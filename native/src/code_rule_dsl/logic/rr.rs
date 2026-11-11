@@ -622,12 +622,11 @@ pub(in crate::code_rule_dsl) fn parse_stored(name: &str, src: String) -> Result<
     lower::lower(stored_statements(Path::new(name), src)?)
 }
 
-fn stored_statements(path: &Path, src: String) -> Result<Vec<syntax::Statement>, Error> {
+fn stored_statements(_path: &Path, src: String) -> Result<Vec<syntax::Statement>, Error> {
     let store = if cfg!(feature = "tape-cache") { super::plan::corpus::tape_cache().ok().flatten() } else { None };
     if let Some(store) = store {
         let src = std::sync::Arc::new(src);
-        let file = crate::code_rule_dsl::model::FileInput::new(path.display().to_string(), "rr".to_owned(), std::sync::Arc::clone(&src), None, None, "core")
-            .map_err(|e| Error::Syntax(format!("{e:?}")))?;
+        let file = crate::code_rule_dsl::facts::core::Source { language: "rr".to_owned(), source: std::sync::Arc::clone(&src) };
         if let Ok(crate::code_rule_dsl::facts::core::Built::Facts(facts)) = crate::code_rule_dsl::facts::core::build_cached(&file, &store) {
             crate::code_rule_dsl::prof::count("rr.statements_from_stored_tape", 1);
             return from_tape::statements(&src, &from_tape::nodes_of_facts(&facts));

@@ -25,6 +25,24 @@ pub(crate) trait SourceFile: Send + Sync {
     fn as_any(&self) -> &dyn std::any::Any;
 }
 
+/// A file that is no request's (a rule program, a library, a guest): its dialect's label and its text.
+pub(crate) struct Source {
+    pub(crate) language: String,
+    pub(crate) source: Arc<String>,
+}
+
+impl SourceFile for Source {
+    fn language(&self) -> &str {
+        &self.language
+    }
+    fn source(&self) -> &Arc<String> {
+        &self.source
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
 /// What reads the values of a file's nodes off its tape (W's, `matcher::file_values`), registered at load:
 /// `each(followed, ordinal, text, types)` for every node with a known value, the plain reading where `plain`, the
 /// one that follows bindings where `follow`.
