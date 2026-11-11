@@ -78,7 +78,7 @@ pub(in crate::code_rule_dsl) fn run_over(
             // the steps read that did not complete fails its chunk.
             let reads = program.steps.iter().any(|step| step.sql.contains(":batch"));
             let status = reads.then_some((&**lease as &rusqlite::Connection, program.name.as_str()));
-            outcome.waves += crate::code_rule_dsl::demand::driver::with_batch(&lease.registry, demand(&docs)?, status, |token| {
+            outcome.waves += crate::code_rule_dsl::demand::driver::with_batch(crate::code_rule_dsl::demand::vtab::registry_of(lease.attached.as_deref())?, demand(&docs)?, status, |token| {
                 waves(&**lease, program, token, limits.max_waves, docs.is_empty())
             })?;
         }

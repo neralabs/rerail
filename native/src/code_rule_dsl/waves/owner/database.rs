@@ -2,7 +2,6 @@
 //! base-relation vtabs, the symbol functions, the `demand` modules and the temp schema's storage.
 //! D's source and regex bindings, program cache and profiler stay with Phase 8's producers.
 use super::super::storage::Storage;
-use crate::code_rule_dsl::demand::vtab::{MatchRegistry, register_module};
 use crate::code_rule_dsl::facts::vtab::{Modules, Source, plan_signature};
 use crate::code_rule_dsl::logic::native::register_symbols;
 use crate::content_store::{ContentStore, StoreError, StoreResult};
@@ -27,7 +26,9 @@ pub(in crate::code_rule_dsl) struct Database {
     pub(super) modules: Modules,
     /// The sources bound now, by table: the plan signature's input.
     pub(super) bound: RefCell<BTreeMap<String, Arc<dyn Source>>>,
-    pub(in crate::code_rule_dsl::waves) registry: Arc<MatchRegistry>,
+    /// What the layers above set up on the connection (the transducer's demand module and its match registry,
+    /// `ConnectionSetup`).
+    pub(in crate::code_rule_dsl) attached: Option<Box<dyn ConnectionSetup>>,
 }
 
 impl Database {
@@ -176,8 +177,10 @@ impl Database {
         // its own (03 §4).
         connection.execute_batch("PRAGMA temp_store = MEMORY")?;
         register_symbols(&connection).map_err(|e| StoreError::Invalid(e.to_string()))?;
-        let registry = Arc::new(MatchRegistry::default());
-        register_module(&connection, Arc::clone(&registry))?;
+        let attached = match SETUP.get() {
+            Some(setup) => Some(setup(&connection)?),
+            None => None,
+        };
         Ok(Self {
             profiler,
             connection,
@@ -189,7 +192,7 @@ impl Database {
             storage: Default::default(),
             modules: Modules::default(),
             bound: Default::default(),
-            registry,
+            attached,
         })
     }
     /// The owned connection, to set a hook of its own (an SQL session's step and time budget).
@@ -203,4 +206,21 @@ impl Deref for Database {
     fn deref(&self) -> &Connection {
         &self.connection
     }
+}
+
+/// What a layer above sets up on each owned connection and keeps with it (the transducer's demand module and its
+/// match registry), registered at load (`install_connection_setup`).
+pub(crate) trait ConnectionSetup {
+    /// The setup as its own type, which only the layer that made it reads.
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+
+/// What sets up an owned connection.
+pub(crate) type SetUp = fn(&rusqlite::Connection) -> StoreResult<Box<dyn ConnectionSetup>>;
+
+static SETUP: std::sync::OnceLock<SetUp> = std::sync::OnceLock::new();
+
+/// Registers what sets up each owned connection (once, at load).
+pub(crate) fn install_connection_setup(setup: SetUp) {
+    let _ = SETUP.set(setup);
 }

@@ -636,6 +636,8 @@ pub(crate) fn install_languages() {
     facts::core::install_executors(logic::lanes::executor_for);
     // A tape's prefilter rows, which the push path derives.
     facts::families::install_prefilter_image(|tape, doc, interrupted| prefilter::image(tape, doc, &interrupted));
+    // An owned connection's demand module.
+    waves::owner::database::install_connection_setup(demand::vtab::set_up_connection);
     // What compiles a program's `ast` matchers into the transducer wave facts runs (decision 0106).
     facts::vtab::syntax::install_ast_compiler(&facts::vtab::syntax::ast_wave::Compiler);
     // The literal grammars `parse` applies, in the order messages list them (`literal::LiteralGrammar`).

@@ -2593,3 +2593,28 @@ struct RootPack {
     fused: super::super::transducer::packed::fusion::Fused,
     walk: super::super::transducer::packed::Micro,
 }
+
+/// An owned connection's demand module and its match registry (`waves::owner::database::ConnectionSetup`).
+impl crate::code_rule_dsl::waves::owner::database::ConnectionSetup for Arc<MatchRegistry> {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// Sets up an owned connection's demand module (`waves::owner::database::install_connection_setup`).
+pub(crate) fn set_up_connection(
+    connection: &Connection,
+) -> crate::content_store::StoreResult<Box<dyn crate::code_rule_dsl::waves::owner::database::ConnectionSetup>> {
+    let registry = Arc::new(MatchRegistry::default());
+    register_module(connection, Arc::clone(&registry))?;
+    Ok(Box::new(registry))
+}
+
+/// The match registry of an owned connection set up by `set_up_connection`.
+pub(crate) fn registry_of(
+    attached: Option<&dyn crate::code_rule_dsl::waves::owner::database::ConnectionSetup>,
+) -> crate::content_store::StoreResult<&Arc<MatchRegistry>> {
+    attached
+        .and_then(|setup| setup.as_any().downcast_ref::<Arc<MatchRegistry>>())
+        .ok_or_else(|| crate::content_store::StoreError::Invalid("the connection has no demand module".to_owned()))
+}
