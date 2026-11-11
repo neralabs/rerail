@@ -1281,9 +1281,25 @@ impl Model {
                 }
             }
             let mut rows = postings(first);
+            // A constant's share of the rows where its postings are counted, else one value's share: a hot value is
+            // not one of `ndv`. `pv($o, 218, $k)` by `$k`, 644 rows a value, was priced at 92 a binding (`218` one
+            // of 7 values) where it holds 43% of the rows: 382 were read, and the plan probed it before `icall`.
+            let card = self.card(&a.rel);
             for &c in &cols {
                 if c != first {
-                    rows /= self.ndv_or_1(&a.rel, c);
+                    let counted = constant(&a.args[c]).and_then(|k| {
+                        let k = &k;
+                        if self.is_input(prog, &a.rel)
+                            && let Some(f) = stats.const_freq(&a.rel, &self.col(&a.rel, c), k)
+                        {
+                            return Some(f as f64);
+                        }
+                        stats.dfreq.get(&(a.rel.clone(), c)).map(|d| d.get(k).copied().unwrap_or(0) as f64)
+                    });
+                    match counted {
+                        Some(f) if card > 0.0 => rows *= (f / card).min(1.0),
+                        _ => rows /= self.ndv_or_1(&a.rel, c),
+                    }
                 }
             }
             // A relation of the component being solved, probed by a value an earlier step bound: a column's fanout
@@ -1799,7 +1815,23 @@ impl Model {
             let mut bound: BTreeSet<String> = BTreeSet::new();
             let mut r = 1.0;
             let mut steps = Vec::new();
+            let mut placed: BTreeSet<usize> = BTreeSet::new();
             for s in &order {
+                // The joins the search could have taken here instead, each priced as it was: rows a binding. A probe's
+                // delta comes first by construction, not by choice: nothing was passed over for it.
+                let passed: Vec<(String, f64)> = if is_join(&s.lit) && first != Some(s.at) {
+                    joins
+                        .iter()
+                        .filter(|&&j| j != s.at && !placed.contains(&j))
+                        .filter_map(|&j| match &body[j] {
+                            Literal::Atom(a) if !a.neg => Some((a.to_string(), atom_rows(a, &bound))),
+                            _ => None,
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                placed.insert(s.at);
                 let cols = |a: &Atom, bound: &BTreeSet<String>| -> Vec<String> {
                     (0..a.args.len())
                         .filter(|&c| constant(&a.args[c]).is_some() || matches!(&a.args[c], Term::Var(v) if bound.contains(v)))
@@ -1854,7 +1886,7 @@ impl Model {
                     }
                 };
                 bound.extend(s.lit.vars());
-                steps.push(super::profile::StepPlan { literal: s.lit.to_string(), access, source: src, rows: r });
+                steps.push(super::profile::StepPlan { literal: s.lit.to_string(), access, source: src, rows: r, passed });
             }
             super::profile::RulePlan { work, rows, subsets, candidates, steps }
         });
@@ -5358,20 +5390,30 @@ pub(in crate::code_rule_dsl) fn leaf_identity(prog: &Program, rel: &str) -> [u8;
 }
 
 /// Holds clean relation `rel` in the run as the earlier run kept it, with its statistics; its rows' count.
+/// A column's distinct values and its skew-weighted fanout: the sum of squared postings over the rows, the rows a
+/// probe by a value drawn from the rows reads, as live statistics give it (`live_stats`). The mean, rows over
+/// distinct values, priced a probe of `pv` by `$k` from `fv__ins` at 83 rows where the delta's values held 382.
+fn postings(values: impl Iterator<Item = i64>) -> (f64, f64) {
+    let mut count: rustc_hash::FxHashMap<i64, u64> = rustc_hash::FxHashMap::default();
+    let mut n = 0u64;
+    for v in values {
+        *count.entry(v).or_insert(0) += 1;
+        n += 1;
+    }
+    let sq: u64 = count.values().map(|m| m * m).sum();
+    ((count.len().max(1)) as f64, if n != 0 { (sq as f64 / n as f64).max(1.0) } else { 1.0 })
+}
+
 fn kept_strata_hold(ks: &mut dyn KeptStrata, db: &Connection, run: &mut Run, rel: &str) -> Result<usize> {
     let (types, rows, n) = ks.rows(rel).ok_or_else(|| Error::Plan(format!("{rel}: kept as clean, but its rows are not kept")))?;
     let k = types.len();
-    let mut ndv = Vec::with_capacity(k);
-    for c in 0..k {
-        let distinct: rustc_hash::FxHashSet<i64> = rows.iter().skip(c).step_by(k).copied().collect();
-        ndv.push(distinct.len() as i64);
-    }
+    let cols: Vec<(f64, f64)> = (0..k).map(|c| postings(rows.iter().skip(c).step_by(k).copied())).collect();
     super::native::component::hold_rows(db, rel, types, rows, n);
     run.native_rels.insert(rel.to_owned());
     run.model.stats.card.insert(rel.to_owned(), (n as f64).max(1.0));
-    for (c, d) in ndv.into_iter().enumerate() {
-        run.model.ndv.insert((rel.to_owned(), c), d.max(1) as f64);
-        run.model.stats.fan.insert((rel.to_owned(), c), if d > 0 { n as f64 / d as f64 } else { 1.0 });
+    for (c, (d, fan)) in cols.into_iter().enumerate() {
+        run.model.ndv.insert((rel.to_owned(), c), d);
+        run.model.stats.fan.insert((rel.to_owned(), c), fan);
         run.model.stats.dfreq.remove(&(rel.to_owned(), c));
     }
     Ok(n)
@@ -5873,9 +5915,9 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             }
             let n = if cols.is_empty() { usize::from(!facts.is_empty()) } else { unique.len() / cols.len() };
             for c in 0..cols.len() {
-                let d = unique.iter().skip(c).step_by(cols.len()).copied().collect::<rustc_hash::FxHashSet<i64>>().len().max(1) as f64;
+                let (d, fan) = postings(unique.iter().skip(c).step_by(cols.len()).copied());
                 run.model.ndv.insert((rel.clone(), c), d);
-                run.model.stats.fan.insert((rel.clone(), c), (n as f64 / d).max(1.0));
+                run.model.stats.fan.insert((rel.clone(), c), fan);
             }
             run.model.stats.card.insert(rel.clone(), (n as f64).max(1.0));
             super::native::component::hold_rows(db, rel, types, unique, n);

@@ -864,6 +864,45 @@ fn a_delta_probe_prices_a_lookup_by_the_bindings_it_can_hit() {
     assert_eq!(order[..2], ["pv", "fcall"], "{order:?}");
 }
 
+/// A probe narrowed by a constant is priced by the constant's share of the rows where its postings are counted, not
+/// by one value's share (`ndv`): `ifn`'s shape on the o125 replay, where `pv($o, 218, $k)` by `$k` holds 644 rows a
+/// value and `218` is one of 7 values but 43% of the rows. Priced at 92 a binding, `pv` was read before `icall` by
+/// `$a` (131): 382 rows a binding were read, then all rejected (0.2 M rows of work at step 07; 554 now).
+#[test]
+fn a_hot_constant_is_priced_by_its_share_of_the_rows() {
+    let p = parse(
+        ".decl icall(c:number, o:number, a:number)\n.decl pv(o:number, k:number, v:number)\n.decl fv(k:number, a:number, m:number, f:number)\n\
+         .decl ifn(c:number, f:number)\n\
+         ifn(c, f) :- icall(c, o, a), pv(o, 218, k), fv(k, a, 193, f).\n.output ifn\n",
+    )
+    .unwrap();
+    let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
+    let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.clone()).collect();
+    let mut model = Model { docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&p), ndv: HashMap::new(), docof: HashMap::new(), view_src: HashMap::new(), inputs, derived };
+    model.stats.nodes = 450_000.0;
+    // Live counts, as the replay's step left them: rows, then by column distinct values and skew-weighted fanout.
+    for (rel, rows, cols) in [
+        ("icall", 438.0, vec![(438.0, 1.0), (438.0, 1.0), (4.0, 131.1)]),
+        ("pv", 28_518.0, vec![(15_950.0, 5.3), (7.0, 12_373.0), (1_693.0, 644.4)]),
+        ("fv", 695.0, vec![(60.0, 46.9), (153.0, 19.2), (3.0, 489.6), (201.0, 8.0)]),
+        ("ifn", 1.0, vec![(1.0, 1.0); 2]),
+    ] {
+        model.stats.card.insert(rel.to_owned(), rows);
+        for (c, (n, fan)) in cols.into_iter().enumerate() {
+            model.ndv.insert((rel.to_owned(), c), n);
+            model.stats.fan.insert((rel.to_owned(), c), fan);
+        }
+    }
+    let values = |v: &[(i64, i64)]| v.iter().map(|&(k, n)| (Constant::Int(k), n)).collect::<HashMap<_, _>>();
+    model.stats.dfreq.insert(("pv".to_owned(), 1), values(&[(218, 12_373), (202, 9_000), (156, 4_000), (1, 1_000), (2, 1_000), (3, 1_000), (4, 145)]));
+    model.stats.dfreq.insert(("fv".to_owned(), 2), values(&[(193, 570), (1, 100), (2, 25)]));
+    model.stats.solve(["pv", "fv", "ifn"].into_iter().map(str::to_owned).collect());
+    let r = &p.rules[0];
+    let ((order, _, _), _) = model.plan_rule_explained(&p, &r.head, &r.body, Some(2)).unwrap();
+    let order: Vec<&str> = order.iter().filter_map(|s| s.lit.atom()).map(|a| a.rel.as_str()).collect();
+    assert_eq!(order, ["fv", "icall", "pv"], "{order:?}");
+}
+
 /// An equality of a bound variable with an unbound one, `$s = $a` with `$s` bound, assigns `$a` (decision 0099 item
 /// 4): the second atom is read by it, not crossed with the first and narrowed after (`fl4317_typing_root`: 14 k rows,
 /// then 2.86 M, then 603). The rule runs to the same rows either way round.
