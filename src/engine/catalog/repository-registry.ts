@@ -345,11 +345,20 @@ export function checkoutStatus(db: Reader, checkout: CheckoutContext | undefined
   if (checkout === undefined) return { started: false, setUp: false, startedBy: "repository" };
   const repository = db.select({ started: repositories.started, configuredAt: repositories.configuredAt })
     .from(repositories).where(eq(repositories.repositoryKey, checkout.repositoryKey)).get();
+  const own = db.select({ started: checkouts.started }).from(checkouts).where(eq(checkouts.checkoutPath, checkout.checkoutPath)).get()?.started ?? null;
+  return statusOf(repository, own, own === null ? parentCheckouts(db, checkout) : []);
+}
+
+/** The status a checkout's own on/off, its parents' (nearest first) and its repository's row give it. */
+function statusOf(
+  repository: { readonly started: boolean | null; readonly configuredAt: number | null } | undefined,
+  own: boolean | null,
+  parents: readonly Pick<CheckoutRecord, "started">[],
+): RepositoryStatus {
   const setUp = repository?.configuredAt != null;
-  const own = db.select({ started: checkouts.started }).from(checkouts).where(eq(checkouts.checkoutPath, checkout.checkoutPath)).get()?.started;
-  if (own != null) return { started: own, setUp, startedBy: "checkout" };
-  const parent = parentCheckouts(db, checkout).find(row => row.started !== null);
-  if (parent?.started != null) return { started: parent.started, setUp, startedBy: "parent" };
+  if (own !== null) return { started: own, setUp, startedBy: "checkout" };
+  const parent = parents.find(row => row.started !== null)?.started;
+  if (parent != null) return { started: parent, setUp, startedBy: "parent" };
   return { started: repository?.started === true, setUp, startedBy: "repository" };
 }
 
@@ -380,6 +389,51 @@ export function listRepositories(db: Reader): RepositoryListing[] {
   return db.select().from(repositories).all()
     .map(repository => ({ ...recordOf(repository), checkouts: byRepository.get(repository.repositoryKey) ?? [] }))
     .sort((left, right) => left.displayName.localeCompare(right.displayName) || left.repositoryKey.localeCompare(right.repositoryKey));
+}
+
+/** A checkout of a listed repository as {@link listedCheckoutStates} reads it. */
+export interface ListedCheckoutState {
+  /** {@link checkoutStatus} of the checkout. */
+  readonly status: RepositoryStatus;
+  /** The nearest recorded checkout of the repository whose folder holds it ({@link parentCheckouts}' first); null when none does. */
+  readonly parentCheckoutPath: string | null;
+}
+
+/** A folder as {@link withinCheckout} compares it: on Windows path.relative ignores letter case, elsewhere it does not. */
+function listedFolderKey(path: string): string {
+  return process.platform === "win32" ? path.toLowerCase() : path;
+}
+
+/** `path` and each folder above it, nearest first. */
+function folderAndAbove(path: string): string[] {
+  const folders = [path];
+  for (let folder = path; dirname(folder) !== folder; folder = dirname(folder)) folders.push(dirname(folder));
+  return folders;
+}
+
+/**
+ * {@link checkoutStatus} and the nearest parent of a checkout of `repository`, recorded or not, from its listing
+ * ({@link listRepositories}) alone: the listing's rows at the checkout's folder and at each folder above it, nearest
+ * first. It runs no statement, so a reader that asks after every checkout of the repository pays one read of the
+ * listing and each checkout's folder depth, not a few statements and a read of every checkout per checkout.
+ */
+export function listedCheckoutStates(repository: RepositoryListing): (checkoutPath: string) => ListedCheckoutState {
+  const byFolder = new Map<string, CheckoutRecord[]>();
+  for (const row of repository.checkouts) {
+    const key = listedFolderKey(row.checkoutPath);
+    byFolder.set(key, [...(byFolder.get(key) ?? []), row]);
+  }
+  return checkoutPath => {
+    let own: boolean | null = null;
+    const parents: CheckoutRecord[] = [];
+    for (const folder of folderAndAbove(checkoutPath)) {
+      for (const row of byFolder.get(listedFolderKey(folder)) ?? []) {
+        if (row.checkoutPath === checkoutPath) own = row.started;
+        else parents.push(row);
+      }
+    }
+    return { status: statusOf(repository, own, parents), parentCheckoutPath: parents[0]?.checkoutPath ?? null };
+  };
 }
 
 /**
