@@ -25,21 +25,9 @@ pub mod value;
 pub use arguments::{ArgumentFeature, ArgumentRules};
 pub use calls::{CallFeature, CallRules};
 pub use format_args::{FormatArgFeature, FormatArgRules};
-// Read through `with_adapter!` (tests) only, whose arm for a family left out of the build is `unreachable!`.
-// cratify: a re-export of rerail-lang-json's, which its facades of this module make
-// Read through `with_adapter!` (tests) only, whose arm for a family left out of the build is `unreachable!`.
-#[cfg(any(test, feature = "test-hooks"))]
-#[cfg_attr(not(feature = "lang-rr"), allow(unused_imports))]
-pub use rr::Rr;
-// Read through `with_adapter!` (tests) only, whose arm for a family left out of the build is `unreachable!`.
-// cratify: a re-export of rerail-lang-rust's, which its facades of this module make
 pub use scope::{ScopeFeature, ScopeRules};
-// Read through `with_adapter!` (tests) only, whose arm for a family left out of the build is `unreachable!`.
-// cratify: a re-export of rerail-lang-sql's, which its facades of this module make
 pub use syntax::{QueryWhen, SyntaxFeature, SyntaxRules};
 pub use value::{ValueFeature, ValueRules};
-// Read through `with_adapter!` (tests) only, whose arm for a family left out of the build is `unreachable!`.
-// cratify: a re-export of rerail-lang-ecma's, which its facades of this module make
 
 use super::{
     Family, GrammarDialect, PackageType, SourceType, is_declaration_file, language_not_supported,
@@ -56,13 +44,9 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::LazyLock;
 // cratify: `python` is rerail-lang-python's (it mounts it)
-// cratify: a re-export of rerail-lang-python's, which its facades of this module make
 // cratify: `ecma` is rerail-lang-ecma's (it mounts it)
-// cratify: a re-export of rerail-lang-ecma's, which its facades of this module make
 // cratify: `php` is rerail-lang-php's (it mounts it)
-// cratify: a re-export of rerail-lang-php's, which its facades of this module make
 // cratify: `blade` is rerail-lang-php's (it mounts it)
-// cratify: a re-export of rerail-lang-php's, which its facades of this module make
 
 /// The adapter of a capability a family does not read (registry `refused` or `not-supported-yet`).
 pub struct Refused;

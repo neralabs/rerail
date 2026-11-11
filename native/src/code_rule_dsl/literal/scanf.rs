@@ -289,7 +289,7 @@ fn mixed(start: usize, end: usize) -> Error {
     )
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub mod tests;
 
 /// The `scanfFormat` grammar (`literal::LiteralGrammar`).

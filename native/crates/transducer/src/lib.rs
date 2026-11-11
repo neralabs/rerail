@@ -25,6 +25,8 @@ pub mod code_rule_dsl {
         #[path = "vtab"]
         pub mod vtab {
             pub use rerail_facts::code_rule_dsl::facts::vtab::*;
+            #[cfg(any(test, feature = "test-hooks"))]
+            pub use rerail_w::code_rule_dsl::facts::vtab::p_table;
             #[allow(unused_imports)]
             use fallible_iterator::FallibleIterator;
             #[allow(unused_imports)]

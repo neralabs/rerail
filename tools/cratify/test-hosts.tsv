@@ -4,12 +4,6 @@ calls::php_tests	rerail-lang-php
 calls::python_tests	rerail-lang-python
 calls::tests	rerail-lang-python
 compile::tests	rerail-engine
-demand::driver::catalog	rerail-transducer
-demand::driver::catalog::policy_lowering_tests	rerail-engine
-demand::driver::catalog::production_contract_tests	rerail-engine
-demand::driver::catalog::relational	rerail-engine
-demand::driver::catalog::sql_backend	rerail-transducer
-demand::driver::catalog::sql_backend::tests	rerail-transducer
 demand::driver::tests	rerail-engine
 demand::vtab::tests	rerail-engine
 embed::tests	rerail-lang-php
@@ -23,6 +17,7 @@ facts::vtab::syntax::tests	rerail-engine
 facts::vtab::tests	rerail-logic
 findings::async_reference	rerail-lang-python
 language::adapter::kit	rerail-engine
+language::adapter::kit::scope_kit	rerail-lang-python
 language::tests	rerail-lang-php
 lines::eslint	rerail-w
 literal::offsets::tests	rerail-lang-python

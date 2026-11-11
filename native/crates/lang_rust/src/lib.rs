@@ -81,6 +81,8 @@ pub mod code_rule_dsl {
         #[path = "vtab"]
         pub mod vtab {
             pub use rerail_facts::code_rule_dsl::facts::vtab::*;
+            #[cfg(any(test, feature = "test-hooks"))]
+            pub use rerail_w::code_rule_dsl::facts::vtab::p_table;
             #[allow(unused_imports)]
             use fallible_iterator::FallibleIterator;
             #[allow(unused_imports)]
@@ -127,14 +129,6 @@ pub mod code_rule_dsl {
             pub(crate) use crate::code_rule_dsl::language::adapter::calls::{CallFeature, CallRules};
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::language::adapter::format_args::{FormatArgFeature, FormatArgRules};
-            #[allow(unused_imports)]
-            #[cfg(any(test, feature = "test-hooks"))]
-            #[cfg_attr(not(feature = "lang-rr"), allow(unused_imports))]
-            pub(crate) use crate::code_rule_dsl::language::adapter::rr::Rr;
-            #[allow(unused_imports)]
-            #[cfg(any(test, feature = "test-hooks"))]
-            #[cfg_attr(not(feature = "lang-rust"), allow(unused_imports))]
-            pub(crate) use crate::code_rule_dsl::language::adapter::rust::Rust;
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::language::adapter::scope::{ScopeFeature, ScopeRules};
             #[allow(unused_imports)]

@@ -458,7 +458,5 @@ fn run(
     })
 }
 
-// Test-only, and it reads the engine's `relational`: the engine mounts it (`code_rule_dsl::demand::driver`).
-#[cfg(test)]
-pub mod catalog;
+// cratify: `catalog` is rerail-engine's (it mounts it)
 // cratify: `tests` is rerail-engine's (it mounts it)

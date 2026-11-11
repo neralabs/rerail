@@ -24,7 +24,7 @@ use ast_grep_core::matcher::Matcher;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 pub(super) use super::relational_ir::SqlOperation as SqlShape;
 pub(super) use super::relational_ir::TerminalKind;
 
@@ -54,12 +54,12 @@ impl TerminalPlan {
         self.kind
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub(super) fn language(&self) -> &'static str {
         label(self.language).expect("a compiled matcher has a registered dialect")
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub(super) fn program_digest(&self) -> String {
         self.program.canonical_digest(self.language(), b"")
     }
@@ -149,11 +149,11 @@ pub(super) struct SqlCatalogPlan {
     clause_outputs: Vec<OutputPlan>,
     clause_logical_plans: Vec<super::plan::ClauseLogicalPlan>,
     utility_call_counts: BTreeMap<UtilityDefinitionId, usize>,
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     authored_fixture_sql: Option<String>,
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     all_execution_sql: std::sync::OnceLock<String>,
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     all_relational_sql: std::sync::OnceLock<String>,
 }
 
@@ -532,7 +532,7 @@ impl SqlCatalogPlan {
         self.render_clauses_plan(ordinals, true, true)
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub(super) fn shape(&self) -> &[SqlShape] {
         self.clause_irs
             .first()
@@ -590,7 +590,7 @@ impl SqlCatalogPlan {
         Ok(())
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub(super) fn structural_sql(&self) -> &str {
         self.all_relational_sql.get_or_init(|| {
             let ordinals = (0..self.clause_irs.len()).collect::<Vec<_>>();
@@ -599,7 +599,7 @@ impl SqlCatalogPlan {
         })
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub(super) fn execution_sql(&self) -> &str {
         self.all_execution_sql.get_or_init(|| {
             if let Some(authored) = &self.authored_fixture_sql {
@@ -625,7 +625,7 @@ impl SqlCatalogPlan {
         &self.clause_logical_plans
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub(super) fn clause_terminal_ids(&self) -> &[Vec<usize>] {
         &self.clause_terminal_ids
     }
@@ -3345,7 +3345,7 @@ impl Builder {
         id
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     fn template_is_var(
         template: Option<&crate::code_rule_dsl::model::Template>,
         name: &str,
@@ -3359,7 +3359,7 @@ impl Builder {
         )
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     fn template_is_text_var(
         template: Option<&crate::code_rule_dsl::model::Template>,
         text: &str,
@@ -3375,7 +3375,7 @@ impl Builder {
         )
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     fn template_is_text_var_text(
         template: Option<&crate::code_rule_dsl::model::Template>,
         before: &str,
@@ -3392,7 +3392,7 @@ impl Builder {
         )
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     fn authored_fixture_shape(&self) -> Option<super::compact_output_sql::Shape> {
         use super::compact_output_sql::Shape;
 
@@ -3614,7 +3614,7 @@ impl Builder {
                 )
             })
             .collect();
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         let authored_fixture_sql = self.authored_fixture_shape().map(|shape| {
             let output = &self.clause_outputs[0];
             super::compact_output_sql::render(
@@ -3633,11 +3633,11 @@ impl Builder {
             clause_outputs: self.clause_outputs,
             clause_logical_plans,
             utility_call_counts: self.utility_call_counts,
-            #[cfg(any(test, feature = "test-hooks"))]
+            #[cfg(test)]
             authored_fixture_sql,
-            #[cfg(any(test, feature = "test-hooks"))]
+            #[cfg(test)]
             all_execution_sql: std::sync::OnceLock::new(),
-            #[cfg(any(test, feature = "test-hooks"))]
+            #[cfg(test)]
             all_relational_sql: std::sync::OnceLock::new(),
         })
     }

@@ -18,7 +18,7 @@ mod test_watchdog;
 mod code_rule_dsl;
 /// The engine's tools without Node (`rerail-engine dump` / `asm`).
 pub use code_rule_dsl::tools;
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 pub(crate) use code_rule_dsl::prof::purge_allocator_pages;
 pub use rerail_store::content_store;
 pub use rerail_w::git_ignore;

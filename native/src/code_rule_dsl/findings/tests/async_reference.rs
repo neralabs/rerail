@@ -782,12 +782,8 @@ fn execute_sql<'t>(
     Run { findings, metrics }
 }
 
-// The oracles read the engine's compiled rules: only this crate's own tests build them (the engine mounts its own,
-// `query::plan::async_reference`).
-#[cfg(test)]
-pub mod native_oracle;
-#[cfg(test)]
-pub mod s_native_oracle;
+// cratify: `native_oracle` is rerail-engine's (it mounts it)
+// cratify: `s_native_oracle` is rerail-engine's (it mounts it)
 #[cfg(test)]
 pub mod tests;
 

@@ -767,9 +767,9 @@ fn execute_sql<'t>(
     Run { findings, metrics }
 }
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 mod generated_shape;
-#[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
+#[cfg(all(test, feature = "p-anchor-corpus"))]
 #[path = "../../findings/tests/native_oracle.rs"]
 mod native_oracle;
 #[cfg(all(test, feature = "p-anchor-corpus"))]

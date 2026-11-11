@@ -550,8 +550,8 @@ pub struct PreNode {
     pub start: u32,
     pub end: u32,
     pub named: bool,
-    pub extra: bool,
-    pub error: bool,
+    pub(crate) extra: bool,
+    pub(crate) error: bool,
 }
 
 /// A sub-tree's text. Node ranges are offsets into it plus `offset`, which an annotation's tree

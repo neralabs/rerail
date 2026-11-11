@@ -404,4 +404,4 @@ pub mod tests;
 
 // cratify: `ruff` is rerail-lang-python's (it mounts it)
 
-// cratify: `eslint` is rerail-lang-ecma's (it mounts it)
+// cratify: `eslint` is rerail-engine's (it mounts it)

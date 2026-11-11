@@ -14,37 +14,6 @@ pub mod code_rule_dsl {
     #[path = "compile"]
     pub mod compile {
         pub use rerail_w::code_rule_dsl::compile::*;
-        #[path = "binds"]
-        pub mod binds {
-            pub use rerail_w::code_rule_dsl::compile::binds::*;
-            // ESLint's binds lab (`eslint.rs`) reads the engine's oracles and test kit: the engine mounts it.
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::compile::ast_rule::{compile_ast_rule};
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::compile::utils::{UtilScope};
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::language::adapter::{ScopeFeature};
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::language::kind_ids;
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::language::{Family, GrammarDialect};
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::matcher::Semantic;
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::matcher::{AstMatcher, BindingCount, BindingFilter, Binds, Redefines};
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::model::Limits;
-            #[allow(unused_imports)]
-            use napi::Result;
-            #[allow(unused_imports)]
-            use serde_json::{Map, Value};
-            #[allow(unused_imports)]
-            use std::collections::BTreeSet;
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::language::adapter::pack as language_pack;
-        }
         pub mod import_target;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::json::{
@@ -150,6 +119,8 @@ pub mod code_rule_dsl {
         #[path = "vtab"]
         pub mod vtab {
             pub use rerail_facts::code_rule_dsl::facts::vtab::*;
+            #[cfg(any(test, feature = "test-hooks"))]
+            pub use rerail_w::code_rule_dsl::facts::vtab::p_table;
             #[path = "syntax"]
             pub mod syntax {
                 pub use rerail_facts::code_rule_dsl::facts::vtab::syntax::*;
@@ -314,19 +285,11 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::language::adapter::format_args::{FormatArgFeature, FormatArgRules};
             #[allow(unused_imports)]
-            #[cfg(any(test, feature = "test-hooks"))]
-            #[cfg_attr(not(feature = "lang-rr"), allow(unused_imports))]
-            pub(crate) use crate::code_rule_dsl::language::adapter::rr::Rr;
-            #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::language::adapter::scope::{ScopeFeature, ScopeRules};
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::language::adapter::syntax::{QueryWhen, SyntaxFeature, SyntaxRules};
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::language::adapter::value::{ValueFeature, ValueRules};
-            #[allow(unused_imports)]
-            #[cfg(any(test, feature = "test-hooks"))]
-            #[cfg_attr(not(feature = "lang-vue"), allow(unused_imports))]
-            pub(crate) use crate::code_rule_dsl::language::adapter::vue::Vue;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::language::{
                 Family, GrammarDialect, PackageType, SourceType, is_declaration_file, language_not_supported,
@@ -353,9 +316,6 @@ pub mod code_rule_dsl {
             use std::path::Path;
             #[allow(unused_imports)]
             use std::sync::LazyLock;
-            #[allow(unused_imports)]
-            #[cfg(any(test, feature = "test-hooks"))]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::language::adapter::ecma::{Ecma};
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::language::{ast_grep, parse_input};
         }

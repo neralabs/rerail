@@ -2,7 +2,7 @@
 //! connection on the content store, the temp schema's lifecycle, and the frontier loop that SQL
 //! steers, wave by wave, until no relation changes.
 pub use rerail_logic::code_rule_dsl::waves::owner;
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 #[path = "waves/relational"]
 pub(in crate::code_rule_dsl) mod relational {
     pub use rerail_w::code_rule_dsl::waves::relational::*;
@@ -12,7 +12,7 @@ pub(in crate::code_rule_dsl) mod relational {
         #[cfg(test)]
         pub mod tests;
         #[allow(unused_imports)]
-        use crate::code_rule_dsl::waves::relational::{Evaluation, Inputs, Job, Preparation, Session, Step, failure, producer, sql_error};
+        use crate::code_rule_dsl::waves::relational::{Inputs, Job, Preparation, Session, Step, failure, producer};
         #[allow(unused_imports)]
         use crate::code_rule_dsl::model::{CompiledCodeRule, Metrics};
         #[allow(unused_imports)]
@@ -27,7 +27,7 @@ pub(in crate::code_rule_dsl) mod relational {
         #[cfg(test)]
         pub mod tests;
         #[allow(unused_imports)]
-        use crate::code_rule_dsl::waves::relational::{FactQuery, Rows, insert};
+        use crate::code_rule_dsl::waves::relational::{FactQuery, insert};
         #[allow(unused_imports)]
         use crate::code_rule_dsl::{
             eval,
@@ -45,13 +45,11 @@ pub(in crate::code_rule_dsl) mod relational {
         };
     }
     #[allow(unused_imports)]
-    use crate::code_rule_dsl::eval::{evidence::Rows, failure, violation_from_witness};
+    use crate::code_rule_dsl::eval::{failure, violation_from_witness};
     #[allow(unused_imports)]
     use crate::code_rule_dsl::json::{hex_digest, invalid};
     #[allow(unused_imports)]
-    use crate::code_rule_dsl::model::{
-        CompiledClause, CompiledCodeRule, Evaluation, FactQuery, Snapshot,
-    };
+    use crate::code_rule_dsl::model::{CompiledClause, CompiledCodeRule, FactQuery, Snapshot};
     #[allow(unused_imports)]
     use crate::code_rule_dsl::violations::{Captures, Witness};
     #[allow(unused_imports)]
@@ -65,7 +63,7 @@ pub(in crate::code_rule_dsl) mod relational {
     #[allow(unused_imports)]
     use crate::code_rule_dsl::waves::relational::database::Database;
     #[allow(unused_imports)]
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub(in crate::code_rule_dsl) use crate::code_rule_dsl::waves::relational::functions::install_unbounded as install_regex_functions;
     #[allow(unused_imports)]
     pub(in crate::code_rule_dsl) use crate::code_rule_dsl::waves::relational::reachability::Reachability;

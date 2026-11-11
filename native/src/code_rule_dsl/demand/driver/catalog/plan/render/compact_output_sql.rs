@@ -916,7 +916,7 @@ SELECT * FROM failures
 ORDER BY clause_ordinal, file_index, stable_order;"#;
 
 #[derive(Clone, Copy)]
-pub enum Shape {
+pub(super) enum Shape {
     CaptureEachDistinct,
     CaptureAnchor,
     CaptureAnchorFallback,
@@ -927,7 +927,7 @@ pub enum Shape {
     OutputStableMultiplicity,
 }
 
-pub fn render(
+pub(super) fn render(
     shape: Shape,
     rule_id: &str,
     clause_id: &str,

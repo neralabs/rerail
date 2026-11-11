@@ -15,7 +15,7 @@ pub use rerail_rr::code_rule_dsl::logic::rr::check;
 #[path = "rr/aggregate_demand"]
 pub mod aggregate_demand {
     pub use rerail_rr::code_rule_dsl::logic::rr::aggregate_demand::*;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub mod tests;
     #[allow(unused_imports)]
     use crate::code_rule_dsl::logic::front::{self, AggOp, Atom, Literal, Program, Rule, Term};
@@ -28,12 +28,10 @@ pub use rerail_rr::code_rule_dsl::logic::rr::print;
 // The parser and the tape's tree, the `.rr` parser crate's (`rerail_rr_syntax`).
 use rerail_rr_syntax::syntax;
 pub use rerail_rr_syntax::tape;
-// `rr/tape_type/` is not a directory: a path through it fails, so the facade's directory is `rr` (as
-// Cratification's mounts.py, e2ab5d26b).
 #[path = "rr"]
 pub mod tape_type {
     pub use rerail_rr::code_rule_dsl::logic::rr::tape_type::*;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     #[path = "tape_type_tests.rs"]
     pub mod tests;
     #[allow(unused_imports)]

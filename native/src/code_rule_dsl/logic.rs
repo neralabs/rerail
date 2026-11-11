@@ -11,12 +11,10 @@ pub mod analysis;
 #[path = "logic/front"]
 pub mod front {
     pub use rerail_rr::code_rule_dsl::logic::front::*;
-    // `front/caches/` is not a directory (caches.rs has no children's directory): a path through it fails, so the
-    // facade's directory is `front` (as Cratification's mounts.py, e2ab5d26b).
     #[path = "."]
     pub mod caches {
         pub use rerail_rr::code_rule_dsl::logic::front::caches::*;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         #[path = "caches_tests.rs"]
         pub mod tests;
         #[allow(unused_imports)]
@@ -26,12 +24,12 @@ pub mod front {
     }
     #[cfg(test)]
     pub mod data_layer_tests;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub mod tests;
     #[path = "yaml"]
     pub mod yaml {
         pub use rerail_rr::code_rule_dsl::logic::front::yaml::*;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         pub mod tests;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::logic::front::{Atom, Error, Literal, Program, Rule, Term};
@@ -59,7 +57,7 @@ pub mod liveness;
 #[path = "logic/magic"]
 pub mod magic {
     pub use rerail_rr::code_rule_dsl::logic::magic::*;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub mod tests;
     #[allow(unused_imports)]
     use crate::code_rule_dsl::logic::front::{AggOp, Atom, Error, Literal, Program, Rule, Term, Value, cmp_binds, join, strata, tarjan};
@@ -100,7 +98,7 @@ pub mod simplify;
 #[path = "logic/strings"]
 pub mod strings {
     pub use rerail_facts::code_rule_dsl::logic::strings::*;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub mod tests;
     #[allow(unused_imports)]
     use std::collections::{BTreeMap, HashMap, HashSet};
