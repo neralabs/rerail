@@ -4821,8 +4821,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "2911f61c5b0238c13e783536302a00d720334982",
-    "status": "Final 2911f61c5 root CLI rebuilt; State original and plugin contracts, all candidate readers, and focused loader checks validated.",
+    "upstreamCommit": "fcce32b26cf5e561ded72575ed6d327394f822fe",
+    "status": "Merged Final fcce with reviewed generic compatibility extensions",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -4862,11 +4862,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
-        "sha256": "0b39e219b73f55695d52fc8a8677965db6b8b1566dbcbd5530cdb0b1acc2f88e"
+        "sha256": "f4a2740af5074026008a7cd17af5cade4bcee4fad8373aa7393cdd001c8c069e"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
-        "sha256": "e9240b01b01c0808532e650bddfc3104118775190e6c3b77c80d844456ad4d7f"
+        "sha256": "e7c4c4cd56040aad54d0d185a31fec399b33acded09190fdb42fe6b633f27751"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs",
@@ -4906,7 +4906,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/tests.rs",
-        "sha256": "98a9db4e099adcf76e6b3e832fbd417961516ac8d8c88d45c708844ddb1fc6ec"
+        "sha256": "e0b3f2d53c7d8d08e061e41cd48fb496612d9dfe9728214bed8593fd7d9b4759"
       },
       {
         "path": "native/src/code_rule_dsl/logic/front.rs",
@@ -4974,7 +4974,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "ecd4bb07ebe93dc5be783b0e4ec6d91d535d5c8e2e91b7c27cccc2cbaeacda5e"
+        "sha256": "29db7480d41290a4163fd3ab5b96114ec6555e83c8e07f5b78c571a2e0b6accc"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
@@ -4986,7 +4986,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/functions.rs",
-        "sha256": "9ee0b340f24e314705fb497432461d08a1502e053894dee5797f88c89c3d5fe1"
+        "sha256": "803af080e836675bad38f4658d076921f85a8f97fe5766a45fa43d11c5d48c24"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/python_integer.rs",
@@ -5006,7 +5006,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/tests.rs",
-        "sha256": "190c43dbe56d744a09bdabe4383349523557f3eeb6b2a611c27d56110c5e4054"
+        "sha256": "ef29c78214acac2d0dbe8a1d1b6b7f7f4391df01384c6adbe207e0ff2b77769a"
       },
       {
         "path": "native/src/code_rule_dsl/sql_executor/documents/shards.rs",
@@ -5176,10 +5176,10 @@
     },
     "adoptionAudit": {
       "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "2911f61c5b0238c13e783536302a00d720334982",
-      "engineCommit": "340401b11ee52846a13a1c0c37e9e5a13992f0b2",
+      "upstreamCommit": "fcce32b26cf5e561ded72575ed6d327394f822fe",
+      "engineCommit": "b9aee60a0b56c64ab6bee150f4b53848a8d68b2a",
       "sourceTrees": {
-        "native": "7896682064ab6a817e84b7c090a7c4d8821a140e",
+        "native": "50bff15b8b58c3893aad15875484846643562b61",
         "accel": "c0a9697122e57c9e213919c4e9b9686dd17a1b07",
         "tools/bitlex": "3699290356d32d790f91b76c5df41186268ada69",
         "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
@@ -7157,6 +7157,374 @@
       "validation": {
         "path": "gate/data-layer/fixtures/host/data-layer-port/rr-final04e3-engine-validation.json.gz",
         "sha256": "0ec0e549a97827beead675a6318207338f70c1fdffdb82b7eba3ff81ade0e7af"
+      }
+    },
+    {
+      "checkout": ".",
+      "upstreamCommit": "2911f61c5b0238c13e783536302a00d720334982",
+      "status": "Final 2911f61c5 root CLI rebuilt; State original and plugin contracts, all candidate readers, and focused loader checks validated.",
+      "retiredCheckout": ".rerail/rr-migration-20261106/engine",
+      "localRepairCommit": "25b580262",
+      "localRepairPaths": [
+        "native/src/code_rule_dsl/logic/plan.rs",
+        "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax.rs",
+        "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/diagnostic.rs",
+        "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs"
+      ],
+      "localCapabilityCommits": [
+        "e6968ad82"
+      ],
+      "localCapabilityPaths": [
+        "native/src/code_rule_dsl/facts/vtab/syntax/python_print.rs",
+        "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
+        "native/src/code_rule_dsl/facts/vtab/syntax.rs",
+        "native/src/code_rule_dsl/logic/sql/select.rs",
+        "native/src/code_rule_dsl/logic/strings.rs"
+      ],
+      "rootMetadataCommit": "7b44f4813",
+      "canonicalCallTextCommit": "eea5ed2da",
+      "nativeExtensions": [
+        {
+          "path": "Cargo.lock",
+          "sha256": "898115da4c35a63bd71e613d41ae410230611a4cfadfb0a1d12277474640909f"
+        },
+        {
+          "path": "native/Cargo.toml",
+          "sha256": "e76700c02857d63d8b66047779c965fb6883223f7bece20f947ef91930d7e335"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/core.rs",
+          "sha256": "6c2ddf5bcc8dd22877888ef1c976e8b6d4e25060643f95c939f4580fc7c4f890"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/repository.rs",
+          "sha256": "7ff68b070b737fb38b27f4736c687cba260151ec5c4ff8dff08f75d5ccd991b0"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
+          "sha256": "0b39e219b73f55695d52fc8a8677965db6b8b1566dbcbd5530cdb0b1acc2f88e"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
+          "sha256": "e9240b01b01c0808532e650bddfc3104118775190e6c3b77c80d844456ad4d7f"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs",
+          "sha256": "13b82d0ba854fee9ad053f2609cbabb693be06f34f7a5c06417f2034c2ba4bf3"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print.rs",
+          "sha256": "670cc09461d50ae90b01f77fee285066c71cb49933a72cf0d803df0bdede2b79"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print/calls.json",
+          "sha256": "214157a6cb66b177fe258f94e75f035130c43100ba19991a9189b441b79c2039"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print/expressions.json",
+          "sha256": "5a6eee8ac5ddbc31b67faab5bc57af09be30c54be73d4aa27d8af050fd180bf9"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print/printable.generated.rs",
+          "sha256": "a3e99353157742c99f47adcef0d88237c5606a6b9b1dbebe754f75ed4434537b"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax.rs",
+          "sha256": "25b649736836d4c4800347d565284b4ee3e0ae46977e16a77494ed78fc61c408"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/diagnostic.rs",
+          "sha256": "8c91d767c6693aa8a07c8dc351b8a25712c62ca4bddc1b7353c0c8d01c4de075"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/python-errors.json",
+          "sha256": "7b85e2616f4f630a121112cac556c1874cafff8bbf9ce85a51d1aca6056bef15"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/python-exceptions.json",
+          "sha256": "8d83797508b026f9c60c88adcc3bfe6812bb83d99631a4623f78a9365d721786"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/tests.rs",
+          "sha256": "98a9db4e099adcf76e6b3e832fbd417961516ac8d8c88d45c708844ddb1fc6ec"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/front.rs",
+          "sha256": "a51e0c8c1ab9a0cdb2bac9fb6a3a1b7cda31604b0216a252d700ed5ce326071d"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/native.rs",
+          "sha256": "ba18ecba95332b98574fd5c5dfb2dab168051fe7cad92da2734fe1e38bcf1907"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/native/balanced_rows.rs",
+          "sha256": "0c935fe75ae2831dfe9db9da2859627a2b5c734d3b593e413d8e812835c32870"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/native/bfs_walk.rs",
+          "sha256": "a0d972d6f3e877b0ab6bf2bd222958542660dd9963f9085f0b5375e3c8806f4c"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/native/python_set_rows.rs",
+          "sha256": "86ad7b22fb4b6e632229c36ea24d5f760d583f50ada005723cd843eabcd37e46"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/native/setfix.rs",
+          "sha256": "b8c35e84ab2d5902c51cf5d0097e07b61d219f0d6c17d3357c42a2c59c18b423"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan.rs",
+          "sha256": "384240944e7ae3232c1ebe48a6e10a3713ab09416a28faa481f31f5cd1ead2d8"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
+          "sha256": "9774c2acc660312f8b912c378da0900811ce262674bd01ae8f321dce1253baeb"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan/corpus/constants.rs",
+          "sha256": "d6f8406d0eebb3825a99885ce43a09a9c157037bdcbae6aaa95db950149ca902"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
+          "sha256": "7598b776d2af34060675be67c7e5a353985c4cb0081387aac6bb3f6caa9bacc4"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan/corpus/inputs.rs",
+          "sha256": "913d20a9f6e4a3f1612329b1a21fe2e86d898c9ee1a6056531e6db663a10e640"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan/corpus/world.rs",
+          "sha256": "97c894d646f2123ccbf1e5a42e7fa1eb42b62f4336d9096426b46814cc0e6747"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan/demand.rs",
+          "sha256": "8d5a7b075bc5db3f9a0319a8f5599c702be2fdfbee673f253441d592ce1c6ee8"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/program_facts.rs",
+          "sha256": "c7be2db7db1207540d1f00ed56d141caefeaa108050e0fb9f2b533343a9163bf"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
+          "sha256": "39bdcece7f399c24b0bdbb4cd786c3e2fc4a4370e3deb0c58fe0c6df157c35a6"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/rr/print.rs",
+          "sha256": "fb8e2f13facab8dabb441bf7e33ea5ce5a7aef45fa6935d5991efe66796d4082"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
+          "sha256": "ecd4bb07ebe93dc5be783b0e4ec6d91d535d5c8e2e91b7c27cccc2cbaeacda5e"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/sql/select.rs",
+          "sha256": "4b127ab05e95cf5ea65541327c5a843104fa31e75e1c2f6687b7eb451697d213"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/strings.rs",
+          "sha256": "41e84aadab8298fec47987a984df43c3ad4708aa20ef89febacf2cb92d22bd33"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/strings/functions.rs",
+          "sha256": "9ee0b340f24e314705fb497432461d08a1502e053894dee5797f88c89c3d5fe1"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/strings/python_integer.rs",
+          "sha256": "8c36fbff3984103f442aa58f1076e9be829396eac3dc0dcc7cae931c6847ea5a"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/strings/python_json.rs",
+          "sha256": "2c8e036c556c1b1f44d0f81e7a0b9512e70fefbd4ba35b62fa2677fba3f76dd3"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/strings/signature-errors.json",
+          "sha256": "d0b1c63f0ece1e791339013ff176d1506e6ae2e2ace4ecaa32d1475aa94bd44c"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/strings/signatures.rs",
+          "sha256": "b56ff78ff1c7b2e4f3c77554fed1659f0918f186f19b085fe2520e7099e65a69"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/strings/tests.rs",
+          "sha256": "190c43dbe56d744a09bdabe4383349523557f3eeb6b2a611c27d56110c5e4054"
+        },
+        {
+          "path": "native/src/code_rule_dsl/sql_executor/documents/shards.rs",
+          "sha256": "ad552b71db6aff0f39bc3d0345ee84373481cc7292192b6f3220044e883ac679"
+        },
+        {
+          "path": "native/src/code_rule_dsl/tools.rs",
+          "sha256": "c2d6f79afc85f9ae7b486860351d1af380159a90b74294c96751d3499e903f6b"
+        },
+        {
+          "path": "native/src/code_rule_dsl/tools/signing.rs",
+          "sha256": "501ae4d5d86a3053b489522bcf123acc70a71017cc583dece8e69741a014333b"
+        },
+        {
+          "path": "native/src/code_rule_dsl/typing/file_local.rs",
+          "sha256": "8c716ef97adcebe8f452bbcf5d1586d85811bd185946ac13992f73dce55e8d79"
+        },
+        {
+          "path": "native/src/code_rule_dsl/value/python.rs",
+          "sha256": "5831c3aab8a17ac8019e6ed247583d88bef73278cda3dba27e6e197df3e17042"
+        },
+        {
+          "path": "native/src/content_store/observe.rs",
+          "sha256": "79d5df3cbf5bd4517252c18e48010f2f63f29cfafd851ff9e5f05b21f810423a"
+        }
+      ],
+      "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
+      "upstreamMerge": "89a58ec57f917b6d251bcd9dde240297be962f3a",
+      "previousUpstreamCommit": "7330552f8b3aa8769ca3e10a2587c13df5f4068b",
+      "artifactHistory": [
+        {
+          "engineCommit": "1954d7c425c81efe98232d0ef6ff1a5c270e2c1a",
+          "upstreamCommit": "93cadec3793c11867cc45314ec566084f77afd03",
+          "sourceTrees": {
+            "native": "befc09347e7cbcebc05531d5634a78bfbdf3975f",
+            "accel": "d0b0c598284934387695bc982782421be44292a2",
+            "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
+            "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
+            "Cargo.lock": "0f601fd6052ffc140243ed0a5800f745cba919c7"
+          },
+          "path": ".rerail/modern-engine-alignment/cli-724324ca07950331",
+          "sha256": "724324ca0795033175aecf0105845818f1b0481fc150377083322e7bc84ca790",
+          "command": [
+            "cargo",
+            "build",
+            "-p",
+            "rerail-engine",
+            "--features",
+            "headless",
+            "--bin",
+            "rerail-engine",
+            "--profile",
+            "profiling"
+          ],
+          "seconds": 95.52
+        },
+        {
+          "engineCommit": "ba106b5311f06fb8f77abec8c4009780d37ffbd9",
+          "upstreamCommit": "fc6c1e0d9444156917642fd1046b532ca1064e1a",
+          "sourceTrees": {
+            "native": "6f49bc7e10d0657c2d8223c9dea11c3432597a61",
+            "accel": "dad65ba08ae01650b6f1453779f66a9da67f98b6",
+            "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
+            "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
+            "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
+          },
+          "path": ".rerail/modern-engine-alignment/cli-63278a96b660a897",
+          "sha256": "63278a96b660a897b54396e66b40ba3fff50035da44f9250b1907d307a50e66f",
+          "command": [
+            "cargo",
+            "build",
+            "-p",
+            "rerail-engine",
+            "--features",
+            "headless",
+            "--bin",
+            "rerail-engine",
+            "--profile",
+            "profiling"
+          ],
+          "seconds": 130.726
+        },
+        {
+          "engineCommit": "ebbf1e38a6552ff786ad68d38545ea4a69bb3cd4",
+          "upstreamCommit": "9e5fa489e0a28d514282ff31652ad05da33bad32",
+          "sourceTrees": {
+            "native": "8ecb7697775e02279086ac1f2eb862fd66d02262",
+            "accel": "dad65ba08ae01650b6f1453779f66a9da67f98b6",
+            "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
+            "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
+            "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
+          },
+          "path": ".rerail/modern-engine-alignment/cli-ef1a5c7432a728b3",
+          "sha256": "ef1a5c7432a728b38f2f25dfcd186129748a0dd33356c4482f5c5a730f93e812",
+          "command": [
+            "rustup",
+            "run",
+            "1.95.0",
+            "cargo",
+            "build",
+            "-p",
+            "rerail-engine",
+            "--features",
+            "headless",
+            "--bin",
+            "rerail-engine",
+            "--profile",
+            "profiling"
+          ],
+          "seconds": 412.02,
+          "cpuSeconds": 1115.06
+        },
+        {
+          "format": "rerail.root-engine-build/v1",
+          "engineCommit": "8d57a19870ece2f9223eb6ea63376d49cee6bae5",
+          "upstreamCommit": "41962153f967d8c0d8fe3154698818a1bcf06869",
+          "sourceTrees": {
+            "native": "0b90b44c32f4ff8065b1a7d4eda6e6bbbd6bd69b",
+            "accel": "81d49bce9e756ba3c44b85d319be41cf37779a53",
+            "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
+            "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
+            "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
+          },
+          "path": ".rerail/modern-engine-alignment/cli-e41d01a2eef49dac",
+          "sha256": "e41d01a2eef49dace2d13e6e1537a74272a3cbdfcb6350ae0187fd8634af35f2",
+          "command": "nice -n 19 rustup run 1.95.0 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling",
+          "wallSeconds": 223.4,
+          "userCpuSeconds": 885.99,
+          "systemCpuSeconds": 20.2
+        },
+        {
+          "format": "rerail.root-engine-build/v1",
+          "engineCommit": "2a09faba87bac060fc2795608094289fad9dddf5",
+          "upstreamCommit": "7330552f8b3aa8769ca3e10a2587c13df5f4068b",
+          "sourceTrees": {
+            "native": "de907b372b7ab640af4ddc32718968873618160e",
+            "accel": "81d49bce9e756ba3c44b85d319be41cf37779a53",
+            "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
+            "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
+            "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
+          },
+          "path": ".rerail/modern-engine-alignment/cli-b5fc6feb1a934585",
+          "sha256": "b5fc6feb1a9345854ff46b33699f1059f37e9c06000185ceac8893cad121e47d",
+          "command": "nice -n 19 rustup run 1.95.0 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling",
+          "wallSeconds": 223.44,
+          "userCpuSeconds": 672.5,
+          "systemCpuSeconds": 24.49
+        }
+      ],
+      "cliArtifact": {
+        "format": "rerail.root-engine-build/v1",
+        "engineCommit": "340401b11ee52846a13a1c0c37e9e5a13992f0b2",
+        "upstreamCommit": "2911f61c5b0238c13e783536302a00d720334982",
+        "sourceTrees": {
+          "native": "7896682064ab6a817e84b7c090a7c4d8821a140e",
+          "accel": "c0a9697122e57c9e213919c4e9b9686dd17a1b07",
+          "tools/bitlex": "3699290356d32d790f91b76c5df41186268ada69",
+          "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
+          "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
+        },
+        "path": ".rerail/modern-engine-alignment/cli-4bc20970e2aabd2f",
+        "sha256": "4bc20970e2aabd2f1227211d947b9ac66252f177b3af3900ce6d52cbda4a58ee",
+        "command": "nice -n 19 rustup run 1.95.0 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling",
+        "wallSeconds": 201.89,
+        "userCpuSeconds": 880.52,
+        "systemCpuSeconds": 22.33
+      },
+      "adoptionAudit": {
+        "format": "rerail.engine-cohort-adoption/v1",
+        "upstreamCommit": "2911f61c5b0238c13e783536302a00d720334982",
+        "engineCommit": "340401b11ee52846a13a1c0c37e9e5a13992f0b2",
+        "sourceTrees": {
+          "native": "7896682064ab6a817e84b7c090a7c4d8821a140e",
+          "accel": "c0a9697122e57c9e213919c4e9b9686dd17a1b07",
+          "tools/bitlex": "3699290356d32d790f91b76c5df41186268ada69",
+          "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
+          "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
+        }
       }
     }
   ],
