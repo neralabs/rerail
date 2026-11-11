@@ -632,7 +632,7 @@ impl Fresh {
         if settled == n {
             return;
         }
-        // The first order's sort (`runs::cmp_vals`: tagged, it sorts by the leading column, then the second's tag).
+        // The first order's sort (`runs::cmp_vals`: tagged, by the leading value's tag first, then the columns).
         let cols = &rel.idx[0].cols;
         let tagged = runs::tagged(cols, k);
         let data = &self.data;
@@ -4575,7 +4575,7 @@ mod posted_tests {
         let old = InRel::moved(rel);
         assert!(old.chains.iter().all(|ix| ix.runs() <= FROZEN_RUNS), "a frozen order holds a few runs");
         for ix in &old.chains {
-            // The full-row order also keeps a 16-bit tag an id (`runs::tagged`).
+            // The full-row order keeps a 16-bit tag an id instead of fences (`runs::tagged`).
             let most = if runs::tagged(&ix.cols, old.k) { 6.5 } else { 4.5 };
             assert!((ix.bytes() as f64) < most * old.n as f64, "{:?}: {} bytes a row", ix.cols, ix.bytes() as f64 / old.n as f64);
         }

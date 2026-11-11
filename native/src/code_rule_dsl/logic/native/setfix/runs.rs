@@ -30,9 +30,10 @@ const FENCE: usize = 64;
 const PROBE_PER_MERGED_ID: u64 = 8;
 
 /// One run: row ids sorted by the order's columns (then id), and the leading value of every `FENCE`th id. A tagged
-/// run (the order on every column, of two or more: the dedup test) sorts by the leading value, then 16 bits of the
-/// second column's hash (`tag`), then the columns in turn, and keeps each id's tag (`tags`): where the fences show a
-/// span of one leading value, its rows are found by their tags, not read.
+/// run (the order on every column, of two or more: the dedup test) sorts by 16 bits of the leading value's hash
+/// (`tag`) first, then the columns in turn, and keeps each id's tag (`tags`) instead of fences: a key's ids are found
+/// by its tag among the tags (placed by interpolation, as hash order spreads them evenly), and only the ids of that
+/// tag are read. Equal leading values have equal tags, so every prefix of the columns is still a range.
 pub(super) struct Run {
     ids: Vec<u32>,
     fences: Vec<i64>,
@@ -51,14 +52,43 @@ pub(super) fn tagged(cols: &[usize], k: usize) -> bool {
     cols.len() >= 2 && cols.len() == k
 }
 
-/// Rows `ra` and `rb` (their values) in an order on `cols`: the leading column, then (tagged) the second column's
-/// tag, then the columns in turn.
+/// Rows `ra` and `rb` (their values) in an order on `cols`: (tagged) the leading column's tag, then the columns in
+/// turn.
 #[inline]
 pub(super) fn cmp_vals(cols: &[usize], tagged: bool, ra: &[i64], rb: &[i64]) -> Ordering {
     let Some(&lead) = cols.first() else { return Ordering::Equal };
-    ra[lead].cmp(&rb[lead])
-        .then_with(|| if tagged { tag(ra[cols[1]]).cmp(&tag(rb[cols[1]])) } else { Ordering::Equal })
-        .then_with(|| cols[1..].iter().map(|&c| ra[c].cmp(&rb[c])).find(|o| o.is_ne()).unwrap_or(Ordering::Equal))
+    (if tagged { tag(ra[lead]).cmp(&tag(rb[lead])) } else { Ordering::Equal })
+        .then_with(|| cols.iter().map(|&c| ra[c].cmp(&rb[c])).find(|o| o.is_ne()).unwrap_or(Ordering::Equal))
+}
+
+/// The span of `tags` (sorted) equal to `t`, searched from `from`: a galloping search forward from there, or (with
+/// `place`) from where an even spread of tags would put it.
+#[inline]
+fn tag_span(tags: &[u16], t: u16, from: usize, place: bool) -> (usize, usize) {
+    let n = tags.len();
+    if from >= n {
+        return (n, n);
+    }
+    let mut at = if place { from.max(((t as usize) * n) >> 16) } else { from };
+    // Back while the place is past the span's start (it can be, placed by interpolation).
+    let mut step = 1;
+    while at > from && tags[at.min(n - 1)] >= t {
+        at = at.saturating_sub(step).max(from);
+        step *= 2;
+    }
+    // Forward, galloping, to the first tag at or past `t`.
+    let mut bound = 1;
+    while at + bound <= n && tags[at + bound - 1] < t {
+        bound *= 2;
+    }
+    let lo = if bound > 1 { at + bound / 2 } else { at };
+    let hi = (at + bound - 1).min(n);
+    let s = lo + tags[lo..hi].partition_point(|&x| x < t);
+    let mut e = s;
+    while e < n && tags[e] == t {
+        e += 1;
+    }
+    (s, e)
 }
 
 /// An order on the columns `cols` (every key set it answers is a prefix of them).
@@ -85,12 +115,15 @@ fn cmp_rows(data: &[i64], k: usize, cols: &[usize], a: u32, b: u32) -> Ordering 
 
 impl Run {
     fn fenced(data: &[i64], k: usize, cols: &[usize], ids: Vec<u32>) -> Run {
+        if tagged(cols, k) {
+            let tags = ids.iter().map(|&id| tag(data[id as usize * k + cols[0]])).collect();
+            return Run { ids, fences: Vec::new(), tags };
+        }
         let fences = match cols.first() {
             Some(&lead) => ids.iter().step_by(FENCE).map(|&id| data[id as usize * k + lead]).collect(),
             None => Vec::new(),
         };
-        let tags = if tagged(cols, k) { ids.iter().map(|&id| tag(data[id as usize * k + cols[1]])).collect() } else { Vec::new() };
-        Run { ids, fences, tags }
+        Run { ids, fences, tags: Vec::new() }
     }
 
     /// The ids of `ids` sorted by `cols` (then id).
@@ -104,52 +137,30 @@ impl Run {
     fn find(&self, data: &[i64], k: usize, cols: &[usize], key: &[i64]) -> &[u32] {
         // No columns: every row (a relation of no columns holds one row at most).
         let Some(&lead) = key.first() else { return &self.ids };
-        // The rows of `lead` start in the block before the first fence at or past it, and end before the first fence
-        // past it.
-        let a = self.fences.partition_point(|&f| f < lead);
-        let b = a + self.fences[a..].partition_point(|&f| f == lead);
-        if !self.tags.is_empty() && key.len() >= 2 {
-            return self.find_tagged(data, k, cols, key, a, b);
-        }
-        let window = &self.ids[a.saturating_sub(1) * FENCE..(b * FENCE).min(self.ids.len())];
         let cmp = |id: u32| -> Ordering {
             let r = &data[id as usize * k..][..k];
             cols.iter().zip(key).map(|(&c, v)| r[c].cmp(v)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
+        };
+        let window = if !self.tags.is_empty() {
+            // The leading value's tag among the tags: only its ids are read.
+            let (s, e) = tag_span(&self.tags, tag(lead), 0, true);
+            &self.ids[s..e]
+        } else {
+            // The rows of `lead` start in the block before the first fence at or past it, and end before the first
+            // fence past it.
+            let a = self.fences.partition_point(|&f| f < lead);
+            let b = a + self.fences[a..].partition_point(|&f| f == lead);
+            &self.ids[a.saturating_sub(1) * FENCE..(b * FENCE).min(self.ids.len())]
         };
         let s = window.partition_point(|&id| cmp(id) == Ordering::Less);
         let e = s + window[s..].partition_point(|&id| cmp(id) == Ordering::Equal);
         &window[s..e]
     }
 
-    /// `find` in a tagged run, for a key of two columns or more, whose leading value's ids start in block `a - 1` or at
-    /// `a`, and end in block `b - 1` (the fences): the span's two ends searched by reading rows, in those blocks
-    /// only; within it, the second column's tag by the tags; within those, the rest of the key by reading rows.
-    fn find_tagged(&self, data: &[i64], k: usize, cols: &[usize], key: &[i64], a: usize, b: usize) -> &[u32] {
-        let (n, lead) = (self.ids.len(), cols[0]);
-        let at = |id: u32| data[id as usize * k + lead];
-        let lo = a.saturating_sub(1) * FENCE;
-        let head = (a * FENCE).min(n);
-        let s = lo + self.ids[lo..head].partition_point(|&id| at(id) < key[0]);
-        let from = s.max(b.saturating_sub(1) * FENCE);
-        let to = (b * FENCE).min(n).max(from);
-        let e = from + self.ids[from..to].partition_point(|&id| at(id) <= key[0]);
-        let t = tag(key[1]);
-        let ts = s + self.tags[s..e].partition_point(|&x| x < t);
-        let te = ts + self.tags[ts..e].partition_point(|&x| x == t);
-        let span = &self.ids[ts..te];
-        let rest = |id: u32| -> Ordering {
-            let r = &data[id as usize * k..][..k];
-            cols[1..].iter().zip(&key[1..]).map(|(&c, v)| r[c].cmp(v)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
-        };
-        let i = span.partition_point(|&id| rest(id) == Ordering::Less);
-        let j = i + span[i..].partition_point(|&id| rest(id) == Ordering::Equal);
-        &span[i..j]
-    }
-
     /// Sets `held[i]` when a live id (`live`) holds row `order[i]` of `rows` (flat, `k` columns each): `order` lists
-    /// distinct rows sorted by `cols`, so each row's search starts where the last one's ended. The fences (leading
-    /// values, inline) find a row's block from there; within it the search gallops, so rows near each other in the
-    /// order read few rows of `data`.
+    /// distinct rows sorted as this run is (`cmp_vals`), so each row's search starts where the last one's ended. Its
+    /// block is found by the fences (leading values, inline), or in a tagged run its tag's span by the tags; within it
+    /// the search gallops, so rows near each other in the order read few rows of `data`.
     fn held_sorted(&self, data: &[i64], k: usize, cols: &[usize], rows: &[i64], order: &[u32], live: &impl Fn(u32) -> bool, held: &mut [bool]) {
         let n = self.ids.len();
         let Some(&lead) = cols.first() else {
@@ -159,6 +170,7 @@ impl Run {
             }
             return;
         };
+        let tagged = !self.tags.is_empty();
         let mut at = 0;
         for (i, &q) in order.iter().enumerate() {
             if at >= n {
@@ -168,8 +180,15 @@ impl Run {
                 continue;
             }
             let row = &rows[q as usize * k..][..k];
-            let tagged = !self.tags.is_empty();
             let cmp = |id: u32| -> Ordering { cmp_vals(cols, tagged, &data[id as usize * k..][..k], row) };
+            if tagged {
+                // The row's tag span, from where the last row's search ended; within it, the rows read in order.
+                let (s, e) = tag_span(&self.tags, tag(row[lead]), at, false);
+                let p = s + self.ids[s..e].partition_point(|&id| cmp(id).is_lt());
+                at = p;
+                held[i] = self.ids[p..e].iter().take_while(|&&id| cmp(id).is_eq()).any(|&id| live(id));
+                continue;
+            }
             // The first id at or past the row is past the block before the first fence at or past its leading value.
             let v = row[lead];
             let from = at / FENCE;
@@ -443,8 +462,9 @@ mod tests {
         assert_eq!(by10.find(&rows, k, &[3], None).len(), (0..2000).filter(|i| i % 7 == 3).count());
     }
 
-    /// The order on every column is tagged (decision 0112, the dedup test with 16 bits of the second column's hash):
-    /// a leading value's span over many blocks is searched by its tags, and every prefix is still a range.
+    /// The order on every column is tagged (decision 0112, the dedup test sorted by 16 bits of the leading value's
+    /// hash first): keys are found by their tags, long spans of one leading value included, and every prefix is still
+    /// a range.
     #[test]
     fn a_tagged_order_finds_keys_in_long_spans_of_one_leading_value() {
         let k = 3;
