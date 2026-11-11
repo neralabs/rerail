@@ -665,6 +665,9 @@ pub fn drop_pipelines() {
     if let Ok(mut libraries) = LIBRARIES.lock() {
         libraries.clear();
     }
+    if let Ok(mut kernels) = crate::block_program::serial::KERNELS.lock() {
+        kernels.clear();
+    }
 }
 
 pub fn pipeline_named(source: &str, name: &str) -> Result<ComputePipelineState, Error> {

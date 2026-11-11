@@ -365,6 +365,138 @@ pub mod tests {
         time(usage.ru_utime) + time(usage.ru_stime)
     }
 
+    /// Where a Metal run's wall time goes: two runs in a row over the corpus's first files.
+    #[test]
+    #[cfg(target_os = "macos")]
+    #[ignore = "a probe: run by hand"]
+    fn rr_metal_probe() {
+        use rerail_metal::block_program::serial::run_resident;
+        let w = std::time::Instant::now();
+        let c = super::compiled().expect("compiles");
+        eprintln!("compiled in {:.2?} wall", w.elapsed());
+        let files = corpus();
+        for n in [100usize] {
+            let batch: Vec<_> = files.iter().take(n).map(|f| rerail_compiler::block::BatchFile { bytes: f.as_bytes(), program: 0 }).collect();
+            for k in 0..4 {
+                let (t, w) = (thread_cpu(), std::time::Instant::now());
+                let r = run_resident(&[&c.native], &batch, super::SEGMENTS);
+                let ok = match &r {
+                    Ok((run, _)) => format!("GPU {:.2} ms, {} launches, {} segments, {} reruns, {} rounds", run.run.seconds * 1e3, run.run.launches, run.segments, run.reruns, run.rounds),
+                    Err(e) => format!("{e:?}"),
+                };
+                eprintln!("{n} files, run {k}: {:.2?} wall, {:.2?} CPU; {ok}", w.elapsed(), thread_cpu() - t);
+            }
+        }
+    }
+
+    /// Throughput over the repository's `.rr` files, a pass's mean of `REPEAT`, CPU (this thread)
+    /// and wall: the hand-written Rust reader (`rr::tape`), the compiled grammar file by file,
+    /// the corpus as one batch with tier 1 on the CPU, and as one batch with tier 1 on Metal
+    /// (tier 2 on the CPU over the buffers where the device left them). Each pass's results are
+    /// checked against the file-by-file tables. Run alone, at nice 19; the load is printed. For
+    /// the reader's speed, build `rerail-rr-syntax` optimized
+    /// (`--config 'profile.dev.package.rerail-rr-syntax.opt-level=3'`); the generated code is the
+    /// same in any build.
+    #[test]
+    #[ignore = "a benchmark: run by hand"]
+    fn rr_throughput() {
+        use rerail_compiler::native_cpu_block::Batch;
+        const REPEAT: u32 = 3;
+        let c = super::compiled().expect("compiles");
+        let p = &c.parser;
+        let files = corpus();
+        let refs: Vec<&[u8]> = files.iter().map(|f| f.as_bytes()).collect();
+        let mb = refs.iter().map(|b| b.len()).sum::<usize>() as f64 / 1e6;
+        let want: Vec<_> = files.iter().map(|f| super::tape(f)).collect();
+        let tokens: usize = files.iter().map(|f| super::rr::tape(f).len()).sum();
+        // (CPU, wall) a pass of `f`, its last pass's tables checked.
+        let time = |f: &mut dyn FnMut() -> Option<Vec<super::Columns>>| {
+            let w = std::time::Instant::now();
+            let _ = f();
+            eprintln!("    (first call {:.2?} wall)", w.elapsed());
+            let (t, w) = (thread_cpu(), std::time::Instant::now());
+            let mut last = None;
+            for _ in 0..REPEAT {
+                last = f();
+            }
+            let r = ((thread_cpu() - t) / REPEAT, w.elapsed() / REPEAT);
+            if let Some(got) = last {
+                assert_eq!(got.len(), want.len());
+                assert!(got == want, "a pass's tables differ from the file-by-file ones");
+            }
+            r
+        };
+        let row = |name: &str, (cpu, wall): (std::time::Duration, std::time::Duration), extra: &str| {
+            eprintln!("  {name:<44} {:>8.1}ms {:>8.1}ms {:>8.1} {extra}", cpu.as_secs_f64() * 1e3, wall.as_secs_f64() * 1e3, mb / cpu.as_secs_f64());
+        };
+        eprintln!("{} files, {mb:.2} MB, {} reader nodes", files.len(), tokens);
+        eprintln!("  {:<44} {:>10} {:>10} {:>8}", "", "CPU/pass", "wall/pass", "MB/s CPU");
+        #[cfg(target_os = "macos")]
+        {
+            use rerail_metal::block_program::serial::run_resident;
+            use rerail_metal::block_program::serial::Resident;
+            // Tier 1 on Metal over `files`, halved while the device refuses it for capacity (as
+            // `metal_tapes`): each part's GPU seconds and buffers, in order.
+            fn parts(c: &super::Compiled, files: &[rerail_compiler::block::BatchFile<'_>], out: &mut Vec<(f64, usize, Resident)>) {
+                match run_resident(&[&c.native], files, super::SEGMENTS) {
+                    Ok((run, res)) => out.push((run.run.seconds, files.len(), res)),
+                    Err(rerail_compiler::Error::BackendCapacity) if files.len() > 1 => {
+                        let (a, b) = files.split_at(files.len() / 2);
+                        parts(c, a, out);
+                        parts(c, b, out);
+                    }
+                    Err(e) => panic!("Metal runs the batch: {e:?}"),
+                }
+            }
+            let batch: Vec<_> = refs.iter().map(|b| rerail_compiler::block::BatchFile { bytes: b, program: 0 }).collect();
+            let (mut gpu, mut t2_cpu, mut n_parts) = (0.0, std::time::Duration::ZERO, 0);
+            let metal = time(&mut || {
+                let mut ps = Vec::new();
+                parts(c, &batch, &mut ps);
+                n_parts = ps.len();
+                let t = thread_cpu();
+                let mut out = Vec::with_capacity(want.len());
+                for (secs, n, res) in &ps {
+                    gpu += secs;
+                    for i in 0..*n {
+                        let k = out.len();
+                        out.push(rerail_metal::tier2_on::columns_on(p, res, i).unwrap_or_else(|_| want[k].clone()));
+                    }
+                }
+                t2_cpu += thread_cpu() - t;
+                Some(out)
+            });
+            row("one batch, tier 1 on Metal, tier 2 on the CPU", metal, &format!("({n_parts} launches' batches)"));
+            let passes = f64::from(REPEAT + 1);
+            eprintln!("    tier 1's GPU time {:.1}ms a pass ({:.0} MB/s); tier 2 on the CPU {:.1}ms", gpu / passes * 1e3, mb / (gpu / passes), t2_cpu.as_secs_f64() / passes * 1e3);
+            let t1m = time(&mut || {
+                let mut ps = Vec::new();
+                parts(c, &batch, &mut ps);
+                std::hint::black_box(&ps);
+                None
+            });
+            row("  tier 1 alone, one Metal batch", t1m, "");
+        }
+        let reader = time(&mut || {
+            let n: usize = files.iter().map(|f| super::rr::tape(f).len()).sum();
+            std::hint::black_box(n);
+            None
+        });
+        row("Rust reader (rr::tape), file by file", reader, "");
+        let by_file = time(&mut || Some(files.iter().map(|f| super::tape(f)).collect()));
+        row("compiled, file by file", by_file, "");
+        // Tier 1 as one batch on the CPU; tier 2 file by file (it runs one file at a time).
+        let t1 = time(&mut || {
+            let mut b = Batch::new(&p.tier1, &refs);
+            b.call(&p.tier1);
+            std::hint::black_box(&b);
+            None
+        });
+        row("  tier 1 alone, one CPU batch", t1, "");
+        let load = std::process::Command::new("uptime").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned()).unwrap_or_default();
+        eprintln!("  load: {load}");
+    }
+
     /// CPU time over the repository's `.rr` files: the compiled grammar against the engine's
     /// parser, each over every file `REPEAT` times, the grammar compiled before. Run alone
     /// (`--test-threads 1`) and at nice 19; the machine's load is printed.
