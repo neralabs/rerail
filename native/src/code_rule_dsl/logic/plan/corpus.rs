@@ -5467,6 +5467,9 @@ fn run_observed(
                         };
                         input_docs.insert(rel.to_owned(), docs);
                         hashed.push(rel.to_owned());
+                        if std::env::var_os("RERAIL_SPIKE_DELTA").is_some() {
+                            eprintln!("O125 input delta {rel}: +{} -{} of {} rows", delta.0.len(), delta.1.len(), new.len());
+                        }
                         Some(delta)
                     };
                     let mut maintained = maintain::rewrite(&cut, cell.as_ref(), &cross, &mut answer)?;

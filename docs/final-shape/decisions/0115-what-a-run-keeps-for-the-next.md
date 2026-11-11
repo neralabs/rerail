@@ -45,6 +45,14 @@ The 20-file corpus (476 KB, 20 `.py` files), under strict mode, with the debug-p
 | Changed rows written | 21.7 M | 10.2 M |
 | Findings | 62 | 62, the same |
 
+**Correction (2026-11-11, later).** These runs had the profile on, which costs much more than it should:
+- **Times.** It adds about 26 s of wall time and 258 G instructions to an edit's run. Unprofiled, the edit's run
+  takes 17.3 s of wall time, 20.5 s of CPU and 300 G instructions. The counts above (rows, frames, strata) do not
+  depend on the profile.
+- **"Warm" here means after an edit.** An unchanged run takes the whole-run cutoff: 0.71 s of CPU. The profile
+  disabled that cutoff until b8819272f.
+- **Where the edit's time goes.** Decision 0116 analyses it.
+
 What the cold run's 304 MB of frames holds, by kind of relation:
 
 | Kind | MB | Rows | Relations |
