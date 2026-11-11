@@ -1,6 +1,7 @@
 //! Moved from `arguments.rs` by the crate split (tools/cratify/moves.tsv).
 
 use super::*;
+use crate::code_rule_dsl::language::adapter::ecma::Ecma;
 
 /// Arguments by position only; ESLint's `node.arguments`.
 impl ArgumentRules for Ecma {

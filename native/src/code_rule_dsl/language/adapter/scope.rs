@@ -1,6 +1,6 @@
 //! Scope tables, bindings and usage (`resolves`, `binds`): `Semantic::Scope`.
 
-use super::{Adapter, Ecma, Php, Python, Refusal};
+use super::{Adapter, Refusal};
 
 use crate::code_rule_dsl::matcher::{ScopeName, Unresolved, file_module, file_source_type_for};
 use crate::code_rule_dsl::module_path::ModulePath;

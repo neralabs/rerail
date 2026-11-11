@@ -1,6 +1,7 @@
 //! Moved from `format_args.rs` by the crate split (tools/cratify/moves.tsv).
 
 use super::*;
+use crate::code_rule_dsl::language::adapter::php::Php;
 
 /// The printf family and `sscanf`/`fscanf`.
 impl FormatArgRules for Php {

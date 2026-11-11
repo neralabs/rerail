@@ -1,6 +1,6 @@
 //! A call's arguments (`arguments`): `Semantic::Arguments`.
 
-use super::{Ecma, Php, Python, Refusal, Refused};
+use super::{Refusal, Refused};
 use crate::code_rule_dsl::matcher::{Arguments, Passed};
 use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;

@@ -1,6 +1,6 @@
 //! Format strings' arguments (`formatArgs`): `Semantic::FormatArgs`.
 
-use super::{Php, Python, Refusal, Refused};
+use super::{Refusal, Refused};
 use crate::code_rule_dsl::matcher::Style;
 use std::borrow::Cow;
 pub(in crate::code_rule_dsl) mod lang_python;

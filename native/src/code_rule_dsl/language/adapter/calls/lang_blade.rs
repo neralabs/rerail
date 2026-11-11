@@ -1,6 +1,8 @@
 //! Moved from `calls.rs` by the crate split (tools/cratify/moves.tsv).
 
 use super::*;
+use crate::code_rule_dsl::language::adapter::php::Php;
+use crate::code_rule_dsl::language::adapter::blade::Blade;
 
 /// A template's calls are those of the PHP it embeds (`blade::view`), read from its embedded
 /// program (`calls::calls_document`); its top level is no class's, so `$this`, `self` and `static`

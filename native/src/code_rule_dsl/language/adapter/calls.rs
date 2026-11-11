@@ -1,6 +1,6 @@
 //! The workspace call graph (`calls`): `Semantic::Calls`.
 
-use super::{Blade, Php, Python, Refusal, Refused};
+use super::{Refusal, Refused};
 use crate::code_rule_dsl::calls::closure::{Graph, Link};
 use crate::code_rule_dsl::calls::names::Name;
 use crate::code_rule_dsl::calls::summary::{Callee, SHADOWED, Summary};

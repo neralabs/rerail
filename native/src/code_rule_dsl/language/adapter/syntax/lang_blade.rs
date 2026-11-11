@@ -1,6 +1,8 @@
 //! Moved from `syntax.rs` by the crate split (tools/cratify/moves.tsv).
 
 use super::*;
+use crate::code_rule_dsl::language::adapter::php::Php;
+use crate::code_rule_dsl::language::adapter::blade::Blade;
 
 /// A template's own tree holds no literal `parse` reads: its PHP's are the embedded program's
 /// (`blade::view`), a PHP document (`ast.embedded`, `embedded`).

@@ -1,6 +1,7 @@
 //! Moved from `value.rs` by the crate split (tools/cratify/moves.tsv).
 
 use super::*;
+use crate::code_rule_dsl::language::adapter::php::Php;
 
 impl ValueRules for Php {
     const SUPPORTED: bool = true;

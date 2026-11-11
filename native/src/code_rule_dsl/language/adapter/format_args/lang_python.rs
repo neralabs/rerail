@@ -1,6 +1,7 @@
 //! Moved from `format_args.rs` by the crate split (tools/cratify/moves.tsv).
 
 use super::*;
+use crate::code_rule_dsl::language::adapter::python::Python;
 
 /// `str.format` templates and `%` formats.
 impl FormatArgRules for Python {

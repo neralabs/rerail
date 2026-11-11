@@ -1,6 +1,7 @@
 //! Moved from `syntax.rs` by the crate split (tools/cratify/moves.tsv).
 
 use super::*;
+use crate::code_rule_dsl::language::adapter::ecma::Ecma;
 
 /// Comments: ESLint's directives.
 impl SyntaxRules for Ecma {

@@ -1,6 +1,7 @@
 //! Moved from `syntax.rs` by the crate split (tools/cratify/moves.tsv).
 
 use super::*;
+use crate::code_rule_dsl::language::adapter::php::Php;
 
 /// Strings (printf and scanf formats) and doc comments.
 impl SyntaxRules for Php {
@@ -43,19 +44,21 @@ impl SyntaxRules for Php {
     }
 
     fn compile_language_options(value: &Value, path: &str) -> napi::Result<QueryOptions> {
-        <Ecma as SyntaxRules>::compile_language_options(value, path)
+        // ESLint's `languageOptions`, as ECMAScript's files read them.
+        let options = options::compile_language_options(value, path)?;
+        Ok((Some(Arc::new(options)), None))
     }
 
     fn compile_when(
         value: &Value,
         path: &str,
         options: Option<&LanguageOptions>,
-        python: Option<&PythonOptions>,
+        _: Option<&PythonOptions>,
         document: &Options,
     ) -> napi::Result<QueryWhen> {
         // A PHP file has no module system: a `when.sourceType` reads ESLint's default, a module.
         let (applies, types) =
-            <Ecma as SyntaxRules>::compile_when(value, path, options, python, document)?;
+            options::compile_ecma_when(value, path, options, document)?;
         Ok((
             applies && types.is_none_or(|types| types.contains(&SourceType::Module)),
             None,
