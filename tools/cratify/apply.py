@@ -47,6 +47,10 @@ DESCRIPTIONS = {
 
 # --- file edits -------------------------------------------------------------------------------------------------
 
+# Edits that replace a whole item: an edit inside one is the replacement's to make (it writes the item anew)
+WHOLE = ('declaration', 'upward use')
+
+
 class Edits:
     """Byte edits per file, refused when two overlap."""
 
@@ -67,9 +71,9 @@ class Edits:
             for x in es:
                 if kept and x[0] < kept[-1][1]:
                     outer = kept[-1]
-                    if outer[0] <= x[0] and x[1] <= outer[1] and outer[3] == 'declaration':
+                    if outer[0] <= x[0] and x[1] <= outer[1] and outer[3] in WHOLE:
                         continue
-                    if x[0] <= outer[0] and outer[1] <= x[1] and x[3] == 'declaration':
+                    if x[0] <= outer[0] and outer[1] <= x[1] and x[3] in WHOLE:
                         kept[-1] = x
                         continue
                     bad.append(f'{os.path.relpath(f, ROOT)}: {outer[3]} {outer[:2]} overlaps {x[3]} {x[:2]}')
