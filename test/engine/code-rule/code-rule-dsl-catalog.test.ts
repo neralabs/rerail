@@ -284,7 +284,59 @@ describe("checkout code-rule catalog", () => {
       catalogs.close();
     }
   });
+
+  it("reads a checkout's rule configuration in one statement, prepared once, at every refresh", () => {
+    const { root, databasePath } = checkout();
+    const key = setUpTestRepository(root, {}, databasePath);
+    const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog: loadRuleCatalog() });
+    try {
+      const catalog = catalogs.catalog(root);
+      const loaded = catalog.status.sourceSignature;
+      const counted = countStatements(catalogs.database, () => {
+        for (let refresh = 0; refresh < 3; refresh += 1) expect(catalog.refresh()).toBe(false);
+      });
+      // Each refresh reads the checkout's start state and set-up, then its rule configuration.
+      expect(counted).toEqual({ prepared: 0, run: 6 });
+      expect(catalog.status.sourceSignature).toBe(loaded);
+
+      // A setting another process makes is read at the next refresh.
+      const other = openRerailDatabase(databasePath);
+      try {
+        setRuleSetting(other, { owner: { kind: "repository", repositoryKey: key }, folder: "docs", targetKind: "rule", targetId: "test:any", on: false, mode: null });
+      } finally {
+        other.$client.close();
+      }
+      catalog.refresh();
+      expect(catalog.status.sourceSignature).not.toBe(loaded);
+    } finally {
+      catalogs.close();
+    }
+  });
 });
+
+/** The statements `work` prepares and runs on `database`'s connection. */
+function countStatements(database: RerailDatabase, work: () => void): { prepared: number; run: number } {
+  const client = database.$client;
+  // Every statement of the connection, prepared before `work` or during it, shares this prototype.
+  const prototype = Object.getPrototypeOf(client.prepare("SELECT 1")) as Record<string, (...parameters: unknown[]) => unknown>;
+  const counted = { prepared: 0, run: 0 };
+  const originals = ["run", "get", "all", "iterate"].map(method => [method, prototype[method]!] as const);
+  for (const [method, original] of originals) {
+    prototype[method] = function (this: { database: unknown }, ...parameters: unknown[]) {
+      if (this.database === client) counted.run += 1;
+      return original.apply(this, parameters);
+    };
+  }
+  const prepare = vi.spyOn(client, "prepare");
+  try {
+    work();
+  } finally {
+    for (const [method, original] of originals) prototype[method] = original;
+    counted.prepared = prepare.mock.calls.length;
+    prepare.mockRestore();
+  }
+  return counted;
+}
 
 /** Records a checkout of `repositoryKey` at each path, as recording each worktree would. */
 function recordCheckoutRows(databasePath: string, repositoryKey: string, paths: readonly string[]): void {
