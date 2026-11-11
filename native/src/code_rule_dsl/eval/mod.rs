@@ -266,7 +266,6 @@ pub(super) fn evaluate_clauses(
     let _corpus = crate::code_rule_dsl::matcher::CorpusSlot::enter();
     let _tapes = TapeCacheSlot::install();
     // P's syntax facts, shared by P's relational inputs (test-only, open item O18).
-    #[cfg(test)]
     let _syntax = super::relational::syntax::Pool::install();
     if mode != "decision" && mode != "report" {
         return Err(invalid(format!("unsupported evaluation mode `{mode}`")));
@@ -277,8 +276,8 @@ pub(super) fn evaluate_clauses(
         .files
         .iter()
         .filter(|file| code_rule.scope.matches(&file.path))
-        .fold((0usize, 0usize), |(files, bytes), file| {
-            (files + 1, bytes + file.source.len())
+        .fold((0usize, 0usize), |(files, bytes): (usize, usize), file| {
+            (files + 1, bytes.max(file.source.len()))
         });
     // Each reported clause has a coverage entry; a synthetic leaf is part of the clause it serves.
     let covered: Vec<(Option<String>, String)> = clauses
@@ -304,7 +303,6 @@ pub(super) fn evaluate_clauses(
     #[cfg(all(test, feature = "p-anchor-corpus"))]
     prepare_candidates(code_rule, snapshot);
     let _calls = stateless_calls(code_rule, snapshot, clauses, &mut evaluation.metrics)?;
-    #[cfg(test)]
     let mut relational_jobs = Vec::new();
     for clause in clauses {
         match &clause.kind {
@@ -413,7 +411,6 @@ pub(super) fn evaluate_clauses(
                 );
             }
             // P's relational clauses (test-only, open item O18): one job per file where per-file.
-            #[cfg(test)]
             ClauseKind::Relational(plan) => {
                 let partitions = if plan.per_file {
                     snapshot
@@ -429,19 +426,22 @@ pub(super) fn evaluate_clauses(
                     vec![snapshot.clone()]
                 };
                 for partition in partitions {
-                    relational_jobs.push(crate::code_rule_dsl::residency::admission::relational::Job {
-                        code_rule,
-                        clause,
-                        inputs: crate::code_rule_dsl::residency::admission::relational::Inputs {
-                            gate: None,
-                            file_local: false,
-                            read_bytes: 0,
-                            rows: None,
-                            facts: Vec::new(),
-                            snapshot: partition,
+                    relational_jobs.push(
+                        crate::code_rule_dsl::residency::admission::relational::Job {
+                            code_rule,
+                            clause,
+                            inputs:
+                                crate::code_rule_dsl::residency::admission::relational::Inputs {
+                                    gate: None,
+                                    file_local: false,
+                                    read_bytes: 0,
+                                    rows: None,
+                                    facts: Vec::new(),
+                                    snapshot: partition,
+                                },
+                            budget: super::budget::Context::capture(),
                         },
-                        budget: super::budget::Context::capture(),
-                    });
+                    );
                 }
             }
             ClauseKind::Llm => evaluation.failures.push(failure(
@@ -452,8 +452,9 @@ pub(super) fn evaluate_clauses(
             )),
         }
     }
-    #[cfg(test)]
-    for result in crate::code_rule_dsl::residency::admission::relational::evaluate_batch(relational_jobs) {
+    for result in
+        crate::code_rule_dsl::residency::admission::relational::evaluate_batch(relational_jobs)
+    {
         merge(&mut evaluation, result);
     }
     if evaluation.metrics.witnesses > limits.max_witnesses
@@ -476,6 +477,7 @@ fn merge(evaluation: &mut Evaluation, mut other: Evaluation) {
     evaluation.violations.append(&mut other.violations);
     evaluation.failures.append(&mut other.failures);
     evaluation.metrics.witnesses += other.metrics.witnesses;
+    evaluation.metrics.observe_native_work(&other.metrics);
 }
 
 /// P's corpus publication and candidate preparation for one rule's stateless evaluation (the

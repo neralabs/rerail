@@ -1,0 +1,20 @@
+    Blocking waiting for file lock on build directory
+   Compiling rerail-store v0.1.0 (/Users/jeremy/orca/workspaces/rerail/Async-family-integration-comparison/native/crates/store)
+    Finished `profiling` profile [optimized + debuginfo] target(s) in 9m 03s
+     Running unittests src/lib.rs (/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_store-9f329dac6c2013e9)
+
+running 1 test
+
+thread 'content_store::frames::tests::frame_publication_batches_put_delete_and_usage_with_bounded_work' (126906318) panicked at native/crates/store/src/../../../src/content_store/frames.rs:298:9:
+257 publications/deletions/touches must be bounded batches: 782 statements
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test content_store::frames::tests::frame_publication_batches_put_delete_and_usage_with_bounded_work ... FAILED
+
+failures:
+
+failures:
+    content_store::frames::tests::frame_publication_batches_put_delete_and_usage_with_bounded_work
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 164 filtered out; finished in 0.05s
+
+error: test failed, to rerun pass `-p rerail-store --lib`

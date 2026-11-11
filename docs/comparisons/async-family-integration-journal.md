@@ -805,3 +805,328 @@ The full workload retains 5,725 files, 19,007,630 core nodes, zero findings, 81 
 Projection sizes remain demanded for only 35 documents, depths for 25, and token spans for 34.
 The full run is profiled validation, not a paired performance comparison.
 Merge evidence and the source hashes are under `benchmark/async-family-integration/merge-b4f0aa04b/`.
+
+## 2026-11-10 — Fact admission and reuse
+
+Merged integration tip `013068e01` by fast-forward. Integration already contains this branch's previous changes.
+Sibling working changes remain untouched.
+
+The baseline reads frame metadata once per relation. Consumers then load individual frame payloads during execution.
+Both paths call `settle`, which can wait for queued writes.
+New tests count actual SQL executions and read queued empty facts while a test blocks the writer.
+
+The intended boundary is one admission per known relation demand batch, before its consumers run.
+Admission keeps compressed payloads. Consumers decode only the relations they read, without more SQL.
+Queued facts use the existing writer's pending values, including deletion markers. No separate transformation cache is added.
+The tests must preserve space, relation identity, partition, empty answers, and restarted-process reads.
+
+The first baseline test build failed because a duplicate comparison helper called removed matcher APIs.
+The query reference now uses the integration's existing native oracle helper.
+The shell's Homebrew compiler also failed to load LLVM. Builds use the installed Rust 1.97.1 toolchain directly.
+Performance measurements and test outcomes follow below when available.
+
+The frame tests failed on the baseline: 257 relations caused 258 statements, and a queued empty relation waited for the blocked writer.
+All six frame tests now pass. Metadata uses at most four statements for those 257 relations.
+The unchanged-output reuse test passes on integration `013068e01`, after the comparison helper correction. No reuse-test workaround was necessary.
+
+Payload admission now uses a conservative dependency pass. It requests outputs and retained inputs of potentially changed consumers.
+Unchanged intermediate relations need metadata only. A changed frame between metadata and payload admission invalidates the cut and forces evaluation.
+
+Imported rr-align commit `d589e41fa` as a focused change, preserving integration's newer cache semantics and shared executor.
+Its native-answer validation replays batched external requests before reusing their derived relations.
+That protects against changed directories and loaded files. It does not yet satisfy zero native-answer calls on an unchanged run.
+
+The five full-workload baseline runs pass, each with 5,725 files and zero findings.
+Cold CPU is 21.899 seconds. Warm CPU is 9.987 seconds, and warm CPU after a comment edit is 9.914 seconds.
+The async job uses a composed query and does not exercise retained frames.
+Its warm profile attributes nearly all SQL hazard time to 23 per-file memo batch reads.
+
+EXPLAIN shows that SQLite drives each memo join from all rows of the plan, then scans the JSON demands.
+On the real store, 256 demands execute about 7,418,800 VM instructions. A demand-first join executes about 12,000 and returns identical rows.
+The new production regression test fails at 2,648,717 VM instructions for 128 demands against 2,048 stored rows.
+The fix uses CROSS JOIN to keep demands outside the indexed lookup. The work ceiling is 100,000 VM instructions.
+All eleven memo tests pass with the demand-first join. The native retention tests also pass.
+An unchanged recursive transformation evaluates zero strata. It admits its final aggregate, without loading the retained closure.
+Publishing replacement rows between metadata and payload admission forces recomputation.
+
+The five candidate workload runs pass, with the same 5,725 files and zero findings.
+Cold-store CPU falls from 21.899 to 16.502 seconds. Warm CPU falls from 9.987 to 0.523 seconds.
+The comment-edit run falls from 10.197 to 0.561 CPU seconds. These are separate processes, including startup and exit.
+Core SQL remains at 20 executions and 74,618 VM instructions in both warm profiles.
+The storage profiler still records 80 SQL executions, including 23 memo batch reads.
+Those reads fall from 27,603 to 138 milliseconds of SQL wall time. The main improvement is storage lookup shape, not frame admission.
+
+Default-mode validation exposes pre-existing composed-query/session failures.
+The saved integration binary reproduces the `.cache` session failure: its consumer cannot find the `info` relation.
+The composed path decodes outputs without retaining their fact relations for session maintenance.
+Other session fixtures use `back`/`BACK` and `leaf`/`LEAF`; SQLite rejects these as duplicate CTE names.
+Retained-strata tests expect scheduler reports that the composed path does not produce.
+The native-path retention tests pass with the existing test-only native selector. Default failures remain recorded, not suppressed.
+
+The architecture checks also found test fixtures mistaken for production tables and an unclassified profiling counter.
+Moved the fixtures to a test-only file. Classified `SIZES` as reporting state; the legacy-cache allowances remain unchanged.
+The remaining integration issues and measured limits are recorded in `fact-admission-2026-11-10.md`.
+
+
+The final review also measured the new frame query's work, beyond statement counts.
+SQLite chose the same bad join order: 128 demands against 8,192 frames took about 5.31 million VM instructions.
+One SQL statement was not enough. Added a production VM-budget test and changed this join to demand-first too.
+The isolated query falls to about 2,500 VM instructions. The production test fails at 5,311,431 before the fix.
+All seven frame tests pass after the fix, including the 100,000-instruction work ceiling.
+This correction affects retained frames, not the previously measured async job, which uses composed execution.
+
+
+The final engine build passes. Both architecture guards and all four relocated native-demand tests pass.
+The independent full-corpus native/reference harness passes parity and its timing gates.
+Its generated-compiler qualification remains false; this is supporting reference evidence, not a production cutover claim.
+The default-mode session failures remain open and are included in the evidence.
+
+
+## 2026-11-10 — Composed session retention and bulk publication
+
+Merged integration tip `5ea1d2f75` as `d65a24d47`.
+Resolved the oracle helper conflict with the shared helper and integration's feature gate.
+Removed duplicate dependency declarations introduced by the merge.
+Integration now selects composed execution with `RERAIL_COMPOSE=1`.
+Validation explicitly sets that selector. The native default cannot prove that composed retention works.
+
+The repair retains typed output rows in ordinary resident relations before decoding them.
+The compiler assigns distinct physical CTE names when logical relation names differ only by case.
+The rewrite traverses typed queries, including aggregates and correlated subqueries. It does not replace SQL text.
+
+Frame publication will use bounded insert, delete, and usage-update batches in the existing transaction.
+The new regression publishes, deletes, and touches 257 keys in a space of 8,192 frames.
+It checks both statement count and VM work, plus repeated keys and nullary replacement.
+
+
+The merged baseline fails all three targeted composed checks: session cache output, case-distinct relations, and durable reuse reporting.
+The publication regression fails at 782 statements before batching.
+The new writer executes 18 statements and 74,776 VM instructions. All eight frame tests pass.
+Its work ceiling is now 100,000 VM instructions.
+The trace resets VM counters at statement start. Without that reset, cached statements include untraced fixture setup.
+
+Composed durable retention now records requested outputs and their transitive input digests.
+An unchanged output can supply another program's reads. Internal CTEs stay inside the query.
+Outputs with unversioned native or tree dependencies run again; their explicit demands alone do not prove unchanged document state.
+
+### Session repair: preparation expansion and restored statistics
+
+The first repaired build passes all ten direct composition tests, both cache-version tests,
+and durable reuse. Six of the thirteen explicit composed session checks still fail.
+Five reach SQLite's 65,535-reference limit; one restored shared relation lacks `uses.c0` statistics.
+The native baseline passes all thirteen checks.
+
+Captured the failing negation-maintenance SQL from `sqlite3_prepare_v3` under LLDB.
+It has 44,239 bytes and 38 CTEs. Recursive substitution of its FROM/JOIN dependencies
+counts 5,850,486 references across the definitions. This is preparation expansion, not
+an executed-row measurement. `MATERIALIZED` does not bound that preparation work.
+
+Added typed dependency counts and bounded shared publication stages. Each stage exports
+only relations used after the cut, together in one query. Ordinary plans remain one query.
+The compiler rejects plans beyond its stage budget instead of silently scheduling each relation.
+Before planning, empty positive joins are removed; negation and aggregates retain their semantics.
+A proven quiet maintenance relation shares its old resident fact and indexes.
+Restored and staged facts supply their existing statistics to the planner.
+Profile output now records generated SQL before preparation, so a failed preparation leaves evidence.
+Validation of this second repair is pending.
+
+### Quiet relations and a separate native budget failure
+
+Bounded CTE stages and restored statistics repair twelve of thirteen session checks.
+The remaining check has correct findings but reports zero quiet strata.
+The SQL needs the net change relations before it can prove that a kept relation is unchanged.
+The repair requests those relations together, then shares old resident facts when both changes are empty.
+A direct regression requires the same resident object, so publication cannot discard its indexes by copying rows.
+The stage budget is shared by change admission and result evaluation.
+Compilation now moves the planner statistics through stages instead of cloning the input statistics at each boundary.
+
+The native whole-job comparison exposed a distinct integration limitation: the cold 5,725-file run
+executes 396 statements (373 in the local phase) and fails the existing ceiling of 100.
+The result keys remain correct. Warm and edited runs execute 30–32 statements.
+This failure is preserved separately; neither the engine default nor the ceiling changes.
+The comparison runner can finish recording after a budget failure, but still exits with failure.
+
+### Whole-job gate catches an over-eager stage cut
+
+All thirteen existing session/cache tests now pass in both modes. The positive four-rule fixture
+and the three cache architecture checks also pass. The new direct tests initially selected the
+legacy SQL-table input mode; corrected their inputs to the production atom-backed configuration.
+
+The 5,725-file composed cold run then fails the unchanged job ceiling: 154 executions.
+Its trace shows 73 chunks with two queries each, plus eight setup/cross statements.
+The initial 4,096-reference planning threshold split a graph that fits SQLite safely.
+Reconstructing dependencies from the profiled queries gives about 5,600 expanded references.
+Raised the internal threshold to 8,192, still well below SQLite's 65,535-reference limit.
+This restores fusion for the async workload while keeping boundaries for the pathological
+maintenance graphs. The job ceiling remains 100. Final validation is pending this rebuild.
+
+### Preparation decides whether a risky graph needs a cut
+
+The 8,192-reference threshold still gives 154 executions. The earlier reconstruction from
+separate stage queries is not a reliable measurement of the original graph: generated demand
+helper names belong to each statement's scope. Reconstructing across those scopes loses identity.
+
+Ran the earlier uncut compiler on the same 5,725-file workload with profiling.
+It passes the unchanged ceiling at 81 executions. Its local query is 23,416 bytes,
+runs 73 times, and accounts for 719,167 VM instructions. SQLite can prepare this graph.
+
+The physical planner now uses the reference estimate to identify risky graphs, then asks SQLite
+to prepare the complete query. A successful preparation keeps it fused. A structural-limit error
+selects shared stages. That result is cached with the compiled plan, so later chunks do not repeat
+a failed preparation. Other SQL errors are returned unchanged. Preparation has its own profile span
+and does not count as execution. The external ceiling remains 100.
+The dense-DAG regression now starts from a bound input and requires SQLite to reject the full query
+before the staged form passes its execution and result gates.
+
+### Final qualification and publication
+
+The preparation-based decision restores fusion without changing the job ceiling.
+All thirteen existing composed session/cache checks pass, as do all thirteen direct compiler tests.
+The same existing session suite passed in native mode. Eight storage tests, three cache architecture
+checks, and the 120-finding positive fixture also pass.
+
+On the full 5,725-file workload, composed execution uses 81 cold statements, 19 warm statements,
+and 10 after the comment edit. All five conditions pass the 100-execution gate.
+Whole-process CPU is 18.514 s cold, 0.652 s warm, and 0.662 s after the edit.
+The same final binary's native arm uses 18.333 s, 0.718 s, and 0.663 s respectively.
+These single observations do not establish a timing improvement.
+The native cold arm still fails its inherited budget at 396 executions; warm and edited runs pass.
+
+Frame publication changes 782 statements to 18, with 74,776 measured VM instructions.
+The regression ceilings remain 20 statements and 100,000 VM instructions.
+Both requested defects are resolved. The separate native cold-run budget failure remains documented.
+The final build disables incremental compilation after a stale-object linker failure.
+Only inactive engine incremental caches in this task's target directory were removed.
+Reproduction artifacts and the final report are under `benchmark/async-family-integration/session-publication`
+and `docs/comparisons/composed-session-publication-2026-11-10.md`.
+
+
+## 2026-11-10 — Native cold execution budget
+
+Merged integration `1e1ec60a3` as `40443adfd`. Its optional index experiments remain off.
+Reproduced the existing 100-execution failure with the previous verified binary (`c05e28a75` source):
+396 core executions across all 5,725 files, including 373 local executions.
+The profile is in `native-budget-1e1ec60a3/baseline-profile` under the comparison artifact directory.
+This baseline predates the merge; validation of the fix uses the merged sources.
+
+Across 73 chunks, the profile records 73 demand-view scans, 73 target-table creations,
+73 target reads, 73 target-table drops, and 73 temporary-schema scans.
+The last two categories include final cleanup in the cross phase.
+These round trips have no useful relational work to perform: their inputs are native facts.
+
+Source inspection found a lifetime defect. Scheduling includes native operator dependencies,
+but first-read and last-read analysis includes only rule-body atoms.
+A native producer can therefore lose its derived targets before consumption.
+Recreating an empty target table loses the requested API set.
+Inspection of import screening shows that known matching APIs can then be discarded,
+while opaque or unresolved calls can still pass. The initial broadening-only diagnosis was incorrect.
+The empty finding set in the full corpus cannot detect this defect alone.
+
+The implementation uses the existing complete dependency analysis for relation lifetimes.
+Native demand projections remain native relations instead of becoming SQL views.
+Python producers read both demand keys and target keys from resident facts, with SQL fallback
+for SQL-owned inputs. Target symbols decode through the shared atom arena.
+This uses the existing per-run demand snapshot, without another cache or execution mode.
+
+Regression coverage includes metadata-only dependencies, view-input lifetimes, derived target
+filters, repeated runs, independent target sets, and the absence of demand/target SQL publication.
+The existing whole-job ceiling remains 100. Build and final measurements are pending.
+
+
+### Native budget qualification
+
+The merged-source build and all selected checks pass: five demand/lifetime tests,
+the 120-finding native positive fixture, and all thirteen native session/cache checks.
+The previous binary also passes the positive fixture. It cannot expose the target-lifetime defect alone.
+The new metadata dependency regression checks that defect directly.
+
+All five full-corpus conditions pass the unchanged ceiling: 20 cold statements, 32 warm,
+32 warm with profiling, 22 after an edit, and 32 after warming the edit.
+Cold local execution now uses zero SQL statements. Seven statistics statements and thirteen cross-file
+statements account for the remaining twenty. Whole-process cold CPU is 19.401 s; wall time is 25.821 s.
+These single observations under shared load do not establish a timing improvement.
+
+The separate cold profile records 74,705 SQL VM instructions, versus 116,245 before.
+It confirms resident reads of all 47 target keys and no demand-view or target-table SQL.
+Both profiles screen 65,292 calls and emit ten conservative candidates.
+The fixed profile has 72 worker chunks, versus 73 before; the work and file set are unchanged.
+The remaining document-range statistics insert accounts for 74,433 VM instructions.
+The profiled local CPU is 0.704 s, versus 0.645 s before. No CPU speedup is claimed.
+
+Results, reproduction commands, and limits are recorded in
+`docs/comparisons/native-cold-budget-2026-11-10.md`.
+Artifacts include the before/after profiles, workload runs, validation logs, and source/binary digests
+under `native-budget-1e1ec60a3` in the comparison artifact directory.
+
+
+## 2026-11-10 — Merge the expanded integration hub
+
+The local integration tip `c59e669ec` includes newer committed work than the remote tip `1add64b22`.
+Merged the local tip, including executor matchers, typing phases, maintained cross-process facts,
+sort reuse, planner axis choices, and index experiments.
+
+Resolved conflicts by preserving both the request-cone tests and the new cross-process maintenance test.
+Kept the native demand tests in their separate module, including the lifetime regression.
+The new cross-process fact space uses the existing namespace helper with `cross-maintained`.
+Its hash bytes match integration's helper exactly. Test documents include the new optional tape field.
+The resident demand fix and complete lifetime analysis remain in place.
+
+The next proposed performance task is the maintained join order recorded in decision 0101.
+At O125 step 07, four `ifn__ins` rules take 526 `fv__ins` rows into `pv` through a broad key.
+The `pv` relation has 201,000 rows. A later `icall` filter rejects everything.
+This costs 0.53 million work units, about 8% of that step.
+
+Compare the current order with an early `icall` join and a semijoin over demanded keys.
+Record intermediate rows, probes, CPU, and the complete step result for each shape.
+Use the winning shape to identify the missing planner statistic or restriction.
+Avoid a rule-name-specific order override. Keep rule outputs and maintenance parity as the acceptance checks.
+This evidence comes from integration's typing/edit workload, not the four-rule async timing.
+The async cold profile still places most CPU in parsing and input preparation.
+Further reductions in its SQL instruction count alone do not establish an end-to-end speedup.
+
+A separate follow-up is prepared-program identity across processes (t32 stage 4).
+Integration records phase recomputation in the second process because fresh preparation and restored preparation have different relation identities.
+Check that equivalent prepared programs produce identical identities and reuse the same facts.
+This is distinct from join ordering and from the cost of genuinely parsing cold inputs.
+
+
+### Merge regression: loading answers missing from maintenance inputs
+
+The merged cone-retention test fails after adding `import b`: reused output omits `b.pyi`, while a fresh run includes it.
+The same test passes with cross-process part retention disabled, isolating the interaction.
+Loading answers were bound for execution but absent from `cross_inputs` and its input digests.
+The new retained part therefore had no recorded dependency on those changing rows.
+The fix registers each loading answer as an ordinary cross-file input, replacing an earlier binding if present.
+The existing cone test supplies the failing regression; the new cross-process maintenance test already passes.
+
+
+### Next priority after reviewing the incoming storage path
+
+The new `kept_strata::load` loops over inputs and derived frames, calling `frame_rows` for each.
+That function calls `admit_frames` with one key. A durable miss from the pending writer cache executes a schema check and a payload query.
+The existing `Kept::admit` already admits a set and checks that payload metadata matches the earlier metadata snapshot.
+The new cross-process path does not use that contract.
+
+Integrating that path with bulk fact admission is the first follow-up for this branch.
+Admit the input frames together, determine which derived frames are valid, then admit that demanded set together.
+Check metadata consistency before accepting rows. Consumers then read admitted facts in memory.
+Measure the store connection too: the core-query budget excludes these storage executions.
+After this integration, address the maintained join amplification and prepared-program identity issues described above.
+
+
+### Merge qualification
+
+The fixed merged build passes the cone-retention regression and the new cross-process maintenance test.
+Five native demand tests, two retained-frame tests, and three matcher-lowering tests pass.
+The positive fixture produces all 120 expected findings.
+All thirteen session/cache checks pass in native mode, and all thirteen pass in composed mode.
+
+The 5,725-file native job passes all five conditions against the unchanged 100-execution ceiling.
+Core SQL counts are 19 cold, 31 warm, 31 warm with profiling, 21 after an edit, and 31 after warming the edit.
+Cold local execution still uses zero SQL statements; statistics setup uses seven and cross-file execution uses twelve.
+Whole-process cold CPU is 11.233 s and wall time is 5.405 s in this run.
+The machine load differs from earlier runs, so this is not a controlled timing comparison.
+These counts exclude storage SQL, including the incoming per-frame reads identified above.
+
+Build logs and regression artifacts are under `merge-c59e669ec` in the comparison artifact directory.
+Final test and workload results are in its `fixed` directory.

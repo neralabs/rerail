@@ -43,6 +43,7 @@ pub(in crate::code_rule_dsl) fn compile(
             "query",
             "key",
             "code",
+            "message",
             "references",
             "locations",
             "partitionBy",
@@ -263,7 +264,7 @@ pub(in crate::code_rule_dsl) fn compile(
     let mut stages = Vec::new();
     let mut last_uses = BTreeMap::new();
     let mut input_fields = relational::FieldReads::new();
-    let mut reads_source = syntax.is_some();
+    let mut reads_source = false;
     if let Some(value) = spec.get("stages") {
         let values = value
             .as_array()
@@ -274,7 +275,14 @@ pub(in crate::code_rule_dsl) fn compile(
             let spec = object(value, &at)?;
             reject_unknown(
                 spec,
-                &["name", "query", "indexes", "reachability", "deferred"],
+                &[
+                    "name",
+                    "query",
+                    "indexes",
+                    "reachability",
+                    "deferred",
+                    "pythonAst",
+                ],
                 &at,
             )?;
             let name = non_empty_str(spec.get("name"), &format!("{at}/name"))?.to_owned();
@@ -285,6 +293,58 @@ pub(in crate::code_rule_dsl) fn compile(
                     "{at}/name must be a new relation identifier"
                 )));
             }
+            let python_ast = spec
+                .get("pythonAst")
+                .map(|value| -> Result<_> {
+                    if ["query", "indexes", "reachability", "deferred"]
+                        .iter()
+                        .any(|k| spec.contains_key(*k))
+                    {
+                        return Err(invalid(
+                            "pythonAst cannot declare SQL stages or reachability",
+                        ));
+                    }
+                    let shape = object(value, &format!("{at}/pythonAst"))?;
+                    reject_unknown(shape, &["roots", "syntax", "fields"], &at)?;
+                    let source = non_empty_str(shape.get("syntax"), &at)?.to_owned();
+                    if syntax.as_ref().is_none_or(|s| s.name != source) {
+                        return Err(invalid("pythonAst must name the declared syntax source"));
+                    }
+                    let fields = names(
+                        shape
+                            .get("fields")
+                            .ok_or_else(|| invalid("pythonAst requires fields"))?,
+                        &at,
+                    )?;
+                    if fields.is_empty()
+                        || fields
+                            .iter()
+                            .any(|f| !relational::python_ast::FIELDS.contains(&f.as_str()))
+                    {
+                        return Err(invalid("unknown canonical Python AST field"));
+                    }
+                    let roots = text(
+                        shape.get("roots"),
+                        &at,
+                        capabilities.limits.max_ast_pattern_bytes,
+                    )?;
+                    let (selected, reads, source_bytes) =
+                        relational::inspect_fields(&db, &roots, &tables)?;
+                    if selected != ["__path", "id"] {
+                        return Err(invalid("pythonAst roots must select __path,id in order"));
+                    }
+                    reads_source |= source_bytes;
+                    for (name, fields) in reads {
+                        input_fields.entry(name.clone()).or_default().extend(fields);
+                        last_uses.insert(name, index);
+                    }
+                    Ok(relational::python_ast::Spec {
+                        roots,
+                        syntax: source,
+                        fields,
+                    })
+                })
+                .transpose()?;
             let reachability = spec
                 .get("reachability")
                 .map(|value| -> Result<_> {
@@ -297,7 +357,18 @@ pub(in crate::code_rule_dsl) fn compile(
                         )));
                     }
                     let shape = object(value, &format!("{at}/reachability"))?;
-                    reject_unknown(shape, &["roots", "edges", "batchSize", "graph", "syntax"], &at)?;
+                    reject_unknown(shape, &["roots", "edges", "batchSize", "graph", "syntax", "selection", "sinks", "match"], &at)?;
+                    let ordered = match shape.get("selection") {
+                        None => false,
+                        Some(Value::String(value)) if value == "memoized-first" => true,
+                        _ => return Err(invalid("unknown reachability selection")),
+                    };
+                    if ordered && ["syntax", "graph", "batchSize"].iter().any(|key| shape.contains_key(*key)) {
+                        return Err(invalid("memoized-first traverses a complete ordered graph batch"));
+                    }
+                    if !ordered && (shape.contains_key("sinks") || shape.contains_key("match")) {
+                        return Err(invalid("sinks and match require memoized-first selection"));
+                    }
                     let syntax_source=shape.get("syntax").map(|v|non_empty_str(Some(v),&at).map(str::to_owned)).transpose()?;
                     if let Some(name)=&syntax_source && (syntax.as_ref().is_none_or(|s| &s.name!=name) || shape.contains_key("edges") || shape.contains_key("graph")) {return Err(invalid("syntax reachability must name the declared syntax source and cannot declare edges or graph"));}
                     let forest = match shape.get("graph").and_then(Value::as_str) {
@@ -312,10 +383,10 @@ pub(in crate::code_rule_dsl) fn compile(
                     };
                     let mut queries = Vec::new();
                     let mut expand = false;
-                    for (field, required) in [
-                        ("roots", vec!["__path", "id"]),
-                        ("edges", vec!["__path", "src", "dst"]),
-                    ] {
+                    let fields = if ordered {
+                        vec![("roots", vec!["__path", "id", "ordinal"]), ("edges", vec!["__path", "src", "dst", "ordinal", "location"]), ("sinks", vec!["__path", "id", "location"])]
+                    } else { vec![("roots", vec!["__path", "id"]), ("edges", vec!["__path", "src", "dst"])] };
+                    for (field, required) in fields {
                         if field=="edges" && syntax_source.is_some() { queries.push(String::new());continue; }
                         let query = text(
                             shape.get(field),
@@ -328,7 +399,7 @@ pub(in crate::code_rule_dsl) fn compile(
                             input_fields.entry(name.clone()).or_default().extend(fields);
                             last_uses.insert(name, index);
                         }
-                        if field=="roots" && selected==["__path","id","expand"] {
+                        if !ordered && field=="roots" && selected==["__path","id","expand"] {
                             expand=true;
                         } else if selected != required {
                             return Err(invalid(format!(
@@ -348,6 +419,14 @@ pub(in crate::code_rule_dsl) fn compile(
                             })? as usize,
                     };
                     Ok(relational::Reachability {
+                        ordered_first: if ordered { Some(relational::ordered_first::Spec {
+                            sinks: queries.remove(2),
+                            on_edge: match shape.get("match").and_then(Value::as_str) {
+                                None if !shape.contains_key("match") => false,
+                                Some("node") => false, Some("edge") => true,
+                                _ => return Err(invalid("memoized-first match must be node or edge")),
+                            },
+                        }) } else { None },
                         roots: queries.remove(0),
                         edges: queries.remove(0),
                         batch_size,
@@ -357,7 +436,14 @@ pub(in crate::code_rule_dsl) fn compile(
                     })
                 })
                 .transpose()?;
-            let query = if reachability.is_some() {
+            let query = if let Some(spec) = &python_ast {
+                relational::python_ast::shape(&spec.fields)
+            } else if reachability
+                .as_ref()
+                .is_some_and(|spec| spec.ordered_first.is_some())
+            {
+                "SELECT CAST(NULL AS TEXT) AS __path,CAST(NULL AS TEXT) AS root,CAST(NULL AS TEXT) AS node,CAST(NULL AS INTEGER) AS location WHERE 0".to_owned()
+            } else if reachability.is_some() {
                 "SELECT CAST(NULL AS TEXT) AS __path,NULL AS root,NULL AS node WHERE 0".to_owned()
             } else {
                 text(
@@ -445,6 +531,7 @@ pub(in crate::code_rule_dsl) fn compile(
                 query,
                 indexes,
                 reachability,
+                python_ast,
                 deferred,
                 stored_columns,
                 output_columns: columns,
@@ -519,7 +606,11 @@ pub(in crate::code_rule_dsl) fn compile(
         .get("code")
         .map(|value| non_empty_str(Some(value), &format!("{path}/code")).map(str::to_owned))
         .transpose()?;
-    for field in key.iter().chain(code.iter()) {
+    let message = spec
+        .get("message")
+        .map(|value| non_empty_str(Some(value), &format!("{path}/message")).map(str::to_owned))
+        .transpose()?;
+    for field in key.iter().chain(code.iter()).chain(message.iter()) {
         if !columns.contains(field) {
             return Err(invalid(format!("{path}: unknown output column {field}")));
         }
@@ -541,6 +632,7 @@ pub(in crate::code_rule_dsl) fn compile(
         query,
         key,
         code,
+        message,
         last_uses,
         reads_source,
     })

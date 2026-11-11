@@ -130,3 +130,69 @@ fn rr_sparsity() {
         eprintln!("  {:>6.2}%  {name} (%{op}, {:?})", 100.0 * *b as f64 / blocks as f64, p.ops[usize::from(*op)]);
     }
 }
+
+/// Tier 1's outputs and totals on `.rr`, and its passes' machine code: the measurement of
+/// doc 26 §1.5.
+#[test]
+#[ignore = "a measurement: run by hand"]
+fn rr_totals() {
+    let c = super::compiled().expect("compiles");
+    let b = &c.block;
+    let labels: Vec<String> = c.labels.iter().map(|(l, k)| format!("{l}@{k}")).collect();
+    eprintln!("outputs {} delays {:?}\ntotals {:?} extracts {:?} masks {:?} delay {}\nlabels {labels:?}", b.outputs.len(), b.output_delays, b.total_outputs(), b.extract_outputs(), b.mask_outputs(), b.delay);
+    // Tier 1's passes' machine code: instructions, memory loads and stores, stack ones.
+    let compiled = rerail_compiler::native_cpu_block::compile(&c.native).expect("compiles");
+    let code = compiled.loops_disassembly();
+    let lines: Vec<&str> = code.lines().map(str::trim).filter(|l| !l.is_empty() && !l.ends_with(':')).collect();
+    let memory = |l: &str| ["ldr", "str", "ldp", "stp", "ldur", "stur"].iter().any(|m| l.starts_with(m));
+    let stack = lines.iter().filter(|l| memory(l) && l.contains("[sp")).count();
+    let mem = lines.iter().filter(|l| memory(l)).count() - stack;
+    let bits = rerail_compiler::clif_text::state_bits(b);
+    eprintln!("tier 1: {} ops, {bits} state bits, {} instructions, {mem} memory, {stack} stack", b.ops.len(), lines.len());
+}
+
+
+/// The most tier 1 can save by not storing the sparse marks' masks (doc 26 §1.7): its machine
+/// code with and without their outputs.
+#[test]
+#[ignore = "a measurement: run by hand"]
+fn rr_sparse_marks_bound() {
+    let c = super::compiled().expect("compiles");
+    let corpus = super::tests::corpus();
+    let files: Vec<&[u8]> = corpus.iter().map(|f| f.as_bytes()).collect();
+    let mb = files.iter().map(|f| f.len()).sum::<usize>() as f64 / 1e6;
+    let count = |p: &rerail_compiler::block::BlockProgram| {
+        let native = rerail_compiler::block_native::BlockNative::lower(p);
+        let compiled = rerail_compiler::native_cpu_block::compile(&native).expect("compiles");
+        let ms = compiled.batch_cpu_seconds(&files, 9) * 1e3;
+        eprintln!("  tier 1 alone: {ms:.2} ms CPU over {mb:.2} MB");
+        #[cfg(target_os = "macos")]
+        {
+            use rerail_metal::block_program::serial::{Segments, run_serial_split};
+            let batch: Vec<rerail_compiler::block::BatchFile<'_>> = files.iter().map(|&bytes| rerail_compiler::block::BatchFile { bytes, program: 0 }).collect();
+            let gpu = (0..5).map(|_| run_serial_split(&[&native], &batch, Segments { blocks: 29, warm: 1 }).expect("runs").run.seconds).fold(f64::MAX, f64::min);
+            eprintln!("  tier 1 on Metal: {:.2} ms GPU", gpu * 1e3);
+        }
+        let code = compiled.loops_disassembly();
+        let lines: Vec<&str> = code.lines().map(str::trim).filter(|l| !l.is_empty() && !l.ends_with(':')).collect();
+        let memory = |l: &str| ["ldr", "str", "ldp", "stp", "ldur", "stur"].iter().any(|m| l.starts_with(m));
+        let stack = lines.iter().filter(|l| memory(l) && l.contains("[sp")).count();
+        (lines.len(), lines.iter().filter(|l| memory(l)).count() - stack, stack)
+    };
+    let sparse = ["options_on", "over_on", "no_value", "one_name", "fix_on", "empty_parens", "suppress_on"];
+    let ops: Vec<u16> = c.values.iter().filter(|v| sparse.iter().any(|s| v.name == format!("mark {s}"))).map(|v| v.op).collect();
+    // The marks' masks are `starts & (m | prev(fill(..)))` of these: the outputs the masks name.
+    let mut p = c.block.clone();
+    let mark_outputs: Vec<u16> = p.masks[1..1 + c.values.iter().filter(|v| v.name.starts_with("mark ")).count()].to_vec();
+    eprintln!("mark ops {ops:?}; mark masks {mark_outputs:?}");
+    let before = count(&p);
+    // Drop the masks of the sparse marks, in the marks' order (`bitlex_masks::tree_section`).
+    let names: Vec<&str> = c.values.iter().filter(|v| v.name.starts_with("mark ")).map(|v| v.name.as_str()).collect();
+    let drop: Vec<u16> = names.iter().zip(&mark_outputs).filter(|(n, _)| sparse.iter().any(|s| **n == format!("mark {s}"))).map(|(_, &o)| o).collect();
+    let keep: Vec<usize> = (0..p.outputs.len()).filter(|&k| !drop.contains(&p.outputs[k])).collect();
+    p.output_delays = keep.iter().map(|&k| p.output_delays[k]).collect();
+    p.outputs = keep.iter().map(|&k| p.outputs[k]).collect();
+    p.masks.retain(|m| !drop.contains(m));
+    let after = count(&p);
+    eprintln!("names {names:?}\ntier 1 (instructions, memory, stack): with the sparse marks' masks {before:?}, without {after:?}");
+}

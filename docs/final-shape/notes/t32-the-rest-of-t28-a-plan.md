@@ -66,21 +66,26 @@ exports against a full run; CPU and instructions retired, cold, warm and after t
 |---|---|---|
 | 2.1 | **P1 exports annotations as structure**, read off each annotation's own tree in the file: `struct__ann(m, e, a, h)` (annotation `e` in module `m` has alternative `a`, head `h`) and `struct__annarg(m, a, j, x)` (its j-th argument). P2's `alt`, `head_of`, `garg`, `galt`, `pbase`, `cbody` and `cfunc` join on them; no text is split. A quoted annotation's text is still split at `|` in P1 until its string is parsed (a cache by its text, 0103) | **done.** Over the 84-file corpus with typeshed: every row P2 lost was a misreading (an argument's union taken for an alternative: `Iterable[bytes \| bytearray]` gave `bytearray`); 52 rows gained (`pgen` +13, `rcarg` +35, `rgen` +4), 40 fewer open returns; workspace resolution unchanged (4438 of 4867). P1 +1.9 s CPU (6.8 to 8.7 s, load 44 on 18 cores), P2 unchanged (2.5 s) |
 | 2.2 | `__all__`: P1 exports a module's `__all__` (`=` and `+=`, not in a dead branch) as `struct__all(m, x)`; P2's `import *` binds what it lists, or with none the public names | **done.** `phase_tests::types_resolves_…`: a listed private name bound, an unlisted one not. P3 over the 84 files: 6,410 agree before and after (and after 2.1), 38–40 s CPU |
-| 2.3 | Overloads by keyword: `lfit` by the keyword names a call passes, against `struct__param`'s names | `os.environ.get(k, default=d)` picks its overload in a test |
-| 2.4 | Overloads by argument type, where the argument's class is known and the parameter declares one | a test; no answer worse on the corpus |
-| 2.5 | Async: P1 flags a library `async def`; `async for` and `async with` as implicit calls | tests for each |
-| 2.6 | Nested runs' profile: a rise on a phase's worker is charged to the phase's span | a profiled P3 run shows P2's workers under P2 |
+| 2.3 | Overloads by keyword: `lfit` by the keyword names a call passes, against `struct__param`'s names | **done** (with 2.4): a library overload whose parameters lack a keyword the call names, and take no `**kwargs`, is refused (`lkwbad`); P1 gives untyped defaults a `param` row. Oracle test `…fits_a_library_overload_by_its_keywords_and_its_literal_arguments_types` |
+| 2.4 | Overloads by argument type, where the argument's class is known and the parameter declares one | **done**, for literal arguments: a literal's class against a parameter that names only classes, none a protocol, with the numeric tower (`ltybad`). P3: 6,410 agree before and after; 47 calls no longer left open beside their answer. The lines counted as moved to "no edge" (2) each close a call jedi answers nothing for, beside a miss that was there before (`_build_cross_branch_base_spec`) |
+| 2.5 | Async: P1 flags a library `async def`; `async for` and `async with` as implicit calls | **done.** `async for x in s` binds x to the awaited `s.__aiter__().__anext__()`, `async with c as z` z to the awaited `c.__aenter__()` (`iawait`): a workspace `async def`'s result, a stub `async def`'s declared class or `Self`; a plain method returning an awaitable stays open. Oracle test `…awaits_an_async_loops_next_value_and_an_async_withs_entered_value` |
+| 2.6 | Nested runs' profile: a rise on a phase's worker is charged to the phase's span | **done.** The pool's jobs open their span under the span open where they were started (`threads`, `profile::span_at`); a phase's run is a span. A cold P3 run shows P1 11.1 s and P2 3.6 s CPU, their chunk jobs under them |
 
 ### Stage 3. A phase's state is relations (this branch)
 
 | Step | Change | Done when |
 |---|---|---|
-| 3.1 | **The run record goes.** A phase's nested run keeps its strata as any run does (the kept strata, or the session). An unchanged run is a run whose inputs have no change: every stratum clean, nothing derived | `phase_record`, `export_versions`, `store_epoch` and `unchanged_phase` gone; off the 0103 lists |
-| 3.2 | **A phase's per-document rows are a cache.** `.owner` and `phase_granules` become two rules in `struct.rr`: `doc_key(d, h)` from each document's content digest, and the per-document exports from it | `phase_granules` and `.owner` gone; P2 over the O125 edits gives the same exports |
-| 3.3 | `Session::phase_rows` (6afe7e79f) goes: the session's kept relations are the phase's exports | the field gone |
-| 3.4 | The cones (`phase_cones`) go with 3.1 | the table gone |
+| 3.1 | **The run record goes.** A phase's nested run keeps its strata as any run does (the kept strata, or the session). An unchanged run is a run whose inputs have no change: every stratum clean, nothing derived | **done.** The phase store is gone: a phase is its nested run, whose relations are kept as any run's (memo, kept strata, session); its exports are handed to the reader as input rows, whose delta the reader's run takes as any input's (by its documents, or the diff rules). Off the 0103 and 0104 lists |
+| 3.2 | **A phase's per-document rows are a cache.** `.owner` and `phase_granules` become two rules in `struct.rr`: `doc_key(d, h)` from each document's content digest, and the per-document exports from it | **done, without a cache:** struct's file-local rows are per document in its run's per-file memo already, so `.owner`, `.positions` and `phase_granules` go with no rule in their place |
+| 3.3 | `Session::phase_rows` (6afe7e79f) goes: the session's kept relations are the phase's exports | **done.** `phase_rows` and `phased` (the versions bound by the session) gone |
+| 3.4 | The cones (`phase_cones`) go with 3.1 | **done** |
 
-3.2 needs caches in the file-local part (5.1), since `struct.rr`'s exports are per document.
+What this costs until K4 (t33): a phase's export statistics are measured from its rows each run, no longer patched by
+version deltas (0096 §3), and an unchanged run runs the phase's nested run (all its parts kept) instead of reading a
+record.
+
+Measured after 2.5 and stage 3 (2026-11-10, load 36 to 76): P3 over the 84-file corpus agrees with jedi on 6,410
+calls, as before; 76.8 s user CPU, 91 s wall, peak RSS 1,292 MB.
 
 ### Stage 4. P2 maintained across processes
 
@@ -90,8 +95,49 @@ maintains it from the deltas instead.
 
 | Step | Change | Done when |
 |---|---|---|
-| 4.1 | **A new process maintains from the kept rows**, as a session does: the kept strata's rows are the `__old` rows of `maintain::rewrite`, and an input's delta is its kept rows against its new ones | a new process after E1: P2 under 3 s, exports equal to a full run's; after E2 and E3 under 0.5 s |
-| 4.2 | Measure what reading the kept rows costs, against the 3.8 s full run; keep fewer relations (0099) or read lazily if it is more | a table, per edit |
+| 4.1 | **A new process maintains from the kept rows**, as a session does: the kept strata's rows are the `__old` rows of `maintain::rewrite`, and an input's delta is its kept rows against its new ones | **built** (`kept_strata::load`, `keep`): a run with no session takes the session's branch, its `Retained` read back from the store's frames (space `cross-maintained`, each relation under its identity) and written back after the run (only frames whose rows or inputs changed). A frame records the digests of the inputs it was derived from (its cone), and is read back only while those inputs' frames hold them: frames are shared by identity across programs. Not for a part whose requests the run answers (phase 0's loads). Test: `a_new_process_maintains_the_cross_file_part_from_the_kept_rows`. **Measured** below |
+| 4.2 | Measure what reading the kept rows costs, against the 3.8 s full run; keep fewer relations (0099) or read lazily if it is more | **done**, below: 0.06 to 0.09 s a run |
+
+Measured 2026-11-10 on 54 of the corpus's files (`_internal`, `l1100_exceptions`, `l2055_lazy_result`), the t28 spike
+with `RERAIL_SPIKE_PROCESS=1` (no session; the process's own caches of programs and files stay warm). P2's CPU; the
+full run is the old per-stratum cut (`RERAIL_KEPT_PART=off`). Exports equal to the full run's after every edit.
+
+| Run | A new process | Full run | Strata run (of 110) | Read back | Written |
+|---|---|---|---|---|---|
+| unchanged | 0.59 s | | 0 | 0.08 s | 0.02 s, queued |
+| E1 | 3.15 s | 3.57 s | 97, all maintained (6 recursive) | 0.09 s | 0.02 s |
+| E2 | 0.57 s | 2.67 s | 0 | 0.09 s | 0.02 s |
+| E3 | 0.40 s | 1.73 s | 0 | 0.06 s | 0.01 s |
+
+Three faults found on the way, fixed:
+
+- A kept relation read by SQL (`want`'s rule, a substring) had no index: SQLite scanned it per probe, 16 s of an
+  unchanged run's 17. A kept relation as a source (`Derived`) now answers probes by a sorted index per column,
+  built on first probe; that is so in a session too.
+- Outputs were not kept (their decoded lines were not), so their strata ran each process and their readers could
+  not be maintained. Their rows are kept as any relation's, and a clean output's lines decoded from them.
+- An input's frame was keyed by its name only, so programs over one root that bind an input of that name to other
+  rows (P3's cross part, its loading cone, the phases: `py_docmod` 63 against 237 rows) overwrote each other, and
+  every process found its inputs changed. An input's frame is now its program's.
+
+P3 over the same 54 files, three processes, no edit: the main thread's CPU 28.8 s (cold), 13.4 s, then 4.7 s; P3's
+cross part 6.4 s, 0.78 s (1 of 481 strata), 0.91 s; the agree count 4,815 each time. The second process ran the
+phases in full. Not the relations' identities (every stratum the second process has, the cold one has with the same
+identity); two faults, both fixed:
+
+- A frame space counted a run per program that kept frames in it, not per run. Every program over one root keeps
+  frames in one space (the phases, P3's cross part, its loading cone, phase 0), so the cold run's eight programs
+  were eight runs, and the types phase's 126 frames were collected (unused for `RUNS` = 4 runs) before the run
+  ended. A space now counts the outermost run once (`corpus::run_token`), however many of its programs keep frames
+  (`frames::the_programs_of_one_run_count_one_run_of_their_space`).
+- A stored prepared program lost the relations it has facts of but no rows (`py_site`, `rr_ctx3`: constants folded to
+  nothing), so the struct phase's file-local part had another memo key in every later process than in the one that
+  prepared it, and its 183 library documents were derived again. `fact_rel` keeps them
+  (`program_facts::a_relation_of_no_facts_reads_back_as_one`); the stored program is the program prepared.
+
+After both, on the same 54 files at load 137 to 160: 92.3 s CPU cold (its first run since the prepared program's
+schema moved), 31.7 s, 29.8 s; the second process no longer runs the struct phase's local part (6.2 s cold, 0 after)
+or the types phase (0 of 110 strata).
 
 This is the same for P2, for calls_cx's cross part and for the pack (t31 B4). t31's "column blocks" would be the
 kept relations' encoding, not a format of their own.
@@ -125,9 +171,9 @@ mro_found(c, x, d) :- mro_ask(c, x), <the search>.      // the output: where the
 
 | Step | Change | Done when |
 |---|---|---|
-| 7.1 | A decision draft: a search is a program kind; its requests a key relation; a wave's new requests answered in one batch (0065 §2a's loop) | reviewed |
-| 7.2 | `mro_find` first: it replaces `found`/`lfound` and `need_name`'s patches | P3's agree count unchanged; the `found` strata's work measured |
-| 7.3 | `inst` for the library generics (`lgpar`, `lcbind`, `lwbind`) | `wbind`/`gpar` work gone |
+| 7.1 | A decision draft: a search is a program kind; its requests a key relation; a wave's new requests answered in one batch (0065 §2a's loop) | **drafted as 0106**, for review: a search is demand rules (a request relation, answer rules that read it), no program kind and no `.cache` |
+| 7.2 | `mro_find` first: it replaces `found`/`lfound` and `need_name`'s patches | **measured, not taken** (0106 §5): as demand rules, `found` pulled six relations into `pv`'s recursion, +13.5% join work there (1.81 M to 2.05 M) for the same answers; the eager `found` was 279 units. P3 keeps it. The full corpus's 116 s (against 66 s, at load 110 against 36 to 76) was not measured again on the full corpus; on the 54 files, the same cold run took 38 s of main-thread CPU at load 75 to 97 and 29 to 32 s at 19 to 48, and the new path's cold run was no slower than the old (28.8 s against 31.9 s) |
+| 7.3 | `inst` for the library generics (`lgpar`, `lcbind`, `lwbind`) | **measured, not taken** (0106 §6): on the 84-file small corpus, cold, `lcbind` 316 k, `lgpar` 281 k, `wbind` 103 k (t27: 2.7 M), `gpar` 69 k, `lfound` 5 k, `lwbind` 4 k of 30.9 M join work: 2.5% and 0.3 s together. The cost is `py_try` (4.5 M), `tv` and `tbv` |
 
 ### Stage 8. P3 on symbols (this branch, after 2.1 and 7.2)
 

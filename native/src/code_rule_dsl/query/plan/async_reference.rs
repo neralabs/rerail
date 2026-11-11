@@ -769,7 +769,8 @@ fn execute_sql<'t>(
 
 #[cfg(test)]
 mod generated_shape;
-#[cfg(test)]
+#[cfg(all(test, feature = "p-anchor-corpus"))]
+#[path = "../../findings/tests/native_oracle.rs"]
 mod native_oracle;
-#[cfg(test)]
+#[cfg(all(test, feature = "p-anchor-corpus"))]
 mod tests;

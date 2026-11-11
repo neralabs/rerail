@@ -178,10 +178,7 @@ impl CallsState {
                 code_rule.clauses.push(producer);
             }
             // P's relational clauses are test-only in W (O18).
-            #[cfg(test)]
             let global = matches!(&template.kind, ClauseKind::Relational(_));
-            #[cfg(not(test))]
-            let global = false;
             if global {
                 self.globals.insert(index);
             } else {

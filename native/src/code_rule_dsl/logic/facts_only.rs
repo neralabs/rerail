@@ -115,11 +115,6 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("slice_match", "3"),
     ("slice_span", "3"),
     ("slice_fresh", "3"),
-    ("phase_record", "5"),
-    ("phase_granules", "5"),
-    ("phase_cones", "5"),
-    ("export_versions", "5"),
-    ("store_epoch", "5"),
     ("compiled_plans", "6"),
     ("compiled_plan_reads", "6"),
     ("plan_feedback", "6"),
@@ -155,7 +150,7 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("context_check_results", "8"),
 ];
 /// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised.
-const NOT_YET_TABLES_PIN: usize = 66;
+const NOT_YET_TABLES_PIN: usize = 61;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
@@ -189,6 +184,9 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "STORED"),
     ("code_rule_dsl/logic/native/setfix.rs", "SYMS"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "GROWTH"),
+    ("code_rule_dsl/logic/native/setfix.rs", "PROBES"),
+    ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
+    ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT"),
     ("code_rule_dsl/logic/native/setfix/level.rs", "PENDING"),
@@ -198,6 +196,13 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan.rs", "SETTING"),
     ("code_rule_dsl/logic/plan/choices.rs", "DURABLE"),
     ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),
+    // The build's Python grammar, and what follows from it and a matcher's text alone (its single-field answers, its
+    // lowered code): the process's code, as a compiled rule's, not a run's result.
+    ("code_rule_dsl/logic/plan/corpus/matchers.rs", "GRAMMAR"),
+    ("code_rule_dsl/logic/plan/corpus/matchers.rs", "KEPT"),
+    ("code_rule_dsl/logic/plan/corpus/matchers.rs", "LOWERED"),
+    // Profiling totals, consumed and cleared by each report; no reusable results.
+    ("code_rule_dsl/logic/plan/corpus/memo.rs", "SIZES"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "FACTS_DIR"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HANDED_DOWN"),
@@ -229,6 +234,8 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "THREAD_CONNECTIONS"),
     ("content_store/connection.rs", "WAIT_SPENT"),
     ("content_store/hazards.rs", "HAZARDS"),
+    // The run each frame space last counted in this process, so a run's programs count it once.
+    ("content_store/frames.rs", "COUNTED"),
     ("content_store/observe.rs", "OBSERVERS"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),

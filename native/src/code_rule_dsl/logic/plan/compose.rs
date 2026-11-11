@@ -4,22 +4,25 @@ use super::super::sql::ident;
 use super::*;
 
 thread_local! {static CACHE:RefCell<HashMap<[u8;32],Compiled>>=RefCell::new(HashMap::new());}
+/// Whether a run may be one composed query: only when asked (`RERAIL_COMPOSE=1`). The integration branch runs its
+/// strata natively, with SQL only where SQL reads a relation (decision 0104). Composition retains ordinary facts
+/// for sessions and persistence; it stays opt-in for comparison (async-family-integration).
 pub(super) fn enabled() -> bool {
     #[cfg(test)]
     if experiments::native_only() {
         return false;
     }
-    true
+    std::env::var("RERAIL_COMPOSE").is_ok_and(|v| v == "1")
 }
 
 pub(super) fn clear() {
     CACHE.with(|c| c.borrow_mut().clear());
 }
-pub(super) fn planned(prog: &Program, db: &Connection, inputs: Inputs) -> Result<Compiled> {
+pub(super) fn planned(prog: &Program, db: &Connection, inputs: &mut Inputs) -> Result<Compiled> {
     use sha2::{Digest, Sha256};
     let key: [u8; 32] = Sha256::digest(
         format!(
-            "compose-v2\0{prog:?}\0{}\0{:?}\0{:?}\0{:?}",
+            "compose-v3\0{prog:?}\0{}\0{:?}\0{:?}\0{:?}",
             inputs.facts, inputs.atoms, inputs.kept, inputs.batch
         )
         .as_bytes(),
@@ -29,22 +32,12 @@ pub(super) fn planned(prog: &Program, db: &Connection, inputs: Inputs) -> Result
         return Ok(plan);
     }
     let _span = super::super::profile::span(|| "compile composed query".into());
-    let mut model = make_plan(prog, db, inputs)?;
+    let given = inputs.given.take();
+    let mut owned = inputs.clone();
+    owned.given = given;
+    let mut model = make_plan(prog, db, owned)?;
     let plan = compile(prog, &mut model)?;
-    if super::super::profile::on() {
-        let mut explain = db.prepare(&format!("EXPLAIN QUERY PLAN {}", plan.sql))?;
-        let rows = explain
-            .query_map([], |r| r.get::<_, String>(3))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        super::super::profile::decision("composed query plan", || rows.join("\n"));
-        super::super::profile::decision("composed query shape", || {
-            format!(
-                "{} SQL bytes; {} outputs; one evaluation statement",
-                plan.sql.len(),
-                plan.outputs.len()
-            )
-        });
-    }
+    inputs.given = Some(model.stats);
     CACHE.with(|c| c.borrow_mut().insert(key, plan.clone()));
     Ok(plan)
 }
@@ -54,6 +47,10 @@ pub(super) struct Compiled {
     pub sql: String,
     outputs: Vec<String>,
     kept: BTreeSet<String>,
+    reads: Vec<(String, BTreeMap<String, usize>)>,
+    aliases: HashMap<String, String>,
+    resident: BTreeSet<String>,
+    prepares: Arc<std::sync::OnceLock<bool>>,
 }
 
 pub(super) fn accepts(prog: &Program) -> Result<bool> {
@@ -98,6 +95,18 @@ pub(super) fn accepts(prog: &Program) -> Result<bool> {
 }
 
 pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
+    // SQLite folds identifier case, whereas rule relations are case-sensitive.
+    // Bind physical names on the typed query; never replace substrings in rendered SQL.
+    let mut counts = HashMap::<String, usize>::new();
+    for rel in prog.decls.keys() { *counts.entry(rel.to_ascii_lowercase()).or_default() += 1; }
+    let mut taken: BTreeSet<_> = prog.decls.keys().map(|r|r.to_ascii_lowercase()).collect();
+    let mut names = HashMap::new();
+    for rel in prog.decls.keys().filter(|r|counts[&r.to_ascii_lowercase()] > 1) {
+        let mut name = format!("__rr_relation_{}", names.len());
+        while !taken.insert(name.to_ascii_lowercase()) { name.push('_'); }
+        names.insert(rel.clone(), name);
+    }
+    let physical = |rel: &str| ident(names.get(rel).map(String::as_str).unwrap_or(rel)).into_owned();
     let outputs: Vec<String> = prog
         .outputs
         .iter()
@@ -133,7 +142,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
         }
         frame_defs.push(format!(
             "{name}(handle) AS MATERIALIZED (SELECT rr_demand_frame(c0) FROM {} HAVING count(*) > 0)",
-            ident(&input)
+            physical(&input)
         ));
         if let Some(n) = uses.get_mut(&input) {
             *n = n.saturating_sub(count - 1);
@@ -143,16 +152,18 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
     let keys_only = |rel: &str| {
         frames.contains_key(rel) && !outputs.iter().any(|r|r==rel) && prog.rules.iter().filter(|r|r.body.iter().filter_map(Literal::atom).any(|a|a.rel==rel)).all(|r|matches!(prog.natives.get(&r.head.rel),Some(super::super::front::Native::Python{input,targets,..}) if input==rel && targets.as_deref()!=Some(rel)))
     };
+    let mut reads = Vec::new();
     let mut defs = Vec::new();
     let mut defined = BTreeSet::new();
-    let mut add = |rel: &str, query: String, materialized: bool| {
+    let mut add = |rel: &str, query: String, materialized: bool, dependencies: BTreeMap<String, usize>| {
+        reads.push((rel.to_owned(), dependencies));
         let columns = (0..prog.decls[rel].len())
             .map(|c| format!("c{c}"))
             .collect::<Vec<_>>()
             .join(",");
         defs.push(format!(
             "{}({columns}) AS {} ({query})",
-            ident(rel),
+            physical(rel),
             if materialized {
                 "MATERIALIZED"
             } else {
@@ -212,6 +223,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
                 arms.join(" UNION ")
             },
             false,
+            BTreeMap::new(),
         );
     }
     for scc in strata(prog)?.0 {
@@ -231,12 +243,15 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
             continue;
         }
         let mut arms = constants(rel);
+        let mut dependencies = BTreeMap::new();
         let producer=match prog.natives.get(rel) {
             Some(super::super::front::Native::Python{kind,input,targets})=>Some((kind.as_str(),input,targets.as_ref(),String::new())),
             Some(super::super::front::Native::PythonCandidates{input,targets,context,member})=>Some(("candidates",input,Some(targets),format!(" AND context='{}' AND member='{}'",context.replace(char::from(39),"''"),member.replace(char::from(39),"''")))),
             _=>None,
         };
         if let Some((kind,input,targets,parameters))=producer {
+            *dependencies.entry(input.clone()).or_default() += 1;
+            if let Some(target) = targets { *dependencies.entry(target.clone()).or_default() += 1; }
             let cols = prog.decls[rel]
                 .iter()
                 .enumerate()
@@ -259,7 +274,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
                         } else {
                             "c0"
                         },
-                        ident(t)
+                        physical(t)
                     )
                 })
                 .unwrap_or_default();
@@ -269,6 +284,11 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
                 let ((order, _, _), _) =
                     model.plan_rule_reused(prog, &rule.head, &rule.body, None)?;
                 let mut q = model.checked_query(prog, &rule.head, &order, None, None)?;
+                count_reads(&mut q.body, &mut dependencies);
+                for cte in &mut q.ctes { for arm in &mut cte.arms { count_reads(arm, &mut dependencies); } }
+                bind_names(&mut q.body, &names);
+                for cte in &mut q.ctes { for arm in &mut cte.arms { bind_names(arm, &names); } }
+
                 // A frame owns key deduplication. No other consumer observes these projection rows.
                 if keys_only(rel) {
                     q.body.distinct = false;
@@ -302,6 +322,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
                 arms.join(" UNION ")
             },
             prog.natives.contains_key(rel) || uses.get(rel).copied().unwrap_or(0) > 1,
+            dependencies,
         );
     }
     drop(add);
@@ -331,7 +352,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
                 })
                 .collect::<Vec<_>>()
                 .join(",");
-            format!("SELECT {id} AS __output,{cols} FROM {}", ident(rel))
+            format!("SELECT {id} AS __output,{cols} FROM {}", physical(rel))
         })
         .collect::<Vec<_>>();
     let body = if arms.is_empty() {
@@ -348,10 +369,75 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
         },
         outputs,
         kept: model.inputs.kept.clone(),
+        reads,
+        resident: BTreeSet::new(),
+        prepares: Default::default(),
+        aliases: names.into_iter().filter(|(r,_)|prog.inputs.contains(r)).collect(),
     })
 }
 
+/// Count typed reads, including correlated subqueries, before SQL rendering.
+fn count_reads(block: &mut Select, reads: &mut BTreeMap<String, usize>) {
+    for item in &block.from {
+        if let Relation::Derived { rel, .. } | Relation::Input { rel, .. } | Relation::Bound {rel,..} | Relation::Batch {rel,..} = &item.relation {
+            *reads.entry(rel.clone()).or_default() += 1;
+        }
+    }
+    let ons = block.from.iter_mut().flat_map(|item| match &mut item.join {
+        Join::On(on) => on.iter_mut().collect::<Vec<_>>(), Join::Cross => Vec::new(),
+    });
+    for e in block.columns.iter_mut().map(|(e,_)|e).chain(&mut block.predicates).chain(ons) {
+        e.visit_mut(&mut |e| if let Expr::Exists { query, .. } | Expr::Scalar(query) = e { count_reads(query,reads); });
+    }
+}
+
+/// Apply physical relation names through joins, aggregates and correlated subqueries.
+fn bind_names(block: &mut Select, names: &HashMap<String, String>) {
+    for item in &mut block.from {
+        if let Relation::Derived { rel, delta: false } | Relation::Input { rel, .. } = &item.relation {
+            if let Some(table) = names.get(rel) {
+                item.relation = Relation::Bound { rel: rel.clone(), table: ident(table).into_owned() };
+            }
+        }
+    }
+    let ons = block.from.iter_mut().flat_map(|item| match &mut item.join {
+        Join::On(on) => on.iter_mut().collect::<Vec<_>>(), Join::Cross => Vec::new(),
+    });
+    for e in block.columns.iter_mut().map(|(e,_)|e).chain(&mut block.predicates).chain(ons) {
+        e.visit_mut(&mut |e| if let Expr::Exists { query, .. } | Expr::Scalar(query) = e { bind_names(query,names); });
+    }
+}
+
 impl Compiled {
+    fn bind_aliases(&self, db: &Connection) -> Result<()> {
+        for (logical,physical) in &self.aliases {
+            let source = crate::code_rule_dsl::facts::vtab::bound_source(db,logical)
+                .or_else(||super::super::native::component::derived(db,logical))
+                .ok_or_else(||Error::Plan(format!("missing composed input {logical}")))?;
+            connection::bind(db,physical,source)?;
+        }
+        Ok(())
+    }
+
+    /// Expanded-read counts identify risky graphs; SQLite determines whether they fit.
+    /// Cache structural refusal so subsequent chunks do not repeat a failed preparation.
+    fn prepares(&self, db: &Connection) -> Result<bool> {
+        if let Some(fits)=self.prepares.get() { return Ok(*fits); }
+        self.bind_aliases(db)?;
+        let _span=super::super::profile::span(|| "composed query limit check".into());
+        super::super::profile::decision("composed query SQL",||self.sql.clone());
+        let fits=match db.prepare_cached(&self.sql) {
+            Ok(_) => true,
+            Err(e) if e.to_string().contains("too many references to") || e.to_string().contains("VIEWs and/or subqueries nested too deep") => {
+                super::super::profile::decision("composed preparation limit",||e.to_string());
+                false
+            }
+            Err(e) => return Err(e.into()),
+        };
+        let _=self.prepares.set(fits);
+        Ok(fits)
+    }
+
     pub(super) fn execute(
         &self,
         db: &Connection,
@@ -359,6 +445,15 @@ impl Compiled {
         lowered: Option<&lower::Lowered>,
         hooks: &mut Hooks<'_>,
     ) -> Result<Outcome> {
+        self.bind_aliases(db)?;
+        if super::super::profile::on() {
+            // Publish the generated text even if preparation fails.
+            super::super::profile::decision("composed query SQL", || self.sql.clone());
+            let mut explain = db.prepare(&format!("EXPLAIN QUERY PLAN {}", self.sql))?;
+            let rows = explain.query_map([], |r| r.get::<_, String>(3))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            super::super::profile::decision("composed query plan", || rows.join("\n"));
+            super::super::profile::decision("composed query shape", || format!("{} SQL bytes; {} outputs; one evaluation statement",self.sql.len(),self.outputs.len()));
+        }
         let _span = super::super::profile::span(|| "composed relational query".into());
         let _frames = crate::code_rule_dsl::facts::vtab::demand::Scope::enter();
         let counters =
@@ -408,16 +503,24 @@ impl Compiled {
             let work = crate::code_rule_dsl::facts::vtab::lookup_spike::take_work();
             if work.requests > 0 { super::super::profile::decision("lookup spike", || serde_json::to_string(&work).unwrap()); }
         }
+        self.finish(db,prog,lowered,hooks,values)
+    }
+
+    fn finish(&self, db: &Connection, prog: &Program, lowered: Option<&lower::Lowered>, hooks: &mut Hooks<'_>,
+        values: BTreeMap<String,Vec<Vec<SqlValue>>>) -> Result<Outcome> {
         let mut out = Outcome::default();
         for (rel, rows) in values {
-            if self.kept.contains(&rel) {
+            // Session maintenance reads ordinary resident facts, including decoded outputs.
+            // Retain their atom rows before decoding instead of expecting a physical SQL table.
+            if self.kept.contains(&rel) || lowered.is_some() {
+                if !self.resident.contains(&rel) {
                 let ints = rows
-                    .into_iter()
+                    .iter()
                     .map(|row| {
-                        row.into_iter()
+                        row.iter()
                             .map(|v| {
                                 if let SqlValue::Integer(n) = v {
-                                    Ok(n)
+                                    Ok(*n)
                                 } else {
                                     Err(Error::Plan(
                                         "retained composed output must contain atoms".into(),
@@ -433,12 +536,13 @@ impl Compiled {
                     ints,
                     vec![b'i'; prog.decls[&rel].len()],
                 )?;
-                out.kept.insert(rel.clone());
-                if let Some(hand) = hooks.hand_off.as_deref_mut() {
-                    hand(&rel)?;
-                    out.handed.insert(rel);
                 }
-                continue;
+                out.kept.insert(rel.clone());
+                if let Some(hand) = hooks.hand_off.as_deref_mut().filter(|_|self.kept.contains(&rel)) {
+                    hand(&rel)?;
+                    out.handed.insert(rel.clone());
+                }
+                if self.kept.contains(&rel) { continue; }
             }
             let domains = lowered.and_then(|l| l.domains.get(&rel));
             let mut decoded = Vec::new();
@@ -509,3 +613,7 @@ mod tests;
 
 #[cfg(test)]
 pub(super) mod experiments;
+
+mod stages;
+mod retained;
+pub(super) use retained::run;

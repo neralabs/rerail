@@ -276,6 +276,7 @@ fn multiple_consumers_union_their_safe_demands() {
 }
 
 #[test]
+#[ignore = "pyflakes.rr writes the outer binding as a rule (`outer_bound`, 913cb3f7a), not an aggregate over bound_in: no rr_agg helper reads it"]
 fn pyflakes_outer_binding_existence_keeps_load_and_nearest_scope_demands() {
     let p = rr::parse("#include \"python/pyflakes.rr\"\n.output unbound_ref\n").unwrap();
     let helpers: Vec<_> = p

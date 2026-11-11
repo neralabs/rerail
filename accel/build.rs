@@ -4,6 +4,8 @@
 mod sme;
 #[path = "build/ane.rs"]
 mod ane;
+#[path = "build/forest.rs"]
+mod forest;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -14,5 +16,8 @@ fn main() {
     }
     if on("ane") && macos {
         ane::run();
+    }
+    if on("gpu") && macos {
+        forest::run();
     }
 }

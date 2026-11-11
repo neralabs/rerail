@@ -65,6 +65,7 @@ adapter reads exactly the capabilities its registry entries support.
 | `rust` | `rust` | `Rust` (`adapter/rust.rs`) | all five | `clippy` |
 | `vue` | `vue` | `Vue` (`adapter/vue.rs`), delegating to `Ecma` over the script-block program | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `eslint` |
 | `sql` | `sql` | `Sql` (`adapter/sql.rs`) | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `sqlfluff` |
+| `json` | `json` | `Json` (`adapter/json.rs`) | none: all five `Refused` (rules read its tree) | none |
 
 ### Vue
 
@@ -159,14 +160,14 @@ One file per language, `languages/<id>.json`, so a language is added or changed 
 | `id` | yes | The code-rule language: what a code rule's `language` names. Equals the file name |
 | `status` | yes | `supported` or `planned` (see the lifecycle) |
 | `family` | yes | The semantic family that reads it. Languages that share one (`typescript` and `javascript` share `ecma`) share its suppressions |
-| `dialects` | yes | The grammars its files are parsed with. Each has a `label` (the file language hosts and the store use), its file `suffixes` (lowercase, with the dot; compound ones such as `.blade.php` win over shorter ones), and, when supported, the engine's `variant` (`GrammarDialect::<variant>`), its `parser` (`tree-sitter`; `forte`: Rerail's port of Forte, [docs/blade-parser.md](blade-parser.md); or `rr`: the rule engine's own parser of `.rr` files, decision 0061) and its `grammar` (`vendored:<name>`, built by `build.rs`; `native:<name>`, a parser Rerail implements itself; or `ast-grep:<Language>`). The `tapeTag` is required on a supported dialect; a `planned` dialect may declare it to reserve its future tag. It is persisted, unique across all entries, and never reused. Taken today: Rust 9, SQL 10, Vue 12 and rr 13 (11 is free for a second SQL dialect) |
+| `dialects` | yes | The grammars its files are parsed with. Each has a `label` (the file language hosts and the store use), its file `suffixes` (lowercase, with the dot; compound ones such as `.blade.php` win over shorter ones), and, when supported, the engine's `variant` (`GrammarDialect::<variant>`), its `parser` (`tree-sitter`; `forte`: Rerail's port of Forte, [docs/blade-parser.md](blade-parser.md); `rr`: the rule engine's own parser of `.rr` files, decision 0061; or `bitlex`: a Bitlex grammar the transducer compiles, written in its tree-sitter grammar's ids, with tree-sitter for a file the grammar refuses) and its `grammar` (`vendored:<name>`, built by `build.rs`; `native:<name>`, a parser Rerail implements itself; or `ast-grep:<Language>`). The `tapeTag` is required on a supported dialect; a `planned` dialect may declare it to reserve its future tag. It is persisted, unique across all entries, and never reused. Taken today: Rust 9, SQL 10, Vue 12, rr 13 and JSON 14 (11 is free for a second SQL dialect) |
 | `runsOn` | no | The dialect labels its rules run on, its own first; default: its own dialects. A `typescript` rule also runs on JavaScript files |
 | `capabilities` | yes | For each engine capability (`scope`, `value`, `arguments`, `calls`, `formatArgs`): `supported`, `refused` (the language has no such thing, or no plan for it: a rule using it is invalid) or `not-supported-yet` |
 | `suppressions` | yes | Linter suppression comments its files honour (`noqa`, `nosec`, `eslint`, `oxlint`, `biome`, `phpstan`, `psalm`, `phpcs`, `clippy`, `sqlfluff`) |
 | `embeds` | no | Languages embedded in its files and how they are reached (`via`): Blade's PHP through the compiled view, Vue's script blocks. A rule runs on the program with `ast.embedded: "<via>"` and reaches it from the file's own tree with `embedded` ([DSL reference](code-rule-dsl-reference.html#embedded)) |
 | `fragments` | no | Grammars of a part of one of its dialects, which `.rr` rules name in `embed`, `sub_tape` and `parsed`: `{ "name": "annotation", "dialect": "python", "start": "expression" }` is a Python expression, parsed inside a written `( … )`. A name is unique among every dialect label and fragment ([decision 0082](final-shape/decisions/0082-embedded-grammar-names-sql-and-global-guests.md)) |
 
-`parser` is validated but drives no behaviour yet. `embeds` names the embedded language and how it is reached
+`parser` is validated; the engine picks the parser by dialect, not from this field (JSON's Bitlex parser: `tape::TapeImage::parse`). `embeds` names the embedded language and how it is reached
 (`via`); a supported entry may embed only supported languages. An embedding's `Embedder` builds at most one program
 per file and `via`, a document derived from the file's own (`tape::DerivedImage`), with a tape of its own that the
 store keeps as a row of its own beside the file's (`file_documents`). Changes
@@ -228,7 +229,7 @@ The generated `Via` and `with_embedder!` carry it only under `#[cfg(test)]`.
 
 1. Add `languages/<id>.json` with `status: "planned"`: its family, its dialects' labels and suffixes, every
    capability `not-supported-yet`, its suppressions and anything it embeds. Give each dialect the `tapeTag` it
-   reserves (Rust 9, SQL 10 and Vue 12 are taken; 11 is free for a second SQL dialect). Run
+   reserves (Rust 9, SQL 10, Vue 12, rr 13 and JSON 14 are taken; 11 is free for a second SQL dialect). Run
    `npm run generate:languages` and commit the regenerated `src/engine/code-rule/code-rule-language-registry.generated.ts`.
    Rules and packs for it can land now.
 2. Vendor or pick its grammar (a vendored one is added to `GRAMMARS` in `native/build.rs`), and flip the entry to

@@ -116,10 +116,11 @@ pub struct Outlined {
     pub disassembly: String,
 }
 
-/// The running counts, as output indexes: each extract's, then each total's. A file's counts are
-/// laid out in this order, so tier 2 reads its totals from the count after the extracts'.
+/// The running counts, as output indexes: each extract's, then one for all the totals (the first
+/// total's index stands for them: `BlockProgram::totals`, one flag). A file's counts are laid out
+/// in this order, so tier 2 reads its totals' flag from the count after the extracts'.
 pub fn counted(native: &BlockNative) -> Vec<usize> {
-    native.extracts.iter().chain(&native.totals).copied().collect()
+    native.extracts.iter().chain(native.totals.first()).copied().collect()
 }
 
 impl CompiledBlock {
@@ -237,7 +238,7 @@ impl Batch {
                         self.positions[at..at + count(e) as usize].to_vec()
                     })
                     .collect();
-                let totals = (0..program.totals.len()).map(|t| count(program.extracts.len() + t)).collect();
+                let totals = if program.totals.is_empty() { Vec::new() } else { vec![u64::from(count(program.extracts.len()) != 0)] };
                 BlockRun { outputs, positions, totals }
             })
             .collect()
@@ -1642,8 +1643,11 @@ fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value]
             let bytes = f.ins().ishl_imm(cnt, 2);
             counts_out.push(f.ins().iadd(n, bytes));
         } else {
-            // A total only tests for a bit (`BlockProgram::totals`): its words OR-ed.
-            counts_out.push(f.ins().bor(n, words[k]));
+            // The totals only test for a bit (`BlockProgram::totals`): every total's words OR-ed
+            // into one running word.
+            let _ = k;
+            let any = native.totals.iter().fold(n, |acc, &t| f.ins().bor(acc, words[t]));
+            counts_out.push(any);
         }
     }
     let next = f.ins().iadd_imm(i, 1);
@@ -1697,7 +1701,8 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
     let mut builder_context = FunctionBuilderContext::new();
     let counted = counted(native);
     let delayed: Vec<usize> = (0..native.outputs.len()).filter(|&k| native.output_delays[k] > 0).collect();
-    let early: Vec<bool> = (0..native.outputs.len()).map(|k| !counted.contains(&k)).collect();
+    // Every total is read at the step's end, into the totals' one running word.
+    let early: Vec<bool> = (0..native.outputs.len()).map(|k| !counted.contains(&k) && !native.totals.contains(&k)).collect();
     let state = State::of(native);
     let carried = state.words;
     let rowed = slots > 0;

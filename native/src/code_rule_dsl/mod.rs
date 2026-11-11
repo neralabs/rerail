@@ -2,6 +2,7 @@ mod blade;
 mod budget;
 mod calls;
 mod compile;
+mod crypto;
 mod demand;
 mod embed;
 mod eval;
@@ -15,6 +16,8 @@ mod language;
 mod lines;
 mod literal;
 mod logic;
+/// A pool job's span under the span that started it (`crate::threads`), so a job's work is charged to its caller.
+pub(crate) use logic::profile::{here as profile_here, span_at as profile_span_at};
 /// The profile's SQL hazards, which the content store's connections and writer report (`content_store::hazards`, set as
 /// the library loads; decision 0104).
 pub(crate) mod sql_hazards {
@@ -56,7 +59,6 @@ mod query;
 #[allow(dead_code)]
 mod residency;
 // P's paths for P's relational stage, under test (open item O18): P's workspace code reads it here.
-#[cfg(test)]
 use residency::admission::relational;
 mod scope;
 mod semver;
@@ -121,6 +123,17 @@ pub struct CodeRuleDslRuntime;
 
 #[napi]
 impl CodeRuleDslRuntime {
+    /// Canonical front-end facts for one complete demand batch, including invalid syntax.
+    /// This only parses source; it never imports or executes a source module.
+    #[napi]
+    pub fn python_ast_batch(documents_json: String) -> Result<String> {
+        let documents: Vec<value::python_ast::Document> =
+            serde_json::from_str(&documents_json).map_err(json_error)?;
+        let response =
+            value::python_ast::batch_with_metrics(&documents).map_err(|error| invalid(error.0))?;
+        serde_json::to_string(&response).map_err(json_error)
+    }
+
     #[napi]
     pub fn compile(
         source: String,

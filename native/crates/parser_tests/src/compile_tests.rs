@@ -158,6 +158,47 @@ fn errors_and_escapes_are_the_fallback_output() {
     assert!(clean > 0 && falls > 0, "{clean} clean, {falls} falling back");
 }
 
+/// The fallback's masks at delays 0, 2 and 5 as totals: one flag per file on every executor
+/// (doc 26 §1.5), set when any mask has a bit, in a batch of files too.
+#[test]
+fn every_total_is_one_flag_on_every_executor() {
+    const DELAYS: &str = "lexer t\nclass a = 'a'\nclass b = 'b'\nclass c = 'c'\nmask ea = a\nmask eb = b & next(a, 2)\nmask ec = c & next(b, 5)\nescape \"a\" when ea\nescape \"b\" when eb\nescape \"c\" when ec\n";
+    let stmts = ::bitlex::syntax::parse(DELAYS).expect("parses");
+    let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], None).unwrap_or_else(|e| panic!("compiles: {e}"));
+    let totals: String = compiled.fallbacks.iter().map(|k| format!("  block 0 total %{}\n", compiled.program.outputs[usize::from(*k)])).collect();
+    let text = format!("program -\n  mode set=0 query=0\n{}{totals}  0000 STOP 0\n", compiled.rows);
+    let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    let block = &p.block_programs[0];
+    let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
+    let cranelift = native_cpu_block::compile(&native).expect("compiles");
+    let mut cases: Vec<Vec<u8>> = inputs().into_iter().map(|v| v.into_iter().map(|b| [b'a', b'b', b'c', b'x', b'x', b'x', b'x', b'x'][usize::from(b) % 8]).collect()).collect();
+    cases.extend([b"cxxxxbxx".to_vec(), [vec![b'x'; 61], b"cxxxxb".to_vec()].concat(), b"xbxxa".to_vec(), vec![b'x'; 300]]);
+    let want: Vec<Vec<u64>> = cases
+        .iter()
+        .map(|bytes| {
+            let m = evaluated(&stmts, bytes, &["ea", "eb", "ec"]);
+            vec![u64::from(m.iter().flatten().any(|&w| w != 0))]
+        })
+        .collect();
+    assert!(want.iter().any(|w| w[0] == 0) && want.iter().any(|w| w[0] == 1), "both kinds of file");
+    let files: Vec<&[u8]> = cases.iter().map(Vec::as_slice).collect();
+    let batch: Vec<block::BatchFile<'_>> = files.iter().map(|&bytes| block::BatchFile { bytes, program: 0 }).collect();
+    let mut runs: Vec<(String, Vec<block::BlockRun>)> = vec![("cpu interpreter".into(), block.run_files(&files)), ("cranelift".into(), cranelift.run_files(&files))];
+    #[cfg(target_os = "macos")]
+    {
+        use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+        use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
+        runs.push(("metal generated".into(), run_split(&[&native], &batch, LaneWidth::ALL[0], Executor::Generated(ClassStrategy::ALL[0]), 64).expect("runs").files));
+        runs.push(("metal forward carry".into(), run_serial_split(&[&native], &batch, Segments { blocks: 3, warm: 1 }).expect("runs").run.files));
+    }
+    let _ = &batch;
+    for (executor, got) in runs {
+        for (k, run) in got.iter().enumerate() {
+            assert_eq!(run.totals, want[k], "{executor}, file {k}: {:?}", String::from_utf8_lossy(&cases[k]));
+        }
+    }
+}
+
 /// Masks that read later bytes, by delays: `next`, `lasts`, the last byte, `next` of a value
 /// the zero padding passes (`eq 0x00`) and of a carried one, `next` inside `prev`, and
 /// `aligned`; JSON's number checks among them.
@@ -811,10 +852,11 @@ fn json_tier1_is_simdjsons_stage1() {
 /// 15 document, 17 object, 18 pair, 19 array, 20 string, 16 `_value`; tokens 1 `{`, 3 `}`,
 /// 5 `[`, 6 `]`, 2 `,`, 4 `:`, 7 `"`, 8 string_content, 9 escape_sequence, 10 number, 11 true,
 /// 12 false, 13 null; fields 1 key, 2 value. The states, by simdjson's stage-2 labels: 0 the
-/// root's start, 2 `document_end`; 1 `object_begin`, 11 and 14 `object_field`, 15 and 18
-/// `object_continue`, 17 after `,`; 3 `array_begin`, 12 `array_value`, 7 and 13
-/// `array_continue`; 4, 5, 8, 16 `parse_string` (root, key, array, pair value); 10 after a root
-/// string; 6 and 9 `scope_end`. A pair closes on the `,` or `}` after its value.
+/// root's start, 2 `document_end`; 1 `object_begin`, 10 and 13 `object_field`, 14 and 17
+/// `object_continue`, 16 after `,`; 3 `array_begin`, 11 `array_value`, 7 and 12
+/// `array_continue`; 4, 5, 8, 15 `parse_string` (root, key, array, pair value); 9 after a root
+/// string; 6 `scope_end`, an object's and an array's alike. The object's and the array's levels
+/// share that state, so they are one level (17).
 #[test]
 fn json_tier2_states_print_as_designed() {
     let got = json_compiled().1.machine;
@@ -825,22 +867,21 @@ const JSON_STATES: &str = "\
 state 0 level 15\n\
 state 1 level 17\n\
 state 2 level 15 end 0\n\
-state 3 level 19\n\
+state 3 level 17\n\
 state 4 level 15\n\
 state 5 level 17\n\
 state 6 level 17 end 0\n\
-state 7 level 19\n\
-state 8 level 19\n\
-state 9 level 19 end 0\n\
-state 10 level 15 end 1\n\
+state 7 level 17\n\
+state 8 level 17\n\
+state 9 level 15 end 1\n\
+state 10 level 17\n\
 state 11 level 17\n\
-state 12 level 19\n\
-state 13 level 19\n\
+state 12 level 17\n\
+state 13 level 17\n\
 state 14 level 17\n\
 state 15 level 17\n\
 state 16 level 17\n\
 state 17 level 17\n\
-state 18 level 17\n\
 arm 0 token 1 to 1 push 2 do open 15 open 17 s 16 leaf\n\
 arm 0 token 5 to 3 push 2 do open 15 open 19 s 16 leaf\n\
 arm 0 token 7 to 4 do open 15 open 20 s 16 leaf\n\
@@ -857,43 +898,43 @@ arm 3 token 10 to 7 do leaf s 16\n\
 arm 3 token 11 to 7 do leaf s 16\n\
 arm 3 token 12 to 7 do leaf s 16\n\
 arm 3 token 13 to 7 do leaf s 16\n\
-arm 3 token 6 to 9 do leaf\n\
+arm 3 token 6 to 6 do leaf\n\
 arm 4 token 8 to 4 do leaf\n\
 arm 4 token 9 to 4 do leaf\n\
-arm 4 token 7 to 10 do leaf\n\
+arm 4 token 7 to 9 do leaf\n\
 arm 5 token 8 to 5 do leaf\n\
 arm 5 token 9 to 5 do leaf\n\
-arm 5 token 7 to 11 do leaf\n\
-arm 7 token 2 to 12 do leaf\n\
-arm 7 token 6 to 9 do leaf\n\
+arm 5 token 7 to 10 do leaf\n\
+arm 7 token 2 to 11 do leaf\n\
+arm 7 token 6 to 6 do leaf\n\
 arm 8 token 8 to 8 do leaf\n\
 arm 8 token 9 to 8 do leaf\n\
-arm 8 token 7 to 13 do leaf\n\
-arm 11 token 4 to 14 do close leaf\n\
-arm 12 token 1 to 1 push 7 do open 17 s 16 leaf\n\
-arm 12 token 5 to 3 push 7 do open 19 s 16 leaf\n\
-arm 12 token 7 to 8 do open 20 s 16 leaf\n\
-arm 12 token 10 to 7 do leaf s 16\n\
-arm 12 token 11 to 7 do leaf s 16\n\
-arm 12 token 12 to 7 do leaf s 16\n\
-arm 12 token 13 to 7 do leaf s 16\n\
-arm 13 token 2 to 12 do close leaf\n\
-arm 13 token 6 to 9 do close leaf\n\
-arm 14 token 1 to 1 push 15 do open 17 f 2 s 16 leaf\n\
-arm 14 token 5 to 3 push 15 do open 19 f 2 s 16 leaf\n\
-arm 14 token 7 to 16 do open 20 f 2 s 16 leaf\n\
-arm 14 token 10 to 15 do leaf f 2 s 16\n\
-arm 14 token 11 to 15 do leaf f 2 s 16\n\
-arm 14 token 12 to 15 do leaf f 2 s 16\n\
-arm 14 token 13 to 15 do leaf f 2 s 16\n\
-arm 15 token 2 to 17 do close leaf\n\
-arm 15 token 3 to 6 do close leaf\n\
-arm 16 token 8 to 16 do leaf\n\
-arm 16 token 9 to 16 do leaf\n\
-arm 16 token 7 to 18 do leaf\n\
-arm 17 token 7 to 5 do open 18 open 20 f 1 leaf\n\
-arm 18 token 2 to 17 do close close leaf\n\
-arm 18 token 3 to 6 do close close leaf\n\
+arm 8 token 7 to 12 do leaf\n\
+arm 10 token 4 to 13 do close leaf\n\
+arm 11 token 1 to 1 push 7 do open 17 s 16 leaf\n\
+arm 11 token 5 to 3 push 7 do open 19 s 16 leaf\n\
+arm 11 token 7 to 8 do open 20 s 16 leaf\n\
+arm 11 token 10 to 7 do leaf s 16\n\
+arm 11 token 11 to 7 do leaf s 16\n\
+arm 11 token 12 to 7 do leaf s 16\n\
+arm 11 token 13 to 7 do leaf s 16\n\
+arm 12 token 2 to 11 do close leaf\n\
+arm 12 token 6 to 6 do close leaf\n\
+arm 13 token 1 to 1 push 14 do open 17 f 2 s 16 leaf\n\
+arm 13 token 5 to 3 push 14 do open 19 f 2 s 16 leaf\n\
+arm 13 token 7 to 15 do open 20 f 2 s 16 leaf\n\
+arm 13 token 10 to 14 do leaf f 2 s 16\n\
+arm 13 token 11 to 14 do leaf f 2 s 16\n\
+arm 13 token 12 to 14 do leaf f 2 s 16\n\
+arm 13 token 13 to 14 do leaf f 2 s 16\n\
+arm 14 token 2 to 16 do close leaf\n\
+arm 14 token 3 to 6 do close leaf\n\
+arm 15 token 8 to 15 do leaf\n\
+arm 15 token 9 to 15 do leaf\n\
+arm 15 token 7 to 17 do leaf\n\
+arm 16 token 7 to 5 do open 18 open 20 f 1 leaf\n\
+arm 17 token 2 to 16 do close close leaf\n\
+arm 17 token 3 to 6 do close close leaf\n\
 ";
 
 /// Tier 2's states and arms are the compiler's (doc 18, decisions 0085 and 0053): `grammar` makes
@@ -1144,12 +1185,17 @@ fn json_compiled_path_equals_the_interpreters() {
     let tier1 = native_cpu_block::compile(&native.block_programs[0]).expect("tier 1 compiles");
     let tier2 = native_cpu_stream::compile(&native).expect("tier 2 compiles");
     // JSON has no wraps and no chained returns: it pays for neither (no wrap columns, no
-    // reorder). Its loop heads are the stream's and the masks'. The table's final pass
-    // (parents and extras) is a function of its own, called once: its loops are not the
-    // token loop's.
+    // reorder). Its loop heads are the stream's and `ACCEPT`'s check of the mask (once a
+    // file). The table's final pass (parents and extras)
+    // is a function of its own, called once, and so is `SPAN m=1`'s search of the last-byte
+    // mask, called at each such span lowered (one copy of a shared arm's): their loops are not
+    // the token loop's.
     assert!(!tier2.wraps);
     assert!(tier2.heads.iter().all(|h| matches!(h.1, native_cpu_shape::Step::Token | native_cpu_shape::Step::Block)), "{:?}", tier2.heads);
-    assert_eq!(tier2.own_calls, 1, "the final pass's call alone");
+    let pushes: Vec<u16> = native.structural.iter().filter_map(|w| if let native_ir::StructuralOperation::Push { target } = w.operation { Some(target) } else { None }).collect();
+    let shared = native_cpu_stream::shared_runs(&native, &pushes);
+    let spans = native.structural.iter().enumerate().filter(|(pc, w)| !shared.skipped[*pc] && shared.at.get(pc).is_none_or(|&(b, _)| shared.bodies[b].start == *pc) && matches!(w.operation, native_ir::StructuralOperation::Span { last: true, .. })).count();
+    assert_eq!(tier2.own_calls, 1 + spans, "the final pass's call and the spans' searches alone");
     let files = json_tier2_files();
     for f in &files {
         let want1 = p.block_programs[0].run_files(&[f]).remove(0);
