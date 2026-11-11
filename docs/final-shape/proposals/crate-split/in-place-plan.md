@@ -260,8 +260,14 @@ Hand-written cuts, done on the prep branch:
 - **Moves by name** (`move_items.py`, `moves.tsv` and `moves2.tsv`): the `.rr` AST, the device data types, the
   profiler's report.
 
-Rehearsal: a worktree of the prep branch, `regenerate.sh` on its own index, then `cargo check` bottom-up.
-`rerail-rr-syntax` checks green. What the other crates still fail on is the remaining cuts.
+Rehearsal: a worktree of the prep branch, `regenerate.sh` on its own index (about 5 minutes with the index), then
+`cargo check` bottom-up. At 8e486692a:
+
+- `rerail-rr-syntax` and `rerail-prof` check green.
+- `rerail-lang` fails on 51 errors. Each is a reference up the DAG: to W (`language::adapter`, `with_adapter!`,
+  `origin`, `scope`, `suppress`), to PHP and Blade, to ECMA's manifest, and to `logic::rr`. None is from the
+  generators.
+- The crates above it are not checked yet: they stand on `lang`.
 
 ### The stop (target under two hours)
 
