@@ -4,7 +4,7 @@
 use super::*;
 mod compile;
 mod execute;
-mod rows;
+pub(super) mod rows;
 mod storage;
 
 const ROWS: &str = "__rr_retained_loop_rows";

@@ -3,6 +3,7 @@ use super::super::logic::sql::select::{Query, Relation as Rel};
 use super::maintenance::{Delta, Work};
 use super::*;
 use crate::code_rule_dsl::logic::native::aggregation::{Grouping, Reduction};
+mod batch;
 mod compose;
 mod cold_loop;
 mod batches;
@@ -141,6 +142,7 @@ pub(super) struct Trace {
     components: Arc<crate::code_rule_dsl::logic::analysis::stages::Components>,
     after: BTreeSet<(u32, u32)>,
     frames: Vec<Frame>,
+    batch: Option<batch::History>,
     limit: u32,
 }
 
@@ -198,11 +200,19 @@ impl Trace {
             .filter(|s|seen.insert(Arc::as_ptr(&s.analysis) as usize)).map(|s|json!(s)).collect()
     }
     pub(in crate::code_rule_dsl::sql_executor) fn explain(&self) -> Value {
+        if let Some(batch) = &self.batch {
+            return json!({
+                "execution_shape":"SQL wave batch",
+                "native_relation_facades":self.native_relations,
+                "dependency_components":self.components.as_ref(),
+                "sql_wave_batch":batch.explain(),
+            });
+        }
         json!({"execution_shape":if self.whole {"One retained relation graph, including checked projections"} else {"Retained recursive component"},"native_relation_facades":self.native_relations,"acyclic_stages":self.stage_decisions,"component_cache_scheduling":self.cache_decisions.as_ref(),"acyclic_sql_depth_bound":pipeline::Pipeline::MAX_DEPTH,"sql_phase_expansion_budget":phase::Phase::EXPANSION_BUDGET,"dependency_components":self.components.as_ref(),"journal_policy":"Share empty-journal inputs and cancel equal roots; bulk set composition for large deltas; sparse patches for small deltas","public_storage":if self.whole {"Declared outputs keep SQL result tables and hooks; intermediate relations are immutable query facades"}else{"SQL-owned component results"},"phase_policy":"Compatible acyclic stages pass signed deltas through one SQL graph; recursive steps read frozen preceding-frame inputs; bounded batches preserve staged deltas","scalar_storage_boundary":"Wave gates reuse transitions only for equal input versions, prior summary roots, and pending journals", "summary_transition_proof":crate::code_rule_dsl::logic::analysis::scalars::maintenance_equivalent(true,true),"frames":self.frames.iter().enumerate().map(|(i, f)|json!({"frame":i,"native_scope":f.scope(),"composed":f.composed,"phase_batches":f.phase_batches,"acyclic_pipeline":f.pipeline,"work":f.observation,"key_set_decisions":f.key_set_decisions,"publication_decisions":f.publication_decisions,"operators":f.operators.iter().enumerate().map(|(id,op)|json!({"relation":self.steps[id].0.output,"result_root":op.result,"active":op.active,"empty_positive_body":op.empty_body,"phase_eligible":op.phase_eligible,"boundary":if op.opaque.is_some() {"Opaque SQL producer; frozen SQL inputs at resolved dependency gate"}else if op.sql_kernel {"One recursive SQL kernel; versioned result root"}else if op.phase_eligible {"Composed support and fold"}else{"Separate retained operator evaluation; shared wave publication"},"analysis":op.logical_analysis.as_ref()})).collect::<Vec<_>>()})).collect::<Vec<_>>()})
     }
     pub fn stable_phases(&self, program: &schedule::Program) -> bool {
         self.whole
-            && !self.frames.is_empty()
+            && (self.batch.is_some() || !self.frames.is_empty())
             && program.relations.len() == self.relations.len()
             && program
                 .relations
@@ -211,7 +221,14 @@ impl Trace {
             && self.frames.iter().all(|f| f.composed)
     }
     pub fn frames(&self) -> usize {
-        self.frames.len()
+        self.batch.as_ref().map_or(self.frames.len(), batch::History::len)
+    }
+    fn final_versions(&self, store: &versions::Store) -> frame::Versions {
+        if let Some(batch) = &self.batch {
+            batch.versions()
+        } else {
+            self.frames.last().unwrap().versions(store)
+        }
     }
     fn ready(&self, pending: &BTreeSet<usize>) -> BTreeSet<usize> {
         let mut ready = pending
@@ -454,9 +471,13 @@ impl Trace {
         changes: &BTreeMap<String, Delta>,
         limit: u32,
     ) -> Result<(BTreeMap<String, Delta>, u32)> {
-        let before = self.frames.last().unwrap().versions(store);
-        let waves = self.replay(w, store, changes, limit)?;
-        let after = self.frames.last().unwrap().versions(store);
+        let before = self.final_versions(store);
+        let waves = if let Some(batch) = &mut self.batch {
+            batch.replay(w, changes, limit, false)?
+        } else {
+            self.replay(w, store, changes, limit)?
+        };
+        let after = self.final_versions(store);
         let mut outputs = BTreeMap::new();
         for (r, spec) in &self.relations {
             let d = delta(w, &before.published[r], &after.published[r])?;
@@ -648,6 +669,7 @@ pub(super) fn prepare(
             cache_decisions:Arc::new(vec![]),
             after,
             frames: vec![],
+            batch: None,
             limit: run.max_waves,
         };
         let mark = w.mark();

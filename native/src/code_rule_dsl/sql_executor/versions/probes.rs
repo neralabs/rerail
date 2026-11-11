@@ -80,7 +80,7 @@ impl Version {
             Arc::make_mut(&mut self.secondary)[c] = true;
         }
     }
-    pub(super) fn restrict_indexes(&mut self, columns: &[usize]) {
+    pub(in crate::code_rule_dsl::sql_executor) fn restrict_indexes(&mut self, columns: &[usize]) {
         self.ensure_indexes(columns);
         let desired = columns
             .iter()

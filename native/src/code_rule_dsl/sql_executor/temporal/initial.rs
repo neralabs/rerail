@@ -46,14 +46,18 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
         .iter()
         .zip(&e.queries)
         .filter(|(s, _)| outputs.contains(&s.output))
-        .map(|(s, q)| (s.clone(),q.clone()))
+        .map(|(s, q)| (s.clone(), q.clone()))
         .collect::<Vec<_>>();
-    let cache_decisions=Arc::new(plan::acyclic::compact_retained(&mut steps,
-        &original.lattices.iter().map(|(r,_,_)|r.clone()).collect()));
-    plan::acyclic::order(&mut steps);
-    let stage_decisions = plan::acyclic::analyze(&steps,
-        &original.relations.iter().cloned().collect(),
-        &original.lattices.iter().map(|(r,_,_)| r.clone()).collect());
+    let batch_selected = batch::selected(steps.len(), w);
+    let lattice_names = original.lattices.iter().map(|(r, _, _)| r.clone()).collect();
+    let relation_widths = original.relations.iter().cloned().collect();
+    let (cache_decisions, stage_decisions) = if batch_selected {
+        (Arc::new(vec![]), BTreeMap::new())
+    } else {
+        let decisions = compact(&mut steps, &lattice_names);
+        let stages = plan::acyclic::analyze(&steps, &relation_widths, &lattice_names);
+        (decisions, stages)
+    };
     let probes = indexes::native(steps.iter().filter_map(|(_, q)| q.as_ref()));
     let relations = original
         .relations
@@ -81,27 +85,7 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
             )
         })
         .collect();
-    let mut after = BTreeSet::new();
-    for (s, _) in &steps {
-        for (p, _) in &steps {
-            if s.stratum != p.stratum && s.reads.contains(&p.output) {
-                after.insert((s.stratum, p.stratum));
-            }
-        }
-    }
-    loop {
-        let n = after.len();
-        for (a, b) in after.clone() {
-            for (c, d) in after.clone() {
-                if b == c && a != d {
-                    after.insert((a, d));
-                }
-            }
-        }
-        if after.len() == n {
-            break;
-        }
-    }
+    let after = dependency_gates(&steps);
     let components=Arc::new(components(&steps));
     let mut trace = Trace {
         whole: true,
@@ -118,8 +102,20 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
         cache_decisions,
         after,
         frames: vec![],
+        batch: None,
         limit: run.max_waves,
     };
+    if batch_selected {
+        // The batch consumes the original delta variants at their emitted gates.
+        trace.batch = batch::History::prepare(&trace, w.db)?;
+    }
+    if batch_selected && trace.batch.is_none() {
+        let steps = Arc::make_mut(&mut trace.steps);
+        trace.cache_decisions = compact(steps, &lattice_names);
+        trace.stage_decisions = plan::acyclic::analyze(steps, &relation_widths, &lattice_names);
+        trace.components = Arc::new(super::components(steps));
+        trace.after = dependency_gates(steps);
+    }
     // Unsupported SQL shapes can retain their established fallback. Only changes made
     // during this attempt enter the nested undo log; existing sessions are not scanned.
     let pool = w.pool.clone();
@@ -141,19 +137,22 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
             );
         }
         let _context = attempt.profile_scope(|| json!({"stage":"initial retained execution"}));
-        let waves = match super::cold_loop::run(&mut trace, &mut attempt, store, run.max_waves)? {
-            Some(waves) => waves,
-            None => trace.replay(&mut attempt, store, &BTreeMap::new(), run.max_waves)?,
+        let waves = if let Some(batch) = &mut trace.batch {
+            batch.replay(&mut attempt, &BTreeMap::new(), run.max_waves, true)?
+        } else {
+            match super::cold_loop::run(&mut trace, &mut attempt, store, run.max_waves)? {
+                Some(waves) => waves,
+                None => trace.replay(&mut attempt, store, &BTreeMap::new(), run.max_waves)?,
+            }
         };
-        let final_versions = trace.frames.last().unwrap().versions(store);
+        let final_versions = trace.final_versions(store);
         for (r, spec) in &trace.relations {
-            let frame = trace.frames.last().unwrap();
             if trace.native_relations.contains(r) {
                 let _scope = store.activate(0)?;
                 store.alias_readonly(w.db,r,final_versions.published[r].clone(),
                     (0..spec.width).map(|c|format!("c{c}")).collect())?;
             } else {
-                let _scope = store.activate(frame.scope())?;
+                let _scope = store.activate(trace.frames.last().map_or(0, Frame::scope))?;
                 trace.publications.publish(&mut attempt,r,final_versions.published[r].clone())?;
             }
             if spec.widening() {
@@ -200,6 +199,38 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
                 Err(err)
             }
         }
+    }
+}
+
+fn compact(
+    steps: &mut Vec<(schedule::Step, Option<Query>)>,
+    lattice_names: &BTreeSet<String>,
+) -> Arc<Vec<Value>> {
+    let decisions = plan::acyclic::compact_retained(steps, lattice_names);
+    plan::acyclic::order(steps);
+    Arc::new(decisions)
+}
+
+fn dependency_gates(steps: &[(schedule::Step, Option<Query>)]) -> BTreeSet<(u32, u32)> {
+    let mut after = BTreeSet::new();
+    for (step, _) in steps {
+        for (producer, _) in steps {
+            if step.stratum != producer.stratum && step.reads.contains(&producer.output) {
+                after.insert((step.stratum, producer.stratum));
+            }
+        }
+    }
+    loop {
+        let before = after.len();
+        let direct = after.clone();
+        for &(a, b) in &direct {
+            for &(c, d) in &direct {
+                if b == c && a != d {
+                    after.insert((a, d));
+                }
+            }
+        }
+        if after.len() == before { return after; }
     }
 }
 

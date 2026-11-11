@@ -2,7 +2,25 @@
 use super::*;
 use crate::code_rule_dsl::facts::vtab::{ReadRow, RowCells};
 
-pub(super) struct Rows(pub Arc<parking_lot::Mutex<Arena>>, pub usize);
+pub(in crate::code_rule_dsl::sql_executor::temporal) trait Roots:
+    Send
+{
+    fn root_at(&mut self, state: i64, slot: usize) -> rusqlite::Result<versions::Version>;
+    fn failure(&mut self) -> &mut Option<String>;
+}
+impl Roots for Arena {
+    fn root_at(&mut self, state: i64, slot: usize) -> rusqlite::Result<versions::Version> {
+        self.root(state, slot)
+    }
+    fn failure(&mut self) -> &mut Option<String> {
+        &mut self.failure
+    }
+}
+pub(in crate::code_rule_dsl::sql_executor::temporal) struct Rows<A>(
+    pub Arc<parking_lot::Mutex<A>>,
+    pub usize,
+    pub Option<usize>,
+);
 struct Cells {
     state: i64,
     slot: i64,
@@ -19,7 +37,7 @@ impl RowCells for Cells {
         }
     }
 }
-impl Source for Rows {
+impl<A: Roots + 'static> Source for Rows<A> {
     fn columns(&self) -> Vec<String> {
         ["rr_state".into(), "rr_slot".into()]
             .into_iter()
@@ -30,13 +48,23 @@ impl Source for Rows {
         0
     }
     fn estimated_len(&self) -> usize {
-        1000
+        self.2.unwrap_or(1000)
     }
-    fn estimated_matches(&self, _: usize, _: bool) -> usize {
-        1000
+    fn estimated_matches(&self, column: usize, batch: bool) -> usize {
+        match (self.2, column >= 2, batch) {
+            // The slot and state must be known for every lookup. Leave IN lists
+            // to SQLite instead of choosing a standalone visible-column probe.
+            (Some(scan), _, true) => scan + 1,
+            (Some(_), true, false) => 2,
+            _ => self.estimated_len(),
+        }
     }
-    fn estimated_matches_all(&self, _: &[usize]) -> usize {
-        8
+    fn estimated_matches_all(&self, columns: &[usize]) -> usize {
+        match self.2 {
+            None => 8,
+            Some(scan) if columns.iter().all(|&c| c < 2) => scan,
+            Some(_) => 2,
+        }
     }
     fn indexed(&self, _: usize) -> bool {
         true
@@ -51,7 +79,7 @@ impl Source for Rows {
         unreachable!("version rows require a state and slot")
     }
     fn failure(&self) -> Option<String> {
-        self.0.lock().failure.clone()
+        self.0.lock().failure().clone()
     }
     fn direct_all(&self, equal: &[(usize, i64)]) -> Option<Vec<ReadRow>> {
         let read = || -> rusqlite::Result<Vec<ReadRow>> {
@@ -65,7 +93,7 @@ impl Source for Rows {
             let (state, slot) = (get(0)?, get(1)?);
             let root = {
                 let mut arena = self.0.lock();
-                arena.root(
+                arena.root_at(
                     state,
                     usize::try_from(slot).map_err(|_| sql_error("invalid version slot"))?,
                 )?
@@ -97,11 +125,12 @@ impl Source for Rows {
                 }
                 rows
             };
+            let width = root.arity();
             for row in &mut rows {
                 row.cells = Arc::new(Cells {
                     state,
                     slot,
-                    width: root.columns().len(),
+                    width,
                     row: row.cells.clone(),
                 });
             }
@@ -110,7 +139,7 @@ impl Source for Rows {
         match read() {
             Ok(rows) => Some(rows),
             Err(error) => {
-                self.0.lock().failure = Some(error.to_string());
+                *self.0.lock().failure() = Some(error.to_string());
                 Some(vec![])
             }
         }

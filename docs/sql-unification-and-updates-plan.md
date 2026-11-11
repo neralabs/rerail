@@ -3481,3 +3481,31 @@ These runs establish parity and admission behavior. CPU speedup remains unmeasur
 The next work is to lower lattice feedback and scalar summaries that change during feedback, then reduce repeated preparation of large checked graphs.
 The version loop still requires total checked expressions, set results, and a bounded statement. Generated recursive CTEs retain their existing kernels.
 The remaining corpus submissions need a smaller execution plan before the cap can admit the full replay.
+
+### Corpus replays within the submission cap (2026-11-10)
+
+Wide retained schedules can now choose a SQL wave batch when the remaining credits are low.
+One recursive statement visits the active rule SELECTs and relation folds at their original gates.
+It retains immutable rows, frontiers, and widening counters. The warm replay reuses total rule results when their input versions match.
+Builtin lattice feedback and changing scalar summaries run inside the statement. Literal SQL producers can participate without changing visibility.
+The previous retained path still handles opaque producers that need their own SQL gates.
+
+The full workload exposed a join that paired two text inputs by string value before it bound either node key.
+The batch planner now anchors a derived input when its rows bind selective indexed probes across repeated fact inputs.
+This reduced user CPU for the capped workload from 321 seconds in the first batch trial to 31 seconds.
+The planner preserves the original frontier anchor for generated delta rules.
+
+All three debug replays completed under the same session cap of 100.
+The independent cold verifier matched every relation, output delta, and requested query at seven checkpoints per replay.
+Each replay covered the expected failed edit, retry, unchanged publication, deletion, and restoration.
+
+| Complete replay | Previous uncapped statements | Capped statements | Relations compared |
+| --- | ---: | ---: | ---: |
+| CPython workload | 128 | 54 | 43 |
+| One-file workload with an opaque producer | 129 | 51 | 44 |
+| CPython call analysis | 416 | 68 | 100 |
+
+The statement counts include verification queries and failed attempts.
+One paired debug run used 30.6 seconds of user CPU for the capped workload and 34.3 seconds on the uncapped path.
+The one-file case used 13.0 seconds under the cap and 5.7 seconds uncapped.
+The batch can cost more CPU when it must recompute a rule result. An uncapped session can still use sparse support maintenance.

@@ -877,3 +877,13 @@ The first loop frame's explain data includes `sql_version_loop`.
 It records placement, cold or warm scope, logical analysis, rule stages, frozen scalar inputs, owner gates, prefix phases, SQL size, VM work, and storage CPU.
 `checked_sql_work_plan` shows the last automatic worker plan and its execution counters.
 The outer operation keeps its original VM and time limits across the handoff.
+
+Wide programs with a tight submission allowance can use the SQL wave batch.
+A recursive CTE visits each active rule and relation fold in the original wave order.
+SQLite evaluates the emitted rules, including scalar feedback and builtin lattice merges.
+Native callbacks advance the schedule and build immutable roots from the rows returned by SQL.
+
+A warm replay can reuse a rule result when its preceding wave roots match and its external inputs have no changes.
+Otherwise SQLite evaluates the rule again. This uses fewer submissions and can cost more CPU than maintaining individual support contexts.
+The batch admits literal SQL producers. Other opaque producers and registered opaque lattice reductions keep their existing gates.
+The `sql_wave_batch` explanation reports the chosen path, statement size, VM steps, and rule result reuse.

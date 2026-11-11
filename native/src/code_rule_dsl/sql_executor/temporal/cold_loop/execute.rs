@@ -73,7 +73,7 @@ pub(super) fn run(
     let mut vm_steps = 0u64;
     let result = (|| {
         modules
-            .bind(w.db, ROWS, Arc::new(rows::Rows(arena.clone(), width)))
+            .bind(w.db, ROWS, Arc::new(rows::Rows(arena.clone(), width, None)))
             .map_err(error)?;
         w.db.create_aggregate_function(
             COLLECT,

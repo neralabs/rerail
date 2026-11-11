@@ -120,6 +120,9 @@ fn key(values: impl IntoIterator<Item = Option<i64>>) -> Key {
     tree::key(values.into_iter().collect())
 }
 impl Version {
+    pub fn arity(&self) -> usize {
+        self.schema.columns.len()
+    }
     pub fn same_schema(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.schema, &other.schema) || self.schema == other.schema
     }
