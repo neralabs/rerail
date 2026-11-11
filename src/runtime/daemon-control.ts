@@ -262,7 +262,10 @@ export function nodeExecutable(platform: NodeJS.Platform = process.platform): st
 export { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE };
 /** The lock a daemon start holds, `locks/start.lock` in the Rerail home. */
 const START_LOCK = "start";
-/** In the Rerail home: the folder Rerail before `locks/` held as the start lock, which uninstall removes. */
+/**
+ * In the Rerail home: the folder Rerail before `locks/` held as the start lock. Uninstall keeps it with the home and
+ * names it there as one of Rerail's own entries (`RERAIL_HOME_ENTRIES` in setup-cli.ts).
+ */
 export const START_LOCK_DIR = "start.lock";
 
 const START_TIMEOUT_MS = 15_000;

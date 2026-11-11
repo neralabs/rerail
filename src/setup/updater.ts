@@ -36,7 +36,10 @@ export const DEFAULT_UPDATE_CHANNEL = "latest";
 export { CURRENT_LINK, LAUNCHER_DIR, UPDATE_STATE_FILE, VERSIONS_DIR };
 /** The lock an update holds, `locks/update.lock` in the Rerail home. */
 const UPDATE_LOCK = "update";
-/** In the Rerail home: the folder Rerail before `locks/` held as the update lock, which uninstall removes. */
+/**
+ * In the Rerail home: the folder Rerail before `locks/` held as the update lock. Uninstall keeps it with the home and
+ * names it there as one of Rerail's own entries (`RERAIL_HOME_ENTRIES` in setup-cli.ts).
+ */
 export const UPDATE_LOCK_DIR = "update.lock";
 
 const UPDATE_STATE_VERSION = 1;
