@@ -119,13 +119,36 @@ fn domain_of(name: &str) -> Option<lower::Domain> {
 }
 
 /// `prepared` as facts.
+#[cfg(test)]
 pub(super) fn facts_of(prepared: &Prepared) -> Facts {
     let mut facts = Facts::new();
-    program_facts::write(&mut facts, "front", &prepared.prog);
-    program_facts::write(&mut facts, "lowered", &prepared.lowered.program);
+    for group in groups(prepared) {
+        for (rel, rows) in group {
+            facts.entry(rel).or_default().extend(rows);
+        }
+    }
+    facts
+}
+
+/// `prepared` as facts, a group at a time: each of its programs', then the rest. Made one by one as they are written
+/// (`remember`), so the writer holds one program's facts at a time, not all four's (about 0.47 GB of the Python pack's
+/// peak at once, a row a `Vec` of `Value`s).
+fn groups(prepared: &Prepared) -> impl Iterator<Item = Facts> + '_ {
     // The split too: a function of the lowered program, but about 0.6 s of the Python pack's to make again.
-    program_facts::write(&mut facts, "split_local", &prepared.split.local);
-    program_facts::write(&mut facts, "split_cross", &prepared.split.cross);
+    let programs = [("front", &prepared.prog), ("lowered", &prepared.lowered.program), ("split_local", &prepared.split.local), ("split_cross", &prepared.split.cross)];
+    programs
+        .into_iter()
+        .map(|(p, prog)| {
+            let mut facts = Facts::new();
+            program_facts::write(&mut facts, p, prog);
+            facts
+        })
+        .chain(std::iter::once_with(|| rest_of(prepared)))
+}
+
+/// `prepared`'s facts other than its programs'.
+fn rest_of(prepared: &Prepared) -> Facts {
+    let mut facts = Facts::new();
     let s = |x: &str| Value::Str(x.to_owned());
     let n = |x: usize| Value::Int(x as i64);
     let mut row = |rel: &str, values: Vec<Value>| facts.entry(rel.to_owned()).or_default().push(values);
@@ -461,10 +484,9 @@ pub(super) fn queued(key: &[u8; 32]) -> crate::content_store::write_back::Key {
 /// keeps them. A document's tape is made when its facts are read and the store has lost them.
 pub(super) fn remember(store: &ContentStore, source: SourceId, key: &[u8; 32], prepared: &Prepared) -> StoreResult<Option<Vec<SourceId>>> {
     super::memo::off();
-    let facts = facts_of(prepared);
     let mut documents = Vec::new();
     let mut entry = Vec::new();
-    for part in parts(facts) {
+    for part in groups(prepared).flat_map(parts) {
         let text = program_facts::document(&part, &schema()).map_err(invalid)?;
         let document = super::memo::source(store, &text)?;
         // The facts read off the document are the part (`a_prepared_program_reads_back_from_its_facts_and_its_tape`
@@ -499,11 +521,11 @@ fn dfa_plan() -> FactsPlanSet {
 /// process reads a group's DFA instead of determinizing it. An entry is a tag (1: a DFA follows; 0: the group does
 /// not determinize within the limit) and the DFA's bytes.
 /// Its second field lists the sources of every group read or stored, for the run's manifest: no other root holds them.
-pub(super) struct StoredDfas<'a>(pub(super) &'a ContentStore, pub(super) std::sync::Mutex<Vec<SourceId>>);
+pub(super) struct StoredDfas<'a>(pub(super) &'a ContentStore, pub(super) std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>);
 
 impl crate::code_rule_dsl::text::vocabulary::DfaCache for StoredDfas<'_> {
     fn get(&self, key: &str) -> Option<Option<Vec<u8>>> {
-        let source = self.0.held_source_by_hash(HashKey::sha256(key.as_bytes())).ok()??;
+        let source = super::memo::stored_source(self.0, key).ok()??;
         self.1.lock().expect("the groups' sources").push(source);
         let memo = self.0.facts_memo(FactsMemoKey { source, fact_schema: DFAS, path: DFA_PATH }).ok()?;
         match memo.results.get(&dfa_plan().plans[0])?.entry.split_first() {
@@ -514,14 +536,24 @@ impl crate::code_rule_dsl::text::vocabulary::DfaCache for StoredDfas<'_> {
     }
 
     fn put(&self, key: &str, dfa: Option<&[u8]>) {
-        // A group not kept is compiled again by the next process: nothing to report.
-        let Ok(source) = super::memo::source(self.0, key) else { return };
-        self.1.lock().expect("the groups' sources").push(source);
         let mut entry = vec![u8::from(dfa.is_some())];
         entry.extend_from_slice(dfa.unwrap_or_default());
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, entry.len() as u64);
-        let set = dfa_plan();
-        let _ = self.0.put_facts_memo(FactsMemoKey { source, fact_schema: DFAS, path: DFA_PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry }], &[]);
+        // Stored by the store's writer, behind the run (decision 0104); its source reaches the manifest, queued after.
+        // A group not kept is compiled again by the next process.
+        let (key, sources) = (key.to_owned(), std::sync::Arc::clone(&self.1));
+        self.0.write_back(
+            "a group of automata",
+            entry.len() + key.len(),
+            Vec::new(),
+            Box::new(move |store| {
+                let source = super::memo::source(store, &key)?;
+                let set = dfa_plan();
+                store.put_facts_memo(FactsMemoKey { source, fact_schema: DFAS, path: DFA_PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry: entry.clone() }], &[])?;
+                sources.lock().expect("the groups' sources").push(source);
+                Ok(())
+            }),
+        );
     }
 }
 
@@ -595,7 +627,7 @@ mod tests {
         assert_eq!((&back.split.exports, &back.split.base, &back.split.locations, &back.split.same_doc), (&prepared.split.exports, &prepared.split.base, &prepared.split.locations, &prepared.split.same_doc));
         // Every prepared program the process holds splits back the same: which one is found above varies with the
         // tests that run beside this one.
-        let all: Vec<super::Prepared> = super::super::with_prepared(|kept| kept.values().flatten().cloned().collect());
+        let all: Vec<std::sync::Arc<super::Prepared>> = super::super::with_prepared(|kept| kept.values().flatten().cloned().collect());
         for p in &all {
             let b = super::prepared_of(&super::facts_of(p), p.lowered.dialect).unwrap();
             assert_eq!((&b.split.exports, &b.split.base, &b.split.locations, &b.split.same_doc), (&p.split.exports, &p.split.base, &p.split.locations, &p.split.same_doc));

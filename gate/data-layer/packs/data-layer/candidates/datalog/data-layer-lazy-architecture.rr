@@ -274,6 +274,7 @@ lazy_fnset("function_definition").
 .decl out_scope(d: number)
 .decl rr_agg1(f: node, r: number, r2: number)
 .decl rr_ctx2(f: node, r: number)
+.decl rr_demand_agg_rr_agg1(f: node, r: number)
 .decl syntax_error(d: number)
 .decl tape_line(d: number, l: number, sp: node)
 .decl tape_syntax_error(d: number)
@@ -912,7 +913,7 @@ lazy_reach(r, r) :- lazy_af(r).
 lazy_reach(r, t) :- lazy_reach(r, n), lazy_nd(n, d), lazy_nd(r, d), lazy_edge(n, _, t).
 lazy_foenc(f, r) :- lazy_sym(f, _), inside(f, c, lazy_clsset), lazy_region(c, r).
 rr_ctx2(f, r) :- lazy_foenc(f, r).
-rr_agg1(f, r, r2) :- rr_ctx2(f, r), lazy_foenc(f, r2), r2 < r.
+rr_agg1(f, r, r2) :- rr_demand_agg_rr_agg1(f, r), rr_ctx2(f, r), lazy_foenc(f, r2), r2 < r.
 lazy_foel(f, i, r) :- lazy_foenc(f, r), i = count : { rr_agg1(f, r, _) }.
 lazy_foel(f, i, r) :- lazy_sym(f, _), lazy_region(f, r), i = count : { lazy_foenc(f, _) }.
 lazy_folen(f, n) :- lazy_sym(f, _), n = count : { lazy_foel(f, _, _) }.
@@ -1088,3 +1089,4 @@ violation("data-layer-lazy-architecture", "deleted-sidecar-27", "LA-018", p, l) 
 violation("data-layer-lazy-architecture", "deleted-sidecar-28", "LA-018", p, l) :- deleted_has("deleted-sidecar-28", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-28", d, l2) }.
 violation("data-layer-lazy-architecture", "deleted-sidecar-29", "LA-018", p, l) :- deleted_has("deleted-sidecar-29", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-29", d, l2) }.
 violation("data-layer-lazy-architecture", "deleted-sidecar-30", "LA-018", p, l) :- deleted_has("deleted-sidecar-30", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-30", d, l2) }.
+rr_demand_agg_rr_agg1(f, r) :- lazy_foenc(f, r).

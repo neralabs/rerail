@@ -4,6 +4,7 @@
 .mode steer
 .scope include "**/*"
 #include "tsx/eslint-a-globals.rr"
+#include "layout.rr"
 //   free_ref(r, x), static_prop(m, o, x), callee(c, f), estree_parent(n, p), deparen(e, x)
 
 // ESLint's no-console: any member of the global console that the `allow` list does not name.
@@ -35,5 +36,6 @@ remove_console(m, _) :- callee(c, m), estree_parent(c, s), kind(s, "expression_s
 .decl statement_list(l: node)
 statement_list(l) :- kind(l, k), (k = "program" ; k = "statement_block" ; k = "switch_case" ; k = "switch_default").
 .decl asi_risk(s: node)
-asi_risk(s) :- kind(s, "expression_statement"), token_after(s, t), match("[-\\[(/+`].*", t), !text(t, "++"),
-    !text(t, "--"), token_before(s, b), !text(b, ";"), !text(b, "{"), !text(b, ":").
+asi_risk(s) :- kind(s, "expression_statement"), next_code(s, t), match("(?s)\\s*[-\\[(/+`].*", t),
+    !match("(?s)\\s*(\\+\\+|--).*", t), prev_code(s, b), !match("(?s).*[;{:]\\s*", b).
+layout_at(s) :- callee(c, m), console_use(m), estree_parent(c, s), kind(s, "expression_statement").

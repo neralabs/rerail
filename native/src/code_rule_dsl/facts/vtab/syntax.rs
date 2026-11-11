@@ -121,7 +121,7 @@ impl Projection {
             _ => None,
         });
         let verdict = shape == Shape::T && program.decls.get("syntax_error").is_some_and(|cols| cols.len() == 3);
-        let derived: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.clone()).collect();
+        let derived: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.to_string()).collect();
         let reads = reads.into_iter().filter(|r| !derived.contains(r)).collect();
         Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), ast_patterns: program.ast_patterns.iter().cloned().collect(), text_spans: Some(span_text_demand(program)), long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: partial.collect(), verdict, derived }
     }
@@ -209,7 +209,15 @@ pub(crate) fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::
     const MAX: usize = 3;
     let TextDemand { any, .. } = text_kind_demand(program, matchers);
     let mut by_rule: std::collections::BTreeMap<usize, Vec<usize>> = Default::default();
-    for (r, i) in any {
+    // A twin binds `v` by the rest of its body: an atom whose `text` alone binds `v` (`list_constant(v) :- text(v, s),
+    // glob(…, s)`) is not twinned, and its rule keeps the any-kind projection.
+    let bound = |r: usize, i: usize| {
+        let body = &program.rules[r].body;
+        let Some(Literal::Atom(text)) = body.get(i) else { return false };
+        let Some(Term::Var(v)) = text.args.first() else { return false };
+        body.iter().enumerate().filter(|(j, _)| *j != i).filter_map(|(_, l)| l.atom()).filter(|a| !a.neg && a.rel != "text").any(|a| a.args.iter().any(|t| matches!(t, Term::Var(x) if x == v)))
+    };
+    for (r, i) in any.into_iter().filter(|&(r, i)| bound(r, i)) {
         by_rule.entry(r).or_default().push(i);
     }
     // Each rule's twins follow it, so a rule's place does not depend on what other rules the program holds.
@@ -334,7 +342,7 @@ fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::Program, match
             for (c, t) in rule.head.args.iter().enumerate() {
                 let Term::Var(v) = t else { continue };
                 let kinds = of_var(&columns, &rule.body, v);
-                let entry = columns.entry((rule.head.rel.clone(), c)).or_insert(Some(BTreeSet::new()));
+                let entry = columns.entry((rule.head.rel.to_string(), c)).or_insert(Some(BTreeSet::new()));
                 let joined = match (&*entry, kinds) {
                     (None, _) | (_, None) => None,
                     (Some(a), Some(b)) => Some(a.union(&b).cloned().collect()),
@@ -358,7 +366,7 @@ fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::Program, match
     // Whether `v` is a span (a `span` column binds it): its text is a span's (`text_spans`), not a node's.
     let span = |body: &[Literal], v: &str| {
         body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel != "text").any(|a| {
-            let types = program.decls.get(&a.rel);
+            let types = program.decls.get(a.rel.as_str());
             a.args.iter().enumerate().any(|(c, t)| matches!(t, Term::Var(x) if x == v) && types.and_then(|ts| ts.get(c)).is_some_and(|(_, ty)| ty == "span"))
         })
     };
@@ -446,7 +454,7 @@ fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::Program, match
             }
             let Some(Term::Var(v)) = text.args.first() else {
                 read = None;
-                wide.get_or_insert_with(|| rule.head.rel.clone());
+                wide.get_or_insert_with(|| rule.head.rel.to_string());
                 continue;
             };
             let fixed = of_var(&columns, &rule.body, v);
@@ -459,7 +467,7 @@ fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::Program, match
                         (_, (k, _)) if !k.is_empty() => nodes.kinds.extend(k),
                         (_, (_, f)) if !f.is_empty() => nodes.fields.extend(f),
                         _ => {
-                            wide = Some(format!("{}, reading text({v}, …)", rule.head.rel));
+                            wide = Some(format!("{}, reading text({v}, …)", rule.head.rel).into());
                             read = None
                         }
                     },
@@ -488,7 +496,7 @@ fn span_text_demand(program: &crate::code_rule_dsl::logic::front::Program) -> BT
             for atom in rule.body.iter().filter_map(Literal::atom).filter(|atom| !atom.neg) {
                 for (column, term) in atom.args.iter().enumerate() {
                     if let Term::Var(value) = term {
-                        *vars.entry(value.clone()).or_default() |= columns.get(&(atom.rel.clone(), column)).copied().unwrap_or(0);
+                        *vars.entry(value.clone()).or_default() |= columns.get(&(atom.rel.to_string(), column)).copied().unwrap_or(0);
                     }
                 }
             }
@@ -510,7 +518,7 @@ fn span_text_demand(program: &crate::code_rule_dsl::logic::front::Program) -> BT
                 if let Term::Var(value) = term {
                     let mask = vars.get(value).copied().unwrap_or(0);
                     if mask != 0 {
-                        let entry = columns.entry((rule.head.rel.clone(), column)).or_default();
+                        let entry = columns.entry((rule.head.rel.to_string(), column)).or_default();
                         changed |= *entry != (*entry | mask);
                         *entry |= mask;
                     }
@@ -2203,6 +2211,7 @@ impl Batch {
             spread: !projection.wants("spread"),
             name: !projection.wants("name"),
             literal: !wants_any(&["str", "strprefix", "value", "static_value", "value_type", "text"]),
+            structural: !wants_any(&["structural_before", "structural_after"]),
         };
         c.long_text = projection.long_text.clone();
         c.long_text_any = projection.long_text_any;
@@ -2335,7 +2344,7 @@ impl Batch {
                         .filter_map(|t| crate::code_rule_dsl::language::rule_pattern(crate::code_rule_dsl::language::PatternSource::Plain(t), lang).ok().map(|p| (t.as_str(), p)))
                         .collect()
                 });
-                c.patterns(&p, dialect, lang, compiled, &mut string);
+                c.patterns(&p, d.tape.as_ref().map(|(t, _)| t), dialect, lang, compiled, &mut string);
             }
             if core && guest.is_none() && let Some(x) = &p.extra {
                 lines_of.insert(d.key, Arc::clone(&x.lines));

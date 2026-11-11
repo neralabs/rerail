@@ -30,7 +30,7 @@ pub(crate) use logic::profile::{here as profile_here, span_at as profile_span_at
 /// The profile's SQL hazards, which the content store's connections and writer report (`content_store::hazards`, set as
 /// the library loads; decision 0104).
 pub(crate) mod sql_hazards {
-    pub(crate) use super::logic::profile::{behind_the_run, on, sql_in_wave, wait_in_wave};
+    pub(crate) use super::logic::profile::{behind_the_run, sql_in_wave, strict_statement, strict_on_every_connection, tracing as on, wait_in_wave};
 }
 mod sql_executor;
 mod matcher;

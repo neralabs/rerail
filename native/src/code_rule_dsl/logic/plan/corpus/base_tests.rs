@@ -956,47 +956,32 @@ ops(k, l, i, s) :- op_at(n, i, s), kind(n, k), line(n, l).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `prev_token(n, s)` is W's `follows` at a neighbour, anonymous tokens included (`,` and `import` in
-/// sql-grammar-escape-hatches' usage clauses); `token(p, i, s, start, end)` read at the next position is W's
-/// `precedes` at a neighbour. Tokens the grammar implies are among them, from the gaps.
+/// `prev_token(n, s)` is the text of the child right before n among its parent's stored children, and `token(p, i, s,
+/// start, end)` p's stored children in order. A named-only tape stores no token the grammar implies (RER-131), and
+/// no relation holds one: the call's `(`, `)` and `,`, the `from` and the import list's `,` are in neither. A keyword
+/// some other word of its gap holds is stored where implied too: `from m import (a, b)` makes `import` one.
 #[test]
-fn tokens_are_ws_neighbours() {
+fn tokens_are_the_stored_neighbours() {
     let files = [("i.py", "from m import a, b\nimport x, y.z\nf(a, b, c=1)  # done\n")];
     let dir = corpus("tokens", &files);
-    let kinds = ["identifier", "dotted_name", "keyword_argument"];
-    let tokens = [",", "import", "(", ")", "from"];
-    let facts = |rel: &str, items: &[&str]| items.iter().map(|k| format!("{rel}({k:?}).")).collect::<Vec<_>>().join("\n");
-    let program = format!(
-        r#"
-.decl kinds(k: symbol)
-{}
-.decl tokens(t: symbol)
-{}
-.decl after(k: symbol, t: symbol, l: number, c: number)
-after(k, t, l, c) :- kinds(k), kind(n, k), prev_token(n, t), tokens(t), line(n, l), col(n, c).
-.decl before(k: symbol, t: symbol, l: number, c: number)
-before(k, t, l, c) :- kinds(k), node(_, n, k, s, e), child(p, n, _), token(p, i, _, s, e), j = i + 1, token(p, j, t, _, _), tokens(t),
-    line(n, l), col(n, c).
-.output after, before
-"#,
-        facts("kinds", &kinds),
-        facts("tokens", &tokens)
-    );
-    let got = run(&dir, &program, &["after", "before"]);
-    let (mut after, mut before) = (Vec::new(), Vec::new());
-    for k in kinds {
-        for t in tokens {
-            let regex = format!("^{}$", regex::escape(t));
-            let at = |rule: Value| w_at(rule, &files).into_iter().map(|r| format!("{k}\t{t}\t{}", r.split_once('\t').unwrap().1)).collect::<Vec<_>>();
-            after.extend(at(json!({ "kind": k, "follows": { "stopBy": "neighbor", "regex": regex } })));
-            before.extend(at(json!({ "kind": k, "precedes": { "stopBy": "neighbor", "regex": regex } })));
-        }
+    let program = r#"
+.decl after(k: symbol, t: symbol)
+after(k, t) :- node(_, n, k, _, _), prev_token(n, t).
+.decl at(k: symbol, i: number, t: symbol)
+at(k, i, t) :- node(_, p, k, _, _), token(p, i, t, _, _).
+.output after, at
+"#;
+    let got = run(&dir, program, &["after", "at"]);
+    let rows = |at: usize| got[at].lines().map(str::to_owned).collect::<Vec<_>>();
+    let (after, at) = (rows(0), rows(1));
+    // The stored neighbours: the keyword argument follows `b`, the comment the call's statement.
+    assert!(after.iter().any(|r| r == "keyword_argument\tb"), "{after:?}");
+    assert!(at.iter().any(|r| r == "argument_list\t2\tc=1"), "{at:?}");
+    assert!(at.iter().any(|r| r == "import_from_statement\t1\timport"), "{at:?}");
+    // No implied token, in either relation.
+    for implied in ["(", ")", ",", "from"] {
+        assert!(!after.iter().chain(&at).any(|r| r.ends_with(&format!("\t{implied}"))), "{implied}: {after:?} {at:?}");
     }
-    assert!(after.iter().any(|r| r.starts_with("dotted_name\t,\t")) && after.iter().any(|r| r.starts_with("dotted_name\timport\t")), "{after:?}");
-    // The call's `(` and `)` are implied (a named-only tape leaves them out, RER-131): both sides read them from the
-    // gaps.
-    assert!(after.iter().any(|r| r.starts_with("identifier\t(\t")) && before.iter().any(|r| r.starts_with("keyword_argument\t)\t")), "{after:?} {before:?}");
-    assert_eq!(got, [csv(after), csv(before)]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

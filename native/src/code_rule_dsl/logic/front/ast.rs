@@ -2,8 +2,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use crate::code_rule_dsl::logic::front::name::Name;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Hash)]
 pub(in crate::code_rule_dsl) enum Term {
     Var(String),
     Wild,
@@ -30,9 +31,9 @@ impl Term {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Hash)]
 pub(in crate::code_rule_dsl) struct Atom {
-    pub(in crate::code_rule_dsl) rel: String,
+    pub(in crate::code_rule_dsl) rel: Name,
     pub(in crate::code_rule_dsl) args: Vec<Term>,
     pub(in crate::code_rule_dsl) neg: bool,
     /// A negation held until its relation's `done_` gate passes (magic sets, row 4): not a negative edge.
@@ -50,7 +51,7 @@ impl Atom {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(in crate::code_rule_dsl) enum AggOp {
     Count,
     Min,
@@ -65,7 +66,7 @@ pub(in crate::code_rule_dsl) enum AggOp {
     Join { by: Vec<String>, sep: String },
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Hash)]
 pub(in crate::code_rule_dsl) enum Literal {
     Atom(Atom),
     Cmp { l: Term, op: &'static str, r: Term },
@@ -189,7 +190,7 @@ pub(in crate::code_rule_dsl) fn join<T: fmt::Display>(items: &[T]) -> String {
     items.iter().map(T::to_string).collect::<Vec<_>>().join(", ")
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Hash)]
 pub(in crate::code_rule_dsl) struct Rule {
     pub(in crate::code_rule_dsl) head: Atom,
     pub(in crate::code_rule_dsl) body: Vec<Literal>,

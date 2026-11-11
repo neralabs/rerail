@@ -23,8 +23,9 @@ use tree_sitter::{Language, Node as TsNode, TreeCursor};
 
 /// v9np (decision 0025): structure-only, regular columns, no parent column; 10: supertype
 /// memberships folded into the codes; 14: named-only, the tokens the grammar implies never
-/// written (`tokens::TokenGrammar::stored_children`, RER-131).
-pub(super) const TAPE_FORMAT_VERSION: u32 = 14;
+/// written (`tokens::TokenGrammar::stored_children`, RER-131); 15: a keyword or operator left out
+/// only where its kind always implies it (`tokens::kept`).
+pub(super) const TAPE_FORMAT_VERSION: u32 = 15;
 const TAPE_MAGIC: &[u8; 8] = b"TMPTAP9N";
 /// The image header: magic, language, the three column widths, version, source length and
 /// digest, and five table lengths: nodes, codes, the code table's bytes, aliases, the alias
@@ -771,6 +772,13 @@ pub(in crate::code_rule_dsl) fn checked(budget: &impl Fn() -> bool) -> Result<()
     } else {
         Ok(())
     }
+}
+
+/// The store's identity of a tape (`HashKey::tape_identity`) whose source hashes to `source` and
+/// whose stored bytes are `tape`.
+pub(crate) fn tape_identity(source: &[u8; 32], tape: &[u8]) -> [u8; 32] {
+    let key = crate::content_store::HashKey::tape_identity(crate::content_store::HashKey::from_sha256_digest(*source), tape);
+    key.sha256_bytes().expect("a SHA-256 identity")
 }
 
 fn source_digest(source: &str, budget: &impl Fn() -> bool) -> Result<[u8; 32], String> {
@@ -1961,17 +1969,23 @@ impl TapeDoc {
         self.data.len()
     }
 
-    /// The SHA-256 of this document's image as stored (the store's key for it), computed once.
+    /// This document's tape identity, the store's key for it (`HashKey::tape_identity`: its image
+    /// as stored and its source's hash), computed once.
     pub(super) fn tape_digest(&self) -> Result<[u8; 32], String> {
         if let Some(digest) = self.digest.get() {
             return Ok(*digest);
         }
-        let digest = <[u8; 32]>::from(Sha256::digest(self.image.to_bytes()?));
+        let digest = tape_identity(&self.source_digest, &self.image.to_bytes()?);
         Ok(*self.digest.get_or_init(|| digest))
     }
 
-    /// This document's tape digest, known where it was restored from stored bytes (the SHA-256 of
-    /// those bytes, the residency's key): admission then reads it from the store, not from here.
+    /// The SHA-256 of this document's source.
+    pub(crate) fn source_digest(&self) -> &[u8; 32] {
+        &self.source_digest
+    }
+
+    /// This document's tape identity, known where it was restored from stored bytes
+    /// (`tape_identity`, the residency's key): admission then reads it from the store.
     pub(crate) fn stored_as(self, digest: [u8; 32]) -> Self {
         let _ = self.digest.set(digest);
         self

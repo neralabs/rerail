@@ -9,7 +9,7 @@ use super::{
     CODEC_ZSTD, HashKey, OverlayFilePublication, SourceId, StoreError, StoreResult, TapeId,
     WorkspaceId,
 };
-use rusqlite::Transaction;
+use rusqlite::Connection;
 use rusqlite::types::{ToSqlOutput, ValueRef};
 use std::collections::BTreeSet;
 
@@ -165,7 +165,7 @@ pub(super) fn prepare_relationship_pass<'a>(
 }
 
 pub(super) fn relationship_references_current(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     rows: &[(
         i64,
         i64,
@@ -209,7 +209,7 @@ pub(super) fn relationship_references_current(
 }
 
 pub(super) fn execute_relationship_pass(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     pass: &PreparedRelationshipPass<'_>,
 ) -> StoreResult<()> {
     for statement in &pass.statements {

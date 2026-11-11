@@ -1539,13 +1539,13 @@ fn converted_programs_hold_only_what_violation_reaches() {
         let prog = crate::code_rule_dsl::logic::rr::parse(&c.program).unwrap();
         let (mut reached, mut todo) = (BTreeSet::new(), vec!["violation".to_owned()]);
         while let Some(rel) = todo.pop() {
-            if reached.insert(rel.clone()) {
-                todo.extend(prog.rules.iter().filter(|r| r.head.rel == rel).flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())));
+            if reached.insert(rel.to_string()) {
+                todo.extend(prog.rules.iter().filter(|r| r.head.rel == rel).flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string())));
             }
         }
         let id = path.display();
         for r in &prog.rules {
-            assert!(reached.contains(&r.head.rel), "{id}: {} is not reached", r.head.rel);
+            assert!(reached.contains(r.head.rel.as_str()), "{id}: {} is not reached", r.head.rel);
         }
         for rel in prog.decls.keys().chain(&prog.inputs) {
             assert!(reached.contains(rel), "{id}: {rel} is declared and not reached");

@@ -44,6 +44,7 @@
           },
           "rule": {
             "regex": "(?P<COMMA>,)\\z",
+            "stored": "a trailing comma ending a statement: stored",
             "not": {
               "kind": "comment"
             },
@@ -148,6 +149,7 @@
           },
           "rule": {
             "regex": "^,$",
+            "stored": "a trailing comma in targets: stored; an implied one has its own clause",
             "matches": "ends-line",
             "inside": {
               "kind": "pattern_list",

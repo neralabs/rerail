@@ -28,6 +28,7 @@
 #include "tsx/eslint-a-functions.rr"
 #include "tsx/eslint-a-expressions.rr"
 #include "tsx/eslint-b-scope.rr"
+#include "layout.rr"
 
 // ---- names ---------------------------------------------------------------------------------------------------------
 // id_value(n, x): an identifier may spell its letters as escapes, and ESTree's `name` is the decoded name, which
@@ -151,8 +152,10 @@ ts_expression("type_assertion").
 // ---- adjacent tokens -----------------------------------------------------------------------------------------------
 // A fix that swaps `Math.pow(a, b)` for `a**b` can glue its first token to the one before: `a+Math.pow(++b, c)`
 // must become `a+ ++b**c`, `typeof Math.pow(a, b)` stays apart anyway. touching(t, n): nothing between them.
-.decl touching(t: span, n: node)
-touching(t, n) :- token_before(n, t), line(t, l), line(n, l), col(t, a), text(t, s), col(n, a + strlen(s)).
+// touching(n, x): the code before n touches it; x is that code (layout.rr's touch_before, for the nodes the
+// including rule puts in layout_at).
+.decl touching(n: node, x: symbol)
+touching(n, x) :- touch_before(n, x).
 // cannot_touch(a, b): ESLint's canTokensBeAdjacent, for the cases that arise: two words (names, keywords,
 // numbers), or `+` / `-` before a token that starts with the same sign.
 .decl cannot_touch(a: symbol, b: symbol)

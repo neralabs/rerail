@@ -34,6 +34,8 @@ unreachable_nest_k("function_definition"). unreachable_nest_k("class_definition"
 .decl rr_agg1(c: symbol, o: symbol, x: node, y: node)
 .decl rr_agg3(j: number, n: symbol, o: symbol)
 .decl rr_ctx2(o: symbol, x: node)
+.decl rr_demand_agg_rr_agg1(o: symbol, x: node)
+.decl rr_demand_agg_rr_agg3(n: symbol, o: symbol)
 .decl source(d: number, sp: node)
 .decl syntax_error(d: number)
 .decl tape_line(d: number, l: number, sp: node)
@@ -377,14 +379,14 @@ unreachable_base_edge(id, b, s) :- unreachable_bname(id, _, bn, s), !unreachable
 unreachable_reach(id, id) :- unreachable_decl(id, _, _, _, "class", _, _).
 unreachable_reach(o, b) :- unreachable_reach(o, x), unreachable_base_edge(x, b, _).
 rr_ctx2(o, x) :- unreachable_reach(o, b), unreachable_decl_node(x, b).
-rr_agg1(c, o, x, y) :- rr_ctx2(o, x), unreachable_reach(o, c), unreachable_decl_node(y, c), node_order(y, rr_ord0), node_order(x, rr_ord1), rr_ord0 <= rr_ord1.
+rr_agg1(c, o, x, y) :- rr_demand_agg_rr_agg1(o, x), rr_ctx2(o, x), unreachable_reach(o, c), unreachable_decl_node(y, c), node_order(y, rr_ord0), node_order(x, rr_ord1), rr_ord0 <= rr_ord1.
 unreachable_hops(o, k) :- unreachable_reach(o, b), unreachable_decl_node(x, b), k = count : { rr_agg1(_, o, x, _) }.
 unreachable_hier_l(id, id, 0) :- unreachable_decl(id, _, _, _, "class", _, _).
 unreachable_hier_l(o, b, j) :- unreachable_hier_l(o, x, i), unreachable_base_edge(x, b, _), unreachable_hops(o, j), j = @add(i, 1).
 unreachable_hier_d(o, b, k) :- unreachable_hier_l(o, b, _), k = min j : { unreachable_hier_l(o, b, j) }.
 unreachable_property(x) :- unreachable_deco(x, n), (suffix("property", n) ; suffix(".setter", n) ; suffix(".deleter", n)).
 unreachable_pub(c, n, id) :- unreachable_decl(c, _, _, cn, _, cm, _), unreachable_decl(id, x, _, n, "method", cm, _), unreachable_decl_class(id, cn), !prefix("_", n), !unreachable_excluded(n), !unreachable_property(x).
-rr_agg3(j, n, o) :- unreachable_hier_d(o, c2, j), unreachable_pub(c2, n, _).
+rr_agg3(j, n, o) :- rr_demand_agg_rr_agg3(n, o), unreachable_hier_d(o, c2, j), unreachable_pub(c2, n, _).
 unreachable_pdist(o, n, k) :- unreachable_hier_d(o, c, _), unreachable_pub(c, n, _), k = min j : { rr_agg3(j, n, o) }.
 unreachable_next_c(x, n, k, y, ord) :- unreachable_pdist(x, n, k), k > 0, unreachable_base_edge(x, y, ord), rr_t4 = @sub(k, 1), unreachable_pdist(y, n, rr_t4).
 unreachable_next_min(x, n, k, m) :- unreachable_next_c(x, n, k, _, _), m = min q : { unreachable_next_c(x, n, k, _, q) }.
@@ -540,3 +542,5 @@ unreachable_category(id, x, d, "high_confidence_other_classes") :- unreachable_h
 unreachable_shown(d) :- unreachable_doc(d, _, _), option_on("oracleAnalyzer").
 unreachable_shown(d) :- unreachable_doc(d, p, _), !option_on("oracleAnalyzer"), !prefix("impl/browser/", p).
 violation("data-layer-internal-dead-code", "unreachable-internal-symbols", c, p, l) :- unreachable_category(_, x, d, c), unreachable_shown(d), doc(d, p, _), line(x, l).
+rr_demand_agg_rr_agg1(o, x) :- unreachable_reach(o, b), unreachable_decl_node(x, b).
+rr_demand_agg_rr_agg3(n, o) :- unreachable_hier_d(o, c, _), unreachable_pub(c, n, _).

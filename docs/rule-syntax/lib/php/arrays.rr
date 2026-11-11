@@ -34,8 +34,11 @@ php_spread_item(e, l) :- kind(e, "array_element_initializer"), child(e, u, 0), k
 // php_written_key(e, k): e has `key => value` with key value k; php_numbered(a, e): e takes the next int key
 // (no key, or an int key inside a literal spread).
 .decl php_written_key(e: node, k: symbol)
-php_written_key(e, k) :- kind(e, "array_element_initializer"), op(e, "=>"), child(e, x, 0), php_value(x, t, v),
-    php_key_of(t, v, k).
+php_written_key(e, k) :- php_keyed(e), child(e, x, 0), php_value(x, t, v), php_key_of(t, v, k).
+// php_keyed(e): e is `key => value`. Its `=>` is the grammar's own, not a token on the tape: the element has two
+// named children, key and value (`&$v` is one by_ref node, `...$xs` one variadic_unpacking).
+.decl php_keyed(e: node)
+php_keyed(e) :- kind(e, "array_element_initializer"), child(e, _, 1).
 .decl php_key_of(t: symbol, v: symbol, k: symbol)
 php_key_of("int", v, cat("i:", v)) :- php_value(_, "int", v).
 php_key_of("string", v, cat("i:", v)) :- php_value(_, "string", v), match("0|-?[1-9][0-9]*", v).
@@ -45,7 +48,7 @@ php_key_of("float", v, cat("i:", w)) :- php_value(_, "float", v), match("(?<w>-?
 php_key_of("float", v, "i:0") :- php_value(_, "float", v), match("-?0*(\\.[0-9]*)?", v).  // -0.5 is key 0
 
 .decl php_numbered(a: node, e: node)
-php_numbered(a, e) :- php_item(a, e), !op(e, "=>").
+php_numbered(a, e) :- php_item(a, e), !php_keyed(e).
 php_numbered(a, e) :- php_item(a, e), child(a, s, _), php_spread_item(s, _), within(e, s), php_written_key(e, k),
     prefix("i:", k).
 .decl php_fixed(a: node, e: node, k: symbol)  // e keeps its written key in a
@@ -56,7 +59,7 @@ php_fixed(a, e, k) :- php_item(a, e), php_written_key(e, k), !php_numbered(a, e)
 php_blocks(a, s) :- kind(a, "array_creation_expression"), child(a, s, _), php_spread_item(s, l),
     !kind(l, "array_creation_expression").
 php_blocks(a, b) :- php_blocks(l, b), child(a, sp, _), php_spread_item(sp, l).
-php_blocks(a, e) :- php_item(a, e), op(e, "=>"), !php_written_key(e, _).  // $k, 1e3: a key we cannot cast
+php_blocks(a, e) :- php_item(a, e), php_keyed(e), !php_written_key(e, _).  // $k, 1e3: a key we cannot cast
 php_blocks(a, e) :- php_fixed(a, e, k), match("i:-?[0-9]{10,}", k).
 
 .decl php_at(e: node, o: number)  // source offset, for "before"

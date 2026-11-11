@@ -14,7 +14,7 @@ use super::{
 };
 use rayon::prelude::*;
 use rusqlite::limits::Limit;
-use rusqlite::{Connection, Transaction, TransactionBehavior, params};
+use rusqlite::{Connection, TransactionBehavior, params};
 #[cfg(any(test, feature = "test-hooks"))]
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -122,10 +122,11 @@ impl ContentStore {
                         ));
                     }
                     validate_tape_payload(publication.tape)?;
+                    let source = HashKey::sha256(publication.source);
                     Ok((
                         publication,
-                        HashKey::sha256(publication.source),
-                        publication.tape.map(|tape| HashKey::sha256(tape.bytes)),
+                        source,
+                        publication.tape.map(|tape| HashKey::tape_identity(source, tape.bytes)),
                     ))
                 })
                 .collect::<StoreResult<Vec<_>>>()
@@ -147,7 +148,7 @@ impl ContentStore {
                 .lock()
                 .expect("content store connection unavailable");
             let transaction =
-                connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
+                super::connection::begin(&mut connection, TransactionBehavior::Deferred)?;
             let existing = stored_object_identities(&transaction, &identities)?;
             let path_ids = stored_path_ids(&transaction, &path_hashes)?;
             let interned = resolve_publication_identities(&transaction, &candidate_identities)?;
@@ -275,7 +276,7 @@ impl ContentStore {
                         .lock()
                         .expect("content store connection unavailable");
                     let transaction =
-                        connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                        super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
                     #[cfg(any(test, feature = "test-hooks"))]
                     let _write_lock = super::WriteLockSection::enter();
                     let started = Instant::now();
@@ -310,7 +311,7 @@ impl ContentStore {
                         .lock()
                         .expect("content store connection unavailable");
                     let transaction =
-                        connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
+                        super::connection::begin(&mut connection, TransactionBehavior::Deferred)?;
                     let stored_objects =
                         stored_object_identities(&transaction, &corrected_identities)?;
                     let path_ids = stored_path_ids(&transaction, &path_hashes)?;
@@ -399,7 +400,7 @@ impl ContentStore {
                 .lock()
                 .expect("content store connection unavailable");
             let transaction =
-                connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
             #[cfg(any(test, feature = "test-hooks"))]
             let _write_lock = super::WriteLockSection::enter();
             let transaction_started = Instant::now();
@@ -639,7 +640,7 @@ fn prepare_object_pass(
                     payload.documents.iter().zip(frames).enumerate()
                 {
                     let document_source = HashKey::sha256(document.source);
-                    let document_tape = HashKey::sha256(document.tape);
+                    let document_tape = HashKey::tape_identity(document_source, document.tape);
                     hashes.insert(document_source);
                     hashes.insert(document_tape);
                     source_rows.push((
@@ -875,7 +876,7 @@ fn prepare_object_pass(
 }
 
 fn execute_object_pass(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     pass: &PreparedObjectPass,
 ) -> StoreResult<usize> {
     let mut statements = 0;

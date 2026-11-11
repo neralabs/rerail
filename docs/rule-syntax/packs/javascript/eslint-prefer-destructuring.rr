@@ -38,7 +38,7 @@ member_read(m) :- (kind(m, "member_expression") ; kind(m, "subscript_expression"
 .decl private_read(m: node)  // this.#x
 private_read(m) :- field(m, "property", p), kind(p, "private_property_identifier").
 .decl using(n: node)
-using(n) :- child(d, n, _), first_token(d, t), (text(t, "using") ; text(t, "await")).
+using(n) :- child(d, n, _), kind(d, "using_declaration").
 // index_read(m): `a[0]`, `a[1.0]`: an integer index (Number.isInteger of the literal's value).
 .decl index_read(m: node)
 index_read(m) :- kind(m, "subscript_expression"), field(m, "index", i), deparen(i, x), number_lit(x), value(x, v),

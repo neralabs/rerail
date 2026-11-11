@@ -67,7 +67,7 @@ fn recursive(program: &Program) -> Vec<BTreeSet<String>> {
     sccs.into_iter()
         .filter(|scc| {
             scc.len() > 1
-                || program.rules.iter().any(|r| scc.contains(&r.head.rel) && r.body.iter().any(|l| matches!(l, Literal::Atom(a) if scc.contains(&a.rel))))
+                || program.rules.iter().any(|r| scc.contains(r.head.rel.as_str()) && r.body.iter().any(|l| matches!(l, Literal::Atom(a) if scc.contains(a.rel.as_str()))))
         })
         .collect()
 }
@@ -1776,8 +1776,8 @@ pub(in crate::code_rule_dsl) fn run(
     };
     let min_rows: usize = std::env::var("RERAIL_SPIKE_RECURSIVE_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(1000);
     for scc in recursive(program) {
-        let rules: Vec<&front::Rule> = program.rules.iter().filter(|r| scc.contains(&r.head.rel)).collect();
-        let reads: BTreeSet<String> = rules.iter().flat_map(|r| &r.body).filter_map(|l| if let Literal::Atom(a) = l { Some(a.rel.clone()) } else { None }).filter(|r| !scc.contains(r)).collect();
+        let rules: Vec<&front::Rule> = program.rules.iter().filter(|r| scc.contains(r.head.rel.as_str())).collect();
+        let reads: BTreeSet<String> = rules.iter().flat_map(|r| &r.body).filter_map(|l| if let Literal::Atom(a) = l { Some(a.rel.to_string()) } else { None }).filter(|r| !scc.contains(r.as_str())).collect();
         let facts = |rel: &str| -> Option<Rows> {
             program.facts.get(rel).map(|rows| rows.iter().map(|r| r.iter().map(|v| match v { front::Value::Int(i) => *i, front::Value::Str(_) => i64::MIN }).collect()).collect())
         };

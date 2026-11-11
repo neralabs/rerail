@@ -661,6 +661,11 @@ impl Scoreboard {
         });
     }
 
+    /// `f` of `lane`'s unit now (its jobs queued and running), read under the board's lock.
+    pub fn with_units<R>(&self, lane: Lane, f: impl FnOnce(&Unit) -> R) -> R {
+        self.with(|s| f(&s.units[lane.index()]))
+    }
+
     /// The estimated seconds not yet done, per lane.
     pub fn outstanding(&self) -> [f64; 4] {
         self.with(|s| std::array::from_fn(|i| s.units[i].outstanding))

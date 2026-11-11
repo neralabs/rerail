@@ -5,6 +5,7 @@
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
 #include "tsx/eslint-a-common.rr"
+#include "layout.rr"
 //   deparen(e, x)
 
 // typescript-eslint's no-confusing-non-null-assertion: an assignment or comparison whose left side ends in a
@@ -20,8 +21,10 @@
     suppress eslint "@typescript-eslint/no-confusing-non-null-assertion"
     suppress oxlint "no-confusing-non-null-assertion"
     fix wrap_left "Wrap the left-hand side in parentheses"
-no_confusing_non_null_assertion(n, id, m) :- confusing(n, l, o), last_token(l, t), text(t, "!"),
-    token_after(l, u), !text(u, ")"), says(o, id, m).
+// The left side ends in `!` (an assertion, or one ending it), and the next code is not the `)` that closes it.
+no_confusing_non_null_assertion(n, id, m) :- confusing(n, l, o), text(l, x), match("(?s).*!", x),
+    next_code(l, u), !match("(?s)\\s*\\).*", u), says(o, id, m).
+layout_at(l) :- confusing(_, l, _).
 wrap_left(n, _, _) :- confusing(n, l, _) => insert_before(l, `(`), insert_after(l, `)`).
 
 // confusing(n, l, o): n is `l o …` with one of the operators; l is ESTree's left, without its parentheses.

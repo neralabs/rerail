@@ -532,8 +532,9 @@ fn shortlex_min_orders_symbols_by_length_then_bytes() {
     let dir = std::env::temp_dir().join(format!("rerail-shortlex-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let _ = std::fs::remove_file(dir.join("atoms.sqlite"));
-    let mut db = rusqlite::Connection::open(dir.join("atoms.sqlite")).unwrap();
-    let atoms = crate::content_store::atoms::Atoms::install(&mut db).unwrap();
+    // A store's atoms (RER-131: an arena belongs to a store of one identity).
+    let store = crate::content_store::ContentStore::open(&dir.join("atoms.sqlite")).unwrap();
+    let atoms = store.atoms_handle();
     let s = atoms.intern_all(&["b.c", "zz", "ab", "é"]).unwrap();
     let (bc, zz, ab, e) = (i64::from(s[0]), i64::from(s[1]), i64::from(s[2]), i64::from(s[3]));
     let l = super::ShortlexMin(atoms);
@@ -544,5 +545,8 @@ fn shortlex_min_orders_symbols_by_length_then_bytes() {
     assert_eq!(l.lub(ab, TOP), TOP);
     assert_eq!(l.lub(ab, i64::from(u32::MAX)), TOP, "an atom not held");
     assert!(l.finite());
+    // The store closes (and flushes its atoms) before its folder goes.
+    drop(l);
+    drop(store);
     std::fs::remove_dir_all(&dir).unwrap();
 }

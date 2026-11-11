@@ -154,9 +154,9 @@ warm and after an edit), CPU (user + sys, with the load) and the pins of `facts_
 |---|---|---|
 | 1 | The tapes as the two rules above, for a run's files and its guests; contents by digest; the tape and source writes are the writer's | **built** (below): phase 1 loads every source file by its key; no tape or source statement of a file or a guest among the hazards, and the 4.2 s wait is gone |
 | 2 | The memo's entries read before the first wave; a lookup writes nothing | **built**: no memo statement among the hazards of a cold run or of a run after an edit (below) |
-| 3 | The constants, the statistics and the choices read before the first wave, written by the writer | no store statement among the hazards |
+| 3 | The constants, the statistics and the choices read before the first wave, written by the writer | **built** (below): the 1-file run sends no statement inside a wave |
 | 4 | A program's stated facts and `rdl_int` bound in the engine, not loaded through SQL tables; inputs read from where they are held | **built**: on the slice, one statement is left on the run's connection (below) |
-| 5 | A test runs a small corpus with the profile on and fails on any hazard | the test passes with none |
+| 5 | A test runs a small corpus with the profile on and fails on any hazard | **built** as a mode (below): `RERAIL_SQL_STRICT=1` ends the run at the first hazard |
 
 **Step 1, as built (the reads and writes).** A wave runs no tape or source SQL:
 
@@ -281,6 +281,38 @@ one rule run in SQLite, to one `PRAGMA` on the first run of a guests' connection
 How relations are stored and read back is shared work. rr-align's frames (one stored form, each
 relation by its identity, written only by the writer) are that form. As each of the stores above
 moves onto it, its hazards here go with it. Nothing on this list adds a store or a read of its own.
+
+**Step 5, as built: the strict mode.** With `RERAIL_SQL_STRICT=1`, every connection the process
+opens is traced (`sqlite3_auto_extension`). A statement ends the process at once, naming the
+statement, its thread, its span and its stack, unless it is:
+
+- sent by a thread that works behind the run (the store's writer, the observer's writer), or
+- a read (`SELECT`, `PRAGMA`, …) while no wave is under way: a run reads before its first wave.
+  A process may hold several runs (phase 0's include graphs, then the run), and each one reads
+  before its own waves.
+
+A wave's wait for the writer ends it too. Every benchmark run sets it.
+
+**Step 3, as built.** Under the strict mode, the 1-file run (cold store) found these, in order.
+Each is now read before the first wave and served from memory, or queued to a writer:
+
+| What a wave sent | Now |
+|---|---|
+| The observer's schema, epoch and record reads | One read when it opens; its writes go to a writer thread of its own |
+| The store's creation (`BEGIN EXCLUSIVE`), the schema check's in-memory `CREATE` | On a writer's thread, before anything reads the store |
+| A new tape and its source; the prepared and combined programs' sources; the choices' source | Queued to the store's writer; their ids reach the manifest through the late sources |
+| The atoms' key (`BEGIN IMMEDIATE`) | Made in the writer's transaction, when it appends atoms |
+| `PRAGMA temp_store`, the identity read, the cost samples | Before the first wave; the identity once a file |
+| The planning choices | All of the prepared program's read once, before the first wave |
+| The cone's and the kept strata's frames | Every frame read once a process, before the first wave; the queued and written frames update that copy |
+| A loaded file's memo, source and tape lookups | None: a file a load finds is new to the run, its source and tape written behind it |
+| The atoms' lookups, ids and flushes | The run holds the atoms' lease to its end. A store's atoms of up to 64 MB of text are read whole before the first wave (the full corpus's are about 21 MB, 0049); then a string not in memory is new, and every id's string is held. A larger store reads by its key as 0111 has it, which the strict mode reports. A flush that falls due is queued to the writer |
+| A gate's `SELECT 1 FROM main.done_N` | Read from the round's held source |
+| 9 strata planned in SQL (`rr_agg` with aggregate demand) | Native: the helpers' columns are typed again once the library's declarations are known |
+
+On the 1-file run, cold and warm (a second run on the same store): every phase's statement count
+is 0, where `local` had 1 and `cross` had 7. Cold, 353 G instructions retired, against 390 G
+before; warm, 72 G.
 
 ## What is checked
 

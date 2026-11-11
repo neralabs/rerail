@@ -217,6 +217,7 @@ pub(crate) struct Families {
     pub parses: Parses,
 }
 
+
 impl Families {
     /// One push of `scope`'s root `new`: observe it, propagate every rebound name through the
     /// derivations that read it, then create the four derivations of each new path with a tape
@@ -400,10 +401,12 @@ impl Families {
         let lines = Arc::new(LineTable::new(&source, Terminators::of(language)));
         let doc = crate::code_rule_dsl::prof::time("push.restore", || TapeDoc::restore_with_lines(source, grammar, &image, Arc::clone(&lines), &|| false))
             .map_err(StoreError::Invalid)?;
-        Ok(Some((Sha256::digest(&bytes).into(), Tape { id, doc, lines })))
+        let identity = crate::code_rule_dsl::tape::tape_identity(doc.source_digest(), &bytes);
+        Ok(Some((identity, Tape { id, doc: doc.stored_as(identity), lines })))
     }
 
-    /// The stored tape `id` of source `source_id`, decoded, and its canonical hash.
+    /// The stored tape `id` of source `source_id`, decoded, and its identity
+    /// (`HashKey::tape_identity`).
     fn decode(
         &mut self,
         graph: &(impl Graph + ?Sized),
@@ -426,8 +429,8 @@ impl Families {
         let lines = Arc::new(LineTable::new(&source, Terminators::of(language)));
         let doc = TapeDoc::restore_with_lines(source, grammar, &image, Arc::clone(&lines), &|| false)
             .map_err(StoreError::Invalid)?;
-        let digest: [u8; 32] = Sha256::digest(&bytes[..]).into();
-        Ok(Some((digest, Tape { id, doc: doc.stored_as(digest), lines })))
+        let identity = crate::code_rule_dsl::tape::tape_identity(doc.source_digest(), &bytes);
+        Ok(Some((identity, Tape { id, doc: doc.stored_as(identity), lines })))
     }
 
     /// The tape `read` names, for one of its readers: taken from the tape wave, else decoded from

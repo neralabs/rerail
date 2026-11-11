@@ -3553,6 +3553,27 @@ The three tests are ignored with this item: `t_programs_plan_and_run_like_t`,
 **Closure:** decide whether the port keeps T's estimates where T's plans are the test (and the new estimate only
 where T has no plan), or takes the new estimate and records new goldens. Then stop ignoring the tests.
 
+**Closed (2026-11-11): the new estimate, with goldens of plans measured to do no more work.** The user's call was
+the new estimate, on condition that the new plans are shown to be better, not just recorded. Measured with
+`o148_plans_and_their_work` (each statement's SQLite VM steps, deterministic) on a build at 2ab61d7b4's parent,
+whose plans are T's goldens exactly, against the hub:
+
+| Program | VM steps, T's plans | VM steps, the new plans | |
+|---|---|---|---|
+| `workload` | 55.75 M | 55.37 M | 0.993x |
+| `workload_demand` | 5.68 M | 5.46 M | 0.962x |
+| `calls` | 10.91 M | 10.38 M | 0.951x |
+
+Every output equals T's in both. By head, the plans that changed order do no more work: `classmeth` 82 → 35,
+`pv` 527 k → 514 k, `attr_open` 21.6 k → 20.2 k, `vopen` 1.71 M → 1.25 M, `returns` 1.07 M → 0.70 M, `lookup`
+(demand) 1.72 M → 1.51 M; the largest increase is `decl` +0.7% (3,070 → 3,093). On O125 steps 1–8 (the native engine,
+the estimate switched alone): join work 0.94x on the full runs and 0.999x on the session steps, instructions retired
+within ±1% across three rounds (the user CPU moved with the machine's load, 36–79). `keeps`'s copy-pricing test
+flipped because the new estimate gets its case right from the start: by the test's own selectivities the copy is
+about 66 k rows against 18 k stored, and `ctx` now stays stored without needing the observed side (the test says
+so; `the_side_that_ran_is_believed` keeps `weigh`'s correction covered). The three tests run again; the goldens
+are the new plans; `scripts/profiling/o148/compare.py` compares two builds' measurements.
+
 ## O-wave-b602-nosec. The wave misses B602 on a line whose `# nosec` names another code
 
 **Seen (2026-11-10).** `the_findings_are_ws_violations` had not run on any worktree for a while: the bandit and
@@ -3565,3 +3586,16 @@ blessed `wave.rir` (B403–B413 imports and five ruff rules), and 140 families c
 wave drops B602 for the comment, or the clause's lowering misses this call. The test is ignored with this item.
 
 **Closure:** the wave reports B602 on that line, or the difference is shown to be W's, and the test runs again.
+
+## O-p0-stats-flake. Phase 0 sometimes finds no statistics for `p0_file_t_shape` under parallel tests
+
+Under the test harness's parallel threads, `corpus::base_tests` fails intermittently with `phase 0: no
+statistics for p0_file_t_shape.c0`. Each time it is a different test (`fstrings_are_ws_python_fstring_trees`,
+`match_group_joined_on_its_match_column`, `a_lines_regex_is_src_line_text_and_match`, and others). It happened in
+8 of 20 runs on the pre-merge hub engine, with or without strands (decision 0113), and never with
+`--test-threads=1`. The failing model is built in `make_plan` from the caller's given statistics, which have
+neither the relation's columns nor a lazy entry. The run comes through `cone_rounds` on a pool thread
+(`maintained::run`). So something process-wide is suspected, shared between concurrent runs: a store keyed by
+connection address or by path (`""` for in-memory databases). Not yet traced.
+
+**Closure:** the shared state is found and keyed per run, and `base_tests` passes 20 of 20 in parallel.

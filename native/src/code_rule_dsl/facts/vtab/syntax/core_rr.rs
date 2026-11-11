@@ -585,6 +585,8 @@ pub(super) struct CoreRows {
     last_token: Vec<[i64; 2]>,
     token_before: Vec<[i64; 2]>,
     token_after: Vec<[i64; 2]>,
+    structural_before: Vec<[i64; 2]>,
+    structural_after: Vec<[i64; 2]>,
     tree_digest: Vec<[i64; 2]>,
     /// `def_digest(n, h)`: each definition unit's own-content hash (`digests`).
     def_digest: Vec<[i64; 2]>,
@@ -604,6 +606,8 @@ pub(super) struct Skip {
     pub(super) name: bool,
     /// `str`, `strprefix`, `value`, `static_value`, `value_type` (and `text` not read: a prefix makes a node token-like).
     pub(super) literal: bool,
+    /// `structural_before`, `structural_after`.
+    pub(super) structural: bool,
 }
 
 /// Every match of `re` in `text`, each named group (and the whole match, group 0) that takes part: (match, group,
@@ -639,15 +643,11 @@ impl CoreRows {
         let kind = dialect.name(f, id);
         let text = f.text(id);
         let children = f.children(id);
-        // `op`: every anonymous child, those the grammar implies among them (from the gaps, `tree::parts`); `op_at`:
-        // those that are no punctuation, in order, Python's two-word operators as one ("not in", "is not"), which
-        // `op` has too.
+        // `op`: every anonymous child the tape stores (none the grammar implies); `op_at`: those that are no
+        // punctuation, in order, Python's two-word operators as one ("not in", "is not"), which `op` has too.
         let mut ops: Vec<String> = Vec::new();
-        for part in (!self.skip.ops).then(|| super::tree::parts(f, dialect, id)).into_iter().flatten() {
-            if part.child.is_some_and(|c| f.named(c)) {
-                continue;
-            }
-            let t = part.child.map_or(part.text, |c| dialect.name(f, c));
+        for &c in children.iter().filter(|&&c| !self.skip.ops && !f.named(c)) {
+            let t = dialect.name(f, c);
             self.op.push([n, string(t) as i64]);
             if !is_punct(t) {
                 let two = dialect.family == Family::Python && matches!((ops.last().map(String::as_str), t), (Some("not"), "in") | (Some("is"), "not"));
@@ -661,6 +661,28 @@ impl CoreRows {
             self.op_at.push([n, i as i64, string(t) as i64]);
             if t.contains(' ') {
                 self.op.push([n, string(t) as i64]);
+            }
+        }
+        // `structural_before`, `structural_after`: the source between each stored child and its
+        // neighbours (the sibling before or after it, else the parent's edge); a root's, between
+        // it and the source's edges.
+        if !self.skip.structural {
+            let (start, end) = (f.start[id as usize], f.end[id as usize]);
+            let between = |a: u32, b: u32| if a < b { &f.source[a as usize..b as usize] } else { "" };
+            if f.parent(id).is_none() {
+                self.structural_before.push([n, string(between(0, start)) as i64]);
+                self.structural_after.push([n, string(between(end, f.source.len() as u32)) as i64]);
+            }
+            for (k, &c) in children.iter().enumerate() {
+                let local_c = p.local[c as usize];
+                if local_c == crate::code_rule_dsl::facts::core::NONE {
+                    continue;
+                }
+                let a = if k == 0 { start } else { f.end[children[k - 1] as usize] };
+                let b = children.get(k + 1).map_or(end, |&d| f.start[d as usize]);
+                let c_global = p.global(local_c);
+                self.structural_before.push([c_global, string(between(a, f.start[c as usize])) as i64]);
+                self.structural_after.push([c_global, string(between(f.end[c as usize], b)) as i64]);
             }
         }
         let mut prev = None;
@@ -824,7 +846,7 @@ impl CoreRows {
     /// `ast_match(p, n, g, c)`: AST pattern `p` (``n ~ `p` ``, `rr::lower`) matches node `n`, and its metavariable
     /// `g` captured node `c`; capture "" is `n` itself. ast-grep matches each pattern over the document's tree once;
     /// a match is the projected node of its kind and byte range (the outermost, when nodes share both).
-    pub(super) fn patterns(&mut self, p: &Projected, dialect: &Dialect, lang: crate::code_rule_dsl::language::GrammarDialect, patterns: &[(&str, ast_grep_core::matcher::Pattern)], string: &mut dyn FnMut(&str) -> usize) {
+    pub(super) fn patterns(&mut self, p: &Projected, tape: Option<&crate::code_rule_dsl::tape::TapeDoc>, dialect: &Dialect, lang: crate::code_rule_dsl::language::GrammarDialect, patterns: &[(&str, ast_grep_core::matcher::Pattern)], string: &mut dyn FnMut(&str) -> usize) {
         if patterns.is_empty() {
             return;
         }
@@ -834,7 +856,16 @@ impl CoreRows {
             let id = p.core[local as usize];
             at.entry((f.start[id as usize], f.end[id as usize], dialect.name(f, id))).or_insert(local);
         }
-        let tree = crate::code_rule_dsl::language::adapter::ast_grep(lang, &f.source);
+        // A pattern is a tape, its implied tokens left out (RER-131's `tape::pattern_doc`): it is matched over the
+        // document's tape, kept for it or encoded here from tree-sitter's parse, not over tree-sitter's tree.
+        let tape = match tape {
+            Some(t) => t.clone(),
+            None => match crate::code_rule_dsl::tape::pattern_doc(lang, &f.source) {
+                Ok((t, _)) => t,
+                Err(_) => return,
+            },
+        };
+        let tree = ast_grep_core::AstGrep::doc(tape);
         let node_of = |n: &ast_grep_core::Node<'_, _>| {
             let r = n.range();
             at.get(&(r.start as u32, r.end as u32, &*n.kind())).map(|&local| p.global(local))
@@ -1009,6 +1040,8 @@ impl CoreRows {
             ("last_token", pair(&["n", "t"], &self.last_token)),
             ("token_before", pair(&["x", "t"], &self.token_before)),
             ("token_after", pair(&["x", "t"], &self.token_after)),
+            ("structural_before", node_sym(&self.structural_before)),
+            ("structural_after", node_sym(&self.structural_after)),
             ("tree_digest", node_sym(&self.tree_digest)),
             ("def_digest", node_sym(&self.def_digest)),
             ("ast_match", make(&["p", "n", "g", "c"], &self.ast_match, [true, false, true, false], atom)),

@@ -71,7 +71,12 @@ pub(crate) fn format_call<'r, D: Doc>(invocation: &Node<'r, D>) -> Option<Format
         .children()
         .filter(|token| !matches!(token.kind().as_ref(), "line_comment" | "block_comment"))
         .collect();
-    let inner = tokens.get(1..tokens.len().checked_sub(1)?)?;
+    // The tree's brackets, where the tape stores them: its opening one always (a choice), its
+    // closing one not where the grammar implies it.
+    let bracket = |token: &Node<'r, D>, texts: &[&str]| !token.is_named() && texts.contains(&token.kind().as_ref());
+    let from = usize::from(tokens.first().is_some_and(|token| bracket(token, &["(", "[", "{"])));
+    let to = tokens.len() - usize::from(tokens.len() > from && tokens.last().is_some_and(|token| bracket(token, &[")", "]", "}"])));
+    let inner = tokens.get(from..to)?;
     let mut segments = split_arguments(inner)?;
     if segments.len() <= leading {
         return None;

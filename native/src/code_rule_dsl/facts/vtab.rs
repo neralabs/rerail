@@ -348,6 +348,69 @@ impl Drop for Modules {
     }
 }
 
+/// A run's connection, or only its scope (`connection_scope`) where the work runs off the connection's thread: a
+/// stratum run as a job on the pool (decision 0113). A connection is not `Sync`, but what the engine keeps per
+/// connection (bound sources, native relations, components, symbols) is keyed by its scope alone, so a job reads and
+/// writes it from any thread. Only SQL needs the connection: [`Db::sql`] is an error without one.
+#[derive(Clone, Copy)]
+pub(crate) struct Db<'a> {
+    at: usize,
+    conn: Option<&'a Connection>,
+}
+
+impl<'a> Db<'a> {
+    pub(crate) fn of(conn: &'a Connection) -> Self {
+        Db { at: connection_scope(conn), conn: Some(conn) }
+    }
+    /// The scope alone: a job off the connection's thread.
+    pub(crate) fn detached(self) -> Db<'static> {
+        Db { at: self.at, conn: None }
+    }
+    pub(crate) fn at(&self) -> usize {
+        self.at
+    }
+    pub(crate) fn sql(&self) -> rusqlite::Result<&'a Connection> {
+        self.conn.ok_or_else(|| rusqlite::Error::ModuleError("SQL read by a stratum off the run's thread (decision 0113): it has only its connection's scope".into()))
+    }
+}
+
+/// A run's SQL, where the caller is on the connection's thread: a detached scope here is a stratum the issuer should
+/// not have sent off its thread (`plan::strand`), a bug, so it panics with what it is.
+impl std::ops::Deref for Db<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        self.conn.expect("SQL read by a stratum off the run's thread (decision 0113)")
+    }
+}
+
+/// What a function of the engine's per-connection state takes: a connection or a [`Db`].
+pub(crate) trait Scoped {
+    fn db(&self) -> Db<'_>;
+    fn at(&self) -> usize {
+        self.db().at()
+    }
+}
+impl Scoped for Connection {
+    fn db(&self) -> Db<'_> {
+        Db::of(self)
+    }
+}
+impl Scoped for Db<'_> {
+    fn db(&self) -> Db<'_> {
+        *self
+    }
+}
+impl Scoped for rusqlite::functions::ConnectionRef<'_> {
+    fn db(&self) -> Db<'_> {
+        Db::of(self)
+    }
+}
+impl<T: Scoped + ?Sized> Scoped for &T {
+    fn db(&self) -> Db<'_> {
+        (**self).db()
+    }
+}
+
 /// The tables bound on each live connection (by its handle), for readers on that connection that read a source in
 /// place rather than through SQL: the native engine's base inputs (`logic::native`).
 /// The scope of what this process keeps per connection (its handle, an address), with a hook that drops all of it
@@ -557,8 +620,8 @@ pub(crate) fn view_columns(db: &Connection, name: &str) -> Option<Vec<Vec<i64>>>
 static BOUND: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), Binding>>> = std::sync::LazyLock::new(Default::default);
 
 /// The source bound now to the table `name` on `db`'s connection, if one is.
-pub(crate) fn bound_source(db: &Connection, name: &str) -> Option<Arc<dyn Source>> {
-    BOUND.lock().get(&(unsafe { db.handle() } as usize, name.to_owned())).map(Binding::current)
+pub(crate) fn bound_source(db: impl Scoped, name: &str) -> Option<Arc<dyn Source>> {
+    BOUND.lock().get(&(db.db().at(), name.to_owned())).map(Binding::current)
 }
 
 /// Rebind through the existing cell so its owning Modules and prepared cursors agree.

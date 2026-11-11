@@ -256,7 +256,7 @@ pub(in crate::code_rule_dsl) fn wait<T>(awaited: &str, doing: &Activity, blockin
     let out = blocking();
     let (wall, spent) = (wall0.elapsed().as_secs_f64(), cpu() - cpu0);
     let path = current();
-    let mut state = STATE.lock().unwrap();
+    let mut state = state();
     let w = state.waits.entry((path, awaited.to_owned(), if at.is_empty() { "-".to_owned() } else { at.to_owned() })).or_default();
     w.count += 1;
     w.wall += wall;
@@ -331,6 +331,41 @@ pub(in crate::code_rule_dsl) const PHASES: [&str; 7] = [
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
 
+thread_local! {
+    /// Whether this thread holds the profile's state (`state`).
+    static HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The profile's state, held: the only way to it. Its lock is not reentrant, so a profile call made while this
+/// thread holds it (from a closure run under the lock: a decision's text that splits a program, which opens a span)
+/// would wait on itself forever. Every closure a profile function takes is run before the lock, and a call that would
+/// wait on itself panics here instead, naming the cause.
+struct Held(std::sync::MutexGuard<'static, State>);
+
+impl std::ops::Deref for Held {
+    type Target = State;
+    fn deref(&self) -> &State {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Held {
+    fn deref_mut(&mut self) -> &mut State {
+        &mut self.0
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        HELD.with(|h| h.set(false));
+    }
+}
+
+fn state() -> Held {
+    assert!(!HELD.with(|h| h.replace(true)), "the profile's state was taken again on a thread holding it: a closure ran under its lock");
+    Held(STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
+}
+
 struct Open {
     path: String,
     start: f64,
@@ -350,7 +385,7 @@ struct Thread {
     port: u32,
     counters: memory::Counters,
     opens: Vec<Open>,
-    /// The statement SQLite is running for it, and since when (`statement`).
+    /// The statement SQLite is running for it, and since when (`strict_statement`).
     statement: Option<(String, std::time::Instant)>,
 }
 
@@ -454,7 +489,7 @@ impl Drop for Span {
                 parent.children_alloc += alloc;
                 parent.children_rise += rise;
             }
-            let mut state = STATE.lock().unwrap();
+            let mut state = state();
             let t = state.spans.entry(open.path).or_default();
             t.calls += 1;
             t.total += total;
@@ -507,7 +542,7 @@ pub(in crate::code_rule_dsl) fn current() -> String {
 /// Charges one run of statement `text` to the current span.
 pub(in crate::code_rule_dsl) fn sql(text: String, ns: u64, vm: u64, scan: u64, sort: u64, autoindex: u64) {
     let path = current();
-    let mut state = STATE.lock().unwrap();
+    let mut state = state();
     let t = state.sql.entry((path, text)).or_default();
     t.runs += 1;
     t.ns += ns;
@@ -530,11 +565,94 @@ thread_local! {
 pub(in crate::code_rule_dsl) struct Waves(bool);
 
 pub(in crate::code_rule_dsl) fn waves() -> Waves {
-    let on = on();
-    if on {
-        WAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    WAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    Waves(true)
+}
+
+/// Whether a run's waves are under way (`waves`): what is not read before the first wave is not read from SQLite.
+pub(in crate::code_rule_dsl) fn inside_waves() -> bool {
+    WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0
+}
+
+
+/// `RERAIL_SQL_STRICT=1`, the benchmark's mode: SQL only where decision 0104 puts it. A run reads what it needs
+/// before its first wave (each run of the process, outside every wave), every wave is given what it reads in memory, and what the run keeps is written behind it by
+/// the store's writer. Any other statement, on any connection of the process, ends it at once (`strict_statement`), naming
+/// the statement, its thread and span, and where it was sent from; so does a wave's wait for the writer.
+pub(crate) fn strict() -> bool {
+    static STRICT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *STRICT.get_or_init(|| std::env::var("RERAIL_SQL_STRICT").is_ok_and(|v| !matches!(v.as_str(), "" | "0" | "off")))
+}
+
+/// Whether the store's connections trace their statements: for the profile, or the strict mode.
+pub(crate) fn tracing() -> bool {
+    on() || strict()
+}
+
+/// Whether `text` only reads: a query, a pragma, or a read transaction's bounds.
+fn reads_only(text: &str) -> bool {
+    let t = text.trim_start().to_ascii_uppercase();
+    let word = t.split(|c: char| !c.is_ascii_alphabetic()).next().unwrap_or("");
+    match word {
+        "SELECT" | "WITH" | "PRAGMA" | "EXPLAIN" | "VALUES" | "COMMIT" | "END" | "ROLLBACK" | "RELEASE" | "SAVEPOINT" => true,
+        "BEGIN" => !t.contains("IMMEDIATE") && !t.contains("EXCLUSIVE"),
+        _ => false,
     }
-    Waves(on)
+}
+
+/// A statement about to run on connection `conn` (`run`, `store`, or `sqlite`: any other). In the strict mode
+/// (`strict`), the process ends unless it is the store writer's, or a read before the process's first wave.
+pub(crate) fn strict_statement(conn: &'static str, text: &str) {
+    if !strict() || BEHIND.with(std::cell::Cell::get) {
+        return;
+    }
+    // A run reads before its first wave; a process's runs (phase 0's include graphs, then the run) each do.
+    let inside = WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0;
+    if !inside && reads_only(text) {
+        return;
+    }
+    let when = if inside { "inside the waves" } else { "a write outside the waves, not the store writer's" };
+    violation(when, &format!("{conn}: {}", text.split_whitespace().collect::<Vec<_>>().join(" ")));
+}
+
+/// Ends the process for the strict mode: what ran where, and the stack that sent it. An abort, not a panic: it is
+/// raised inside SQLite's callback, which cannot unwind.
+fn violation(when: &str, what: &str) -> ! {
+    let thread = std::thread::current().name().unwrap_or("unnamed").to_owned();
+    let mut what = what.to_owned();
+    if what.len() > 600 {
+        what.truncate(what.floor_char_boundary(600));
+        what.push('…');
+    }
+    eprintln!(
+        "rerail: RERAIL_SQL_STRICT: SQL {when} (decision 0104: one read before the first wave, writes behind the run)\n  {what}\n  thread {thread}, span {}\n{}",
+        current(),
+        std::backtrace::Backtrace::force_capture()
+    );
+    std::process::abort();
+}
+
+/// In the strict mode, every SQLite connection the process opens checks its statements (`strict_statement`): one that
+/// sets a trace of its own (the store's, the run's) checks them there.
+pub(crate) fn strict_on_every_connection() {
+    use rusqlite::ffi;
+    unsafe extern "C" fn trace(event: u32, _: *mut std::ffi::c_void, p: *mut std::ffi::c_void, _: *mut std::ffi::c_void) -> std::ffi::c_int {
+        if event == ffi::SQLITE_TRACE_STMT as u32 {
+            // SAFETY: for SQLITE_TRACE_STMT, P is the statement.
+            let text = unsafe { std::ffi::CStr::from_ptr(ffi::sqlite3_sql(p.cast::<ffi::sqlite3_stmt>())) }.to_string_lossy();
+            strict_statement("sqlite", &text);
+        }
+        0
+    }
+    unsafe extern "C" fn opened(db: *mut ffi::sqlite3, _: *mut *mut std::ffi::c_char, _: *const ffi::sqlite3_api_routines) -> std::ffi::c_int {
+        // SAFETY: SQLite calls this with a connection it has just opened.
+        unsafe { ffi::sqlite3_trace_v2(db, ffi::SQLITE_TRACE_STMT as u32, Some(trace), std::ptr::null_mut()) };
+        ffi::SQLITE_OK
+    }
+    if strict() {
+        // SAFETY: registers a function with the signature SQLite calls; it outlives every connection.
+        unsafe { ffi::sqlite3_auto_extension(Some(opened)) };
+    }
 }
 
 impl Drop for Waves {
@@ -552,6 +670,14 @@ pub(crate) fn behind_the_run() {
 
 fn in_waves() -> bool {
     on() && WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0 && !BEHIND.with(std::cell::Cell::get)
+}
+
+/// In the strict mode a wave's wait for the writer ends the process, as its SQL would (`strict_statement`); the run's last
+/// wait, for every queued write, is the end of the run.
+fn strict_wait(what: &str) {
+    if strict() && !BEHIND.with(std::cell::Cell::get) && WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+        violation("inside the waves", &format!("a wait for the store's writer: {what}"));
+    }
 }
 
 /// Why a statement inside the waves forces a wait on SQLite, by where it ran and what it does.
@@ -585,7 +711,7 @@ pub(crate) fn sql_in_wave(conn: &'static str, text: &str, ns: u64) {
     }
     let path = current();
     let class = hazard_class(conn, &path, text);
-    let mut state = STATE.lock().unwrap();
+    let mut state = state();
     let e = state.hazards.entry((class, path, format!("{conn}: {text}"))).or_default();
     e.0 += 1;
     e.1 += ns;
@@ -594,18 +720,19 @@ pub(crate) fn sql_in_wave(conn: &'static str, text: &str, ns: u64) {
 /// SQL waits attributed to their connection and span, including the content store's separate connection.
 /// Each row is (span, connection and SQL text, executions, nanoseconds).
 pub(in crate::code_rule_dsl) fn sql_waits() -> Vec<(String, String, u64, u64)> {
-    STATE.lock().unwrap().hazards.iter().map(|((_, path, text), (runs, ns))|
+    state().hazards.iter().map(|((_, path, text), (runs, ns))|
         (path.clone(), text.clone(), *runs, *ns)).collect()
 }
 
 /// A wave's thread waited `wall` seconds for SQLite's side of the store (`what`: a queued write it reads, the queue's
 /// back-pressure): a hazard like a statement.
 pub(crate) fn wait_in_wave(what: &str, wall: f64) {
+    strict_wait(what);
     if !in_waves() {
         return;
     }
     let path = current();
-    let mut state = STATE.lock().unwrap();
+    let mut state = state();
     let e = state.hazards.entry(("a wait for the store's writer", path, format!("store: {what}"))).or_default();
     e.0 += 1;
     e.1 += (wall * 1e9) as u64;
@@ -657,13 +784,13 @@ pub(in crate::code_rule_dsl) fn work(unit: Unit, n: u64) {
         return;
     }
     let path = current();
-    *STATE.lock().unwrap().work.entry((path, unit)).or_default() += n;
+    *state().work.entry((path, unit)).or_default() += n;
 }
 
 /// Adds a native plan's rows in and out per step, and its probes' CPU seconds, to the current span.
 pub(in crate::code_rule_dsl) fn native(plan: String, steps: &[(u64, u64)], cpu_s: f64) {
     let path = current();
-    let mut state = STATE.lock().unwrap();
+    let mut state = state();
     *state.native_cpu.entry((path.clone(), plan.clone())).or_default() += cpu_s;
     let t = state.native.entry((path, plan)).or_default();
     if t.len() < steps.len() {
@@ -677,8 +804,12 @@ pub(in crate::code_rule_dsl) fn native(plan: String, steps: &[(u64, u64)], cpu_s
 
 /// Keeps `text` under `key` (the first one given).
 pub(in crate::code_rule_dsl) fn note(key: String, text: impl FnOnce() -> String) {
-    let mut state = STATE.lock().unwrap();
-    state.notes.entry(key).or_insert_with(text);
+    if state().notes.contains_key(&key) {
+        return;
+    }
+    // Made without the state's lock: making it may profile too.
+    let text = text();
+    state().notes.entry(key).or_insert(text);
 }
 
 /// A statement's text as the SQL trace keys it: its words, single-spaced.
@@ -692,7 +823,7 @@ pub(in crate::code_rule_dsl) fn plan(db: &rusqlite::Connection, statement: &str)
         return;
     }
     let key = format!("plan:{}", normal(statement));
-    if STATE.lock().unwrap().notes.contains_key(&key) {
+    if state().notes.contains_key(&key) {
         return;
     }
     let text = (|| -> rusqlite::Result<String> {
@@ -722,7 +853,9 @@ pub(in crate::code_rule_dsl) fn decision(topic: &str, text: impl FnOnce() -> Str
     if !on() {
         return;
     }
-    *STATE.lock().unwrap().decisions.entry((topic.to_owned(), text())).or_default() += 1;
+    // The text first: making it may profile too (a split's span), and the state's lock is not reentrant.
+    let text = text();
+    *state().decisions.entry((topic.to_owned(), text)).or_default() += 1;
 }
 
 /// The decisions made so far (none when profiling is off): `decisions_since` takes the ones made after.
@@ -730,7 +863,7 @@ pub(in crate::code_rule_dsl) fn decisions() -> BTreeMap<(String, String), u64> {
     if !on() {
         return BTreeMap::new();
     }
-    STATE.lock().unwrap().decisions.clone()
+    state().decisions.clone()
 }
 
 /// The decisions made since `before` (`decisions`), with how often: what a step decided, for a run that reuses the
@@ -744,7 +877,7 @@ pub(in crate::code_rule_dsl) fn add_decisions(made: &[((String, String), u64)]) 
     if !on() {
         return;
     }
-    let mut state = STATE.lock().unwrap();
+    let mut state = state();
     for (k, n) in made {
         *state.decisions.entry(k.clone()).or_default() += n;
     }
@@ -804,11 +937,19 @@ fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
 const JOIN_ESTIMATE_CAP: f64 = 1e3;
 
 /// Records that stratum `key` fell back to SQLite, and the kind of literal the native engine declined (`class`).
+/// A stratum SQLite is about to run inside the waves: under the strict mode, the end of the process, naming it and
+/// what the native engine declined.
+pub(in crate::code_rule_dsl) fn strict_declined(key: &str, why: &str, class: Option<&str>) {
+    if strict() && inside_waves() {
+        violation("inside the waves: a stratum the native engine declined", &format!("stratum {key}: {why}; {}", class.unwrap_or("no class")));
+    }
+}
+
 pub(in crate::code_rule_dsl) fn fallback(key: &str, class: String) {
     if !on() {
         return;
     }
-    STATE.lock().unwrap().fallbacks.insert(key.to_owned(), class);
+    state().fallbacks.insert(key.to_owned(), class);
 }
 
 /// The strata that fell back to SQLite, costliest first, and the same by the kind of literal declined: each one's
@@ -858,18 +999,26 @@ pub(in crate::code_rule_dsl) fn stratum(key: &str, engine: &str, why: impl FnOnc
     if !on() {
         return;
     }
-    let mut state = STATE.lock().unwrap();
-    match state.strata.iter_mut().find(|s| s.key == key) {
-        Some(s) if s.engine == engine => s.loops += 1,
-        Some(_) => {
-            // The engine changed between chunks: both are kept.
-            let (k, e, w) = (format!("{key} (chunk with {engine})"), engine.to_owned(), why());
-            match state.strata.iter_mut().find(|s| s.key == k) {
+    // The engine changed between chunks: both are kept, the later under its own key.
+    let other = format!("{key} (chunk with {engine})");
+    let seen = |state: &mut State| -> Option<String> {
+        match state.strata.iter_mut().find(|s| s.key == key) {
+            Some(s) if s.engine == engine => s.loops += 1,
+            Some(_) => match state.strata.iter_mut().find(|s| s.key == other) {
                 Some(s) => s.loops += 1,
-                None => state.strata.push(Stratum { key: k, engine: e, why: w, loops: 1 }),
-            }
+                None => return Some(other.clone()),
+            },
+            None => return Some(key.to_owned()),
         }
-        None => state.strata.push(Stratum { key: key.to_owned(), engine: engine.to_owned(), why: why(), loops: 1 }),
+        None
+    };
+    let Some(new) = seen(&mut state()) else { return };
+    // The reason is made without the state's lock: making it may profile too.
+    let why = why();
+    let mut state = state();
+    match state.strata.iter_mut().find(|s| s.key == new) {
+        Some(s) => s.loops += 1,
+        None => state.strata.push(Stratum { key: new, engine: engine.to_owned(), why, loops: 1 }),
     }
 }
 
@@ -891,7 +1040,7 @@ pub(in crate::code_rule_dsl) fn planned(
         return;
     }
     let text = plan.steps.iter().map(|s| s.literal.as_str()).collect::<Vec<_>>().join(" , ");
-    let mut state = STATE.lock().unwrap();
+    let mut state = state();
     let t = state.plans.entry((key.to_owned(), kind.to_owned(), text)).or_default();
     t.rule = rule;
     t.plan = plan.clone();
@@ -919,7 +1068,7 @@ pub(in crate::code_rule_dsl) fn device(kernel: &str, launches: u64, gpu: f64, wa
         return;
     }
     let path = current();
-    let mut state = STATE.lock().unwrap();
+    let mut state = state();
     let t = state.devices.entry((path, kernel.to_owned())).or_default();
     t.runs += 1;
     t.launches += launches;
@@ -935,7 +1084,7 @@ pub(in crate::code_rule_dsl) fn device_phases(kernel: &str, phases: [f64; PHASES
         return;
     }
     let path = current();
-    let mut state = STATE.lock().unwrap();
+    let mut state = state();
     let t = state.devices.entry((path, kernel.to_owned())).or_default();
     for (a, b) in t.phases.iter_mut().zip(phases) {
         *a += b;
@@ -965,12 +1114,12 @@ pub(in crate::code_rule_dsl) fn one_run_if_free() -> Option<std::sync::MutexGuar
 
 /// Forgets everything recorded (a run's start).
 pub(in crate::code_rule_dsl) fn reset() {
-    *STATE.lock().unwrap() = State::default();
+    *state() = State::default();
 }
 
 /// The statements recorded, by SQLite's time, most first: (span, text, totals).
 pub(in crate::code_rule_dsl) fn statements() -> Vec<(String, String, SqlTotal)> {
-    let state = STATE.lock().unwrap();
+    let state = state();
     let mut all: Vec<_> = state.sql.iter().map(|((p, t), s)| (p.clone(), t.clone(), s.clone())).collect();
     all.sort_by_key(|(_, _, s)| std::cmp::Reverse(s.ns));
     all
@@ -978,7 +1127,7 @@ pub(in crate::code_rule_dsl) fn statements() -> Vec<(String, String, SqlTotal)> 
 
 /// The spans recorded: path and totals.
 pub(in crate::code_rule_dsl) fn spans() -> BTreeMap<String, SpanTotal> {
-    STATE.lock().unwrap().spans.clone()
+    state().spans.clone()
 }
 
 fn short(s: &str, n: usize) -> String {
@@ -1156,7 +1305,7 @@ pub(in crate::code_rule_dsl) fn open_spans() -> String {
         }
         if let Some((text, since)) = &t.statement {
             let _ = writeln!(r, "  SQL running for {:.2} s (wall): {}", since.elapsed().as_secs_f64(), short(text, 600));
-            let plan = STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).notes.get(&format!("plan:{}", normal(text))).cloned();
+            let plan = state().notes.get(&format!("plan:{}", normal(text))).cloned();
             for line in plan.iter().flat_map(|p| p.lines()) {
                 let _ = writeln!(r, "      {line}");
             }

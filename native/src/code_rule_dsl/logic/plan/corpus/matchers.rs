@@ -33,7 +33,7 @@ fn relation(k: usize, m: usize) -> String {
 }
 
 fn atom(rel: &str, args: Vec<Term>) -> Literal {
-    Literal::Atom(Atom { rel: rel.to_owned(), args, neg: false, gated: false })
+    Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg: false, gated: false })
 }
 
 /// The tree-shaped parts of a Python program's rules as `ast` atoms (decision 0106 §4): a root `r` with

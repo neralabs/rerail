@@ -105,6 +105,9 @@ legacy_execution_graphs_fdef("function_definition").
 .decl rr_agg3(b: number, f: node, t: number)
 .decl rr_agg4(b: number, f: node, s: number, t: number)
 .decl rr_ctx2(a: node, xs: number)
+.decl rr_demand_agg_rr_agg1(a: node, xs: number)
+.decl rr_demand_agg_rr_agg3(b: number, f: node)
+.decl rr_demand_agg_rr_agg4(b: number, f: node, s: number)
 .decl syntax_error(d: number)
 .decl t30(s: symbol)
 .decl t51(s: symbol)
@@ -217,7 +220,7 @@ les_walk(r, c2) :- les_walk(r, c), les_open(c), child(c, c2, _).
 les_cast_args(c, a) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, "cast"), field(c, "arguments", a).
 les_cast_comment(a, s) :- les_cast_args(_, a), token(a, _, t, s, _), prefix("#", t).
 rr_ctx2(a, xs) :- child(a, x, j), node(_, x, _, xs, _), j <= 1.
-rr_agg1(a, s, xs) :- rr_ctx2(a, xs), les_cast_comment(a, s), s < xs.
+rr_agg1(a, s, xs) :- rr_demand_agg_rr_agg1(a, xs), rr_ctx2(a, xs), les_cast_comment(a, s), s < xs.
 les_cast_arg(c, x) :- les_cast_args(c, a), child(a, x, j), j <= 1, node(_, x, _, xs, _), k = count : { rr_agg1(a, _, xs) }, @add(j, k) = 1.
 raw_cursor_target(n, o) :- node(_, n, "call", _, _), field(n, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, s), (s = "execute" ; s = "fetchall" ; s = "fetchone"), field(f, "object", o).
 raw_cursor_name(x) :- node(_, x, "identifier", _, _), text(x, s), match("(?s:.*)(?:(?i)cursor|^(?:db|conn|connection|raw_conn|raw_connection)$)(?s:.*)", s).
@@ -321,9 +324,9 @@ legacy_execution_graphs_reach(f) :- legacy_execution_graphs_seed_fn(f).
 legacy_execution_graphs_reach(c) :- legacy_execution_graphs_reach(g), legacy_execution_graphs_resolved(c, _, g), legacy_execution_graphs_active_live(_, c, _, _).
 legacy_execution_graphs_anchor_cand(0, f, c) :- legacy_execution_graphs_seed(f, c).
 legacy_execution_graphs_anchor_cand(1, f, c) :- legacy_execution_graphs_resolved(f, c, g), legacy_execution_graphs_reach(g), !legacy_execution_graphs_seed_fn(f).
-rr_agg3(b, f, t) :- legacy_execution_graphs_anchor_cand(b, f, x), node(_, x, _, t, _).
+rr_agg3(b, f, t) :- rr_demand_agg_rr_agg3(b, f), legacy_execution_graphs_anchor_cand(b, f, x), node(_, x, _, t, _).
 legacy_execution_graphs_anchor_start(b, f, s) :- legacy_execution_graphs_anchor_cand(b, f, _), s = min t : { rr_agg3(b, f, t) }.
-rr_agg4(b, f, s, t) :- legacy_execution_graphs_anchor_cand(b, f, x), node(_, x, _, s, t).
+rr_agg4(b, f, s, t) :- rr_demand_agg_rr_agg4(b, f, s), legacy_execution_graphs_anchor_cand(b, f, x), node(_, x, _, s, t).
 legacy_execution_graphs_anchor_end(b, f, e) :- legacy_execution_graphs_anchor_start(b, f, s), e = max t : { rr_agg4(b, f, s, t) }.
 legacy_execution_graphs_anchor(f, c) :- legacy_execution_graphs_anchor_start(b, f, s), legacy_execution_graphs_anchor_end(b, f, e), legacy_execution_graphs_anchor_cand(b, f, c), node(_, c, _, s, e).
 legacy_execution_graphs_l08(d, q) :- legacy_execution_graphs_path(d, q), match("(?s:.*)(?:^(?:impl/|data_layer/|l[0-9]))(?s:.*)", q), !match("(?s:.*)(?:(?:^|/)tests/)(?s:.*)", q), q != "l2050_transaction/execution_boundary.py", q != "l2050_transaction/legacy_wrappers.py".
@@ -340,3 +343,6 @@ legacy_execution_graphs_l010_file(d, q) :- legacy_execution_graphs_path(d, q), !
 violation("data-layer-legacy-execution-surfaces", "legacy-execution-graphs", "LEG-010", p, l) :- legacy_execution_graphs_wrappers_from(n), node(d, n, _, _, _), legacy_execution_graphs_l010_file(d, q), !match("(?s:.*)(?:(?:^|/)tests/)(?s:.*)", q), doc(d, p, _), line(n, l).
 violation("data-layer-legacy-execution-surfaces", "legacy-execution-graphs", "LEG-010", p, l) :- legacy_execution_graphs_wrappers_from(n), node(d, n, _, _, _), legacy_execution_graphs_l010_file(d, q), match("(?s:.*)(?:(?:^|/)tests/)(?s:.*)", q), legacy_execution_graphs_wrappers_user(d), doc(d, p, _), line(n, l).
 violation("data-layer-legacy-execution-surfaces", "legacy-execution-graphs", "LEG-010", p, l) :- legacy_execution_graphs_direct(d, n, nm), legacy_execution_graphs_wrappers_module(nm), legacy_execution_graphs_l010_file(d, _), doc(d, p, _), line(n, l).
+rr_demand_agg_rr_agg1(a, xs) :- les_cast_args(c, a), child(a, x, j), node(_, x, _, xs, _), j <= 1.
+rr_demand_agg_rr_agg3(b, f) :- legacy_execution_graphs_anchor_cand(b, f, _).
+rr_demand_agg_rr_agg4(b, f, s) :- legacy_execution_graphs_anchor_start(b, f, s).

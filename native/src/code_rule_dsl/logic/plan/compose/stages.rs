@@ -29,7 +29,7 @@ fn simplify(prog: &mut Program, db: &Connection, inputs: &mut Inputs, resident: 
     let mut empty: BTreeSet<String> = prog.inputs.iter().filter(|r|vtab::bound_source(db,r).is_some_and(|s|s.len()==0)).cloned().collect();
     loop {
         let before = (empty.len(),prog.rules.len(),prog.inputs.len());
-        prog.rules.retain(|r|!r.body.iter().any(|l|matches!(l,Literal::Atom(a) if !a.neg && empty.contains(&a.rel))));
+        prog.rules.retain(|r|!r.body.iter().any(|l|matches!(l,Literal::Atom(a) if !a.neg && empty.contains(a.rel.as_str()))));
         for rel in prog.decls.keys() {
             if !prog.inputs.contains(rel) && !prog.natives.contains_key(rel)
                 && prog.facts.get(rel).is_none_or(Vec::is_empty) && !prog.rules.iter().any(|r|r.head.rel==*rel) {
@@ -106,7 +106,7 @@ fn changes(prog: &Program, inputs: &Inputs) -> BTreeSet<String> {
             if survivors(r,&scc,&native).is_some() { return true; }
             let [Literal::Atom(a)]=r.body.as_slice() else { return false };
             if a.neg || a.args!=r.head.args { return false; }
-            demands.insert(a.rel.clone()); true
+            demands.insert(a.rel.to_string()); true
         });
         // Do not split a recursive component across a publication boundary.
         let reads=super::super::super::front::needed(prog,demands.iter().cloned().collect());

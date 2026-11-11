@@ -26,7 +26,7 @@ use super::bounded_insert;
 use super::{
     CODEC_ZSTD, ContentStore, HashKey, STRING_OWNER, SourceId, StoreError, StoreResult, compress,
 };
-use rusqlite::{OptionalExtension, Transaction, params, types::Value};
+use rusqlite::{Connection, OptionalExtension, params, types::Value};
 use sha2::{Digest as _, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -234,6 +234,27 @@ impl ContentStore {
             if codec == CODEC_ZSTD {
                 out[at] = Some(FactsFrame { source: keys[at].0, path, codec, raw_length, frame });
                 at_path[at] = own;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Every path-dependent result of `source` under `fact_schema` and `plan`, by path, decoded: one statement, for a
+    /// run that reads all a source's entries before its first wave (decision 0104). A frame that does not decode is
+    /// left out.
+    pub fn facts_results_of(&self, source: SourceId, fact_schema: u32, plan: [u8; 32]) -> StoreResult<Vec<(String, Vec<u8>)>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut statement = connection.prepare_cached(
+            "SELECT path, codec_id, raw_length, frame FROM facts_results WHERE source_id=?1 AND fact_schema=?2 AND plan_digest=?3 AND path<>?4",
+        )?;
+        let rows = statement.query_map(params![source.0, i64::from(fact_schema), &plan[..], CONTENT_PURE], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, Vec<u8>>(3)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (path, codec, raw_length, frame) = row?;
+            if let Ok(entry) = decode(codec, raw_length, &frame) {
+                out.push((path, entry));
             }
         }
         Ok(out)
@@ -518,7 +539,7 @@ impl ContentStore {
 }
 
 /// Records `set`'s ordinals unless the store holds them.
-fn write_plan_set(transaction: &Transaction<'_>, set: &FactsPlanSet) -> StoreResult<()> {
+fn write_plan_set(transaction: &Connection, set: &FactsPlanSet) -> StoreResult<()> {
     let held = transaction
         .prepare_cached("SELECT 1 FROM facts_plan_sets WHERE set_digest=?1 LIMIT 1")?
         .query_row([&set.digest[..]], |_| Ok(()))
@@ -539,7 +560,7 @@ fn write_plan_set(transaction: &Transaction<'_>, set: &FactsPlanSet) -> StoreRes
 /// Adds `words` and `counts` to the stored completion row of (source, schema, path, set).
 #[allow(clippy::too_many_arguments)]
 fn merge_completion(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     source: SourceId,
     schema: i64,
     path: &str,

@@ -339,7 +339,7 @@ pub(crate) fn build_cached_with_tape(
     }
     let lookup = crate::code_rule_dsl::logic::profile::span(|| "tape cache lookup".into());
     // The source as the store has it, when it has it: a new one is stored with its tape below.
-    let mut source_id = match known {
+    let source_id = match known {
         Some(id) => Some(id),
         None => {
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
@@ -368,11 +368,19 @@ pub(crate) fn build_cached_with_tape(
             };
             let image = image?;
             drop(parse);
-            let _store = crate::code_rule_dsl::logic::profile::span(|| "tape store".into());
-            let tape = image.primary.to_bytes()?;
+            let tape = std::sync::Arc::new(image.primary.to_bytes()?);
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, tape.len() as u64);
-            let (id, _) = cache.put_source_and_tape(bytes, HashKey::sha256(bytes), tag, gv, fv, &tape).map_err(e)?;
-            source_id = Some(id);
+            // Handed to the store's writer, behind the run (decision 0104), and read from memory until written
+            // (`pending`, above): the source's id is the writer's, so none is returned for a source not stored yet.
+            use sha2::Digest as _;
+            let digest: [u8; 32] = sha2::Sha256::digest(bytes).into();
+            let (source, held) = (std::sync::Arc::clone(file.source()), std::sync::Arc::clone(&tape));
+            cache.write_back(
+                "a tape and its source",
+                bytes.len() + tape.len(),
+                vec![(queued_tape(&digest, tag, gv, fv), Some(tape as std::sync::Arc<dyn std::any::Any + Send + Sync>))],
+                Box::new(move |store| store.put_source_and_tape(source.as_bytes(), HashKey::from_sha256_digest(digest), tag, gv, fv, &held).map(|_| ())),
+            );
             image.primary
         }
     };
@@ -695,7 +703,7 @@ pub(crate) fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "doc" => &["d", "path", "module"],
         "child" => &["p", "c", "idx"],
         "field" => &["p", "f", "c"],
-        "text" | "name" | "str" | "strprefix" | "node_text" | "comment" => &["n", "s"],
+        "text" | "name" | "str" | "strprefix" | "node_text" | "comment" | "structural_before" | "structural_after" => &["n", "s"],
         // W's values (`facts::vtab::syntax::Extra`).
         "value" | "static_value" => &["n", "v"],
         "value_type_of" => &["n", "t"],

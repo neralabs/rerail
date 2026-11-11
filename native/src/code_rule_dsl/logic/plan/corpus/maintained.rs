@@ -70,7 +70,7 @@ pub(in crate::code_rule_dsl) fn run(
         let program = &mut maintained.program.program;
         if maintain::levels_wanted() {
             for rel in program.rules.iter().map(|r| r.head.rel.clone()).collect::<BTreeSet<_>>() {
-                program.qualifiers.entry(rel).or_default().insert("levels".to_owned());
+                program.qualifiers.entry(rel.to_string().to_string()).or_default().insert("levels".to_owned());
             }
         }
         // What is kept for the next run is stored, not inlined into its readers (decision 0099).

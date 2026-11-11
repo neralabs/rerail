@@ -260,7 +260,7 @@ fn core_rows(docs: Vec<Document>) -> HashMap<String, BTreeSet<String>> {
     let reads = [
         "node", "text", "comment", "op", "op_at", "str", "strprefix", "value", "value_type", "name", "spread", "next_sibling", "syntax_error",
         "src_line", "line_count", "str_part", "first_token", "last_token", "token_before", "token_after", "child", "line", "end_line", "col",
-        "visit_index", "ast_depth",
+        "visit_index", "ast_depth", "structural_before", "structural_after",
     ];
     let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
     let sources = shaped(&store, docs, &projection).unwrap();
@@ -288,6 +288,8 @@ fn core_rows(docs: Vec<Document>) -> HashMap<String, BTreeSet<String>> {
     let shapes = [
         ("comment", "ls"),
         ("op", "ls"),
+        ("structural_before", "ls"),
+        ("structural_after", "ls"),
         ("op_at", "lis"),
         ("str", "ls"),
         ("strprefix", "ls"),
@@ -334,7 +336,7 @@ fn core_rows(docs: Vec<Document>) -> HashMap<String, BTreeSet<String>> {
 }
 
 /// `core.rr`'s base relations over a Python file (decision 0046): comments are nodes and children, `text` is every
-/// node's, `op` every token's (one the grammar implies is in no tape, RER-131: from the gaps), literals decode, and
+/// node's, `op` every token the tape stores (one the grammar implies is in no tape and no relation, RER-131), literals decode, and
 /// the source-text, token and place relations agree.
 #[test]
 fn core_rr_relations_hold_what_core_rr_says() {
@@ -348,9 +350,16 @@ fn core_rr_relations_hold_what_core_rr_says() {
     has("next_sibling", "comment'# top' import_statement'import os.path as p'");
     has("op", "comparison_operator'a not in b' not in");
     has("op_at", "comparison_operator'a not in b' 0 not in");
-    // `def`, the parentheses and the separators are implied: no tape holds them, `op` has them from the gaps.
+    // `def` is kept (`async def` holds it beside a choice); the parentheses and the separators are
+    // delimiters the grammar implies: no tape holds them, and no relation.
     has("op", "function_definition def");
-    has("op", "argument_list'(*a, f\"v{a}w\", 0xff)' ,");
+    lacks("op", "argument_list'(*a, f\"v{a}w\", 0xff)' ,");
+    // The source around a node, between it and its stored neighbours: the separators the tape
+    // leaves out, and the parent's closing bracket after its last child.
+    has("structural_before", "list_splat'*a' (");
+    has("structural_before", "string'f\"v{a}w\"' , ");
+    has("structural_before", "integer'0xff' , ");
+    has("structural_after", "integer'0xff' )");
     has("str", "string'\"\"\"d\\x41\"\"\"' dA");
     has("value", "string'\"\"\"d\\x41\"\"\"' dA");
     has("strprefix", "string'f\"v{a}w\"' f");
@@ -370,10 +379,12 @@ fn core_rr_relations_hold_what_core_rr_says() {
     has("end_line", "block 7");
     has("visit_index", "module 0");
     has("ast_depth", "module 0");
-    lacks("first_token", "function_definition 'def'");
+    // `def` is stored (kept); `return` and the parentheses are left out, so no token holds them.
+    has("first_token", "function_definition 'def'");
+    has("token_before", "identifier'f' 'def'");
     has("last_token", "return_statement'return x' identifier'x'");
+    lacks("first_token", "return_statement'return x' 'return'");
     lacks("token_after", "identifier'f' '('");
-    lacks("token_before", "identifier'f' 'def'");
 }
 
 /// The shape follows the program: one that includes `core.rr` reads `core.rr`'s, one that declares its base

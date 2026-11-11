@@ -63,9 +63,21 @@ std_expr_macro("dbg").
 // tree's elements.
 .decl format_string(s: node)
 format_string(s) :- macro_args(m, t), macro_name(m, x), format_pos(x, k), child(t, s, _),
-    (kind(s, "string_literal") ; kind(s, "raw_string_literal")), arg_index(t, s, k),
-    token_before(s, b), (text(b, "(") ; text(b, "[") ; text(b, "{") ; text(b, ",")),
-    token_after(s, a), (text(a, ")") ; text(a, "]") ; text(a, "}") ; text(a, ",")).
+    (kind(s, "string_literal") ; kind(s, "raw_string_literal")), arg_index(t, s, k), whole_arg(t, s).
+// whole_arg(t, s): element s of token tree t is an argument by itself: t's opening bracket or a `,` before it, a
+// `,` after it or nothing more before t's closing bracket. In a token tree the tape keeps every token but the
+// closing bracket (each is one of the grammar's token choices), so the opener and the commas are on it; the
+// closing bracket is not, so the end is read from the offsets: no token of t between s and t's last byte.
+.decl whole_arg(t: node, s: node)
+.stored whole_arg "inside a token_tree every token but the closing bracket is stored: each is one of the grammar's token choices"
+whole_arg(t, s) :- child(t, s, _), token_before(s, b), (first_token(t, b) ; text(b, ",")), arg_end(t, s).
+.decl arg_end(t: node, s: node)
+.stored arg_end "inside a token_tree every token but the closing bracket is stored: the comma read is on the tape"
+arg_end(t, s) :- child(t, s, _), token_after(s, a), text(a, ",").
+arg_end(t, s) :- child(t, s, i), !child(t, _, i + 1), node(_, s, _, _, e), !tail_token(t, e).
+.decl tail_token(t: node, e: number)   // t has a token at or after offset e, its closing bracket aside
+tail_token(t, e) :- macro_args(_, t), child(t, s, _), node(_, s, _, _, e), node(_, t, _, _, te),
+    token(t, _, _, st, _), st >= e, st < te - 1.
 .decl format_pos(name: symbol, k: number)
 format_pos("print", 0). format_pos("println", 0). format_pos("eprint", 0). format_pos("eprintln", 0).
 format_pos("format", 0). format_pos("panic", 0). format_pos("write", 1). format_pos("writeln", 1).
@@ -80,6 +92,7 @@ arg_index(t, d, k + w) :- arg_index(t, c, k), next_sibling(c, d), w = count : { 
 .decl format_args(t: node)
 format_args(t) :- macro_args(m, t), macro_name(m, x), format_pos(x, _).
 .decl gap_token(c: node, g: span)   // the tokens between element c and the next one
+.stored gap_token "inside a token_tree every token but the closing bracket is stored: the commas counted are on the tape"
 gap_token(c, g) :- format_args(t), child(t, c, _), token_after(c, g), next_sibling(c, d), !first_token(d, g).
 gap_token(c, h) :- gap_token(c, g), token_after(g, h), next_sibling(c, d), !first_token(d, h).
 .decl opaque_macro(m: node)
@@ -96,8 +109,9 @@ has_comment(n) :- child(n, c, _), kind(c, k), comment_kind(k).
 paren_inner(p, e) :- kind(p, "parenthesized_expression"), child(p, e, _), kind(e, k), !comment_kind(k).
 // sole_group(p, t): t comes right after p's opening bracket and right before its closing one.
 .decl sole_group(p: node, t: node)
-sole_group(p, t) :- kind(p, "token_tree"), child(p, t, _), kind(t, "token_tree"),
-    first_token(p, o), token_before(t, o), last_token(p, c), token_after(t, c).
+// The opener is a choice the tape keeps (p's token 0); the closer it implies is in the source after t.
+sole_group(p, t) :- kind(p, "token_tree"), child(p, t, _), kind(t, "token_tree"), node(_, p, _, ps, _),
+    node(_, t, _, ts, _), token(p, 0, _, ps, _), token(p, 1, _, ts, _), structural_after(t, h), match("\\s*[)\\]}]\\s*", h).
 
 // The operator is the binary expression's one anonymous token.
 .decl binary(e: node, op: symbol, l: node, r: node)

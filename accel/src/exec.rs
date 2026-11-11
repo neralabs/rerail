@@ -774,6 +774,11 @@ impl<R> Job<R> {
 }
 
 impl Executor {
+    /// The executor's scoreboard, shared: a host stream ([`crate::stream`]) scores its jobs on it.
+    pub fn board(&self) -> Arc<Scoreboard> {
+        Arc::clone(&self.board)
+    }
+
     /// Every lane this machine has, with the default prices.
     pub fn new() -> Self {
         configure(false);

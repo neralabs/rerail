@@ -65,7 +65,10 @@ impl Connections {
                 if let Some((_, db)) = other {
                     super::close_beside(db);
                 }
-                Connection::open(path)
+                let mut db = Connection::open(path)?;
+                // Its own store's atoms, guarded at commit (decision 0049); a kept connection already is.
+                crate::content_store::atoms::Atoms::install(&mut db)?;
+                Ok(db)
             }
         }
     }
@@ -109,10 +112,25 @@ impl Cone {
             }
             super::close_beside(db);
         }
-        let db = Connection::open(path)?;
+        let mut db = Connection::open(path)?;
+        // The atoms guarded at commit, as the run's connection's (decision 0049).
+        crate::content_store::atoms::Atoms::install(&mut db)?;
         crate::code_rule_dsl::logic::native::register(&db)?;
         crate::code_rule_dsl::logic::native::register_symbols(&db)?;
         Ok(db)
+    }
+
+    /// Opens the cone's connection on `path` and its handle on the store at `store` before the run's first wave
+    /// (decision 0104: opening one reads the store), kept in the slot for `take_db` and `take_store`.
+    pub(super) fn ready(slot: &parking_lot::Mutex<Cone>, path: &Path, store: Option<&Path>) -> super::Result<()> {
+        let db = Self::take_db(slot, path)?;
+        let handle = store.map(|p| Self::take_store(slot, p).map(|s| (p.to_path_buf(), s))).transpose().map_err(|e| super::Error::Plan(e.to_string()))?;
+        let mut cone = slot.lock();
+        cone.db = Some((path.to_path_buf(), db));
+        if handle.is_some() {
+            cone.store = handle;
+        }
+        Ok(())
     }
 
     /// The cone's handle on the store at `path`: the kept one, or one opened.

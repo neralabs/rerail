@@ -64,6 +64,7 @@ pub mod write_back;
 pub mod hazards;
 
 pub use compression::compress;
+pub use frames::forget_snapshot as forget_frames_snapshot;
 pub use frames::{Admitted as AdmittedFrame, Put as FramePut, Rel as FrameRel, Rows as FrameRows, Stored as FrameStored, local_space};
 pub use connection::BusyRetries;
 pub use connection::OperationDeadline;
@@ -213,6 +214,24 @@ impl HashKey {
         }
         let digest: [u8; 32] = Sha256::digest(bytes).into();
         Self::from_sha256_digest(digest)
+    }
+
+    /// The identity of a tape of the source `source`: its bytes and its source's hash. A
+    /// named-only tape holds no source text, so two sources of one shape and one set of token
+    /// lengths store the same bytes; each is its own tape, as it carries its own source.
+    pub fn tape_identity(source: Self, tape: &[u8]) -> Self {
+        #[cfg(any(test, feature = "test-hooks"))]
+        if WRITE_LOCK_HELD.with(std::cell::Cell::get) {
+            HASHES_UNDER_WRITE_LOCK.with(|hashes| hashes.set(hashes.get() + 1));
+        }
+        let mut hash = Sha256::new();
+        hash.update(b"rerail.tape-of/v1\0");
+        hash.update(source.algorithm.to_le_bytes());
+        for lane in source.lanes {
+            hash.update(lane.to_le_bytes());
+        }
+        hash.update(tape);
+        Self::from_sha256_digest(hash.finalize().into())
     }
 
     pub fn from_sha256_digest(digest: [u8; 32]) -> Self {
@@ -646,7 +665,13 @@ impl Drop for ContentStore {
     /// handle then closes the process's connections to its file: the arena outlives it (the
     /// planner's symbols keep it), its file stays closed until next read.
     fn drop(&mut self) {
-        // The queued writes first: they may name atoms this handle still holds.
+        // With a writer, the atoms are its to write: every handle shares them, and its batch's commit appends them (a
+        // handle dropped inside a wave writes nothing). The queued writes first: they may name atoms this handle holds.
+        if self.atoms.pending() && self.write_back.is_some() {
+            self.write_back("the atoms at a handle's close", 0, Vec::new(), Box::new(|store| store.flush_atoms()));
+            self.end_writer();
+            return;
+        }
         self.end_writer();
         if self.atoms.pending()
             && let Err(error) = self.immediate_transaction(|_| Ok(()))

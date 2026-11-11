@@ -314,7 +314,8 @@ impl Emitter {
                 body.extend(self.condition(condition, &p)?);
                 body
             }
-            AstMatcher::Semantic(Semantic::Gap(test)) if test.past.is_none() => self.gap_test(test, n)?,
+            // A token the tape leaves out (t31): no relation holds it, so the clause is not converted.
+            AstMatcher::Semantic(Semantic::Gap(_)) => return gap("a token the tape leaves out"),
             AstMatcher::Semantic(other) => return gap(format!("semantic {}", semantic_name(other))),
             AstMatcher::Call(_) => return gap("utility call"),
             AstMatcher::Compare(_) => return gap("compare"),
@@ -323,36 +324,6 @@ impl Emitter {
             #[cfg(test)]
             AstMatcher::TestUnknown(_) => return gap("three-valued"),
         })
-    }
-
-    /// A token the grammar implies, at its place by `n` (t31), over core.rr's tokens, which hold those of the gaps
-    /// (`facts::vtab::syntax::tree`): the one right before `n` (`prev_token`), `n`'s own, or its parent's after or before
-    /// `n`'s place among them (`token`); its text as the regex's tests. A field's tokens are a gap.
-    fn gap_test(&mut self, test: &crate::code_rule_dsl::matcher::gap::GapTest, n: &str) -> Res<Body> {
-        use crate::code_rule_dsl::matcher::gap::Place;
-        let s = self.var();
-        let mut body = match &test.place {
-            Place::Before => vec![format!("prev_token({n}, {s})")],
-            Place::Own => vec![format!("token({n}, _, {s}, _, _)")],
-            Place::After | Place::Earlier | Place::Later => {
-                let (p, a, b, i, j) = (self.var(), self.var(), self.var(), self.var(), self.var());
-                let order = match test.place {
-                    Place::After => format!("{j} = {i} + 1"),
-                    Place::Earlier => format!("{j} < {i}"),
-                    _ => format!("{j} > {i}"),
-                };
-                vec![
-                    format!("child({p}, {n}, _)"),
-                    format!("node(_, {n}, _, {a}, {b})"),
-                    format!("token({p}, {i}, _, {a}, {b})"),
-                    format!("token({p}, {j}, {s}, _, _)"),
-                    order,
-                ]
-            }
-            Place::Field(_) => return gap("an implied token in a field"),
-        };
-        body.extend(self.tests(test.regex.as_str(), &s, &["token(_, _, $s, _, _)"], Text::Content)?);
-        Ok(body)
     }
 
     fn never(&mut self, n: &str) -> Body {
@@ -915,10 +886,10 @@ pub(in crate::code_rule_dsl) fn reachable(prog: Program) -> Program {
     let mut used: BTreeSet<String> = prog.outputs.iter().cloned().collect();
     let mut sets = BTreeSet::new();
     for r in &prog.rules {
-        used.insert(r.head.rel.clone());
+        used.insert(r.head.rel.to_string());
         for l in &r.body {
             if let Some(a) = l.atom() {
-                used.insert(a.rel.clone());
+                used.insert(a.rel.to_string());
                 if let Some((set, _)) = front::axis(&a.rel) {
                     sets.insert(set.to_owned());
                 }
@@ -1084,8 +1055,11 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, mut authored: Pr
             if !authored.decls.contains_key(rel) {
                 return err(format!("{rel} is read and not declared"));
             }
-            // A bridged relation (`typing_<program>__<output>`, the library's calls) is the runner's to give.
-            if !(derived.contains(rel) || base_types(rel).is_some() || GIVEN.contains(&rel) || authored.inputs.iter().any(|i| i == rel) || super::plan::corpus::bridge::is_bridged(rel)) {
+            // A bridged relation (`typing_<program>__<output>`, the library's calls) is the runner's to give; so are
+            // decision 0055's settings (`guest_policy`, the lowering's facts, empty where the program sets none), which
+            // the library reads (`python/names.rr`).
+            if !(derived.contains(rel) || base_types(rel).is_some() || GIVEN.contains(&rel) || authored.inputs.iter().any(|i| i == rel) || super::plan::corpus::bridge::is_bridged(rel)
+                || rel == crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY) {
                 return err(format!("{rel} is read, and nothing derives or inputs it"));
             }
         }
@@ -1110,7 +1084,7 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, mut authored: Pr
         return err(format!("{rel} is derived by both the converter and the overlay"));
     }
     // The base relations it reads are inputs, declared `.input` or not.
-    let reads_base: Vec<String> = authored.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.clone()).filter(|r| base_types(r).is_some()).collect();
+    let reads_base: Vec<String> = authored.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.to_string()).filter(|r| base_types(r).is_some()).collect();
     let Program { decls, lattice, facts, rules, inputs, outputs, kindsets, demand, .. } = authored;
     for (name, columns) in decls {
         match converted.decls.get(&name) {

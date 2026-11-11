@@ -28,13 +28,13 @@ impl Watch {
             deltas: vec![0; rels.len()], dirty: vec![true; probes.len()],
         };
         for (p, (rule, delta, _)) in probes.iter().enumerate() {
-            let delta_rel = rule.body[*delta].atom().and_then(|a| rels.get(&a.rel)).copied();
+            let delta_rel = rule.body[*delta].atom().and_then(|a| rels.get(a.rel.as_str())).copied();
             watch.delta_of.push(delta_rel);
             if let Some(r) = delta_rel { watch.delta_readers[r].push(p); }
             for atom in rule.body.iter().filter_map(|l| match l {
                 Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a), _ => None,
             }) {
-                let Some(&r) = rels.get(&atom.rel) else { continue };
+                let Some(&r) = rels.get(atom.rel.as_str()) else { continue };
                 let slots = &mut watch.versions[r];
                 slots.resize_with(slots.len().max(atom.args.len() + 1), Version::default);
                 let used = std::iter::once(0).chain(atom.args.iter().enumerate()

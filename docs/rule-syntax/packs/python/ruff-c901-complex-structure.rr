@@ -40,9 +40,15 @@ catch_all_last(c) :- kind(c, "case_clause"), !next_case(c), !field(c, "guard", _
 next_case(c) :- kind(c, "case_clause"), next_sibling(c, d), kind(d, "case_clause").
 // catch_all(p): Ruff's is_irrefutable: `_`, a capture `x`, `(x)`, `_ as y`, `a | _`.
 .decl catch_all(p: node)
-catch_all(p) :- kind(p, "case_pattern"), op(p, "_"), !child(p, _, _).
+// A bare `case _` is all its kind says (the tape stores no `_` there, RER-131): a case_pattern with no child. In a
+// union_pattern the `_` is stored.
+catch_all(p) :- kind(p, "case_pattern"), !child(p, _, _).
 catch_all(p) :- kind(p, "case_pattern"), child(p, c, 0), !child(p, _, 1), catch_all(c).
 catch_all(p) :- kind(p, "dotted_name"), !child(p, _, 1).
 catch_all(p) :- kind(p, "as_pattern"), child(p, c, 0), catch_all(c).
 catch_all(p) :- kind(p, "union_pattern"), (op(p, "_") ; child(p, c, _), catch_all(c)).
-catch_all(p) :- kind(p, "tuple_pattern"), !op(p, ","), child(p, c, 0), !child(p, _, 1), catch_all(c).
+catch_all(p) :- paren_pattern(p, c), catch_all(c).
+// paren_pattern(p, c): `(c)`, a one-element tuple_pattern with no trailing comma.
+.stored paren_pattern "a one-element tuple_pattern's comma is its trailing comma, which the tape stores"
+.decl paren_pattern(p: node, c: node)
+paren_pattern(p, c) :- kind(p, "tuple_pattern"), !op(p, ","), child(p, c, 0), !child(p, _, 1).

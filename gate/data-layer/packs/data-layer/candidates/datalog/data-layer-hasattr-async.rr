@@ -17,6 +17,7 @@
 .decl out_scope(d: number)
 .decl rr_agg1(a: node, st: number, xs: number)
 .decl rr_ctx2(a: node, xs: number)
+.decl rr_demand_agg_rr_agg1(a: node, xs: number)
 .decl tape_line(d: number, l: number, sp: node)
 .decl text(n: node, s: symbol)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
@@ -134,7 +135,7 @@ hasattr_args(c, a, s) :- node(_, c, "call", _, _), field(c, "function", fn), nod
 hasattr_extra(a, st) :- hasattr_args(_, a, _), token(a, _, s, st, _), match("(?:#|\\\\)(?s:.*)", s), !hasattr_child_at(a, st).
 hasattr_child_at(a, st) :- hasattr_args(_, a, _), child(a, c, _), node(_, c, _, st, _).
 rr_ctx2(a, xs) :- child(a, x, i), node(_, x, _, xs, _).
-rr_agg1(a, st, xs) :- rr_ctx2(a, xs), hasattr_extra(a, st), st < xs.
+rr_agg1(a, st, xs) :- rr_demand_agg_rr_agg1(a, xs), rr_ctx2(a, xs), hasattr_extra(a, st), st < xs.
 hasattr_pos(a, x, k) :- hasattr_args(_, a, _), child(a, x, i), node(_, x, _, xs, _), e = count : { rr_agg1(a, _, xs) }, k = @add(@add(i, e), 1).
 hasattr_named(a, k) :- hasattr_args(_, a, _), c = count : { child(a, _, _) }, e = count : { hasattr_extra(a, _) }, k = @add(c, e).
 hasattr_call(c, a, s) :- hasattr_args(c, a, s), hasattr_pos(a, x, 2), node(_, x, "string", _, _), node_text(x, t), match("['\"]\\w+_async['\"]", t).
@@ -142,3 +143,4 @@ hasattr_allowed(c) :- hasattr_call(c, _, _), node(d, c, _, _, _), line(c, l), ta
 violation("data-layer-hasattr-async", "hasattr", "hasattr", p, l) :- hasattr_call(c, _, f), suffix("hasattr", f), !hasattr_allowed(c), node(d, c, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(c, l).
 getattr_three(a) :- hasattr_call(_, a, _), hasattr_pos(a, y, 3), node(_, y, "none", _, _), hasattr_named(a, 3).
 violation("data-layer-hasattr-async", "getattr", "getattr", p, l) :- hasattr_call(c, a, f), suffix("getattr", f), getattr_three(a), !hasattr_allowed(c), node(d, c, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(c, l).
+rr_demand_agg_rr_agg1(a, xs) :- hasattr_args(_, a, _), child(a, x, i), node(_, x, _, xs, _).

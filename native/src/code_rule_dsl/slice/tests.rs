@@ -1010,6 +1010,22 @@ fn rer131_one_rule_probe() {
     eprintln!("PROBE keys {:?}", keys(&audit(&store, WS, root, &mut rules).unwrap()));
 }
 
+/// Named-only tapes hold no source text, so these three files store the same tape bytes. Each
+/// is still its own tape, with its own source: the run's core facts are each file's own (it
+/// failed with "stale core facts" when a tape was known by its bytes alone).
+#[test]
+fn files_of_one_tape_shape_keep_their_own_sources() {
+    let dir = temp("one-shape");
+    std::fs::create_dir_all(&dir).unwrap();
+    for (path, call) in [("a.py", "exists"), ("b.py", "isfile"), ("c.py", "islink")] {
+        write(&dir, path, &format!("import os\nos.path.{call}(\"file\")\n"));
+    }
+    let policies: Vec<_> = policies().into_iter().filter(|(name, _)| name.starts_with("ruff-pth11")).collect();
+    assert!(!policies.is_empty());
+    let run = cold(&dir, &policies);
+    assert_eq!(run.paths.len(), 3);
+}
+
 /// RER-131 oracle (ignored): one pack's rules over a file list, interpreter only, keys to `RERAIL_DUMP_KEYS`.
 /// `RERAIL_PACK` (a directory under `packs/`), `RERAIL_FILES` (a list of paths), `RERAIL_MAX` (default 200).
 #[test]

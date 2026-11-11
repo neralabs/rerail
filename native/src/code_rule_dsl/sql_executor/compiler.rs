@@ -46,7 +46,7 @@ impl CodeRuleSqlExecutor {
                 r.body
                     .iter()
                     .filter_map(front::Literal::atom)
-                    .map(|a| a.rel.clone())
+                    .map(|a| a.rel.to_string())
             })
             .chain(program.outputs.iter().cloned())
             .collect();

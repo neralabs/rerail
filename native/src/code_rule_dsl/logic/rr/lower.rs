@@ -411,7 +411,7 @@ fn lower_boolean_relations(prog: &mut Program) {
         }
     }
     let encode = |atom: &mut Atom| {
-        if names.contains(&atom.rel) && atom.args.is_empty() {
+        if names.contains(atom.rel.as_str()) && atom.args.is_empty() {
             atom.args.push(Term::Int(1));
         }
     };
@@ -525,8 +525,8 @@ impl Lowerer {
         loop {
             let before = three.len();
             for rule in &self.prog.rules {
-                if rule.body.iter().any(|l| l.atom().is_some_and(|a| three.contains(&a.rel))) {
-                    three.insert(rule.head.rel.clone());
+                if rule.body.iter().any(|l| l.atom().is_some_and(|a| three.contains(a.rel.as_str()))) {
+                    three.insert(rule.head.rel.to_string());
                 }
             }
             if three.len() == before {
@@ -538,10 +538,10 @@ impl Lowerer {
                 .cloned()
                 .map(|mut l| {
                     if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = &mut l
-                        && three.contains(&a.rel)
+                        && three.contains(a.rel.as_str())
                         && (a.neg != must_side)
                     {
-                        a.rel = must(&a.rel);
+                        a.rel = must(&a.rel).into();
                     }
                     l
                 })
@@ -549,14 +549,14 @@ impl Lowerer {
         };
         let mut rules = Vec::new();
         for (i, rule) in std::mem::take(&mut self.prog.rules).into_iter().enumerate() {
-            if !three.contains(&rule.head.rel) {
+            if !three.contains(rule.head.rel.as_str()) {
                 rules.push(rule);
                 continue;
             }
             let modal = self.modal.get(&i).map(String::as_str);
             if modal != Some("may") {
                 let mut head = rule.head.clone();
-                head.rel = must(&head.rel);
+                head.rel = must(&head.rel).into();
                 rules.push(Rule { head, body: side(&rule.body, true) });
             }
             rules.push(Rule { head: rule.head.clone(), body: side(&rule.body, false) });
@@ -578,7 +578,7 @@ impl Lowerer {
     /// too. (`precedes` is core.rr's tree arithmetic, `core::rewrite`.)
     fn projections(&mut self) {
         let v = |s: &str| Term::Var(s.to_owned());
-        let read: BTreeSet<String> = self.prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.clone()).collect();
+        let read: BTreeSet<String> = self.prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.to_string()).collect();
         for (rel, args) in [("kind", [Term::Wild, v("n"), v("k"), Term::Wild, Term::Wild]), ("docof", [v("d"), v("n"), Term::Wild, Term::Wild, Term::Wild])] {
             if !read.contains(rel) || !self.prog.inputs.iter().any(|i| i == rel) || (rel == "docof" && (self.docof_of_locs || !self.prog.decls.contains_key("node"))) {
                 continue;
@@ -590,8 +590,8 @@ impl Lowerer {
             // First, kind before docof: where T's programs wrote them.
             let at = usize::from(rel == "docof" && self.prog.rules.first().is_some_and(|r| r.head.rel == "kind"));
             self.prog.rules.insert(at, Rule {
-                head: Atom { rel: rel.to_owned(), args: head, neg: false, gated: false },
-                body: vec![Literal::Atom(Atom { rel: "node".to_owned(), args: args.to_vec(), neg: false, gated: false })],
+                head: Atom { rel: rel.to_owned().into(), args: head, neg: false, gated: false },
+                body: vec![Literal::Atom(Atom { rel: "node".to_owned().into(), args: args.to_vec(), neg: false, gated: false })],
             });
         }
     }
@@ -667,7 +667,7 @@ impl Lowerer {
         self.prog.outputs.retain(|o| o != "violation");
         self.prog.outputs.push("violation".to_owned());
         let v = |s: &str| Term::Var(s.to_owned());
-        let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned(), args, neg: false, gated: false });
+        let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg: false, gated: false });
         // Whether a rule makes a `@place` value: only then can a span or loc `at` hold one.
         let place_values = self.prog.rules.iter().any(|r| r.head.args.iter().chain(r.body.iter().flat_map(literal_terms)).any(has_place));
         for f in std::mem::take(&mut self.violations) {
@@ -681,7 +681,7 @@ impl Lowerer {
                 FindingCode::Column(i) => v(&format!("rr_v{i}")),
                 FindingCode::Constant(c) => Term::Str(c.clone()),
             };
-            let head = Atom { rel: "violation".to_owned(), args: vec![Term::Str(policy.clone()), Term::Str(f.name.clone()), code, v("rr_p"), v("rr_l")], neg: false, gated: false };
+            let head = Atom { rel: "violation".to_owned().into(), args: vec![Term::Str(policy.clone()), Term::Str(f.name.clone()), code, v("rr_p"), v("rr_l")], neg: false, gated: false };
             let cols: Vec<Term> = (0..f.arity).map(|i| if i == 0 || Some(i) == code_col { v(&format!("rr_v{i}")) } else { Term::Wild }).collect();
             let at = if f.node {
                 vec![atom("node", vec![v("rr_d"), v("rr_v0"), Term::Wild, Term::Wild, Term::Wild]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]), atom("line", vec![v("rr_v0"), v("rr_l")])]
@@ -710,11 +710,11 @@ impl Lowerer {
         }
         // A syntax error at its line (or line 1), in its document; an input error at line 1 of the input's path.
         for (what, code, line_one) in on {
-            let head = Atom { rel: "violation".to_owned(), args: vec![Term::Str(policy.clone()), Term::Str(what.clone()), Term::Str(code.clone()), v("rr_p"), v("rr_l")], neg: false, gated: false };
+            let head = Atom { rel: "violation".to_owned().into(), args: vec![Term::Str(policy.clone()), Term::Str(what.clone()), Term::Str(code.clone()), v("rr_p"), v("rr_l")], neg: false, gated: false };
             let body = if what == "syntax_error" {
                 let line = if line_one { Term::Wild } else { v("rr_l") };
                 // A file's own error: a guest's is `.on guest_error`'s.
-                let not_guest = Literal::Atom(Atom { rel: "guest".to_owned(), args: vec![v("rr_d"), Term::Wild, Term::Wild, Term::Wild], neg: true, gated: false });
+                let not_guest = Literal::Atom(Atom { rel: "guest".to_owned().into(), args: vec![v("rr_d"), Term::Wild, Term::Wild, Term::Wild], neg: true, gated: false });
                 let mut body = vec![atom("syntax_error", vec![v("rr_d"), line, Term::Wild]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]), not_guest];
                 body.extend(scoped.iter().cloned());
                 if line_one {
@@ -737,7 +737,7 @@ impl Lowerer {
         }
         // A guest that does not parse, reported at its host's line (`syntax_error` of a guest is a file line).
         for (grammar, code) in guest_errors {
-            let head = Atom { rel: "violation".to_owned(), args: vec![Term::Str(policy.clone()), Term::Str("guest_error".to_owned()), Term::Str(code.clone()), v("rr_p"), v("rr_l")], neg: false, gated: false };
+            let head = Atom { rel: "violation".to_owned().into(), args: vec![Term::Str(policy.clone()), Term::Str("guest_error".to_owned()), Term::Str(code.clone()), v("rr_p"), v("rr_l")], neg: false, gated: false };
             let g = grammar.map_or(Term::Wild, Term::Str);
             let body = vec![atom("syntax_error", vec![v("rr_d"), v("rr_l"), Term::Wild]), atom("guest", vec![v("rr_d"), Term::Wild, Term::Wild, g]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild])];
             for (rel, cols) in [
@@ -775,13 +775,13 @@ impl Lowerer {
             self.prog.doc_scopes = Some(vec![(within.clone(), out.clone())]);
         }
         let v = |s: &str| Term::Var(s.to_owned());
-        let doc = Literal::Atom(Atom { rel: "doc".to_owned(), args: vec![v("d"), v("p"), Term::Wild], neg: false, gated: false });
+        let doc = Literal::Atom(Atom { rel: "doc".to_owned().into(), args: vec![v("d"), v("p"), Term::Wild], neg: false, gated: false });
         let glob = |g: &str| Literal::Cmp { l: Term::Call("glob".to_owned(), vec![v("p"), Term::Str(g.to_owned())]), op: "=", r: Term::Int(1) };
         // An entry from a policy option (`front::OPTION_GLOB`): the option's values, as `option_item` holds them; a
         // directory's documents are those under it.
         let option_entry = |g: &str| g.strip_prefix(crate::code_rule_dsl::logic::front::OPTION_GLOB).and_then(|r| r.split_once(':')).map(|(f, n)| (f.to_owned(), n.to_owned()));
         let by_option = |form: &str, name: &str| -> Vec<Literal> {
-            let item = Literal::Atom(Atom { rel: "option_item".to_owned(), args: vec![Term::Str(name.to_owned()), Term::Wild, v("rr_o")], neg: false, gated: false });
+            let item = Literal::Atom(Atom { rel: "option_item".to_owned().into(), args: vec![Term::Str(name.to_owned()), Term::Wild, v("rr_o")], neg: false, gated: false });
             let test = if form == "dirs" {
                 Literal::Cmp { l: Term::Call("prefix".to_owned(), vec![v("p"), Term::Call("concat".to_owned(), vec![v("rr_o"), Term::Str("/".to_owned())])]), op: "=", r: Term::Int(1) }
             } else {
@@ -801,8 +801,8 @@ impl Lowerer {
                 None => vec![glob(g)],
             }
         };
-        let atom = |rel: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: rel.to_owned(), args, neg, gated: false });
-        let head = |rel: &str, var: &str| Atom { rel: rel.to_owned(), args: vec![v(var)], neg: false, gated: false };
+        let atom = |rel: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg, gated: false });
+        let head = |rel: &str, var: &str| Atom { rel: rel.to_owned().into(), args: vec![v(var)], neg: false, gated: false };
         self.prog.decls.entry("doc".to_owned()).or_insert_with(|| [("d", "int"), ("path", "sym"), ("module", "sym")].iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
         if !self.prog.inputs.iter().any(|i| i == "doc") {
             self.prog.inputs.push("doc".to_owned());
@@ -896,6 +896,13 @@ impl Lowerer {
         if warn {
             self.prog.settings.push(("severity".to_owned(), "guest_error warning".to_owned()));
         }
+        // The libraries' `embed`s are made by default: a program that reads the setting and sets none reads
+        // `guest_policy("library", "on")`, a stated fact, so `!guest_policy("library", "off")` is decided before the
+        // run (`simplify`) instead of reading a relation nothing gives.
+        let reads = self.prog.rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == GUEST_POLICY);
+        if reads && !facts.iter().any(|(k, _)| k == "library") {
+            facts.push(("library".to_owned(), "on".to_owned()));
+        }
         if !facts.is_empty() {
             self.prog.decls.insert(GUEST_POLICY.to_owned(), vec![("k".to_owned(), "sym".to_owned()), ("v".to_owned(), "sym".to_owned())]);
             let rows = self.prog.facts.entry(GUEST_POLICY.to_owned()).or_default();
@@ -953,7 +960,7 @@ impl Lowerer {
                 if let Some(m) = &head.modal {
                     self.modal.insert(self.prog.rules.len(), m.clone());
                 }
-                self.prog.rules.push(Rule { head: Atom { rel: rel.clone(), args, neg: false, gated: false }, body });
+                self.prog.rules.push(Rule { head: Atom { rel: rel.clone().into(), args, neg: false, gated: false }, body });
             }
         }
         Ok(())
@@ -1265,10 +1272,10 @@ impl Lowerer {
             STerm::Str(s) => Term::Str(s.clone()),
             _ => unreachable!("checked above"),
         }).collect();
-        let head = Atom { rel: req.to_owned(), args, neg: false, gated: false };
+        let head = Atom { rel: req.to_owned().into(), args, neg: false, gated: false };
         let mut body: Vec<Literal> = ctx.into_iter().map(Literal::Atom).collect();
         if every_chunk {
-            body.push(Literal::Atom(Atom { rel: "doc".to_owned(), args: vec![Term::Var("rr_demand_doc".to_owned()), Term::Wild, Term::Wild], neg: false, gated: false }));
+            body.push(Literal::Atom(Atom { rel: "doc".to_owned().into(), args: vec![Term::Var("rr_demand_doc".to_owned()), Term::Wild, Term::Wild], neg: false, gated: false }));
         }
         let rule = Rule { head, body };
         if !self.prog.rules.contains(&rule) {
@@ -1286,7 +1293,7 @@ impl Lowerer {
             return Ok(());
         }
         let Some(key) = args.first() else { return Ok(()) };
-        let head = |key: Term| Atom { rel: demand.to_owned(), args: vec![key], neg: false, gated: false };
+        let head = |key: Term| Atom { rel: demand.to_owned().into(), args: vec![key], neg: false, gated: false };
         self.prog.decls.insert(demand.to_owned(), vec![("k".to_owned(), "sym".to_owned())]);
         let s = match key {
             // A constant key is a fact, as the reader takes a bodiless clause: printed and read back, it is the same.
@@ -1367,7 +1374,7 @@ impl Lowerer {
             (shared.iter().map(|c| (c.clone(), self.type_of(c, &bodies))).collect(), shared.iter().map(|c| Term::Var(c.clone())).collect())
         };
         self.prog.decls.insert(name.clone(), cols);
-        let head = Atom { rel: name, args, neg: false, gated: false };
+        let head = Atom { rel: name.into(), args, neg: false, gated: false };
         for body in bodies {
             self.prog.rules.push(Rule { head: head.clone(), body });
         }
@@ -1386,7 +1393,7 @@ impl Lowerer {
             return name;
         }
         let v = |s: &str| Term::Var(s.to_owned());
-        let atom = |rel: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: rel.to_owned(), args, neg, gated: false });
+        let atom = |rel: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg, gated: false });
         let cmp = |l: &str, r: &str| Literal::Cmp { l: v(l), op: "<", r: v(r) };
         let member = match (set, self.node_set(set)) {
             (_, Some(nodes)) => vec![atom(&nodes, vec![v("s")], false)],
@@ -1401,7 +1408,7 @@ impl Lowerer {
         self.prog.decls.insert(after.clone(), node_int.clone());
         self.prog.decls.insert(first.clone(), node_int);
         self.prog.decls.insert(name.clone(), vec![("a".to_owned(), "node".to_owned()), ("b".to_owned(), "node".to_owned())]);
-        let head = |rel: &str, args: Vec<Term>| Atom { rel: rel.to_owned(), args, neg: false, gated: false };
+        let head = |rel: &str, args: Vec<Term>| Atom { rel: rel.to_owned().into(), args, neg: false, gated: false };
         let mut body = vec![atom("child", vec![v("p"), v("a"), v("i")], false), atom("child", vec![v("p"), v("s"), v("k")], false), cmp("i", "k")];
         body.extend(member);
         self.prog.rules.push(Rule { head: head(&after, vec![v("a"), v("k")]), body });
@@ -1446,18 +1453,18 @@ impl Lowerer {
         let rel = self.fresh("up");
         self.prog.decls.insert(rel.clone(), vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
         let v = |s: &str| Term::Var(s.to_owned());
-        let atom = |r: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: r.to_owned(), args, neg, gated: false });
+        let atom = |r: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: r.to_owned().into(), args, neg, gated: false });
         let up = |p: &str, q: &str| atom("tape", vec![v(p), v(q), Term::Wild, Term::Wild], false);
         let real = |q: &str| Literal::Cmp { l: v(q), op: ">=", r: Term::Int(0) };
         let mut first = seed;
         first.extend([up(x, "rr_p"), real("rr_p")]);
-        self.prog.rules.push(Rule { head: Atom { rel: rel.clone(), args: vec![v(x), v("rr_p")], neg: false, gated: false }, body: first });
+        self.prog.rules.push(Rule { head: Atom { rel: rel.clone().into(), args: vec![v(x), v("rr_p")], neg: false, gated: false }, body: first });
         let mut next = vec![atom(&rel, vec![v("rr_n"), v("rr_p")], false)];
         if let Some(stop) = stop {
             next.push(atom(stop, vec![v("rr_p")], true));
         }
         next.extend([up("rr_p", "rr_q"), real("rr_q")]);
-        self.prog.rules.push(Rule { head: Atom { rel: rel.clone(), args: vec![v("rr_n"), v("rr_q")], neg: false, gated: false }, body: next });
+        self.prog.rules.push(Rule { head: Atom { rel: rel.clone().into(), args: vec![v("rr_n"), v("rr_q")], neg: false, gated: false }, body: next });
         rel
     }
 
@@ -1469,7 +1476,7 @@ impl Lowerer {
             self.siblings = siblings;
             return Ok(vec![Literal::Atom(ctx?)]);
         }
-        Ok(vec![Literal::Atom(Atom { rel: "node".to_owned(), args: vec![Term::Wild, Term::Var(n.to_owned()), Term::Wild, Term::Wild, Term::Wild], neg: false, gated: false })])
+        Ok(vec![Literal::Atom(Atom { rel: "node".to_owned().into(), args: vec![Term::Wild, Term::Var(n.to_owned()), Term::Wild, Term::Wild, Term::Wild], neg: false, gated: false })])
     }
 
     /// The axes over a set of nodes S (`core.rr`: a set may be a relation of nodes), as climbs up the tree:
@@ -1481,7 +1488,7 @@ impl Lowerer {
     /// Negated, each is a helper relation (`negate`).
     fn node_axis(&mut self, rel: &str, args: &[STerm], neg: bool, outer: &BTreeSet<String>) -> Result<Vec<Vec<Literal>>, Error> {
         let set = self.node_set(&args[2]).expect("a node set");
-        let atom = |r: &str, args: Vec<Term>| Literal::Atom(Atom { rel: r.to_owned(), args, neg: false, gated: false });
+        let atom = |r: &str, args: Vec<Term>| Literal::Atom(Atom { rel: r.to_owned().into(), args, neg: false, gated: false });
         let named = |me: &mut Self, t: &STerm| -> Result<String, Error> {
             match t {
                 STerm::Var(v) => Ok(v.clone()),
@@ -1551,7 +1558,7 @@ impl Lowerer {
         if !self.prog.inputs.iter().any(|i| i == within) {
             self.prog.inputs.push(within.to_owned());
         }
-        let below = |neg: bool| vec![Literal::Atom(Atom { rel: within.to_owned(), args: vec![n.clone(), a.clone()], neg, gated: false })];
+        let below = |neg: bool| vec![Literal::Atom(Atom { rel: within.to_owned().into(), args: vec![n.clone(), a.clone()], neg, gated: false })];
         let cmp = |l: &Term, op: &'static str, r: &Term| Literal::Cmp { l: l.clone(), op, r: r.clone() };
         let Some(stop) = stop else { return Ok(vec![below(neg)]) };
         let set = self.set_name("within_stop", stop)?;
@@ -1562,12 +1569,12 @@ impl Lowerer {
         // 0083 §3).
         if neg {
             // n is not below a, or its nearest stop is strictly below a.
-            let between = Literal::Atom(Atom { rel: within.to_owned(), args: vec![Term::Var(s.clone()), a.clone()], neg: false, gated: false });
+            let between = Literal::Atom(Atom { rel: within.to_owned().into(), args: vec![Term::Var(s.clone()), a.clone()], neg: false, gated: false });
             return Ok(vec![below(true), below(false).into_iter().chain([nearest, between]).collect()]);
         }
-        let none = Literal::Atom(Atom { rel: format!("{AXIS}{set}"), args: vec![n.clone(), Term::Wild], neg: true, gated: false });
+        let none = Literal::Atom(Atom { rel: format!("{AXIS}{set}").into(), args: vec![n.clone(), Term::Wild], neg: true, gated: false });
         // The nearest stop is a, or a is below it.
-        let above = Literal::Atom(Atom { rel: within.to_owned(), args: vec![a.clone(), Term::Var(s.clone())], neg: false, gated: false });
+        let above = Literal::Atom(Atom { rel: within.to_owned().into(), args: vec![a.clone(), Term::Var(s.clone())], neg: false, gated: false });
         Ok(vec![
             below(false).into_iter().chain([none]).collect(),
             below(false).into_iter().chain([nearest.clone(), cmp(&Term::Var(s.clone()), "=", &a)]).collect(),
@@ -1601,7 +1608,7 @@ impl Lowerer {
             }
             let pattern = if all { re.clone() } else { format!("^(?:{re})$") };
             self.rx_span_input();
-            let atom = |args: Vec<Term>| Literal::Atom(Atom { rel: "rx_span".to_owned(), args, neg: false, gated: false });
+            let atom = |args: Vec<Term>| Literal::Atom(Atom { rel: "rx_span".to_owned().into(), args, neg: false, gated: false });
             let (p, c) = (Term::Str(pattern), Term::Var(v.clone()));
             if gs.is_empty() {
                 return Ok(vec![vec![atom(vec![p, c, Term::Wild, Term::Str(String::new()), Term::Wild])]]);
@@ -1643,11 +1650,11 @@ impl Lowerer {
             // The native producer replaces these seed values. They establish dependency and numeric types.
             head_args.extend([Term::Int(0), Term::Int(0), Term::Int(0)]);
         }
-        self.prog.rules.push(Rule { head: Atom { rel: name.clone(), args: head_args, neg: false, gated: false }, body });
-        self.prog.natives.insert(name.clone(), Native::MatchAll { input: ctx.rel, pattern: re.clone(), groups: gs.clone(), positions: !positions.is_empty() });
+        self.prog.rules.push(Rule { head: Atom { rel: name.clone().into(), args: head_args, neg: false, gated: false }, body });
+        self.prog.natives.insert(name.clone(), Native::MatchAll { input: ctx.rel.to_string(), pattern: re.clone(), groups: gs.clone(), positions: !positions.is_empty() });
         let args = std::iter::once(Term::Var(v.clone())).chain(gs.iter().map(|g| Term::Var(g.clone())))
             .map(Ok).chain(positions.iter().map(|p| self.term(p))).collect::<Result<Vec<_>, Error>>()?;
-        Ok(vec![vec![Literal::Atom(Atom { rel: name, args, neg: false, gated: false })]])
+        Ok(vec![vec![Literal::Atom(Atom { rel: name.into(), args, neg: false, gated: false })]])
     }
 
     /// Every constant grammar a rule names, in an `embed` or `embed_value` head or a `parsed` or `sub_tape` atom, is
@@ -1691,16 +1698,16 @@ impl Lowerer {
                 ("kind", [Term::Var(y), Term::Str(k)]) if y == x && k == "comment" => Some([SpanIn::Comment].into()),
                 ("kind", [Term::Var(y), Term::Str(k)]) if y == x => Some([SpanIn::Kind(k.clone())].into()),
                 ("rx_span", [Term::Str(p), _, _, Term::Str(g), Term::Var(y)]) if y == x => Some([SpanIn::Capture(p.clone(), g.clone())].into()),
-                _ => b.args.iter().enumerate().find_map(|(i, t)| matches!(t, Term::Var(y) if y == x).then(|| columns.get(&(b.rel.clone(), i)).cloned()).flatten()),
+                _ => b.args.iter().enumerate().find_map(|(i, t)| matches!(t, Term::Var(y) if y == x).then(|| columns.get(&(b.rel.to_string(), i)).cloned()).flatten()),
             })
         };
         // A declared relation no rule derives, and that is not read in, has no rows: its columns hold no nodes, and a
         // scan over them is empty. A library a pack's rules include (`…confusables.rr`) is loaded on its own too.
         {
-            let heads: BTreeSet<&String> = self.prog.rules.iter().map(|r| &r.head.rel).collect();
-            let inputs: BTreeSet<&String> = self.prog.inputs.iter().collect();
+            let heads: BTreeSet<&str> = self.prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
+            let inputs: BTreeSet<&str> = self.prog.inputs.iter().map(String::as_str).collect();
             for (rel, cols) in &self.prog.decls {
-                if !heads.contains(rel) && !inputs.contains(rel) && !self.prog.natives.contains_key(rel) {
+                if !heads.contains(rel.as_str()) && !inputs.contains(rel.as_str()) && !self.prog.natives.contains_key(rel) {
                     for i in 0..cols.len() {
                         columns.insert((rel.clone(), i), BTreeSet::new());
                     }
@@ -1708,9 +1715,9 @@ impl Lowerer {
             }
         }
         // Each derived relation's rules, in order: one pass, not one over every rule per relation.
-        let mut by_head: BTreeMap<&String, Vec<&Rule>> = BTreeMap::new();
+        let mut by_head: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();
         for r in &self.prog.rules {
-            by_head.entry(&r.head.rel).or_default().push(r);
+            by_head.entry(r.head.rel.as_str()).or_default().push(r);
         }
         loop {
             let mut found = BTreeMap::new();
@@ -1722,8 +1729,8 @@ impl Lowerer {
                     }).collect();
                     if let Some(each) = each {
                         let all: BTreeSet<SpanIn> = each.into_iter().flatten().collect();
-                        if columns.get(&(rel.clone(), i)) != Some(&all) {
-                            found.insert((rel.clone(), i), all);
+                        if columns.get(&(rel.to_owned(), i)) != Some(&all) {
+                            found.insert((rel.to_owned(), i), all);
                         }
                     }
                 }
@@ -1740,24 +1747,24 @@ impl Lowerer {
         // rows for other nodes too, but none of its readers joins them, so testing only the spans its readers bind
         // gives every reader the same rows. Not for a column the run outputs, which no reader bounds.
         let mut demand: BTreeMap<(String, usize), BTreeSet<SpanIn>> = BTreeMap::new();
-        let outputs: BTreeSet<&String> = self.prog.outputs.iter().collect();
+        let outputs: BTreeSet<&str> = self.prog.outputs.iter().map(String::as_str).collect();
         let mut rounds = 0;
         loop {
             let mut found = BTreeMap::new();
             for &rel in by_head.keys().filter(|r| !outputs.contains(*r)) {
                 for i in 0..by_head[rel][0].head.args.len() {
-                    if columns.contains_key(&(rel.clone(), i)) {
+                    if columns.contains_key(&(rel.to_owned(), i)) {
                         continue;
                     }
                     let mut all = BTreeSet::new();
                     let mut sites = 0;
                     let mut bound = true;
                     for r in &self.prog.rules {
-                        for a in r.body.iter().filter_map(Literal::atom).filter(|a| &a.rel == rel) {
+                        for a in r.body.iter().filter_map(Literal::atom).filter(|a| a.rel == rel) {
                             sites += 1;
                             let got = match a.args.get(i) {
                                 Some(Term::Var(y)) => binder(&r.body, y, &columns).or_else(|| {
-                                    r.head.args.iter().position(|t| matches!(t, Term::Var(h) if h == y)).and_then(|j| demand.get(&(r.head.rel.clone(), j)).cloned())
+                                    r.head.args.iter().position(|t| matches!(t, Term::Var(h) if h == y)).and_then(|j| demand.get(&(r.head.rel.to_string(), j)).cloned())
                                 }),
                                 _ => None,
                             };
@@ -1767,8 +1774,8 @@ impl Lowerer {
                             }
                         }
                     }
-                    if bound && sites > 0 && demand.get(&(rel.clone(), i)) != Some(&all) {
-                        found.insert((rel.clone(), i), all);
+                    if bound && sites > 0 && demand.get(&(rel.to_owned(), i)) != Some(&all) {
+                        found.insert((rel.to_owned(), i), all);
                     }
                 }
             }
@@ -1783,7 +1790,7 @@ impl Lowerer {
                 let (Some(Term::Str(p)), Some(Term::Var(c))) = (a.args.first(), a.args.get(1)) else {
                     return Err(Error::Syntax(format!("{}: rx_span reads a constant pattern over a span variable", rule.head.rel)));
                 };
-                let from_readers = || rule.head.args.iter().position(|t| matches!(t, Term::Var(h) if h == c)).and_then(|j| demand.get(&(rule.head.rel.clone(), j)).cloned());
+                let from_readers = || rule.head.args.iter().position(|t| matches!(t, Term::Var(h) if h == c)).and_then(|j| demand.get(&(rule.head.rel.to_string(), j)).cloned());
                 let Some(within) = binder(&rule.body, c, &columns).or_else(from_readers) else {
                                         return not_yet(format!("{}: match_all over ${c}, a node or span not bound by `source`, `src_line`, `kind` or a capture", rule.head.rel));
                 };
@@ -1813,10 +1820,10 @@ impl Lowerer {
         {
             self.rx_span_input();
             let args = vec![Term::Str(format!("^(?:{re})$")), Term::Var(v.clone()), Term::Wild, Term::Str(String::new()), Term::Wild];
-            return Ok(vec![vec![Literal::Atom(Atom { rel: "rx_span".to_owned(), args, neg, gated: false })]]);
+            return Ok(vec![vec![Literal::Atom(Atom { rel: "rx_span".to_owned().into(), args, neg, gated: false })]]);
         }
         let t = self.fresh("text");
-        let text = Literal::Atom(Atom { rel: "text".to_owned(), args: vec![Term::Var(v.clone()), Term::Var(t.clone())], neg: false, gated: false });
+        let text = Literal::Atom(Atom { rel: "text".to_owned().into(), args: vec![Term::Var(v.clone()), Term::Var(t.clone())], neg: false, gated: false });
         let test = self.atom(rel, &[p.clone(), STerm::Var(t)], neg)?;
         Ok(vec![vec![text, test]])
     }
@@ -1836,7 +1843,7 @@ impl Lowerer {
             self.prog.decls.insert("ast_match".to_owned(), cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
         }
         let atom = |g: &str, c: Term, neg: bool| {
-            Literal::Atom(Atom { rel: "ast_match".to_owned(), args: vec![Term::Str(pattern.to_owned()), Term::Var(n.clone()), Term::Str(g.to_owned()), c], neg, gated: false })
+            Literal::Atom(Atom { rel: "ast_match".to_owned().into(), args: vec![Term::Str(pattern.to_owned()), Term::Var(n.clone()), Term::Str(g.to_owned()), c], neg, gated: false })
         };
         if neg {
             return Ok(vec![vec![atom("", Term::Wild, true)]]);
@@ -1931,7 +1938,7 @@ impl Lowerer {
             let s = match &tests[0].1 {
                 STerm::Var(v) if self.span_container(v).is_some() || self.node_typed(v) => {
                     let t = self.fresh("text");
-                    out.push(Literal::Atom(Atom { rel: "text".to_owned(), args: vec![Term::Var(v.clone()), Term::Var(t.clone())], neg: false, gated: false }));
+                    out.push(Literal::Atom(Atom { rel: "text".to_owned().into(), args: vec![Term::Var(v.clone()), Term::Var(t.clone())], neg: false, gated: false }));
                     Term::Var(t)
                 }
                 s => self.term(s)?,
@@ -2011,7 +2018,7 @@ impl Lowerer {
             // `nearest(n, _, set)`: n has an ancestor in the set, which is `inside(n, _, set)`; and negated.
             ("nearest", [n, STerm::Wild, set]) => {
                 let set = self.set_name(rel, set)?;
-                return Ok(Literal::Atom(Atom { rel: format!("{AXIS}{set}"), args: vec![self.term(n)?, Term::Wild], neg, gated: false }));
+                return Ok(Literal::Atom(Atom { rel: format!("{AXIS}{set}").into(), args: vec![self.term(n)?, Term::Wild], neg, gated: false }));
             }
             ("nearest", [n, a, set]) if !neg => {
                 let kindset = self.set_name(rel, set)?;
@@ -2030,12 +2037,12 @@ impl Lowerer {
                 let set = self.set_name(rel, set)?;
                 let (x, y) = (self.term(x)?, self.term(y)?);
                 let (axis, args) = if rel == "inside" { (AXIS, vec![x, y]) } else { (DESCENDANTS, vec![y, x]) };
-                return Ok(Literal::Atom(Atom { rel: format!("{axis}{set}"), args, neg, gated: false }));
+                return Ok(Literal::Atom(Atom { rel: format!("{axis}{set}").into(), args, neg, gated: false }));
             }
             ("ast", _) if !neg => return self.ast(args),
             ("precedes_stop", [a, b, set]) => {
                 let rel = self.precedes_stop(set);
-                return Ok(Literal::Atom(Atom { rel, args: vec![self.term(a)?, self.term(b)?], neg, gated: false }));
+                return Ok(Literal::Atom(Atom { rel: rel.into(), args: vec![self.term(a)?, self.term(b)?], neg, gated: false }));
             }
             ("dfs_first", [r, hit, first, edge, target]) | ("dfs_first_memo", [r, hit, first, edge, target, _]) => {
                 let name = |t: &STerm| match t {
@@ -2045,7 +2052,7 @@ impl Lowerer {
                 let (edge, target) = (name(edge)?, name(target)?);
                 let roots = if rel == "dfs_first_memo" { Some(name(&args[5])?) } else { None };
                 let rel = self.dfs_first(&edge, &target, roots.as_deref());
-                return Ok(Literal::Atom(Atom { rel, args: vec![self.term(r)?, self.term(hit)?, self.term(first)?], neg, gated: false }));
+                return Ok(Literal::Atom(Atom { rel: rel.into(), args: vec![self.term(r)?, self.term(hit)?, self.term(first)?], neg, gated: false }));
             }
             ("python_candidates", [call,report,reference,receiver,input,targets,context,member]) => {
                 let name=|t:&STerm|match t{STerm::Var(v)=>Ok(v.clone()),_=>Err(Error::Syntax("Python candidate inputs are relation names".into()))};
@@ -2067,10 +2074,10 @@ impl Lowerer {
                     // Locality proof only: the native contract emits nodes from these documents.
                     for n in ["c","f","r","o"] {body.push(a("node",vec![v("d"),v(n),Term::Wild,Term::Wild,Term::Wild]));}
                     self.prog.decls.insert(rel.clone(),["c","f","r","o"].into_iter().map(|n|(n.into(),"node".into())).collect());
-                    self.prog.rules.push(Rule{head:Atom{rel:rel.clone(),args:["c","f","r","o"].into_iter().map(v).collect(),neg:false,gated:false},body});
+                    self.prog.rules.push(Rule{head:Atom{rel:rel.clone().into(),args:["c","f","r","o"].into_iter().map(v).collect(),neg:false,gated:false},body});
                     self.prog.natives.insert(rel.clone(),native);rel
                 };
-                return Ok(Literal::Atom(Atom{rel,args:[call,report,reference,receiver].into_iter().map(|a|self.term(a)).collect::<Result<Vec<_>,_>>()?,neg,gated:false}));
+                return Ok(Literal::Atom(Atom{rel: rel.into(),args:[call,report,reference,receiver].into_iter().map(|a|self.term(a)).collect::<Result<Vec<_>,_>>()?,neg,gated:false}));
             }
             ("python_qualified" | "python_origins" | "python_assigned" | "python_arguments", _) => {
                 let kind=rel.strip_prefix("python_").unwrap();
@@ -2081,7 +2088,7 @@ impl Lowerer {
                 let input=name(&args[width])?;
                 let targets=if kind=="qualified" {Some(name(&args[width+1])?)}else{None};
                 let producer=self.python_producer(kind,&input,targets.as_deref());
-                return Ok(Literal::Atom(Atom{rel:producer,args:args[..width].iter().map(|a|self.term(a)).collect::<Result<Vec<_>,_>>()?,neg,gated:false}));
+                return Ok(Literal::Atom(Atom{rel:producer.into(),args:args[..width].iter().map(|a|self.term(a)).collect::<Result<Vec<_>,_>>()?,neg,gated:false}));
             }
             ("components", [d, c, k, edge, own]) => {
                 let name = |t: &STerm| match t {
@@ -2089,7 +2096,7 @@ impl Lowerer {
                     _ => Err(Error::Syntax("components: the edge and own relations are named".to_owned())),
                 };
                 let rel = self.components(&name(edge)?, &name(own)?);
-                return Ok(Literal::Atom(Atom { rel, args: vec![self.term(d)?, self.term(c)?, self.term(k)?], neg, gated: false }));
+                return Ok(Literal::Atom(Atom { rel: rel.into(), args: vec![self.term(d)?, self.term(c)?, self.term(k)?], neg, gated: false }));
             }
             _ => {}
         }
@@ -2097,7 +2104,7 @@ impl Lowerer {
             return not_yet(format!("the built-in {rel}"));
         }
         let args = args.iter().map(|a| self.term(a)).collect::<Result<Vec<_>, _>>()?;
-        Ok(Literal::Atom(Atom { rel: rel.to_owned(), args, neg, gated: false }))
+        Ok(Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg, gated: false }))
     }
 
     fn python_producer(&mut self, kind:&str, input:&str, targets:Option<&str>)->String {
@@ -2124,7 +2131,7 @@ impl Lowerer {
             }
         }
         self.prog.decls.insert(rel.clone(),vars.iter().map(|(n,t)|(n.to_string(),t.to_string())).collect());
-        self.prog.rules.push(Rule{head:Atom{rel:rel.clone(),args:vars.iter().map(|(n,_)|v(n)).collect(),neg:false,gated:false},body});
+        self.prog.rules.push(Rule{head:Atom{rel:rel.clone().into(),args:vars.iter().map(|(n,_)|v(n)).collect(),neg:false,gated:false},body});
         self.prog.natives.insert(rel.clone(),native);
         rel
     }
@@ -2141,12 +2148,12 @@ impl Lowerer {
             return rel;
         }
         let v = |n: &str| Term::Var(n.to_owned());
-        let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned(), args, neg: false, gated: false });
+        let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg: false, gated: false });
         let mut body = vec![atom(edge, vec![v("r"), v("hit"), v("first")]), atom(target, vec![v("hit")])];
         if let Some(roots) = roots {
             body.push(atom(roots, vec![v("r"), Term::Wild]));
         }
-        self.prog.rules.push(Rule { head: Atom { rel: rel.clone(), args: vec![v("r"), v("hit"), v("first")], neg: false, gated: false }, body });
+        self.prog.rules.push(Rule { head: Atom { rel: rel.clone().into(), args: vec![v("r"), v("hit"), v("first")], neg: false, gated: false }, body });
         // The edge relation's column types (a node, a number, a symbol); nodes where it is declared later.
         let ty = |c: usize, or: &str| self.prog.decls.get(edge).and_then(|cols| cols.get(c)).map_or_else(|| or.to_owned(), |(_, t)| t.clone());
         let cols = vec![("r".to_owned(), ty(0, "node")), ("hit".to_owned(), ty(1, "node")), ("first".to_owned(), ty(2, "int"))];
@@ -2164,9 +2171,9 @@ impl Lowerer {
             return rel;
         }
         let v = |n: &str| Term::Var(n.to_owned());
-        let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned(), args, neg: false, gated: false });
+        let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg: false, gated: false });
         let body = vec![atom(own, vec![v("d"), v("k")]), atom(edge, vec![v("d"), v("e")]), atom(own, vec![v("e"), Term::Wild])];
-        self.prog.rules.push(Rule { head: Atom { rel: rel.clone(), args: vec![v("d"), v("e"), v("k")], neg: false, gated: false }, body });
+        self.prog.rules.push(Rule { head: Atom { rel: rel.clone().into(), args: vec![v("d"), v("e"), v("k")], neg: false, gated: false }, body });
         let cols = vec![("d".to_owned(), "int".to_owned()), ("c".to_owned(), "int".to_owned()), ("k".to_owned(), "sym".to_owned())];
         self.prog.decls.insert(rel.clone(), cols);
         self.prog.natives.insert(rel.clone(), Native::Components { edge: edge.to_owned(), own: own.to_owned() });
@@ -2300,12 +2307,12 @@ impl Lowerer {
         // Only the literals tied to `vars` through shared variables: one tied to none tests that some row exists
         // anywhere (`ann_root(_)` once `(s = a ; within(s, a))` is left out), which makes every row of the context
         // depend on every document. Leaving it out widens the context, which the rule joins with its own literals.
-        let context = Self::connected(Self::placed_texts(Self::connected(context, vars), vars), vars);
+        let context = Self::covering(Self::connected(Self::placed_texts(Self::connected(context, vars), vars), vars), vars);
         let ctx = self.fresh("ctx");
         let alts = self.conjunction(&context, &vars.iter().cloned().collect())?;
         let types = vars.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
         self.prog.decls.insert(ctx.clone(), types);
-        let head = Atom { rel: ctx, args: vars.iter().map(|c| Term::Var(c.clone())).collect(), neg: false, gated: false };
+        let head = Atom { rel: ctx.into(), args: vars.iter().map(|c| Term::Var(c.clone())).collect(), neg: false, gated: false };
         for b in alts {
             self.prog.rules.push(Rule { head: head.clone(), body: b });
         }
@@ -2355,6 +2362,55 @@ impl Lowerer {
             }
         }
         context.into_iter().zip(keep).filter(|(_, k)| *k).map(|(l, _)| l).collect()
+    }
+
+    /// Of a context's groups of literals (joined through variables other than `vars`), those that bind a variable of
+    /// `vars` no group before them does. Another group only tests that rows exist, and joined in it multiplies the
+    /// context's rows by its own: `within(c1, n), within(c2, n)` asked for `n` is every pair of n's descendants (1.3 G
+    /// rows on 20 files). The context may hold more rows than the rule, which joins it with its own literals.
+    fn covering(context: Vec<Lit>, vars: &[String]) -> Vec<Lit> {
+        let asked: BTreeSet<String> = vars.iter().cloned().collect();
+        let of: Vec<BTreeSet<String>> = context.iter().map(|l| body_vars(std::slice::from_ref(l))).collect();
+        // Each literal's group: literals sharing a variable not asked about are one group.
+        let mut group: Vec<usize> = (0..context.len()).collect();
+        fn root(g: &mut [usize], mut i: usize) -> usize {
+            while g[i] != i {
+                g[i] = g[g[i]];
+                i = g[i];
+            }
+            i
+        }
+        for i in 0..context.len() {
+            for j in 0..i {
+                if of[i].iter().any(|v| !asked.contains(v) && of[j].contains(v)) {
+                    let (a, b) = (root(&mut group, i), root(&mut group, j));
+                    group[a] = b;
+                }
+            }
+        }
+        let binds = |l: &Lit| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() && rel != "earlier");
+        let mut covered: BTreeSet<String> = BTreeSet::new();
+        let mut kept: BTreeSet<usize> = BTreeSet::new();
+        for i in 0..context.len() {
+            let g = root(&mut group, i);
+            if kept.contains(&g) {
+                continue;
+            }
+            let bound: BTreeSet<String> = (0..context.len())
+                .filter(|&k| root(&mut group, k) == g && binds(&context[k]))
+                .flat_map(|k| of[k].iter().filter(|v| asked.contains(*v)).cloned().collect::<Vec<_>>())
+                .collect();
+            if !bound.is_subset(&covered) {
+                covered.extend(bound);
+                kept.insert(g);
+            }
+        }
+        // A variable no group binds is left to the context as it was.
+        if !asked.is_subset(&covered) {
+            return context;
+        }
+        let groups: Vec<usize> = (0..context.len()).map(|k| root(&mut group, k)).collect();
+        context.into_iter().zip(groups).filter(|(_, g)| kept.contains(g)).map(|(l, _)| l).collect()
     }
 
     /// A context's atoms and the comparisons it can evaluate, in order, and the variables they bind.
@@ -2505,11 +2561,11 @@ impl Lowerer {
         for b in bodies {
             // The empty value inside the body is the constant, as in a rule's own body.
             let (args, b) = unset(args.clone(), b)?;
-            self.prog.rules.push(Rule { head: Atom { rel: name.clone(), args, neg: false, gated: false }, body: b });
+            self.prog.rules.push(Rule { head: Atom { rel: name.clone().into(), args, neg: false, gated: false }, body: b });
         }
         // The helper keeps every column (`count` counts distinct rows), but only the rule's variables group it.
         let args = cols.iter().map(|c| if outer.contains(c) || own(c) { Term::Var(c.clone()) } else { Term::Wild }).collect();
-        Ok(vec![Literal::Agg { var: var.to_owned(), op, over, atom: Atom { rel: name, args, neg: false, gated: false } }])
+        Ok(vec![Literal::Agg { var: var.to_owned(), op, over, atom: Atom { rel: name.into(), args, neg: false, gated: false } }])
     }
 
     /// A helper column's type: the column it fills in the body's atoms, else the type of the aggregate or the
@@ -2523,7 +2579,7 @@ impl Lowerer {
                             if crate::code_rule_dsl::logic::front::is_axis(&a.rel) {
                                 return "node".to_owned();
                             }
-                            if let Some(cols) = self.prog.decls.get(&a.rel)
+                            if let Some(cols) = self.prog.decls.get(a.rel.as_str())
                                 && let Some((_, ty)) = cols.get(i)
                             {
                                 return ty.clone();
@@ -2551,7 +2607,7 @@ impl Lowerer {
                         AggOp::Join { .. } => "sym".to_owned(),
                         AggOp::Min | AggOp::Max => {
                             let col = atom.args.iter().position(|t| over.as_ref().is_some_and(|o| *t == Term::Var(o.clone())));
-                            col.and_then(|c| self.prog.decls.get(&atom.rel)?.get(c).map(|(_, ty)| ty.clone())).unwrap_or_else(|| "int".to_owned())
+                            col.and_then(|c| self.prog.decls.get(atom.rel.as_str())?.get(c).map(|(_, ty)| ty.clone())).unwrap_or_else(|| "int".to_owned())
                         }
                     };
                 }
@@ -2689,7 +2745,7 @@ impl Lowerer {
                     },
                     _ => continue,
                 };
-                *l = Literal::Atom(Atom { rel: format!("rr_{helper}_{set}"), args, neg, gated: false });
+                *l = Literal::Atom(Atom { rel: format!("rr_{helper}_{set}").into(), args, neg, gated: false });
                 if helper == "anc" {
                     need.insert((set.clone(), "near"));
                 }
@@ -2703,14 +2759,14 @@ impl Lowerer {
             self.base(rel);
         }
         let v = |s: &str| Term::Var(s.to_owned());
-        let atom = |rel: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: rel.to_owned(), args, neg, gated: false });
+        let atom = |rel: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg, gated: false });
         let child = |p: &str, c: &str| atom("child", vec![v(p), v(c), Term::Wild], false);
         for (set, helper) in need {
             let member = format!("rr_in_{set}");
             if !self.prog.decls.contains_key(&member) {
                 self.prog.decls.insert(member.clone(), vec![("x".to_owned(), "node".to_owned())]);
                 let body = vec![atom("node", vec![Term::Wild, v("x"), v("k"), Term::Wild, Term::Wild], false), atom(&set, vec![v("k")], false)];
-                self.prog.rules.push(Rule { head: Atom { rel: member.clone(), args: vec![v("x")], neg: false, gated: false }, body });
+                self.prog.rules.push(Rule { head: Atom { rel: member.clone().into(), args: vec![v("x")], neg: false, gated: false }, body });
             }
             let is = |x: &str, neg: bool| atom(&member, vec![v(x)], neg);
             let rel = format!("rr_{helper}_{set}");
@@ -2722,7 +2778,7 @@ impl Lowerer {
                 _ => (&["a"], vec![vec![is("n", false), child("a", "n")], vec![me(&["p"]), child("a", "p")]]),
             };
             self.prog.decls.insert(rel.clone(), cols.iter().map(|c| ((*c).to_owned(), "node".to_owned())).collect());
-            let head = Atom { rel: rel.clone(), args: cols.iter().map(|c| v(c)).collect(), neg: false, gated: false };
+            let head = Atom { rel: rel.clone().into(), args: cols.iter().map(|c| v(c)).collect(), neg: false, gated: false };
             for body in bodies {
                 self.prog.rules.push(Rule { head: head.clone(), body });
             }
@@ -2788,7 +2844,7 @@ impl Lowerer {
             // A matcher atom (`ast(…)`) or a walk reads the tree itself; an aggregate reads its atom.
             let reads = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg) || matches!(l, Literal::Ast { .. } | Literal::Nearest { .. } | Literal::Agg { .. });
             if !rule.body.iter().any(reads) {
-                rule.body.insert(0, Literal::Atom(Atom { rel: UNIT.to_owned(), args: vec![Term::Int(0)], neg: false, gated: false }));
+                rule.body.insert(0, Literal::Atom(Atom { rel: UNIT.to_owned().into(), args: vec![Term::Int(0)], neg: false, gated: false }));
                 used = true;
             }
         }

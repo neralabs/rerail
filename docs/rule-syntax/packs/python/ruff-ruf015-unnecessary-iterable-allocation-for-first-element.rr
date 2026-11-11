@@ -26,9 +26,9 @@ RUF015(c, m) :- kind(c, "call"), field(c, "function", f), attr_of(f, v, "pop"), 
 // Ruff counts the positional arguments only, a `*x` among them: `list(*x)` and `tuple(x, k=1)` count.
 built(v, "copy") :- unparen(v, c), (call_q(c, "builtins.list") ; call_q(c, "builtins.tuple")), call_nargs(c, 1).
 // `[*x]`: tree-sitter reads `[*f(y)]` and `[*x.y]` as a call or attribute of `*f`, so the test is the
-// list's one element starting with `*`.
-built(v, "copy") :- unparen(v, l), kind(l, "list"), child(l, s, 0), first_token(s, t), text(t, "*"),
-    count : { child(l, x, _), !kind(x, "comment") } = 1.
+// list's one element starting with `*`: a list_splat that starts where it does.
+built(v, "copy") :- unparen(v, l), kind(l, "list"), child(l, s, 0), node(_, s, _, a, _), kind(x, "list_splat"),
+    node(_, x, _, a, _), (x = s ; within(x, s)), count : { child(l, y, _), !kind(y, "comment") } = 1.
 built(v, "comprehension") :- unparen(v, l), kind(l, "list_comprehension").
 
 .decl says(how: symbol, m: symbol)

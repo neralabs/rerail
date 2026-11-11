@@ -50,8 +50,26 @@ text_deprecated_comparison_op_name(n) :- node(_, n, "identifier", _, _), text(n,
 text_deprecated_comparison_op_m(n, n) :- text_deprecated_comparison_op_name(n).
 text_deprecated_comparison_op_m(n, a) :- text_deprecated_comparison_op_name(n), field(a, "attribute", n), node(_, a, "attribute", _, _).
 .decl text_deprecated_comparison_op_hit(m: node)
-text_deprecated_comparison_op_hit(m) :- text_deprecated_comparison_op_m(_, m), child(p, m, _), node(_, m, _, s, e), token(p, i, _, s, e),
-    j = i + 1, token(p, j, t, _, _), match("=|==|:|:=", t).
+// The policy asks for the token after m to be `=`, `==`, `:` or `:=`. The tape stores none of those but `==` and
+// the `=` of `f"{x=}"` (RER-131); each marks a place in the named structure, read from it here.
+text_deprecated_comparison_op_hit(m) :- text_deprecated_comparison_op_m(_, m), text_deprecated_comparison_op_before(m).
+.decl text_deprecated_comparison_op_before(m: node)
+// `m = …`, `m: T`, `m: T = …`
+text_deprecated_comparison_op_before(m) :- field(p, "left", m), node(_, p, "assignment", _, _).
+// `f(m=…)`, `def f(m=…)`, `def f(m: T = …)`, `(m := …)`
+text_deprecated_comparison_op_before(m) :- field(p, "name", m), node(_, p, k, _, _),
+    (k = "keyword_argument" ; k = "default_parameter" ; k = "typed_default_parameter" ; k = "named_expression").
+// `def f(m: T)`
+text_deprecated_comparison_op_before(m) :- child(p, m, 0), node(_, p, "typed_parameter", _, _).
+// `{m: …}`
+text_deprecated_comparison_op_before(m) :- field(p, "key", m), node(_, p, "pair", _, _).
+// `m == …`
+text_deprecated_comparison_op_before(m) :- child(p, m, 0), node(_, p, "comparison_operator", _, _), op_at(p, 0, "==").
+// `x[m:]`: a slice's start
+text_deprecated_comparison_op_before(m) :- child(p, m, 0), node(_, p, "slice", s, _), node(_, m, _, s, _).
+// `f"{m=}"`, `f"{m:…}"`
+text_deprecated_comparison_op_before(m) :- child(p, m, 0), node(_, p, "interpolation", _, _), token(p, _, "=", _, _).
+text_deprecated_comparison_op_before(m) :- child(p, m, 0), node(_, p, "interpolation", _, _), field(p, "format_specifier", _).
 violation("data-layer-type-safety-patterns", "text-deprecated_comparison_op", "TSP001", p, l) :- text_deprecated_comparison_op_m(n, m), text_deprecated_comparison_op_hit(m), node(d, n, _, _, _), doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(n, l).
 
 // ---- signature-where, signature-select, signature-group_by (TSP001): a def of that name whose text (body included)

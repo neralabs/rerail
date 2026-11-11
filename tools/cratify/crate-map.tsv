@@ -279,3 +279,4 @@ stats::identity	rerail-facts
 waves::schedule::batches	rerail-transducer
 waves::relational	rerail-w
 rule_api	rerail-w
+logic::front::name	rerail-rr-syntax

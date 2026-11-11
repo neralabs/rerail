@@ -99,6 +99,7 @@ side_effect_block("block").
 .decl out_scope(d: number)
 .decl rr_agg1(p: node, s: number, t: number)
 .decl rr_ctx2(p: node, s: number)
+.decl rr_demand_agg_rr_agg1(p: node, s: number)
 .decl rrs_bindings(b: node, name: symbol, v: node)
 .decl rrs_calls(c: node)
 .decl rrs_calls_callee(c: node, callee: symbol)
@@ -1365,7 +1366,7 @@ sc4_sel_start(p, s) :- sc4_sel_comment(p, s).
 sc4_sel_before(p, s) :- sc4_sel_start(p, s), sc4_sel_start(p, t), t < s.
 sc4_ord(n, 0) :- sc4_sel_child(p, n, _), node(_, n, _, s, _), !sc4_sel_before(p, s).
 rr_ctx2(p, s) :- sc4_sel_child(p, n, _), node(_, n, _, s, _), sc4_sel_before(p, s).
-rr_agg1(p, s, t) :- rr_ctx2(p, s), sc4_sel_start(p, t), t < s.
+rr_agg1(p, s, t) :- rr_demand_agg_rr_agg1(p, s), rr_ctx2(p, s), sc4_sel_start(p, t), t < s.
 sc4_ord(n, o) :- sc4_sel_child(p, n, _), node(_, n, _, s, _), sc4_sel_before(p, s), o = count : { rr_agg1(p, s, _) }.
 sc4_fn_name(f, s) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s).
 sc4_class(c, s) :- node(_, c, "class_definition", _, _), field(c, "name", x), text(x, s).
@@ -1539,3 +1540,4 @@ sc6_hit(n) :- sc6_postop("post_op_with_refs", n), sc6_call_full(n, t), t != "par
 sc6_hit(n) :- sc6_postop(_, n), !node(_, n, "call", _, _), sc6_user_callable(n).
 sc6_hit(n) :- sc6_callback_fn(f), inside(n, f, sc6_k_fn), sc6_call(n, _), sc6_user_callable(n).
 violation("data-layer-serverplan-steps", "step-contracts-6", "STEP-028", p, l) :- sc6_hit(n), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_legacy_postop_user_callable_escape_hatches").
+rr_demand_agg_rr_agg1(p, s) :- sc4_sel_child(p, n, _), node(_, n, _, s, _), sc4_sel_before(p, s).

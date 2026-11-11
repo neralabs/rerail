@@ -52,7 +52,7 @@ pub(super) fn foldable(prog: &Program) -> BTreeSet<String> {
             .filter(|rel| {
                 prog.rules.iter().filter(|r| &r.head.rel == *rel).all(|r| {
                     r.body.iter().all(|l| match l {
-                        Literal::Atom(a) | Literal::Agg { atom: a, .. } => fold.contains(&a.rel) || given(&a.rel),
+                        Literal::Atom(a) | Literal::Agg { atom: a, .. } => fold.contains(a.rel.as_str()) || given(&a.rel),
                         Literal::Cmp { .. } => true,
                         _ => false,
                     })
@@ -72,7 +72,7 @@ pub(super) fn foldable(prog: &Program) -> BTreeSet<String> {
     let read_outside: BTreeSet<&str> = prog
         .rules
         .iter()
-        .filter(|r| !fold.contains(&r.head.rel))
+        .filter(|r| !fold.contains(r.head.rel.as_str()))
         .flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str()))
         .chain(prog.outputs.iter().map(String::as_str))
         .collect();
@@ -92,7 +92,7 @@ pub(super) fn as_outputs(prog: &mut Program, wanted: &[String]) {
     for rel in wanted {
         let Some(cols) = prog.decls.get(rel).cloned() else { continue };
         let args: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("c{i}"))).collect();
-        let atom = |r: String| Atom { rel: r, args: args.clone(), neg: false, gated: false };
+        let atom = |r: String| Atom { rel: r.into(), args: args.clone(), neg: false, gated: false };
         prog.decls.insert(copy(rel), cols);
         prog.rules.push(Rule { head: atom(copy(rel)), body: vec![Literal::Atom(atom(rel.clone()))] });
         prog.outputs.push(copy(rel));
@@ -145,7 +145,7 @@ pub(super) fn fold(
         }
         prog.facts.insert(rel.clone(), rows);
     }
-    prog.rules.retain(|r| !wanted.contains(&r.head.rel));
+    prog.rules.retain(|r| !wanted.contains(r.head.rel.as_str()));
     crate::code_rule_dsl::logic::profile::decision("the run's constants (decision 0094 §6)", || {
         format!("{} relations made from no document, {} and given as facts: {}", wanted.len(), if reused { "kept from an earlier run (what they read is as it was)" } else { "derived first" }, wanted.iter().cloned().collect::<Vec<_>>().join(", "))
     });

@@ -26,8 +26,10 @@ no_empty(b, "Add the missing code to this empty block, or add a comment saying w
 no_empty(b, "Empty switch statement.") :- kind(s, "switch_statement"), field(s, "body", b),
     count : { inside_braces(b, x) } = 0.
 .decl inside_braces(b: node, x: node)  // x, a case or comment, starts before switch body b's `}`
-inside_braces(b, x) :- kind(b, "switch_body"), child(b, x, _), last_token(b, t), line(t, l), col(t, c),
-    line(x, lx), col(x, cx), (lx < l ; lx = l, cx < c).
+inside_braces(b, x) :- kind(b, "switch_body"), child(b, x, _), !after_brace(b, x).
+// after_brace(b, x): b's `}` comes before x: it is in the source before x (the tape keeps none).
+.decl after_brace(b: node, x: node)
+after_brace(b, x) :- kind(b, "switch_body"), child(b, x, _), structural_before(x, g), match("(?s).*\\}.*", g).
 
 // not_a_block(k): a statement_block under these is a function body, a static block or a namespace body.
 .decl not_a_block(k: symbol)

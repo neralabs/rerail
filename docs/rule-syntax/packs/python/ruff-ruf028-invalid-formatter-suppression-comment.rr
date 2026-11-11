@@ -25,12 +25,12 @@ RUF028(c, "Put a skip comment at the end of the line it applies to and an on com
 RUF028(c, "Move this comment above the first decorator; after a decorator the formatter ignores it.") :-
     fmt_comment(c, k), k != "skip", own_line(c), child(p, c, _), kind(p, "decorated_definition").
 RUF028(c, "Indent this off comment to match the block above, or move it before the whole statement; directly above else, elif, except or finally the formatter ignores it.") :-
-    fmt_comment(c, "off"), own_line(c), !in_expr(c), token_after(c, t), text(t, w),
-    (w = "else" ; w = "elif" ; w = "except" ; w = "finally"), col(c, n), col(t, n).
+    fmt_comment(c, "off"), own_line(c), !in_expr(c), next_sibling(c, t), kind(t, k),
+    (k = "else_clause" ; k = "elif_clause" ; k = "except_clause" ; k = "finally_clause"), col(c, n), col(t, n).
 RUF028(c, "Move this off comment below the first statement of the else or finally block, or above the try statement; at the start of a block after except the formatter ignores it.") :-
     fmt_comment(c, "off"), own_line(c), kind(y, "try_statement"), child(y, x, _), kind(x, "except_clause"),
     child(y, e, _), (kind(e, "else_clause") ; kind(e, "finally_clause")), field(e, "body", b), child(b, s, 0),
-    token_after(c, t), first_token(s, t).
+    next_sibling(c, x), node(_, x, _, st, _), node(_, s, _, st, _).
 
 // fmt_comment(c, k): comment c is a formatter comment of kind "off", "on" or "skip".
 .decl fmt_comment(c: node, k: symbol)

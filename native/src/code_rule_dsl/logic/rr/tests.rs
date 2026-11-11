@@ -264,6 +264,9 @@ fn check_rr_finds_problems() {
     // `m = @dot(q, x)` splits a bound `m` at each dot, binding both parts; an unbound `m` is named.
     let split = statements(".decl a(m: symbol)\n.decl b(q: symbol)\nb(q) :- a(m), m = @dot(q, x).\nb(q) :- m = @dot(q, x), a(m).\nb(q) :- a(q), m = @dot(q, x).\n");
     assert_eq!(check::grounded(&split, &BTreeSet::new()), vec![(5, vec!["m".to_owned()])]);
+    // So does `m = @cat(q, x)`, at each position (the front end's `cmp_binds`).
+    let cat = statements(".decl a(m: symbol)\n.decl b(q: symbol)\nb(q) :- a(m), m = @cat(q, x).\nb(q) :- a(q), m = @cat(q, x).\n");
+    assert_eq!(check::grounded(&cat, &BTreeSet::new()), vec![(4, vec!["m".to_owned()])]);
     let cyclic = statements(".decl a(x: number)\n.decl b(x: number)\na(x) :- b(x), !a(x).\nb(x) :- a(x).\n");
     let refs: Vec<&syntax::Statement> = cyclic.iter().collect();
     assert_eq!(check::strata(&refs).len(), 1);
@@ -672,7 +675,7 @@ fn authored() -> Vec<(String, String, PathBuf)> {
 /// test merged (both keep the program's meaning).
 fn normalized(mut p: front::Program) -> front::Program {
     let r = |name: &str| translate::relation(name);
-    let rename = |a: &mut front::Atom| a.rel = r(&a.rel);
+    let rename = |a: &mut front::Atom| a.rel = r(&a.rel).into();
     p.decls = std::mem::take(&mut p.decls).into_iter().map(|(k, v)| (r(&k), v)).collect();
     p.lattice = std::mem::take(&mut p.lattice).into_iter().map(|(k, v)| (r(&k), v)).collect();
     p.facts = std::mem::take(&mut p.facts).into_iter().map(|(k, v)| (r(&k), v)).collect();
@@ -698,7 +701,7 @@ fn normalized(mut p: front::Program) -> front::Program {
     ] {
         if p.inputs.iter().any(|i| i == rel) && p.decls.contains_key("node") {
             p.inputs.retain(|i| i != rel);
-            let atom = |rel: &str, args: Vec<front::Term>| front::Atom { rel: rel.to_owned(), args, neg: false, gated: false };
+            let atom = |rel: &str, args: Vec<front::Term>| front::Atom { rel: rel.into(), args, neg: false, gated: false };
             p.rules.insert(at, front::Rule { head: atom(rel, head.to_vec()), body: vec![Literal::Atom(atom("node", args.to_vec()))] });
             at += 1;
         }
@@ -713,9 +716,9 @@ fn normalized(mut p: front::Program) -> front::Program {
 fn without_requests(mut p: front::Program) -> front::Program {
     let mut gone: BTreeSet<String> = ["rr_embed_req", "rr_parse_req", "rr_splice_req"].into_iter().map(str::to_owned).chain(super::WORLD.iter().map(|(_, d)| (*d).to_owned())).collect();
     loop {
-        p.rules.retain(|r| !gone.contains(&r.head.rel));
+        p.rules.retain(|r| !gone.contains(r.head.rel.as_str()));
         let read: BTreeSet<&str> = p.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.as_str()).collect();
-        let more: Vec<String> = p.rules.iter().map(|r| r.head.rel.clone()).filter(|h| h.starts_with("rr_ctx") && !read.contains(h.as_str()) && !gone.contains(h)).collect();
+        let more: Vec<String> = p.rules.iter().map(|r| r.head.rel.to_string()).filter(|h| h.starts_with("rr_ctx") && !read.contains(h.as_str()) && !gone.contains(h.as_str())).collect();
         if more.is_empty() {
             break;
         }
@@ -875,12 +878,12 @@ fn sum_and_join_lower() {
     // Keys (n, i): the helper's columns in order c, i, n, t.
     let (op, _, atom) = agg("k");
     assert_eq!(op, front::AggOp::Join { by: vec!["n".to_owned(), "i".to_owned()], sep: String::new() });
-    let types: Vec<&str> = p.decls[&atom.rel].iter().map(|(_, t)| t.as_str()).collect();
+    let types: Vec<&str> = p.decls[atom.rel.as_str()].iter().map(|(_, t)| t.as_str()).collect();
     assert_eq!(types, ["node", "int", "int", "sym"], "{atom}");
     let (op, over, atom) = agg("g");
     let over = over.unwrap();
     assert!(op == front::AggOp::Sum && over.starts_with("rr_val"), "{over}");
-    let cols = &p.decls[&atom.rel];
+    let cols = &p.decls[atom.rel.as_str()];
     assert_eq!(cols.len(), 3, "c, t and the value: {cols:?}");
     assert!(cols.contains(&(over.clone(), "int".to_owned())), "{cols:?}");
     let (_, _, atom) = agg("r");
@@ -1031,7 +1034,7 @@ s(q) :- s(x), split_dot(x, q, _), !split_dot(x, q, "y").
     .unwrap();
     let rules: Vec<&front::Rule> = p.rules.iter().filter(|r| r.head.rel == "r").collect();
     let v = |s: &str| Term::Var(s.to_owned());
-    assert_eq!(rules[0].body, [Literal::Atom(front::Atom { rel: "rr_has_fn".to_owned(), args: vec![v("n"), v("a")], neg: false, gated: false })]);
+    assert_eq!(rules[0].body, [Literal::Atom(front::Atom { rel: "rr_has_fn".to_owned().into(), args: vec![v("n"), v("a")], neg: false, gated: false })]);
     assert!(!p.kindsets.contains_key("blk") && p.kindsets.contains_key("fn"));
     // The nearest block: a climb from n that stops at the first member of blk, which is a.
     assert!(rules[1].body.iter().any(|l| matches!(l, Literal::Atom(x) if x.rel.starts_with("rr_up") && x.args == [v("n"), v("a")])), "{}", rules[1]);
@@ -1082,8 +1085,8 @@ fn negated_conjunctions_lower_to_helpers() {
             .iter()
             .filter_map(|l| match l {
                 Literal::Atom(a) if a.neg => Some((
-                    a.to_string().replace(&a.rel, "H"),
-                    rules(&a.rel).iter().map(|r| r.to_string().replace(&a.rel, "H")).collect(),
+                    a.to_string().replace(&*a.rel, "H"),
+                    rules(&a.rel).iter().map(|r| r.to_string().replace(&*a.rel, "H")).collect(),
                 )),
                 _ => None,
             })
@@ -2480,7 +2483,7 @@ lines(i) :- file_line("setup.cfg", i, _).
 "#;
     let once = parse(text).unwrap();
     let printed = print(&once).unwrap();
-    let twice = parse(&printed).unwrap();
+    let twice = parse(&printed).unwrap_or_else(|e| panic!("{e:?} reading back:\n{printed}"));
     assert!(difference(&once, &twice).is_none(), "{:?}", difference(&once, &twice));
     assert_eq!(print(&twice).unwrap(), printed);
     for demand in ["rr_embed_req", "rr_parse_req", "rr_splice_req", "rr_file_req"] {

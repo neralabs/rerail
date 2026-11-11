@@ -8,7 +8,7 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
     if !on() {
         return;
     }
-    let mut state = STATE.lock().unwrap();
+    let mut state = super::state();
     let t = state.placements.entry(key.to_owned()).or_default();
     t.runs += 1;
     let ran = match device {
@@ -151,7 +151,7 @@ pub(in crate::code_rule_dsl) fn placements(r: &mut String, state: &State) {
 /// The report, and the tables, into `dir`. `header`: what was run (lines put first).
 pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
-    let state = STATE.lock().unwrap();
+    let state = super::state();
     let mut spans_tsv = String::from("path\tcalls\tcpu_s\town_s\talloc_bytes\town_alloc_bytes\tfreed_bytes\tpeak_rise_bytes\town_peak_rise_bytes\n");
     for (p, t) in &state.spans {
         let _ = writeln!(spans_tsv, "{p}\t{}\t{:.4}\t{:.4}\t{}\t{}\t{}\t{}\t{}", t.calls, t.total, t.own, t.alloc, t.own_alloc, t.freed, t.rise, t.own_rise);

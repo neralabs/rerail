@@ -9,7 +9,7 @@ fn v(name: &str) -> Term { Term::Var(name.to_owned()) }
 fn s(text: &str) -> Term { Term::Str(text.to_owned()) }
 fn call(name: &str, args: Vec<Term>) -> Term { Term::Call(name.to_owned(), args) }
 fn atom(rel: &str, args: Vec<Term>) -> Literal {
-    Literal::Atom(Atom { rel: rel.to_owned(), args, neg: false, gated: false })
+    Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg: false, gated: false })
 }
 fn concat(terms: Vec<Term>) -> Term {
     terms.into_iter().reduce(|a, b| call("concat", vec![a, b])).unwrap_or_else(|| s(""))
@@ -140,7 +140,7 @@ impl Lowerer {
         }
         terms.push(s("}}"));
         body.push(Literal::Cmp { l: v("rr_json"), op: "=", r: concat(terms) });
-        self.prog.rules.push(Rule { head: Atom { rel: OUTPUT.to_owned(), args: vec![v("rr_json")], neg: false, gated: false }, body });
+        self.prog.rules.push(Rule { head: Atom { rel: OUTPUT.to_owned().into(), args: vec![v("rr_json")], neg: false, gated: false }, body });
         Ok(())
     }
 }

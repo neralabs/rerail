@@ -23,7 +23,9 @@
 no_magic_numbers(f, cat("No magic number: ", cat(raw, "."))) :- signed(n, f, raw, _), estree_parent(f, p), !excused(f),
     !kind(p, "variable_declarator"), !named(f, p).
 no_magic_numbers(f, "Number constants declarations must use 'const'.") :- signed(n, f, _, _), estree_parent(f, p),
-    !excused(f), kind(p, "variable_declarator"), option("enforceConst", "true"), estree_parent(p, d), !op(d, "const").
+    !excused(f), kind(p, "variable_declarator"), option("enforceConst", "true"), estree_parent(p, d), !const_decl(d).
+.decl const_decl(d: node)
+const_decl(d) :- kind(d, "lexical_declaration"), op(d, "const").
 
 // signed(n, f, raw, v): literal n, or the unary -n / +n holding it, is the number f, written raw, of value v.
 // A BigInt's value ends in n (-2n), so it never equals a Number's.
@@ -64,7 +66,8 @@ excused(f) :- option("ignoreArrayIndexes", "true"), estree_parent(f, p), kind(p,
 excused(f) :- parse_radix(f).
 excused(f) :- estree_parent(f, p), kind(p, k), prefix("jsx_", k).
 excused(f) :- option("ignoreEnums", "true"), estree_parent(f, p), kind(p, "enum_assignment").
-excused(f) :- option("ignoreReadonlyClassProperties", "true"), estree_parent(f, p), field_value(p, f), op(p, "readonly").
+excused(f) :- option("ignoreReadonlyClassProperties", "true"), estree_parent(f, p), field_value(p, f), kind(p, "public_field_definition"),
+    op(p, "readonly").
 excused(f) :- option("ignoreNumericLiteralTypes", "true"), estree_parent(f, l), kind(l, "literal_type"),
     nearest(l, a, union_climb_stop), kind(a, "type_alias_declaration").
 excused(f) :- option("ignoreTypeIndexes", "true"), estree_parent(f, l), kind(l, "literal_type"),

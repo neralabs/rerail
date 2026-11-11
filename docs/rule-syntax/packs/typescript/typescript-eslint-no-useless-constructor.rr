@@ -41,7 +41,7 @@ kept(m) :- ctor(m), access(m, a), (a = "private" ; a = "protected").
 kept(m) :- ctor(m), access(m, "public"), derived(m).
 kept(m) :- ctor(m), fn_param(m, p, _), child(p, c, _), (kind(c, "accessibility_modifier") ; kind(c, "override_modifier") ;
     kind(c, "decorator")).
-kept(m) :- ctor(m), fn_param(m, p, _), op(p, "readonly").
+kept(m) :- ctor(m), fn_param(m, p, _), (kind(p, "required_parameter") ; kind(p, "optional_parameter")), op(p, "readonly").
 .decl access(m: node, a: symbol)
 access(m, a) :- ctor(m), child(m, c, _), kind(c, "accessibility_modifier"), text(c, a).
 .decl derived(m: node)  // m's class has `extends` (an `implements` alone is no superclass)

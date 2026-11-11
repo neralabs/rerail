@@ -4,10 +4,7 @@
 //! `matcher/anchors/sql/functions.rs`; its node decoders (`nera_decode`, `nera_span`, `nera_slice`,
 //! `nera_parent`, ...) read P's private tape copies and went with them (03 §7).
 use crate::probes::TextProbe;
-use rusqlite::{
-    Connection, Result,
-    functions::FunctionFlags,
-};
+use rusqlite::{Connection, Result, functions::FunctionFlags};
 
 fn invalid(message: impl Into<String>) -> rusqlite::Error {
     rusqlite::Error::UserFunctionError(message.into().into())
