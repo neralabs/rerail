@@ -860,6 +860,7 @@ pub fn discover(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::content_store::test_support::TemporaryDatabase;
 
     #[test]
     fn discovers_current_repository_without_a_git_process() {
@@ -1502,15 +1503,9 @@ mod tests {
         }
     }
 
-    fn temporary_store(label: &str) -> (PathBuf, ContentStore) {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "rerail-gix-{label}-{}-{nanos}.sqlite",
-            std::process::id()
-        ));
+    /// A store on a fresh temporary database; dropping the path removes the database.
+    fn temporary_store(label: &str) -> (TemporaryDatabase, ContentStore) {
+        let path = TemporaryDatabase::new(&format!("rerail-gix-{label}"));
         let store = ContentStore::open(&path).unwrap();
         (path, store)
     }
