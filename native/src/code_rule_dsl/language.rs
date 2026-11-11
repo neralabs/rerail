@@ -653,6 +653,25 @@ pub(crate) trait LanguageBase: Send + Sync {
     fn reads_values(&self) -> bool;
     /// The module name its file's path gives it (`Adapter::path_module`).
     fn path_module(&self, path: &str) -> Option<String>;
+    /// The module a host sends for its file at `file` (`Adapter::module_path`).
+    fn module_path(&self, file: &std::path::Path) -> Option<serde_json::Value>;
+    /// Whether its files take their module from package markers (`Adapter::PACKAGES`).
+    fn packages(&self) -> bool;
+    /// Whether its files read their nearest `package.json` (`Adapter::PACKAGE_MANIFESTS`).
+    fn package_manifests(&self) -> bool;
+    /// Whether its files are read past a leading byte order mark (`Adapter::STRIPS_BOM`).
+    fn strips_bom(&self) -> bool;
+    /// Whether its ast queries may use `importTarget` (`Adapter::IMPORT_TARGETS`).
+    fn import_targets(&self) -> bool;
+    /// Whether Forte parses its files (`Adapter::PARSED_BY_FORTE`).
+    fn parsed_by_forte(&self) -> bool;
+    /// The kinds of its parenthesized expressions (`ScopeRules::PAREN_KINDS`).
+    fn paren_kinds(&self) -> &'static [&'static str];
+}
+
+/// `family`'s base, where its pack is registered (a family left out of the build has none).
+pub(crate) fn registered_base(family: Family) -> Option<&'static dyn LanguageBase> {
+    BASES[family as usize].get().copied()
 }
 
 /// Whether `kind` is a comment kind of any registered family (`LanguageBase::comment_kinds`).

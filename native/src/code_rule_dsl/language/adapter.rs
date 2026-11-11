@@ -23,6 +23,7 @@ pub(crate) mod pack;
 mod value;
 mod vue;
 
+#[cfg(test)]
 pub(crate) use super::with_adapter;
 pub(crate) use arguments::{ArgumentFeature, ArgumentRules};
 pub(crate) use calls::{CallFeature, CallRules};
@@ -160,7 +161,7 @@ pub(crate) trait Adapter: 'static {
 /// family's `Adapter::module_path`; `None` for a label no dialect has.
 pub(crate) fn module_path(label: &str, file: &Path) -> Option<serde_json::Value> {
     let dialect = super::dialect_by_label(label)?;
-    with_adapter!(Family::of(dialect), A => A::module_path(file))
+    super::base(Family::of(dialect)).module_path(file)
 }
 
 /// The module system of the file at `path` in the dialect labelled `label`
@@ -172,7 +173,7 @@ pub(crate) fn source_type(
 ) -> Option<SourceType> {
     match super::dialect_by_label(label) {
         Some(dialect) => {
-            with_adapter!(Family::of(dialect), A => A::source_type(path, package))
+            super::base(Family::of(dialect)).source_type(path, package)
         }
         None => Some(SourceType::Module),
     }
@@ -182,14 +183,14 @@ pub(crate) fn source_type(
 /// (`Adapter::PACKAGES`); `false` for a label no dialect has.
 pub(crate) fn packages(label: &str) -> bool {
     super::dialect_by_label(label)
-        .is_some_and(|dialect| with_adapter!(Family::of(dialect), A => A::PACKAGES))
+        .is_some_and(|dialect| super::base(Family::of(dialect)).packages())
 }
 
 /// Every family's `kinds`, each once: the walks ask per node they visit, so the union is gathered
 /// once rather than per call.
 fn every_family_kind(kinds: impl Fn(Family) -> &'static [&'static str]) -> Vec<&'static str> {
     let mut union = Vec::new();
-    for kind in Family::ALL.into_iter().flat_map(kinds) {
+    for kind in Family::ALL.into_iter().filter(|&family| super::registered_base(family).is_some()).flat_map(kinds) {
         if !union.contains(kind) {
             union.push(*kind);
         }
@@ -198,11 +199,11 @@ fn every_family_kind(kinds: impl Fn(Family) -> &'static [&'static str]) -> Vec<&
 }
 
 static WALK_COMMENT_KINDS: LazyLock<Vec<&'static str>> =
-    LazyLock::new(|| every_family_kind(|family| with_adapter!(family, A => A::WALK_COMMENT_KINDS)));
+    LazyLock::new(|| every_family_kind(|family| super::base(family).comment_kinds()));
 
 static PAREN_KINDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     every_family_kind(
-        |family| with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::PAREN_KINDS),
+        |family| super::base(family).paren_kinds(),
     )
 });
 
@@ -221,12 +222,12 @@ pub(crate) fn is_paren_kind(kind: &str) -> bool {
 
 /// Whether a file of `dialect` is parsed by Forte: its family's `Adapter::PARSED_BY_FORTE`.
 pub(crate) fn parsed_by_forte(dialect: GrammarDialect) -> bool {
-    with_adapter!(Family::of(dialect), A => A::PARSED_BY_FORTE)
+    super::base(Family::of(dialect)).parsed_by_forte()
 }
 
 /// Whether an ast query in `dialect` may use `importTarget`: its family's `Adapter::IMPORT_TARGETS`.
 pub(crate) fn has_import_targets(dialect: GrammarDialect) -> bool {
-    with_adapter!(Family::of(dialect), A => A::IMPORT_TARGETS)
+    super::base(Family::of(dialect)).import_targets()
 }
 
 /// What tree-sitter parses for a file of `dialect`: its family's `Adapter::parse_input`.
@@ -252,14 +253,14 @@ pub(crate) fn ast_grep(dialect: GrammarDialect, source: &str) -> AstGrep<StrDoc<
 /// (`Adapter::PACKAGE_MANIFESTS`); `false` for a label no dialect has.
 pub(crate) fn package_manifests(label: &str) -> bool {
     super::dialect_by_label(label)
-        .is_some_and(|dialect| with_adapter!(Family::of(dialect), A => A::PACKAGE_MANIFESTS))
+        .is_some_and(|dialect| super::base(Family::of(dialect)).package_manifests())
 }
 
 /// Whether files of the dialect labelled `label` are read past a leading byte order mark
 /// (`Adapter::STRIPS_BOM`); `false` for a label no dialect has.
 pub(crate) fn strips_bom(label: &str) -> bool {
     super::dialect_by_label(label)
-        .is_some_and(|dialect| with_adapter!(Family::of(dialect), A => A::STRIPS_BOM))
+        .is_some_and(|dialect| super::base(Family::of(dialect)).strips_bom())
 }
 
 /// Why a family refuses a DSL feature, with the message the refusal reports.
@@ -294,6 +295,27 @@ impl<A: Adapter> super::LanguageBase for pack::Pack<A> {
     }
     fn path_module(&self, path: &str) -> Option<String> {
         A::path_module(path)
+    }
+    fn module_path(&self, file: &Path) -> Option<serde_json::Value> {
+        A::module_path(file)
+    }
+    fn packages(&self) -> bool {
+        A::PACKAGES
+    }
+    fn package_manifests(&self) -> bool {
+        A::PACKAGE_MANIFESTS
+    }
+    fn strips_bom(&self) -> bool {
+        A::STRIPS_BOM
+    }
+    fn import_targets(&self) -> bool {
+        A::IMPORT_TARGETS
+    }
+    fn parsed_by_forte(&self) -> bool {
+        A::PARSED_BY_FORTE
+    }
+    fn paren_kinds(&self) -> &'static [&'static str] {
+        <<A as Adapter>::Scope as ScopeRules>::PAREN_KINDS
     }
     fn reads_values(&self) -> bool {
         <<A as Adapter>::Value as ValueRules>::SUPPORTED
