@@ -21,12 +21,12 @@ impl CallRules for Python {
         table: Option<&ScopeTable>,
         has_errors: bool,
     ) -> Summary {
-        Summary::extract(root, table, module, has_errors)
+        crate::code_rule_dsl::calls::summary::python::extract(root, table, module, has_errors)
     }
 
     /// Python names the module, whose members may hide in it.
     fn unread(module: Option<&ModulePath>) -> Summary {
-        Summary::extract(
+        crate::code_rule_dsl::calls::summary::python::extract(
             &GrammarDialect::Python.ast_grep("").root(),
             None,
             module,
@@ -50,7 +50,7 @@ impl CallRules for Python {
         let Some(FileTables::Python(table, module)) = tables() else {
             return None;
         };
-        Some(crate::code_rule_dsl::calls::summary::callee_at(
+        Some(crate::code_rule_dsl::calls::summary::python::callee_at(
             &table,
             module.as_deref(),
             summary,

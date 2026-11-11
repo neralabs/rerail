@@ -229,3 +229,4 @@ blade::tape	rerail-lang-php
 transducer::packed::json_parser::tape	rerail-lang-json
 value::key	rerail-lang-ecma
 value::python_structure	rerail-lang-python
+calls::summary::python	rerail-lang-python
