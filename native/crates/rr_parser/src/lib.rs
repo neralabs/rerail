@@ -46,6 +46,8 @@ pub struct Compiled {
     /// Tier 2's words and its state machine as text, for the profile.
     pub words: String,
     pub machine: String,
+    /// The program as assembled: the interpreter's input, for the analyses.
+    pub program: rerail_compiler::program::Words,
 }
 
 // SAFETY: nothing changes a compiled parser once it is made. Its JIT module holds finished code
@@ -80,7 +82,7 @@ fn compile() -> Result<Compiled, String> {
     let program = rir::assemble(&compiled.text())?;
     let native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
     let parser = native_cpu_stream::Parser::new(&native).map_err(|e| format!("Cranelift: {e:?}"))?;
-    Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs[0].clone(), labels: compiled.labels.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone() })
+    Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs[0].clone(), labels: compiled.labels.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone(), program })
 }
 
 /// `src`'s node table, as tier 2 writes it: from the compiled grammar, or, for a file the grammar
@@ -338,6 +340,204 @@ pub mod tests {
         assert_eq!(differ, 0);
     }
 
+    /// Tier 2's states cut into clusters, for a function a cluster: each state (a `TOKEN` word)
+    /// and the words it reaches before the next `TOKEN` (its code), and how often the corpus
+    /// goes from each state to each (the interpreter's run). Clusters are merged greedily, the
+    /// two with the most traffic between them first, while the merged code stays under a cap
+    /// (in words; tier 2 is about 12 instructions a word). For each cap: the clusters, the
+    /// largest, and the traffic that crosses clusters (a call or a return a crossing).
+    #[test]
+    #[ignore = "an analysis: run by hand"]
+    fn rr_state_clusters() {
+        use rerail_compiler::program::*;
+        use std::collections::{BTreeSet, HashMap};
+        let t = thread_cpu();
+        let c = super::compiled().expect("compiles");
+        eprintln!("the grammar compiled in {:.2?} CPU", thread_cpu() - t);
+        let program = &c.program;
+        // Cranelift's share: tier 1 and tier 2 made again from the lowered program.
+        let native = rerail_compiler::native_ir::lower(program, 0, 0).expect("lowers");
+        let t = thread_cpu();
+        let _t1 = rerail_compiler::native_cpu_block::compile(&native.block_programs[0]).expect("tier 1");
+        let t1 = thread_cpu() - t;
+        let t = thread_cpu();
+        let _t2 = rerail_compiler::native_cpu_stream::compile(&native).expect("tier 2");
+        eprintln!("Cranelift: tier 1 {t1:.2?} CPU, tier 2 {:.2?} CPU", thread_cpu() - t);
+        let words = &program.words;
+        let refuse = rerail_compiler::stream_ir::REFUSE;
+        let flag = rerail_compiler::program::FLAG;
+        // Where a `RETURN` goes: the places after each `PUSH`'s target, by its mode.
+        let pushes: Vec<usize> = words.iter().filter_map(|&w| (split(w).0 == PUSH).then(|| usize::from(split(w).2))).collect();
+        let next = |pc: usize| -> Vec<usize> {
+            let (op, mode, x) = split(words[pc]);
+            match op {
+                STOP | ACCEPT => vec![],
+                RETURN => pushes.iter().map(|&p| p + usize::from(mode)).collect(),
+                GOTO => vec![usize::from(x)],
+                SWITCH => {
+                    let sw = &program.switches[usize::from(x)];
+                    sw.targets.iter().chain([&sw.end]).filter(|&&t| t != refuse).map(|&t| usize::from(t)).collect()
+                }
+                WORD_IS if mode == 1 => vec![pc + 1, pc + 2],
+                o if o == flag && mode == 2 => vec![pc + 1, pc + 2],
+                MARK | ROW => vec![pc + 1, pc + 2],
+                _ => vec![pc + 1],
+            }
+        };
+        let states: Vec<usize> = (0..words.len()).filter(|&pc| split(words[pc]).0 == TOKEN).collect();
+        let index: HashMap<usize, usize> = states.iter().enumerate().map(|(i, &pc)| (pc, i)).collect();
+        // A state's code: the words from its `TOKEN` to the next `TOKEN`s (a `RETURN`'s places
+        // are its callers', not followed).
+        let code: Vec<BTreeSet<usize>> = states
+            .iter()
+            .map(|&s| {
+                let (mut seen, mut work) = (BTreeSet::new(), vec![s]);
+                while let Some(pc) = work.pop() {
+                    if pc >= words.len() || !seen.insert(pc) {
+                        continue;
+                    }
+                    if split(words[pc]).0 == RETURN {
+                        continue;
+                    }
+                    for n in next(pc) {
+                        if n < words.len() && (split(words[n]).0 != TOKEN || n == s) {
+                            work.push(n);
+                        }
+                    }
+                }
+                seen
+            })
+            .collect();
+        // The traffic: each token's state after the one before.
+        let block = &program.block_programs[0];
+        let mut edges: HashMap<(usize, usize), u64> = HashMap::new();
+        let (mut tokens, mut ran) = (0u64, 0u64);
+        for src in corpus() {
+            let run = block.run(src.as_bytes());
+            let mut last: Option<usize> = None;
+            let _ = rerail_compiler::stream::run_seen(program, src.as_bytes(), &run, &mut |pc| {
+                ran += 1;
+                if let Some(&i) = index.get(&pc) {
+                    tokens += 1;
+                    if let Some(l) = last {
+                        *edges.entry((l, i)).or_default() += 1;
+                    }
+                    last = Some(i);
+                }
+            });
+        }
+        let total_words: usize = code.iter().map(BTreeSet::len).sum();
+        let distinct: BTreeSet<usize> = code.iter().flatten().copied().collect();
+        eprintln!("{} words, {} states; a state's code {} words in all ({} distinct: words shared by states); {tokens} tokens, {ran} words run", words.len(), states.len(), total_words, distinct.len());
+        let mut sizes: Vec<usize> = code.iter().map(BTreeSet::len).collect();
+        sizes.sort_unstable();
+        eprintln!("  a state's code: median {} words, 90% {}, largest {}", sizes[sizes.len() / 2], sizes[sizes.len() * 9 / 10], sizes[sizes.len() - 1]);
+        let mut pairs: HashMap<(usize, usize), u64> = HashMap::new();
+        for (&(a, b), &n) in &edges {
+            if a != b {
+                *pairs.entry((a.min(b), a.max(b))).or_default() += n;
+            }
+        }
+        let crossing_all: u64 = pairs.values().sum();
+        // The static graph: a state to each state its code goes on to, weighted by the edges.
+        let mut fixed: HashMap<(usize, usize), u64> = HashMap::new();
+        for (i, words_of) in code.iter().enumerate() {
+            for &pc in words_of {
+                for n in next(pc) {
+                    if let Some(&j) = index.get(&n) {
+                        if j != i {
+                            *fixed.entry((i.min(j), i.max(j))).or_default() += 1;
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!("  transitions between two different states: {crossing_all} ({:.2} a token)", crossing_all as f64 / tokens as f64);
+        // A walk taking each of a state's ways on equally often: its flow along each edge, from
+        // the walk's stationary distribution (power iteration), scaled to integers.
+        let n = states.len();
+        let mut out: Vec<HashMap<usize, f64>> = vec![HashMap::new(); n];
+        for (i, words_of) in code.iter().enumerate() {
+            for &pc in words_of {
+                for x in next(pc) {
+                    if let Some(&j) = index.get(&x) {
+                        *out[i].entry(j).or_default() += 1.0;
+                    }
+                }
+            }
+        }
+        let mut pi = vec![1.0 / n as f64; n];
+        for _ in 0..500 {
+            let mut nx = vec![0.15 / n as f64; n];
+            for i in 0..n {
+                let sum: f64 = out[i].values().sum();
+                if sum == 0.0 {
+                    for v in nx.iter_mut() {
+                        *v += 0.85 * pi[i] / n as f64;
+                    }
+                    continue;
+                }
+                for (&j, &w) in &out[i] {
+                    nx[j] += 0.85 * pi[i] * w / sum;
+                }
+            }
+            pi = nx;
+        }
+        let mut walk: HashMap<(usize, usize), u64> = HashMap::new();
+        for i in 0..n {
+            let sum: f64 = out[i].values().sum();
+            for (&j, &w) in &out[i] {
+                if i != j {
+                    *walk.entry((i.min(j), i.max(j))).or_default() += (pi[i] * w / sum * 1e9) as u64;
+                }
+            }
+        }
+        for (by, weights) in [("the corpus's traffic", &pairs), ("the static graph", &fixed), ("a walk's flow (static)", &walk)] {
+        eprintln!(" clusters by {by}; crossings counted on the corpus");
+        for cap in [300usize, 600, 1200, 2500] {
+            let mut of: Vec<usize> = (0..states.len()).collect();
+            let mut members: Vec<BTreeSet<usize>> = code.clone();
+            let mut order: Vec<((usize, usize), u64)> = weights.iter().map(|(&k, &n)| (k, n)).collect();
+            order.sort_by(|a, b| b.1.cmp(&a.1));
+            // Weights between clusters, merged as clusters merge: repeat until nothing merges.
+            loop {
+                let mut between: HashMap<(usize, usize), u64> = HashMap::new();
+                for &((a, b), n) in &order {
+                    let (x, y) = (of[a], of[b]);
+                    if x != y {
+                        *between.entry((x.min(y), x.max(y))).or_default() += n;
+                    }
+                }
+                let mut cand: Vec<((usize, usize), u64)> = between.into_iter().collect();
+                cand.sort_by(|a, b| b.1.cmp(&a.1));
+                let mut merged = false;
+                for ((x, y), _) in cand {
+                    if members[x].len() + members[y].len() > cap && members[x].union(&members[y]).count() > cap {
+                        continue;
+                    }
+                    let moved = std::mem::take(&mut members[y]);
+                    members[x].extend(moved);
+                    for o in of.iter_mut() {
+                        if *o == y {
+                            *o = x;
+                        }
+                    }
+                    merged = true;
+                    break;
+                }
+                if !merged {
+                    break;
+                }
+            }
+            let clusters: BTreeSet<usize> = of.iter().copied().collect();
+            let crossing: u64 = pairs.iter().filter(|(k, _)| of[k.0] != of[k.1]).map(|(_, n)| *n).sum();
+            let largest = clusters.iter().map(|&k| members[k].len()).max().unwrap_or(0);
+            let words_in_all: usize = clusters.iter().map(|&k| members[k].len()).sum();
+            eprintln!("  cap {cap:>5} words: {:>4} clusters, largest {largest:>5} words, {words_in_all:>6} words in all; crossings {crossing:>8} ({:.3} a token)", clusters.len(), crossing as f64 / tokens as f64);
+        }
+        }
+    }
+
     /// Tier 2's words by operation, and its state machine's size: what makes the function big.
     #[test]
     #[ignore = "a profile: run by hand"]
@@ -404,20 +604,20 @@ pub mod tests {
         const REPEAT: u32 = 3;
         let c = super::compiled().expect("compiles");
         let p = &c.parser;
-        let files = corpus();
+        // `RR_REPEAT=n`: the corpus n times over, as one batch.
+        let n: usize = std::env::var("RR_REPEAT").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+        let files: Vec<String> = (0..n).flat_map(|_| corpus()).collect();
         let refs: Vec<&[u8]> = files.iter().map(|f| f.as_bytes()).collect();
         let mb = refs.iter().map(|b| b.len()).sum::<usize>() as f64 / 1e6;
         let want: Vec<_> = files.iter().map(|f| super::tape(f)).collect();
         let tokens: usize = files.iter().map(|f| super::rr::tape(f).len()).sum();
         // (CPU, wall) a pass of `f`, its last pass's tables checked.
-        let time = |f: &mut dyn FnMut() -> Option<Vec<super::Columns>>| {
-            // Three calls first: on Metal the second runs a program its first run learned from
-            // (its source made and compiled again), the third the settled one.
+        let time = |warm: usize, f: &mut dyn FnMut() -> Option<Vec<super::Columns>>| {
             let w = std::time::Instant::now();
-            for _ in 0..3 {
+            for _ in 0..warm {
                 let _ = f();
             }
-            eprintln!("    (three calls first: {:.2?} wall)", w.elapsed());
+            eprintln!("    ({warm} calls first: {:.2?} wall)", w.elapsed());
             let (t, w) = (thread_cpu(), std::time::Instant::now());
             let mut last = None;
             for _ in 0..REPEAT {
@@ -437,15 +637,14 @@ pub mod tests {
         eprintln!("  {:<44} {:>10} {:>10} {:>8}", "", "CPU/pass", "wall/pass", "MB/s CPU");
         #[cfg(target_os = "macos")]
         {
-            use rerail_metal::block_program::serial::run_resident;
             use rerail_metal::block_program::serial::Resident;
             // Tier 1 on Metal over `files`, halved while the device refuses it for capacity (as
             // `metal_tapes`), each part's buffers given to `each` as they come (held all at once,
             // they pass the device's budget): its GPU seconds, its first file, its buffers (none:
             // a file past the device's room alone).
-            fn parts(c: &super::Compiled, files: &[rerail_compiler::block::BatchFile<'_>], at: usize, each: &mut dyn FnMut(f64, usize, usize, Option<&Resident>)) {
+            fn parts(c: &super::Compiled, files: &[rerail_compiler::block::BatchFile<'_>], digests: &[[u8; 32]], at: usize, each: &mut dyn FnMut(f64, usize, usize, Option<&Resident>)) {
                 let (t, w) = (thread_cpu(), std::time::Instant::now());
-                let r = run_resident(&[&c.native], files, super::SEGMENTS);
+                let r = rerail_metal::block_program::serial::run_resident_digested(&[&c.native], files, Some(digests), super::SEGMENTS);
                 if std::env::var_os("RR_PARTS").is_some() {
                     eprintln!("      run_resident {} files: {:.2?} CPU {:.2?} wall {}", files.len(), thread_cpu() - t, w.elapsed(), if r.is_ok() { "ok" } else { "refused" });
                 }
@@ -461,19 +660,24 @@ pub mod tests {
                     }
                     Err(rerail_compiler::Error::BackendCapacity) if files.len() > 1 => {
                         let (a, b) = files.split_at(files.len() / 2);
-                        parts(c, a, at, each);
-                        parts(c, b, at + a.len(), each);
+                        let (da, db) = digests.split_at(files.len() / 2);
+                        parts(c, a, da, at, each);
+                        parts(c, b, db, at + a.len(), each);
                     }
                     Err(rerail_compiler::Error::BackendCapacity) => each(0.0, at, 1, None),
                     Err(e) => panic!("Metal runs the batch: {e:?}"),
                 }
             }
             let batch: Vec<_> = refs.iter().map(|b| rerail_compiler::block::BatchFile { bytes: b, program: 0 }).collect();
+            // The files' digests, made once: the engine has them from a `stat` or a Git blob.
+            let digests: Vec<[u8; 32]> = refs.iter().map(|b| <sha2::Sha256 as sha2::Digest>::digest(b).into()).collect();
             let (mut gpu, mut t2_cpu, mut n_parts, mut on_cpu) = (0.0, std::time::Duration::ZERO, 0, 0);
-            let metal = time(&mut || {
+            // Three calls first: the second runs a program its first run learned from (its source
+            // made and compiled again), the third the settled one.
+            let metal = time(3, &mut || {
                 let mut out: Vec<Option<super::Columns>> = vec![None; want.len()];
                 let (mut np, mut oc) = (0, 0);
-                parts(c, &batch, 0, &mut |secs, at, n, res| {
+                parts(c, &batch, &digests, 0, &mut |secs, at, n, res| {
                     gpu += secs;
                     np += 1;
                     let t = thread_cpu();
@@ -493,25 +697,28 @@ pub mod tests {
             });
             row("one batch, tier 1 on Metal, tier 2 on the CPU", metal, &format!("({n_parts} batches; {on_cpu} files too big, on the CPU)"));
             let passes = f64::from(REPEAT + 3);
-            eprintln!("    tier 1's GPU time {:.1}ms a pass ({:.0} MB/s); tier 2 on the CPU {:.1}ms", gpu / passes * 1e3, mb / (gpu / passes), t2_cpu.as_secs_f64() / passes * 1e3);
-            let t1m = time(&mut || {
-                parts(c, &batch, 0, &mut |_, _, _, res| {
+            eprintln!("    tier 1's GPU time {:.1}ms a pass ({:.2} GB/s); tier 2 on the CPU {:.1}ms", gpu / passes * 1e3, mb / 1e3 / (gpu / passes), t2_cpu.as_secs_f64() / passes * 1e3);
+            let t1m = time(1, &mut || {
+                parts(c, &batch, &digests, 0, &mut |_, _, _, res| {
                     std::hint::black_box(res);
                 });
                 None
             });
             row("  tier 1 alone, one Metal batch", t1m, "");
         }
-        let reader = time(&mut || {
+        // The reader once over the corpus (the batch repeats it): its rate is the same.
+        if n == 1 {
+        let reader = time(1, &mut || {
             let n: usize = files.iter().map(|f| super::rr::tape(f).len()).sum();
             std::hint::black_box(n);
             None
         });
         row("Rust reader (rr::tape), file by file", reader, "");
-        let by_file = time(&mut || Some(files.iter().map(|f| super::tape(f)).collect()));
+        }
+        let by_file = time(1, &mut || Some(files.iter().map(|f| super::tape(f)).collect()));
         row("compiled, file by file", by_file, "");
         // Tier 1 as one batch on the CPU; tier 2 file by file (it runs one file at a time).
-        let t1 = time(&mut || {
+        let t1 = time(1, &mut || {
             let mut b = Batch::new(&p.tier1, &refs);
             b.call(&p.tier1);
             std::hint::black_box(&b);
