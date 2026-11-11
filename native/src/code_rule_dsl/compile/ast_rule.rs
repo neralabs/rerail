@@ -51,6 +51,7 @@ const AST_RULE_KEYS: &[&str] = &[
     "embedded",
     "host",
     "importTarget",
+    "stored",
 ];
 /// Tests add `testUnknown`, a leaf whose verdict is unknown where its regex matches the node's text.
 #[cfg(test)]
@@ -82,6 +83,7 @@ const AST_RULE_KEYS: &[&str] = &[
     "embedded",
     "host",
     "importTarget",
+    "stored",
     "testUnknown",
 ];
 
@@ -154,6 +156,13 @@ pub(super) fn validate_ast_rule(
         )?;
         Regex::new(source)
             .map_err(|_| invalid(format!("{path}/regex: Parsing text matcher fails.")))?;
+    }
+    // Why the token a `regex` tests is stored where the rule looks (`compile::token_tests`).
+    if let Some(stored) = rule.get("stored") {
+        non_empty_str(Some(stored), &format!("{path}/stored"))?;
+        if !rule.contains_key("regex") {
+            return Err(invalid(format!("{path}/stored says why a token a regex tests is stored: it needs a regex")));
+        }
     }
     if let Some(nth) = rule.get("nthChild") {
         validate_nth_child(nth, &format!("{path}/nthChild"), limits, utils)?;
@@ -1260,7 +1269,7 @@ mod tests {
 pub(in crate::code_rule_dsl) fn gap_test(key: &str, relation: &Value, language: GrammarDialect, past: Option<Box<AstMatcher>>) -> Option<crate::code_rule_dsl::matcher::gap::GapTest> {
     use crate::code_rule_dsl::matcher::gap::{GapTest, Place};
     let object = relation.as_object()?;
-    // `stopBy: {not: X}` walks past X; the test holds only where X names extras (comments).
+    // `stopBy: {not: X}` walks past X; the test holds only where X names kinds and tokens.
     let past_extras = object.get("stopBy").and_then(Value::as_object).is_some_and(|stop| stop.len() == 1 && stop.contains_key("not"));
     let end = match object.get("stopBy").and_then(Value::as_str) {
         None if object.contains_key("stopBy") && !past_extras => return None,
@@ -1332,6 +1341,21 @@ pub(in crate::code_rule_dsl) fn gap_test(key: &str, relation: &Value, language: 
     }
     let past = if past_extras { Some(past?) } else { None };
     if past.is_some() && !matches!(place, Place::Before | Place::After) {
+        return None;
+    }
+    // The walk may pass kinds (stored children) and tokens (by a bare regex), as the gaps can; one
+    // whose stop rule says more is not a gap's question. A utility's own rule is checked as the
+    // test runs (`GapTest::holds`).
+    fn passable(rule: &Value) -> bool {
+        let Some(rule) = rule.as_object().filter(|rule| rule.len() == 1) else { return false };
+        match rule.iter().next() {
+            Some((key, value)) if key == "kind" || key == "matches" => value.is_string(),
+            Some((key, value)) if key == "regex" => value.as_str().is_some_and(|regex| Regex::new(regex).is_ok()),
+            Some((key, value)) if key == "any" => value.as_array().is_some_and(|any| any.iter().all(passable)),
+            _ => false,
+        }
+    }
+    if past.is_some() && !object.get("stopBy").and_then(|stop| stop.get("not")).is_some_and(passable) {
         return None;
     }
     Some(GapTest { place, regex, grammar, dialect: language, past })

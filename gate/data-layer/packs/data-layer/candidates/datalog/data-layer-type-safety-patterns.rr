@@ -7,6 +7,7 @@
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
 .decl op(n: node, s: symbol)
+.decl op_at(n: node, i: number, s: symbol)
 .decl out_scope(d: number)
 .decl signature_def(d: number, n: node, name: symbol)
 .decl signature_order_by_end(n: node, j: number)
@@ -19,6 +20,7 @@
 .decl tape_line(d: number, l: number, sp: node)
 .decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
+.decl text_deprecated_comparison_op_before(m: node)
 .decl text_deprecated_comparison_op_hit(m: node)
 .decl text_deprecated_comparison_op_m(n: node, m: node)
 .decl text_deprecated_comparison_op_name(n: node)
@@ -26,7 +28,7 @@
 .decl text_str_union_bin(d: number, n: node, a: symbol, b: symbol)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, field, text, line, syntax_error, child, op, tape_line, node_text, token
+.input doc, node, field, text, line, syntax_error, child, op, tape_line, node_text, op_at, token
 .output violation
 signature_order_by_offset(0).
 signature_order_by_offset(1).
@@ -153,7 +155,15 @@ violation("data-layer-type-safety-patterns", "text-expression_any_any", "TSP001"
 text_deprecated_comparison_op_name(n) :- node(_, n, "identifier", _, _), text(n, s), (s = "_lt" ; s = "_gt" ; s = "_le" ; s = "_ge" ; s = "_eq" ; s = "_ne").
 text_deprecated_comparison_op_m(n, n) :- text_deprecated_comparison_op_name(n).
 text_deprecated_comparison_op_m(n, a) :- text_deprecated_comparison_op_name(n), field(a, "attribute", n), node(_, a, "attribute", _, _).
-text_deprecated_comparison_op_hit(m) :- text_deprecated_comparison_op_m(_, m), child(p, m, _), node(_, m, _, s, e), token(p, i, _, s, e), j = @add(i, 1), token(p, j, t, _, _), match("=|==|:|:=", t).
+text_deprecated_comparison_op_hit(m) :- text_deprecated_comparison_op_m(_, m), text_deprecated_comparison_op_before(m).
+text_deprecated_comparison_op_before(m) :- field(p, "left", m), node(_, p, "assignment", _, _).
+text_deprecated_comparison_op_before(m) :- field(p, "name", m), node(_, p, k, _, _), (k = "keyword_argument" ; k = "default_parameter" ; k = "typed_default_parameter" ; k = "named_expression").
+text_deprecated_comparison_op_before(m) :- child(p, m, 0), node(_, p, "typed_parameter", _, _).
+text_deprecated_comparison_op_before(m) :- field(p, "key", m), node(_, p, "pair", _, _).
+text_deprecated_comparison_op_before(m) :- child(p, m, 0), node(_, p, "comparison_operator", _, _), op_at(p, 0, "==").
+text_deprecated_comparison_op_before(m) :- child(p, m, 0), node(_, p, "slice", s, _), node(_, m, _, s, _).
+text_deprecated_comparison_op_before(m) :- child(p, m, 0), node(_, p, "interpolation", _, _), token(p, _, "=", _, _).
+text_deprecated_comparison_op_before(m) :- child(p, m, 0), node(_, p, "interpolation", _, _), field(p, "format_specifier", _).
 violation("data-layer-type-safety-patterns", "text-deprecated_comparison_op", "TSP001", p, l) :- text_deprecated_comparison_op_m(n, m), text_deprecated_comparison_op_hit(m), node(d, n, _, _, _), doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(n, l).
 signature_def(d, n, s) :- node(d, n, "function_definition", _, _), field(n, "name", x), node(_, x, "identifier", _, _), text(x, s).
 violation("data-layer-type-safety-patterns", "signature-where", "TSP001", p, l) :- signature_def(d, n, "where"), node_text(n, s), match("(?s:.*)(?:expression\\s*:\\s*str\\b|:\\s*str\\s*\\|)(?s:.*)", s), doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(n, l).

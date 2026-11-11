@@ -144,6 +144,7 @@ fn insert_parts(digests: &[[u8; 32]], parts: Vec<([u8; 32], &Plan, &Grammar, Par
 /// Writes a document's parts into `slab` at `offset` (`plan.bytes()` of room), checked.
 /// Where a document's bytes come from: a store's frames, decompressed into the slab, or an image
 /// and source already in memory, copied.
+#[derive(Clone, Copy)]
 enum Parts<'a> {
     Frames(&'a crate::content_store::ResidentFrames),
     Bytes(&'a [u8], &'a [u8]),
@@ -171,23 +172,29 @@ fn place(
     let by_code_at = code_start_at + aligned(4 * (plan.codes + 1));
     let tape = region(tape_at, plan.tape);
     let source = region(source_at, plan.source);
-    match parts {
+    let source_sha256: [u8; 32] = Sha256::digest(match parts {
         // Decompressed straight into the slab, to the frames' raw lengths exactly.
         Parts::Frames(frames) => {
             crate::content_store::decompress_into(&frames.tape_frame, tape).map_err(|error| invalid(format!("tape frame: {error}")))?;
             crate::content_store::decompress_into(&frames.source_frame, source).map_err(|error| invalid(format!("source frame: {error}")))?;
-            if <[u8; 32]>::from(Sha256::digest(&*source)) != frames.source_sha256 {
-                return Err(invalid("a resident source's digest"));
-            }
+            &*source
         }
         Parts::Bytes(image, text) => {
             tape.copy_from_slice(image);
             source.copy_from_slice(text);
+            &*source
         }
+    })
+    .into();
+    if let Parts::Frames(frames) = parts
+        && source_sha256 != frames.source_sha256
+    {
+        return Err(invalid("a resident source's digest"));
     }
     let tape = &*tape;
     let source = &*source;
-    if <[u8; 32]>::from(Sha256::digest(tape)) != *digest {
+    // The key is the tape's identity: its bytes and its source's (`HashKey::tape_identity`).
+    if crate::code_rule_dsl::tape::tape_identity(&source_sha256, tape) != *digest {
         return Err(invalid("a resident tape's digest"));
     }
     let layout = resident::layout(tape).map_err(invalid)?;

@@ -487,8 +487,13 @@ fn source_and_tape_objects_deduplicate_and_round_trip() {
     {
         let cache = store.decompressed_cache.lock().unwrap();
         assert!(cache.contains(CacheKey::Source(HashKey::sha256(b"print('hello')\n"))));
-        assert!(cache.contains(CacheKey::Tape(HashKey::sha256(b"compact tape"))));
+        assert!(cache.contains(CacheKey::Tape(HashKey::tape_identity(HashKey::sha256(b"print('hello')\n"), b"compact tape"))));
     }
+    // Another source with the same tape bytes (a named-only tape holds no text) has its own tape.
+    let other = store.put_source(b"print('world')\n", &[]).unwrap();
+    let other_tape = store.put_tape(other, 1, 45, 1, b"compact tape").unwrap();
+    assert_ne!(other_tape, tape);
+    assert_eq!(store.tape_by_source(other, 1, 45, 1).unwrap(), Some(other_tape));
     {
         let connection = store.connection.lock().unwrap();
         let source_frame: (i64, Vec<u8>) = connection

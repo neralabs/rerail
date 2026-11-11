@@ -67,13 +67,17 @@ cc_self_attr(a, s) :- node(_, a, "attribute", _, _), field(a, "object", o), node
 cc_keyed(n) :- node(_, n, "assignment", _, _), field(n, "type", t), node_text(t, s), match("dict\\[(?:BranchId|RevisionId)(?s:.*)", s).
 
 // ---- pattern-0: connection-level branch/revision tip cache -----------------------------------------------------
-// A `self.<attr>` attribute, attr matching the name regex, whose next sibling (`precedes`, stopBy neighbor: the
-// next of its parent's children, anonymous tokens and comments included) has a text matching `^(?:=|:|==|:=)$`.
-.decl cc_p0_next(a: node, t: symbol)
-cc_p0_next(a, t) :- cc_self_attr(a, _), child(p, a, _), node(_, a, _, s, e), token(p, i, _, s, e), j = i + 1, token(p, j, t, _, _).
+// A `self.<attr>` attribute, attr matching the name regex, followed by `=`, `:`, `==` or `:=` (the policy's
+// `precedes` a token `^(?:=|:|==|:=)$`). The tape stores none of those but `==` (RER-131); each marks a place in the
+// named structure: an assignment's left side (`=`, and `:` before an annotation), a dict pair's key (`:`), or a
+// comparison's first operand before `==`. A `:=` names a plain identifier, never an attribute.
+.decl cc_p0_next(a: node)
+cc_p0_next(a) :- cc_self_attr(a, _), field(p, "left", a), node(_, p, "assignment", _, _).
+cc_p0_next(a) :- cc_self_attr(a, _), field(p, "key", a), node(_, p, "pair", _, _).
+cc_p0_next(a) :- cc_self_attr(a, _), child(p, a, 0), node(_, p, "comparison_operator", _, _), op_at(p, 0, "==").
 .decl cc_p0_hit(n: node)
 cc_p0_hit(a) :- cc_self_attr(a, s), match("_\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*", s),
-    cc_p0_next(a, t), match("(?:=|:|==|:=)", t).
+    cc_p0_next(a).
 violation("data-layer-connection-caches", "pattern-0", "CC001", p, l) :- cc_p0_hit(n), cc_found(n, p, l).
 
 // ---- pattern-1: connection dict cache keyed by BranchId/RevisionId ---------------------------------------------
@@ -83,30 +87,16 @@ violation("data-layer-connection-caches", "pattern-1", "CC001", p, l) :- cc_p1_h
 
 // ---- pattern-2: module-level dict keyed by BranchId/RevisionId -------------------------------------------------
 // The assignment branch (any depth, as the rule has no `inside`), and a typed_parameter with a direct identifier
-// child `^_\w+$`, such a type, and `layout: {before: {to: token, breaks: {min: 1}}}`: the nearest token before it
-// with a width, comments passed over (no file-start stand-in), ends on an earlier line than its start.
+// child `^_\w+$`, such a type, and `layout: {before: {to: token, breaks: {min: 1}}}`: the token before it (a `(`
+// or `,`, comments passed over) ends on an earlier line. The tape stores neither (RER-131); the token before it ends
+// on an earlier line exactly when nothing but space comes before the parameter on its own line.
 .decl cc_p2_hit(n: node)
 cc_p2_hit(n) :- cc_keyed(n), field(n, "left", x), node(_, x, "identifier", _, _), node_text(x, s), match("_\\w+", s).
-cc_p2_hit(n) :- cc_p2_typed(n), cc_p2_before(n, e), node(_, n, _, s, _), col(n, c), e < s - c.
+cc_p2_hit(n) :- cc_p2_typed(n), node(d, n, _, _, _), line(n, l), tape_line(d, l, sp), text(sp, t), col(n, c),
+    match("\\s*", substr(t, 0, c)).
 .decl cc_p2_typed(n: node)
 cc_p2_typed(n) :- node(_, n, "typed_parameter", _, _), child(n, x, _), node(_, x, "identifier", _, _), node_text(x, xs),
     match("_\\w+", xs), field(n, "type", t), node_text(t, ts), match("dict\\[(?:BranchId|RevisionId)(?s:.*)", ts).
-// The token before n: the last of its parent's children before it that is no comment and has a width (its end),
-// else, where n is its parent's first such, the token before the parent, and so on up (a: n or an ancestor; the
-// deepest one with such a sibling, which starts after every shallower one). A sibling is taken at its end: W's leaf
-// walk would pass over a comment that is a sibling's own last child (none in a parameter list, where comments are
-// the list's children).
-.decl cc_p2_up(n: node, a: node)
-cc_p2_up(n, n) :- cc_p2_typed(n).
-cc_p2_up(n, p) :- cc_p2_up(n, a), child(p, a, _).
-.decl cc_p2_prior(n: node, a: node, j: number, e: number)
-cc_p2_prior(n, a, j, pe) :- cc_p2_up(n, a), child(p, a, _), node(_, a, _, s, e), token(p, i, _, s, e), token(p, j, t, ps, pe), j < i,
-    pe > ps, !match("#(?s:.*)", t).
-.decl cc_p2_level(n: node, st: number)
-cc_p2_level(n, st) :- cc_p2_prior(n, a, _, _), node(_, a, _, st, _).
-.decl cc_p2_before(n: node, e: number)
-cc_p2_before(n, e) :- cc_p2_prior(n, a, j, e), node(_, a, _, st, _), st = max t : { cc_p2_level(n, t) },
-    j = max k : { cc_p2_prior(n, a, k, _) }.
 violation("data-layer-connection-caches", "pattern-2", "CC001", p, l) :- cc_p2_hit(n), cc_found(n, p, l).
 
 // ---- pattern-3: instance dict cache mapping BranchId/RevisionId ------------------------------------------------

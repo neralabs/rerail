@@ -608,15 +608,11 @@ impl CoreRows {
         let kind = dialect.name(f, id);
         let text = f.text(id);
         let children = f.children(id);
-        // `op`: every anonymous child, those the grammar implies among them (from the gaps, `tree::parts`); `op_at`:
-        // those that are no punctuation, in order, Python's two-word operators as one ("not in", "is not"), which
-        // `op` has too.
+        // `op`: every anonymous child the tape stores (none the grammar implies); `op_at`: those that are no
+        // punctuation, in order, Python's two-word operators as one ("not in", "is not"), which `op` has too.
         let mut ops: Vec<String> = Vec::new();
-        for part in (!self.skip.ops).then(|| super::tree::parts(f, dialect, id)).into_iter().flatten() {
-            if part.child.is_some_and(|c| f.named(c)) {
-                continue;
-            }
-            let t = part.child.map_or(part.text, |c| dialect.name(f, c));
+        for &c in children.iter().filter(|&&c| !self.skip.ops && !f.named(c)) {
+            let t = dialect.name(f, c);
             self.op.push([n, string(t) as i64]);
             if !is_punct(t) {
                 let two = dialect.family == Family::Python && matches!((ops.last().map(String::as_str), t), (Some("not"), "in") | (Some("is"), "not"));
