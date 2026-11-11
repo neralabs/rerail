@@ -6,12 +6,14 @@
  * the code under test, so the removal fails at once and names it, on every platform, where a retry would only wait for
  * it to end by chance. Any other holder is out of the test's reach (antivirus, the search indexer, a process another
  * process started, a handle the system releases late) and lets go within a moment, so a refused removal is retried as
- * Rerail's own removals are ({@link REMOVAL_RETRIES}).
+ * Rerail's own removals are ({@link REMOVAL_RETRIES}). A holder that never lets go, most often a database or file this
+ * test process left open, fails the removal once the retries run out, naming the file it holds.
  */
 import { ChildProcess } from "node:child_process";
 import { realpathSync, rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -115,7 +117,7 @@ export function runningIn(folder: string): string[] {
 /** The codes of a removal Windows refused because something holds the folder, the ones `rm` retries. */
 const HELD = new Set(["EBUSY", "EPERM", "ENOTEMPTY", "EMFILE", "ENFILE"]);
 
-function held(error: unknown): boolean {
+function isHeld(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error && HELD.has(String(error.code));
 }
 
@@ -130,8 +132,18 @@ function assertNothingRunningIn(path: string): void {
 }
 
 /** Rethrows `error` unless it says something held the folder and `retry` allows another try. */
-function assertRetryable(error: unknown, retry: boolean): void {
-  if (!held(error) || !retry) throw error;
+function assertRetryable(error: unknown, retry: boolean): asserts error is NodeJS.ErrnoException {
+  if (!isHeld(error) || !retry) throw error;
+}
+
+/** The error a removal of `path` gives up with once {@link REMOVAL_RETRIES} run out: `error`, the last try's. */
+function stillHeld(path: string, error: NodeJS.ErrnoException): Error {
+  return new Error(
+    `${path} is not removed: ${error.path ?? path} is still held (${error.code}) after ${REMOVAL_RETRIES.maxRetries} ` +
+    "retries, and no process this test started runs in it. Close what the test opened there (a database, a file " +
+    "handle, a watcher) before the folder goes; otherwise another program holds it (antivirus, the search indexer).",
+    { cause: error },
+  );
 }
 
 export interface RemoveFolderOptions {
@@ -141,20 +153,38 @@ export interface RemoveFolderOptions {
 
 /**
  * Removes the folder `path` and everything in it, if it exists. Fails at once while a process this test started still
- * runs in it ({@link runningIn}); retries while anything else holds it.
+ * runs in it ({@link runningIn}); retries while anything else holds it, and gives up after {@link REMOVAL_RETRIES},
+ * naming the file still held.
+ *
+ * The tries are counted here, each one `rm` with no retries of its own: node:fs/promises' `rm` applies `maxRetries` at
+ * every level of the tree, each try at a folder removing its contents with a full set of retries again, so one file
+ * held directly in the folder keeps it trying for 67 s rather than 5.5 s, past the 60 s hook timeout.
  */
 export async function removeFolder(path: string, options: RemoveFolderOptions = {}): Promise<void> {
+  const retries = options.retry === false ? 0 : REMOVAL_RETRIES.maxRetries;
+  for (let attempt = 0; !(await removed(path, attempt, retries)); attempt += 1) {
+    // As `rm` waits between its own retries: 100 ms, then each 100 ms longer than the last.
+    await delay((attempt + 1) * REMOVAL_RETRIES.retryDelay);
+  }
+}
+
+/** Try `attempt` (from 0) of `retries` at removing `path`: true once it is gone, false while a holder leaves a retry. */
+async function removed(path: string, attempt: number, retries: number): Promise<boolean> {
   assertNothingRunningIn(path);
   try {
     await rm(path, { recursive: true, force: true });
-    return;
+    return true;
   } catch (error) {
-    assertRetryable(error, options.retry ?? true);
+    assertRetryable(error, retries > 0);
+    if (attempt === retries) throw stillHeld(path, error);
+    return false;
   }
-  await rm(path, { recursive: true, force: true, ...REMOVAL_RETRIES });
 }
 
-/** {@link removeFolder} for code that cannot wait: a synchronous hook, a `finally` in a synchronous test. */
+/**
+ * {@link removeFolder} for code that cannot wait: a synchronous hook, a `finally` in a synchronous test. `rmSync` retries
+ * the folder as a whole rather than each level, so it keeps its own retries.
+ */
 export function removeFolderSync(path: string, options: RemoveFolderOptions = {}): void {
   assertNothingRunningIn(path);
   try {
