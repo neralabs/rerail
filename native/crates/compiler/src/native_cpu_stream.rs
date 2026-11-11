@@ -190,6 +190,9 @@ pub struct CompiledStream {
     /// calls of each other: one where a jump left its cluster.
     pub clusters: usize,
     pub crossings: usize,
+    /// Each word's Cranelift instructions as lowered (a shared run's body counted at its first
+    /// place), for the profile: times how often each word runs, where tier 2's work goes.
+    pub word_insts: Vec<u32>,
 }
 
 /// Each word's successors, as `stream::validate` reads them, `TOKEN`'s cut.
@@ -322,7 +325,7 @@ pub fn bounds(native: &Structure) -> Bounds {
 }
 
 /// The places `PUSH` names, sorted: where a `RETURN` can go.
-pub(crate) fn push_targets(native: &Structure) -> Vec<u16> {
+pub fn push_targets(native: &Structure) -> Vec<u16> {
     let mut out: Vec<u16> = native
         .structural
         .iter()
@@ -1126,6 +1129,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     let mut table_fn: Option<(cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)> = None;
     let mut span_fn = None;
     let mut lowered: Vec<Lowered> = Vec::new();
+    let mut word_insts: Vec<u32> = vec![0; words.len()];
     let phase = std::time::Instant::now();
     let times = std::env::var_os("RERAIL_STREAM_TIMES").is_some();
     let shared_all = shared_runs(native, &pushes);
@@ -1375,10 +1379,13 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
             }
             entries[b]
         };
+        let mut marks_at: Vec<(usize, usize)> = Vec::new();
         for (pc, w) in words.iter().enumerate() {
             if shared.skipped[pc] || cut.of[pc] != c {
                 continue;
             }
+            // Each word's instructions, for the profile (`CompiledStream::word_insts`).
+            marks_at.push((pc, f.func.dfg.num_insts()));
             if let Some(&(body, ti)) = shared.at.get(&pc) {
                 let first = shared.bodies[body].start;
                 f.switch_to_block(wb[pc].expect("its own place"));
@@ -2318,6 +2325,10 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                 _ => return Err(Error::UnsupportedBackend),
             }
         }
+        marks_at.push((usize::MAX, f.func.dfg.num_insts()));
+        for w in marks_at.windows(2) {
+            word_insts[w[0].0] = (w[1].1 - w[0].1) as u32;
+        }
         if clustered {
             // Each place of another cluster a word here goes to: the held fields stored, then
             // the tail call of its cluster with the place's index there.
@@ -2515,7 +2526,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     let marks = words.iter().filter_map(|b| if let Op::Mark { order, .. } = b.operation { Some(u64::from(order) + 1) } else { None }).max().unwrap_or(0);
     let wraps = framed(words);
     let two_slots = has_context(words);
-    Ok(CompiledStream { _module: module, entry, bounds: bounds(native), starts, lasts, marks, wraps, context: two_slots, clif, disassembly, heads, own_calls, clusters: cut.count as usize, crossings })
+    Ok(CompiledStream { _module: module, entry, bounds: bounds(native), starts, lasts, marks, wraps, context: two_slots, clif, disassembly, heads, own_calls, clusters: cut.count as usize, crossings, word_insts })
 }
 
 /// The loops across clusters, checked as a function's are: from each place a cluster is

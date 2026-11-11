@@ -741,6 +741,93 @@ pub mod tests {
     /// register allocation), the code (instructions, stack loads and stores), the share of steps
     /// that cross, and tier 2's time over the whole corpus with tier 1's buffers made before.
     /// Every file's table equals the one function's. Run by hand, at nice 19.
+    /// The compiled grammar against the engine's Rust parser (`rr::tape`), over the corpus: tier
+    /// 1 and tier 2 on buffers made before, the Rust parser from the text. Instructions retired,
+    /// cycles and CPU time, each the least of the rounds, the parsers in turns. Build the Rust
+    /// parser optimized for a fair count:
+    /// `--config 'profile.dev.package.rerail-rr-syntax.opt-level=3'`.
+    #[test]
+    #[ignore = "a benchmark: run by hand"]
+    fn rr_against_rust() {
+        let c = crate::compiled().expect("compiles");
+        let rounds: usize = std::env::var("RR_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(7);
+        let files = corpus();
+        let ours: Vec<&String> = files.iter().filter(|f| crate::compiled_tape(f).is_some()).collect();
+        let bytes: usize = ours.iter().map(|f| f.len()).sum();
+        let p = &c.parser;
+        let mut batches: Vec<_> = ours.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()])).collect();
+        for b in &mut batches {
+            b.call(&p.tier1);
+        }
+        let mut tapes: Vec<_> = batches.iter().map(|b| p.tape(b)).collect();
+        let nodes: usize = ours.iter().map(|f| super::rr::tape(f).len()).sum();
+        let retired = rerail_compiler::native_cpu_codegen::retired;
+        // tier 1, tier 2, the Rust parser
+        let mut best = [(std::time::Duration::MAX, u64::MAX, u64::MAX); 3];
+        let mut keep = |k: usize, t: std::time::Duration, i: u64, c: u64| best[k] = (best[k].0.min(t), best[k].1.min(i), best[k].2.min(c));
+        for _ in 0..rounds {
+            let (i0, c0, t0) = (retired().0, retired().1, thread_cpu());
+            for b in &mut batches {
+                b.call(&p.tier1);
+            }
+            let (t1, (i1, c1)) = (thread_cpu(), retired());
+            for (b, t) in batches.iter().zip(&mut tapes) {
+                let _ = p.words(b, t);
+            }
+            let (t2, (i2, c2)) = (thread_cpu(), retired());
+            let mut n = 0;
+            for f in &ours {
+                n += super::rr::tape(f).len();
+            }
+            std::hint::black_box(n);
+            let (t3, (i3, c3)) = (thread_cpu(), retired());
+            keep(0, t1 - t0, i1 - i0, c1 - c0);
+            keep(1, t2 - t1, i2 - i1, c2 - c1);
+            keep(2, t3 - t2, i3 - i2, c3 - c2);
+        }
+        eprintln!("{} files the grammar parses, {:.2} MB, {nodes} nodes; the least of {rounds} rounds", ours.len(), bytes as f64 / 1e6);
+        for (name, (t, i, cy)) in ["tier 1", "tier 2", "Rust (rr::tape)"].iter().zip(best) {
+            eprintln!("  {name:>16}: {t:8.2?} CPU, {:7.1}M instructions, {:7.1}M cycles, IPC {:.2}; {:.0} instructions and {:.0} cycles a node", i as f64 / 1e6, cy as f64 / 1e6, i as f64 / cy as f64, i as f64 / nodes as f64, cy as f64 / nodes as f64);
+        }
+        // Where tier 2's instructions go: each word's Cranelift instructions times how often the
+        // corpus runs it (the interpreter's steps), by the word's operation, a token.
+        let native = rerail_compiler::native_ir::lower(&c.program, 0, 0).expect("lowers");
+        let all: Vec<&[u8]> = ours.iter().map(|f| f.as_bytes()).collect();
+        let traffic = rerail_compiler::native_cpu_clusters::traffic(&c.program, &all);
+        let mut runs = vec![0u64; native.structural.len()];
+        for (&(_, b), &w) in &traffic {
+            runs[b as usize] += w;
+        }
+        let insts = &p.tier2.word_insts;
+        let tokens: u64 = (0..runs.len()).filter(|&pc| matches!(native.structural[pc].operation, rerail_compiler::native_ir::StructuralOperation::Token { .. })).map(|pc| runs[pc]).sum();
+        let mut by: std::collections::BTreeMap<String, (u64, u64)> = Default::default();
+        for pc in 0..runs.len() {
+            let op = format!("{:?}", native.structural[pc].operation);
+            let e = by.entry(op.split([' ', '{', '(']).next().unwrap_or("").to_owned()).or_default();
+            e.0 += runs[pc];
+            e.1 += runs[pc] * u64::from(insts.get(pc).copied().unwrap_or(0));
+        }
+        let mut v: Vec<_> = by.into_iter().collect();
+        v.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+        let total: u64 = v.iter().map(|x| x.1.1).sum();
+        let pushes = rerail_compiler::native_cpu_stream::push_targets(&native);
+        // The switches as run: their runs of bytes, weighted by how often each switch runs.
+        let (mut sw_runs, mut sw_n) = (0u64, 0u64);
+        for pc in 0..runs.len() {
+            if let rerail_compiler::native_ir::StructuralOperation::Switch { table } = native.structural[pc].operation {
+                let t = &native.switches[usize::from(table)].targets;
+                let n = 1 + t.windows(2).filter(|w| w[0] != w[1]).count() as u64;
+                sw_runs += runs[pc] * n;
+                sw_n += runs[pc];
+            }
+        }
+        eprintln!("{} places a RETURN can go back to (a compare tree {} deep); a switch as run has {:.1} runs of bytes ({:.1} compares deep)", pushes.len(), (pushes.len() as f64).log2().ceil(), sw_runs as f64 / sw_n.max(1) as f64, (sw_runs as f64 / sw_n.max(1) as f64).log2());
+        eprintln!("tier 2's IR instructions run, {:.0} a token ({tokens} tokens), by word:", total as f64 / tokens as f64);
+        for (k, (n, i)) in v.iter().take(16) {
+            eprintln!("  {k:>10}: {:5.2} words a token, {:5.1} instructions each, {:6.1} a token", *n as f64 / tokens as f64, *i as f64 / (*n).max(1) as f64, *i as f64 / tokens as f64);
+        }
+    }
+
     /// Cranelift's optimizer on `.rr`'s tier 1 (doc 28): tier 1 compiled with it and without, in
     /// one process, timed in turns over the corpus, each its best round.
     #[test]
