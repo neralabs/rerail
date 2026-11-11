@@ -1207,6 +1207,36 @@ fn json_compiled_path_equals_the_interpreters() {
     }
 }
 
+/// Tier 2 in clusters (`native_cpu_clusters`, `native_cpu_stream::compile_cut`): JSON cut by
+/// its traffic into small clusters, and with every word a cluster of its own. Each run equals
+/// the one function's, refusals at the same word.
+#[test]
+fn json_in_clusters_equals_one_function() {
+    let (p, _) = json_compiled();
+    let native = native_ir::lower(&p, 0, 0).expect("lowers");
+    assert_eq!(native.structural.len(), p.words.len(), "a word is lowered at its place");
+    let tier1 = native_cpu_block::compile(&native.block_programs[0]).expect("tier 1 compiles");
+    let one = native_cpu_stream::compile(&native).expect("one function");
+    assert_eq!((one.clusters, one.crossings), (1, 0));
+    let files = json_tier2_files();
+    let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
+    let traffic = native_cpu_clusters::traffic(&p, &refs);
+    let n = native.structural.len();
+    let cuts = [
+        ("by traffic, at most 40 words", native_cpu_clusters::by_traffic(&native, &traffic, 40)),
+        ("a word a cluster", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32 }),
+    ];
+    for (name, cut) in cuts {
+        let tier2 = native_cpu_stream::compile_cut(&native, &cut).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        eprintln!("{name}: {} clusters, {} tail calls; {:.3} of the steps cross", tier2.clusters, tier2.crossings, native_cpu_clusters::crossings(&native, &cut, &traffic));
+        assert!(tier2.clusters > 1 && tier2.crossings > 0, "{name}: in clusters");
+        for f in &files {
+            let t1 = tier1.extract(f);
+            assert_eq!(tier2.run(f, &t1).map_err(|r| r.pc), one.run(f, &t1).map_err(|r| r.pc), "{name}: {}", String::from_utf8_lossy(f));
+        }
+    }
+}
+
 /// `rounds until settled`: strings with escapes and `//` comments, each hiding the other's
 /// openers, through one carry (the reference's own test lexer). Its masks equal the
 /// evaluator's on the CPU executors (Metal refuses a fixed point so far), over every short

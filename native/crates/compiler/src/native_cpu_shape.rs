@@ -49,19 +49,26 @@ pub enum Refusal {
 /// Refuse `func` unless it calls only `own` functions and each of its cycles passes one of
 /// `heads`.
 pub fn check(func: &Function, heads: &[(Block, Step)], own: &[UserExternalName]) -> Result<(), Refusal> {
+    check_tails(func, heads, own, &[])
+}
+
+/// `check`, and tail calls (`return_call`) of `tails` allowed too: tier 2's functions of
+/// clusters, which call each other so. Their loops across functions are `acyclic`'s check.
+pub fn check_tails(func: &Function, heads: &[(Block, Step)], own: &[UserExternalName], tails: &[UserExternalName]) -> Result<(), Refusal> {
     for block in func.layout.blocks() {
         for inst in func.layout.block_insts(block) {
             let data = &func.dfg.insts[inst];
             let calls = matches!(data, InstructionData::Call { .. } | InstructionData::CallIndirect { .. })
                 || matches!(data.opcode(), Opcode::Call | Opcode::CallIndirect | Opcode::ReturnCall | Opcode::ReturnCallIndirect | Opcode::TryCall | Opcode::TryCallIndirect);
-            let mine = match data {
+            let named = |list: &[UserExternalName]| match data {
                 InstructionData::Call { func_ref, .. } => match &func.dfg.ext_funcs[*func_ref].name {
-                    ExternalName::User(r) => own.contains(&func.params.user_named_funcs()[*r]),
+                    ExternalName::User(r) => list.contains(&func.params.user_named_funcs()[*r]),
                     _ => false,
                 },
                 _ => false,
             };
-            if calls && !(mine && data.opcode() == Opcode::Call) {
+            let allowed = (data.opcode() == Opcode::Call && named(own)) || (data.opcode() == Opcode::ReturnCall && named(tails));
+            if calls && !allowed {
                 return Err(Refusal::Call(func.dfg.display_inst(inst).to_string()));
             }
         }
@@ -91,6 +98,65 @@ pub fn check(func: &Function, heads: &[(Block, Step)], own: &[UserExternalName])
                 },
                 None => {
                     mark.insert(*block, 2);
+                    stack.pop();
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The `exits` (a block that leaves the function, and where to) reached from `from` before any
+/// of `heads`: none if `from` is one.
+pub fn exits(func: &Function, heads: &[(Block, Step)], from: Block, exits: &HashMap<Block, usize>) -> Vec<usize> {
+    let cfg = ControlFlowGraph::with_function(func);
+    let named: HashMap<Block, Step> = heads.iter().copied().collect();
+    let mut out = Vec::new();
+    if named.contains_key(&from) {
+        return out;
+    }
+    let mut seen = std::collections::HashSet::from([from]);
+    let mut work = vec![from];
+    while let Some(b) = work.pop() {
+        if let Some(&x) = exits.get(&b) {
+            out.push(x);
+        }
+        for s in cfg.succ_iter(b) {
+            if !named.contains_key(&s) && seen.insert(s) {
+                work.push(s);
+            }
+        }
+    }
+    out.sort_unstable();
+    out
+}
+
+/// Functions that pass control to each other: no cycle of `edges` (an entry to the entries it
+/// reaches before a loop head, `exits`), so every loop across them passes a head.
+pub fn acyclic(edges: &HashMap<usize, Vec<usize>>) -> Result<(), Refusal> {
+    let mut mark: HashMap<usize, u8> = HashMap::new();
+    let mut roots: Vec<usize> = edges.keys().copied().collect();
+    roots.sort_unstable();
+    for root in roots {
+        if mark.contains_key(&root) {
+            continue;
+        }
+        let next = |x: usize| edges.get(&x).cloned().unwrap_or_default();
+        let mut stack: Vec<(usize, Vec<usize>)> = vec![(root, next(root))];
+        mark.insert(root, 1);
+        while let Some((at, rest)) = stack.last_mut() {
+            match rest.pop() {
+                Some(n) => match mark.get(&n).copied() {
+                    Some(1) => return Err(Refusal::Loop(format!("entry {at} -> entry {n}, across functions"))),
+                    Some(_) => {}
+                    None => {
+                        mark.insert(n, 1);
+                        let s = next(n);
+                        stack.push((n, s));
+                    }
+                },
+                None => {
+                    mark.insert(*at, 2);
                     stack.pop();
                 }
             }

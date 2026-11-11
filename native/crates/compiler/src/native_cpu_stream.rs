@@ -182,10 +182,14 @@ pub struct CompiledStream {
     /// Its calls, each of an outlined function made from the same program (`outline`): the
     /// only calls the machine code may have.
     pub own_calls: usize,
+    /// Its functions of clusters (`compile_cut`: one, the token loop's alone), and their tail
+    /// calls of each other: one where a jump left its cluster.
+    pub clusters: usize,
+    pub crossings: usize,
 }
 
 /// Each word's successors, as `stream::validate` reads them, `TOKEN`'s cut.
-fn successors(native: &Structure, pushes: &[u16], pc: usize) -> Vec<usize> {
+pub(crate) fn successors(native: &Structure, pushes: &[u16], pc: usize) -> Vec<usize> {
     match native.structural[pc].operation {
         Op::Stop | Op::Accept | Op::Token { .. } => vec![],
         Op::Goto { target } => vec![usize::from(target)],
@@ -314,7 +318,7 @@ pub fn bounds(native: &Structure) -> Bounds {
 }
 
 /// The places `PUSH` names, sorted: where a `RETURN` can go.
-fn push_targets(native: &Structure) -> Vec<u16> {
+pub(crate) fn push_targets(native: &Structure) -> Vec<u16> {
     let mut out: Vec<u16> = native
         .structural
         .iter()
@@ -975,6 +979,37 @@ pub fn shared_runs(native: &Structure, pushes: &[u16]) -> SharedRuns {
 }
 
 pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
+    compile_cut(native, &crate::native_cpu_clusters::Cut::one(native.structural.len()))
+}
+
+/// What a cluster's function left for the steps after every cluster is lowered: the places
+/// entered from other clusters (`dispatch`) and the calls of other clusters (`foreign`).
+struct Lowered {
+    func: cranelift_codegen::ir::Function,
+    heads: Vec<(Block, Step)>,
+    /// Each word's block, and each shared body's entry: where a place of the cluster is lowered,
+    /// or (another cluster's) where the call of its cluster goes.
+    wb: Vec<Block>,
+    entries: Vec<Block>,
+    off_end: Block,
+    /// The block that picks the place a call enters at, by its index in the cluster's entries.
+    dispatch: Block,
+    /// The places of other clusters this one names (a word's place; a body's, past the words).
+    foreign: std::collections::BTreeSet<usize>,
+    params: [Value; 3],
+}
+
+/// Tier 2 lowered in the clusters of `cut` (`native_cpu_clusters`): one function a cluster.
+/// One cluster is the one function `tempo_stream(ctx)`, its state in its stack frame. With
+/// more, `tempo_stream` holds the state and calls the cluster of the first word; a cluster's
+/// function takes `ctx`, the state's address and the index of the place it enters at, and a jump
+/// to a word of another cluster is a tail call of that cluster (`return_call`, the `tail`
+/// calling convention): no stack grows, and every function returns the run's result to
+/// `tempo_stream`.
+pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) -> Result<CompiledStream, Error> {
+    if cut.of.len() != native.structural.len() || cut.count == 0 || (native.structural.is_empty() && cut.count > 1) {
+        return Err(Error::UnsupportedBackend);
+    }
     let words = &native.structural;
     let pushes = push_targets(native);
     let named = |op: fn(&Op) -> Option<u16>| words.iter().find_map(|b| op(&b.operation)).map(usize::from);
@@ -989,15 +1024,35 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
     signature.params.push(AbiParam::new(pointer));
     signature.returns.push(AbiParam::new(types::I64));
     let id = module.declare_function("tempo_stream", Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
-    let mut context: Context = module.make_context();
-    context.func.signature = signature;
-    context.set_disasm(true);
+    let clustered = cut.count > 1;
+    // A cluster's function: (ctx, the state's address, the entry's index), the `tail` convention.
+    let csig = if clustered {
+        let mut c = module.make_signature();
+        c.call_conv = cranelift_codegen::isa::CallConv::Tail;
+        c.params.extend([AbiParam::new(pointer), AbiParam::new(types::I64), AbiParam::new(types::I64)]);
+        c.returns.push(AbiParam::new(types::I64));
+        c
+    } else {
+        signature.clone()
+    };
+    let cids: Vec<cranelift_module::FuncId> = if clustered {
+        (0..cut.count).map(|c| module.declare_function(&format!("tempo_stream_c{c}"), Linkage::Local, &csig).map_err(|_| Error::BackendFailure)).collect::<Result<_, _>>()?
+    } else {
+        vec![id]
+    };
     let mut fctx = FunctionBuilderContext::new();
-    let mut heads: Vec<(Block, Step)> = Vec::new();
-    let shape;
-    let own;
-    {
-        let mut f = FunctionBuilder::new(&mut context.func, &mut fctx);
+    // The node table's passes, outlined (`outline`): made where first called, by any cluster.
+    let mut reorder_fn = None;
+    let mut table_fn: Option<(cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)> = None;
+    let mut span_fn = None;
+    let mut lowered: Vec<Lowered> = Vec::new();
+    for c in 0..cut.count {
+        let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, cids[c as usize].as_u32()), csig.clone());
+        let mut heads: Vec<(Block, Step)> = Vec::new();
+        let foreign = std::cell::RefCell::new(std::collections::BTreeSet::new());
+        let (wb_kept, entries_kept, off_end_kept, pick_kept, params): (Vec<Block>, Vec<Block>, Block, Block, [Value; 3]);
+        {
+        let mut f = FunctionBuilder::new(&mut func, &mut fctx);
         let entry = f.create_block();
         f.append_block_params_for_function_params(entry);
         let refuse = f.create_block();
@@ -1005,7 +1060,20 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
         let wb: Vec<Block> = (0..words.len()).map(|_| f.create_block()).collect();
         // A place past the words refuses, as the interpreter's `STOP`.
         let off_end = f.create_block();
-        let word = |t: u16| -> Block { if t == REFUSE { off_end } else { wb.get(usize::from(t)).copied().unwrap_or(off_end) } };
+        // A word's block: its own, in its cluster; else the block that calls its cluster (made
+        // after the clusters are lowered, where the jump is kept).
+        let goto = |pc: usize| -> Block {
+            match wb.get(pc) {
+                None => off_end,
+                Some(&b) => {
+                    if cut.of[pc] != c {
+                        foreign.borrow_mut().insert(pc);
+                    }
+                    b
+                }
+            }
+        };
+        let word = |t: u16| -> Block { if t == REFUSE { off_end } else { goto(usize::from(t)) } };
         // Where returns chain, each `RETURN` is a loop's head: a turn pops a call.
         let bound = bounds(native);
         let chains = bound.chains;
@@ -1038,10 +1106,6 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
             f.append_block_param(fin, types::I64);
         }
         let mut fin_used = false;
-        // The node table's passes, outlined (`outline`): made where first called.
-        let mut reorder_fn = None;
-        let mut table_fn = None;
-        let mut span_fn = None;
         let w: Vec<Value> = if wrapping {
             [FRAME_BASE, FRAME_LAST, FRAME_LAST_BASE, HEAD, LINK, PLACE, OUT_KIND, OUT_FIELD, OUT_START, OUT_END, OUT_SIZE].iter().map(|&at| load(&mut f, at)).collect()
         } else {
@@ -1052,22 +1116,39 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
         let zero = f.ins().iconst(types::I64, 0);
         // The state few words touch, in memory (`Mem`): not carried through every block where
         // paths meet, as an SSA variable is.
-        let slot = f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * Mem::COUNT, 3));
-        let mget = |f: &mut FunctionBuilder<'_>, k: Mem| f.ins().stack_load(types::I64, slot, 8 * k as i32);
-        let mset = |f: &mut FunctionBuilder<'_>, k: Mem, x: Value| {
-            f.ins().stack_store(x, slot, 8 * k as i32);
+        // In clusters, the state is `tempo_stream`'s, at the address each call passes.
+        let memp = clustered.then(|| f.block_params(entry)[1]);
+        let slot = (!clustered).then(|| f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * Mem::COUNT, 3)));
+        let mget = |f: &mut FunctionBuilder<'_>, k: Mem| match (memp, slot) {
+            (Some(p), _) => f.ins().load(types::I64, MemFlags::trusted(), p, 8 * k as i32),
+            (None, Some(s)) => f.ins().stack_load(types::I64, s, 8 * k as i32),
+            (None, None) => unreachable!("the state is in a slot or at an address"),
         };
-        for k in 0..Mem::COUNT {
-            f.ins().stack_store(zero, slot, 8 * k as i32);
-        }
+        let mset = |f: &mut FunctionBuilder<'_>, k: Mem, x: Value| match (memp, slot) {
+            (Some(p), _) => {
+                f.ins().store(MemFlags::trusted(), x, p, 8 * k as i32);
+            }
+            (None, Some(s)) => {
+                f.ins().stack_store(x, s, 8 * k as i32);
+            }
+            (None, None) => unreachable!("the state is in a slot or at an address"),
+        };
         let one = f.ins().iconst(types::I64, 1);
-        mset(&mut f, Mem::Need, one);
         let before_first = f.ins().iconst(types::I64, -1);
-        mset(&mut f, Mem::Lw, before_first);
-        match wb.first() {
-            Some(&b) => f.ins().jump(b, &[]),
-            None => f.ins().jump(off_end, &[]),
-        };
+        let pick = f.create_block();
+        if clustered {
+            f.ins().jump(pick, &[]);
+        } else {
+            for k in 0..Mem::COUNT {
+                f.ins().stack_store(zero, slot.expect("a slot"), 8 * k as i32);
+            }
+            mset(&mut f, Mem::Need, one);
+            mset(&mut f, Mem::Lw, before_first);
+            match wb.first() {
+                Some(&b) => f.ins().jump(b, &[]),
+                None => f.ins().jump(off_end, &[]),
+            };
+        }
 
         let flags = MemFlags::trusted();
         // Refuse at `pc` when `bad`; else go on in a new block.
@@ -1105,8 +1186,16 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
         // of its words from the first place's, for a refusal's word.
         let shared = shared_runs(native, &pushes);
         let entries: Vec<Block> = shared.bodies.iter().map(|_| f.create_block()).collect();
+        // A body's entry: its own, where its first place is in this cluster; else the call of its
+        // cluster.
+        let body_entry = |b: usize| -> Block {
+            if cut.of[shared.bodies[b].start] != c {
+                foreign.borrow_mut().insert(words.len() + b);
+            }
+            entries[b]
+        };
         for (pc, w) in words.iter().enumerate() {
-            if shared.skipped[pc] {
+            if shared.skipped[pc] || cut.of[pc] != c {
                 continue;
             }
             if let Some(&(body, ti)) = shared.at.get(&pc) {
@@ -1116,7 +1205,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                 mset(&mut f, Mem::Sel, i);
                 let sh = f.ins().iconst(types::I64, pc as i64 - first as i64);
                 mset(&mut f, Mem::Shift, sh);
-                f.ins().jump(entries[body], &[]);
+                f.ins().jump(body_entry(body), &[]);
                 if pc != first {
                     continue;
                 }
@@ -1141,7 +1230,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                 }
                 continue;
             }
-            let fall = wb.get(pc + 1).copied().unwrap_or(off_end);
+            let fall = goto(pc + 1);
             match w.operation {
                 Op::Token { .. } => {
                     heads.push((wb[pc], Step::Token));
@@ -1290,7 +1379,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                         same = f.ins().band(same, eq);
                     }
                     if test {
-                        let skip = wb.get(pc + 2).copied().unwrap_or(off_end);
+                        let skip = goto(pc + 2);
                         f.ins().brif(same, fall, &[], skip, &[]);
                     } else {
                         let differs = f.ins().bxor_imm(same, 1);
@@ -1302,7 +1391,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     // The mark's bit at the token's start, if the mark is live: one load. At the
                     // stream's end, the mark is there when the end has it.
                     let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(mask)).copied()).ok_or(Error::UnsupportedBackend)?;
-                    let skip = wb.get(pc + 2).copied().unwrap_or(off_end);
+                    let skip = goto(pc + 2);
                     let (at_end, live) = (mget(&mut f, Mem::AtEnd), mget(&mut f, Mem::Live));
                     let lit = f.ins().ushr_imm(live, i64::from(order));
                     let lit = f.ins().band_imm(lit, 1);
@@ -1338,7 +1427,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                 Op::Row { mask } => {
                     // The row's start bit at the token's start: one load.
                     let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(mask)).copied()).ok_or(Error::UnsupportedBackend)?;
-                    let skip = wb.get(pc + 2).copied().unwrap_or(off_end);
+                    let skip = goto(pc + 2);
                     let start = mget(&mut f, Mem::Start);
                     let w = f.ins().ushr_imm(start, 6);
                     let off = f.ins().imul_imm(output_stride, output as i64);
@@ -1463,7 +1552,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                         }
                         // The next word where the flag is set; else the one after.
                         FlagOp::Test => {
-                            let skip = wb.get(pc + 2).copied().unwrap_or(off_end);
+                            let skip = goto(pc + 2);
                             let set = f.ins().band_imm(fl, bit);
                             f.ins().brif(set, fall, &[], skip, &[]);
                         }
@@ -1956,10 +2045,12 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
             f.switch_to_block(fin);
             let p = f.block_params(fin).to_vec();
             let extras = &native.readings.extras;
-            let made = outline(&mut module, "tempo_stream_table", 6, 1, |f, q, heads| table(f, [q[0], q[1]], q[2], q[3], [q[4], q[5]], extras, heads))?;
+            if table_fn.is_none() {
+                table_fn = Some(outline(&mut module, "tempo_stream_table", 6, 1, |f, q, heads| table(f, [q[0], q[1]], q[2], q[3], [q[4], q[5]], extras, heads))?);
+            }
+            let made = table_fn.as_ref().expect("made");
             let r = call_own(&mut f, made.0, &made.1, &[p[0], p[1], p[2], open_c, parent_c, extra_c]);
             f.ins().return_(&[r[0]]);
-            table_fn = Some(made);
         }
         f.switch_to_block(off_end);
         let past = f.ins().iconst(types::I64, words.len() as i64 + 1);
@@ -1971,37 +2062,82 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
         let pc = f.ins().iadd(pc, sh);
         f.ins().return_(&[pc]);
         f.seal_all_blocks();
+        let p = f.block_params(entry).to_vec();
+        params = [p[0], p.get(1).copied().unwrap_or(p[0]), p.get(2).copied().unwrap_or(p[0])];
         f.finalize();
-        own = reorder_fn.into_iter().chain(table_fn).chain(span_fn).collect::<Vec<_>>();
-        let names: Vec<_> = own.iter().map(|(id, _, _)| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())).collect();
-        shape = crate::native_cpu_shape::check(&context.func, &heads, &names);
-    }
-    shape.map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
-    let mut clif = context.func.display().to_string();
-    crate::native_cpu_codegen::define_function(&mut module, id, &mut context).map_err(|e| {
-        if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
-            eprintln!("tier 2: {e:?}");
+        (wb_kept, entries_kept, off_end_kept, pick_kept) = (wb, entries, off_end, pick);
         }
-        Error::BackendFailure
-    })?;
-    let mut disassembly = context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default();
-    module.clear_context(&mut context);
-    let calls = clif.lines().filter(|l| l.trim().starts_with("call ") || l.contains(" = call ")).count();
-    // The outlined functions, after the token loop's: their IR and machine code appended.
-    for (fid, _, func) in own {
+        lowered.push(Lowered { func, heads, wb: wb_kept, entries: entries_kept, off_end: off_end_kept, dispatch: pick_kept, foreign: foreign.into_inner(), params });
+    }
+    let own: Vec<_> = reorder_fn.into_iter().chain(table_fn).chain(span_fn).collect();
+    let names: Vec<_> = own.iter().map(|(id, _, _)| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())).collect();
+    let crossings = if clustered { join_clusters(&mut lowered, cut, &cids, &csig, words.len(), &shared_runs(native, &pushes))? } else { 0 };
+    let cluster_names: Vec<_> = cids.iter().map(|id| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())).collect();
+    for l in &lowered {
+        crate::native_cpu_shape::check_tails(&l.func, &l.heads, &names, if clustered { &cluster_names } else { &[] }).map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
+    }
+    // `tempo_stream` itself, in clusters: the state, then the first word's cluster.
+    let driver = if clustered {
+        let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, id.as_u32()), signature.clone());
+        {
+            let mut f = FunctionBuilder::new(&mut func, &mut fctx);
+            let entry = f.create_block();
+            f.append_block_params_for_function_params(entry);
+            f.switch_to_block(entry);
+            let ctx = f.block_params(entry)[0];
+            let slot = f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * Mem::COUNT, 3));
+            let zero = f.ins().iconst(types::I64, 0);
+            for k in 0..Mem::COUNT {
+                f.ins().stack_store(zero, slot, 8 * k as i32);
+            }
+            let one = f.ins().iconst(types::I64, 1);
+            f.ins().stack_store(one, slot, 8 * Mem::Need as i32);
+            let before_first = f.ins().iconst(types::I64, -1);
+            f.ins().stack_store(before_first, slot, 8 * Mem::Lw as i32);
+            let state = f.ins().stack_addr(types::I64, slot, 0);
+            // The first word is its cluster's first entry (`join_clusters`).
+            let first = f.ins().iconst(types::I64, 0);
+            let r = call_own(&mut f, cids[cut.of[0] as usize], &csig, &[ctx, state, first]);
+            f.ins().return_(&[r[0]]);
+            f.seal_all_blocks();
+            f.finalize();
+        }
+        crate::native_cpu_shape::check(&func, &[], &cluster_names).map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
+        Some(func)
+    } else {
+        None
+    };
+    let mut clif = String::new();
+    let mut disassembly = String::new();
+    let mut define = |module: &mut JITModule, fid: cranelift_module::FuncId, func: cranelift_codegen::ir::Function, what: &str| -> Result<(), Error> {
         let mut c: Context = module.make_context();
         c.func = func;
         c.set_disasm(true);
         clif.push_str(&c.func.display().to_string());
-        crate::native_cpu_codegen::define_function(&mut module, fid, &mut c).map_err(|e| {
+        crate::native_cpu_codegen::define_function(module, fid, &mut c).map_err(|e| {
             if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
-                eprintln!("tier 2's own function: {e:?}");
+                eprintln!("tier 2's {what}: {e:?}");
             }
             Error::BackendFailure
         })?;
         disassembly.push_str(&c.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default());
         module.clear_context(&mut c);
+        Ok(())
+    };
+    // The token loop's function first (a driver, in clusters), then the clusters', then the
+    // outlined functions: their IR and machine code appended.
+    if let Some(func) = driver {
+        define(&mut module, id, func, "driver")?;
     }
+    let mut heads: Vec<(String, Step)> = Vec::new();
+    for (c, l) in lowered.into_iter().enumerate() {
+        heads.extend(l.heads.iter().map(|(b, s)| (if clustered { format!("c{c}:{b}") } else { b.to_string() }, *s)));
+        define(&mut module, cids[c], l.func, "function")?;
+    }
+    for (fid, _, func) in own {
+        define(&mut module, fid, func, "own function")?;
+    }
+    let calls = clif.lines().filter(|l| l.trim().starts_with("call ") || l.contains(" = call ")).count();
     module.finalize_definitions().map_err(|e| {
         if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
             eprintln!("tier 2's module: {e:?}");
@@ -2011,12 +2147,75 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
     let code = module.get_finalized_function(id);
     // SAFETY: `tempo_stream` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(code) };
-    let heads = heads.into_iter().map(|(b, s)| (b.to_string(), s)).collect();
     let own_calls = calls;
     let marks = words.iter().filter_map(|b| if let Op::Mark { order, .. } = b.operation { Some(u64::from(order) + 1) } else { None }).max().unwrap_or(0);
     let wraps = framed(words);
     let two_slots = has_context(words);
-    Ok(CompiledStream { _module: module, entry, bounds: bounds(native), starts, lasts, marks, wraps, context: two_slots, clif, disassembly, heads, own_calls })
+    Ok(CompiledStream { _module: module, entry, bounds: bounds(native), starts, lasts, marks, wraps, context: two_slots, clif, disassembly, heads, own_calls, clusters: cut.count as usize, crossings })
+}
+
+/// The clusters joined, once each is lowered (`compile_cut`). Each block of a word of another
+/// cluster that a jump kept becomes the tail call of that cluster, with the place's index among
+/// the places that cluster is entered at; each cluster's first block picks its place by that
+/// index (a jump table). The first word is its cluster's first entry. The loops across clusters
+/// are checked as a function's are: from each place entered, the calls it reaches before any
+/// loop head, and over all clusters no cycle of those (`native_cpu_shape::acyclic`). Returns the
+/// tail calls made.
+fn join_clusters(lowered: &mut [Lowered], cut: &crate::native_cpu_clusters::Cut, cids: &[cranelift_module::FuncId], csig: &cranelift_codegen::ir::Signature, n_words: usize, shared: &SharedRuns) -> Result<usize, Error> {
+    use cranelift_codegen::cursor::{Cursor, FuncCursor};
+    use cranelift_codegen::ir::{ExtFuncData, ExternalName, JumpTableData, UserExternalName};
+    let cluster_of = |g: usize| (if g < n_words { cut.of[g] } else { cut.of[shared.bodies[g - n_words].start] }) as usize;
+    let block_of = |wb: &[Block], entries: &[Block], g: usize| if g < n_words { wb[g] } else { entries[g - n_words] };
+    // The places of other clusters each cluster jumps to (a block a jump kept), and so each
+    // cluster's entries.
+    let mut used: Vec<Vec<usize>> = Vec::with_capacity(lowered.len());
+    let mut incoming: Vec<std::collections::BTreeSet<usize>> = vec![std::collections::BTreeSet::new(); lowered.len()];
+    incoming[cut.of[0] as usize].insert(0);
+    for l in lowered.iter() {
+        let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&l.func);
+        let u: Vec<usize> = l.foreign.iter().copied().filter(|&g| cfg.pred_iter(block_of(&l.wb, &l.entries, g)).next().is_some()).collect();
+        for &g in &u {
+            incoming[cluster_of(g)].insert(g);
+        }
+        used.push(u);
+    }
+    let index: Vec<std::collections::HashMap<usize, usize>> = incoming.iter().map(|s| s.iter().enumerate().map(|(i, &g)| (g, i)).collect()).collect();
+    let mut crossings = 0usize;
+    let mut edges: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+    for (c, l) in lowered.iter_mut().enumerate() {
+        let [ctx, mem, at] = l.params;
+        let (wb, entries) = (l.wb.clone(), l.entries.clone());
+        let mut exits: std::collections::HashMap<Block, usize> = std::collections::HashMap::new();
+        let mut refs: std::collections::HashMap<usize, cranelift_codegen::ir::FuncRef> = std::collections::HashMap::new();
+        for &g in &used[c] {
+            let d = cluster_of(g);
+            let fref = *refs.entry(d).or_insert_with(|| {
+                let name = l.func.declare_imported_user_function(UserExternalName::new(0, cids[d].as_u32()));
+                let signature = l.func.import_signature(csig.clone());
+                l.func.import_function(ExtFuncData { name: ExternalName::user(name), signature, colocated: true })
+            });
+            let b = block_of(&wb, &entries, g);
+            l.func.layout.append_block(b);
+            let mut pos = FuncCursor::new(&mut l.func).at_bottom(b);
+            let i = pos.ins().iconst(types::I64, index[d][&g] as i64);
+            pos.ins().return_call(fref, &[ctx, mem, i]);
+            exits.insert(b, g);
+            crossings += 1;
+        }
+        let targets: Vec<Block> = incoming[c].iter().map(|&g| block_of(&wb, &entries, g)).collect();
+        l.func.layout.append_block(l.dispatch);
+        let default = l.func.dfg.block_call(l.off_end, &[]);
+        let calls: Vec<_> = targets.iter().map(|&b| l.func.dfg.block_call(b, &[])).collect();
+        let jt = l.func.create_jump_table(JumpTableData::new(default, &calls));
+        let mut pos = FuncCursor::new(&mut l.func).at_bottom(l.dispatch);
+        let i = pos.ins().ireduce(types::I32, at);
+        pos.ins().br_table(i, jt);
+        for (&g, &b) in incoming[c].iter().zip(&targets) {
+            edges.insert(g, crate::native_cpu_shape::exits(&l.func, &l.heads, b, &exits));
+        }
+    }
+    crate::native_cpu_shape::acyclic(&edges).map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
+    Ok(crossings)
 }
 
 /// Whether the program has context beside each call's return (a level's word, its flags): two
