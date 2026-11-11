@@ -1392,6 +1392,16 @@ pub(in crate::code_rule_dsl) fn observe<T>(f: impl FnOnce(&mut crate::content_st
         OFF.call_once(|| crate::content_store::observe::set_journal(false));
     }
     let store = tape_cache_path().map(|p| crate::content_store::observe::store_beside(&p));
+    // Each test thread its own observer, unless the test set its own tape cache: another test's run flushes a shared
+    // one's journal, after which it answers for this test's edits until the next flush (decision 0105).
+    #[cfg(test)]
+    let store = store.map(|p| {
+        if TEST_TAPE_CACHE.with(|t| t.borrow().is_some()) {
+            return p;
+        }
+        let thread: String = format!("{:?}", std::thread::current().id()).chars().filter(char::is_ascii_digit).collect();
+        std::path::PathBuf::from(format!("{}.thread{thread}", p.display()))
+    });
     crate::content_store::observe::with(store.as_deref(), f)
 }
 

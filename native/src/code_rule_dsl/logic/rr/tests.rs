@@ -800,7 +800,9 @@ fn programs_are_kept_by_the_hashes_of_what_they_read() {
     assert!(files.iter().filter_map(LibraryFile::fact).all(|f| f.starts_with("library_file(") && f.contains("\"sha256:")));
     let (again, files_again) = read_file(&main).unwrap();
     assert_eq!((format!("{first:?}"), &files), (format!("{again:?}"), &files_again), "unchanged files: the same program");
+    // The edit comes in a later run: a run reads its files as they were when it first looked (decision 0105).
     std::fs::write(&helper, ".decl h(x: number)\nh(2).\n").unwrap();
+    crate::code_rule_dsl::logic::plan::corpus::observe(|o| o.flush());
     let (edited, edited_files) = read_file(&main).unwrap();
     assert_ne!(format!("{first:?}"), format!("{edited:?}"), "an edited include is read again");
     assert_ne!(files, edited_files);
