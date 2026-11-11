@@ -594,6 +594,8 @@ pub(crate) fn install_languages() {
     }
     // A workspace's project context of ECMAScript's files (manifests, project configurations, server graphs).
     workspace::ingest::install_project(|| Box::new(workspace::ingest::ecma::EcmaProject::default()));
+    // A snapshot's context of ECMAScript's files (its manifests).
+    eval::install_snapshot_context(eval::ecma::derive);
     // What compiles a program's `ast` matchers into the transducer wave facts runs (decision 0106).
     facts::vtab::syntax::install_ast_compiler(&facts::vtab::syntax::ast_wave::Compiler);
     // The literal grammars `parse` applies, in the order messages list them (`literal::LiteralGrammar`).

@@ -249,3 +249,4 @@ facts::vtab::syntax::python_core	rerail-lang-python
 facts::vtab::syntax::ecma_core	rerail-lang-ecma
 facts::vtab::syntax::rr_core	rerail-logic
 workspace::ingest::ecma	rerail-lang-ecma
+eval::ecma	rerail-lang-ecma
