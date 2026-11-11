@@ -285,6 +285,16 @@ impl Modules {
         if let Some(binding) = bindings.get(name) {
             return binding.set(source);
         }
+        // A kept connection's table of this shape from its last run (`reuse`): its module is registered still.
+        let at = connection_scope(db);
+        let shape = (source.columns(), (0..source.columns().len()).map(|c| source.text_column(c)).collect::<Vec<_>>(), source.writable());
+        let kept = REGISTERED.lock().remove(&(at, name.to_owned()));
+        if let Some(binding) = kept.filter(|b| !shape.2 && (b.schema.columns.clone(), b.schema.text.clone(), b.schema.writable) == shape) {
+            binding.set(source)?;
+            BOUND.lock().insert((at, name.to_owned()), binding.clone());
+            bindings.insert(name.into(), binding);
+            return Ok(());
+        }
         let binding = Binding {
             schema: Arc::new(Metadata { text:(0..source.columns().len()).map(|c|source.text_column(c)).collect(), columns: source.columns(), writable:source.writable() }),
             current: Arc::new(parking_lot::RwLock::new(source)),
@@ -323,7 +333,16 @@ impl Drop for Modules {
     fn drop(&mut self) {
         let mine=self.bindings.get_mut();
         if mine.is_empty(){return;}
-        BOUND.lock().retain(|(_,name),binding|!mine.get(name).is_some_and(|owned|Arc::ptr_eq(&owned.current,&binding.current)));
+        // Their modules stay registered on the connection, which may still read them: a later run on it takes one
+        // of the same shape back (`REGISTERED`; `reuse` empties them first).
+        let mut registered = REGISTERED.lock();
+        BOUND.lock().retain(|(at,name),binding| {
+            let owned = mine.get(name).is_some_and(|owned|Arc::ptr_eq(&owned.current,&binding.current));
+            if owned {
+                registered.insert((*at, name.clone()), binding.clone());
+            }
+            !owned
+        });
     }
 }
 
@@ -342,6 +361,7 @@ pub(crate) fn connection_scope(db: &Connection) -> usize {
         CLOSES.fetch_add(1, Ordering::AcqRel);
         let at = at as usize;
         BOUND.lock().retain(|(h, _), _| *h != at);
+        REGISTERED.lock().retain(|(h, _), _| *h != at);
         VIEWS.lock().retain(|(h, _), _| *h != at);
         UNRESOLVED.lock().remove(&at);
         SETUP.lock().remove(&at);
@@ -369,6 +389,10 @@ pub(crate) struct UnmadeView {
     pub cols: Vec<usize>,
     pub eqs: Vec<(usize, i64)>,
 }
+
+/// The tables a kept connection's last run bound, emptied (`reuse`), by connection and name: their modules stay
+/// registered until the connection closes, and the next run's `bind` of a table of the same shape takes one back.
+static REGISTERED: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), Binding>>> = std::sync::LazyLock::new(Default::default);
 
 /// A connection's deferred set-up (`defer_setup`): the statements still to run, each with what undoes it, and what
 /// undoes those already run (`reuse`).
@@ -408,8 +432,9 @@ pub(crate) fn setup_now(db: &Connection) -> Result<()> {
 
 /// Readies a connection an earlier run worked on for the next run (its owner keeps it, `corpus::Connections`): what
 /// the earlier run set up of its own is undone (SQL only where its set-up ran), and what the process kept for that
-/// run on it (its bound tables, views, the engine's relations) is dropped. What the connection itself holds stays:
-/// its functions, its symbols, what its runs left in SQL (`plan::Left`, which the next run drops).
+/// run on it (its views, the engine's relations) is dropped; its bound tables are emptied, kept for the next run's
+/// `bind` (`REGISTERED`). What the connection itself holds stays: its functions and modules, its symbols, which of
+/// its tables SQL has yet to connect (`UNRESOLVED`), what its runs left in SQL (`plan::Left`, which the next run drops).
 pub(crate) fn reuse(db: &Connection) -> Result<()> {
     let at = connection_scope(db);
     let undo = SETUP.lock().remove(&at).map(|s| s.undo).unwrap_or_default();
@@ -418,14 +443,21 @@ pub(crate) fn reuse(db: &Connection) -> Result<()> {
     }
     // SQLite keeps each module's binding until the connection closes: the last run's sources are let go, its tables
     // left empty (a `Modules` may drop while its connection still reads, so this is the connection's next run's).
-    BOUND.lock().retain(|(h, _), binding| {
+    // The next run's `bind` takes a table of the same shape back (`REGISTERED`): its module stays registered.
+    let mut registered = REGISTERED.lock();
+    BOUND.lock().retain(|(h, name), binding| {
         if *h == at {
-            binding.clear();
+            registered.insert((at, name.clone()), binding.clone());
         }
         *h != at
     });
+    for ((h, _), binding) in registered.iter() {
+        if *h == at {
+            binding.clear();
+        }
+    }
+    drop(registered);
     VIEWS.lock().retain(|(h, _), _| *h != at);
-    UNRESOLVED.lock().remove(&at);
     crate::code_rule_dsl::logic::native::forget_engine(at);
     Ok(())
 }

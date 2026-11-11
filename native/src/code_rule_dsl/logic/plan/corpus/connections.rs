@@ -34,7 +34,7 @@ pub(in crate::code_rule_dsl) struct Cone {
 impl Connections {
     /// Connections a session keeps from run to run.
     pub(in crate::code_rule_dsl) fn kept() -> Connections {
-        Connections { kept: true, ..Connections::default() }
+        Connections { kept: true, tapes: None, run: None, cone: Default::default() }
     }
 
     /// Readies the kept connections for the next run, before its scratch files are made again (`x` is detached from
@@ -84,6 +84,19 @@ impl Connections {
     /// Whether the cone's connection and store are kept from run to run.
     pub(super) fn cone_kept(&self) -> bool {
         self.kept
+    }
+}
+
+impl Drop for Connections {
+    /// Closes what it keeps beside the caller (a session's end): a close frees what the process kept for the
+    /// connection (`close_beside`).
+    fn drop(&mut self) {
+        if let Some((_, db)) = self.run.take() {
+            super::close_beside(db);
+        }
+        if let Some((_, db)) = self.cone.lock().db.take() {
+            super::close_beside(db);
+        }
     }
 }
 
