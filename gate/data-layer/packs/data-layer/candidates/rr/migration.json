@@ -1742,7 +1742,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/conn-or-txn-union.rr",
-      "sha256": "9a59a992f6e1945d4c5b6ed509945775b2d4a9fbab679266dc0f00f3a7e17e43",
+      "sha256": "32bf41d7730246f725033b1c97bc72512ad5da339099861dfdec2d6f0cf203cf",
       "origin": "authored",
       "upstreamPath": "scripts/lint_conn_or_txn_union.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -2963,6 +2963,20 @@
       "destination": "docs/rule-syntax/lib/data-layer/generated-indexes-api.rr",
       "sha256": "641bc2a5b8560c8ac73ceef25b8da86a0a99c7fabd1da5c756445eae0619e2dd",
       "authored": "Native generated-index integration"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/conn-union-api.rr",
+      "sha256": "77c4c165609dbb82b90626b8aea7f757594dc2a62eb1e1487b066f800765b8c1",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_conn_or_txn_union.py"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/conn-union-production.rr",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_conn_or_txn_union.py",
+      "sha256": "2f8ad68e4ad72bfd48acf74ce732a1cce52d39e472c528c9e642a073325a59c5"
     }
   ],
   "rules": [
@@ -3638,25 +3652,32 @@
       "legacySha256": "8d783578a716e46d038ed1f28d288355f48f5f40338123e13a38a4f6f0901daa",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/conn-or-txn-union.rr",
-      "ruleSha256": "9a59a992f6e1945d4c5b6ed509945775b2d4a9fbab679266dc0f00f3a7e17e43",
+      "ruleSha256": "32bf41d7730246f725033b1c97bc72512ad5da339099861dfdec2d6f0cf203cf",
       "migrationProgress": {
-        "status": "scanner-contract-passed",
+        "status": "component-and-production-contracts-passed",
         "originalCasesPerAPI": 5,
         "originalPositiveObservationsPerAPI": 2,
         "scannerCasesPerAPI": 64,
-        "verifiedNativeExecutions": 138,
+        "verifiedNativeExecutions": 370,
         "checkpoints": [
           {
             "path": "gate/data-layer/fixtures/host/data-layer-port/rr-conn-union-scanner-finalfcce.json.gz",
             "sha256": "030190a308aef651306b2a5f10c49254f66d9e802b3f5f67e2a5228b300e0ece"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-conn-union-components-finalfcce.json.gz",
+            "sha256": "d88bc06e55863b114ee9f337226ea7e191b4980e8c8d7141ef8d8f54cafc63eb"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-conn-union-production-finalfcce.json.gz",
+            "sha256": "0680c3ee45c2c644198745529f9c2da2b5d904c555865b2960b9a974350bcf3d"
           }
         ],
         "remaining": [
-          "Native collector helpers and registration",
-          "Supplied-fact reporting and signatures",
-          "Production discovery and persistent updates",
           "CLI and signing administration",
-          "Behavior-removal controls and full admission"
+          "Persistent updates and behavior-removal controls",
+          "Mechanical replay of earlier batch-two inputs",
+          "Final single-cohort scanner refresh and admission"
         ]
       }
     },

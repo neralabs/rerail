@@ -1,5 +1,7 @@
 """Record connection-union configuration, collector, helper, and reporter contracts."""
 import ast
+import contextlib
+import io
 from dataclasses import asdict,fields
 from pathlib import Path
 from unittest.mock import patch
@@ -17,6 +19,8 @@ def cases(_module):
         ('invalid','def broken(: # ReadTransaction\n'),('allowlisted','class SqlQuery:\n def __init__(self, owner: Connection | Transaction):\n  pass\n'),
         ('duplicates',UNION+UNION),('bare-connections','def load(owner: SyncDatabaseConnection):\n pass\n')]:
         rows.append(dict(id='extract-'+name,kind='extract',source=text))
+    for name,text in [('positive',UNION),('clean','pass\n'),('no-trigger','def load(x: int):\n pass\n')]:
+        rows.append(dict(id='registry-extract-'+name,kind='registry-extract',source=text))
     annotations=['Connection','ReadTransaction','api.Connection','"Connection"','"Connection | Transaction"',
         'Connection | ReadTransaction','Connection & ReadTransaction','Union[Connection,ReadTransaction]',
         'Union[(Connection,ReadTransaction)]','(Connection,ReadTransaction)','[Connection,ReadTransaction]',
@@ -35,6 +39,7 @@ def cases(_module):
         [dict(hit,line_number=l,details=m) for l,m in [(9,'b'),(1,'z'),(9,'a'),(9,'a')]]]
     rows.extend(dict(id='report-'+str(i),kind='report',bundles=[dict(key='a.py',path='ignored.py',value=v)]) for i,v in enumerate(values))
     rows.extend([dict(id='report-path-order',kind='report',bundles=[dict(key=p,value=[hit]) for p in ['z.py','a/z.py','a-.py','a.py']]),
+        dict(id='report-line-field-collision',kind='report',bundles=[dict(key='a.py',value=[dict(hit,line=999)])]),
         dict(id='report-test-basename',kind='report',bundles=[dict(key='test_a.py',value=[hit]),dict(key='nested/a.py',value=[hit])]),
         dict(id='report-test-directory',kind='report',bundles=[dict(key='tests/a.py',value=[hit])]),
         dict(id='report-absolute',kind='report',bundles=[dict(key='$ROOT/a.py',value=[hit])]),
@@ -44,7 +49,7 @@ def cases(_module):
     return rows
 
 
-def exercise(module,case,scratch):
+def component_value(module,case,scratch):
     root=scratch/'repo';root.mkdir()
     for name in case.get('directories',[]):(root/name).mkdir(parents=True)
     family=module.CONN_OR_TXN_UNION_EXTRACTOR.extractor_id
@@ -53,10 +58,10 @@ def exercise(module,case,scratch):
             plugin=module.conn_or_txn_union_plugin(root)
             value={f.name:getattr(plugin,f.name) for f in fields(plugin) if f.name!='reporter'}
             value.update(registry=list(module.conn_or_txn_union_fact_extractors(root)),allowlist=sorted(module.ALLOWLIST),
-                signature=module._ALLOWLIST_SIGNATURE,connections=sorted(module.CONNECTION_TYPES),transactions=sorted(module.TRANSACTION_TYPES))
-        elif case['kind']=='extract':
+                signature=module._ALLOWLIST_SIGNATURE,connections=sorted(module.CONNECTION_TYPES),transactions=sorted(module.TRANSACTION_TYPES),source_type_triggers=module.SOURCE_TYPE_TRIGGERS)
+        elif case['kind'] in {'extract','registry-extract'}:
             from scripts.lint_lib.fact_engine import materialize_source_facts
-            bundle=materialize_source_facts(path=root/'impl/a.py',source=case['source'],specs=(module.CONN_OR_TXN_UNION_EXTRACTOR,),extractors=module.conn_or_txn_union_fact_extractors(root))
+            bundle=(module._rerail_union_extract(root/'impl/a.py',case['source']) if case['kind']=='extract' and hasattr(module,'_rerail_union_extract') else materialize_source_facts(path=root/'impl/a.py',source=case['source'],specs=(module.CONN_OR_TXN_UNION_EXTRACTOR,),extractors=module.conn_or_txn_union_fact_extractors(root)))
             value=dict(facts=bundle.facts,errors=bundle.errors)
         elif case['kind']=='helper':
             collector=module.ConnectionTransactionCollector(root/'impl/a.py',_class_stack=case.get('stack',[]))
@@ -74,10 +79,16 @@ def exercise(module,case,scratch):
     except Exception as error:return dict(error=dict(type=type(error).__name__,args=canonical(error.args,scratch)))
 
 
+def exercise(module,case,scratch):
+    out=io.StringIO();err=io.StringIO()
+    with contextlib.redirect_stdout(out),contextlib.redirect_stderr(err):value=component_value(module,case,scratch)
+    return dict(value,stdout=out.getvalue(),stderr=err.getvalue())
+
+
 def install(backend,module,detectors=False):
-    from conn_union_contract import install as current_install
-    current_install(backend,module,detectors=detectors)
+    from conn_union_port import install as native_install
+    native_install(backend,module,detectors=detectors)
 
 
 if __name__=='__main__':
-    main(CHECK,'rerail.conn-union-components/v1',cases,exercise,install,['conn_union_components_contract.py','conn_union_contract.py','conn_union_port.py','ast_transport.py','fact_transport.py'])
+    main(CHECK,'rerail.conn-union-components/v1',cases,exercise,install,['conn_union_components_contract.py','conn_union_contract.py','conn_union_port.py','ast_transport.py','fact_transport.py'],guard_modules=('scripts.lint_lib.signing',))

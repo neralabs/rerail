@@ -3,8 +3,8 @@
 .description "Port of nera-data-layer conn_or_txn_union at 2b1504adc4291daaf080b2e932962b134da1a69a."
 .language python
 .mode block
-.scope include "impl/**/*.py", "conform/**/*.py", "data_layer/**/*.py", "_internal/**/*.py", "l*/**/*.py"
-.scope exclude "**/tests/**", "**/test/**", "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**"
+.scope dirs "__conn_union_no_primary__"
+.scope dirs option("apiInputDirs")
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_conn_or_txn_union.py
 #include "python/ast.rr"
 .severity ConnectionUnion error
@@ -30,42 +30,24 @@ cut_transaction("ReadTransaction").
 cut_transaction("SchemaTransaction").
 cut_transaction("Transaction").
 cut_transaction("WriteTransaction").
-.decl cut_allow(name: symbol)
-cut_allow("GenericSparseVersionedWriteTransaction.__init__").
-cut_allow("Neo4jCrossBranchQuery.__init__").
-cut_allow("Neo4jQuery.__init__").
-cut_allow("Neo4jRevisionHistoryQuery.__init__").
-cut_allow("SqlCrossBranchQuery.__init__").
-cut_allow("SqlCrossBranchQuery.from_spec").
-cut_allow("SqlQuery.__init__").
-cut_allow("SqlQueryBase.__init__").
-cut_allow("SqlRevisionHistoryQuery.__init__").
-cut_allow("VersionedWriteSqlQuery.__init__").
-cut_allow("_get_metadata_id_for_revision").
-cut_allow("_lookup_doltdb_metadata_by_revision_id").
-cut_allow("_revision_id_from_metadata_id").
-cut_allow("execute_vector_query").
-cut_allow("index_versioned_table_at_revision").
-cut_allow("process_trigger_ripple").
-cut_allow("search_versioned_table_with_replay").
-allow_entry("conn_or_txn_union", "GenericSparseVersionedWriteTransaction.__init__").
-allow_entry("conn_or_txn_union", "Neo4jCrossBranchQuery.__init__").
-allow_entry("conn_or_txn_union", "Neo4jQuery.__init__").
-allow_entry("conn_or_txn_union", "Neo4jRevisionHistoryQuery.__init__").
-allow_entry("conn_or_txn_union", "SqlCrossBranchQuery.__init__").
-allow_entry("conn_or_txn_union", "SqlCrossBranchQuery.from_spec").
-allow_entry("conn_or_txn_union", "SqlQuery.__init__").
-allow_entry("conn_or_txn_union", "SqlQueryBase.__init__").
-allow_entry("conn_or_txn_union", "SqlRevisionHistoryQuery.__init__").
-allow_entry("conn_or_txn_union", "VersionedWriteSqlQuery.__init__").
-allow_entry("conn_or_txn_union", "_get_metadata_id_for_revision").
-allow_entry("conn_or_txn_union", "_lookup_doltdb_metadata_by_revision_id").
-allow_entry("conn_or_txn_union", "_revision_id_from_metadata_id").
-allow_entry("conn_or_txn_union", "execute_vector_query").
-allow_entry("conn_or_txn_union", "index_versioned_table_at_revision").
-allow_entry("conn_or_txn_union", "process_trigger_ripple").
-allow_entry("conn_or_txn_union", "search_versioned_table_with_replay").
-allow_sig("conn_or_txn_union", "lint_conn_or_txn_union", "ZDB3lnXE+wc2ztyJcW5+ZxuYWvWLeUR6pFYjt2h1vhC8GxbFfsSdSM8RG9L27JrZMyadyW/LBazWmrWvfEkECQ==").
+.decl cut_default_allow(name: symbol)
+cut_default_allow("GenericSparseVersionedWriteTransaction.__init__").
+cut_default_allow("Neo4jCrossBranchQuery.__init__").
+cut_default_allow("Neo4jQuery.__init__").
+cut_default_allow("Neo4jRevisionHistoryQuery.__init__").
+cut_default_allow("SqlCrossBranchQuery.__init__").
+cut_default_allow("SqlCrossBranchQuery.from_spec").
+cut_default_allow("SqlQuery.__init__").
+cut_default_allow("SqlQueryBase.__init__").
+cut_default_allow("SqlRevisionHistoryQuery.__init__").
+cut_default_allow("VersionedWriteSqlQuery.__init__").
+cut_default_allow("_get_metadata_id_for_revision").
+cut_default_allow("_lookup_doltdb_metadata_by_revision_id").
+cut_default_allow("_revision_id_from_metadata_id").
+cut_default_allow("execute_vector_query").
+cut_default_allow("index_versioned_table_at_revision").
+cut_default_allow("process_trigger_ripple").
+cut_default_allow("search_versioned_table_with_replay").
 .decl cut_layer(d: number)
 cut_layer(d) :- doc(d, p, _), match("(?s)l[\\x{30}-\\x{39}\\x{660}-\\x{669}\\x{6f0}-\\x{6f9}\\x{7c0}-\\x{7c9}\\x{966}-\\x{96f}\\x{9e6}-\\x{9ef}\\x{a66}-\\x{a6f}\\x{ae6}-\\x{aef}\\x{b66}-\\x{b6f}\\x{be6}-\\x{bef}\\x{c66}-\\x{c6f}\\x{ce6}-\\x{cef}\\x{d66}-\\x{d6f}\\x{de6}-\\x{def}\\x{e50}-\\x{e59}\\x{ed0}-\\x{ed9}\\x{f20}-\\x{f29}\\x{1040}-\\x{1049}\\x{1090}-\\x{1099}\\x{17e0}-\\x{17e9}\\x{1810}-\\x{1819}\\x{1946}-\\x{194f}\\x{19d0}-\\x{19d9}\\x{1a80}-\\x{1a89}\\x{1a90}-\\x{1a99}\\x{1b50}-\\x{1b59}\\x{1bb0}-\\x{1bb9}\\x{1c40}-\\x{1c49}\\x{1c50}-\\x{1c59}\\x{a620}-\\x{a629}\\x{a8d0}-\\x{a8d9}\\x{a900}-\\x{a909}\\x{a9d0}-\\x{a9d9}\\x{a9f0}-\\x{a9f9}\\x{aa50}-\\x{aa59}\\x{abf0}-\\x{abf9}\\x{ff10}-\\x{ff19}\\x{104a0}-\\x{104a9}\\x{10d30}-\\x{10d39}\\x{11066}-\\x{1106f}\\x{110f0}-\\x{110f9}\\x{11136}-\\x{1113f}\\x{111d0}-\\x{111d9}\\x{112f0}-\\x{112f9}\\x{11450}-\\x{11459}\\x{114d0}-\\x{114d9}\\x{11650}-\\x{11659}\\x{116c0}-\\x{116c9}\\x{11730}-\\x{11739}\\x{118e0}-\\x{118e9}\\x{11950}-\\x{11959}\\x{11c50}-\\x{11c59}\\x{11d50}-\\x{11d59}\\x{11da0}-\\x{11da9}\\x{11f50}-\\x{11f59}\\x{16a60}-\\x{16a69}\\x{16ac0}-\\x{16ac9}\\x{16b50}-\\x{16b59}\\x{1d7ce}-\\x{1d7ff}\\x{1e140}-\\x{1e149}\\x{1e2f0}-\\x{1e2f9}\\x{1e4f0}-\\x{1e4f9}\\x{1e950}-\\x{1e959}\\x{1fbf0}-\\x{1fbf9}]{4}_[^/\\n][^/]*/.*", p).
 
@@ -146,11 +128,23 @@ cut_issue(f, "SEPARATE_PARAMS", cat("Has both connection (", connections, ") and
 UnionAPI(f, q, details, i) :- cut_issue(f, "UNION", details), cut_qualified(f, _, q), visit_index(f, i), option("entryPoint", "analyze_file").
 .violation SeparateAPI(at: node, function_name: symbol, details: symbol, ordinal: number) code "SEPARATE_PARAMS" "{details}"
 SeparateAPI(f, q, details, i) :- cut_issue(f, "SEPARATE_PARAMS", details), cut_qualified(f, _, q), visit_index(f, i), option("entryPoint", "analyze_file").
-.violation ConnectionUnion(at: node, function_name: symbol, details: symbol, ordinal: number) code "UNION" "{function_name}: {details}"
-ConnectionUnion(f, q, details, i) :- cut_issue(f, "UNION", details), cut_qualified(f, _, q), visit_index(f, i), !option("entryPoint", _), allow_status("conn_or_txn_union", "valid").
-.violation Separate(at: node, function_name: symbol, details: symbol, ordinal: number) code "SEPARATE_PARAMS" "{function_name}: {details}"
-Separate(f, q, details, i) :- cut_issue(f, "SEPARATE_PARAMS", details), cut_qualified(f, _, q), visit_index(f, i), !option("entryPoint", _), allow_status("conn_or_txn_union", "valid").
+.violation ConnectionUnion(at: span, function_name: symbol, details: symbol, ordinal: number) code "UNION" "{function_name}: {details}"
+ConnectionUnion(@place(p,l), q, details, i) :- cut_issue(f, "UNION", details), cut_qualified(f, _, q), visit_index(f, i),line(f,l),docof(f,d),pp_doc(d,p),!cut_report_skip(p),!option("entryPoint", _),allow_status("conn_or_txn_union", "valid").
+.violation Separate(at: span, function_name: symbol, details: symbol, ordinal: number) code "SEPARATE_PARAMS" "{function_name}: {details}"
+Separate(@place(p,l), q, details, i) :- cut_issue(f, "SEPARATE_PARAMS", details), cut_qualified(f, _, q), visit_index(f, i),line(f,l),docof(f,d),pp_doc(d,p),!cut_report_skip(p),!option("entryPoint", _),allow_status("conn_or_txn_union", "valid").
 .violation DecodeFailure(at: span) code "CUT_DECODE_ERROR" "Source decoding failed"
 DecodeFailure(@place("input.py", 1)) :- option("entryPoint", "analyze_file"), option("decodeError", "true").
 .violation InvalidSignature(at: span) code "unsigned_allowlist" "connection/transaction allowlist signature verification failed"
 InvalidSignature(@place("scripts/lint_conn_or_txn_union.py", 1)) :- !option("entryPoint", _), !allow_status("conn_or_txn_union", "valid").
+
+.decl cut_setting(key: symbol, value: symbol)
+cut_setting("plugin","{\"name\": \"conn_or_txn_union\", \"enforcement\": \"hard-fail\", \"description\": \"Connection|Transaction union anti-pattern\"}").
+cut_setting("extractor","{\"extractor_id\": \"conn_or_txn_union.violations\", \"schema_version\": \"1\", \"implementation_version\": \"conn-or-txn-union-v2\", \"parser_mode\": \"ast_collect\", \"source_triggers\": [\"AsyncReadTransaction\", \"AsyncWriteTransaction\", \"LazyVersionedReadTransaction\", \"LazyVersionedWriteTransaction\", \"ReadTransaction\", \"SchemaTransaction\", \"Transaction\", \"WriteTransaction\"], \"source_trigger_groups\": [], \"cacheable\": true, \"workload_scope\": \"file\", \"project_input_facts\": [], \"project_input_scope\": null, \"implementation_digest\": \"cc57b59556fca232\", \"node_kinds\": [\"ClassDef\", \"FunctionDef\", \"AsyncFunctionDef\"]}").
+cut_setting("signature","ZDB3lnXE+wc2ztyJcW5+ZxuYWvWLeUR6pFYjt2h1vhC8GxbFfsSdSM8RG9L27JrZMyadyW/LBazWmrWvfEkECQ==").
+cut_setting("connections","[\"Connection\", \"DoltDbConnection\", \"MariaDbConnection\", \"MongoDbConnection\", \"SyncDatabaseConnection\", \"SyncNeo4jConnection\", \"SyncPostgresConnection\", \"SyncSqliteConnection\"]").
+cut_setting("transactions","[\"AsyncReadTransaction\", \"AsyncWriteTransaction\", \"LazyVersionedReadTransaction\", \"LazyVersionedWriteTransaction\", \"ReadTransaction\", \"SchemaTransaction\", \"Transaction\", \"WriteTransaction\"]").
+cut_setting("source_type_triggers","[\"AsyncReadTransaction\", \"AsyncWriteTransaction\", \"Connection\", \"DoltDbConnection\", \"LazyVersionedReadTransaction\", \"LazyVersionedWriteTransaction\", \"MariaDbConnection\", \"MongoDbConnection\", \"ReadTransaction\", \"SchemaTransaction\", \"SyncDatabaseConnection\", \"SyncNeo4jConnection\", \"SyncPostgresConnection\", \"SyncSqliteConnection\", \"Transaction\", \"WriteTransaction\"]").
+cut_setting("allowlist","[\"GenericSparseVersionedWriteTransaction.__init__\", \"Neo4jCrossBranchQuery.__init__\", \"Neo4jQuery.__init__\", \"Neo4jRevisionHistoryQuery.__init__\", \"SqlCrossBranchQuery.__init__\", \"SqlCrossBranchQuery.from_spec\", \"SqlQuery.__init__\", \"SqlQueryBase.__init__\", \"SqlRevisionHistoryQuery.__init__\", \"VersionedWriteSqlQuery.__init__\", \"_get_metadata_id_for_revision\", \"_lookup_doltdb_metadata_by_revision_id\", \"_revision_id_from_metadata_id\", \"execute_vector_query\", \"index_versioned_table_at_revision\", \"process_trigger_ripple\", \"search_versioned_table_with_replay\"]").
+cut_setting("layer_regex","(?s)l[\\x{30}-\\x{39}\\x{660}-\\x{669}\\x{6f0}-\\x{6f9}\\x{7c0}-\\x{7c9}\\x{966}-\\x{96f}\\x{9e6}-\\x{9ef}\\x{a66}-\\x{a6f}\\x{ae6}-\\x{aef}\\x{b66}-\\x{b6f}\\x{be6}-\\x{bef}\\x{c66}-\\x{c6f}\\x{ce6}-\\x{cef}\\x{d66}-\\x{d6f}\\x{de6}-\\x{def}\\x{e50}-\\x{e59}\\x{ed0}-\\x{ed9}\\x{f20}-\\x{f29}\\x{1040}-\\x{1049}\\x{1090}-\\x{1099}\\x{17e0}-\\x{17e9}\\x{1810}-\\x{1819}\\x{1946}-\\x{194f}\\x{19d0}-\\x{19d9}\\x{1a80}-\\x{1a89}\\x{1a90}-\\x{1a99}\\x{1b50}-\\x{1b59}\\x{1bb0}-\\x{1bb9}\\x{1c40}-\\x{1c49}\\x{1c50}-\\x{1c59}\\x{a620}-\\x{a629}\\x{a8d0}-\\x{a8d9}\\x{a900}-\\x{a909}\\x{a9d0}-\\x{a9d9}\\x{a9f0}-\\x{a9f9}\\x{aa50}-\\x{aa59}\\x{abf0}-\\x{abf9}\\x{ff10}-\\x{ff19}\\x{104a0}-\\x{104a9}\\x{10d30}-\\x{10d39}\\x{11066}-\\x{1106f}\\x{110f0}-\\x{110f9}\\x{11136}-\\x{1113f}\\x{111d0}-\\x{111d9}\\x{112f0}-\\x{112f9}\\x{11450}-\\x{11459}\\x{114d0}-\\x{114d9}\\x{11650}-\\x{11659}\\x{116c0}-\\x{116c9}\\x{11730}-\\x{11739}\\x{118e0}-\\x{118e9}\\x{11950}-\\x{11959}\\x{11c50}-\\x{11c59}\\x{11d50}-\\x{11d59}\\x{11da0}-\\x{11da9}\\x{11f50}-\\x{11f59}\\x{16a60}-\\x{16a69}\\x{16ac0}-\\x{16ac9}\\x{16b50}-\\x{16b59}\\x{1d7ce}-\\x{1d7ff}\\x{1e140}-\\x{1e149}\\x{1e2f0}-\\x{1e2f9}\\x{1e4f0}-\\x{1e4f9}\\x{1e950}-\\x{1e959}\\x{1fbf0}-\\x{1fbf9}]{4}_[^\\n].*").
+#include "data-layer/conn-union-api.rr"
+#include "data-layer/conn-union-production.rr"

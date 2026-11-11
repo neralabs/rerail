@@ -1,0 +1,34 @@
+// Discovery retains the complete selected set, including test_ basenames. Only
+// reporting excludes those basenames. File errors precede parse requests.
+pp_config("name","conn_or_txn_union").
+pp_config("enforcement","hard-fail").
+pp_config("description","Connection|Transaction union anti-pattern").
+pp_config("extractor","conn_or_txn_union.violations").
+pp_config("parser","ast_collect"). pp_config("fact_kind","list").
+pp_config("scope","explicit").
+pp_config("layer_regex",r) :- cut_setting("layer_regex",r).
+pp_trigger(t) :- cut_transaction(t).
+.decl cut_root(path: symbol)
+cut_root(p) :- !env("data-layer.api","true"),dir_entry(".",p,1),(p="impl";p="data_layer";p="_internal";p="conform").
+cut_root(p) :- pp_layer(p).
+.decl cut_walk(path: symbol)
+cut_walk(p) :- cut_root(p).
+cut_walk(cat(p,"/",n)) :- cut_walk(p),dir_entry(p,n,1),dir_metadata(p,n,_,0,_),!pp_skip(n).
+.decl cut_discovered_file(path: symbol)
+cut_discovered_file(cat(p,"/",n)) :- cut_walk(p),dir_entry(p,n,0),suffix(".py",n).
+.decl cut_read_failed(path: symbol)
+cut_read_failed(p) :- cut_discovered_file(p),file_error(p,_,_,_,_,_,_,_).
+pp_file(p) :- cut_discovered_file(p),!cut_read_failed(p).
+.violation UnionReadError(at: span,kind: symbol,errno: number,detail: symbol,bytes_hex: symbol,start: number,end: number,reason: symbol) code "CUT_READ_ERROR" "{detail}"
+UnionReadError(@place(p,0),k,n,m,b,s,e,r) :- pp_run(),cut_discovered_file(p),file_error(p,k,n,m,b,s,e,r).
+.decl cut_production()
+cut_production() :- !option("entryPoint",_).
+cut_production() :- option("entryPoint","_production_contract").
+cut_document(d) :- cut_production(),pp_doc(d,_),pp_fact_present(d).
+.decl cut_report_skip(path: symbol)
+cut_report_skip(p) :- pp_doc(_,p),match("(?s)(?:.*/)?test_[^/]*",p).
+.violation UnionProductionFact(at: span,path: symbol,path_order: symbol,ordinal: number,line_number: number,function_name: symbol,violation_type: symbol,details: symbol) code "DL_FACT" "production fact"
+UnionProductionFact(@place("",0),p,@replace_all(p,"/","\u0000"),i,l,q,c,m) :- option("entryPoint","_production_contract"),cut_issue(f,c,m),cut_qualified(f,_,q),visit_index(f,i),line(f,l),docof(f,d),pp_doc(d,p).
+pp_report(p,l,c,cat(q,": ",m),@replace_all(p,"/","\u0000"),0,"",0,i,0,0) :- cut_production(),cut_issue(f,c,m),cut_qualified(f,_,q),line(f,l),visit_index(f,i),docof(f,d),pp_doc(d,p),!cut_report_skip(p),allow_status("conn_or_txn_union","valid").
+.violation UnionProductionSignature(at: span,source_code: symbol,file: symbol,source_line: number,source_message: symbol,order0: symbol,order1: number,order2: symbol,order3: number,source_order0: number,source_order1: number,source_order2: number) code "DL_REPORT" "{source_message}"
+UnionProductionSignature(@place("scripts/lint_conn_or_txn_union.py",1),"unsigned_allowlist",cat(root,"/scripts/lint_conn_or_txn_union.py"),1,"connection/transaction allowlist signature verification failed","",0,"",0,0,0,0) :- option("entryPoint","_production_contract"),workspace_root(root),!allow_status("conn_or_txn_union","valid").

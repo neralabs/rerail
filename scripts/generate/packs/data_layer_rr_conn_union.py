@@ -3,7 +3,7 @@ import json,re
 from data_layer_rr_text import module,classes,character_class
 
 
-def conn_or_txn_union(source,target,header):
+def base_program(source,target,header):
     original=module(source,'conn_or_txn_union');classes();q=json.dumps
     text=header('conn_or_txn_union',target)
     text=re.sub(r'^\.scope include .*$', '.scope include "impl/**/*.py", "conform/**/*.py", "data_layer/**/*.py", "_internal/**/*.py", "l*/**/*.py"',text,flags=re.M)
@@ -92,12 +92,33 @@ cut_issue(f, "SEPARATE_PARAMS", cat("Has both connection (", connections, ") and
 UnionAPI(f, q, details, i) :- cut_issue(f, "UNION", details), cut_qualified(f, _, q), visit_index(f, i), option("entryPoint", "analyze_file").
 .violation SeparateAPI(at: node, function_name: symbol, details: symbol, ordinal: number) code "SEPARATE_PARAMS" "{details}"
 SeparateAPI(f, q, details, i) :- cut_issue(f, "SEPARATE_PARAMS", details), cut_qualified(f, _, q), visit_index(f, i), option("entryPoint", "analyze_file").
-.violation ConnectionUnion(at: node, function_name: symbol, details: symbol, ordinal: number) code "UNION" "{function_name}: {details}"
-ConnectionUnion(f, q, details, i) :- cut_issue(f, "UNION", details), cut_qualified(f, _, q), visit_index(f, i), !option("entryPoint", _), allow_status("conn_or_txn_union", "valid").
-.violation Separate(at: node, function_name: symbol, details: symbol, ordinal: number) code "SEPARATE_PARAMS" "{function_name}: {details}"
-Separate(f, q, details, i) :- cut_issue(f, "SEPARATE_PARAMS", details), cut_qualified(f, _, q), visit_index(f, i), !option("entryPoint", _), allow_status("conn_or_txn_union", "valid").
+.violation ConnectionUnion(at: span, function_name: symbol, details: symbol, ordinal: number) code "UNION" "{function_name}: {details}"
+ConnectionUnion(@place(p,l), q, details, i) :- cut_issue(f, "UNION", details), cut_qualified(f, _, q), visit_index(f, i),line(f,l),docof(f,d),pp_doc(d,p),!cut_report_skip(p),!option("entryPoint", _),allow_status("conn_or_txn_union", "valid").
+.violation Separate(at: span, function_name: symbol, details: symbol, ordinal: number) code "SEPARATE_PARAMS" "{function_name}: {details}"
+Separate(@place(p,l), q, details, i) :- cut_issue(f, "SEPARATE_PARAMS", details), cut_qualified(f, _, q), visit_index(f, i),line(f,l),docof(f,d),pp_doc(d,p),!cut_report_skip(p),!option("entryPoint", _),allow_status("conn_or_txn_union", "valid").
 .violation DecodeFailure(at: span) code "CUT_DECODE_ERROR" "Source decoding failed"
 DecodeFailure(@place("input.py", 1)) :- option("entryPoint", "analyze_file"), option("decodeError", "true").
 .violation InvalidSignature(at: span) code "unsigned_allowlist" "connection/transaction allowlist signature verification failed"
 InvalidSignature(@place("scripts/lint_conn_or_txn_union.py", 1)) :- !option("entryPoint", _), !allow_status("conn_or_txn_union", "valid").
 '''
+
+
+def conn_or_txn_union(source,target,header):
+    from dataclasses import asdict
+    from pathlib import Path
+    original=module(source,'conn_or_txn_union');q=json.dumps
+    text=base_program(source,target,header)
+    text=re.sub(r'^\.scope include .*$', '.scope dirs "__conn_union_no_primary__"\n.scope dirs option("apiInputDirs")',text,flags=re.M)
+    text=re.sub(r'^\.scope exclude .*\n','',text,flags=re.M)
+    text=re.sub(r'^\.decl cut_allow\(name: symbol\)$','.decl cut_default_allow(name: symbol)',text,flags=re.M)
+    text=re.sub(r'^cut_allow\(', 'cut_default_allow(',text,flags=re.M)
+    text=re.sub(r'^allow_(?:entry|sig)\([^\n]*\n','',text,flags=re.M)
+    plugin=original.conn_or_txn_union_plugin(Path('.'))
+    settings=dict(plugin=json.dumps(dict(name=plugin.name,enforcement=plugin.enforcement,description=plugin.description)),
+        extractor=json.dumps(asdict(original.CONN_OR_TXN_UNION_EXTRACTOR)),signature=original._ALLOWLIST_SIGNATURE,
+        connections=json.dumps(sorted(original.CONNECTION_TYPES)),transactions=json.dumps(sorted(original.TRANSACTION_TYPES)),
+        source_type_triggers=json.dumps(original.SOURCE_TYPE_TRIGGERS),
+        allowlist=json.dumps(sorted(original.ALLOWLIST)),layer_regex='(?s)l'+character_class(str.isdecimal)+r'{4}_[^\n].*')
+    text+='\n.decl cut_setting(key: symbol, value: symbol)\n'
+    for key,value in settings.items():text+='cut_setting('+q(key)+','+q(value)+').\n'
+    return text+'#include "data-layer/conn-union-api.rr"\n#include "data-layer/conn-union-production.rr"\n'

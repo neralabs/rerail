@@ -1,0 +1,122 @@
+// Shared scanner decisions serve native collectors and the source API adapters.
+#include "data-layer/plugin-production.rr"
+.decl cut_allow(name: symbol)
+cut_allow(n) :- cut_default_allow(n),!option("cutAllowOverride",_).
+cut_allow(n) :- option("cutAllowOverride","true"),option_item("cutAllowEntries",_,n).
+allow_entry("conn_or_txn_union",n) :- cut_allow(n).
+allow_sig("conn_or_txn_union","lint_conn_or_txn_union",s) :- cut_setting("signature",s),!option("cutAllowSignature",_).
+allow_sig("conn_or_txn_union","lint_conn_or_txn_union",s) :- option("cutAllowSignature",s).
+.violation UnionConfiguration(at: span, key: symbol, value: symbol) code "CUT_CONFIG" "configuration"
+UnionConfiguration(@place("",0),k,v) :- option("entryPoint","_cut_configuration"),cut_setting(k,v).
+.decl cut_directory(i: number, name: symbol)
+cut_directory(i,n) :- option_item("cutDirectoryNames",i,n),option_item("cutDirectoryIsDir",i,"1").
+.decl cut_selected_directory(name: symbol, rank: number)
+cut_selected_directory("impl",0) :- cut_directory(_,"impl").
+cut_selected_directory("data_layer",1) :- cut_directory(_,"data_layer").
+cut_selected_directory("_internal",2) :- cut_directory(_,"_internal").
+cut_selected_directory(n,3) :- cut_directory(_,n),cut_setting("layer_regex",r),match(r,n).
+cut_selected_directory("conform",4) :- option_item("cutDirectoryNames",i,"conform"),option_item("cutDirectoryExists",i,"1").
+.violation UnionDirectory(at: span, directory: symbol, rank: number) code "CUT_DIRECTORY" "directory"
+UnionDirectory(@place("",0),n,r) :- option("entryPoint","_cut_directories"),cut_selected_directory(n,r).
+
+// Direct collection is not subject to the FactEngine's source-trigger filter.
+cut_document(d) :- option("entryPoint","_collector_facts"),doc(d,_,_),file_name(d,n),suffix(".py",n),!syntax_error(d,_,_).
+.violation UnionCollectorFact(at: span, ordinal: number, line_number: number, function_name: symbol, violation_type: symbol, details: symbol) code "CUT_FACT" "{details}"
+UnionCollectorFact(f,i,l,q,c,m) :- option("entryPoint","_collector_facts"),cut_issue(f,c,m),cut_qualified(f,_,q),visit_index(f,i),line(f,l).
+.violation UnionCollectorStatus(at: span, present: number) code "CUT_COLLECTED" "collector status"
+UnionCollectorStatus(@place(p,0),1) :- option("entryPoint","_collector_facts"),doc(d,p,_),file_name(d,n),suffix(".py",n),!syntax_error(d,_,_).
+UnionCollectorStatus(@place(p,0),0) :- option("entryPoint","_collector_facts"),doc(d,p,_),file_name(d,n),suffix(".py",n),syntax_error(d,_,_).
+.violation UnionCollectorError(at: span, value: symbol) code "CUT_COLLECTOR_ERROR" "{value}"
+UnionCollectorError(@place(p,l),cat("SyntaxError: ",m," (",name,", line ",to_string(l),")")) :- option("entryPoint","_collector_facts"),doc(d,p,_),option("cutCollectorName",name),syntax_error(d,l,m).
+
+// Raw Python AST arguments are flat typed input columns. Name attributes stay
+// untouched: a caller can construct an AST without identifier normalization.
+.decl cut_graph_kind(n: number, kind: symbol)
+cut_graph_kind(n,k) :- option_item("astKinds",n,k).
+.decl cut_graph_edge(parent: number, field: symbol, child: number)
+cut_graph_edge(to_number(p),f,n) :- option_item("astParents",n,p),p!="-1",option_item("astFields",n,f).
+.decl cut_graph_step(parent: number, child: number)
+cut_graph_step(n,c) :- cut_graph_kind(n,"Subscript"),cut_graph_edge(n,"value",c).
+cut_graph_step(n,c) :- cut_graph_kind(n,"Subscript"),cut_graph_edge(n,"slice",c),!cut_graph_kind(c,"Tuple").
+cut_graph_step(n,c) :- cut_graph_kind(n,"Subscript"),cut_graph_edge(n,"slice",t),cut_graph_kind(t,"Tuple"),cut_graph_edge(t,"elts",c).
+cut_graph_step(n,c) :- cut_graph_kind(n,"BinOp"),cut_graph_edge(n,"op",op),cut_graph_kind(op,"BitOr"),(cut_graph_edge(n,"left",c);cut_graph_edge(n,"right",c)).
+.decl cut_graph_walk(n: number)
+cut_graph_walk(0) :- cut_graph_kind(0,_).
+cut_graph_walk(c) :- cut_graph_walk(n),cut_graph_step(n,c).
+.decl cut_graph_name(name: symbol)
+cut_graph_name(s) :- cut_graph_walk(n),cut_graph_kind(n,"Name"),option_item("astIds",n,s).
+cut_graph_name(s) :- cut_graph_walk(n),cut_graph_kind(n,"Attribute"),option_item("astAttrs",n,s).
+cut_graph_name(s) :- cut_graph_walk(n),cut_graph_kind(n,"Constant"),option_item("astValueTypes",n,"str"),option_item("cutLiteralStrings",n,s).
+.decl cut_graph_connection()
+cut_graph_connection() :- cut_graph_name(n),cut_connection(n).
+.decl cut_graph_transaction()
+cut_graph_transaction() :- cut_graph_name(n),cut_transaction(n).
+.violation UnionHelperName(at: span, value: symbol) code "CUT_HELPER_NAME" "{value}"
+UnionHelperName(@place("",0),s) :- option("entryPoint","ConnectionTransactionCollector._get_all_type_names"),cut_graph_name(s).
+.decl cut_helper_true()
+cut_helper_true() :- option("entryPoint","ConnectionTransactionCollector._has_connection_type"),cut_graph_connection().
+cut_helper_true() :- option("entryPoint","ConnectionTransactionCollector._has_transaction_type"),cut_graph_transaction().
+cut_helper_true() :- option("entryPoint","ConnectionTransactionCollector._has_connection_and_transaction"),cut_graph_connection(),cut_graph_transaction().
+.decl cut_helper_qualified(value: symbol)
+cut_helper_qualified(n) :- option("cutFunctionName",n),!option_item("cutClassStack",_,_).
+cut_helper_qualified(cat(c,".",n)) :- option("cutFunctionName",n),option_item("cutClassStack",i,c),i=max j:{option_item("cutClassStack",j,_)}.
+cut_helper_true() :- option("entryPoint","ConnectionTransactionCollector._is_allowlisted"),option("cutFunctionName",n),cut_allow(n).
+cut_helper_true() :- option("entryPoint","ConnectionTransactionCollector._is_allowlisted"),cut_helper_qualified(q),cut_allow(q).
+.violation UnionHelperQualified(at: span, value: symbol) code "CUT_HELPER_QUALIFIED" "{value}"
+UnionHelperQualified(@place("",0),q) :- option("entryPoint","ConnectionTransactionCollector._get_qualified_name"),cut_helper_qualified(q).
+.violation UnionHelperBool(at: span, value: number) code "CUT_HELPER_BOOL" "boolean"
+UnionHelperBool(@place("",0),1) :- option("entryPoint",e),(e="ConnectionTransactionCollector._has_connection_type";e="ConnectionTransactionCollector._has_transaction_type";e="ConnectionTransactionCollector._has_connection_and_transaction";e="ConnectionTransactionCollector._is_allowlisted"),cut_helper_true().
+UnionHelperBool(@place("",0),0) :- option("entryPoint",e),(e="ConnectionTransactionCollector._has_connection_type";e="ConnectionTransactionCollector._has_transaction_type";e="ConnectionTransactionCollector._has_connection_and_transaction";e="ConnectionTransactionCollector._is_allowlisted"),!cut_helper_true().
+
+// Projection preserves the actual JSON value and does not coerce its type.
+.decl cut_project_line(value: symbol)
+.input cut_project_line(IO=json,filename="conn-value.json",path="/line",projection="json")
+.decl cut_project_function(value: symbol)
+.input cut_project_function(IO=json,filename="conn-value.json",path="/function",projection="json")
+.decl cut_project_type(value: symbol)
+.input cut_project_type(IO=json,filename="conn-value.json",path="/type",projection="json")
+.decl cut_project_details(value: symbol)
+.input cut_project_details(IO=json,filename="conn-value.json",path="/details",projection="json")
+.violation UnionProjected(at: span, line_json: symbol, function_json: symbol, type_json: symbol, details_json: symbol) code "CUT_PROJECTED" "projected fact"
+UnionProjected(@place("",0),l,f,t,d) :- option("entryPoint","_violation_to_fact"),cut_project_line(l),cut_project_function(f),cut_project_type(t),cut_project_details(d).
+
+#include "data-layer/supplied-facts.rr"
+pp_config("findingSeverity","error").
+sf_config("strict_line","true"). sf_config("code_field","violation_type"). sf_config("order","bundle").
+sf_strict("function_name"). sf_strict("violation_type"). sf_strict("details").
+// Bind a distinct envelope. The source reads line_number and ignores a separate
+// raw field named line; mapping those keys in Datalog prevents collisions.
+.decl cut_bundle(b: number, path: symbol)
+.input cut_bundle(IO=json,filename="conn-reporter-facts.json",path="/bundles/*/source_path",projection="python-str")
+sf_bundle(b,p) :- cut_bundle(b,p).
+sf_source_bundle(b,p) :- cut_bundle(b,p).
+.decl cut_container(b: number, kind: symbol)
+.input cut_container(IO=json,filename="conn-reporter-facts.json",path="/bundles/*/kind",projection="python-str")
+sf_container(b,k) :- cut_container(b,k).
+.decl cut_shape(b: number, r: number, kind: symbol)
+.input cut_shape(IO=json,filename="conn-reporter-facts.json",path="/bundles/*/rows/*/kind",projection="python-str")
+sf_shape(b,r,k) :- cut_shape(b,r,k).
+.decl cut_member(b: number, r: number, f: number, key: symbol)
+.input cut_member(IO=json,filename="conn-reporter-facts.json",path="/bundles/*/rows/*/fields/*/key",projection="python-str")
+sf_member(b,r,f,"line") :- cut_member(b,r,f,"line_number").
+sf_member(b,r,f,k) :- cut_member(b,r,f,k),k!="line",k!="line_number".
+.decl cut_value(b: number, r: number, f: number, value: symbol)
+.input cut_value(IO=json,filename="conn-reporter-facts.json",path="/bundles/*/rows/*/fields/*/value",projection="python-str")
+sf_value(b,r,f,v) :- cut_value(b,r,f,v).
+.decl cut_value_type(b: number, r: number, f: number, kind: symbol)
+.input cut_value_type(IO=json,filename="conn-reporter-facts.json",path="/bundles/*/rows/*/fields/*/value",projection="type")
+sf_value_type(b,r,f,k) :- cut_value_type(b,r,f,k).
+.decl cut_value_json(b: number, r: number, f: number, value: symbol)
+.input cut_value_json(IO=json,filename="conn-reporter-facts.json",path="/bundles/*/rows/*/fields/*/value",projection="json")
+sf_value_json(b,r,f,v) :- cut_value_json(b,r,f,v).
+sf_path_input(b,r,p) :- sf_active(b,r),sf_source_bundle(b,p).
+sf_message(b,r,cat(f,": ",d)) :- sf_active(b,r),sf_field(b,r,"function_name",f),sf_field(b,r,"details",d).
+sf_excluded(b) :- sf_source_bundle(b,p),match("(?s)(?:.*/)?test_[^/]*",p).
+sf_excluded(b) :- sf_bundle(b,_),!allow_status("conn_or_txn_union","valid").
+.violation UnionReportSignature(at: span, file: symbol) code "CUT_SIGNATURE_ERROR" "connection/transaction allowlist signature verification failed"
+UnionReportSignature(@place("",1),cat(root,"/scripts/lint_conn_or_txn_union.py")) :- option("entryPoint","_report_facts"),option("cutOwnerRoot",root),!allow_status("conn_or_txn_union","valid").
+.decl cut_signature_log(value: symbol)
+cut_signature_log(cat("FAIL: WARNING: Allowlist for lint_conn_or_txn_union is ",label,". Sign with --sign-allowlist.\n")) :- allow_status("conn_or_txn_union","unsigned"),allow_sig("conn_or_txn_union",_,s),(s="NEEDS_SIGNING",label="needs signing";s!="NEEDS_SIGNING",label="unsigned").
+cut_signature_log(cat("FAIL: Allowlist signature verification failed for lint_conn_or_txn_union: ",@ed25519_error(key,m,s),"\n")) :- allow_status("conn_or_txn_union","invalid"),allow_sig("conn_or_txn_union",_,s),allow_message("conn_or_txn_union",m),nera_key(key).
+.violation UnionSignatureLog(at: span,text: symbol) code "CUT_SIGNATURE_LOG" "{text}"
+UnionSignatureLog(@place("",0),s) :- option("entryPoint",e),(e="_report_facts";e="_production_contract"),cut_signature_log(s).

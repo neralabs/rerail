@@ -11931,3 +11931,35 @@ This rule remains a draft. Collector helpers, supplied facts, signatures, produc
 Global admission stays at fourteen rules. No full-repository cold run or additional Linear ticket was created.
 
 The complete tooling suite now passes 475 tests. The migration inventory audit passes. Final shape has no newer local commits.
+
+
+### 2026-11-11 — Connection-union components and production
+
+Both APIs pass all 115 source-recorded component cases and all eighteen production cases.
+Both APIs also pass all five original tests, including both positive observations.
+The two receipts contain 370 distinct native executions. Their original-test executions are shared and must not be counted twice.
+
+Native relations now supply configuration, directory selection, type-name traversal, type predicates, qualified names, allowlist predicates, and fact conversion.
+Actual framework registration and extraction pass positive, clean, and no-trigger cases.
+Supplied-fact reporting preserves strict field types, booleans, unbounded integer lines, row duplicates, path order, and signature failures.
+A separate raw field named `line` cannot override the source's `line_number` field.
+
+The first value-only replay missed a source side effect: signature failures write to stderr.
+Fresh source recordings now retain both streams. Two red cases expose the missing warning before the repair.
+Native verification now supplies those exact warning strings. Both component and production replays compare the complete streams.
+
+Production discovery retains `test_` files for fact construction and filters those basenames only when reporting.
+It matches Unicode layer names, skipped directories, suffixes, file aliases, directory links, linked roots, and invalid UTF-8 failures.
+The rule starts without primary files and loads only its demanded selected files.
+No Python rule callback executes. The engine remains the existing Final fcce binary; no Rust change or rebuild was required.
+
+Receipts: `rr-conn-union-components-finalfcce.json.gz` and `rr-conn-union-production-finalfcce.json.gz`.
+The common contract validator checks both groups without claiming rule admission. Seven regression tests cover scope, streams, positives, original assertions, and engine identity.
+CLI and signing administration, persistent edits, removal controls, earlier batch-two inputs, and the final scanner refresh remain open.
+The inventory remains fourteen admitted rules, eighty-five drafts, and one absent translation.
+
+The native file-error reader still constructs line vectors for successful reads.
+That work is unnecessary for an error-only consumer. It is a performance observation, not a missing rule representation feature.
+No full-repository cold benchmark or additional Linear ticket was created.
+
+The complete tooling suite passes 482 tests. The engine alignment and migration inventory audits also pass.
