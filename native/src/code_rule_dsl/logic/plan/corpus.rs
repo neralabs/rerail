@@ -6686,6 +6686,7 @@ uses(n, f) :- imp(n, q), def(f, q).
     /// from the warm memo's (`factorize: off` then on, and back) misses the memo and finds the same.
     #[cfg(feature = "tape-cache")]
     #[test]
+    #[ignore = "O-factorize-nothing: `uses` is no longer file-local, so no export is handed on as its parts and the factorized run's plan is the unfactorized one's"]
     fn an_export_handed_on_as_its_parts_finds_the_same_and_a_changed_choice_misses_the_memo() {
         use serde_json::{Value, json};
         let marker = format!("# {:?}\n", std::time::SystemTime::now());

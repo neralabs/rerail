@@ -337,6 +337,28 @@ impl ContentStore {
         Ok(digest)
     }
 
+    /// The SHA-256 of each of `sources`' contents, in their order (`None`: no such source): one read.
+    pub fn source_digests(&self, sources: &[SourceId]) -> StoreResult<Vec<Option<[u8; 32]>>> {
+        let mut out = vec![None; sources.len()];
+        if sources.is_empty() {
+            return Ok(out);
+        }
+        let ids = serde_json::to_string(&sources.iter().map(|s| s.0).collect::<Vec<_>>()).expect("integers");
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut statement = connection.prepare_cached(
+            "SELECT j.key, h.algorithm_id, h.lane0, h.lane1, h.lane2, h.lane3 FROM json_each(?1) j \
+             CROSS JOIN source_objects s ON s.source_id = j.value JOIN hashes h ON h.hash_id = s.canonical_hash_id",
+        )?;
+        let rows = statement.query_map([ids], |row| {
+            Ok((row.get::<_, i64>(0)?, HashKey { algorithm: row.get(1)?, lanes: [row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?] }))
+        })?;
+        for row in rows {
+            let (at, key) = row?;
+            out[at as usize] = key.sha256_bytes();
+        }
+        Ok(out)
+    }
+
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn source_has_hash(&self, source_id: SourceId, key: HashKey) -> StoreResult<bool> {
         let connection = self
