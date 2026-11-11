@@ -721,6 +721,12 @@ fn fold_constants(rule: &mut Rule) -> usize {
 /// as a copy of its class.)
 fn fixed(prog: &Program, rel: &str) -> bool {
     prog.inputs.iter().any(|i| i == rel)
+        // Request names select external handlers. Equal demand rows do not
+        // make a directory listing and metadata the same operation.
+        || prog.answers.contains_key(rel)
+        || prog.answers.values().flatten().any(|p| p == rel)
+        || super::rr::WORLD.iter().any(|(answer, request)| *answer == rel || *request == rel)
+        || matches!(rel, "load" | "loaded" | "loaded_doc")
         || prog.natives.contains_key(rel)
         || prog.lattice.contains_key(rel)
         || prog.demand.iter().any(|d| d == rel)
