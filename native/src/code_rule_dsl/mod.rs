@@ -638,6 +638,8 @@ pub(crate) fn install_languages() {
     facts::families::install_prefilter_image(|tape, doc, interrupted| prefilter::image(tape, doc, &interrupted));
     // An owned connection's demand module.
     waves::owner::database::install_connection_setup(demand::vtab::set_up_connection);
+    // Python's reference graph, a program's cross-file relations.
+    logic::plan::corpus::install_cross_file(logic::plan::corpus::references::make);
     // What compiles a program's `ast` matchers into the transducer wave facts runs (decision 0106).
     facts::vtab::syntax::install_ast_compiler(&facts::vtab::syntax::ast_wave::Compiler);
     // The literal grammars `parse` applies, in the order messages list them (`literal::LiteralGrammar`).

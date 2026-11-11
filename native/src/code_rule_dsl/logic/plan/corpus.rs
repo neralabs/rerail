@@ -38,7 +38,30 @@ pub(in crate::code_rule_dsl) mod memo;
 mod kept_strata;
 mod maintained;
 mod cone_rounds;
-mod references;
+pub(in crate::code_rule_dsl) mod references;
+
+/// The reference graph's base relations (`reference_edge`, `reference_open`), and their columns
+/// (`sql::select::input_columns`).
+pub(in crate::code_rule_dsl) const REFERENCE_RELATIONS: [&str; 2] = ["reference_edge", "reference_open"];
+
+/// Base relations a program reads that are built across a run's files (the reference graph's,
+/// `corpus::references`): each file added as its facts are built, the rows bound in the cross-file part.
+pub(crate) trait CrossFileRelations: Send + Sync {
+    /// Adds the file with key `key` at `path`, with its source and facts.
+    fn add(&self, key: u32, path: &str, source: &Arc<String>, facts: &Arc<crate::code_rule_dsl::facts::core::Facts>) -> Result<()>;
+    /// The relations the run's files give, with their columns and rows.
+    fn relations(self: Box<Self>, store: &crate::content_store::ContentStore, read: &BTreeSet<String>) -> Result<Vec<(&'static str, Vec<String>, Vec<Option<Vec<i64>>>)>>;
+}
+
+/// What makes a program's cross-file relations over the files at `paths` of the dialect `label`, where it reads them.
+pub(crate) type MakeCrossFile = fn(&str, &crate::code_rule_dsl::logic::front::Program, &BTreeSet<String>, &[String]) -> Result<Option<Box<dyn CrossFileRelations>>>;
+
+static CROSS_FILE: std::sync::OnceLock<MakeCrossFile> = std::sync::OnceLock::new();
+
+/// Registers what makes a program's cross-file relations (once, at load).
+pub(crate) fn install_cross_file(make: MakeCrossFile) {
+    let _ = CROSS_FILE.set(make);
+}
 mod prepared;
 mod maintain;
 mod supports;
@@ -2351,7 +2374,7 @@ fn run_observed(
     let read: BTreeSet<String> = lowered.program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())).collect();
     // The reference graph's relations, for a program that reads them: its files are summarized as the chunks are
     // built, and linked once they all are (`references`). W's graph is Python's.
-    let references = if label != "python" { None } else { references::Files::new(&prog, &read, &docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(p)).collect::<Vec<_>>())? };
+    let references = match CROSS_FILE.get() { Some(make) => make(label, &prog, &read, &docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(p)).collect::<Vec<_>>())?, None => None };
     let part = |program: front::Program| lower::Lowered { program, domains: lowered.domains.clone(), ops: lowered.ops, dialect: lowered.dialect };
     crate::code_rule_dsl::logic::profile::decision("file-local split", || {
         format!(
@@ -2644,7 +2667,7 @@ fn run_observed(
         }
         repository
     };
-    for rel in split.base.iter().filter(|rel| !references::RELATIONS.contains(&rel.as_str()) && !repository.iter().any(|(r, _, _)| r == *rel)) {
+    for rel in split.base.iter().filter(|rel| !REFERENCE_RELATIONS.contains(&rel.as_str()) && !repository.iter().any(|(r, _, _)| r == *rel)) {
         let cols = projection.columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
         let decode: &[&str] = match rel.as_str() {
             "node" if decodes => &["d", "n"],
