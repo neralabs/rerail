@@ -8,7 +8,7 @@
 //!   has, the prices are the priors.
 //!
 //! - **The learned model** (`rerail_accel::cost_model`): after the rates, the model saved for this machine (table
-//!   `models`) is put in place, and a thread of its own, at the background quality of service and in a pool of two
+//!   `models`) is put in place, and a thread of its own, at the utility quality of service and in a pool of two
 //!   threads apart from the engine's, trains a model on the samples read. A model that beats the rates on the
 //!   newest fifth of them is put in place and saved; one that does not is taken out, with the saved one. Training
 //!   runs again once [`RETRAIN_AFTER`] more samples are written, at most every [`RETRAIN_EVERY`].
@@ -154,8 +154,7 @@ fn read() {
             *FITTED.lock().unwrap_or_else(|p| p.into_inner()) = Some((samples.len(), fitted.len()));
             #[cfg(target_os = "macos")]
             {
-                load_saved(&path);
-                train(path, samples);
+                train(path, samples, true);
             }
         }
         Err(e) => {
@@ -178,7 +177,8 @@ fn model_state(s: String) {
     *MODEL_STATE.lock().unwrap_or_else(|p| p.into_inner()) = s;
 }
 
-/// Puts this machine's saved model in place, if there is one that reads.
+/// Puts this machine's saved model in place, if there is one that reads, its kernels compiled first (the training
+/// thread's: a new binary compiles them in seconds).
 #[cfg(target_os = "macos")]
 fn load_saved(path: &PathBuf) {
     let Ok(db) = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) else { return };
@@ -187,18 +187,24 @@ fn load_saved(path: &PathBuf) {
     let Ok((bytes, trained_on)) = saved else { return };
     match rerail_accel::cost_model::CostModel::from_bytes(&bytes) {
         Ok(m) => {
+            let t = std::time::Instant::now();
+            if let Err(e) = m.warm() {
+                model_state(format!("the saved model does not predict ({e}); training a new one"));
+                return;
+            }
             rerail_accel::cost_model::install(Some(std::sync::Arc::new(m)));
-            model_state(format!("the saved model ({trained_on} samples) in place; training a new one"));
+            model_state(format!("the saved model ({trained_on} samples) in place, warmed in {:.2} s; training a new one", t.elapsed().as_secs_f64()));
         }
         Err(e) => model_state(format!("the saved model does not read ({e}); training a new one")),
     }
 }
 
 /// Trains a model on `samples` (oldest first) on a thread of its own, unless one is training: in a pool of two
-/// threads at the background quality of service, apart from the engine's. A model that wins is put in place and
-/// saved; else the model in place, and the saved one, are taken out.
+/// threads at the utility quality of service, apart from the engine's. With `saved`, the saved model is put in
+/// place first ([`load_saved`]). A model that wins is put in place and saved; else the model in place, and the
+/// saved one, are taken out.
 #[cfg(target_os = "macos")]
-fn train(path: PathBuf, samples: Vec<rerail_accel::score::Sample>) {
+fn train(path: PathBuf, samples: Vec<rerail_accel::score::Sample>, saved: bool) {
     use std::sync::atomic::Ordering;
     if TRAINING.swap(true, Ordering::AcqRel) {
         return;
@@ -206,11 +212,14 @@ fn train(path: PathBuf, samples: Vec<rerail_accel::score::Sample>) {
     WRITTEN.store(0, Ordering::Relaxed);
     *TRAINED_AT.lock().unwrap_or_else(|p| p.into_inner()) = Some(std::time::Instant::now());
     let spawned = std::thread::Builder::new().name("rerail-cost-model".into()).spawn(move || {
-        rerail_accel::cost_model::set_background_qos();
+        rerail_accel::cost_model::set_qos(rerail_accel::cost_model::Qos::Utility);
+        if saved {
+            load_saved(&path);
+        }
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(2)
             .thread_name(|i| format!("rerail-cost-model-{i}"))
-            .start_handler(|_| rerail_accel::cost_model::set_background_qos())
+            .start_handler(|_| rerail_accel::cost_model::set_qos(rerail_accel::cost_model::Qos::Utility))
             .build();
         let started = std::time::Instant::now();
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -278,7 +287,7 @@ fn maybe_retrain() {
         let Some(path) = path() else { return };
         let r = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).and_then(|db| read_samples(&db, READ));
         if let Ok(samples) = r {
-            train(path, samples);
+            train(path, samples, false);
         }
     }
 }
@@ -362,7 +371,7 @@ mod tests {
         db.execute("DELETE FROM models", []).unwrap();
         let samples = super::read_samples(&db, super::READ).unwrap();
         let t = std::time::Instant::now();
-        super::train(path.clone(), samples);
+        super::train(path.clone(), samples, false);
         while super::TRAINING.load(Ordering::Acquire) {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }

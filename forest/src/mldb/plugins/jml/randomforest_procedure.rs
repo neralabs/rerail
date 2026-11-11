@@ -64,13 +64,26 @@ pub struct RandomForestProcedureConfig {
     pub min_leaf_examples: u32,
     /// The threads training takes at most (0: `MAX_BAGS_AT_ONCE`), each with its device memory for a tree.
     pub max_threads: usize,
-    /// Train at the background quality of service (macOS): the threads yield the cores to everything else.
-    pub background: bool,
+    /// The quality of service training's threads run at (macOS).
+    pub qos: Qos,
+}
+
+/// A thread's quality of service on macOS: what the scheduler gives it, on the cores and on the GPU.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Qos {
+    /// The caller's.
+    #[default]
+    Inherit,
+    /// Utility: below the engine's threads, yet run on the performance cores at a fair GPU priority.
+    Utility,
+    /// Background: only on the efficiency cores, at the GPU's lowest priority. Measured (2026-11-11) at about
+    /// 10× the wall and 3× the GPU seconds of utility on an idle machine, far more under load.
+    Background,
 }
 
 impl Default for RandomForestProcedureConfig {
     fn default() -> Self {
-        RandomForestProcedureConfig { feature_vector_samplings: 5, feature_vector_sampling_prop: 0.3, feature_samplings: 20, feature_sampling_prop: 0.3, max_depth: 20, sample_feature_vectors: true, training_scheme: TrainingScheme::Partitioned, categorical_subsets: false, min_leaf_examples: 1, max_threads: 0, background: false }
+        RandomForestProcedureConfig { feature_vector_samplings: 5, feature_vector_sampling_prop: 0.3, feature_samplings: 20, feature_sampling_prop: 0.3, max_depth: 20, sample_feature_vectors: true, training_scheme: TrainingScheme::Partitioned, categorical_subsets: false, min_leaf_examples: 1, max_threads: 0, qos: Qos::Inherit }
     }
 }
 
@@ -312,12 +325,22 @@ pub fn train_forest(all_data: &PartitionData, config: &RandomForestProcedureConf
     train_forest_compacted(all_data, config)
 }
 
-/// Puts the calling thread at the background quality of service (macOS): it runs when the cores are free.
-pub fn set_background_qos() {
+/// Puts the calling thread at `qos` (macOS; `Inherit` leaves it as it is).
+pub fn set_qos(qos: Qos) {
     #[cfg(target_os = "macos")]
     unsafe {
-        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_BACKGROUND, 0);
+        match qos {
+            Qos::Inherit => {}
+            Qos::Utility => {
+                libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_UTILITY, 0);
+            }
+            Qos::Background => {
+                libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_BACKGROUND, 0);
+            }
+        }
     }
+    #[cfg(not(target_os = "macos"))]
+    let _ = qos;
 }
 
 /// The most bags trained at once (threads, each with its device memory for a tree).
@@ -350,10 +373,10 @@ pub fn train_forest_weighted(all_data: &PartitionData, config: &RandomForestProc
     let samplings: Vec<Vec<Vec<i32>>> = (0..bags).map(|b| bag_feature_samplings(&data, b, config)).collect::<Result<_, _>>()?;
     let threads = bags.clamp(1, if config.max_threads > 0 { config.max_threads } else { MAX_BAGS_AT_ONCE });
     let chunks: Vec<Vec<usize>> = (0..threads).map(|t| (t..bags).step_by(threads).collect()).collect();
-    let background = config.background;
+    let qos = config.qos;
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
-        .start_handler(move |_| if background { set_background_qos() })
+        .start_handler(move |_| set_qos(qos))
         .build()
         .map_err(|e| e.to_string())?;
     let trained: Vec<Result<Vec<(usize, Vec<Tree>)>, String>> = pool.install(|| chunks.par_iter().map(|chunk| {

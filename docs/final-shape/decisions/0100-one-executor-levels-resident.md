@@ -501,20 +501,25 @@ launch on every lane that can run it; where the model gave a cost it replaces th
 stay. The model prices only a lane and name it saw at least 8 warm samples of.
 
 It is put in place only when it wins. Each training holds out the newest fifth of the samples, trains on the rest,
-and compares the errors on the held-out jobs. On this machine's 14,945 samples (2026-11-10), as the factor of the
-root mean square log error:
+and compares the errors on the held-out jobs. On this machine's newest 20,000 samples (2026-11-11), as the factor of
+the root mean square log error:
 
 | Held-out jobs | Model | Medians | Prices when run |
 |---|---|---|---|
-| Wall, with a learned rate (1,450) | ×2.08 | ×7.13 | ×8.18 |
-| Wall, all (2,989) | ×2.58 | — | ×20.5 |
-| Host CPU, all (2,989) | ×1.84 | — | ×4.93 |
+| Wall, with a learned rate (3,459) | ×1.94 | ×3.29 | ×6.50 |
+| Wall, all (4,000) | ×2.14 | — | ×12.1 |
+| Host CPU, all (4,000) | ×2.11 | — | ×10.0 |
 
 A model that wins is trained again on every sample, put in place and saved (table `models` in the store, one
 for each machine); the next run puts the saved one in place at once. One that loses is taken out with the saved
-one. Training runs on a thread of its own at the background quality of service, in a pool of two threads apart
-from the engine's (25 s wall, about 1.2 s CPU on a loaded machine), and again once 2,000 more samples are written,
-at most every ten minutes. A batch of up to 4 jobs is predicted on the host, a larger one on the GPU.
+one. Training runs on a thread of its own at the utility quality of service, in a pool of two threads apart from
+the engine's, and again once 2,000 more samples are written, at most every ten minutes. A comparison on 20,000
+samples takes 0.53 s wall and 0.85 s CPU at a load of 25–90 (debug build). The background quality of service was
+tried first and refused: it holds the threads to the efficiency cores and the GPU's lowest priority, 4–10× the
+wall and twice the GPU seconds on an idle machine, 22 s under load. The prediction kernels are compiled on the
+training thread before a model is put in place, so placement never waits on a compile. A batch of up to 4 jobs
+is predicted on the host (17 µs a job in a debug build); a larger one on the GPU: 1,024 jobs in 0.4 ms wall and
+0.27 ms CPU, of which 0.04 ms is GPU, the rest the host's lookup of each job's names and the call's round trip.
 
 ## Order of work
 

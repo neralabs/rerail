@@ -211,9 +211,9 @@ pub use rerail_forest::cost_model::{CostConfig, CostModel};
 #[cfg(target_os = "macos")]
 pub use rerail_forest::randomforest_procedure::RandomForestProcedureConfig as ForestConfig;
 
-/// Puts the calling thread at the background quality of service (the model's training).
+/// Puts the calling thread at a quality of service (the model's training runs at utility).
 #[cfg(target_os = "macos")]
-pub use rerail_forest::randomforest_procedure::set_background_qos;
+pub use rerail_forest::randomforest_procedure::{Qos, set_qos};
 
 /// Every launch's predicted cost on each of its lanes (by lane index), one model call for the batch: `None` where
 /// there is no model, it does not know the launch's lane and name, or the prediction failed.
@@ -249,6 +249,8 @@ pub fn train(samples: &[Sample], config: &CostConfig, min: usize) -> Result<Trai
     }
     let all: Vec<_> = samples.iter().map(sample).collect();
     let model = std::sync::Arc::new(CostModel::train(&all, config)?);
+    // Its kernels compiled here, not on the first placement that asks; one that fails leaves the rates.
+    model.warm()?;
     install(Some(model.clone()));
     Ok(Trained { comparison, model: Some(model) })
 }
