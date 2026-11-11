@@ -2529,14 +2529,14 @@ pub struct Tape {
 }
 
 impl CompiledStream {
-    /// Room for a stream of `n` starts.
+    /// Room for a stream of `n` starts: from the token count, as the lean parser sizes its
+    /// tape (half again as many nodes as tokens; on the `.rr` corpus, 0.76 a token), and a
+    /// token's path past it. A run that could pass it stops at a token word (`OVERFLOW`) and
+    /// `call` runs it again on `full_tape`.
     pub fn tape(&self, n: usize) -> Tape {
-        // Room for what files write (on the `.rr` corpus, a node a token and fewer supertypes
-        // and open calls), and a token's path past it; a run that could pass it stops at a
-        // token word (`OVERFLOW`) and `call` runs it again on `full_tape`.
         let b = &self.bounds;
         let tokens = n as u64 + 2;
-        self.sized((2 * tokens + b.nodes + 1) as usize, (tokens + b.supers + 1) as usize, (tokens / 4 + b.pushes + 64) as usize)
+        self.sized((tokens + tokens / 2 + b.nodes + 1) as usize, (tokens / 2 + b.supers + 1) as usize, (tokens / 4 + b.pushes + 64) as usize)
     }
 
     /// A tape with the program's bound's room for `n` starts: no run passes it.
@@ -2546,24 +2546,34 @@ impl CompiledStream {
         self.sized((self.bounds.nodes * paths + 1) as usize, (self.bounds.supers * paths + 1) as usize, (self.bounds.pushes * paths + 1) as usize)
     }
 
+    /// The buffers, room only: not zeroed. The code writes every slot before it reads it (a
+    /// record's columns and its chain's head where it is made, a frame where it opens, the
+    /// table's passes over the records made); the columns' lengths are set to what it wrote
+    /// (`Tape::written`). `RERAIL_TAPE_POISON=1` fills them with ones instead, to show a slot
+    /// read before it is written.
     fn sized(&self, nodes: usize, supers: usize, pushes: usize) -> Tape {
-        Tape {
-            kind: vec![0; nodes],
-            field: vec![0; nodes],
-            start: vec![0; nodes],
-            end: vec![0; nodes],
-            size: vec![0; nodes],
-            super_node: vec![0; supers],
-            super_kind: vec![0; supers],
-            open: vec![0; nodes],
-            returns: vec![0; if self.context { 2 * pushes } else { pushes }],
+        let poison = std::env::var_os("RERAIL_TAPE_POISON").is_some();
+        let room = |n: usize| -> Vec<u32> { if poison { vec![u32::MAX; n] } else { Vec::with_capacity(n) } };
+        let wraps = |n: usize| if self.wraps { n } else { 0 };
+        let mut t = Tape {
+            kind: room(nodes),
+            field: room(nodes),
+            start: room(nodes),
+            end: room(nodes),
+            size: room(nodes),
+            super_node: room(supers),
+            super_kind: room(supers),
+            open: room(nodes),
+            returns: room(if self.context { 2 * pushes } else { pushes }),
             counts: [0; 3],
-            frames: std::array::from_fn(|_| vec![0; if self.wraps { nodes + 1 } else { 0 }]),
-            chains: std::array::from_fn(|_| vec![0; if self.wraps { nodes } else { 0 }]),
-            out: std::array::from_fn(|_| vec![0; if self.wraps { nodes } else { 0 }]),
-            parent: vec![0; nodes],
-            extra: vec![0; nodes],
-        }
+            frames: std::array::from_fn(|_| room(wraps(nodes + 1))),
+            chains: std::array::from_fn(|_| room(wraps(nodes))),
+            out: std::array::from_fn(|_| room(wraps(nodes))),
+            parent: room(nodes),
+            extra: if poison { vec![u8::MAX; nodes] } else { Vec::with_capacity(nodes) },
+        };
+        t.clear();
+        t
     }
 
     /// One call over a file. `bytes` is the file (`len` its length), with 64 readable bytes
@@ -2575,12 +2585,15 @@ impl CompiledStream {
         // SAFETY: the caller's contract.
         let r = unsafe { self.call_once(bytes, len, tier1, tape) };
         if r != OVERFLOW {
+            // SAFETY: the code wrote the records and supertypes it counted.
+            unsafe { tape.written(r == 0) };
             return r;
         }
         ROOM_RETRIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         *tape = self.full_tape(tier1.nstarts);
         // SAFETY: as above, on the bound's tape.
         let r = unsafe { self.call_once(bytes, len, tier1, tape) };
+        unsafe { tape.written(r == 0) };
         if r == OVERFLOW { self.overflow_pc() } else { r }
     }
 
@@ -2631,9 +2644,9 @@ impl CompiledStream {
             output_stride: tier1.output_stride as u64,
             totals_stride: tier1.totals_stride as u64,
             totals_mask: tier1.totals_mask,
-            room_nodes: tape.kind.len() as u64,
-            room_supers: tape.super_node.len() as u64,
-            room_pushes: (tape.returns.len() / if self.context { 2 } else { 1 }) as u64,
+            room_nodes: tape.kind.capacity() as u64,
+            room_supers: tape.super_node.capacity() as u64,
+            room_pushes: (tape.returns.capacity() / if self.context { 2 } else { 1 }) as u64,
             state: [0; Mem::COUNT as usize],
         };
         // SAFETY: the caller's contract; the function writes only the tape's buffers and the
@@ -2710,6 +2723,51 @@ impl Columns {
 }
 
 impl Tape {
+    /// The columns' lengths: none, before a call (the code writes through their room).
+    fn clear(&mut self) {
+        for v in [&mut self.kind, &mut self.field, &mut self.start, &mut self.end, &mut self.size, &mut self.super_node, &mut self.super_kind, &mut self.open, &mut self.returns, &mut self.parent] {
+            v.clear();
+        }
+        for v in self.frames.iter_mut().chain(&mut self.chains).chain(&mut self.out) {
+            v.clear();
+        }
+        self.extra.clear();
+    }
+
+    /// The columns' lengths after a call: where it accepted, the records and supertypes it
+    /// counted (`counts`), the table's columns where it wrote them; else none.
+    ///
+    /// # Safety
+    /// The call wrote, where it accepted, each record's columns, its parent and extra flag, and
+    /// (with a wrap) the table in preorder, `counts[0]` of them, and `counts[1]` supertypes.
+    unsafe fn written(&mut self, accepted: bool) {
+        self.clear();
+        if !accepted {
+            return;
+        }
+        let (n, s) = (self.counts[0] as usize, self.counts[1] as usize);
+        let wrapped = self.counts[2] > 0;
+        // SAFETY: the caller's contract; each is within its room (the code checks it).
+        unsafe {
+            for v in [&mut self.parent] {
+                v.set_len(n);
+            }
+            self.extra.set_len(n);
+            for v in [&mut self.super_node, &mut self.super_kind] {
+                v.set_len(s);
+            }
+            if wrapped {
+                for v in &mut self.out {
+                    v.set_len(n);
+                }
+            } else {
+                for v in [&mut self.kind, &mut self.field, &mut self.start, &mut self.end, &mut self.size] {
+                    v.set_len(n);
+                }
+            }
+        }
+    }
+
     /// The node table's columns: the tape's own buffers, cut to the records written.
     pub fn columns(mut self) -> Columns {
         let n = self.counts[0] as usize;

@@ -1377,19 +1377,19 @@ pub mod tests {
         }
         let d = total / REPEAT;
         eprintln!("  {:<28} {:>8.1}ms {:>9.1}", "all", d.as_secs_f64() * 1e3, mb / d.as_secs_f64());
-        // The tape's room against what is written: rows allocated (and zeroed) for every file.
+        // The tape's room against what is written: rows allocated (not zeroed) for every file.
         let (mut room, mut used) = (0usize, 0usize);
         for src in &files {
             let mut batch = Batch::new(&p.tier1, &[src.as_bytes()]);
             batch.call(&p.tier1);
             let mut tape = p.tape(&batch);
-            room += tape.kind.len();
+            room += tape.kind.capacity();
             if p.words(&batch, &mut tape).is_ok() {
                 used += tape.counts[0] as usize;
             }
         }
         let retries = rerail_compiler::native_cpu_stream::ROOM_RETRIES.load(std::sync::atomic::Ordering::Relaxed);
-        eprintln!("tape rows: {room} allocated, {used} written ({:.1}x), {} MB zeroed a pass; {retries} runs again on the bound's tape (all passes)", room as f64 / used.max(1) as f64, room * 4 * 7 / 1_000_000);
+        eprintln!("tape rows: {room} allocated, {used} written ({:.1}x), {} MB of room a pass; {retries} runs again on the bound's tape (all passes)", room as f64 / used.max(1) as f64, room * 4 * 7 / 1_000_000);
         // Tier 1 alone, every file in one batch.
         let refs: Vec<&[u8]> = files.iter().map(|f| f.as_bytes()).collect();
         let t = thread_cpu();
