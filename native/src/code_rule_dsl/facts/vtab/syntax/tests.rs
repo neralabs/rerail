@@ -502,32 +502,50 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     };
     // Nested kinds: the root's, and two from inside the documents.
     let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
-    let member = |r: usize| set.contains(&kind(r));
+    // Each row's place and membership read once: the brute force below is quadratic in the rows.
+    let place: Vec<(u32, usize, usize)> = (0..nodes).map(at).collect();
+    let member: Vec<bool> = (0..nodes).map(|r| set.contains(&kind(r))).collect();
     let below = |n: usize, a: usize| {
-        let ((dn, ln, _), (da, la, za)) = (at(n), at(a));
+        let ((dn, ln, _), (da, la, za)) = (place[n], place[a]);
         dn == da && la < ln && ln <= la + za
+    };
+    // Each axis's pairs by brute force, once: a node's nearest member ancestor is its deepest (the latest in
+    // preorder of the ancestors).
+    let expected_of = |axis: within::Axis| -> BTreeSet<(i64, i64)> {
+        let mut expected = BTreeSet::new();
+        for n in 0..nodes {
+            let mut nearest: Option<usize> = None;
+            for a in 0..nodes {
+                if !below(n, a) {
+                    continue;
+                }
+                match axis {
+                    within::Axis::Inside if member[a] => {
+                        expected.insert((id(n), id(a)));
+                    }
+                    within::Axis::Has if member[n] => {
+                        expected.insert((id(n), id(a)));
+                    }
+                    within::Axis::Nearest if member[a] && nearest.is_none_or(|b| place[b].1 < place[a].1) => nearest = Some(a),
+                    _ => {}
+                }
+            }
+            if let Some(a) = nearest {
+                expected.insert((id(n), id(a)));
+            }
+        }
+        expected
     };
     use crate::code_rule_dsl::typing::file_local::Binding;
     // Each axis made per looked-up node, and with the batch's solve chosen (decision 0105) on the CPU and on Metal.
     let ways = [(Binding::Cpu, false), (Binding::Cpu, true), (Binding::Metal, true)];
-    for (axis, (binding, solve)) in [within::Axis::Nearest, within::Axis::Inside, within::Axis::Has].into_iter().flat_map(|a| ways.map(|w| (a, w))) {
+    let axes = [within::Axis::Nearest, within::Axis::Inside, within::Axis::Has];
+    let expected_by: Vec<BTreeSet<(i64, i64)>> = axes.iter().map(|&a| expected_of(a)).collect();
+    for ((axis, expected), (binding, solve)) in axes.into_iter().zip(&expected_by).flat_map(|a| ways.map(|w| (a, w))) {
+        let expected = expected.clone();
         let source = within::Within::axis(Arc::clone(&batch), axis, &set, binding);
         if solve {
             source.expect_lookups(0, 1e12);
-        }
-        let mut expected = BTreeSet::new();
-        for n in 0..nodes {
-            for a in 0..nodes {
-                let holds = below(n, a)
-                    && match axis {
-                        within::Axis::Inside => member(a),
-                        within::Axis::Has => member(n),
-                        within::Axis::Nearest => member(a) && !(0..nodes).any(|c| c != a && member(c) && below(n, c) && below(c, a)),
-                    };
-                if holds {
-                    expected.insert((id(n), id(a)));
-                }
-            }
         }
         assert!(!expected.is_empty());
         let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (source.value(r, 0), source.value(r, 1))).collect() };

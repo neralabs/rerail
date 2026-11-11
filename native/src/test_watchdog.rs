@@ -10,6 +10,10 @@
 //!   when set, still caps it.
 //!
 //! A test waiting for a free test thread has no thread yet, so its wait is not counted.
+//!
+//! A segmentation fault or bus error kills the process with no word of which test it was in. The watchdog's handler
+//! of both writes the faulting thread's name and the tests running then, and hands the fault on to the handler it
+//! replaced (Rust's, which reports a stack overflow, or the default one).
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -65,11 +69,15 @@ extern "C" fn start() {
 fn watch() {
     let env = configured().flatten();
     let mut seen: HashMap<(u64, String), Instant> = HashMap::new();
+    // After `main` has started: Rust installs its own handlers there, which ours then hand on to.
+    std::thread::sleep(Duration::from_millis(200));
+    faults::install();
     loop {
         std::thread::sleep(Duration::from_secs(1));
         let now = Instant::now();
         let threads = threads();
         seen.retain(|k, _| threads.contains(k));
+        faults::running(threads.iter().map(|(_, n)| n.as_str()).filter(|n| n.contains("::")));
         for k in threads {
             // A test's thread is named by its path; the engine's own threads (`rerail-cpu 3`) are not.
             if !k.1.contains("::") {
@@ -179,5 +187,94 @@ mod tests {
         assert_eq!(out.status.code(), Some(124), "{err}");
         assert!(err.contains("a_test_past_its_limit_ends_the_run` ran"), "{err}");
         assert!(t0.elapsed() < Duration::from_secs(20));
+    }
+
+    /// A segmentation fault names its thread and the tests running, and still ends the process by the signal (a
+    /// child, as above).
+    #[test]
+    fn a_segmentation_fault_names_the_test() {
+        if std::env::var_os("RERAIL_WATCHDOG_CHILD").is_some() {
+            // Past the watchdog's first listing of the tests.
+            std::thread::sleep(Duration::from_millis(1500));
+            // SAFETY: none: the fault is the test.
+            unsafe { std::ptr::null_mut::<u64>().write_volatile(1) };
+            return;
+        }
+        let exe = std::env::current_exe().unwrap();
+        let out = std::process::Command::new(exe)
+            .args(["test_watchdog::tests::a_segmentation_fault_names_the_test", "--exact", "--nocapture"])
+            .env("RERAIL_WATCHDOG_CHILD", "1")
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(out.status.signal(), Some(libc::SIGSEGV), "{err}");
+        assert!(err.contains("a segmentation fault on thread `test_watchdog::tests::a_segmentation_fault_names_the_test`"), "{err}");
+        assert!(err.contains("  test_watchdog::tests::a_segmentation_fault_names_the_test\n"), "{err}");
+    }
+}
+
+/// The fault handler (module docs): the names it writes are kept in a fixed buffer the watchdog fills each second, so
+/// the handler only reads memory and writes to stderr.
+mod faults {
+    use std::cell::UnsafeCell;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct Buffer(UnsafeCell<[u8; 8192]>);
+    // SAFETY: written by the watchdog thread only; read by a fault handler, which may see a line half-written.
+    unsafe impl Sync for Buffer {}
+    static RUNNING: Buffer = Buffer(UnsafeCell::new([0; 8192]));
+    static LEN: AtomicUsize = AtomicUsize::new(0);
+    static mut OLD: [std::mem::MaybeUninit<libc::sigaction>; 2] = [std::mem::MaybeUninit::uninit(); 2];
+
+    /// The tests running now, a line each, for the handler.
+    pub(super) fn running<'a>(names: impl Iterator<Item = &'a str>) {
+        // SAFETY: the one writer (see `Buffer`).
+        let buf = unsafe { &mut *RUNNING.0.get() };
+        let mut n = 0;
+        for name in names {
+            let line = name.as_bytes();
+            if n + line.len() + 3 > buf.len() {
+                break;
+            }
+            buf[n..n + 2].copy_from_slice(b"  ");
+            buf[n + 2..n + 2 + line.len()].copy_from_slice(line);
+            buf[n + 2 + line.len()] = b'\n';
+            n += line.len() + 3;
+        }
+        LEN.store(n, Ordering::Release);
+    }
+
+    pub(super) fn install() {
+        for (i, sig) in [libc::SIGSEGV, libc::SIGBUS].into_iter().enumerate() {
+            // SAFETY: a handler of plain reads and writes; the old action is kept for it to restore.
+            unsafe {
+                let mut action: libc::sigaction = std::mem::zeroed();
+                action.sa_sigaction = handler as usize;
+                action.sa_flags = libc::SA_SIGINFO | libc::SA_ONSTACK;
+                libc::sigemptyset(&mut action.sa_mask);
+                libc::sigaction(sig, &action, (&raw mut OLD[i]).cast());
+            }
+        }
+    }
+
+    extern "C" fn handler(sig: libc::c_int, _: *mut libc::siginfo_t, _: *mut libc::c_void) {
+        let write = |b: &[u8]| unsafe {
+            libc::write(2, b.as_ptr().cast(), b.len());
+        };
+        let mut name = [0u8; 64];
+        // SAFETY: the calling thread's name into a buffer of its size.
+        unsafe { libc::pthread_getname_np(libc::pthread_self(), name.as_mut_ptr().cast(), name.len()) };
+        let end = name.iter().position(|&b| b == 0).unwrap_or(name.len());
+        write(if sig == libc::SIGBUS { b"\ntest watchdog: a bus error on thread `" } else { b"\ntest watchdog: a segmentation fault on thread `" });
+        write(&name[..end]);
+        write(b"`; the tests running:\n");
+        let len = LEN.load(std::sync::atomic::Ordering::Acquire);
+        // SAFETY: reads what the watchdog wrote (see `Buffer`).
+        write(unsafe { &(&*RUNNING.0.get())[..len] });
+        // The replaced handler takes the fault when it recurs on return.
+        let i = usize::from(sig == libc::SIGBUS);
+        // SAFETY: the action `install` saved.
+        unsafe { libc::sigaction(sig, (&raw const OLD[i]).cast(), std::ptr::null_mut()) };
     }
 }
