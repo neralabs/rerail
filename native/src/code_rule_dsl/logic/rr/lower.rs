@@ -2271,6 +2271,9 @@ impl Lowerer {
                 .filter(|l| match l {
                     Lit::Atom { neg, .. } => !neg,
                     Lit::Cmp { l, r, .. } => aggregates || !matches!(l, STerm::Agg { .. }) && !matches!(r, STerm::Agg { .. }),
+                    // `(v = t ; within(v, t))`: it may be all that ties two asked variables (pyi047's unread_comp_var
+                    // ties a comprehension c to its target v only so). `bound_context` keeps it once what it reads is bound.
+                    l @ Lit::Group { .. } => Self::plain_group(l),
                     _ => false,
                 })
                 .cloned()
@@ -2281,7 +2284,12 @@ impl Lowerer {
         // field(m, "subscript", a0), a0 < a }` with ann_input recursive through type_app would aggregate in its
         // own component). The context may hold more rows than the rule; the rule joins it with its own literals.
         let inputs: BTreeSet<String> = self.prog.inputs.iter().cloned().collect();
-        let base: Vec<Lit> = context(false).into_iter().filter(|l| !matches!(l, Lit::Atom { rel, .. } if !inputs.contains(rel))).collect();
+        let input_only = |l: &Lit| match l {
+            Lit::Atom { rel, .. } => inputs.contains(rel),
+            Lit::Group { alts, .. } => alts.iter().flatten().all(|l| !matches!(l, Lit::Atom { rel, .. } if !inputs.contains(rel))),
+            _ => true,
+        };
+        let base: Vec<Lit> = context(false).into_iter().filter(|l| input_only(l)).collect();
         // Of the inputs, only those that reach the variables asked about through shared variables: an input that
         // meets them nowhere (`text(nm, x)` beside `text(a, t)` asked for `t`) filters nothing the rule does not,
         // and joined in the context it is a cross product (every text times every text).
@@ -2321,7 +2329,7 @@ impl Lowerer {
             let mut grew = true;
             while grew {
                 grew = false;
-                for l in lits.iter().filter(|l| matches!(l, Lit::Atom { neg: false, .. })) {
+                for l in lits.iter().filter(|l| matches!(l, Lit::Atom { neg: false, .. }) || Self::plain_group(l)) {
                     let lv = body_vars(std::slice::from_ref(l));
                     if !lv.is_disjoint(&reach) && !lv.is_subset(&reach) {
                         reach.extend(lv);
@@ -2430,11 +2438,17 @@ impl Lowerer {
             if kept.contains(&g) {
                 continue;
             }
-            let bound: BTreeSet<String> = (0..context.len())
-                .filter(|&k| root(&mut group, k) == g && binds(&context[k]))
-                .flat_map(|k| of[k].iter().filter(|v| asked.contains(*v)).cloned().collect::<Vec<_>>())
+            let members: Vec<usize> = (0..context.len()).filter(|&k| root(&mut group, k) == g).collect();
+            let bound: BTreeSet<String> = members
+                .iter()
+                .filter(|&&k| binds(&context[k]))
+                .flat_map(|&k| of[k].iter().filter(|v| asked.contains(*v)).cloned().collect::<Vec<_>>())
                 .collect();
-            if !bound.is_subset(&covered) {
+            // A group naming two asked variables ties them (`child(c, fc, _), field(fc, "left", t), (v = t ;
+            // within(v, t))` ties c to v): left out, the groups binding each are a product, c's rows times v's
+            // (pyi047's unread_comp_var: 122 M rows, tens of GB). It stays.
+            let ties = members.iter().flat_map(|&k| of[k].iter().filter(|v| asked.contains(*v))).collect::<BTreeSet<_>>().len() > 1;
+            if !bound.is_subset(&covered) || ties {
                 covered.extend(bound);
                 kept.insert(g);
             }
@@ -2469,7 +2483,68 @@ impl Lowerer {
             bound.extend(body_vars(std::slice::from_ref(&c)));
             context.push(c);
         }
+        // A plain disjunction (`plain_group`) stays once each alternative grounds what it reads given `bound`; it binds
+        // the variables every alternative binds. Otherwise it is left out, widening the context.
+        let mut grew = true;
+        while grew {
+            grew = false;
+            if let Some(k) = cmps.iter().position(|g| Self::group_binds(g, &bound).is_some()) {
+                let g = cmps.remove(k);
+                bound.extend(Self::group_binds(&g, &bound).expect("ready"));
+                context.push(g);
+                grew = true;
+            }
+        }
         (context, bound)
+    }
+
+    /// `( a ; b )`, positive, each alternative only positive atoms (no text test, no `earlier`) and comparisons without
+    /// aggregates: a disjunction a context can hold.
+    fn plain_group(l: &Lit) -> bool {
+        let Lit::Group { alts, neg: false } = l else { return false };
+        !alts.is_empty()
+            && alts.iter().all(|alt| {
+                alt.iter().all(|l| match l {
+                    Lit::Atom { rel, neg: false, .. } => test_of(rel).is_none() && rel != "earlier",
+                    Lit::Cmp { l, r, .. } => !matches!(l, STerm::Agg { .. }) && !matches!(r, STerm::Agg { .. }),
+                    _ => false,
+                })
+            })
+    }
+
+    /// The variables plain group `g` binds given `bound` (those every alternative binds), if each alternative grounds
+    /// its comparisons: an equality may bind one side from the other, any other comparison reads only bound ones.
+    fn group_binds(g: &Lit, bound: &BTreeSet<String>) -> Option<BTreeSet<String>> {
+        let Lit::Group { alts, .. } = g else { return None };
+        if !Self::plain_group(g) {
+            return None;
+        }
+        let mut all: Option<BTreeSet<String>> = None;
+        for alt in alts {
+            let mut have = bound.clone();
+            have.extend(body_vars(&alt.iter().filter(|l| matches!(l, Lit::Atom { .. })).cloned().collect::<Vec<_>>()));
+            let mut cmps: Vec<&Lit> = alt.iter().filter(|l| matches!(l, Lit::Cmp { .. })).collect();
+            loop {
+                let reads = |t: &STerm| body_vars(&[Lit::Cmp { l: t.clone(), op: "=", r: STerm::Wild }]);
+                let ready = cmps.iter().position(|c| {
+                    let Lit::Cmp { l, op, r } = c else { return false };
+                    match (l, r) {
+                        (STerm::Var(x), t) | (t, STerm::Var(x)) if *op == "=" && !have.contains(x) => reads(t).is_subset(&have),
+                        _ => reads(l).union(&reads(r)).all(|v| have.contains(v)),
+                    }
+                });
+                let Some(k) = ready else { break };
+                have.extend(body_vars(std::slice::from_ref(cmps.remove(k))));
+            }
+            if !cmps.is_empty() {
+                return None;
+            }
+            all = Some(match all {
+                None => have,
+                Some(a) => a.intersection(&have).cloned().collect(),
+            });
+        }
+        all
     }
 
     /// Whether a positive atom beside the literal being lowered (not a text test or `earlier`) binds `v`. `within`
