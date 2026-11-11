@@ -195,8 +195,12 @@ fn probes() -> Vec<Probe> {
         if probed.contains(&format!("call {name}")) || tree.contains(&name) || out.iter().any(|p| p.name == format!("shipped functor @{name}/{arity}")) {
             continue;
         }
-        let (kinds, ret) = match decls.get(name) {
-            Some((k, r)) if k.len() == arity => (k.clone(), *r),
+        // A data-layer builtin (`functions::catalogue`) is typed as the engine function it is.
+        use crate::code_rule_dsl::logic::strings::functions as fns;
+        let builtin = fns::catalogue(name, arity).and_then(|(f, _)| fns::signature(f)).filter(|(_, k, _)| k.len() == arity);
+        let (kinds, ret) = match (builtin, decls.get(name)) {
+            (Some((_, k, r)), _) => (k.to_vec(), r),
+            (None, Some((k, r))) if k.len() == arity => (k.clone(), *r),
             _ => (vec![Kind::Text; arity], Kind::Text),
         };
         let args: Vec<&str> = kinds.iter().enumerate().map(|(i, k)| arg(k, i)).collect();

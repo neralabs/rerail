@@ -97,6 +97,8 @@ fn test(op: &str, s: &Term, pattern: &Term, neg: bool) -> Result<String, Error> 
         Ok(match op {
             "equals" => format!("{s} {} {}", if neg { "!=" } else { "=" }, quote(p)),
             "iequals" => format!("{bang}iglob({}, {s})", quote(&glob_literal(p))),
+            // A search (`rx` of no `^(?:X)$`) is the data-layer builtin `@rx_matches` (`functions::catalogue`).
+            "rx" if whole(p).is_none() => format!("@rx_matches({s}, {}) = {}", quote(p), if neg { 0 } else { 1 }),
             "rx" | "irx" => format!("{bang}match({}, {s})", quote(&search(op, p))),
             _ => format!("{bang}{op}({}, {s})", quote(p)),
         })

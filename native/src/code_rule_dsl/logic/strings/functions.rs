@@ -118,6 +118,29 @@ pub(in crate::code_rule_dsl) fn native_call(f: &str) -> Option<(&'static str, &'
     }
 }
 
+/// The function a data-layer program's SQL builtin `@f` with `n` arguments is (decision 0107: t17's catalogue, the
+/// names its SQL stages used), and whether its first two arguments swap (`@like(x, pattern)` is SQLite's
+/// `like(pattern, x)`). `@lower` and `@substr` are not here: `.rr` has its own of those names.
+pub(in crate::code_rule_dsl) fn catalogue(f: &str, n: usize) -> Option<(&'static str, bool)> {
+    Some(match (f, n) {
+        ("instr", 2) => ("sql_instr", false),
+        ("length", 1) => ("sql_length", false),
+        ("trim", 1) => ("sql_trim", false),
+        ("trim", 2) => ("sql_trim2", false),
+        ("ltrim", 1) => ("sql_ltrim", false),
+        ("ltrim", 2) => ("sql_ltrim2", false),
+        ("rtrim", 2) => ("sql_rtrim2", false),
+        ("upper", 1) => ("sql_upper", false),
+        ("replace", 3) => ("sql_replace", false),
+        ("like", 2) => ("sql_like", true),
+        ("cast_int", 1) => ("sql_cast_int", false),
+        ("char", 1) => ("sql_char", false),
+        ("substr_bytes", 3) => ("sql_substr_bytes", false),
+        ("rx_matches", 2) => ("rx", false),
+        _ => return None,
+    })
+}
+
 /// Every function: its name, arguments and result (the executor coverage gate probes each, `plan::coverage`).
 pub(in crate::code_rule_dsl) fn all() -> &'static [(&'static str, &'static [Kind], Kind)] {
     FUNCTIONS
