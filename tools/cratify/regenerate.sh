@@ -10,7 +10,7 @@
 #
 # 1. the module graph and tree; 2. the join without test hosts, and the hosts it implies (test-hosts.tsv);
 # 3. the join with them; 4. widen what other crates read (index positions: before any other edit);
-# 5. the tree again; 6. the mounts, manifests and file edits.
+# 5. the tree again; 6. the mounts, manifests and file edits; 7. the external uses dropped; 8. settle.
 set -e
 IDX=$1; W=$2
 : "${CRATIFY_BIN:?set CRATIFY_BIN to the syn tool}"
@@ -26,3 +26,6 @@ python3 "$HERE/widen.py" "$W/join/widen.tsv" --apply > "$W/widen.txt" 2>&1 || tr
 head -1 "$W/widen.txt"; echo "widen refused: $(grep -c REFUSED "$W/widen.txt" || true)"
 "$CRATIFY_BIN" tree native/src/lib.rs > "$W/tree2.tsv"
 python3 "$HERE/apply.py" "$W/tree2.tsv" "$W/join" --write | tail -2
+# 7. the uses the generator dropped as upward that are an external crate's; 8. settle (tools/cratify/settle.sh)
+python3 "$HERE/restore_uses.py" "$ROOT" | tail -1
+sh "$HERE/settle.sh" "$W"
