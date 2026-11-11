@@ -5385,7 +5385,7 @@ fn run_observed(
                     }
                     let mut clean_outputs = cell.as_ref().map(|kept| cut.outputs(kept, &read_back)).unwrap_or_default();
                     // A clean output read back from the store has its rows, not its lines: decoded from the rows.
-                    if let Some(kept) = cell.as_ref().filter(|_| kept_part.is_some()) {
+                    if let Some(kept) = cell.as_ref() {
                         let rows: Vec<(String, Arc<crate::code_rule_dsl::logic::native::component::InRel>)> = read_back
                             .iter()
                             .filter(|o| cut.clean.contains(*o) && !clean_outputs.iter().any(|(r, _, _)| r == *o))

@@ -1005,10 +1005,11 @@ impl Retained {
         Ok(Retained { key, inputs, input_docs, docs: (Default::default(), [0xff; 32]), frames: Some(frames), ..Default::default() })
     }
 
-    /// Whether the last run's rows of `rel` are kept, as a cut takes them: held, or in the frames. The frames do not
-    /// hold an output's decoded rows: an output there is derived again, from its reads as kept.
+    /// Whether the last run's rows of `rel` are kept, as a cut takes them: held, or in the frames. Ordinary
+    /// outputs are decoded from their retained rows; missing decoded text does not invalidate their derivation.
+    /// `finding` retains its existing SQL decoding path, which also reads the current node and document facts.
     pub(in crate::code_rule_dsl) fn holds(&self, rel: &str, prog: &front::Program) -> bool {
-        self.rels.contains_key(rel) || (!prog.outputs.iter().any(|o| o == rel) && self.frames.as_ref().is_some_and(|f| f.derived.contains_key(rel)))
+        self.rels.contains_key(rel) || (!(rel == "finding" && prog.outputs.iter().any(|o| o == rel)) && self.frames.as_ref().is_some_and(|f| f.derived.contains_key(rel)))
     }
 
     /// Reads from the frames the rows this run reads of what they hold (t33 K4): the clean relations a stratum that
@@ -1020,6 +1021,9 @@ impl Retained {
         let running: Vec<&front::Rule> = prog.rules.iter().filter(|r| !cut.clean.contains(&r.head.rel)).collect();
         let mut wanted: BTreeSet<String> = running.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.clone()).filter(|r| cut.clean.contains(r)).collect();
         wanted.extend(running.iter().map(|r| r.head.rel.clone()));
+        // Outputs are consumers too. Admit their raw facts in the same batch as other demanded relations,
+        // then decode them at the output boundary without scheduling their producing strata again.
+        wanted.extend(prog.outputs.iter().filter(|r| cut.clean.contains(*r)).cloned());
         let wanted: Vec<String> = wanted.into_iter().filter(|r| frames.derived.contains_key(r) && !self.rels.contains_key(r)).collect();
         let inputs: Vec<String> = cut.changed.iter().filter(|r| frames.inputs.contains_key(*r) && !self.input_srcs.contains_key(*r)).cloned().collect();
         let derived_keys: Vec<_> = wanted.iter().map(|r| (frames.names[r].clone(), DOCS_PART)).collect();
@@ -1087,6 +1091,13 @@ impl Retained {
     pub(in crate::code_rule_dsl) fn write_frames(&self, store: &ContentStore, was: &InFrames, prog: &front::Program, cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>) -> Result<usize> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the kept part's changes, to the frames".into());
         let (sccs, _) = front::strata(prog).map_err(|e| Error::Plan(e.to_string()))?;
+        // Literal-only leaves are part of the derived relation's identity (leaf_identity), not runtime
+        // inputs requiring a frame digest. Without this, a read of gproto("Generic") or an env fact makes
+        // publication skip its consumer and forces that consumer to run in every new process.
+        let produced = crate::code_rule_dsl::logic::answers::produced(prog);
+        let dynamic: BTreeSet<&str> = prog.inputs.iter().chain(sccs.iter().flatten()).chain(prog.natives.keys())
+            .map(String::as_str).chain(inputs.iter().map(|(r,_)|r.as_str())).chain(produced.keys().copied()).collect();
+        let literals: BTreeSet<&str> = prog.facts.keys().map(String::as_str).filter(|r| !dynamic.contains(r)).collect();
         let mut puts: Vec<FramePut> = Vec::new();
         let mut now: HashMap<String, u64> = HashMap::new();
         let mut written = 0;
@@ -1135,7 +1146,7 @@ impl Retained {
         }
         let derived: BTreeSet<&String> = sccs.iter().flatten().collect();
         for scc in &sccs {
-            let reads: Vec<String> = reads(prog, scc).into_iter().filter(|r| !scc.contains(r)).collect();
+            let reads: Vec<String> = reads(prog, scc).into_iter().filter(|r| !scc.contains(r) && !literals.contains(r.as_str())).collect();
             for rel in scc {
                 let Some(name) = was.names.get(rel) else { continue };
                 if cut.clean.contains(rel) {
