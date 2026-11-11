@@ -80,21 +80,31 @@ async function sessionWithWorktrees(count: number) {
   }
   const catalogs = new CheckoutCatalogs(databasePath);
   const owners = new CheckoutOwners(() => catalogs.recordedCheckoutsVersion());
-  const auditor = new CheckoutCodeRuleRouter({
-    sessionRoot: main, startingCheckout: startingCheckout(owners, main).checkoutRoot, owners, catalogs,
-    steerDelivery: { requestSteer: async () => undefined },
-    audits: { start: () => "audit", finish: () => undefined, progress: () => undefined, interrupt: () => undefined },
-  });
+  const auditor = await openRouter(main, { owners, catalogs }, "session");
   cleanups.push(async () => {
     await auditor.close();
     catalogs.close();
   });
-  await auditor.openWorkspace("session");
   expect(auditor.worktreeRoots()).toEqual(worktrees);
   for (const worktree of worktrees) expect(auditor.acceptsPath(join(worktree, "api", "x.py"))).toBe(true);
   // The first walk records each worktree it finds; the next one finds them recorded.
   auditor.worktreeRoots();
-  return { base, main, databasePath, worktrees, catalogs, auditor };
+  return { base, main, databasePath, worktrees, catalogs, owners, auditor };
+}
+
+/** A session's router in `folder`, open, over `shared`: the runtime gives every session the same catalogs and owners. */
+async function openRouter(
+  folder: string,
+  shared: { readonly owners: CheckoutOwners; readonly catalogs: CheckoutCatalogs },
+  sessionId: string,
+): Promise<CheckoutCodeRuleRouter> {
+  const auditor = new CheckoutCodeRuleRouter({
+    sessionRoot: folder, startingCheckout: startingCheckout(shared.owners, folder).checkoutRoot, ...shared,
+    steerDelivery: { requestSteer: async () => undefined },
+    audits: { start: () => "audit", finish: () => undefined, progress: () => undefined, interrupt: () => undefined },
+  });
+  await auditor.openWorkspace(sessionId);
+  return auditor;
 }
 
 /** What `work` costs: the statements it runs on `database`'s connection and the Git processes it starts. */
@@ -117,6 +127,11 @@ function withDatabase(databasePath: string, write: (database: RerailDatabase) =>
   } finally {
     database.$client.close();
   }
+}
+
+/** Turns the rule on or off in `checkout` by a setting of the checkout's own, as `rerail rules` does from another process. */
+function turnRule(database: RerailDatabase, checkout: string, on: boolean): void {
+  setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: checkout }, folder: "", targetKind: "rule", targetId: RULE.id, on, mode: null });
 }
 
 describe("CheckoutCodeRuleRouter in a repository with many worktrees", () => {
@@ -170,6 +185,33 @@ describe("CheckoutCodeRuleRouter in a repository with many worktrees", () => {
     // An event with no tool call, as a message's end is: the runtime then reports the session's rule coverage from it.
     auditor.refreshCodeRules();
     expect(catalog.status.ruleCount).toBe(0);
+  }, 60_000);
+
+  it("reads a worktree's rules when its lane opens again, after events that did not use the lane before it closed", async () => {
+    const { databasePath, worktrees: [worktree], auditor } = await sessionWithWorktrees(1);
+    const path = join(worktree!, "api", "x.py");
+    withDatabase(databasePath, database => turnRule(database, worktree!, false));
+    auditor.refreshCodeRules();
+    expect(auditor.acceptsPath(path)).toBe(false);
+    withDatabase(databasePath, database => turnRule(database, worktree!, true));
+    auditor.refreshCodeRules();
+    auditor.refreshCodeRules();
+    withDatabase(databasePath, database => setCheckoutStarted(database, recordCheckout(database, worktree!), false));
+    auditor.refreshCodeRules();
+    withDatabase(databasePath, database => setCheckoutStarted(database, recordCheckout(database, worktree!), true));
+    auditor.refreshCodeRules();
+    expect(auditor.acceptsPath(path)).toBe(true);
+  }, 60_000);
+
+  it("opens a lane with a worktree's rules as they are, though another session's lane read them before a change", async () => {
+    const { main, databasePath, worktrees: [worktree], catalogs, owners, auditor } = await sessionWithWorktrees(1);
+    withDatabase(databasePath, database => turnRule(database, worktree!, false));
+    // The first session's event leaves its lane in the worktree as it was until it next uses it.
+    auditor.refreshCodeRules();
+    const second = await openRouter(main, { owners, catalogs }, "second");
+    cleanups.push(() => second.close());
+    second.refreshCodeRules();
+    expect(second.acceptsPath(join(worktree!, "api", "x.py"))).toBe(false);
   }, 60_000);
 
   it("closes the lane of a worktree another process stops at the next event, and audits with a setting changed elsewhere", async () => {

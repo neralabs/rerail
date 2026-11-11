@@ -2005,7 +2005,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const known = recordCheckout(this.#catalogs.database, cwd);
     if (known !== undefined && !known.git) this.#owners.addPlainRoot(known.checkoutPath);
     const start = startingCheckout(this.#owners, cwd);
-    this.#catalogs.refresh(start.checkoutRoot);
+    // The session's rule coverage reads the checkout's catalog before its evaluator opens. Other sessions' lanes in the
+    // checkout share that catalog and read it again only at their own use, so its rules are read here.
+    if (this.#catalogs.refresh(start.checkoutRoot) !== "unrecorded") this.#catalogs.catalog(start.checkoutRoot).refresh();
     return { root: start.checkoutRoot, folder: start.path, cwd };
   }
 

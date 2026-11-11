@@ -361,9 +361,9 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   }
 
   /**
-   * The lane of an eligible checkout, opened on first use and reading its rules again on its first use after each
-   * `refreshCodeRules`; undefined while the checkout may not run rules, and for every checkout while the session's own
-   * checkout is stopped (the gate stays on the starting checkout).
+   * The lane of an eligible checkout, opened on first use with its rules read then, and reading them again on its first
+   * use after each `refreshCodeRules`; undefined while the checkout may not run rules, and for every checkout while the
+   * session's own checkout is stopped (the gate stays on the starting checkout).
    */
   #lane(root: string): Lane | undefined {
     const sessionId = this.#sessionId;
@@ -374,7 +374,11 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
       lane.enforcer.refreshCodeRules();
     }
     if (lane === undefined) {
-      const enforcer = new NativeCodeRuleEnforcer(this.#options.catalogs.catalog(root), {
+      // Every lane in this checkout, this session's earlier ones and other sessions', shares the catalog, and each reads
+      // it again only at its own next use: it may hold rules from before the last event.
+      const catalog = this.#options.catalogs.catalog(root);
+      catalog.refresh();
+      const enforcer = new NativeCodeRuleEnforcer(catalog, {
         workspaceRoot: root,
         steerDelivery: this.#options.steerDelivery,
         audits: this.#options.audits,

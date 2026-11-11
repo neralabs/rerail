@@ -12,13 +12,14 @@ import { SqliteAuditReader } from "../../../src/engine/audit/audit-store.js";
 import type { AuditRecorder, AuditInput, AuditResult } from "../../../src/engine/audit/audit.js";
 import { type CodeRule, codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
-import { setCheckoutStarted, setRepositoryStarted, RerailRuntime } from "../../../src/runtime/index.js";
+import { setCheckoutStarted, setRepositoryStarted, RerailRuntime, SqliteSessionReader } from "../../../src/runtime/index.js";
 import { setRuleSetting } from "../../../src/engine/catalog/rule-configuration.js";
 import { readRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
 import type { RuleCatalog } from "../../../src/engine/catalog/repository-model.js";
 import { PACKAGE_ROOT } from "../../../src/engine/package-root.js";
 import type { RuleMode } from "../../../src/engine/catalog/rule-mode.js";
 import { checkouts, repositoryAudits } from "../../../src/engine/storage/schema.js";
+import { testEmbedder } from "../../support/hook-events.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { stopTestRepository } from "../../support/started-repository.js";
 
@@ -47,7 +48,8 @@ function git(cwd: string, ...args: string[]): void {
 
 async function temporaryRoot(): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-router-")));
-  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  // Windows can refuse (EBUSY) to remove a folder for a moment after a disposed runtime's sessions read it.
+  cleanups.push(() => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   return root;
 }
 
@@ -745,6 +747,38 @@ describe("repository audit through the runtime", () => {
     } finally {
       reader.close();
     }
+  }, 60_000);
+});
+
+describe("rule coverage through the runtime", () => {
+  it("reports a worktree's rules as they are when a session starts there, though another session's lane read them before a change", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const main = await repository(join(root, "main"));
+    git(main, "worktree", "add", "--quiet", "--detach", join(root, "w"), "HEAD");
+    const worktree = await realpath(join(root, "w"));
+    setUpTestRepository(main, { library: [file(needle("test:main", "MAIN"))] }, databasePath);
+    const runtime = new RerailRuntime({ storageRoot: join(root, "sessions"), databasePath, workspaceRoot: main, embedder: testEmbedder, autostart: false });
+    cleanups.push(() => runtime.dispose());
+    const reader = new SqliteSessionReader(databasePath);
+    cleanups.push(async () => { reader.close(); });
+
+    await runtime.ingest({ kind: "session-start", eventId: "first-start", session: { host: "claude-code", sessionId: "first", cwd: main } });
+    await runtime.codeRulesOpened("first");
+    // Its edit in the worktree opens a lane there.
+    const edited = { sessionId: "first", toolCallId: "write", toolName: "Write" };
+    await runtime.ingest({ kind: "call", eventId: "write", ...edited, input: { file_path: join(worktree, "api", "x.py"), content: "x = 1\n" } });
+    await runtime.ingest({ kind: "result", eventId: "written", ...edited, output: "ok" });
+    const database = openRerailDatabase(databasePath);
+    try {
+      setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: worktree }, folder: "", targetKind: "rule", targetId: "test:main", on: false, mode: null });
+    } finally {
+      database.$client.close();
+    }
+    await runtime.ingest({ kind: "user-prompt", eventId: "prompt", sessionId: "first", text: "next" });
+    await runtime.ingest({ kind: "session-start", eventId: "second-start", session: { host: "claude-code", sessionId: "second", cwd: worktree } });
+
+    expect(reader.hud("second").activeRuleCount).toBe(0);
   }, 60_000);
 });
 
