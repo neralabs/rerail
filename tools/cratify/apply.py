@@ -136,6 +136,55 @@ def module_vis_edits(nodes, edits):
         edits.add(n.decl_file, s, e, 'pub ', 'module pub')
 
 
+def test_gated(nodes, q):
+    """Whether q or a module above it exists only in test builds (`cfg(test)`, a `tests` module)."""
+    while q != 'crate':
+        n = nodes[q]
+        if re.search(r'\btest\b', n.cfg) or n.name == 'tests' or n.name.endswith('_tests'):
+            return True
+        q = q.rsplit('::', 1)[0]
+    return False
+
+
+def hooked_test_modules(nodes, keep):
+    """The test modules (cfg(test), outside the engine) that follow test-hooks: those another crate reads (`keep`),
+    and those code of their own crate that test-hooks builds reads: their declaring file by name (`tally::PARSES`),
+    another file outside test modules by their parent's path (`syntax::candidate_spike::X`), or a helper (one
+    file, no tests nor modules of its own: an impl's methods) in a file whose other test items follow test-hooks."""
+    out = set(keep)
+    texts = []  # (module, its crate, whether it is test-only, its file's text)
+    for q, n in nodes.items():
+        if q != 'crate' and not n.inline and n.file and os.path.exists(n.file):
+            texts.append((q, n.owner, test_gated(nodes, q), open(n.file, 'rb').read()))
+    for p, n in nodes.items():
+        if p == 'crate' or n.owner == ENGINE or not re.search(r'\btest\b', n.cfg) or not n.decl_file:
+            continue
+        name = n.name
+        decl = open(n.decl_file, 'rb').read()
+        s, e = n.decl
+        here = re.search(rb'(?<![A-Za-z0-9_:])' + name.encode() + rb'::', decl[:s] + decl[e:]) is not None
+        parent = p.rsplit('::', 2)[-2]
+        # by its last three segments (`vtab::syntax::candidate_spike`; two are ambiguous: `value::tests`), or from
+        # a sibling (`super::name`) or a sibling's child (`super::parent::name`)
+        segs = p.split('::')
+        tail = '::'.join(segs[-3:]).replace('crate::', '')
+        pat = re.compile(rb'(?<![A-Za-z0-9_])' + tail.encode() + rb'(?![A-Za-z0-9_])')
+        sib = re.compile(rb'(?<![A-Za-z0-9_:])super::' + name.encode() + rb'(?![A-Za-z0-9_])')
+        cousin = re.compile(rb'(?<![A-Za-z0-9_:])super::' + parent.encode() + rb'::' + name.encode() + rb'(?![A-Za-z0-9_])')
+        up = p.rsplit('::', 1)[0]
+        upup = up.rsplit('::', 1)[0]
+        # read by another crate (the index may be stale: its tests too), or by its own crate's other code
+        there = any((pat.search(t) or (q.rsplit('::', 1)[0] == up and sib.search(t))
+                     or (q.rsplit('::', 1)[0] == upup and cousin.search(t)))
+                    for q, o, gated, t in texts
+                    if q != p and not q.startswith(p + '::') and (o != n.owner or not gated))
+        helper = (not n.inline and name != 'tests' and not name.endswith('_tests') and os.path.exists(n.file)
+                  and not re.search(rb'#\[test\]|^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*;', open(n.file, 'rb').read(), re.M))
+        if here or there or helper:
+            out.add(p)
+    return out
+
+
 def cfg_test_edits(nodes, files, keep_test_mods, edits):
     """The `test` atom of every cfg predicate: `any(test, feature = "test-hooks")`, but on a test module no other
     crate reads (it stays its own crate's test build's)."""
@@ -151,17 +200,7 @@ def cfg_test_edits(nodes, files, keep_test_mods, edits):
             continue  # done already
         if gated.startswith('mod '):
             p = by_decl.get((os.path.abspath(f), gated[4:]))
-            # a test module stays its crate's test build's, unless another crate reads it or its own file does by
-            # path (`tally::PARSES` under a converted cfg)
-            # (the text after the declaration's own line); or a helper with no tests of its own (an impl's methods)
-            # in a file whose other test items follow test-hooks
-            decl_end = data.find(b'\n', data.find(b'mod ' + gated[4:].encode(), int(e)))
-            read_here = re.search(rb'(?<![A-Za-z0-9_:])' + gated[4:].encode() + rb'::', data[:int(s)] + data[decl_end:]) is not None
-            # (not a `tests` module, and one file: no modules of its own)
-            name = gated[4:]
-            helper = (p is not None and nodes[p].file and name != 'tests' and not name.endswith('_tests')
-                      and not re.search(rb'#\[test\]|^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*;', open(nodes[p].file, 'rb').read(), re.M))
-            if p is None or (p not in keep_test_mods and not read_here and not helper):
+            if p is None or p not in keep_test_mods:
                 continue
         edits.add(os.path.abspath(f), int(s), int(e), HOOKS, 'cfg test')
 
@@ -571,7 +610,7 @@ def main(tree_tsv, join_out, *flags):
     mounts.owners(nodes)
     v = mounts.view(nodes)
     crates = sorted({n.owner for n in nodes.values()} - {ENGINE})
-    keep = read_modules(nodes, join_out)
+    keep = hooked_test_modules(nodes, read_modules(nodes, join_out))
     mounts.KEEP_TEST = set(keep)
     engine_text = open(os.path.join(NATIVE, 'Cargo.toml')).read()
     engine = tomllib.loads(engine_text)
@@ -607,13 +646,18 @@ def main(tree_tsv, join_out, *flags):
         open(ws, 'w').write(t)
     # the edits in the files
     edits = Edits()
+    # the engine's own files keep `cfg(test)`: nothing builds the engine under test-hooks but its own tests
+    file_owner = {n.file: n.owner for n in nodes.values() if not n.inline}
     for f, s, e, old, new in mounts.file_edits(nodes, v):
-        edits.add(f, s, e, hooks(new, False, {nodes[p].name for p in keep}), 'declaration')
+        if file_owner.get(f) != ENGINE:
+            new = hooks(new, False, {nodes[p].name for p in keep})
+        edits.add(f, s, e, new, 'declaration')
     module_vis_edits(nodes, edits)
     use_vis_edits(nodes, edits)
     upward_use_edits(nodes, edits)
     files = sorted({n.file for n in nodes.values() if not n.inline})
-    cfg_test_edits(nodes, files, keep, edits)
+    # (the engine's own files keep `cfg(test)`, as its declarations do)
+    cfg_test_edits(nodes, [f for f in files if file_owner.get(f) != ENGINE], keep, edits)
     thread_local_cfg_edits(nodes, edits)
     manifest_dir_edits(nodes, edits)
     bad = edits.apply(write)

@@ -137,7 +137,9 @@ fn keyed<'r, D: Doc>(node: &Node<'r, D>) -> Keyed<'r, D> {
             Some(key) => Keyed::Computed(key, Role::ArrayKey),
             None => Keyed::Nameless,
         },
-        "subscript_expression" if node.has_token("[") || node.has_token("{") => {
+        // `x[k]`: the grammar's every subscript is `[ … ]` (no `{ … }` form), so the kind implies
+        // the `[`, which a tape does not store (RER-131): the kind is the question, not the token.
+        "subscript_expression" => {
             match node.named_code().nth(1) {
                 Some(index) => Keyed::Computed(index, Role::ArrayKey),
                 None => Keyed::Nameless,

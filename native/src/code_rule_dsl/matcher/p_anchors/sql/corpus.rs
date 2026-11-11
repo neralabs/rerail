@@ -63,7 +63,7 @@ impl Corpus {
         let decoded = state.writer.readers.0.lock().counters.decoded_nodes;
         (decoded, state.templates.len())
     }
-    pub(in crate::code_rule_dsl) fn put(
+    pub fn put(
         &self,
         path: &str,
         doc: &TapeDoc,
@@ -163,7 +163,7 @@ impl Corpus {
 
     /// Test convenience for a frontier over every published file.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(in crate::code_rule_dsl) fn prepare(
+    pub fn prepare(
         &self,
         plans: &BTreeMap<u32, Vec<Arc<AnchorPlan>>>,
     ) -> Result<()> {
@@ -542,7 +542,7 @@ thread_local! {
 pub struct CorpusSlot(Option<Arc<Corpus>>);
 
 impl CorpusSlot {
-    pub(in crate::code_rule_dsl) fn install(corpus: Arc<Corpus>) -> Self {
+    pub fn install(corpus: Arc<Corpus>) -> Self {
         Self(CURRENT.replace(Some(corpus)))
     }
 
