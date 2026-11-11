@@ -97,13 +97,22 @@ def main(tsv, *flags):
                     continue
                 before = lines[i][:c]
                 if kind == 'field':
-                    edits.append((i, c, c, 'pub '))
+                    at_ = c
                 else:
                     m = KEYWORD.search(before)
                     if not m:
                         refused.append(f'{f}:{l}:{c} {kind} {item}: no keyword before the name: {lines[i].strip()[:80]}')
                         continue
-                    edits.append((i, m.start(), m.start(), 'pub '))
+                    at_ = m.start()
+                # the file already gives it a visibility (the index is older): that one is replaced, `pub` kept
+                v = re.search(r'(pub(?:\s*\([^)]*\))?)\s+$', lines[i][:at_])
+                if v and v.group(1) == 'pub':
+                    done[kind] += 1
+                    continue
+                if v:
+                    edits.append((i, v.start(1), v.end(1), 'pub'))
+                else:
+                    edits.append((i, at_, at_, 'pub '))
             else:
                 pos, span = at.split(':')
                 i = int(pos) - 1
