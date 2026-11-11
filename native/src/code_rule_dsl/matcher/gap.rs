@@ -50,8 +50,9 @@ pub(in crate::code_rule_dsl) struct GapTest {
     pub(in crate::code_rule_dsl) regex: Regex,
     pub(in crate::code_rule_dsl) grammar: Arc<TokenGrammar>,
     pub(in crate::code_rule_dsl) dialect: GrammarDialect,
-    /// A neighbour walk's `stopBy: {not: X}`: X, which must name only extras (comments), so the
-    /// walk passes them. `None`: a plain neighbour, where an extra beside the node is the neighbour.
+    /// A neighbour walk's `stopBy: {not: X}`: X, which must name only kinds and tokens (by a bare
+    /// regex), so the walk passes them. `None`: a plain neighbour, where an extra
+    /// beside the node is the neighbour.
     pub(in crate::code_rule_dsl) past: Option<Box<AstMatcher>>,
 }
 
@@ -65,12 +66,17 @@ impl GapTest {
     /// Whether an implied token the regex matches is at the test's place.
     pub(in crate::code_rule_dsl) fn holds<D: Doc>(&self, node: &Node<'_, D>) -> bool {
         let matches = |token: &(&str, &str)| self.regex.is_match(token.0);
-        let past = match &self.past {
-            None => false,
-            Some(stop) if self.only_extras(stop, 0) => true,
-            // A walk that stops at other kinds is not a gap's question.
-            Some(_) => return false,
+        // What a neighbour walk passes: the stored children its stop rule matches, and the implied
+        // tokens its regexes do (no kind is an implied token's).
+        let (past, skips) = match &self.past {
+            None => (None, Vec::new()),
+            Some(stop) => match self.passes(stop, 0) {
+                Some(skips) => (Some(stop), skips),
+                // A walk past more than kinds and tokens is not a gap's question.
+                None => return false,
+            },
         };
+        let skipped = |token: &str| skips.iter().any(|skip| skip.is_match(token));
         match &self.place {
             Place::Own | Place::Field(_) => {
                 let Some((_, gaps)) = stored_gaps(&self.grammar, node) else { return false };
@@ -84,21 +90,44 @@ impl GapTest {
                 let Some(parent) = node.parent() else { return false };
                 let Some((children, gaps)) = stored_gaps(&self.grammar, &parent) else { return false };
                 let Some(at) = children.iter().position(|child| child.node_id() == node.node_id()) else { return false };
+                // A stored child the walk passes: one its stop rule matches. The gap's word comes
+                // before the extras between the two stored children.
+                let passed = |child: &Node<'_, D>| {
+                    use ast_grep_core::matcher::Matcher;
+                    past.is_some_and(|stop| stop.match_node_with_env(child.clone(), &mut std::borrow::Cow::Owned(ast_grep_core::meta_var::MetaVarEnv::new())).is_some())
+                };
                 match self.place {
-                    // An extra right before the node is its neighbour, unless the walk passes it;
-                    // the gap's word comes before the extras between the two stored children.
-                    Place::Before if !past && at > 0 && self.grammar.is_extra(&children[at - 1].kind()) => false,
-                    Place::Before => gaps.before[at].last().is_some_and(matches),
+                    // The first token back that the walk does not pass, through the gaps of the
+                    // children it passes; a stored child is the relation's own walk's.
+                    // An extra right before the node is its neighbour, unless the walk passes it.
+                    Place::Before if past.is_none() && at > 0 && self.grammar.is_extra(&children[at - 1].kind()) => false,
+                    Place::Before => {
+                        let mut k = at;
+                        loop {
+                            if let Some(token) = gaps.before[k].iter().rev().find(|token| !skipped(token.0)) {
+                                return matches(token);
+                            }
+                            if k == 0 || !passed(&children[k - 1]) {
+                                return false;
+                            }
+                            k -= 1;
+                        }
+                    }
                     Place::Earlier => gaps.before[..=at].iter().flatten().any(matches),
                     Place::Later => gaps.before[at + 1..].iter().flatten().chain(&gaps.end).any(matches),
-                    // The gap after the node: before the next child, or the end. A stored token
-                    // or an extra next is a stored gap, which the relation's own walk reads.
+                    // The gap after the node: the first token on that the walk does not pass,
+                    // before the next children, or at the end.
                     _ => {
-                        let next = children[at + 1..].iter().position(|child| !(past && self.grammar.is_extra(&child.kind()))).map(|step| at + 1 + step);
-                        match next.map(|next| (next, &children[next])) {
-                            Some((next, child)) if child.is_named() && !self.grammar.is_extra(&child.kind()) => gaps.before[next].first().is_some_and(matches),
-                            Some(_) => false,
-                            None => gaps.end.first().is_some_and(matches),
+                        let mut k = at + 1;
+                        loop {
+                            let word = if k < children.len() { &gaps.before[k] } else { &gaps.end };
+                            if let Some(token) = word.iter().find(|token| !skipped(token.0)) {
+                                return matches(token);
+                            }
+                            if k >= children.len() || !passed(&children[k]) {
+                                return false;
+                            }
+                            k += 1;
                         }
                     }
                 }
@@ -108,19 +137,22 @@ impl GapTest {
 }
 
 impl GapTest {
-    /// Whether `rule` matches nodes by kind alone, and only the grammar's extras.
-    fn only_extras(&self, rule: &AstMatcher, depth: usize) -> bool {
+    /// The token regexes `rule` passes, where it is made of kinds (which no implied token has)
+    /// and tokens (by a bare regex); `None` where it says more.
+    fn passes(&self, rule: &AstMatcher, depth: usize) -> Option<Vec<Regex>> {
         use ast_grep_core::matcher::Matcher;
         if depth > 32 {
-            return false;
+            return None;
         }
         match rule {
-            AstMatcher::Kind(kind) => kind.potential_kinds().is_some_and(|set| {
-                set.iter().all(|id| u16::try_from(id).ok().and_then(|id| self.dialect.kind_name(id)).is_some_and(|name| self.grammar.is_extra(name)))
+            AstMatcher::Kind(_) | AstMatcher::Supertype(_) => Some(Vec::new()),
+            AstMatcher::Regex(regex) => Some(vec![regex.clone()]),
+            AstMatcher::Any(rules) => rules.iter().try_fold(Vec::new(), |mut all, rule| {
+                all.extend(self.passes(rule, depth + 1)?);
+                Some(all)
             }),
-            AstMatcher::Any(rules) => rules.iter().all(|rule| self.only_extras(rule, depth + 1)),
-            AstMatcher::Util(util) => util.with_target(|rule| self.only_extras(rule, depth + 1)).unwrap_or(false),
-            _ => false,
+            AstMatcher::Util(util) => util.with_target(|rule| self.passes(rule, depth + 1)).flatten(),
+            _ => None,
         }
     }
 }

@@ -447,6 +447,7 @@
                   "has": {
                     "stopBy": "neighbor",
                     "regex": "^,$",
+                    "stored": "a lone trailing comma in a subscript or longer tuple: stored; a one-element tuple is the next alternative",
                     "precedes": {
                       "stopBy": "neighbor",
                       "regex": "^[\\])]$"

@@ -138,6 +138,7 @@
                       "follows": {
                         "stopBy": "end",
                         "regex": "^:$",
+                        "stored": "a slice's `::` (`[::2]`, `[1::2]`): stored; implied colons are the next alternative",
                         "follows": {
                           "stopBy": "end",
                           "regex": "^:$"

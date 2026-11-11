@@ -1,4 +1,4 @@
-wave sha256:0fa4ced0b6a2d0f0a34c0810927a1a4f4fec86c9a5f2e937231eb0ea0f990e9c clauses=463 labels=5094
+wave sha256:5e3f8a3c323ee3fa35c4fba62c08ac262dc66f1cf6a1910d22ce28b820ec8f20 clauses=463 labels=5094
 clause 0 "bandit-b104-hardcoded-bind-all-interfaces/B104" root=sha256:f79ca489f679d5f1c726ba9310272affd8f75f16168640ea48096b0002074868 domain=kinds[string] offset=0
   label L16384 fact value slots=[]
   step L16384
