@@ -164,11 +164,18 @@ def hooked_test_modules(nodes, keep):
         s, e = n.decl
         here = re.search(rb'(?<![A-Za-z0-9_:])' + name.encode() + rb'::', decl[:s] + decl[e:]) is not None
         parent = p.rsplit('::', 2)[-2]
-        pat = re.compile(rb'(?<![A-Za-z0-9_])' + parent.encode() + rb'::' + name.encode() + rb'(?![A-Za-z0-9_])')
+        # by its last three segments (`vtab::syntax::candidate_spike`; two are ambiguous: `value::tests`), or from
+        # a sibling (`super::name`) or a sibling's child (`super::parent::name`)
+        segs = p.split('::')
+        tail = '::'.join(segs[-3:]).replace('crate::', '')
+        pat = re.compile(rb'(?<![A-Za-z0-9_])' + tail.encode() + rb'(?![A-Za-z0-9_])')
         sib = re.compile(rb'(?<![A-Za-z0-9_:])super::' + name.encode() + rb'(?![A-Za-z0-9_])')
+        cousin = re.compile(rb'(?<![A-Za-z0-9_:])super::' + parent.encode() + rb'::' + name.encode() + rb'(?![A-Za-z0-9_])')
         up = p.rsplit('::', 1)[0]
+        upup = up.rsplit('::', 1)[0]
         # read by another crate (the index may be stale: its tests too), or by its own crate's other code
-        there = any((pat.search(t) or (q.rsplit('::', 1)[0] == up and sib.search(t)))
+        there = any((pat.search(t) or (q.rsplit('::', 1)[0] == up and sib.search(t))
+                     or (q.rsplit('::', 1)[0] == upup and cousin.search(t)))
                     for q, o, gated, t in texts
                     if q != p and not q.startswith(p + '::') and (o != n.owner or not gated))
         helper = (not n.inline and name != 'tests' and not name.endswith('_tests') and os.path.exists(n.file)
