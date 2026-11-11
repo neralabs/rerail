@@ -2253,10 +2253,10 @@ impl Model {
     }
 
     /// Whether a statement of `prog` may read `relation`: its inputs, batch inputs and derived relations, and
-    /// the tape relations the `nearest` walks read, and views the run planned from.
+    /// the tape relations the `nearest` walks read (`node_order` for a descent by preorder key), and views the run planned from.
     fn declared(&self, prog: &Program, relation: &Relation) -> bool {
         match relation {
-            Relation::Input { rel, .. } => prog.inputs.contains(rel) || matches!(rel.as_str(), "tape" | "node"),
+            Relation::Input { rel, .. } => prog.inputs.contains(rel) || matches!(rel.as_str(), "tape" | "node" | "node_order"),
             Relation::Batch { rel, .. } => self.inputs.batch.contains_key(rel),
             Relation::Derived { rel, .. } | Relation::Bound { rel, .. } => {
                 // Or a view the run made and planned from (`rdl_kinds`: its statistics are the model's).
@@ -2587,12 +2587,30 @@ impl Model {
                         ctes.push(Cte::walk(near.clone(), None, vec![arm]));
                         a
                     } else {
+                        // A subtree is a run of preorder positions: the walk steps over preorder keys (`node_order`),
+                        // which are the node ids themselves when nodes are numbered in preorder. Ids by definition
+                        // are not contiguous in a subtree, so there each position is mapped back to its node.
+                        let keyed = crate::code_rule_dsl::facts::vtab::syntax::definition_ids();
                         walk_columns.extend(["cur".to_owned(), "stop".to_owned()]);
                         let size = col("t", "size");
+                        let start = if keyed { col("o", "k") } else { col("s", a) };
+                        let mut seed_from = vec![FromItem::cross(Relation::Cte(seed.clone()), "s")];
+                        if keyed {
+                            seed_from.push(on("node_order", "o", vec![eq(col("o", "n"), col("s", a))]));
+                        }
+                        seed_from.push(on("tape", "t", vec![eq(col("t", "n"), col("s", a))]));
+                        // The node at the walk's position.
+                        let at = if keyed { col("o", "n") } else { col("w", "cur") };
+                        let mut walk_from = vec![FromItem::cross(Relation::Cte(walk.clone()), "w")];
+                        if keyed {
+                            walk_from.push(on("node_order", "o", vec![eq(col("o", "k"), col("w", "cur"))]));
+                        }
+                        walk_from.push(on("node", "k", vec![eq(col("k", "n"), at.clone())]));
+                        walk_from.push(on("tape", "t", vec![eq(col("t", "n"), at.clone())]));
                         let arms = vec![
                             Select {
-                                columns: with("s", vec![bin(Op::Add, col("s", a), integer(1)), bin(Op::Add, col("s", a), size.clone())]),
-                                from: vec![FromItem::cross(Relation::Cte(seed.clone()), "s"), on("tape", "t", vec![eq(col("t", "n"), col("s", a))])],
+                                columns: with("s", vec![bin(Op::Add, start.clone(), integer(1)), bin(Op::Add, start, size.clone())]),
+                                from: seed_from,
                                 predicates: vec![bin(Op::Greater, size.clone(), integer(0))],
                                 ..Select::default()
                             },
@@ -2607,11 +2625,7 @@ impl Model {
                                         col("w", "stop"),
                                     ],
                                 ),
-                                from: vec![
-                                    FromItem::cross(Relation::Cte(walk.clone()), "w"),
-                                    on("node", "k", vec![eq(col("k", "n"), col("w", "cur"))]),
-                                    on("tape", "t", vec![eq(col("t", "n"), col("w", "cur"))]),
-                                ],
+                                from: walk_from,
                                 predicates: vec![bin(Op::Less, col("w", "cur"), col("w", "stop"))],
                                 ..Select::default()
                             },
@@ -2619,11 +2633,15 @@ impl Model {
                         ctes.push(Cte::walk(walk.clone(), Some(walk_columns), arms));
                         let mut predicates = vec![bin(Op::LessOrEqual, col("w", "cur"), col("w", "stop"))];
                         if env.contains_key(n) {
-                            predicates.push(eq(col("w", "cur"), col("w", n)));
+                            predicates.push(eq(at.clone(), col("w", n)));
+                        }
+                        let mut from = vec![FromItem::cross(Relation::Cte(walk.clone()), "w")];
+                        if keyed {
+                            from.push(on("node_order", "o", vec![eq(col("o", "k"), col("w", "cur"))]));
                         }
                         let arm = Select {
-                            columns: with("w", Vec::new()).into_iter().chain([(col("w", "cur"), Some("near_out".to_owned()))]).collect(),
-                            from: vec![FromItem::cross(Relation::Cte(walk.clone()), "w")],
+                            columns: with("w", Vec::new()).into_iter().chain([(at, Some("near_out".to_owned()))]).collect(),
+                            from,
                             predicates,
                             ..Select::default()
                         };
@@ -6365,6 +6383,9 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 if prog.inputs.contains(rel) || rows.is_empty() || !prog.rules.iter().any(|r| r.body.iter().filter_map(|l| l.atom()).any(|a| a.rel == *rel)) {
                     continue;
                 }
+                // A relation no rule derives is held in the engine with no table (decision 0104): the answers are
+                // written to SQL, so it is made there first.
+                run.materialize(std::slice::from_ref(rel))?;
                 let width = prog.decls[rel].len();
                 let marks = vec!["?"; width].join(", ");
                 let mut insert = db.prepare(&format!("INSERT OR IGNORE INTO {} VALUES ({marks})", crate::code_rule_dsl::logic::sql::ident(rel)))?;

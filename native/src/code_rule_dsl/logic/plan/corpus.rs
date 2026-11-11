@@ -1385,8 +1385,43 @@ pub(in crate::code_rule_dsl) fn tape_cache_path() -> Option<std::path::PathBuf> 
     match std::env::var("RERAIL_TAPE_CACHE") {
         Ok(v) if v == "off" => None,
         Ok(v) => Some(std::path::PathBuf::from(v)),
+        #[cfg(test)]
+        Err(_) => Some(test_tape_cache().clone()),
+        #[cfg(not(test))]
         Err(_) => Some(std::env::temp_dir().join("rerail-tape-cache.sqlite")),
     }
+}
+
+/// A test process's own tape cache: the machine's is written by every other run on it, so a test's writes could wait
+/// out its busy deadline behind them. Removed when the process exits; one a killed process left is removed by the
+/// next test process to start.
+#[cfg(test)]
+fn test_tape_cache() -> &'static std::path::PathBuf {
+    static PATH: std::sync::LazyLock<std::path::PathBuf> = std::sync::LazyLock::new(|| {
+        const PREFIX: &str = "rerail-tape-cache-test-";
+        let dir = std::env::temp_dir();
+        // Another process's, when it is gone.
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some(pid) = name.strip_prefix(PREFIX).and_then(|rest| rest.split('.').next()).and_then(|p| p.parse::<i32>().ok()) else { continue };
+            // SAFETY: signal 0 checks that the process exists and sends nothing.
+            if pid != std::process::id() as i32 && unsafe { libc::kill(pid, 0) } != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+        extern "C" fn remove() {
+            let own = format!("{PREFIX}{}.", std::process::id());
+            for entry in std::fs::read_dir(std::env::temp_dir()).into_iter().flatten().flatten() {
+                if entry.file_name().to_string_lossy().starts_with(&own) {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+        // SAFETY: `remove` is a plain function that runs once, at exit.
+        unsafe { libc::atexit(remove) };
+        dir.join(format!("{PREFIX}{}.sqlite", std::process::id()))
+    });
+    &PATH
 }
 
 /// `run` with typing inputs and outputs (`typing`: declarations, dependency summaries, summarizing).
@@ -6749,19 +6784,21 @@ uses(n, f) :- imp(n, q), def(f, q).
         std::fs::write(dir.join("a.py"), format!("{marker}{body}")).unwrap();
         std::fs::write(dir.join("b.py"), format!("{marker}{body}def h():\n    x = 3\n    print(x)\n")).unwrap();
         let rule = dir.join("outer.rr");
-        // `outer`: a statement of a function's body that reads a name the function assigns. Its file-local join,
-        // `encl(f, p), bound(p, x)`, meets at the function `p`, which it projects away.
+        // `outer`: a statement of a function's body, and a name the function assigns that some file reads. Its
+        // file-local join, `encl(f, p), bound(p, x)`, meets at the function `p`, which it projects away. Its
+        // cross-file filter, `named(x)`, binds only `x`: one that bound `f` and `x` both (`uses(f, x)`) would keep the
+        // join in the cross part, unpushed (t31 A1), and nothing would be handed on to factorize.
         std::fs::write(&rule, r#"
 .decl defined(s: symbol)
 defined(s) :- kind(n, "identifier"), text(n, s).
-.decl uses(f: node, x: symbol)
-uses(f, x) :- kind(f, "expression_statement"), within(i, f), kind(i, "identifier"), text(i, x), defined(x).
+.decl named(x: symbol)
+named(x) :- kind(i, "identifier"), text(i, x), defined(x).
 .decl encl(f: node, p: node)
 encl(f, p) :- kind(p, "function_definition"), child(p, b, _), kind(b, "block"), child(b, f, _).
 .decl bound(p: node, x: symbol)
 bound(p, x) :- kind(p, "function_definition"), child(p, b, _), kind(b, "block"), child(b, e, _), child(e, a, _), kind(a, "assignment"), field(a, "left", l), text(l, x).
 .decl outer(f: node, x: symbol)
-outer(f, x) :- uses(f, x), encl(f, p), bound(p, x).
+outer(f, x) :- named(x), encl(f, p), bound(p, x).
 .output outer
 "#).unwrap();
         let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();

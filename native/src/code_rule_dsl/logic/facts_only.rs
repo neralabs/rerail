@@ -188,6 +188,8 @@ const STATE: &[(&str, &str)] = &[
     // The index spike's growth totals (`InRel::grow_spike`), taken and reset by its measurement: profiling.
     ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
     ("code_rule_dsl/logic/native/setfix.rs", "FANOUT"),
+    // A test process's own tape cache path (`corpus::test_tape_cache`): where the store is, not a result kept.
+    ("code_rule_dsl/logic/plan/corpus.rs", "PATH"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT"),
     ("code_rule_dsl/logic/native/setfix/level.rs", "PENDING"),
