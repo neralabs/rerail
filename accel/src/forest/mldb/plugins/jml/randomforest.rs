@@ -217,7 +217,10 @@ impl<'a> FeatureSamplingTrainerKernel<'a> {
         let weight_data = transfer_to_device_immutable(device, rows.weight_encoder.weight_format_table.data());
         let bucket_data = transfer_to_device_immutable(device, bucket_memory.data());
         let device_feature_is_ordinal = transfer_to_device_immutable(device, &feature_is_ordinal);
-        let expanded_row_data = alloc_uninitialized_array_sync::<f32>(device, num_rows as usize);
+        // Each row's weights to false and true (`RowWeights`).
+        let expanded_row_data = alloc_uninitialized_array_sync::<f32>(device, 2 * num_rows as usize);
+        let targets: &[f32] = rows.targets.as_deref().map_or(&[], |t| &t[..]);
+        let device_targets = transfer_to_device_immutable(device, if targets.is_empty() { &[0f32][..] } else { targets });
 
         let mut queue = MetalComputeQueue::new(&shared.queue);
         run(&queue, "decodeRows", &[
@@ -229,6 +232,8 @@ impl<'a> FeatureSamplingTrainerKernel<'a> {
             ("weightFormat", Int(rows.weight_encoder.weight_format as i64)),
             ("weightMultiplier", Float(rows.weight_encoder.weight_multiplier as f64)),
             ("weightData", B(&weight_data)),
+            ("numTargets", Int(targets.len() as i64)),
+            ("targets", B(&device_targets)),
             ("decodedRowsOut", B(&expanded_row_data)),
         ], &[num_rows])?;
         let device_bucket_entry_bits = transfer_to_device_immutable(device, &bucket_entry_bits);
@@ -445,6 +450,7 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
             num_rows: o.num_rows,
             feature_sampling: feature_sampling as u16,
             feature_vector_sampling: feature_vector_sampling as u16,
+            split_criterion: SplitCriterion::of(o.fs) as u32,
         };
         data.tree_depth_info0.num_active_partitions = 1;
 
@@ -615,7 +621,7 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
             let partitions = transfer_to_host_sync::<RowPartitionInfo>(partitions, o.num_rows as usize);
             let w_all = transfer_to_host_sync::<W>(w_all, nap);
             let indexes = transfer_to_host_sync::<PartitionIndex>(indexes, nap);
-            let decoded_rows = transfer_to_host_sync::<f32>(&o.expanded_row_data, o.num_rows as usize);
+            let decoded_rows = transfer_to_host_sync::<RowWeights>(&o.expanded_row_data, o.num_rows as usize);
             let mut features = o.features.to_vec();
             for (i, f) in features.iter_mut().enumerate() {
                 f.active = data.feature_is_active[i] != 0;
@@ -751,10 +757,12 @@ impl PartitionData {
             }
         });
         let num_non_zero = keep.len();
-        let mut src_rows = Rows { weight_encoder, ..Default::default() };
+        let mut src_rows = Rows { weight_encoder, targets: self.rows.targets.clone(), ..Default::default() };
         let mut writer = src_rows.get_row_writer(num_non_zero, num_non_zero, serializer, false, 1.0);
         for (k, &i) in keep.iter().enumerate() {
-            writer.add_row_values(self.rows.get_row(i).label(), weight_of(i), k as u32)?;
+            let row = self.rows.get_row(i);
+            let encoded_weight_ = src_rows.weight_encoder.encode_weight(weight_of(i))?;
+            writer.add_row_with(&Row { label_: row.label(), encoded_weight_, example_num_: k as u32 }, self.rows.target_of(row.label(), row.example_num()));
         }
         src_rows = writer.freeze(serializer);
 
@@ -803,7 +811,7 @@ impl PartitionData {
         for _ in 0..self.rows.row_count() {
             let row = it.get_row();
             let side = side_of(f.buckets.get(row.example_num()), split_value, f.ordinal);
-            writers[side as usize].add_row(&row);
+            writers[side as usize].add_row_with(&row, self.rows.target_of(row.label(), row.example_num()));
         }
         let [w0, w1] = writers;
         [w0, w1].map(|w| PartitionData { fs: self.fs.clone(), rows: w.freeze(serializer), bucket_memory: self.bucket_memory.clone(), features: self.features.clone() })
@@ -822,9 +830,11 @@ impl PartitionData {
             let mut row = it.get_row();
             let side = side_of(f.buckets.get(row.example_num()), split_value, f.ordinal);
             *side_of_row = side;
+            // The target by the row's example number here, before the side numbers it.
+            let target = self.rows.target_of(row.label(), row.example_num());
             row.example_num_ = num_on_side[side as usize] as u32;
             num_on_side[side as usize] += 1;
-            writers[side as usize].add_row(&row);
+            writers[side as usize].add_row_with(&row, target);
         }
         let mut sides = [self.features.clone(), self.features.clone()];
         for (i, feat) in self.features.iter().enumerate() {
@@ -875,7 +885,7 @@ impl PartitionData {
             }
             _ => {}
         }
-        let (best_score, best_feature, best_split, w_left, w_right, _new_active) = test_all(depth, &self.features, &self.rows);
+        let (best_score, best_feature, best_split, w_left, w_right, _new_active) = test_all(depth, &self.features, &self.rows, SplitCriterion::of(&self.fs));
         if best_feature == -1 {
             return Ok(get_leaf(tree, &self.rows.w_all));
         }
@@ -1045,7 +1055,7 @@ pub(crate) mod tests {
             numbers.push(numbers.last().unwrap() + f.buckets.num_buckets as u32);
         }
         let nab = *numbers.last().unwrap();
-        let tti = [TreeTrainingInfo { num_rows: nr, max_depth: max_depth as u16, num_active_features: nf as u16, num_features: nf as u16, max_num_active_partitions: mpc as u16, num_active_buckets: nab, max_num_finished_partitions: u32::MAX, ..Default::default() }];
+        let tti = [TreeTrainingInfo { num_rows: nr, max_depth: max_depth as u16, num_active_features: nf as u16, num_features: nf as u16, max_num_active_partitions: mpc as u16, num_active_buckets: nab, max_num_finished_partitions: u32::MAX, split_criterion: SplitCriterion::of(&d.fs) as u32, ..Default::default() }];
         let mut tdi = [TreeDepthInfo { num_active_partitions: 1, ..Default::default() }];
         let mut buckets = vec![W::default(); mpc * nab as usize];
         let mut w_all = vec![W::default(); mpc];
@@ -1185,6 +1195,43 @@ pub(crate) mod tests {
             }
         }
         assert!(widths.iter().any(|&w| w > 254), "a level wider than 254 partitions: {widths:?}");
+    }
+
+    /// `d` as a regression: each row's target in [0, 1] a function of its buckets with noise, its weight kept, the
+    /// label real.
+    pub(crate) fn as_regression(d: &PartitionData) -> PartitionData {
+        let nr = d.rows.row_count() as u32;
+        let mut s = MemorySerializer;
+        let mut w = RowWriter::new(&d.rows.weight_encoder, nr as usize, nr as usize, &mut s, true, 1.0);
+        let b = |f: usize, r: u32| d.features[f].buckets.get(r) as f32 / d.features[f].buckets.num_buckets as f32;
+        for r in 0..nr {
+            let t = (0.4 * b(0, r) + 0.3 * b(1, r) * b(3 % d.features.len(), r) + 0.2 * b(2, r) + 0.1 * (hash(r, 99) % 10) as f32 / 10.0).clamp(0.0, 1.0);
+            w.add_row_target(t, d.rows.get_weight(r as usize), r).unwrap();
+        }
+        let mut fs = (*d.fs).clone();
+        fs.label_info = FeatureType::Real;
+        PartitionData { fs: Arc::new(fs), rows: w.freeze(&mut s), bucket_memory: d.bucket_memory.clone(), features: d.features.clone() }
+    }
+
+    /// Regression trees: the device, the device's schedule over the kernels' host forms, the CPU's partitioned
+    /// trainer and the recursive trainer give the same tree.
+    #[test]
+    fn regression_trees_match_on_every_trainer() {
+        if crate::gpu::shared::get().is_none() {
+            eprintln!("no Metal device: skipped");
+            return;
+        }
+        for (d, depths) in [(as_regression(&dataset(2000)), vec![1, 3, 6]), (as_regression(&deep_dataset(20000)), vec![10])] {
+            for max_depth in depths {
+                let device = train_with(&d, max_depth, "device");
+                assert!(device.node(device.root).is_some(), "a root split");
+                if max_depth <= 6 {
+                    same(&device, &train_on_host(&d, max_depth), &d.fs, &format!("host schedule, max depth {max_depth}"));
+                }
+                same(&device, &train_with(&d, max_depth, "cpu"), &d.fs, &format!("cpu, max depth {max_depth}"));
+                same(&device, &train_with(&d, max_depth, "recursive"), &d.fs, &format!("recursive, max depth {max_depth}"));
+            }
+        }
     }
 
     fn train_device_levels(d: &PartitionData, max_depth: i32, levels: u32, samplings: &[Vec<i32>]) -> Vec<Tree> {

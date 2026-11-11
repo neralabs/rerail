@@ -485,7 +485,7 @@ mod tests {
         let (all, w1, c1) = timed(|| training_data(fs.clone(), labels, None, None).unwrap());
         let (forest, w2, c2) = timed(|| train_forest(&all, config).unwrap());
         for (i, t) in forest.trees.iter().enumerate() {
-            if let Err(e) = FlatForest::new(&Forest { fs: forest.fs.clone(), trees: vec![t.clone()], weights: vec![1.0] }) {
+            if let Err(e) = FlatForest::new(&Forest { fs: forest.fs.clone(), trees: vec![t.clone()], weights: vec![1.0], target_scale: None }) {
                 let r = t.node(t.root).map(|n| (n.child_true, n.child_false, n.child_missing, n.split_bucket, n.base.examples));
                 panic!("{what}: tree {i}: {e}; root {:?} {r:?}", t.root);
             }

@@ -28,6 +28,9 @@ macro_rules! pod {
 }
 pod!(u8, i8, u16, i16, u32, i32, u64, i64, f32, f64);
 
+// Pairs of floats (a row's weights to false and true).
+unsafe impl Pod for [f32; 2] {}
+
 /// Handle to a memory pool, which is a set of memory attached by some kind of a bus to one or more devices.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AddressSpace;

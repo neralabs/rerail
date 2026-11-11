@@ -18,7 +18,7 @@ use crate::forest::bucket::BucketListRef;
 use crate::forest::fixed_point_accum::FixedPointAccum32;
 use crate::forest::memory_region::FrozenMemoryRegionT;
 use crate::forest::randomforest_types::{
-    IndexedPartitionSplit, PartitionIndex, PartitionInfo, PartitionSplit, PartitionSplitDirection, RowPartitionInfo, Rows, TreeDepthInfo, TreeTrainingInfo, UpdateWorkEntry, WeightFormat, W,
+    IndexedPartitionSplit, PartitionIndex, PartitionInfo, PartitionSplit, PartitionSplitDirection, RowPartitionInfo, Rows, TreeDepthInfo, TreeTrainingInfo, UpdateWorkEntry, WeightFormat, W, RowWeights, SplitCriterion,
 };
 use std::ops::Range;
 
@@ -40,9 +40,22 @@ pub fn sqrt3(mut val: f32) -> f32 {
 }
 
 #[inline]
-pub fn score_split(w_false: &W, w_true: &W) -> f32 {
-    let f = |w: &W, i: usize| FixedPointAccum32::to_f32(w.v[i]);
-    2.0 * (sqrt3(f(w_false, 0) * f(w_false, 1)) + sqrt3(f(w_true, 0) * f(w_true, 1)))
+pub fn score_split(w_false: &W, w_true: &W, criterion: SplitCriterion) -> f32 {
+    match criterion {
+        SplitCriterion::Sqrt => {
+            let f = |w: &W, i: usize| FixedPointAccum32::to_f32(w.v[i]);
+            2.0 * (sqrt3(f(w_false, 0) * f(w_false, 1)) + sqrt3(f(w_true, 0) * f(w_true, 1)))
+        }
+        SplitCriterion::Variance => (variance_fixed(w_false) + variance_fixed(w_true)) as f32 * (1.0 / (1u64 << 30) as f32),
+    }
+}
+
+/// A side's squared error about its mean target, less the part every split shares: `f t / (f + t)` in the
+/// accumulators' fixed point (2^-30), by integer division, so that the device's (`varianceFixed`) is the same.
+#[inline]
+pub fn variance_fixed(w: &W) -> i64 {
+    let (f, t) = (w.v[0].rep as i64, w.v[1].rep as i64);
+    if f + t <= 0 { 0 } else { f * t / (f + t) }
 }
 
 /// A feature's bucket list, out of all the features' bucket data.
@@ -51,7 +64,7 @@ fn feature_buckets<'a>(f: usize, all_bucket_data: &'a [u32], bucket_data_offsets
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn decode_rows_kernel_cpu(row_range: Range<u32>, row_data: FrozenMemoryRegionT<u64>, _row_data_length: u32, weight_bits: u16, example_num_bits: u16, num_rows: u32, weight_format: WeightFormat, weight_multiplier: f32, weight_data: FrozenMemoryRegionT<f32>, decoded_rows_out: &mut [f32]) {
+pub fn decode_rows_kernel_cpu(row_range: Range<u32>, row_data: FrozenMemoryRegionT<u64>, _row_data_length: u32, weight_bits: u16, example_num_bits: u16, num_rows: u32, weight_format: WeightFormat, weight_multiplier: f32, weight_data: FrozenMemoryRegionT<f32>, targets: &[f32], decoded_rows_out: &mut [RowWeights]) {
     let mut rows = Rows { row_data, num_row_entries: num_rows as usize, example_num_bits: example_num_bits as i32, ..Default::default() };
     rows.example_num_mask = (1u64 << example_num_bits) - 1;
     rows.weight_mask = (1u64 << weight_bits) - 1;
@@ -60,6 +73,7 @@ pub fn decode_rows_kernel_cpu(row_range: Range<u32>, row_data: FrozenMemoryRegio
     rows.weight_encoder.weight_format = weight_format;
     rows.weight_encoder.weight_multiplier = weight_multiplier;
     rows.weight_encoder.weight_format_table = weight_data;
+    rows.targets = (!targets.is_empty()).then(|| std::sync::Arc::new(targets.to_vec()));
 
     let mut it = rows.get_row_iterator();
     assert_eq!(decoded_rows_out.len(), num_rows as usize);
@@ -67,13 +81,13 @@ pub fn decode_rows_kernel_cpu(row_range: Range<u32>, row_data: FrozenMemoryRegio
         it.skip_to(i as usize);
         let row = it.get_decoded_row();
         assert_eq!(i, row.example_num);
-        decoded_rows_out[i as usize] = row.weight * (1 - 2 * row.label as i32) as f32;
+        decoded_rows_out[i as usize] = row.weights();
     }
 }
 
 /// Accumulates one active feature's buckets over all the rows (the root partition).
 #[allow(clippy::too_many_arguments)]
-pub fn test_feature_kernel_host(fidx: u32, _naf: u32, rows: Range<u32>, decoded_rows: &[f32], num_rows: u32, all_bucket_data: &[u32], bucket_data_offsets: &[u32], bucket_numbers: &[u32], bucket_entry_bits: &[u32], active_feature_list: &[u32], all_w_out: &mut [W]) {
+pub fn test_feature_kernel_host(fidx: u32, _naf: u32, rows: Range<u32>, decoded_rows: &[RowWeights], num_rows: u32, all_bucket_data: &[u32], bucket_data_offsets: &[u32], bucket_numbers: &[u32], bucket_entry_bits: &[u32], active_feature_list: &[u32], all_w_out: &mut [W]) {
     let f = active_feature_list[fidx as usize] as usize;
     assert!(bucket_numbers[f + 1] as usize <= all_w_out.len());
     assert_eq!(rows.len() as u32, num_rows); // We fake having this argument...
@@ -99,7 +113,8 @@ pub fn get_partition_splits_kernel(fidx: u32, naf: u32, tree_training_info: &[Tr
         let end_bucket = bucket_numbers[f + 1] as usize;
         let max_bucket = end_bucket as i32 - start_bucket as i32 - 1;
         let w_feature = &buckets[p * total_buckets + start_bucket..];
-        let (score, value, left, right) = choose_split_kernel(w_feature, max_bucket, feature_is_ordinal[f] != 0, &w_all[p]);
+        let criterion = if tree_training_info[0].split_criterion == SplitCriterion::Variance as u32 { SplitCriterion::Variance } else { SplitCriterion::Sqrt };
+        let (score, value, left, right) = choose_split_kernel(w_feature, max_bucket, feature_is_ordinal[f] != 0, &w_all[p], criterion);
         result.score = score as f32;
         result.value = value as i16;
         result.left = left;
@@ -263,7 +278,7 @@ pub fn clear_buckets_kernel(bucket_range: Range<u32>, tree_training_info: &[Tree
 /// Applies each partition's split to each row (the tree's evaluation on the rows): every row reads its split's
 /// feature's bucket, goes to a side, and the rows that change partition are listed for `update_buckets_kernel`.
 #[allow(clippy::too_many_arguments)]
-pub fn update_partition_numbers_kernel(row_range: Range<u32>, _tree_training_info: &[TreeTrainingInfo], tree_depth_info: &[TreeDepthInfo], partitions: &mut [RowPartitionInfo], _directions: &mut [u32], num_non_zero_direction_indices: &mut [u32], non_zero_direction_indices: &mut [UpdateWorkEntry], small_side_indexes: &[u8], partition_splits: &[IndexedPartitionSplit], partition_info: &[PartitionInfo], all_bucket_data: &[u32], bucket_data_offsets: &[u32], bucket_numbers: &[u32], bucket_entry_bits: &[u32], feature_is_ordinal: &[u32], decoded_rows: &[f32]) {
+pub fn update_partition_numbers_kernel(row_range: Range<u32>, _tree_training_info: &[TreeTrainingInfo], tree_depth_info: &[TreeDepthInfo], partitions: &mut [RowPartitionInfo], _directions: &mut [u32], num_non_zero_direction_indices: &mut [u32], non_zero_direction_indices: &mut [UpdateWorkEntry], small_side_indexes: &[u8], partition_splits: &[IndexedPartitionSplit], partition_info: &[PartitionInfo], all_bucket_data: &[u32], bucket_data_offsets: &[u32], bucket_numbers: &[u32], bucket_entry_bits: &[u32], feature_is_ordinal: &[u32], decoded_rows: &[RowWeights]) {
     let partition_splits_offset = tree_depth_info[0].prev_num_finished_partitions as usize;
     let partition_splits = &partition_splits[partition_splits_offset..];
     let depth = tree_depth_info[0].depth as u16 - 1;
@@ -326,7 +341,7 @@ pub fn update_partition_numbers_kernel(row_range: Range<u32>, _tree_training_inf
 /// otherwise it is the active feature `fidxp1 - 1`). Only the rows on the side that moved are touched, as the
 /// weight is transferred rather than summed from the beginning: less work for unbalanced splits, which most are.
 #[allow(clippy::too_many_arguments)]
-pub fn update_buckets_kernel(_row_range: Range<u32>, fidxp1: u32, _nafp1: u32, tree_training_info: &[TreeTrainingInfo], _tree_depth_info: &[TreeDepthInfo], _partitions: &[RowPartitionInfo], _directions: &[u32], num_non_zero_direction_indices: &[u32], non_zero_direction_indices: &[UpdateWorkEntry], partition_buckets: &mut [W], w_all: &mut [W], _small_side_indexes: &[u8], _small_side_index_to_partition: &[u16], _decoded_rows: &[f32], all_bucket_data: &[u32], bucket_data_offsets: &[u32], bucket_numbers: &[u32], bucket_entry_bits: &[u32], feature_active: &[u32], _feature_is_ordinal: &[u32]) {
+pub fn update_buckets_kernel(_row_range: Range<u32>, fidxp1: u32, _nafp1: u32, tree_training_info: &[TreeTrainingInfo], _tree_depth_info: &[TreeDepthInfo], _partitions: &[RowPartitionInfo], _directions: &[u32], num_non_zero_direction_indices: &[u32], non_zero_direction_indices: &[UpdateWorkEntry], partition_buckets: &mut [W], w_all: &mut [W], _small_side_indexes: &[u8], _small_side_index_to_partition: &[u16], _decoded_rows: &[RowWeights], all_bucket_data: &[u32], bucket_data_offsets: &[u32], bucket_numbers: &[u32], bucket_entry_bits: &[u32], feature_active: &[u32], _feature_is_ordinal: &[u32]) {
     let fidx = fidxp1 as i32 - 1; // -1 means wAll, otherwise it's the feature number
     let f = if fidx == -1 { None } else { Some(feature_active[fidx as usize] as usize) };
     let num_active_buckets = tree_training_info[0].num_active_buckets as usize;
@@ -345,9 +360,7 @@ pub fn update_buckets_kernel(_row_range: Range<u32>, fidxp1: u32, _nafp1: u32, t
             None => partition,
             Some(b) => partition * num_active_buckets + start_bucket + b.get(work_item.row) as usize,
         };
-        let weight = work_item.decoded_row.abs();
-        let label = work_item.decoded_row < 0.0;
-        w_global[to_bucket].add_weight(label, weight);
+        w_global[to_bucket].add_weights(work_item.decoded_row);
     }
 }
 
@@ -612,7 +625,8 @@ mod tests {
         }
         let mut pure = W::default();
         pure.add_weight(true, 0.5);
-        assert_eq!(score_split(&pure, &pure), 0.0);
+        assert_eq!(score_split(&pure, &pure, SplitCriterion::Sqrt), 0.0);
+        assert_eq!(score_split(&pure, &pure, SplitCriterion::Variance), 0.0);
         assert_eq!(HOST_KERNELS.len(), 10);
     }
 
@@ -638,8 +652,8 @@ mod tests {
         }
         let rows = w.freeze(&mut s);
         let decoded = decode_rows(&rows);
-        let mut via_kernel = vec![0.0; nr as usize];
-        decode_rows_kernel_cpu(0..nr, rows.row_data.clone(), rows.row_data.length() as u32, 32, 0, nr, WeightFormat::WfFloat, 0.0, Default::default(), &mut via_kernel);
+        let mut via_kernel = vec![[0.0; 2]; nr as usize];
+        decode_rows_kernel_cpu(0..nr, rows.row_data.clone(), rows.row_data.length() as u32, 32, 0, nr, WeightFormat::WfFloat, 0.0, Default::default(), &[], &mut via_kernel);
         assert_eq!(decoded, via_kernel);
 
         // The features' bucket data, back to back.
@@ -670,7 +684,7 @@ mod tests {
         }
         let mut w_all = vec![W::default(); max_parts];
         for &d in &decoded {
-            w_all[0].add_weight(d < 0.0, d.abs());
+            w_all[0].add_weights(d);
         }
 
         let mut splits = vec![PartitionSplit::default(); max_parts * 2];
@@ -715,9 +729,9 @@ mod tests {
                     continue;
                 }
                 let d = decoded[r as usize];
-                expect_all.add_weight(d < 0.0, d.abs());
+                expect_all.add_weights(d);
                 for f in 0..2 {
-                    expect[(numbers[f] + bucket_of(f, r)) as usize].add_weight(d < 0.0, d.abs());
+                    expect[(numbers[f] + bucket_of(f, r)) as usize].add_weights(d);
                 }
             }
             assert_eq!(w_all[p], expect_all, "partition {p}: wAll");

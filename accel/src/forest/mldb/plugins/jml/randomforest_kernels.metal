@@ -15,8 +15,10 @@
 #define W W32
 
 // Take a bit-compressed representation of rows, and turn it into a
-// decompressed version with one float per row (the sign gives the
-// label, and the magnitude gives the weight).
+// decompressed version with two floats per row: its weights to false and
+// true (a label's side has the weight; a regression row's target t, by
+// example, gives w (1 - t) and w t). Upstream had one float, the sign giving
+// the label and the magnitude the weight.
 //
 // This is a 1D kernel over the array of rows, not very complicated
 
@@ -27,12 +29,14 @@ struct DecompressRowsKernelArgs {
     uint32_t numRows;
     WeightFormat weightFormat;
     float weightMultiplier;
+    uint32_t numTargets;
 };
 
 __kernel void
 decompressRowsKernel(__constant DecompressRowsKernelArgs & args,
                      __global const uint64_t * rowData,
                      __global const float * weightData,                     
+                     __global const float * targets,
                      __global float * decodedRowsOut,
                      uint32_t id [[thread_position_in_grid]],
                      uint32_t n [[threads_per_grid]])
@@ -45,8 +49,8 @@ decompressRowsKernel(__constant DecompressRowsKernelArgs & args,
     float weightMultiplier = args.weightMultiplier;
 
     decompressRowsImpl(rowData, rowDataLength, weightBits, exampleNumBits, numRows,
-                             weightFormat, weightMultiplier, weightData, decodedRowsOut,
-                             id, n);
+                             weightFormat, weightMultiplier, weightData, args.numTargets, targets,
+                             decodedRowsOut, id, n);
 }
 
 
