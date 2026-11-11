@@ -135,57 +135,57 @@ shipped functor @substr_bytes/3	native	no computed term	p(v) :- t(a), m(y), m(w)
 shipped functor @trim/1	native	no computed term	p(v) :- t(a), v = @trim(a).
 shipped functor @trim/2	native	no computed term	p(v) :- t(a), t(b), v = @trim(a, b).
 shipped functor @upper/1	native	no computed term	p(v) :- t(a), v = @upper(a).
-text test glob: a constant pattern	native	no text test	p(a) :- s(a), glob("a", a).
-text test glob: negated	native	no text test	p(a) :- s(a), !glob("a", a).
-text test glob: a set of patterns	native	no text test	p(a) :- s(a), (glob("a", a) ; glob("B", a)).
-text test glob: a bound pattern	native	no text test	p(a, b) :- s(a), t(b), glob(b, a).
-text test iglob: a constant pattern	native	no text test	p(a) :- s(a), iglob("a", a).
-text test iglob: negated	native	no text test	p(a) :- s(a), !iglob("a", a).
-text test iglob: a set of patterns	native	no text test	p(a) :- s(a), (iglob("a", a) ; iglob("B", a)).
-text test iglob: a bound pattern	native	no text test	p(a, b) :- s(a), t(b), iglob(b, a).
-text test prefix: a constant pattern	native	no text test	p(a) :- s(a), prefix("a", a).
-text test prefix: negated	native	no text test	p(a) :- s(a), !prefix("a", a).
-text test prefix: a set of patterns	native	no text test	p(a) :- s(a), (prefix("a", a) ; prefix("B", a)).
-text test prefix: a bound pattern	native	no text test	p(a, b) :- s(a), t(b), prefix(b, a).
-text test iprefix: a constant pattern	native	no text test	p(a) :- s(a), iprefix("a", a).
-text test iprefix: negated	native	no text test	p(a) :- s(a), !iprefix("a", a).
-text test iprefix: a set of patterns	native	no text test	p(a) :- s(a), (iprefix("a", a) ; iprefix("B", a)).
-text test iprefix: a bound pattern	native	no text test	p(a, b) :- s(a), t(b), iprefix(b, a).
-text test suffix: a constant pattern	native	no text test	p(a) :- s(a), suffix("a", a).
-text test suffix: negated	native	no text test	p(a) :- s(a), !suffix("a", a).
-text test suffix: a set of patterns	native	no text test	p(a) :- s(a), (suffix("a", a) ; suffix("B", a)).
-text test suffix: a bound pattern	native	no text test	p(a, b) :- s(a), t(b), suffix(b, a).
-text test isuffix: a constant pattern	native	no text test	p(a) :- s(a), isuffix("a", a).
-text test isuffix: negated	native	no text test	p(a) :- s(a), !isuffix("a", a).
-text test isuffix: a set of patterns	native	no text test	p(a) :- s(a), (isuffix("a", a) ; isuffix("B", a)).
-text test isuffix: a bound pattern	native	no text test	p(a, b) :- s(a), t(b), isuffix(b, a).
-text test contains: a constant pattern	native	no text test	p(a) :- s(a), contains("a", a).
-text test contains: negated	native	no text test	p(a) :- s(a), !contains("a", a).
-text test contains: a set of patterns	native	no text test	p(a) :- s(a), (contains("a", a) ; contains("B", a)).
-text test contains: a bound pattern	native	no text test	p(a, b) :- s(a), t(b), contains(b, a).
-text test icontains: a constant pattern	native	no text test	p(a) :- s(a), icontains("a", a).
-text test icontains: negated	native	no text test	p(a) :- s(a), !icontains("a", a).
-text test icontains: a set of patterns	native	no text test	p(a) :- s(a), (icontains("a", a) ; icontains("B", a)).
-text test icontains: a bound pattern	native	no text test	p(a, b) :- s(a), t(b), icontains(b, a).
-text test word: a constant pattern	native	no text test	p(a) :- s(a), word("a", a).
-text test word: negated	native	no text test	p(a) :- s(a), !word("a", a).
-text test word: a set of patterns	native	no text test	p(a) :- s(a), (word("a", a) ; word("B", a)).
-text test word: a bound pattern	native	no text test	p(a, b) :- s(a), t(b), word(b, a).
-text test iword: a constant pattern	native	no text test	p(a) :- s(a), iword("a", a).
-text test iword: negated	native	no text test	p(a) :- s(a), !iword("a", a).
-text test iword: a set of patterns	native	no text test	p(a) :- s(a), (iword("a", a) ; iword("B", a)).
-text test iword: a bound pattern	native	no text test	p(a, b) :- s(a), t(b), iword(b, a).
-text test match: a constant pattern	native	no text test	p(a) :- s(a), match("a", a).
-text test match: negated	native	no text test	p(a) :- s(a), !match("a", a).
-text test match: a set of patterns	native	no text test	p(a) :- s(a), (match("a", a) ; match("B", a)).
-text test match: a bound pattern	native	no text test	p(a, b) :- s(a), t(b), match(b, a).
+text test glob: a constant pattern	native	device	p(a) :- s(a), glob("a", a).
+text test glob: negated	native	device	p(a) :- s(a), !glob("a", a).
+text test glob: a set of patterns	native	device	p(a) :- s(a), (glob("a", a) ; glob("B", a)).
+text test glob: a bound pattern	native	refused: the text test @glob of a pattern that is not a constant has no device form	p(a, b) :- s(a), t(b), glob(b, a).
+text test iglob: a constant pattern	native	device	p(a) :- s(a), iglob("a", a).
+text test iglob: negated	native	device	p(a) :- s(a), !iglob("a", a).
+text test iglob: a set of patterns	native	device	p(a) :- s(a), (iglob("a", a) ; iglob("B", a)).
+text test iglob: a bound pattern	native	refused: the text test @iglob of a pattern that is not a constant has no device form	p(a, b) :- s(a), t(b), iglob(b, a).
+text test prefix: a constant pattern	native	device	p(a) :- s(a), prefix("a", a).
+text test prefix: negated	native	device	p(a) :- s(a), !prefix("a", a).
+text test prefix: a set of patterns	native	device	p(a) :- s(a), (prefix("a", a) ; prefix("B", a)).
+text test prefix: a bound pattern	native	refused: the text test @prefix of a pattern that is not a constant has no device form	p(a, b) :- s(a), t(b), prefix(b, a).
+text test iprefix: a constant pattern	native	device	p(a) :- s(a), iprefix("a", a).
+text test iprefix: negated	native	device	p(a) :- s(a), !iprefix("a", a).
+text test iprefix: a set of patterns	native	device	p(a) :- s(a), (iprefix("a", a) ; iprefix("B", a)).
+text test iprefix: a bound pattern	native	refused: the text test @iprefix of a pattern that is not a constant has no device form	p(a, b) :- s(a), t(b), iprefix(b, a).
+text test suffix: a constant pattern	native	device	p(a) :- s(a), suffix("a", a).
+text test suffix: negated	native	device	p(a) :- s(a), !suffix("a", a).
+text test suffix: a set of patterns	native	device	p(a) :- s(a), (suffix("a", a) ; suffix("B", a)).
+text test suffix: a bound pattern	native	refused: the text test @suffix of a pattern that is not a constant has no device form	p(a, b) :- s(a), t(b), suffix(b, a).
+text test isuffix: a constant pattern	native	device	p(a) :- s(a), isuffix("a", a).
+text test isuffix: negated	native	device	p(a) :- s(a), !isuffix("a", a).
+text test isuffix: a set of patterns	native	device	p(a) :- s(a), (isuffix("a", a) ; isuffix("B", a)).
+text test isuffix: a bound pattern	native	refused: the text test @isuffix of a pattern that is not a constant has no device form	p(a, b) :- s(a), t(b), isuffix(b, a).
+text test contains: a constant pattern	native	device	p(a) :- s(a), contains("a", a).
+text test contains: negated	native	device	p(a) :- s(a), !contains("a", a).
+text test contains: a set of patterns	native	device	p(a) :- s(a), (contains("a", a) ; contains("B", a)).
+text test contains: a bound pattern	native	refused: the text test @contains of a pattern that is not a constant has no device form	p(a, b) :- s(a), t(b), contains(b, a).
+text test icontains: a constant pattern	native	device	p(a) :- s(a), icontains("a", a).
+text test icontains: negated	native	device	p(a) :- s(a), !icontains("a", a).
+text test icontains: a set of patterns	native	device	p(a) :- s(a), (icontains("a", a) ; icontains("B", a)).
+text test icontains: a bound pattern	native	refused: the text test @icontains of a pattern that is not a constant has no device form	p(a, b) :- s(a), t(b), icontains(b, a).
+text test word: a constant pattern	native	device	p(a) :- s(a), word("a", a).
+text test word: negated	native	device	p(a) :- s(a), !word("a", a).
+text test word: a set of patterns	native	device	p(a) :- s(a), (word("a", a) ; word("B", a)).
+text test word: a bound pattern	native	refused: the text test @word of a pattern that is not a constant has no device form	p(a, b) :- s(a), t(b), word(b, a).
+text test iword: a constant pattern	native	device	p(a) :- s(a), iword("a", a).
+text test iword: negated	native	device	p(a) :- s(a), !iword("a", a).
+text test iword: a set of patterns	native	device	p(a) :- s(a), (iword("a", a) ; iword("B", a)).
+text test iword: a bound pattern	native	refused: the text test @iword of a pattern that is not a constant has no device form	p(a, b) :- s(a), t(b), iword(b, a).
+text test match: a constant pattern	native	device	p(a) :- s(a), match("a", a).
+text test match: negated	native	device	p(a) :- s(a), !match("a", a).
+text test match: a set of patterns	native	device	p(a) :- s(a), (match("a", a) ; match("B", a)).
+text test match: a bound pattern	native	refused: the function str_concat has no device form	p(a, b) :- s(a), t(b), match(b, a).
 aggregate count	native	device	p(a, c) :- s(a), c = count : { p(a, _) }.
 aggregate sum	native	device	p(a, c) :- s(a), c = sum v : { p(a, v) }.
 aggregate min	native	device	p(a, c) :- t(a), c = min v : { p(a, v) }.
 aggregate max	native	device	p(a, c) :- t(a), c = max v : { p(a, v) }.
 aggregate product	sqlite: aggregate product (the native engine declined: rule #0000: $c = product $v : { p($a, $v) } has no native step)	not native	p(a, c) :- s(a), c = product v : { p(a, v) }.
 aggregate join	native	no string join	p(a, c) :- t(a), c = join b by b sep ", " : { q(a, b) }.
-membership of a constant set	native	no text test	p(a) :- s(a), (a = "alpha" ; a = "x_1").
+membership of a constant set	native	device	p(a) :- s(a), (a = "alpha" ; a = "x_1").
 lattice relation (shortest)	sqlite: a lattice relation (the native engine declined: a lattice relation: the native set engine holds sets only)	not native	p(x, 0) :- n(x), x = 1. p(y, d + 1) :- p(x, d), e(x, y).
 aggregate count = 0 (a negation)	native	device	p(a) :- s(a), count : { p(a, _) } = 0.
 aggregate over two atoms' bag	native	device	p(a, c) :- t(a), c = count : { q(a, _) }.

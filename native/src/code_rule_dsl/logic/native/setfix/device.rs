@@ -28,7 +28,7 @@
 //! is dropped by the store's own set), and each step's observed counts (the bindings that entered it and that it
 //! passed on) are the CPU's, so the replanner sees the same fanouts.
 
-use super::{InRel, JoinRule, Key, Src, Step, Store, Term, Fresh, is_dead, rowcode, thread_cpu};
+use super::{InRel, Interner, JoinRule, Key, Src, Step, Store, Term, Fresh, is_dead, rowcode, thread_cpu};
 use crate::code_rule_dsl::transducer::packed::metal_join as mj;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -64,6 +64,9 @@ enum Kind {
     /// An atom over the component's own relation `rel` (recursion, `fixpoint`): its last round's new rows
     /// (`delta`) or all of them, kept on the device by the rounds (`Own`).
     Own { rel: usize, delta: bool, cols: Vec<usize> },
+    /// A text test of a slot bound from column `col` of `rel`: the verdicts of `table` (keyed `key`) for the
+    /// column's distinct symbols, made on the device and kept with the relation.
+    Text { rel: Arc<InRel>, col: usize, table: Arc<crate::code_rule_dsl::text::table::Table>, key: String },
 }
 
 #[derive(Clone)]
@@ -204,6 +207,8 @@ fn readable(rel: &InRel, keys: usize) -> Result<(), String> {
 /// `j`'s device plan, or the step the device cannot run.
 pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
     let mut bound = vec![false; j.nslots];
+    // Where each slot's value came from: a column of an input relation (a text test's terms are its symbols).
+    let mut origin: Vec<Option<(Arc<InRel>, usize)>> = vec![None; j.nslots];
     let mut stages = Vec::new();
     let mut i = 0;
     while i < j.steps.len() {
@@ -258,6 +263,14 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
                             bound[s] = true;
                         }
                         d.nbinds = atom_binds.len() as u32;
+                    }
+                }
+                if !*neg {
+                    for &(c, s) in atom_binds.iter() {
+                        if s >= origin.len() {
+                            origin.resize(s + 1, None);
+                        }
+                        origin[s] = match src { Src::In(rel, _) => Some((rel.clone(), c)), _ => None };
                     }
                 }
                 let cols = keys.iter().map(|&(c, _)| c).collect();
@@ -319,6 +332,21 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
                 stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
                 i += 1;
             }
+            Step::Test { op, s, matcher, want, .. } => {
+                // A text test with constant patterns, of a slot an input relation's column bound: its verdicts per
+                // distinct symbol of the column, made on the device by the test's automaton (`text::table`).
+                let Some(m) = matcher else { return Err(format!("the text test @{op} of a pattern that is not a constant has no device form")) };
+                let Key::Slot(x) = *s else { return Err(format!("the text test @{op} of a constant has no device form")) };
+                let Some((rel, col)) = origin.get(x).cloned().flatten() else {
+                    return Err(format!("the text test @{op} of a slot no input relation's column bound has no device form"));
+                };
+                let table = crate::code_rule_dsl::text::table::table(&m.plans).map_err(|e| format!("the text test @{op} has no device form: {e}"))?;
+                let key = m.plans.iter().map(|p| p.key.0.as_str()).collect::<Vec<_>>().join(",");
+                let mut d = mj::Stage { mode: mj::TEXT, ..mj::Stage::default() };
+                d.agg = [x as u32, u32::from(*want)];
+                stages.push(PStage { first: i, span: 1, kind: Kind::Text { rel, col, table, key }, desc: d, npassed: 0 });
+                i += 1;
+            }
             Step::Let { .. } | Step::DocOf { bind: true, .. } => {
                 // Consecutive binds of slots: one map, each bind reading the slots as the ones before it left them.
                 let mut d = mj::Stage::default();
@@ -349,6 +377,10 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
                         }
                     }
                     bound[out] = true;
+                    if out >= origin.len() {
+                        origin.resize(out + 1, None);
+                    }
+                    origin[out] = match (doc, src) { (false, Key::Slot(x)) => origin.get(x).cloned().flatten(), _ => None };
                     n += 1;
                 }
                 d.nbinds = n as u32;
@@ -439,6 +471,9 @@ struct Entry {
     rel: Weak<InRel>,
     dev: Rc<mj::DevRel>,
     indexes: Vec<(Vec<usize>, Rc<mj::DevIndex>)>,
+    /// Per column a text test read, its distinct symbols' names; per (column, test), the test's verdicts.
+    texts: Vec<(usize, Rc<mj::DevText>)>,
+    verdicts: Vec<((usize, String), Rc<mj::DevRel>)>,
     bytes: usize,
     used: u64,
 }
@@ -586,7 +621,7 @@ fn resident(rel: &Arc<InRel>, cols: &[usize], batch: &mut mj::Batch, rep: &mut R
                 rep.upload_bytes += dev.bytes() as u64;
                 rep.upload_cpu += thread_cpu() - c0;
                 let bytes = dev.bytes();
-                res.entries.push(Entry { rel: weak, dev: Rc::new(dev), indexes: Vec::new(), bytes, used: clock });
+                res.entries.push(Entry { rel: weak, dev: Rc::new(dev), indexes: Vec::new(), texts: Vec::new(), verdicts: Vec::new(), bytes, used: clock });
                 res.bytes += bytes;
                 res.entries.len() - 1
             }
@@ -609,6 +644,56 @@ fn resident(rel: &Arc<InRel>, cols: &[usize], batch: &mut mj::Batch, rep: &mut R
     })
 }
 
+/// The verdicts of text test `table` (keyed `key`) for the distinct symbols of column `col` of `rel`: a bitset by
+/// symbol, 64 a row, made on the device (`Batch::verdicts`) the first time a stage asks and kept with the relation.
+/// The column's symbols' names are copied to the device once (the host evaluates nothing).
+fn verdicts(rel: &Arc<InRel>, col: usize, table: &Arc<crate::code_rule_dsl::text::table::Table>, key: &str, batch: &mut mj::Batch, rep: &mut Report, names: &Interner)
+    -> Result<Rc<mj::DevRel>, String> {
+    // The relation resident first (its entry holds the verdicts).
+    resident(rel, &[], batch, rep)?;
+    RESIDENT.with_borrow_mut(|res| {
+        let weak = Arc::downgrade(rel);
+        let e = res.entries.iter_mut().find(|e| Weak::ptr_eq(&e.rel, &weak)).expect("the relation made resident");
+        if let Some((_, v)) = e.verdicts.iter().find(|((c, k), _)| *c == col && k == key) {
+            rep.sort_hits += 1;
+            return Ok(v.clone());
+        }
+        let text = match e.texts.iter().find(|(c, _)| *c == col) {
+            Some((_, t)) => t.clone(),
+            None => {
+                let c0 = thread_cpu();
+                let mut seen = std::collections::HashSet::new();
+                let mut ids = Vec::new();
+                for id in 0..rel.len() {
+                    if is_dead(&rel.dead, id as u32) {
+                        continue;
+                    }
+                    let v = if rel.view.is_none() { rel.row(id)[col] } else { rel.at(id).read().at(col) };
+                    if seen.insert(v) {
+                        ids.push(v);
+                    }
+                }
+                let t = Rc::new(mj::DevText::upload(&ids, |v, out| out.extend_from_slice(names.name(v).as_bytes())).map_err(|e| format!("{e:?}: the names of {} symbols", ids.len()))?);
+                rep.uploads += 1;
+                rep.upload_bytes += t.bytes() as u64;
+                rep.upload_cpu += thread_cpu() - c0;
+                e.bytes += t.bytes();
+                e.texts.push((col, t.clone()));
+                t
+            }
+        };
+        let dt = mj::DevTable::upload(table).map_err(|e| format!("{e:?}"))?;
+        let words = text.span.div_ceil(64).max(1);
+        let bits = Rc::new(mj::DevRel::upload(1, words, |v| v.fill(0)).map_err(|e| format!("{e:?}: verdicts of {} symbols", text.span))?);
+        batch.verdicts(&text, &dt, &bits).map_err(|e| format!("{e:?}"))?;
+        batch.hold_table(dt);
+        rep.sorts += 1;
+        e.bytes += bits.bytes();
+        e.verdicts.push(((col, key.to_owned()), bits.clone()));
+        Ok(bits)
+    })
+}
+
 impl<'p> Run<'p> {
     fn new(plan: &'p Plan) -> Result<Run<'p>, String> {
         let mut io = Vec::new();
@@ -618,7 +703,7 @@ impl<'p> Run<'p> {
         for s in &plan.stages {
             match s.kind {
                 Kind::Pass | Kind::Map => io.push((slot, slot)),
-                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } => {
+                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Text { .. } => {
                     io.push((slot, slot + 1));
                     slot += 1;
                 }
@@ -671,7 +756,7 @@ impl<'p> Run<'p> {
     }
 
     /// Encodes stages `from..` into `batch`; the component's own relations are `own`'s.
-    fn encode(&mut self, from: usize, batch: &mut mj::Batch, rep: &mut Report, own: &mut Own) -> Result<(), String> {
+    fn encode(&mut self, from: usize, batch: &mut mj::Batch, rep: &mut Report, own: &mut Own, names: &Interner) -> Result<(), String> {
         for k in from..self.plan.stages.len() {
             let s = &self.plan.stages[k];
             let (i, o) = self.io[k];
@@ -681,9 +766,10 @@ impl<'p> Run<'p> {
                     let t = self.tables[i].as_ref().expect("the map's table");
                     batch.map(s.desc, t, i, &self.totals).map_err(|e| format!("{e:?}"))?;
                 }
-                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } => {
+                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Text { .. } => {
                     match (&s.kind, &self.rels[k]) {
                         (Kind::Atom { rel, cols }, None) => self.rels[k] = Some(resident(rel, cols, batch, rep)?),
+                        (Kind::Text { rel, col, table, key }, None) => self.rels[k] = Some((verdicts(rel, *col, table, key, batch, rep, names)?, None)),
                         (Kind::Own { rel, delta, cols }, None) => {
                             self.rels[k] = Some(own.get(*rel, *delta, cols, batch, rep)?.ok_or("an own relation with no rows")?);
                         }
@@ -747,8 +833,8 @@ impl<'p> Run<'p> {
 /// Runs the seed joins `rules` (each: its plan, its rule, its head relation) on the device, their head rows into
 /// `fresh` as the CPU's run would add them. Returns each rule's head rows (before the store's set). The rules go in
 /// as few submissions as their tables' space allows (`BATCH_MAX`): one, for most strata.
-pub(super) fn run(rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
-    on_lane("stratum joins", rules.len(), || run_here(rules, store, fresh))
+pub(super) fn run(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+    on_lane("stratum joins", rules.len(), || run_here(rules, store, names, fresh))
 }
 
 /// `f`, a stratum's work on the device, as one job of the Metal binding's GPU lane (`Executor::inline`): its
@@ -764,7 +850,7 @@ fn on_lane<R>(form: &'static str, rules: usize, f: impl FnOnce() -> Result<R, St
     })
 }
 
-fn run_here(rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+fn run_here(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device joins".into());
     let c0 = thread_cpu();
     let mut rep = Report { rules: rules.len() as u32, stages: rules.iter().map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
@@ -772,7 +858,7 @@ fn run_here(rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &mut [Fre
     let mut from = 0;
     let mut cleared = false;
     while from < rules.len() {
-        match group(&rules[from..], store, fresh, &mut rep) {
+        match group(&rules[from..], store, names, fresh, &mut rep) {
             Ok(rows) => {
                 from += rows.len();
                 out.extend(rows);
@@ -798,7 +884,7 @@ fn run_here(rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &mut [Fre
 }
 
 /// The first rules of `rules` that fit one submission's space, run: their head rows as `run`'s.
-fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &mut [Fresh], rep: &mut Report) -> Result<Vec<u64>, String> {
+fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh], rep: &mut Report) -> Result<Vec<u64>, String> {
     let mut batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
     let mut runs: Vec<Run<'_>> = Vec::with_capacity(rules.len());
     {
@@ -809,7 +895,7 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &mut [Fresh]
                 break;
             }
             let mut r = Run::new(plan)?;
-            r.encode(0, &mut batch, rep, &mut Own::default())?;
+            r.encode(0, &mut batch, rep, &mut Own::default(), names)?;
             bytes += r.bytes();
             runs.push(r);
         }
@@ -847,7 +933,7 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &mut [Fresh]
         rep.reruns += again.len() as u32;
         pending = again.iter().map(|&(k, _)| k).collect();
         for (k, s) in again {
-            runs[k].encode(s, &mut batch, rep, &mut Own::default())?;
+            runs[k].encode(s, &mut batch, rep, &mut Own::default(), names)?;
         }
     }
     // The rows into the store, and each step's counts.
@@ -935,7 +1021,7 @@ pub(super) fn reads_own(plan: &Plan) -> bool {
 
 /// One round's rules run in one batch: each one's head rows made distinct on the device, with their count. A rule
 /// over an own relation with no rows is not run (`None`).
-fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, rep: &mut Report) -> Result<Vec<Option<(Run<'p>, usize)>>, String> {
+fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Interner, rep: &mut Report) -> Result<Vec<Option<(Run<'p>, usize)>>, String> {
     let mut batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
     let mut runs: Vec<Option<Run<'p>>> = Vec::with_capacity(rules.len());
     for (plan, _, _) in rules {
@@ -944,7 +1030,7 @@ fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, rep: &mut Re
             continue;
         }
         let mut r = Run::new(plan)?;
-        r.encode(0, &mut batch, rep, own)?;
+        r.encode(0, &mut batch, rep, own, names)?;
         runs.push(Some(r));
     }
     let mut pending: Vec<usize> = (0..runs.len()).filter(|&k| runs[k].is_some()).collect();
@@ -980,7 +1066,7 @@ fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, rep: &mut Re
         rep.reruns += again.len() as u32;
         pending = again.iter().map(|&(k, _)| k).collect();
         for (k, s) in again {
-            runs[k].as_mut().expect("a run").encode(s, &mut batch, rep, own)?;
+            runs[k].as_mut().expect("a run").encode(s, &mut batch, rep, own, names)?;
         }
     }
     let mut out = Vec::with_capacity(runs.len());
@@ -1001,11 +1087,11 @@ fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, rep: &mut Re
 /// none. Each relation's rows stay on the device between rounds; the host reads one count per relation a round, and
 /// the new rows once, at the end, into `fresh` as the CPU's waves would add them. `heads` are the component's
 /// relations, which must be empty when it starts. Returns each rule's rows made, seeds then deltas.
-pub(super) fn fixpoint(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
-    on_lane("stratum rounds", seeds.len() + deltas.len(), || fixpoint_here(seeds, deltas, heads, store, fresh))
+pub(super) fn fixpoint(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+    on_lane("stratum rounds", seeds.len() + deltas.len(), || fixpoint_here(seeds, deltas, heads, store, names, fresh))
 }
 
-fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device fixpoint".into());
     let c0 = thread_cpu();
     let mut rep = Report { rules: (seeds.len() + deltas.len()) as u32, stages: seeds.iter().chain(deltas).map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
@@ -1028,7 +1114,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             return Err(format!("a recursive component past {ROUNDS_MAX} rounds"));
         }
         let (rules, base) = if first { (seeds, 0) } else { (deltas, seeds.len()) };
-        let ran = round(rules, &mut own, &mut rep)?;
+        let ran = round(rules, &mut own, names, &mut rep)?;
         first = false;
         // Each head's rows this round, from every rule that made some, into one union; made distinct; less the
         // relation's rows: its new rows.
@@ -1334,5 +1420,66 @@ mod tests {
         assert!(got[0].len() > 1000, "{} rows", got[0].len());
         assert_eq!(got[0], got[1], "the device's fixpoint is the CPU's");
         assert!(gpu_jobs() > jobs0, "the device's rounds are a job on the GPU lane's scoreboard");
+    }
+
+    /// Text tests on the device: each test's verdicts per distinct symbol made by its automaton, the same rows as
+    /// the CPU's matcher gives (names past one chunk of 32 bytes among them).
+    #[test]
+    fn text_tests_on_the_device_are_the_cpus() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::prefilter::tests::temp();
+        drop(crate::code_rule_dsl::prefilter::tests::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        let mut x = 5u64;
+        let mut next = |m: u64| {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (x >> 33) % m
+        };
+        let parts = ["foo", "bar", "Src", "src/lib", "test", "_", ".ts", "αβ", "x9", "TODO", "a_b", "/"];
+        db.execute_batch("CREATE TEMP TABLE n (c0, c1);").unwrap();
+        for k in 0..2000 {
+            let len = 1 + next(if k % 50 == 0 { 30 } else { 5 });
+            let name: String = (0..len).map(|_| parts[next(parts.len() as u64) as usize]).collect();
+            db.execute("INSERT INTO n VALUES (?1, ?2)", rusqlite::params![name, k]).unwrap();
+        }
+        let n = format!("t:x:{}:{}:si", hex("temp.n"), hex("c0, c1"));
+        let sym = |t: &str| format!("x:{}", hex(t));
+        let rules = [
+            format!("pos {n} v0 v1\ntest prefix v0 {} 1\nhead v0 v1", sym("foo")),
+            format!("pos {n} v0 v1\ntest contains v0 {} 0\nhead v0 v1", sym("_b")),
+            format!("pos {n} v0 v1\ntest rx v0 {} 1\nhead v0 v1", sym("^[a-z]+_[a-z]+[0-9]*$")),
+            format!("pos {n} v0 v1\ntestset suffix v0 1 {} {}\nhead v0 v1", sym(".ts"), sym("bar")),
+            format!("pos {n} v0 v1\neq v2 v0\ntest iprefix v2 {} 1\nhead v0 v1", sym("SRC")),
+            format!("pos {n} v0 v1\ntest glob v0 {} 1\nhead v0 v1", sym("src/lib*.ts")),
+            format!("pos {n} v0 v1\ntest contains v0 {} 1\ntest suffix v0 {} 0\nhead v0 v1", sym("αβ"), sym("x9")),
+        ];
+        let mut got = Vec::new();
+        for device in [false, true] {
+            db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+            let mut spec = vec!["name dev_text".to_owned()];
+            if device {
+                spec.push("device".into());
+            }
+            spec.push("rel h0 si empty".into());
+            spec.extend(rules.iter().map(|r| format!("seed 0 {}", hex(r))));
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, "dev_text", 0).unwrap();
+            let report = super::take_report();
+            assert_eq!(report.as_ref().is_some_and(|r| r.refused.is_none()), device, "{report:?}");
+            let counts = super::super::step_counts(&db, "dev_text").unwrap();
+            super::super::close(&db, "dev_text").unwrap();
+            let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+            rows.sort_unstable();
+            got.push((rows, counts));
+        }
+        assert!(got[0].0.len() > 500, "{} rows", got[0].0.len());
+        let longest: i64 = db.query_row("SELECT max(length(CAST(c0 AS BLOB))) FROM temp.n", [], |r| r.get(0)).unwrap();
+        assert!(longest > 64, "a name past two chunks: {longest} bytes");
+        assert_eq!(got[0].0, got[1].0, "the device's text tests are the CPU's");
+        assert_eq!(got[0].1, got[1].1, "the device's counts per step are the CPU's");
     }
 }

@@ -5,10 +5,7 @@
 346	cmp !=: computed symbol	not on the device: no computed term	python 79, lib 76, javascript 37, typescript 35, data-layer 33, data-layer (engine) 18, vue 16, engine 15, node 9, react 7, next 6, sql 5, php 3, rust 3, blade 2, rule-syntax 1, typing 1
 307	cmp <: computed symbol	not on the device: no computed term	python 82, lib 76, javascript 36, typescript 31, data-layer 26, data-layer (engine) 18, vue 9, node 6, react 6, engine 5, next 4, php 4, rust 4
 295	cmp >: computed symbol	not on the device: no computed term	python 76, lib 66, javascript 41, data-layer 28, typescript 27, data-layer (engine) 16, vue 10, node 7, engine 6, react 6, next 4, php 3, rust 3, sql 1, typing 1
-235	text test match: a bound pattern	not on the device: no text test	lib 63, python 50, data-layer 30, javascript 30, typescript 18, next 8, node 6, react 6, vue 6, php 4, sql 4, engine 3, blade 2, rule-syntax 2, rust 2, rr 1
-235	text test match: a constant pattern	not on the device: no text test	lib 63, python 50, data-layer 30, javascript 30, typescript 18, next 8, node 6, react 6, vue 6, php 4, sql 4, engine 3, blade 2, rule-syntax 2, rust 2, rr 1
-235	text test match: a set of patterns	not on the device: no text test	lib 63, python 50, data-layer 30, javascript 30, typescript 18, next 8, node 6, react 6, vue 6, php 4, sql 4, engine 3, blade 2, rule-syntax 2, rust 2, rr 1
-235	text test match: negated	not on the device: no text test	lib 63, python 50, data-layer 30, javascript 30, typescript 18, next 8, node 6, react 6, vue 6, php 4, sql 4, engine 3, blade 2, rule-syntax 2, rust 2, rr 1
+235	text test match: a bound pattern	not on the device: refused: the function str_concat has no device form	lib 63, python 50, data-layer 30, javascript 30, typescript 18, next 8, node 6, react 6, vue 6, php 4, sql 4, engine 3, blade 2, rule-syntax 2, rust 2, rr 1
 229	cmp <=: computed symbol	not on the device: no computed term	lib 56, python 46, javascript 32, typescript 28, data-layer 22, data-layer (engine) 14, vue 9, node 6, react 6, engine 4, next 3, php 2, rust 1
 216	cmp >=: computed symbol	not on the device: no computed term	lib 51, python 46, javascript 32, typescript 26, data-layer 22, data-layer (engine) 12, vue 9, node 6, react 5, next 3, php 2, engine 1, rust 1
 194	builtin cat/2	not on the device: no computed term	lib 45, python 36, javascript 29, typescript 26, data-layer 22, data-layer (engine) 9, vue 9, node 6, react 5, next 3, php 2, engine 1, rust 1
@@ -17,27 +14,15 @@
 183	cmp <: symbols	not on the device: no computed term	lib 54, python 54, data-layer (engine) 16, data-layer 15, javascript 13, typescript 13, engine 5, php 4, rust 4, next 2, vue 2, react 1
 158	cmp >: symbol and constant	not on the device: no computed term	python 45, lib 41, data-layer 18, javascript 16, data-layer (engine) 14, engine 6, typescript 5, rust 3, next 2, php 2, vue 2, node 1, react 1, sql 1, typing 1
 158	cmp >: symbols	not on the device: no computed term	python 45, lib 41, data-layer 18, javascript 16, data-layer (engine) 14, engine 6, typescript 5, rust 3, next 2, php 2, vue 2, node 1, react 1, sql 1, typing 1
-101	text test prefix: a bound pattern	not on the device: no text test	lib 35, data-layer 24, python 18, next 6, engine 4, javascript 4, rust 3, node 2, typescript 2, blade 1, php 1, react 1
-101	text test prefix: a constant pattern	not on the device: no text test	lib 35, data-layer 24, python 18, next 6, engine 4, javascript 4, rust 3, node 2, typescript 2, blade 1, php 1, react 1
-101	text test prefix: a set of patterns	not on the device: no text test	lib 35, data-layer 24, python 18, next 6, engine 4, javascript 4, rust 3, node 2, typescript 2, blade 1, php 1, react 1
-101	text test prefix: negated	not on the device: no text test	lib 35, data-layer 24, python 18, next 6, engine 4, javascript 4, rust 3, node 2, typescript 2, blade 1, php 1, react 1
-77	text test contains: a bound pattern	not on the device: no text test	data-layer 25, lib 25, python 11, next 3, rust 3, sql 3, engine 2, vue 2, node 1, react 1, typescript 1
-77	text test contains: a constant pattern	not on the device: no text test	data-layer 25, lib 25, python 11, next 3, rust 3, sql 3, engine 2, vue 2, node 1, react 1, typescript 1
-77	text test contains: a set of patterns	not on the device: no text test	data-layer 25, lib 25, python 11, next 3, rust 3, sql 3, engine 2, vue 2, node 1, react 1, typescript 1
-77	text test contains: negated	not on the device: no text test	data-layer 25, lib 25, python 11, next 3, rust 3, sql 3, engine 2, vue 2, node 1, react 1, typescript 1
+101	text test prefix: a bound pattern	not on the device: refused: the text test @prefix of a pattern that is not a constant has no device form	lib 35, data-layer 24, python 18, next 6, engine 4, javascript 4, rust 3, node 2, typescript 2, blade 1, php 1, react 1
+77	text test contains: a bound pattern	not on the device: refused: the text test @contains of a pattern that is not a constant has no device form	data-layer 25, lib 25, python 11, next 3, rust 3, sql 3, engine 2, vue 2, node 1, react 1, typescript 1
 72	function @replace_all/3	not on the device: no computed term	lib 27, python 13, javascript 9, data-layer 6, typescript 5, react 3, engine 2, next 2, node 2, rust 1, sql 1, vue 1
 72	functor @replace_all/3	not on the device: no computed term	lib 27, python 13, javascript 9, data-layer 6, typescript 5, react 3, engine 2, next 2, node 2, rust 1, sql 1, vue 1
 66	cmp <=: symbol and constant	not on the device: no computed term	lib 17, python 15, data-layer (engine) 10, javascript 8, data-layer 5, engine 4, typescript 4, next 1, react 1, rust 1
 66	cmp <=: symbols	not on the device: no computed term	lib 17, python 15, data-layer (engine) 10, javascript 8, data-layer 5, engine 4, typescript 4, next 1, react 1, rust 1
-61	text test suffix: a bound pattern	not on the device: no text test	data-layer 22, lib 22, python 8, javascript 4, engine 2, node 2, typescript 1
-61	text test suffix: a constant pattern	not on the device: no text test	data-layer 22, lib 22, python 8, javascript 4, engine 2, node 2, typescript 1
-61	text test suffix: a set of patterns	not on the device: no text test	data-layer 22, lib 22, python 8, javascript 4, engine 2, node 2, typescript 1
-61	text test suffix: negated	not on the device: no text test	data-layer 22, lib 22, python 8, javascript 4, engine 2, node 2, typescript 1
+61	text test suffix: a bound pattern	not on the device: refused: the text test @suffix of a pattern that is not a constant has no device form	data-layer 22, lib 22, python 8, javascript 4, engine 2, node 2, typescript 1
 58	builtin strlen/1	not on the device: no computed term	lib 26, python 13, javascript 6, typescript 5, next 3, rust 2, data-layer 1, engine 1, vue 1
-56	text test glob: a bound pattern	not on the device: no text test	data-layer 23, lib 14, rust 4, next 3, react 3, javascript 2, python 2, sql 2, data-layer (engine) 1, php 1, rule-syntax 1
-56	text test glob: a constant pattern	not on the device: no text test	data-layer 23, lib 14, rust 4, next 3, react 3, javascript 2, python 2, sql 2, data-layer (engine) 1, php 1, rule-syntax 1
-56	text test glob: a set of patterns	not on the device: no text test	data-layer 23, lib 14, rust 4, next 3, react 3, javascript 2, python 2, sql 2, data-layer (engine) 1, php 1, rule-syntax 1
-56	text test glob: negated	not on the device: no text test	data-layer 23, lib 14, rust 4, next 3, react 3, javascript 2, python 2, sql 2, data-layer (engine) 1, php 1, rule-syntax 1
+56	text test glob: a bound pattern	not on the device: refused: the text test @glob of a pattern that is not a constant has no device form	data-layer 23, lib 14, rust 4, next 3, react 3, javascript 2, python 2, sql 2, data-layer (engine) 1, php 1, rule-syntax 1
 51	functor @dot/2	not on the device: no computed term	lib 20, engine 15, data-layer 8, data-layer (engine) 3, python 3, rule-syntax 1, typing 1
 42	function @lower/1	not on the device: no computed term	lib 12, data-layer (engine) 7, sql 5, javascript 4, react 4, vue 4, python 3, data-layer 1, php 1, typescript 1
 40	cmp >=: symbol and constant	not on the device: no computed term	lib 12, python 10, data-layer (engine) 7, data-layer 4, javascript 4, typescript 2, vue 1
@@ -49,18 +34,12 @@
 22	function @slice/3	not on the device: no computed term	lib 7, javascript 5, python 4, next 3, typescript 2, data-layer 1
 20	builtin to_string/1	not on the device: no computed term	data-layer 6, lib 6, javascript 2, typescript 2, engine 1, php 1, python 1, vue 1
 18	shipped functor @rx_matches/2	not native: sqlite: function @rx (the native engine declined: rule #0000: $v = @rx($a, $b) has no native step)	data-layer (engine) 18
-13	text test iglob: a bound pattern	not on the device: no text test	sql 4, data-layer 3, lib 3, php 3
-13	text test iglob: a constant pattern	not on the device: no text test	sql 4, data-layer 3, lib 3, php 3
-13	text test iglob: a set of patterns	not on the device: no text test	sql 4, data-layer 3, lib 3, php 3
-13	text test iglob: negated	not on the device: no text test	sql 4, data-layer 3, lib 3, php 3
+13	text test iglob: a bound pattern	not on the device: refused: the text test @iglob of a pattern that is not a constant has no device form	sql 4, data-layer 3, lib 3, php 3
 10	shipped functor @trim/1	not on the device: no computed term	data-layer (engine) 10
 10	shipped functor @trim/2	not on the device: no computed term	data-layer (engine) 10
 9	function @head/1	not on the device: no computed term	python 4, lib 3, data-layer 1, engine 1
 9	shipped functor @instr/2	not on the device: no computed term	data-layer (engine) 9
-9	text test icontains: a bound pattern	not on the device: no text test	data-layer 7, lib 2
-9	text test icontains: a constant pattern	not on the device: no text test	data-layer 7, lib 2
-9	text test icontains: a set of patterns	not on the device: no text test	data-layer 7, lib 2
-9	text test icontains: negated	not on the device: no text test	data-layer 7, lib 2
+9	text test icontains: a bound pattern	not on the device: refused: the text test @icontains of a pattern that is not a constant has no device form	data-layer 7, lib 2
 8	function @rx_extract/3	not on the device: no computed term	data-layer (engine) 8
 7	arithmetic of floats	not on the device: no computed term	lib 3, python 2, javascript 1, typescript 1
 7	function @count_matches/2	not on the device: no computed term	lib 3, data-layer 2, python 2
@@ -92,10 +71,7 @@
 2	shipped functor @drop_components/2	not native: sqlite: error: no SQL for @drop_components($a, $b)	data-layer (engine) 2
 2	shipped functor @join_nonempty/4	not native: sqlite: error: no SQL for @join_nonempty($a, $b, $c, $a)	data-layer (engine) 2
 2	shipped functor @ltrim/2	not on the device: no computed term	data-layer (engine) 2
-2	text test iprefix: a bound pattern	not on the device: no text test	javascript 1, react 1
-2	text test iprefix: a constant pattern	not on the device: no text test	javascript 1, react 1
-2	text test iprefix: a set of patterns	not on the device: no text test	javascript 1, react 1
-2	text test iprefix: negated	not on the device: no text test	javascript 1, react 1
+2	text test iprefix: a bound pattern	not on the device: refused: the text test @iprefix of a pattern that is not a constant has no device form	javascript 1, react 1
 1	aggregate product	not native: sqlite: aggregate product (the native engine declined: rule #0000: $c = product $v : { p($a, $v) } has no native step)	lib 1
 1	function @convert/3	not on the device: no computed term	vue 1
 1	function @glob_sub/3	not on the device: no computed term	lib 1
@@ -108,7 +84,4 @@
 1	shipped functor @qualname/1	not native: sqlite: error: no SQL for @qualname($a)	data-layer (engine) 1
 1	shipped functor @substr_bytes/3	not on the device: no computed term	data-layer (engine) 1
 1	shipped functor @upper/1	not on the device: no computed term	data-layer (engine) 1
-1	text test isuffix: a bound pattern	not on the device: no text test	python 1
-1	text test isuffix: a constant pattern	not on the device: no text test	python 1
-1	text test isuffix: a set of patterns	not on the device: no text test	python 1
-1	text test isuffix: negated	not on the device: no text test	python 1
+1	text test isuffix: a bound pattern	not on the device: refused: the text test @isuffix of a pattern that is not a constant has no device form	python 1

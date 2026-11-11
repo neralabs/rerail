@@ -64,6 +64,9 @@ pub(in crate::code_rule_dsl) const AGG_COUNT: u32 = 0;
 pub(in crate::code_rule_dsl) const AGG_SUM: u32 = 1;
 pub(in crate::code_rule_dsl) const AGG_MIN: u32 = 2;
 pub(in crate::code_rule_dsl) const AGG_MAX: u32 = 3;
+/// A text test of a slot (`Stage::agg`: `[slot, want]`): a binding passes when its symbol's verdict bit (the right
+/// relation, a bitset of 64 bits a row, by symbol) is `want`.
+pub(in crate::code_rule_dsl) const TEXT: u32 = 5;
 
 /// A program column's or a bind's source: a candidate's column, or the binding's slot.
 pub(in crate::code_rule_dsl) const RIGHT: u32 = 0;
@@ -338,6 +341,13 @@ static inline uint aggregate(constant Stage& s, device const long* L, uint t, de
     return 0;
 }
 
+// Whether binding t's symbol in slot agg[0] has its verdict bit (mode 5), as agg[1] wants.
+static inline bool text_pass(constant Stage& s, device const long* L, uint t, device const long* R) {
+    long v = L[ulong(s.agg[0]) * s.cap_in + t];
+    bool bit = v >= 0 && ulong(v >> 6) < ulong(s.nr) && ((R[v >> 6] >> (v & 63)) & 1) != 0;
+    return bit == (s.agg[1] != 0);
+}
+
 kernel void stage_count(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]], device const uint* perm [[buffer(2)]],
                         device const uint* starts [[buffer(3)]], device const uint* rkeys [[buffer(4)]], device const uint* nruns [[buffer(5)]],
                         device const uint* totals [[buffer(6)]], device atomic_uint* counters [[buffer(7)]], device uint* counts [[buffer(8)]],
@@ -347,6 +357,7 @@ kernel void stage_count(device const long* L [[buffer(0)]], device const long* R
     if (t >= n) { counts[t] = 0; return; }
     long kv[8];
     uint lo, hi;
+    if (s.mode == 5) { counts[t] = uint(text_pass(s, L, t, R)); return; }
     candidates(s, L, t, starts, rkeys, nruns, kv, lo, hi);
     if (s.mode == 4) {
         long v = 0;
@@ -402,6 +413,10 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
     if (at >= s.cap_out) return;
     long kv[8];
     uint lo, hi;
+    if (s.mode == 5) {
+        if (offsets[t + 1] > at) write_row(s, L, t, R, 0, O, at);
+        return;
+    }
     if (s.mode == 4) {
         if (offsets[t + 1] <= at) return;
         candidates(s, L, t, starts, rkeys, nruns, kv, lo, hi);
@@ -428,6 +443,58 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
         }
         write_row(s, L, t, R, r, O, at);
         at++;
+    }
+}
+
+// A text test's verdicts, once per distinct term (decision 0038's chunked matching): a SIMD group per term walks it
+// 32 bytes at a time, each lane one byte's transition function (a row of the table), the group composing them (a
+// reduction of compositions, its scratch in device memory: 32 rows of `states` bytes a group); the chunk's function
+// takes the state on. A term whose final state, after the end of text, accepts sets its symbol's bit. The groups are
+// persistent: `groups` of them over the terms.
+struct TextParams { uint nterms; uint states; uint classes; uint start; uint groups; uint pad0; uint pad1; uint pad2; };
+
+kernel void text_verdicts(device const uint* offs [[buffer(0)]], device const uchar* bytes [[buffer(1)]], device const long* ids [[buffer(2)]],
+                          device const uchar* table [[buffer(3)]], device atomic_uint* bits [[buffer(4)]], device uchar* scratch [[buffer(5)]],
+                          constant TextParams& p [[buffer(6)]], uint t [[thread_position_in_grid]], uint lane [[thread_index_in_simdgroup]]) {
+    uint sg = t / 32;
+    if (sg >= p.groups) return;
+    uint S = p.states, C = p.classes;
+    device const uchar* cls = table;
+    device const uchar* next = table + 256;
+    device const uchar* eoi = next + S * C;
+    device const uchar* acc = eoi + S;
+    device uchar* f = scratch + ulong(sg) * 32 * S;
+    for (uint term = sg; term < p.nterms; term += p.groups) {
+        uint lo = offs[term], hi = offs[term + 1];
+        uint state = p.start;
+        for (uint base = lo; base < hi; base += 32) {
+            uint at = base + lane;
+            bool has = at < hi;
+            uint c = has ? uint(cls[bytes[at]]) : 0;
+            for (uint q = 0; q < S; q++) f[lane * S + q] = has ? next[q * C + c] : uchar(q);
+            simdgroup_barrier(mem_flags::mem_device);
+            for (uint d = 1; d < 32; d <<= 1) {
+                uint tasks = (32 / (2 * d)) * S;
+                // The earlier block's function, then the later's, into the earlier's row; then copied to the later's.
+                for (uint k = lane; k < tasks; k += 32) {
+                    uint right = (k / S) * 2 * d + 2 * d - 1, left = right - d, q = k % S;
+                    f[left * S + q] = f[right * S + f[left * S + q]];
+                }
+                simdgroup_barrier(mem_flags::mem_device);
+                for (uint k = lane; k < tasks; k += 32) {
+                    uint right = (k / S) * 2 * d + 2 * d - 1, left = right - d, q = k % S;
+                    f[right * S + q] = f[left * S + q];
+                }
+                simdgroup_barrier(mem_flags::mem_device);
+            }
+            state = f[31 * S + state];
+            simdgroup_barrier(mem_flags::mem_device);
+        }
+        state = eoi[state];
+        if (lane == 0 && acc[state] != 0) {
+            long id = ids[term];
+            if (id >= 0) atomic_fetch_or_explicit(&bits[ulong(id) >> 5], 1u << uint(id & 31), memory_order_relaxed);
+        }
     }
 }
 
@@ -615,6 +682,53 @@ impl DevRel {
     pub(in crate::code_rule_dsl) fn column(&self, c: usize) -> &[i64] {
         // SAFETY: the buffer holds `rows` values per column; the writer completed.
         unsafe { std::slice::from_raw_parts(self.buffer.buffer.contents().cast::<i64>().add(c * self.rows), self.rows) }
+    }
+}
+
+/// A column's distinct symbols and their names' bytes on the device: the terms a text test's verdicts are made for.
+pub(in crate::code_rule_dsl) struct DevText {
+    offs: Held,
+    bytes: Held,
+    ids: Held,
+    pub(in crate::code_rule_dsl) terms: usize,
+    /// One past the greatest symbol: the verdicts' bits.
+    pub(in crate::code_rule_dsl) span: usize,
+}
+
+impl DevText {
+    /// The terms `ids`, each named by `name` (copied to the device: the host evaluates nothing).
+    pub(in crate::code_rule_dsl) fn upload(ids: &[i64], mut name: impl FnMut(i64, &mut Vec<u8>)) -> Result<DevText, Error> {
+        let mut bytes = Vec::new();
+        let mut offs = Vec::with_capacity(ids.len() + 1);
+        offs.push(0u32);
+        for &id in ids {
+            name(id, &mut bytes);
+            offs.push(u32::try_from(bytes.len()).map_err(|_| Error::BackendCapacity)?);
+        }
+        let span = ids.iter().copied().max().map_or(0, |m| m.max(0) as usize + 1);
+        bytes.push(0);
+        let mut idv = ids.to_vec();
+        idv.push(0);
+        let held = |r: Result<Held, String>| r.map_err(|_| Error::BackendCapacity);
+        Ok(DevText { offs: held(Held::of(offs.into_iter()))?, bytes: held(Held::of(bytes.into_iter()))?, ids: held(Held::of(idv.into_iter()))?, terms: ids.len(), span })
+    }
+
+    pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
+        self.offs.buffer.length() as usize + self.bytes.buffer.length() as usize + self.ids.buffer.length() as usize
+    }
+}
+
+/// A text test's automaton on the device (`text::table`).
+pub(in crate::code_rule_dsl) struct DevTable {
+    table: Held,
+    states: u32,
+    classes: u32,
+    start: u32,
+}
+
+impl DevTable {
+    pub(in crate::code_rule_dsl) fn upload(t: &crate::code_rule_dsl::text::table::Table) -> Result<DevTable, Error> {
+        Ok(DevTable { table: Held::of(t.bytes.iter().copied()).map_err(|_| Error::BackendCapacity)?, states: t.states, classes: t.classes, start: t.start })
     }
 }
 
@@ -944,6 +1058,29 @@ impl Batch {
         let (s, d) = (s.to_owned(), d.to_owned());
         let pass = self.pass(1)?;
         pass.run_bytes(&copy, &[&s, &d], bytes, groups(n));
+        Ok(())
+    }
+
+    /// Keeps `table` until the batch's work completes (its verdicts read it).
+    pub(in crate::code_rule_dsl) fn hold_table(&mut self, table: DevTable) {
+        self.keep.push(table.table);
+    }
+
+    /// The verdicts of `table` for `text`'s terms, as bits by symbol into `bits` (zeroed, at least `text.span` bits).
+    pub(in crate::code_rule_dsl) fn verdicts(&mut self, text: &DevText, table: &DevTable, bits: &DevRel) -> Result<(), Error> {
+        if text.terms == 0 {
+            return Ok(());
+        }
+        assert!(bits.rows * 64 >= text.span);
+        let kernel = pipeline("join", "text_verdicts", || SOURCE.to_owned())?;
+        let groups = text.terms.min(1024);
+        let scratch = Held::new(groups * 32 * table.states as usize)?;
+        let p: [u32; 8] = [text.terms as u32, table.states, table.classes, table.start, groups as u32, 0, 0, 0];
+        // SAFETY: plain integers.
+        let bytes = unsafe { std::slice::from_raw_parts(p.as_ptr().cast::<u8>(), 32) };
+        let pass = self.pass(1)?;
+        pass.run_bytes(&kernel, &[&text.offs.buffer, &text.bytes.buffer, &text.ids.buffer, &table.table.buffer, &bits.buffer.buffer, &scratch.buffer], bytes, (groups * 32).div_ceil(256));
+        self.keep.push(scratch);
         Ok(())
     }
 

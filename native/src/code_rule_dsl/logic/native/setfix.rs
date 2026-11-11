@@ -1415,12 +1415,12 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                 heads.sort_unstable();
                 heads.dedup();
                 // Each rule's rows in `plans`' order, from the fixpoint's seeds-then-deltas order.
-                device::fixpoint(&seeds, &deltas, &heads, store, &mut dev_fresh).map(|made| {
+                device::fixpoint(&seeds, &deltas, &heads, store, &syms, &mut dev_fresh).map(|made| {
                     let (mut s, mut d) = (made[..seeds.len()].iter(), made[seeds.len()..].iter());
                     rules.iter().map(|r| *if device::reads_own(r.0) { d.next() } else { s.next() }.expect("a count per rule")).collect::<Vec<u64>>()
                 })
             } else {
-                device::run(&rules, store, &mut dev_fresh)
+                device::run(&rules, store, &syms, &mut dev_fresh)
             };
             match got {
                 Ok(made) => {

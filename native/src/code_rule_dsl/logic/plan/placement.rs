@@ -72,9 +72,10 @@ impl Form {
 /// negated atoms and atoms that bind nothing (anti- and semi-joins by the same keys), and comparisons, `in` and
 /// document tests as row programs, recursion (a recursive stratum's rounds to its fixpoint on the device,
 /// `device::fixpoint`; one that keeps levels is refused at open, named), and aggregates (count, sum, min, max folded
-/// per binding over the relation's sort by the keys). A stratum that needs any other form stays on the CPU, named in
-/// the profile.
-const DEVICE_FORMS: &[Form] = &[Form::Join, Form::Negation, Form::Comparison, Form::Recursion, Form::Aggregate];
+/// per binding over the relation's sort by the keys), and text tests with constant patterns of a slot an input
+/// relation's column binds (verdicts per distinct symbol by the test's automaton, `text::table`; any other text test
+/// is refused at open, named). A stratum that needs any other form stays on the CPU, named in the profile.
+const DEVICE_FORMS: &[Form] = &[Form::Join, Form::Negation, Form::Comparison, Form::Recursion, Form::Aggregate, Form::TextTest];
 
 /// A join step as the planner estimates it: the bindings it reads, the rows of the relation it reads, the rows it
 /// makes, its key columns, and whether it reads a range inside a document (`Mode::Range`).
@@ -520,15 +521,17 @@ mod tests {
 
     #[test]
     fn a_stratum_is_placed_by_its_price_and_named_by_the_forms_the_device_lacks() {
-        // A large join with a negation and a text test: the GPU's price is lower, and every form is missing.
+        // A large join with a negation, a text test and a computed head: the GPU's price is lower, and the computed
+        // term is the form it lacks.
         let mut big = Shape::default();
-        big.add(&[atom("kind", false), atom("strtest_3", false), atom("within", true)], &[Term::Var("x".into())], 4e6, false);
-        assert_eq!(big.forms, [Form::Join, Form::Negation, Form::TextTest].into_iter().collect());
+        let cat = Term::Call("cat".into(), vec![Term::Var("x".into()), Term::Var("x".into())]);
+        big.add(&[atom("kind", false), atom("strtest_3", false), atom("within", true)], &[cat], 4e6, false);
+        assert_eq!(big.forms, [Form::Join, Form::Negation, Form::Computed, Form::TextTest].into_iter().collect());
         let p = place(&big);
         assert!(p.gpu_cheaper && !p.gpu, "{p:?}");
-        assert_eq!(p.missing, vec![Form::TextTest]);
-        assert!(p.why().contains("no text test"), "{}", p.why());
-        // Without the text test, under the Metal binding, the device takes it; under the CPU binding it does not.
+        assert_eq!(p.missing, vec![Form::Computed]);
+        assert!(p.why().contains("no computed term"), "{}", p.why());
+        // Without the computed head, under the Metal binding, the device takes it; under the CPU binding it does not.
         let mut plain = Shape::default();
         plain.add(&[atom("kind", false), atom("within", true)], &[Term::Var("x".into())], 4e6, false);
         assert!(plain.missing_none());

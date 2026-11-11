@@ -32,6 +32,7 @@ mod canon;
 mod plan;
 mod productions;
 pub(in crate::code_rule_dsl) mod scan;
+pub(in crate::code_rule_dsl) mod table;
 mod source;
 pub(in crate::code_rule_dsl) mod vocabulary;
 #[cfg(test)]
