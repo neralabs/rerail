@@ -445,6 +445,26 @@ this: the radix sort join beat the hash join 96 vs 234 ms on the lab captures, a
 the bulk lookup matrix above (merge for dense demand, galloping or point probes for
 sparse).
 
+### 14. Built and accepted: the lead tag, sorted by tag, probes batched
+
+Two changes on top of 12b, within the same 2 bytes; this is the shape decision
+0112 now records.
+
+- **Sorting by tag (part 2).** The wave's batch and new runs sort u64 keys
+  (tag << 32 | id) first, and compare rows only inside equal tags. Merges compare
+  tags before rows. Dedup and run building (`settle`): 4.0% → 3.2% of the run.
+- **Probes from a hint (part 1).** Each join step keeps a few hints (one per
+  run); a probe gallops from the last place instead of searching the whole run.
+  A first-step scan of 256 rows or more is sorted by the next step's key, so the
+  probes walk the order forwards. Probes (`candidates`): 11.7% → 10.7%.
+- **CPU (O125 1–8, two rounds, load 19–41):** user 33.5 / 34.5 s against 31.8 /
+  31.4 s today's index on the same program: **about 1.07–1.10×**. RSS 1.62 GB
+  against 2.0 GB; index 7.2 + 7.4 MB against 44 + 62 MB.
+- **Accepted** by the user on 2026-11-11 at about 1.08×.
+- **What is left:** about half of the probe cost is the loop over several runs
+  per probe. Levers not yet tried: recalibrate `PROBE_PER_MERGED_ID` (8), or
+  count runs per probe and merge when it passes a limit.
+
 ## Never measured
 
 | Proposal | Where raised | Why not measured |
@@ -455,7 +475,7 @@ sparse).
 | Placed slots packed in fewer than 32 bits | mixed report | not tried |
 | 16 bits of column 2's hash to cut merge row reads | IdHash review | later tried for probes and dedup (12) |
 | Tags on every multi-column order (~12 B/row) | per-wave report | over budget; not built |
-| Probe a wave at a time (13) | latest profile | proposed last |
+| Probe a wave at a time (13) | latest profile | built as hints and sorted scans (14) |
 | A count per (head, join variables) instead of a row per derivation | per-row overhead options, 2026-11-10 | not pursued |
 | Narrower value encodings than 8 bytes | same | not pursued (values, not index) |
 | A maintained relation sharing its kept rows too (about 47 MB copied) | 0112 build report | not measured |
