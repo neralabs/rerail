@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -55,6 +55,19 @@ describe("removeFolder", () => {
     expect(runningIn(path)).toEqual([]);
     await removeFolder(path, { retry: false });
     expect(existsSync(path)).toBe(false);
+  });
+
+  it("removes a link to a folder a process runs in, and leaves the folder and the process alone", async () => {
+    const target = await folder();
+    const child = await runningProcess(target);
+    const link = join(await folder(), "link");
+    // A junction on Windows, which needs no administrator rights; a symbolic link elsewhere, which ignores the type.
+    await symlink(target, link, "junction");
+
+    await removeFolder(link, { retry: false });
+    expect(existsSync(link)).toBe(false);
+    expect(existsSync(join(target, "a.txt"))).toBe(true);
+    expect(runningIn(target)).toEqual([expect.stringContaining(`pid ${child.pid}: `)]);
   });
 
   it("waits out a holder this test did not start, which lets go a moment later", async () => {
