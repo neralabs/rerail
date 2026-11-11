@@ -1,7 +1,8 @@
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadRuleCatalog } from "../../src/engine/index.js";
 import type { NpmRunner } from "../../src/runtime/index.js";
 import {
@@ -19,10 +20,16 @@ import {
 import { directoryPackStore } from "../support/directory-pack-store.js";
 import { installPackDirectory, linkingPackStore, thirdPartyPack, uninstallPack } from "../support/installed-packs.js";
 import { fixturesPath, repositoryPath } from "../support/oracles.js";
+import { holdRemovals } from "../support/platform/held-removal.js";
 import { removeFolderSync } from "../support/platform/remove-folder.js";
+
+// Spied on so a test can make Windows hold a run's staging folder for a moment.
+vi.mock("node:fs/promises", { spy: true });
+const { rm: actualRm } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
 
 const homes: string[] = [];
 afterEach(() => {
+  vi.mocked(rm).mockReset();
   for (const home of homes.splice(0)) removeFolderSync(home);
 });
 
@@ -78,6 +85,18 @@ describe("npmPackStore", () => {
     }
     expect(existsSync(run)).toBe(true);
     await fetch.release();
+    expect(existsSync(run)).toBe(false);
+  });
+
+  it("removes the run's staging folder on release while Windows holds a file in it for a moment", async () => {
+    const { npm, calls } = fakeNpm();
+    const fetch = await npmPackStore(temporaryHome(), npm).fetch(["typescript"], "latest");
+    const run = dirname(prefixOf(calls[0]!));
+    const refused = holdRemovals(vi.mocked(rm), actualRm, 2, path => path === run);
+
+    await fetch.release();
+
+    expect(refused).toEqual([run, run]);
     expect(existsSync(run)).toBe(false);
   });
 

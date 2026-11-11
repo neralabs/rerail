@@ -5,7 +5,7 @@ import { EventEmitter, once } from "node:events";
 import { existsSync } from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import type * as FsPromises from "node:fs/promises";
-import { chmod, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { setImmediate as queueHostTurn } from "node:timers";
 import { tmpdir } from "node:os";
@@ -32,6 +32,7 @@ import { testCodeRuleCatalog } from "../../support/repository-rules.js";
 import { gateStorageAttachments } from "../support/storage-attach-gate.js";
 import { SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES } from "../../../src/engine/path-boundary.js";
 import * as native from "../../../src/engine/native/native.js";
+import { holdRemovals } from "../../support/platform/held-removal.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 
@@ -928,6 +929,28 @@ describe("mechanical code rule regressions", () => {
       await settled(enforcer);
       expect((await settled(enforcer)).violations).toHaveLength(12);
     } finally { await enforcer.close(); }
+  }, 60_000);
+
+  it("removes its spool folder on close while Windows holds a file in it for a moment", async () => {
+    const { enforcer } = await fixture();
+    const actual = await vi.importActual<typeof FsPromises>("node:fs/promises");
+    // The spool folder, not a spooled file in it.
+    const refused = holdRemovals(vi.mocked(rm), actual.rm, 2, path => /rerail-policy-[^\\/]+$/u.test(path));
+    try {
+      await enforcer.openWorkspace("held-spool");
+      const source = `NEEDLE\n${"x".repeat(850_000)}`;
+      const edits = Array.from({ length: 12 }, (_, index) => ({ path: `api/generated-${index}.py`, language: "python" as const, generatedText: source }));
+      await enforcer.auditGeneratedEdits("held-spool", { revision: 1, checkpoints: ["edit"], edits });
+      await settled(enforcer);
+
+      await enforcer.close();
+
+      expect(refused).toHaveLength(2);
+      expect(existsSync(refused[0]!)).toBe(false);
+    } finally {
+      vi.mocked(rm).mockReset();
+      await enforcer.close();
+    }
   }, 60_000);
 
   it("never evaluates a spooled edit a newer edit of its file superseded while the pump was running", async () => {

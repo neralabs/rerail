@@ -196,10 +196,14 @@ fail while an editor had the file open.
   all, then fails with an error that names the file and says another program held it open. It counts the tries
   itself, each one `rm` with no retries of its own: `fs.promises.rm` repeats `maxRetries` at every level of the
   folder, so one held file kept it trying for 67 s rather than 5.5 s, and each folder further down multiplies that
-  by 11. The updater's staging cleanup and `rerail install --remove` use it.
+  by 11. The updater's staging cleanup, `rerail install --remove`, `rerail profile remove` and the folder lock, for
+  the folder it staged, use it.
 - `removeScratch` removes a temporary folder Rerail made through `removeWithRetry` and never throws: a folder Windows
-  still holds must not replace the result, or the error, of the work that used it. The system's temp cleanup takes
-  what is left.
+  still holds must not replace the result, or the error, of the work that used it. Rule pack discovery's staging
+  folder, the code rule spool and the clock probe use it. The system's temp cleanup takes what is left, or, for a
+  pack staging folder, the next fetch.
+- Rule pack discovery's sweep of staging folders an hour old tries each once: one Windows still holds waits for the
+  next fetch, rather than holding up this one.
 - Set-up no longer deletes a coding agent's settings file before renaming the new one in, so a failed rename leaves
   the old file, not none.
 

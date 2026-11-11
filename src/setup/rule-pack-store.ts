@@ -11,6 +11,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import semver from "semver";
 import { RULE_PACK_LIST } from "../engine/catalog/pack-list.generated.js";
+import { removeScratch } from "../engine/file-replace.js";
 import {
   activeCoreVersion,
   installedPackageName,
@@ -136,7 +137,8 @@ async function removeStaleStaging(staging: string, now: number): Promise<void> {
     try {
       if (now - statSync(path).mtimeMs > STALE_STAGING_MS) await rm(path, { recursive: true, force: true });
     } catch {
-      // Another run removed it first.
+      // Another run removed it first, or Windows still holds a file in it. One try is enough: the next fetch sweeps it
+      // again, and waiting out a held folder here would hold up this fetch.
     }
   }));
 }
@@ -175,7 +177,9 @@ export function npmPackStore(home: string = defaultRerailHome(), runner: NpmRunn
         if (result.status === "fulfilled") fetched.push(result.value);
         else problems.push({ packageName, reason: fetchProblemReason(packageName, result.reason) });
       });
-      return { fetched, problems, release: () => rm(run, { recursive: true, force: true }) };
+      // Discovery releases in a `finally`, so a removal that failed would replace its result or its error: the run's
+      // folder is retried while Windows holds a file in it, then left for a later fetch's sweep.
+      return { fetched, problems, release: () => removeScratch(run) };
     },
     async install(specs) {
       if (specs.length === 0) return;

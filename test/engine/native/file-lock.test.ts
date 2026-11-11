@@ -1,17 +1,19 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LOCKS_DIR, withHomeLock, type LockHolder, type LockRequest } from "../../../src/engine/native/file-lock.js";
+import { holdRemovals } from "../../support/platform/held-removal.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 import { raceForLock, raceSize, sourceModule } from "../../support/processes/lock-race.js";
 
 vi.mock("node:fs/promises", { spy: true });
-const { unlink: realUnlink } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+const { rm: realRm, unlink: realUnlink } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
 
 const homes: string[] = [];
 afterEach(async () => {
+  vi.mocked(rm).mockReset();
   vi.mocked(unlink).mockReset();
   await Promise.all(homes.splice(0).map(home => removeFolder(home)));
 });
@@ -156,6 +158,17 @@ describe("the folder lock, without the engine", () => {
 
     await expect(withHomeLock(home, withoutEngine, async () => "ran")).rejects.toBeInstanceOf(Busy);
     expect(existsSync(owner)).toBe(true);
+  });
+
+  it("answers busy, and removes the folder it staged, while Windows holds that folder for a moment", async () => {
+    const home = await temporaryHome();
+    await folderHeldBy(home, process.pid);
+    const refused = holdRemovals(vi.mocked(rm), realRm, 2, path => path.endsWith(".tmp"));
+
+    await expect(withHomeLock(home, withoutEngine, async () => "ran")).rejects.toBeInstanceOf(Busy);
+
+    expect(refused).toHaveLength(2);
+    expect(readdirSync(join(home, LOCKS_DIR))).toEqual(["work-without-engine"]);
   });
 
   it("never removes the lock of a taker that cleared the same dead holder first", async () => {

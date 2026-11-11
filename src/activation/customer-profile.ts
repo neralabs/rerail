@@ -9,7 +9,7 @@ import {
   type webcrypto,
 } from "node:crypto";
 import { readFile, rm, writeFile, mkdir } from "node:fs/promises";
-import { replaceFile } from "../engine/file-replace.js";
+import { removeWithRetry, replaceFile } from "../engine/file-replace.js";
 import { withHomeLock } from "../engine/native/file-lock.js";
 import { join } from "node:path";
 import { z } from "zod";
@@ -341,7 +341,8 @@ export class CustomerProfileStore {
   }
 
   async remove(profileName: string): Promise<void> {
-    await rm(this.profileDirectory(profileName), { recursive: true, force: true });
+    // On Windows a virus scan or the indexer can hold a file in the folder for a moment; the removal waits that out.
+    await removeWithRetry(this.profileDirectory(profileName));
     if (await this.selectedProfileName() === profileName) await rm(this.activeProfilePath, { force: true });
   }
 }

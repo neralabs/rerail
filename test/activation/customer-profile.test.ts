@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createPublicKey,
   generateKeyPairSync,
@@ -7,7 +7,8 @@ import {
   type webcrypto,
   type KeyObject,
 } from "node:crypto";
-import { mkdir, mkdtemp, readdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -19,6 +20,7 @@ import {
 import {
   ACTIVE_PROFILE_FILE,
   CustomerActivationManager,
+  PROFILES_DIR,
   type ActivationFetch,
   CustomerProfileStore,
   type ActivationTrustRoots,
@@ -27,12 +29,18 @@ import {
 } from "../../src/activation/customer-profile.js";
 import type { DeviceSecretStore } from "../../src/activation/device-keystore.js";
 import { stableJsonText } from "../../src/engine/index.js";
+import { holdRemovals } from "../support/platform/held-removal.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { raceForLock, raceSize, sourceModule } from "../support/processes/lock-race.js";
+
+// Spied on so a test can make Windows hold a profile's folder for a moment.
+vi.mock("node:fs/promises", { spy: true });
+const { rm: actualRm } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
 
 const NOW = new Date("2026-09-01T12:00:00.000Z");
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
+  vi.mocked(rm).mockReset();
   await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
@@ -263,6 +271,19 @@ describe("signed customer profiles", () => {
     await mkdir(join(setup.home, ACTIVE_PROFILE_FILE, "kept"), { recursive: true });
     await expect(setup.profileStore.select("acme")).rejects.toThrow();
     expect(await readdir(setup.home)).toEqual([ACTIVE_PROFILE_FILE]);
+  });
+
+  it("removes a profile whose folder Windows holds for a moment", async () => {
+    const setup = await fixture();
+    const folder = join(setup.home, PROFILES_DIR, "acme");
+    await mkdir(folder, { recursive: true });
+    await writeFile(join(folder, "activation.json"), "{}");
+    const refused = holdRemovals(vi.mocked(rm), actualRm, 2);
+
+    await setup.profileStore.remove("acme");
+
+    expect(refused).toEqual([folder, folder]);
+    expect(existsSync(folder)).toBe(false);
   });
 
   it("rejects trailing profile command arguments", async () => {

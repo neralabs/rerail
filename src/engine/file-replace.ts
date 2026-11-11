@@ -22,8 +22,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 /**
  * How a folder removal waits out a file Windows holds for a moment: 10 more tries, each 100 ms later than the one
  * before, 5.5 s of waits in all. A file a running program keeps open stays held, and the removal then fails.
- * `removeWithRetry` counts these tries itself, for `removeScratch`, the updater's staging cleanup and
- * `rerail install --remove`; the tests' `removeFolder` repeats them, held equal by `test/engine/file-replace.test.ts`.
+ * `removeWithRetry` counts these tries itself, for `removeScratch` and every folder removal in `src/` that waits out a
+ * held file; the tests' `removeFolder` repeats them, held equal by `test/engine/file-replace.test.ts`.
  */
 export const FOLDER_REMOVAL_RETRIES = { maxRetries: 10, retryDelay: 100 } as const;
 

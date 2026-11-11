@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { constants, type Dirent, type Stats } from "node:fs";
-import { type FileHandle, lstat, mkdtemp, open, opendir, readFile, realpath, rm, unlink } from "node:fs/promises";
+import { type FileHandle, lstat, mkdtemp, open, opendir, readFile, realpath, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
@@ -32,7 +32,7 @@ import {
 } from "../git.js";
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
-import { renameWithRetry } from "../file-replace.js";
+import { removeScratch, renameWithRetry } from "../file-replace.js";
 import { blobIds, heldAs, textAs } from "./line-endings.js";
 import { openNoFollow } from "../no-follow.js";
 import { sourceLanguageOfPath, UNLISTED_TEXT_LANGUAGE } from "./code-rule-languages.js";
@@ -458,14 +458,16 @@ interface SourceDiscovery {
  * advance per scheduler tick and lag it, so a write made right after session start carries an earlier mtime,
  * while on macOS stamps carry sub-millisecond precision that `Date.now()` truncates away.
  */
-async function filesystemClock(): Promise<number> {
+export async function filesystemClock(): Promise<number> {
   try {
     const probe = await mkdtemp(join(tmpdir(), "rerail-clock-"));
     try {
       const info = await lstat(probe);
       return Math.min(info.mtimeMs, info.ctimeMs);
     } finally {
-      await rm(probe, { recursive: true, force: true });
+      // Retried while Windows holds the folder, then left in the temp directory: a failed removal must not throw the
+      // sample away for `Date.now()`, the clock this function exists to avoid.
+      await removeScratch(probe);
     }
   } catch {
     return Date.now();

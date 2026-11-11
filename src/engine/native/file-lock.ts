@@ -22,7 +22,7 @@ import { readFileSync, rmdirSync, rmSync, unlinkSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, rmdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { heldOnWindows, renameWithRetry } from "../file-replace.js";
+import { heldOnWindows, removeWithRetry, renameWithRetry } from "../file-replace.js";
 import { loadNativeBinding, type NativeBinding } from "./native.js";
 
 /** In the Rerail home: the lock files. */
@@ -227,8 +227,9 @@ async function takeFolderLock(folder: string, wait: Wait): Promise<Taken> {
       await (wait.sleep ?? sleep)(POLL_MS);
     }
   } finally {
-    // Gone already once moved in.
-    await rm(staged, { recursive: true, force: true });
+    // Gone already once moved in. Otherwise it holds the owner file this process just wrote, which a virus scan on
+    // Windows may still hold: the removal waits that out, as nothing else would ever remove the folder.
+    await removeWithRetry(staged);
   }
 }
 

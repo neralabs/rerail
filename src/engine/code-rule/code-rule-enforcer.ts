@@ -55,6 +55,7 @@ import { SqliteAuditStore } from "../audit/audit-store.js";
 import { DEFAULT_AUDIT_SETTINGS } from "../audit/audit-control-schema.js";
 import { RULE_MODES, steers } from "../catalog/rule-mode.js";
 import { compareDeterministicStrings } from "../stable-json.js";
+import { removeScratch } from "../file-replace.js";
 import { assertContentStoreOwner } from "../native/main-instance.js";
 import { contentStorePath } from "../native/rerail-build.js";
 import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
@@ -993,7 +994,9 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#pending.clear();
     this.#applied.clear();
     await Promise.all(this.#spoolRemovals);
-    if (this.#spoolDirectory !== undefined) await rm(this.#spoolDirectory, { recursive: true, force: true });
+    // Retried while Windows holds a spooled file, then left in the temp directory: a failure here would stop the close
+    // before it closes the audits below.
+    if (this.#spoolDirectory !== undefined) await removeScratch(this.#spoolDirectory);
     this.#workspaceRevisions.clear();
     this.#workspaceStorage.clear();
     this.#workspaceEvaluations.clear();

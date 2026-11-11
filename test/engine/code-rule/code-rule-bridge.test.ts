@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { appendFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,6 +11,7 @@ import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CodeRuleBridge,
+  filesystemClock,
   generatedEditPaths,
   isCommandTool,
   ledgerPreimage,
@@ -19,6 +21,7 @@ import { MAX_FINISHED_CALLS, ToolCallWindows } from "../../../src/engine/code-ru
 import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../../../src/engine/code-rule/code-rule.js";
 import type { IgnoreRulesChange } from "../../../src/engine/code-rule/ignore-rule-files.js";
 import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
+import { holdRemovals } from "../../support/platform/held-removal.js";
 import { removeFolder, runningIn } from "../../support/platform/remove-folder.js";
 
 const discovery = vi.hoisted(() => ({
@@ -66,6 +69,8 @@ vi.mock("node:fs/promises", async importOriginal => {
       await discovery.directories.get(String(args[0]))?.shift()?.();
       return await actual.opendir(...args);
     },
+    // A test can make Windows hold a folder for a moment (holdRemovals).
+    rm: vi.fn(actual.rm),
   };
 });
 
@@ -1994,5 +1999,26 @@ describe("ToolCallWindows", () => {
     expect(windows.ranDuring(0, 0)).toBe(false);
     expect(windows.ranDuring(10, 10)).toBe(true);
     expect(windows.ranDuring(MAX_FINISHED_CALLS * 10, MAX_FINISHED_CALLS * 10)).toBe(true);
+  });
+});
+
+describe("the file system's clock", () => {
+  afterEach(() => {
+    vi.mocked(rm).mockReset();
+    vi.useRealTimers();
+  });
+
+  it("is sampled from its probe folder even while Windows holds that folder for a moment", async () => {
+    const { rm: actualRm } = await vi.importActual<typeof FileSystem>("node:fs/promises");
+    // Date.now() far from the file system's clock, so a sample that fell back to it shows.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(0);
+    const refused = holdRemovals(vi.mocked(rm), actualRm, 2, path => /rerail-clock-[^\\/]+$/u.test(path));
+
+    const clock = await filesystemClock();
+
+    expect(refused).toHaveLength(2);
+    expect(clock).toBeGreaterThan(0);
+    expect(existsSync(refused[0]!)).toBe(false);
   });
 });
