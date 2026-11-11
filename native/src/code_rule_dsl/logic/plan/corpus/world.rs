@@ -4,6 +4,7 @@
 //! A program may read, as relations:
 //! - `dir_entry(dir, name, is_dir)`: the entries of a directory;
 //! - `file_line(path, i, text)`: the lines of a file, from 1;
+//! - `file_digest(path, c)`: the SHA-256 of a file's bytes, hex (what a cache key names a file's content by);
 //!
 //! and ask for documents with `load(path, module, grammar)`: the file at `path`, parsed in `grammar`, as module
 //! `module` (its resolution's answer, which names the document as a file of the corpus is named by its path). A
@@ -62,6 +63,7 @@ pub(super) struct World {
     root: PathBuf,
     dirs: BTreeMap<String, Vec<(String, bool)>>,
     files: BTreeMap<String, Vec<String>>,
+    digests: BTreeMap<String, String>,
     loads: BTreeMap<String, Loaded>,
     refused: BTreeSet<String>,
     budget: usize,
@@ -130,6 +132,20 @@ impl World {
         lines
     }
 
+    /// A file's content digest (none when it is refused or missing): the observer's, read only where it cannot vouch
+    /// for the file.
+    pub(super) fn digest(&mut self, asked: &str) -> Option<String> {
+        if let Some(d) = self.digests.get(asked) {
+            return Some(d.clone());
+        }
+        let Some(d) = self.allowed(asked).filter(|p| p.is_file()).map(|p| bytes_digest(&p)).filter(|d| !d.is_empty()) else {
+            self.refused.insert(asked.to_owned());
+            return None;
+        };
+        self.digests.insert(asked.to_owned(), d.clone());
+        Some(d)
+    }
+
     /// A load's document: the file's canonical path, when it is new, allowed, in the run's grammar and within the
     /// budget. A file of the corpus is a document already, so its load takes nothing. A loaded document is named by
     /// its canonical path: the same file is one document, and its key and memo entries are the same in every
@@ -188,6 +204,9 @@ impl World {
         for asked in self.files.keys() {
             out.push(("file".to_owned(), asked.clone(), self.allowed(asked).map(|p| bytes_digest(&p)).unwrap_or_default()));
         }
+        for (asked, d) in &self.digests {
+            out.push(("digest".to_owned(), asked.clone(), d.clone()));
+        }
         for path in self.loads.keys() {
             out.push(("load".to_owned(), path.clone(), bytes_digest(Path::new(path))));
         }
@@ -203,7 +222,7 @@ impl World {
         consulted.iter().all(|(what, path, digest)| {
             let now = match what.as_str() {
                 "dir" => listing_digest(&self.dir(path)),
-                "file" => self.allowed(path).map(|p| bytes_digest(&p)).unwrap_or_default(),
+                "file" | "digest" => self.allowed(path).map(|p| bytes_digest(&p)).unwrap_or_default(),
                 "load" => bytes_digest(Path::new(path)),
                 "refused" => self.probe(path),
                 _ => return false,
