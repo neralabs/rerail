@@ -449,7 +449,7 @@ fn within_holds_exactly_the_contained_pairs() {
     };
     let zero = (0..nodes).filter(|&r| at(r).4 == at(r).5).count();
     assert!(zero > 0, "the broken documents have nodes of zero width");
-    let cpu = || { let (u, s) = crate::code_rule_dsl::logic::plan::corpus::thread_usage(); u + s };
+    let cpu = || { let (u, s) = crate::code_rule_dsl::prof::thread_usage(); u + s };
     let (mut reference_cpu, mut relation_cpu) = (0.0, 0.0);
     for mode in [within::Mode::Tree, within::Mode::Span] {
         let before_reference = cpu();

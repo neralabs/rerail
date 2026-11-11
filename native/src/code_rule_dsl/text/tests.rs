@@ -301,7 +301,7 @@ fn determinizing_a_group_costs_more_than_reading_it() {
         }
     }
     let cpu = || {
-        let (u, s) = crate::code_rule_dsl::logic::plan::corpus::thread_usage();
+        let (u, s) = crate::code_rule_dsl::prof::thread_usage();
         u + s
     };
     let patterns = [

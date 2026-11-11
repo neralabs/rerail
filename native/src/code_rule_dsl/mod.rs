@@ -71,6 +71,7 @@ mod resolution;
 mod search_index;
 #[cfg(test)]
 mod walks;
+mod functors;
 mod residency;
 // P's paths for P's relational stage, under test (open item O18): P's workspace code reads it here.
 use residency::admission::relational;
@@ -629,6 +630,8 @@ pub(crate) fn install_languages() {
     facts::core::install_core_names(logic::rr::core_names);
     // What the evaluator keeps per connection, dropped with it.
     facts::vtab::install_forget(facts::vtab::Forget { scope: logic::native::forget_scope, engine: logic::native::forget_engine });
+    // core.rr's functors whose meaning is W's or a language's.
+    logic::strings::install_functors(functors::register_functors);
     // What compiles a program's `ast` matchers into the transducer wave facts runs (decision 0106).
     facts::vtab::syntax::install_ast_compiler(&facts::vtab::syntax::ast_wave::Compiler);
     // The literal grammars `parse` applies, in the order messages list them (`literal::LiteralGrammar`).

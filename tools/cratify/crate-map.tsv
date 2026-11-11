@@ -274,3 +274,4 @@ facts::nearest	rerail-facts
 walks	rerail-w
 semver	rerail-lang
 matcher::arguments_sql	rerail-lang-sql
+functors	rerail-engine

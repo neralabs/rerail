@@ -188,7 +188,7 @@ pub(in crate::code_rule_dsl) fn group(s: &str, re: &str, name: &str) -> Option<S
 }
 
 /// `str_test(op, s, patterns)`: 1 or 0; and `core.rr`'s text functors (`functions`, `rx_group` among them, and
-/// `plan::register_functors`'s: `rr_join`, `@rx_replace`, `@nfkc`, …). NULL gives NULL.
+/// `functors::register_functors`'s: `rr_join`, `@rx_replace`, `@nfkc`, …). NULL gives NULL.
 pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()> {
     use rusqlite::functions::FunctionFlags;
     db.create_scalar_function(c"str_test", 3, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
@@ -198,7 +198,18 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
         Ok(Some(i64::from(test(&op, &s, &p))))
     })?;
     functions::register(db)?;
-    super::plan::register_functors(db)
+    match FUNCTORS.get() {
+        Some(register) => register(db),
+        None => Ok(()),
+    }
+}
+
+/// What registers core.rr's functors whose meaning is W's or a language's (`functors::register_functors`).
+static FUNCTORS: std::sync::OnceLock<fn(&Connection) -> rusqlite::Result<()>> = std::sync::OnceLock::new();
+
+/// Registers what adds those functors to a connection (once, at load).
+pub(in crate::code_rule_dsl) fn install_functors(register: fn(&Connection) -> rusqlite::Result<()>) {
+    let _ = FUNCTORS.set(register);
 }
 
 /// A text test in a rule body: `@op($s, patterns) = 1` (holds) or `= 0` (fails).
