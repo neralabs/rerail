@@ -64,7 +64,10 @@ excused(f) :- option("ignoreClassFieldInitialValues", "true"), estree_parent(f, 
 excused(f) :- option("ignoreArrayIndexes", "true"), estree_parent(f, p), kind(p, "subscript_expression"),
     field(p, "index", i), deparen(i, f), signed(_, f, _, v), array_index(v).
 excused(f) :- parse_radix(f).
-excused(f) :- estree_parent(f, p), kind(p, k), prefix("jsx_", k).
+// ESLint asks whether the parent's type starts with JSX; a kind is no text, so the grammar's JSX kinds are listed.
+excused(f) :- estree_parent(f, p), (kind(p, "jsx_element") ; kind(p, "jsx_self_closing_element") ; kind(p, "jsx_opening_element") ;
+    kind(p, "jsx_closing_element") ; kind(p, "jsx_attribute") ; kind(p, "jsx_expression") ; kind(p, "jsx_namespace_name") ;
+    kind(p, "jsx_text")).
 excused(f) :- option("ignoreEnums", "true"), estree_parent(f, p), kind(p, "enum_assignment").
 excused(f) :- option("ignoreReadonlyClassProperties", "true"), estree_parent(f, p), field_value(p, f), kind(p, "public_field_definition"),
     op(p, "readonly").

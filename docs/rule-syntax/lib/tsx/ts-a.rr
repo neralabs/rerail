@@ -99,7 +99,9 @@ type_child(x, c) :- kind(x, "parenthesized_type"), child(x, y, _), !kind(y, "com
 // type_identifier (it is no reserved word, but TypeScript reads it as the keyword).
 .decl ts_keyword(y: node, t: symbol)
 ts_keyword(y, t) :- kind(y, "predefined_type"), text(y, t).
-ts_keyword(y, t) :- kind(y, "literal_type"), child(y, z, 0), kind(z, t), (t = "null" ; t = "undefined").
+// A kind is no text: each keyword type names its own.
+ts_keyword(y, "null") :- kind(y, "literal_type"), child(y, z, 0), kind(z, "null").
+ts_keyword(y, "undefined") :- kind(y, "literal_type"), child(y, z, 0), kind(z, "undefined").
 ts_keyword(y, "bigint") :- kind(y, "type_identifier"), text(y, "bigint").
 
 // type_literal(b), mapped_type(b, c): tree-sitter parses a mapped type as an object_type holding one

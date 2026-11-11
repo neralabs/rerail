@@ -17,4 +17,7 @@
 // ESLint's LINEBREAK_MATCHER: \r, \n, U+2028, U+2029 in the raw text.
 no_multi_str(n) :- kind(n, "string"), match("[\\s\\S]*[\\r\\n\\u2028\\u2029][\\s\\S]*", n), !jsx_parent(n).
 .decl jsx_parent(n: node)
-jsx_parent(n) :- estree_parent(n, p), kind(p, k), prefix("jsx_", k).
+// ESLint asks whether the parent's type starts with JSX; a kind is no text, so the grammar's JSX kinds are listed.
+jsx_parent(n) :- estree_parent(n, p), (kind(p, "jsx_element") ; kind(p, "jsx_self_closing_element") ; kind(p, "jsx_opening_element") ;
+    kind(p, "jsx_closing_element") ; kind(p, "jsx_attribute") ; kind(p, "jsx_expression") ; kind(p, "jsx_namespace_name") ;
+    kind(p, "jsx_text")).
