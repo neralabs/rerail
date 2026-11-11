@@ -161,9 +161,24 @@ kept relations' encoding, not a format of their own.
 
 | Step | Change | Owner |
 |---|---|---|
-| 5.1 | Caches in the file-local part: plain rules there already; the per-file memo keeps their rows as any relation's | engine |
-| 5.2 | The per-file memo as a cache by `(document, content, program)` (0103 §8) | engine |
+| 5.1 | Caches in the file-local part: plain rules there already; the per-file memo keeps their rows as any relation's | engine: **built** (0108, 472c8bfaa). An entry's relations are typed rows in its frame |
+| 5.2 | The per-file memo as a cache by `(document, content, program)` (0103 §8) | engine: **built** (0108). One frame per entry in the plan's space, its part keyed by content and path. **Measured** below |
 | 5.3 | Each other cache of 0103 §8 | its owner |
+
+**5.1 and 5.2 measured (2026-11-10, after 1515840af).** The test binary's P3 bench on the 54 files of `dl-sub40` used
+a new store. The machine was loaded at 63 to 98. Every run gave 4,815 agree.
+
+| Run | CPU (user + sys) | Wall | Per-file memo |
+|---|---|---|---|
+| cold | 66.6 s (63.9 + 2.7) | 164 s | 0 of 54 files |
+| warm | 17.0 s (16.0 + 1.0) | 32 s | 54 of 54 files, and 237 of 237 library files |
+| a comment added to one file | 26.2 s (25.2 + 1.1) | 53 s | 53 of 54 |
+| a top-level name added to one file | 48.0 s (46.3 + 1.7) | 73 s | 0 of 54 |
+
+A new name misses every file. The memo's key covers the rows of the earlier phases' exports that the file-local
+rules read (`under_phased`), and a new module name changes those rows. The key was already that coarse before
+this change, which kept the same key. In the P3 part, an edit's run maintains 445 of 481 strata from deltas
+(Stage 6).
 
 ### Stage 6. Strata the delta does not reach (the owners' work, measured here)
 
