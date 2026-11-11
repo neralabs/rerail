@@ -31,6 +31,7 @@ import {
   type RepositoryAuditHooks,
   type AuditorCloseOptions,
   type SteerSourceOf,
+  type WalkEntry,
 } from "./code-rule.js";
 import type { SteerTrigger } from "./rerail-steer.js";
 import {
@@ -695,11 +696,11 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * say, a path Git ignores is refused while the lane follows `.gitignore`.
    */
   acceptsPath(path: string): boolean {
-    return this.#readsPath(path) && !this.ignoresPath(path, false);
+    return this.readsPath(path) && !this.ignoresPath(path, false);
   }
 
   /** `acceptsPath` apart from Git's ignore rules. */
-  #readsPath(path: string): boolean {
+  readsPath(path: string): boolean {
     const language = languageFor(path);
     const workspace = (this.#replacement ?? this.#workspace)?.workspace;
     if (language === undefined) return (workspace?.acceptsTextPath(path) ?? false) && !sensitiveByName(path);
@@ -721,13 +722,21 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return this.#askGitIgnore(path, matcher => matcher.ignored(path, directory)) ?? false;
   }
 
+  /** `ignoresPath` of each entry of the folder `folder` (relative to the workspace root, `""` for it), in one ask. */
+  ignoredEntries(folder: string, entries: readonly WalkEntry[]): boolean[] {
+    if (entries.length === 0) return [];
+    const names = entries.map(entry => entry.name);
+    const directories = entries.map(entry => entry.directory);
+    return this.#askGitIgnore(folder, matcher => matcher.ignoredEntries(folder, names, directories)) ?? entries.map(() => false);
+  }
+
   /**
    * Why an edit of the file `path` (relative to the workspace root) goes unchecked though the rules would read it: the
    * pattern by which Git ignores it, while this lane follows `.gitignore`. Undefined for a file it checks, and for one
    * no rule reads anyway.
    */
   ignoredEdit(path: string): NativeGitIgnoreMatch | undefined {
-    if (!this.#followGitignore || !this.#readsPath(path)) return undefined;
+    if (!this.#followGitignore || !this.readsPath(path)) return undefined;
     return this.#askGitIgnore(path, matcher => matcher.ignoredBy(path, false)) ?? undefined;
   }
 

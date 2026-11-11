@@ -215,6 +215,12 @@ export interface NativeGitIgnoreMatcher {
    * ignored folder names the folder's pattern. Null when Git does not ignore it; throws as `ignored` does.
    */
   ignoredBy(relativePath: string, isDirectory: boolean): NativeGitIgnoreMatch | null;
+  /**
+   * `ignored` of each entry of the folder `folder` (relative to the matcher's root, `""` for the root): `names[i]` is
+   * one path component, a folder where `directories[i]` is true. One look at the index answers them all, where
+   * `ignored` takes one, a file system call, per path. Throws as `ignored` does.
+   */
+  ignoredEntries(folder: string, names: string[], directories: boolean[]): boolean[];
 }
 
 /** A pattern of Git's exclude stack that ignores a path (`NativeGitIgnoreMatcher.ignoredBy`). */
@@ -382,9 +388,19 @@ export function resolveNativeBindingPath(configuredPath = process.env.RERAIL_ENG
  */
 let workspaceBusy: unknown;
 
+/**
+ * The addon loaded for the `RERAIL_ENGINE_PATH` value it was loaded under. A loaded addon stays in the process, so a
+ * second load gets the same one: finding its file again costs an `existsSync` per call, and a walk calls this for
+ * every file it finds (`NativeCodeRuleEnforcer`'s `acceptsPath`).
+ */
+let loaded: { readonly configuredPath: string | undefined; readonly binding: NativeBinding } | undefined;
+
 export function loadNativeBinding(): NativeBinding {
-  const binding = require(resolveNativeBindingPath()) as NativeBinding;
+  const configuredPath = process.env.RERAIL_ENGINE_PATH;
+  if (loaded !== undefined && loaded.configuredPath === configuredPath) return loaded.binding;
+  const binding = require(resolveNativeBindingPath(configuredPath)) as NativeBinding;
   workspaceBusy ??= binding.WORKSPACE_BUSY;
+  loaded = { configuredPath, binding };
   return binding;
 }
 

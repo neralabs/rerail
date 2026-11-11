@@ -25,6 +25,7 @@ import type {
   RuleSteerDelivery,
   RepositoryAuditHooks,
   IgnoredEditMatch,
+  WalkEntry,
 } from "./code-rule.js";
 import type { CheckoutCatalogs, CheckoutEligibility } from "./code-rule-dsl-catalog.js";
 import type { AuditRecorder, AuditMode } from "../audit/audit.js";
@@ -124,10 +125,37 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     return routed !== undefined && routed.lane.enforcer.acceptsPath(routed.path);
   }
 
+  /** Whether the lane that owns `path`, a file Git does not ignore, reads it (`readsPath` of the enforcer). */
+  readsPath(path: string): boolean {
+    const routed = this.#route(path);
+    return routed !== undefined && routed.lane.enforcer.readsPath(routed.path);
+  }
+
   /** Whether the checkout that owns `path` ignores it; a path no lane owns is never ignored here, only not accepted. */
   ignoresPath(path: string, directory: boolean): boolean {
     const routed = this.#route(path);
     return routed !== undefined && routed.lane.enforcer.ignoresPath(routed.path, directory);
+  }
+
+  /**
+   * `ignoresPath` of each entry of `folder`, the entries its checkout owns asked of its lane in one go: its files, whose
+   * checkout is their folder's, as the walk asking this never lists a link, and the folders in it that are no checkout
+   * of their own. A folder that is a checkout's top level, such as a submodule, is asked of its own lane.
+   */
+  ignoredEntries(folder: string, entries: readonly WalkEntry[]): boolean[] {
+    const owner = this.#owner(resolve(this.#sessionRoot, folder));
+    const ignored = entries.map(() => false);
+    const asked: number[] = [];
+    for (const [index, entry] of entries.entries()) {
+      const path = folder === "" ? entry.name : `${folder}/${entry.name}`;
+      if (entry.directory && this.#owner(resolve(this.#sessionRoot, path))?.checkoutRoot !== owner?.checkoutRoot) ignored[index] = this.ignoresPath(path, true);
+      else asked.push(index);
+    }
+    const lane = owner === undefined || asked.length === 0 ? undefined : this.#lane(owner.checkoutRoot);
+    if (owner === undefined || lane === undefined) return ignored;
+    const answers = lane.enforcer.ignoredEntries(owner.path, asked.map(index => entries[index]!));
+    for (const [at, index] of asked.entries()) ignored[index] = answers[at] === true;
+    return ignored;
   }
 
   /** Why the checkout that owns the file `path` leaves an edit of it unchecked for Git's rules (`ignoredEdit` of its enforcer). */

@@ -1838,15 +1838,30 @@ export class CodeRuleBridge {
   }
 
   /**
-   * Folders Git ignores (when the session follows `.gitignore`) are never entered, so nothing below them is observed.
-   * A folder's `.git` is not entered either, and marks the checkout that owns the folder's files (`SourceScan.checkouts`).
+   * Folders Git ignores (when the session follows `.gitignore`) are never entered, so nothing below them is observed,
+   * and files it ignores are not observed either; Git's rules are asked once for all of a folder's entries. A
+   * `.gitignore` is walked whatever Git says of it, since it decides what is ignored. A folder's `.git` is not entered
+   * either, and marks the checkout that owns the folder's files (`SourceScan.checkouts`).
    */
   async #expandDirectory(walk: SourceWalk, absolute: string): Promise<void> {
+    const entries: Dirent[] = [];
     for await (const entry of await opendir(absolute)) {
       if (walk.discovery.cancelled) return;
       if (entry.name === ".git") this.#noteCheckout(walk, join(absolute, entry.name));
-      else if (this.#walksInto(walk, absolute, entry)) walk.stack.push(join(absolute, entry.name));
+      else if (this.#walksInto(walk, absolute, entry)) entries.push(entry);
     }
+    const ignored = this.#ignoredEntries(walk, absolute, entries);
+    for (const [index, entry] of entries.entries()) {
+      if (ignored[index] !== true || (entry.isFile() && entry.name === GITIGNORE)) walk.stack.push(join(absolute, entry.name));
+    }
+  }
+
+  /** Whether Git ignores each of `entries` of the folder `absolute`: one question for the folder where the auditor takes one. */
+  #ignoredEntries(walk: SourceWalk, absolute: string, entries: readonly Dirent[]): readonly boolean[] {
+    const folder = sessionPath(walk.discovery.root, absolute);
+    const listed = entries.map(entry => ({ name: entry.name, directory: entry.isDirectory() }));
+    if (this.#auditor.ignoredEntries !== undefined) return this.#auditor.ignoredEntries(folder, listed);
+    return listed.map(entry => this.#auditor.ignoresPath?.(folder === "" ? entry.name : `${folder}/${entry.name}`, entry.directory) === true);
   }
 
   /** Asks for the owner of the `.git` entry, not of its folder: it is owned as the files beside it are. */
@@ -1855,21 +1870,19 @@ export class CodeRuleBridge {
     if (checkout !== undefined) walk.scan.checkouts.add(checkout);
   }
 
-  /** A folder another walk starts at is not walked twice. */
+  /** Folders and files, but a folder another walk starts at, which is not walked twice. */
   #walksInto(walk: SourceWalk, absolute: string, entry: Dirent): boolean {
     if (neverWalked(entry)) return false;
-    if (!entry.isDirectory()) return entry.isFile();
-    const child = join(absolute, entry.name);
-    return !walk.roots.has(child) && this.#auditor.ignoresPath?.(sessionPath(walk.discovery.root, child), true) !== true;
+    return entry.isDirectory() ? !walk.roots.has(join(absolute, entry.name)) : entry.isFile();
   }
 
   /**
-   * A file Git ignores is not observed at all: no baseline entry, so no later read or edit of it is audited. A
-   * `.gitignore` is observed by its stamp whatever Git says of it, since it decides what is ignored.
+   * A file Git ignores is not observed at all (`#expandDirectory` leaves it out): no baseline entry, so no later read or
+   * edit of it is audited. A `.gitignore` is observed by its stamp whatever Git says of it, since it decides what is
+   * ignored.
    */
   async #observeRegularFile(walk: SourceWalk, absolute: string, info: Stats): Promise<void> {
-    const path = sessionPath(walk.discovery.root, absolute);
-    if (basename(path) === GITIGNORE || !this.#auditor.ignoresPath?.(path, false)) await this.#observeFile(walk, sourceLocation(absolute, path), info);
+    await this.#observeFile(walk, sourceLocation(absolute, sessionPath(walk.discovery.root, absolute)), info);
   }
 
   async #observeFile(walk: SourceWalk, location: SourceLocation, info: Stats): Promise<void> {
@@ -1885,12 +1898,21 @@ export class CodeRuleBridge {
   async #observedFile(walk: SourceWalk, location: SourceLocation, info: Stats): Promise<Source | undefined> {
     const stamped = { path: location.path, language: location.language, stamp: fileStamp(info), observedAt: walk.observedAt };
     const previous = walk.previousSources.get(location.path);
-    if (!this.#auditor.acceptsPath(location.path)) return { ...stamped, ...knownDigest(previous) };
+    if (!this.#walkReads(location.path)) return { ...stamped, ...knownDigest(previous) };
     const modifiedAt = Math.max(info.mtimeMs, info.ctimeMs);
     if (staleStamp(previous, stamped.stamp, modifiedAt)) return previous;
     const unread = await unreadFile(location, info);
     if (unread !== undefined) return { ...stamped, modifiedAt, ...unread };
     return await this.#readObservedFile(walk, location, { ...stamped, modifiedAt }, previous);
+  }
+
+  /**
+   * Whether the auditor reads a file the walk found. Its folder's listing found Git does not ignore it, so the rules alone
+   * decide (`readsPath`); but a `.gitignore` is walked whatever Git says of it, and asked in full.
+   */
+  #walkReads(path: string): boolean {
+    if (this.#auditor.readsPath === undefined || basename(path) === GITIGNORE) return this.#auditor.acceptsPath(path);
+    return this.#auditor.readsPath(path);
   }
 
   async #readObservedFile(

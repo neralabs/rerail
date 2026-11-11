@@ -5,7 +5,8 @@
 //! and can name the pattern that ignored a path, with its file and line (`git check-ignore -v`).
 //!
 //! The index is re-read whenever it changes on disk, so `git add` of an ignored file brings it back;
-//! a `.gitignore` is read when the walk first enters its folder.
+//! a `.gitignore` is read when the walk first enters its folder. A walk asks once per folder
+//! (`ignored_entries`), so the index is looked at once per folder, not once per file.
 
 use gix::bstr::{BStr, ByteSlice};
 use gix::index::entry::Mode;
@@ -49,14 +50,7 @@ impl GitIgnore {
         let index = repository
             .index_or_empty()
             .map_err(|error| format!("cannot read Git index: {error}"))?;
-        let stack = repository
-            .excludes(
-                &index,
-                None,
-                gix::worktree::stack::state::ignore::Source::WorktreeThenIdMappingIfNotSkipped,
-            )
-            .map_err(|error| format!("cannot read Git excludes: {error}"))?
-            .detach();
+        let stack = exclude_stack(&repository, &index)?;
         Ok(Some(Self {
             repository,
             stack,
@@ -82,17 +76,65 @@ impl GitIgnore {
         relative: &str,
         is_directory: bool,
     ) -> std::result::Result<Option<GitIgnoreMatch>, String> {
+        let index = self.index()?;
+        self.matching(&index, relative, is_directory)
+    }
+
+    /// Which entries of the folder `folder` Git ignores: `ignored` of `folder/names[i]`, a folder
+    /// where `directories[i]` says so. `folder` is relative to the opened root as for `ignored`
+    /// (empty for the root), and each name is one path component. The index is looked at once for
+    /// all of them, where `ignored` looks at it, a file system call, for each path; and the exclude
+    /// stack, positioned at the folder for the first entry, stays there for the rest.
+    pub fn ignored_entries(
+        &mut self,
+        folder: &str,
+        names: &[String],
+        directories: &[bool],
+    ) -> std::result::Result<Vec<bool>, String> {
+        if names.len() != directories.len() {
+            return Err(format!(
+                "{} entry names but {} folder marks",
+                names.len(),
+                directories.len()
+            ));
+        }
+        let index = self.index()?;
+        names
+            .iter()
+            .zip(directories)
+            .map(|(name, &is_directory)| {
+                let relative = if folder.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{folder}/{name}")
+                };
+                Ok(self.matching(&index, &relative, is_directory)?.is_some())
+            })
+            .collect()
+    }
+
+    /// The index as it is on disk now: re-read once it changed, so `git add` of an ignored file
+    /// brings it back.
+    fn index(&self) -> std::result::Result<gix::worktree::Index, String> {
+        self.repository
+            .index_or_empty()
+            .map_err(|error| format!("cannot read Git index: {error}"))
+    }
+
+    /// `ignored_by` against `index`.
+    fn matching(
+        &mut self,
+        index: &gix::index::State,
+        relative: &str,
+        is_directory: bool,
+    ) -> std::result::Result<Option<GitIgnoreMatch>, String> {
         let Some(path) = self.worktree_path(relative) else {
             return Ok(None);
         };
         if path.is_empty() {
             return Ok(None);
         }
-        let index = self
-            .repository
-            .index_or_empty()
-            .map_err(|error| format!("cannot read Git index: {error}"))?;
-        if tracked(&index, path.as_bytes().as_bstr(), is_directory) {
+        if tracked(index, path.as_bytes().as_bstr(), is_directory) {
             return Ok(None);
         }
         let platform = self
@@ -129,6 +171,23 @@ impl GitIgnore {
         }
         Some(components.join("/"))
     }
+}
+
+/// The exclude stack of `repository`'s worktree: `.git/info/exclude` and `core.excludesFile` read
+/// now, each `.gitignore` as a question first goes into its folder (from the worktree, else from
+/// `index`).
+fn exclude_stack(
+    repository: &gix::Repository,
+    index: &gix::index::State,
+) -> std::result::Result<gix::worktree::Stack, String> {
+    Ok(repository
+        .excludes(
+            index,
+            None,
+            gix::worktree::stack::state::ignore::Source::WorktreeThenIdMappingIfNotSkipped,
+        )
+        .map_err(|error| format!("cannot read Git excludes: {error}"))?
+        .detach())
 }
 
 /// Git applies ignore rules to untracked paths only: a tracked file, a submodule, and a folder
@@ -192,6 +251,25 @@ impl GitIgnoreMatcher {
             .map_err(|_| Error::new(Status::GenericFailure, "Git ignore matcher is poisoned"))?;
         inner
             .ignored_by(&relative_path, is_directory)
+            .map_err(|message| Error::new(Status::GenericFailure, message))
+    }
+
+    /// Which entries of the folder `folder` (relative to the matcher's root, `/`-separated; empty
+    /// for the root) Git ignores: `ignored` of each of `names`, a folder where `directories` says
+    /// so, asked with one look at the index for all of them. A walk asks this once per folder.
+    #[napi(catch_unwind)]
+    pub fn ignored_entries(
+        &self,
+        folder: String,
+        names: Vec<String>,
+        directories: Vec<bool>,
+    ) -> Result<Vec<bool>> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| Error::new(Status::GenericFailure, "Git ignore matcher is poisoned"))?;
+        inner
+            .ignored_entries(&folder, &names, &directories)
             .map_err(|message| Error::new(Status::GenericFailure, message))
     }
 }
@@ -300,6 +378,98 @@ mod tests {
         git(&root, &["add", "-f", "api/e.py"]);
         assert!(
             !ignore.ignored("api/e.py", false).unwrap(),
+            "the index is re-read once it changes"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn answers_a_folders_entries_as_it_answers_each_path() {
+        let root = fixture(
+            "entries",
+            &[
+                ("tracked/gen.py", "tracked\n"),
+                (".gitignore", "gen/\n*.log\n!keep.log\n"),
+                ("api/.gitignore", "e.py\n"),
+                ("api/d.py", ""),
+                ("api/e.py", ""),
+                ("api/gen/c.py", ""),
+                ("api/build/x.py", ""),
+                ("keep.log", ""),
+                ("drop.log", ""),
+                ("local.py", ""),
+            ],
+        );
+        git(&root, &["init", "--initial-branch=main"]);
+        git(&root, &["add", "tracked/gen.py"]);
+        std::fs::write(
+            root.join(".gitignore"),
+            "gen/\n*.log\n!keep.log\ntracked/\nbuild/\n",
+        )
+        .unwrap();
+        std::fs::write(root.join(".git/info/exclude"), "local.py\n").unwrap();
+        std::fs::write(root.join("tracked/fresh.py"), "").unwrap();
+
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        for folder in ["", "api", "api/gen", "api/build", "tracked"] {
+            let mut names = Vec::new();
+            let mut directories = Vec::new();
+            for entry in std::fs::read_dir(root.join(folder)).unwrap() {
+                let entry = entry.unwrap();
+                names.push(entry.file_name().to_string_lossy().into_owned());
+                directories.push(entry.file_type().unwrap().is_dir());
+            }
+            let one_by_one: Vec<bool> = names
+                .iter()
+                .zip(&directories)
+                .map(|(name, &directory)| {
+                    let path = if folder.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{folder}/{name}")
+                    };
+                    ignore.ignored(&path, directory).unwrap()
+                })
+                .collect();
+            assert_eq!(
+                ignore
+                    .ignored_entries(folder, &names, &directories)
+                    .unwrap(),
+                one_by_one,
+                "entries of {folder:?}: {names:?}"
+            );
+        }
+        let names = ["drop.log", "keep.log", "gen", "api", "local.py"].map(String::from);
+        assert_eq!(
+            ignore
+                .ignored_entries("", &names, &[false, false, true, true, false])
+                .unwrap(),
+            [true, false, true, false, true]
+        );
+        assert_eq!(
+            ignore
+                .ignored_entries(
+                    "api",
+                    &["gen".to_owned(), "build".to_owned()],
+                    &[false, true]
+                )
+                .unwrap(),
+            [false, true],
+            "a directory-only pattern matches an entry marked a folder only"
+        );
+        assert!(
+            ignore
+                .ignored_entries("", &names, &[false])
+                .unwrap_err()
+                .contains("5 entry names but 1 folder marks")
+        );
+
+        git(&root, &["add", "-f", "api/e.py"]);
+        assert_eq!(
+            ignore
+                .ignored_entries("api", &["e.py".to_owned()], &[false])
+                .unwrap(),
+            [false],
             "the index is re-read once it changes"
         );
         std::fs::remove_dir_all(root).unwrap();

@@ -1502,6 +1502,12 @@ export interface IgnoredEditMatch {
   pattern: string;
 }
 
+/** An entry of a folder a walk listed: its name, one path component, and whether it is a folder. */
+export interface WalkEntry {
+  readonly name: string;
+  readonly directory: boolean;
+}
+
 export interface CodeRuleAuditor {
   openWorkspace(sessionId: string): Promise<void>;
   /** Refresh live rules before filtering paths for a tool's preimages; `acceptsPath` reflects them on return. */
@@ -1511,10 +1517,21 @@ export interface CodeRuleAuditor {
   /** `path` is relative to the session folder and may lead out of it (`../`) into another checkout. */
   acceptsPath(path: string): boolean;
   /**
+   * `acceptsPath` of a file Git does not ignore, which a walk found so (`ignoredEntries`): whether the rules read it,
+   * without asking Git's ignore rules again. Absent: the walk asks `acceptsPath`.
+   */
+  readsPath?(path: string): boolean;
+  /**
    * Whether `path` (as for `acceptsPath`) is left out because Git ignores it and the session follows `.gitignore`:
    * a shell-write walk neither descends into such a folder (`directory`) nor observes such a file. Absent: nothing is.
    */
   ignoresPath?(path: string, directory: boolean): boolean;
+  /**
+   * `ignoresPath` of each entry of the folder `folder` (as for `acceptsPath`, `""` for the session folder), in the
+   * order given: a walk asks this once for each folder it lists, so Git's rules are asked once per folder, not once
+   * per file. Absent: the walk asks `ignoresPath` of each entry.
+   */
+  ignoredEntries?(folder: string, entries: readonly WalkEntry[]): readonly boolean[];
   /**
    * Why an edit of the file `path` (as for `acceptsPath`) goes unchecked though the rules would read it: the pattern
    * by which Git ignores it, while the session follows `.gitignore`, with its file (absolute) and line. Undefined for a
