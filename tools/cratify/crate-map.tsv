@@ -231,3 +231,6 @@ value::key	rerail-lang-ecma
 value::python_structure	rerail-lang-python
 calls::summary::python	rerail-lang-python
 matcher::resolve::php	rerail-lang-php
+calls::closure::lang_php	rerail-lang-php
+calls::closure::lang_python	rerail-lang-python
+calls::closure::lang_rust	rerail-lang-rust
