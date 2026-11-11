@@ -127,9 +127,9 @@ pub(super) fn projection(
     for rule in &prog.rules {
         for a in rule.body.iter().filter_map(Literal::atom) {
             users
-                .entry(a.rel.clone())
+                .entry(a.rel.to_string())
                 .or_default()
-                .insert(rule.head.rel.clone());
+                .insert(rule.head.rel.to_string());
         }
     }
     for (name, native) in &prog.natives {

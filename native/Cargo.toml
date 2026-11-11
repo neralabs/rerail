@@ -38,6 +38,9 @@ python-syntax-error = []
 # The corpus runner's persistent store (`RERAIL_TAPE_CACHE`): tapes kept across runs, the per-file memo, run records
 # and their collection, in zstd frames. Off (the browser build), every run parses every file.
 tape-cache = []
+# Memory attribution: Rust, Tree-sitter and SQLite allocate through the system allocator instead of jemalloc, so
+# macOS's `malloc_history` and `heap` see every live allocation with its stack. Never on for a build that ships.
+system-allocator = []
 code-rule-profile = []
 # P's workspace anchor path (Pulling-it-all-together@cbee7a03): its anchor corpus prepared for every
 # rule and read by `FileAnchorIndex::build_at`, in place of W's per-file index. Test builds only, over

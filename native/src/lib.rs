@@ -39,7 +39,7 @@ use rules::{CompileSummary, ModelEncoder, NativeMatch, NativeRuleInput, NativeSa
 use std::path::Path;
 
 // jemalloc does not build for MSVC targets; Windows keeps the system allocator.
-#[cfg(not(any(windows, target_family = "wasm")))]
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
@@ -122,6 +122,7 @@ fn install_tree_sitter_allocator() {
     }
     // SAFETY: the four functions are jemalloc's, return no null for a nonzero size, and are
     // installed while the addon loads, before any Tree-sitter object exists.
+    #[cfg(not(feature = "system-allocator"))]
     unsafe {
         tree_sitter::set_allocator(Some(tree_sitter::Allocator {
             malloc,
@@ -261,7 +262,7 @@ pub fn native_memory_profile() -> String {
 
 /// SQLite's allocator set when the library loads, before anything can initialize SQLite
 /// (`content_store::sqlite_on_jemalloc`).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), not(feature = "system-allocator")))]
 #[used]
 #[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
 #[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]

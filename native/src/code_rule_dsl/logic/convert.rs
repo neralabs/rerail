@@ -886,10 +886,10 @@ pub(in crate::code_rule_dsl) fn reachable(prog: Program) -> Program {
     let mut used: BTreeSet<String> = prog.outputs.iter().cloned().collect();
     let mut sets = BTreeSet::new();
     for r in &prog.rules {
-        used.insert(r.head.rel.clone());
+        used.insert(r.head.rel.to_string());
         for l in &r.body {
             if let Some(a) = l.atom() {
-                used.insert(a.rel.clone());
+                used.insert(a.rel.to_string());
                 if let Some((set, _)) = front::axis(&a.rel) {
                     sets.insert(set.to_owned());
                 }
@@ -1084,7 +1084,7 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, mut authored: Pr
         return err(format!("{rel} is derived by both the converter and the overlay"));
     }
     // The base relations it reads are inputs, declared `.input` or not.
-    let reads_base: Vec<String> = authored.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.clone()).filter(|r| base_types(r).is_some()).collect();
+    let reads_base: Vec<String> = authored.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.to_string()).filter(|r| base_types(r).is_some()).collect();
     let Program { decls, lattice, facts, rules, inputs, outputs, kindsets, demand, .. } = authored;
     for (name, columns) in decls {
         match converted.decls.get(&name) {

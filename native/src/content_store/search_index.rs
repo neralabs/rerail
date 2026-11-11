@@ -59,7 +59,7 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         // The schema requires a positive node count; nothing reads the count of an incomplete set.
         let mut put_set = transaction.prepare_cached(
             "INSERT INTO search_index_sets(tape_id,index_version,node_count,complete,has_errors) \
@@ -103,7 +103,7 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let mut remove_kind =
             transaction.prepare_cached("DELETE FROM search_kind_fts WHERE rowid=?1")?;
         let mut put_kind =

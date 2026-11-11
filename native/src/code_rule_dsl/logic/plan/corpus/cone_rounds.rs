@@ -434,7 +434,7 @@ impl RoundProgram {
         // input's granules whose documents' rows changed. What no round derived again stays as stored.
         let written = match &was {
             Some(was) => {
-                let derived: BTreeSet<String> = self.program.rules.iter().map(|r| r.head.rel.clone()).collect();
+                let derived: BTreeSet<String> = self.program.rules.iter().map(|r| r.head.rel.to_string()).collect();
                 let clean = derived.into_iter().filter(|r| next.kept(r).is_none()).collect();
                 let cut = retain::Cut { clean, strata: (0, 0), changed: Vec::new() };
                 let sources: Vec<(String, Arc<dyn Source>)> = bound.iter().map(|(r, (s, _))| (r.clone(), Arc::clone(s))).collect();

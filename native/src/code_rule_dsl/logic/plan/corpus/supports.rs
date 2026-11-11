@@ -37,30 +37,31 @@ pub(in crate::code_rule_dsl) fn supports(cross: &lower::Lowered) -> (lower::Lowe
     let mut out = cross.clone();
     let prog = &cross.program;
     let Ok((sccs, _)) = front::strata(prog) else { return (out, 0, 0) };
-    let gated: BTreeSet<&String> = prog.gates.iter().map(|(g, _)| g).collect();
+    let gated: BTreeSet<&str> = prog.gates.iter().map(|(g, _)| g.as_str()).collect();
     let mut rules: Vec<Rule> = Vec::new();
     let (mut through, mut kept) = (0, 0);
-    let recursive: BTreeSet<&String> = sccs
+    let recursive: BTreeSet<&str> = sccs
         .iter()
-        .filter(|scc| scc.len() > 1 || prog.rules.iter().any(|r| scc.contains(&r.head.rel) && r.body.iter().any(|l| l.atom().is_some_and(|a| scc.contains(&a.rel)))))
+        .filter(|scc| scc.len() > 1 || prog.rules.iter().any(|r| scc.contains(r.head.rel.as_str()) && r.body.iter().any(|l| l.atom().is_some_and(|a| scc.contains(a.rel.as_str())))))
         .flatten()
+        .map(String::as_str)
         .collect();
     let mut n: BTreeMap<String, usize> = BTreeMap::new();
     for rule in &prog.rules {
         let h = &rule.head.rel;
-        let eligible = !recursive.contains(h) && !gated.contains(h) && !prog.natives.contains_key(h) && !prog.lattice.contains_key(h) && !prog.nullary.contains(h);
-        match eligible.then(|| support(prog, rule, n.get(h).copied().unwrap_or(0))).flatten() {
+        let eligible = !recursive.contains(h.as_str()) && !gated.contains(h.as_str()) && !prog.natives.contains_key(h.as_str()) && !prog.lattice.contains_key(h.as_str()) && !prog.nullary.contains(h.as_str());
+        match eligible.then(|| support(prog, rule, n.get(h.as_str()).copied().unwrap_or(0))).flatten() {
             Some((name, decl, made)) => {
-                *n.entry(h.clone()).or_default() += 1;
+                *n.entry(h.to_string()).or_default() += 1;
                 let width = decl.len() - rule.head.args.len();
                 let mut args = rule.head.args.clone();
                 args.extend((0..width).map(|_| Term::Wild));
                 out.program.decls.insert(name.clone(), decl);
-                if let Some(d) = cross.domains.get(h).cloned() {
+                if let Some(d) = cross.domains.get(h.as_str()).cloned() {
                     out.domains.entry(name.clone()).or_insert(d);
                 }
                 rules.push(made);
-                rules.push(Rule { head: rule.head.clone(), body: vec![Literal::Atom(Atom { rel: name, args, neg: false, gated: false })] });
+                rules.push(Rule { head: rule.head.clone(), body: vec![Literal::Atom(Atom { rel: name.into(), args, neg: false, gated: false })] });
                 through += 1;
             }
             None => {
@@ -76,7 +77,7 @@ pub(in crate::code_rule_dsl) fn supports(cross: &lower::Lowered) -> (lower::Lowe
 /// Rule `i` of a head as a support relation: its name, columns and rule. `None`: the rule keeps its form.
 fn support(prog: &front::Program, rule: &Rule, i: usize) -> Option<(String, Vec<(String, String)>, Rule)> {
     let h = &rule.head.rel;
-    let hdecl = prog.decls.get(h)?;
+    let hdecl = prog.decls.get(h.as_str())?;
     if !rule.head.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Str(_))) {
         return None;
     }
@@ -88,7 +89,7 @@ fn support(prog: &front::Program, rule: &Rule, i: usize) -> Option<(String, Vec<
     for l in &rule.body {
         match l {
             Literal::Atom(a) if !a.neg => {
-                let decl = prog.decls.get(&a.rel)?;
+                let decl = prog.decls.get(a.rel.as_str())?;
                 let mut args = Vec::new();
                 for (c, t) in a.args.iter().enumerate() {
                     let t = match t {
@@ -126,5 +127,5 @@ fn support(prog: &front::Program, rule: &Rule, i: usize) -> Option<(String, Vec<
         args.push(Term::Var(v.clone()));
     }
     let name = format!("{h}__sup{i}");
-    Some((name.clone(), decl, Rule { head: Atom { rel: name, args, neg: false, gated: false }, body }))
+    Some((name.clone(), decl, Rule { head: Atom { rel: name.into(), args, neg: false, gated: false }, body }))
 }

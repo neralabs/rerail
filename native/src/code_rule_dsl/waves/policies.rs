@@ -77,7 +77,7 @@ impl Logic {
         let mut prog = Program::default();
         for (i, clause) in clauses.iter().enumerate() {
             let (policy, id) = &clause.key;
-            let head = Atom { rel: "violation".to_owned(), args: vec![Term::Str(policy.clone()), Term::Str(id.clone()), var("D"), var("N")], neg: false, gated: false };
+            let head = Atom { rel: "violation".to_owned().into(), args: vec![Term::Str(policy.clone()), Term::Str(id.clone()), var("D"), var("N")], neg: false, gated: false };
             prog.rules.push(Rule { head, body: vec![matched(i, "D", "N")] });
         }
         declare_violation(&mut prog);
@@ -121,7 +121,7 @@ fn var(name: &str) -> Term {
 }
 
 fn atom(rel: &str, args: Vec<Term>) -> Literal {
-    Literal::Atom(Atom { rel: rel.to_owned(), args, neg: false, gated: false })
+    Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg: false, gated: false })
 }
 
 /// `matched(i, d, n)`: clause `i`'s matches.
@@ -131,13 +131,13 @@ fn matched(i: usize, document: &str, node: &str) -> Literal {
 
 /// Whether `rel` is one of the `py.*` families (`facts::vtab::syntax::PY`).
 fn is_py(rel: &str) -> bool {
-    crate::code_rule_dsl::facts::vtab::syntax::PY.contains(&rel)
+    crate::code_rule_dsl::facts::vtab::syntax::PY.iter().any(|x| x == &rel)
 }
 
 /// Declares each `py.*` family the rules read and do not declare: integer columns, as bound.
 fn declare_py(prog: &mut Program) {
     use crate::code_rule_dsl::facts::vtab::syntax::{PY, PY_COLUMNS};
-    let read: BTreeSet<String> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())).filter(|rel| is_py(rel)).collect();
+    let read: BTreeSet<String> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string())).filter(|rel| is_py(rel)).collect();
     for rel in read {
         let columns = PY_COLUMNS[PY.iter().position(|p| *p == rel).expect("a py family")];
         prog.decls.entry(rel).or_insert_with(|| columns.iter().map(|c| ((*c).to_owned(), "int".to_owned())).collect());
@@ -146,7 +146,7 @@ fn declare_py(prog: &mut Program) {
 
 /// Declares each base relation the rules read and do not declare (`BASE`), as bound.
 fn declare_base(prog: &mut Program) {
-    let read: BTreeSet<String> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())).collect();
+    let read: BTreeSet<String> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string())).collect();
     for (rel, columns) in BASE.iter().filter(|(rel, _)| read.contains(*rel)) {
         prog.decls.entry((*rel).to_owned()).or_insert_with(|| columns.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
     }
@@ -783,9 +783,9 @@ fn demand_program(mut prog: Program, wave: &Program, atoms: usize) -> StoreResul
         let more = magic
             .rules
             .iter()
-            .filter(|rule| !rule.head.rel.starts_with("magic_") && !unavailable.contains(&rule.head.rel))
-            .filter(|rule| rule.body.iter().any(|l| l.atom().is_some_and(|a| unavailable.contains(&a.rel)) || matches!(l, Literal::Ast { .. })))
-            .map(|rule| rule.head.rel.clone())
+            .filter(|rule| !rule.head.rel.starts_with("magic_") && !unavailable.contains(rule.head.rel.as_str()))
+            .filter(|rule| rule.body.iter().any(|l| l.atom().is_some_and(|a| unavailable.contains(a.rel.as_str())) || matches!(l, Literal::Ast { .. })))
+            .map(|rule| rule.head.rel.to_string())
             .collect::<Vec<_>>();
         if more.is_empty() {
             break;
@@ -809,10 +809,10 @@ fn demand_program(mut prog: Program, wave: &Program, atoms: usize) -> StoreResul
         }
     }
     for i in 0..atoms {
-        let head = Atom { rel: DEMANDED.to_owned(), args: vec![Term::Int(i as i64), var("D")], neg: false, gated: false };
+        let head = Atom { rel: DEMANDED.to_owned().into(), args: vec![Term::Int(i as i64), var("D")], neg: false, gated: false };
         rules.push(Rule { head, body: vec![atom(&format!("magic_ast_{i}"), vec![var("D")])] });
     }
-    let referenced: BTreeSet<String> = rules.iter().flat_map(|r| std::iter::once(r.head.rel.clone()).chain(r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()))).collect();
+    let referenced: BTreeSet<String> = rules.iter().flat_map(|r| std::iter::once(r.head.rel.to_string()).chain(r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()))).collect();
     let mut decls: BTreeMap<String, Vec<(String, String)>> = magic.decls.iter().filter(|(rel, _)| referenced.contains(*rel)).map(|(r, c)| (r.clone(), c.clone())).collect();
     decls.insert(DEMANDED.to_owned(), vec![int("c"), int("d")]);
     decls.insert(WAVE.to_owned(), vec![int("d")]);
@@ -830,7 +830,7 @@ fn demand_program(mut prog: Program, wave: &Program, atoms: usize) -> StoreResul
 /// `body` less the literals the batch has not derived (`unavailable`), and less those left without their
 /// variables bound: leaving a literal out of a magic rule only widens demand.
 fn widened(head: &Atom, body: &[Literal], unavailable: &BTreeSet<String>) -> Vec<Literal> {
-    let mut kept: Vec<Literal> = body.iter().filter(|l| !l.atom().is_some_and(|a| unavailable.contains(&a.rel))).cloned().collect();
+    let mut kept: Vec<Literal> = body.iter().filter(|l| !l.atom().is_some_and(|a| unavailable.contains(a.rel.as_str()))).cloned().collect();
     loop {
         let bound: BTreeSet<String> = kept.iter().filter_map(|l| match l {
             Literal::Atom(a) if !a.neg => Some(a.vars()),

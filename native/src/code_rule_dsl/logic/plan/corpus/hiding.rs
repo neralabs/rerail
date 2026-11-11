@@ -173,7 +173,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                     Literal::Atom(a) | Literal::Agg { atom: a, .. } => a,
                     _ => continue,
                 };
-                let Some(cols) = carried.get(&a.rel) else { continue };
+                let Some(cols) = carried.get(a.rel.as_str()) else { continue };
                 let spec = a.args.iter().enumerate().find_map(|(c, t)| match t {
                     Term::Var(v) if !cols.get(c).is_some_and(|f| f.scoped) => grammar_of(v).map(|g| (c, g)),
                     _ => None,
@@ -181,13 +181,13 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                 let Some((c, g)) = spec else { continue };
                 // A copy read with another column scoped is a copy of the same relation with both seeded, not a copy
                 // of the copy: one per relation and set of seeded columns, so the copies end.
-                let (orig, mut cols) = specialized.get(&a.rel).cloned().unwrap_or_else(|| (a.rel.clone(), BTreeMap::new()));
+                let (orig, mut cols) = specialized.get(a.rel.as_str()).cloned().unwrap_or_else(|| (a.rel.to_string(), BTreeMap::new()));
                 cols.insert(c, g);
                 let name = format!("rr_in_{}{orig}", cols.iter().map(|(c, g)| format!("{}_{c}_", g.replace(|ch: char| !ch.is_ascii_alphanumeric(), "_"))).collect::<String>());
                 if made.insert(name.clone()) {
                     for r in snapshot.iter().filter(|r| r.head.rel == orig) {
                         let mut copy = r.clone();
-                        copy.head.rel = name.clone();
+                        copy.head.rel = name.clone().into();
                         let mut seed = BTreeMap::new();
                         for (c, g) in &cols {
                             if let Some(Term::Var(v)) = copy.head.args.get(*c) {
@@ -205,7 +205,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                 // seeded column is never carried as scoped there, so the same copy is found each round (a loop
                 // that did not end on `ruff-perf401`).
                 if a.rel != name {
-                    a.rel = name;
+                    a.rel = name.into();
                     changed = true;
                 }
             }
@@ -231,7 +231,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
             if a.neg {
                 continue;
             }
-            let Some(cols) = base_locations.get(&a.rel) else { continue };
+            let Some(cols) = base_locations.get(a.rel.as_str()) else { continue };
             let doc_col = crate::code_rule_dsl::typing::file_local::document_column(&a.rel);
             let atom_scoped = cols.iter().any(|&c| matches!(a.args.get(c), Some(Term::Var(v)) if facts.get(v).is_some_and(|f| f.scoped)));
             if atom_scoped {
@@ -270,11 +270,11 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
     for rule in prog.rules.iter_mut().filter(|r| !VIEWS.contains(&r.head.rel.as_str())) {
         for l in &mut rule.body {
             let Literal::Agg { atom, .. } = l else { continue };
-            let Some(cols) = base_locations.get(&atom.rel) else { continue };
+            let Some(cols) = base_locations.get(atom.rel.as_str()) else { continue };
             if cols.is_empty() {
                 continue;
             }
-            let decl = prog.decls.get(&atom.rel).cloned().unwrap_or_default();
+            let decl = prog.decls.get(atom.rel.as_str()).cloned().unwrap_or_default();
             let doc_col = crate::code_rule_dsl::typing::file_local::document_column(&atom.rel);
             // Every wildcard becomes a column of the helper: the aggregate counts the atom's rows, not their
             // projection.
@@ -300,7 +300,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                 }
             }
             let name = format!("rr_shown_agg{}", helpers.len());
-            let head = Atom { rel: name, args: vars.iter().map(|(v, _)| Term::Var(v.clone())).collect(), neg: false, gated: false };
+            let head = Atom { rel: name.into(), args: vars.iter().map(|(v, _)| Term::Var(v.clone())).collect(), neg: false, gated: false };
             // The aggregate's own wildcards stay wildcards: its named variables are correlated.
             let args = head.args.iter().map(|t| match t {
                 Term::Var(v) if v.starts_with("rr_shown_agg_c") => Term::Wild,
@@ -311,7 +311,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         }
     }
     for (head, vars, body) in helpers {
-        prog.decls.insert(head.rel.clone(), vars);
+        prog.decls.insert(head.rel.to_string(), vars);
         prog.rules.push(crate::code_rule_dsl::logic::front::Rule { head, body });
     }
 }
@@ -319,7 +319,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
 /// What each derived relation's columns carry, to a fixpoint over the rules.
 fn carry(prog: &Program, base: &HashMap<String, Vec<usize>>, seeds: &[BTreeMap<String, Fact>], view: &dyn Fn(&str) -> bool) -> HashMap<String, Vec<Fact>> {
     let mut carried: HashMap<String, Vec<Fact>> =
-        prog.rules.iter().map(|r| r.head.rel.clone()).filter(|r| !view(r)).map(|r| { let n = prog.decls.get(&r).map_or(0, Vec::len); (r, vec![Fact::default(); n]) }).collect();
+        prog.rules.iter().map(|r| r.head.rel.to_string()).filter(|r| !view(r)).map(|r| { let n = prog.decls.get(r.as_str()).map_or(0, Vec::len); (r, vec![Fact::default(); n]) }).collect();
     // A rule's analysis reads its positive atoms' carried columns: it is analysed again only when one of them changed
     // (a worklist, not every rule each round: a combined pack has tens of thousands, O111).
     let mut readers: HashMap<&str, Vec<usize>> = HashMap::default();
@@ -342,7 +342,7 @@ fn carry(prog: &Program, base: &HashMap<String, Vec<usize>>, seeds: &[BTreeMap<S
             queued[i] = false;
             let (rule, seed) = (&prog.rules[i], &seeds[i]);
             let facts = analyse(rule, base, carried, seed);
-            let Some(cols) = carried.get_mut(&rule.head.rel) else { continue };
+            let Some(cols) = carried.get_mut(rule.head.rel.as_str()) else { continue };
             let mut changed = false;
             for (c, t) in rule.head.args.iter().enumerate() {
                 if let Some(slot) = cols.get_mut(c) {
@@ -409,7 +409,7 @@ fn analyse(rule: &crate::code_rule_dsl::logic::front::Rule, base: &HashMap<Strin
     }
     // Derived relations' carried columns.
     for a in positive() {
-        if let Some(cols) = carried.get(&a.rel) {
+        if let Some(cols) = carried.get(a.rel.as_str()) {
             for (c, f) in cols.iter().enumerate() {
                 if (f.scoped || f.grammar.is_some()) && let Some(v) = var(a.args.get(c)) {
                     facts.entry(v).or_default().join(&Fact { definite: f.definite && f.scoped, ..f.clone() });

@@ -122,7 +122,7 @@ impl Projection {
             _ => None,
         });
         let verdict = shape == Shape::T && program.decls.get("syntax_error").is_some_and(|cols| cols.len() == 3);
-        let derived: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.clone()).collect();
+        let derived: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.to_string()).collect();
         let reads = reads.into_iter().filter(|r| !derived.contains(r)).collect();
         Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), ast_patterns: program.ast_patterns.iter().cloned().collect(), text_spans: Some(span_text_demand(program)), long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: partial.collect(), verdict, derived }
     }
@@ -343,7 +343,7 @@ fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::Program, match
             for (c, t) in rule.head.args.iter().enumerate() {
                 let Term::Var(v) = t else { continue };
                 let kinds = of_var(&columns, &rule.body, v);
-                let entry = columns.entry((rule.head.rel.clone(), c)).or_insert(Some(BTreeSet::new()));
+                let entry = columns.entry((rule.head.rel.to_string(), c)).or_insert(Some(BTreeSet::new()));
                 let joined = match (&*entry, kinds) {
                     (None, _) | (_, None) => None,
                     (Some(a), Some(b)) => Some(a.union(&b).cloned().collect()),
@@ -367,7 +367,7 @@ fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::Program, match
     // Whether `v` is a span (a `span` column binds it): its text is a span's (`text_spans`), not a node's.
     let span = |body: &[Literal], v: &str| {
         body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel != "text").any(|a| {
-            let types = program.decls.get(&a.rel);
+            let types = program.decls.get(a.rel.as_str());
             a.args.iter().enumerate().any(|(c, t)| matches!(t, Term::Var(x) if x == v) && types.and_then(|ts| ts.get(c)).is_some_and(|(_, ty)| ty == "span"))
         })
     };
@@ -455,7 +455,7 @@ fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::Program, match
             }
             let Some(Term::Var(v)) = text.args.first() else {
                 read = None;
-                wide.get_or_insert_with(|| rule.head.rel.clone());
+                wide.get_or_insert_with(|| rule.head.rel.to_string());
                 continue;
             };
             let fixed = of_var(&columns, &rule.body, v);
@@ -468,7 +468,7 @@ fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::Program, match
                         (_, (k, _)) if !k.is_empty() => nodes.kinds.extend(k),
                         (_, (_, f)) if !f.is_empty() => nodes.fields.extend(f),
                         _ => {
-                            wide = Some(format!("{}, reading text({v}, …)", rule.head.rel));
+                            wide = Some(format!("{}, reading text({v}, …)", rule.head.rel).into());
                             read = None
                         }
                     },
@@ -497,7 +497,7 @@ fn span_text_demand(program: &crate::code_rule_dsl::logic::front::Program) -> BT
             for atom in rule.body.iter().filter_map(Literal::atom).filter(|atom| !atom.neg) {
                 for (column, term) in atom.args.iter().enumerate() {
                     if let Term::Var(value) = term {
-                        *vars.entry(value.clone()).or_default() |= columns.get(&(atom.rel.clone(), column)).copied().unwrap_or(0);
+                        *vars.entry(value.clone()).or_default() |= columns.get(&(atom.rel.to_string(), column)).copied().unwrap_or(0);
                     }
                 }
             }
@@ -519,7 +519,7 @@ fn span_text_demand(program: &crate::code_rule_dsl::logic::front::Program) -> BT
                 if let Term::Var(value) = term {
                     let mask = vars.get(value).copied().unwrap_or(0);
                     if mask != 0 {
-                        let entry = columns.entry((rule.head.rel.clone(), column)).or_default();
+                        let entry = columns.entry((rule.head.rel.to_string(), column)).or_default();
                         changed |= *entry != (*entry | mask);
                         *entry |= mask;
                     }

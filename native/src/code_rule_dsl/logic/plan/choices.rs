@@ -111,14 +111,16 @@ impl Drop for Durable {
 
 /// The choices for program `key` that a run at `nodes` takes: this process's, else the store's.
 pub(super) fn lookup(key: &[u8; 32], nodes: f64) -> Option<Chosen> {
-    if let Some(c) = kept().lock().expect("the kept choices").get(key).filter(|c| holds(c.nodes, nodes)) {
-        return Some(c.clone());
+    // Memory is ahead of the store (decision 0102): choices this process holds are the newest there are, so the store
+    // is read only for a program this process has not planned. Nor does the read wait for the writer: what a queued
+    // write holds is in memory already.
+    if let Some(c) = kept().lock().expect("the kept choices").get(key) {
+        return holds(c.nodes, nodes).then(|| c.clone());
     }
     let found = DURABLE.with(|d| {
         let d = d.borrow();
         let (store, prepared) = d.as_ref()?;
         let _span = super::super::profile::span(|| "planning choices, from the store".into());
-        store.settle(&queued(prepared, key));
         read(store, prepared, key).ok().flatten()
     })?;
     keep(*key, found.clone());
@@ -219,7 +221,7 @@ fn write(store: &ContentStore, prepared: &[u8; 32], key: &[u8; 32], chosen: &Cho
         program_facts::write(&mut facts, P, program);
         // A program that does not read back the same is not kept: the next run chooses again.
         let back = program_facts::program(&facts, P);
-        if !back.is_ok_and(|back| format!("{back:?}") == format!("{program:?}")) {
+        if !back.is_ok_and(|back| program_facts::debug_digest(&back) == program_facts::debug_digest(program)) {
             return Ok(false);
         }
         facts.insert(REWRITTEN.to_owned(), vec![vec![Value::Int(1)]]);

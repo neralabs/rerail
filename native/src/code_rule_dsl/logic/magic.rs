@@ -77,7 +77,7 @@ fn is_const(t: &Term) -> bool {
 }
 
 fn atom(rel: String, args: Vec<Term>) -> Atom {
-    Atom { rel, args, neg: false, gated: false }
+    Atom { rel: rel.into(), args, neg: false, gated: false }
 }
 
 fn positive(l: &Literal) -> Option<&Atom> {
@@ -183,11 +183,11 @@ pub(in crate::code_rule_dsl) fn demand_negated_tests(prog: Program) -> (Program,
     for rule in &prog.rules {
         for l in &rule.body {
             let Literal::Atom(a) = l else { continue };
-            if !demand.contains(&a.rel) {
+            if !demand.iter().any(|x| x == &a.rel) {
                 continue;
             }
             let Some(Term::Var(key)) = a.args.first() else { continue };
-            let only_key = |b: &Atom| !b.neg && prog.inputs.contains(&b.rel) && b.vars().iter().all(|v| v == key) && b.vars().contains(key);
+            let only_key = |b: &Atom| !b.neg && prog.inputs.iter().any(|x| x == &b.rel) && b.vars().iter().all(|v| v == key) && b.vars().contains(key);
             let atoms: Vec<Literal> = rule
                 .body
                 .iter()
@@ -197,9 +197,9 @@ pub(in crate::code_rule_dsl) fn demand_negated_tests(prog: Program) -> (Program,
                 })
                 .collect();
             if atoms.is_empty() {
-                unbounded.insert(a.rel.clone());
+                unbounded.insert(a.rel.to_string());
             } else {
-                wanted.entry(a.rel.clone()).or_default().push(atoms);
+                wanted.entry(a.rel.to_string()).or_default().push(atoms);
             }
         }
     }
@@ -293,7 +293,7 @@ fn magic_sets_once(mut prog: Program, options: &Options) -> Result<Program, Erro
                 if !(vars(key).is_subset(&bound) || is_const(key)) {
                     return Err(Error::UnboundDemand {
                         message: format!("demand for {} is unbound in the rule for {}: [{}]", a.rel, h.rel, join(&rule.body)),
-                        relation: a.rel.clone(),
+                        relation: a.rel.to_string(),
                     });
                 }
                 magic.push((atom(format!("magic_{}", a.rel), vec![key.clone()]), seen.clone()));
@@ -403,22 +403,22 @@ impl From<Error> for Attempt {
 /// docs). A negative cycle that demand closes makes each relation negated inside it, with what it depends on,
 /// computed in full, and the transformation is tried again.
 pub(in crate::code_rule_dsl) fn magic_adorn(prog: Program, options: &Options) -> Result<Program, Error> {
-    let derived: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
+    let derived: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
     let mut by: BTreeMap<String, Vec<Rule>> = BTreeMap::new();
     for r in &prog.rules {
-        by.entry(r.head.rel.clone()).or_default().push(r.clone());
+        by.entry(r.head.rel.to_string()).or_default().push(r.clone());
     }
     let view: BTreeSet<String> = by
         .iter()
         .filter(|(_, rs)| {
-            rs.iter().all(|r| r.body.len() == 1 && positive(&r.body[0]).is_some_and(|a| !derived.contains(&a.rel)))
+            rs.iter().all(|r| r.body.len() == 1 && positive(&r.body[0]).is_some_and(|a| !derived.contains(a.rel.as_str())))
         })
         .map(|(r, _)| r.clone())
         .collect();
     let idb: BTreeSet<String> = derived.difference(&view).cloned().collect();
     let mut full: BTreeSet<String> = options.exclude.iter().cloned().collect();
     // A relation that aggregates is computed in full: guarded, its count would join its demand's recursive component.
-    full.extend(prog.rules.iter().filter(|r| r.body.iter().any(|l| matches!(l, Literal::Agg { .. }))).map(|r| r.head.rel.clone()));
+    full.extend(prog.rules.iter().filter(|r| r.body.iter().any(|l| matches!(l, Literal::Agg { .. }))).map(|r| r.head.rel.to_string()));
     let (sccs, _) = strata(&prog)?;
     let level: BTreeMap<String, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.clone(), i))).collect();
     let mut cyc = Vec::new();
@@ -441,7 +441,7 @@ pub(in crate::code_rule_dsl) fn magic_adorn(prog: Program, options: &Options) ->
                     if new.contains(&r) || full.contains(&r) || !idb.contains(&r) {
                         continue;
                     }
-                    todo.extend(by[&r].iter().flat_map(|rule| rule.body.iter().filter_map(Literal::atom).map(|a| a.rel.clone())));
+                    todo.extend(by[&r].iter().flat_map(|rule| rule.body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string())));
                     new.insert(r);
                 }
                 if new.is_empty() {
@@ -543,8 +543,8 @@ impl Adorn<'_> {
             };
             for l in &order {
                 if let Literal::Atom(a) = l
-                    && self.idb.contains(&a.rel)
-                    && !full.contains(&a.rel)
+                    && self.idb.contains(a.rel.as_str())
+                    && !full.contains(a.rel.as_str())
                 {
                     let ad2 = self.pattern(a, &bound);
                     if !ad2.starts_with('b') {
@@ -583,7 +583,7 @@ impl Adorn<'_> {
             }
             let a = |i: usize| positive(&rest[i]).expect("a positive atom");
             let first = |i: usize| is_const(&a(i).args[0]) || matches!(&a(i).args[0], Term::Var(v) if bound.contains(v));
-            let derived = |i: usize| self.idb.contains(&a(i).rel);
+            let derived = |i: usize| self.idb.contains(a(i).rel.as_str());
             let joined: Vec<usize> = pos.iter().copied().filter(|&i| !a(i).vars().is_disjoint(&bound)).collect();
             let lowest = |ix: &[usize], key: &dyn Fn(usize) -> i64| {
                 ix.iter().copied().fold(None, |best: Option<usize>, i| match best {
@@ -597,7 +597,7 @@ impl Adorn<'_> {
                 .find(|&i| first(i) && !derived(i) && self.options.input_first)
                 .or_else(|| pos.iter().copied().find(|&i| first(i)))
                 .or_else(|| lowest(&joined, &|i| i64::from(derived(i))))
-                .or_else(|| lowest(&pos, &|i| self.level.get(&a(i).rel).map_or(-1, |&l| l as i64)))
+                .or_else(|| lowest(&pos, &|i| self.level.get(a(i).rel.as_str()).map_or(-1, |&l| l as i64)))
                 .expect("a positive atom");
             let l = rest.remove(pick);
             bound.extend(l.vars());
@@ -652,26 +652,26 @@ impl Adorn<'_> {
                 for l in order {
                     let a = l.atom().cloned();
                     if let Some(a) = &a
-                        && self.idb.contains(&a.rel)
+                        && self.idb.contains(a.rel.as_str())
                     {
                         // An aggregated relation is computed in full: its demand would pull the count into its
                         // consumers' recursive component.
-                        let ad2 = if full.contains(&a.rel) || matches!(l, Literal::Agg { .. }) {
+                        let ad2 = if full.contains(a.rel.as_str()) || matches!(l, Literal::Agg { .. }) {
                             "f".repeat(self.arity(&a.rel))
                         } else {
                             self.adorn(a, &bound, full)
                         };
-                        let ad2 = coarse.get(&(a.rel.clone(), ad2.clone())).cloned().unwrap_or(ad2);
+                        let ad2 = coarse.get(&(a.rel.to_string(), ad2.clone())).cloned().unwrap_or(ad2);
                         if ad2.contains('b') {
                             let args = a.args.iter().zip(ad2.bytes()).filter(|(_, x)| *x == b'b').map(|(t, _)| t.clone()).collect();
                             magic.push((atom(format!("magic_{}_{ad2}", a.rel), args), pre.clone()));
                         }
-                        todo.push((a.rel.clone(), ad2));
+                        todo.push((a.rel.to_string(), ad2));
                     }
                     // Sideways: input atoms and filters always; derived atoms and negations as extras, kept if the
                     // program stays stratifiable. Leaving one out only widens the demand.
                     match &l {
-                        Literal::Atom(x) if !x.neg => pre.push((l.clone(), self.idb.contains(&x.rel))),
+                        Literal::Atom(x) if !x.neg => pre.push((l.clone(), self.idb.contains(x.rel.as_str()))),
                         Literal::Agg { .. } => {}
                         _ => pre.push((l.clone(), matches!(l, Literal::Atom(_)))),
                     }
@@ -722,7 +722,7 @@ impl Adorn<'_> {
         }
         add_magic_true(&mut self.prog);
         let mut keep: Vec<Vec<bool>> = magic.iter().map(|(_, pre)| pre.iter().map(|(_, extra)| !extra).collect()).collect();
-        let views: Vec<Rule> = self.prog.rules.iter().filter(|r| !self.idb.contains(&r.head.rel)).cloned().collect();
+        let views: Vec<Rule> = self.prog.rules.iter().filter(|r| !self.idb.contains(r.head.rel.as_str())).cloned().collect();
         let build = |keep: &[Vec<bool>]| -> Result<Vec<Rule>, Error> {
             // Keyed by T's repr of (head, body): the first of equal magic rules stays.
             let (mut out, mut keys) = (Vec::new(), BTreeSet::new());
@@ -775,7 +775,7 @@ impl Adorn<'_> {
                     let pre: Vec<Literal> = pre.iter().map(|p| p.0.clone()).collect();
                     return Err(Error::UnboundDemand {
                         message: format!("demand for {} is unbound: [{}]", mh.rel, join(&pre)),
-                        relation: mh.rel.clone(),
+                        relation: mh.rel.to_string(),
                     });
                 }
                 if keys.insert(format!("{mh} {}", join(&body))) {
@@ -809,12 +809,12 @@ impl Adorn<'_> {
                 .prog
                 .rules
                 .iter()
-                .filter(|r| scc.contains(&r.head.rel))
+                .filter(|r| scc.contains(r.head.rel.as_str()))
                 .flat_map(|r| &r.body)
                 .filter(|l| matches!(l, Literal::Atom(a) if a.neg) || matches!(l, Literal::Agg { .. }))
                 .filter_map(Literal::atom)
-                .filter(|a| scc.contains(&a.rel))
-                .map(|a| a.rel.clone())
+                .filter(|a| scc.contains(a.rel.as_str()))
+                .map(|a| a.rel.to_string())
                 .collect();
             return Err(Attempt::Cycle { error, negs });
         }
@@ -847,8 +847,8 @@ impl Adorn<'_> {
 
     /// The adornment a negated atom (every variable bound) was demanded with.
     fn neg_ad(&mut self, a: &Atom, full: &BTreeSet<String>, coarse: &BTreeMap<(String, String), String>) -> String {
-        let ad = if full.contains(&a.rel) { "f".repeat(self.arity(&a.rel)) } else { self.adorn(a, &a.vars(), full) };
-        coarse.get(&(a.rel.clone(), ad.clone())).cloned().unwrap_or(ad)
+        let ad = if full.contains(a.rel.as_str()) { "f".repeat(self.arity(&a.rel)) } else { self.adorn(a, &a.vars(), full) };
+        coarse.get(&(a.rel.to_string(), ad.clone())).cloned().unwrap_or(ad)
     }
 
     /// Gates the negations that demand puts in their own component (T's `gate_negations`): `!N(t)` becomes
@@ -856,14 +856,14 @@ impl Adorn<'_> {
     /// reads changed. Within each such component the edges into guards are dropped: what is left must be
     /// stratified, and its strata are the gates' levels.
     fn gate_negations(&mut self, full: &BTreeSet<String>, coarse: &BTreeMap<(String, String), String>) -> Result<(), Error> {
-        let derived: BTreeSet<String> = self.prog.rules.iter().map(|r| r.head.rel.clone()).collect();
+        let derived: BTreeSet<String> = self.prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
         let mut edges: BTreeMap<String, BTreeSet<(String, bool)>> = BTreeMap::new();
         for r in &self.prog.rules {
             for l in &r.body {
                 if let Some(a) = l.atom()
-                    && derived.contains(&a.rel)
+                    && derived.contains(a.rel.as_str())
                 {
-                    edges.entry(r.head.rel.clone()).or_default().insert((a.rel.clone(), a.neg || matches!(l, Literal::Agg { .. })));
+                    edges.entry(r.head.rel.to_string()).or_default().insert((a.rel.to_string(), a.neg || matches!(l, Literal::Agg { .. })));
                 }
             }
         }
@@ -907,7 +907,7 @@ impl Adorn<'_> {
             let mut nb = Vec::new();
             for l in r.body {
                 let inside = l.atom().is_some_and(|a| {
-                    comp.get(&a.rel).is_some_and(|c| Some(c) == comp.get(&r.head.rel) && bad.contains(c))
+                    comp.get(a.rel.as_str()).is_some_and(|c| Some(c) == comp.get(r.head.rel.as_str()) && bad.contains(c))
                 });
                 let agg = matches!(l, Literal::Agg { .. });
                 if !(inside && (agg || l.atom().is_some_and(|a| a.neg))) {
@@ -918,14 +918,14 @@ impl Adorn<'_> {
                 // An aggregated relation is full.
                 let ad = if agg { "f".repeat(a.args.len()) } else { self.neg_ad(&a, full, coarse) };
                 let mut src = Some(format!("magic_{}_{ad}", a.rel));
-                let g = if ad.contains('b') && comp.get(src.as_deref().unwrap_or_default()) == comp.get(&a.rel) {
+                let g = if ad.contains('b') && comp.get(src.as_deref().unwrap_or_default()) == comp.get(a.rel.as_str()) {
                     atom(format!("done_{}_{ad}", a.rel), a.args.iter().zip(ad.bytes()).filter(|(_, x)| *x == b'b').map(|(t, _)| t.clone()).collect())
                 } else {
                     src = None;
                     atom(format!("done_{}", a.rel), vec![Term::Int(0)])
                 };
                 if !gates.iter().any(|(name, _)| *name == g.rel) {
-                    gates.push((g.rel.clone(), Gate { src, rel: a.rel.clone(), level: level[&a.rel], quiet: Vec::new(), deps: Vec::new() }));
+                    gates.push((g.rel.to_string(), Gate { src, rel: a.rel.to_string(), level: level[a.rel.as_str()], quiet: Vec::new(), deps: Vec::new() }));
                 }
                 let n = match l {
                     Literal::Agg { var, op, over, atom } => Literal::Agg { var, op, over, atom: Atom { gated: true, ..atom } },
@@ -961,11 +961,11 @@ impl Adorn<'_> {
             quiet.extend(scc.iter().filter(|m| magic_of(m).is_some_and(|r| reach.contains(&r))).cloned());
             let deps: BTreeSet<String> = rules
                 .iter()
-                .filter(|r| reach.contains(&r.head.rel))
+                .filter(|r| reach.contains(r.head.rel.as_str()))
                 .flat_map(|r| &r.body)
                 .filter_map(|l| if let Literal::Atom(a) = l { Some(&a.rel) } else { None })
-                .filter(|rel| names.contains(*rel) && **rel != done)
-                .cloned()
+                .filter(|rel| names.contains((*rel).as_str()) && **rel != done)
+                .map(|rel| rel.to_string())
                 .collect();
             gates[i].1.quiet = quiet.into_iter().collect();
             gates[i].1.deps = deps.into_iter().collect();

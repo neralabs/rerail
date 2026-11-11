@@ -664,7 +664,13 @@ impl Drop for ContentStore {
     /// handle then closes the process's connections to its file: the arena outlives it (the
     /// planner's symbols keep it), its file stays closed until next read.
     fn drop(&mut self) {
-        // The queued writes first: they may name atoms this handle still holds.
+        // With a writer, the atoms are its to write: every handle shares them, and its batch's commit appends them (a
+        // handle dropped inside a wave writes nothing). The queued writes first: they may name atoms this handle holds.
+        if self.atoms.pending() && self.write_back.is_some() {
+            self.write_back("the atoms at a handle's close", 0, Vec::new(), Box::new(|store| store.flush_atoms()));
+            self.end_writer();
+            return;
+        }
         self.end_writer();
         if self.atoms.pending()
             && let Err(error) = self.immediate_transaction(|_| Ok(()))

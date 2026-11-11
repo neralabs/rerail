@@ -179,7 +179,7 @@ fn edges(rule: &Rule, moves: &Moves) -> Edges {
     for literal in &rule.body {
         match literal {
             Literal::Atom(a) if !a.neg => {
-                for (&(i, j), ms) in moves.get(&a.rel).into_iter().flatten() {
+                for (&(i, j), ms) in moves.get(a.rel.as_str()).into_iter().flatten() {
                     if let (Some(Term::Var(x)), Some(Term::Var(y))) = (a.args.get(i), a.args.get(j)) {
                         ms.iter().for_each(|(&m, &s)| add(x, y, Some((m, s))));
                     }
@@ -305,7 +305,7 @@ fn depth_edges(rule: &Rule, depths: &Depths) -> BTreeMap<String, Vec<(String, Sp
     for literal in &rule.body {
         match literal {
             Literal::Atom(a) if !a.neg => {
-                for (&(i, j), &d) in depths.get(&a.rel).into_iter().flatten() {
+                for (&(i, j), &d) in depths.get(a.rel.as_str()).into_iter().flatten() {
                     if let (Some(Term::Var(x)), Some(Term::Var(y))) = (a.args.get(i), a.args.get(j)) {
                         add(x, y, d);
                     }
@@ -501,8 +501,8 @@ impl<'a> Bounds<'a> {
         let mut outside = BTreeSet::new();
         for l in &rule.body {
             match l {
-                Literal::Atom(a) if !a.neg && !component.contains(&a.rel) => outside.extend(a.vars()),
-                Literal::Agg { var, atom, .. } if !component.contains(&atom.rel) => {
+                Literal::Atom(a) if !a.neg && !component.contains(a.rel.as_str()) => outside.extend(a.vars()),
+                Literal::Agg { var, atom, .. } if !component.contains(atom.rel.as_str()) => {
                     outside.insert(var.clone());
                 }
                 Literal::Nearest { .. } | Literal::Ast { .. } => outside.extend(l.vars()),
@@ -623,12 +623,12 @@ fn flow(rules: &[&Rule], component: &BTreeSet<String>) -> Vec<(Column, Column, b
         let bound = b.atoms();
         let fixed = |v: &str| bound.contains(v) || b.outside.contains(v);
         for literal in &rule.body {
-            if let Some(a) = literal.atom().filter(|a| !a.neg && component.contains(&a.rel)) {
+            if let Some(a) = literal.atom().filter(|a| !a.neg && component.contains(a.rel.as_str())) {
                 for (i, t) in a.args.iter().enumerate() {
                     if let Term::Var(v) = t
                         && !b.outside.contains(v)
                     {
-                        from.entry(v.clone()).or_default().insert(((a.rel.clone(), i), false));
+                        from.entry(v.clone()).or_default().insert(((a.rel.to_string(), i), false));
                     }
                 }
             }
@@ -677,7 +677,7 @@ fn flow(rules: &[&Rule], component: &BTreeSet<String>) -> Vec<(Column, Column, b
                 continue;
             }
             for (c, made) in sources(t, None, &from) {
-                out.push((c, (rule.head.rel.clone(), j), made));
+                out.push((c, (rule.head.rel.to_string(), j), made));
             }
         }
     }
@@ -903,7 +903,7 @@ fn bounded(
         // The variables an atom strictly along the key binds, for the functions' inputs.
         let mut before = BTreeSet::<&String>::new();
         for literal in &rule.body {
-            let Some(a) = literal.atom().filter(|a| component.contains(&a.rel) && !functions.contains_key(a.rel.as_str())) else { continue };
+            let Some(a) = literal.atom().filter(|a| component.contains(a.rel.as_str()) && !functions.contains_key(a.rel.as_str())) else { continue };
             let (ak, acount) = key[a.rel.as_str()];
             let placed = match (k, ak) {
                 (Some(k), Some(ak)) => {
@@ -931,7 +931,7 @@ fn bounded(
                     }
                 }
                 Some(false) => {
-                    same.entry(rule.head.rel.clone()).or_default().insert((a.rel.clone(), false));
+                    same.entry(rule.head.rel.to_string()).or_default().insert((a.rel.to_string(), false));
                     if creates {
                         made.push((&rule.head.rel, &a.rel, rule));
                     }
@@ -951,7 +951,7 @@ fn bounded(
         }
     }
     let cycles = super::tarjan(component, &same);
-    match made.into_iter().find(|(h, a, _)| cycles.iter().any(|c| c.contains(*h) && c.contains(*a))) {
+    match made.into_iter().find(|(h, a, _)| cycles.iter().any(|c| c.contains((*h).as_str()) && c.contains((*a).as_str()))) {
         Some((_, _, rule)) => Err(rule.to_string()),
         None => Ok(()),
     }
@@ -995,14 +995,14 @@ fn constant_keyed(rules: &[&Rule], component: &BTreeSet<String>) -> bool {
         let Some(c) = (0..arity(rel)).find(|&c| atoms.iter().all(|a| a.args.get(c).and_then(key).is_some())) else { return false };
         columns.insert(rel.as_str(), c);
     }
-    let node = |a: &super::Atom| key(&a.args[columns[a.rel.as_str()]]).map(|k| (a.rel.clone(), k));
+    let node = |a: &super::Atom| key(&a.args[columns[a.rel.as_str()]]).map(|k| (a.rel.to_string(), k));
     let mut graph = BTreeMap::<(String, String), BTreeSet<(String, String)>>::new();
     for rule in rules {
         let Some(head) = node(&rule.head) else { return false };
         let to = graph.entry(head).or_default();
         for l in &rule.body {
             if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
-                && component.contains(&a.rel)
+                && component.contains(a.rel.as_str())
             {
                 let Some(n) = node(a) else { return false };
                 to.insert(n);

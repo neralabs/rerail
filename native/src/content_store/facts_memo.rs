@@ -26,7 +26,7 @@ use super::bounded_insert;
 use super::{
     CODEC_ZSTD, ContentStore, HashKey, STRING_OWNER, SourceId, StoreError, StoreResult, compress,
 };
-use rusqlite::{OptionalExtension, Transaction, params, types::Value};
+use rusqlite::{Connection, OptionalExtension, params, types::Value};
 use sha2::{Digest as _, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -518,7 +518,7 @@ impl ContentStore {
 }
 
 /// Records `set`'s ordinals unless the store holds them.
-fn write_plan_set(transaction: &Transaction<'_>, set: &FactsPlanSet) -> StoreResult<()> {
+fn write_plan_set(transaction: &Connection, set: &FactsPlanSet) -> StoreResult<()> {
     let held = transaction
         .prepare_cached("SELECT 1 FROM facts_plan_sets WHERE set_digest=?1 LIMIT 1")?
         .query_row([&set.digest[..]], |_| Ok(()))
@@ -539,7 +539,7 @@ fn write_plan_set(transaction: &Transaction<'_>, set: &FactsPlanSet) -> StoreRes
 /// Adds `words` and `counts` to the stored completion row of (source, schema, path, set).
 #[allow(clippy::too_many_arguments)]
 fn merge_completion(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     source: SourceId,
     schema: i64,
     path: &str,

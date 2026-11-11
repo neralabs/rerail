@@ -345,7 +345,7 @@ pub fn local_space(plan: &[u8; 32]) -> [u8; 32] {
 }
 
 /// The run of `space` that run `token` is: counted once per token (`0`: a run of its own, counted each time).
-fn count_run(t: &rusqlite::Transaction<'_>, space: &[u8; 32], token: u64) -> rusqlite::Result<i64> {
+fn count_run(t: &rusqlite::Connection, space: &[u8; 32], token: u64) -> rusqlite::Result<i64> {
     t.execute("INSERT INTO frame_spaces(space, runs) VALUES (?1, 0) ON CONFLICT(space) DO NOTHING", [&space[..]])?;
     let run: i64 = t.query_row("SELECT runs FROM frame_spaces WHERE space = ?1", [&space[..]], |r| r.get(0))?;
     let mut counted = counted().lock().expect("the spaces' counted runs");

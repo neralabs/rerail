@@ -9,7 +9,7 @@ use super::{
     compression::{compress_source, compress_tape, path_tag, tape_tag},
 };
 use rusqlite::Connection;
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{OptionalExtension, params};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
@@ -1062,7 +1062,7 @@ pub(super) fn compress_documents(
 }
 
 pub(super) fn put_source_tx(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     source: &[u8],
     frame: &[u8],
     aliases: &[HashKey],
@@ -1079,7 +1079,7 @@ pub(super) fn put_source_tx(
 }
 
 fn put_source_prepared_tx(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     canonical_hash: HashKey,
     source_length: usize,
     frame: &[u8],
@@ -1110,7 +1110,7 @@ fn put_source_prepared_tx(
 }
 
 fn put_source_aliases_tx(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     source_id: SourceId,
     aliases: &[HashKey],
 ) -> StoreResult<()> {
@@ -1138,7 +1138,7 @@ fn put_source_aliases_tx(
 /// Stores `tape` over `source_id`, with the documents derived from it (`file_documents`), whose
 /// source and tape frames `document_frames` holds in order.
 pub(super) fn put_tape_tx(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     source_id: SourceId,
     tape: TapePayload<'_>,
     frame: &[u8],
@@ -1210,7 +1210,7 @@ pub(super) fn put_tape_tx(
 }
 
 fn put_tape_prepared_tx(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     source_id: SourceId,
     tape: TapePayload<'_>,
     canonical_hash: HashKey,

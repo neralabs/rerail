@@ -47,7 +47,7 @@ pub(in crate::code_rule_dsl) fn live(rel: &str) -> String {
 }
 
 fn atom(rel: String, args: Vec<Term>) -> Atom {
-    Atom { rel, args, neg: false, gated: false }
+    Atom { rel: rel.into(), args, neg: false, gated: false }
 }
 
 /// The backward rules and the counts for `prog` (its rules, declarations and outputs, as `rr::parse` gives them): a
@@ -76,10 +76,10 @@ pub(in crate::code_rule_dsl) fn program(prog: &Program) -> Program {
             continue;
         }
         // Every derived relation is counted, read or not: a relation nothing reads is all dead rows.
-        targets.insert(h.clone());
+        targets.insert(h.to_string());
         // The head as a read of its liveness: a computed argument is a variable the body computes again.
         let mut computed = Vec::new();
-        let lattice_keys = prog.lattice.get(h).map(|l| l.keys);
+        let lattice_keys = prog.lattice.get(h.as_str()).map(|l| l.keys);
         let head_args: Vec<Term> = rule
             .head
             .args
@@ -107,7 +107,7 @@ pub(in crate::code_rule_dsl) fn program(prog: &Program) -> Program {
                 continue;
             }
             let args: Vec<Term> = read.args.iter().map(|t| if matches!(t, Term::Wild) { Term::Var(var()) } else { t.clone() }).collect();
-            let positive = Literal::Atom(atom(read.rel.clone(), args.clone()));
+            let positive = Literal::Atom(atom(read.rel.to_string(), args.clone()));
             let mut body = Vec::with_capacity(rule.body.len() + 2);
             if !negated {
                 body.push(live_head.clone());
@@ -126,7 +126,7 @@ pub(in crate::code_rule_dsl) fn program(prog: &Program) -> Program {
                 body.extend(computed.iter().cloned());
             }
             out.rules.push(Rule { head: atom(live(&read.rel), args), body });
-            targets.insert(read.rel.clone());
+            targets.insert(read.rel.to_string());
         }
     }
     let count = |n: &str, rel: &str, what: &str, of: Atom| Rule {

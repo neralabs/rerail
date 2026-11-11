@@ -120,8 +120,8 @@ fn atom(a: &Atom, prog: &Program) -> Result<String, Error> {
     {
         return Ok(if has { format!("{bang}has({}, {}, {set})", term(x)?, term(n)?) } else { format!("{bang}inside({}, {}, {set})", term(n)?, term(x)?) });
     }
-    let builtin = BUILTINS.contains(&a.rel.as_str()) && !prog.decls.contains_key(&a.rel);
-    let name = if builtin { a.rel.clone() } else { relation(&a.rel) };
+    let builtin = BUILTINS.contains(&a.rel.as_str()) && !prog.decls.contains_key(a.rel.as_str());
+    let name = if builtin { a.rel.clone() } else { relation(&a.rel).into() };
     Ok(format!("{bang}{name}({})", terms(&a.args)?))
 }
 
@@ -200,7 +200,7 @@ pub(in crate::code_rule_dsl) fn print(prog: &Program) -> Result<String, Error> {
             if let Some(cols)=logical.decls.get_mut(name){cols.clear();}
             for row in logical.facts.get_mut(name).into_iter().flatten(){row.clear();}
         }
-        let decode=|a:&mut Atom|{if prog.nullary.contains(&a.rel){a.args.clear();}};
+        let decode=|a:&mut Atom|{if prog.nullary.contains(a.rel.as_str()){a.args.clear();}};
         for rule in &mut logical.rules {
             decode(&mut rule.head);
             for lit in &mut rule.body{if let Literal::Atom(a)|Literal::Agg{atom:a,..}=lit{decode(a);}}
@@ -276,7 +276,7 @@ pub(in crate::code_rule_dsl) fn print(prog: &Program) -> Result<String, Error> {
     }
     for rule in &prog.rules {
         // A relation made natively is printed as what made it: its rule only orders it after its inputs.
-        if let Some(native) = prog.natives.get(&rule.head.rel) {
+        if let Some(native) = prog.natives.get(rule.head.rel.as_str()) {
             writeln!(out, "{}", native_rule(&rule.head, native, prog)?).expect("a string");
             continue;
         }

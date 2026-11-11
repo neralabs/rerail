@@ -211,7 +211,7 @@ fn span_containment(rule: &mut Rule) -> usize {
             let starts = rule.body.iter().position(|l| le(l) == Some((outer.2.clone(), inner.2.clone())));
             let ends = rule.body.iter().position(|l| le(l) == Some((inner.3.clone(), outer.3.clone())));
             let (Some(starts), Some(ends)) = (starts, ends) else { continue };
-            let within = Literal::Atom(Atom { rel: SPAN_WITHIN.to_owned(), args: vec![Term::Var(inner.1.clone()), Term::Var(outer.1.clone())], neg: false, gated: false });
+            let within = Literal::Atom(Atom { rel: SPAN_WITHIN.to_owned().into(), args: vec![Term::Var(inner.1.clone()), Term::Var(outer.1.clone())], neg: false, gated: false });
             rule.body[starts.min(ends)] = within;
             rule.body.remove(starts.max(ends));
             made += 1;
@@ -320,10 +320,10 @@ fn existential(rule: &mut Rule, name: &str, decls: &BTreeMap<String, Vec<(String
             }
             // `$d`'s column type, from a positive atom of the part that names it.
             let ty = lits.iter().find_map(|l| match l {
-                Literal::Atom(a) if !a.neg => a.args.iter().position(|t| matches!(t, Term::Var(v) if v == d)).and_then(|c| Some(decls.get(&a.rel)?.get(c)?.1.clone())),
+                Literal::Atom(a) if !a.neg => a.args.iter().position(|t| matches!(t, Term::Var(v) if v == d)).and_then(|c| Some(decls.get(a.rel.as_str())?.get(c)?.1.clone())),
                 _ => None,
             })?;
-            let atom = |neg| Atom { rel: name.to_owned(), args: vec![Term::Var(d.clone())], neg, gated: false };
+            let atom = |neg| Atom { rel: name.to_owned().into(), args: vec![Term::Var(d.clone())], neg, gated: false };
             let body: Vec<Literal> = lits.into_iter().cloned().collect();
             let at = members[0];
             let mut kept = Vec::with_capacity(rule.body.len() - members.len() + 1);
@@ -358,12 +358,12 @@ fn unit_columns(prog: &mut Program) {
         }
     }
     let read = |a: &mut Atom| {
-        if a.args.is_empty() && units.contains(&a.rel) {
+        if a.args.is_empty() && units.contains(a.rel.as_str()) {
             a.args.push(Term::Wild);
         }
     };
     for rule in &mut prog.rules {
-        if rule.head.args.is_empty() && units.contains(&rule.head.rel) {
+        if rule.head.args.is_empty() && units.contains(rule.head.rel.as_str()) {
             rule.head.args.push(Term::Int(1));
         }
         for l in &mut rule.body {
@@ -400,7 +400,7 @@ fn decided_fact_tests(prog: &mut Program) -> usize {
                 continue;
             }
             let Some(row) = a.args.iter().map(constant).collect::<Option<Vec<Value>>>() else { continue };
-            let present = prog.facts.get(&a.rel).is_some_and(|f| f.iter().any(|r| *r == row));
+            let present = prog.facts.get(a.rel.as_str()).is_some_and(|f| f.iter().any(|r| *r == row));
             if present != a.neg {
                 drop.push(i);
             } else {
@@ -442,7 +442,7 @@ fn ground_rules(prog: &mut Program) -> usize {
     let mut replaced = 0;
     let mut kept = Vec::with_capacity(prog.rules.len());
     for rule in std::mem::take(&mut prog.rules) {
-        if rule.body.is_empty() || prog.lattice.contains_key(&rule.head.rel) {
+        if rule.body.is_empty() || prog.lattice.contains_key(rule.head.rel.as_str()) {
             kept.push(rule);
             continue;
         }
@@ -490,7 +490,7 @@ fn ground_rules(prog: &mut Program) -> usize {
         match row {
             Some(row) => {
                 if consistent {
-                    let facts = prog.facts.entry(rule.head.rel.clone()).or_default();
+                    let facts = prog.facts.entry(rule.head.rel.to_string()).or_default();
                     if !facts.contains(&row) {
                         facts.push(row);
                     }
@@ -613,10 +613,10 @@ fn function_keys(prog: &mut Program) -> Vec<String> {
                     let world = super::rr::WORLD.iter().any(|(r, _)| *r == a.rel) || a.rel == "loaded";
                     // An atom keyed by this variable already (an earlier pass of the loop) is not keyed again.
                     let keyed = rule.body.iter().any(|o| matches!(o, Literal::Atom(k) if k.rel.starts_with(&format!("{}__key_", a.rel)) && k.args.first() == Some(&Term::Var(v.clone()))));
-                    if a.neg || a.gated || a.rel.contains("__key_") || world || keyed || prog.inputs.contains(&a.rel) {
+                    if a.neg || a.gated || a.rel.contains("__key_") || world || keyed || prog.inputs.iter().any(|x| x == &a.rel) {
                         continue;
                     }
-                    let Some(cols) = prog.decls.get(&a.rel) else { continue };
+                    let Some(cols) = prog.decls.get(a.rel.as_str()) else { continue };
                     if cols.len() != a.args.len() || cols.iter().any(|(_, t)| t == "node") {
                         continue;
                     }
@@ -639,7 +639,7 @@ fn function_keys(prog: &mut Program) -> Vec<String> {
                             .collect(),
                     );
                     let ty = if kind == Kind::Number { "int" } else { "sym" };
-                    found = Some((ci, ai, a.rel.clone(), shape, ty.to_owned()));
+                    found = Some((ci, ai, a.rel.to_string(), shape, ty.to_owned()));
                     break 'cmps;
                 }
             }
@@ -657,9 +657,9 @@ fn function_keys(prog: &mut Program) -> Vec<String> {
                     let mut head_args = vec![Term::Var("k".to_owned())];
                     head_args.extend(columns.iter().cloned());
                     new_rules.push(Rule {
-                        head: Atom { rel: name.clone(), args: head_args, neg: false, gated: false },
+                        head: Atom { rel: name.clone().into(), args: head_args, neg: false, gated: false },
                         body: vec![
-                            Literal::Atom(Atom { rel: rel.clone(), args: columns, neg: false, gated: false }),
+                            Literal::Atom(Atom { rel: rel.clone().into(), args: columns, neg: false, gated: false }),
                             Literal::Cmp { l: Term::Var("k".to_owned()), op: "=", r: shape.clone() },
                         ],
                     });
@@ -676,7 +676,7 @@ fn function_keys(prog: &mut Program) -> Vec<String> {
             // The comparison stays: a plan that has R's columns first computes `$v` forward from them, and the keyed
             // atom is then a test (as a concatenation and its inverse are).
             let Literal::Atom(a) = &mut rule.body[ai] else { unreachable!("an atom") };
-            a.rel = name;
+            a.rel = name.into();
             a.args.insert(0, Term::Var(v));
         }
     }
@@ -821,9 +821,9 @@ fn inline_node_tests(prog: &mut Program) -> Vec<String> {
             _ => None,
         };
         match one_node {
-            Some(body) if !kept(prog, rel) => bodies.entry(rel.clone()).or_default().push(body),
+            Some(body) if !kept(prog, rel) => bodies.entry(rel.to_string()).or_default().push(body),
             _ => {
-                refused.insert(rel.clone());
+                refused.insert(rel.to_string());
             }
         }
     }
@@ -833,7 +833,7 @@ fn inline_node_tests(prog: &mut Program) -> Vec<String> {
             match l {
                 Literal::Atom(a) if !a.neg && matches!(a.args.as_slice(), [Term::Var(_)]) => {}
                 Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
-                    refused.insert(a.rel.clone());
+                    refused.insert(a.rel.to_string());
                 }
                 _ => {}
             }
@@ -854,7 +854,7 @@ fn inline_node_tests(prog: &mut Program) -> Vec<String> {
             let mut at = 0;
             while at < rule.body.len() {
                 let candidate = match &rule.body[at] {
-                    Literal::Atom(a) if !a.neg && bodies.contains_key(&a.rel) => match &a.args[0] {
+                    Literal::Atom(a) if !a.neg && bodies.contains_key(a.rel.as_str()) => match &a.args[0] {
                         Term::Var(t) => Some((a.rel.clone(), t.clone())),
                         _ => None,
                     },
@@ -874,7 +874,7 @@ fn inline_node_tests(prog: &mut Program) -> Vec<String> {
                     }
                     l
                 };
-                let body: Vec<Literal> = bodies[&rel][0].iter().map(apart).collect();
+                let body: Vec<Literal> = bodies[rel.as_str()][0].iter().map(apart).collect();
                 let len = body.len();
                 rule.body.splice(at..=at, body);
                 at += len;
@@ -887,11 +887,11 @@ fn inline_node_tests(prog: &mut Program) -> Vec<String> {
         }
     }
     // Unfinished (a chain of reads deeper than the passes): nothing is inlined.
-    let reads = |r: &Rule| r.body.iter().any(|l| matches!(l, Literal::Atom(a) if bodies.contains_key(&a.rel)));
-    if rules.iter().any(|r| !bodies.contains_key(&r.head.rel) && reads(r)) {
+    let reads = |r: &Rule| r.body.iter().any(|l| matches!(l, Literal::Atom(a) if bodies.contains_key(a.rel.as_str())));
+    if rules.iter().any(|r| !bodies.contains_key(r.head.rel.as_str()) && reads(r)) {
         return Vec::new();
     }
-    rules.retain(|r| !bodies.contains_key(&r.head.rel));
+    rules.retain(|r| !bodies.contains_key(r.head.rel.as_str()));
     prog.rules = rules;
     for rel in bodies.keys() {
         prog.decls.remove(rel);
@@ -1005,7 +1005,7 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
     };
     let mut rules_of: BTreeMap<String, Vec<&Rule>> = BTreeMap::new();
     for rule in &prog.rules {
-        rules_of.entry(rule.head.rel.clone()).or_default().push(rule);
+        rules_of.entry(rule.head.rel.to_string()).or_default().push(rule);
     }
     let mut candidates: BTreeSet<String> = rules_of
         .iter()
@@ -1026,7 +1026,7 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
             match l {
                 Literal::Atom(a) if !a.neg && a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Str(_))) && a.rel != rule.head.rel => {}
                 Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
-                    candidates.remove(&a.rel);
+                    candidates.remove(a.rel.as_str());
                 }
                 _ => {}
             }
@@ -1037,19 +1037,19 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
     for rule in &prog.rules {
         for l in &rule.body {
             if let Literal::Atom(read) = l
-                && candidates.contains(&read.rel)
-                && let [def] = rules_of[&read.rel].as_slice()
+                && candidates.contains(read.rel.as_str())
+                && let [def] = rules_of[read.rel.as_str()].as_slice()
                 && filter(def).is_none()
                 && !domain_read(def, read, &rule.body)
             {
-                candidates.remove(&read.rel);
+                candidates.remove(read.rel.as_str());
             }
         }
     }
     // A filter's body reads no other candidate (one level; deeper chains stay built).
     let bodies: BTreeMap<String, Vec<Rule>> = candidates
         .iter()
-        .filter(|rel| rules_of[*rel].iter().all(|r| r.body.iter().all(|l| !matches!(l, Literal::Atom(a) if candidates.contains(&a.rel)))))
+        .filter(|rel| rules_of[*rel].iter().all(|r| r.body.iter().all(|l| !matches!(l, Literal::Atom(a) if candidates.contains(a.rel.as_str())))))
         .map(|rel| (rel.clone(), rules_of[rel].iter().map(|r| (*r).clone()).collect()))
         .collect();
     if bodies.is_empty() {
@@ -1057,15 +1057,15 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
     }
     let mut fresh = 0usize;
     let mut out = Vec::with_capacity(prog.rules.len());
-    let mut work: Vec<Rule> = prog.rules.iter().filter(|r| !bodies.contains_key(&r.head.rel)).cloned().collect();
+    let mut work: Vec<Rule> = prog.rules.iter().filter(|r| !bodies.contains_key(r.head.rel.as_str())).cloned().collect();
     work.reverse();
     while let Some(rule) = work.pop() {
-        let Some(at) = rule.body.iter().position(|l| matches!(l, Literal::Atom(a) if !a.neg && bodies.contains_key(&a.rel))) else {
+        let Some(at) = rule.body.iter().position(|l| matches!(l, Literal::Atom(a) if !a.neg && bodies.contains_key(a.rel.as_str()))) else {
             out.push(rule);
             continue;
         };
         let Literal::Atom(read) = rule.body[at].clone() else { unreachable!("a read") };
-        for def in &bodies[&read.rel] {
+        for def in &bodies[read.rel.as_str()] {
             fresh += 1;
             // The definition's variables renamed apart; a head variable read as a variable becomes it, anything else
             // an equality.
@@ -1145,11 +1145,11 @@ fn join_complements(prog: &mut Program) {
                     && x.rel != rule.head.rel
                     && x.args == [Term::Var(h.clone())] =>
             {
-                Some(x.rel.clone())
+                Some(x.rel.to_string())
             }
             _ => None,
         };
-        by_rel.entry(rule.head.rel.clone()).or_default().push(negated);
+        by_rel.entry(rule.head.rel.to_string()).or_default().push(negated);
     }
     for (rel, parts) in by_rel {
         if parts.len() < 2 || kept(prog, &rel) {
@@ -1161,10 +1161,10 @@ fn join_complements(prog: &mut Program) {
             continue;
         }
         let h = || Term::Var("n".to_owned());
-        let atom = |rel: &str, neg: bool| Atom { rel: rel.to_owned(), args: vec![h()], neg, gated: false };
+        let atom = |rel: &str, neg: bool| Atom { rel: rel.to_owned().into(), args: vec![h()], neg, gated: false };
         prog.rules.retain(|r| r.head.rel != rel);
         prog.rules.push(Rule { head: atom(&all, false), body: parts.iter().map(|p| Literal::Atom(atom(p, false))).collect() });
-        let node = Atom { rel: "node".to_owned(), args: vec![Term::Wild, h(), Term::Wild, Term::Wild, Term::Wild], neg: false, gated: false };
+        let node = Atom { rel: "node".to_owned().into(), args: vec![Term::Wild, h(), Term::Wild, Term::Wild, Term::Wild], neg: false, gated: false };
         prog.rules.push(Rule { head: atom(&rel, false), body: vec![Literal::Atom(node), Literal::Atom(atom(&all, true))] });
         prog.decls.insert(all, vec![("n".to_owned(), "node".to_owned())]);
     }
@@ -1318,7 +1318,7 @@ fn drop_unread(prog: &mut Program) -> Vec<String> {
         }
     }
     let unread: Vec<String> = reads.keys().filter(|r| !live.contains(**r)).map(|r| (*r).to_owned()).collect::<BTreeSet<_>>().into_iter().collect();
-    prog.rules.retain(|r| !unread.contains(&r.head.rel));
+    prog.rules.retain(|r| !unread.iter().any(|x| x == &r.head.rel));
     unread
 }
 
@@ -1342,7 +1342,7 @@ fn location_column(prog: &Program, rel: &str, c: usize) -> bool {
     let base_location = |a: &Atom, i: usize| {
         crate::code_rule_dsl::typing::file_local::document_column(&a.rel) == Some(i)
             || (a.rel == "docof" && i == 1)
-            || prog.decls.get(&a.rel).and_then(|d| d.get(i)).is_some_and(|(_, t)| t == "node")
+            || prog.decls.get(a.rel.as_str()).and_then(|d| d.get(i)).is_some_and(|(_, t)| t == "node")
     };
     let mut rules = prog.rules.iter().filter(|r| r.head.rel == rel).peekable();
     rules.peek().is_some()
@@ -1365,26 +1365,26 @@ fn project_unread_columns(prog: &mut Program) -> Vec<(String, Vec<usize>)> {
             for l in &rule.body {
                 match l {
                     Literal::Agg { var, op: AggOp::Count, atom, .. } if exists.contains(var) => {
-                        let e = read.entry(atom.rel.clone()).or_insert_with(|| Some(BTreeSet::new()));
+                        let e = read.entry(atom.rel.to_string()).or_insert_with(|| Some(BTreeSet::new()));
                         if let Some(cols) = e {
                             cols.extend(atom.args.iter().enumerate().filter(|(_, t)| !matches!(t, Term::Wild)).map(|(c, _)| c));
                         }
                     }
                     Literal::Atom(a) => {
-                        let e = read.entry(a.rel.clone()).or_insert_with(|| Some(BTreeSet::new()));
+                        let e = read.entry(a.rel.to_string()).or_insert_with(|| Some(BTreeSet::new()));
                         if let Some(cols) = e {
                             cols.extend(a.args.iter().enumerate().filter(|(_, t)| !matches!(t, Term::Wild)).map(|(c, _)| c));
                         }
                     }
                     Literal::Agg { atom, .. } => {
-                        read.insert(atom.rel.clone(), None);
+                        read.insert(atom.rel.to_string(), None);
                     }
                     _ => {}
                 }
             }
         }
         let mut changed = false;
-        let heads: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
+        let heads: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
         for rel in heads {
             if kept(prog, &rel) || prog.nullary.contains(&rel) || prog.answers.contains_key(&rel) || prog.answers.values().flatten().any(|a| *a == rel) {
                 continue;
@@ -1608,7 +1608,7 @@ fn canonical(rule: &Rule, label: &dyn Fn(&str) -> String) -> String {
             t => t.clone(),
         }
     }
-    let atom = |a: &Atom, name: &mut dyn FnMut(&str) -> String| Atom { rel: label(&a.rel), args: a.args.iter().map(|t| term(t, name)).collect(), ..a.clone() };
+    let atom = |a: &Atom, name: &mut dyn FnMut(&str) -> String| Atom { rel: label(&a.rel).into(), args: a.args.iter().map(|t| term(t, name)).collect(), ..a.clone() };
     // The head is the relation the signature is of: `@`, so two relations' rules compare by their bodies.
     let head = Atom { rel: "@".into(), ..atom(&rule.head, &mut name) };
     let body: Vec<Literal> = rule
@@ -1803,7 +1803,7 @@ fn climbs_as_axes(prog: &mut Program) -> Vec<String> {
     let index = |prog: &Program| -> HashMap<String, Vec<usize>> {
         let mut by: HashMap<String, Vec<usize>> = HashMap::new();
         for (i, r) in prog.rules.iter().enumerate() {
-            by.entry(r.head.rel.clone()).or_default().push(i);
+            by.entry(r.head.rel.to_string()).or_default().push(i);
         }
         by
     };
@@ -1828,11 +1828,11 @@ fn climbs_as_axes(prog: &mut Program) -> Vec<String> {
                 break;
             };
             let reads_member = rule.body.iter().any(|l| match l {
-                Literal::Atom(a) | Literal::Agg { atom: a, .. } => members.contains(&a.rel),
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => members.contains(a.rel.as_str()),
                 _ => false,
             });
             if !reads_member {
-                bases.push((rule.head.rel.clone(), (*rule).clone()));
+                bases.push((rule.head.rel.to_string(), (*rule).clone()));
                 continue;
             }
             let atoms: Vec<&Atom> = rule.body.iter().filter_map(|l| if let Literal::Atom(a) = l { Some(a) } else { None }).collect();
@@ -1841,10 +1841,10 @@ fn climbs_as_axes(prog: &mut Program) -> Vec<String> {
                 break;
             }
             match atoms.as_slice() {
-                [s] if members.contains(&s.rel) && s.args == [Term::Var(x.clone())] => edges.push((s.rel.clone(), rule.head.rel.clone(), false)),
+                [s] if members.contains(s.rel.as_str()) && s.args == [Term::Var(x.clone())] => edges.push((s.rel.to_string(), rule.head.rel.to_string(), false)),
                 [a, b] => {
-                    let (s, c) = if members.contains(&a.rel) { (a, b) } else { (b, a) };
-                    let (Some(Term::Var(y)), true) = (s.args.first(), members.contains(&s.rel) && s.args.len() == 1 && c.rel == "child" && c.args.len() == 3) else {
+                    let (s, c) = if members.contains(a.rel.as_str()) { (a, b) } else { (b, a) };
+                    let (Some(Term::Var(y)), true) = (s.args.first(), members.contains(s.rel.as_str()) && s.args.len() == 1 && c.rel == "child" && c.args.len() == 3) else {
                         ok = false;
                         break;
                     };
@@ -1866,7 +1866,7 @@ fn climbs_as_axes(prog: &mut Program) -> Vec<String> {
                         break;
                     }
                     up = Some(dir);
-                    edges.push((s.rel.clone(), rule.head.rel.clone(), true));
+                    edges.push((s.rel.to_string(), rule.head.rel.to_string(), true));
                 }
                 _ => {
                     ok = false;
@@ -1914,14 +1914,14 @@ fn climbs_as_axes(prog: &mut Program) -> Vec<String> {
                     let [t] = b.head.args.as_slice() else { valid = false; continue };
                     let Term::Var(t) = t else { valid = false; continue };
                     if depths.contains(&0) {
-                        new_rules.push(Rule { head: Atom { rel: m.clone(), ..b.head.clone() }, body: b.body.clone() });
+                        new_rules.push(Rule { head: Atom { rel: m.clone().into(), ..b.head.clone() }, body: b.body.clone() });
                     }
                     if !stepped.is_empty() {
                         let x = format!("{t}_axis");
                         let (inner, outer) = if up { (Term::Var(t.clone()), Term::Var(x.clone())) } else { (Term::Var(x.clone()), Term::Var(t.clone())) };
                         let mut body = b.body.clone();
-                        body.push(Literal::Atom(Atom { rel: WITHIN.to_owned(), args: vec![inner, outer], neg: false, gated: false }));
-                        new_rules.push(Rule { head: Atom { rel: m.clone(), args: vec![Term::Var(x)], neg: false, gated: false }, body });
+                        body.push(Literal::Atom(Atom { rel: WITHIN.to_owned().into(), args: vec![inner, outer], neg: false, gated: false }));
+                        new_rules.push(Rule { head: Atom { rel: m.clone().into(), args: vec![Term::Var(x)], neg: false, gated: false }, body });
                     }
                 }
             }
@@ -1929,7 +1929,7 @@ fn climbs_as_axes(prog: &mut Program) -> Vec<String> {
         if !valid {
             continue;
         }
-        prog.rules.retain(|r| !members.contains(&r.head.rel));
+        prog.rules.retain(|r| !members.contains(r.head.rel.as_str()));
         prog.rules.extend(new_rules);
         by_head = index(prog);
         if !prog.decls.contains_key(WITHIN) {
@@ -2016,12 +2016,12 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
     for (from, to) in &outputs {
         let width = prog.decls.get(from).map_or(0, Vec::len);
         let args: Vec<Term> = (0..width).map(|i| Term::Var(format!("c{i}"))).collect();
-        copies.push(Rule { head: Atom { rel: from.clone(), args: args.clone(), neg: false, gated: false }, body: vec![Literal::Atom(Atom { rel: to.clone(), args, neg: false, gated: false })] });
+        copies.push(Rule { head: Atom { rel: from.clone().into(), args: args.clone(), neg: false, gated: false }, body: vec![Literal::Atom(Atom { rel: to.clone().into(), args, neg: false, gated: false })] });
     }
-    prog.rules.retain(|r| !rename.contains_key(&r.head.rel) || firsts.contains(&r.head.rel));
-    let to = |rel: &mut String| {
+    prog.rules.retain(|r| !rename.contains_key(r.head.rel.as_str()) || firsts.contains(r.head.rel.as_str()));
+    let to = |rel: &mut crate::code_rule_dsl::logic::front::Name| {
         if let Some(t) = rename.get(rel.as_str()) {
-            *rel = t.clone();
+            *rel = crate::code_rule_dsl::logic::front::Name::new(t);
         }
     };
     for rule in &mut prog.rules {

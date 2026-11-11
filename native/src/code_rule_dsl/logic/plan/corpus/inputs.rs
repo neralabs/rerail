@@ -678,20 +678,20 @@ fn withhold(program: &mut front::Program, incomplete: &BTreeMap<String, String>)
     loop {
         let mut grew = false;
         for rule in &program.rules {
-            if why.contains_key(&rule.head.rel) {
+            if why.contains_key(rule.head.rel.as_str()) {
                 continue;
             }
-            if let Some(w) = rule.body.iter().filter_map(Literal::atom).find_map(|a| why.get(&a.rel)) {
+            if let Some(w) = rule.body.iter().filter_map(Literal::atom).find_map(|a| why.get(a.rel.as_str())) {
                 let w = w.clone();
-                why.insert(rule.head.rel.clone(), w);
+                why.insert(rule.head.rel.to_string(), w);
                 grew = true;
             }
         }
         let mut dropped = Vec::new();
         program.rules.retain(|rule| {
             let reason = rule.body.iter().find_map(|l| match l {
-                Literal::Atom(a) if a.neg => why.get(&a.rel),
-                Literal::Agg { atom, .. } => why.get(&atom.rel),
+                Literal::Atom(a) if a.neg => why.get(a.rel.as_str()),
+                Literal::Agg { atom, .. } => why.get(atom.rel.as_str()),
                 _ => None,
             });
             match reason {
@@ -703,9 +703,9 @@ fn withhold(program: &mut front::Program, incomplete: &BTreeMap<String, String>)
             }
         });
         for (head, w) in dropped {
-            let entry = removed.entry(head.clone()).or_insert((0, w.clone()));
+            let entry = removed.entry(head.to_string()).or_insert((0, w.clone()));
             entry.0 += 1;
-            why.entry(head).or_insert(w);
+            why.entry(head.to_string()).or_insert(w);
             grew = true;
         }
         if !grew {
@@ -716,7 +716,7 @@ fn withhold(program: &mut front::Program, incomplete: &BTreeMap<String, String>)
     // incomplete one is named with how many of its rules read an incomplete relation (the granularity is the rule).
     let mut reported: Vec<String> = program.outputs.clone();
     for rule in program.rules.iter().filter(|r| r.head.rel == "rr_diagnostic") {
-        reported.extend(rule.body.iter().filter_map(Literal::atom).filter(|a| !a.neg).map(|a| a.rel.clone()));
+        reported.extend(rule.body.iter().filter_map(Literal::atom).filter(|a| !a.neg).map(|a| a.rel.to_string()));
     }
     let mut seen = std::collections::BTreeSet::new();
     reported.retain(|r| seen.insert(r.clone()));
@@ -725,7 +725,7 @@ fn withhold(program: &mut front::Program, incomplete: &BTreeMap<String, String>)
         .filter_map(|rel| {
             let w = why.get(&rel)?;
             let rules: Vec<&front::Rule> = program.rules.iter().filter(|r| r.head.rel == rel).collect();
-            let reading = rules.iter().filter(|r| r.body.iter().filter_map(Literal::atom).any(|a| why.contains_key(&a.rel))).count();
+            let reading = rules.iter().filter(|r| r.body.iter().filter_map(Literal::atom).any(|a| why.contains_key(a.rel.as_str()))).count();
             let gone = removed.get(&rel).map_or(0, |(n, _)| *n);
             Some((rel, format!("{w}; {} of its {} rules", reading + gone, rules.len() + gone)))
         })

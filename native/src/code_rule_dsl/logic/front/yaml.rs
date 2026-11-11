@@ -44,7 +44,7 @@ pub(in crate::code_rule_dsl) fn add(prog: &mut Program, doc: &Value) -> Result<(
         let args = vec![Term::Str(policy.clone()), Term::Str(id.to_owned()), Term::Var("D".to_owned()), Term::Var("N".to_owned())];
         let body =
             vec![Literal::Ast { document: "D".to_owned(), node: "N".to_owned(), matcher: matcher.to_string(), captures: Vec::new() }];
-        prog.rules.push(Rule { head: Atom { rel: HEAD.to_owned(), args, neg: false, gated: false }, body });
+        prog.rules.push(Rule { head: Atom { rel: HEAD.to_owned().into(), args, neg: false, gated: false }, body });
         clause["forbid"] = Value::String(MARK.to_owned());
     }
     prog.decls.entry(HEAD.to_owned()).or_insert_with(|| {

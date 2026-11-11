@@ -54,7 +54,7 @@ pub(in crate::code_rule_dsl) fn is_core(rel: &str) -> bool {
 }
 
 fn atom(rel: &str, args: Vec<Term>, neg: bool) -> Literal {
-    Literal::Atom(Atom { rel: rel.to_owned(), args, neg, gated: false })
+    Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg, gated: false })
 }
 
 fn var(v: &str) -> Term {
@@ -144,7 +144,7 @@ impl Lowerer {
         if !self.prog.decls.contains_key(&name) {
             let (params, body) = definition(rel);
             self.prog.decls.insert(name.clone(), DECLS[rel].clone());
-            self.prog.rules.push(Rule { head: Atom { rel: name.clone(), args: params.iter().map(|p| var(p)).collect(), neg: false, gated: false }, body });
+            self.prog.rules.push(Rule { head: Atom { rel: name.clone().into(), args: params.iter().map(|p| var(p)).collect(), neg: false, gated: false }, body });
         }
         name
     }
@@ -156,7 +156,7 @@ impl Lowerer {
             .rules
             .iter()
             .flat_map(|r| r.body.iter().filter_map(Literal::atom))
-            .map(|a| (a.rel.clone(), a.args.len()))
+            .map(|a| (a.rel.to_string(), a.args.len()))
             .collect();
         for (rel, arity) in read {
             if self.prog.decls.contains_key(&rel) || is_axis(&rel) {
@@ -193,7 +193,7 @@ pub(in crate::code_rule_dsl) fn drop_unread_core(prog: &mut crate::code_rule_dsl
         .rules
         .iter()
         .flat_map(|r| std::iter::once(&r.head).chain(r.body.iter().filter_map(Literal::atom)))
-        .map(|a| a.rel.clone())
+        .map(|a| a.rel.to_string())
         .chain(prog.facts.keys().cloned())
         .chain(prog.outputs.iter().cloned())
         .collect();

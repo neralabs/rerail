@@ -119,13 +119,36 @@ fn domain_of(name: &str) -> Option<lower::Domain> {
 }
 
 /// `prepared` as facts.
+#[cfg(test)]
 pub(super) fn facts_of(prepared: &Prepared) -> Facts {
     let mut facts = Facts::new();
-    program_facts::write(&mut facts, "front", &prepared.prog);
-    program_facts::write(&mut facts, "lowered", &prepared.lowered.program);
+    for group in groups(prepared) {
+        for (rel, rows) in group {
+            facts.entry(rel).or_default().extend(rows);
+        }
+    }
+    facts
+}
+
+/// `prepared` as facts, a group at a time: each of its programs', then the rest. Made one by one as they are written
+/// (`remember`), so the writer holds one program's facts at a time, not all four's (about 0.47 GB of the Python pack's
+/// peak at once, a row a `Vec` of `Value`s).
+fn groups(prepared: &Prepared) -> impl Iterator<Item = Facts> + '_ {
     // The split too: a function of the lowered program, but about 0.6 s of the Python pack's to make again.
-    program_facts::write(&mut facts, "split_local", &prepared.split.local);
-    program_facts::write(&mut facts, "split_cross", &prepared.split.cross);
+    let programs = [("front", &prepared.prog), ("lowered", &prepared.lowered.program), ("split_local", &prepared.split.local), ("split_cross", &prepared.split.cross)];
+    programs
+        .into_iter()
+        .map(|(p, prog)| {
+            let mut facts = Facts::new();
+            program_facts::write(&mut facts, p, prog);
+            facts
+        })
+        .chain(std::iter::once_with(|| rest_of(prepared)))
+}
+
+/// `prepared`'s facts other than its programs'.
+fn rest_of(prepared: &Prepared) -> Facts {
+    let mut facts = Facts::new();
     let s = |x: &str| Value::Str(x.to_owned());
     let n = |x: usize| Value::Int(x as i64);
     let mut row = |rel: &str, values: Vec<Value>| facts.entry(rel.to_owned()).or_default().push(values);
@@ -461,10 +484,9 @@ pub(super) fn queued(key: &[u8; 32]) -> crate::content_store::write_back::Key {
 /// keeps them. A document's tape is made when its facts are read and the store has lost them.
 pub(super) fn remember(store: &ContentStore, source: SourceId, key: &[u8; 32], prepared: &Prepared) -> StoreResult<Option<Vec<SourceId>>> {
     super::memo::off();
-    let facts = facts_of(prepared);
     let mut documents = Vec::new();
     let mut entry = Vec::new();
-    for part in parts(facts) {
+    for part in groups(prepared).flat_map(parts) {
         let text = program_facts::document(&part, &schema()).map_err(invalid)?;
         let document = super::memo::source(store, &text)?;
         // The facts read off the document are the part (`a_prepared_program_reads_back_from_its_facts_and_its_tape`
@@ -595,7 +617,7 @@ mod tests {
         assert_eq!((&back.split.exports, &back.split.base, &back.split.locations, &back.split.same_doc), (&prepared.split.exports, &prepared.split.base, &prepared.split.locations, &prepared.split.same_doc));
         // Every prepared program the process holds splits back the same: which one is found above varies with the
         // tests that run beside this one.
-        let all: Vec<super::Prepared> = super::super::with_prepared(|kept| kept.values().flatten().cloned().collect());
+        let all: Vec<std::sync::Arc<super::Prepared>> = super::super::with_prepared(|kept| kept.values().flatten().cloned().collect());
         for p in &all {
             let b = super::prepared_of(&super::facts_of(p), p.lowered.dialect).unwrap();
             assert_eq!((&b.split.exports, &b.split.base, &b.split.locations, &b.split.same_doc), (&p.split.exports, &p.split.base, &p.split.locations, &p.split.same_doc));

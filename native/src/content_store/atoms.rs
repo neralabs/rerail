@@ -1093,7 +1093,13 @@ impl super::ContentStore {
     }
 
     /// Commits `transaction`, appending the pending atoms first if it writes the store.
-    pub fn commit(&self, transaction: rusqlite::Transaction<'_>) -> StoreResult<()> {
+    /// Inside the writer's batch (`super::connection::begin`) it releases its savepoint only: the batch's commit
+    /// appends the atoms.
+    pub(super) fn commit(&self, transaction: super::connection::Tx<'_>) -> StoreResult<()> {
+        let super::connection::Tx::Top(transaction) = transaction else {
+            transaction.commit()?;
+            return Ok(());
+        };
         let upto = self.atoms.write_pending(&transaction)?;
         transaction.commit()?;
         self.atoms.committed(upto);

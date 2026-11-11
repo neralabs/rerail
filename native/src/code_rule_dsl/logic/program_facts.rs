@@ -125,9 +125,17 @@ struct Writer<'a> {
 }
 
 impl Writer<'_> {
-    fn row(&mut self, rel: &str, mut values: Vec<Value>) {
-        values.insert(0, s(&self.p));
-        self.facts.entry(rel.to_owned()).or_default().push(values);
+    fn row(&mut self, rel: &str, values: Vec<Value>) {
+        // Made at its length: an `insert(0, …)` doubled each full row's capacity (0.2 GB of the Python pack's program).
+        let mut row = Vec::with_capacity(values.len() + 1);
+        row.push(s(&self.p));
+        row.extend(values);
+        match self.facts.get_mut(rel) {
+            Some(rows) => rows.push(row),
+            None => {
+                self.facts.insert(rel.to_owned(), vec![row]);
+            }
+        }
     }
 
     fn term(&mut self, term: &Term) -> i64 {
@@ -453,7 +461,7 @@ impl<'a> Reader<'a> {
     fn atom(&self, a: i64) -> Result<Atom, String> {
         let row = self.atoms.get(&a).ok_or_else(|| bad(format!("no atom {a}")))?;
         let args = self.args.get(&a).map(|args| args.values().map(|t| self.term(*t)).collect::<Result<Vec<_>, _>>()).transpose()?.unwrap_or_default();
-        Ok(Atom { rel: text(&row[1])?, args, neg: int(&row[2])? != 0, gated: int(&row[3])? != 0 })
+        Ok(Atom { rel: text(&row[1])?.into(), args, neg: int(&row[2])? != 0, gated: int(&row[3])? != 0 })
     }
 
     /// Rows of `rel` keyed by their first column (an id), each row less that column.
@@ -897,4 +905,20 @@ mod tests {
         super::write(&mut facts, "p", &prog);
         assert_eq!(super::program(&facts, "p").unwrap().ast_patterns, prog.ast_patterns);
     }
+}
+
+/// A digest of `value`'s `Debug` text, made as it is written: two programs compared by it without either's text in
+/// memory (a 16 k-rule program's is tens of megabytes).
+pub(in crate::code_rule_dsl) fn debug_digest(value: &impl std::fmt::Debug) -> [u8; 32] {
+    use sha2::Digest as _;
+    struct Hashing(sha2::Sha256);
+    impl std::fmt::Write for Hashing {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            self.0.update(s.as_bytes());
+            Ok(())
+        }
+    }
+    let mut out = Hashing(sha2::Sha256::new());
+    let _ = std::fmt::write(&mut out, format_args!("{value:?}"));
+    out.0.finalize().into()
 }

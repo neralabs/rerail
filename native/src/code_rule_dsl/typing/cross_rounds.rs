@@ -105,7 +105,7 @@ pub(crate) struct Bounded {
 }
 
 fn first_node_var(prog: &Program, a: &Atom) -> Option<String> {
-    let cols = prog.decls.get(&a.rel)?;
+    let cols = prog.decls.get(a.rel.as_str())?;
     a.args.iter().zip(cols).find_map(|(t, (_, ty))| match t {
         Term::Var(v) if ty == "node" => Some(v.clone()),
         _ => None,
@@ -126,7 +126,7 @@ pub(crate) fn same_document(body: &[Literal], same_doc: &BTreeMap<String, Vec<us
             _ => None,
         })
         .filter_map(|a| {
-            let cols = same_doc.get(&a.rel)?;
+            let cols = same_doc.get(a.rel.as_str())?;
             Some(cols.iter().filter_map(|&c| if let Some(Term::Var(x)) = a.args.get(c) { Some(x.as_str()) } else { None }).collect())
         })
         .collect();
@@ -168,13 +168,13 @@ pub(crate) fn bound(prog: &Program, same_doc: &BTreeMap<String, Vec<usize>>) -> 
                 (Some(h), Some(v)) if *h == v || local_to_head.contains(&v) => {}
                 (Some(h), Some(v)) if matches!(rule.body[i], Literal::Atom(_)) => found.push((i, h.clone(), v)),
                 _ => {
-                    unbounded.insert(rule.head.rel.clone());
+                    unbounded.insert(rule.head.rel.to_string());
                 }
             }
         }
         if found.is_empty() || found.len() > MAX_HOPS {
             if !found.is_empty() {
-                unbounded.insert(rule.head.rel.clone());
+                unbounded.insert(rule.head.rel.to_string());
             }
             out.rules.push(rule.clone());
             continue;
@@ -186,8 +186,8 @@ pub(crate) fn bound(prog: &Program, same_doc: &BTreeMap<String, Vec<usize>>) -> 
                 let across = choice & (1 << bit) != 0;
                 if across {
                     let Literal::Atom(a) = &mut body[*i] else { unreachable!() };
-                    hops.insert(a.rel.clone());
-                    a.rel = format!("{}{PREV}", a.rel);
+                    hops.insert(a.rel.to_string());
+                    a.rel = format!("{}{PREV}", a.rel).into();
                 }
                 body.push(Literal::Cmp { l: doc(v), op: if across { "!=" } else { "=" }, r: doc(h) });
             }
@@ -196,8 +196,8 @@ pub(crate) fn bound(prog: &Program, same_doc: &BTreeMap<String, Vec<usize>>) -> 
     }
     for rel in &hops {
         let prev = format!("{rel}{PREV}");
-        out.decls.insert(prev.clone(), prog.decls[rel].clone());
-        if let Some(l) = prog.lattice.get(rel) {
+        out.decls.insert(prev.clone(), prog.decls[rel.as_str()].clone());
+        if let Some(l) = prog.lattice.get(rel.as_str()) {
             out.lattice.insert(prev.clone(), l.clone());
         }
         out.inputs.push(prev);
@@ -241,7 +241,7 @@ pub(crate) fn cone_split(prog: &Program, hops: &BTreeSet<String>) -> Option<Spli
         .filter(|r| !in_cone(&r.head.rel))
         .flat_map(|r| r.body.iter().filter_map(Literal::atom))
         .filter(|a| in_cone(&a.rel))
-        .map(|a| a.rel.clone())
+        .map(|a| a.rel.to_string())
         .collect();
     // A lattice relation's rows are its cells, not a set: the rest does not read one as an input.
     if reads.iter().any(|r| prog.lattice.contains_key(r)) {
@@ -257,9 +257,9 @@ pub(crate) fn cone_split(prog: &Program, hops: &BTreeSet<String>) -> Option<Spli
     for r in &mut rest.rules {
         for l in &mut r.body {
             if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
-                && reads.contains(&a.rel)
+                && reads.contains(a.rel.as_str())
             {
-                a.rel = format!("{}{DONE}", a.rel);
+                a.rel = format!("{}{DONE}", a.rel).into();
             }
         }
     }
@@ -313,7 +313,7 @@ pub(crate) fn pre_split(cone: &Program) -> Option<PreSplit> {
         .filter(|r| !in_pre(&r.head.rel))
         .flat_map(|r| r.body.iter().filter_map(Literal::atom))
         .filter(|a| in_pre(&a.rel) && cone.rules.iter().any(|r| r.head.rel == a.rel))
-        .map(|a| a.rel.clone())
+        .map(|a| a.rel.to_string())
         .collect();
     if reads.iter().any(|r| cone.lattice.contains_key(r)) {
         return None;
@@ -327,9 +327,9 @@ pub(crate) fn pre_split(cone: &Program) -> Option<PreSplit> {
     for r in &mut rounds.rules {
         for l in &mut r.body {
             if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
-                && reads.contains(&a.rel)
+                && reads.contains(a.rel.as_str())
             {
-                a.rel = format!("{}{PRE}", a.rel);
+                a.rel = format!("{}{PRE}", a.rel).into();
             }
         }
     }

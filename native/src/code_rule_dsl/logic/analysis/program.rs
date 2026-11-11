@@ -68,10 +68,10 @@ fn projection(head: &Atom, body: &[Literal], known: &keys::Keys) -> keys::Projec
                     }
                 }
                 model.inputs.push(keys::Input {
-                    relation: atom.rel.clone(),
+                    relation: atom.rel.to_string(),
                     columns,
                     keys: known
-                        .get(&atom.rel)
+                        .get(atom.rel.as_str())
                         .cloned()
                         .unwrap_or_else(|| vec![(0..atom.args.len()).collect()]),
                 });
@@ -204,7 +204,7 @@ fn scalar_inputs(body: &[Literal]) -> Vec<scalars::Scalar> {
                 AggOp::Max => Kind::Max,
                 AggOp::Join { .. } => Kind::OrderedJoin,
             },
-            source: atom.rel.clone(),
+            source: atom.rel.to_string(),
             keys,
             predicates,
             lookup,
@@ -243,18 +243,18 @@ impl ProgramAnalysis {
             for rule in &program.rules {
                 let name = &rule.head.rel;
                 if inputs.contains(name.as_str())
-                    || program.facts.get(name).is_some_and(|v| !v.is_empty())
-                    || program.natives.contains_key(name)
-                    || program.lattice.contains_key(name)
+                    || program.facts.get(name.as_str()).is_some_and(|v| !v.is_empty())
+                    || program.natives.contains_key(name.as_str())
+                    || program.lattice.contains_key(name.as_str())
                     || producers.get(name.as_str()) != Some(&1)
                 {
                     continue;
                 }
                 let model = projection(&rule.head, &rule.body, &relation_keys);
                 if let Some(key) = model.key() {
-                    let current = relation_keys.entry(name.clone()).or_default();
+                    let current = relation_keys.entry(name.to_string()).or_default();
                     if current.iter().all(|old| key.len() < old.len()) {
-                        key_inferences.push(KeyInference { relation: name.clone(), columns: key.clone(), reason: "Projection preserves a determining input key, with one rule and no additional producer".into(), proof: Some(model.prove(&key)) });
+                        key_inferences.push(KeyInference { relation: name.to_string(), columns: key.clone(), reason: "Projection preserves a determining input key, with one rule and no additional producer".into(), proof: Some(model.prove(&key)) });
                         *current = vec![key];
                         changed = true;
                     }
@@ -268,7 +268,7 @@ impl ProgramAnalysis {
             .rules
             .iter()
             .map(|r| RuleAnalysis {
-                head: r.head.rel.clone(),
+                head: r.head.rel.to_string(),
                 uniqueness: projection(&r.head, &r.body, &relation_keys).unique(),
                 scalars: scalars::analyze(scalar_inputs(&r.body)),
                 contribution_storage: storage::analyze(r),
