@@ -303,6 +303,7 @@ impl<'a> FeatureSamplingTrainerKernel<'a> {
         for (i, (scheduled, data)) in outputs.into_iter().enumerate() {
             scheduled.event.await_()?;
             result.push(partition.finish_with_depth(i as i32, &format!("{debug_name}-{i}"), &data, &scheduled).map_err(|e| format!("Error training {debug_name} partition {i}: {e}"))?);
+            partition.release(&scheduled);
         }
         Ok(result)
     }
@@ -417,8 +418,13 @@ pub struct FeatureSamplingTrainerPartition<'o, 'a> {
     pub num_non_zero_direction_indices: Buffer,
     pub small_side_indexes: Buffer,
     pub small_side_index_to_partition_numbers: Buffer,
-    pub device_all_partition_splits_pool: Buffer,
     pub device_feature_partition_splits_pool: Buffer,
+    /// The trees' results' memory, reused (`release`): each tree's kernels write its splits into its slot's pool
+    /// (so the next tree's work does not touch them, and nothing is copied out), its depth info and continuation
+    /// copied to its slot.
+    slots: std::cell::RefCell<Vec<ResultSlot>>,
+    /// `finish_flat`'s partition table, kept from tree to tree.
+    table: std::cell::RefCell<PartitionTable>,
     /// The launches planned so far (`launch`): a tree's launches are the last tree's, so after the first tree each
     /// replays its plan, binding only buffers.
     plans: std::cell::RefCell<Vec<(PlanKey, &'static GridComputeKernelSpecialization, GridLaunchPlan)>>,
@@ -473,6 +479,31 @@ pub fn device_splits_pool(levels: u32, width: u32) -> (usize, bool) {
     (all.min(DEVICE_SPLITS_POOL_MAX), all <= DEVICE_SPLITS_POOL_MAX)
 }
 
+/// The trees a partition keeps result memory for at once (`ResultSlot`): more than the trees a trainer keeps in
+/// flight (`train_weighted`'s four, and the one it schedules before finishing the oldest).
+pub const RESULT_SLOTS: usize = 6;
+
+/// One tree's result memory: its splits pool (written by its kernels), its depth info, and its continuation's
+/// copies.
+struct ResultSlot {
+    splits: Buffer,
+    depth_info: Buffer,
+    continuation: Option<(Buffer, Buffer, Buffer)>,
+    busy: bool,
+}
+
+impl ResultSlot {
+    fn new(d: &metal::DeviceRef, splits_pool: usize, continuation: Option<[u64; 3]>, busy: bool) -> Self {
+        let bytes = |n: u64| alloc_uninitialized_array_sync::<u8>(d, n as usize);
+        ResultSlot {
+            splits: alloc_uninitialized_array_sync::<IndexedPartitionSplit>(d, splits_pool),
+            depth_info: alloc_uninitialized_array_sync::<TreeDepthInfo>(d, 1),
+            continuation: continuation.map(|[a, b, c]| (bytes(a), bytes(b), bytes(c))),
+            busy,
+        }
+    }
+}
+
 /// One tree's scheduled training: its event, and the memory its results land in, in queue order (so the next
 /// tree's use of the pools does not touch them). When the device leaves levels for the host, the rows' partitions,
 /// and the active partitions' weights and places in the tree, as the last device level left them.
@@ -481,6 +512,8 @@ pub struct ScheduledTree {
     pub partition_splits: Buffer,
     pub tree_depth_info: Buffer,
     pub continuation: Option<(Buffer, Buffer, Buffer)>,
+    /// Its result slot, given back by `release` (none: memory of its own).
+    pub slot: Option<usize>,
 }
 
 impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
@@ -520,10 +553,43 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
             num_non_zero_direction_indices: alloc_uninitialized_array_sync::<u32>(d, 1),
             small_side_indexes: alloc_uninitialized_array_sync::<u8>(d, mpc),
             small_side_index_to_partition_numbers: alloc_uninitialized_array_sync::<u16>(d, 256),
-            device_all_partition_splits_pool: alloc_uninitialized_array_sync::<IndexedPartitionSplit>(d, splits_pool),
             device_feature_partition_splits_pool: alloc_uninitialized_array_sync::<PartitionSplit>(d, mpc * nf),
             plans: Default::default(),
+            slots: Default::default(),
+            table: Default::default(),
         })
+    }
+
+    /// A free result slot (one made while there are fewer than `RESULT_SLOTS`), marked busy; `None` when all are
+    /// busy (the tree then gets memory of its own).
+    fn take_slot(&self) -> Option<usize> {
+        let mut slots = self.slots.borrow_mut();
+        if let Some(i) = slots.iter().position(|s| !s.busy) {
+            slots[i].busy = true;
+            return Some(i);
+        }
+        if slots.len() >= RESULT_SLOTS {
+            return None;
+        }
+        let d = &shared().ok()?.device;
+        slots.push(ResultSlot::new(d, self.splits_pool, self.continues().then(|| self.continuation_lengths()), true));
+        Some(slots.len() - 1)
+    }
+
+    /// Gives a finished tree's result slot back, for a later tree's results (the tree's results are not read after).
+    pub fn release(&self, scheduled: &ScheduledTree) {
+        if let Some(i) = scheduled.slot {
+            self.slots.borrow_mut()[i].busy = false;
+        }
+    }
+
+    /// Whether a tree's partitions are copied out for the host to continue (`ScheduledTree::continuation`).
+    fn continues(&self) -> bool {
+        self.owner.device_levels < self.owner.tree_max_depth || self.can_stop
+    }
+
+    fn continuation_lengths(&self) -> [u64; 3] {
+        [self.device_partitions.length(), self.device_w_all_pool.length(), self.device_partition_index_pool.length()]
     }
 
     /// Enqueues grid kernel `name` on the tree's queue, from its plan (made the first time this launch is seen):
@@ -634,8 +700,18 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
         let o = self.owner;
         let shared = shared()?;
         let (naf, nab, nr) = (data.num_active_features, data.num_active_buckets, o.num_rows);
-        let result_partition_splits = alloc_uninitialized_array_sync::<IndexedPartitionSplit>(&shared.device, self.splits_pool);
-        let result_tree_depth_info = alloc_uninitialized_array_sync::<TreeDepthInfo>(&shared.device, 1);
+        let slot = self.take_slot();
+        let own;
+        let (splits_pool, result_tree_depth_info, continuation_to) = match slot {
+            Some(i) => {
+                let slots = self.slots.borrow();
+                (slots[i].splits.clone(), slots[i].depth_info.clone(), slots[i].continuation.clone())
+            }
+            None => {
+                own = ResultSlot::new(&shared.device, self.splits_pool, self.continues().then(|| self.continuation_lengths()), false);
+                (own.splits.clone(), own.depth_info.clone(), own.continuation.clone())
+            }
+        };
         let q = &self.depth_queue;
         let levels = o.device_levels + 1;
         for depth in 0..levels {
@@ -654,7 +730,7 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
                 ("treeDepthInfo", B(&self.device_tree_depth_info)),
                 ("activeFeatureList", B(&self.device_active_feature_list)),
                 ("featurePartitionSplits", B(&self.device_feature_partition_splits_pool)),
-                ("allPartitionSplitsOut", B(&self.device_all_partition_splits_pool)),
+                ("allPartitionSplitsOut", B(&splits_pool)),
                 ("partitionIndexes", B(&self.device_partition_index_pool)),
             ], &[])?;
             if depth == levels - 1 {
@@ -664,7 +740,7 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
             self.launch("assignPartitionNumbers", &[
                 ("treeTrainingInfo", B(&self.device_tree_training_info)),
                 ("treeDepthInfo", B(&self.device_tree_depth_info)),
-                ("allPartitionSplits", B(&self.device_all_partition_splits_pool)),
+                ("allPartitionSplits", B(&splits_pool)),
                 ("partitionIndexesOut", B(&self.device_partition_index_pool)),
                 ("partitionInfoOut", B(&self.device_partition_info_pool)),
                 ("smallSideIndexesOut", B(&self.small_side_indexes)),
@@ -688,7 +764,7 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
                 ("nonZeroDirectionIndices", B(&self.non_zero_direction_indices)),
                 ("numNonZeroDirectionIndices", B(&self.num_non_zero_direction_indices)),
                 ("smallSideIndexes", B(&self.small_side_indexes)),
-                ("allPartitionSplits", B(&self.device_all_partition_splits_pool)),
+                ("allPartitionSplits", B(&splits_pool)),
                 ("partitionInfo", B(&self.device_partition_info_pool)),
                 ("bucketData", B(&o.bucket_data)),
                 ("bucketDataOffsets", B(&o.device_bucket_data_offsets)),
@@ -728,16 +804,13 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
             ], &[nab])?;
         }
         q.enqueue_copy_between_device_regions(&self.device_tree_depth_info, &result_tree_depth_info, 0, 0, std::mem::size_of::<TreeDepthInfo>() as u64);
-        q.enqueue_copy_between_device_regions(&self.device_all_partition_splits_pool, &result_partition_splits, 0, 0, self.device_all_partition_splits_pool.length());
-        let continuation = (o.device_levels < o.tree_max_depth || self.can_stop).then(|| {
-            let copy = |src: &Buffer| {
-                let dst = alloc_uninitialized_array_sync::<u8>(&shared.device, src.length() as usize);
-                q.enqueue_copy_between_device_regions(src, &dst, 0, 0, src.length());
-                dst
-            };
-            (copy(&self.device_partitions), copy(&self.device_w_all_pool), copy(&self.device_partition_index_pool))
+        let continuation = continuation_to.map(|(a, b, c)| {
+            for (src, dst) in [(&self.device_partitions, &a), (&self.device_w_all_pool, &b), (&self.device_partition_index_pool, &c)] {
+                q.enqueue_copy_between_device_regions(src, dst, 0, 0, src.length());
+            }
+            (a, b, c)
         });
-        Ok(ScheduledTree { event: self.depth_queue.flush(), partition_splits: result_partition_splits, tree_depth_info: result_tree_depth_info, continuation })
+        Ok(ScheduledTree { event: self.depth_queue.flush(), partition_splits: splits_pool, tree_depth_info: result_tree_depth_info, continuation, slot })
     }
 
     /// Builds the tree from the finished partitions' splits (the work must have completed), continuing on the host
@@ -804,51 +877,102 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
             let tree = self.finish(0, "flat", data, scheduled)?;
             return tree.root.is_some().then(|| crate::randomforest_predict::FlatTree::from_tree(o.fs, &tree)).transpose();
         }
-        let splits = transfer_to_host_sync::<IndexedPartitionSplit>(&scheduled.partition_splits, tree_depth_info.num_finished_partitions as usize);
-        FlatBuilder::new(&splits, cols).build()
+        // Read in place: the tree's work is done, and its slot is not reused before `release`.
+        let n = tree_depth_info.num_finished_partitions as usize;
+        if n * std::mem::size_of::<IndexedPartitionSplit>() > scheduled.partition_splits.length() as usize {
+            return Err(format!("{n} finished partitions past the splits pool"));
+        }
+        let splits = unsafe { std::slice::from_raw_parts(scheduled.partition_splits.contents().cast::<IndexedPartitionSplit>(), n) };
+        FlatBuilder::new(splits, self.table.borrow_mut(), cols).build()
     }
 }
 
-/// `finished_leaves` and `extract_tree` then `FlatTree::from_tree`, at once: each partition's last split and last
-/// leaf event in sorted vectors (a partition's leaf is its parent's side until its own split replaces it), and the
-/// tree emitted in preorder from the root.
+/// `finished_leaves` and `extract_tree` then `FlatTree::from_tree`, at once: each partition's split and leaf in an
+/// open-addressed table by partition index (`PartitionTable`: a split's insert replaces the partition's split and
+/// removes its leaf, its sides insert their leaves, as the maps did), and the tree emitted in preorder from the root.
 struct FlatBuilder<'s> {
-    /// (partition, its last valid split), by partition.
-    splits: Vec<(u32, &'s PartitionSplit)>,
-    /// (partition, its leaf's weights; none when a split of its own came after), by partition.
-    leaves: Vec<(u32, Option<W>)>,
+    splits: &'s [IndexedPartitionSplit],
+    table: std::cell::RefMut<'s, PartitionTable>,
     cols: &'s crate::randomforest_predict::FlatColumns,
     tree: crate::randomforest_predict::FlatTree,
 }
 
+/// A partition's entry: its split (a place in the splits, `NO_SPLIT` for none) and its leaf's weights.
+#[derive(Clone, Copy, Default)]
+struct PartitionEntry {
+    key: u32,
+    generation: u32,
+    split: u32,
+    leaf: Option<W>,
+}
+
+const NO_SPLIT: u32 = u32::MAX;
+
+/// Partitions' entries by index, kept from tree to tree (a tree's are those of its generation: nothing is
+/// cleared), linear probing in a power of two at least twice the entries.
+#[derive(Default)]
+pub struct PartitionTable {
+    entries: Vec<PartitionEntry>,
+    generation: u32,
+}
+
+impl PartitionTable {
+    /// Starts a tree of at most `n` partitions.
+    fn start(&mut self, n: usize) {
+        let want = (2 * n + 16).next_power_of_two();
+        self.generation = self.generation.wrapping_add(1);
+        if self.entries.len() < want || self.generation == 0 {
+            self.entries = vec![PartitionEntry::default(); want.max(self.entries.len())];
+            self.generation = 1;
+        }
+    }
+
+    fn slot(&self, key: u32) -> usize {
+        let mask = self.entries.len() - 1;
+        let mut at = (key.wrapping_mul(0x9E37_79B1) as usize) & mask;
+        loop {
+            let e = &self.entries[at];
+            if e.generation != self.generation || e.key == key {
+                return at;
+            }
+            at = (at + 1) & mask;
+        }
+    }
+
+    fn entry(&mut self, key: u32) -> &mut PartitionEntry {
+        let at = self.slot(key);
+        let g = self.generation;
+        let e = &mut self.entries[at];
+        if e.generation != g {
+            *e = PartitionEntry { key, generation: g, split: NO_SPLIT, leaf: None };
+        }
+        e
+    }
+
+    fn get(&self, key: u32) -> Option<&PartitionEntry> {
+        let e = &self.entries[self.slot(key)];
+        (e.generation == self.generation).then_some(e)
+    }
+}
+
 impl<'s> FlatBuilder<'s> {
-    fn new(all: &'s [IndexedPartitionSplit], cols: &'s crate::randomforest_predict::FlatColumns) -> Self {
-        // Events in order: (partition, sequence, leaf weights or a split's removal of the leaf).
-        let mut events: Vec<(u32, u32, Option<W>)> = Vec::new();
-        let mut splits: Vec<(u32, u32, &PartitionSplit)> = Vec::new();
-        for (seq, s) in all.iter().enumerate() {
+    fn new(all: &'s [IndexedPartitionSplit], mut table: std::cell::RefMut<'s, PartitionTable>, cols: &'s crate::randomforest_predict::FlatColumns) -> Self {
+        // Each valid split and its two sides: at most three partitions a split.
+        table.start(3 * all.len());
+        for (at, s) in all.iter().enumerate() {
             if s.index == PartitionIndex::none() || !s.split.valid() {
                 continue;
             }
-            let (i, seq) = (s.index, seq as u32);
-            splits.push((i.index, seq, &s.split));
-            events.push((i.index, 2 * seq, None));
+            let e = table.entry(s.index.index);
+            e.split = at as u32;
+            e.leaf = None;
             if s.split.left.count() == 0 && s.split.right.count() == 0 {
                 continue;
             }
-            events.push((i.left_child().index, 2 * seq + 1, Some(s.split.left)));
-            events.push((i.right_child().index, 2 * seq + 1, Some(s.split.right)));
+            table.entry(s.index.left_child().index).leaf = Some(s.split.left);
+            table.entry(s.index.right_child().index).leaf = Some(s.split.right);
         }
-        splits.sort_unstable_by_key(|&(i, seq, _)| (i, std::cmp::Reverse(seq)));
-        splits.dedup_by_key(|s| s.0);
-        events.sort_unstable_by_key(|&(i, seq, _)| (i, std::cmp::Reverse(seq)));
-        events.dedup_by_key(|e| e.0);
-        FlatBuilder {
-            splits: splits.into_iter().map(|(i, _, s)| (i, s)).collect(),
-            leaves: events.into_iter().map(|(i, _, w)| (i, w)).collect(),
-            cols,
-            tree: Default::default(),
-        }
+        FlatBuilder { splits: all, table, cols, tree: Default::default() }
     }
 
     fn build(mut self) -> Result<Option<crate::randomforest_predict::FlatTree>, String> {
@@ -869,13 +993,14 @@ impl<'s> FlatBuilder<'s> {
 
     /// The subtree at `p` (`extract_tree`'s cases), `None` where there is none.
     fn emit(&mut self, p: PartitionIndex, depth: u32) -> Result<Option<i32>, String> {
-        if let Ok(at) = self.leaves.binary_search_by_key(&p.index, |l| l.0) {
-            if let Some(w) = self.leaves[at].1 {
-                return Ok(Some(self.leaf(&w, depth)));
-            }
+        let Some(&e) = self.table.get(p.index) else { return Ok(None) };
+        if let Some(w) = e.leaf {
+            return Ok(Some(self.leaf(&w, depth)));
         }
-        let Ok(at) = self.splits.binary_search_by_key(&p.index, |s| s.0) else { return Ok(None) };
-        let s = *self.splits[at].1;
+        if e.split == NO_SPLIT {
+            return Ok(None);
+        }
+        let s = self.splits[e.split as usize].split;
         if s.left.count() + s.right.count() == 0 {
             return Ok(None);
         }

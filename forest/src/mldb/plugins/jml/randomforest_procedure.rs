@@ -541,6 +541,7 @@ fn train_weighted(all_data: &PartitionData, config: &RandomForestProcedureConfig
                     Trained::Tree(tree)
                 }
             };
+            partition.release(&scheduled);
             match out.last_mut() {
                 Some((last, trees)) if *last == b => trees.push(tree),
                 _ => out.push((b, vec![tree])),
