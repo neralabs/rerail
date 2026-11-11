@@ -5648,8 +5648,11 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
     let native_reads: HashSet<&str> = if model.inputs.atoms.is_some() && model.inputs.native.contains("program") {
         prog.natives.values().filter(|n| matches!(n, super::front::Native::Python { .. } | super::front::Native::PythonCandidates { .. })).flat_map(|n| n.reads()).collect()
     } else { HashSet::new() };
+    // A gate's relations and a request are tables: the fixpoint writes them as a stratum's (its gate opens, its
+    // requests are answered), which a view cannot take.
+    let written: HashSet<&str> = prog.gates.iter().flat_map(|(done, g)| std::iter::once(done.as_str()).chain(g.src.as_deref())).chain(prog.answers.keys().map(String::as_str)).collect();
     for (&rel, rs) in rules_by {
-        if native_reads.contains(rel) { continue; }
+        if native_reads.contains(rel) || written.contains(rel) { continue; }
         let [rule] = rs.as_slice() else { continue };
         if prog.lattice.contains_key(rel) || prog.facts.contains_key(rel) {
             continue;

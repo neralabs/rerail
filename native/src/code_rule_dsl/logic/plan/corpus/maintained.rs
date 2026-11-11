@@ -23,6 +23,8 @@ pub(in crate::code_rule_dsl) struct Ran {
     pub(in crate::code_rule_dsl) derived_again: usize,
     /// The inputs whose rows changed.
     pub(in crate::code_rule_dsl) changed: Vec<String>,
+    /// Each stratum derived again, by one of its relations, and why (`maintain::Maintained::again`).
+    pub(in crate::code_rule_dsl) again: Vec<(String, &'static str)>,
 }
 
 /// Runs `prog` over `inputs` on `db`, maintaining what `kept` holds of it (of the same `key`); `keep` the relations
@@ -30,12 +32,13 @@ pub(in crate::code_rule_dsl) struct Ran {
 /// (as it is: a run before this one on `db` and `modules` bound it, and `stats` holds its statistics).
 #[allow(clippy::too_many_arguments)]
 pub(in crate::code_rule_dsl) fn run(
+    store: Option<&crate::content_store::ContentStore>,
     db: &Connection,
     modules: &Modules,
     prog: &lower::Lowered,
     key: [u8; 32],
     inputs: &[(String, Arc<dyn Source>, u64, bool)],
-    kept: Option<retain::Retained>,
+    mut kept: Option<retain::Retained>,
     stats: &mut crate::code_rule_dsl::logic::plan::Stats,
     keep: &BTreeSet<String>,
     modes: &str,
@@ -45,6 +48,11 @@ pub(in crate::code_rule_dsl) fn run(
     let sources: Vec<(String, Arc<dyn Source>)> = inputs.iter().map(|(r, s, ..)| (r.clone(), Arc::clone(s))).collect();
     let s = span("cut and rewrite");
     let cut = retain::cut(kept.as_ref(), key, &prog.program, &digests)?;
+    // What the strata that run read of a part kept in the frames is read back now; the rest stays in the store.
+    if let (Some(k), Some(store)) = (kept.as_mut(), store) {
+        k.load(store, &cut, &prog.program)?;
+    }
+    let frames = kept.as_mut().and_then(retain::Retained::take_frames);
     let by_name: HashMap<&str, &Arc<dyn Source>> = inputs.iter().map(|(r, s, ..)| (r.as_str(), s)).collect();
     let mut input_docs: HashMap<String, Arc<retain::DocDigests>> = HashMap::new();
     // An input's delta, found from its old rows by document.
@@ -133,8 +141,11 @@ pub(in crate::code_rule_dsl) fn run(
     let outputs: BTreeMap<String, (Vec<String>, Vec<usize>)> = got.outputs.iter().map(|(rel, lines)| (rel.clone(), (lines.clone(), got.nodes[rel].clone()))).collect();
     drop(s);
     let _s = span("retain");
-    let next = retain::after(kept, key, digests, &cut, rows, &outputs, &sources, HashMap::new(), HashMap::new(), input_docs, Default::default(), HashMap::new());
-    Ok(Ran { next, strata: cut.strata, maintained: maintained.maintained, derived_again: maintained.derived_again, changed: cut.changed.clone() })
+    let mut next = retain::after(kept, key, digests, &cut, rows, &outputs, &sources, HashMap::new(), HashMap::new(), input_docs, Default::default(), HashMap::new());
+    if let Some(frames) = frames {
+        next.with_frames(frames, &cut);
+    }
+    Ok(Ran { next, strata: cut.strata, maintained: maintained.maintained, derived_again: maintained.derived_again, changed: cut.changed.clone(), again: maintained.again.clone() })
 }
 
 /// A relation's rows as `next` keeps them (`None`: not kept).

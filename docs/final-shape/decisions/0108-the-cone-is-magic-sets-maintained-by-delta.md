@@ -197,20 +197,76 @@ Test (`the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads`): a new impo
 library's own import, an import taken away, and a library file removed. Each time the kept run
 runs rounds and loads what a run with nothing kept loads.
 
+## Built: kept as frames, the journal, loads taken back
+
+**Kept like any fact.** The rounds keep nothing in memory between runs. Their state is frames
+in a fact space of its own, one per phase and program (t33 K4), the same as the cross part's:
+
+- At the start, only digests are read (`Retained::from_frames`).
+- Each round's cut reads back only the rows its running strata read (`load`). The driver reads
+  the requests, the gates and the loaded documents' granules when it needs them.
+- At the end, only what changed is written back, behind the run (`write_frames`).
+
+So a session and a new process start the same way. The round program has no outputs: its rows
+are handed on, so each relation is stored with its rows. A relation of no columns is stored as
+its count. A view of one input records its input's digest.
+
+**Unchanged directories are not asked (decision 0105).** With its frames, the rounds record the
+journal's cursors for the roots they read, and the digest of the file-system answers kept. The
+next run asks the journal what changed since. A carried directory, file or digest request keeps
+its kept answer and is not asked, when the journal names none of these paths:
+
+- the request's own path;
+- a directory above it;
+- for a directory, an entry of it.
+
+The cursors are trusted only over the answers they were recorded with. A root not read this
+run keeps its old cursor.
+
+```text
+workload, an import added and reverted   before      now
+main thread's directory answers           2011 keys   0
+whole run (user CPU)                      2.5 s       1.3-1.7 s
+the cone (each phase)                     0.3-0.9 s   0.25-0.3 s
+```
+
+**A load the run's own rows do not ask for is taken back.** A run starts from the last run's
+gates. So a negation can read a relation that is not yet complete this run.
+
+Take a module that became the workspace's own (`csv.py` added). Its gate was open from the
+last run, so `py_workspace(csv)` was read before `csv.py`'s own load was answered. The library
+`csv.pyi` was loaded, and then `_csv`, which it imports.
+
+At the quiet, once the gates are the run's own, a load answered this run that nothing asks for
+now is taken back:
+
+- its `loaded` rows;
+- each row its answer gave that names its file or a node of its document.
+
+The rounds then run on to quiet, so what only it asked for goes in turn. The main thread drops
+those documents from the run's documents and from the exports.
+
+Holding every load back until the last run's rows are gone was measured and rejected: correct,
+but the cone took 2.2 s instead of 0.25 s, re-loading level by level.
+
+Test: `the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads`, case "a library shadowed
+by the workspace's module".
+
+**Switches.** `RERAIL_CONE_ROUNDS=off` turns the rounds off; `RERAIL_CONE_ROUNDS=off-<phase>`
+turns them off in one phase. `RERAIL_CONE_STILL=off` turns off the journal's kept answers.
+
 ## Open
 
-- **The main thread's answers.** Each run answers every key still asked: 2011 directories,
-  0.31 s on the workload, 0.26 s of it in `World::dir`, the observer's kept listing, about
-  128 µs a key. The journal (0105) says which directories changed, so an unchanged
-  directory's kept answer could stand without asking.
-- **A withdrawn load inside a run.** A load can be answered from rounds whose provisional
-  answers later prove wrong; a library file changed on disk is the case. Such a load is
-  already in the run's documents. The rounds do not ask it again, but its per-file rows reach
-  the rest of the cross part. Not seen on the workload or in the test.
-- **Sessions.** The rounds are kept in the store, not in a session's memory. A session's run
-  reads them back from the frames.
-- **The load budget** still admits loads in answer order. When it binds, the result can differ
-  from the fixpoint's.
+- **The load budget, across waves.** Within one batch of loads, the budget now admits by the
+  requests themselves: a top-level module before a submodule, then by module and path. Across
+  batches it is still first-come. A carried run asks all its loads in one batch, a fresh one
+  wave by wave, so when the budget binds (over 4000 libraries; the workload loads 208) the two
+  can admit different sets. A load taken back still counts against the budget for the rest of
+  the run. A rank both share needs each load's depth as a fact (a `min` lattice in
+  `modules.rr`).
+- **Taking a load back** finds its rows by value. A row is taken if it holds the loaded file's
+  symbol, or a node of its document in its location column. An integer column that happens to
+  equal that symbol would be taken too.
 - `fs_dir` and `fs_line` as relations of the cone's fact space (t33's K2). The answers are the
   join `r :- m_r, fs_r` above, but the native step still answers from `World`'s maps.
 

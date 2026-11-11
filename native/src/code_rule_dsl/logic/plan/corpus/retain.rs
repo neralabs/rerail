@@ -1081,6 +1081,70 @@ impl Retained {
         Ok(Some((count, rows)))
     }
 
+    /// The frames this part was read from, taken out: a run of rounds carries them from one round's part to the
+    /// next (`with_frames`), so a relation no round read stays in the store and is still held.
+    pub(in crate::code_rule_dsl) fn take_frames(&mut self) -> Option<InFrames> {
+        self.frames.take()
+    }
+
+    /// `frames` carried into this part, which `cut` made: a relation it derived again is held only as derived (its
+    /// stored rows are of the reads before), the others as stored.
+    pub(in crate::code_rule_dsl) fn with_frames(&mut self, mut frames: InFrames, cut: &Cut) {
+        frames.derived.retain(|rel, _| cut.clean.contains(rel) && !self.rels.contains_key(rel));
+        self.frames = Some(frames);
+    }
+
+    /// Whether the part knows input `rel`'s rows: bound by its run, or current in the frames.
+    pub(in crate::code_rule_dsl) fn has_input(&self, rel: &str) -> bool {
+        self.input_srcs.contains_key(rel) || self.frames.as_ref().is_some_and(|f| f.inputs.contains_key(rel))
+    }
+
+    /// Input `rel`'s rows, as bound or read back from the frames; with `docs`, only the rows of the documents it
+    /// takes (by the first column's document), and only their granules read.
+    pub(in crate::code_rule_dsl) fn read_input(&self, store: &ContentStore, prog: &front::Program, rel: &str, docs: Option<&dyn Fn(i64) -> bool>) -> Result<Option<Vec<Vec<i64>>>> {
+        let width = prog.decls.get(rel).map_or(0, Vec::len);
+        let take = |row: &[i64]| docs.is_none_or(|d| d(super::memo::document_of(row[0])));
+        if let Some(src) = self.input_srcs.get(rel) {
+            let all: Vec<usize> = (0..width).collect();
+            let mut out = Vec::new();
+            let mut row = vec![0i64; width];
+            for i in 0..src.len() {
+                src.row_at(i, &all, &mut row);
+                if width > 0 && take(&row) {
+                    out.push(row.clone());
+                }
+            }
+            return Ok(Some(out));
+        }
+        let Some(frames) = self.frames.as_ref() else { return Ok(None) };
+        let Some((_, by_doc)) = frames.inputs.get(rel) else { return Ok(None) };
+        if width == 0 {
+            return Ok(Some(vec![Vec::new(); by_doc.values().map(|(_, n)| *n as usize).sum()]));
+        }
+        let granules: BTreeSet<i64> = by_doc.keys().filter(|d| docs.is_none_or(|f| f(**d))).map(|d| granule(*d)).collect();
+        let _span = crate::code_rule_dsl::logic::profile::span(|| format!("{rel}: {} granules, from the frames", granules.len()));
+        let mut out = Vec::new();
+        for g in granules {
+            let Some(got) = store.frame_rows(&frames.space, &frames.names[rel], g).map_err(|e| Error::Plan(e.to_string()))? else {
+                return Err(Error::Plan(format!("{rel}: granule {g} of its stored rows is missing")));
+            };
+            out.extend(got.rows.chunks_exact(width.max(1)).take(got.n).filter(|r| take(r)).map(<[i64]>::to_vec));
+        }
+        Ok(Some(out))
+    }
+
+    /// Derived relation `rel`'s rows, as held or read back from the frames.
+    pub(in crate::code_rule_dsl) fn read_derived(&self, store: &ContentStore, rel: &str) -> Result<Option<Vec<Vec<i64>>>> {
+        if let Some(k) = self.rels.get(rel) {
+            let Some(flat) = k.rel.live_rows() else { return Ok(None) };
+            return Ok(Some(flat.chunks_exact(k.width.max(1)).map(<[i64]>::to_vec).collect()));
+        }
+        let Some(frames) = self.frames.as_ref().filter(|f| f.derived.contains_key(rel)) else { return Ok(None) };
+        let Some(got) = store.frame_rows(&frames.space, &frames.names[rel], DOCS_PART).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(None) };
+        let width = got.types.len();
+        Ok(Some(got.rows.chunks_exact(width.max(1)).take(got.n).map(<[i64]>::to_vec).collect()))
+    }
+
     /// What the frames held of this part before the run (`from_frames`).
     pub(in crate::code_rule_dsl) fn frames(&self) -> Option<&InFrames> {
         self.frames.as_ref()
@@ -1108,7 +1172,14 @@ impl Retained {
             let width = source.columns().len();
             let digest = digests.get(rel).copied().unwrap_or_else(|| digest(source.as_ref()));
             now.insert(rel.clone(), digest);
-            if width == 0 || was.inputs.get(rel).is_some_and(|(d, _)| *d == digest) {
+            if was.inputs.get(rel).is_some_and(|(d, _)| *d == digest) {
+                continue;
+            }
+            // A relation of no columns is its count: one document's entry, its digest the input's (`digest`).
+            if width == 0 {
+                let n = source.len() as u64;
+                let rows = vec![0, (digest ^ n.wrapping_mul(0xff51_afd7_ed55_8ccd)) as i64, n as i64];
+                puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest, reads: Vec::new(), rows: FrameRows { types: vec![b'i'; 3], n: 1, rows } });
                 continue;
             }
             let docs = self.input_docs.get(rel).cloned().filter(|d| digest_of_docs(d) == digest).unwrap_or_else(|| Arc::new(docs_of(source.as_ref())));

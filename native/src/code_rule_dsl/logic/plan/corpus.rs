@@ -4131,12 +4131,37 @@ fn run_observed(
         let decls = load.decls.clone();
         // The cone as rounds of its stratified program, maintained by delta (decision 0108): with a store to keep
         // them in. `RERAIL_CONE_ROUNDS=off` runs the gated fixpoint alone.
-        let rounds_wanted = cone_store.is_some() && std::env::var("RERAIL_CONE_ROUNDS").map_or(true, |v| v != "off");
+        let rounds_wanted = cone_store.is_some()
+            && std::env::var("RERAIL_CONE_ROUNDS").map_or(true, |v| v != "off" && v != format!("off-{}", phases::current().as_deref().unwrap_or("none")));
         let round = rounds_wanted.then(|| cone_rounds::RoundProgram::of(load, &per_file)).flatten();
         let lowered_round = round.as_ref().map(|r| part(r.program.clone()));
         let per_file_at: Vec<usize> = per_file.iter().map(|rel| split.locations.get(rel).and_then(|l| l.first().copied()).unwrap_or(0)).collect();
         let corpus_docs: std::collections::HashSet<i64> = docs.iter().map(|(k, _)| *k).collect();
-        let cone_root = root.to_path_buf();
+        let world_answer_rels: BTreeSet<String> = world_rels.iter().map(|(r, _)| r.clone()).collect();
+        // The rounds' frames: a fact space of their own, by phase and program (a phase may run several cones, whose
+        // inputs share names), as the cross part's is by phase (`kept_strata::space`).
+        let rounds_phase = phases::current().map_or_else(|| "cone/rounds".to_owned(), |phase| format!("cone/{phase}"));
+        let rounds_root = root.to_path_buf();
+        let rounds_space_of = move |key: &[u8; 32]| kept_strata::part_space(&rounds_root, &format!("{rounds_phase}/{}", crate::content_store::observe::hex(key)));
+        // What the journal names as changed since the last run kept its rounds (decision 0105): the roots and cursors
+        // recorded with them, the paths named since, and the digest of the file system's answers kept with them.
+        let rounds_record = round.as_ref().map(|r| format!("cone-rounds:{}", crate::content_store::observe::hex(&rounds_space_of(&retain::key(&[0; 32], &r.program)))));
+        let rounds_journal: Option<(Vec<(std::path::PathBuf, String)>, Vec<std::path::PathBuf>, u64)> = rounds_record.as_ref().and_then(|key| {
+            observe(|o| {
+                let (read, _) = o.run_record(key)?;
+                let mut lines = read.lines();
+                let cursors: Vec<String> = lines.next()?.split('\t').map(str::to_owned).collect();
+                let roots: Vec<std::path::PathBuf> = lines.next()?.split('\t').map(std::path::PathBuf::from).collect();
+                let world: u64 = lines.next()?.parse().ok()?;
+                let named = o.changed_since(&roots, &cursors)?;
+                Some((roots.into_iter().zip(cursors).collect(), named, world))
+            })
+        });
+        let rounds_world: Arc<std::sync::Mutex<Option<u64>>> = Arc::default();
+        let rounds_world_in = Arc::clone(&rounds_world);
+        let rounds_withdrawn: Arc<std::sync::Mutex<std::collections::HashSet<i64>>> = Arc::default();
+        let rounds_withdrawn_in = Arc::clone(&rounds_withdrawn);
+        let rounds_journal_in = rounds_journal.clone();
         // Beside the main thread, which answers its requests: a job of the pool's that takes turns with this one.
         let modes = modes.to_owned();
         let cone = crate::threads::beside("the cone of requests", move || -> Result<(Vec<(String, Vec<Vec<i64>>)>, Option<(usize, usize)>, usize)> {
@@ -4162,6 +4187,7 @@ fn run_observed(
                 cone_inputs.push((rel.clone(), Arc::clone(&source)));
                 bind(&rel, source)?;
             }
+            let constants_at: BTreeMap<String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> = constants_in.iter().map(|(r, s)| (r.clone(), Arc::clone(s))).collect();
             for (rel, source) in constants_in {
                 cone_inputs.push((rel.clone(), Arc::clone(&source)));
                 bind(&rel, source)?;
@@ -4184,34 +4210,55 @@ fn run_observed(
             };
             // The rounds from the last run's final round, kept in the store.
             let rounds_key = round.as_ref().map(|r| retain::key(&[0; 32], &r.program));
-            let mut rounds_part = None;
+            let rounds_space = rounds_key.as_ref().map(&rounds_space_of).unwrap_or_default();
+            // Only what the stored frames hold that is current is known here; rows are read when a round needs them.
             let mut from_rounds = None;
             if let (Some(r), Some(store), Some(key)) = (&round, &cone_handle, rounds_key) {
-                let (k, p) = kept_strata::load(store, &cone_root, key, &r.program, &r.input_shapes(), &HashMap::new())?;
-                rounds_part = Some(p);
-                from_rounds = k.filter(|k| r.holds(k));
+                let _s = crate::code_rule_dsl::logic::profile::span(|| "the cone's rounds, from the frames".into());
+                let k = retain::Retained::from_frames(store, rounds_space, key, &r.program)?;
+                let missing = r.missing(&k);
+                if missing.is_empty() {
+                    from_rounds = Some(k);
+                } else {
+                    crate::code_rule_dsl::logic::profile::decision("the cone's rounds (decision 0108)", || format!("the frames hold no final round: {} of it not current ({})", missing.len(), missing.iter().take(6).cloned().collect::<Vec<_>>().join(", ")));
+                }
             }
             let mut keep_rounds: BTreeSet<String> = kept_in.clone();
             if let Some(r) = &round {
                 keep_rounds.extend(r.read());
             }
             let rounds_stats = load_stats.clone();
-            let on = lowered_round.as_ref().zip(rounds_key).map(|(lowered, key)| cone_rounds::On { db: &db2, modules: &modules, lowered, key, stats: &rounds_stats, keep: &keep_rounds, modes: &modes });
-            let rounds_in = cone_rounds::Inputs { per_file: &corpus_rows, corpus: &corpus_docs };
+            // A file-system request still answered as the last run kept it: under a root the record holds, and no
+            // path the journal names since is it, above it, or (for a directory) an entry of it. Only over the
+            // answers the record was kept with.
+            let journal = rounds_journal_in.as_ref().filter(|_| std::env::var("RERAIL_CONE_STILL").map_or(true, |v| v != "off")).filter(|(_, _, world)| from_rounds.as_ref().is_some_and(|k| cone_rounds::world_digest(|rel| k.input_digest(rel)) == *world));
+            let db_text = &db2;
+            let still_fn = journal.map(|(roots, named, _)| {
+                move |req: &str, key: &[i64]| -> bool {
+                    let Some(text) = key.first().and_then(|a| crate::code_rule_dsl::logic::native::sym_text_of(db_text, *a).ok()) else { return false };
+                    let path = std::path::Path::new(&text);
+                    roots.iter().any(|(r, _)| path.starts_with(r)) && named.iter().all(|n| !path.starts_with(n) && !(req == "rr_dir_req" && n.parent() == Some(path)))
+                }
+            });
+            let still_ref = still_fn.as_ref().map(|f| f as &dyn Fn(&str, &[i64]) -> bool);
+            let on = lowered_round.as_ref().zip(rounds_key).zip(cone_handle.as_ref()).map(|((lowered, key), store)| cone_rounds::On { store, space: rounds_space, db: &db2, modules: &modules, lowered, key, stats: &rounds_stats, keep: &keep_rounds, modes: &modes, still: still_ref });
+            let rounds_in = cone_rounds::Inputs { per_file: &corpus_rows, corpus: &corpus_docs, constants: &constants_at };
             let mut gave_up = None;
             if let (Some(r), Some(on), Some(k)) = (&round, &on, from_rounds) {
                 match r.run(on, &rounds_in, cone_rounds::Start::Kept(k), cone_rounds::Answers::default(), &mut answer) {
                     Ok(done) => {
                         let mut out = Vec::new();
                         for rel in kept_in.iter().filter(|r| !lowered_round.as_ref().is_some_and(|l| l.program.inputs.contains(*r))) {
-                            out.push((rel.clone(), maintained::rows_of(&done.next, rel).ok_or_else(|| Error::Plan(format!("{rel}: not kept by the cone's rounds")))?));
+                            let store = cone_handle.as_ref().expect("rounds run with a store");
+                            out.push((rel.clone(), done.next.read_derived(store, rel)?.ok_or_else(|| Error::Plan(format!("{rel}: not kept by the cone's rounds")))?));
                         }
+                        // The answers' relations as the rounds ended: the kept answers that still stand among them.
+                        out.extend(done.produced.iter().filter(|(r, _)| kept_in.contains(r) || world_answer_rels.contains(r)).cloned());
                         crate::code_rule_dsl::logic::profile::decision("the cone's rounds (decision 0108)", || {
-                            format!("{} rounds from the last run's; {} of {} strata run ({} maintained, {} derived again); answered: {:?}", done.rounds, done.strata.0, done.strata.1, done.maintained, done.derived_again, done.answered)
+                            format!("{} rounds from the last run's; {} of {} strata run ({} maintained, {} derived again: {:?}); answered: {:?}; {} file-system requests kept as the journal names no change there; {} rows written back", done.rounds, done.strata.0, done.strata.1, done.maintained, done.derived_again, done.again_why, done.answered, done.still, done.written)
                         });
-                        if let (Some(store), Some(p)) = (&cone_handle, rounds_part) {
-                            kept_strata::keep(store, p, &done.next);
-                        }
+                        *rounds_world_in.lock().unwrap_or_else(|e| e.into_inner()) = Some(done.world);
+                        rounds_withdrawn_in.lock().unwrap_or_else(|e| e.into_inner()).extend(done.withdrawn.iter().copied());
                         return Ok((out, Some(done.strata), done.rounds));
                     }
                     Err(cone_rounds::Gave::Err(e)) => return Err(e),
@@ -4243,7 +4290,7 @@ fn run_observed(
             }
             // The closing round over the fixpoint's answers, kept for the next run's rounds; only when the fixpoint
             // ran its strata (a cone kept whole, K3, asked nothing of this run).
-            if let (Some(r), Some(on), Some(store), Some(p)) = (&round, &on, &cone_handle, rounds_part)
+            if let (Some(r), Some(on)) = (&round, &on)
                 && cone_strata.is_none_or(|(ran, _)| ran > 0)
             {
                 let mut asks = BTreeMap::new();
@@ -4254,8 +4301,8 @@ fn run_observed(
                 let mut refuse = |rel: &str, _: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> { Err(Error::Plan(format!("the closing round asked {rel}"))) };
                 match r.run(on, &rounds_in, cone_rounds::Start::Closing(asks), recorded, &mut refuse) {
                     Ok(done) => {
-                        crate::code_rule_dsl::logic::profile::decision("the cone's rounds (decision 0108)", || format!("closing round over the fixpoint's answers kept ({} of {} strata)", done.strata.0, done.strata.1));
-                        kept_strata::keep(store, p, &done.next);
+                        crate::code_rule_dsl::logic::profile::decision("the cone's rounds (decision 0108)", || format!("closing round over the fixpoint's answers kept ({} of {} strata; {} rows written back)", done.strata.0, done.strata.1, done.written));
+                        *rounds_world_in.lock().unwrap_or_else(|e| e.into_inner()) = Some(done.world);
                     }
                     Err(cone_rounds::Gave::Up(why)) => crate::code_rule_dsl::logic::profile::decision("the cone's rounds (decision 0108)", || format!("the closing round is not kept: {why}")),
                     Err(cone_rounds::Gave::Err(e)) => crate::code_rule_dsl::logic::profile::decision("the cone's rounds (decision 0108)", || format!("the closing round failed: {e}")),
@@ -4306,8 +4353,14 @@ fn run_observed(
             let mut loaded_rows = Vec::new();
             // A run of some documents on their own (`phases::maintain`) follows no load: the documents loaded are the
             // last run's, kept.
+            // Taken in an order of the requests themselves, not of their atoms: where the load budget binds, a
+            // top-level module before a submodule, then by module and path (decision 0108).
+            let mut asked_rows: Vec<(String, String, String, &Vec<i64>)> = Vec::new();
             for row in rows.iter().filter(|_| !no_loads) {
-                let (asked, module, grammar) = (text(row[0])?, text(row[1])?, text(row[2])?);
+                asked_rows.push((text(row[0])?, text(row[1])?, text(row[2])?, row));
+            }
+            asked_rows.sort_by(|a, b| (a.1.matches('.').count(), &a.1, &a.0).cmp(&(b.1.matches('.').count(), &b.1, &b.0)));
+            for (asked, module, grammar, row) in asked_rows {
                 // A load asked again (its stratum's requests answered again, t33 K3) is answered alike: the same
                 // document, its rows from the exports, not sent again.
                 if let Some(doc) = world.loaded_as(&asked) {
@@ -4375,7 +4428,51 @@ fn run_observed(
         drop(reply_tx);
         drop(answer_one);
         (loading_rows, cone_kept, cone_rounds) = cone.join().map_err(|_| Error::Plan("the cone of requests panicked".to_owned()))??;
-        loading_rows.extend(answered);
+        // The documents the rounds loaded and took back (decision 0108): neither the run's documents nor rows of its
+        // exports.
+        let gone = std::mem::take(&mut *rounds_withdrawn.lock().unwrap_or_else(|e| e.into_inner()));
+        if !gone.is_empty() {
+            loaded_docs.retain(|(d, _)| !gone.contains(d));
+            for rel in &per_file {
+                let width = load.decls[rel].len();
+                let at = split.locations.get(rel).and_then(|l| l.first().copied()).unwrap_or(0);
+                let held = exports.borrow().snapshot(rel, width);
+                let mut row = vec![0i64; width];
+                let all: Vec<usize> = (0..width).collect();
+                let mut kept_rows = Vec::with_capacity(held.len());
+                for i in 0..held.len() {
+                    held.row_at(i, &all, &mut row);
+                    if width == 0 || !gone.contains(&memo::document_of(row[at])) {
+                        kept_rows.push(row.clone());
+                    }
+                }
+                exports.borrow_mut().install(rel, width, cone_rounds::of_rows(width, kept_rows.iter()));
+            }
+            crate::code_rule_dsl::logic::profile::decision("the cone's rounds (decision 0108)", || format!("{} documents loaded and taken back: no load the run's own rows ask for names them", gone.len()));
+        }
+        // The rounds kept: the journal's cursors of the roots read this run are recorded with them (a root not read
+        // this run keeps the cursor it was recorded with: what changed since is still named from there).
+        if let (Some(key), Some(world)) = (&rounds_record, *rounds_world.lock().unwrap_or_else(|e| e.into_inner())) {
+            observe(|o| {
+                let mut at = o.watched();
+                for (root, cursor) in rounds_journal.iter().flat_map(|(old, _, _)| old) {
+                    if !at.iter().any(|(r, _)| r == root) {
+                        at.push((root.clone(), cursor.clone()));
+                    }
+                }
+                if !at.is_empty() {
+                    let cursors: Vec<&str> = at.iter().map(|(_, c)| c.as_str()).collect();
+                    let roots: Vec<String> = at.iter().map(|(r, _)| r.to_string_lossy().into_owned()).collect();
+                    o.put_run_record(key, &format!("{}\n{}\n{world}", cursors.join("\t"), roots.join("\t")), &[]);
+                }
+            });
+        }
+        // What the main thread answered, for the relations the cone did not hand on whole (its rounds do).
+        for (rel, rows) in answered {
+            if !loading_rows.iter().any(|(r, _)| *r == rel) {
+                loading_rows.push((rel, rows));
+            }
+        }
         // Every file seen: the keeper ends here, so the digests read the run's exports (the counted ones).
         finished = Some(finish()?);
         cone_inputs = cone_digests(&exports.borrow(), &per_file, &split.locations, &lowered.program, docs.iter().chain(&loaded_docs))?;
@@ -7415,6 +7512,10 @@ unused(f) :- def(f, _), !used(f).
         both("an import taken away", &["a.pyi", "builtins.pyi", "c.pyi", "d.pyi"]);
         std::fs::remove_file(lib.join("d.pyi")).unwrap();
         both("a library file gone", &["a.pyi", "builtins.pyi", "c.pyi"]);
+        // The workspace's own module now: the library it shadowed was loaded from the last run's gates, and is taken
+        // back (decision 0108).
+        std::fs::write(ws.join("c.py"), "x = 2\n").unwrap();
+        both("a library shadowed by the workspace's module", &["a.pyi", "builtins.pyi"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

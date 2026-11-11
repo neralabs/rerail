@@ -615,6 +615,12 @@ impl Observer {
             .collect()
     }
 
+    /// Each root asked of the journal this run, with its cursor as it was asked: what a later run's `changed_since`
+    /// names under them is what changed after this run read them.
+    pub fn watched(&self) -> Vec<(PathBuf, String)> {
+        self.roots.iter().filter(|r| r.asked == self.flushes).filter_map(|r| Some((r.path.clone(), r.cursor.clone()?))).collect()
+    }
+
     /// What the journal names as changed under each of `roots` since its cursor in `cursors` (`mark`'s), decision
     /// 0105: `None` where it cannot say.
     pub fn changed_since(&mut self, roots: &[PathBuf], cursors: &[String]) -> Option<Vec<PathBuf>> {
