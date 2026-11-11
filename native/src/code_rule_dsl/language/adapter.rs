@@ -216,7 +216,7 @@ pub(crate) use super::{ast_grep, parse_input};
 
 /// Whether files of the dialect labelled `label` read their nearest `package.json`
 /// (`Adapter::PACKAGE_MANIFESTS`); `false` for a label no dialect has.
-pub(crate) fn package_manifests(label: &str) -> bool {
+pub fn package_manifests(label: &str) -> bool {
     super::dialect_by_label(label)
         .is_some_and(|dialect| super::base(Family::of(dialect)).package_manifests())
 }
