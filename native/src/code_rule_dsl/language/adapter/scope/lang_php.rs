@@ -130,7 +130,7 @@ impl ScopeRules for Php {
         name: &str,
     ) -> Option<(&'t Binding, Option<NodeRef>)> {
         let binding = Self::resolve(table, reference, name)?;
-        let read = table.php.as_deref()?.read(reference.start)?;
+        let read = table.flow.as_deref()?.read(reference.start)?;
         Some((binding, binding.site.value.filter(|_| !read.aliased)))
     }
 
@@ -163,7 +163,7 @@ impl ScopeRules for Php {
     fn undecided(table: &ScopeTable, reference: &Reference) -> bool {
         table.php_index(reference).is_none()
             && table
-                .php
+                .flow
                 .as_deref()
                 .and_then(|flow| flow.read(reference.start))
                 .is_some_and(|read| !read.bindings.is_empty() || read.defined == Defined::Unknown)
@@ -221,5 +221,29 @@ impl ScopeRules for Php {
             "ESLint reports an unused variable once, at its last write; php's usage oracle, Psalm, reports each unused assignment, which `binds: { used: false }` matches",
             "qualified import names are Python's; a PHP variable is never bound by an import",
         )
+    }
+
+    fn names<D: Doc>(
+        root: Node<'_, D>,
+        cap: usize,
+        deadline: &dyn Fn() -> bool,
+    ) -> Option<Result<crate::code_rule_dsl::scope::NameTable, BuildError>> {
+        Some(
+            crate::code_rule_dsl::scope::php_names::PhpNames::build(root, cap, deadline)
+                .map(|names| Arc::new(names) as crate::code_rule_dsl::scope::NameTable),
+        )
+    }
+
+    fn table_names(table: &ScopeTable) -> Option<crate::code_rule_dsl::scope::NameTable> {
+        let flow = table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of)?;
+        Some(Arc::clone(&flow.names) as crate::code_rule_dsl::scope::NameTable)
+    }
+
+    fn constant<D: Doc>(names: &crate::code_rule_dsl::scope::NameTable, node: &Node<'_, D>) -> Option<NodeRef> {
+        crate::code_rule_dsl::scope::php_names::PhpNames::of(names)?.constant_value(node)
+    }
+
+    fn resolves<D: Doc>(resolves: &crate::code_rule_dsl::matcher::Resolves, node: &Node<'_, D>) -> Option<bool> {
+        Some(crate::code_rule_dsl::matcher::resolve_php::holds(resolves, node))
     }
 }

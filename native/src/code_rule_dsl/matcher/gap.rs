@@ -25,7 +25,6 @@ use crate::code_rule_dsl::tape::tokens::TokenGrammar;
 pub(in crate::code_rule_dsl) use crate::code_rule_dsl::tape::tokens::stored_gaps;
 use ast_grep_core::{Doc, Node};
 use regex::Regex;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Where, relative to the node, the token is looked for.

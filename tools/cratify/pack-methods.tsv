@@ -53,6 +53,10 @@ ScopeRules	usage	free	scope_usage
 ScopeRules	unpackaged_module	fn	scope_unpackaged_module
 ScopeRules	import_path	free	scope_import_path
 ScopeRules	feature	fn	scope_feature
+ScopeRules	names	free	scope_names
+ScopeRules	table_names	fn	scope_table_names
+ScopeRules	constant	free	scope_constant
+ScopeRules	resolves	free	scope_resolves
 ValueRules	SUPPORTED	const	value_supported
 ValueRules	LANG	const	value_lang
 ValueRules	EXPRESSION_KINDS	const	value_expression_kinds

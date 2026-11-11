@@ -214,7 +214,7 @@ fn compare_definedness(
     )
     .expect("table builds");
     let program = doc.root();
-    let flow = table.php.as_deref().expect("a PHP flow");
+    let flow = table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of).expect("a PHP flow");
     let inside = |at: usize| foreign.iter().any(|span| span.contains(&at));
     // Each read's claim: `Some(true)` undefined on every path, `Some(false)` defined or
     // guarded, `None` nothing.
@@ -349,7 +349,7 @@ fn a_template_variable_some_paths_define_is_unknown() {
         Reading::default(),
     )
     .expect("table builds");
-    let flow = table.php.as_deref().expect("a PHP flow");
+    let flow = table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of).expect("a PHP flow");
     let read = descendants(&doc.root())
         .into_iter()
         .filter(|node| node.kind() == "variable_name" && node.text() == "$x")

@@ -7,7 +7,7 @@
 //! program it derives (`DerivedImage`), with a tape of its own over the program's text and the
 //! segments that map that text back to the document it was derived from. The store keeps each
 //! derived tape as a row of its own (`file_documents`); no tape holds another.
-use crate::code_rule_dsl::embed::segments::{FileRanges, SegmentMap};
+use crate::code_rule_dsl::embed::segments::SegmentMap;
 use crate::code_rule_dsl::embed::Program;
 use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog, Via};
 use crate::code_rule_dsl::lines::LineTable;

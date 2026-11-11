@@ -474,7 +474,7 @@ impl<'r, D: Doc> Reader<'_, 'r, D> {
     /// binding's assigned value. `None` where a path reaches it unassigned or with a value no
     /// assignment gives (a parameter, a reference, `global`, `foreach`, a dynamic write).
     fn values(&self, variable: &Node<'r, D>) -> Option<Vec<Node<'r, D>>> {
-        let flow = self.table.php.as_ref()?;
+        let flow = self.table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of)?;
         let read = flow.read(variable.range().start)?;
         if read.defined != crate::code_rule_dsl::scope::php::Defined::Yes
             || read.aliased
@@ -585,7 +585,7 @@ impl<'r, D: Doc> Reader<'_, 'r, D> {
         {
             return false;
         }
-        let Some(flow) = self.table.php.as_ref() else {
+        let Some(flow) = self.table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of) else {
             return false;
         };
         let name = left.text();
@@ -1238,4 +1238,28 @@ pub(crate) fn label(name: &str) -> String {
         Some((class, member)) => format!("{class}::{member}"),
         None => name.to_owned(),
     }
+}
+
+/// The summary of the PHP `program` in the file at `path`, through `table`, the file's scope
+/// table where one was built.
+pub(crate) fn extract_program<D: Doc>(
+    program: &Node<'_, D>,
+    path: &str,
+    table: Option<&crate::code_rule_dsl::scope::ScopeTable>,
+    has_errors: bool,
+) -> crate::code_rule_dsl::calls::summary::Summary {
+    // The table's flow read the program's names; build them only where no table holds them.
+    let names = table
+        .and_then(|table| table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of))
+        .map(|flow| std::sync::Arc::clone(&flow.names))
+        .or_else(|| {
+            crate::code_rule_dsl::scope::php_names::PhpNames::build(
+                program.clone(),
+                crate::code_rule_dsl::calls::MAX_TABLE_NODES,
+                &crate::code_rule_dsl::budget::matcher_budget_exhausted,
+            )
+            .ok()
+            .map(std::sync::Arc::new)
+        });
+    extract(program, path, table, names.as_deref(), has_errors)
 }

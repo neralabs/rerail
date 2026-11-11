@@ -93,7 +93,9 @@ pub(crate) use resolve::{
     FileGates, calls_tables, file_index, file_lines, file_module, file_rerail_ignores, file_source_type_for,
     table_reading,
 };
-pub(super) use resolve::{FileScopeSlot, Resolves, Unresolved, matched_file_path};
+pub(super) use resolve::{FileScopeSlot, Unresolved, matched_file_path};
+pub(crate) use resolve::Resolves;
+pub(crate) use resolve::php as resolve_php;
 #[cfg(test)]
 pub(super) use resolve::{JSX_RUNTIME_DERIVATIONS, SOURCE_TYPE_DERIVATIONS, TABLE_BUILDS};
 pub(super) use run::{Stopped, enumerate, node_at, run_clause};

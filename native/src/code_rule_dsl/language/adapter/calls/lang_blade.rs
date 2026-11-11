@@ -35,7 +35,7 @@ impl CallRules for Blade {
     fn tables(
         table: impl FnOnce() -> Option<Arc<ScopeTable>>,
         module: impl FnOnce() -> Option<Arc<ModulePath>>,
-        names: impl FnOnce() -> Option<Arc<PhpNames>>,
+        names: impl FnOnce() -> Option<crate::code_rule_dsl::scope::NameTable>,
     ) -> Option<FileTables> {
         <Php as CallRules>::tables(table, module, names)
     }

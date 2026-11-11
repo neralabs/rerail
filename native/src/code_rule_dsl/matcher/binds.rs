@@ -240,7 +240,7 @@ impl BindingFilter {
         let holds =
             |wanted: Option<bool>, actual: bool| wanted.is_none_or(|wanted| wanted == actual);
         // The flow keys a binding by where it is made: its name node, or a Blade marker.
-        let php = table.php.as_deref().filter(|_| {
+        let php = table.flow.as_deref().filter(|_| {
             self.language
                 .is_some_and(|language| flow(Family::of(language)))
         });
@@ -437,7 +437,7 @@ impl Binds {
     ) -> Option<(Vec<(BindingId<'t>, bool)>, bool)> {
         if flow(table.family) {
             let start = table.binding_of(id).offset as u32;
-            let reach = table.php.as_deref()?.reach(start)?;
+            let reach = table.flow.as_deref()?.reach(start)?;
             if reach.bindings.is_empty() && !reach.unknown {
                 return None;
             }

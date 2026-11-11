@@ -13,6 +13,7 @@ mod lookup;
 pub(crate) mod options;
 pub(crate) mod php;
 pub(crate) mod php_names;
+pub(crate) mod flow;
 pub(crate) mod python;
 pub(crate) mod rust;
 pub(crate) mod sql;
@@ -364,6 +365,18 @@ pub(crate) const ANNOTATION_RANGE: usize = 1 << (usize::BITS - 2);
 const ANNOTATION_SHIFT: u32 = if usize::BITS == 32 { 16 } else { 24 };
 
 /// Where the names of the annotation with this index start.
+/// A family's own name table for a file, built before its scope where the family resolves names itself (PHP's
+/// `php_names::PhpNames`, `ScopeRules::names`): the shared code carries and charges it, the family's reads it.
+pub(crate) trait FileNames: std::any::Any + Send + Sync {
+    /// What building it cost, in visited nodes.
+    fn cost(&self) -> usize;
+    /// The table as its family's own type.
+    fn into_any(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync>;
+}
+
+/// A file's name table, as the shared code holds it.
+pub(crate) type NameTable = Arc<dyn FileNames>;
+
 /// The scope of a program an embedding gives a meaning of its own (`embed::Embedder`): its crate registers it
 /// for its `Via` as the engine loads (Blade's compiled view, `embed::compiled_view::scope`).
 pub(crate) type ProgramScope = fn(&mut Builder<'_>, &Node<'_, crate::code_rule_dsl::tape::TapeDoc>) -> Result<(), BuildError>;
@@ -435,8 +448,8 @@ pub(crate) struct ScopeTable {
     pub(crate) usage: OnceLock<Arc<usage::Usage>>,
     /// Declaration names alone, without resolving every read in the file.
     pub(crate) declaration_sites: OnceLock<Arc<usage::Usage>>,
-    /// PHP: what reaches each read of a variable.
-    pub(crate) php: Option<Box<php::Flow>>,
+    /// What reaches each read of a variable, where the family has a flow (PHP's, `flow::VariableFlow`).
+    pub(crate) flow: Option<Box<dyn flow::VariableFlow>>,
     /// SQL: the file's query blocks, relations and qualified references, which resolve a
     /// reference and decide a relation's usage (`scope/sql.rs`).
     pub(crate) sql: Option<Box<sql::SqlScopes>>,
@@ -556,7 +569,7 @@ impl ScopeTable {
         deadline: &dyn Fn() -> bool,
         reading: Reading,
         module: Option<&ModulePath>,
-        php_names: Option<Arc<php_names::PhpNames>>,
+        php_names: Option<NameTable>,
     ) -> Result<Self, BuildError> {
         let family = Family::of(language);
         let mut builder = Builder {
@@ -577,7 +590,7 @@ impl ScopeTable {
                 module_imports: Vec::new(),
                 usage: OnceLock::new(),
                 declaration_sites: OnceLock::new(),
-                php: None,
+                flow: None,
                 sql: None,
             },
             current: 0,
@@ -769,9 +782,9 @@ impl ScopeTable {
     /// scope's bindings of the name. `None` where no binding reaches, where several may, where
     /// some path reaches none, or where PHP's dynamic symbol table may decide.
     pub(crate) fn php_index(&self, reference: &Reference) -> Option<(u32, usize)> {
-        let read = self.php.as_deref()?.read(reference.start)?;
+        let read = self.flow.as_deref()?.read(reference.start)?;
         match (read.bindings.as_ref(), read.defined) {
-            ([binding], php::Defined::Yes) => Some(*binding),
+            ([binding], flow::Defined::Yes) => Some(*binding),
             _ => None,
         }
     }
@@ -1258,7 +1271,7 @@ pub(crate) struct Builder<'d> {
     deadline: &'d dyn Fn() -> bool,
     /// PHP: the file's resolved names, where the caller built them (and charged their cost); the
     /// flow builds them otherwise.
-    php_names: Option<Arc<php_names::PhpNames>>,
+    php_names: Option<NameTable>,
 }
 
 impl Builder<'_> {

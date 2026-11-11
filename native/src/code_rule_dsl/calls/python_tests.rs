@@ -1,6 +1,6 @@
 use super::closure::Graph;
 use super::names::Name;
-use super::summary::{Callee, Summary, python::callee_at};
+use super::summary::{Callee, python::callee_at};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::{Reading, ScopeTable};

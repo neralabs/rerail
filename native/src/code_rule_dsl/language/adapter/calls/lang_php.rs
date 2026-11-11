@@ -21,7 +21,7 @@ impl CallRules for Php {
         table: Option<&ScopeTable>,
         has_errors: bool,
     ) -> Summary {
-        crate::code_rule_dsl::calls::extract_php(root, path, table, has_errors)
+        crate::code_rule_dsl::calls::php::extract_program(root, path, table, has_errors)
     }
 
     /// A PHP file names nothing.
@@ -32,10 +32,10 @@ impl CallRules for Php {
     fn tables(
         table: impl FnOnce() -> Option<Arc<ScopeTable>>,
         _: impl FnOnce() -> Option<Arc<ModulePath>>,
-        names: impl FnOnce() -> Option<Arc<PhpNames>>,
+        names: impl FnOnce() -> Option<crate::code_rule_dsl::scope::NameTable>,
     ) -> Option<FileTables> {
         let table = table()?;
-        Some(FileTables::Php(table, names()?))
+        Some(FileTables { table, module: None, names: Some(names()?) })
     }
 
     fn callee_at<'t, D: Doc>(
@@ -43,9 +43,10 @@ impl CallRules for Php {
         summary: &Summary,
         tables: impl FnOnce() -> Option<FileTables>,
     ) -> Option<Option<Callee>> {
-        let Some(FileTables::Php(table, names)) = tables() else {
+        let Some(FileTables { table, names: Some(names), .. }) = tables() else {
             return None;
         };
+        let names = crate::code_rule_dsl::scope::php_names::PhpNames::of(&names)?;
         let reader = php::Reader {
             names: &names,
             table: &table,

@@ -90,6 +90,16 @@ pub(crate) trait LanguagePack: Send + Sync {
     fn scope_import_path_sub(&self, table: &crate::code_rule_dsl::scope::ScopeTable, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::literal::SubDoc>, file: Option<&str>) -> Option<String>;
     fn scope_import_path_str(&self, table: &crate::code_rule_dsl::scope::ScopeTable, node: &ast_grep_core::Node<'_, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>, file: Option<&str>) -> Option<String>;
     fn scope_feature(&self, feature: crate::code_rule_dsl::language::adapter::scope::ScopeFeature) -> Result<(), crate::code_rule_dsl::language::adapter::Refusal>;
+    fn scope_names_tape(&self, root: ast_grep_core::Node<'_, crate::code_rule_dsl::tape::TapeDoc>, cap: usize, deadline: &dyn Fn () -> bool) -> Option<Result<crate::code_rule_dsl::scope::NameTable, crate::code_rule_dsl::scope::BuildError>>;
+    fn scope_names_sub(&self, root: ast_grep_core::Node<'_, crate::code_rule_dsl::literal::SubDoc>, cap: usize, deadline: &dyn Fn () -> bool) -> Option<Result<crate::code_rule_dsl::scope::NameTable, crate::code_rule_dsl::scope::BuildError>>;
+    fn scope_names_str(&self, root: ast_grep_core::Node<'_, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>, cap: usize, deadline: &dyn Fn () -> bool) -> Option<Result<crate::code_rule_dsl::scope::NameTable, crate::code_rule_dsl::scope::BuildError>>;
+    fn scope_table_names(&self, table: &crate::code_rule_dsl::scope::ScopeTable) -> Option<crate::code_rule_dsl::scope::NameTable>;
+    fn scope_constant_tape(&self, names: &crate::code_rule_dsl::scope::NameTable, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::tape::TapeDoc>) -> Option<crate::code_rule_dsl::value::NodeRef>;
+    fn scope_constant_sub(&self, names: &crate::code_rule_dsl::scope::NameTable, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::literal::SubDoc>) -> Option<crate::code_rule_dsl::value::NodeRef>;
+    fn scope_constant_str(&self, names: &crate::code_rule_dsl::scope::NameTable, node: &ast_grep_core::Node<'_, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>) -> Option<crate::code_rule_dsl::value::NodeRef>;
+    fn scope_resolves_tape(&self, resolves: &crate::code_rule_dsl::matcher::Resolves, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::tape::TapeDoc>) -> Option<bool>;
+    fn scope_resolves_sub(&self, resolves: &crate::code_rule_dsl::matcher::Resolves, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::literal::SubDoc>) -> Option<bool>;
+    fn scope_resolves_str(&self, resolves: &crate::code_rule_dsl::matcher::Resolves, node: &ast_grep_core::Node<'_, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>) -> Option<bool>;
     // ValueRules
     fn value_supported(&self) -> bool;
     fn value_lang(&self) -> crate::code_rule_dsl::language::Family;
@@ -149,7 +159,7 @@ pub(crate) trait LanguagePack: Send + Sync {
     fn calls_summary_sub(&self, root: &ast_grep_core::Node<'_, crate::code_rule_dsl::literal::SubDoc>, path: &str, module: Option<&crate::code_rule_dsl::module_path::ModulePath>, table: Option<&crate::code_rule_dsl::scope::ScopeTable>, has_errors: bool) -> crate::code_rule_dsl::calls::summary::Summary;
     fn calls_summary_str(&self, root: &ast_grep_core::Node<'_, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>, path: &str, module: Option<&crate::code_rule_dsl::module_path::ModulePath>, table: Option<&crate::code_rule_dsl::scope::ScopeTable>, has_errors: bool) -> crate::code_rule_dsl::calls::summary::Summary;
     fn calls_unread(&self, module: Option<&crate::code_rule_dsl::module_path::ModulePath>) -> crate::code_rule_dsl::calls::summary::Summary;
-    fn calls_tables(&self, table: Box<dyn FnOnce () -> Option<std::sync::Arc<crate::code_rule_dsl::scope::ScopeTable>> + '_>, module: Box<dyn FnOnce () -> Option<std::sync::Arc<crate::code_rule_dsl::module_path::ModulePath>> + '_>, names: Box<dyn FnOnce () -> Option<std::sync::Arc<crate::code_rule_dsl::scope::php_names::PhpNames>> + '_>) -> Option<crate::code_rule_dsl::calls::FileTables>;
+    fn calls_tables(&self, table: Box<dyn FnOnce () -> Option<std::sync::Arc<crate::code_rule_dsl::scope::ScopeTable>> + '_>, module: Box<dyn FnOnce () -> Option<std::sync::Arc<crate::code_rule_dsl::module_path::ModulePath>> + '_>, names: Box<dyn FnOnce () -> Option<crate::code_rule_dsl::scope::NameTable> + '_>) -> Option<crate::code_rule_dsl::calls::FileTables>;
     fn calls_callee_at_tape<'t>(&self, node: &ast_grep_core::Node<'t, crate::code_rule_dsl::tape::TapeDoc>, summary: &crate::code_rule_dsl::calls::summary::Summary, tables: Box<dyn FnOnce () -> Option<crate::code_rule_dsl::calls::FileTables> + '_>) -> Option<Option<crate::code_rule_dsl::calls::summary::Callee>>;
     fn calls_callee_at_sub<'t>(&self, node: &ast_grep_core::Node<'t, crate::code_rule_dsl::literal::SubDoc>, summary: &crate::code_rule_dsl::calls::summary::Summary, tables: Box<dyn FnOnce () -> Option<crate::code_rule_dsl::calls::FileTables> + '_>) -> Option<Option<crate::code_rule_dsl::calls::summary::Callee>>;
     fn calls_callee_at_str<'t>(&self, node: &ast_grep_core::Node<'t, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>, summary: &crate::code_rule_dsl::calls::summary::Summary, tables: Box<dyn FnOnce () -> Option<crate::code_rule_dsl::calls::FileTables> + '_>) -> Option<Option<crate::code_rule_dsl::calls::summary::Callee>>;
@@ -369,6 +379,36 @@ impl<A: Adapter + SyntaxRules> LanguagePack for Pack<A> {
     fn scope_feature(&self, feature: crate::code_rule_dsl::language::adapter::scope::ScopeFeature) -> Result<(), crate::code_rule_dsl::language::adapter::Refusal> {
         <<A as Adapter>::Scope as ScopeRules>::feature(feature)
     }
+    fn scope_names_tape(&self, root: ast_grep_core::Node<'_, crate::code_rule_dsl::tape::TapeDoc>, cap: usize, deadline: &dyn Fn () -> bool) -> Option<Result<crate::code_rule_dsl::scope::NameTable, crate::code_rule_dsl::scope::BuildError>> {
+        <<A as Adapter>::Scope as ScopeRules>::names::<crate::code_rule_dsl::tape::TapeDoc>(root, cap, deadline)
+    }
+    fn scope_names_sub(&self, root: ast_grep_core::Node<'_, crate::code_rule_dsl::literal::SubDoc>, cap: usize, deadline: &dyn Fn () -> bool) -> Option<Result<crate::code_rule_dsl::scope::NameTable, crate::code_rule_dsl::scope::BuildError>> {
+        <<A as Adapter>::Scope as ScopeRules>::names::<crate::code_rule_dsl::literal::SubDoc>(root, cap, deadline)
+    }
+    fn scope_names_str(&self, root: ast_grep_core::Node<'_, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>, cap: usize, deadline: &dyn Fn () -> bool) -> Option<Result<crate::code_rule_dsl::scope::NameTable, crate::code_rule_dsl::scope::BuildError>> {
+        <<A as Adapter>::Scope as ScopeRules>::names::<ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>(root, cap, deadline)
+    }
+    fn scope_table_names(&self, table: &crate::code_rule_dsl::scope::ScopeTable) -> Option<crate::code_rule_dsl::scope::NameTable> {
+        <<A as Adapter>::Scope as ScopeRules>::table_names(table)
+    }
+    fn scope_constant_tape(&self, names: &crate::code_rule_dsl::scope::NameTable, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::tape::TapeDoc>) -> Option<crate::code_rule_dsl::value::NodeRef> {
+        <<A as Adapter>::Scope as ScopeRules>::constant::<crate::code_rule_dsl::tape::TapeDoc>(names, node)
+    }
+    fn scope_constant_sub(&self, names: &crate::code_rule_dsl::scope::NameTable, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::literal::SubDoc>) -> Option<crate::code_rule_dsl::value::NodeRef> {
+        <<A as Adapter>::Scope as ScopeRules>::constant::<crate::code_rule_dsl::literal::SubDoc>(names, node)
+    }
+    fn scope_constant_str(&self, names: &crate::code_rule_dsl::scope::NameTable, node: &ast_grep_core::Node<'_, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>) -> Option<crate::code_rule_dsl::value::NodeRef> {
+        <<A as Adapter>::Scope as ScopeRules>::constant::<ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>(names, node)
+    }
+    fn scope_resolves_tape(&self, resolves: &crate::code_rule_dsl::matcher::Resolves, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::tape::TapeDoc>) -> Option<bool> {
+        <<A as Adapter>::Scope as ScopeRules>::resolves::<crate::code_rule_dsl::tape::TapeDoc>(resolves, node)
+    }
+    fn scope_resolves_sub(&self, resolves: &crate::code_rule_dsl::matcher::Resolves, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::literal::SubDoc>) -> Option<bool> {
+        <<A as Adapter>::Scope as ScopeRules>::resolves::<crate::code_rule_dsl::literal::SubDoc>(resolves, node)
+    }
+    fn scope_resolves_str(&self, resolves: &crate::code_rule_dsl::matcher::Resolves, node: &ast_grep_core::Node<'_, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>) -> Option<bool> {
+        <<A as Adapter>::Scope as ScopeRules>::resolves::<ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>(resolves, node)
+    }
     // ValueRules
     fn value_supported(&self) -> bool {
         <<A as Adapter>::Value as ValueRules>::SUPPORTED
@@ -540,7 +580,7 @@ impl<A: Adapter + SyntaxRules> LanguagePack for Pack<A> {
     fn calls_unread(&self, module: Option<&crate::code_rule_dsl::module_path::ModulePath>) -> crate::code_rule_dsl::calls::summary::Summary {
         <<A as Adapter>::Calls as CallRules>::unread(module)
     }
-    fn calls_tables(&self, table: Box<dyn FnOnce () -> Option<std::sync::Arc<crate::code_rule_dsl::scope::ScopeTable>> + '_>, module: Box<dyn FnOnce () -> Option<std::sync::Arc<crate::code_rule_dsl::module_path::ModulePath>> + '_>, names: Box<dyn FnOnce () -> Option<std::sync::Arc<crate::code_rule_dsl::scope::php_names::PhpNames>> + '_>) -> Option<crate::code_rule_dsl::calls::FileTables> {
+    fn calls_tables(&self, table: Box<dyn FnOnce () -> Option<std::sync::Arc<crate::code_rule_dsl::scope::ScopeTable>> + '_>, module: Box<dyn FnOnce () -> Option<std::sync::Arc<crate::code_rule_dsl::module_path::ModulePath>> + '_>, names: Box<dyn FnOnce () -> Option<crate::code_rule_dsl::scope::NameTable> + '_>) -> Option<crate::code_rule_dsl::calls::FileTables> {
         <<A as Adapter>::Calls as CallRules>::tables(table, module, names)
     }
     fn calls_callee_at_tape<'t>(&self, node: &ast_grep_core::Node<'t, crate::code_rule_dsl::tape::TapeDoc>, summary: &crate::code_rule_dsl::calls::summary::Summary, tables: Box<dyn FnOnce () -> Option<crate::code_rule_dsl::calls::FileTables> + '_>) -> Option<Option<crate::code_rule_dsl::calls::summary::Callee>> {
@@ -650,6 +690,48 @@ pub(crate) fn scope_import_path<D: Doc>(pack: &dyn LanguagePack, table: &crate::
         return unsafe { pack.scope_import_path_str(table, same(node), file) };
     }
     unreachable!("scope_import_path: a document type no language pack takes: {}", std::any::type_name::<D>())
+}
+
+/// `ScopeRules::names` of `pack`, for `D`.
+pub(crate) fn scope_names<D: Doc>(pack: &dyn LanguagePack, root: ast_grep_core::Node<'_, D>, cap: usize, deadline: &dyn Fn () -> bool) -> Option<Result<crate::code_rule_dsl::scope::NameTable, crate::code_rule_dsl::scope::BuildError>> {
+    if TypeId::of::<D>() == TypeId::of::<crate::code_rule_dsl::tape::TapeDoc>() {
+        return unsafe { pack.scope_names_tape(same(root), cap, deadline) };
+    }
+    if TypeId::of::<D>() == TypeId::of::<crate::code_rule_dsl::literal::SubDoc>() {
+        return unsafe { pack.scope_names_sub(same(root), cap, deadline) };
+    }
+    if TypeId::of::<D>() == TypeId::of::<ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>() {
+        return unsafe { pack.scope_names_str(same(root), cap, deadline) };
+    }
+    unreachable!("scope_names: a document type no language pack takes: {}", std::any::type_name::<D>())
+}
+
+/// `ScopeRules::constant` of `pack`, for `D`.
+pub(crate) fn scope_constant<D: Doc>(pack: &dyn LanguagePack, names: &crate::code_rule_dsl::scope::NameTable, node: &ast_grep_core::Node<'_, D>) -> Option<crate::code_rule_dsl::value::NodeRef> {
+    if TypeId::of::<D>() == TypeId::of::<crate::code_rule_dsl::tape::TapeDoc>() {
+        return unsafe { pack.scope_constant_tape(names, same(node)) };
+    }
+    if TypeId::of::<D>() == TypeId::of::<crate::code_rule_dsl::literal::SubDoc>() {
+        return unsafe { pack.scope_constant_sub(names, same(node)) };
+    }
+    if TypeId::of::<D>() == TypeId::of::<ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>() {
+        return unsafe { pack.scope_constant_str(names, same(node)) };
+    }
+    unreachable!("scope_constant: a document type no language pack takes: {}", std::any::type_name::<D>())
+}
+
+/// `ScopeRules::resolves` of `pack`, for `D`.
+pub(crate) fn scope_resolves<D: Doc>(pack: &dyn LanguagePack, resolves: &crate::code_rule_dsl::matcher::Resolves, node: &ast_grep_core::Node<'_, D>) -> Option<bool> {
+    if TypeId::of::<D>() == TypeId::of::<crate::code_rule_dsl::tape::TapeDoc>() {
+        return unsafe { pack.scope_resolves_tape(resolves, same(node)) };
+    }
+    if TypeId::of::<D>() == TypeId::of::<crate::code_rule_dsl::literal::SubDoc>() {
+        return unsafe { pack.scope_resolves_sub(resolves, same(node)) };
+    }
+    if TypeId::of::<D>() == TypeId::of::<ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>() {
+        return unsafe { pack.scope_resolves_str(resolves, same(node)) };
+    }
+    unreachable!("scope_resolves: a document type no language pack takes: {}", std::any::type_name::<D>())
 }
 
 /// `ValueRules::to_str` of `pack`, for `D`.
@@ -793,7 +875,7 @@ pub(crate) fn calls_summary<D: Doc>(pack: &dyn LanguagePack, root: &ast_grep_cor
 }
 
 /// `CallRules::tables` of `pack`.
-pub(crate) fn calls_tables(pack: &dyn LanguagePack, table: impl FnOnce () -> Option<std::sync::Arc<crate::code_rule_dsl::scope::ScopeTable>>, module: impl FnOnce () -> Option<std::sync::Arc<crate::code_rule_dsl::module_path::ModulePath>>, names: impl FnOnce () -> Option<std::sync::Arc<crate::code_rule_dsl::scope::php_names::PhpNames>>) -> Option<crate::code_rule_dsl::calls::FileTables> {
+pub(crate) fn calls_tables(pack: &dyn LanguagePack, table: impl FnOnce () -> Option<std::sync::Arc<crate::code_rule_dsl::scope::ScopeTable>>, module: impl FnOnce () -> Option<std::sync::Arc<crate::code_rule_dsl::module_path::ModulePath>>, names: impl FnOnce () -> Option<crate::code_rule_dsl::scope::NameTable>) -> Option<crate::code_rule_dsl::calls::FileTables> {
     pack.calls_tables(Box::new(table), Box::new(module), Box::new(names))
 }
 

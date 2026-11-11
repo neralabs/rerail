@@ -12,7 +12,6 @@ use crate::code_rule_dsl::literal::{Grammar, SubTree};
 use crate::code_rule_dsl::model::FileInput;
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{DEFAULT_PYTHON_MINOR, LanguageOptions, PythonOptions};
-use crate::code_rule_dsl::scope::php_names::{self, PhpNames, Resolved};
 use crate::code_rule_dsl::scope::usage::Usage;
 use crate::code_rule_dsl::scope::{Binding, BuildError, Import, Reading, ScopeTable, TYPE, VALUE};
 use crate::code_rule_dsl::suppress::RerailIgnores;
@@ -245,8 +244,9 @@ impl Resolves {
 
     /// `holds`, where `S` reads the family's scope.
     fn holds_in<D: Doc>(&self, pack: &dyn language_pack::LanguagePack, node: &Node<'_, D>) -> bool {
-        if pack.scope_flow() {
-            return self.php_holds(node);
+        // A family with its own reading (PHP's names and variable flow, `ScopeRules::resolves`).
+        if let Some(holds) = language_pack::scope_resolves(pack, self, node) {
+            return holds;
         }
         if self.item {
             let text = node.text();
@@ -692,90 +692,8 @@ impl Resolves {
                     .match_indices('.')
                     .any(|(dot, _)| names.contains(&name[..dot])))
     }
-
-    /// PHP: the node is a class, function or constant name that resolves to a listed name (any
-    /// resolved name with `import: true`), or (`imported`) the name a `use` clause imports, whose
-    /// fully qualified name is listed. `self`, `static` and `parent` resolve to none; an
-    /// unqualified function or constant PHP resolves only at run time is unknown unless this file
-    /// declares it or PHP defines it (`scope/php_names.rs`).
-    fn php_holds<D: Doc>(&self, node: &Node<'_, D>) -> bool {
-        let node = self.unparenthesized(node.clone());
-        if node.kind() == "variable_name" {
-            return self.reference_kinds.contains(&node.kind_id()) && self.php_variable(&node);
-        }
-        // A `name` holding an expression (`X::{expr}`) is no name.
-        if !self.reference_kinds.contains(&node.kind_id())
-            || (node.kind() == "name" && node.children().any(|child| child.is_named()))
-        {
-            return false;
-        }
-        let Some(names) = file_php_names(&node, self.language) else {
-            return false;
-        };
-        if let Some((kind, name)) = names.import(&node.range()) {
-            return php_names::listed(&self.imported, kind, name, self.prefix);
-        }
-        if self.imports.is_empty() && !self.import_any {
-            return false;
-        }
-        let Some(reference) = names.reference(&node.range()) else {
-            return false;
-        };
-        let listed = |kind, name: &str| {
-            self.import_any || php_names::listed(&self.imports, kind, name, self.prefix)
-        };
-        let verdict = match (&reference.resolved, reference.kind) {
-            (Resolved::Name(name), Some(kind)) => Some(listed(kind, name)),
-            (Resolved::Special, _) => Some(false),
-            // PHP decides at run time; both candidates listed, or neither, decide here.
-            (Resolved::Either { namespaced, global }, Some(kind)) => {
-                let namespaced = listed(kind, namespaced);
-                (namespaced == listed(kind, global)).then_some(namespaced)
-            }
-            _ => None,
-        };
-        verdict.unwrap_or_else(|| {
-            UNKNOWN.set(true);
-            false
-        })
-    }
 }
 
-impl Resolves {
-    /// A PHP variable read: `global`, a superglobal (listed, or any with `global: true`);
-    /// `unresolved`, a read PHPStan reports undefined because no path defines it. A read `isset`,
-    /// `empty` or `??` guards is never unresolved; one a callee may take by reference, or one some
-    /// paths define, is unknown.
-    fn php_variable<D: Doc>(&self, node: &Node<'_, D>) -> bool {
-        use crate::code_rule_dsl::scope::php::{Defined, Quiet};
-        let Some(table) = file_table(node, self.language, Reading::default()) else {
-            return false;
-        };
-        let Some(read) = table
-            .php
-            .as_deref()
-            .and_then(|flow| flow.read(node.range().start))
-        else {
-            // A binding's own name, not a read.
-            return false;
-        };
-        if self.global_any || !self.globals.is_empty() {
-            return read.superglobal
-                && (self.global_any || self.globals.contains(read.name.as_ref()));
-        }
-        if self.unresolved.is_none() || read.superglobal {
-            return false;
-        }
-        match (read.quiet, read.defined) {
-            (Quiet::Silent, _) | (_, Defined::Yes) => false,
-            (Quiet::No, Defined::No) => true,
-            _ => {
-                UNKNOWN.set(true);
-                false
-            }
-        }
-    }
-}
 
 /// The expression inside any parentheses (of `paren_kinds`) around `node`.
 pub(super) fn unparenthesized<'r, D: Doc>(
@@ -927,7 +845,7 @@ struct FileScopes {
     /// The file's PHP name references (`resolves` in php, and the flow a PHP table reads), built
     /// on first use or taken from a cached table's flow; a build that stopped at its node budget
     /// stops again at any budget up to `php_names_failed_within`.
-    php_names: Option<Arc<PhpNames>>,
+    php_names: Option<crate::code_rule_dsl::scope::NameTable>,
     php_names_failed_within: usize,
     /// The clauses that paid for `php_names`.
     php_names_charged: Vec<usize>,
@@ -1371,8 +1289,8 @@ pub(super) fn constant_value<D: Doc>(
     if has_errors {
         return None;
     }
-    let names = file_php_names(node, language)?;
-    names.constant_value(&target.find_near(node.root().root(), node)?)
+    let names = file_names(node, language)?;
+    language_pack::scope_constant(language_pack::pack(Family::of(language)), &names, &target.find_near(node.root().root(), node)?)
 }
 
 /// How a table reads the file under these options: Python annotations after the module from 3.14,
@@ -1480,12 +1398,17 @@ fn exceed<T>() -> Option<T> {
 /// `maxVisitedNodes` once per file. A PHP table's flow reads these (`file_table`), so a clause that
 /// reads names alone pays for them alone. `None` means the clause failed for the file
 /// (`UTIL_EXCEEDED` is set): a missing table must not read as "not listed".
-fn file_php_names<D: Doc>(node: &Node<'_, D>, language: GrammarDialect) -> Option<Arc<PhpNames>> {
+pub(super) fn file_names<D: Doc>(node: &Node<'_, D>, language: GrammarDialect) -> Option<crate::code_rule_dsl::scope::NameTable> {
     if UTIL_EXCEEDED.get().is_some() {
         return None;
     }
     let root = node.root().root();
-    let build = |cap| PhpNames::build(root.clone(), cap, &budget::matcher_budget_exhausted);
+    let pack = language_pack::pack(Family::of(language));
+    // A family without a name table reads none (`ScopeRules::names`): no caller asks one.
+    let build = |cap| {
+        language_pack::scope_names(pack, root.clone(), cap, &budget::matcher_budget_exhausted)
+            .unwrap_or(Err(BuildError::Depth))
+    };
     let clause = CURRENT_CLAUSE.get();
     let steps = UTIL_STEPS_LEFT.get();
     let installed = FILE_SCOPES.with_borrow_mut(|slot| {
@@ -1496,8 +1419,7 @@ fn file_php_names<D: Doc>(node: &Node<'_, D>, language: GrammarDialect) -> Optio
                     .tables
                     .iter()
                     .filter(|table| table.language == language)
-                    .find_map(|table| table.php.as_deref())
-                    .map(|flow| Arc::clone(&flow.names));
+                    .find_map(|table| pack.scope_table_names(table));
             }
             (
                 slot.php_names.clone(),
@@ -1518,7 +1440,6 @@ fn file_php_names<D: Doc>(node: &Node<'_, D>, language: GrammarDialect) -> Optio
             }
             match build(steps) {
                 Ok(names) => {
-                    let names = Arc::new(names);
                     FILE_SCOPES.with_borrow_mut(|slot| {
                         if let Some(slot) = slot {
                             slot.php_names = Some(Arc::clone(&names));
@@ -1545,12 +1466,12 @@ fn file_php_names<D: Doc>(node: &Node<'_, D>, language: GrammarDialect) -> Optio
         }
         // Outside a file evaluation: build for this call alone, and charge it every time.
         None => match build(steps) {
-            Ok(names) => (Arc::new(names), false),
+            Ok(names) => (names, false),
             Err(_) => return exceed(),
         },
     };
     if !charged {
-        let Some(left) = steps.checked_sub(names.cost) else {
+        let Some(left) = steps.checked_sub(names.cost()) else {
             return exceed();
         };
         UTIL_STEPS_LEFT.set(left);
@@ -1568,7 +1489,7 @@ fn build<D: Doc>(
     language: GrammarDialect,
     cap: usize,
     reading: Reading,
-    php_names: Option<Arc<PhpNames>>,
+    php_names: Option<crate::code_rule_dsl::scope::NameTable>,
 ) -> Result<ScopeTable, BuildError> {
     #[cfg(test)]
     TABLE_BUILDS.set(TABLE_BUILDS.get() + 1);
@@ -1595,7 +1516,7 @@ pub(crate) fn calls_tables<D: Doc>(
     { let pack = language_pack::pack(Family::of(language)); language_pack::calls_tables(pack, 
         || file_table(node, language, Reading::default()),
         file_module,
-        || file_php_names(node, language),
+        || file_names(node, language),
     ) }
 }
 
@@ -1633,7 +1554,7 @@ pub(super) fn file_table<D: Doc>(
         return table.or_else(exceed);
     }
     let php_names = if flow {
-        Some(file_php_names(node, language)?)
+        Some(file_names(node, language)?)
     } else {
         None
     };
@@ -1708,3 +1629,6 @@ pub(super) fn file_table<D: Doc>(
     }
     Some(table)
 }
+
+// PHP's reading of `resolves` (`ScopeRules::resolves`), the PHP crate's.
+pub(crate) mod php;

@@ -37,9 +37,9 @@ impl CallRules for Python {
     fn tables(
         table: impl FnOnce() -> Option<Arc<ScopeTable>>,
         module: impl FnOnce() -> Option<Arc<ModulePath>>,
-        _: impl FnOnce() -> Option<Arc<PhpNames>>,
+        _: impl FnOnce() -> Option<crate::code_rule_dsl::scope::NameTable>,
     ) -> Option<FileTables> {
-        Some(FileTables::Python(table()?, module()))
+        Some(FileTables { table: table()?, module: module(), names: None })
     }
 
     fn callee_at<'t, D: Doc>(
@@ -47,7 +47,7 @@ impl CallRules for Python {
         summary: &Summary,
         tables: impl FnOnce() -> Option<FileTables>,
     ) -> Option<Option<Callee>> {
-        let Some(FileTables::Python(table, module)) = tables() else {
+        let Some(FileTables { table, module, .. }) = tables() else {
             return None;
         };
         Some(crate::code_rule_dsl::calls::summary::python::callee_at(

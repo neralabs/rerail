@@ -18,6 +18,7 @@
 //! expression), as the global name where PHP 8.5.11 defines it (`data/php_builtins.generated.json`), and as
 //! unknown otherwise: another file may declare it.
 
+use std::sync::Arc;
 use crate::code_rule_dsl::tree::Tree;
 use super::{BuildError, NodeRef};
 use crate::code_rule_dsl::value::php_compare::{ImportKind, import_kind};
@@ -99,7 +100,22 @@ pub(crate) struct PhpNames {
 /// once.
 type Declared = HashMap<String, Option<NodeRef>>;
 
+/// PHP's names, as the shared code carries them (`scope::FileNames`).
+impl super::FileNames for PhpNames {
+    fn cost(&self) -> usize {
+        self.cost
+    }
+    fn into_any(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
+        self
+    }
+}
+
 impl PhpNames {
+    /// `names` as PHP's own, where they are.
+    pub(crate) fn of(names: &super::NameTable) -> Option<Arc<Self>> {
+        Arc::clone(names).into_any().downcast().ok()
+    }
+
     /// Reads the references of `root`'s file, visiting at most `cap` nodes.
     pub(crate) fn build<D: Doc>(
         root: Node<'_, D>,

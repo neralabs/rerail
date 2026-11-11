@@ -24,7 +24,6 @@ use crate::code_rule_dsl::language::is_stub_file;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::lines::Span;
 use crate::code_rule_dsl::module_path::ModulePath;
-use crate::code_rule_dsl::scope::php_names::PhpNames;
 use crate::code_rule_dsl::scope::{Reading, ScopeTable};
 use crate::content_store::HashKey;
 use ast_grep_core::{Doc, Node};
@@ -1212,7 +1211,7 @@ pub(crate) fn reading(path: &str) -> Reading {
 }
 
 /// Nodes one summary's scope table may visit before the file's summary is open.
-const MAX_TABLE_NODES: usize = 5_000_000;
+pub(in crate::code_rule_dsl) const MAX_TABLE_NODES: usize = 5_000_000;
 
 /// Whether `calls` follows the calls of files in `language`: those of a family whose calls join
 /// the call graph (`CallRules::SUPPORTED`).
@@ -1271,29 +1270,6 @@ pub(crate) fn summarize<D: Doc>(
     (summary, built.flatten())
 }
 
-/// The summary of the PHP `program` in the file at `path`, through `table`, the file's scope
-/// table where one was built.
-pub(crate) fn extract_php<D: Doc>(
-    program: &Node<'_, D>,
-    path: &str,
-    table: Option<&ScopeTable>,
-    has_errors: bool,
-) -> Summary {
-    // The table's flow read the program's names; build them only where no table holds them.
-    let names = table
-        .and_then(|table| table.php.as_deref())
-        .map(|flow| Arc::clone(&flow.names))
-        .or_else(|| {
-            PhpNames::build(
-                program.clone(),
-                MAX_TABLE_NODES,
-                &crate::code_rule_dsl::budget::matcher_budget_exhausted,
-            )
-            .ok()
-            .map(Arc::new)
-        });
-    php::extract(program, path, table, names.as_deref(), has_errors)
-}
 
 /// A seed query's witnesses in one file, by their spans: the definitions (by node start) they
 /// stand for, read through the file's summary where they are nodes the definitions hold. `None`
@@ -1339,14 +1315,12 @@ pub(crate) enum Reach {
     Unknown,
 }
 
-/// What `calls` reads in a file to name a callee the summary did not record.
-pub(crate) enum FileTables {
-    /// Python's scope table and the file's module path.
-    Python(Arc<ScopeTable>, Option<Arc<ModulePath>>),
-    /// PHP's variable flow and name resolution (a Blade template's: its embedded program's).
-    Php(Arc<ScopeTable>, Arc<PhpNames>),
-    /// Rust's scope table.
-    Rust(Arc<ScopeTable>),
+/// What `calls` reads in a file to name a callee the summary did not record: its scope table, and what its
+/// family reads besides (Python's module path; PHP's names, a Blade template's its embedded program's).
+pub(crate) struct FileTables {
+    pub(crate) table: Arc<ScopeTable>,
+    pub(crate) module: Option<Arc<ModulePath>>,
+    pub(crate) names: Option<crate::code_rule_dsl::scope::NameTable>,
 }
 
 /// The `calls` verdict at `node`; `tables` gives what `calls` reads in `node`'s file for its

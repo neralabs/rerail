@@ -16,7 +16,7 @@ use crate::code_rule_dsl::model::{
 };
 use crate::code_rule_dsl::module_graph;
 use crate::code_rule_dsl::package_manifest::{
-    GITIGNORE, Manifest, NPMIGNORE, deserialize_wire, ignore_file_directory, manifest_directory,
+    GITIGNORE, Manifest, NPMIGNORE, ignore_file_directory, manifest_directory,
     manifest_in,
 };
 use crate::content_store::StoreError;

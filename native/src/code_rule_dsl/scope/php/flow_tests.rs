@@ -246,7 +246,7 @@ fn php_flow_agrees_with_traced_runs() {
             Reading::default(),
         )
         .expect("table builds");
-        let flow = table.php.as_deref().expect("a PHP flow");
+        let flow = table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of).expect("a PHP flow");
         // Each binding by its name node's start: its scope, and its index among the scope's.
         let mut starts = BTreeMap::new();
         for (scope, owner) in table.scopes.iter().enumerate() {

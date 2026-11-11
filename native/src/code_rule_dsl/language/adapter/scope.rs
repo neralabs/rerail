@@ -7,7 +7,7 @@ use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{
     DEFAULT_PYTHON_MINOR, EsGlobals, LanguageOptions, PythonOptions,
 };
-use crate::code_rule_dsl::scope::php::Defined;
+use crate::code_rule_dsl::scope::flow::Defined;
 use crate::code_rule_dsl::scope::usage::{Steps, Usage};
 use crate::code_rule_dsl::scope::{
     Access, Binding, BuildError, Builder, Directives, Form, Lookup, Reading, Reference, ScopeKind,
@@ -192,6 +192,36 @@ pub(crate) trait ScopeRules {
     ) -> Option<String>;
     /// Whether the family reads `feature`.
     fn feature(feature: ScopeFeature) -> Result<(), Refusal>;
+
+    /// The family's own name table for the file at `root` (PHP's `PhpNames`), built within `cap` visited nodes:
+    /// `None` where the family has none.
+    fn names<D: Doc>(
+        root: Node<'_, D>,
+        cap: usize,
+        deadline: &dyn Fn() -> bool,
+    ) -> Option<Result<crate::code_rule_dsl::scope::NameTable, BuildError>> {
+        let _ = (root, cap, deadline);
+        None
+    }
+
+    /// The name table `table`'s build read, where it holds one.
+    fn table_names(table: &ScopeTable) -> Option<crate::code_rule_dsl::scope::NameTable> {
+        let _ = table;
+        None
+    }
+
+    /// The value node of the constant `node` fetches, by the file's `names` (`value.follow`).
+    fn constant<D: Doc>(names: &crate::code_rule_dsl::scope::NameTable, node: &Node<'_, D>) -> Option<NodeRef> {
+        let _ = (names, node);
+        None
+    }
+
+    /// Whether `resolves` holds of `node` by the family's own reading (PHP's names and variable flow); `None`
+    /// where the shared reading decides.
+    fn resolves<D: Doc>(resolves: &crate::code_rule_dsl::matcher::Resolves, node: &Node<'_, D>) -> Option<bool> {
+        let _ = (resolves, node);
+        None
+    }
 }
 
 /// The refusal reporting `message`.

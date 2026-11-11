@@ -8,7 +8,6 @@ use crate::code_rule_dsl::calls::{FileTables, php};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::ScopeTable;
-use crate::code_rule_dsl::scope::php_names::PhpNames;
 use ast_grep_core::{Doc, Node};
 use ast_grep_language::LanguageExt;
 use std::borrow::Cow;
@@ -64,7 +63,7 @@ pub(crate) trait CallRules {
     fn tables(
         table: impl FnOnce() -> Option<Arc<ScopeTable>>,
         module: impl FnOnce() -> Option<Arc<ModulePath>>,
-        names: impl FnOnce() -> Option<Arc<PhpNames>>,
+        names: impl FnOnce() -> Option<crate::code_rule_dsl::scope::NameTable>,
     ) -> Option<FileTables>;
 
     /// The callee of the call `node`, in a file whose summary is `summary`, through `tables`;
@@ -126,7 +125,7 @@ impl CallRules for Refused {
     fn tables(
         _: impl FnOnce() -> Option<Arc<ScopeTable>>,
         _: impl FnOnce() -> Option<Arc<ModulePath>>,
-        _: impl FnOnce() -> Option<Arc<PhpNames>>,
+        _: impl FnOnce() -> Option<crate::code_rule_dsl::scope::NameTable>,
     ) -> Option<FileTables> {
         None
     }

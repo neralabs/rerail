@@ -22,7 +22,7 @@ use super::{
 use crate::code_rule_dsl::json::{invalid, json_error};
 use crate::code_rule_dsl::language::adapter::{module_path, package_manifests};
 use crate::code_rule_dsl::model::FileInput;
-use crate::code_rule_dsl::package_manifest::{Manifest, Manifests};
+use crate::code_rule_dsl::package_manifest::Manifests;
 use crate::content_store::{
     CandidateCatalogIdentity, DirectoryReuse, HashKey, StoredFile, StoredPathObjects,
 };

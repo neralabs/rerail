@@ -24,7 +24,6 @@ use crate::code_rule_dsl::matcher::{Arguments, Passed, ScopeName, SemanticText, 
 use crate::code_rule_dsl::model::ViolationSpec;
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
-use crate::code_rule_dsl::scope::php_names::PhpNames;
 use crate::code_rule_dsl::scope::rust::{self as scope_rust, LABEL, MACRO};
 use crate::code_rule_dsl::scope::usage::{Steps, Usage};
 use crate::code_rule_dsl::scope::{
@@ -754,9 +753,9 @@ impl CallRules for Rust {
     fn tables(
         table: impl FnOnce() -> Option<Arc<ScopeTable>>,
         _: impl FnOnce() -> Option<Arc<ModulePath>>,
-        _: impl FnOnce() -> Option<Arc<PhpNames>>,
+        _: impl FnOnce() -> Option<crate::code_rule_dsl::scope::NameTable>,
     ) -> Option<FileTables> {
-        Some(FileTables::Rust(table()?))
+        Some(FileTables { table: table()?, module: None, names: None })
     }
 
     fn callee_at<'t, D: Doc>(
@@ -764,7 +763,7 @@ impl CallRules for Rust {
         summary: &Summary,
         tables: impl FnOnce() -> Option<FileTables>,
     ) -> Option<Option<Callee>> {
-        let Some(FileTables::Rust(table)) = tables() else {
+        let Some(FileTables { table, .. }) = tables() else {
             return None;
         };
         Some(calls::rust::callee_at(node, summary, &table))
