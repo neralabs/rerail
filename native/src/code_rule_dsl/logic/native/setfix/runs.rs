@@ -91,6 +91,49 @@ impl Run {
         &window[s..e]
     }
 
+    /// Sets `held[i]` when a live id (`live`) holds row `order[i]` of `rows` (flat, `k` columns each): `order` lists
+    /// distinct rows sorted by `cols`, so each row's search starts where the last one's ended. The fences (leading
+    /// values, inline) find a row's block from there; within it the search gallops, so rows near each other in the
+    /// order read few rows of `data`.
+    fn held_sorted(&self, data: &[i64], k: usize, cols: &[usize], rows: &[i64], order: &[u32], live: &impl Fn(u32) -> bool, held: &mut [bool]) {
+        let n = self.ids.len();
+        let Some(&lead) = cols.first() else {
+            // No columns: one row at most, held when a live id is.
+            if self.ids.iter().any(|&id| live(id)) {
+                held.iter_mut().for_each(|h| *h = true);
+            }
+            return;
+        };
+        let mut at = 0;
+        for (i, &q) in order.iter().enumerate() {
+            if at >= n {
+                break;
+            }
+            if held[i] {
+                continue;
+            }
+            let row = &rows[q as usize * k..][..k];
+            let cmp = |id: u32| -> Ordering {
+                let r = &data[id as usize * k..][..k];
+                cols.iter().map(|&c| r[c].cmp(&row[c])).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
+            };
+            // The first id at or past the row is past the block before the first fence at or past its leading value.
+            let v = row[lead];
+            let from = at / FENCE;
+            let f = from + self.fences[from..].partition_point(|&x| x < v);
+            let start = at.max(f.saturating_sub(1) * FENCE);
+            let mut bound = 1;
+            while start + bound <= n && cmp(self.ids[start + bound - 1]).is_lt() {
+                bound *= 2;
+            }
+            let lo = if bound > 1 { start + bound / 2 } else { start };
+            let hi = (start + bound - 1).min(n);
+            let p = lo + self.ids[lo..hi].partition_point(|&id| cmp(id).is_lt());
+            at = p;
+            held[i] = self.ids[p..].iter().take_while(|&&id| cmp(id).is_eq()).any(|&id| live(id));
+        }
+    }
+
     /// Two runs as one.
     fn merge(data: &[i64], k: usize, cols: &[usize], a: &Run, b: &Run) -> Run {
         let mut ids = Vec::with_capacity(a.ids.len() + b.ids.len());
@@ -253,6 +296,19 @@ impl Index {
             self.rent.fetch_add(read - 1, AtomicOrdering::Relaxed);
         }
         found
+    }
+
+    /// Sets `held[i]` when a live id (`live`) of this order holds row `order[i]` of `rows` (flat, `k` columns each):
+    /// `order` lists distinct rows sorted by this order's columns, which are every column (the first order, the dedup
+    /// test). Each run is searched once, in order (decision 0112: the dedup test a wave at a time).
+    pub(super) fn held_sorted(&self, data: &[i64], k: usize, rows: &[i64], order: &[u32], live: impl Fn(u32) -> bool, held: &mut [bool]) {
+        debug_assert_eq!(self.cols.len(), k, "the dedup test is the order on every column");
+        for (run, _) in &self.runs {
+            run.held_sorted(data, k, &self.cols, rows, order, &live, held);
+        }
+        if self.runs.len() > 1 {
+            self.rent.fetch_add((self.runs.len() as u64 - 1) * order.len() as u64, AtomicOrdering::Relaxed);
+        }
     }
 
     /// Rows indexed.

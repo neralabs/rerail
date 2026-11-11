@@ -493,6 +493,32 @@ impl Rel {
         self.pending.insert_unique(hash_vals(row.iter().copied()), id, |&i| hash_vals(data[i as usize * k..][..k].iter().copied()));
         true
     }
+    /// A wave's derived rows added as the next wave's, each once, unless held: checked as one sorted batch
+    /// (`Fresh::settle`), so the dedup test reads each of the first order's runs once, in order, not row by row
+    /// (decision 0112). `pend`: the rows stay in no order past this wave's end (a gate's relation, its delta set
+    /// later), so they are also put in `pending` for the dedup tests until then. Whether any was new.
+    fn push_fresh(&mut self, mut f: Fresh, pend: bool) -> bool {
+        f.settle(self);
+        let (k, m) = (self.k, f.n);
+        if m == 0 {
+            return false;
+        }
+        let from = self.n;
+        self.data.extend_from_slice(&f.data[..m * k]);
+        for _ in 0..m {
+            if self.leveled && self.level.len() == self.n {
+                self.level.push(self.lbase + self.wave + 1);
+            }
+            self.n += 1;
+        }
+        if pend {
+            let data = &self.data;
+            for id in from..self.n {
+                self.pending.insert_unique(hash_vals(data[id * k..][..k].iter().copied()), id as u32, |&i| hash_vals(data[i as usize * k..][..k].iter().copied()));
+            }
+        }
+        true
+    }
     /// Rows `indexed..n` counted in the sketches; `pending` emptied (they are in the orders now).
     fn indexed_to_n(&mut self) {
         for id in self.indexed..self.n {
@@ -576,16 +602,71 @@ impl Cands<'_> {
     }
 }
 
-/// New tuples of one relation found in a wave, flat; duplicates are dropped when they are pushed. `emitted`: every
-/// row a rule derived this wave, new or not (`RERAIL_SPIKE_DERIVATIONS`: the derivations a counting scheme would
-/// count).
+/// The tuples of one relation derived in a wave, flat, not yet checked against it (decision 0112: the dedup test a
+/// batch at a time). Rows `..settled` are distinct, not held by the relation, and sorted by its first order; the rest
+/// are as derived. `emitted`: every row a rule derived this wave, new or not (`RERAIL_SPIKE_DERIVATIONS`: the
+/// derivations a counting scheme would count).
 #[derive(Clone, Default)]
-struct Fresh { data: Vec<i64>, n: usize, emitted: u64 }
+struct Fresh { data: Vec<i64>, n: usize, emitted: u64, settled: usize }
+
+/// Rows a wave's derived tuples hold before they are checked against their relation (`Fresh::offer`): a wave that
+/// derives many rows already held keeps at most about this many more.
+const FRESH_BATCH: usize = 1 << 16;
 
 /// `RERAIL_SPIKE_DERIVATIONS`: rows derived (new or already held) and rows held new, by relation, over the process.
 pub(crate) static DERIVATIONS: std::sync::Mutex<std::collections::BTreeMap<String, (u64, u64)>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
 impl Fresh {
     fn add(&mut self, row: &[i64]) { self.data.extend_from_slice(row); self.n += 1; }
+    /// A row a rule derived for `rel`: kept unchecked, the rows past `settled` checked a batch at a time.
+    #[inline]
+    fn offer(&mut self, row: &[i64], rel: &Rel) {
+        self.add(row);
+        if self.n - self.settled >= FRESH_BATCH.max(self.settled) {
+            self.settle(rel);
+        }
+    }
+    /// Drops the rows `rel` holds and the repeats: the rest, distinct, sorted by `rel`'s first order (so a wave's rows
+    /// are checked against it as one sorted batch, each run searched once in order, not row by row).
+    fn settle(&mut self, rel: &Rel) {
+        let (k, n, settled) = (rel.k, self.n, self.settled);
+        if settled == n {
+            return;
+        }
+        let cols = &rel.idx[0].cols;
+        let data = &self.data;
+        let cmp = |a: u32, b: u32| -> std::cmp::Ordering {
+            let (ra, rb) = (&data[a as usize * k..][..k], &data[b as usize * k..][..k]);
+            cols.iter().map(|&c| ra[c].cmp(&rb[c])).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal)
+        };
+        let mut order: Vec<u32> = (settled as u32..n as u32).collect();
+        order.sort_unstable_by(|&a, &b| cmp(a, b));
+        order.dedup_by(|a, b| cmp(*a, *b).is_eq());
+        // The new rows' check: rows pushed since the last wave (in no order yet), then the first order.
+        let mut held = vec![false; order.len()];
+        if rel.indexed < rel.n {
+            for (h, &q) in held.iter_mut().zip(&order) {
+                *h = rel.contains(&data[q as usize * k..][..k]);
+            }
+        }
+        rel.idx[0].held_sorted(&rel.data, k, data, &order, |id| !rel.dead(id), &mut held);
+        // Merged with the settled rows (sorted, distinct, not held), less those the new rows repeat.
+        let mut out: Vec<i64> = Vec::with_capacity((settled + order.len()) * k);
+        let (mut s, mut kept) = (0, 0);
+        for (&q, h) in order.iter().zip(held) {
+            while s < settled && cmp(s as u32, q).is_lt() {
+                out.extend_from_slice(&data[s * k..][..k]);
+                (s, kept) = (s + 1, kept + 1);
+            }
+            if !h && !(s < settled && cmp(s as u32, q).is_eq()) {
+                out.extend_from_slice(&data[q as usize * k..][..k]);
+                kept += 1;
+            }
+        }
+        out.extend_from_slice(&data[s * k..settled * k]);
+        self.n = kept + settled - s;
+        self.settled = self.n;
+        self.data = out;
+    }
 }
 struct EdgeRule { head: usize, src: usize, key: Vec<usize>, ecols: Vec<usize>, pat: Vec<Pat>, out: Vec<Term>,
                   edges: HashMap<Vec<i64>, Vec<Vec<i64>>>, has_edge: bool, nslots: usize }
@@ -1228,7 +1309,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
                     row.push(read_value(ValueRef::from(v), ty, &mut syms).map_err(|e| err(format!("{}: {e}", store.rels[head].table)))?);
                 }
                 fresh[head].emitted += 1;
-                if !store.rels[head].contains(&row) { fresh[head].add(&row); }
+                fresh[head].offer(&row, &store.rels[head]);
             }
         }
         // The seed joins on the device, in one batch, when the stratum was placed there (decision 0095, step 4).
@@ -1350,7 +1431,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
                         Term::Cat(a, b) => cat(syms, slots[*a], slots[*b]),
                     }));
                     fresh[rule.head].emitted += 1;
-                    if !store.rels[rule.head].contains(&row) { fresh[rule.head].add(&row); }
+                    fresh[rule.head].offer(&row, &store.rels[rule.head]);
                 };
                 if !rule.has_edge { emit(&slots, store, &mut syms, &mut fresh); continue; }
                 key.clear();
@@ -1370,13 +1451,13 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
         let counting = std::env::var_os("RERAIL_SPIKE_DERIVATIONS").is_some();
         for (r, f) in fresh.into_iter().enumerate() {
             let rel = &mut store.rels[r];
-            let (lo, k) = (rel.n, rel.k);
-            rel.reserve(f.n);
-            for i in 0..f.n { any |= rel.push(&f.data[i * k..][..k]); }
-            if counting && f.emitted > 0 {
+            let lo = rel.n;
+            let emitted = f.emitted;
+            any |= rel.push_fresh(f, gates_done.contains(&r));
+            if counting && emitted > 0 {
                 let mut all = DERIVATIONS.lock().unwrap();
                 let e = all.entry(rel.table.clone()).or_default();
-                e.0 += f.emitted;
+                e.0 += emitted;
                 e.1 += (rel.n - lo) as u64;
             }
             lo_of[r] = lo;
@@ -4154,7 +4235,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             cx.n += 1;
             if let Some(c) = &mut cx.collect { c.extend_from_slice(&cx.row); return; }
             cx.fresh[cx.head].emitted += 1;
-            if !store.rels[cx.head].contains(&cx.row) { cx.fresh[cx.head].add(&cx.row); }
+            cx.fresh[cx.head].offer(&cx.row, &store.rels[cx.head]);
             return;
         };
         /// The candidates: an input's index on exactly the key columns, a component relation's composite index, or
@@ -4500,6 +4581,51 @@ mod posted_tests {
             assert!(ix.shares(kept), "the maintained relation's order {:?} is a copy", ix.cols);
         }
         assert!(based.contains(&[3, 3, 93]) && !based.contains(&[3, 3, 94]));
+    }
+
+    /// The dedup test a wave at a time (decision 0112): a wave's derived rows, in any order, repeated, and some
+    /// held already (one of them dead), become the wave's new rows once each, whether they are checked at the wave's
+    /// end or in batches as they come (`FRESH_BATCH`); the relation holds what a set of its rows would.
+    #[test]
+    fn a_waves_rows_are_checked_once_as_a_sorted_batch() {
+        let mut x: u64 = 11;
+        let mut next = |m: u64| {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((x >> 33) % m) as i64
+        };
+        let mut rel = Rel::new("t", b"iii");
+        rel.want(&[2]);
+        let mut set: std::collections::BTreeSet<Vec<i64>> = Default::default();
+        for w in 0..5 {
+            let mut f = Fresh::default();
+            // Few values a column: many repeats in the wave and many rows held from earlier waves.
+            let rows = if w == 3 { 3 * FRESH_BATCH } else { 5000 };
+            let mut new = std::collections::BTreeSet::new();
+            for _ in 0..rows {
+                let row = vec![next(40), next(30), next(20)];
+                f.offer(&row, &rel);
+                if !set.contains(&row) {
+                    new.insert(row);
+                }
+            }
+            assert!(w != 3 || f.n < rows, "a large wave is checked in batches as it comes");
+            let lo = rel.n;
+            assert_eq!(rel.push_fresh(f, false), !new.is_empty());
+            let hi = rel.n;
+            assert_eq!(hi - lo, new.len(), "wave {w}: each new row once");
+            rel.set_delta(lo, hi);
+            set.extend(new);
+            if w == 1 {
+                // A row deleted in place is new again when derived again.
+                let id = (0..rel.n as u32).find(|&id| !rel.dead(id)).expect("a row");
+                assert!(kill(&mut rel.dead, id));
+                rel.ndead += 1;
+                set.remove(rel.row(id as usize));
+            }
+        }
+        let live: std::collections::BTreeSet<Vec<i64>> = (0..rel.n).filter(|&id| !rel.dead(id as u32)).map(|id| rel.row(id).to_vec()).collect();
+        assert_eq!(live, set);
+        assert_eq!((0..rel.n).filter(|&id| !rel.dead(id as u32)).count(), set.len(), "no live row twice");
     }
 
     /// A column's sorted index is the same whichever way it is built (in order, few values, many): its rows sorted
