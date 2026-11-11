@@ -572,6 +572,7 @@ pub(crate) fn install_languages() {
     ]);
     // What a `package` file condition reads of a file without a manifest (ECMA's default Node range).
     language::set_no_manifest(&package_manifest::NoManifest);
+    language::set_manifest_reader(package_manifest::read_wire);
     // The dialects their languages parse themselves (`tape::TreeParser`). A build without a language's
     // feature routes no file to it, so its parser is not linked.
     {

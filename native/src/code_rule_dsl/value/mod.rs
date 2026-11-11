@@ -12,6 +12,7 @@ pub(crate) mod python_ast;
 pub(crate) mod rust;
 pub(crate) mod sql;
 pub(crate) mod structure;
+pub(crate) mod python_structure;
 pub(crate) mod text_regex;
 
 use crate::code_rule_dsl::language::{Family, GrammarDialect};

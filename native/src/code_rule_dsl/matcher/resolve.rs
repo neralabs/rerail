@@ -11,7 +11,6 @@ use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::literal::{Grammar, SubTree};
 use crate::code_rule_dsl::model::FileInput;
 use crate::code_rule_dsl::module_path::ModulePath;
-use crate::code_rule_dsl::package_manifest::Manifest;
 use crate::code_rule_dsl::scope::options::{DEFAULT_PYTHON_MINOR, LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::scope::php_names::{self, PhpNames, Resolved};
 use crate::code_rule_dsl::scope::usage::Usage;
@@ -905,7 +904,7 @@ struct FileScopes {
     package_type_source_type: SourceType,
     /// The ECMA file's nearest `package.json`, which decides its JSX runtime where its text does
     /// not (`decide_file_jsx_runtime`).
-    package: Option<Arc<Manifest>>,
+    package: Option<crate::code_rule_dsl::language::FileManifest>,
     /// The file's JSX runtime, once a `file.jsxRuntime` read it.
     jsx_runtime: Option<JsxRuntime>,
     /// Values decoded so far, by node, grammar and reading (`value`, `compare` over values).
@@ -1070,11 +1069,11 @@ fn syntax_source_type<D: Doc>(root: &Node<'_, D>) -> SourceType {
 
 /// The JSX runtime of a file whose tree is `root` and whose nearest manifest is `package`: the
 /// one its text names (`jsx_runtime_in_source`), else its manifest's; `Unknown` without either.
-fn jsx_runtime_of<D: Doc>(root: &Node<'_, D>, package: Option<&Manifest>) -> JsxRuntime {
+fn jsx_runtime_of<D: Doc>(root: &Node<'_, D>, package: Option<&dyn crate::code_rule_dsl::language::ProjectManifest>) -> JsxRuntime {
     #[cfg(test)]
     JSX_RUNTIME_DERIVATIONS.set(JSX_RUNTIME_DERIVATIONS.get() + 1);
     jsx_runtime_in_source(root)
-        .unwrap_or_else(|| package.map_or(JsxRuntime::Unknown, Manifest::jsx_runtime))
+        .unwrap_or_else(|| package.map_or(JsxRuntime::Unknown, |package| package.jsx_runtime()))
 }
 
 /// The facts of `file`, whose tree is `root`, that queries' file gates read (its module system,

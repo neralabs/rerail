@@ -80,7 +80,7 @@ impl ValueRules for Python {
         equality: Equality,
         context: &mut Context<'_>,
     ) -> Option<Vec<Tok>> {
-        structure::structure(node, equality, context)
+        crate::code_rule_dsl::value::python_structure::structure(node, equality, context)
     }
 
     fn string(text: &str) -> Value {

@@ -3,7 +3,6 @@ use super::json::invalid;
 use super::matcher::{GrammarMatcher, Transform};
 use super::module_path::ModulePath;
 use crate::code_rule_dsl::language::{GrammarDialect, PackageType};
-use crate::code_rule_dsl::package_manifest::Manifest;
 use ast_grep_core::replacer::TemplateFix;
 use globset::GlobSet;
 use napi::Result;
@@ -840,7 +839,7 @@ pub(super) struct FileInput {
     /// A Python file's module path: the host's (`module`), else the file's stem.
     pub(super) module: Option<Arc<ModulePath>>,
     /// An ECMA file's nearest `package.json` (`package`); `None` without one.
-    pub(super) package: Option<Arc<Manifest>>,
+    pub(super) package: Option<crate::code_rule_dsl::language::FileManifest>,
 }
 
 impl FileInput {
@@ -855,7 +854,7 @@ impl FileInput {
         language: String,
         source: Arc<String>,
         module: Option<&Value>,
-        package: Option<Arc<Manifest>>,
+        package: Option<crate::code_rule_dsl::language::FileManifest>,
         at: &str,
     ) -> Result<Self> {
         let module = match module {
@@ -880,7 +879,7 @@ impl FileInput {
 
     /// The `type` of the file's nearest `package.json`, which decides a `.js` file's module system.
     pub(super) fn package_type(&self) -> Option<PackageType> {
-        self.package.as_deref().map(Manifest::package_type)
+        self.package.as_deref().map(|package| package.package_type())
     }
 }
 

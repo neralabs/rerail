@@ -219,10 +219,11 @@ pub(super) fn repository_package(
     repository: &git_workspace::GitWorkspace,
     repository_path: &str,
     language: &str,
-) -> Option<Arc<Manifest>> {
+) -> Option<crate::code_rule_dsl::language::FileManifest> {
     package_manifests(language)
         .then(|| manifests.of_file(&repository.worktree_root.join(repository_path)))
         .flatten()
+        .map(|manifest| manifest as crate::code_rule_dsl::language::FileManifest)
 }
 
 fn restore_prepared_file(

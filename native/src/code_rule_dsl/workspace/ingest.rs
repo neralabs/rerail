@@ -69,8 +69,8 @@ struct BufferFile {
     #[serde(default)]
     module: Option<Value>,
     /// The same package a JSON request's file carries (see `FileInput::new`).
-    #[serde(default, deserialize_with = "deserialize_wire")]
-    package: Option<Arc<Manifest>>,
+    #[serde(default, deserialize_with = "crate::code_rule_dsl::language::deserialize_manifest")]
+    package: Option<crate::code_rule_dsl::language::FileManifest>,
 }
 
 pub(super) fn decode_buffer_request(buffer: &[u8]) -> Result<Request> {
@@ -132,8 +132,8 @@ pub(super) struct WireFile {
     pub(super) module: Option<Value>,
     /// An ECMA file's nearest `package.json` (see `FileInput::new`); without it the workspace's
     /// `package.json` entries decide (`refresh_manifest_context`).
-    #[serde(default, deserialize_with = "deserialize_wire")]
-    pub(super) package: Option<Arc<Manifest>>,
+    #[serde(default, deserialize_with = "crate::code_rule_dsl::language::deserialize_manifest")]
+    pub(super) package: Option<crate::code_rule_dsl::language::FileManifest>,
 }
 impl WireFile {
     pub(super) fn into_input(self, index: usize) -> Result<FileInput> {

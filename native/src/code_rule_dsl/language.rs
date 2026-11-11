@@ -990,7 +990,21 @@ pub(crate) struct PackageCondition {
 /// model found for the file (ECMA's `package.json`, `package_manifest::Manifest`), which that language's crate
 /// implements this for. A file without one is read through the registered `no_manifest` where a condition
 /// still holds of it (`nodeVersion`: the configured default).
-pub(crate) trait ProjectManifest: Send + Sync {
+pub(crate) trait ProjectManifest: std::fmt::Debug + Send + Sync + 'static {
+    /// The manifest as its own type, for its language's crate.
+    fn as_any(&self) -> &dyn std::any::Any;
+    /// Whether `other` is the same manifest (a resident file follows a derived one while its own equals it).
+    fn same(&self, other: &dyn ProjectManifest) -> bool;
+    /// Its content's digest: what a stored result of its file is keyed by.
+    fn digest(&self) -> &[u8; 32];
+    /// Its `type` (an ECMA file's module system, `SourceType::by_package_type`).
+    fn package_type(&self) -> PackageType {
+        PackageType::Unset
+    }
+    /// The JSX runtime its dependencies imply.
+    fn jsx_runtime(&self) -> JsxRuntime {
+        JsxRuntime::Unknown
+    }
     /// Whether the manifest lists `path` as a bin.
     fn is_bin(&self, path: &str) -> bool;
     /// Whether the manifest's configured Node range is a subset of `range`.
@@ -1018,6 +1032,42 @@ pub(crate) trait ProjectManifest: Send + Sync {
     fn publishes(&self, path: &str) -> Option<bool> {
         let _ = path;
         None
+    }
+}
+
+/// A file's manifest, as the workspace holds it.
+pub(crate) type FileManifest = std::sync::Arc<dyn ProjectManifest>;
+
+/// Reads a request file's `package` (at `at`), as the language whose project model has manifests registers it.
+pub(crate) type ManifestReader = fn(&serde_json::Value, &str) -> napi::Result<FileManifest>;
+
+static MANIFEST_READER: std::sync::OnceLock<ManifestReader> = std::sync::OnceLock::new();
+
+/// The engine's manifest reader; the first call holds.
+pub(crate) fn set_manifest_reader(reader: ManifestReader) {
+    let _ = MANIFEST_READER.set(reader);
+}
+
+/// A request file's `package` at `at`, read by the registered reader; refused where none is registered.
+pub(crate) fn read_manifest(value: &serde_json::Value, at: &str) -> napi::Result<FileManifest> {
+    match MANIFEST_READER.get() {
+        Some(read) => read(value, at),
+        None => Err(super::json::invalid(format!("{at}/package is read by no language this build has"))),
+    }
+}
+
+/// Serde's reading of a request file's `package` (`read_manifest`).
+pub(crate) fn deserialize_manifest<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<FileManifest>, D::Error> {
+    let value = <serde_json::Value as serde::Deserialize>::deserialize(deserializer)?;
+    read_manifest(&value, "files").map(Some).map_err(|error| serde::de::Error::custom(error.reason))
+}
+
+/// Two manifests are equal where they are the same (`ProjectManifest::same`).
+impl PartialEq for dyn ProjectManifest {
+    fn eq(&self, other: &Self) -> bool {
+        self.same(other)
     }
 }
 

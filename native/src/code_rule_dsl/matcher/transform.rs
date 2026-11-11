@@ -11,7 +11,6 @@ use super::value::Reading;
 use crate::code_rule_dsl::origin::InFile;
 use crate::code_rule_dsl::value::Value;
 use crate::code_rule_dsl::value::ecma::{number, to_precision};
-use crate::code_rule_dsl::value::key::number_to_string;
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
 use ast_grep_core::source::Content;
 use ast_grep_core::{Doc, Node};
@@ -1469,6 +1468,47 @@ mod tests {
                 regex.replace_all("x", replacement),
                 "{replacement}",
             );
+        }
+    }
+}
+
+/// `Number::toString(x)` in base 10: the shortest digits that read back as `x`, laid out as
+/// ECMA-262 §6.1.6.1.20 lays them out.
+pub(crate) fn number_to_string(value: f64) -> String {
+    if value.is_nan() {
+        return "NaN".to_owned();
+    }
+    if value == 0.0 {
+        return "0".to_owned();
+    }
+    if value.is_infinite() {
+        return if value > 0.0 { "Infinity" } else { "-Infinity" }.to_owned();
+    }
+    if value < 0.0 {
+        return format!("-{}", number_to_string(-value));
+    }
+    // Rust's shortest round-trip digits, as `d.ddde±x`.
+    let scientific = format!("{value:e}");
+    let (mantissa, exponent) = scientific
+        .split_once('e')
+        .expect("LowerExp writes an exponent");
+    let digits = mantissa.replace('.', "");
+    let exponent: i32 = exponent.parse().expect("an integer exponent");
+    let k = digits.len() as i32;
+    let n = exponent + 1;
+    if k <= n && n <= 21 {
+        format!("{digits}{}", "0".repeat((n - k) as usize))
+    } else if 0 < n && n <= 21 {
+        format!("{}.{}", &digits[..n as usize], &digits[n as usize..])
+    } else if -6 < n && n <= 0 {
+        format!("0.{}{digits}", "0".repeat((-n) as usize))
+    } else {
+        let sign = if n > 0 { '+' } else { '-' };
+        let (first, rest) = digits.split_at(1);
+        if rest.is_empty() {
+            format!("{first}e{sign}{}", (n - 1).abs())
+        } else {
+            format!("{first}.{rest}e{sign}{}", (n - 1).abs())
         }
     }
 }

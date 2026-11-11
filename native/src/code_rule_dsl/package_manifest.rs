@@ -751,7 +751,7 @@ pub(crate) fn manifest_directory(path: &str) -> Option<&str> {
 pub(crate) fn manifest_in<'m>(
     path: &str,
     manifest: impl Fn(&str) -> Option<&'m Arc<Manifest>>,
-) -> Option<Arc<Manifest>> {
+) -> Option<crate::code_rule_dsl::language::FileManifest> {
     let mut rest = path;
     loop {
         let directory = rest.rfind('/').map_or("", |at| &rest[..at]);
@@ -963,6 +963,21 @@ mod tests {
 
 /// A manifest as a `package` file condition reads it.
 impl crate::code_rule_dsl::language::ProjectManifest for Manifest {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn same(&self, other: &dyn crate::code_rule_dsl::language::ProjectManifest) -> bool {
+        other.as_any().downcast_ref::<Manifest>().is_some_and(|other| self == other)
+    }
+    fn digest(&self) -> &[u8; 32] {
+        Manifest::digest(self)
+    }
+    fn package_type(&self) -> PackageType {
+        Manifest::package_type(self)
+    }
+    fn jsx_runtime(&self) -> JsxRuntime {
+        Manifest::jsx_runtime(self)
+    }
     fn is_bin(&self, path: &str) -> bool {
         Manifest::is_bin(self, path)
     }
@@ -987,9 +1002,29 @@ impl crate::code_rule_dsl::language::ProjectManifest for Manifest {
 }
 
 /// A file without a `package.json`: its Node range eslint-plugin-n's default (`node_range_is_subset_of`).
+#[derive(Debug)]
 pub(crate) struct NoManifest;
 
+/// A request file's `package` (`language::set_manifest_reader`).
+pub(crate) fn read_wire(value: &Value, at: &str) -> Result<crate::code_rule_dsl::language::FileManifest> {
+    Manifest::from_wire(value, at).map(|manifest| Arc::new(manifest) as crate::code_rule_dsl::language::FileManifest)
+}
+
+/// The manifest of a file the workspace holds, where it is ECMA's.
+pub(crate) fn of_file(manifest: &crate::code_rule_dsl::language::FileManifest) -> Option<&Manifest> {
+    manifest.as_any().downcast_ref()
+}
+
 impl crate::code_rule_dsl::language::ProjectManifest for NoManifest {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn same(&self, other: &dyn crate::code_rule_dsl::language::ProjectManifest) -> bool {
+        other.as_any().is::<NoManifest>()
+    }
+    fn digest(&self) -> &[u8; 32] {
+        &[0; 32]
+    }
     fn is_bin(&self, _: &str) -> bool {
         false
     }

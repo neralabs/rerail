@@ -66,7 +66,7 @@ pub(super) fn parse_snapshot(
             .then(|| python_module_in(path, |directory| packages.contains(directory)))
             .flatten();
             let package = match file.get("package") {
-                Some(package) => Some(Arc::new(Manifest::from_wire(package, &at)?)),
+                Some(package) => Some(crate::code_rule_dsl::language::read_manifest(package, &at)?),
                 None => {
                     if package_manifests(language) {
                         derived.push(index);
@@ -188,6 +188,8 @@ impl DerivedPackages {
                 *summary = again;
                 changed.extend(
                     manifest_in(&file.path, |directory| self.manifests.get(directory))
+                        .as_ref()
+                        .and_then(super::package_manifest::of_file)
                         .filter(|manifest| manifest.has_server_graph())
                         .map(|manifest| manifest.folder().to_owned()),
                 );

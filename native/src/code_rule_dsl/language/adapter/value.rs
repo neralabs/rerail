@@ -3,7 +3,7 @@
 use super::{Ecma, Php, Python, Refusal};
 use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::matcher::SemanticText;
-use crate::code_rule_dsl::value::structure::{self, Equality, Tok};
+use crate::code_rule_dsl::value::structure::{Equality, Tok};
 use crate::code_rule_dsl::value::{
     self, BigInt, Context, Ordered, TypeNames, Value, key, php_compare, php_structure,
 };
