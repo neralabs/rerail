@@ -558,6 +558,7 @@ fn learned_rates_come_from_warm_samples_of_one_kernel() {
         cold: false,
         ok: true,
         load: 1.0,
+        threads: 1,
     };
     let mut samples: Vec<Sample> = (0..MIN_SAMPLES).map(|i| sample(Lane::Gpu, "test-learned-span", 1, 1e5 + i as f64, 2e-9)).collect();
     samples.push(Sample { cold: true, ..sample(Lane::Gpu, "test-learned-span", 1, 1e5, 1.0) });
