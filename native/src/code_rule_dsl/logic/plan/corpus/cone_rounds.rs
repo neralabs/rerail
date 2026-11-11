@@ -24,7 +24,7 @@ use super::{Result, lower, maintained, retain};
 use crate::code_rule_dsl::facts::vtab::{Modules, Source};
 use crate::code_rule_dsl::logic::front::{self, Literal};
 use rusqlite::Connection;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 /// Rounds past this many go back to the gated fixpoint.
@@ -96,7 +96,7 @@ impl RoundProgram {
 
 }
 
-fn of_rows<'a>(width: usize, rows: impl Iterator<Item = &'a Vec<i64>>) -> Arc<dyn Source> {
+pub(in crate::code_rule_dsl) fn of_rows<'a>(width: usize, rows: impl Iterator<Item = &'a Vec<i64>>) -> Arc<dyn Source> {
     let mut columns: Vec<Vec<i64>> = vec![Vec::new(); width];
     for row in rows {
         for (c, v) in row.iter().enumerate() {
@@ -129,6 +129,38 @@ pub(in crate::code_rule_dsl) struct Answers {
 }
 
 impl Answers {
+    /// Takes back the loads `stale` (keys of `world::LOAD`, `(file, module, grammar)`), none of which `asked_now`
+    /// holds: the `loaded` rows of their module and grammar that no key still asked shares, and each row an answer
+    /// gave that names one of their files or a node of one of their documents (by `per_file`'s location column). Their documents go into `withdrawn`; the relations whose rows changed are returned.
+    fn withdraw(&mut self, stale: &[Vec<i64>], asked_now: &HashSet<Vec<i64>>, per_file: &[(String, Arc<dyn Source>, usize)], withdrawn: &mut HashSet<i64>) -> BTreeSet<String> {
+        let live: HashSet<(i64, i64)> = asked_now.iter().filter(|k| k.len() == 3).map(|k| (k[1], k[2])).collect();
+        let gone: HashSet<(i64, i64)> = stale.iter().filter(|k| k.len() == 3).map(|k| (k[1], k[2])).filter(|mg| !live.contains(mg)).collect();
+        for k in stale {
+            self.asked.remove(&(super::world::LOAD.to_owned(), k.clone()));
+        }
+        let files: HashSet<i64> = self.rows.get(super::world::LOADED).into_iter().flatten().filter(|r| r.len() == 3 && gone.contains(&(r[1], r[2]))).map(|r| r[0]).collect();
+        // A document of theirs: the one a per-file row that names one of the files is of (its location column).
+        let at: HashMap<&str, usize> = per_file.iter().map(|(r, _, at)| (r.as_str(), *at)).collect();
+        let docs: HashSet<i64> = self
+            .rows
+            .iter()
+            .filter_map(|(rel, rows)| Some((at.get(rel.as_str())?, rows)))
+            .flat_map(|(c, rows)| rows.iter().filter(|r| r.iter().any(|v| files.contains(v))).filter_map(|r| r.get(*c).map(|v| super::memo::document_of(*v))))
+            .collect();
+        withdrawn.extend(docs.iter().copied());
+        let mut touched = BTreeSet::new();
+        for (rel, rows) in self.rows.iter_mut() {
+            let before = rows.len();
+            let of_doc = |r: &Vec<i64>| at.get(rel.as_str()).is_some_and(|c| r.get(*c).is_some_and(|v| docs.contains(&super::memo::document_of(*v))));
+            let loaded_gone = |r: &Vec<i64>| rel == super::world::LOADED && r.len() == 3 && gone.contains(&(r[1], r[2]));
+            rows.retain(|r| !(loaded_gone(r) || of_doc(r) || r.iter().any(|v| files.contains(v))));
+            if rows.len() != before {
+                touched.insert(rel.clone());
+            }
+        }
+        touched
+    }
+
     /// Records an answer: `rel`'s `keys` asked, and what was given.
     pub(in crate::code_rule_dsl) fn record(&mut self, rel: &str, keys: &[Vec<i64>], given: &[(String, Vec<Vec<i64>>)]) {
         self.asked.extend(keys.iter().map(|k| (rel.to_owned(), k.clone())));
@@ -148,6 +180,12 @@ pub(in crate::code_rule_dsl) struct Done {
     pub(in crate::code_rule_dsl) derived_again: usize,
     /// The strata derived again, by why, with one of their relations.
     pub(in crate::code_rule_dsl) again_why: BTreeMap<&'static str, BTreeSet<String>>,
+    /// Requests of the file system kept as the last run answered them (`On::still`).
+    pub(in crate::code_rule_dsl) still: usize,
+    /// The file system's answers as the last round bound them (`world_digest`).
+    pub(in crate::code_rule_dsl) world: u64,
+    /// The documents loaded this run and taken back: the run drops them (`Answers::withdraw`).
+    pub(in crate::code_rule_dsl) withdrawn: HashSet<i64>,
     /// Rows written back to the frames.
     pub(in crate::code_rule_dsl) written: usize,
     /// Each produced relation's rows as the last round bound them (what the rest of the cross part reads).
@@ -181,6 +219,15 @@ pub(in crate::code_rule_dsl) struct On<'a> {
     pub(in crate::code_rule_dsl) stats: &'a crate::code_rule_dsl::logic::plan::Stats,
     pub(in crate::code_rule_dsl) keep: &'a BTreeSet<String>,
     pub(in crate::code_rule_dsl) modes: &'a str,
+    /// Whether a carried request of the file system (`rr::WORLD`) still has the answer the last run kept: the
+    /// journal names no change at its path since (decision 0105). Such a key is not asked again.
+    pub(in crate::code_rule_dsl) still: Option<&'a dyn Fn(&str, &[i64]) -> bool>,
+}
+
+/// The digest of the file system's answers `kept` holds as inputs (`rr::WORLD`'s relations): what a record of the
+/// journal's cursors is checked against, so its cursors are trusted only over the answers kept with them.
+pub(in crate::code_rule_dsl) fn world_digest(digest: impl Fn(&str) -> Option<u64>) -> u64 {
+    crate::code_rule_dsl::logic::rr::WORLD.iter().fold(0x5157_0001u64, |h, (rel, _)| h.rotate_left(17) ^ digest(rel).unwrap_or(0))
 }
 
 /// Where the rounds start.
@@ -206,6 +253,9 @@ impl RoundProgram {
             Start::Closing(asks) => (None, Some(asks)),
         };
         let mut provisional: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
+        let mut still_n = 0;
+        // The documents loaded this run and taken back (`Answers::withdraw`).
+        let mut withdrawn: HashSet<i64> = HashSet::new();
         let mut carried: HashSet<(String, Vec<i64>)> = HashSet::new();
         // Each gate's keys open: the last run's, or (closing) every key the fixpoint asked.
         let mut open: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
@@ -241,6 +291,23 @@ impl RoundProgram {
             }
             for (req, _) in &self.requests {
                 carried.extend(k.read_derived(on.store, req)?.unwrap_or_default().into_iter().map(|r| (req.clone(), r)));
+            }
+            // A request of the file system the journal names no change for keeps its answer: its rows of the kept
+            // answers are its answer again, and it is not asked.
+            if let Some(still) = on.still {
+                let _s = crate::code_rule_dsl::logic::profile::span(|| "rounds/answers the journal keeps".into());
+                for (produced, req) in crate::code_rule_dsl::logic::rr::WORLD {
+                    let Some(rows) = provisional.get(produced) else { continue };
+                    let mut by: HashMap<i64, Vec<&Vec<i64>>> = HashMap::new();
+                    for r in rows.iter().filter(|r| !r.is_empty()) {
+                        by.entry(r[0]).or_default().push(r);
+                    }
+                    let keys: Vec<&Vec<i64>> = carried.iter().filter(|(q, k)| q == req && k.len() == 1 && still(q, k)).map(|(_, k)| k).collect();
+                    let given: Vec<Vec<i64>> = keys.iter().flat_map(|k| by.get(&k[0]).into_iter().flatten().map(|r| (*r).clone())).collect();
+                    still_n += keys.len();
+                    answers.asked.extend(keys.into_iter().map(|k| ((*req).to_owned(), k.clone())));
+                    answers.rows.entry((*produced).to_owned()).or_default().extend(given);
+                }
             }
         }
         let mut kept = kept;
@@ -329,7 +396,21 @@ impl RoundProgram {
                 a.len() == b.len() && a.iter().all(|(k, v)| b.get(k).is_some_and(|w| v.iter().collect::<BTreeSet<_>>() == w.iter().collect::<BTreeSet<_>>()))
             };
             if same(&opened, &open) {
-                break;
+                // Quiet with its gates as the run's own: a load answered this run that nothing asks for now was
+                // asked from the last run's rows or gates alone. It is taken back, with every row its answer gave
+                // (those naming its file or a node of it), and the rounds run on to quiet: what only it asked for
+                // goes in turn.
+                let asked_now: HashSet<Vec<i64>> = next.read_derived(on.store, super::world::LOAD)?.unwrap_or_default().into_iter().collect();
+                let stale: Vec<Vec<i64>> = answers.asked.iter().filter(|(r, k)| r == super::world::LOAD && !asked_now.contains(k)).map(|(_, k)| k.clone()).collect();
+                if stale.is_empty() {
+                    break;
+                }
+                if closing {
+                    return Err(Gave::Up("the closing round takes back a load".to_owned()));
+                }
+                let touched = answers.withdraw(&stale, &asked_now, inputs.per_file, &mut withdrawn);
+                dirty.extend(touched);
+                continue;
             }
             if closing {
                 return Err(Gave::Up("the closing round opens gates the fixpoint did not".to_owned()));
@@ -356,7 +437,8 @@ impl RoundProgram {
             None => 0,
         };
         let produced = self.produced.iter().map(|(rel, _)| (rel.clone(), bound.get(rel).map(|(s, _)| rows(s.as_ref())).unwrap_or_default())).collect();
-        Ok(Done { next, rounds, strata, maintained: maintained_n, derived_again: again, again_why, written, produced, answered })
+        let world = world_digest(|rel| bound.get(rel).map(|(_, d)| *d));
+        Ok(Done { next, rounds, strata, maintained: maintained_n, derived_again: again, again_why, still: still_n, world, withdrawn, written, produced, answered })
     }
 
     /// The ask relations, by gate.
