@@ -222,7 +222,17 @@ export type AdapterEvent =
     })
   | (ContextualAdapterEvent & { kind: "assistant-message"; messageId: string; text: string })
   | (ContextualAdapterEvent & { kind: "assistant-abort"; messageId: string })
-  | (ContextualAdapterEvent & { kind: "call"; toolCallId: string; toolName: string; input: unknown })
+  | (ContextualAdapterEvent & {
+      kind: "call";
+      toolCallId: string;
+      toolName: string;
+      input: unknown;
+      /**
+       * The subagent that made the call, where a host sends a subagent's calls under its parent's session: Claude Code's
+       * `agent_id`. Absent for the session's own agent.
+       */
+      agentId?: string | undefined;
+    })
   | (ContextualAdapterEvent & { kind: "result"; toolCallId: string; toolName: string; output: unknown; failed?: boolean | undefined })
   | (ContextualAdapterEvent & { kind: "turn-end"; text: string });
 

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AdapterEvent } from "../../src/engine/index.js";
 import { claudeHookEvents, createClaudeEventHandler } from "../../src/hosts/claude/index.js";
 import { codexHookEvents, createCodexEventHandler } from "../../src/hosts/codex/index.js";
+import { AdapterEventSchema } from "../../src/runtime/index.js";
 
 describe("lifecycle event adapters", () => {
   it("normalizes Claude hook input before calling the event loop", async () => {
@@ -26,6 +27,14 @@ describe("lifecycle event adapters", () => {
     }]);
     await createClaudeEventHandler({ ingest })(input);
     expect(ingest).toHaveBeenCalledWith(claudeHookEvents(input)[0]);
+  });
+
+  it("keeps the subagent a Claude tool call came from, which reaches Rerail under its parent's session", () => {
+    const call = { hook_event_name: "PreToolUse", session_id: "parent", cwd: "/workspace", tool_use_id: "tool-1", tool_name: "Write", tool_input: {} };
+    expect(claudeHookEvents({ ...call, agent_id: "agent-a", agent_type: "general-purpose" })).toEqual([expect.objectContaining({ kind: "call", sessionId: "parent", agentId: "agent-a" })]);
+    expect(claudeHookEvents(call)[0]).not.toHaveProperty("agentId");
+    // The daemon reads the event as the hook sends it.
+    expect(AdapterEventSchema.parse(claudeHookEvents({ ...call, agent_id: "agent-a" })[0])).toMatchObject({ agentId: "agent-a" });
   });
 
   it("maps one Codex stop hook to ordered assistant and turn events", async () => {

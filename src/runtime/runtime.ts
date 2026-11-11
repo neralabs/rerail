@@ -184,6 +184,32 @@ const CODE_RULE_BOUNDARIES: Partial<Record<AdapterEvent["kind"], true>> = { call
 /** A turn end that waited longer than this on its settle work is written to the daemon log. */
 const SLOW_TURN_END_WAIT_MS = 1_000;
 
+/** A code-rule call waiting for its result. */
+interface PendingCodeRuleCall {
+  id: string;
+  toolName: string;
+  /** The subagent that made it (Claude Code's `agent_id`), absent for the session's own agent. */
+  agentId?: string | undefined;
+  /** Still waiting after a yield of the session's agent, which a subagent's call may outlive. */
+  outlivedYield?: boolean;
+}
+
+/**
+ * Takes from `pending` the calls whose result will not come, which `#settleUnresolvedCalls` finishes. When the agent
+ * yields: its own calls, and a subagent's already pending at its previous yield. Claude Code runs a subagent in the
+ * background and sends its hooks under the parent's session, so a subagent's call in flight at the parent's stop gets
+ * its result later and is checked then; one still waiting at the next stop was refused, or its result lost. At the
+ * session's end (`subagentsOnly`), the subagents' calls: no result comes after it, and the agent's own were finished at
+ * its stops. Each call kept is marked as having outlived this yield.
+ */
+function takeUnanswered(pending: PendingCodeRuleCall[], subagentsOnly: boolean): PendingCodeRuleCall[] {
+  const due = pending.filter(call => (subagentsOnly ? call.agentId !== undefined : call.agentId === undefined || call.outlivedYield === true));
+  const kept = pending.filter(call => !due.includes(call));
+  pending.splice(0, pending.length, ...kept);
+  if (!subagentsOnly) for (const call of kept) call.outlivedYield = true;
+  return due;
+}
+
 /** Code-rule calls recorded without a matching result, in ledger order. */
 function unresolvedCodeRuleCalls(ledger: readonly LedgerEntry[]): Extract<LedgerEntry, { type: "policy-call" }>[] {
   const pending = new Map<string, Extract<LedgerEntry, { type: "policy-call" }>>();
@@ -525,7 +551,7 @@ interface RuntimeSessionState {
   controlsVersion: number | undefined;
   auditRequestWork: Promise<void> | undefined;
   repositoryAudit: Promise<void> | undefined;
-  pendingCodeRuleCalls: Array<{ id: string; toolName: string }>;
+  pendingCodeRuleCalls: PendingCodeRuleCall[];
   /**
    * The tool calls of the session's current turn still waiting for their result, which may come long after the call
    * (a permission prompt, a long command). The turn's end settles them all: a call the user refused gets no result.
@@ -907,8 +933,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         type: "policy-call", toolCallId: id, toolName: event.toolName, paths: generatedEditPaths(event.toolName, event.input),
         ...(preimages === undefined ? {} : { preimages }),
       });
-      state.pendingCodeRuleCalls.push({ id, toolName: event.toolName });
+      state.pendingCodeRuleCalls.push({ id, toolName: event.toolName, ...(event.agentId === undefined ? {} : { agentId: event.agentId }) });
     }
+    // Before the session closes with its end: a subagent's call still waiting gets no result after it.
+    if (event.kind === "session-end") await this.#settleUnresolvedCalls(state, true);
     await this.#router(descriptor.host).ingest(event);
     noteCallsAwaitingResult(state.callsAwaitingResult, event);
     if (event.kind === "result") {
@@ -972,11 +1000,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * while the daemon is down. A pending call keeps its files out of every source walk, so a shell write to one went
    * unchecked for the session's life, and a reopen began the call again from the ledger. Each is checked against what
    * it captured and closed in the ledger; a result that comes after all checks nothing. An evaluator still opening
-   * begins the calls it restores from the ledger once open, so they wait for the next yield.
+   * begins the calls it restores from the ledger once open, so they wait for the next yield. Which calls are due, a
+   * subagent's among them, and the session end's (`subagentsOnly`): `takeUnanswered`.
    */
-  async #settleUnresolvedCalls(state: RuntimeSessionState): Promise<void> {
+  async #settleUnresolvedCalls(state: RuntimeSessionState, subagentsOnly = false): Promise<void> {
     if (state.codeRuleOpening) return;
-    const calls = state.pendingCodeRuleCalls.splice(0);
+    const calls = takeUnanswered(state.pendingCodeRuleCalls, subagentsOnly);
     if (calls.length === 0) return;
     await state.codeRuleBridge?.finishUnanswered(calls.map(call => call.id));
     for (const call of calls) await this.#append(state, { type: "policy-result", toolCallId: call.id });

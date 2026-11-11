@@ -134,3 +134,66 @@ describe("a tool call whose result never comes", () => {
     }
   }, 30_000);
 });
+
+// Claude Code sends a subagent's hooks under its parent's session id, with the subagent's agent_id, and runs a
+// subagent in the background: the main agent may stop while a subagent's write still waits for its result.
+describe("a subagent's tool call still waiting when the main agent stops", () => {
+  const subagentWrite = (root: string, sessionId: string) => ({ ...writeCall(root, sessionId), agentId: "agent-a" });
+
+  it("is checked at its own result, which comes after the stop, and steers there", async () => {
+    const { root, open, findings } = await checkout();
+    const runtime = await open("parent");
+    try {
+      await runtime.ingest(subagentWrite(root, "parent"));
+      await runtime.ingest({ kind: "turn-end", eventId: "turn-1", sessionId: "parent", text: "" });
+      await writeFile(join(root, "a.py"), "NEEDLE\n");
+
+      const atResult = await runtime.ingest({ kind: "result", eventId: "write-result", sessionId: "parent", toolCallId: "write", toolName: "Write", output: "" });
+
+      expect(atResult).toEqual([expect.objectContaining({ content: expect.stringContaining("No needle") })]);
+      expect(findings()).toEqual(["a.py"]);
+    } finally {
+      await runtime.dispose();
+    }
+  }, 30_000);
+
+  it("is finished at the main agent's next stop when its result never comes, so a later shell write to its file is checked", async () => {
+    const { root, open, findings } = await checkout();
+    const runtime = await open("parent");
+    try {
+      await runtime.ingest(subagentWrite(root, "parent"));
+      await runtime.ingest({ kind: "turn-end", eventId: "turn-1", sessionId: "parent", text: "" });
+      await runtime.ingest({ kind: "turn-end", eventId: "turn-2", sessionId: "parent", text: "" });
+      expect(findings()).toEqual([]);
+
+      await runtime.ingest({ kind: "call", eventId: "shell-call", sessionId: "parent", toolCallId: "shell", toolName: "Bash", input: { command: "echo NEEDLE > a.py" } });
+      await writeFile(join(root, "a.py"), "NEEDLE\n");
+      await runtime.ingest({ kind: "result", eventId: "shell-result", sessionId: "parent", toolCallId: "shell", toolName: "Bash", output: "" });
+
+      await vi.waitFor(() => expect(findings()).toEqual(["a.py"]), { timeout: 10_000 });
+    } finally {
+      await runtime.dispose();
+    }
+  }, 30_000);
+
+  it("is finished when the session ends, so it is not begun again when the session opens again", async () => {
+    const { root, open } = await checkout();
+    const first = await open("parent");
+    try {
+      await first.ingest(subagentWrite(root, "parent"));
+      await first.ingest({ kind: "turn-end", eventId: "turn-1", sessionId: "parent", text: "" });
+      await first.ingest({ kind: "session-end", eventId: "end", sessionId: "parent" });
+    } finally {
+      await first.dispose();
+    }
+
+    const begun = vi.spyOn(CodeRuleBridge.prototype, "begin");
+    try {
+      const reopened = await open("parent");
+      await reopened.dispose();
+      expect(begun).not.toHaveBeenCalled();
+    } finally {
+      begun.mockRestore();
+    }
+  }, 30_000);
+});

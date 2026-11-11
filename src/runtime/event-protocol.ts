@@ -18,7 +18,7 @@ export const AdapterEventSchema: z.ZodType<AdapterEvent> = z.discriminatedUnion(
   z.object({ kind: z.literal("assistant-delta"), eventId: z.string().min(1), sessionId: z.string().min(1), session: SessionSchema.optional(), messageId: z.string().min(1), delta: z.string(), final: z.boolean() }).strict(),
   z.object({ kind: z.literal("assistant-message"), eventId: z.string().min(1), sessionId: z.string().min(1), session: SessionSchema.optional(), messageId: z.string().min(1), text: z.string() }).strict(),
   z.object({ kind: z.literal("assistant-abort"), eventId: z.string().min(1), sessionId: z.string().min(1), session: SessionSchema.optional(), messageId: z.string().min(1) }).strict(),
-  z.object({ kind: z.literal("call"), eventId: z.string().min(1), toolCallId: z.string().min(1), sessionId: z.string().min(1), session: SessionSchema.optional(), toolName: z.string().min(1), input: z.unknown() }).strict(),
+  z.object({ kind: z.literal("call"), eventId: z.string().min(1), toolCallId: z.string().min(1), sessionId: z.string().min(1), session: SessionSchema.optional(), toolName: z.string().min(1), input: z.unknown(), agentId: z.string().min(1).optional() }).strict(),
   z.object({ kind: z.literal("result"), eventId: z.string().min(1), toolCallId: z.string().min(1), sessionId: z.string().min(1), session: SessionSchema.optional(), toolName: z.string().min(1), output: z.unknown(), failed: z.boolean().optional() }).strict(),
   z.object({ kind: z.literal("turn-end"), eventId: z.string().min(1), sessionId: z.string().min(1), session: SessionSchema.optional(), text: z.string() }).strict(),
 ]);
