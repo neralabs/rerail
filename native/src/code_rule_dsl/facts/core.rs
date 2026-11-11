@@ -783,3 +783,17 @@ pub(crate) fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         _ => return None,
     })
 }
+
+/// The executor of a binding (the run's lanes: every lane under the device binding, the cores' otherwise), registered
+/// at load (`install_executors`); without one, a fresh executor of the machine's lanes.
+pub(crate) fn executor_for(device: bool) -> &'static rerail_accel::Executor {
+    static OWN: std::sync::LazyLock<rerail_accel::Executor> = std::sync::LazyLock::new(rerail_accel::Executor::new);
+    EXECUTORS.get().map_or(&*OWN, |executor| executor(device))
+}
+
+static EXECUTORS: std::sync::OnceLock<fn(bool) -> &'static rerail_accel::Executor> = std::sync::OnceLock::new();
+
+/// Registers the run's executors (once, at load).
+pub(crate) fn install_executors(executor: fn(bool) -> &'static rerail_accel::Executor) {
+    let _ = EXECUTORS.set(executor);
+}

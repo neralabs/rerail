@@ -632,6 +632,8 @@ pub(crate) fn install_languages() {
     facts::vtab::install_forget(facts::vtab::Forget { scope: logic::native::forget_scope, engine: logic::native::forget_engine });
     // core.rr's functors whose meaning is W's or a language's.
     logic::strings::install_functors(functors::register_functors);
+    // The run's executors, by binding.
+    facts::core::install_executors(logic::lanes::executor_for);
     // What compiles a program's `ast` matchers into the transducer wave facts runs (decision 0106).
     facts::vtab::syntax::install_ast_compiler(&facts::vtab::syntax::ast_wave::Compiler);
     // The literal grammars `parse` applies, in the order messages list them (`literal::LiteralGrammar`).

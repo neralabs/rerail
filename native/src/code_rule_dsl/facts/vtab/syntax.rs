@@ -2261,7 +2261,7 @@ impl Batch {
                 }
                 let _span = crate::code_rule_dsl::logic::profile::span(|| "span prefilter".into());
                 let programs: Vec<Arc<SpanPrefilter>> = filters.iter().map(|(_, f)| Arc::clone(f)).collect();
-                let (ends, ran) = ends_launch(crate::code_rule_dsl::logic::lanes::executor_for(metal), &programs, &sources, &files, metal).map_err(StoreError::Invalid)?;
+                let (ends, ran) = ends_launch(crate::code_rule_dsl::facts::core::executor_for(metal), &programs, &sources, &files, metal).map_err(StoreError::Invalid)?;
                 crate::code_rule_dsl::logic::profile::decision("span prefilter", || match ran {
                     RanOn::Metal => "metal".into(),
                     RanOn::Cpu => "cpu".into(),
