@@ -211,6 +211,11 @@ export class SqliteSessionStore {
     this.path = path;
     this.#repositoryId = repositoryId ?? null;
     this.#database = openRerailDatabase(path);
+    // Events arrive with every hook, and a disk sync at each commit (FULL) held the daemon tens of milliseconds an
+    // event on a busy disk. NORMAL syncs the write-ahead log only before a checkpoint: a committed event still
+    // survives the daemon crashing, since it sits in the operating system's cache, while a power cut or system crash
+    // can roll back the last events, as it can the session ledger, which is never synced. The file stays consistent.
+    this.#database.run(sql`PRAGMA synchronous = NORMAL`);
   }
 
   openSession(session: AdapterSession, startedAt = Date.now(), repositoryKey: string | null = this.#repositoryId): void {

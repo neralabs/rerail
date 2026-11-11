@@ -1,13 +1,16 @@
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { once } from "node:events";
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { chmod, mkdtemp, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import Database from "better-sqlite3";
 import { is } from "drizzle-orm";
 import { getTableConfig, SQLiteTable } from "drizzle-orm/sqlite-core";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createConversationRulesExtension } from "../../src/hosts/omp/index.js";
 import { RerailRuntime } from "../../src/runtime/runtime.js";
 import {
@@ -34,6 +37,8 @@ import { startTestRepository } from "../support/started-repository.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 import { approve, currentSubject } from "../../src/engine/index.js";
 
+const PACKAGE_ROOT = resolve(import.meta.dirname, "..", "..");
+const SESSION_STORE_MODULE = pathToFileURL(join(PACKAGE_ROOT, "src", "runtime", "session-store.ts")).href;
 const temporaryDirectories: string[] = [];
 const temporaryConnections: Array<{ close(): void }> = [];
 
@@ -513,6 +518,54 @@ describe("SQLite session persistence", () => {
     }]);
     reader.close();
   });
+
+  it("commits each appended event without a disk sync of its own: SQLite syncs the log when it checkpoints", async () => {
+    const root = await temporaryDirectory();
+    const store = closeAfterTest(new SqliteSessionStore(join(root, "rerail.sqlite")));
+    store.openSession({ host: "claude-code", sessionId: "session-1", cwd: "/workspace" }, 100);
+    // The connection the append runs on, caught as it prepares the insert.
+    const prepare = vi.spyOn(Database.prototype, "prepare");
+    let connection: unknown;
+    try {
+      store.append({ sessionId: "session-1", eventId: "event-1", kind: "result", observedAt: 110, payload: { output: "ok" } });
+      connection = prepare.mock.contexts[0];
+    } finally {
+      prepare.mockRestore();
+    }
+    expect(connection).toBeInstanceOf(Database);
+    // SQLite's synchronous levels: FULL (2) syncs the write-ahead log at every commit, NORMAL (1) only before a
+    // checkpoint.
+    expect(connection instanceof Database && connection.pragma("synchronous", { simple: true })).toBe(1);
+  });
+
+  it("keeps every event a writer appended when its process is killed before it closes the store", async () => {
+    const root = await temporaryDirectory();
+    const path = join(root, "rerail.sqlite");
+    const child = spawn(process.execPath, [
+      "--import", "tsx", "--input-type=module", "-e",
+      `import { SqliteSessionStore } from ${JSON.stringify(SESSION_STORE_MODULE)};
+       const store = new SqliteSessionStore(${JSON.stringify(path)});
+       store.openSession({ host: "claude-code", sessionId: "session-1", cwd: "/workspace" }, 100);
+       for (let i = 1; i <= 20; i += 1) {
+         store.append({ sessionId: "session-1", eventId: "event-" + i, kind: "result", observedAt: 100 + i, payload: { output: "x".repeat(2500) } });
+       }
+       process.stdout.write("appended\\n");
+       process.stdin.resume();`,
+    ], { cwd: PACKAGE_ROOT, stdio: ["pipe", "pipe", "pipe"] });
+    let stderr = "";
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
+    const exited = once(child, "exit");
+    const outcome = await Promise.race([
+      once(child.stdout, "data").then(([chunk]) => String(chunk)),
+      exited.then(() => `the writer exited early: ${stderr}`),
+    ]);
+    child.kill("SIGKILL");
+    await exited;
+    expect(outcome).toBe("appended\n");
+
+    const reader = closeAfterTest(new SqliteSessionReader(path));
+    expect(reader.events("session-1").map(event => event.eventId)).toEqual(Array.from({ length: 20 }, (_, i) => `event-${i + 1}`));
+  }, 30_000);
 
   it("counts successful steers across the full session history, deduplicating only receipt retries", async () => {
     const { store, reader, session: first } = await hudFixture("first");

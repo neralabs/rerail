@@ -1,0 +1,1 @@
+The daemon no longer waits for the disk to confirm each hook event it records, which held it tens of milliseconds an event on a busy disk and slowed every hook behind it. A recorded event still survives the daemon crashing; a power cut or system crash can lose the last events recorded before it.
