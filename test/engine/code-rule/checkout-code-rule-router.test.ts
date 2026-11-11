@@ -218,8 +218,9 @@ describe("CheckoutCodeRuleRouter", () => {
     const lookups = vi.spyOn(CheckoutOwners.prototype, "ownerOf");
     cleanups.push(async () => { lookups.mockRestore(); });
     await bridge.checkpoint("turn");
-    // The session's folder, api and api/deep.
-    expect(lookups.mock.calls.length).toBeLessThanOrEqual(3);
+    // The session's folder, api and api/deep; and, once a pass whatever the files, the checkout that owns the session
+    // folder and the one that owns the `.git` entry the walk passed, whose unmerged entries each pass reads.
+    expect(lookups.mock.calls.length).toBeLessThanOrEqual(5);
 
     lookups.mockRestore();
     await writeFile(join(session, "api", "deep", "g3.py"), "NEEDLE\n");
