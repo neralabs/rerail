@@ -4,6 +4,7 @@
 //! A program may read, as relations:
 //! - `dir_entry(dir, name, is_dir)`: the entries of a directory;
 //! - `file_line(path, i, text)`: the lines of a file, from 1;
+//! - `file_digest(path, c)`: the SHA-256 of a file's bytes, hex (what a cache key names a file's content by);
 //!
 //! and ask for documents with `load(path, module, grammar)`: the file at `path`, parsed in `grammar`, as module
 //! `module` (its resolution's answer, which names the document as a file of the corpus is named by its path). A
@@ -62,9 +63,13 @@ pub(super) struct World {
     root: PathBuf,
     dirs: BTreeMap<String, Vec<(String, bool)>>,
     files: BTreeMap<String, Vec<String>>,
+    digests: BTreeMap<String, String>,
     loads: BTreeMap<String, Loaded>,
     refused: BTreeSet<String>,
     budget: usize,
+    /// The documents loaded from beyond the corpus root (the libraries'), which the budget bounds. A source file of
+    /// the run's own tree is always loaded (phase 1, `sources.rr`).
+    beyond: usize,
     /// Loads past the budget, or in another grammar than the run's, not taken.
     pub(super) dropped: usize,
 }
@@ -92,8 +97,9 @@ impl World {
     }
 
     /// The file `asked` names, when it lies under a root: relative to the corpus root, or absolute.
+    /// Resolved by phase 0's observer: where the journal says nothing changed, with no `realpath` (decision 0105).
     fn allowed(&self, asked: &str) -> Option<PathBuf> {
-        let path = std::fs::canonicalize(self.root.join(asked)).ok()?;
+        let path = super::observe(|o| o.canonical(&self.root.join(asked)))?;
         self.roots.iter().any(|r| path.starts_with(r)).then_some(path)
     }
 
@@ -127,6 +133,20 @@ impl World {
         lines
     }
 
+    /// A file's content digest (none when it is refused or missing): the observer's, read only where it cannot vouch
+    /// for the file.
+    pub(super) fn digest(&mut self, asked: &str) -> Option<String> {
+        if let Some(d) = self.digests.get(asked) {
+            return Some(d.clone());
+        }
+        let Some(d) = self.allowed(asked).filter(|p| p.is_file()).map(|p| bytes_digest(&p)).filter(|d| !d.is_empty()) else {
+            self.refused.insert(asked.to_owned());
+            return None;
+        };
+        self.digests.insert(asked.to_owned(), d.clone());
+        Some(d)
+    }
+
     /// A load's document: the file's canonical path, when it is new, allowed, in the run's grammar and within the
     /// budget. A file of the corpus is a document already, so its load takes nothing. A loaded document is named by
     /// its canonical path: the same file is one document, and its key and memo entries are the same in every
@@ -135,7 +155,7 @@ impl World {
     pub(super) fn canonical_corpus<'a>(&self, paths: impl IntoIterator<Item = &'a String>) -> BTreeSet<String> {
         let mut out = BTreeSet::new();
         for p in paths {
-            if let Ok(c) = std::fs::canonicalize(self.root.join(p)) {
+            if let Some(c) = super::observe(|o| o.canonical(&self.root.join(p))) {
                 out.insert(c.to_string_lossy().into_owned());
             }
             out.insert(p.clone());
@@ -162,12 +182,14 @@ impl World {
         if corpus.contains(&path) || self.loads.contains_key(&path) {
             return None;
         }
-        if grammar != run_grammar || self.loads.len() >= self.budget {
+        let own = self.roots.first().is_some_and(|r| Path::new(&path).starts_with(r));
+        if grammar != run_grammar || (!own && self.beyond >= self.budget) {
             self.dropped += 1;
             self.refused.insert(asked.to_owned());
             return None;
         }
         let loaded = Loaded { path: path.clone(), module: module.to_owned(), grammar: grammar.to_owned() };
+        self.beyond += usize::from(!own);
         self.loads.insert(path, loaded.clone());
         Some(loaded)
     }
@@ -182,6 +204,9 @@ impl World {
         }
         for asked in self.files.keys() {
             out.push(("file".to_owned(), asked.clone(), self.allowed(asked).map(|p| bytes_digest(&p)).unwrap_or_default()));
+        }
+        for (asked, d) in &self.digests {
+            out.push(("digest".to_owned(), asked.clone(), d.clone()));
         }
         for path in self.loads.keys() {
             out.push(("load".to_owned(), path.clone(), bytes_digest(Path::new(path))));
@@ -198,7 +223,7 @@ impl World {
         consulted.iter().all(|(what, path, digest)| {
             let now = match what.as_str() {
                 "dir" => listing_digest(&self.dir(path)),
-                "file" => self.allowed(path).map(|p| bytes_digest(&p)).unwrap_or_default(),
+                "file" | "digest" => self.allowed(path).map(|p| bytes_digest(&p)).unwrap_or_default(),
                 "load" => bytes_digest(Path::new(path)),
                 "refused" => self.probe(path),
                 _ => return false,

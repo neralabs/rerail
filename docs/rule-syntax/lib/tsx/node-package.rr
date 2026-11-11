@@ -56,11 +56,12 @@ src_bom(d) :- kind(h, "hash_bang_line"), col(h, c), c > 0, docof(h, d).
 src_env_shebang(d) :- src_shebang(d, t), prefix("#!/usr/bin/env", t).
 
 .decl program_start(d: number, at: loc)
-program_start(d, t) :- kind(p, "program"), docof(p, d), first_token(p, t), !src_hashbang_token(t).
-program_start(d, t) :- kind(p, "program"), docof(p, d), first_token(p, h), src_hashbang_token(h), token_after(h, t).
-program_start(d, @place(f, 1)) :- doc(d, f, _), kind(p, "program"), docof(p, d), !first_token(p, _).
-.decl src_hashbang_token(t: span)  // the token is the `#!` line
-src_hashbang_token(t) :- kind(h, "hash_bang_line"), first_token(h, t).
+// Its first token starts its first child that is code (not a comment or the `#!` line).
+program_start(d, c) :- kind(p, "program"), docof(p, d), child(p, c, i), program_code(c),
+    i = min j : { child(p, x, j), program_code(x) }.
+program_start(d, @place(f, 1)) :- doc(d, f, _), kind(p, "program"), docof(p, d), count : { child(p, x, _), program_code(x) } = 0.
+.decl program_code(c: node)
+program_code(c) :- child(p, c, _), kind(p, "program"), !kind(c, "comment"), !kind(c, "hash_bang_line").
 
 // pkg_listed(d, opt). gitignore's rules: the last pattern that matches wins, and `!p` re-includes; a pattern with a
 // `/` before its end is anchored at the package root (a leading `/` only anchors), any other matches at any depth;

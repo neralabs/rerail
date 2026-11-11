@@ -180,6 +180,16 @@ CREATE TABLE IF NOT EXISTS store_state (
 ) STRICT;
 INSERT OR IGNORE INTO store_state(singleton, generation) VALUES (1, 1);
 
+-- Which store this file is: random when it is created. What a process holds of a store by its path (its atoms,
+-- atoms.rs; its threads' connections, connection.rs) belongs to the store of this identity only, so a store
+-- deleted and created again at the same path, by any process, is not read with the old one's. Additive: older
+-- binaries never read it.
+CREATE TABLE IF NOT EXISTS store_identity (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    id INTEGER NOT NULL
+) STRICT;
+INSERT OR IGNORE INTO store_identity(singleton, id) VALUES (1, random());
+
 CREATE TABLE IF NOT EXISTS candidate_catalogs (
     catalog_id INTEGER PRIMARY KEY,
     identity_hash_id INTEGER NOT NULL UNIQUE REFERENCES hashes(hash_id)
@@ -686,21 +696,35 @@ impl ContentStore {
     /// Configures `connection` and brings its store up to SCHEMA. A store at this floor that holds
     /// every SCHEMA object is only read, so opening it never waits for another process's writer;
     /// creation, a floor raise or a missing object (an index this build added) takes the
-    /// exclusive lock and applies SCHEMA. Returns whether it created the store.
-    pub(super) fn initialize(connection: &mut Connection) -> StoreResult<bool> {
+    /// exclusive lock and applies SCHEMA. Returns the store's identity (`store_identity`).
+    pub(super) fn initialize(connection: &mut Connection) -> StoreResult<i64> {
         configure_connection(connection)?;
-        if compatible_version(connection)? == SCHEMA_VERSION && holds_schema_objects(connection)? {
-            return Ok(false);
+        if compatible_version(connection)? != SCHEMA_VERSION || !holds_schema_objects(connection)? {
+            // A store made here is made by a writer's thread (decision 0104: a run's own threads only read): once,
+            // before anything reads it.
+            std::thread::scope(|scope| {
+                scope
+                    .spawn(|| -> StoreResult<()> {
+                        super::hazards::behind_the_run();
+                        let transaction = connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
+                        // Another open may have created the store since the read above.
+                        let version = compatible_version(&transaction)?;
+                        transaction.execute_batch(SCHEMA)?;
+                        if version != SCHEMA_VERSION {
+                            transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+                        }
+                        transaction.commit()?;
+                        Ok(())
+                    })
+                    .join()
+                    .unwrap_or_else(|p| std::panic::resume_unwind(p))
+            })?;
+            if let Some(path) = connection.path() {
+                super::atoms::forget_identity(path);
+                super::frames::forget_snapshot(path);
+            }
         }
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
-        // Another open may have created the store since the read above.
-        let version = compatible_version(&transaction)?;
-        transaction.execute_batch(SCHEMA)?;
-        if version != SCHEMA_VERSION {
-            transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-        }
-        transaction.commit()?;
-        Ok(version == 0)
+        Ok(connection.query_row("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0))?)
     }
 }
 
@@ -735,12 +759,19 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
 
 /// Every object SCHEMA creates, as `(type, name)`: read once from SCHEMA applied to an in-memory
 /// database, so it cannot drift from SCHEMA.
+/// Made on a writer's thread (decision 0104: a run's own threads only read).
 static SCHEMA_OBJECTS: LazyLock<Result<Vec<(String, String)>, String>> = LazyLock::new(|| {
-    let connection = Connection::open_in_memory().map_err(|error| error.to_string())?;
-    connection
-        .execute_batch(SCHEMA)
-        .map_err(|error| error.to_string())?;
-    schema_object_names(&connection).map_err(|error| error.to_string())
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                super::hazards::behind_the_run();
+                let connection = Connection::open_in_memory().map_err(|error| error.to_string())?;
+                connection.execute_batch(SCHEMA).map_err(|error| error.to_string())?;
+                schema_object_names(&connection).map_err(|error| error.to_string())
+            })
+            .join()
+            .unwrap_or_else(|p| std::panic::resume_unwind(p))
+    })
 });
 
 fn schema_object_names(connection: &Connection) -> StoreResult<Vec<(String, String)>> {

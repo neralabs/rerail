@@ -150,7 +150,6 @@ impl Contexts {
         let columns = {
             let stmt = db.prepare(&format!("SELECT * FROM {} LIMIT 0", quote(&backing(name))))?;
             stmt.column_names()
-                .into_iter()
                 .skip(1)
                 .map(|column| format!("r.{}", quote(column)))
                 .collect::<Vec<_>>()
@@ -472,4 +471,4 @@ impl Contexts {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

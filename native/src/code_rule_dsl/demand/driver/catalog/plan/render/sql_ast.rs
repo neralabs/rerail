@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl::demand::driver::catalog) enum SqlAstNodeKind {
+pub enum SqlAstNodeKind {
     RelationScan,
     DemandScan,
     Select,
@@ -47,7 +47,7 @@ impl SqlAstNodeKind {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl::demand::driver::catalog) struct SqlRelationRef(u32);
+pub struct SqlRelationRef(u32);
 
 impl SqlRelationRef {
     pub(in crate::code_rule_dsl::demand::driver::catalog) const fn new(value: u32) -> Self {
@@ -76,7 +76,7 @@ pub(in crate::code_rule_dsl::demand::driver::catalog) enum PhysicalRelation {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl::demand::driver::catalog) enum SqlParameter {
+pub enum SqlParameter {
     Batch,
     Files,
 }
@@ -984,14 +984,14 @@ impl SqlAst {
     }
 }
 
-pub(in crate::code_rule_dsl::demand::driver::catalog) struct ClauseMergeAst {
+pub struct ClauseMergeAst {
     ast: SqlAst,
     sources: Vec<PhysicalRelation>,
     outputs: bool,
 }
 
 impl ClauseMergeAst {
-    pub(in crate::code_rule_dsl::demand::driver::catalog) fn new(
+    pub fn new(
         ordinals: &[usize],
         outputs: bool,
     ) -> Result<Self, String> {
@@ -1071,7 +1071,7 @@ impl ClauseMergeAst {
         })
     }
 
-    pub(in crate::code_rule_dsl::demand::driver::catalog) fn render(&self) -> Result<(String, String), String> {
+    pub fn render(&self) -> Result<(String, String), String> {
         self.ast
             .validate()
             .map_err(|error| format!("invalid clause merge AST: {error:?}"))?;
@@ -1096,7 +1096,7 @@ impl ClauseMergeAst {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     fn column(name: &str) -> SqlExpression {

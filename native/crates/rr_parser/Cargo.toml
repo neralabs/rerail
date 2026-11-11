@@ -20,3 +20,7 @@ rerail-metal = { path = "../metal", features = ["test-hooks"] }
 rerail-compiler = { path = "../compiler", features = ["test-hooks"] }
 # The measurements' CPU clocks (`tests`).
 libc = "0.2.189"
+# The files' digests a benchmark gives the Metal run, as the engine would (`rr_throughput`).
+sha2 = "0.10"
+# Cranelift's own pass timings, for tier 2's compile (`rr_state_clusters`).
+cranelift-codegen = "=0.125.4"

@@ -28,10 +28,10 @@ lonely(b, x) :- body(_, b, "else"), single_statement(b, x), kind(x, "if_statemen
 collapse(x) :- lonely(b, x), !unfixable(b, x), !tight(b) => replace(b, `$x`).
 collapse(x) :- lonely(b, x), !unfixable(b, x), tight(b) => replace(b, ` $x`).
 .decl tight(b: node)  // `else{`: the brace touches the keyword
-tight(b) :- lonely(b, _), token_before(b, e), text(e, s), line(e, l), line(b, l), col(e, i), col(b, j),
-    j = i + strlen(s).
+tight(b) :- lonely(b, _), touch_before(b, _).
+layout_at(b) :- lonely(b, _).
 .decl unfixable(b: node, x: node)
 unfixable(b, x) :- lonely(b, x), child(b, c, _), is_comment(c).
 // ESLint's ASI test, on the inner if's consequent c (not its else) and the token after the block.
-unfixable(b, x) :- lonely(b, x), field(x, "consequence", c), !braced(c), last_token(c, t), !text(t, ";"),
-    token_after(b, n), (line(n, l), end_line(c, l) ; asi_hazard(b) ; text(t, "++") ; text(t, "--")).
+unfixable(b, x) :- lonely(b, x), field(x, "consequence", c), !braced(c), text(c, t), !match("(?s).*;", t),
+    next_code(b, _), (after_line(b, l), end_line(c, l) ; asi_hazard(b) ; match("(?s).*(\\+\\+|--)", t)).

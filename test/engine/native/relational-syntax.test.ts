@@ -170,7 +170,7 @@ it("restores shared metadata after document eviction and refuses stale source va
   execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "source fixture"], { cwd: root });
   const rule = compile(policy()), workspace = new native.CodeRuleDslWorkspace();
   try {
-    await workspace.enableStorageAsync(root, join(root, "results.sqlite"));
+    await workspace.enableStorageAsync(root, join(root, "results.sqlite"), { files: [], folders: [] });
     workspace.setDocumentResidencyLimit(0);
     workspace.addCodeRule(rule);
     await workspace.applyAsync(JSON.stringify({ revision: 1, files: current, removed: [] }));

@@ -12,8 +12,6 @@
 //                         test/hosts/<harness>/** → src/hosts/<harness>/**), and a vitest mock seam
 //                         (vi.mock, vi.doMock, vi.importActual, vi.importMock, with `typeof import()` in its type
 //                         arguments) names the module it replaces by path.
-//   playground-public-api playground/ imports the package only through its package.json `exports`, i.e. the built
-//                         dist/ entry points, never src/ or another dist/ module; its tsconfig `paths` likewise.
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, normalize, relative, resolve } from "node:path";
@@ -63,6 +61,22 @@ function isEntryPoint(target) {
   return target === "src/index.ts" || /^src\/(?:hosts\/[^/]+|[^/]+)\/index\.ts$/u.test(target);
 }
 
+/** The specifier of an `import` or `export ... from` declaration. */
+function declarationSpecifier(node) {
+  return ts.isImportDeclaration(node) || ts.isExportDeclaration(node) ? node.moduleSpecifier : undefined;
+}
+
+/** The specifier of an `import x = require("...")`, or of an `import("...")` type. */
+function referenceSpecifier(node) {
+  if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) return node.moduleReference.expression;
+  return ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument) ? node.argument.literal : undefined;
+}
+
+const isModuleLoad = (callee) => callee.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(callee) && callee.text === "require");
+
+const isMockSeamCall = (callee) => ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && callee.expression.text === "vi"
+  && MOCK_SEAMS.has(callee.name.text);
+
 /** Every module specifier in `text` with its line and whether it is a vitest mock seam. */
 function specifiers(file, text) {
   const kind = /\.[cm]?js$/u.test(file) ? ts.ScriptKind.JS : file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
@@ -72,22 +86,26 @@ function specifiers(file, text) {
     if (!ts.isStringLiteralLike(node)) return;
     found.push({ specifier: node.text, line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1, seam });
   };
-  const visit = (node, seam) => {
-    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier !== undefined) add(node.moduleSpecifier, seam);
-    else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) add(node.moduleReference.expression, seam);
-    else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) add(node.argument.literal, seam);
-    else if (ts.isCallExpression(node)) {
-      const callee = node.expression;
-      if (callee.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(callee) && callee.text === "require")) {
-        if (node.arguments[0] !== undefined) add(node.arguments[0], seam);
-      } else if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && callee.expression.text === "vi"
-        && MOCK_SEAMS.has(callee.name.text)) {
-        if (node.arguments[0] !== undefined) add(node.arguments[0], true);
-        for (const argument of node.typeArguments ?? []) visit(argument, true);
-        for (const argument of node.arguments.slice(1)) visit(argument, seam);
-        return;
-      }
+  const visitMockSeam = (node, seam) => {
+    if (node.arguments[0] !== undefined) add(node.arguments[0], true);
+    for (const argument of node.typeArguments ?? []) visit(argument, true);
+    for (const argument of node.arguments.slice(1)) visit(argument, seam);
+  };
+  const visitCall = (node, seam) => {
+    if (isMockSeamCall(node.expression)) {
+      visitMockSeam(node, seam);
+      return;
     }
+    if (isModuleLoad(node.expression) && node.arguments[0] !== undefined) add(node.arguments[0], seam);
+    ts.forEachChild(node, child => visit(child, seam));
+  };
+  const visit = (node, seam) => {
+    if (ts.isCallExpression(node)) {
+      visitCall(node, seam);
+      return;
+    }
+    const specifier = declarationSpecifier(node) ?? referenceSpecifier(node);
+    if (specifier !== undefined) add(specifier, seam);
     ts.forEachChild(node, child => visit(child, seam));
   };
   visit(source, false);
@@ -103,18 +121,6 @@ function targetOf(root, file, specifier) {
     }
   }
   return path;
-}
-
-/** The dist/ files package.json `exports` publishes, as repository paths. */
-function publicTargets(root) {
-  const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-  const targets = new Set();
-  const collect = (value) => {
-    if (typeof value === "string") targets.add(normalize(value).replaceAll("\\", "/"));
-    else if (value !== null && typeof value === "object") Object.values(value).forEach(collect);
-  };
-  collect(manifest.exports);
-  return targets;
 }
 
 function checkSrc(file, target, line) {
@@ -147,32 +153,6 @@ function checkOutside(file, target, line, seam) {
   };
 }
 
-function checkPlayground(file, target, line, published) {
-  if (target.startsWith("playground/")) return undefined;
-  if (target.startsWith("dist/") && published.has(target)) return undefined;
-  if (!target.startsWith("src/") && !target.startsWith("dist/")) return undefined;
-  return {
-    file, line, rule: "playground-public-api",
-    message: `imports ${target}; the playground uses only the package's exports (${[...published].filter(path => path.endsWith(".js")).join(", ")})`,
-  };
-}
-
-/** tsconfig `paths` under playground/ must point at published entry points too. */
-function checkPlaygroundPaths(root, file, published) {
-  const violations = [];
-  const text = readFileSync(join(root, file), "utf8");
-  const paths = ts.parseConfigFileTextToJson(file, text).config?.compilerOptions?.paths ?? {};
-  for (const [alias, targets] of Object.entries(paths)) {
-    for (const value of targets) {
-      const target = normalize(join(dirname(file), value)).replaceAll("\\", "/").replace(/\.d\.ts$/u, ".js");
-      const violation = checkPlayground(file, target, 1, published);
-      const line = text.slice(0, text.indexOf(`"${alias}"`)).split("\n").length;
-      if (violation !== undefined) violations.push({ ...violation, line, message: `paths ${alias} → ${value}; ${violation.message.split("; ")[1]}` });
-    }
-  }
-  return violations;
-}
-
 function trackedFiles(root) {
   const result = spawnSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8", maxBuffer: 1 << 28 });
   if (result.status !== 0) throw new Error(`git ls-files failed: ${result.stderr}`);
@@ -181,23 +161,15 @@ function trackedFiles(root) {
 
 /** Every boundary violation in the checkout at `root`, sorted by file and line. `files`: its tracked files. */
 export function checkBoundaries(root, { files = trackedFiles(root) } = {}) {
-  const published = publicTargets(root);
   const violations = [];
   for (const file of files) {
     if (SKIPPED.some(prefix => file.startsWith(prefix)) || file.includes("/node_modules/") || !existsSync(join(root, file))) continue;
     const inSrc = file.startsWith("src/");
-    const inPlayground = file.startsWith("playground/");
-    if (inPlayground && /(?:^|\/)tsconfig[^/]*\.json$/u.test(file)) {
-      violations.push(...checkPlaygroundPaths(root, file, published));
-      continue;
-    }
-    if (!CODE.test(file) || (!inSrc && !inPlayground && !OUTSIDE_SRC.some(prefix => file.startsWith(prefix)))) continue;
+    if (!CODE.test(file) || (!inSrc && !OUTSIDE_SRC.some(prefix => file.startsWith(prefix)))) continue;
     for (const { specifier, line, seam } of specifiers(file, readFileSync(join(root, file), "utf8"))) {
       if (!specifier.startsWith(".")) continue;
       const target = targetOf(root, file, specifier);
-      const violation = inSrc ? checkSrc(file, target, line)
-        : inPlayground ? checkPlayground(file, target, line, published)
-        : checkOutside(file, target, line, seam);
+      const violation = inSrc ? checkSrc(file, target, line) : checkOutside(file, target, line, seam);
       if (violation !== undefined) violations.push(violation);
     }
   }

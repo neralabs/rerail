@@ -263,7 +263,7 @@ pub(in crate::code_rule_dsl) fn capture_outputs(conn: &Connection, cap: Capture)
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::super::thread_cpu;
     use rusqlite::Connection;
     use std::path::Path;

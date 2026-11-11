@@ -121,10 +121,38 @@ Three faults found on the way, fixed:
   every process found its inputs changed. An input's frame is now its program's.
 
 P3 over the same 54 files, three processes, no edit: the main thread's CPU 28.8 s (cold), 13.4 s, then 4.7 s; P3's
-cross part 6.4 s, 0.78 s (1 of 481 strata), 0.91 s; the agree count 4,815 each time. The second process still runs
-the phases in full: the cold process prepares its programs itself (0098's dropped columns, simplified bodies, text
-tests) and later ones read the stored prepared program without those rewrites, so the phases' relations have other
-identities once. Open: the stored prepared program and a fresh one should be the same program.
+cross part 6.4 s, 0.78 s (1 of 481 strata), 0.91 s; the agree count 4,815 each time. The second process ran the
+phases in full. Not the relations' identities (every stratum the second process has, the cold one has with the same
+identity); two faults, both fixed:
+
+- A frame space counted a run per program that kept frames in it, not per run. Every program over one root keeps
+  frames in one space (the phases, P3's cross part, its loading cone, phase 0), so the cold run's eight programs
+  were eight runs, and the types phase's 126 frames were collected (unused for `RUNS` = 4 runs) before the run
+  ended. A space now counts the outermost run once (`corpus::run_token`), however many of its programs keep frames
+  (`frames::the_programs_of_one_run_count_one_run_of_their_space`).
+- A stored prepared program lost the relations it has facts of but no rows (`py_site`, `rr_ctx3`: constants folded to
+  nothing), so the struct phase's file-local part had another memo key in every later process than in the one that
+  prepared it, and its 183 library documents were derived again. `fact_rel` keeps them
+  (`program_facts::a_relation_of_no_facts_reads_back_as_one`); the stored program is the program prepared.
+
+After both, on the same 54 files at load 137 to 160: 92.3 s CPU cold (its first run since the prepared program's
+schema moved), 31.7 s, 29.8 s; the second process no longer runs the struct phase's local part (6.2 s cold, 0 after)
+or the types phase (0 of 110 strata).
+
+The larger corpus (84 files, 6,410 calls agreeing, load about 90): 78.75 s CPU cold (321 s wall), 23.18 s warm, 20.28 s
+the third time (33 s wall). Warm runs found inputs changed every time — `doc, node` (types phase) and `doc, types__wgen` (P3) — for two
+reasons, both fixed: phase 1's program and the pack's shared one frame space, so an input both read was one frame
+each overwrote (a space per program now), and an input bound from an earlier phase (`doc`, `types__wgen`) or read by
+a pattern (`node`) is in no rule's body nor `prog.inputs`, so it had no frame name (the bound inputs are named now).
+Warm on the 54 files: inputs changed none; 14.5 s CPU.
+
+With no input changed, the same strata still ran (34 of 110, 429 of 481): a derived relation's frame was current
+only when each read had a digest, and two kinds had none. An input bound with no frame (an option's `env`, phase 0's
+`p0_resolved`) is now read by its bound digest, and a program fact by its identity; a relation with no rows to keep
+(a view such as `gproto`, `blocking`; one past the budget) is named by its reads' digests, on writing and on loading
+alike, so the chain above it (`pbase__sup0`, `pbase`, `explicit`, …) stays current. The input digests checked are the
+frames' (the state the old rows are of), so a changed stratum is still maintained from them. Warm on the 54 files,
+steady: 15 of 481 and 18 of 110 strata run, none derived again; 12.4 to 14.6 s CPU; 4,815 agreeing.
 
 This is the same for P2, for calls_cx's cross part and for the pack (t31 B4). t31's "column blocks" would be the
 kept relations' encoding, not a format of their own.
@@ -133,9 +161,24 @@ kept relations' encoding, not a format of their own.
 
 | Step | Change | Owner |
 |---|---|---|
-| 5.1 | Caches in the file-local part: plain rules there already; the per-file memo keeps their rows as any relation's | engine |
-| 5.2 | The per-file memo as a cache by `(document, content, program)` (0103 §8) | engine |
+| 5.1 | Caches in the file-local part: plain rules there already; the per-file memo keeps their rows as any relation's | engine: **built** (0108, 472c8bfaa). An entry's relations are typed rows in its frame |
+| 5.2 | The per-file memo as a cache by `(document, content, program)` (0103 §8) | engine: **built** (0108). One frame per entry in the plan's space, its part keyed by content and path. **Measured** below |
 | 5.3 | Each other cache of 0103 §8 | its owner |
+
+**5.1 and 5.2 measured (2026-11-10, after 1515840af).** The test binary's P3 bench on the 54 files of `dl-sub40` used
+a new store. The machine was loaded at 63 to 98. Every run gave 4,815 agree.
+
+| Run | CPU (user + sys) | Wall | Per-file memo |
+|---|---|---|---|
+| cold | 66.6 s (63.9 + 2.7) | 164 s | 0 of 54 files |
+| warm | 17.0 s (16.0 + 1.0) | 32 s | 54 of 54 files, and 237 of 237 library files |
+| a comment added to one file | 26.2 s (25.2 + 1.1) | 53 s | 53 of 54 |
+| a top-level name added to one file | 48.0 s (46.3 + 1.7) | 73 s | 0 of 54 |
+
+A new name misses every file. The memo's key covers the rows of the earlier phases' exports that the file-local
+rules read (`under_phased`), and a new module name changes those rows. The key was already that coarse before
+this change, which kept the same key. In the P3 part, an edit's run maintains 445 of 481 strata from deltas
+(Stage 6).
 
 ### Stage 6. Strata the delta does not reach (the owners' work, measured here)
 
@@ -158,9 +201,9 @@ mro_found(c, x, d) :- mro_ask(c, x), <the search>.      // the output: where the
 
 | Step | Change | Done when |
 |---|---|---|
-| 7.1 | A decision draft: a search is a program kind; its requests a key relation; a wave's new requests answered in one batch (0065 §2a's loop) | **drafted as 0106**, for review: a search is demand rules (a request relation, answer rules that read it), no program kind and no `.cache` |
-| 7.2 | `mro_find` first: it replaces `found`/`lfound` and `need_name`'s patches | **measured, not taken** (0106 §5): as demand rules, `found` pulled six relations into `pv`'s recursion, +13.5% join work there (1.81 M to 2.05 M) for the same answers; the eager `found` was 279 units. P3 keeps it. The full corpus's 116 s (against 66 s, at load 110 against 36 to 76) was not measured again on the full corpus; on the 54 files, the same cold run took 38 s of main-thread CPU at load 75 to 97 and 29 to 32 s at 19 to 48, and the new path's cold run was no slower than the old (28.8 s against 31.9 s) |
-| 7.3 | `inst` for the library generics (`lgpar`, `lcbind`, `lwbind`) | `wbind`/`gpar` work gone |
+| 7.1 | A decision draft: a search is a program kind; its requests a key relation; a wave's new requests answered in one batch (0065 §2a's loop) | **drafted as 0107**, for review: a search is demand rules (a request relation, answer rules that read it), no program kind and no `.cache` |
+| 7.2 | `mro_find` first: it replaces `found`/`lfound` and `need_name`'s patches | **measured, not taken** (0107 §5): as demand rules, `found` pulled six relations into `pv`'s recursion, +13.5% join work there (1.81 M to 2.05 M) for the same answers; the eager `found` was 279 units. P3 keeps it. The full corpus's 116 s (against 66 s, at load 110 against 36 to 76) was not measured again on the full corpus; on the 54 files, the same cold run took 38 s of main-thread CPU at load 75 to 97 and 29 to 32 s at 19 to 48, and the new path's cold run was no slower than the old (28.8 s against 31.9 s) |
+| 7.3 | `inst` for the library generics (`lgpar`, `lcbind`, `lwbind`) | **measured, not taken** (0107 §6): on the 84-file small corpus, cold, `lcbind` 316 k, `lgpar` 281 k, `wbind` 103 k (t27: 2.7 M), `gpar` 69 k, `lfound` 5 k, `lwbind` 4 k of 30.9 M join work: 2.5% and 0.3 s together. The cost is `py_try` (4.5 M), `tv` and `tbv` |
 
 ### Stage 8. P3 on symbols (this branch, after 2.1 and 7.2)
 

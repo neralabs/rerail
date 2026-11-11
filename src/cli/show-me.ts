@@ -14,6 +14,7 @@ import type { RepositoryKey } from "../engine/catalog/repository-model.js";
 import { lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { addAttachment, removeAttachment } from "../engine/catalog/rule-configuration.js";
 import { removeLibraryRule, upsertLibraryRule } from "../engine/catalog/rule-library.js";
+import { approve, ruleSubject } from "../engine/catalog/rule-approval.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { libraryRules, ruleAttachments } from "../engine/storage/schema.js";
 import { workspaceStartState } from "../runtime/repository-start.js";
@@ -129,7 +130,9 @@ export function startShowMe(repo: string, databasePath = defaultRerailDatabasePa
     if (ruleOwner(database) === "foreign") throw new ShowMeError(`Your library has a rule ${SHOW_ME_RULE_ID} the demo did not add, so the demo left it alone.`);
     removeDemoFile(file);
     const { repositoryKey } = recordCheckout(database, workspace);
-    upsertLibraryRule(database, loadRuleCatalog(), SHOW_ME_RULE, "code");
+    // The demo's rule is Rerail's own text, run because the person asked for the demo: approved as it is written.
+    const stored = upsertLibraryRule(database, loadRuleCatalog(), SHOW_ME_RULE, "code");
+    approve(database, ruleSubject(SHOW_ME_RULE_ID, stored.payloadHash));
     addAttachment(database, { repositoryKey, sourceKind: "library_rule", sourceId: SHOW_ME_RULE_ID, folder: "" });
   } finally {
     database.$client.close();

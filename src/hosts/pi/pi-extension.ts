@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import {
   sendNativeDeliveries,
@@ -9,7 +9,8 @@ import {
 } from "../../engine/adapter-contract.js";
 import { LiveConversationRules } from "../../engine/catalog/conversation-rule-sync.js";
 import { isRerailStarted, sessionNoteRules } from "../../runtime/repository-start.js";
-import { bundledModelPath, PACKAGE_ROOT } from "../../engine/package-root.js";
+import { PACKAGE_ROOT } from "../../engine/package-root.js";
+import { resolveSessionPaths, type SessionPaths } from "../../runtime/session-paths.js";
 import type { SessionDatabaseOptions } from "../../harness/session-database-options.js";
 import type { ModelFingerprint } from "../../engine/native/native.js";
 import type { NativeSemanticToolRuntime } from "../../harness/native-semantic-tools.js";
@@ -24,6 +25,7 @@ import { ConversationRuleRegistry, type RuleMatch } from "../../engine/catalog/r
 import { openCheckoutConversationRules } from "../../engine/code-rule/code-rule-dsl-catalog.js";
 import { defaultRerailDatabasePath } from "../../engine/storage/database.js";
 import { RerailRuntime } from "../../runtime/runtime.js";
+import { messageSteer } from "../../engine/code-rule/rerail-steer.js";
 import { MATCH_ENTRY_TYPE, replaySessionState, TURN_ENTRY_TYPE } from "../../runtime/session-state.js";
 
 export interface PiConversationRulesOptions extends SessionDatabaseOptions {
@@ -169,7 +171,9 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
         fixToolRegistered = true;
         registerPiFixTool(pi);
       }
-      await sendNativeDeliveries(await linkDeliveries(deliveries, (native.context() ?? currentContext)?.cwd), (message, options_) => pi.sendMessage(message, options_),
+      // Pi hands the model an extension's message as the user's, so a steer sent as one says it is Rerail's.
+      await sendNativeDeliveries(await linkDeliveries(deliveries, (native.context() ?? currentContext)?.cwd),
+        (message, options_) => pi.sendMessage(message.content.trim() === "" ? message : { ...message, content: messageSteer(message.content) }, options_),
         (sessionId, receiptId, ruleIds) => current.recordSteer(sessionId, receiptId, ruleIds),
         (toolCallId, delivery) => {
           const placed = openResults.get(toolCallId);
@@ -237,13 +241,14 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
         return;
       }
       const session = { host: "pi", sessionId: ctx.sessionManager.getSessionId(), cwd: ctx.cwd } satisfies AdapterSession & { host: "pi" };
-      const activation = await native.initialize(ctx, session, options_.rebuild === true, options);
+      const paths = resolveSessionPaths(ctx.cwd, { modelPath: options.modelPath });
+      const activation = await native.initialize(ctx, session, options_.rebuild === true, { ...options, ...paths });
       if (activation === "attached") {
         presentation.start(ctx);
         return;
       }
       semantic ??= new NativeSemanticRuntime({
-        modelPath: options.modelPath ?? process.env.RERAIL_MODEL_PATH ?? bundledModelPath(),
+        modelPath: paths.modelPath,
         sourceId: "pi:message",
       });
       // Navigating within the same session keeps the runtime; only the turn counter is replayed.
@@ -255,7 +260,7 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
         presentation.start(ctx);
         return;
       }
-      const built = await build(ctx, session);
+      const built = await build(ctx, session, paths);
       try {
         await built.runtime.ingest({ kind: "session-start", eventId: `session-start:${session.sessionId}:${randomUUID()}`, session });
         if (semantic instanceof NativeSemanticRuntime) {
@@ -285,10 +290,10 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
       presentation.start(ctx);
     };
 
-    const build = async (ctx: ExtensionContext, session: AdapterSession): Promise<Attached> => {
+    const build = async (ctx: ExtensionContext, session: AdapterSession, paths: SessionPaths): Promise<Attached> => {
       const databasePath = configuredDatabasePath(options, ctx.cwd);
       const next = new ConversationRuleRegistry({
-        modelPath: options.modelPath ?? process.env.RERAIL_MODEL_PATH ?? bundledModelPath(),
+        modelPath: paths.modelPath,
         ...(options.maxInputTokens === undefined ? {} : { maxInputTokens: options.maxInputTokens }),
         ...(options.maxRules === undefined ? {} : { maxRules: options.maxRules }),
       });
@@ -297,10 +302,7 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
         sync.prime();
         const nextTurn = replaySessionState(next, ctx.sessionManager.getBranch());
         const nextRuntime = new RerailRuntime({
-          storageRoot: process.env.RERAIL_STORAGE_ROOT === undefined
-            ? join(ctx.cwd, ".rerail", "sessions")
-            : resolve(ctx.cwd, process.env.RERAIL_STORAGE_ROOT),
-          modelPath: options.modelPath ?? process.env.RERAIL_MODEL_PATH ?? bundledModelPath(),
+          ...paths,
           databasePath,
           workspaceRoot: ctx.cwd,
           startGate: true,

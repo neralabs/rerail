@@ -1,5 +1,5 @@
-// Inside `src/` so every checkout copy of the native sources (the playground, release
-// builds) carries it; the library compiles it only for tests.
+// Inside `src/` so every copy of the native sources (release builds) carries it; the
+// library compiles it only for tests.
 #[path = "src/build_identity.rs"]
 mod identity;
 #[path = "src/build_languages.rs"]
@@ -15,6 +15,7 @@ fn main() {
         napi_build::setup();
     }
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
+    check_names_table(&manifest);
     let lock_text = std::fs::read_to_string(
         manifest
             .parent()
@@ -38,23 +39,7 @@ fn main() {
 /// `lang-<id>` (all are by default; the browser build picks the ones a page needs, `wasm/README.md`).
 fn omitted_languages() -> Vec<String> {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
-    let directory = manifest.parent().expect("repository root").join("languages");
-    let mut omitted = Vec::new();
-    for entry in std::fs::read_dir(&directory).expect("languages/ is readable") {
-        let path = entry.expect("languages/ entry").path();
-        if path.extension().is_none_or(|extension| extension != "json") {
-            continue;
-        }
-        let value: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&path).expect("registry file")).expect("registry JSON");
-        let (Some(id), Some("supported")) = (value["id"].as_str(), value["status"].as_str()) else { continue };
-        let feature = format!("CARGO_FEATURE_LANG_{}", id.to_ascii_uppercase().replace('-', "_"));
-        if std::env::var_os(&feature).is_none() {
-            omitted.push(id.to_owned());
-        }
-    }
-    omitted.sort();
-    omitted
+    languages::omitted_languages(&manifest.parent().expect("repository root").join("languages"))
 }
 
 /// The vendored grammars (`GRAMMARS` names) the `omitted` languages' dialects are parsed with.
@@ -85,23 +70,10 @@ fn vendored_of(omitted: &[String]) -> Vec<String> {
 /// The `omitted` languages keep their tables but no grammar (`language_registry.rs`'s `built`).
 fn generate_languages(omitted: &[String]) -> Vec<(String, Vec<u8>)> {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
-    let root = manifest.parent().expect("repository root");
-    let directory = root.join("languages");
-    let test_directory = manifest.join("test-languages");
-    println!("cargo:rerun-if-changed={}", directory.display());
-    println!("cargo:rerun-if-changed={}", test_directory.display());
-    let vendored = GRAMMARS
-        .iter()
-        .map(|grammar| grammar.name)
-        .collect::<Vec<_>>();
+    let vendored = GRAMMARS.iter().map(|grammar| grammar.name).collect::<Vec<_>>();
+    assert_eq!(vendored, languages::VENDORED, "GRAMMARS and build_languages.rs's VENDORED name the same grammars");
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"));
-    languages::generate(
-        &directory,
-        test_directory.is_dir().then_some(test_directory.as_path()),
-        &vendored,
-        omitted,
-        &out,
-    )
+    languages::generate_registry(&manifest, omitted, &out)
 }
 
 /// A grammar vendored under `grammars/`. Its generated parser is not vendored (TypeScript's and
@@ -281,8 +253,8 @@ fn committed_parser(grammar: &VendoredGrammar, json: &str, generator: &str) -> S
         format!("regenerate it with `node {GENERATOR}` (about 15 minutes) and commit {path}");
     let bytes = std::fs::read(&path)
         .unwrap_or_else(|error| panic!("{path} is unreadable ({error}): {regenerate}"));
-    if bytes.starts_with(b"version https://git-lfs") {
-        panic!("{path} is a Git LFS pointer: run `git lfs pull` (CONTRIBUTING.md)");
+    if bytes.starts_with(LFS_POINTER) {
+        panic!("{path} is a Git LFS pointer, not the file: run `{LFS_REMEDY}` (CONTRIBUTING.md)");
     }
     let mut parser = String::new();
     flate2::read::GzDecoder::new(bytes.as_slice())
@@ -296,6 +268,32 @@ fn committed_parser(grammar: &VendoredGrammar, json: &str, generator: &str) -> S
         );
     }
     parser
+}
+
+/// What a Git LFS pointer file starts with: a checkout without Git LFS holds these in place of the
+/// binaries `.gitattributes` stores in LFS.
+const LFS_POINTER: &[u8] = b"version https://git-lfs";
+const LFS_REMEDY: &str = "git lfs install && git lfs pull";
+
+/// The Unicode names table `include_bytes!` embeds (`value/names.rs`): it must be the table, not
+/// its Git LFS pointer, or every Python `\N{...}` escape fails at run time.
+fn check_names_table(manifest: &Path) {
+    let relative = "src/code_rule_dsl/value/names/names.bin";
+    let path = manifest.join(relative);
+    println!("cargo:rerun-if-changed={}", path.display());
+    let bytes = std::fs::read(&path).unwrap_or_else(|error| {
+        panic!("native/{relative} is unreadable ({error}): run `{LFS_REMEDY}`")
+    });
+    if bytes.starts_with(LFS_POINTER) {
+        panic!(
+            "native/{relative} is a Git LFS pointer, not the names table: run `{LFS_REMEDY}` (CONTRIBUTING.md)"
+        );
+    }
+    if !bytes.starts_with(b"TNAMES01") {
+        panic!(
+            "native/{relative} is not a names table (no TNAMES01 header): run `{LFS_REMEDY}`, or regenerate it with scripts/generate/value/names.py"
+        );
+    }
 }
 
 fn build_grammar(grammar: &VendoredGrammar, generator: &str) {
@@ -409,6 +407,9 @@ fn configure_fixtures() {
         .canonicalize()
         .expect("fixtures directory is readable");
     println!("cargo:rustc-env=RERAIL_ORACLES_DIR={}", directory.display());
+    // What the tests' `fixtures_dir!` reads (`code_rule_dsl/fixtures.rs`); the engine's crates have it from
+    // `.cargo/config.toml`, the engine from here, so an `RERAIL_ORACLES_DIR` override holds for its tests.
+    println!("cargo:rustc-env=RERAIL_FIXTURES_DIR={}", directory.display());
     println!("cargo:rerun-if-changed={}", directory.display());
 }
 
@@ -474,6 +475,11 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
     // A `.rr` tape is the tree the rule engine's parser builds, numbered by its kinds table (decision 0061).
     view_sources.push(manifest.join("crates/rr_syntax/src/syntax.rs"));
     view_sources.push(manifest.join("crates/rr_syntax/src/tape.rs"));
+    // A named-only tape (RER-131) leaves out the tokens its grammar's automata recognize: the
+    // automata, and the grammars they are built from, decide what a stored tape means.
+    view_sources.push(manifest.join("src/code_rule_dsl/tape/tokens.rs"));
+    view_sources.push(manifest.join("grammars/token-grammars/rust/grammar.json"));
+    view_sources.push(manifest.join("grammars/token-grammars/php/grammar.json"));
     view_sources.retain(|path| {
         !path
             .file_name()

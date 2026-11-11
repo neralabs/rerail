@@ -36,7 +36,6 @@
 
 use super::owner::{Database, Lease};
 use super::owner::sql::{SqlOwner, Borrowed};
-use crate::code_rule_dsl::demand::vtab::PackedDemand;
 use crate::code_rule_dsl::facts::Graph;
 use crate::code_rule_dsl::facts::vtab::Source;
 use crate::code_rule_dsl::facts::vtab::syntax::{Document, fresh, sources};
@@ -44,13 +43,13 @@ use crate::content_store::{DerivationInput, DerivationRecord, StoreError, StoreR
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
-mod lattice;
-pub(in crate::code_rule_dsl) mod sets;
-pub(in crate::code_rule_dsl) use lattice::Operations as LatticeOperations;
+pub mod lattice;
+pub mod sets;
+pub use lattice::Operations as LatticeOperations;
 
 /// One statement of a wave program.
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
-pub(in crate::code_rule_dsl) struct Step {
+pub struct Step {
     pub output: String,
     pub stratum: u32,
     /// The relations the statement reads: derived ones by name (whole or `delta_`), base ones by
@@ -60,7 +59,7 @@ pub(in crate::code_rule_dsl) struct Step {
 }
 
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
-pub(in crate::code_rule_dsl) struct Program {
+pub struct Program {
     pub name: String,
     /// Derived relations and their arity. Every column is an integer (decision 0009), and the
     /// whole row is the key.
@@ -85,7 +84,7 @@ pub(in crate::code_rule_dsl) struct Program {
 impl Program {
     /// The longest chain of strata its steps read through: the waves a chunk of a program without
     /// recursion takes (independent strata share a wave).
-    pub(in crate::code_rule_dsl) fn strata(&self) -> u32 {
+    pub fn strata(&self) -> u32 {
         let mut depth = BTreeMap::<&str, u32>::new();
         let mut steps = self.steps.iter().collect::<Vec<_>>();
         steps.sort_by_key(|step| step.stratum);
@@ -98,7 +97,7 @@ impl Program {
     }
 
     /// The producer of the program's families: its relations and statements.
-    fn digest(&self) -> [u8; 32] {
+    pub fn digest(&self) -> [u8; 32] {
         let mut hash = Sha256::new();
         hash.update(b"rerail.wave/v1\0");
         for (rel, arity) in &self.relations {
@@ -120,7 +119,7 @@ impl Program {
     }
 }
 
-pub(in crate::code_rule_dsl) struct Limits {
+pub struct Limits {
     /// Bytes of core facts and their projection one chunk may hold. Two chunks are resident at
     /// once, so this is half the scheduler's pool.
     pub chunk_bytes: usize,
@@ -134,7 +133,7 @@ impl Default for Limits {
 }
 
 #[derive(Debug, Default)]
-pub(in crate::code_rule_dsl) struct Outcome {
+pub struct Outcome {
     /// Waves over all chunks.
     pub waves: u32,
     pub chunks: usize,
@@ -145,7 +144,7 @@ pub(in crate::code_rule_dsl) struct Outcome {
 }
 
 /// The family of relation `rel` of program `program` over a batch of `scope`.
-pub(in crate::code_rule_dsl) fn family_name(scope: &str, program: &str, rel: &str) -> String {
+pub fn family_name(scope: &str, program: &str, rel: &str) -> String {
     format!("{scope}#wave:{program}:{rel}")
 }
 
@@ -157,7 +156,7 @@ fn bytes(d: &Document) -> usize {
 
 /// Documents in chunks of at most `budget` bytes, in order; a document over the budget is a chunk
 /// of its own. A program that is not file-local is one chunk.
-fn chunks(documents: Vec<Document>, budget: usize, file_local: bool) -> Vec<Vec<Document>> {
+pub fn chunks(documents: Vec<Document>, budget: usize, file_local: bool) -> Vec<Vec<Document>> {
     // No documents is one chunk all the same: a warm run's kept rows are a wave's (06 S6).
     if !file_local || documents.is_empty() {
         return vec![documents];
@@ -187,13 +186,13 @@ const CONTROL: [(&str, &str); 6] = [
     ("wave_document", "CREATE TEMP TABLE wave_document(position INTEGER PRIMARY KEY, d INTEGER NOT NULL)"),
 ];
 
-fn sql(e: rusqlite::Error) -> StoreError {
+pub fn sql(e: rusqlite::Error) -> StoreError {
     StoreError::Database(e)
 }
 
 /// Declares the program's relations, their `new_` and `delta_` tables and the loop's control
 /// tables, empty, and loads the steps and their reads.
-fn declare(lease: &impl SqlOwner, program: &Program, existing:bool) -> rusqlite::Result<()> {
+pub fn declare(lease: &impl SqlOwner, program: &Program, existing:bool) -> rusqlite::Result<()> {
     let mut storage = lease.storage().borrow_mut();
     for (name, definition) in CONTROL {
         let definition=if existing {definition.replacen("CREATE TEMP TABLE ","CREATE TEMP TABLE IF NOT EXISTS ",1)} else {definition.to_owned()};
@@ -243,7 +242,7 @@ fn declare_relations(lease: &impl SqlOwner, program: &Program, existing: bool, p
 }
 
 /// Retained waves need public outputs and wave diagnostics; cold control tables are deferred.
-pub(in crate::code_rule_dsl) fn declare_outputs(db: &Database, program: &Program) -> StoreResult<()> {
+pub fn declare_outputs(db: &Database, program: &Program) -> StoreResult<()> {
     {
         let mut storage = db.storage().borrow_mut();
         let (name, definition) = CONTROL[2];
@@ -283,7 +282,7 @@ fn fold_lattice(lease: &impl SqlOwner, rel: &str, arity: usize, keys: usize, top
 /// Runs one chunk's waves to the fixpoint: every step is pending at first, and after each wave
 /// the readers of every relation that changed. Returns the number of waves.
 /// `empty`: the chunk has no documents, so a step reading its batch reads nothing and is skipped.
-fn waves(lease: &impl SqlOwner, program: &Program, token: Option<i64>, max_waves: u32, empty: bool) -> StoreResult<u32> {
+pub fn waves(lease: &impl SqlOwner, program: &Program, token: Option<i64>, max_waves: u32, empty: bool) -> StoreResult<u32> {
     waves_with(lease, program, token, max_waves, empty, &mut |_| Ok(None))
 }
 
@@ -380,14 +379,14 @@ fn waves_with(lease: &impl SqlOwner, program: &Program, token: Option<i64>, max_
 pub(in crate::code_rule_dsl) fn execute_sql(db: &Database, program: &Program, max_waves: u32) -> StoreResult<u32> {
     execute_sql_with(db, program, max_waves, || Ok(()))
 }
-pub(in crate::code_rule_dsl) fn declare_sql(db:&Database,program:&Program)->StoreResult<()> {
+pub fn declare_sql(db:&Database,program:&Program)->StoreResult<()> {
     declare(db,program,false)?;Ok(())
 }
-pub(in crate::code_rule_dsl) fn execute_declared(db:&Database,program:&Program,max_waves:u32)->StoreResult<u32> {
+pub fn execute_declared(db:&Database,program:&Program,max_waves:u32)->StoreResult<u32> {
     waves(db,program,None,max_waves,false)
 }
 
-pub(in crate::code_rule_dsl) fn execute_declared_with(db:&Database, program:&Program, max_waves:u32,
+pub fn execute_declared_with(db:&Database, program:&Program, max_waves:u32,
     mut before: impl FnMut(usize) -> StoreResult<Option<String>>) -> StoreResult<u32> {
     waves_with(db,program,None,max_waves,false,&mut before)
 }
@@ -400,7 +399,7 @@ pub(in crate::code_rule_dsl) fn execute_sql_with(db: &Database, program: &Progra
 
 /// Run a component whose full tables already exist (corpus strata and maintained sessions).
 /// Only the frontier/candidate tables are reset. Full rows and their indexes remain in place.
-pub(in crate::code_rule_dsl) fn execute_existing(db:&rusqlite::Connection,program:&Program,max_waves:u32)->StoreResult<u32>{
+pub fn execute_existing(db:&rusqlite::Connection,program:&Program,max_waves:u32)->StoreResult<u32>{
     let present:BTreeSet<String>=db.prepare("SELECT name FROM temp.sqlite_schema WHERE type='table'")?.query_map([],|r|r.get(0))?.collect::<rusqlite::Result<_>>()?;
     // Reuse control schemas; the wave loop clears pending/delta rows itself.
     for (name,_) in CONTROL {if present.contains(name)&&!matches!(name,"wave_delta"|"wave_pending"){db.execute_batch(&format!("DELETE FROM temp.{name}"))?;}}
@@ -412,7 +411,7 @@ pub(in crate::code_rule_dsl) fn execute_existing(db:&rusqlite::Connection,progra
 
 /// The digest of a relation's rows in key order, and their count: all of them, or those whose
 /// first column is `part`.
-fn rows_digest(lease: &Lease<'_>, rel: &str, arity: usize, part: Option<i64>) -> rusqlite::Result<([u8; 32], i64)> {
+pub fn rows_digest(lease: &Lease<'_>, rel: &str, arity: usize, part: Option<i64>) -> rusqlite::Result<([u8; 32], i64)> {
     let order = (0..arity).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
     let mut hash = Sha256::new();
     hash.update((arity as u64).to_le_bytes());
@@ -432,139 +431,7 @@ fn rows_digest(lease: &Lease<'_>, rel: &str, arity: usize, part: Option<i64>) ->
     Ok((hash.finalize().into(), count))
 }
 
-type Built = StoreResult<(Vec<Document>, Vec<(&'static str, Arc<dyn Source>)>)>;
+// cratify: `batches` is rerail-engine's (it mounts it)
 
-/// Runs `program` over `documents` of `scope` on `lease` to its fixpoint, then records each derived
-/// relation as a family. `demand` gives a chunk's packed batch, if its steps read one. The
-/// relations stay readable on the lease until it is dropped.
-pub(in crate::code_rule_dsl) fn run(
-    lease: &Lease<'_>,
-    graph: &(impl Graph + ?Sized),
-    program: &Program,
-    scope: &str,
-    documents: Vec<Document>,
-    limits: &Limits,
-    demand: &mut dyn FnMut(&[Document]) -> StoreResult<Option<PackedDemand>>,
-) -> StoreResult<Outcome> {
-    let inputs = documents.iter().map(|d| DerivationInput { name: Some(d.core.clone()), digest: d.digest }).collect();
-    run_over(lease, graph, program, scope, documents, inputs, limits, demand)
-}
 
-/// `run` over `documents`, its families recorded as read from `inputs`: a warm run evaluates the
-/// documents that changed, its relations holding the others' rows as kept (06 S6), and its
-/// families read every document.
-#[allow(clippy::too_many_arguments)]
-pub(in crate::code_rule_dsl) fn run_over(
-    lease: &Lease<'_>,
-    graph: &(impl Graph + ?Sized),
-    program: &Program,
-    scope: &str,
-    documents: Vec<Document>,
-    mut inputs: Vec<DerivationInput>,
-    limits: &Limits,
-    demand: &mut dyn FnMut(&[Document]) -> StoreResult<Option<PackedDemand>>,
-) -> StoreResult<Outcome> {
-    declare(&**lease, program,false)?;
-    // A program that reads a `py.*` family reads it as a fact of its own (decision 0029).
-    if program.steps.iter().any(|step| step.reads.iter().any(|read| crate::code_rule_dsl::facts::vtab::syntax::PY.contains(&read.as_str()))) {
-        inputs.extend(crate::code_rule_dsl::facts::families::py_inputs(graph, scope, &documents)?);
-    }
-    inputs.sort_by(|a, b| a.name.cmp(&b.name));
-    inputs.dedup_by(|a, b| a.name == b.name);
-    let planned = chunks(documents, limits.chunk_bytes, program.file_local);
-    let mut outcome = Outcome { chunks: planned.len(), ..Outcome::default() };
-    let store = graph.store();
-    // Chunk k+1's sources are built as a job on the pool while chunk k runs; the run takes them once built (running
-    // the pool's jobs meanwhile), and starts chunk k+2's.
-    let next: parking_lot::Mutex<Option<Built>> = parking_lot::Mutex::new(None);
-    let mut planned = planned.into_iter();
-    crate::threads::scope(|jobs| -> StoreResult<()> {
-        let next = &next;
-        let start = |chunk: Vec<Document>| {
-            jobs.spawn("a wave chunk's sources", move |_| {
-                let built = sources(store, chunk.clone()).map(|s| (chunk, s));
-                *next.lock() = Some(built);
-            })
-        };
-        let mut started = planned.next().map(start).is_some();
-        while started {
-            let built = rerail_accel::exec::help_until_as("a wave chunk: its sources", || next.lock().take());
-            started = planned.next().map(start).is_some();
-            let (docs, relations) = built?;
-            fresh(graph, &docs)?;
-            lease.execute_batch("DELETE FROM temp.wave_document")?;
-            {
-                let mut position = lease.prepare_cached("INSERT INTO temp.wave_document(position, d) VALUES (?1, ?2)")?;
-                for (at, d) in docs.iter().enumerate() {
-                    position.execute(rusqlite::params![at as i64, d.key])?;
-                }
-            }
-            for (name, source) in relations {
-                lease.bind(name, source).map_err(sql)?;
-            }
-            // The chunk's batch through the one driver (`demand::driver`, list step 20): a batch
-            // the steps read that did not complete fails its chunk.
-            let reads = program.steps.iter().any(|step| step.sql.contains(":batch"));
-            let status = reads.then_some((&**lease as &rusqlite::Connection, program.name.as_str()));
-            outcome.waves += crate::code_rule_dsl::demand::driver::with_batch(&lease.registry, demand(&docs)?, status, |token| {
-                waves(&**lease, program, token, limits.max_waves, docs.is_empty())
-            })?;
-        }
-        Ok(())
-    })?;
-    record(lease, graph, program, scope, inputs, outcome)
-}
-
-/// Runs `program`, whose steps read only tables already on `lease` (no documents' sources, no
-/// batch), once to its fixpoint, then records each derived relation as a family read from
-/// `inputs`: a layer over another program's relations (06 S5's findings, architecture §8).
-pub(in crate::code_rule_dsl) fn layer(
-    lease: &Lease<'_>,
-    graph: &(impl Graph + ?Sized),
-    program: &Program,
-    scope: &str,
-    mut inputs: Vec<DerivationInput>,
-    limits: &Limits,
-) -> StoreResult<Outcome> {
-    declare(&**lease, program,false)?;
-    inputs.sort_by(|a, b| a.name.cmp(&b.name));
-    let waves = waves(&**lease, program, None, limits.max_waves, false)?;
-    record(lease, graph, program, scope, inputs, Outcome { waves, chunks: 1, ..Outcome::default() })
-}
-
-/// Records each derived relation of `program` (and each part of a partitioned one) as a family
-/// read from `inputs`; `outcome.changed` names those whose digest changed.
-fn record(
-    lease: &Lease<'_>,
-    graph: &(impl Graph + ?Sized),
-    program: &Program,
-    scope: &str,
-    inputs: Vec<DerivationInput>,
-    mut outcome: Outcome,
-) -> StoreResult<Outcome> {
-    outcome.rows = lease.storage().borrow_mut().statistics_boundary(lease)?;
-    let producer = program.digest();
-    let record = |output: String, (digest, rows): ([u8; 32], i64)| DerivationRecord {
-        output,
-        producer,
-        inputs: inputs.clone(),
-        digest,
-        status: 0,
-        cost: rows,
-    };
-    let mut records = Vec::new();
-    for (rel, arity) in &program.relations {
-        records.push(record(family_name(scope, &program.name, rel), rows_digest(lease, rel, *arity, None)?));
-        for (_, names) in program.partitions.iter().filter(|(partitioned, _)| partitioned == rel) {
-            for (part, name) in names.iter().enumerate() {
-                let rows = rows_digest(lease, rel, *arity, Some(part as i64))?;
-                records.push(record(family_name(scope, &program.name, &format!("{rel}:{name}")), rows));
-            }
-        }
-    }
-    outcome.changed = graph.record_derivations(&records)?;
-    Ok(outcome)
-}
-
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

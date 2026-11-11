@@ -45,7 +45,10 @@ fn policies() -> Vec<(String, CompiledCodeRuleDsl)> {
         .into_iter()
         .filter_map(|path| {
             let text = std::fs::read_to_string(&path).ok()?;
-            let compiled = CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned()).ok()?;
+            // A policy that does not compile is left out, and named.
+            let compiled = CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned())
+                .map_err(|error| eprintln!("SKIP {}: {}", path.display(), error.reason))
+                .ok()?;
             Some((path.file_stem().unwrap().to_string_lossy().into_owned(), compiled))
         })
         .collect()
@@ -79,7 +82,8 @@ fn an_edit_reruns_its_file_and_a_whitespace_edit_cuts_off() {
     std::fs::create_dir_all(&dir).unwrap();
     write(&dir, "a.py", "import os, sys\nf = lambda: 0\n");
     write(&dir, "b.py", "try:\n    pass\nexcept:\n    pass\n");
-    write(&dir, "c.py", "x = 1\n");
+    // A module docstring: the pack's D100 flags a public module without one.
+    write(&dir, "c.py", "\"\"\"The c module.\"\"\"\nx = 1\n");
     write(&dir, "notes.txt", "not code\n");
     let store = ContentStore::open(&temp("store").with_extension("sqlite")).unwrap();
     let mut rules = Rules::lower(&policies, ExecutionBackend::CpuJit).unwrap();
@@ -106,7 +110,7 @@ fn an_edit_reruns_its_file_and_a_whitespace_edit_cuts_off() {
     assert_eq!(keys(&again), keys(&first));
 
     // One file edited: its four derivations re-run and only it is evaluated; only its findings move.
-    write(&dir, "c.py", "x = 1\ng = lambda: 1\n");
+    write(&dir, "c.py", "\"\"\"The c module.\"\"\"\nx = 1\ng = lambda: 1\n");
     let edited = apply(&store, WS, directory_root(&store, &dir).unwrap(), &mut rules).unwrap();
     assert_eq!(edited.ingested.push.work.rerun, 4, "c.py's tape, core, prefilter and kinds");
     assert_eq!(edited.evaluated, ["c.py"]);
@@ -437,7 +441,7 @@ fn pack_census() {
             rules += 1;
             for clause in &compiled.inner.clauses {
                 let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind else { continue };
-                for grammar in matchers {
+                for grammar in matchers.iter() {
                     clauses += 1;
                     let Some(matcher) = match_tree(grammar).ok().and_then(|tree| LoweredMatcher::lower(&tree).ok()) else {
                         unlowered += 1;
@@ -522,6 +526,11 @@ fn the_backends_find_the_same_keys_on_real_files() {
         eprintln!("phase 4 {name}: {} files, {} clauses, {} keys, cpu {:?}", run.paths.len(), rules.clauses(), found.len(), cpu() - start);
         match &reference {
             None => {
+                if let Ok(path) = std::env::var("RERAIL_DUMP_KEYS") {
+                    let lines: String = found.iter().map(|k| format!("{}\t{}\t{}\t{}\n", k.0, k.1, k.2, k.3)).collect();
+                    std::fs::write(&path, lines).unwrap();
+                    eprintln!("phase 4 {name}: footprint {} MB", crate::code_rule_dsl::prof::footprint_mb());
+                }
                 assert!(!found.is_empty(), "the sample finds nothing");
                 reference = Some((found, covered));
             }
@@ -603,7 +612,7 @@ fn the_slice_finds_ws_findings_on_real_files() {
                 )
             };
             eprintln!("S7 jemalloc: {}", jemalloc());
-            crate::purge_allocator_pages();
+            crate::code_rule_dsl::prof::purge_allocator_pages();
             eprintln!("S7 after purge: jemalloc {}; footprint {} MB", jemalloc(), footprint());
             eprintln!("S7 holding, pid {}", std::process::id());
             while !std::path::Path::new(&path).exists() {
@@ -983,3 +992,187 @@ fn the_statistics_loop_runs_on_the_slices_path() {
 }
 
 mod data_layer;
+
+/// RER-131 probe (scratch): one pack rule on one small file, interpreter only.
+#[test]
+#[ignore = "RER-131 scratch probe"]
+fn rer131_one_rule_probe() {
+    let rule = std::env::var("RERAIL_PROBE_RULE").unwrap_or("ruff-e722-bare-except".into());
+    let source = std::env::var("RERAIL_PROBE_SOURCE").unwrap_or("try:\n    x()\nexcept:\n    pass\n".into());
+    let policies: Vec<_> = policies().into_iter().filter(|(name, _)| *name == rule).collect();
+    assert_eq!(policies.len(), 1);
+    let dir = temp("probe");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), source).unwrap();
+    let store = ContentStore::open(&temp("probe-store").with_extension("sqlite")).unwrap();
+    let mut rules = Rules::lower(&policies, ExecutionBackend::CpuInterpreter).unwrap();
+    let root = directory_root(&store, &dir).unwrap();
+    eprintln!("PROBE keys {:?}", keys(&audit(&store, WS, root, &mut rules).unwrap()));
+}
+
+/// Named-only tapes hold no source text, so these three files store the same tape bytes. Each
+/// is still its own tape, with its own source: the run's core facts are each file's own (it
+/// failed with "stale core facts" when a tape was known by its bytes alone).
+#[test]
+fn files_of_one_tape_shape_keep_their_own_sources() {
+    let dir = temp("one-shape");
+    std::fs::create_dir_all(&dir).unwrap();
+    for (path, call) in [("a.py", "exists"), ("b.py", "isfile"), ("c.py", "islink")] {
+        write(&dir, path, &format!("import os\nos.path.{call}(\"file\")\n"));
+    }
+    let policies: Vec<_> = policies().into_iter().filter(|(name, _)| name.starts_with("ruff-pth11")).collect();
+    assert!(!policies.is_empty());
+    let run = cold(&dir, &policies);
+    assert_eq!(run.paths.len(), 3);
+}
+
+/// RER-131 oracle (ignored): one pack's rules over a file list, interpreter only, keys to `RERAIL_DUMP_KEYS`.
+/// `RERAIL_PACK` (a directory under `packs/`), `RERAIL_FILES` (a list of paths), `RERAIL_MAX` (default 200).
+#[test]
+#[ignore = "RER-131 oracle: needs RERAIL_PACK and RERAIL_FILES"]
+fn rer131_pack_keys() {
+    let pack = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs").join(std::env::var("RERAIL_PACK").unwrap());
+    let mut documents = Vec::new();
+    files(&pack.join("rules"), "json", &mut documents);
+    files(&pack.join("candidates/rules"), "json", &mut documents);
+    documents.sort();
+    let policies: Vec<_> = documents
+        .into_iter()
+        .filter_map(|path| {
+            let text = std::fs::read_to_string(&path).ok()?;
+            // A policy that does not compile is left out, and named.
+            let compiled = CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned())
+                .map_err(|error| eprintln!("SKIP {}: {}", path.display(), error.reason))
+                .ok()?;
+            Some((path.file_stem().unwrap().to_string_lossy().into_owned(), compiled))
+        })
+        .collect();
+    let max: usize = std::env::var("RERAIL_MAX").ok().and_then(|m| m.parse().ok()).unwrap_or(200);
+    let dir = temp("pack-keys");
+    std::fs::create_dir_all(&dir).unwrap();
+    let list = std::fs::read_to_string(std::env::var("RERAIL_FILES").unwrap()).unwrap();
+    let mut copied = 0;
+    for (i, path) in list.lines().filter(|l| !l.is_empty()).enumerate() {
+        if copied == max {
+            break;
+        }
+        let Ok(text) = std::fs::read_to_string(path) else { continue };
+        let name = Path::new(path).file_name().unwrap().to_string_lossy();
+        std::fs::write(dir.join(format!("f{i:05}-{name}")), text).unwrap();
+        copied += 1;
+    }
+    let store = ContentStore::open(&temp("pack-keys-store").with_extension("sqlite")).unwrap();
+    let backend = match std::env::var("RERAIL_BACKEND").as_deref() {
+        Ok("jit") => ExecutionBackend::CpuJit,
+        #[cfg(target_os = "macos")]
+        Ok("metal") => ExecutionBackend::MetalInterpreter,
+        _ => ExecutionBackend::CpuInterpreter,
+    };
+    // A policy that does not lower on its own is left out, and named.
+    let policies: Vec<_> = policies
+        .into_iter()
+        .filter(|policy| {
+            let lowered = Rules::lower(std::slice::from_ref(policy), backend);
+            if let Err(error) = &lowered {
+                eprintln!("SKIP {}: {error:?}", policy.0);
+            }
+            lowered.is_ok()
+        })
+        .collect();
+    let mut rules = Rules::lower(&policies, backend).unwrap();
+    let start = cpu();
+    let root = directory_root(&store, &dir).unwrap();
+    let run = audit(&store, WS, root, &mut rules).inspect_err(|error| eprintln!("AUDIT {error:?}")).unwrap();
+    let found = keys(&run);
+    eprintln!("PACK {}: {} rules, {} files, {} keys, cpu {:?}", pack.display(), policies.len(), copied, found.len(), cpu() - start);
+    // The slice runs only the clauses that lower to its wave; a rule with none finds nothing here and has no
+    // coverage, so it is named (the runtime, `rer131_runtime_keys`, evaluates every rule).
+    let (clauses, _) = crate::code_rule_dsl::slice::lowered(&policies).unwrap();
+    let waved: BTreeSet<&str> = clauses.iter().filter_map(|clause| clause.name.split('/').next()).collect();
+    let left: Vec<&str> = policies.iter().map(|(name, _)| name.as_str()).filter(|name| !waved.contains(name)).collect();
+    eprintln!("NOT IN THE WAVE: {} of {} rules", left.len(), policies.len());
+    for name in left {
+        eprintln!("  {name}");
+    }
+    crate::code_rule_dsl::prof::report("pack");
+    if let Ok(path) = std::env::var("RERAIL_DUMP_KEYS") {
+        std::fs::write(&path, found.iter().map(|k| format!("{}\t{}\t{}\t{}\n", k.0, k.1, k.2, k.3)).collect::<String>()).unwrap();
+    }
+}
+
+/// RER-131 oracle (ignored), any language: every policy of `RERAIL_PACK` evaluated by the runtime
+/// over `RERAIL_FILES` (first `RERAIL_MAX`, default 150), its violations as keys to `RERAIL_DUMP_KEYS`.
+#[test]
+#[ignore = "RER-131 oracle: needs RERAIL_PACK and RERAIL_FILES"]
+fn rer131_runtime_keys() {
+    let pack = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs").join(std::env::var("RERAIL_PACK").unwrap());
+    let mut documents = Vec::new();
+    files(&pack.join("rules"), "json", &mut documents);
+    files(&pack.join("candidates/rules"), "json", &mut documents);
+    documents.sort();
+    let max: usize = std::env::var("RERAIL_MAX").ok().and_then(|m| m.parse().ok()).unwrap_or(150);
+    let label = |path: &str| match Path::new(path).extension().and_then(|e| e.to_str()) {
+        Some("ts" | "mts" | "cts") => "typescript",
+        Some("tsx") => "tsx",
+        Some("js" | "mjs" | "cjs" | "jsx") => "javascript",
+        Some("py") => "python",
+        Some("php") => "php",
+        Some("rs") => "rust",
+        Some("sql") => "sql",
+        Some("vue") => "vue",
+        _ => "",
+    };
+    let list = std::fs::read_to_string(std::env::var("RERAIL_FILES").unwrap()).unwrap();
+    let inputs: Vec<serde_json::Value> = list
+        .lines()
+        .filter(|l| !label(l).is_empty())
+        .filter_map(|path| Some((path, std::fs::read_to_string(path).ok()?)))
+        .take(max)
+        .enumerate()
+        .map(|(i, (path, source))| serde_json::json!({ "path": format!("f{i:05}-{}", Path::new(path).file_name().unwrap().to_string_lossy()), "language": label(path), "source": source }))
+        .collect();
+    let snapshot = serde_json::json!({ "facts": [], "format": "rerail.repository-snapshot/v1", "revision": 0, "files": inputs }).to_string();
+    let start = cpu();
+    let mut out = String::new();
+    let (mut rules, mut failed, mut keys) = (0, 0, 0);
+    for path in documents {
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let compiled = match CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned()) {
+            Ok(compiled) => compiled,
+            // A policy that does not compile is left out, and named.
+            Err(error) => {
+                eprintln!("SKIP {}: {}", path.display(), error.reason);
+                continue;
+            }
+        };
+        rules += 1;
+        let stem = path.file_stem().unwrap().to_string_lossy().into_owned();
+        let result = match compiled.evaluate(snapshot.clone(), "report".to_owned()) {
+            Ok(result) => result,
+            Err(error) => {
+                eprintln!("FAILURE {stem}: {}", error.reason.chars().take(300).collect::<String>());
+                failed += 1;
+                continue;
+            }
+        };
+        let result: serde_json::Value = serde_json::from_str(&result).unwrap();
+        if let Some(failures) = result["failures"].as_array().filter(|f| !f.is_empty()) {
+            eprintln!("FAILURE {stem}: {}", serde_json::Value::from(failures.clone()).to_string().chars().take(300).collect::<String>());
+            failed += 1;
+        }
+        for v in result["violations"].as_array().into_iter().flatten() {
+            if keys == 0 && std::env::var_os("RERAIL_SHOW_VIOLATION").is_some() {
+                eprintln!("VIOLATION {v}");
+            }
+            let line = v.pointer("/span/startLine").cloned().unwrap_or_default();
+            out.push_str(&format!("{stem}\t{}\t{}\t{line}\n", v["code"].as_str().unwrap_or(""), v["path"].as_str().unwrap_or("")));
+            keys += 1;
+        }
+    }
+    eprintln!("RUNTIME {}: {rules} rules ({failed} with failures), {} files, {keys} keys, cpu {:?}", pack.display(), max, cpu() - start);
+    if let Ok(path) = std::env::var("RERAIL_DUMP_KEYS") {
+        let mut lines: Vec<&str> = out.lines().collect();
+        lines.sort_unstable();
+        std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+    }
+}

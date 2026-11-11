@@ -64,7 +64,7 @@ breakable(s) :- kind(s, k), breakable_kind(k).
 // for_await(s): the `await` follows `for` directly. `for (await using x of xs)` has an `await` token too, inside
 // the parentheses.
 .decl for_await(s: node)
-for_await(s) :- kind(s, "for_in_statement"), first_token(s, f), token_after(f, t), text(t, "await").
+for_await(s) :- kind(s, "for_in_statement"), match("(?s)for\\s*await\\b.*", s).
 // repeated(l, r): ESLint's isLooped, by field.  for (init; test; update) body   while (test) body
 .decl repeated(l: node, r: node)
 repeated(l, r) :- kind(l, "for_statement"), (field(l, "condition", r) ; field(l, "increment", r) ; field(l, "body", r)).

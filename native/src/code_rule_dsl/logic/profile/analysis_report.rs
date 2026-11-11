@@ -105,7 +105,7 @@ fn input(state: &State) -> Input {
     i
 }
 
-pub(super) fn report(state: &State) -> (String, serde_json::Value) {
+pub fn report(state: &State) -> (String, serde_json::Value) {
     let i = input(state);
     let findings = analysis::analyze(&i);
     let text = analysis::render(&findings);
@@ -127,9 +127,9 @@ pub(super) fn projection(
     for rule in &prog.rules {
         for a in rule.body.iter().filter_map(Literal::atom) {
             users
-                .entry(a.rel.clone())
+                .entry(a.rel.to_string())
                 .or_default()
-                .insert(rule.head.rel.clone());
+                .insert(rule.head.rel.to_string());
         }
     }
     for (name, native) in &prog.natives {
@@ -166,7 +166,7 @@ pub(super) fn projection(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn production_adapter_emits_ranked_findings_and_json() {

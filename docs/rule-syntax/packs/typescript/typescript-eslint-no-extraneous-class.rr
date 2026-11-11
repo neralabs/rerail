@@ -45,7 +45,8 @@ instance_like(b) :- ts_member(b, m, _), ctor_with_properties(m).
 instance_like(b) :- ts_member(b, m, _), !ts_ctor(m), !op(m, "static"),
     (kind(m, "method_definition") ; kind(m, "method_signature") ; kind(m, "public_field_definition") ;
      kind(m, "index_signature")).
-instance_like(b) :- ts_member(b, m, _), (kind(m, "abstract_method_signature") ; op(m, "abstract")).
+instance_like(b) :- ts_member(b, m, _), (kind(m, "abstract_method_signature") ; kind(m, "public_field_definition"),
+    op(m, "abstract") ; kind(m, "method_definition"), op(m, "abstract")).
 
 .decl allowed(id: symbol)
 allowed("empty") :- option("allowEmpty", "true").

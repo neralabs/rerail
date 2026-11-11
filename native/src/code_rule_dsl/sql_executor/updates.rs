@@ -129,12 +129,8 @@ impl CodeRuleSqlExecutor {
         let previous_counts = prepared.iter().map(|p| (p.name.clone(),self.inputs[&p.name].estimated_len())).collect::<BTreeMap<_,_>>();
         let affected = self.affected(&changed);
         let mut executions = self.executions.clone();
-        let mut work = Work::new(&self.db, &self.scratch);
-        work.versions = Some(&self.versions);
-        work.profiler = self.db.profiler();
         let mut touched = Vec::new();
         let previous_statistics=self.statistics.snapshot();
-        let limits = self.limits.clone();
         self.db
             .execute_batch("SAVEPOINT sql_fact_changes")
             .map_err(error)?;
@@ -142,8 +138,14 @@ impl CodeRuleSqlExecutor {
             let _ = self.db.execute_batch("RELEASE sql_fact_changes");
             return Err(e);
         }
-        let result = (|| -> Result<Value> {
-            let _budget = limits.enter(&self.db)?;
+        let (budget, entered) = match self.limits.enter(self.db.connection_mut()) {
+            Ok(budget) => (Some(budget), Ok(())),
+            Err(e) => (None, Err(e)),
+        };
+        let mut work = Work::new(&self.db, &self.scratch);
+        work.versions = Some(&self.versions);
+        work.profiler = self.db.profiler();
+        let result = entered.and_then(|()| -> Result<Value> {
             let mut deltas = BTreeMap::new();
             for p in &prepared {
                 touched.push(p);
@@ -226,13 +228,17 @@ impl CodeRuleSqlExecutor {
             Ok(
                 json!({"inserted_facts":prepared.iter().map(|p|p.plus.len()).sum::<usize>(),"deleted_facts":prepared.iter().map(|p|p.minus.len()).sum::<usize>(),"programs":reports,"initializations":[],"scratch_tables_created":work.created,"version_nodes":work.version_nodes,"summary_transition_reuses":work.summary_reuses,"migrated_inputs":prepared.iter().filter(|p|p.migrated).map(|p|p.name.clone()).collect::<Vec<_>>()}),
             )
-        })();
+        });
+        let pool = work.pool;
+        if let Some(budget) = budget {
+            budget.leave(self.db.connection_mut());
+        }
         match result {
             Ok(report) => {
                 self.stats_ready.set(true);
                 self.control_ready.set(true);
                 self.versions.commit();
-                self.scratch = work.pool;
+                self.scratch = pool;
                 for p in prepared {
                     self.inputs.insert(p.name.clone(), p.source.clone());
                     if let Some(live) = p.live {

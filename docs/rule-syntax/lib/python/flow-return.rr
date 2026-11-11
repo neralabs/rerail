@@ -53,10 +53,11 @@ none_return(r) :- kind(r, "return_statement"), child(r, v, 0), unparen(v, n), ki
 .decl returns_value(f: node)
 returns_value(f) :- fn_return(f, r), !bare_return(r), !none_return(r).
 
-.decl first_alternative(i: node, b: node, c: node, kw: span)
+.decl first_alternative(i: node, b: node, c: node, kw: loc)
 // The lowest child index, not next_sibling: a comment before the `else` is a child of the if statement too.
-first_alternative(i, b, c, kw) :- kind(i, "if_statement"), field(i, "consequence", b),
-    j = min k : { field(i, "alternative", a), child(i, a, k) }, child(i, c, j), first_token(c, kw).
+// kw is the clause itself: it starts at its keyword (the kind implies it; the tape keeps none).
+first_alternative(i, b, c, c) :- kind(i, "if_statement"), field(i, "consequence", b),
+    j = min k : { field(i, "alternative", a), child(i, a, k) }, child(i, c, j).
 .decl branch_word(c: node, w: symbol)
 branch_word(c, "elif") :- kind(c, "elif_clause").
 branch_word(c, "else") :- kind(c, "else_clause").
@@ -69,7 +70,7 @@ first_jump(b, w) :- kind(b, "block"), j = min i : { child(b, s, i), kind(s, k), 
 
 // else_after_jump(kw, w, jump): in a def RET checks, the `elif`/`else` keyword kw (w says which) follows an if
 // body whose first jump is `jump` (RET505-RET508).
-.decl else_after_jump(kw: span, w: symbol, jump: symbol)
+.decl else_after_jump(kw: loc, w: symbol, jump: symbol)
 else_after_jump(kw, w, j) :- ret_function(f), fn_stmt(f, i), first_alternative(i, b, c, kw), first_jump(b, j),
     branch_word(c, w).
 

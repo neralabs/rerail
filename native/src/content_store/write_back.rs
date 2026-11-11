@@ -15,16 +15,29 @@
 //! - **Durable at the end.** `written` waits for the queue and gives the first error a job met; a
 //!   handle's drop waits too, so no queued write is lost when the process ends.
 //!
-//! A job that fails leaves the store as a cache that lacks that write: the next run misses and
-//! recomputes, as when the write never happened. Its error is reported at `written`.
+//! A job that finds the store busy (another process's writer held it past the job's own write
+//! deadlines, `connection::retry_busy`) is run again whole, after a backoff that starts at
+//! [`JOB_BACKOFF_FIRST`] and doubles to [`JOB_BACKOFF_MAX`], until [`JOB_DEADLINE`]: a job is a
+//! cache's writes (each an upsert), so running it again writes the same. A job that fails
+//! otherwise, or stays busy past the deadline, leaves the store as a cache that lacks that write:
+//! the next run misses and recomputes, as when the write never happened. Its error is reported at
+//! `written`.
 use super::{ContentStore, StoreError, StoreResult};
 use std::any::Any;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
+use std::time::{Duration, Instant};
 
 /// The most bytes queued and unwritten: within the 1 GB budget, a few chunks' memo entries.
 const CAP_BYTES: usize = 192 << 20;
+
+/// The first wait before a busy job runs again: a writer that held the store is often done at once.
+pub const JOB_BACKOFF_FIRST: Duration = Duration::from_micros(50);
+/// The largest wait between a busy job's runs.
+pub const JOB_BACKOFF_MAX: Duration = Duration::from_millis(500);
+/// How long a busy job is run again before it is given up (the run's end waits for it meanwhile).
+pub const JOB_DEADLINE: Duration = Duration::from_secs(120);
 
 /// What a job writes, named so a read of it can find the job (a digest of the table and its key).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -43,8 +56,37 @@ impl Key {
     }
 }
 
-/// A queued write: run on the writer's handle, its own transactions.
-pub type Job = Box<dyn FnOnce(&ContentStore) -> StoreResult<()> + Send>;
+/// A queued write: run on the writer's handle, its own transactions. Run again whole if it finds
+/// the store busy (`run_job`), so it writes what it holds without consuming it.
+pub type Job = Box<dyn FnMut(&ContentStore) -> StoreResult<()> + Send>;
+
+/// Runs `job` until it does not find the store busy, waiting a jittered backoff between runs from
+/// [`JOB_BACKOFF_FIRST`], doubled each time up to [`JOB_BACKOFF_MAX`]; `Busy` once `deadline` has
+/// passed. Returns the outcome and the runs that found the store busy.
+fn run_job(mut job: impl FnMut() -> StoreResult<()>, deadline: Duration) -> (StoreResult<()>, usize) {
+    let started = Instant::now();
+    let mut backoff = JOB_BACKOFF_FIRST;
+    let mut busy = 0;
+    loop {
+        match job() {
+            Err(StoreError::Busy) => {
+                busy += 1;
+                let Some(remaining) = deadline.checked_sub(started.elapsed()).filter(|r| !r.is_zero()) else {
+                    return (Err(StoreError::Busy), busy);
+                };
+                std::thread::sleep(super::connection::jittered(backoff).min(remaining));
+                backoff = (backoff * 2).min(JOB_BACKOFF_MAX);
+            }
+            outcome => return (outcome, busy),
+        }
+    }
+}
+
+/// `job` on `store`, run again while it finds the store busy (`run_job`), its error named by `what`.
+fn retried(store: &ContentStore, what: &str, job: &mut Job) -> StoreResult<()> {
+    let (outcome, busy) = run_job(|| job(store), JOB_DEADLINE);
+    outcome.map_err(|e| StoreError::Invalid(format!("{what}: {e}{}", if busy > 0 { format!(" ({busy} runs found the store busy)") } else { String::new() })))
+}
 
 type Held = Arc<dyn Any + Send + Sync>;
 
@@ -60,6 +102,15 @@ struct State {
     error: Option<String>,
     /// Jobs run, bytes written and the writer's CPU, since the writer started.
     done: (usize, usize, f64),
+    /// Transactions the writer committed its batches in.
+    batches: usize,
+    /// Whether the writer holds a batch's transaction open now.
+    open: bool,
+    /// By what a job writes: jobs queued, their bytes, and the writer's CPU running them.
+    by_what: HashMap<&'static str, (usize, usize, f64)>,
+    /// The most bytes queued at once, and the queue's back-pressure: how often it held a producer, and how long.
+    peak: usize,
+    held: (usize, f64),
 }
 
 #[derive(Default)]
@@ -68,8 +119,29 @@ struct Shared {
     changed: Condvar,
 }
 
-/// A queued job, the bytes it holds, the keys it writes and the holder it pins its sources under.
-type Queued = (Job, usize, Vec<Key>, Option<(String, i64)>);
+/// A queued job, the bytes it holds, the keys it writes, the holder it pins its sources under, and how it runs.
+type Queued = (Job, usize, Vec<Key>, Option<(String, i64)>, Run, &'static str);
+
+/// How the writer runs a job.
+#[derive(Clone, Copy, PartialEq)]
+enum Run {
+    /// In the open batch.
+    Batched,
+    /// After the batch commits, in transactions of its own (`write_back_alone`).
+    Alone,
+    /// Nothing: it commits the batch, for a wait for the writer (`commit_now`). Not counted as a write.
+    Commit,
+}
+
+/// How long the writer's batch stays open with no job queued: jobs come all through a run, so a run's writes commit
+/// in about one transaction.
+const BATCH_IDLE: Duration = Duration::from_millis(500);
+
+/// The bytes a batch holds before it commits: half the queue's cap, so the back-pressure is never waiting on it.
+const BATCH_BYTES: usize = CAP_BYTES / 2;
+
+/// The bytes under which a job is queued past the cap (back-pressure holds only a job of this size or more).
+const SMALL_JOB: usize = CAP_BYTES / 64;
 
 struct Lane {
     tx: mpsc::Sender<Queued>,
@@ -136,12 +208,24 @@ pub fn hold(path: &Path) -> Hold {
     Hold(path.to_path_buf(), register(path))
 }
 
+/// Each kind of job's count, bytes and CPU on the writer's thread, in this process (the profile's write-back).
+static BY_KIND: std::sync::LazyLock<Mutex<std::collections::BTreeMap<&'static str, (usize, usize, f64)>>> = std::sync::LazyLock::new(Default::default);
+
+/// Each kind of job written so far in this process: count, bytes and the writer's CPU, costliest first.
+pub fn written_by_kind() -> Vec<(&'static str, usize, usize, f64)> {
+    let mut v: Vec<_> = BY_KIND.lock().expect("the writer's account").iter().map(|(k, (n, b, c))| (*k, *n, *b, *c)).collect();
+    v.sort_by(|a, b| b.3.total_cmp(&a.3));
+    v
+}
+
 /// The writer's account since it started: jobs, bytes and its thread's CPU (user + sys).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Written {
     pub jobs: usize,
     pub bytes: usize,
     pub cpu: f64,
+    /// The transactions they were committed in.
+    pub batches: usize,
 }
 
 impl ContentStore {
@@ -153,26 +237,65 @@ impl ContentStore {
     /// `bytes` is what it holds until written; `keys` are what it writes, each with the value a
     /// read of it gets meanwhile (`None`: a read waits for the job). The writer's own handle (in a
     /// job) writes at once.
+    ///
+    /// The writer drains what is queued into one transaction (`ContentStore::in_one_transaction`), each job a
+    /// savepoint in it, and a read of a key waits for its batch's commit.
     pub fn write_back(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job) {
+        self.queue(what, bytes, keys, job, Run::Batched);
+    }
+
+    /// [`Self::write_back`] for a job that must commit before it goes on (it starts work on another connection that
+    /// reads what it wrote): the batch before it commits first, and it runs in transactions of its own.
+    pub fn write_back_alone(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job) {
+        self.queue(what, bytes, keys, job, Run::Alone);
+    }
+
+    fn queue(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job, run: Run) {
+        let mut job = job;
         let Some(w) = self.writer() else {
-            if let Err(e) = job(self) {
-                eprintln!("rerail: {what}: the write failed: {e}");
+            if let Err(e) = retried(self, what, &mut job) {
+                eprintln!("rerail: the write failed: {e}");
             }
             return;
         };
-        let job: Job = Box::new(move |store| job(store).map_err(|e| StoreError::Invalid(format!("{what}: {e}"))));
+        let mut job: Job = Box::new(move |store| {
+            let t0 = thread_cpu();
+            let out = retried(store, what, &mut job);
+            let mut by = BY_KIND.lock().expect("the writer's account");
+            let e = by.entry(what).or_default();
+            e.0 += 1;
+            e.1 += bytes;
+            e.2 += thread_cpu() - t0;
+            out
+        });
         {
             let mut s = w.shared.state.lock().expect("the writer's state");
-            // Back-pressure: past the cap, wait for the writer (never for an empty queue).
-            let t = (s.jobs > 0 && s.bytes + bytes > CAP_BYTES).then(std::time::Instant::now);
-            while s.jobs > 0 && s.bytes + bytes > CAP_BYTES {
+            // Back-pressure: past the cap, wait for the writer (never for an empty queue). A small job never waits:
+            // its wait frees next to nothing, and holds the wave behind a large job the writer is writing.
+            let full = |s: &State| bytes >= SMALL_JOB && s.jobs > 0 && s.bytes + bytes > CAP_BYTES;
+            let t = full(&s).then(std::time::Instant::now);
+            // The first hold says what fills the queue (a strict run ends at it).
+            static TOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+            if t.is_some() && !TOLD.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                let mut rows: Vec<_> = s.by_what.iter().map(|(w, (j, b, c))| (*w, *j, *b, *c)).collect();
+                rows.sort_by(|a, b| b.2.cmp(&a.2));
+                let rows: Vec<String> = rows.iter().map(|(w, j, b, c)| format!("{w}: {j} jobs, {:.1} MB, {c:.3} s", *b as f64 / 1048576.0)).collect();
+                eprintln!("rerail: the writer's queue is full ({:.1} MB in {} jobs; {what} brings {:.1} MB): queued so far, by what: {}", s.bytes as f64 / 1048576.0, s.jobs, bytes as f64 / 1048576.0, rows.join("; "));
+            }
+            while full(&s) {
                 s = w.shared.changed.wait(s).expect("the writer's state");
             }
             if let Some(t) = t {
-                super::hazards::wait_in_wave("the queue's back-pressure", t.elapsed().as_secs_f64());
+                let waited = t.elapsed().as_secs_f64();
+                s.held = (s.held.0 + 1, s.held.1 + waited);
+                super::hazards::wait_in_wave("the queue's back-pressure", waited);
             }
             s.bytes += bytes;
             s.jobs += 1;
+            s.peak = s.peak.max(s.bytes);
+            let entry = s.by_what.entry(what).or_default();
+            entry.0 += 1;
+            entry.1 += bytes;
             for (key, held) in &keys {
                 let slot = s.keys.entry(*key).or_insert((0, None));
                 slot.0 += 1;
@@ -184,15 +307,15 @@ impl ContentStore {
         // No threads in the browser build: written now, in order.
         if cfg!(target_family = "wasm") {
             let outcome = job(self);
-            finish(&w.shared, bytes, &keys, outcome, 0.0);
+            finish(&w.shared, bytes, &keys, outcome, 0.0, run != Run::Commit);
             return;
         }
         let mut lane = w.lane.lock().expect("the writer");
         let lane = lane.get_or_insert_with(|| self.start_writer(w));
-        if let Err(mpsc::SendError((job, bytes, keys, _))) = lane.tx.send((job, bytes, keys, holder)) {
+        if let Err(mpsc::SendError((mut job, bytes, keys, _, _, _))) = lane.tx.send((job, bytes, keys, holder, run, what)) {
             // The writer is gone (it panicked): written here, in order, as the writer would have.
             let outcome = job(self);
-            finish(&w.shared, bytes, &keys, outcome, 0.0);
+            finish(&w.shared, bytes, &keys, outcome, 0.0, run != Run::Commit);
         }
     }
 
@@ -205,12 +328,63 @@ impl ContentStore {
             .spawn(move || {
                 // What this thread sends to SQLite no wave waits for.
                 super::hazards::behind_the_run();
-                for (job, bytes, keys, holder) in rx {
-                    *store.holder.lock() = holder;
+                let mut next: Option<Queued> = None;
+                loop {
+                    let Some(first) = next.take().or_else(|| rx.recv().ok()) else { break };
                     let before = thread_cpu();
-                    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
-                        .unwrap_or_else(|_| Err(StoreError::Invalid("a queued write panicked".into())));
-                    finish(&w.shared, bytes, &keys, outcome, thread_cpu() - before);
+                    if first.4 != Run::Batched {
+                        let (mut job, bytes, keys, holder, run, what) = first;
+                        *store.holder.lock() = holder;
+                        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
+                            .unwrap_or_else(|_| Err(StoreError::Invalid("a queued write panicked".into())));
+                        w.shared.state.lock().expect("the writer's state").by_what.entry(what).or_default().2 += thread_cpu() - before;
+                        finish(&w.shared, bytes, &keys, outcome, thread_cpu() - before, run != Run::Commit);
+                        continue;
+                    }
+                    // One transaction while jobs keep coming: it commits once the queue is idle for `BATCH_IDLE`, holds
+                    // `BATCH_BYTES`, or a job comes that runs alone (a wait for the writer sends one: `written`).
+                    let mut batch = vec![first];
+                    let run = |batch: &mut Vec<Queued>, next: &mut Option<Queued>| -> Vec<StoreResult<()>> {
+                        let mut outcomes = Vec::new();
+                        let mut bytes = 0;
+                        loop {
+                            for (job, b, _, holder, _, what) in &mut batch[outcomes.len()..] {
+                                *store.holder.lock() = holder.clone();
+                                bytes += *b;
+                                let c0 = thread_cpu();
+                                outcomes.push(
+                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
+                                        .unwrap_or_else(|_| Err(StoreError::Invalid("a queued write panicked".into()))),
+                                );
+                                w.shared.state.lock().expect("the writer's state").by_what.entry(*what).or_default().2 += thread_cpu() - c0;
+                            }
+                            if bytes >= BATCH_BYTES {
+                                return outcomes;
+                            }
+                            match rx.recv_timeout(BATCH_IDLE) {
+                                Ok(q) if q.4 != Run::Batched => {
+                                    *next = Some(q);
+                                    return outcomes;
+                                }
+                                Ok(q) => batch.push(q),
+                                Err(_) => return outcomes,
+                            }
+                        }
+                    };
+                    let outcomes = match store.in_one_transaction(|| {
+                        w.shared.state.lock().expect("the writer's state").open = true;
+                        let outcomes = run(&mut batch, &mut next);
+                        w.shared.state.lock().expect("the writer's state").open = false;
+                        outcomes
+                    }) {
+                        Ok(outcomes) => outcomes,
+                        Err(e) => batch.iter().map(|_| Err(StoreError::Invalid(format!("the batch's commit: {e}")))).collect(),
+                    };
+                    let cpu = (thread_cpu() - before) / batch.len() as f64;
+                    w.shared.state.lock().expect("the writer's state").batches += 1;
+                    for ((_, bytes, keys, _, _, _), outcome) in batch.into_iter().zip(outcomes) {
+                        finish(&w.shared, bytes, &keys, outcome, cpu, true);
+                    }
                 }
             })
             .expect("the store's writer thread");
@@ -226,6 +400,9 @@ impl ContentStore {
     /// Waits for the jobs that write `key`, if any is queued; a read of anything else never waits.
     pub fn settle(&self, key: &Key) {
         let Some(w) = self.writer() else { return };
+        if w.shared.state.lock().expect("the writer's state").keys.contains_key(key) {
+            self.commit_now();
+        }
         let mut s = w.shared.state.lock().expect("the writer's state");
         let t = s.keys.contains_key(key).then(std::time::Instant::now);
         while s.keys.contains_key(key) {
@@ -240,6 +417,9 @@ impl ContentStore {
     /// a job met since the last call.
     pub fn written(&self) -> StoreResult<()> {
         let Some(w) = self.writer() else { return Ok(()) };
+        if w.shared.state.lock().expect("the writer's state").jobs > 0 {
+            self.commit_now();
+        }
         let mut s = w.shared.state.lock().expect("the writer's state");
         let t = (s.jobs > 0).then(std::time::Instant::now);
         while s.jobs > 0 {
@@ -254,11 +434,34 @@ impl ContentStore {
         }
     }
 
+    /// Before a write of this handle's own (not queued): the writer's open batch commits, so the write waits for the
+    /// jobs it holds, not for the batch to go idle. Every such write is one to move behind the writer.
+    pub(super) fn yield_writer(&self) {
+        if self.writer().is_some_and(|w| w.shared.state.lock().expect("the writer's state").open) {
+            self.commit_now();
+        }
+    }
+
+    /// Ends the writer's open batch: an empty job that runs alone, queued behind it.
+    fn commit_now(&self) {
+        self.queue("a wait for the writer", 0, Vec::new(), Box::new(|_| Ok(())), Run::Commit);
+    }
+
     /// What the writer has done since it started.
     pub fn written_so_far(&self) -> Written {
         let Some(w) = self.writer() else { return Written::default() };
         let s = w.shared.state.lock().expect("the writer's state");
-        Written { jobs: s.done.0, bytes: s.done.1, cpu: s.done.2 }
+        Written { jobs: s.done.0, bytes: s.done.1, cpu: s.done.2, batches: s.batches }
+    }
+
+    /// The writer's work by what each job writes, `(what, jobs, bytes, writer CPU)`, costliest first; the most bytes
+    /// queued at once; and the back-pressure's holds of a producer, `(count, seconds)`.
+    pub fn written_by_what(&self) -> (Vec<(&'static str, usize, usize, f64)>, usize, (usize, f64)) {
+        let Some(w) = self.writer() else { return (Vec::new(), 0, (0, 0.0)) };
+        let s = w.shared.state.lock().expect("the writer's state");
+        let mut rows: Vec<_> = s.by_what.iter().map(|(w, (j, b, c))| (*w, *j, *b, *c)).collect();
+        rows.sort_by(|a, b| b.3.total_cmp(&a.3));
+        (rows, s.peak, s.held)
     }
 
     /// This handle gone (its drop): the last of the store's ends the writer, its queue written.
@@ -269,11 +472,11 @@ impl ContentStore {
     }
 }
 
-fn finish(shared: &Shared, bytes: usize, keys: &[Key], outcome: StoreResult<()>, cpu: f64) {
+fn finish(shared: &Shared, bytes: usize, keys: &[Key], outcome: StoreResult<()>, cpu: f64, counted: bool) {
     let mut s = shared.state.lock().expect("the writer's state");
     s.bytes -= bytes;
     s.jobs -= 1;
-    s.done = (s.done.0 + 1, s.done.1 + bytes, s.done.2 + cpu);
+    s.done = (s.done.0 + usize::from(counted), s.done.1 + bytes, s.done.2 + cpu);
     for key in keys {
         if let Some(slot) = s.keys.get_mut(key) {
             slot.0 -= 1;
@@ -320,6 +523,38 @@ fn thread_cpu() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A job that finds the store busy is run again at once, then after waits that double: three busy runs, then
+    /// written, cost well under a millisecond's backoff each to start.
+    #[test]
+    fn a_busy_job_is_run_again_after_a_fast_backoff() {
+        let mut runs = 0;
+        let started = Instant::now();
+        let (outcome, busy) = run_job(
+            || {
+                runs += 1;
+                if runs <= 3 { Err(StoreError::Busy) } else { Ok(()) }
+            },
+            JOB_DEADLINE,
+        );
+        assert!(outcome.is_ok());
+        assert_eq!((runs, busy), (4, 3));
+        // 50 + 100 + 200 µs of backoff at most (jittered to half or more), and a slow machine's scheduling.
+        assert!(started.elapsed() < Duration::from_millis(250), "{:?}", started.elapsed());
+    }
+
+    /// A job busy past its deadline is given up, busy; any other error is not run again.
+    #[test]
+    fn a_job_busy_past_its_deadline_or_failing_otherwise_is_given_up() {
+        let mut runs = 0;
+        let (outcome, busy) = run_job(|| { runs += 1; Err(StoreError::Busy) }, Duration::from_millis(20));
+        assert!(matches!(outcome, Err(StoreError::Busy)));
+        assert!(busy == runs && runs > 1, "{runs} runs");
+        let mut runs = 0;
+        let (outcome, busy) = run_job(|| { runs += 1; Err(StoreError::Invalid("no".into())) }, JOB_DEADLINE);
+        assert!(matches!(outcome, Err(StoreError::Invalid(_))));
+        assert_eq!((runs, busy), (1, 0));
+    }
 
     fn store(name: &str) -> (PathBuf, ContentStore) {
         let dir = std::env::temp_dir().join(format!("rerail-write-back-{name}-{}", std::process::id()));

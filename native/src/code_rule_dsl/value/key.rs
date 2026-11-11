@@ -1,6 +1,7 @@
 //! ECMAScript's conversions between numbers and strings, exactly: `Number::toString`,
 //! StringToNumber, StringToBigInt, ToInt32 and ToUint32; and ESLint's static property names.
 
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::language::Family;
 
 use super::ecma::{cooked, number, operand, ops, string_node};
@@ -202,7 +203,7 @@ pub(crate) fn member_access_name<'r, D: Doc>(
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 /// The key node that ESLint's `key` or `property` is: a computed name without its brackets and
 /// parentheses, since ESTree has neither.
 pub(crate) fn key_node<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
@@ -287,46 +288,8 @@ pub(crate) fn identifier_name(text: &str) -> Option<Vec<u16>> {
     Some(out)
 }
 
-/// `Number::toString(x)` in base 10: the shortest digits that read back as `x`, laid out as
-/// ECMA-262 §6.1.6.1.20 lays them out.
-pub(crate) fn number_to_string(value: f64) -> String {
-    if value.is_nan() {
-        return "NaN".to_owned();
-    }
-    if value == 0.0 {
-        return "0".to_owned();
-    }
-    if value.is_infinite() {
-        return if value > 0.0 { "Infinity" } else { "-Infinity" }.to_owned();
-    }
-    if value < 0.0 {
-        return format!("-{}", number_to_string(-value));
-    }
-    // Rust's shortest round-trip digits, as `d.ddde±x`.
-    let scientific = format!("{value:e}");
-    let (mantissa, exponent) = scientific
-        .split_once('e')
-        .expect("LowerExp writes an exponent");
-    let digits = mantissa.replace('.', "");
-    let exponent: i32 = exponent.parse().expect("an integer exponent");
-    let k = digits.len() as i32;
-    let n = exponent + 1;
-    if k <= n && n <= 21 {
-        format!("{digits}{}", "0".repeat((n - k) as usize))
-    } else if 0 < n && n <= 21 {
-        format!("{}.{}", &digits[..n as usize], &digits[n as usize..])
-    } else if -6 < n && n <= 0 {
-        format!("0.{}{digits}", "0".repeat((-n) as usize))
-    } else {
-        let sign = if n > 0 { '+' } else { '-' };
-        let (first, rest) = digits.split_at(1);
-        if rest.is_empty() {
-            format!("{first}e{sign}{}", (n - 1).abs())
-        } else {
-            format!("{first}.{rest}e{sign}{}", (n - 1).abs())
-        }
-    }
-}
+// The DSL's number text, which is ECMAScript's (`matcher::transform`, the engine's).
+pub use crate::code_rule_dsl::matcher::transform::number_to_string;
 
 /// `StrWhiteSpaceChar`: ECMAScript white space and line terminators.
 fn is_str_white_space(c: char) -> bool {
@@ -454,7 +417,7 @@ pub(crate) fn to_int32(value: f64) -> i32 {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::oracle;
@@ -501,8 +464,7 @@ mod tests {
                     .find(|node| node.kind() == "arguments")
                     .expect("the call's arguments");
                 let [a, b] = arguments
-                    .children()
-                    .filter(|child| child.is_named())
+                    .named()
                     .collect::<Vec<_>>()
                     .try_into()
                     .unwrap_or_else(|_| panic!("{language:?} {source:?} has two arguments"));
@@ -532,8 +494,7 @@ mod tests {
             .find(|node| node.kind() == "arguments")
             .expect("the call's arguments");
         let [left, right] = arguments
-            .children()
-            .filter(|child| child.is_named())
+            .named()
             .collect::<Vec<_>>()
             .try_into()
             .unwrap_or_else(|_| panic!("two bigint arguments"));

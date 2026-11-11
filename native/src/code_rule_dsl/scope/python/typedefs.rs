@@ -11,15 +11,16 @@
 //! Other calls' arguments are not; `Literal[...]` never is. Whether a generic or callable is the
 //! typing one is a qualified name, read from the finished table.
 
+use crate::code_rule_dsl::tree::Tree;
 use super::unparenthesized;
 
 use super::super::options::PythonTyping;
 use super::super::{
-    Annotation, BuildError, Builder, DEADLINE_INTERVAL, Import, MAX_BUILD_DEPTH, NodeRef, Reading,
+    Annotation, BuildError, Builder, DEADLINE_INTERVAL, Import, MAX_BUILD_DEPTH, Reading,
     ScopeTable, annotation_offset,
 };
 use super::super::{Origin, ScopeKind};
-use super::{Visit, Visitor, named};
+use super::{Visit, Visitor};
 use crate::code_rule_dsl::identifier::python_identifier;
 use crate::code_rule_dsl::literal::{SubDoc, annotation, semantic};
 use crate::code_rule_dsl::module_path::ModulePath;
@@ -123,20 +124,7 @@ pub(super) const SUBSCRIPT_MEMBERS: &[&str] = &[
     "WeakValueDictionary",
 ];
 
-/// Where a type definition may start: recorded while the table is built, classified after.
-pub(crate) struct TypeRoot {
-    pub(super) node: NodeRef,
-    pub(super) kind: RootKind,
-}
-
-pub(super) enum RootKind {
-    /// An annotation, a `type` statement's value, a type parameter's bound.
-    Definition,
-    /// A subscript or call whose name may be a typing generic or callable.
-    Candidate,
-    /// The value of `x: A = value`, a type definition where `A` is `TypeAlias`.
-    AliasValue(NodeRef),
-}
+pub use crate::code_rule_dsl::scope::{RootKind, TypeRoot};
 
 /// The name a subscript's value or a call's callee ends with.
 pub(super) fn last_segment<D: Doc>(node: &Node<'_, D>) -> String {
@@ -180,7 +168,7 @@ fn qualified_name<D: Doc>(
                 head = head.field("object")?;
             }
             "parenthesized_expression" => {
-                let inner = named(&head)
+                let inner = head.named()
                     .filter(|child| child.kind() != "comment")
                     .collect::<Vec<_>>();
                 let [inner] = inner.as_slice() else {
@@ -445,7 +433,7 @@ fn plain_string<D: Doc>(node: &Node<'_, D>) -> bool {
     let parts: Vec<Node<'_, D>> = if node.kind() == "string" {
         vec![node.clone()]
     } else {
-        named(node).filter(|part| part.kind() == "string").collect()
+        node.named().filter(|part| part.kind() == "string").collect()
     };
     !parts.is_empty()
         && parts.iter().all(|part| {
@@ -460,7 +448,7 @@ fn plain_string<D: Doc>(node: &Node<'_, D>) -> bool {
 /// The expression a `type` node wraps.
 fn unwrap_type<'r, D: Doc>(node: &Node<'r, D>) -> Node<'r, D> {
     if node.kind() == "type" {
-        let mut inner = named(node).filter(|child| child.kind() != "comment");
+        let mut inner = node.named().filter(|child| child.kind() != "comment");
         if let (Some(expression), None) = (inner.next(), inner.next()) {
             return expression;
         }
@@ -471,7 +459,7 @@ fn unwrap_type<'r, D: Doc>(node: &Node<'r, D>) -> Node<'r, D> {
 /// The elements of a list or tuple display (parentheses aside).
 fn display_elements<'r, D: Doc>(node: &Node<'r, D>) -> Option<Vec<Node<'r, D>>> {
     matches!(node.kind().as_ref(), "list" | "tuple").then(|| {
-        named(node)
+        node.named()
             .filter(|child| child.kind() != "comment")
             .collect()
     })
@@ -523,7 +511,7 @@ impl Classifier<'_> {
             "call" => self.call(node, flags, found)?,
             "comment" => {}
             _ => {
-                for child in named(node) {
+                for child in node.named() {
                     self.walk(&child, flags, found)?;
                 }
             }
@@ -551,7 +539,7 @@ impl Classifier<'_> {
         found: &mut Vec<Node<'r, D>>,
     ) -> Visit {
         let value = node.field("value");
-        let slices: Vec<Node<'r, D>> = named(node)
+        let slices: Vec<Node<'r, D>> = node.named()
             .filter(|child| {
                 child.kind() != "comment"
                     && value
@@ -585,7 +573,7 @@ impl Classifier<'_> {
         };
         // A slice of several elements is Ruff's tuple.
         let elements: Vec<Node<'r, D>> = match slices.as_slice() {
-            [single] if single.kind() == "tuple" => named(single)
+            [single] if single.kind() == "tuple" => single.named()
                 .filter(|child| child.kind() != "comment")
                 .collect(),
             _ => slices.clone(),
@@ -626,7 +614,7 @@ impl Classifier<'_> {
         flags: Flags,
         found: &mut Vec<Node<'r, D>>,
     ) -> Visit {
-        let mut parts = named(node).filter(|child| child.kind() != "comment");
+        let mut parts = node.named().filter(|child| child.kind() != "comment");
         let Some(value) = parts.next() else {
             return Ok(());
         };
@@ -634,7 +622,7 @@ impl Classifier<'_> {
         let elements: Vec<Node<'r, D>> = parts
             .filter(|part| part.kind() == "type_parameter")
             .flat_map(|parameter| {
-                named(&parameter)
+                parameter.named()
                     .filter(|child| child.kind() != "comment")
                     .collect::<Vec<_>>()
             })
@@ -673,7 +661,7 @@ impl Classifier<'_> {
         flags: Flags,
         found: &mut Vec<Node<'r, D>>,
     ) -> Visit {
-        for entry in named(dict) {
+        for entry in dict.named() {
             match entry.kind().as_ref() {
                 "pair" => {
                     if let Some(key) = entry.field("key") {
@@ -708,7 +696,7 @@ impl Classifier<'_> {
             return Ok(());
         };
         // Arguments in source order: positional (a starred one too) and keyword.
-        let items: Vec<Node<'r, D>> = named(&arguments)
+        let items: Vec<Node<'r, D>> = arguments.named()
             .filter(|child| child.kind() != "comment")
             .collect();
         let positional: Vec<&Node<'r, D>> = items
@@ -817,7 +805,7 @@ impl Classifier<'_> {
                     match item.kind().as_ref() {
                         "keyword_argument" => self.walk(&value(item), def, found)?,
                         "dictionary_splat" => {
-                            let inner = named(item).find(|child| child.kind() != "comment");
+                            let inner = item.named().find(|child| child.kind() != "comment");
                             match inner {
                                 Some(dict) if dict.kind() == "dictionary" => {
                                     self.dict(&dict, flags, found)?
@@ -837,9 +825,7 @@ impl Classifier<'_> {
                         self.walk(item, non, found)?;
                     }
                 }
-                // Stub tables carry their target minor. Outside stubs, 0 means the latest
-                // grammar, which has no legacy keyword fields.
-                let legacy = matches!(self.table.reading.python_minor, 1..13)
+                let legacy = self.table.reading.target_minor() < 13
                     && match positional.as_slice() {
                         [_] => true,
                         [_, second] => {
@@ -891,7 +877,7 @@ impl Classifier<'_> {
 /// Classifies the string type definitions under the recorded roots, parses them, reads their
 /// names in the scopes they occur in, and repeats for the strings nested in them. Their names are
 /// deferred forward references: they see every binding, the module's first.
-pub(crate) fn string_type_definitions<D: Doc>(
+pub fn string_type_definitions<D: Doc>(
     builder: &mut Builder,
     root: &Node<'_, D>,
     reading: Reading,
@@ -1066,7 +1052,7 @@ fn host_scopes<R: Doc>(builder: &Builder, root: &Node<'_, R>, scope: u32) -> Vec
                         .and_then(|node| semantic::Comprehension::of(&node.kind()))
                         .unwrap_or(semantic::Comprehension::List),
                     is_async: node.is_some_and(|node| {
-                        named(&node)
+                        node.named()
                             .filter(|clause| clause.kind() == "for_in_clause")
                             .any(|clause| clause.children().any(|token| token.kind() == "async"))
                     }),

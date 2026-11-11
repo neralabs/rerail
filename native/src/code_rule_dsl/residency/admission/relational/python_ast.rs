@@ -1,4 +1,5 @@
 //! Canonical Python facts: one broad preparation pass, then indexed typed SQL reads.
+use super::ast_stage::{AstProducer, PublishedAst};
 use super::{Result, invalid, source, sql_error, syntax, table};
 use crate::code_rule_dsl::{budget, value::python_ast as canonical};
 use rusqlite::{Connection, types::Value, vtab::Context};
@@ -7,12 +8,6 @@ use std::{
     sync::{Arc, atomic::AtomicUsize},
 };
 
-#[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Spec {
-    pub roots: String,
-    pub syntax: String,
-    pub fields: Vec<String>,
-}
 pub(in crate::code_rule_dsl) const FIELDS: &[&str] = &[
     "dump",
     "body_sha256",
@@ -24,34 +19,6 @@ pub(in crate::code_rule_dsl) const FIELDS: &[&str] = &[
     "column",
     "repr_unparse",
 ];
-pub(super) fn shape(fields: &[String]) -> String {
-    let mut columns = vec![
-        "CAST(NULL AS TEXT) AS __path".to_owned(),
-        "CAST(NULL AS INTEGER) AS id".to_owned(),
-    ];
-    columns.extend(fields.iter().map(|f| format!("CAST(NULL AS TEXT) AS {f}")));
-    format!("SELECT {} WHERE 0", columns.join(","))
-}
-pub(super) fn demand(
-    db: &Connection,
-    spec: &Spec,
-    trees: &[super::producer::Tree],
-    files: &syntax::Files,
-    work: Arc<AtomicUsize>,
-) -> Result<super::producer::Demand> {
-    let request = super::Reachability {
-        ordered_first: None,
-        roots: spec.roots.clone(),
-        edges: String::new(),
-        batch_size: 256,
-        forest: false,
-        syntax: Some(spec.syntax.clone()),
-        expand: false,
-    };
-    let mut demand = syntax::demand(db, &request, trees, files, work)?;
-    demand.python_ast = Some(spec.fields.clone());
-    Ok(demand)
-}
 /// Column storage, not a JSON property bag or a vector of complete syntax rows.
 pub(in crate::code_rule_dsl) struct Output {
     fields: Vec<String>,
@@ -69,7 +36,7 @@ impl Output {
         }
     }
 }
-pub(super) fn execute(
+fn execute(
     pending: Vec<(usize, super::producer::Demand)>,
     contexts: &mut [budget::Context],
     allowance: &mut super::producer::Allowance,
@@ -95,12 +62,13 @@ pub(super) fn execute(
                 let document = *by_document.entry(key).or_insert_with(|| {
                     let i = documents.len();
                     documents.push(canonical::Document {
-                        source: facts.python_ast_source(),
+                        source: facts.ast_source(),
                         requests: Vec::new(),
                     });
                     i
                 });
-                let request = facts.python_ast_request(root.node, fields.clone())?;
+                let (start, end, kind) = facts.ast_root(root.node)?;
+                let request = canonical::Request { start, end, kind, fields: fields.clone() };
                 let row = documents[document].requests.len();
                 documents[document].requests.push(request);
                 mapping.push((document, row));
@@ -150,7 +118,7 @@ pub(super) fn execute(
                         output.values[column].push(value);
                     }
                 }
-                Ok(super::producer::Completed::python(output, demand.paths))
+                Ok(super::producer::Completed::python(Box::new(output), demand.paths))
             })
         })
         .collect()
@@ -234,7 +202,7 @@ impl syntax::Source for Published {
             .map_err(|e| rusqlite::Error::UserFunctionError(e.reason.into()))
     }
 }
-pub(super) fn publish(
+fn publish(
     output: Output,
     paths: Vec<String>,
     db: &Connection,
@@ -263,4 +231,27 @@ pub(super) fn publish(
     )
     .map(|_| ())
     .map_err(sql_error)
+}
+
+/// Python's canonical AST stage (`AstProducer`): CPython's `ast` of each root, by field.
+pub struct PythonAst;
+
+impl AstProducer for PythonAst {
+    fn fields(&self) -> &'static [&'static str] {
+        FIELDS
+    }
+    fn execute(
+        &self,
+        pending: Vec<(usize, super::producer::Demand)>,
+        contexts: &mut [budget::Context],
+        allowance: &mut super::producer::Allowance,
+    ) -> Vec<Result<super::producer::Completed>> {
+        execute(pending, contexts, allowance)
+    }
+}
+
+impl PublishedAst for Output {
+    fn publish(self: Box<Self>, paths: Vec<String>, db: &Connection, name: &str, work: Arc<AtomicUsize>) -> Result<()> {
+        publish(*self, paths, db, name, work)
+    }
 }

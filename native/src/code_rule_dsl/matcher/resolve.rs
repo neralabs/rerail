@@ -1,8 +1,8 @@
+use crate::code_rule_dsl::tree::Tree;
 use super::GrammarMatcher;
 use super::util::{UNKNOWN, UTIL_EXCEEDED, UTIL_STEPS_LEFT, UtilLimit};
 use crate::code_rule_dsl::budget;
 use crate::code_rule_dsl::identifier::{name_in, python_identifier};
-use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::language::{
     JsxRuntime, SourceType, has_module_syntax, is_stub_file, jsx_runtime_in_source,
@@ -11,15 +11,10 @@ use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::literal::{Grammar, SubTree};
 use crate::code_rule_dsl::model::FileInput;
 use crate::code_rule_dsl::module_path::ModulePath;
-use crate::code_rule_dsl::package_manifest::Manifest;
 use crate::code_rule_dsl::scope::options::{DEFAULT_PYTHON_MINOR, LanguageOptions, PythonOptions};
-use crate::code_rule_dsl::scope::php_names::{self, PhpNames, Resolved};
 use crate::code_rule_dsl::scope::usage::Usage;
 use crate::code_rule_dsl::scope::{Binding, BuildError, Import, Reading, ScopeTable, TYPE, VALUE};
-use crate::code_rule_dsl::suppress::{
-    BiomeSuppressions, ClippyIndex, EslintDirectives, NoqaIndex, NosecIndex, OxlintDirectives,
-    PhpcsIndex, PhpstanIndex, PsalmIndex, RerailIgnores, SqlfluffIndex, VueDirectives,
-};
+use crate::code_rule_dsl::suppress::RerailIgnores;
 use crate::code_rule_dsl::value::NodeRef;
 use crate::code_rule_dsl::value::structure::{Equality, Tok};
 use crate::code_rule_dsl::value::{Followed, Value};
@@ -30,90 +25,91 @@ use std::collections::BTreeSet;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// `resolves`: file-local name resolution (a Rerail extension). It binds and reads no captures.
 #[derive(Clone)]
-pub(crate) struct Resolves {
+pub struct Resolves {
     /// `global`: the node is a reference to one of these names that no file-local binding
     /// visible there shadows.
-    pub(crate) globals: BTreeSet<String>,
+    pub globals: BTreeSet<String>,
     /// `import`: the node is a name or attribute chain whose head is bound by an import, and the
     /// import's qualified name joined with the rest of the chain is one of these (Python); or a
     /// name or path whose path, its head read through the file's imports, is one of these (Rust,
     /// `ScopeRules::import_path`).
-    pub(crate) imports: BTreeSet<String>,
+    pub imports: BTreeSet<String>,
     /// Attribute-chain kinds (Python) or path kinds (Rust), which only `import` accepts.
-    pub(crate) attribute_kinds: BTreeSet<u16>,
+    pub attribute_kinds: BTreeSet<u16>,
     /// `directives: "eslint"`: `/* global */` comments add and remove global names.
-    pub(crate) directives: bool,
-    pub(crate) language: GrammarDialect,
+    pub directives: bool,
+    pub language: GrammarDialect,
     /// Kinds a matching node can have: the grammar's reference kinds.
-    pub(crate) reference_kinds: BTreeSet<u16>,
+    pub reference_kinds: BTreeSet<u16>,
     /// Parenthesized expressions, which are transparent: Ruff's and ESTree's ASTs have none.
-    pub(crate) paren_kinds: BTreeSet<u16>,
+    pub paren_kinds: BTreeSet<u16>,
     /// The query's `languageOptions`: with them, a `global` name must also be a declared global.
-    pub(crate) options: Option<Arc<LanguageOptions>>,
+    pub options: Option<Arc<LanguageOptions>>,
     /// A Python query's `languageOptions`: a `global` name must also be a builtin of its
     /// version, and from 3.14 annotations are read after the module.
-    pub(crate) python: Option<Arc<PythonOptions>>,
+    pub python: Option<Arc<PythonOptions>>,
     /// `declared` (default true): under `languageOptions` a `global` name must also be a declared
     /// global (TypeScript) or a builtin of the version (Python). `false` asks only that no
     /// file-local binding shadows it, as without options.
-    pub(crate) declared: bool,
+    pub declared: bool,
     /// `scriptDeclarations`: in a script, a `global` name bound at the top level is the global
     /// variable itself (eslint-scope's global scope holds a script's top-level declarations), so
     /// it matches whether or not it is declared; parameters and block bindings still shadow.
-    pub(crate) script_declarations: bool,
+    pub script_declarations: bool,
     /// `this`: the node is a `this` of the form below.
-    pub(crate) this_global: bool,
+    pub this_global: bool,
     /// `this: "globalScope"` (else `"global"`, whose value is the global object): a `this` that
     /// eslint-scope's global scope holds, so no nested scope does (ESLint's no-alert).
-    pub(crate) this_scope: bool,
+    pub this_scope: bool,
     /// `sloppyFunctions` (with `this: "global"`): also a `this` whose owner is an ordinary function
     /// (not an arrow, method, accessor or class member) that is not strict, whose default binding
     /// is the global object (ESLint's no-eval).
-    pub(crate) sloppy_functions: bool,
+    pub sloppy_functions: bool,
     /// `this` expressions, which only `this: "global"` accepts.
-    pub(crate) this_kinds: BTreeSet<u16>,
+    pub this_kinds: BTreeSet<u16>,
     /// `imported` (Python): the node is a name an import statement imports, and the qualified
     /// name it imports is one of these.
-    pub(crate) imported: BTreeSet<String>,
+    pub imported: BTreeSet<String>,
     /// `prefix`: an `import` or `imported` name also matches every name under it.
-    pub(crate) prefix: bool,
+    pub prefix: bool,
     /// `relative: "text"`: `imported` names a relative import by its module text, ignoring the
     /// dots (Ruff's T100, F404, F407 read `module` without `level`): `from .a import b` imports
     /// `a.b`, `from . import b` imports `b`. Otherwise (`"never"`) relative imports name nothing.
-    pub(crate) relative_text: bool,
+    pub relative_text: bool,
     /// `dotted_name`, the kind of the names an import statement holds.
-    pub(crate) dotted_kinds: BTreeSet<u16>,
+    pub dotted_kinds: BTreeSet<u16>,
     /// `global: true`: any unshadowed declared global (TypeScript) or builtin (Python), under the
     /// query's `languageOptions` or their defaults.
-    pub(crate) global_any: bool,
+    pub global_any: bool,
     /// `import: true` (Python): the name or attribute chain has a qualified name (Ruff's
     /// `resolve_qualified_name(..).is_some()`): its head is an import, a definition the module
     /// path qualifies, or an unshadowed builtin.
-    pub(crate) import_any: bool,
+    pub import_any: bool,
     /// `unresolved`: the reference has no binding, is no builtin or declared global, and (Python)
     /// a visible star import may (`Star`) or may not (`Unbound`) bind it.
-    pub(crate) unresolved: Option<Unresolved>,
+    pub unresolved: Option<Unresolved>,
     /// Python string kinds, which `unresolved` reads as a module `__all__` entry's name.
-    pub(crate) string_kinds: BTreeSet<u16>,
+    pub string_kinds: BTreeSet<u16>,
     /// `beforeLocal` (Python): the reference is its function's first read of the binding that the
     /// function's own later binding of the name shadows (Ruff's F823).
-    pub(crate) before_local: bool,
+    pub before_local: bool,
     /// `seenBefore` (Python, with `imported` top-level modules): any node that Ruff visits after an
     /// import of one of them (Ruff's `seen_module`).
-    pub(crate) seen_before: bool,
+    pub seen_before: bool,
     /// Inside an `eslintDirective` tree: the node's text is a name, which holds where it is listed
     /// (or `global: true`) and a declared global of the query's `languageOptions` (the builtins of
     /// its ecmaVersion and environment, and its configured globals, `off` aside). `/* global */`
     /// comments, which the tree is one of, are not read.
-    pub(crate) item: bool,
+    pub item: bool,
 }
 
 /// Which unresolved references `resolves.unresolved` matches.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Unresolved {
+pub enum Unresolved {
     /// `true`: Ruff's F821, ESLint's no-undef.
     Unbound,
     /// `"star"`: Ruff's F405, a name only a star import can bind.
@@ -186,7 +182,7 @@ fn is_strict<D: Doc>(options: &LanguageOptions, node: &Node<'_, D>) -> bool {
     if !options.strict_mode() {
         return false;
     }
-    if options.all_strict(file_source_type()) {
+    if options.all_strict(file_source_type_for(options)) {
         return true;
     }
     std::iter::once(node.clone())
@@ -210,15 +206,14 @@ fn is_strict<D: Doc>(options: &LanguageOptions, node: &Node<'_, D>) -> bool {
 /// Whether a body's directive prologue (its leading string-literal statements) holds
 /// `'use strict'` or `"use strict"`, spelled exactly so.
 fn has_use_strict<D: Doc>(body: &Node<'_, D>) -> bool {
-    for statement in body.children().filter(|child| child.is_named()) {
+    for statement in body.named() {
         match statement.kind().as_ref() {
             "comment" | "hash_bang_line" => continue,
             "expression_statement" => {}
             _ => return false,
         }
         let mut parts = statement
-            .children()
-            .filter(|part| part.is_named() && part.kind() != "comment");
+            .named_code();
         let (Some(literal), None) = (parts.next(), parts.next()) else {
             return false;
         };
@@ -243,20 +238,21 @@ enum ThisBoundary {
 }
 
 impl Resolves {
-    pub(super) fn holds<D: Doc>(&self, node: &Node<'_, D>) -> bool {
-        with_adapter!(Family::of(self.language), A => self.holds_in::<<A as Adapter>::Scope, D>(node))
+    pub fn holds<D: Doc>(&self, node: &Node<'_, D>) -> bool {
+        { let pack = language_pack::pack(Family::of(self.language)); self.holds_in::<D>(pack, node) }
     }
 
     /// `holds`, where `S` reads the family's scope.
-    fn holds_in<S: ScopeRules, D: Doc>(&self, node: &Node<'_, D>) -> bool {
-        if S::FLOW {
-            return self.php_holds(node);
+    fn holds_in<D: Doc>(&self, pack: &dyn language_pack::LanguagePack, node: &Node<'_, D>) -> bool {
+        // A family with its own reading (PHP's names and variable flow, `ScopeRules::resolves`).
+        if let Some(holds) = language_pack::scope_resolves(pack, self, node) {
+            return holds;
         }
         if self.item {
             let text = node.text();
             return (self.global_any || self.globals.contains(text.as_ref()))
                 && self.options.as_ref().is_none_or(|options| {
-                    options.declares_in(&text, VALUE, None, file_source_type())
+                    options.declares_in(&text, VALUE, None, file_source_type_for(options))
                 });
         }
         if self.seen_before {
@@ -289,17 +285,16 @@ impl Resolves {
             return false;
         }
         if let Some(mode) = self.unresolved {
-            return !self.attribute_kinds.contains(&kind) && self.is_unresolved::<S, D>(node, mode);
+            return !self.attribute_kinds.contains(&kind) && self.is_unresolved::<D>(pack, node, mode);
         }
         let chain = (!self.imports.is_empty() || self.import_any)
-            && (S::IMPORT_PATHS || self.import_chain(node).is_some());
+            && (pack.scope_import_paths() || self.import_chain(node).is_some());
         let text = name_in(self.language, node.text());
-        // Without language options only a comment can make another name global; without the
-        // opt-in no table is needed.
-        let unlisted = self.directives && self.options.is_none();
-        let global = (!self.globals.is_empty() || unlisted || self.global_any)
+        // A `/* global */` comment makes a name a global variable of that name, never one of the
+        // listed names: the list decides, and an unlisted name needs no table.
+        let global = (!self.globals.is_empty() || self.global_any)
             && !self.attribute_kinds.contains(&kind)
-            && (unlisted || self.global_any || self.globals.contains(text.as_ref()))
+            && (self.global_any || self.globals.contains(text.as_ref()))
             && (!self.declared
                 || self
                     .python
@@ -312,19 +307,19 @@ impl Resolves {
             return false;
         };
         (global && self.is_global(&table, node, text.as_ref()))
-            || (chain && S::IMPORT_PATHS && self.is_import_path::<S, D>(&table, node))
-            || (chain && !S::IMPORT_PATHS && self.is_import(&table, node))
+            || (chain && pack.scope_import_paths() && self.is_import_path::<D>(pack, &table, node))
+            || (chain && !pack.scope_import_paths() && self.is_import(&table, node))
     }
 
     /// Rust: the path the read at `node` names through the file's imports is listed (or with
     /// `import: true`, there is one).
-    fn is_import_path<S: ScopeRules, D: Doc>(
+    fn is_import_path<D: Doc>(
         &self,
-        table: &ScopeTable,
+        pack: &dyn language_pack::LanguagePack, table: &ScopeTable,
         node: &Node<'_, D>,
     ) -> bool {
         let file = file_path();
-        S::import_path(table, node, file.as_deref()).is_some_and(|path| {
+        language_pack::scope_import_path(pack, table, node, file.as_deref()).is_some_and(|path| {
             self.import_any
                 || self.imports.contains(&path)
                 || (self.prefix
@@ -336,7 +331,7 @@ impl Resolves {
 
     /// Ruff's F821 and F405, ESLint's no-undef: `node` reads a name with no binding (or one an
     /// unconditional `del` unbound) that is no builtin, declared global or implicit name.
-    fn is_unresolved<S: ScopeRules, D: Doc>(&self, node: &Node<'_, D>, mode: Unresolved) -> bool {
+    fn is_unresolved<D: Doc>(&self, pack: &dyn language_pack::LanguagePack, node: &Node<'_, D>, mode: Unresolved) -> bool {
         let Some(table) = file_table(node, self.language, self.reading()) else {
             return false;
         };
@@ -347,14 +342,14 @@ impl Resolves {
         // A function's bare annotation ends a load: an unbound local, whatever an outer scope,
         // builtin or star import binds, unless a nested `nonlocal` may initialize it (Ruff's
         // `annotation_binding_id` with rebinding scopes).
-        if let Some(annotation) = S::unbound_annotation(&table, reference, &name) {
+        if let Some(annotation) = pack.scope_unbound_annotation(&table, reference, &name) {
             return mode == Unresolved::Unbound && !table.binding_at(annotation, &name).rebound;
         }
-        if let Some(binding) = S::resolve(&table, reference, &name) {
+        if let Some(binding) = pack.scope_resolve(&table, reference, &name) {
             // Ruff stops at a deletion: the name is unbound, whatever a star import binds.
             return binding.is_deletion() && mode == Unresolved::Unbound;
         }
-        S::unresolved(
+        pack.scope_unresolved(
             &table,
             reference,
             &name,
@@ -461,11 +456,9 @@ impl Resolves {
     /// strict; never in a module, where it is `undefined`. With `sloppyFunctions`, also in an
     /// ordinary function that is not strict.
     fn is_global_this<D: Doc>(&self, node: &Node<'_, D>) -> bool {
-        let Some(options) = self
-            .options
-            .as_ref()
-            .filter(|options| options.source_type(file_source_type()) != SourceType::Module)
-        else {
+        let Some(options) = self.options.as_ref().filter(|options| {
+            options.source_type(file_source_type_for(options)) != SourceType::Module
+        }) else {
             return false;
         };
         let mut child = node.clone();
@@ -499,7 +492,7 @@ impl Resolves {
         let Some(options) = self
             .options
             .as_ref()
-            .filter(|options| options.global_top_level(file_source_type()))
+            .filter(|options| options.global_top_level(file_source_type_for(options)))
         else {
             return false;
         };
@@ -535,9 +528,10 @@ impl Resolves {
                 }
                 "for_in_statement" => {
                     blocks
-                        && ancestor
-                            .field("kind")
-                            .is_some_and(|kind| matches!(kind.kind().as_ref(), "let" | "const"))
+                        && ancestor.field("kind").is_some_and(|kind| {
+                            // `await using`'s kind starts with `await`.
+                            matches!(kind.kind().as_ref(), "let" | "const" | "using" | "await")
+                        })
                 }
                 _ => false,
             })
@@ -548,7 +542,7 @@ impl Resolves {
             && self
                 .options
                 .as_ref()
-                .is_some_and(|options| options.global_top_level(file_source_type()))
+                .is_some_and(|options| options.global_top_level(file_source_type_for(options)))
             && let Some(reference) = table.reference(&node.range())
             && let Some((0, _)) = table.resolve_lexical_scope(reference, name)
         {
@@ -572,18 +566,20 @@ impl Resolves {
         if let Some(options) = &self.options {
             let directives = self.directives.then_some(&table.directives);
             return table.reference(&node.range()).is_some_and(|reference| {
-                options.declares_in(name, reference.spaces, directives, file_source_type())
-                    && table
-                        .resolve(reference, name)
-                        .is_none_or(|binding| !binding.shadows())
+                options.declares_in(
+                    name,
+                    reference.spaces,
+                    directives,
+                    file_source_type_for(options),
+                ) && table
+                    .resolve(reference, name)
+                    .is_none_or(|binding| !binding.shadows())
             });
         }
-        let listed = if self.directives {
-            (self.globals.contains(name) || table.directives.declared.contains(name))
-                && !table.directives.off.contains(name)
-        } else {
-            true
-        };
+        // Without options the list alone names the globals (checked above); a comment declaring
+        // a name only makes it global under that name, and `off` removes it.
+        let listed = self.globals.contains(name)
+            && !(self.directives && table.directives.off.contains(name));
         listed
             && table.reference(&node.range()).is_some_and(|reference| {
                 table
@@ -592,7 +588,7 @@ impl Resolves {
             })
     }
 
-    fn unparenthesized<'r, D: Doc>(&self, node: Node<'r, D>) -> Node<'r, D> {
+    pub fn unparenthesized<'r, D: Doc>(&self, node: Node<'r, D>) -> Node<'r, D> {
         unparenthesized(&self.paren_kinds, node)
     }
 
@@ -696,90 +692,8 @@ impl Resolves {
                     .match_indices('.')
                     .any(|(dot, _)| names.contains(&name[..dot])))
     }
-
-    /// PHP: the node is a class, function or constant name that resolves to a listed name (any
-    /// resolved name with `import: true`), or (`imported`) the name a `use` clause imports, whose
-    /// fully qualified name is listed. `self`, `static` and `parent` resolve to none; an
-    /// unqualified function or constant PHP resolves only at run time is unknown unless this file
-    /// declares it or PHP defines it (`scope/php_names.rs`).
-    fn php_holds<D: Doc>(&self, node: &Node<'_, D>) -> bool {
-        let node = self.unparenthesized(node.clone());
-        if node.kind() == "variable_name" {
-            return self.reference_kinds.contains(&node.kind_id()) && self.php_variable(&node);
-        }
-        // A `name` holding an expression (`X::{expr}`) is no name.
-        if !self.reference_kinds.contains(&node.kind_id())
-            || (node.kind() == "name" && node.children().any(|child| child.is_named()))
-        {
-            return false;
-        }
-        let Some(names) = file_php_names(&node, self.language) else {
-            return false;
-        };
-        if let Some((kind, name)) = names.import(&node.range()) {
-            return php_names::listed(&self.imported, kind, name, self.prefix);
-        }
-        if self.imports.is_empty() && !self.import_any {
-            return false;
-        }
-        let Some(reference) = names.reference(&node.range()) else {
-            return false;
-        };
-        let listed = |kind, name: &str| {
-            self.import_any || php_names::listed(&self.imports, kind, name, self.prefix)
-        };
-        let verdict = match (&reference.resolved, reference.kind) {
-            (Resolved::Name(name), Some(kind)) => Some(listed(kind, name)),
-            (Resolved::Special, _) => Some(false),
-            // PHP decides at run time; both candidates listed, or neither, decide here.
-            (Resolved::Either { namespaced, global }, Some(kind)) => {
-                let namespaced = listed(kind, namespaced);
-                (namespaced == listed(kind, global)).then_some(namespaced)
-            }
-            _ => None,
-        };
-        verdict.unwrap_or_else(|| {
-            UNKNOWN.set(true);
-            false
-        })
-    }
 }
 
-impl Resolves {
-    /// A PHP variable read: `global`, a superglobal (listed, or any with `global: true`);
-    /// `unresolved`, a read PHPStan reports undefined because no path defines it. A read `isset`,
-    /// `empty` or `??` guards is never unresolved; one a callee may take by reference, or one some
-    /// paths define, is unknown.
-    fn php_variable<D: Doc>(&self, node: &Node<'_, D>) -> bool {
-        use crate::code_rule_dsl::scope::php::{Defined, Quiet};
-        let Some(table) = file_table(node, self.language, Reading::default()) else {
-            return false;
-        };
-        let Some(read) = table
-            .php
-            .as_deref()
-            .and_then(|flow| flow.read(node.range().start))
-        else {
-            // A binding's own name, not a read.
-            return false;
-        };
-        if self.global_any || !self.globals.is_empty() {
-            return read.superglobal
-                && (self.global_any || self.globals.contains(read.name.as_ref()));
-        }
-        if self.unresolved.is_none() || read.superglobal {
-            return false;
-        }
-        match (read.quiet, read.defined) {
-            (Quiet::Silent, _) | (_, Defined::Yes) => false,
-            (Quiet::No, Defined::No) => true,
-            _ => {
-                UNKNOWN.set(true);
-                false
-            }
-        }
-    }
-}
 
 /// The expression inside any parentheses (of `paren_kinds`) around `node`.
 pub(super) fn unparenthesized<'r, D: Doc>(
@@ -854,14 +768,14 @@ thread_local! {
     /// The clause whose root is being matched (`GrammarMatcher` address), which pays for a table
     /// once per file.
     pub(super) static CURRENT_CLAUSE: Cell<usize> = const { Cell::new(0) };
-    #[cfg(test)]
-    pub(crate) static TABLE_BUILDS: Cell<usize> = const { Cell::new(0) };
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub static TABLE_BUILDS: Cell<usize> = const { Cell::new(0) };
     /// How many times a file's module system was read off its syntax (`syntax_source_type`).
-    #[cfg(test)]
-    pub(crate) static SOURCE_TYPE_DERIVATIONS: Cell<usize> = const { Cell::new(0) };
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub static SOURCE_TYPE_DERIVATIONS: Cell<usize> = const { Cell::new(0) };
     /// How many times a file's JSX runtime was read (`jsx_runtime_of`).
-    #[cfg(test)]
-    pub(crate) static JSX_RUNTIME_DERIVATIONS: Cell<usize> = const { Cell::new(0) };
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub static JSX_RUNTIME_DERIVATIONS: Cell<usize> = const { Cell::new(0) };
     /// The tables whose string type definitions are being matched (`parse: annotation`): a parsed
     /// annotation's names are read in its file's table.
     static SUB_TABLES: RefCell<Vec<Arc<ScopeTable>>> = const { RefCell::new(Vec::new()) };
@@ -903,9 +817,12 @@ struct FileScopes {
     /// The ECMA file's module system for queries that leave `sourceType` to it
     /// (`SourceType::of_file`); `None` until its syntax decides it (`decide_file_source_type`).
     source_type: Option<SourceType>,
+    /// The ECMA file's module system by its extension and package type alone, for queries that
+    /// read it (`moduleSystem: "package-type"`, `SourceType::by_package_type`).
+    package_type_source_type: SourceType,
     /// The ECMA file's nearest `package.json`, which decides its JSX runtime where its text does
     /// not (`decide_file_jsx_runtime`).
-    package: Option<Arc<Manifest>>,
+    package: Option<crate::code_rule_dsl::language::FileManifest>,
     /// The file's JSX runtime, once a `file.jsxRuntime` read it.
     jsx_runtime: Option<JsxRuntime>,
     /// Values decoded so far, by node, grammar and reading (`value`, `compare` over values).
@@ -920,35 +837,15 @@ struct FileScopes {
     value_parses: HashMap<(ValueKey, Grammar), Option<Arc<SubTree>>>,
     /// The file's lines, per linter's terminators (`layout`, `suppress`), built on first use.
     lines: [Option<Rc<LineTable>>; 2],
-    /// The file's ESLint directive comments (`suppress.eslint`), read on first use.
-    eslint_directives: Option<Rc<EslintDirectives>>,
-    /// The file's eslint-plugin-vue template comment directives (`suppress.eslint` in a Vue
-    /// file), read on first use.
-    vue_directives: Option<Rc<VueDirectives>>,
-    /// The file's oxlint directive comments (`suppress.oxlint`), read on first use.
-    oxlint_directives: Option<Rc<OxlintDirectives>>,
-    /// The file's Biome suppression comments (`suppress.biome`), read on first use.
-    biome_suppressions: Option<Rc<BiomeSuppressions>>,
-    /// The file's `noqa` comments and line mapping (`suppress.noqa`), read on first use.
-    noqa: Option<Rc<NoqaIndex>>,
-    /// The file's comments, read as Bandit's `# nosec` (`suppress.nosec`), read on first use.
-    nosec: Option<Rc<NosecIndex>>,
-    /// The file's PHPStan ignore comments (`suppress.phpstan`), read on first use.
-    phpstan: Option<Rc<PhpstanIndex>>,
-    /// The file's Psalm `@psalm-suppress` tags (`suppress.psalm`), read on first use.
-    psalm: Option<Rc<PsalmIndex>>,
-    /// The file's PHP_CodeSniffer annotations (`suppress.phpcs`), read on first use.
-    phpcs: Option<Rc<PhpcsIndex>>,
-    /// The file's Rust lint-level attributes (`suppress.clippy`), read on first use.
-    clippy: Option<Rc<ClippyIndex>>,
-    /// The file's SQLFluff `-- noqa` directives (`suppress.sqlfluff`), read on first use.
-    sqlfluff: Option<Rc<SqlfluffIndex>>,
+    /// The file's suppression indexes (each linter's comments a `suppress` reads), by type, read on first use
+    /// (`file_index`).
+    indexes: HashMap<std::any::TypeId, Rc<dyn std::any::Any>>,
     /// The file's `rerail-ignore` directives, read on first use.
     rerail_ignores: Option<Rc<RerailIgnores>>,
     /// The file's PHP name references (`resolves` in php, and the flow a PHP table reads), built
     /// on first use or taken from a cached table's flow; a build that stopped at its node budget
     /// stops again at any budget up to `php_names_failed_within`.
-    php_names: Option<Arc<PhpNames>>,
+    php_names: Option<crate::code_rule_dsl::scope::NameTable>,
     php_names_failed_within: usize,
     /// The clauses that paid for `php_names`.
     php_names_charged: Vec<usize>,
@@ -961,12 +858,12 @@ pub(super) type ValueKey = (usize, usize);
 
 /// Holds the file's scope table while its roots are matched: built by the first `resolves` that
 /// needs it, shared by every clause on the file, and handed back for caching by `table`.
-pub(crate) struct FileScopeSlot {
+pub struct FileScopeSlot {
     previous: Option<FileScopes>,
 }
 
 impl FileScopeSlot {
-    pub(crate) fn install(
+    pub fn install(
         cached: Vec<Arc<ScopeTable>>,
         module: Option<Arc<ModulePath>>,
         has_errors: bool,
@@ -981,6 +878,7 @@ impl FileScopeSlot {
             has_errors,
             stub: false,
             source_type: Some(SourceType::Module),
+            package_type_source_type: SourceType::Module,
             package: None,
             jsx_runtime: None,
             values: HashMap::new(),
@@ -988,17 +886,7 @@ impl FileScopeSlot {
             parses: HashMap::new(),
             value_parses: HashMap::new(),
             lines: [None, None],
-            eslint_directives: None,
-            vue_directives: None,
-            oxlint_directives: None,
-            biome_suppressions: None,
-            noqa: None,
-            nosec: None,
-            phpstan: None,
-            psalm: None,
-            phpcs: None,
-            clippy: None,
-            sqlfluff: None,
+            indexes: HashMap::new(),
             rerail_ignores: None,
             php_names: None,
             php_names_failed_within: 0,
@@ -1009,15 +897,27 @@ impl FileScopeSlot {
 
     /// Reads `file` at the host's path (the one `file` conditions read) as a Python stub where it
     /// is one (`is_stub_file`), and as the module system its path and package type give it.
-    pub(crate) fn file(self, file: &FileInput) -> Self {
+    pub fn file(self, file: &FileInput) -> Self {
         let stub = is_stub_file(&file.path);
         let source_type = SourceType::of_file(&file.language, &file.path, file.package_type());
+        let package_type_source_type = SourceType::by_package_type(&file.path, file.package_type());
         FILE_SCOPES.with_borrow_mut(|slot| {
             if let Some(slot) = slot {
                 slot.stub = stub;
                 slot.path = Some(Arc::from(file.path.as_str()));
                 slot.source_type = source_type;
+                slot.package_type_source_type = package_type_source_type;
                 slot.package.clone_from(&file.package);
+            }
+        });
+        self
+    }
+
+    /// Reads the file being matched at `path` (what `filePath` conditions test), and nothing more of it.
+    pub fn path(self, path: &str) -> Self {
+        FILE_SCOPES.with_borrow_mut(|slot| {
+            if let Some(slot) = slot {
+                slot.path = Some(Arc::from(path));
             }
         });
         self
@@ -1040,13 +940,19 @@ impl Drop for FileScopeSlot {
 }
 
 /// The module path of the file being matched, if the host or its name gives one.
-pub(crate) fn file_module() -> Option<Arc<ModulePath>> {
+pub fn file_module() -> Option<Arc<ModulePath>> {
     FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.module.clone()))
 }
 
 /// The host's path of the file being matched, if it gave one.
-pub(in crate::code_rule_dsl) fn file_path() -> Option<Arc<str>> {
+pub fn file_path() -> Option<Arc<str>> {
     FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.path.clone()))
+}
+
+/// The host's path of the file being matched (workspace-relative), if it gave one: where
+/// `importTarget` resolves from.
+pub fn matched_file_path() -> Option<Arc<str>> {
+    file_path()
 }
 
 /// The module system of the file being matched, for queries that leave `sourceType` to it: its
@@ -1070,7 +976,7 @@ pub(super) fn decide_file_source_type<D: Doc>(root: &Node<'_, D>) -> SourceType 
 
 /// The module system Node gives a file its path and package leave to its syntax.
 fn syntax_source_type<D: Doc>(root: &Node<'_, D>) -> SourceType {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     SOURCE_TYPE_DERIVATIONS.set(SOURCE_TYPE_DERIVATIONS.get() + 1);
     if has_module_syntax(root) {
         SourceType::Module
@@ -1081,17 +987,17 @@ fn syntax_source_type<D: Doc>(root: &Node<'_, D>) -> SourceType {
 
 /// The JSX runtime of a file whose tree is `root` and whose nearest manifest is `package`: the
 /// one its text names (`jsx_runtime_in_source`), else its manifest's; `Unknown` without either.
-fn jsx_runtime_of<D: Doc>(root: &Node<'_, D>, package: Option<&Manifest>) -> JsxRuntime {
-    #[cfg(test)]
+fn jsx_runtime_of<D: Doc>(root: &Node<'_, D>, package: Option<&dyn crate::code_rule_dsl::language::ProjectManifest>) -> JsxRuntime {
+    #[cfg(any(test, feature = "test-hooks"))]
     JSX_RUNTIME_DERIVATIONS.set(JSX_RUNTIME_DERIVATIONS.get() + 1);
     jsx_runtime_in_source(root)
-        .unwrap_or_else(|| package.map_or(JsxRuntime::Unknown, Manifest::jsx_runtime))
+        .unwrap_or_else(|| package.map_or(JsxRuntime::Unknown, |package| package.jsx_runtime()))
 }
 
 /// The facts of `file`, whose tree is `root`, that queries' file gates read (its module system,
 /// its JSX runtime), each derived at most once, when a gate first reads it. Needs no file
 /// evaluation.
-pub(crate) struct FileGates<'a, 'r, D: Doc> {
+pub struct FileGates<'a, 'r, D: Doc> {
     file: &'a FileInput,
     root: Node<'r, D>,
     source_type: OnceCell<SourceType>,
@@ -1099,7 +1005,7 @@ pub(crate) struct FileGates<'a, 'r, D: Doc> {
 }
 
 impl<'a, 'r, D: Doc> FileGates<'a, 'r, D> {
-    pub(crate) fn new(file: &'a FileInput, root: Node<'r, D>) -> Self {
+    pub fn new(file: &'a FileInput, root: Node<'r, D>) -> Self {
         Self {
             file,
             root,
@@ -1111,9 +1017,12 @@ impl<'a, 'r, D: Doc> FileGates<'a, 'r, D> {
     /// Whether `matcher`'s file gates (its `when.sourceType`, its `file.jsxRuntime`) admit the
     /// file, as `run_clause` reads them. A file they exclude matches nothing, so its syntax errors
     /// cannot leave the clause's result incomplete.
-    pub(crate) fn admit(&self, matcher: &GrammarMatcher) -> bool {
+    pub fn admit(&self, matcher: &GrammarMatcher) -> bool {
         let file = self.file;
         let source_type = matcher.source_types.as_ref().map(|_| {
+            if matcher.package_type_gate {
+                return SourceType::by_package_type(&file.path, file.package_type());
+            }
             *self.source_type.get_or_init(|| {
                 SourceType::of_file(&file.language, &file.path, file.package_type())
                     .unwrap_or_else(|| syntax_source_type(&self.root))
@@ -1133,11 +1042,29 @@ impl<'a, 'r, D: Doc> FileGates<'a, 'r, D> {
     }
 }
 
-/// The module system `decide_file_source_type` gave the file being matched.
-pub(crate) fn file_source_type() -> SourceType {
+/// The module system the file being matched has by its extension and package type
+/// (`SourceType::by_package_type`); ESLint's `module` outside a file evaluation.
+pub(super) fn file_package_type_source_type() -> SourceType {
     FILE_SCOPES.with_borrow(|slot| {
         slot.as_ref()
-            .and_then(|slot| slot.source_type)
+            .map_or(SourceType::Module, |slot| slot.package_type_source_type)
+    })
+}
+
+/// The module system the file being matched has for a query with `options` that leaves
+/// `sourceType` to it: the one its extension and package type give it where the query reads that
+/// (`moduleSystem: "package-type"`), else the one `decide_file_source_type` gave it. ESLint's
+/// `module` outside a file evaluation.
+pub fn file_source_type_for(options: &LanguageOptions) -> SourceType {
+    FILE_SCOPES.with_borrow(|slot| {
+        slot.as_ref()
+            .and_then(|slot| {
+                if options.package_type_module_system {
+                    Some(slot.package_type_source_type)
+                } else {
+                    slot.source_type
+                }
+            })
             .unwrap_or(SourceType::Module)
     })
 }
@@ -1193,7 +1120,7 @@ pub(super) fn memoize_structure(key: (usize, Equality), structure: &Rc<Option<Ve
 
 /// The lines of the file being matched, read from `source` (its whole text) with `terminators`:
 /// built once per file while a file is being matched, and fresh outside one.
-pub(crate) fn file_lines(source: &str, terminators: Terminators) -> Rc<LineTable> {
+pub fn file_lines(source: &str, terminators: Terminators) -> Rc<LineTable> {
     let slot = terminators.index();
     if let Some(lines) = FILE_SCOPES.with_borrow(|scopes| {
         scopes
@@ -1211,91 +1138,27 @@ pub(crate) fn file_lines(source: &str, terminators: Terminators) -> Rc<LineTable
     lines
 }
 
-/// The ESLint directives of the file being matched: read once per file while a file is being
-/// matched, and fresh outside one.
-pub(crate) fn file_eslint_directives(
-    read: impl FnOnce() -> EslintDirectives,
-) -> Rc<EslintDirectives> {
-    if let Some(directives) = FILE_SCOPES.with_borrow(|scopes| {
-        scopes
-            .as_ref()
-            .and_then(|scopes| scopes.eslint_directives.clone())
+/// A suppression index of the file being matched (a linter's comments, `T`): read once per file while a file is
+/// being matched, and fresh outside one. Each linter's reader is its language's: the core keys them by type.
+pub fn file_index<T: 'static>(read: impl FnOnce() -> T) -> Rc<T> {
+    let key = std::any::TypeId::of::<T>();
+    if let Some(index) = FILE_SCOPES.with_borrow(|scopes| {
+        scopes.as_ref().and_then(|scopes| scopes.indexes.get(&key).cloned())
     }) {
-        return directives;
+        return index.downcast::<T>().unwrap_or_else(|_| unreachable!("an index under another type's key"));
     }
-    let directives = Rc::new(read());
+    let index = Rc::new(read());
     FILE_SCOPES.with_borrow_mut(|scopes| {
         if let Some(scopes) = scopes {
-            scopes.eslint_directives = Some(Rc::clone(&directives));
+            scopes.indexes.insert(key, Rc::clone(&index) as Rc<dyn std::any::Any>);
         }
     });
-    directives
-}
-
-/// The eslint-plugin-vue template comment directives of the file being matched: read once per
-/// file while a file is being matched, and fresh outside one.
-pub(crate) fn file_vue_directives(read: impl FnOnce() -> VueDirectives) -> Rc<VueDirectives> {
-    if let Some(directives) = FILE_SCOPES.with_borrow(|scopes| {
-        scopes
-            .as_ref()
-            .and_then(|scopes| scopes.vue_directives.clone())
-    }) {
-        return directives;
-    }
-    let directives = Rc::new(read());
-    FILE_SCOPES.with_borrow_mut(|scopes| {
-        if let Some(scopes) = scopes {
-            scopes.vue_directives = Some(Rc::clone(&directives));
-        }
-    });
-    directives
-}
-
-/// The oxlint directives of the file being matched: read once per file while a file is being
-/// matched, and fresh outside one.
-pub(crate) fn file_oxlint_directives(
-    read: impl FnOnce() -> OxlintDirectives,
-) -> Rc<OxlintDirectives> {
-    if let Some(directives) = FILE_SCOPES.with_borrow(|scopes| {
-        scopes
-            .as_ref()
-            .and_then(|scopes| scopes.oxlint_directives.clone())
-    }) {
-        return directives;
-    }
-    let directives = Rc::new(read());
-    FILE_SCOPES.with_borrow_mut(|scopes| {
-        if let Some(scopes) = scopes {
-            scopes.oxlint_directives = Some(Rc::clone(&directives));
-        }
-    });
-    directives
-}
-
-/// The Biome suppressions of the file being matched: read once per file while a file is being
-/// matched, and fresh outside one.
-pub(crate) fn file_biome_suppressions(
-    read: impl FnOnce() -> BiomeSuppressions,
-) -> Rc<BiomeSuppressions> {
-    if let Some(suppressions) = FILE_SCOPES.with_borrow(|scopes| {
-        scopes
-            .as_ref()
-            .and_then(|scopes| scopes.biome_suppressions.clone())
-    }) {
-        return suppressions;
-    }
-    let suppressions = Rc::new(read());
-    FILE_SCOPES.with_borrow_mut(|scopes| {
-        if let Some(scopes) = scopes {
-            scopes.biome_suppressions = Some(Rc::clone(&suppressions));
-        }
-    });
-    suppressions
+    index
 }
 
 /// The `rerail-ignore` directives of the file being matched: read once per file while a file is
 /// being matched, and fresh outside one.
-pub(crate) fn file_rerail_ignores(read: impl FnOnce() -> RerailIgnores) -> Rc<RerailIgnores> {
+pub fn file_rerail_ignores(read: impl FnOnce() -> RerailIgnores) -> Rc<RerailIgnores> {
     if let Some(ignores) = FILE_SCOPES.with_borrow(|scopes| {
         scopes
             .as_ref()
@@ -1310,125 +1173,6 @@ pub(crate) fn file_rerail_ignores(read: impl FnOnce() -> RerailIgnores) -> Rc<Re
         }
     });
     ignores
-}
-
-/// The `noqa` index of the file being matched: read once per file while a file is being matched,
-/// and fresh outside one.
-pub(crate) fn file_noqa(read: impl FnOnce() -> NoqaIndex) -> Rc<NoqaIndex> {
-    if let Some(index) =
-        FILE_SCOPES.with_borrow(|scopes| scopes.as_ref().and_then(|scopes| scopes.noqa.clone()))
-    {
-        return index;
-    }
-    let index = Rc::new(read());
-    FILE_SCOPES.with_borrow_mut(|scopes| {
-        if let Some(scopes) = scopes {
-            scopes.noqa = Some(Rc::clone(&index));
-        }
-    });
-    index
-}
-
-/// The `nosec` index of the file being matched: read once per file while a file is being matched,
-/// and fresh outside one.
-pub(crate) fn file_nosec(read: impl FnOnce() -> NosecIndex) -> Rc<NosecIndex> {
-    if let Some(index) =
-        FILE_SCOPES.with_borrow(|scopes| scopes.as_ref().and_then(|scopes| scopes.nosec.clone()))
-    {
-        return index;
-    }
-    let index = Rc::new(read());
-    FILE_SCOPES.with_borrow_mut(|scopes| {
-        if let Some(scopes) = scopes {
-            scopes.nosec = Some(Rc::clone(&index));
-        }
-    });
-    index
-}
-
-/// The PHPStan ignore index of the file being matched: read once per file while a file is being
-/// matched, and fresh outside one.
-pub(crate) fn file_phpstan(read: impl FnOnce() -> PhpstanIndex) -> Rc<PhpstanIndex> {
-    if let Some(index) =
-        FILE_SCOPES.with_borrow(|scopes| scopes.as_ref().and_then(|scopes| scopes.phpstan.clone()))
-    {
-        return index;
-    }
-    let index = Rc::new(read());
-    FILE_SCOPES.with_borrow_mut(|scopes| {
-        if let Some(scopes) = scopes {
-            scopes.phpstan = Some(Rc::clone(&index));
-        }
-    });
-    index
-}
-
-/// The Psalm suppression index of the file being matched: read once per file while a file is
-/// being matched, and fresh outside one.
-pub(crate) fn file_psalm(read: impl FnOnce() -> PsalmIndex) -> Rc<PsalmIndex> {
-    if let Some(index) =
-        FILE_SCOPES.with_borrow(|scopes| scopes.as_ref().and_then(|scopes| scopes.psalm.clone()))
-    {
-        return index;
-    }
-    let index = Rc::new(read());
-    FILE_SCOPES.with_borrow_mut(|scopes| {
-        if let Some(scopes) = scopes {
-            scopes.psalm = Some(Rc::clone(&index));
-        }
-    });
-    index
-}
-
-/// The PHP_CodeSniffer annotation index of the file being matched: read once per file while a
-/// file is being matched, and fresh outside one.
-pub(crate) fn file_phpcs(read: impl FnOnce() -> PhpcsIndex) -> Rc<PhpcsIndex> {
-    if let Some(index) =
-        FILE_SCOPES.with_borrow(|scopes| scopes.as_ref().and_then(|scopes| scopes.phpcs.clone()))
-    {
-        return index;
-    }
-    let index = Rc::new(read());
-    FILE_SCOPES.with_borrow_mut(|scopes| {
-        if let Some(scopes) = scopes {
-            scopes.phpcs = Some(Rc::clone(&index));
-        }
-    });
-    index
-}
-
-/// The Rust lint-level attribute index of the file being matched: read once per file while a
-/// file is being matched, and fresh outside one.
-pub(crate) fn file_clippy(read: impl FnOnce() -> ClippyIndex) -> Rc<ClippyIndex> {
-    if let Some(index) =
-        FILE_SCOPES.with_borrow(|scopes| scopes.as_ref().and_then(|scopes| scopes.clippy.clone()))
-    {
-        return index;
-    }
-    let index = Rc::new(read());
-    FILE_SCOPES.with_borrow_mut(|scopes| {
-        if let Some(scopes) = scopes {
-            scopes.clippy = Some(Rc::clone(&index));
-        }
-    });
-    index
-}
-
-/// The SQLFluff `noqa` index of the file being matched: read once per file while a file is being
-/// matched, and fresh outside one.
-pub(crate) fn file_sqlfluff(read: impl FnOnce() -> SqlfluffIndex) -> Rc<SqlfluffIndex> {
-    if let Some(index) =
-        FILE_SCOPES.with_borrow(|scopes| scopes.as_ref().and_then(|scopes| scopes.sqlfluff.clone()))
-    {
-        return index;
-    }
-    let index = Rc::new(read());
-    FILE_SCOPES.with_borrow_mut(|scopes| {
-        if let Some(scopes) = scopes {
-            scopes.sqlfluff = Some(Rc::clone(&index));
-        }
-    });
-    index
 }
 
 /// A literal parsed earlier in this file: `Some(None)` when its value is not known.
@@ -1479,7 +1223,7 @@ pub(super) fn unshadowed_global<D: Doc>(
     }
     if python.is_some_and(|python| !python.declares(name))
         || options.is_some_and(|options| {
-            !options.declares_in(name, VALUE | TYPE, None, file_source_type())
+            !options.declares_in(name, VALUE | TYPE, None, file_source_type_for(options))
         })
     {
         return Some(false);
@@ -1545,13 +1289,13 @@ pub(super) fn constant_value<D: Doc>(
     if has_errors {
         return None;
     }
-    let names = file_php_names(node, language)?;
-    names.constant_value(&target.find_near(node.root().root(), node)?)
+    let names = file_names(node, language)?;
+    language_pack::scope_constant(language_pack::pack(Family::of(language)), &names, &target.find_near(node.root().root(), node)?)
 }
 
 /// How a table reads the file under these options: Python annotations after the module from 3.14,
 /// TypeScript blocks as scopes from ES2015.
-pub(crate) fn table_reading(
+pub fn table_reading(
     options: Option<&LanguageOptions>,
     python: Option<&PythonOptions>,
 ) -> Reading {
@@ -1654,12 +1398,17 @@ fn exceed<T>() -> Option<T> {
 /// `maxVisitedNodes` once per file. A PHP table's flow reads these (`file_table`), so a clause that
 /// reads names alone pays for them alone. `None` means the clause failed for the file
 /// (`UTIL_EXCEEDED` is set): a missing table must not read as "not listed".
-fn file_php_names<D: Doc>(node: &Node<'_, D>, language: GrammarDialect) -> Option<Arc<PhpNames>> {
+pub fn file_names<D: Doc>(node: &Node<'_, D>, language: GrammarDialect) -> Option<crate::code_rule_dsl::scope::NameTable> {
     if UTIL_EXCEEDED.get().is_some() {
         return None;
     }
     let root = node.root().root();
-    let build = |cap| PhpNames::build(root.clone(), cap, &budget::matcher_budget_exhausted);
+    let pack = language_pack::pack(Family::of(language));
+    // A family without a name table reads none (`ScopeRules::names`): no caller asks one.
+    let build = |cap| {
+        language_pack::scope_names(pack, root.clone(), cap, &budget::matcher_budget_exhausted)
+            .unwrap_or(Err(BuildError::Depth))
+    };
     let clause = CURRENT_CLAUSE.get();
     let steps = UTIL_STEPS_LEFT.get();
     let installed = FILE_SCOPES.with_borrow_mut(|slot| {
@@ -1670,8 +1419,7 @@ fn file_php_names<D: Doc>(node: &Node<'_, D>, language: GrammarDialect) -> Optio
                     .tables
                     .iter()
                     .filter(|table| table.language == language)
-                    .find_map(|table| table.php.as_deref())
-                    .map(|flow| Arc::clone(&flow.names));
+                    .find_map(|table| pack.scope_table_names(table));
             }
             (
                 slot.php_names.clone(),
@@ -1692,7 +1440,6 @@ fn file_php_names<D: Doc>(node: &Node<'_, D>, language: GrammarDialect) -> Optio
             }
             match build(steps) {
                 Ok(names) => {
-                    let names = Arc::new(names);
                     FILE_SCOPES.with_borrow_mut(|slot| {
                         if let Some(slot) = slot {
                             slot.php_names = Some(Arc::clone(&names));
@@ -1719,12 +1466,12 @@ fn file_php_names<D: Doc>(node: &Node<'_, D>, language: GrammarDialect) -> Optio
         }
         // Outside a file evaluation: build for this call alone, and charge it every time.
         None => match build(steps) {
-            Ok(names) => (Arc::new(names), false),
+            Ok(names) => (names, false),
             Err(_) => return exceed(),
         },
     };
     if !charged {
-        let Some(left) = steps.checked_sub(names.cost) else {
+        let Some(left) = steps.checked_sub(names.cost()) else {
             return exceed();
         };
         UTIL_STEPS_LEFT.set(left);
@@ -1742,9 +1489,9 @@ fn build<D: Doc>(
     language: GrammarDialect,
     cap: usize,
     reading: Reading,
-    php_names: Option<Arc<PhpNames>>,
+    php_names: Option<crate::code_rule_dsl::scope::NameTable>,
 ) -> Result<ScopeTable, BuildError> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     TABLE_BUILDS.set(TABLE_BUILDS.get() + 1);
     ScopeTable::build_with_names(
         node.root().root(),
@@ -1761,23 +1508,23 @@ fn build<D: Doc>(
 /// its table under the default reading (as `resolves` without options reads it), the file's
 /// module path, and the PHP names a table's flow reads (Blade's: its embedded program's). `None`
 /// where one could not be built.
-pub(crate) fn calls_tables<D: Doc>(
+pub fn calls_tables<D: Doc>(
     node: &Node<'_, D>,
     language: GrammarDialect,
 ) -> Option<crate::code_rule_dsl::calls::FileTables> {
-    use crate::code_rule_dsl::language::adapter::CallRules;
-    with_adapter!(Family::of(language), A => <<A as Adapter>::Calls as CallRules>::tables(
+    
+    { let pack = language_pack::pack(Family::of(language)); language_pack::calls_tables(pack, 
         || file_table(node, language, Reading::default()),
         file_module,
-        || file_php_names(node, language),
-    ))
+        || file_names(node, language),
+    ) }
 }
 
 /// The table of `node`'s file under `reading`, charging its build to the current clause's
 /// `maxVisitedNodes` once per file; a PHP or Blade table's flow reads the file's names, which
 /// `file_php_names` builds and charges apart. `None` means the clause failed for the file
 /// (`UTIL_EXCEEDED` is set).
-pub(super) fn file_table<D: Doc>(
+pub fn file_table<D: Doc>(
     node: &Node<'_, D>,
     language: GrammarDialect,
     reading: Reading,
@@ -1785,10 +1532,10 @@ pub(super) fn file_table<D: Doc>(
     if UTIL_EXCEEDED.get().is_some() {
         return None;
     }
-    let (stubs, flow) = with_adapter!(Family::of(language), A => (
-        <<A as Adapter>::Scope as ScopeRules>::STUBS,
-        <<A as Adapter>::Scope as ScopeRules>::FLOW,
-    ));
+    let (stubs, flow) = { let pack = language_pack::pack(Family::of(language)); (
+        pack.scope_stubs(),
+        pack.scope_flow(),
+    ) };
     let stub = stubs && FILE_SCOPES.with_borrow(|slot| slot.as_ref().is_some_and(|slot| slot.stub));
     let reading = Reading {
         stub,
@@ -1807,7 +1554,7 @@ pub(super) fn file_table<D: Doc>(
         return table.or_else(exceed);
     }
     let php_names = if flow {
-        Some(file_php_names(node, language)?)
+        Some(file_names(node, language)?)
     } else {
         None
     };
@@ -1882,3 +1629,6 @@ pub(super) fn file_table<D: Doc>(
     }
     Some(table)
 }
+
+// PHP's reading of `resolves` (`ScopeRules::resolves`), the PHP crate's.
+// cratify: `php` is rerail-lang-php's (it mounts it)

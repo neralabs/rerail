@@ -5,85 +5,14 @@
 //! elsewhere. Each chunk fills the relations by running the matchers' wave over its documents' tapes
 //! (`facts::vtab::syntax::with_matchers`); a captured matcher's rows read W's bindings at each matched root. The
 //! joins read the matches as any base relation.
-use crate::code_rule_dsl::facts::vtab::syntax::Matcher;
 use crate::code_rule_dsl::logic::front::{Atom, Literal, Program, Term};
 use std::collections::{BTreeSet, HashMap};
-use std::sync::{Arc, Mutex};
 
-/// Whether a node of kind `kind` holds at most one node in field `field`, by tree-sitter-python's grammar: the field
-/// once in the kind's rule (its hidden and inlined rules read through), under no repeat. A kind some rule aliases a
-/// node to, or a rule that reads itself, is taken to hold several (so its parts stay joins).
-pub(in crate::code_rule_dsl) fn single_field(kind: &str, field: &str) -> bool {
-    use serde_json::Value;
-    static GRAMMAR: std::sync::LazyLock<Option<Value>> = std::sync::LazyLock::new(|| serde_json::from_str(include_str!("../../../../../grammars/tree-sitter-python/src/grammar.json")).ok());
-    static KEPT: std::sync::LazyLock<Mutex<HashMap<(String, String), bool>>> = std::sync::LazyLock::new(Default::default);
-    let Some(grammar) = GRAMMAR.as_ref() else { return false };
-    if let Some(&kept) = KEPT.lock().unwrap_or_else(|p| p.into_inner()).get(&(kind.to_owned(), field.to_owned())) {
-        return kept;
-    }
-    let rules = &grammar["rules"];
-    let names = |key: &str| -> BTreeSet<String> { grammar[key].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect() };
-    let (inline, supertypes) = (names("inline"), names("supertypes"));
-    fn aliased(e: &Value, out: &mut BTreeSet<String>) {
-        if e["type"] == "ALIAS" && e["named"] == true {
-            if let Some(v) = e["value"].as_str() {
-                out.insert(v.to_owned());
-            }
-        }
-        if let Some(c) = e.get("content") {
-            aliased(c, out);
-        }
-        e["members"].as_array().into_iter().flatten().for_each(|m| aliased(m, out));
-    }
-    let mut aliases = BTreeSet::new();
-    rules.as_object().into_iter().flatten().for_each(|(_, r)| aliased(r, &mut aliases));
-    // At most `MANY`: 0, 1 or several of the field.
-    const MANY: u8 = 2;
-    fn count(e: &Value, field: &str, rules: &Value, inline: &BTreeSet<String>, supertypes: &BTreeSet<String>, seen: &mut Vec<String>) -> u8 {
-        let mut c = |e: &Value, seen: &mut Vec<String>| count(e, field, rules, inline, supertypes, seen);
-        match e["type"].as_str().unwrap_or("") {
-            "FIELD" => (u8::from(e["name"] == field) + c(&e["content"], seen)).min(MANY),
-            "SEQ" => e["members"].as_array().into_iter().flatten().map(|m| c(m, seen)).fold(0, |a, b| (a + b).min(MANY)),
-            "CHOICE" => e["members"].as_array().into_iter().flatten().map(|m| c(m, seen)).max().unwrap_or(0),
-            "REPEAT" | "REPEAT1" => {
-                if c(&e["content"], seen) > 0 { MANY } else { 0 }
-            }
-            "ALIAS" if e["named"] == true => 0,
-            "SYMBOL" => {
-                let name = e["name"].as_str().unwrap_or("");
-                if supertypes.contains(name) || !(name.starts_with('_') || inline.contains(name)) || rules.get(name).is_none() {
-                    return 0;
-                }
-                if seen.iter().any(|s| s == name) {
-                    return MANY;
-                }
-                seen.push(name.to_owned());
-                let n = c(&rules[name], seen);
-                seen.pop();
-                n
-            }
-            _ => e.get("content").map_or(0, |content| c(content, seen)),
-        }
-    }
-    let single = !kind.starts_with('_') && !aliases.contains(kind) && rules.get(kind).is_some_and(|rule| count(rule, field, rules, &inline, &supertypes, &mut Vec::new()) <= 1);
-    KEPT.lock().unwrap_or_else(|p| p.into_inner()).insert((kind.to_owned(), field.to_owned()), single);
-    single
-}
+pub use crate::code_rule_dsl::facts::grammar_shape::single_field;
+#[cfg(any(test, feature = "test-hooks"))]
+use crate::code_rule_dsl::facts::grammar_shape::{field_kinds, leaf_kind};
 
-/// The prefix of a matcher's relation.
-pub(in crate::code_rule_dsl) const PREFIX: &str = "rr_ast_";
-
-/// A matcher relation's columns: the root `n`, then one a capture.
-const COLUMNS: [&str; 16] = ["n", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15"];
-
-/// The most captures an atom may name.
-const MOST_CAPTURES: usize = COLUMNS.len() - 1;
-
-/// The columns of matcher relation `rel` (`rr_ast_<k>` or `rr_ast_<k>_<m>`).
-pub(in crate::code_rule_dsl) fn columns(rel: &str) -> &'static [&'static str] {
-    let width = rel.strip_prefix(PREFIX).and_then(|rest| rest.split_once('_')).and_then(|(_, m)| m.parse::<usize>().ok()).unwrap_or(0);
-    &COLUMNS[..=width.min(MOST_CAPTURES)]
-}
+pub use crate::code_rule_dsl::facts::core::ast_matches::{MOST_CAPTURES, PREFIX, columns};
 
 /// The relation of the `k`th distinct matcher, capturing `m` names.
 fn relation(k: usize, m: usize) -> String {
@@ -91,7 +20,7 @@ fn relation(k: usize, m: usize) -> String {
 }
 
 fn atom(rel: &str, args: Vec<Term>) -> Literal {
-    Literal::Atom(Atom { rel: rel.to_owned(), args, neg: false, gated: false })
+    Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg: false, gated: false })
 }
 
 /// The tree-shaped parts of a Python program's rules as `ast` atoms (decision 0106 §4): a root `r` with
@@ -186,7 +115,7 @@ pub(in crate::code_rule_dsl) fn absorb(prog: &mut Program, capture: bool) -> usi
 
 /// Rewrites `prog`'s `ast` atoms over the matchers' relations: each relation, its matcher's text and the names it
 /// captures (an atom naming more than [`MOST_CAPTURES`] is left as written).
-pub(in crate::code_rule_dsl) fn lower(prog: &mut Program) -> Vec<(String, String, Vec<String>)> {
+pub fn lower(prog: &mut Program) -> Vec<(String, String, Vec<String>)> {
     let mut texts: Vec<(String, Vec<String>)> = Vec::new();
     for rule in &mut prog.rules {
         if !rule.body.iter().any(|l| matches!(l, Literal::Ast { captures, .. } if captures.len() <= MOST_CAPTURES)) {
@@ -224,7 +153,10 @@ pub(in crate::code_rule_dsl) fn lower(prog: &mut Program) -> Vec<(String, String
     let mut out = Vec::new();
     for (k, (text, names)) in texts.into_iter().enumerate() {
         let rel = relation(k, names.len());
-        prog.decls.insert(rel.clone(), columns(&rel).iter().map(|c| ((*c).to_owned(), "node".to_owned())).collect());
+        // A name of the rule's `transform` binds text (a symbol); every other name, and the root, a node.
+        let made = transformed(&text);
+        let types = std::iter::once("node").chain(names.iter().map(|name| if made.contains(name) { "sym" } else { "node" }));
+        prog.decls.insert(rel.clone(), columns(&rel).iter().zip(types).map(|(c, t)| ((*c).to_owned(), t.to_owned())).collect());
         if !prog.inputs.contains(&rel) {
             prog.inputs.push(rel.clone());
         }
@@ -240,35 +172,23 @@ pub(in crate::code_rule_dsl) fn lower(prog: &mut Program) -> Vec<(String, String
     out
 }
 
-/// The process's lowered matchers, by their text and their base policy's: lowered once.
-type Lowered = Result<(Arc<crate::code_rule_dsl::transducer::packed::LoweredMatcher>, Vec<crate::code_rule_dsl::matcher::DocumentGate>, Arc<crate::code_rule_dsl::waves::policies::Captor>), String>;
-static LOWERED: std::sync::LazyLock<Mutex<HashMap<(String, String), Lowered>>> = std::sync::LazyLock::new(Default::default);
+/// The names an `ast` atom's matcher text makes in its `transform`: they bind text, not nodes.
+fn transformed(text: &str) -> BTreeSet<String> {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|v| v.get("transform")?.as_object().map(|t| t.keys().cloned().collect()))
+        .unwrap_or_default()
+}
 
-/// Each relation's matcher lowered for the transducer, over the program's first `.policy` (its utils). A matcher that
-/// does not lower fails the run, naming it.
+/// Each relation's matcher compiled for the transducer, over the program's first `.policy` (its utils), by the
+/// registered compiler (`facts::vtab::syntax::AstCompiler`). A matcher that does not lower fails the run, naming it.
 pub(in crate::code_rule_dsl) fn compiled(matchers: &[(String, String, Vec<String>)], policies: &[serde_json::Value]) -> Result<crate::code_rule_dsl::facts::vtab::syntax::Matchers, String> {
-    let base = policies.first();
-    let base_text = base.map(|b| b.to_string()).unwrap_or_default();
     let _span = crate::code_rule_dsl::logic::profile::span(|| "ast matchers lowered".into());
-    matchers
-        .iter()
-        .map(|(rel, text, captures)| {
-            let key = (text.clone(), base_text.clone());
-            let got = {
-                let mut kept = LOWERED.lock().unwrap_or_else(|p| p.into_inner());
-                kept.entry(key)
-                    .or_insert_with(|| crate::code_rule_dsl::waves::policies::lower_matcher(text, base).map(|(m, g, c)| (Arc::new(m), g, Arc::new(c))))
-                    .clone()
-            };
-            let (lowered, gates, captor) = got.map_err(|why| format!("{rel}: the matcher {text} does not lower: {why}"))?;
-            Ok(Matcher { rel: rel.clone(), lowered, gates, captures: captures.clone(), captor })
-        })
-        .collect::<Result<Vec<_>, String>>()
-        .and_then(crate::code_rule_dsl::facts::vtab::syntax::Matchers::new)
+    crate::code_rule_dsl::facts::vtab::syntax::compile_matchers(matchers, policies)
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /// Each `ast` atom without captures reads its matcher's relation, one per distinct matcher; `docof` joins the node
@@ -304,6 +224,54 @@ b(c, f) :- kind(c, "call"), field(c, "function", f), kind(f, "attribute").
         assert_eq!(m["rule"]["all"][1]["has"]["field"], "function");
         assert_eq!(m["rule"]["all"][1]["has"]["kind"], "attribute");
         assert_eq!(body("b").len(), 3, "a field the head reads stays a join");
+    }
+
+    /// `any`'s arms bind into the environment only when they match, so two arms binding one name share nothing; a
+    /// name two parts of one `all` bind is a join the labels do not carry, and stays refused.
+    #[test]
+    fn any_arms_binding_one_name_lower() {
+        let lower = |rule: &str| crate::code_rule_dsl::waves::policies::lower_matcher(&format!(r#"{{"language": "python", "rule": {rule}}}"#), None).map(|_| ());
+        lower(r#"{"any": [{"all": [{"kind": "call"}, {"pattern": "$X"}]}, {"all": [{"kind": "attribute"}, {"pattern": "$X"}]}]}"#).unwrap();
+        let err = lower(r#"{"all": [{"pattern": "$X"}, {"has": {"pattern": "$X", "stopBy": "neighbor"}}]}"#).unwrap_err();
+        assert!(err.contains("shared binding"), "{err}");
+    }
+
+    /// A comparison of captures, which the labels do not carry, is dropped where that only widens the matcher; one
+    /// under an `any` arm left with nothing is not.
+    #[test]
+    fn a_matcher_relaxed_where_it_only_widens() {
+        use crate::code_rule_dsl::waves::policies::relaxed;
+        let m = |rule: &str| serde_json::from_str::<serde_json::Value>(&format!(r#"{{"language": "python", "rule": {rule}}}"#)).unwrap();
+        let got = relaxed(&m(r#"{"all": [{"kind": "call"}, {"pattern": "$A"}, {"not": {"compare": {"left": "A", "right": "A", "op": "ne"}}}]}"#), false).unwrap();
+        assert_eq!(got["rule"], serde_json::json!({"all": [{"kind": "call"}, {"pattern": "$A"}]}));
+        let got = relaxed(&m(r#"{"kind": "call", "has": {"compare": {"left": "A", "right": "B", "op": "eq"}, "stopBy": "neighbor"}}"#), false).unwrap();
+        assert_eq!(got["rule"], serde_json::json!({"kind": "call"}));
+        assert!(relaxed(&m(r#"{"any": [{"kind": "call"}, {"compare": {"left": "A", "right": "B", "op": "eq"}}]}"#), false).is_none());
+        assert!(relaxed(&m(r#"{"kind": "call"}"#), false).is_none());
+        // A path test is W's to confirm; an `any` with an arm left matching every node goes with it.
+        let got = relaxed(&m(r#"{"all": [{"kind": "call"}, {"any": [{"filePath": {"regex": "x"}}, {"kind": "call"}]}]}"#), false).unwrap();
+        assert_eq!(got["rule"], serde_json::json!({"all": [{"kind": "call"}]}));
+        // Every negation in a positive place, only where asked.
+        let not = m(r#"{"all": [{"kind": "call"}, {"not": {"kind": "identifier"}}]}"#);
+        assert!(relaxed(&not, false).is_none());
+        assert_eq!(relaxed(&not, true).unwrap()["rule"], serde_json::json!({"all": [{"kind": "call"}]}));
+        // The relaxed matcher lowers; its roots are confirmed by W's.
+        let (_, _, captor) = crate::code_rule_dsl::waves::policies::lower_matcher(
+            r#"{"language": "python", "rule": {"all": [{"kind": "call"}, {"has": {"pattern": "$A", "field": "function", "stopBy": "neighbor"}}, {"not": {"compare": {"left": "A", "right": "A", "op": "ne", "text": "node"}}}]}}"#,
+            None,
+        )
+        .unwrap();
+        assert!(captor.verify);
+    }
+
+    /// A field's kinds and a kind's leafhood from the grammar: what a long-text twin is made for.
+    #[test]
+    fn field_kinds_and_leaves_from_the_grammar() {
+        assert_eq!(field_kinds("attribute"), Some(BTreeSet::from(["identifier".to_owned()])));
+        assert!(field_kinds("function").is_some_and(|k| k.contains("call") && k.contains("attribute")));
+        assert_eq!(field_kinds("no_such_field"), None);
+        assert!(leaf_kind("identifier") && leaf_kind("integer"));
+        assert!(!leaf_kind("call") && !leaf_kind("decorated_definition"));
     }
 
     /// A field's multiplicity from the grammar: `import os, sys` holds two names, a subscript several indexes.
@@ -345,5 +313,30 @@ c(n, x) :- ast(d, n, {"language": "python", "rule": {"pattern": "f($X)"}}, X: x)
         assert_eq!(columns("rr_ast_1_1"), &["n", "x1"]);
         assert_eq!(columns("rr_ast_0"), &["n"]);
         assert!(prog.inputs.contains(rel) && prog.decls.contains_key(rel));
+    }
+
+    /// A `filePath` test below a matcher's root conjuncts (here in an `any`) is the document's: the matcher holds in
+    /// a file its path passes, by that branch, and elsewhere only by the other.
+    #[test]
+    fn a_nested_file_path_is_the_documents() {
+        let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("nested-file-path");
+        std::fs::create_dir_all(root.join("a")).unwrap();
+        std::fs::create_dir_all(root.join("b")).unwrap();
+        std::fs::write(root.join("a/x.py"), "f()\n").unwrap();
+        std::fs::write(root.join("b/y.py"), "f()\nzz()\n").unwrap();
+        let policy = root.with_extension("policy.rr");
+        let rule = r#"{"language": "python", "rule": {"all": [{"kind": "call"}, {"any": [{"filePath": {"regex": "^a/"}}, {"has": {"field": "function", "regex": "^zz"}}]}]}}"#;
+        std::fs::write(&policy, format!(".language python\n.violation hit(at: node) code \"X1\" \"hit\"\nhit(n) :- ast(d, n, {rule}).\n")).unwrap();
+        let report = crate::code_rule_dsl::tools::run_policies(&[policy.clone()], &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_file(&policy);
+        let mut hits: Vec<(String, i64)> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| (d["file"].as_str().or(d["path"].as_str()).unwrap_or("").rsplit('/').next().unwrap_or("").to_owned(), d["line"].as_i64().or(d["start_line"].as_i64()).unwrap_or(-1)))
+            .collect();
+        hits.sort();
+        assert_eq!(hits.iter().map(|h| h.0.as_str()).collect::<Vec<_>>(), ["x.py", "y.py"], "{report:#}");
     }
 }

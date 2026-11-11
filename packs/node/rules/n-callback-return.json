@@ -1,0 +1,237 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-callback-return",
+  "revision": 4,
+  "mode": "steer",
+  "description": "Return right after calling a callback named callback, cb or next; otherwise the function keeps running and the callback can fire twice.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "c1": {
+            "all": [
+              {
+                "matches": "c3"
+              }
+            ],
+            "inside": {
+              "inside": {
+                "any": [
+                  {
+                    "kind": "function_declaration"
+                  },
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "generator_function_declaration"
+                  },
+                  {
+                    "kind": "generator_function"
+                  },
+                  {
+                    "kind": "arrow_function"
+                  },
+                  {
+                    "kind": "method_definition"
+                  }
+                ],
+                "field": "body"
+              },
+              "kind": "statement_block"
+            },
+            "kind": "expression_statement"
+          },
+          "c2": {
+            "all": [
+              {
+                "nthChild": {
+                  "ofRule": {
+                    "not": {
+                      "kind": "comment"
+                    }
+                  },
+                  "position": 2,
+                  "reverse": true
+                }
+              }
+            ],
+            "inside": {
+              "has": {
+                "all": [
+                  {
+                    "matches": "c3"
+                  }
+                ],
+                "kind": "return_statement"
+              },
+              "kind": "statement_block"
+            },
+            "kind": "expression_statement"
+          },
+          "c3": {
+            "nthChild": {
+              "ofRule": {
+                "not": {
+                  "kind": "comment"
+                }
+              },
+              "position": 1,
+              "reverse": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "not": {
+              "has": {
+                "field": "arguments",
+                "kind": "template_string"
+              }
+            },
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "kind": "identifier",
+                  "regex": "^(?:callback|cb|next)$"
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "statement_block"
+                        },
+                        {
+                          "kind": "return_statement"
+                        },
+                        {
+                          "kind": "arrow_function"
+                        }
+                      ]
+                    },
+                    "any": [
+                      {
+                        "kind": "return_statement"
+                      },
+                      {
+                        "kind": "arrow_function"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "inside": {
+                        "matches": "c1"
+                      }
+                    },
+                    {
+                      "inside": {
+                        "kind": "binary_expression",
+                        "field": "right",
+                        "inside": {
+                          "matches": "c1"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "inside": {
+                        "matches": "c2"
+                      }
+                    },
+                    {
+                      "inside": {
+                        "kind": "binary_expression",
+                        "field": "right",
+                        "inside": {
+                          "matches": "c2"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "function_declaration"
+                    },
+                    {
+                      "kind": "function_expression"
+                    },
+                    {
+                      "kind": "generator_function_declaration"
+                    },
+                    {
+                      "kind": "generator_function"
+                    },
+                    {
+                      "kind": "arrow_function"
+                    },
+                    {
+                      "kind": "method_definition"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/callback-return",
+        "message": "Expected return with your callback function.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/callback-return"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "callback-return"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

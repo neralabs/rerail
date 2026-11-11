@@ -1,18 +1,20 @@
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
 .decl child(p: node, c: node, i: number)
+.decl doc(d: number, path: symbol, module: symbol)
 .decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
-.input doc, node, child, field, text, line, syntax_error
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
 .decl m1(n: node)
 .decl m15(n: node)
 .decl m22(n: node)
 .decl m25(n: node)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl out_scope(d: number)
+.decl syntax_error(d: number)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, child, field, text, line, syntax_error
+.output violation
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
@@ -36,4 +38,3 @@ m22(n) :- node(_, n, "delete_statement", _, _), m15(n).
 m22(n) :- node(_, n, "call", _, _), field(n, "function", v16), node(_, v16, "attribute", _, _), field(v16, "attribute", v17), node(_, v17, "identifier", _, _), text(v17, v18), (v18 = "clear" ; v18 = "pop" ; v18 = "popitem" ; v18 = "setdefault" ; v18 = "update"), field(v16, "object", v19), node(_, v19, "attribute", _, _), field(v19, "attribute", v20), node(_, v20, "identifier", _, _), text(v20, v21), v21 = "cte_refs".
 m25(n) :- node(v23, n, _, _, _), doc(v23, v24, _), glob("**/l2070_batching/compilation.py", v24).
 violation("data-layer-publication-registry-writes", "direct-write", "REGISTRY_DIRECT_WRITE", p, l) :- m22(n), !m25(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-.output violation

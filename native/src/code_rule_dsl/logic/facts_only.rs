@@ -23,6 +23,8 @@ use std::path::{Path, PathBuf};
 const FACT_STORE: &[&str] = &[
     "atoms",
     "atom_segment",
+    "atom_key",
+    "atom_key_end",
     "strings",
     "hashes",
     "paths",
@@ -32,6 +34,8 @@ const FACT_STORE: &[&str] = &[
     "file_documents",
     "object_pins",
     "store_state",
+    // The store's identity (RER-131): its atoms and connections belong to this store only.
+    "store_identity",
     "push_pending",
     "rows",
     "git_alias",
@@ -87,6 +91,8 @@ const SCRATCH: &[&str] = &[
 ];
 /// Caches between runs not yet facts: (table, the 0104 step that moves it).
 const NOT_YET_TABLES: &[(&str, &str)] = &[
+    // The cost model fitted from `samples`, per machine (planning's placement).
+    ("models", "6"),
     ("constant_rows", "1"),
     ("run_record", "1"),
     ("observed", "1"),
@@ -149,16 +155,23 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("local_check_results", "8"),
     ("context_check_results", "8"),
 ];
-/// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised.
-const NOT_YET_TABLES_PIN: usize = 61;
+/// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised. Raised once, 61 to 62, by the merge of
+/// the cost classifier's per-machine `models` (2026-11-10), which a move to facts has yet to take.
+const NOT_YET_TABLES_PIN: usize = 62;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
 const STATE: &[(&str, &str)] = &[
+    // The process's interned relation names (`front::Name`): one allocation per distinct name, not a result kept.
+    ("code_rule_dsl/logic/front/name.rs", "TABLE"),
     ("code_rule_dsl/logic/costs.rs", "FITTED"),
     ("code_rule_dsl/logic/costs.rs", "WRITER"),
+    ("code_rule_dsl/logic/costs.rs", "MODEL_STATE"),
     // Which connections hold tables or views a run left in SQL: state of the connections, not a result kept.
     ("code_rule_dsl/logic/plan.rs", "TEMP_LEFT"),
+    // Each live connection's path and symbols, by its scope; dropped when it closes (`setfix::forget_scope`).
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     ("code_rule_dsl/logic/lanes.rs", "ALL"),
     ("code_rule_dsl/logic/lanes.rs", "CPU"),
     ("code_rule_dsl/logic/lanes.rs", "BATCHES"),
@@ -183,11 +196,22 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "LOADS"),
     ("code_rule_dsl/logic/native/setfix.rs", "STORED"),
     ("code_rule_dsl/logic/native/setfix.rs", "SYMS"),
+    // Each live connection's path and symbols, dropped at its close (`forget_scope`): state of the connections.
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "GROWTH"),
     ("code_rule_dsl/logic/native/setfix.rs", "PROBES"),
+    // A live connection's file and symbol table, by its handle (dropped as it closes, `forget_scope`): state of the
+    // connections, not a result kept.
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
+    // Atoms reserved by components not yet retired, and this thread's reservation (decision 0114 §4): which
+    // pending atoms no committed row may hold yet, not a result kept.
+    ("content_store/atoms.rs", "RESERVED"),
+    ("content_store/atoms.rs", "RESERVING"),
     ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
-    ("code_rule_dsl/logic/native/setfix.rs", "FANOUT"),
+    ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),
     // A test process's own tape cache path (`corpus::test_tape_cache`): where the store is, not a result kept.
     ("code_rule_dsl/logic/plan/corpus.rs", "PATH"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
@@ -197,6 +221,17 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan.rs", "LOG"),
     ("code_rule_dsl/logic/plan.rs", "PATH"),
     ("code_rule_dsl/logic/plan.rs", "SETTING"),
+    // The `re_match` functions' compiled patterns (RER-131): the program's own text compiled once, not a result kept.
+    ("code_rule_dsl/logic/plan.rs", "REGEXES"),
+    // core.rr's declarations (RER-131), read once from the engine's own library text: not a result kept.
+    ("code_rule_dsl/logic/rr/lower/core.rs", "DECLS"),
+    // This thread's zstd contexts by dictionary (RER-131): open things, not results.
+    ("content_store/compression.rs", "DECODERS"),
+    ("content_store/compression.rs", "DICT_ENCODERS"),
+    // The language tags the store's dictionaries are chosen by (RER-131): set once as the library loads.
+    ("content_store/compression.rs", "LANGUAGE_TAGS"),
+    // The store handles open in this process, by path (RER-131): a registry of open things.
+    ("content_store/connection.rs", "HANDLES"),
     ("code_rule_dsl/logic/plan/choices.rs", "DURABLE"),
     ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),
     // The build's Python grammar, and what follows from it and a matcher's text alone (its single-field answers, its
@@ -209,6 +244,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "FACTS_DIR"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HANDED_DOWN"),
+    // Phase 1's exports while the run that ran it is under way: the run's own facts, gone when it ends.
+    ("code_rule_dsl/logic/plan/corpus/phases.rs", "PHASE_ONE"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "RUNNING"),
     ("code_rule_dsl/logic/plan/sketch.rs", "FILE"),
     ("code_rule_dsl/logic/profile.rs", "DIR"),
@@ -223,6 +260,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/rr.rs", "READS"),
     ("code_rule_dsl/logic/derived.rs", "KEYS"),
     ("content_store/atoms.rs", "CANONICAL"),
+    // Each database file's identity, read once a file: a registry, as CANONICAL is.
+    ("content_store/atoms.rs", "IDENTITIES"),
     ("content_store/atoms.rs", "MEMORY"),
     ("content_store/atoms.rs", "REGISTRY"),
     ("content_store/compression.rs", "ENCODER"),
@@ -237,6 +276,11 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "THREAD_CONNECTIONS"),
     ("content_store/connection.rs", "WAIT_SPENT"),
     ("content_store/hazards.rs", "HAZARDS"),
+    // The run each frame space last counted in this process, so a run's programs count it once.
+    ("content_store/frames.rs", "COUNTED"),
+    // The store's frames as this process holds them, ahead of SQLite (decision 0104): the facts themselves, read
+    // once before a run's first wave, not a cache of anything else.
+    ("content_store/frames.rs", "SNAPSHOTS"),
     ("content_store/observe.rs", "OBSERVERS"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
@@ -262,10 +306,12 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/logic/plan.rs", "KEPT", "6"),
     ("code_rule_dsl/logic/derived.rs", "MEMO", "6"),
     ("code_rule_dsl/logic/derived.rs", "SESSION_MEMO", "6"),
-    ("code_rule_dsl/logic/plan/keeps.rs", "OBSERVED", "6"),
+    // The observed keeps, a handle a strand enters (decision 0113 §4).
+    ("code_rule_dsl/logic/plan/keeps.rs", "OBSERVED_AT", "6"),
     ("code_rule_dsl/logic/native/setfix/table.rs", "PAID", "6"),
     ("code_rule_dsl/logic/strings.rs", "MATCHERS", "7"),
-    ("code_rule_dsl/logic/strings.rs", "GROUPS", "7"),
+    // RER-131's compiled group patterns, where `GROUPS` was.
+    ("code_rule_dsl/logic/strings.rs", "GROUP_REGEXES", "7"),
     ("code_rule_dsl/logic/strings/functions.rs", "CACHE", "7"),
     ("code_rule_dsl/text.rs", "LOWERED", "7"),
     ("code_rule_dsl/text.rs", "NAMES", "7"),
@@ -274,7 +320,7 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
 const NOT_YET_MAPS_PIN: usize = 24;
 
 fn src() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
+    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src")
 }
 
 /// The crate's source files, tests left out: a test may make what it likes.

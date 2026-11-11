@@ -61,7 +61,7 @@ use crate::code_rule_dsl::php_literal::literal_end;
 use ast_grep_core::source::SgNode;
 use ast_grep_language::LanguageExt;
 use std::ops::Range;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use tree_sitter::Node as TsNode;
 use tree_sitter::{Parser, Tree};
 
@@ -362,31 +362,31 @@ impl View {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn root(&self) -> TsNode<'_> {
         self.tree.root_node()
     }
 
     /// The program's text.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn text(&self) -> &str {
         &self.text
     }
 
     /// Where the program's text stands in the template.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn segments(&self) -> &SegmentMap {
         &self.segments
     }
 
     /// The template's syntax errors as Blade reads them.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn syntax_errors(&self) -> &[Range<usize>] {
         &self.syntax_errors
     }
 
     /// The template ranges the program copies byte for byte, in program order.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn copied(&self) -> impl Iterator<Item = Range<usize>> + '_ {
         self.segments.copied()
     }

@@ -20,7 +20,7 @@ impl Source for Rows {
         Ok(None)
     }
     fn column(&self, row: usize, _: usize, ctx: &mut Context) -> Result<()> {
-        ctx.set_result(&self.0[row])
+        ctx.set_result(self.0[row])
     }
     fn charge(&self, _: usize) -> Result<()> {
         Ok(())

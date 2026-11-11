@@ -15,19 +15,19 @@
 //! attribute values, TSX generics, bogus comments) spend the distance they scanned, so retrying
 //! them from every offset is bounded. Every other loop moves forward only. Nothing recurses.
 
-mod attribute;
-mod blade_comment;
-mod bytes;
-mod comment;
-mod construct;
-mod data;
-mod directive;
-mod doctype;
-mod echo;
-mod html;
-mod jsx;
-mod php;
-mod rawtext;
+pub mod attribute;
+pub mod blade_comment;
+pub mod bytes;
+pub mod comment;
+pub mod construct;
+pub mod data;
+pub mod directive;
+pub mod doctype;
+pub mod echo;
+pub mod html;
+pub mod jsx;
+pub mod php;
+pub mod rawtext;
 
 use super::directives::Directives;
 use super::scan;

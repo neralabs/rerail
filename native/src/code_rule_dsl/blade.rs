@@ -9,12 +9,13 @@
 //! the view's data, which Blade defines outside the template, so a variable the template does not
 //! define is unknown there, never undefined.
 
-pub(crate) mod forte;
+pub mod forte;
 #[cfg(test)]
-mod oracle_tests;
-#[cfg(test)]
-mod tests;
-pub(crate) mod view;
+pub mod oracle_tests;
+// cratify: `tests` is rerail-engine's (it mounts it)
+pub mod view;
+// Its tape (`tape::TreeParser`).
+pub mod tape;
 
 /// What a marker (`view`'s empty statement over a directive) does to the template's variables.
 #[derive(Debug, Default, PartialEq)]

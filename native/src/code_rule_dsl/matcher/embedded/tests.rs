@@ -1,7 +1,7 @@
 //! `embedded` and `host` between a file's own tree and the program it embeds, through utilities
 //! as written inline.
 
-use crate::code_rule_dsl::test_support::*;
+// cratify: a re-export of rerail-engine's, which its facades of this module make
 use serde_json::{Value, json};
 
 const REFS: &str = "<template><div ref=\"a\"></div><p ref=\"b\"></p></template>\n<script setup>\nconst a = 1\n</script>\n";

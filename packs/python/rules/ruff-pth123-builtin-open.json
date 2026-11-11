@@ -1,0 +1,308 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pth123-builtin-open",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use the open method of a Path object instead of the open builtin; pathlib reads better than passing path strings around.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "clauses": [
+    {
+      "id": "builtin-open",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "has": {"field": "function", "matches": "callee"},
+            "all": [
+              {
+                "any": [
+                  {"arguments": {"signature": ["file"], "mode": "syntactic", "absent": ["file"]}},
+                  {"arguments": {"signature": ["file"], "mode": "syntactic", "bind": {"FI": "file"}}}
+                ]
+              },
+              {
+                "any": [
+                  {"arguments": {"signature": ["file", "mode", "buffering", "encoding", "errors", "newline", "closefd"], "mode": "syntactic", "absent": ["closefd"]}},
+                  {"arguments": {"signature": ["file", "mode", "buffering", "encoding", "errors", "newline", "closefd"], "mode": "syntactic", "bind": {"CF": "closefd"}}}
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "arguments": {
+                      "signature": ["file", "mode", "buffering", "encoding", "errors", "newline", "closefd", "opener"],
+                      "mode": "syntactic",
+                      "absent": ["opener"]
+                    }
+                  },
+                  {
+                    "arguments": {
+                      "signature": ["file", "mode", "buffering", "encoding", "errors", "newline", "closefd", "opener"],
+                      "mode": "syntactic",
+                      "bind": {"OP": "opener"}
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "utils": {
+            "callee": {
+              "any": [
+                {"any": [{"kind": "identifier"}, {"kind": "attribute"}], "resolves": {"global": ["open"], "import": ["builtins.open"]}, "pattern": "$F"},
+                {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "callee"}}
+              ]
+            },
+            "true-literal": {"any": [{"kind": "true"}, {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "true-literal"}}]},
+            "none-literal": {"any": [{"kind": "none"}, {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "none-literal"}}]},
+            "int-name-ann": {"any": [{"kind": "identifier"}, {"kind": "attribute"}], "resolves": {"global": ["int"], "import": ["builtins.int"]}},
+            "int-annotation": {
+              "any": [
+                {"matches": "int-name-ann"},
+                {"kind": "type", "has": {"stopBy": "neighbor", "matches": "int-annotation"}},
+                {"kind": "subscript", "has": {"field": "value", "matches": "int-name-ann"}},
+                {"kind": "generic_type", "has": {"stopBy": "neighbor", "kind": "identifier", "matches": "int-name-ann"}}
+              ]
+            },
+            "int-call": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": {"field": "function", "any": [{"kind": "identifier"}, {"kind": "attribute"}], "resolves": {"global": ["int"], "import": ["builtins.int"]}}
+                },
+                {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "int-call"}}
+              ]
+            },
+            "bool-type": {
+              "any": [
+                {"kind": "true"},
+                {"kind": "false"},
+                {"kind": "not_operator"},
+                {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "bool-type"}},
+                {"kind": "named_expression", "has": {"field": "value", "matches": "bool-type"}},
+                {
+                  "kind": "conditional_expression",
+                  "all": [
+                    {"has": {"stopBy": "neighbor", "matches": "bool-type", "precedes": {"stopBy": "neighbor", "regex": "^if$"}}},
+                    {"has": {"stopBy": "neighbor", "matches": "bool-type", "follows": {"stopBy": "neighbor", "regex": "^else$"}}}
+                  ]
+                },
+                {"kind": "boolean_operator", "all": [{"has": {"field": "left", "matches": "bool-type"}}, {"has": {"field": "right", "matches": "bool-type"}}]}
+              ]
+            },
+            "number": {"any": [{"matches": "int-type"}, {"matches": "bool-type"}]},
+            "int-type": {
+              "any": [
+                {"kind": "integer", "value": {"type": "int"}},
+                {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "int-type"}},
+                {"kind": "named_expression", "has": {"field": "value", "matches": "int-type"}},
+                {"kind": "unary_operator", "has": {"field": "argument", "matches": "number"}},
+                {
+                  "kind": "binary_operator",
+                  "all": [
+                    {"has": {"field": "operator", "regex": "^(?:[-+%*&|^]|//|\\*\\*|<<|>>)$"}},
+                    {"has": {"field": "left", "matches": "number"}},
+                    {"has": {"field": "right", "matches": "number"}}
+                  ]
+                },
+                {
+                  "kind": "conditional_expression",
+                  "all": [
+                    {"has": {"stopBy": "neighbor", "matches": "number", "precedes": {"stopBy": "neighbor", "regex": "^if$"}}},
+                    {"has": {"stopBy": "neighbor", "matches": "number", "follows": {"stopBy": "neighbor", "regex": "^else$"}}}
+                  ],
+                  "any": [
+                    {"has": {"stopBy": "neighbor", "matches": "int-type", "precedes": {"stopBy": "neighbor", "regex": "^if$"}}},
+                    {"has": {"stopBy": "neighbor", "matches": "int-type", "follows": {"stopBy": "neighbor", "regex": "^else$"}}}
+                  ]
+                },
+                {
+                  "kind": "boolean_operator",
+                  "all": [{"has": {"field": "left", "matches": "number"}}, {"has": {"field": "right", "matches": "number"}}],
+                  "any": [{"has": {"field": "left", "matches": "int-type"}}, {"has": {"field": "right", "matches": "int-type"}}]
+                }
+              ]
+            },
+            "int-value": {"any": [{"matches": "int-type"}, {"matches": "int-call"}]},
+            "int-name": {
+              "kind": "identifier",
+              "any": [
+                {"resolves": {"binding": {"only": true, "form": ["assignment", "named"], "value": {"matches": "int-value"}}}},
+                {
+                  "resolves": {
+                    "binding": {
+                      "only": true,
+                      "site": {
+                        "kind": "as_pattern",
+                        "all": [
+                          {"has": {"stopBy": "neighbor", "matches": "int-value"}},
+                          {"has": {"stopBy": "neighbor", "kind": "as_pattern_target", "has": {"stopBy": "neighbor", "kind": "identifier"}}}
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "only": true,
+                      "form": ["annotated", "annotation", "parameter"],
+                      "site": {"not": {"has": {"stopBy": "neighbor", "any": [{"kind": "list_splat_pattern"}, {"kind": "dictionary_splat_pattern"}]}}},
+                      "annotation": {"matches": "int-annotation"}
+                    }
+                  }
+                },
+                {"resolves": {"binding": {"only": true, "site": {"kind": "function_definition", "has": {"field": "return_type", "matches": "int-annotation"}}}}},
+                {
+                  "pattern": "$PW",
+                  "resolves": {
+                    "binding": {
+                      "only": true,
+                      "site": {
+                        "kind": "assignment",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "left",
+                              "any": [{"kind": "list_pattern"}, {"kind": "tuple_pattern"}, {"kind": "pattern_list"}],
+                              "has": {"stopBy": "neighbor", "kind": "identifier", "pattern": "$UT", "compare": {"left": "UT", "op": "eq", "right": "PW", "text": "tokens"}}
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "right",
+                              "kind": "set",
+                              "has": {"stopBy": "neighbor", "matches": "int-value", "pattern": "$UV", "compare": {"left": "UV", "op": "eq", "right": "UT", "text": "index"}}
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "name-root": {
+              "any": [
+                {"matches": "int-name"},
+                {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "name-root"}},
+                {"kind": "call", "has": {"field": "function", "matches": "name-root"}}
+              ]
+            },
+            "int-class-member": {
+              "kind": "identifier",
+              "pattern": "$A",
+              "any": [
+                {"binds": {"scope": "class", "latest": true, "form": ["assignment", "named"], "value": {"matches": "int-value"}}},
+                {
+                  "binds": {
+                    "scope": "class",
+                    "latest": true,
+                    "site": {
+                      "kind": "as_pattern",
+                      "all": [
+                        {"has": {"stopBy": "neighbor", "matches": "int-value"}},
+                        {"has": {"stopBy": "neighbor", "kind": "as_pattern_target", "has": {"stopBy": "neighbor", "kind": "identifier"}}}
+                      ]
+                    }
+                  }
+                },
+                {
+                  "binds": {
+                    "scope": "class",
+                    "latest": true,
+                    "form": ["annotated", "annotation", "parameter"],
+                    "site": {"not": {"has": {"stopBy": "neighbor", "any": [{"kind": "list_splat_pattern"}, {"kind": "dictionary_splat_pattern"}]}}},
+                    "annotation": {"matches": "int-annotation"}
+                  }
+                },
+                {"binds": {"scope": "class", "latest": true, "site": {"kind": "function_definition", "has": {"field": "return_type", "matches": "int-annotation"}}}}
+              ]
+            },
+            "class-holding-int": {
+              "kind": "class_definition",
+              "has": {"field": "body", "has": {"stopBy": {"kind": "class_definition"}, "matches": "int-class-member"}}
+            },
+            "int-attribute": {
+              "kind": "attribute",
+              "all": [
+                {"has": {"field": "attribute", "kind": "identifier", "pattern": "$A"}},
+                {
+                  "has": {
+                    "field": "object",
+                    "any": [
+                      {"kind": "identifier", "resolves": {"binding": {"site": {"matches": "class-holding-int"}}}},
+                      {
+                        "kind": "attribute",
+                        "all": [
+                          {"has": {"field": "attribute", "kind": "identifier", "pattern": "$B"}},
+                          {
+                            "has": {
+                              "field": "object",
+                              "kind": "identifier",
+                              "resolves": {
+                                "binding": {
+                                  "site": {
+                                    "kind": "class_definition",
+                                    "has": {
+                                      "field": "body",
+                                      "has": {
+                                        "stopBy": {"kind": "class_definition"},
+                                        "matches": "class-holding-int",
+                                        "has": {"field": "name", "pattern": "$B", "binds": {"scope": "class", "latest": true}}
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "file-descriptor": {
+              "any": [
+                {"kind": "integer", "value": {"type": "int"}},
+                {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "file-descriptor"}},
+                {"matches": "name-root"},
+                {"matches": "int-attribute"}
+              ]
+            }
+          },
+          "constraints": {"FI": {"not": {"matches": "file-descriptor"}}, "CF": {"matches": "true-literal"}, "OP": {"matches": "none-literal"}}
+        }
+      },
+      "violation": {
+        "anchor": "capture.F",
+        "code": "PTH123",
+        "message": "Use `Path(file).open(...)` instead of `open(file, ...)`; the other arguments carry over. Leave `open()` when the argument is a file descriptor, or when it needs `closefd=False` or an `opener`.",
+        "suppress": {"noqa": {"codes": ["PTH123"]}}
+      }
+    },
+    {
+      "id": "builtin-open-in-string-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {"matches": "ann-string"},
+          "utils": {
+            "callee": {"any": [{"any": [{"kind": "identifier"}, {"kind": "attribute"}], "resolves": {"global": ["open"], "import": ["builtins.open"]}, "pattern": "$F"}, {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "callee"}}]},
+            "true-literal": {"any": [{"kind": "true"}, {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "true-literal"}}]},
+            "none-literal": {"any": [{"kind": "none"}, {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "none-literal"}}]},
+            "positional": {"not": {"any": [{"kind": "keyword_argument"}, {"kind": "dictionary_splat"}, {"kind": "comment"}, {"kind": "line_continuation"}, {"regex": "^[(),]$"}]}},
+            "unread-file": {"any": [{"kind": "integer"}, {"kind": "identifier"}, {"kind": "attribute"}, {"kind": "call"}, {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "unread-file"}}]},
+            "args-ok": {"kind": "argument_list", "not": {"has": {"stopBy": "neighbor", "any": [{"all": [{"matches": "positional", "count": {"follows": {"stopBy": "end", "matches": "positional"}, "min": 0, "max": 0}}, {"matches": "unread-file"}]}, {"kind": "keyword_argument", "has": {"stopBy": "neighbor", "kind": "identifier", "regex": "^file$", "precedes": {"stopBy": "neighbor", "regex": "^=$"}}, "all": [{"has": {"stopBy": "neighbor", "matches": "unread-file", "follows": {"stopBy": "neighbor", "regex": "^=$"}}}]}, {"all": [{"matches": "positional", "count": {"follows": {"stopBy": "end", "matches": "positional"}, "min": 6, "max": 6}}, {"not": {"matches": "true-literal"}}]}, {"all": [{"matches": "positional", "count": {"follows": {"stopBy": "end", "matches": "positional"}, "min": 7, "max": 7}}, {"not": {"matches": "none-literal"}}]}, {"kind": "keyword_argument", "has": {"stopBy": "neighbor", "kind": "identifier", "regex": "^closefd$", "precedes": {"stopBy": "neighbor", "regex": "^=$"}}, "not": {"has": {"stopBy": "neighbor", "matches": "true-literal", "follows": {"stopBy": "neighbor", "regex": "^=$"}}}}, {"kind": "keyword_argument", "has": {"stopBy": "neighbor", "kind": "identifier", "regex": "^opener$", "precedes": {"stopBy": "neighbor", "regex": "^=$"}}, "not": {"has": {"stopBy": "neighbor", "matches": "none-literal", "follows": {"stopBy": "neighbor", "regex": "^=$"}}}}]}}},
+            "ann-call": {"kind": "call", "has": {"stopBy": "neighbor", "matches": "callee", "precedes": {"stopBy": "neighbor", "matches": "args-ok"}}},
+            "ann-string": {"kind": "string", "not": {"has": {"stopBy": "end", "kind": "escape_sequence"}}, "parse": {"grammar": "annotation", "has": {"stopBy": "end", "any": [{"matches": "ann-call"}, {"matches": "ann-string"}]}}}
+          }
+        }
+      },
+      "violation": {"anchor": "capture.F", "code": "PTH123", "message": "Use `Path(file).open(...)` instead of `open(file, ...)`; the other arguments carry over. Leave `open()` when the argument is a file descriptor, or when it needs `closefd=False` or an `opener`.", "suppress": {"noqa": {"codes": ["PTH123"]}}, "each": "F"}
+    }
+  ]
+}

@@ -3,9 +3,10 @@
 
 use super::{Arguments, Passed, SlotKind};
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::oracle;
+// cratify: a re-export of rerail-engine's, which its facades of this module make
 use ast_grep_core::tree_sitter::LanguageExt;
 use serde_json::Value as Json;
+use crate::code_rule_dsl::matcher::arguments::lang_php::PhpArguments as _;
 
 /// Every case in the oracle: each slot holds the argument Ruff's `find_argument` finds in
 /// PHP-Parser's `args`, or none; a first-class callable is no call.

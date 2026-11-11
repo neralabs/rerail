@@ -1,0 +1,658 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up040-non-pep695-type-alias",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Declare type aliases with the type statement (Python 3.12 and later) instead of a TypeAlias annotation or a TypeAliasType call; it is shorter and scopes type parameters to the alias.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "typevar-call": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "any": [
+                    {
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "attribute"
+                        }
+                      ],
+                      "resolves": {
+                        "import": [
+                          "typing.TypeVar",
+                          "typing_extensions.TypeVar",
+                          "_typeshed.TypeVar",
+                          "typing.TypeVarTuple",
+                          "typing_extensions.TypeVarTuple",
+                          "_typeshed.TypeVarTuple",
+                          "typing.ParamSpec",
+                          "typing_extensions.ParamSpec",
+                          "_typeshed.ParamSpec"
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "arguments",
+                  "kind": "argument_list",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    },
+                    "matches": "plain-string"
+                  }
+                }
+              }
+            ]
+          },
+          "unconvertible-typevar": {
+            "matches": "typevar-call",
+            "any": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "arguments",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "keyword_argument",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "regex": "^default$"
+                    }
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "function",
+                      "any": [
+                        {
+                          "any": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "kind": "attribute"
+                            }
+                          ],
+                          "resolves": {
+                            "import": [
+                              "typing.TypeVarTuple",
+                              "typing_extensions.TypeVarTuple",
+                              "_typeshed.TypeVarTuple",
+                              "typing.ParamSpec",
+                              "typing_extensions.ParamSpec",
+                              "_typeshed.ParamSpec"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "arguments",
+                      "any": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "keyword_argument",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "field": "name",
+                              "regex": "^bound$"
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "nthChild": {
+                              "position": 2,
+                              "ofRule": {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              }
+                            },
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "keyword_argument"
+                                },
+                                {
+                                  "kind": "dictionary_splat"
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "unconvertible-reference": {
+            "kind": "identifier",
+            "resolves": {
+              "binding": {
+                "site": {
+                  "kind": "assignment",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "kind": "identifier"
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "type",
+                      "regex": "(?s)."
+                    }
+                  }
+                },
+                "value": {
+                  "matches": "unconvertible-typevar"
+                }
+              }
+            }
+          },
+          "typealias-annotation": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.TypeAlias",
+                    "typing_extensions.TypeAlias",
+                    "_typeshed.TypeAlias"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "typealias-annotation"
+                }
+              }
+            ]
+          },
+          "plain-string": {
+            "any": [
+              {
+                "kind": "string",
+                "not": {
+                  "regex": "^[a-zA-Z]*[bBfFtT]"
+                }
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "regex": "^[a-zA-Z]*[bBfFtT]"
+                  }
+                }
+              }
+            ]
+          },
+          "type-params-keyword": {
+            "kind": "keyword_argument",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "regex": "^type_params$"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "type-params-value"
+                }
+              }
+            ]
+          },
+          "type-params-value": {
+            "any": [
+              {
+                "kind": "tuple",
+                "all": [
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "not": {
+                          "any": [
+                            {
+                              "matches": "paren-name"
+                            },
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "regex": "^[(),]$"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "matches": "unconvertible-reference"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "type-params-value"
+                }
+              }
+            ]
+          },
+          "alias-call": {
+            "any": [
+              {
+                "kind": "call",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "function",
+                      "any": [
+                        {
+                          "any": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "kind": "attribute"
+                            }
+                          ],
+                          "resolves": {
+                            "import": [
+                              "typing.TypeAliasType",
+                              "typing_extensions.TypeAliasType",
+                              "_typeshed.TypeAliasType"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "arguments",
+                      "kind": "argument_list",
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "nthChild": {
+                              "position": 1,
+                              "ofRule": {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              }
+                            },
+                            "matches": "plain-string",
+                            "pattern": "$ALIAS"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "nthChild": {
+                              "position": 2,
+                              "ofRule": {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              }
+                            },
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "keyword_argument"
+                                },
+                                {
+                                  "kind": "dictionary_splat"
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "not": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "nthChild": {
+                                "position": 4,
+                                "ofRule": {
+                                  "not": {
+                                    "kind": "comment"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "not": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "nthChild": {
+                                "position": 3,
+                                "ofRule": {
+                                  "not": {
+                                    "kind": "comment"
+                                  }
+                                }
+                              },
+                              "not": {
+                                "matches": "type-params-keyword"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "alias-call"
+                }
+              }
+            ]
+          },
+          "paren-name": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "paren-name"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "type-alias-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "min": "3.12"
+            }
+          },
+          "rule": {
+            "kind": "assignment",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "pattern": "$NAME"
+                    },
+                    {
+                      "any": [
+                        {
+                          "kind": "parenthesized_expression"
+                        },
+                        {
+                          "kind": "tuple_pattern"
+                        }
+                      ],
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "regex": "^,$"
+                        }
+                      },
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "identifier",
+                        "pattern": "$NAME"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "type",
+                  "kind": "type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "typealias-annotation"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "right",
+                  "regex": "(?s)."
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "right",
+                    "has": {
+                      "stopBy": "end",
+                      "matches": "unconvertible-reference"
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "right",
+                    "matches": "unconvertible-reference"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "assignment",
+                    "field": "right"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP040",
+        "message": "Write this alias as `type $NAME = ...`, moving any type variables into `[T]`; keep `TypeAlias` if the alias is used at runtime, e.g. in `isinstance`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP040"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "type-alias-type-call",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "min": "3.12"
+            }
+          },
+          "rule": {
+            "kind": "assignment",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "pattern": "$NAME"
+                    },
+                    {
+                      "any": [
+                        {
+                          "kind": "parenthesized_expression"
+                        },
+                        {
+                          "kind": "tuple_pattern"
+                        }
+                      ],
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "regex": "^,$"
+                        }
+                      },
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "identifier",
+                        "pattern": "$NAME"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "type",
+                    "regex": "(?s)."
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "right",
+                  "matches": "alias-call"
+                }
+              },
+              {
+                "compare": {
+                  "left": "NAME",
+                  "op": "eq",
+                  "right": "ALIAS_VALUE",
+                  "text": "source"
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "assignment",
+                    "field": "right"
+                  }
+                }
+              }
+            ]
+          },
+          "transform": {
+            "ALIAS_VALUE": {
+              "substring": {
+                "source": "$ALIAS",
+                "value": true
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP040",
+        "message": "Write this alias as `type $NAME[...] = value`, listing the `type_params` names in the brackets; both forms create a TypeAliasType, but the `type` statement evaluates the value lazily.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP040"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

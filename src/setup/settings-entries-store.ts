@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import type * as Sqlite from "node:sqlite";
 import { enableWal } from "../engine/storage/sqlite-wal.js";
+import { holdsTable } from "../engine/storage/table-probe.js";
 import { claudeStatusDatabasePath } from "./claude-status-store.js";
 
 /**
@@ -54,7 +55,7 @@ export function readAddedSettingsEntries(home: string, settingsPath: string): Ad
   const path = claudeStatusDatabasePath(home);
   if (!existsSync(path)) return undefined;
   using database = openDatabase(path, { readOnly: true, timeout: 100 });
-  if (database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(TABLE) === undefined) return undefined;
+  if (!holdsTable(database, TABLE)) return undefined;
   const row = database.prepare(`SELECT added_json AS addedJson FROM ${TABLE} WHERE settings_path = ?`)
     .get(resolve(settingsPath)) as { addedJson: string } | undefined;
   return row === undefined ? undefined : parseAdded(row.addedJson);

@@ -19,7 +19,7 @@
 use super::memo;
 use crate::content_store::ContentStore;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 pub(in crate::code_rule_dsl) struct Session {
     /// The store's file, which each run's SQL connection opens (its atoms are the store's).
@@ -27,7 +27,7 @@ pub(in crate::code_rule_dsl) struct Session {
     pub(super) store: ContentStore,
     /// In a test build, the thread that started the session, the only one whose runs are its: the other tests run
     /// beside it, in the same process, and are no session's.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     thread: std::thread::ThreadId,
     pub(super) memo: memo::Held,
     /// The cross-file part as the last run left it (decision 0077): an edit runs the strata whose inputs changed. One
@@ -40,6 +40,10 @@ pub(in crate::code_rule_dsl) struct Session {
     pub(super) stats: Mutex<std::collections::HashMap<[u8; 32], super::keptstats::Keeper>>,
     /// Which session this is: its runs' kept plans and derived values are taken back only by its own runs.
     generation: u64,
+    /// Its runs' connections and stores, kept from run to run (`connections`): an edit's run opens none.
+    pub(super) connections: Arc<parking_lot::Mutex<super::connections::Connections>>,
+    /// Its runs' chunk mixes' tree counts (`own_counts`), read from memory as they are written behind the runs.
+    pub(super) own: super::OwnKept,
 }
 
 
@@ -53,7 +57,7 @@ pub(super) fn generation() -> Option<u64> {
 static SESSION: Mutex<Option<Session>> = Mutex::new(None);
 
 /// Starts this process's session, its store in `dir`; one already started is kept.
-pub(in crate::code_rule_dsl) fn start(dir: &Path) -> std::result::Result<(), String> {
+pub fn start(dir: &Path) -> std::result::Result<(), String> {
     let mut session = SESSION.lock().map_err(|_| "the session is poisoned".to_owned())?;
     if session.is_some() {
         return Ok(());
@@ -69,15 +73,17 @@ pub(in crate::code_rule_dsl) fn start(dir: &Path) -> std::result::Result<(), Str
         written: Mutex::new(Default::default()),
         stats: Mutex::new(Default::default()),
         generation: GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-        #[cfg(test)]
+        connections: Arc::new(parking_lot::Mutex::new(super::connections::Connections::kept())),
+        own: Default::default(),
+        #[cfg(any(test, feature = "test-hooks"))]
         thread: std::thread::current().id(),
     });
     Ok(())
 }
 
 /// Ends this process's session: later runs are a fresh process's.
-#[cfg(test)]
-pub(in crate::code_rule_dsl) fn stop() {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn stop() {
     *SESSION.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
 }
 
@@ -85,7 +91,7 @@ static FULL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(
 
 /// Runs `run` as a full run: as a process without a session would, compiling the program and evaluating every file,
 /// so its profile shows every step (`logic --full`). The session is left as it was.
-pub(in crate::code_rule_dsl) fn full<T>(run: impl FnOnce() -> T) -> T {
+pub fn full<T>(run: impl FnOnce() -> T) -> T {
     struct Reset;
     impl Drop for Reset {
         fn drop(&mut self) {
@@ -104,9 +110,9 @@ pub(super) fn current() -> Held {
         return Held(None, true);
     }
     let held = SESSION.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let skip = held.as_ref().is_some_and(|s| s.thread != std::thread::current().id());
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-hooks")))]
     let skip = false;
     Held(Some(held), skip || FULL.load(std::sync::atomic::Ordering::Relaxed))
 }
@@ -124,15 +130,15 @@ impl Held {
     }
     /// Whether a run on this thread is the session's: always, outside tests.
     fn ours(_session: &Session) -> bool {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         return _session.thread == std::thread::current().id();
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-hooks")))]
         true
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::typing::file_local::Binding;
 
@@ -149,7 +155,7 @@ mod tests {
         std::fs::create_dir_all(&src).unwrap();
         std::fs::write(src.join("a.py"), "import hashlib\nhashlib.md5(b'x')\n").unwrap();
         std::fs::write(src.join("b.py"), "import pickle\npickle.loads(b'x')\n").unwrap();
-        let rule = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/bandit-b301-pickle.rr");
+        let rule = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../docs/rule-syntax/packs/python/bandit-b301-pickle.rr");
         let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
         let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
         let findings = || std::fs::read_to_string(out.join("violation.csv")).unwrap();
@@ -181,7 +187,7 @@ mod tests {
         std::fs::write(src.join("pkg/loader.py"), "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n").unwrap();
         std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
         std::fs::write(src.join("other.py"), "import json\njson.loads('1')\n").unwrap();
-        let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+        let rules = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../docs/rule-syntax/packs/python");
         let programs: Vec<String> = ["bandit-b301-pickle.rr", "bandit-b307-eval.rr"].iter().map(|r| crate::code_rule_dsl::tools::flatten(&rules.join(r)).unwrap()).collect();
         let texts: Vec<&str> = programs.iter().map(String::as_str).collect();
         let run = || super::super::run_all(&texts, &src, &out, "program", Binding::Cpu, 1 << 18).unwrap();

@@ -17,24 +17,21 @@ test-hooks = []
 [dependencies]
 rerail-accel = { path = "../../../accel" }
 foldhash = "=0.2.0"
-gix = { version = "=0.84.0", default-features = false, features = ["status", "parallel", "sha1", "sha256", "revision"] }
+gix = { version = "=0.90.0", default-features = false, features = ["status", "parallel", "sha1", "sha256", "revision"] }
 hashbrown = { version = "=0.16.1", default-features = false }
 libc = "0.2.189"
 parking_lot = { version = "0.12", features = ["arc_lock"] }
 rayon = "=1.12.0"
 regex = "=1.13.1"
 regex-syntax = "=0.8.11"
-rusqlite = { version = "=0.40.2", features = ["bundled", "column_decltype", "functions", "hooks", "limits", "modern_sqlite", "series", "vtab", "array"] }
+rusqlite = { version = "=0.41.1", features = ["bundled", "column_decltype", "functions", "hooks", "limits", "modern_sqlite", "series", "vtab", "array"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-sha2 = "0.10"
+sha2 = "0.11"
 zstd = "=0.14.3"
 
 [target.'cfg(not(any(windows, target_family = "wasm")))'.dependencies]
-tikv-jemalloc-sys = { version = "=0.6.1", default-features = false }
-
-[target.'cfg(all(target_arch = "aarch64", not(windows)))'.dependencies]
-sha2 = { version = "0.10", features = ["asm"] }
+tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
 
 [dev-dependencies]
 tempfile = "=3.27.0"

@@ -1,9 +1,10 @@
 import { z } from "zod/v4";
 import { STEER_STRATEGIES } from "../adapter-contract.js";
+import { AUDIT_MODES, AUDIT_SCOPES } from "./audit.js";
 
 const auditSettingsShape = {
-  scope: z.enum(["repository", "touched-files", "ai-output"]),
-  mode: z.enum(["log", "steer"]),
+  scope: z.enum(AUDIT_SCOPES),
+  mode: z.enum(AUDIT_MODES),
   steerStrategy: z.enum(STEER_STRATEGIES),
 };
 /** A row saved before `steerStrategy` existed reads as `message`, the strategy Rerail always used. */
@@ -32,7 +33,7 @@ export const auditRequestInputSchema = z.strictObject({
 export type AuditRequestInput = z.infer<typeof auditRequestInputSchema>;
 export const auditRequestSchema = z.strictObject({
   id: z.string(), sessionId: z.string(), workspaceRoot: z.string(),
-  scope: z.enum(["repository", "touched-files", "ai-output"]), mode: z.enum(["log", "steer"]),
+  scope: z.enum(AUDIT_SCOPES), mode: z.enum(AUDIT_MODES),
   paths: z.array(z.string()), status: z.enum(["queued", "running", "completed", "failed", "interrupted"]),
   createdAt: z.number(), startedAt: z.number().nullable(), finishedAt: z.number().nullable(),
   auditIds: z.array(z.string()), error: z.string().nullable(),

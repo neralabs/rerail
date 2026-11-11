@@ -1,0 +1,102 @@
+{
+  "caught": [
+    {
+      "path": "native/src/code_rule_dsl/p01_ufcs_subtree.rs",
+      "content": "fn f(tree: &SubTree, id: usize) {\n    let r = SubTree::host_range(&tree, id);\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/p02_ufcs_decoded.rs",
+      "content": "fn f(spans: &Decoded, range: Range<usize>) {\n    let r = Decoded::host_range(spans, range);\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/p03_tuple_field.rs",
+      "content": "impl Wrapped {\n    fn span(&self, range: Range<usize>) -> Range<usize> {\n        self.0.host_span(range)\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/p04_decoded_named_subtree.rs",
+      "content": "fn f(text: &str) {\n    let decoded = parse(text)?;\n    let r = decoded.host_range(found.node_id());\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/p05_decoded_outside_seam.rs",
+      "content": "fn place(map: &HostMap, r: Range<usize>) -> Range<usize> {\n    match map {\n        HostMap::Spans(decoded) => decoded.host_range(r),\n        HostMap::Whole(whole) => whole.clone(),\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/p06_path_ref.rs",
+      "content": "fn f(ids: &[usize], tree: &SubTree) {\n    let rs: Vec<_> = ids.iter().filter_map(|&id| Some(id)).map(SubTree::host_range).collect();\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/p11_self_decoded_field.rs",
+      "content": "impl Literal {\n    fn place(&self, r: Range<usize>) -> Range<usize> {\n        self.decoded.host_range(r)\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/p13_brace_receiver.rs",
+      "content": "fn f() {\n    let r = { pick(&trees) }.host_range(id);\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/p14_trait_dyn.rs",
+      "content": "fn f(doc: &dyn HostMapped, r: Range<usize>) {\n    let x = <SubTree as HostMapped>::host_span(doc, r);\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/tape.rs",
+      "content": "fn errors(segments: &SegmentMap, rec: &Rec) {\n    let span = segments.host_span(rec.start as usize..rec.end as usize);\n    report(span);\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/vue/view.rs",
+      "content": "impl View {\n    fn file_range(&self, node: &Node<'_, StrDoc<Vue>>) -> Range<usize> {\n        return self.segments.host_span(node.byte_range());\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/parse.rs",
+      "content": "fn exports(tree: &SubTree, found: &Found, out: &mut Vec<Range<usize>>) {\n    if let Some(range) = tree.host_range(found.node_id()) {\n        out.push(range);\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/sql/relational/parse_export.rs",
+      "content": "fn export(tree: &SubTree, span: Span, text: Option<String>) -> Option<(String, Range<usize>)> {\n    match text {\n        Some(text) => Some((text, tree.host_span(span.range))),\n        None => None,\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/demand/driver/catalog/sql_backend.rs",
+      "content": "fn rows(tree: &SubTree, candidate: &Candidate, failure: &mut Option<String>) -> Option<Range<usize>> {\n    let Some(range) = tree\n        .host_range(candidate.node_id())\n    else {\n        *failure = Some(\"parse-invalid-map\".to_owned());\n        return None;\n    };\n    Some(range)\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/literal/mod.rs",
+      "content": "impl SubTree {\n    #[cfg_attr(not(test), allow(dead_code))]\n    /// The source range of the node with this id.\n    pub(crate) fn host_range(&self, node_id: usize) -> Option<Range<usize>> {\n        let rec = self.nodes.get(self.index_of(node_id)?)?;\n        Some(self.map_range(rec.start as usize..rec.end as usize))\n    }\n}\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "native/src/code_rule_dsl/q01_comment.rs",
+      "content": "/// Unlike the old `tree.host_range(id)`, this keeps every range (`Origin::of_node`).\nfn f() {}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/q02_string.rs",
+      "content": "fn f() {\n    let msg = \"replaced segments.host_span(range) with file_ranges\";\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/literal/q03_new_origin_impl.rs",
+      "content": "impl crate::code_rule_dsl::origin::Origin for HeredocTree {\n    fn of_range(&self, range: Range<usize>) -> Option<FileRanges> {\n        Some(FileRanges::one(self.spans.host_range(range)))\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/literal/php_string.rs",
+      "content": "#[cfg(test)]\nmod tests {\n    #[test]\n    fn maps() {\n        let map = decode(\"'a'\");\n        assert_eq!(map.host_range(0..1), 1..2);\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/literal/subtree.rs",
+      "content": "    /// The source range of decoded bytes `range`.\n    fn map_range(&self, range: Range<usize>) -> Range<usize> {\n        match &self.map {\n            HostMap::Spans(decoded) => decoded.host_range(range),\n            HostMap::Whole(whole) => whole.clone(),\n        }\n    }\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/host.rs",
+      "content": "pub(super) fn host_exports<D: Doc>(doc: &D) {}\n\npub(crate) fn host_errors(tape: &Tape) -> Vec<Range<usize>> {\n    let name = \"host_range\";\n    tape.errors(name)\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/format_args.rs",
+      "content": "fn exports(tree: &SubTree, found: &Found, span: Range<usize>, out: &mut Vec<Range<usize>>) {\n    if let Some(range) = tree.of_node(found.node_id(), found.range()) {\n        out.push(range);\n    }\n    if let Some(range) = tree.of_range(span) {\n        out.push(range);\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/workspace/doc.rs",
+      "content": "fn place(link: Option<&Link>, range: Range<usize>) -> FileRanges {\n    match link {\n        Some(link) => link.segments.file_ranges(range).bridged(&link.host.source),\n        None => FileRanges::one(range),\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/compile/parse/m12b_tests.rs",
+      "content": "fn f(tree: &SubTree, found: &Found) {\n    let r = tree.host_range(found.node_id());\n}\n"
+    }
+  ]
+}

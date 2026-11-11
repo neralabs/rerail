@@ -17,7 +17,7 @@ use std::fmt::Write;
 use std::path::{Path, PathBuf};
 
 fn gate() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer")
+    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../gate/data-layer")
 }
 
 /// Matcher terms (keys of a rule object), each with its category.

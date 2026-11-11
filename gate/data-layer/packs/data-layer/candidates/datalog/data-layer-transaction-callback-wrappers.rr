@@ -1,8 +1,75 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl tcw_block(kind: symbol)
+tcw_block("block").
+.decl tcw_class(kind: symbol)
+tcw_class("class_definition").
+.decl tcw_fn(kind: symbol)
+tcw_fn("function_definition").
+.decl tcw_lambda(kind: symbol)
+tcw_lambda("lambda").
+.decl tcw_type(kind: symbol)
+tcw_type("type").
+.decl child(p: node, c: node, i: number)
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
 .decl out_scope(d: number)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl tcw_cb_annotation(t: node)
+.decl tcw_cb_param(f: node)
+.decl tcw_cb_reads(f: node)
+.decl tcw_cb_word_kind(x: node)
+.decl tcw_cb_word_node(x: node, w: symbol)
+.decl tcw_doc(d: number, p: symbol)
+.decl tcw_in_body(f: node, x: node)
+.decl tcw_ir_before(al: node, y: node, z: node)
+.decl tcw_ir_callback(al: node, cb: node)
+.decl tcw_ir_counted(al: node, y: node, i: number)
+.decl tcw_ir_def_versioned(g: node)
+.decl tcw_ir_first_end(f: node, e: number)
+.decl tcw_ir_first_end_at(f: node, e: number)
+.decl tcw_ir_first_name(f: node, name: symbol)
+.decl tcw_ir_first_start(f: node, s: number)
+.decl tcw_ir_has_kwfn(al: node)
+.decl tcw_ir_kwfn(al: node, v: node)
+.decl tcw_ir_kwfn_id(al: node, v: node, i: number)
+.decl tcw_ir_lambda(al: node, la: node)
+.decl tcw_ir_lambda_versioned(la: node)
+.decl tcw_ir_named(f: node, c: node, cb: node)
+.decl tcw_ir_named_at(f: node, s: number)
+.decl tcw_ir_owner(d: number, p: symbol, f: node)
+.decl tcw_ir_second(al: node, y: node)
+.decl tcw_ir_uncounted(y: node)
+.decl tcw_ir_vcall(x: node)
+.decl tcw_owner(d: number, p: symbol, f: node)
+.decl tcw_owner_exempt(f: node)
+.decl tcw_reads(name: symbol)
+.decl tcw_reads_call(c: node)
+.decl tcw_versioned(name: symbol)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, text, line, node_text
+.output violation
+tcw_reads("read").
+tcw_reads("read_async").
+tcw_reads("read_version").
+tcw_reads("read_version_async").
+tcw_reads("versioned_read").
+tcw_reads("versioned_read_async").
+tcw_reads("versioned_write").
+tcw_reads("versioned_write_async").
+tcw_reads("write").
+tcw_reads("write_async").
+tcw_reads("write_version").
+tcw_reads("write_version_async").
+tcw_versioned("versioned_read").
+tcw_versioned("versioned_read_async").
+tcw_versioned("versioned_write").
+tcw_versioned("versioned_write_async").
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
@@ -15,4 +82,45 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
-.output violation
+tape_syntax_error(d) :- syntax_error(d).
+tcw_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), !match("(?:.*/)?(?:l2000_connection/connection\\.py|l9900_auto_api/_versioning_helpers\\.py)", p).
+tcw_owner_exempt(f) :- node(_, f, "function_definition", _, _), field(f, "name", nm), node(_, nm, "identifier", _, _), text(nm, s), tcw_reads(s), nearest(f, c, tcw_class), field(c, "name", cn), node(_, cn, "identifier", _, _), text(cn, cs), (cs = "SyncDatabaseConnection" ; cs = "SyncVersionedDatabaseConnection").
+tcw_owner(d, p, f) :- tcw_doc(d, p), node(d, f, "function_definition", _, _), !tcw_owner_exempt(f).
+tcw_reads_call(c) :- node(_, c, "call", _, _), field(c, "function", a), node(_, a, "attribute", _, _), field(a, "attribute", i), node(_, i, "identifier", _, _), text(i, s), tcw_reads(s).
+tcw_in_body(f, x) :- nearest(x, f, tcw_fn), field(f, "body", b), inside(x, b, tcw_block).
+tcw_cb_word_node(x, "Callable") :- tcw_cb_word_kind(x), node_text(x, s), contains("Callable", s).
+tcw_cb_word_node(x, "Transaction") :- tcw_cb_word_kind(x), node_text(x, s), contains("Transaction", s).
+tcw_cb_word_kind(x) :- node(_, x, "identifier", _, _).
+tcw_cb_word_kind(x) :- node(_, x, "string", _, _).
+tcw_cb_word_kind(x) :- node(_, x, "concatenated_string", _, _).
+tcw_cb_annotation(t) :- node(_, t, "type", _, _), inside(x, t, tcw_type), tcw_cb_word_node(x, "Callable"), inside(y, t, tcw_type), tcw_cb_word_node(y, "Transaction").
+tcw_cb_param(f) :- field(f, "parameters", ps), child(ps, q, _), node(_, q, "typed_parameter", _, _), field(q, "type", t), tcw_cb_annotation(t).
+tcw_cb_param(f) :- field(f, "parameters", ps), child(ps, q, _), node(_, q, "typed_default_parameter", _, _), field(q, "type", t), tcw_cb_annotation(t).
+tcw_cb_reads(f) :- tcw_reads_call(c), tcw_in_body(f, c).
+violation("data-layer-transaction-callback-wrappers", "callback-helper", "transaction_callback_wrapper", p, l) :- tcw_owner(_, p, f), node_text(f, s), contains("Callable", s), contains("Transaction", s), tcw_cb_param(f), tcw_cb_reads(f), line(f, l).
+tcw_ir_owner(d, p, f) :- tcw_owner(d, p, f), node_text(f, s), (contains("versioned_read", s) ; contains("versioned_write", s)).
+tcw_ir_kwfn(al, v) :- child(al, kw, _), node(_, kw, "keyword_argument", _, _), field(kw, "name", nm), node(_, nm, "identifier", _, _), text(nm, "fn"), field(kw, "value", v).
+tcw_ir_has_kwfn(al) :- tcw_ir_kwfn(al, _).
+tcw_ir_counted(al, y, i) :- child(al, y, i), !tcw_ir_uncounted(y).
+tcw_ir_uncounted(y) :- node(_, y, "keyword_argument", _, _).
+tcw_ir_uncounted(y) :- node(_, y, "dictionary_splat", _, _).
+tcw_ir_before(al, y, z) :- tcw_ir_counted(al, y, i), tcw_ir_counted(al, z, j), j < i.
+tcw_ir_second(al, y) :- tcw_ir_counted(al, y, _), k = count : { tcw_ir_before(al, y, _) }, k = 1.
+tcw_ir_kwfn_id(al, v, i) :- child(al, kw, i), node(_, kw, "keyword_argument", _, _), field(kw, "name", nm), node(_, nm, "identifier", _, _), text(nm, "fn"), field(kw, "value", v), node(_, v, "identifier", _, _).
+tcw_ir_callback(al, v) :- tcw_ir_kwfn_id(al, v, i), i = min j : { tcw_ir_kwfn_id(al, _, j) }.
+tcw_ir_callback(al, y) :- tcw_ir_second(al, y), node(_, y, "identifier", _, _), !tcw_ir_has_kwfn(al).
+tcw_ir_vcall(x) :- node(_, x, "call", _, _), field(x, "function", a), node(_, a, "attribute", _, _), field(a, "attribute", i), node(_, i, "identifier", _, _), text(i, s), tcw_versioned(s).
+tcw_ir_vcall(x) :- node(_, x, "call", _, _), field(x, "function", g), node(_, g, "identifier", _, _), text(g, "getattr"), field(x, "arguments", al), child(al, st, i), node(_, st, "string", _, _), node_text(st, s), match("[rRuUfF]{0,2}(?:\"\"\"(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)\"\"\"|'''(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)'''|\"(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)\"|'(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)')", s), child(al, _, j), j < i.
+tcw_ir_named(f, c, cb) :- tcw_ir_owner(_, _, f), tcw_reads_call(c), tcw_in_body(f, c), field(c, "arguments", al), tcw_ir_callback(al, cb).
+tcw_ir_named_at(f, s) :- tcw_ir_named(f, c, _), node(_, c, _, s, _).
+tcw_ir_first_start(f, s) :- tcw_ir_named_at(f, _), s = min x : { tcw_ir_named_at(f, x) }.
+tcw_ir_first_end_at(f, e) :- tcw_ir_first_start(f, s), tcw_ir_named(f, c, _), node(_, c, _, s, e).
+tcw_ir_first_end(f, e) :- tcw_ir_first_end_at(f, _), e = max x : { tcw_ir_first_end_at(f, x) }.
+tcw_ir_first_name(f, t) :- tcw_ir_first_start(f, s), tcw_ir_first_end(f, e), tcw_ir_named(f, c, cb), node(_, c, _, s, e), text(cb, t).
+tcw_ir_def_versioned(g) :- tcw_ir_vcall(x), tcw_in_body(g, x).
+violation("data-layer-transaction-callback-wrappers", "inline-reentrant", "transaction_callback_wrapper", p, l) :- tcw_ir_owner(_, p, f), tcw_ir_first_name(f, t), field(f, "body", b), child(b, g, _), node(_, g, "function_definition", _, _), field(g, "name", gn), node(_, gn, "identifier", _, _), text(gn, t), tcw_ir_def_versioned(g), line(f, l).
+tcw_ir_lambda(al, v) :- tcw_ir_kwfn(al, v), node(_, v, "lambda", _, _).
+tcw_ir_lambda(al, y) :- tcw_ir_second(al, y), node(_, y, "lambda", _, _), !tcw_ir_has_kwfn(al).
+tcw_ir_lambda_versioned(la) :- field(la, "body", lb), tcw_ir_vcall(lb).
+tcw_ir_lambda_versioned(la) :- field(la, "body", lb), node(_, lb, _, bs, be), inside(x, la, tcw_lambda), tcw_ir_vcall(x), node(_, x, _, xs, xe), xs >= bs, xe <= be.
+violation("data-layer-transaction-callback-wrappers", "inline-reentrant", "transaction_callback_wrapper", p, l) :- tcw_ir_owner(_, p, f), tcw_reads_call(c), tcw_in_body(f, c), field(c, "arguments", al), tcw_ir_lambda(al, la), tcw_ir_lambda_versioned(la), line(f, l).

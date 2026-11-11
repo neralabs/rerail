@@ -1,0 +1,1 @@
+A shell edit to a file that already had unstaged changes when the session started, or was new and not ignored by Git, is now measured from the text the session first saw, so the agent is steered only on the lines it changed, not on every finding in the file.

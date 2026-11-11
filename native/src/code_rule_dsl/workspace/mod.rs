@@ -6,22 +6,23 @@
 //! - `evaluate`: per-file evaluation; `global`: cross-file clauses.
 //! - `crossfile`: the cross-file scheduling seam; `calls_state`: the `calls` adapter's summaries
 //!   and closure.
-//! - `persisted` and `storage`: stored results and the content store.
+//! - `persisted` and `storage`: stored results and the content store; `secret_names`: the paths
+//!   it never holds.
 //! - `results` and `memory`: reporting and memory accounting.
 
-pub(in crate::code_rule_dsl) mod api;
-mod calls_state;
-mod crossfile;
-mod documents;
-mod evaluate;
-mod global;
-mod index;
-mod ingest;
-mod memory;
-mod persisted;
-pub(in crate::code_rule_dsl) use persisted::grammar_version;
-mod results;
-mod storage;
+pub mod api;
+pub mod calls_state;
+pub mod crossfile;
+pub mod documents;
+pub mod evaluate;
+pub mod global;
+pub mod index;
+pub mod ingest;
+pub mod memory;
+pub mod persisted;
+pub mod results;
+pub mod secret_names;
+pub mod storage;
 
 use super::json::invalid;
 use super::model::{CompiledClause, CompiledCodeRule, Evaluation, FileInput};
@@ -29,12 +30,11 @@ use super::scope::ScopeTable;
 use super::tape;
 use super::violations::Witness;
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::package_manifest::Manifest;
 use crate::content_store::StoredFile;
 use global::{Partition, QueryPlan};
 use napi::Result;
 use results::ResultPageIndex;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -69,59 +69,59 @@ const FILE_WORK_BYTES_PER_UNIT: u64 = 8;
 /// bounds a 445 KB file to about 850,000 polls (1 to 4.5 s at the rates above).
 const FILE_CLAUSE_WORK_ALLOWANCES: u64 = 8;
 /// The failure of a clause that ran out of its own work allowance on a file.
-const CLAUSE_WORK_BUDGET_EXCEEDED: &str = "clause work budget exceeded";
+pub const CLAUSE_WORK_BUDGET_EXCEEDED: &str = "clause work budget exceeded";
 /// The failure of a clause the file's clause-work ceiling stopped: the clauses before it on the
 /// file spent it. Not the clause's verdict on the content, so never persisted (`FileState::unstored`).
-const FILE_CLAUSE_WORK_EXCEEDED: &str = "file clause work budget exceeded";
+pub const FILE_CLAUSE_WORK_EXCEEDED: &str = "file clause work budget exceeded";
 /// The failure of a clause of a resident file whose stored result could not be read back: the
 /// file is evaluated again by the next apply that offers it.
 const STORED_RESULT_UNAVAILABLE: &str = "the file's stored result could not be read";
 /// Persisted per-file clause results are reused only under a key covering every input the result
 /// depends on: source content, file context (`file_context`) and engine build (`candidate_catalog`).
-const REUSE_LOCAL_RESULTS: bool = true;
+pub const REUSE_LOCAL_RESULTS: bool = true;
 /// Directory reuse restores complete per-file results only after a tree-and-package-marker
 /// completion record proves the entire clean directory was evaluated.
 const REUSE_DIRECTORY_RESULTS: bool = true;
 /// How long a workspace leaves a store alone after a write of its own waited out the write
 /// deadline (`content_store`'s `BUSY_DEADLINE`): one maintenance wake (`storage.rs`), so a
 /// scan's later batches do not each wait out the deadline again.
-const STORE_BUSY_COOLDOWN: Duration = Duration::from_secs(30);
+pub const STORE_BUSY_COOLDOWN: Duration = Duration::from_secs(30);
 /// The source and tape bytes the files a busy store left unpublished may keep resident in all.
 /// Past it, later files are released down to their results (`release_unpublished_over_budget`),
 /// so a store that stays busy through a long index cannot make the workspace hold the whole
 /// repository.
 const UNPUBLISHED_RESIDENT_BYTES: usize = 64 * 1024 * 1024;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Tests shorten the per-file work budget (the shared steps') on their own thread.
-    static TEST_FILE_WORK_BUDGET: Cell<Option<u64>> = const { Cell::new(None) };
+    pub static TEST_FILE_WORK_BUDGET: Cell<Option<u64>> = const { Cell::new(None) };
     /// Tests shrink the unpublished files' resident byte budget on their own thread.
-    static TEST_UNPUBLISHED_RESIDENT_BYTES: Cell<Option<usize>> = const { Cell::new(None) };
+    pub static TEST_UNPUBLISHED_RESIDENT_BYTES: Cell<Option<usize>> = const { Cell::new(None) };
     /// Tests move the busy window's clock forward on their own thread, so a window passes
     /// without a wait (`store_busy_now`).
-    static TEST_STORE_BUSY_CLOCK_ADVANCE: Cell<Duration> = const { Cell::new(Duration::ZERO) };
+    pub static TEST_STORE_BUSY_CLOCK_ADVANCE: Cell<Duration> = const { Cell::new(Duration::ZERO) };
     /// Tests fail every read of evicted files' stored results on their own thread while set.
-    static TEST_EVICTED_READ_FAILURE: Cell<bool> = const { Cell::new(false) };
+    pub static TEST_EVICTED_READ_FAILURE: Cell<bool> = const { Cell::new(false) };
     /// Tests shorten each clause's work allowance on their own thread.
-    static TEST_CLAUSE_WORK_BUDGET: Cell<Option<u64>> = const { Cell::new(None) };
+    pub static TEST_CLAUSE_WORK_BUDGET: Cell<Option<u64>> = const { Cell::new(None) };
     /// Tests shorten the next clause's allowance alone, once, on their own thread.
-    static TEST_NEXT_CLAUSE_WORK_BUDGET: Cell<Option<u64>> = const { Cell::new(None) };
+    pub static TEST_NEXT_CLAUSE_WORK_BUDGET: Cell<Option<u64>> = const { Cell::new(None) };
     /// Tests shorten each clause's allowance in cross-file consumer passes alone.
-    static TEST_CONSUMER_CLAUSE_WORK_BUDGET: Cell<Option<u64>> = const { Cell::new(None) };
+    pub static TEST_CONSUMER_CLAUSE_WORK_BUDGET: Cell<Option<u64>> = const { Cell::new(None) };
     /// Tests shorten a file's clause-work ceiling on their own thread.
-    static TEST_CLAUSE_WORK_CEILING: Cell<Option<u64>> = const { Cell::new(None) };
+    pub static TEST_CLAUSE_WORK_CEILING: Cell<Option<u64>> = const { Cell::new(None) };
     /// Tests stand in another engine build on their own thread.
-    static TEST_ENGINE_BUILD_ID: Cell<Option<&'static str>> = const { Cell::new(None) };
+    pub static TEST_ENGINE_BUILD_ID: Cell<Option<&'static str>> = const { Cell::new(None) };
     /// Tests inject a failure in the batch local-result storage read.
-    static TEST_STORAGE_PREFETCH_FAILURE: Cell<bool> = const { Cell::new(false) };
+    pub static TEST_STORAGE_PREFETCH_FAILURE: Cell<bool> = const { Cell::new(false) };
     /// Tests pass the deadline on their own thread, unpolled, once evaluation reaches this phase
     /// (`pass_deadline_at_test_phase`).
-    static TEST_DEADLINE_PASSES_AT: Cell<Option<&'static str>> = const { Cell::new(None) };
+    pub static TEST_DEADLINE_PASSES_AT: Cell<Option<&'static str>> = const { Cell::new(None) };
 }
 
 /// The work a file's shared steps (parsing, the tape, the anchor index) may spend.
 fn file_work_budget(source_bytes: usize) -> u64 {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if let Some(budget) = TEST_FILE_WORK_BUDGET.get() {
         return budget;
     }
@@ -130,7 +130,7 @@ fn file_work_budget(source_bytes: usize) -> u64 {
 
 /// The work one clause's evaluation of a file of `source_bytes` may spend.
 fn clause_work_budget(source_bytes: usize) -> u64 {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if let Some(budget) = TEST_NEXT_CLAUSE_WORK_BUDGET
         .take()
         .or(TEST_CLAUSE_WORK_BUDGET.get())
@@ -142,7 +142,7 @@ fn clause_work_budget(source_bytes: usize) -> u64 {
 
 /// The work every clause's evaluation of a file of `source_bytes` may spend together.
 fn clause_work_ceiling(source_bytes: usize) -> u64 {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if let Some(ceiling) = TEST_CLAUSE_WORK_CEILING.get() {
         return ceiling;
     }
@@ -151,7 +151,7 @@ fn clause_work_ceiling(source_bytes: usize) -> u64 {
 }
 
 fn unpublished_resident_bytes() -> usize {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if let Some(budget) = TEST_UNPUBLISHED_RESIDENT_BYTES.get() {
         return budget;
     }
@@ -160,9 +160,9 @@ fn unpublished_resident_bytes() -> usize {
 
 /// The clock the busy window is measured on.
 fn store_busy_now() -> Instant {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     return Instant::now() + TEST_STORE_BUSY_CLOCK_ADVANCE.get();
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-hooks")))]
     Instant::now()
 }
 
@@ -234,26 +234,26 @@ impl WorkspaceState {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn pass_deadline_at_test_phase(phase: &str) {
     if TEST_DEADLINE_PASSES_AT.get() == Some(phase) {
         crate::code_rule_dsl::budget::pass_deadline_unpolled();
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
-    static TEST_PHASE_GATE: RefCell<Option<TestPhaseGate>> = const { RefCell::new(None) };
+    pub static TEST_PHASE_GATE: RefCell<Option<TestPhaseGate>> = const { RefCell::new(None) };
 }
 
-#[cfg(test)]
-struct TestPhaseGate {
-    phase: &'static str,
-    reached: std::sync::mpsc::Sender<std::sync::Weak<String>>,
-    release: std::sync::mpsc::Receiver<()>,
+#[cfg(any(test, feature = "test-hooks"))]
+pub struct TestPhaseGate {
+    pub phase: &'static str,
+    pub reached: std::sync::mpsc::Sender<std::sync::Weak<String>>,
+    pub release: std::sync::mpsc::Receiver<()>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn pause_at_test_phase(phase: &str, source: &Arc<String>) {
     TEST_PHASE_GATE.with(|gate| {
         if let Some(gate) = gate.borrow().as_ref().filter(|gate| gate.phase == phase) {
@@ -266,55 +266,62 @@ fn pause_at_test_phase(phase: &str, source: &Arc<String>) {
 }
 
 #[derive(Default)]
-struct Candidates {
+pub struct Candidates {
+    /// The file's `forbid` clauses over a regex or file query: they need no parse.
     regex: Vec<ClauseId>,
     ast: Vec<ClauseId>,
     by_kind: Vec<Vec<usize>>,
     unrestricted: Vec<usize>,
 }
 
-struct FileState {
+pub struct FileState {
     prepared: Option<Box<evaluate::PreparedAst>>,
-    input: FileInput,
+    pub input: FileInput,
     source_digest: [u8; 32],
     source_revision: u32,
     /// The documents of this source revision (`tape::FileImage`): its own tape, and the ones it
     /// derives.
-    tape: Option<(u32, tape::FileImage)>,
+    pub tape: Option<(u32, tape::FileImage)>,
     /// The scope tables `resolves` built for this source revision (one per grammar and annotation
     /// reading), reused by later evaluations.
     scopes: Option<(u32, Vec<Arc<ScopeTable>>)>,
-    stored: Option<StoredFile>,
+    pub stored: Option<StoredFile>,
     /// Every remaining AST terminal was absent from a complete, error-free selector index.
     /// Its empty result is retained for persistence without restoring the tape.
-    selector_skipped: bool,
-    tape_cache_hit: bool,
-    tape_decompressed: bool,
-    restored_local_results: usize,
+    pub selector_skipped: bool,
+    pub tape_cache_hit: bool,
+    pub tape_decompressed: bool,
+    pub restored_local_results: usize,
     restored_result_ids: HashSet<ClauseId>,
     /// The last evaluation was interrupted (the workspace closed, or the inline deadline passed):
     /// not the content's verdict; see `evaluate_file`.
-    transient_failure: bool,
+    pub transient_failure: bool,
     /// The store does not hold the results of the file's last evaluation: their publication found
     /// the store busy past its write deadline. However much of the file `stored` says the store
     /// holds, it stays resident through every eviction until a later apply publishes them.
-    unpublished: bool,
+    pub unpublished: bool,
     /// The unpublished file's source and tape were freed to bound what a busy store keeps
     /// resident (`release_unpublished_over_budget`): its results stand, it is never published,
     /// and its source is empty.
-    results_only: bool,
+    pub results_only: bool,
+    /// The file is named like one holding secrets (`StorageContext::withholds`): the store never
+    /// holds its source, tapes or results, so it is never published and stays resident whole
+    /// through every eviction.
+    withheld: bool,
     /// Clauses whose last result depends on more than the content and the catalog: the file's
     /// shared work or its clause-work ceiling ran out before they finished, or they ran out of
     /// work in a pass over some of the file's clauses, or with tables an earlier pass built. Kept
     /// for this workspace, which evaluates the same way, but never persisted.
-    unstored: HashSet<ClauseId>,
-    candidates: Arc<Candidates>,
+    pub unstored: HashSet<ClauseId>,
+    pub candidates: Arc<Candidates>,
     witnesses: Witnesses,
-    failures: BTreeMap<ClauseId, LocalFailure>,
+    pub failures: BTreeMap<ClauseId, LocalFailure>,
     /// `source-partial` message when the last parse had syntax errors and AST clauses ran around them.
     syntax: Option<String>,
-    /// Adapter-owned per-file cross-file state, retained with the file across persistence.
     crossfile: crossfile::CrossFileFileState,
+    /// The `import_generation` of the workspace its last evaluation read import targets at: a file
+    /// whose clauses read them is evaluated again once the held files change (`stale_imports`).
+    import_generation: u64,
 }
 
 impl FileState {
@@ -336,10 +343,10 @@ impl FileState {
     }
 
     /// Whether eviction keeps the file: the store lacks some of its results (its last evaluation
-    /// was transient, some clause's result is `unstored`, or a busy store left it `unpublished`),
-    /// which reading it back would lose.
+    /// was transient, some clause's result is `unstored`, a busy store left it `unpublished`, or
+    /// it is `withheld`), which reading it back would lose.
     fn stays_resident(&self) -> bool {
-        self.transient_failure || self.unpublished || !self.unstored.is_empty()
+        self.transient_failure || self.unpublished || self.withheld || !self.unstored.is_empty()
     }
 
     /// Takes `stored`'s results (this file read back from the store) for the clauses this file
@@ -398,13 +405,13 @@ impl std::ops::DerefMut for Witnesses {
 }
 
 #[derive(Default)]
-struct WorkspaceState {
+pub struct WorkspaceState {
     /// P's anchor corpus (`matcher::p_anchors`), for P's relational clauses and the
     /// `p-anchor-corpus` path (test-only, open items O18 and O20).
-    #[cfg(test)]
-    anchor_corpus: Arc<crate::code_rule_dsl::matcher::Corpus>,
-    code_rules: Vec<Arc<CompiledCodeRule>>,
-    candidate_sets: CandidateSets,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub anchor_corpus: Arc<crate::code_rule_dsl::matcher::Corpus>,
+    pub code_rules: Vec<Arc<CompiledCodeRule>>,
+    pub candidate_sets: CandidateSets,
     globals: BTreeMap<usize, Vec<CompiledClause>>,
     global_results: BTreeMap<usize, Evaluation>,
     dirty_globals: BTreeSet<usize>,
@@ -418,53 +425,52 @@ struct WorkspaceState {
     /// Per synthetic clause, the files it has evidence in: witnesses, or unknown. It outlives the
     /// files' residency, so eviction keeps cross-file clauses answerable.
     evidence: BTreeMap<ClauseId, BTreeMap<String, Partition>>,
-    files: BTreeMap<String, FileState>,
+    pub files: BTreeMap<String, FileState>,
     /// Directories containing a current Python package marker.
     package_directories: BTreeSet<String>,
-    /// The `package.json` entries requests sent, by directory: the manifests an ECMA file the
-    /// host sent no `package` for reads (`refresh_manifest_context`).
-    manifests: BTreeMap<String, Arc<Manifest>>,
-    /// The `tsconfig.json`-style configuration texts requests sent, by path: the import aliases
-    /// and `jsxImportSource` of those manifests (`refresh_manifest_context`).
-    module_configs: BTreeMap<String, Arc<String>>,
-    /// The manifest directories whose server graph the workspace derives for files the host sent
-    /// no `package` for: requests that change what the graph reads refresh them
-    /// (`refresh_server_graphs`).
-    server_graph_directories: BTreeSet<String>,
-    /// What server graphs read of the files requests sent without a host `package`, by path:
-    /// an ECMA source's summary, or `None` for another file, which only marks its folder present.
-    /// Kept whatever the code rules' scopes, since a source outside them still moves others in or
-    /// out of a graph (`refresh_server_graphs`).
-    graph_entries: BTreeMap<String, Option<crate::code_rule_dsl::module_graph::Summary>>,
-    dirty_files: BTreeSet<String>,
-    grammars: BTreeMap<String, Arc<tape::Grammar>>,
-    storage: Option<StorageContext>,
+    /// The project context of the files besides the files themselves (ECMAScript's manifests, project
+    /// configurations and server graphs: `ingest::ProjectState`).
+    pub project: Box<dyn ingest::ProjectState>,
+    pub dirty_files: BTreeSet<String>,
+    pub grammars: BTreeMap<String, Arc<tape::Grammar>>,
+    pub storage: Option<StorageContext>,
     /// Removed paths whose overlay rows a busy store kept (`ingest::apply_request`): the next
     /// apply that publishes deletes them before it publishes its files.
-    pending_removals: BTreeSet<String>,
+    pub pending_removals: BTreeSet<String>,
     /// Until when an apply treats the store as busy: a write of the workspace's own waited out
     /// the write deadline (`note_store_busy`), so later applies do not wait it out again.
-    store_busy_until: Option<Instant>,
+    pub store_busy_until: Option<Instant>,
     /// Whether the workspace already said on stderr that the store was busy.
-    store_busy_reported: bool,
+    pub store_busy_reported: bool,
     /// The repository index the host is driving, chunk by chunk (see `index`).
     repository_index: Option<index::RepositoryIndex>,
-    revision: u32,
+    pub revision: u32,
     /// The current version of every file the workspace evaluated or restored, kept through
     /// eviction so node references can be checked and documents reloaded (see `documents`).
     versions: BTreeMap<String, documents::FileVersion>,
     /// The input (without source) of every evicted file, so complete results can be paged from its
     /// stored results (see `evicted_file_states`).
-    evicted_inputs: BTreeMap<String, FileInput>,
+    pub evicted_inputs: BTreeMap<String, FileInput>,
     /// Documents loaded through the storage contract, bounded in bytes.
-    documents: documents::DocumentCache,
+    pub documents: documents::DocumentCache,
     /// Tells this workspace's node references from another's.
     instance: u64,
     /// Ordered reporting entries, retained for the current revision so result paging does not
     /// repeatedly restore and sort the entire workspace.
-    result_page_index: Option<ResultPageIndex>,
+    pub result_page_index: Option<ResultPageIndex>,
     /// Cross-file adapters and their shared derived state.
     crossfile: crossfile::CrossFileScheduler,
+    /// The files requests sent, as import target resolution reads them (`import_target::fs`).
+    import_files: Box<dyn crate::code_rule_dsl::resolution::HeldForResolution>,
+    /// The folder on disk the workspace's paths are relative to (`setRoot`): resolution reads
+    /// the files below it the workspace does not hold.
+    import_root: Option<std::path::PathBuf>,
+    /// Counts the changes of what import target resolution reads that disk does not already
+    /// show: held files that differ from disk below the root, and the root itself.
+    import_generation: u64,
+    /// The file-local clauses (synthetic ones included) whose rules read `importTarget`: their
+    /// results depend on more than the file, so they are never stored (`FileState::unstored`).
+    import_clauses: HashSet<ClauseId>,
 }
 
 fn check_closed(closed: &AtomicBool) -> Result<()> {
@@ -475,13 +481,8 @@ fn check_closed(closed: &AtomicBool) -> Result<()> {
     }
 }
 
-#[cfg(test)]
-mod context_tests;
-#[cfg(test)]
-mod crossfile_tests;
-#[cfg(test)]
-mod placement_tests;
-#[cfg(test)]
-mod storage_tests;
-#[cfg(test)]
-mod tests;
+// cratify: `context_tests` is rerail-engine's (it mounts it)
+// cratify: `crossfile_tests` is rerail-engine's (it mounts it)
+// cratify: `placement_tests` is rerail-engine's (it mounts it)
+// cratify: `storage_tests` is rerail-engine's (it mounts it)
+// cratify: `tests` is rerail-engine's (it mounts it)

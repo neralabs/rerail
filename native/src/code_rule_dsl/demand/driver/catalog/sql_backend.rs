@@ -4,7 +4,6 @@
 //! calls `xFilter` with the batch token. The first call executes the packed backend and stores its
 //! normalized relation. No host callback or semantic matcher can be registered here.
 
-use crate::code_rule_dsl::language::adapter::{Adapter, ValueRules, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::matcher::{Reading, ValueTest};
 use crate::code_rule_dsl::transducer::packed::{
@@ -32,8 +31,9 @@ use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const MODULE_NAME: &CStr = c"rerail_matches";
 const BATCH_COLUMN: c_int = 0;
 const USE_BATCH: c_int = 1;
@@ -46,7 +46,7 @@ const USE_PRODUCER_IN: c_int = 1 << 5;
 /// Everything `xFilter` needs to execute one sparse packed batch. Construction verifies programs
 /// before registration; this value contains no callback and cannot enter the semantic matcher.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) enum ProducerKind {
+pub enum ProducerKind {
     Terminal,
     Pattern,
     Navigation,
@@ -58,10 +58,10 @@ pub(in crate::code_rule_dsl) enum ProducerKind {
 }
 
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct TransformFactDescriptor {
-    pub(in crate::code_rule_dsl) transform: Arc<crate::code_rule_dsl::matcher::Transform>,
-    pub(in crate::code_rule_dsl) outputs: Vec<(String, String)>,
-    pub(in crate::code_rule_dsl) sources: Vec<usize>,
+pub struct TransformFactDescriptor {
+    pub transform: Arc<crate::code_rule_dsl::matcher::Transform>,
+    pub outputs: Vec<(String, String)>,
+    pub sources: Vec<usize>,
 }
 
 impl std::fmt::Debug for TransformFactDescriptor {
@@ -75,18 +75,18 @@ impl std::fmt::Debug for TransformFactDescriptor {
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::code_rule_dsl) struct FileFactDescriptor {
-    pub(in crate::code_rule_dsl) regex: regex::Regex,
-    pub(in crate::code_rule_dsl) path: bool,
+pub struct FileFactDescriptor {
+    pub regex: regex::Regex,
+    pub path: bool,
 }
 
 /// A bounded parsed-document request. It owns grammar and host selection only. Nested user rules
 /// remain relational SQL operands and are not stored in this descriptor.
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct ParseFactDescriptor {
-    pub(in crate::code_rule_dsl) grammar: crate::code_rule_dsl::literal::Grammar,
-    pub(in crate::code_rule_dsl) host_kinds: Arc<std::collections::BTreeSet<u16>>,
-    pub(in crate::code_rule_dsl) reading: crate::code_rule_dsl::scope::Reading,
+pub struct ParseFactDescriptor {
+    pub grammar: crate::code_rule_dsl::literal::Grammar,
+    pub host_kinds: Arc<std::collections::BTreeSet<u16>>,
+    pub reading: crate::code_rule_dsl::scope::Reading,
 }
 
 impl std::fmt::Debug for ParseFactDescriptor {
@@ -100,7 +100,7 @@ impl std::fmt::Debug for ParseFactDescriptor {
 /// A bounded semantic-fact request. The descriptor emits only predicate-local rows. Nested user
 /// rules remain relational operands and are never executed by this producer.
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) enum SemanticFactSource {
+pub enum SemanticFactSource {
     Resolves(crate::code_rule_dsl::matcher::Resolves),
     Binding {
         test: Box<crate::code_rule_dsl::matcher::BindingTest>,
@@ -117,7 +117,7 @@ pub(in crate::code_rule_dsl) enum SemanticFactSource {
 }
 
 impl SemanticFactSource {
-    pub(in crate::code_rule_dsl) fn has_nested_user_rule(&self) -> bool {
+    pub fn has_nested_user_rule(&self) -> bool {
         match self {
             Self::Binding { test, .. } => {
                 test.site.is_some()
@@ -143,10 +143,10 @@ impl SemanticFactSource {
 }
 
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct SemanticFactDescriptor {
-    pub(in crate::code_rule_dsl) source: SemanticFactSource,
-    pub(in crate::code_rule_dsl) input_labels: Vec<String>,
-    pub(in crate::code_rule_dsl) call_through: Option<crate::code_rule_dsl::calls::Through>,
+pub struct SemanticFactDescriptor {
+    pub source: SemanticFactSource,
+    pub input_labels: Vec<String>,
+    pub call_through: Option<crate::code_rule_dsl::calls::Through>,
 }
 
 impl std::fmt::Debug for SemanticFactDescriptor {
@@ -161,14 +161,14 @@ impl std::fmt::Debug for SemanticFactDescriptor {
 /// Compound predicates emit a typed three-valued verdict from the same packed batch. SQL composes
 /// either fact with the surrounding relational clause.
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct ValueFactDescriptor {
-    pub(in crate::code_rule_dsl) language: GrammarDialect,
-    pub(in crate::code_rule_dsl) follow: bool,
-    pub(in crate::code_rule_dsl) expression_kinds: Vec<u16>,
-    pub(in crate::code_rule_dsl) reading: Reading,
+pub struct ValueFactDescriptor {
+    pub language: GrammarDialect,
+    pub follow: bool,
+    pub expression_kinds: Vec<u16>,
+    pub reading: Reading,
     /// A compound predicate evaluated in the packed value-fact batch. SQL still composes its typed
     /// three-valued verdict with the surrounding relational clause.
-    pub(in crate::code_rule_dsl) predicate: Option<ValueTest>,
+    pub predicate: Option<ValueTest>,
 }
 
 impl std::fmt::Debug for ValueFactDescriptor {
@@ -288,13 +288,13 @@ impl ValueFactDescriptor {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct DocumentMapSpan {
-    pub(in crate::code_rule_dsl) source_document: usize,
-    pub(in crate::code_rule_dsl) generated_document: usize,
-    pub(in crate::code_rule_dsl) source_start: usize,
-    pub(in crate::code_rule_dsl) source_end: usize,
-    pub(in crate::code_rule_dsl) generated_start: usize,
-    pub(in crate::code_rule_dsl) generated_end: usize,
+pub struct DocumentMapSpan {
+    pub source_document: usize,
+    pub generated_document: usize,
+    pub source_start: usize,
+    pub source_end: usize,
+    pub generated_start: usize,
+    pub generated_end: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -328,7 +328,7 @@ struct MaterializedDemand {
     counters: PackedExecutionCounters,
 }
 
-pub(in crate::code_rule_dsl) struct PackedDemand {
+pub struct PackedDemand {
     backend: ExecutionBackend,
     programs: Vec<Program>,
     producer_kinds: Vec<ProducerKind>,
@@ -367,7 +367,7 @@ fn stable_partition_ranges(
 }
 
 impl PackedDemand {
-    pub(in crate::code_rule_dsl) fn new(
+    pub fn new(
         backend: ExecutionBackend,
         programs: Vec<Program>,
         files: Vec<TapeDoc>,
@@ -419,7 +419,7 @@ impl PackedDemand {
         })
     }
 
-    pub(in crate::code_rule_dsl) fn with_sound_under_errors(
+    pub fn with_sound_under_errors(
         mut self,
         sound_under_errors: Vec<bool>,
     ) -> Result<Self, PackedError> {
@@ -430,7 +430,7 @@ impl PackedDemand {
         Ok(self)
     }
 
-    pub(in crate::code_rule_dsl) fn with_producer_kinds(
+    pub fn with_producer_kinds(
         mut self,
         producer_kinds: Vec<ProducerKind>,
     ) -> Result<Self, PackedError> {
@@ -454,7 +454,7 @@ impl PackedDemand {
         Ok(self)
     }
 
-    pub(in crate::code_rule_dsl) fn with_value_facts(
+    pub fn with_value_facts(
         mut self,
         value_facts: Vec<Option<ValueFactDescriptor>>,
     ) -> Result<Self, PackedError> {
@@ -473,7 +473,7 @@ impl PackedDemand {
         Ok(self)
     }
 
-    pub(in crate::code_rule_dsl) fn with_semantic_facts(
+    pub fn with_semantic_facts(
         mut self,
         semantic_facts: Vec<Option<SemanticFactDescriptor>>,
     ) -> Result<Self, PackedError> {
@@ -492,7 +492,7 @@ impl PackedDemand {
         Ok(self)
     }
 
-    pub(in crate::code_rule_dsl) fn with_parse_facts(
+    pub fn with_parse_facts(
         mut self,
         parse_facts: Vec<Option<ParseFactDescriptor>>,
     ) -> Result<Self, PackedError> {
@@ -511,7 +511,7 @@ impl PackedDemand {
         Ok(self)
     }
 
-    pub(in crate::code_rule_dsl) fn with_transform_facts(
+    pub fn with_transform_facts(
         mut self,
         transform_facts: Vec<Option<TransformFactDescriptor>>,
     ) -> Result<Self, PackedError> {
@@ -530,7 +530,7 @@ impl PackedDemand {
         Ok(self)
     }
 
-    pub(in crate::code_rule_dsl) fn with_file_facts(
+    pub fn with_file_facts(
         mut self,
         file_facts: Vec<Option<FileFactDescriptor>>,
         file_paths: Vec<String>,
@@ -548,7 +548,7 @@ impl PackedDemand {
         Ok(self)
     }
 
-    pub(in crate::code_rule_dsl) fn with_document_maps(
+    pub fn with_document_maps(
         mut self,
         document_maps: Vec<DocumentMapSpan>,
         required: bool,
@@ -577,8 +577,8 @@ impl PackedDemand {
         Ok(self)
     }
 
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn with_failure_injection(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn with_failure_injection(
         mut self,
         producer: usize,
         code: String,
@@ -1157,7 +1157,7 @@ impl PackedDemand {
                                             let _ = environment.insert(label, found);
                                         }
                                     }
-                                    let mut facts = crate::code_rule_dsl::matcher::producer_facts(
+                                    let mut facts = producer_facts(
                                         &descriptor.source,
                                         node.clone(),
                                         &environment,
@@ -1171,15 +1171,12 @@ impl PackedDemand {
                                     {
                                         use crate::code_rule_dsl::calls::summary::Callee;
                                         use crate::code_rule_dsl::language::Family;
-                                        use crate::code_rule_dsl::language::adapter::{
-                                            Adapter, CallRules, with_adapter,
-                                        };
                                         facts.rows.clear();
-                                        let callee = with_adapter!(Family::of(test.language), A => <<A as Adapter>::Calls as CallRules>::callee_at(
+                                        let callee = { let pack = language_pack::pack(Family::of(test.language)); language_pack::calls_callee_at(pack, 
                                             &node,
                                             summary,
                                             || crate::code_rule_dsl::matcher::calls_tables(&node, test.language),
-                                        ));
+                                        ) };
                                         match callee {
                                             Some(Some(Callee::Name(name))) => {
                                                 let mut pending = summary
@@ -1511,14 +1508,11 @@ impl PackedDemand {
                                                     if family == Family::Ecma {
                                                         return None;
                                                     }
-                                                    let tokens = with_adapter!(
-                                                        family,
-                                                        A => <<A as Adapter>::Value as ValueRules>::structure(
+                                                    let tokens = { let pack = language_pack::pack(family); language_pack::value_structure(pack, 
                                                             &node,
                                                             Equality::Plain,
                                                             &mut context,
-                                                        )
-                                                    );
+                                                        ) };
                                                     (!context.exhausted())
                                                         .then_some(tokens)
                                                         .flatten()
@@ -1733,14 +1727,11 @@ impl PackedDemand {
                                         if family == Family::Ecma {
                                             return None;
                                         }
-                                        let tokens = with_adapter!(
-                                            family,
-                                            A => <<A as Adapter>::Value as ValueRules>::structure(
+                                        let tokens = { let pack = language_pack::pack(family); language_pack::value_structure(pack, 
                                                 &node,
                                                 Equality::Plain,
                                                 &mut context,
-                                            )
-                                        );
+                                            ) };
                                         (!context.exhausted())
                                             .then_some(tokens)
                                             .flatten()
@@ -1873,28 +1864,28 @@ struct CaptureData {
     end_byte: usize,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::code_rule_dsl) struct TestProducerStatusRow {
-    pub(in crate::code_rule_dsl) producer: i64,
-    pub(in crate::code_rule_dsl) file: i64,
-    pub(in crate::code_rule_dsl) complete: i64,
-    pub(in crate::code_rule_dsl) verdict: Option<i64>,
-    pub(in crate::code_rule_dsl) work_used: Option<i64>,
-    pub(in crate::code_rule_dsl) error: Option<String>,
+    pub producer: i64,
+    pub file: i64,
+    pub complete: i64,
+    pub verdict: Option<i64>,
+    pub work_used: Option<i64>,
+    pub error: Option<String>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(in crate::code_rule_dsl) struct TestFactRow {
-    pub(in crate::code_rule_dsl) producer: i64,
-    pub(in crate::code_rule_dsl) node: i64,
-    pub(in crate::code_rule_dsl) related: Option<i64>,
-    pub(in crate::code_rule_dsl) slot: i64,
-    pub(in crate::code_rule_dsl) key: i64,
-    pub(in crate::code_rule_dsl) position: i64,
-    pub(in crate::code_rule_dsl) flag: Option<i64>,
-    pub(in crate::code_rule_dsl) target_kind: Option<i64>,
-    pub(in crate::code_rule_dsl) label: Option<String>,
+    pub producer: i64,
+    pub node: i64,
+    pub related: Option<i64>,
+    pub slot: i64,
+    pub key: i64,
+    pub position: i64,
+    pub flag: Option<i64>,
+    pub target_kind: Option<i64>,
+    pub label: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2201,17 +2192,17 @@ impl PackedRow {
         row
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(in crate::code_rule_dsl) const fn row_kind(&self) -> RowKind {
         self.row_kind
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(in crate::code_rule_dsl) fn is_complete(&self) -> bool {
         self.complete != 0
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(in crate::code_rule_dsl) fn error_code(&self) -> Option<&str> {
         self.error_code.as_deref()
     }
@@ -2320,13 +2311,13 @@ impl MatchBatch {
 }
 
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct MatchRegistry {
+pub struct MatchRegistry {
     next: AtomicI64,
     batches: Mutex<HashMap<i64, Arc<MatchBatch>>>,
 }
 
 impl MatchRegistry {
-    pub(in crate::code_rule_dsl) fn register(&self, demand: PackedDemand) -> i64 {
+    pub fn register(&self, demand: PackedDemand) -> i64 {
         let token = self.next.fetch_add(1, Ordering::Relaxed) + 1;
         self.batches
             .lock()
@@ -2344,8 +2335,8 @@ impl MatchRegistry {
         token
     }
 
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn query_producer_status_rows(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn query_producer_status_rows(
         &self,
         token: i64,
     ) -> Vec<TestProducerStatusRow> {
@@ -2370,8 +2361,8 @@ impl MatchRegistry {
             .collect()
     }
 
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn query_fact_rows(&self, token: i64) -> Vec<TestFactRow> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn query_fact_rows(&self, token: i64) -> Vec<TestFactRow> {
         let Some(batch) = self.batch(token) else {
             return Vec::new();
         };
@@ -2396,8 +2387,8 @@ impl MatchRegistry {
             .collect()
     }
 
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn query_execution_counters(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn query_execution_counters(
         &self,
         token: i64,
     ) -> Option<(usize, usize)> {
@@ -2446,7 +2437,7 @@ impl MatchRegistry {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const ALL_COLUMNS: [c_int; 35] = [
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
     26, 27, 28, 29, 30, 31, 32, 33, 34,
@@ -2487,7 +2478,7 @@ struct RelationModule {
     ordering: &'static [c_int],
 }
 
-pub(in crate::code_rule_dsl) fn register_module(
+pub fn register_module(
     connection: &Connection,
     registry: Arc<MatchRegistry>,
 ) -> SqlResult<()> {
@@ -2519,7 +2510,7 @@ pub(in crate::code_rule_dsl) fn register_module(
     let register = |name, module: RelationModule| {
         connection.create_module(name, &MODULE, Some(Arc::new(module)))
     };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     register(
         MODULE_NAME,
         RelationModule {
@@ -2948,41 +2939,41 @@ unsafe impl VTabCursor for MatchCursor<'_> {
                 ))
             })?;
         match column {
-            0 => context.set_result(&row.batch),
-            1 => context.set_result(&(row.row_kind as i64)),
-            2 => context.set_result(&row.producer_id),
-            3 => context.set_result(&row.file_index),
-            4 => context.set_result(&row.task_index),
-            5 => context.set_result(&row.match_index),
-            6 => context.set_result(&row.capture_index),
-            7 => context.set_result(&row.capture_occurrence),
-            8 => context.set_result(&row.capture_sequence_start),
-            9 => context.set_result(&row.capture_sequence_count),
-            10 => context.set_result(&row.node),
-            11 => context.set_result(&row.related_node),
-            12 => context.set_result(&row.axis_kind),
-            13 => context.set_result(&row.axis_order),
-            14 => context.set_result(&row.fact_kind),
-            15 => context.set_result(&row.document_id),
-            16 => context.set_result(&row.mapped_document_id),
-            17 => context.set_result(&row.start_ordinal),
-            18 => context.set_result(&row.output_label.as_deref()),
-            19 => context.set_result(&row.capture_label.as_deref()),
-            20 => context.set_result(&row.text_value.as_deref()),
-            21 => context.set_result(&row.start_byte),
-            22 => context.set_result(&row.end_byte),
-            23 => context.set_result(&row.verdict),
-            24 => context.set_result(&row.complete),
-            25 => context.set_result(&row.work_used),
-            26 => context.set_result(&row.error_code.as_deref()),
-            27 => context.set_result(&row.field_id),
-            28 => context.set_result(&row.related_named),
-            29 => context.set_result(&row.source_text.as_deref()),
-            30 => context.set_result(&row.structural_key.as_deref()),
-            31 => context.set_result(&row.named_leaf),
-            32 => context.set_result(&row.capture_kind),
-            33 => context.set_result(&row.capture_named),
-            34 => context.set_result(&row.equality_occurrence),
+            0 => context.set_result(row.batch),
+            1 => context.set_result(row.row_kind as i64),
+            2 => context.set_result(row.producer_id),
+            3 => context.set_result(row.file_index),
+            4 => context.set_result(row.task_index),
+            5 => context.set_result(row.match_index),
+            6 => context.set_result(row.capture_index),
+            7 => context.set_result(row.capture_occurrence),
+            8 => context.set_result(row.capture_sequence_start),
+            9 => context.set_result(row.capture_sequence_count),
+            10 => context.set_result(row.node),
+            11 => context.set_result(row.related_node),
+            12 => context.set_result(row.axis_kind),
+            13 => context.set_result(row.axis_order),
+            14 => context.set_result(row.fact_kind),
+            15 => context.set_result(row.document_id),
+            16 => context.set_result(row.mapped_document_id),
+            17 => context.set_result(row.start_ordinal),
+            18 => context.set_result(row.output_label.as_deref()),
+            19 => context.set_result(row.capture_label.as_deref()),
+            20 => context.set_result(row.text_value.as_deref()),
+            21 => context.set_result(row.start_byte),
+            22 => context.set_result(row.end_byte),
+            23 => context.set_result(row.verdict),
+            24 => context.set_result(row.complete),
+            25 => context.set_result(row.work_used),
+            26 => context.set_result(row.error_code.as_deref()),
+            27 => context.set_result(row.field_id),
+            28 => context.set_result(row.related_named),
+            29 => context.set_result(row.source_text.as_deref()),
+            30 => context.set_result(row.structural_key.as_deref()),
+            31 => context.set_result(row.named_leaf),
+            32 => context.set_result(row.capture_kind),
+            33 => context.set_result(row.capture_named),
+            34 => context.set_result(row.equality_occurrence),
             _ => Err(rusqlite::Error::InvalidColumnIndex(column as usize)),
         }
     }
@@ -2993,7 +2984,7 @@ unsafe impl VTabCursor for MatchCursor<'_> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::{
         HardPartition, MatchRegistry, PackedDemand, ProducerKind, RowKind, register_module,
         stable_partition_ranges,
@@ -3325,4 +3316,59 @@ mod tests {
         assert_eq!(repeated, 1);
         assert_eq!(registry.query_execution_counters(token), Some((1, 2)));
     }
+}
+
+/// Emit predicate-local rows without executing a nested user rule. For N's catalog backend
+/// (`demand::driver::catalog::sql_backend`), which only tests run.
+#[cfg(any(test, feature = "test-hooks"))]
+fn producer_facts<'tree, D: ast_grep_core::Doc>(
+    source: &crate::code_rule_dsl::demand::driver::catalog::sql_backend::SemanticFactSource,
+    node: ast_grep_core::Node<'tree, D>,
+    env: &ast_grep_core::meta_var::MetaVarEnv<'tree, D>,
+) -> crate::code_rule_dsl::transducer::semantic_facts::Facts<'tree, D> {
+    use crate::code_rule_dsl::transducer::semantic_facts::{Facts, Target, slot};
+    use crate::code_rule_dsl::demand::driver::catalog::sql_backend::SemanticFactSource;
+    let mut facts = Facts::new();
+    match source {
+        SemanticFactSource::Binding { test, request } => {
+            test.facts(node, env, &mut facts, *request)
+        }
+        SemanticFactSource::Binds { test, request } => test.facts(node, env, &mut facts, *request),
+        SemanticFactSource::FormatArgs(test) => test.facts(env, &mut facts),
+        SemanticFactSource::Arguments(arguments) => {
+            let mut trial = std::borrow::Cow::Borrowed(env);
+            crate::code_rule_dsl::matcher::util::UNKNOWN.set(false);
+            if arguments.match_node(node, &mut trial).is_some() {
+                facts.gate(1, Target::None);
+                for (position, (name, _)) in arguments.bind.iter().enumerate() {
+                    if let Some(target) = trial.get_match(name) {
+                        facts.push(
+                            slot::ARGUMENT,
+                            position as i64,
+                            1,
+                            Target::Node(target.clone()),
+                        );
+                    }
+                }
+            } else if crate::code_rule_dsl::matcher::util::UNKNOWN.replace(false) {
+                facts.gate(-1, Target::None);
+            }
+        }
+        SemanticFactSource::Resolves(resolves) => {
+            if resolves.holds(&node) {
+                facts.gate(1, Target::None);
+            }
+        }
+        SemanticFactSource::Layout(layout) => {
+            let mut trial = std::borrow::Cow::Borrowed(env);
+            crate::code_rule_dsl::matcher::util::UNKNOWN.set(false);
+            if layout.match_node(node, &mut trial).is_some() {
+                facts.gate(1, Target::None);
+            } else if crate::code_rule_dsl::matcher::util::UNKNOWN.replace(false) {
+                facts.gate(-1, Target::None);
+            }
+        }
+        SemanticFactSource::Calls(_) => {}
+    }
+    facts
 }

@@ -1,4 +1,5 @@
-use super::{DERIVED_MANIFESTS, parse_snapshot};
+use super::ecma::DERIVED_MANIFESTS;
+use super::parse_snapshot;
 use crate::code_rule_dsl::module_graph::SUMMARIES;
 use crate::code_rule_dsl::test_support::CAPABILITIES;
 use crate::code_rule_dsl::{CodeRuleDslEditor, CodeRuleDslRuntime, CompiledCodeRuleDsl};

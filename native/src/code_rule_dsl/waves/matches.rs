@@ -18,15 +18,13 @@ use crate::content_store::ContentStore;
 use std::collections::HashMap;
 use crate::code_rule_dsl::demand::vtab::PackedDemand;
 use crate::code_rule_dsl::facts::Graph;
-use crate::code_rule_dsl::facts::core;
-use crate::code_rule_dsl::facts::families::{Families, Tape, core_name};
-use crate::code_rule_dsl::facts::observe::path_name;
+use crate::code_rule_dsl::facts::families::{Families, Tape};
 use crate::code_rule_dsl::facts::vtab::syntax::Document;
 use crate::code_rule_dsl::language::{GrammarDialect, tape_tag};
 use crate::code_rule_dsl::matcher::AnchorPlan;
 use crate::code_rule_dsl::transducer::packed::{ExecutionBackend, LoweredMatcher, LoweredWave, PlanId};
 use crate::content_store::{StoreError, StoreResult};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -147,7 +145,7 @@ impl Wave {
 
     /// Whether the demand statement reads a `py.*` family: the wave then reads it before its batch.
     pub(in crate::code_rule_dsl) fn demand_reads_py(&self) -> bool {
-        let py = |rel: &str| crate::code_rule_dsl::facts::vtab::syntax::PY.contains(&rel);
+        let py = |rel: &str| crate::code_rule_dsl::facts::vtab::syntax::is_family(rel);
         self.logic.demand.as_ref().is_some_and(|p| p.rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| py(&a.rel)))))
     }
 
@@ -361,7 +359,8 @@ impl Wave {
         crate::code_rule_dsl::prof::time("demand.gates", || self.gate(&mut demanded, documents, &tapes));
         crate::code_rule_dsl::prof::release();
         crate::code_rule_dsl::prof::peak("1.tapes");
-        let docs = tapes.iter().map(|tape| tape.doc.clone()).collect::<Vec<_>>();
+        // Each read at its path, which a `filePath` test inside a matcher tests.
+        let docs = tapes.iter().zip(documents).map(|(tape, document)| tape.doc.with_path(&document.path)).collect::<Vec<_>>();
         // The walks' text tests from the term index (`R[tid]`, list step 17).
         let docs = crate::code_rule_dsl::prof::time("demand.texts", || self.texts(graph.store(), &tapes, docs))?;
         let metal = cfg!(target_os = "macos")
@@ -541,23 +540,7 @@ impl Wave {
     }
 }
 
-/// The documents of `paths` in `scope` whose core facts are bound, each keyed by its path name's
-/// atom, its facts rebuilt from its stored tape.
-pub(in crate::code_rule_dsl) fn documents(graph: &(impl Graph + ?Sized), scope: &str, paths: &[String]) -> StoreResult<Vec<Document>> {
-    let mut out = Vec::new();
-    for path in paths {
-        let core = core_name(scope, path);
-        let Some(digest) = graph.binding(&core)? else { continue };
-        let Some(tape) = Families::stored(graph, scope, path)? else { continue };
-        let facts = core::from_tape(&tape.doc, Arc::clone(&tape.lines)).map_err(StoreError::Invalid)?;
-        if core::digest(&facts) != digest {
-            return Err(StoreError::Invalid(format!("stale core facts for {core}")));
-        }
-        let key = graph.store().atom(&path_name(scope, path))?.ok_or_else(|| StoreError::Corrupt(format!("{path} has no atom")))?;
-        out.push(Document { key, path: path.clone(), core, digest, facts: Arc::new(facts), guest: None, module: None, tape: None });
-    }
-    Ok(out)
-}
+pub(in crate::code_rule_dsl) use crate::code_rule_dsl::facts::families::stored_documents as documents;
 
 /// The tapes labelled on Metal, all at once or, where their label levels outgrow a workspace
 /// (06 S7: 250 files in one chunk) or the evaluation's launch bound, each half on its own: a file's labels read only that file.
@@ -609,6 +592,7 @@ mod tests;
 /// is the dialect the store's tag names. Leases are not kept: the label run takes its own.
 fn prepare(store: &ContentStore, docs: &[crate::code_rule_dsl::tape::TapeDoc]) -> StoreResult<()> {
     use crate::code_rule_dsl::{language, residency::slabs, tape::Grammar};
+    // The stored bytes are read in place.
     let digests = docs.iter().map(|doc| doc.resident_key().map_err(StoreError::Invalid)).collect::<StoreResult<Vec<_>>>()?;
     let grammar = |id: i64| Grammar::new(u8::try_from(id).ok().and_then(language::from_tape_tag).ok_or("unknown grammar")?);
     slabs::admit(store, &digests, &grammar).map(drop).map_err(invalid)

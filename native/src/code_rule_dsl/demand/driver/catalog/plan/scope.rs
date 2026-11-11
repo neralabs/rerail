@@ -134,7 +134,7 @@ impl CandidateScope {
         self.id
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn same_exact_scope(&self, other: &Self) -> bool {
         self == other
     }

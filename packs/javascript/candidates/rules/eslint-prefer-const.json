@@ -1,15 +1,12 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-prefer-const",
-  "revision": 1,
+  "revision": 2,
   "mode": "log",
   "description": "Declare JavaScript variables with const instead of let when they are never reassigned; it signals intent and prevents accidental changes.",
   "scope": {
     "include": [
-      "**/*.js",
-      "**/*.jsx",
-      "**/*.mjs",
-      "**/*.cjs"
+      "**/*"
     ],
     "exclude": [
       "**/node_modules/**",
@@ -38,7 +35,7 @@
       "id": "never-reassigned",
       "forbid": {
         "ast": {
-          "language": "javascript",
+          "language": "typescript",
           "rule": {
             "all": [
               {
@@ -65,7 +62,14 @@
                       "inside": {
                         "kind": "lexical_declaration",
                         "regex": "^let\\b",
-                        "stopBy": "neighbor"
+                        "stopBy": "neighbor",
+                        "not": {
+                          "inside": {
+                            "kind": "for_statement",
+                            "field": "initializer",
+                            "stopBy": "neighbor"
+                          }
+                        }
                       }
                     }
                   },
@@ -125,7 +129,14 @@
                         "inside": {
                           "kind": "lexical_declaration",
                           "regex": "^let\\b",
-                          "stopBy": "neighbor"
+                          "stopBy": "neighbor",
+                          "not": {
+                            "inside": {
+                              "kind": "for_statement",
+                              "field": "initializer",
+                              "stopBy": "neighbor"
+                            }
+                          }
                         }
                       }
                     }
@@ -184,6 +195,18 @@
                                   },
                                   {
                                     "kind": "rest_pattern"
+                                  },
+                                  {
+                                    "kind": "non_null_expression"
+                                  },
+                                  {
+                                    "kind": "as_expression"
+                                  },
+                                  {
+                                    "kind": "satisfies_expression"
+                                  },
+                                  {
+                                    "kind": "type_assertion"
                                   }
                                 ]
                               }
@@ -194,13 +217,53 @@
                           "inside": {
                             "kind": "augmented_assignment_expression",
                             "field": "left",
-                            "stopBy": "neighbor"
+                            "stopBy": {
+                              "not": {
+                                "any": [
+                                  {
+                                    "kind": "parenthesized_expression"
+                                  },
+                                  {
+                                    "kind": "non_null_expression"
+                                  },
+                                  {
+                                    "kind": "as_expression"
+                                  },
+                                  {
+                                    "kind": "satisfies_expression"
+                                  },
+                                  {
+                                    "kind": "type_assertion"
+                                  }
+                                ]
+                              }
+                            }
                           }
                         },
                         {
                           "inside": {
                             "kind": "update_expression",
-                            "stopBy": "neighbor"
+                            "stopBy": {
+                              "not": {
+                                "any": [
+                                  {
+                                    "kind": "parenthesized_expression"
+                                  },
+                                  {
+                                    "kind": "non_null_expression"
+                                  },
+                                  {
+                                    "kind": "as_expression"
+                                  },
+                                  {
+                                    "kind": "satisfies_expression"
+                                  },
+                                  {
+                                    "kind": "type_assertion"
+                                  }
+                                ]
+                              }
+                            }
                           }
                         },
                         {
@@ -215,6 +278,15 @@
                         }
                       ]
                     }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "binds": {
+                    "scope": "global",
+                    "exported": true,
+                    "directives": "eslint"
                   }
                 }
               }

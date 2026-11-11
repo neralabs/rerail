@@ -4,6 +4,6 @@
 
 // Nothing registers a batch until the logic planner (Phase 6) and the waves (Phase 7) do.
 #[allow(dead_code)]
-pub(in crate::code_rule_dsl) mod driver;
+pub mod driver;
 #[allow(dead_code)]
-pub(in crate::code_rule_dsl) mod vtab;
+pub mod vtab;

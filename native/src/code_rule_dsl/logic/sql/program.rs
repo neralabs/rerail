@@ -6,11 +6,11 @@ fn error(message: impl std::fmt::Display) -> napi::Error {
     napi::Error::from_reason(message.to_string())
 }
 
-pub(in crate::code_rule_dsl) fn logical_arity(program:&front::Program,name:&str)->usize {
+pub fn logical_arity(program:&front::Program,name:&str)->usize {
     if program.nullary.contains(name){0}else{program.decls[name].len()}
 }
 
-pub(in crate::code_rule_dsl) fn physical(program: &mut front::Program) {
+pub fn physical(program: &mut front::Program) {
     let sentinel: BTreeSet<String> = program
         .decls
         .iter()
@@ -34,7 +34,7 @@ pub(in crate::code_rule_dsl) fn physical(program: &mut front::Program) {
         }
     }
     let atom = |a: &mut front::Atom| {
-        if sentinel.contains(&a.rel) {
+        if sentinel.contains(a.rel.as_str()) {
             a.args.insert(0, front::Term::Int(1));
         }
     };
@@ -50,7 +50,7 @@ pub(in crate::code_rule_dsl) fn physical(program: &mut front::Program) {
 }
 
 /// The `top` keyword belongs to a lattice, rather than the flat lattice's numeric sentinel.
-pub(in crate::code_rule_dsl) fn tops(
+pub fn tops(
     program: &mut front::Program,
     lattices: &BTreeMap<String, (usize, i64)>,
 ) -> Result<()> {
@@ -67,7 +67,7 @@ pub(in crate::code_rule_dsl) fn tops(
     }
     for rule in &mut program.rules {
         let default = lattices
-            .get(&rule.head.rel)
+            .get(rule.head.rel.as_str())
             .map_or(crate::code_rule_dsl::logic::native::TOP, |(_, top)| *top);
         let mut known = BTreeMap::<String, BTreeSet<i64>>::new();
         for atom in rule
@@ -76,7 +76,7 @@ pub(in crate::code_rule_dsl) fn tops(
             .filter_map(front::Literal::atom)
             .chain([&rule.head])
         {
-            if let Some((col, top)) = lattices.get(&atom.rel)
+            if let Some((col, top)) = lattices.get(atom.rel.as_str())
                 && let Some(front::Term::Var(v)) = atom.args.get(*col)
             {
                 known.entry(v.clone()).or_default().insert(*top);
@@ -110,7 +110,7 @@ pub(in crate::code_rule_dsl) fn tops(
             }
         }
         let atom = |a: &mut front::Atom| {
-            let top = lattices.get(&a.rel).map_or(default, |(_, top)| *top);
+            let top = lattices.get(a.rel.as_str()).map_or(default, |(_, top)| *top);
             for t in &mut a.args {
                 term(t, top);
             }
@@ -160,7 +160,7 @@ pub(in crate::code_rule_dsl) fn tops(
         if rule.body.is_empty()
             && let Some(row) = row
         {
-            program.facts.entry(rule.head.rel).or_default().push(row);
+            program.facts.entry(rule.head.rel.to_string()).or_default().push(row);
         } else {
             rules.push(rule);
         }

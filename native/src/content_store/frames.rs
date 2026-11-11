@@ -16,6 +16,8 @@
 //!
 //! Frames are written only by the store's writer (decision 0102), behind the run. What a space keeps is the
 //! relations its runs use: a relation is collected by the [`RUNS`]th run of its space in a row that does not use it.
+//! A run is the outermost run (its token): the programs of one run that keep frames in one space (a phase's, P3's
+//! cross part, its loading cone) each mark what they used, and the space counts the run once.
 
 use super::{ContentStore, StoreResult};
 use rusqlite::params;
@@ -24,6 +26,16 @@ use std::sync::Arc;
 
 /// How many runs of a space in a row may leave a relation unused before it is collected.
 pub const RUNS: i64 = 4;
+
+/// The run each space last counted in this process, by its token: a later program of that run marks what it used and
+/// counts nothing. A new process counts its first run of a space, since its tokens are new.
+fn counted() -> &'static std::sync::Mutex<HashMap<[u8; 32], u64>> {
+    static COUNTED: std::sync::OnceLock<std::sync::Mutex<HashMap<[u8; 32], u64>>> = std::sync::OnceLock::new();
+    COUNTED.get_or_init(Default::default)
+}
+
+/// What a run used of a space: the relations, and the run's token (`0`: a run of its own, counted each time).
+pub type Used = (Vec<Rel>, u64);
 
 const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS frames(space BLOB NOT NULL, rel TEXT NOT NULL, ident BLOB NOT NULL, \
      part INTEGER NOT NULL, digest INTEGER NOT NULL, reads BLOB NOT NULL, width INTEGER NOT NULL, rows INTEGER NOT NULL, \
@@ -105,11 +117,59 @@ impl Admitted {
 // Stay below even SQLite's older 999-parameter limit. Full batches share one prepared shape.
 const READ_BATCH: usize = 128;
 
+/// Every frame of a store as this process holds it (decision 0104: a run reads before its first wave): read once
+/// (`preload_frames`), kept current by every write this process queues or makes, by space, then relation and part.
+/// Shared by the store's handles in this process, by its path.
+type Snapshot = HashMap<[u8; 32], HashMap<(Rel, i64), Arc<Admitted>>>;
+
+fn snapshots() -> &'static std::sync::Mutex<HashMap<std::path::PathBuf, Arc<std::sync::Mutex<Snapshot>>>> {
+    static SNAPSHOTS: std::sync::OnceLock<std::sync::Mutex<HashMap<std::path::PathBuf, Arc<std::sync::Mutex<Snapshot>>>>> = std::sync::OnceLock::new();
+    SNAPSHOTS.get_or_init(Default::default)
+}
+
 fn frame_key(space: &[u8; 32], rel: &Rel, part: i64) -> super::write_back::Key {
     super::write_back::Key::of(&[b"frame", space, rel.name.as_bytes(), &rel.ident, &part.to_le_bytes()])
 }
 
 impl ContentStore {
+    /// The snapshot of this store's file, by its canonical path: handles that name it differently share it.
+    fn snapshot(&self) -> Option<Arc<std::sync::Mutex<Snapshot>>> {
+        snapshots().lock().expect("the frames' snapshots").get(&super::atoms::key(&self.database_path)).cloned()
+    }
+
+    /// Reads every frame of the store, once a process (decision 0104: before a run's first wave): from then on the
+    /// frames are read from memory, and every write of this process updates it. Returns the frames and their
+    /// encoded bytes read now (none when an earlier run of the process read them).
+    pub fn preload_frames(&self) -> StoreResult<(usize, usize)> {
+        if self.snapshot().is_some() {
+            return Ok((0, 0));
+        }
+        let mut snapshot = Snapshot::new();
+        let (mut frames, mut bytes) = (0, 0);
+        if self.frames_table()? {
+            let connection = self.connection.lock().expect("content store mutex poisoned");
+            let mut st = connection.prepare("SELECT space, rel, ident, part, digest, reads, rows, types, data FROM frames")?;
+            let rows = st.query_map([], |row| {
+                let (space, ident): (Vec<u8>, Vec<u8>) = (row.get(0)?, row.get(2)?);
+                let space: [u8; 32] = space.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
+                let ident: [u8; 32] = ident.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
+                let data: Vec<u8> = row.get(8)?;
+                Ok((space, (Rel { name: row.get(1)?, ident }, row.get::<_, i64>(3)?), Arc::new(Admitted {
+                    stored: Stored { digest: row.get::<_, i64>(4)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(5)?) },
+                    data: Data::Encoded { n: row.get::<_, i64>(6)? as usize, types: row.get(7)?, bytes: data },
+                })))
+            })?;
+            for row in rows {
+                let (space, key, frame) = row?;
+                frames += 1;
+                bytes += frame.encoded_bytes();
+                snapshot.entry(space).or_default().insert(key, frame);
+            }
+        }
+        snapshots().lock().expect("the frames' snapshots").entry(super::atoms::key(&self.database_path)).or_insert_with(|| Arc::new(std::sync::Mutex::new(snapshot)));
+        Ok((frames, bytes))
+    }
+
     fn frames_table(&self) -> StoreResult<bool> {
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let n: i64 = connection.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='frames'", [], |r| r.get(0))?;
@@ -118,48 +178,68 @@ impl ContentStore {
 
     /// The stored frames of `rels` in `space`, partition `part`, without their rows.
     pub fn frames(&self, space: &[u8; 32], rels: &[Rel], part: i64) -> StoreResult<HashMap<Rel, Stored>> {
-        Ok(self.read_frames(space, rels, part, false)?.into_iter().map(|(r, f)| (r, f.stored.clone())).collect())
+        let keys: Vec<_> = rels.iter().cloned().map(|r| (r, part)).collect();
+        Ok(self.read_frame_parts(space, &keys, false)?.into_iter().map(|((r, _), f)| (r, f.stored.clone())).collect())
     }
 
     /// Admit requested relations before their consumers run. No consumer needs another store read.
     pub fn admit_frames(&self, space: &[u8; 32], rels: &[Rel], part: i64) -> StoreResult<HashMap<Rel, Arc<Admitted>>> {
-        self.read_frames(space, rels, part, true)
+        let keys: Vec<_> = rels.iter().cloned().map(|r| (r, part)).collect();
+        Ok(self.admit_frame_parts(space, &keys)?.into_iter().map(|((r, _), f)| (r, f)).collect())
     }
 
-    fn read_frames(&self, space: &[u8; 32], rels: &[Rel], part: i64, payload: bool) -> StoreResult<HashMap<Rel, Arc<Admitted>>> {
+    /// Admit a demand set across relation partitions. Granules share the same full-key probes as whole relations.
+    pub fn admit_frame_parts(&self, space: &[u8; 32], keys: &[(Rel, i64)]) -> StoreResult<HashMap<(Rel, i64), Arc<Admitted>>> {
+        self.read_frame_parts(space, keys, true)
+    }
+
+    fn read_frame_parts(&self, space: &[u8; 32], keys: &[(Rel, i64)], payload: bool) -> StoreResult<HashMap<(Rel, i64), Arc<Admitted>>> {
         let mut out = HashMap::new();
         let mut missing = std::collections::BTreeSet::new();
-        for rel in rels {
+        for (rel, part) in keys {
             // Pin pending values before SQLite can catch up and release the writer's copy.
             // Some(None) is a queued deletion, not a reason to read an older durable row.
-            if let Some(pending) = self.pending::<Option<Arc<Admitted>>>(&frame_key(space, rel, part)) {
-                if let Some(frame) = pending.as_ref() { out.insert(rel.clone(), Arc::clone(frame)); }
+            if let Some(pending) = self.pending::<Option<Arc<Admitted>>>(&frame_key(space, rel, *part)) {
+                if let Some(frame) = pending.as_ref() { out.insert((rel.clone(), *part), Arc::clone(frame)); }
             } else {
-                missing.insert(rel.clone());
+                missing.insert((rel.clone(), *part));
             }
         }
-        if missing.is_empty() || !self.frames_table()? { return Ok(out); }
+        if missing.is_empty() { return Ok(out); }
+        // Read before the first wave (`preload_frames`): from memory.
+        if let Some(snapshot) = self.snapshot() {
+            let snapshot = snapshot.lock().expect("the frames' snapshot");
+            if let Some(held) = snapshot.get(space) {
+                for key in missing {
+                    if let Some(frame) = held.get(&key) {
+                        out.insert(key, Arc::clone(frame));
+                    }
+                }
+            }
+            return Ok(out);
+        }
+        if !self.frames_table()? { return Ok(out); }
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let missing: Vec<_> = missing.into_iter().collect();
         for batch in missing.chunks(READ_BATCH) {
-            let values = (0..batch.len()).map(|i| format!("(?{}, ?{})", 3 + 2*i, 4 + 2*i)).collect::<Vec<_>>().join(",");
+            let values = (0..batch.len()).map(|i| format!("(?{}, ?{}, ?{})", 2 + 3*i, 3 + 3*i, 4 + 3*i)).collect::<Vec<_>>().join(",");
             let columns = if payload { ", f.rows, f.types, f.data" } else { "" };
             // Keep demand rows outside full-key probes; a space-first scan multiplies retained rows by demands.
-            let sql = format!("WITH demanded(rel, ident) AS (VALUES {values}) \
-                SELECT f.rel, f.ident, f.digest, f.reads{columns} FROM demanded d \
-                CROSS JOIN frames f ON f.space = ?1 AND f.part = ?2 AND f.rel = d.rel AND f.ident = d.ident");
-            let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into(), part.into()];
-            for rel in batch { args.extend([rel.name.clone().into(), rel.ident.to_vec().into()]); }
+            let sql = format!("WITH demanded(rel, ident, part) AS (VALUES {values}) \
+                SELECT f.rel, f.ident, f.part, f.digest, f.reads{columns} FROM demanded d \
+                CROSS JOIN frames f ON f.space = ?1 AND f.rel = d.rel AND f.ident = d.ident AND f.part = d.part");
+            let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into()];
+            for (rel, part) in batch { args.extend([rel.name.clone().into(), rel.ident.to_vec().into(), (*part).into()]); }
             let mut st = connection.prepare_cached(&sql)?;
             let frames = st.query_map(rusqlite::params_from_iter(args), |row| {
                 let ident: Vec<u8> = row.get(1)?;
                 let ident: [u8; 32] = ident.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
-                Ok((Rel { name: row.get(0)?, ident }, Arc::new(Admitted {
-                    stored: Stored { digest: row.get::<_, i64>(2)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(3)?) },
-                    data: if payload { Data::Encoded { n: row.get::<_, i64>(4)? as usize, types: row.get(5)?, bytes: row.get(6)? } } else { Data::Metadata },
+                Ok(((Rel { name: row.get(0)?, ident }, row.get(2)?), Arc::new(Admitted {
+                    stored: Stored { digest: row.get::<_, i64>(3)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(4)?) },
+                    data: if payload { Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes: row.get(7)? } } else { Data::Metadata },
                 })))
             })?;
-            for frame in frames { let (rel, frame) = frame?; out.insert(rel, frame); }
+            for frame in frames { let (key, frame) = frame?; out.insert(key, frame); }
         }
         Ok(out)
     }
@@ -169,8 +249,76 @@ impl ContentStore {
         self.admit_frames(space, std::slice::from_ref(rel), part)?.get(rel).map(|f| f.rows()).transpose()
     }
 
+    /// The frames of `rel` in `space` at each of `parts`, admitted (`admit_frame_parts`). A part with no frame is absent.
+    pub fn admit_parts_of(&self, space: &[u8; 32], rel: &Rel, parts: &[i64]) -> StoreResult<HashMap<i64, Arc<Admitted>>> {
+        let keys: Vec<(Rel, i64)> = parts.iter().map(|p| (rel.clone(), *p)).collect();
+        Ok(self.admit_frame_parts(space, &keys)?.into_iter().map(|((_, p), f)| (p, f)).collect())
+    }
+
+    /// Every stored frame of `rel` in `space`, by part, admitted (queued writes are not among them).
+    pub fn admit_all_parts(&self, space: &[u8; 32], rel: &Rel) -> StoreResult<Vec<(i64, Arc<Admitted>)>> {
+        if let Some(snapshot) = self.snapshot() {
+            let snapshot = snapshot.lock().expect("the frames' snapshot");
+            let mut parts: Vec<(i64, Arc<Admitted>)> = snapshot.get(space).into_iter().flatten().filter(|((r, _), _)| r == rel).map(|((_, p), f)| (*p, Arc::clone(f))).collect();
+            parts.sort_by_key(|(p, _)| *p);
+            return Ok(parts);
+        }
+        if !self.frames_table()? {
+            return Ok(Vec::new());
+        }
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut st = connection.prepare_cached(
+            "SELECT part, digest, reads, rows, types, data FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 ORDER BY part",
+        )?;
+        let rows = st.query_map(params![&space[..], rel.name, &rel.ident[..]], admitted_part)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Run `token`'s use of `parts` of `rel` in `space`, queued behind the run: the space counts the run once, the
+    /// parts are marked as used by it, and the parts of `rel` no run used in the last `keep` runs of the space are
+    /// forgotten (an incremental store returns its dead rows).
+    pub fn queue_frame_parts_used(&self, space: [u8; 32], rel: Rel, parts: Vec<i64>, token: u64, keep: i64) {
+        let bytes = parts.len() * 8;
+        self.write_back("the frames' parts used", bytes, Vec::new(), Box::new(move |store| store.use_frame_parts(&space, &rel, &parts, token, keep)));
+    }
+
+    /// `queue_frame_parts_used`, now.
+    pub fn use_frame_parts(&self, space: &[u8; 32], rel: &Rel, parts: &[i64], token: u64, keep: i64) -> StoreResult<()> {
+        self.immediate_transaction_once(|t| {
+            t.execute_batch(SCHEMA)?;
+            let run = count_run(t, space, token)?;
+            for batch in parts.chunks(READ_BATCH * 4) {
+                let values = (0..batch.len()).map(|i| format!("(?{})", 5 + i)).collect::<Vec<_>>().join(",");
+                let sql = format!(
+                    "WITH demanded(part) AS (VALUES {values}) UPDATE frames SET used = ?4 \
+                     WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part IN (SELECT part FROM demanded)"
+                );
+                let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into(), rel.name.clone().into(), rel.ident.to_vec().into(), run.into()];
+                args.extend(batch.iter().map(|p| rusqlite::types::Value::from(*p)));
+                t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
+            }
+            t.execute("DELETE FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND used <= ?4", params![&space[..], rel.name, &rel.ident[..], run - keep])?;
+            Ok(())
+        })
+    }
+
+    /// Forgets every frame of `space` and its count of runs: the space of a program no run will run again.
+    pub fn drop_frame_space(&self, space: &[u8; 32]) -> StoreResult<usize> {
+        if let Some(snapshot) = self.snapshot() {
+            snapshot.lock().expect("the frames' snapshot").remove(space);
+        }
+        if !self.frames_table()? {
+            return Ok(0);
+        }
+        self.immediate_transaction_once(|t| {
+            let n = t.execute("DELETE FROM frames WHERE space = ?1", [&space[..]])?;
+            t.execute("DELETE FROM frame_spaces WHERE space = ?1", [&space[..]])?;
+            Ok(n)
+        })
+    }
+
     /// `keep_frames`, queued behind the run (decision 0102): encoded and written by the store's writer.
-    pub fn queue_frames(&self, space: [u8; 32], puts: Vec<Put>, gone: Vec<(Rel, i64)>, used: Option<Vec<Rel>>) {
+    pub fn queue_frames(&self, space: [u8; 32], puts: Vec<Put>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
         let bytes = puts.iter().map(|p| p.rows.rows.len() * 8).sum();
         let puts: Vec<_> = puts.into_iter().map(Arc::new).collect();
         let mut keys: Vec<(super::write_back::Key, Option<Arc<dyn std::any::Any + Send + Sync>>)> = puts.iter().map(|p| {
@@ -178,26 +326,55 @@ impl ContentStore {
             (frame_key(&space, &p.rel, p.part), Some(Arc::new(Some(frame)) as Arc<dyn std::any::Any + Send + Sync>))
         }).collect();
         keys.extend(gone.iter().map(|(rel, part)| (frame_key(&space, rel, *part), Some(Arc::new(None::<Arc<Admitted>>) as Arc<dyn std::any::Any + Send + Sync>))));
+        // Memory is ahead of the store: the snapshot holds what is queued (`preload_frames`).
+        if let Some(snapshot) = self.snapshot() {
+            let mut snapshot = snapshot.lock().expect("the frames' snapshot");
+            let held = snapshot.entry(space).or_default();
+            for p in &puts {
+                held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored: Stored { digest: p.digest, reads: p.reads.clone() }, data: Data::Queued(Arc::clone(p)) }));
+            }
+            for key in &gone {
+                held.remove(key);
+            }
+        }
         self.write_back("frames", bytes, keys, Box::new(move |store| {
             // Attempted once: a busy store leaves these frames unwritten, and the next run derives them again.
             let refs: Vec<_> = puts.iter().map(Arc::as_ref).collect();
-            let _ = store.keep_frame_refs(&space, &refs, &gone, used.as_deref());
+            let _ = store.keep_frame_refs(&space, &refs, &gone, used.as_ref().map(|(rels, run)| (rels.as_slice(), *run)));
             Ok(())
         }));
     }
 
-    /// Writes `puts` into `space` (each replacing its frame) and forgets `gone`. With `used`, the run is over: the
-    /// space counts it, marks the relations it used, and forgets those the last [`RUNS`] runs did not use.
-    pub fn keep_frames(&self, space: &[u8; 32], puts: &[Put], gone: &[(Rel, i64)], used: Option<&[Rel]>) -> StoreResult<()> {
+    /// Writes `puts` into `space` (each replacing its frame) and forgets `gone`. With `used`, a program of run `token`
+    /// is over: the space counts the run if it has not yet, marks the relations the program used, and forgets those
+    /// the last [`RUNS`] runs did not use.
+    pub fn keep_frames(&self, space: &[u8; 32], puts: &[Put], gone: &[(Rel, i64)], used: Option<(&[Rel], u64)>) -> StoreResult<()> {
         self.keep_frame_refs(space, &puts.iter().collect::<Vec<_>>(), gone, used)
     }
 
-    fn keep_frame_refs(&self, space: &[u8; 32], puts: &[&Put], gone: &[(Rel, i64)], used: Option<&[Rel]>) -> StoreResult<()> {
+    fn keep_frame_refs(&self, space: &[u8; 32], puts: &[&Put], gone: &[(Rel, i64)], used: Option<(&[Rel], u64)>) -> StoreResult<()> {
         let blocks: Vec<Vec<u8>> = puts.iter().map(|p| super::cross_rows::encode(p.rows.types.len(), &p.rows.rows)).collect();
+        // The snapshot holds what is written (a write the writer runs was put there as it was queued: the same).
+        if let Some(snapshot) = self.snapshot() {
+            let mut snapshot = snapshot.lock().expect("the frames' snapshot");
+            let held = snapshot.entry(*space).or_default();
+            for (p, block) in puts.iter().zip(&blocks) {
+                held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored: Stored { digest: p.digest, reads: p.reads.clone() }, data: Data::Encoded { types: p.rows.types.clone(), n: p.rows.n, bytes: block.clone() } }));
+            }
+            for key in gone {
+                held.remove(key);
+            }
+        }
         self.immediate_transaction_once(|t| {
             t.execute_batch(SCHEMA)?;
-            t.execute("INSERT INTO frame_spaces(space, runs) VALUES (?1, 0) ON CONFLICT(space) DO NOTHING", [&space[..]])?;
-            let run: i64 = t.query_row("SELECT runs FROM frame_spaces WHERE space = ?1", [&space[..]], |r| r.get(0))?;
+            // A run's first program counts it: what it writes and marks is of the new run.
+            let run = match used {
+                Some((_, token)) => count_run(t, space, token)?,
+                None => {
+                    t.execute("INSERT INTO frame_spaces(space, runs) VALUES (?1, 0) ON CONFLICT(space) DO NOTHING", [&space[..]])?;
+                    t.query_row("SELECT runs FROM frame_spaces WHERE space = ?1", [&space[..]], |r| r.get(0))?
+                }
+            };
             // Nine bound values per frame, plus shared space and run, stay below 999 parameters.
             // Each statement publishes a bounded batch. No frame launches its own SQL execution.
             for batch in puts.iter().zip(&blocks).collect::<Vec<_>>().chunks(96) {
@@ -223,7 +400,7 @@ impl ContentStore {
                 for (rel,part) in batch { args.extend([rel.name.clone().into(),rel.ident.to_vec().into(),(*part).into()]); }
                 t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
             }
-            if let Some(used) = used {
+            if let Some((used, _)) = used {
                 for batch in used.chunks(READ_BATCH) {
                     let values=(0..batch.len()).map(|i|format!("(?{},?{})",3+2*i,4+2*i)).collect::<Vec<_>>().join(",");
                     // Row-value membership selects primary-key prefixes, including every partition of a relation.
@@ -234,7 +411,6 @@ impl ContentStore {
                     t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
                 }
                 t.execute("DELETE FROM frames WHERE space = ?1 AND used <= ?2", params![&space[..], run - RUNS])?;
-                t.execute("UPDATE frame_spaces SET runs = runs + 1 WHERE space = ?1", [&space[..]])?;
             }
             Ok(())
         })
@@ -249,6 +425,36 @@ fn encode_reads(reads: &[(String, u64)]) -> Vec<u8> {
         out.extend(digest.to_le_bytes());
     }
     out
+}
+
+/// The space of the per-file memo of plan `plan` (decision 0108): one space per file-local program.
+pub fn local_space(plan: &[u8; 32]) -> [u8; 32] {
+    use sha2::{Digest as _, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"rerail.space/v1\0local\0");
+    h.update(plan);
+    h.finalize().into()
+}
+
+/// The run of `space` that run `token` is: counted once per token (`0`: a run of its own, counted each time).
+fn count_run(t: &rusqlite::Connection, space: &[u8; 32], token: u64) -> rusqlite::Result<i64> {
+    t.execute("INSERT INTO frame_spaces(space, runs) VALUES (?1, 0) ON CONFLICT(space) DO NOTHING", [&space[..]])?;
+    let run: i64 = t.query_row("SELECT runs FROM frame_spaces WHERE space = ?1", [&space[..]], |r| r.get(0))?;
+    let mut counted = counted().lock().expect("the spaces' counted runs");
+    if token == 0 || counted.get(space) != Some(&token) {
+        t.execute("UPDATE frame_spaces SET runs = runs + 1 WHERE space = ?1", [&space[..]])?;
+        counted.insert(*space, token);
+        return Ok(run + 1);
+    }
+    Ok(run)
+}
+
+/// A frame read by part: `(part, digest, reads, rows, types, data)`.
+fn admitted_part(row: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, Arc<Admitted>)> {
+    Ok((row.get(0)?, Arc::new(Admitted {
+        stored: Stored { digest: row.get::<_, i64>(1)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(2)?) },
+        data: Data::Encoded { n: row.get::<_, i64>(3)? as usize, types: row.get(4)?, bytes: row.get(5)? },
+    })))
 }
 
 fn decode_reads(mut bytes: &[u8]) -> Vec<(String, u64)> {
@@ -302,7 +508,7 @@ mod tests {
         unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),
             rusqlite::ffi::SQLITE_TRACE_STMT | rusqlite::ffi::SQLITE_TRACE_PROFILE, Some(trace), (&counters as *const [AtomicUsize;2]).cast_mut().cast()); }
         let refs: Vec<_> = changed.iter().collect();
-        let result = store.keep_frame_refs(&[1;32], &refs, &gone, Some(&used));
+        let result = store.keep_frame_refs(&[1;32], &refs, &gone, Some((&used, 1)));
         unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),0,None,std::ptr::null_mut()); }
         result.unwrap();
         eprintln!("frame publication total: {} statements, {} VM",counters[0].load(Ordering::Relaxed),counters[1].load(Ordering::Relaxed));
@@ -336,6 +542,41 @@ mod tests {
         for p in puts.iter().step_by(64) { assert_eq!(got[&p.rel].rows().unwrap(), p.rows); }
         assert!(work.load(Ordering::Relaxed) < 100_000,
             "128 demands must use full-key probes, not scan 8192 stored frames: {} VM instructions", work.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn mixed_partition_admission_uses_bounded_full_key_probes() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
+        let puts: Vec<_> = (0..8192).map(|i| Put {
+            rel: rel(&format!("r{}", i % 32), 1), part: i / 32,
+            digest: i as u64, reads: vec![], rows: Rows {types:vec![b'i'],n:1,rows:vec![i]}
+        }).collect();
+        store.keep_frames(&[1;32], &puts, &[], None).unwrap();
+        let mut keys: Vec<_> = puts.iter().step_by(31).map(|p|(p.rel.clone(),p.part)).collect();
+        let unique = keys.len();
+        keys.extend(keys.clone());
+        keys.push((rel("r0", 2), 0)); // Same name, different identity: absent.
+        let counters = [AtomicUsize::new(0), AtomicUsize::new(0)];
+        unsafe extern "C" fn trace(_:u32,state:*mut std::ffi::c_void,statement:*mut std::ffi::c_void,_:*mut std::ffi::c_void)->i32 {
+            let c=unsafe {&*state.cast::<[AtomicUsize;2]>()};
+            c[0].fetch_add(1,Ordering::Relaxed);
+            let vm=unsafe {rusqlite::ffi::sqlite3_stmt_status(statement.cast(),rusqlite::ffi::SQLITE_STMTSTATUS_VM_STEP,1)};
+            c[1].fetch_add(vm as usize,Ordering::Relaxed);0
+        }
+        unsafe {rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),rusqlite::ffi::SQLITE_TRACE_PROFILE,
+            Some(trace),(&counters as *const [AtomicUsize;2]).cast_mut().cast());}
+        let got=store.admit_frame_parts(&[1;32],&keys);
+        unsafe {rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),0,None,std::ptr::null_mut());}
+        let got=got.unwrap();
+        assert_eq!(got.len(),unique);
+        for p in puts.iter().step_by(31) {assert_eq!(got[&(p.rel.clone(),p.part)].rows().unwrap(),p.rows);}
+        assert!(store.admit_frame_parts(&[2;32],&keys).unwrap().is_empty());
+        let sql=counters[0].load(Ordering::Relaxed);let vm=counters[1].load(Ordering::Relaxed);
+        eprintln!("{unique} mixed-part demands: {sql} SQL, {vm} VM instructions");
+        assert!(sql<=4,"one schema check and three batches, not one read per part: {sql}");
+        assert!(vm<100_000,"demands must probe full keys, not scan 8192 frames: {vm}");
     }
 
     #[test]
@@ -481,13 +722,42 @@ mod tests {
         let space = [2u8; 32];
         let (kept, old) = (rel("kept", 1), rel("old", 1));
         let put = |r: &Rel| Put { rel: r.clone(), part: 0, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } };
-        store.keep_frames(&space, &[put(&kept), put(&old)], &[], Some(&[kept.clone(), old.clone()])).unwrap();
+        store.keep_frames(&space, &[put(&kept), put(&old)], &[], Some((&[kept.clone(), old.clone()][..], 0))).unwrap();
         for _ in 0..RUNS {
             assert!(store.frames(&space, &[old.clone()], 0).unwrap().contains_key(&old));
-            store.keep_frames(&space, &[], &[], Some(&[kept.clone()])).unwrap();
+            store.keep_frames(&space, &[], &[], Some((&[kept.clone()][..], 0))).unwrap();
         }
         let got = store.frames(&space, &[kept.clone(), old.clone()], 0).unwrap();
         assert!(got.contains_key(&kept) && !got.contains_key(&old));
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// The programs of one run that keep frames in one space (a phase's, P3's cross part, its loading cone) count one
+    /// run: however many there are, a relation one of them used is kept for the next [`RUNS`] runs.
+    #[test]
+    fn the_programs_of_one_run_count_one_run_of_their_space() {
+        let dir = std::env::temp_dir().join(format!("rerail-frames-runs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
+        let space = [3u8; 32];
+        let (first, other) = (rel("first", 1), rel("other", 1));
+        let put = |r: &Rel| Put { rel: r.clone(), part: 0, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } };
+        // Run 7's first program keeps `first`; eight more programs of run 7 keep `other`.
+        store.keep_frames(&space, &[put(&first)], &[], Some((&[first.clone()][..], 7))).unwrap();
+        for _ in 0..2 * RUNS {
+            store.keep_frames(&space, &[put(&other)], &[], Some((&[other.clone()][..], 7))).unwrap();
+        }
+        assert!(store.frames(&space, &[first.clone()], 0).unwrap().contains_key(&first), "one run, not nine");
+        // RUNS later runs that do not use it collect it.
+        for run in 8..8 + RUNS as u64 {
+            store.keep_frames(&space, &[], &[], Some((&[other.clone()][..], run))).unwrap();
+        }
+        assert!(!store.frames(&space, &[first.clone()], 0).unwrap().contains_key(&first));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// A store created at `path` (its schema new): a snapshot of an earlier file there is not this one's.
+pub fn forget_snapshot(path: &str) {
+    snapshots().lock().expect("the frames' snapshots").remove(&super::atoms::key(std::path::Path::new(path)));
 }

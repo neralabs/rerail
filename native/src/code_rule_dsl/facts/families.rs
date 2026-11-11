@@ -24,8 +24,9 @@ use super::observe::{Push, observe_root, path_name};
 use super::propagate::propagate;
 use crate::code_rule_dsl::language::{GrammarDialect, dialect_by_label, label_of_path, tape_tag};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
+use crate::code_rule_dsl::facts::vtab::syntax::{Families as LazyFamilies, families};
 use crate::code_rule_dsl::tape::{self, FileImage, TAPE_FORMAT_VERSION, TapeDoc, TapeImage};
-use crate::code_rule_dsl::workspace::grammar_version;
+use crate::code_rule_dsl::build_ids::grammar_version;
 use crate::content_store::prefilter::{PREFILTER_VERSION, TapePrefilter};
 use crate::content_store::{
     ABSENT, Derivation, DerivationInput, DerivationRecord, HashKey, SourceId, StoreError, StoreResult, TapeId,
@@ -39,7 +40,6 @@ const TAPE: &str = "#tape:";
 const CORE: &str = "#core:";
 const PREFILTER: &str = "#prefilter:";
 const KINDS: &str = "#kinds:";
-const PY: &str = "#py:";
 /// A tape's readers in the next wave: core and prefilter.
 const TAPE_READERS: u8 = 2;
 /// New paths per chunk of a push: a chunk's tapes and facts are resident at once.
@@ -61,8 +61,9 @@ pub(crate) fn kinds_name(scope: &str, path: &str) -> String {
     format!("{scope}{KINDS}{path}")
 }
 
-pub(crate) fn py_name(scope: &str, path: &str) -> String {
-    format!("{scope}{PY}{path}")
+/// A document's derivation name for a registered family's relations (`Families::derived`).
+pub fn derived_name(families: &dyn LazyFamilies, scope: &str, path: &str) -> String {
+    format!("{scope}{}{path}", families.derived())
 }
 
 /// The producer of tape derivations: the tape format and the grammars that encode it.
@@ -77,7 +78,7 @@ pub(crate) fn tape_producer() -> [u8; 32] {
 /// The producer of core derivations: the tape format the facts are read from.
 pub(crate) fn core_producer() -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"rerail.core/v2\0");
+    hash.update(b"rerail.core/v4\0");
     hash.update(TAPE_FORMAT_VERSION.to_le_bytes());
     hash.finalize().into()
 }
@@ -94,25 +95,14 @@ pub(crate) fn kinds_producer() -> [u8; 32] {
     Sha256::digest(b"rerail.kinds/v1\0").into()
 }
 
-/// The producer of `py.*` derivations (decision 0029): the rows' version, over core facts.
-pub(crate) fn py_producer() -> [u8; 32] {
-    let mut hash = Sha256::new();
-    hash.update(b"rerail.py/v1\0");
-    hash.update(crate::code_rule_dsl::facts::producers::python::families::VERSION.to_le_bytes());
-    hash.finalize().into()
-}
-
-/// The `py.*` derivation of `path` over the core facts `facts` its core name binds as `read`: the
-/// rows' digest, `ABSENT` without facts. The rows are not stored: a wave makes them from the core
+/// The derivation of `families`' relations for `path` over the core facts `facts` its core name binds as `read`
+/// (decision 0029): the rows' digest, `ABSENT` without facts. The rows are not stored: a wave makes them from the core
 /// facts it holds (`facts::vtab::syntax`), as the core facts are made from the tape.
-pub(crate) fn py_record(scope: &str, path: &str, read: [u8; 32], facts: Option<&Facts>) -> DerivationRecord {
-    use crate::code_rule_dsl::facts::producers::python::families as py;
-    let digest = facts.zip(tape_tag(GrammarDialect::Python)).map_or(ABSENT, |(facts, tag)| {
-        py::digest(&py::rows(&py::Grammar::new(tag, &GrammarDialect::Python.kinds()), facts))
-    });
+pub(crate) fn derived_record(families: &dyn LazyFamilies, scope: &str, path: &str, read: [u8; 32], facts: Option<&Facts>) -> DerivationRecord {
+    let digest = facts.map_or(ABSENT, |facts| families.rows_digest(facts));
     DerivationRecord {
-        output: py_name(scope, path),
-        producer: py_producer(),
+        output: derived_name(families, scope, path),
+        producer: families.producer(),
         inputs: vec![DerivationInput { name: Some(core_name(scope, path)), digest: read }],
         digest,
         status: 0,
@@ -120,22 +110,21 @@ pub(crate) fn py_record(scope: &str, path: &str, read: [u8; 32], facts: Option<&
     }
 }
 
-/// The `py.*` families of `documents` as a wave reads them: each document's name and digest, its
-/// derivation recorded the first time a wave reads it (a family nobody reads is never made), then
+/// The registered families' relations of `documents` as a wave reads them (Python's `py.*`): each document's name
+/// and digest, its derivation recorded the first time a wave reads it (a family nobody reads is never made), then
 /// kept current by propagation from its core name (`Families::recompute`).
-pub(crate) fn py_inputs(
+pub fn derived_inputs(
     graph: &(impl Graph + ?Sized),
     scope: &str,
     documents: &[crate::code_rule_dsl::facts::vtab::syntax::Document],
 ) -> StoreResult<Vec<DerivationInput>> {
-    let python = documents.iter().filter(|d| dialect(&d.path) == Some(GrammarDialect::Python));
     let (mut inputs, mut records) = (Vec::new(), Vec::new());
-    for d in python {
-        let name = py_name(scope, &d.path);
+    for (families, d) in families().iter().flat_map(|&f| documents.iter().filter(move |d| dialect(&d.path) == Some(f.dialect())).map(move |d| (f, d))) {
+        let name = derived_name(families, scope, &d.path);
         let digest = match graph.binding(&name)? {
             Some(digest) => digest,
             None => {
-                let record = py_record(scope, &d.path, d.digest, Some(&d.facts));
+                let record = derived_record(families, scope, &d.path, d.digest, Some(&d.facts));
                 let digest = record.digest;
                 records.push(record);
                 digest
@@ -173,7 +162,7 @@ pub(crate) fn histogram_digest(f: &Facts) -> [u8; 32] {
 }
 
 /// The source a path name's blob (a Git blob id in its first 20 bytes) is stored as.
-pub(crate) fn blob_source_id(graph: &(impl Graph + ?Sized), digest: [u8; 32]) -> StoreResult<Option<SourceId>> {
+pub fn blob_source_id(graph: &(impl Graph + ?Sized), digest: [u8; 32]) -> StoreResult<Option<SourceId>> {
     let blob: [u8; 20] = digest[..20].try_into().expect("twenty bytes");
     graph.store().source_by_alias(HashKey::git_sha1(blob))
 }
@@ -193,7 +182,7 @@ fn dialect(path: &str) -> Option<GrammarDialect> {
 }
 
 /// A stored tape, decoded.
-pub(crate) struct Tape {
+pub struct Tape {
     pub id: TapeId,
     pub doc: TapeDoc,
     pub lines: Arc<LineTable>,
@@ -211,14 +200,14 @@ pub(crate) struct Parses {
 /// What one ingest push did: the observer and propagation (`Push`), and the derivations created
 /// for paths no derivation read before.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct Ingested {
+pub struct Ingested {
     pub push: Push,
     pub created: u64,
 }
 
 /// Recomputes the ingest families for one push. Drop the value after the push.
 #[derive(Default)]
-pub(crate) struct Families {
+pub struct Families {
     tapes: HashMap<[u8; 32], (Arc<Tape>, u8)>,
     facts: HashMap<[u8; 32], Arc<Facts>>,
     /// Prefilter rows built in this recomputation, published together.
@@ -228,13 +217,14 @@ pub(crate) struct Families {
     pub parses: Parses,
 }
 
+
 impl Families {
     /// One push of `scope`'s root `new`: observe it, propagate every rebound name through the
     /// derivations that read it, then create the four derivations of each new path with a tape
     /// dialect, a chunk of paths at a time, wave by wave (tape; core and prefilter; kinds). Cold
     /// and warm are this same call: cold every path is new. `others` re-runs each wave's
     /// derivations of other producers (the readers of these families).
-    pub(crate) fn push(
+    pub fn push(
         &mut self,
         graph: &(impl Graph + ?Sized),
         scope: &str,
@@ -284,12 +274,12 @@ impl Families {
     }
 
     /// Re-runs the ingest derivations of `frontier`; other producers' are left out.
-    pub(crate) fn recompute(
+    pub fn recompute(
         &mut self,
         graph: &(impl Graph + ?Sized),
         frontier: &[Derivation],
     ) -> StoreResult<Vec<DerivationRecord>> {
-        let (tape, core, prefilter, kinds, py) = (tape_producer(), core_producer(), prefilter_producer(), kinds_producer(), py_producer());
+        let (tape, core, prefilter, kinds) = (tape_producer(), core_producer(), prefilter_producer(), kinds_producer());
         let mut records = Vec::new();
         for derivation in frontier {
             if derivation.producer == tape {
@@ -304,9 +294,9 @@ impl Families {
             } else if derivation.producer == kinds {
                 let (scope, path) = split(&derivation.output, KINDS)?;
                 records.push(self.kinds(graph, scope, path)?);
-            } else if derivation.producer == py {
-                let (scope, path) = split(&derivation.output, PY)?;
-                records.push(self.py(graph, scope, path)?);
+            } else if let Some(families) = families().iter().find(|f| f.producer() == derivation.producer) {
+                let (scope, path) = split(&derivation.output, families.derived())?;
+                records.push(self.derived(*families, graph, scope, path)?);
             }
         }
         self.publish(graph)?;
@@ -411,10 +401,12 @@ impl Families {
         let lines = Arc::new(LineTable::new(&source, Terminators::of(language)));
         let doc = crate::code_rule_dsl::prof::time("push.restore", || TapeDoc::restore_with_lines(source, grammar, &image, Arc::clone(&lines), &|| false))
             .map_err(StoreError::Invalid)?;
-        Ok(Some((Sha256::digest(&bytes).into(), Tape { id, doc, lines })))
+        let identity = crate::code_rule_dsl::tape::tape_identity(doc.source_digest(), &bytes);
+        Ok(Some((identity, Tape { id, doc: doc.stored_as(identity), lines })))
     }
 
-    /// The stored tape `id` of source `source_id`, decoded, and its canonical hash.
+    /// The stored tape `id` of source `source_id`, decoded, and its identity
+    /// (`HashKey::tape_identity`).
     fn decode(
         &mut self,
         graph: &(impl Graph + ?Sized),
@@ -437,8 +429,8 @@ impl Families {
         let lines = Arc::new(LineTable::new(&source, Terminators::of(language)));
         let doc = TapeDoc::restore_with_lines(source, grammar, &image, Arc::clone(&lines), &|| false)
             .map_err(StoreError::Invalid)?;
-        let digest: [u8; 32] = Sha256::digest(&bytes[..]).into();
-        Ok(Some((digest, Tape { id, doc: doc.stored_as(digest), lines })))
+        let identity = crate::code_rule_dsl::tape::tape_identity(doc.source_digest(), &bytes);
+        Ok(Some((identity, Tape { id, doc: doc.stored_as(identity), lines })))
     }
 
     /// The tape `read` names, for one of its readers: taken from the tape wave, else decoded from
@@ -477,7 +469,7 @@ impl Families {
     /// families outside a push (a wave) reads.
     /// The working set's copy where it holds the tape (by its digest, the binding: the same
     /// tape), else the store's.
-    pub(crate) fn stored(graph: &(impl Graph + ?Sized), scope: &str, path: &str) -> StoreResult<Option<Arc<Tape>>> {
+    pub fn stored(graph: &(impl Graph + ?Sized), scope: &str, path: &str) -> StoreResult<Option<Arc<Tape>>> {
         let read = graph.binding(&tape_name(scope, path))?.unwrap_or(ABSENT);
         if read != ABSENT {
             if let Some(tape) = graph.store().working_set().tape(read).and_then(|tape| tape.downcast::<Tape>().ok()) {
@@ -525,7 +517,7 @@ impl Families {
         let digest = match self.take(graph, scope, path, read)? {
             Some(tape) => {
                 let budget = crate::code_rule_dsl::budget::matcher_budget_exhausted;
-                self.rows.push(crate::code_rule_dsl::prof::time("push.prefilter", || crate::code_rule_dsl::prefilter::image(tape.id, &tape.doc, &budget))?);
+                self.rows.push(crate::code_rule_dsl::prof::time("push.prefilter", || prefilter_image(tape.id, &tape.doc, &budget))?);
                 let mut hash = Sha256::new();
                 hash.update(b"rerail.prefilter-rows/v1\0");
                 hash.update(PREFILTER_VERSION.to_le_bytes());
@@ -549,16 +541,16 @@ impl Families {
         graph.publish_prefilters(std::mem::take(&mut self.rows))
     }
 
-    /// The `py.*` derivation of `path`, from the facts its core name binds now: those this push
+    /// The derivation of `families`' relations for `path`, from the facts its core name binds now: those this push
     /// built (kinds may have taken them), else rebuilt from the stored tape.
-    pub(crate) fn py(&mut self, graph: &(impl Graph + ?Sized), scope: &str, path: &str) -> StoreResult<DerivationRecord> {
+    pub(crate) fn derived(&mut self, families: &dyn LazyFamilies, graph: &(impl Graph + ?Sized), scope: &str, path: &str) -> StoreResult<DerivationRecord> {
         let read = graph.binding(&core_name(scope, path))?.unwrap_or(ABSENT);
         let facts = match self.facts.get(&read) {
             Some(facts) => Some(Arc::clone(facts)),
             None if read == ABSENT => None,
             None => self.core(graph, scope, path)?.1.filter(|facts| core::digest(facts) == read),
         };
-        Ok(py_record(scope, path, read, facts.as_deref()))
+        Ok(derived_record(families, scope, path, read, facts.as_deref()))
     }
 
     /// The kinds derivation of `path`, from the facts its core name binds now.
@@ -599,4 +591,48 @@ fn split<'a>(output: &'a str, family: &str) -> StoreResult<(&'a str, &'a str)> {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
+
+/// What derives a tape's prefilter rows from the tape alone (`prefilter::image`), registered at load; `interrupted`
+/// is polled as it goes.
+pub(crate) type PrefilterImage = fn(
+    crate::content_store::TapeId,
+    &crate::code_rule_dsl::tape::TapeDoc,
+    &dyn Fn() -> bool,
+) -> StoreResult<crate::content_store::TapePrefilter>;
+
+static PREFILTER_IMAGE: std::sync::OnceLock<PrefilterImage> = std::sync::OnceLock::new();
+
+/// Registers what derives a tape's prefilter rows (once, at load).
+pub fn install_prefilter_image(image: PrefilterImage) {
+    let _ = PREFILTER_IMAGE.set(image);
+}
+
+fn prefilter_image(
+    tape: crate::content_store::TapeId,
+    doc: &crate::code_rule_dsl::tape::TapeDoc,
+    interrupted: &dyn Fn() -> bool,
+) -> StoreResult<crate::content_store::TapePrefilter> {
+    match PREFILTER_IMAGE.get() {
+        Some(image) => image(tape, doc, interrupted),
+        None => Err(crate::content_store::StoreError::Invalid("no prefilter image is registered".to_owned())),
+    }
+}
+
+/// The documents of `paths` in `scope` whose core facts are bound, each keyed by its path name's
+/// atom, its facts rebuilt from its stored tape.
+pub fn stored_documents(graph: &(impl Graph + ?Sized), scope: &str, paths: &[String]) -> StoreResult<Vec<crate::code_rule_dsl::facts::vtab::syntax::Document>> {
+    let mut out = Vec::new();
+    for path in paths {
+        let core = core_name(scope, path);
+        let Some(digest) = graph.binding(&core)? else { continue };
+        let Some(tape) = Families::stored(graph, scope, path)? else { continue };
+        let facts = crate::code_rule_dsl::facts::core::from_tape(&tape.doc, Arc::clone(&tape.lines)).map_err(StoreError::Invalid)?;
+        if crate::code_rule_dsl::facts::core::digest(&facts) != digest {
+            return Err(StoreError::Invalid(format!("stale core facts for {core}")));
+        }
+        let key = graph.store().atom(&crate::code_rule_dsl::facts::observe::path_name(scope, path))?.ok_or_else(|| StoreError::Corrupt(format!("{path} has no atom")))?;
+        out.push(crate::code_rule_dsl::facts::vtab::syntax::Document { key, path: path.clone(), core, digest, facts: Arc::new(facts), tape: None, guest: None, module: None });
+    }
+    Ok(out)
+}

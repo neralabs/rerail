@@ -5,8 +5,8 @@
 use super::noqa::{NoqaIndex, parent_statement};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
-use crate::code_rule_dsl::oracle;
-use crate::code_rule_dsl::test_support::*;
+// cratify: a re-export of rerail-engine's, which its facades of this module make
+// cratify: a re-export of rerail-engine's, which its facades of this module make
 use ast_grep_language::LanguageExt;
 use serde_json::{Value, json};
 

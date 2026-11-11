@@ -121,7 +121,7 @@ unsafe impl VTabCursor for Cursor {
     }
     fn column(&self, ctx: &mut Context, col: c_int) -> Result<()> {
         match col {
-            0 => ctx.set_result(&self.pre),
+            0 => ctx.set_result(self.pre),
             _ => ctx.set_result(&self.bytes),
         }
     }

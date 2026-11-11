@@ -57,6 +57,8 @@ pub(in crate::code_rule_dsl) fn schema() -> BTreeMap<String, Vec<(String, String
         ("output", &["p:sym", "k:int", "rel:sym"]),
         ("kindset", &["p:sym", "set:sym"]),
         ("kindset_kind", &["p:sym", "set:sym", "k:int", "kind:sym"]),
+        // A relation of facts, with or without rows: one with none (a constant folded empty) reads back as present.
+        ("fact_rel", &["p:sym", "rel:sym"]),
         ("fact_row", &["p:sym", "rel:sym", "row:int", "width:int"]),
         ("fact", &["p:sym", "rel:sym", "row:int", "i:int", "kind:sym", "n:int", "s:sym"]),
         ("demand", &["p:sym", "k:int", "rel:sym"]),
@@ -123,9 +125,17 @@ struct Writer<'a> {
 }
 
 impl Writer<'_> {
-    fn row(&mut self, rel: &str, mut values: Vec<Value>) {
-        values.insert(0, s(&self.p));
-        self.facts.entry(rel.to_owned()).or_default().push(values);
+    fn row(&mut self, rel: &str, values: Vec<Value>) {
+        // Made at its length: an `insert(0, …)` doubled each full row's capacity (0.2 GB of the Python pack's program).
+        let mut row = Vec::with_capacity(values.len() + 1);
+        row.push(s(&self.p));
+        row.extend(values);
+        match self.facts.get_mut(rel) {
+            Some(rows) => rows.push(row),
+            None => {
+                self.facts.insert(rel.to_owned(), vec![row]);
+            }
+        }
     }
 
     fn term(&mut self, term: &Term) -> i64 {
@@ -243,6 +253,7 @@ impl Writer<'_> {
             }
         }
         for (rel, rows) in &prog.facts {
+            self.row("fact_rel", vec![s(rel)]);
             for (row, values) in rows.iter().enumerate() {
                 self.row("fact_row", vec![s(rel), n(row), n(values.len())]);
                 for (i, v) in values.iter().enumerate() {
@@ -450,7 +461,7 @@ impl<'a> Reader<'a> {
     fn atom(&self, a: i64) -> Result<Atom, String> {
         let row = self.atoms.get(&a).ok_or_else(|| bad(format!("no atom {a}")))?;
         let args = self.args.get(&a).map(|args| args.values().map(|t| self.term(*t)).collect::<Result<Vec<_>, _>>()).transpose()?.unwrap_or_default();
-        Ok(Atom { rel: text(&row[1])?, args, neg: int(&row[2])? != 0, gated: int(&row[3])? != 0 })
+        Ok(Atom { rel: text(&row[1])?.into(), args, neg: int(&row[2])? != 0, gated: int(&row[3])? != 0 })
     }
 
     /// Rows of `rel` keyed by their first column (an id), each row less that column.
@@ -551,6 +562,9 @@ impl<'a> Reader<'a> {
             values.entry((text(&row[0])?, int(&row[1])?)).or_default().push((int(&row[2])?, v));
         }
         let mut facts: BTreeMap<String, Vec<(i64, Vec<Value>)>> = BTreeMap::new();
+        for row in self.get("fact_rel") {
+            facts.entry(text(&row[0])?).or_default();
+        }
         for row in self.get("fact_row") {
             let (rel, k) = (text(&row[0])?, int(&row[1])?);
             let row_values = ordered(values.remove(&(rel.clone(), k)).unwrap_or_default());
@@ -794,7 +808,7 @@ pub(in crate::code_rule_dsl) fn decode(bytes: &[u8]) -> Result<Facts, String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     /// The encoding names each string by its first use and puts the table first: the bytes the two-pass writer made
     /// (strings counted, then the rows written), and they decode to the facts.
     #[test]
@@ -854,6 +868,32 @@ mod tests {
         }
     }
 
+    /// A relation of facts with no rows (a constant folded empty, `constants::fold`) survives its facts: a stored
+    /// program read back is the program written, so its digests (the memo's key, the relations' identities) are the
+    /// same. Without it, the first run after a rebuild and the second keyed the memo apart.
+    #[test]
+    fn an_empty_relation_of_facts_reads_back_as_present() {
+        let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(s: symbol)\n.decl b(s: symbol)\nb(\"x\").\n.output a\n").unwrap();
+        prog.facts.insert("a".to_owned(), Vec::new());
+        let mut facts = super::Facts::new();
+        super::write(&mut facts, "p", &prog);
+        let back = super::program(&facts, "p").unwrap();
+        assert_eq!(back.facts, prog.facts);
+        assert_eq!(super::super::plan::corpus::memo::program_digest(&back), super::super::plan::corpus::memo::program_digest(&prog));
+    }
+
+    /// A relation the program has facts of but no rows (a constant folded to nothing) reads back as one: a stored
+    /// program is the program prepared, and its file-local part has the same memo key (`memo::program_digest`).
+    #[test]
+    fn a_relation_of_no_facts_reads_back_as_one() {
+        let mut prog = crate::code_rule_dsl::logic::front::Program::default();
+        prog.facts.insert("none".into(), Vec::new());
+        prog.facts.insert("one".into(), vec![vec![crate::code_rule_dsl::logic::front::Value::Int(1)]]);
+        let mut facts = super::Facts::new();
+        super::write(&mut facts, "p", &prog);
+        assert_eq!(super::program(&facts, "p").unwrap().facts, prog.facts);
+    }
+
     /// The AST patterns a program matches survive its facts: a stored program read back (a prepared program,
     /// O-stored-patterns) still asks the batch for `ast_match` rows. Without them, a run that reuses it finds no
     /// pattern matches.
@@ -865,4 +905,20 @@ mod tests {
         super::write(&mut facts, "p", &prog);
         assert_eq!(super::program(&facts, "p").unwrap().ast_patterns, prog.ast_patterns);
     }
+}
+
+/// A digest of `value`'s `Debug` text, made as it is written: two programs compared by it without either's text in
+/// memory (a 16 k-rule program's is tens of megabytes).
+pub(in crate::code_rule_dsl) fn debug_digest(value: &impl std::fmt::Debug) -> [u8; 32] {
+    use sha2::Digest as _;
+    struct Hashing(sha2::Sha256);
+    impl std::fmt::Write for Hashing {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            self.0.update(s.as_bytes());
+            Ok(())
+        }
+    }
+    let mut out = Hashing(sha2::Sha256::new());
+    let _ = std::fmt::write(&mut out, format_args!("{value:?}"));
+    out.0.finalize().into()
 }

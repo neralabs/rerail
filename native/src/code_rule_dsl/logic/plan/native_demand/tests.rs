@@ -1,7 +1,7 @@
 use super::*;
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::logic::native::component;
 
@@ -60,7 +60,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod integration_tests {
+pub mod integration_tests {
     use crate::code_rule_dsl::{
         facts::{
             core,
@@ -143,9 +143,9 @@ posts(n,q) :- python_qualified(n,q,wanted,post_target).
                     digest: core::digest(&facts),
                     path: "test.py".into(),
                     facts,
+                    tape: None,
                     guest: None,
                     module: None,
-                    tape: None,
                 }];
                 let mut stats = Stats::empty(&lowered.program);
                 for (name, source) in syntax::with_nearest(

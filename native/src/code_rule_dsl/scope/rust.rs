@@ -11,6 +11,7 @@ use super::{
     Binding, BuildError, Builder, Form, Import, NodeRef, Reference, ScopeKind, ScopeTable, Site,
     TYPE, VALUE,
 };
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::calls::rust::{LIBRARY_ROOTS, crate_module, std_macro};
 use ast_grep_core::{Doc, Node};
 
@@ -392,7 +393,7 @@ impl Visitor<'_, '_> {
     }
 
     fn children<D: Doc>(&mut self, node: &Node<'_, D>) -> Result<(), BuildError> {
-        for child in node.children().filter(|child| child.is_named()) {
+        for child in node.named() {
             self.visit(&child)?;
         }
         Ok(())
@@ -485,7 +486,7 @@ impl Visitor<'_, '_> {
                 self.field(node, "right")
             }
             "break_expression" | "continue_expression" => {
-                for child in node.children().filter(|child| child.is_named()) {
+                for child in node.named() {
                     if child.kind() == "label" {
                         self.builder.reference(child.range(), LABEL);
                     } else {
@@ -530,7 +531,7 @@ impl Visitor<'_, '_> {
     /// is visible in its whole block or module, before it too.
     fn items<D: Doc>(&mut self, node: &Node<'_, D>) {
         let start = self.scope_start();
-        for child in node.children().filter(|child| child.is_named()) {
+        for child in node.named() {
             let (spaces, form) = match child.kind().as_ref() {
                 "function_item" | "function_signature_item" => (VALUE, Form::Definition),
                 "struct_item" => {
@@ -628,7 +629,7 @@ impl Visitor<'_, '_> {
             binding.name = name.map(|name| NodeRef::of(&name));
             self.builder.bind(self.builder.current, "Self", binding);
         }
-        for child in node.children().filter(|child| child.is_named()) {
+        for child in node.named() {
             let is_name = node
                 .field("name")
                 .is_some_and(|name| name.range() == child.range());
@@ -652,7 +653,7 @@ impl Visitor<'_, '_> {
         node: &Node<'_, D>,
         start: usize,
     ) -> Result<(), BuildError> {
-        for parameter in node.children().filter(|child| child.is_named()) {
+        for parameter in node.named() {
             let spaces = match parameter.kind().as_ref() {
                 "type_parameter" => TYPE,
                 // A const parameter is read in value and in type-argument position (`[u8; N]`,
@@ -664,7 +665,7 @@ impl Visitor<'_, '_> {
             if let Some(name) = parameter.field("name") {
                 self.bind(&name, &parameter, spaces, Form::TypeParameter, start);
             }
-            for child in parameter.children().filter(|child| child.is_named()) {
+            for child in parameter.named() {
                 let is_name = parameter
                     .field("name")
                     .is_some_and(|name| name.range() == child.range());
@@ -753,7 +754,7 @@ impl Visitor<'_, '_> {
     /// A function's or closure's parameters: their types are read, their patterns bound at
     /// `start`.
     fn parameters<D: Doc>(&mut self, node: &Node<'_, D>, start: usize) -> Result<(), BuildError> {
-        for parameter in node.children().filter(|child| child.is_named()) {
+        for parameter in node.named() {
             match parameter.kind().as_ref() {
                 "self_parameter" => {
                     if let Some(name) = parameter.children().find(|child| child.kind() == "self") {
@@ -872,7 +873,7 @@ impl Visitor<'_, '_> {
                 Ok(())
             }
             "let_chain" => {
-                for child in node.children().filter(|child| child.is_named()) {
+                for child in node.named() {
                     self.condition(&child, form)?;
                 }
                 Ok(())
@@ -908,7 +909,7 @@ impl Visitor<'_, '_> {
         self.builder.push(ScopeKind::Block, node.range());
         let start = node.range().start;
         if let Some(pattern) = node.field("pattern") {
-            for child in pattern.children().filter(|child| child.is_named()) {
+            for child in pattern.named() {
                 let is_condition = pattern
                     .field("condition")
                     .is_some_and(|condition| condition.range() == child.range());
@@ -966,7 +967,7 @@ impl Visitor<'_, '_> {
                     self.pattern_constructor(&path)?;
                 }
                 let constructor = pattern.field("type");
-                for child in pattern.children().filter(|child| child.is_named()) {
+                for child in pattern.named() {
                     if constructor
                         .as_ref()
                         .is_none_or(|path| path.range() != child.range())
@@ -978,7 +979,7 @@ impl Visitor<'_, '_> {
             }
             "struct_pattern" => {
                 self.type_name(pattern.field("type"))?;
-                for child in pattern.children().filter(|child| child.is_named()) {
+                for child in pattern.named() {
                     if child.kind() == "field_pattern" {
                         if let Some(inner) = child.field("pattern") {
                             self.pattern(&inner, site, form, offset, None)?;
@@ -996,7 +997,7 @@ impl Visitor<'_, '_> {
             "closure_expression" | "macro_invocation" => self.visit(pattern),
             "token_tree" | "attribute_item" | "line_comment" | "block_comment" => Ok(()),
             _ => {
-                for child in pattern.children().filter(|child| child.is_named()) {
+                for child in pattern.named() {
                     self.pattern(&child, site, form, offset, None)?;
                 }
                 Ok(())
@@ -1199,7 +1200,7 @@ impl Visitor<'_, '_> {
                 }
             }
             "use_list" => {
-                for child in tree.children().filter(|child| child.is_named()) {
+                for child in tree.named() {
                     self.use_tree(&child, prefix, site, start);
                 }
             }
@@ -1292,7 +1293,7 @@ fn defines_items<D: Doc>(node: &Node<'_, D>) -> bool {
 }
 
 /// A Rust file's table, as `ScopeTable::build` builds it.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) fn build_for_test(source: &str) -> ScopeTable {
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_core::tree_sitter::LanguageExt;
@@ -1302,4 +1303,4 @@ pub(crate) fn build_for_test(source: &str) -> ScopeTable {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

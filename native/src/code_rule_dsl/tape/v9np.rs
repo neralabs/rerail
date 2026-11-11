@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tree_sitter::{Language, Node as TsNode, Parser};
 
-mod sql;
+pub mod sql;
 
 // ---- copied from tape.rs (v7) ----
 pub const KIND_LIMIT: usize = 1024;
@@ -1006,4 +1006,4 @@ pub(crate) fn main(args: &[String]) {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

@@ -197,7 +197,8 @@ fn bit_files(gates: &[Gate], term_files: &BTreeMap<&str, BTreeSet<i64>>, uncover
 /// `plan`'s gate under `statistics`.
 fn gate(plan: &AnchorPlan, lang: u32, statistics: &Statistics, seen: &mut HashSet<usize>) -> Gate {
     match &plan.condition {
-        Condition::Always | Condition::Text { .. } | Condition::Not(_) => Gate::All,
+        // A root gate (main's `Condition::RootGate`) is every root of its scope away from the file's root: no gate.
+        Condition::Always | Condition::Text { .. } | Condition::Not(_) | Condition::RootGate { .. } => Gate::All,
         Condition::Pattern(required) if required.is_empty() => Gate::All,
         Condition::Pattern(required) => match &required[statistics.choose(lang, required).0].value {
             Required::Terminal(_, term) => Gate::Term(term.clone()),
@@ -254,6 +255,10 @@ fn identity(plan: &AnchorPlan, lang: u32) -> PlanId {
                 walk(inner, hash, seen);
             }
             Condition::Utility(_) => hash.update(b"again"),
+            Condition::RootGate { kind, gated } => {
+                hash.update(format!("rootgate{kind}").as_bytes());
+                walk(gated, hash, seen);
+            }
         }
     }
     let mut hash = Sha256::new();

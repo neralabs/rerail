@@ -2,8 +2,7 @@
 use super::metal_backend::{MetalExecutionGuard, metal_execution_guard};
 use super::metal_grid_plan::{ContinuationPoint, ExecutionPlan, ResidentInput, StageKind};
 use super::{Error, PackedExecution};
-
-pub(super) type PageConsumer<'a> = dyn FnMut(PackedExecution, usize) -> Result<(), Error> + 'a;
+pub use crate::code_rule_dsl::transducer::packed::device::{PageConsumer};
 
 pub(super) struct GuardedExecutor {
     resident: ResidentInput,
@@ -34,7 +33,7 @@ impl GuardedExecutor {
         Ok(self)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn with_output_bounds(
         mut self,
         bounds: super::metal_output_pages::PageBounds,

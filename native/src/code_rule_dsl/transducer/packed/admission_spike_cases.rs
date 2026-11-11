@@ -164,7 +164,7 @@ fn compare_case(
         eprintln!(
             "ADMISSION_SPIKE {}",
             serde_json::json!({
-                "case": name, "query": query, "source_sha256": format!("{:x}", Sha256::digest(source)),
+                "case": name, "query": query, "source_sha256": crate::code_rule_dsl::prof::lower_hex(&Sha256::digest(source)),
                 "source_bytes": source.len(), "roots": roots.len(), "strategy": format!("{strategy:?}"),
                 "measurement": measured, "complete": measured.stop.is_none(),
                 "outputs": actual.as_ref().ok().map(Vec::len), "error": actual.as_ref().err().map(|e| format!("{e:?}")),

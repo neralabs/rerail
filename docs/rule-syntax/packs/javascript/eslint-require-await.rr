@@ -45,8 +45,9 @@ async_token(f, t, f) :- unawaited(f), !kind(f, "method_definition"), first_token
 .decl semi(f: node, h: node, s: symbol)
 semi(f, h, ";") :- async_token(f, t, h), opens(t), run_on(h).
 semi(f, h, "") :- async_token(f, t, h), !(opens(t), run_on(h)).
-.decl opens(t: span)  // the token after `async` is `(` or `[`
-opens(t) :- token_after(t, u), (text(u, "(") ; text(u, "[")).
+.decl opens(t: span)  // the code after `async` starts with `(` or `[`
+.stored opens "after a stored `async`, the next stored child is the parameters or the computed key, whose text starts with the `(` or `[` the tape leaves out"
+opens(t) :- async_token(_, t, _), token_after(t, u), match("(?s)[(\\[].*", u).
 .decl run_on(h: node)
 run_on(h) :- kind(h, "method_definition"), member_runs_on(h).
 run_on(h) :- !kind(h, "method_definition"), semi_needed(h).

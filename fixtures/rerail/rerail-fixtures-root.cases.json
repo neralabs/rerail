@@ -1,0 +1,90 @@
+{
+  "caught": [
+    {
+      "path": "native/src/code_rule_dsl/scope/rust/tests.rs",
+      "content": "use super::{build_for_test, resolve_index};\nuse crate::code_rule_dsl::oracle;\nuse serde_json::Value;\nuse std::collections::HashMap;\nuse std::ops::Range;\n\nfn source(path: &str) -> &'static str {\n    match path.rsplit('/').next().unwrap() {\n        \"closures.rs\" => include_str!(\"../../../../../fixtures/rust/scope/crate/src/closures.rs\"),\n        \"generics.rs\" => include_str!(\"../../../../../fixtures/rust/scope/crate/src/generics.rs\"),\n        \"imports.rs\" => include_str!(\"../../../../../fixtures/rust/scope/crate/src/imports.rs\"),\n        \"items.rs\" => include_str!(\"../../../../../fixtures/rust/scope/crate/src/items.rs\"),\n        \"lets.rs\" => include_str!(\"../../../../../fixtures/rust/scope/crate/src/lets.rs\"),\n        \"lib.rs\" => include_str!(\"../../../../../fixtures/rust/scope/crate/src/lib.rs\"),\n        \"macros.rs\" => include_str!(\"../../../../../fixtures/rust/scope/crate/src/macros.rs\"),\n        \"patterns.rs\" => include_str!(\"../../../../../fixtures/rust/scope/crate/src/patterns.rs\"),\n        \"unused.rs\" => include_str!(\"../../../../../fixtures/rust/scope/crate/src/unused.rs\"),\n        other => panic!(\"unknown fixture {other}\"),\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/scope/usage/rust/tests.rs",
+      "content": "use crate::code_rule_dsl::oracle;\n\nfn source(path: &str) -> &'static str {\n    match path.rsplit('/').next().unwrap() {\n        \"closures.rs\" => {\n            include_str!(\"../../../../../../fixtures/rust/scope/crate/src/closures.rs\")\n        }\n        \"imports.rs\" => include_str!(\"../../../../../../fixtures/rust/scope/crate/src/imports.rs\"),\n        other => panic!(\"unknown fixture {other}\"),\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/query/production_contract_tests.rs",
+      "content": "#[test]\nfn implementation_catalog_fixture_has_one_meaning() {\n    let fixture: Value = serde_json::from_str(include_str!(\n        \"../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_2_4.json\"\n    ))\n    .expect(\"the implementation catalog fixture is JSON\");\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/findings/tests/tests.rs",
+      "content": "#[test]\nfn complete_async_family_matches_existing_path_fixtures() {\n    check(vec![\n        include_str!(\"../../../../../fixtures/python/value/ruff/ASYNC230.py\").into(),\n        include_bytes!(\"../../../../../fixtures/python/value/ruff/ASYNC230-unpacking.py\").to_vec().into(),\n    ]);\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/sql/tests/frontier.rs",
+      "content": "fn sources(paths: &[&str]) -> Vec<String> {\n    paths\n        .iter()\n        .map(|p| {\n            std::fs::read_to_string(format!(\"{}/../fixtures/{p}\", env!(\"CARGO_MANIFEST_DIR\")))\n                .unwrap()\n        })\n        .collect()\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/calls/rust/tests.rs",
+      "content": "fn oracle_root() -> std::path::PathBuf {\n    std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\"))\n        .join(\"..\")\n        .join(\"fixtures/rust/calls\")\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/blade/oracle_tests.rs",
+      "content": "use std::path::PathBuf;\n\nfn oracle_root() -> PathBuf {\n    PathBuf::from(env!(\"RERAIL_FIXTURES_DIR\")).join(\"blade/view\")\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/vue/oracle_tests.rs",
+      "content": "const EXPECTED: &str = include_str!(concat!(env!(\"RERAIL_ORACLES_DIR\"), \"/vue/vue.expected.json\"));\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/query/plan/tests.rs",
+      "content": "#[test]\nfn ruff_async_fixtures() {\n    let dir = std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(\"../fixtures/python/value/ruff\");\n    let raw = include_str!(r\"../../../../fixtures/python/value/ruff/ASYNC230.py\");\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/calls/php_tests.rs",
+      "content": "fn root() -> std::path::PathBuf {\n    std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\"))\n        .parent()\n        .expect(\"repository root\")\n        .join(\"fixtures/php/calls\")\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/scope/php/tests.rs",
+      "content": "const ROOT: Option<&str> = option_env!(\"RERAIL_ORACLES_DIR\");\n\nfn root() -> std::path::PathBuf {\n    std::path::PathBuf::from(std::env::var_os(\"RERAIL_ORACLES_DIR\").unwrap())\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/compile/parse/ruff.rs",
+      "content": "macro_rules! fixture {\n    ($name:literal) => {\n        (\n            $name,\n            include_str!(concat!(\n                env!(\"RERAIL_FIXTURES_DIR\"),\n                \"/python/literal/ruff/\",\n                $name\n            )),\n        )\n    };\n}\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "native/src/code_rule_dsl/scope/rust/tests.rs",
+      "content": "use super::{build_for_test, resolve_index};\nuse crate::code_rule_dsl::oracle;\nuse serde_json::Value;\nuse std::collections::HashMap;\nuse std::ops::Range;\n\nfn source(path: &str) -> &'static str {\n    match path.rsplit('/').next().unwrap() {\n        \"closures.rs\" => oracle!(\"rust/scope/crate/src/closures.rs\"),\n        \"generics.rs\" => oracle!(\"rust/scope/crate/src/generics.rs\"),\n        \"imports.rs\" => oracle!(\"rust/scope/crate/src/imports.rs\"),\n        \"items.rs\" => oracle!(\"rust/scope/crate/src/items.rs\"),\n        \"lets.rs\" => oracle!(\"rust/scope/crate/src/lets.rs\"),\n        \"lib.rs\" => oracle!(\"rust/scope/crate/src/lib.rs\"),\n        \"macros.rs\" => oracle!(\"rust/scope/crate/src/macros.rs\"),\n        \"patterns.rs\" => oracle!(\"rust/scope/crate/src/patterns.rs\"),\n        \"unused.rs\" => oracle!(\"rust/scope/crate/src/unused.rs\"),\n        other => panic!(\"unknown fixture {other}\"),\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/blade/oracle_tests.rs",
+      "content": "use std::path::PathBuf;\n\nfn oracle_root() -> PathBuf {\n    PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join(\"blade/view\")\n}\n\nfn fixture(name: &str) -> String {\n    std::fs::read_to_string(oracle_root().join(\"fixtures\").join(name)).expect(\"fixture\")\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/query/tests.rs",
+      "content": "use crate::code_rule_dsl::test_support::pack_test_data;\n\nfn python_pack_code_rule(rule: &str) -> std::path::PathBuf {\n    std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\"))\n        .join(\"../packs/python\")\n        .join(rule)\n}\n\n#[test]\nfn ruff_fixtures() {\n    let fixtures = pack_test_data(\"packs/python/upstream/ruff/fixtures\");\n    let other = std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(\"../packs/python/upstream/ruff/fixtures\");\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/blade/forte/tests.rs",
+      "content": "//! Forte against its own records (`fixtures/blade/blade/forte`); never `include_str!(\"../../../../fixtures/x\")`.\n// Not \"../../fixtures/rust\" either: oracle!(\"rust/x\") is the one route.\nconst SAMPLE: &str = r#\"import data from \"../fixtures/data.json\";\"#;\nconst NAMES: &[&str] = &[\"fixtures/clippy/needless_return.rs\", \"fixtures\"];\nconst HELP: &str = \"set RERAIL_ORACLES_DIR to a fixtures directory\";\nconst CAPS: &str = include_str!(\"../capabilities.json\");\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/mod.rs",
+      "content": "macro_rules! fixtures_dir {\n    () => {\n        env!(\"RERAIL_ORACLES_DIR\", \"Rerail fixtures not found\")\n    };\n}\n"
+    },
+    {
+      "path": "native/build.rs",
+      "content": "fn configure_fixtures() {\n    let directory = match std::env::var_os(\"RERAIL_ORACLES_DIR\") {\n        Some(d) => d.into(),\n        None => std::path::PathBuf::from(\"../fixtures\"),\n    };\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/value/sql.rs",
+      "content": "fn pack_fixture(name: &str) -> std::path::PathBuf {\n    let base = std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(\"../packs/python/upstream/ruff\").join(\"fixtures\");\n    let js = std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(\"..\").join(\"packs/javascript/upstream/eslint\").join(\"fixtures/no-unused.js\");\n    let rule = read(std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(\"../packs/blade/rules/x.json\"))[\"fixtures\"].clone();\n    base.join(name)\n}\n"
+    },
+    {
+      "path": "native/src/build_languages.rs",
+      "content": "#[test]\nfn override_is_reported() {\n    let err = run();\n    assert!(err.contains(\"RERAIL_ORACLES_DIR\"));\n    std::process::Command::new(\"cargo\").env(\"RERAIL_ORACLES_DIR\", \"fixtures\").status().unwrap();\n    unsafe { std::env::remove_var(\"RERAIL_ORACLES_DIR\") };\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/compile/format_args/ruff.rs",
+      "content": "macro_rules! fixture {\n    ($name:literal) => {\n        (\n            $name,\n            include_str!(concat!(\n                crate::code_rule_dsl::fixtures_dir!(),\n                \"/python/literal/ruff/\",\n                $name\n            )),\n        )\n    };\n}\n"
+    }
+  ]
+}

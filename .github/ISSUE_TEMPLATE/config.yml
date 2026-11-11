@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/neralabs/rerail/security/advisories/new
+    about: Privately, through GitHub. Never in a public issue. We reply within 2 business days.
+  - name: Report a conduct problem
+    url: https://github.com/neralabs/rerail/blob/main/CODE_OF_CONDUCT.md#reporting
+    about: By email to the maintainers. We reply within 3 business days and keep your identity private.

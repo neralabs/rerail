@@ -120,6 +120,7 @@ describe("query parity options", () => {
 });
 
 describe("query parity command", () => {
+  // A cold `node --import tsx` start: well under a second alone, over vitest's 5 s default on a loaded CI runner.
   it("prints its usage and fails when no corpus is given", async () => {
     const failure = await execute(process.execPath, ["--import", "tsx", script], { cwd: rerailRoot, env: { ...process.env, RERAIL_QUERY_PARITY_REFERENCE_ADDON: "" } })
       .then(() => undefined, (error: unknown) => error);
@@ -127,7 +128,7 @@ describe("query parity command", () => {
       code: 2,
       stderr: expect.stringMatching(/A corpus is required[\s\S]*Usage: just rerail-query-parity --corpus <dir> --manifest <paths\.json>/u),
     });
-  });
+  }, 30_000);
 
   it("finds two sides running the same engine equal over a temporary corpus", async () => {
     const { root, manifest } = await corpus({

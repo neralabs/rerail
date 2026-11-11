@@ -6,7 +6,7 @@ use super::{
     CapacityState, CollectionReport, ContentStore, HashKey, MAX_COLLECTION_BATCH, STRING_OWNER, SourceId,
     StoreCapacity, StoreError, StoreResult, TapeId,
 };
-use rusqlite::{OptionalExtension, Params, Transaction, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, Params, TransactionBehavior, params};
 use std::fs;
 use std::time::Instant;
 
@@ -44,7 +44,7 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let owner_id = intern_string(&transaction, STRING_OWNER, owner)?;
         transaction.execute(
             "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until) VALUES (?1,?2,?3,?4)\
@@ -69,17 +69,17 @@ impl ContentStore {
     }
 
     /// Pins `source` under this handle's holder, if it has one, in `transaction`.
-    pub(super) fn pin_held(&self, transaction: &rusqlite::Transaction<'_>, source: SourceId) -> StoreResult<()> {
+    pub(super) fn pin_held(&self, transaction: &rusqlite::Connection, source: SourceId) -> StoreResult<()> {
         self.pin_held_object(transaction, OBJECT_SOURCE, source.0)
     }
 
     /// Pins `tape` under this handle's holder, if it has one, in `transaction`: a run's tapes stay until its manifest
     /// makes them live, so the next run does not parse them again.
-    pub(super) fn pin_held_tape(&self, transaction: &rusqlite::Transaction<'_>, tape: TapeId) -> StoreResult<()> {
+    pub(super) fn pin_held_tape(&self, transaction: &rusqlite::Connection, tape: TapeId) -> StoreResult<()> {
         self.pin_held_object(transaction, OBJECT_TAPE, tape.0)
     }
 
-    fn pin_held_object(&self, transaction: &rusqlite::Transaction<'_>, kind: i64, id: i64) -> StoreResult<()> {
+    fn pin_held_object(&self, transaction: &rusqlite::Connection, kind: i64, id: i64) -> StoreResult<()> {
         let Some((owner, lease_until)) = self.holder.lock().clone() else { return Ok(()) };
         let owner_id = intern_string(transaction, STRING_OWNER, &owner)?;
         transaction
@@ -160,6 +160,13 @@ impl ContentStore {
         })
     }
 
+    /// Ends this handle's holding under `owner` (`hold_sources`), in memory only: `release_pins` deletes its pins.
+    pub fn release_holder(&self, owner: &str) {
+        if self.holder.lock().as_ref().is_some_and(|(o, _)| o == owner) {
+            *self.holder.lock() = None;
+        }
+    }
+
     pub fn release_pins(&self, owner: &str) -> StoreResult<usize> {
         if self.holder.lock().as_ref().is_some_and(|(o, _)| o == owner) {
             *self.holder.lock() = None;
@@ -237,7 +244,7 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let expired_pins = execute_collect(
             &transaction,
             "DELETE FROM object_pins WHERE (object_kind_id,object_id,owner_string_id) IN (\
@@ -520,7 +527,7 @@ fn collect_sql(sql: &'static str) -> &'static str {
 }
 
 fn execute_collect(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     sql: &'static str,
     params: impl Params,
 ) -> StoreResult<usize> {

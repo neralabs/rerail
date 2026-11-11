@@ -188,4 +188,4 @@ pub(crate) fn digest(lanes: impl IntoIterator<Item = u32>) -> [u8; 32] {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

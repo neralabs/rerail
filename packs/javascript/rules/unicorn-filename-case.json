@@ -1,0 +1,52 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "unicorn-filename-case",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Name JavaScript files and the folders holding them in kebab-case, ignoring leading underscores; consistent names are easier to find and import.",
+  "scope": {
+    "include": [
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js",
+      "**/*.config.js",
+      "**/*.config.mjs",
+      "**/*.config.cjs",
+      "**/.*rc.js",
+      "**/.*rc.cjs"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "case",
+      "forbid": {
+        "regex": {
+          "source": "file.path",
+          "pattern": "^(?:[^/]*/)*?(?:(?:_+(?:[A-Z-]|[^A-Za-z0-9_/-]-|[^/_][^/]*?(?:[A-Z_]|--|[^A-Za-z0-9_/-]-|-[^A-Za-z0-9_-]))|(?:[A-Z-]|[^A-Za-z0-9_/$-]-|[^/_$][^/]*?(?:[A-Z_]|--|[^A-Za-z0-9_/-]-|-[^A-Za-z0-9_-])))[^/]*/|(?:_+(?:[A-Z-]|[^A-Za-z0-9_/.-]-|[^/_.][^/.]*?(?:[A-Z_]|--|[^A-Za-z0-9_/.-]-|-(?:[^A-Za-z0-9_-]|$)))|(?:[A-Z-]|[^A-Za-z0-9_/.$-]-|[^/_.$][^/.]*?(?:[A-Z_]|--|[^A-Za-z0-9_/.-]-|-(?:[^A-Za-z0-9_-]|$))))[^/]*$)"
+        }
+      },
+      "violation": {
+        "anchor": "file.start",
+        "code": "unicorn/filename-case",
+        "message": "Rename this file or folder to kebab-case, for example cart-total.js."
+      }
+    }
+  ]
+}

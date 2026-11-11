@@ -107,7 +107,7 @@ impl Builder {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn shuffled_transport_promotes_with_a_file_sized_memory_bound() {

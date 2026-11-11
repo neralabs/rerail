@@ -1,6 +1,6 @@
 //! Connection contract for future shared SQL owners. Uses the production settings and authorizer.
-use crate::{authorizer, session};
-use rusqlite::{Connection, Result, hooks::Authorization};
+use crate::{code_rule_dsl::Database, session};
+use rusqlite::{Connection, Result};
 use std::{collections::BTreeSet, sync::atomic::Ordering};
 
 fn count(db: &Connection) -> Result<i64> {
@@ -19,9 +19,9 @@ fn writer_publication_scoped_readers_private_scratch_and_authorizer_agree() -> R
     writer.execute_batch("CREATE TABLE source_spans(fid INTEGER,pre INTEGER,start INTEGER,len INTEGER,PRIMARY KEY(fid,pre)) WITHOUT ROWID;
         CREATE TABLE __stage_hidden(secret INTEGER); INSERT INTO __stage_hidden VALUES(99);
         INSERT INTO source_spans VALUES(1,1,0,4)")?;
-    let a = Connection::open(&path)?;
+    let a = Database::new(Connection::open(&path)?)?;
     let b = Connection::open(&path)?;
-    for reader in [&a, &b] {
+    for reader in [&*a, &b] {
         session::configure(reader)?;
     }
     a.execute_batch(
@@ -54,7 +54,7 @@ fn writer_publication_scoped_readers_private_scratch_and_authorizer_agree() -> R
     assert_eq!(count(&a)?, 2, "failed publication retains no partial rows");
 
     let allowed = BTreeSet::from(["source_spans".into(), "private_rows".into()]);
-    let observed = authorizer::install(&a, &allowed).expect("install scoped authorizer");
+    let observed = a.authorize(&allowed).expect("install scoped authorizer");
     assert_eq!(
         count(&a).expect("authorized owner read"),
         2,
@@ -82,7 +82,7 @@ fn writer_publication_scoped_readers_private_scratch_and_authorizer_agree() -> R
     );
     assert!(!observed.source.load(Ordering::Relaxed));
     assert!(observed.fields.lock().contains_key("source_spans"));
-    a.authorizer(None::<fn(rusqlite::hooks::AuthContext<'_>) -> Authorization>)?;
+    a.allow_all()?;
     assert_eq!(
         b.query_row("SELECT x FROM private_rows", [], |r| r.get::<_, i64>(0))?,
         22

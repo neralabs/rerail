@@ -2,7 +2,7 @@
 //! Opaque callbacks retain their evaluation order and multiplicity.
 
 /// The scalar sum contract is independent of input order. Both evaluators check the final integer range.
-pub(in crate::code_rule_dsl) fn sum_value(sum: i128) -> rusqlite::Result<i64> {
+pub fn sum_value(sum: i128) -> rusqlite::Result<i64> {
     i64::try_from(sum).map_err(|_| rusqlite::Error::UserFunctionError("integer overflow".into()))
 }
 pub(in crate::code_rule_dsl) fn register_sum(db: &rusqlite::Connection) -> rusqlite::Result<()> {
@@ -33,7 +33,7 @@ pub(in crate::code_rule_dsl) fn register_sum(db: &rusqlite::Connection) -> rusql
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) enum Reduction {
+pub enum Reduction {
     #[default]
     Opaque,
     Flat {
@@ -54,7 +54,7 @@ impl Reduction {
         }
     }
 
-    pub(in crate::code_rule_dsl) fn duplicate_insensitive(self) -> bool {
+    pub fn duplicate_insensitive(self) -> bool {
         self != Self::Opaque
     }
 }
@@ -62,14 +62,14 @@ impl Reduction {
 /// Each input has at most one non-null value per prefix key, after this reduction.
 /// This description applies before merging the previous wave or applying widening.
 #[derive(Clone, Copy, Debug)]
-pub(in crate::code_rule_dsl) struct Grouping {
+pub struct Grouping {
     pub keys: usize,
     pub reduction: Reduction,
 }
 
 impl Grouping {
     /// A single partial result needs no second aggregate at the same keys.
-    pub(in crate::code_rule_dsl) fn accepts(self, input: Self) -> bool {
+    pub fn accepts(self, input: Self) -> bool {
         self.keys == input.keys
             && self.reduction == input.reduction
             && self.reduction.duplicate_insensitive()
@@ -77,7 +77,7 @@ impl Grouping {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::logic::native::{Flat, Lattice, Max, Min, TOP};
 

@@ -1,11 +1,130 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl bootstrap_fdef(kind: symbol)
+bootstrap_fdef("function_definition").
+.decl bootstrap_type(kind: symbol)
+bootstrap_type("type").
+.decl bootstrap_ann(t: node, x: symbol)
+.decl bootstrap_ann_expr(t: node, e: node)
+.decl bootstrap_at(n: node, p: symbol, l: number)
+.decl bootstrap_bare(f: node, nm: node, x: symbol)
+.decl bootstrap_body(r: node, e: node)
+.decl bootstrap_body_str(r: node, e: node)
+.decl bootstrap_broad(x: symbol)
+.decl bootstrap_broad_other(t: node)
+.decl bootstrap_callee(c: node, x: symbol)
+.decl bootstrap_conn_name(x: symbol)
+.decl bootstrap_conn_param(f: node)
+.decl bootstrap_conn_type(x: symbol)
+.decl bootstrap_deco_expr(f: node, e: node)
+.decl bootstrap_doc(d: number)
+.decl bootstrap_elem_any(t: node)
+.decl bootstrap_elem_name(t: node, x: symbol)
+.decl bootstrap_elem_one(t: node, e: node)
+.decl bootstrap_elem_scalar(t: node)
+.decl bootstrap_elem_str(t: node, s: node)
+.decl bootstrap_fn(f: node, x: symbol)
+.decl bootstrap_fn_ann(f: node, t: node)
+.decl bootstrap_fpart(s: node)
+.decl bootstrap_frun(r: node)
+.decl bootstrap_has_elem_str(t: node)
+.decl bootstrap_in_run(s: node)
+.decl bootstrap_in_tree(r: node, i: node)
+.decl bootstrap_kwname(i: node)
+.decl bootstrap_lazy_forbidden(x: symbol)
+.decl bootstrap_nonstr_prefix(e: node)
+.decl bootstrap_param(f: node, nm: node, x: symbol, t: node)
+.decl bootstrap_peel(c: node, e: node)
+.decl bootstrap_plain_string(s: node, c: symbol)
+.decl bootstrap_public_readonly(f: node, t: node)
+.decl bootstrap_pure_lazy(f: node)
+.decl bootstrap_readonly(t: node)
+.decl bootstrap_scalar(x: symbol)
+.decl bootstrap_schema_txn_name(x: symbol)
+.decl bootstrap_seq_elem(t: node, e: node)
+.decl bootstrap_str_names(s: node, x: symbol)
+.decl bootstrap_str_value(s: node, v: symbol)
+.decl bootstrap_string_ann(t: node)
+.decl bootstrap_subscripts(sb: node)
+.decl bootstrap_txn_name(x: symbol)
+.decl bootstrap_txn_param(f: node)
+.decl bootstrap_txn_type(x: symbol)
+.decl child(p: node, c: node, i: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
-.input doc, node, line, syntax_error
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl out_scope(d: number)
+.decl parsed(s: node, grammar: symbol, root: node)
+.decl str(n: node, v: symbol)
+.decl string_annotation(s: node)
+.decl strprefix(n: node, p: symbol)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.decl within(n: node, a: node)
+.input doc, node, line, syntax_error, field, child, text, value, str, strprefix, value_type_of, token, within, parsed, string_annotation, cpython_syntax_error
+.output violation
+bootstrap_broad("Any").
+bootstrap_broad("Collection").
+bootstrap_broad("Iterable").
+bootstrap_broad("Mapping").
+bootstrap_broad("MutableMapping").
+bootstrap_broad("MutableSequence").
+bootstrap_broad("Sequence").
+bootstrap_conn_name("async_conn").
+bootstrap_conn_name("conn").
+bootstrap_conn_name("connection").
+bootstrap_conn_name("db_connection").
+bootstrap_conn_name("sql_conn").
+bootstrap_conn_name("sync_conn").
+bootstrap_conn_type("AsyncDatabaseConnection").
+bootstrap_conn_type("AsyncVersionedDatabaseConnection").
+bootstrap_conn_type("SyncDatabaseConnection").
+bootstrap_conn_type("SyncVersionedDatabaseConnection").
+bootstrap_conn_type("_DatabaseConnectionCore").
+bootstrap_conn_type("_SqlConnectionCore").
+bootstrap_lazy_forbidden("AsyncDatabaseConnection").
+bootstrap_lazy_forbidden("AsyncReadTransaction").
+bootstrap_lazy_forbidden("AsyncSchemaTransaction").
+bootstrap_lazy_forbidden("AsyncVersionedDatabaseConnection").
+bootstrap_lazy_forbidden("AsyncWriteTransaction").
+bootstrap_lazy_forbidden("SyncDatabaseConnection").
+bootstrap_lazy_forbidden("SyncReadTransaction").
+bootstrap_lazy_forbidden("SyncSchemaTransaction").
+bootstrap_lazy_forbidden("SyncVersionedDatabaseConnection").
+bootstrap_lazy_forbidden("SyncWriteTransaction").
+bootstrap_scalar("Any").
+bootstrap_scalar("bytes").
+bootstrap_scalar("bytearray").
+bootstrap_scalar("float").
+bootstrap_scalar("int").
+bootstrap_scalar("object").
+bootstrap_scalar("str").
+bootstrap_schema_txn_name("current_schema_txn").
+bootstrap_schema_txn_name("schema_transaction").
+bootstrap_schema_txn_name("schema_txn").
+bootstrap_txn_name("current_schema_txn").
+bootstrap_txn_name("read_txn").
+bootstrap_txn_name("schema_transaction").
+bootstrap_txn_name("schema_txn").
+bootstrap_txn_name("transaction").
+bootstrap_txn_name("txn").
+bootstrap_txn_name("write_txn").
+bootstrap_txn_type("AsyncReadTransaction").
+bootstrap_txn_type("AsyncSchemaTransaction").
+bootstrap_txn_type("AsyncWriteTransaction").
+bootstrap_txn_type("LazySchemaTransaction").
+bootstrap_txn_type("ReadTransaction").
+bootstrap_txn_type("SyncReadTransaction").
+bootstrap_txn_type("SyncSchemaTransaction").
+bootstrap_txn_type("SyncWriteTransaction").
+bootstrap_txn_type("WriteTransaction").
 in_scope(d) :- doc(d, p, _), glob("l2000_connection/schema_transaction.py", p).
 in_scope(d) :- doc(d, p, _), glob("l2000_connection/connection_caches.py", p).
 in_scope(d) :- doc(d, p, _), glob("l3200_metadata/bootstrap_state.py", p).
@@ -24,5 +143,82 @@ out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
+tape_syntax_error(d) :- syntax_error(d).
 violation("data-layer-schema-bootstrap-contracts", "source-syntax", "NATIVE-SYNTAX", p, l) :- node(_, n, "module", _, _), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-.output violation
+bootstrap_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), !cpython_syntax_error(d, _, _).
+bootstrap_fn(f, x) :- node(d, f, "function_definition", _, _), bootstrap_doc(d), field(f, "name", nm), text(nm, t), x = @nfkc(t).
+bootstrap_kwname(i) :- node(_, k, "keyword_argument", _, _), field(k, "name", i).
+bootstrap_kwname(i) :- node(_, lp, "lambda_parameters", _, _), child(lp, i, _), node(_, i, "identifier", _, _).
+bootstrap_kwname(i) :- node(_, lp, "lambda_parameters", _, _), child(lp, q, _), field(q, "name", i).
+bootstrap_kwname(i) :- node(_, lp, "lambda_parameters", _, _), child(lp, q, _), node(_, q, "list_splat_pattern", _, _), child(q, i, 0), node(_, i, "identifier", _, _).
+bootstrap_kwname(i) :- node(_, lp, "lambda_parameters", _, _), child(lp, q, _), node(_, q, "dictionary_splat_pattern", _, _), child(q, i, 0), node(_, i, "identifier", _, _).
+bootstrap_fpart(s) :- node(_, s, "string", _, _), strprefix(s, p), match("(?s:.*)[fF](?s:.*)", p).
+bootstrap_in_run(s) :- node(_, c, "concatenated_string", _, _), child(c, s, _).
+bootstrap_plain_string(s, c) :- node(_, s, "string", _, _), !bootstrap_in_run(s), !bootstrap_fpart(s), value_type_of(s, "str"), value(s, c).
+bootstrap_plain_string(r, c) :- node(_, r, "concatenated_string", _, _), !bootstrap_frun(r), value_type_of(r, "str"), value(r, c).
+bootstrap_frun(r) :- node(_, r, "concatenated_string", _, _), child(r, s, _), bootstrap_fpart(s).
+bootstrap_ann_expr(t, e) :- node(_, t, "type", _, _), child(t, e, 0), !child(t, _, 1).
+bootstrap_ann_expr(t, i) :- bootstrap_ann_expr(t, e), node(_, e, "parenthesized_expression", _, _), child(e, i, 0).
+bootstrap_ann(t, x) :- node(d, i, "identifier", _, _), bootstrap_doc(d), inside(i, t, bootstrap_type), text(i, u), !bootstrap_kwname(i), !bootstrap_string_ann(t), x = @nfkc(u).
+bootstrap_ann(t, x) :- bootstrap_ann_expr(t, s), bootstrap_plain_string(s, _), bootstrap_str_names(s, x).
+bootstrap_string_ann(t) :- bootstrap_ann_expr(t, s), bootstrap_plain_string(s, _).
+bootstrap_body(r, r) :- string_annotation(s), parsed(s, "annotation", r).
+bootstrap_body(r, i) :- bootstrap_body(r, e), node(_, e, "parenthesized_expression", _, _), child(e, i, 0).
+bootstrap_in_tree(r, r) :- string_annotation(s), parsed(s, "annotation", r).
+bootstrap_in_tree(r, i) :- string_annotation(s), parsed(s, "annotation", r), within(i, r).
+bootstrap_nonstr_prefix(e) :- bootstrap_body(_, e), strprefix(e, p), match("(?s:.*)[bBfFtT](?s:.*)", p).
+bootstrap_body_str(r, e) :- bootstrap_body(r, e), node(_, e, "string", _, _), !bootstrap_nonstr_prefix(e).
+bootstrap_str_value(s, v) :- bootstrap_plain_string(s, v).
+bootstrap_str_value(e, v) :- bootstrap_body_str(_, e), str(e, v).
+bootstrap_str_names(s, x) :- string_annotation(s), parsed(s, "annotation", r), !bootstrap_body_str(r, _), bootstrap_in_tree(r, i), node(_, i, "identifier", _, _), text(i, u), !bootstrap_kwname(i), x = @nfkc(u).
+bootstrap_str_names(s, x) :- string_annotation(s), parsed(s, "annotation", r), bootstrap_body_str(r, e), bootstrap_str_names(e, x).
+bootstrap_str_names(s, x) :- string_annotation(s), !parsed(s, "annotation", _), bootstrap_str_value(s, x).
+bootstrap_param(f, nm, x, t) :- bootstrap_fn(f, _), field(f, "parameters", ps), child(ps, p, _), node(_, p, "typed_parameter", _, _), child(p, nm, 0), node(_, nm, "identifier", _, _), text(nm, u), x = @nfkc(u), field(p, "type", t).
+bootstrap_param(f, nm, x, t) :- bootstrap_fn(f, _), field(f, "parameters", ps), child(ps, p, _), node(_, p, "typed_parameter", _, _), child(p, s, 0), node(_, s, "list_splat_pattern", _, _), child(s, nm, 0), text(nm, u), x = @nfkc(u), field(p, "type", t).
+bootstrap_param(f, nm, x, t) :- bootstrap_fn(f, _), field(f, "parameters", ps), child(ps, p, _), node(_, p, "typed_parameter", _, _), child(p, s, 0), node(_, s, "dictionary_splat_pattern", _, _), child(s, nm, 0), text(nm, u), x = @nfkc(u), field(p, "type", t).
+bootstrap_param(f, nm, x, t) :- bootstrap_fn(f, _), field(f, "parameters", ps), child(ps, p, _), node(_, p, "typed_default_parameter", _, _), field(p, "name", nm), text(nm, u), x = @nfkc(u), field(p, "type", t).
+bootstrap_bare(f, p, x) :- bootstrap_fn(f, _), field(f, "parameters", ps), child(ps, p, _), node(_, p, "identifier", _, _), text(p, u), x = @nfkc(u).
+bootstrap_bare(f, nm, x) :- bootstrap_fn(f, _), field(f, "parameters", ps), child(ps, p, _), node(_, p, "default_parameter", _, _), field(p, "name", nm), text(nm, u), x = @nfkc(u).
+bootstrap_bare(f, nm, x) :- bootstrap_fn(f, _), field(f, "parameters", ps), child(ps, p, _), node(_, p, "list_splat_pattern", _, _), child(p, nm, 0), text(nm, u), x = @nfkc(u).
+bootstrap_bare(f, nm, x) :- bootstrap_fn(f, _), field(f, "parameters", ps), child(ps, p, _), node(_, p, "dictionary_splat_pattern", _, _), child(p, nm, 0), text(nm, u), x = @nfkc(u).
+bootstrap_seq_elem(t, e) :- bootstrap_ann_expr(t, g), node(_, g, "generic_type", _, _), child(g, v, 0), node(_, v, "identifier", _, _), text(v, u), q = @nfkc(u), q = "Sequence", child(g, e, 1), node(_, e, "type_parameter", _, _).
+bootstrap_seq_elem(t, e) :- bootstrap_ann_expr(t, sb), node(_, sb, "subscript", _, _), field(sb, "value", v), node(_, v, "identifier", _, _), text(v, u), q = @nfkc(u), q = "Sequence", field(sb, "subscript", e).
+bootstrap_elem_one(t, e) :- bootstrap_seq_elem(t, tp), node(_, tp, "type_parameter", _, _), child(tp, c, 0), !child(tp, _, 1), !token(tp, _, ",", _, _), child(c, e, 0), !child(c, _, 1).
+bootstrap_elem_one(t, e) :- bootstrap_seq_elem(t, e), field(sb, "subscript", e), !token(sb, _, ",", _, _), !bootstrap_subscripts(sb).
+bootstrap_subscripts(sb) :- field(sb, "subscript", a), field(sb, "subscript", b), a != b.
+bootstrap_elem_one(t, i) :- bootstrap_elem_one(t, e), node(_, e, "parenthesized_expression", _, _), child(e, i, 0).
+bootstrap_elem_str(t, s) :- bootstrap_elem_one(t, s), bootstrap_plain_string(s, _).
+bootstrap_has_elem_str(t) :- bootstrap_elem_str(t, _).
+bootstrap_elem_name(t, x) :- bootstrap_seq_elem(t, e), !bootstrap_has_elem_str(t), node(d, e, _, s0, e0), node(d, i, "identifier", s1, e1), s0 <= s1, e1 <= e0, text(i, u), !bootstrap_kwname(i), x = @nfkc(u).
+bootstrap_elem_name(t, x) :- bootstrap_elem_str(t, s), bootstrap_str_names(s, x).
+bootstrap_elem_any(t) :- bootstrap_elem_name(t, _).
+bootstrap_readonly(t) :- bootstrap_elem_any(t), !bootstrap_elem_scalar(t).
+bootstrap_elem_scalar(t) :- bootstrap_elem_name(t, x), bootstrap_scalar(x).
+bootstrap_broad_other(t) :- bootstrap_ann(t, x), bootstrap_broad(x), x != "Sequence".
+bootstrap_at(n, p, l) :- node(d, n, _, _, _), doc(d, p, _), line(n, l).
+bootstrap_deco_expr(f, e) :- bootstrap_fn(f, _), field(dd, "definition", f), child(dd, dc, _), node(_, dc, "decorator", _, _), child(dc, e, 0).
+bootstrap_deco_expr(f, i) :- bootstrap_deco_expr(f, e), node(_, e, "parenthesized_expression", _, _), child(e, i, 0).
+bootstrap_deco_expr(f, g) :- bootstrap_deco_expr(f, e), node(_, e, "call", _, _), field(e, "function", g).
+bootstrap_pure_lazy(f) :- bootstrap_deco_expr(f, e), node(_, e, "identifier", _, _), text(e, u), q = @nfkc(u), q = "pure_lazy".
+bootstrap_pure_lazy(f) :- bootstrap_deco_expr(f, e), node(_, e, "attribute", _, _), field(e, "attribute", a), text(a, u), q = @nfkc(u), q = "pure_lazy".
+violation("data-layer-schema-bootstrap-contracts", "bootstrap-contracts", "SBC001", p, l) :- bootstrap_fn(f, x), suffix("_lazy", x), !bootstrap_pure_lazy(f), bootstrap_at(f, p, l).
+bootstrap_fn_ann(f, t) :- bootstrap_param(f, _, _, t).
+bootstrap_fn_ann(f, t) :- bootstrap_fn(f, _), field(f, "return_type", t).
+bootstrap_fn_ann(f, t) :- bootstrap_fn(f, _), node(_, a, "assignment", _, _), inside(a, f, bootstrap_fdef), field(a, "type", t).
+violation("data-layer-schema-bootstrap-contracts", "bootstrap-contracts", "SBC006", p, l) :- bootstrap_fn(f, x), suffix("_lazy", x), bootstrap_fn_ann(f, t), bootstrap_ann(t, y), bootstrap_lazy_forbidden(y), bootstrap_at(t, p, l).
+violation("data-layer-schema-bootstrap-contracts", "bootstrap-contracts", "SBC002", p, l) :- bootstrap_bare(_, nm, x), x != "self", x != "cls", bootstrap_at(nm, p, l).
+violation("data-layer-schema-bootstrap-contracts", "bootstrap-contracts", "SBC002", p, l) :- bootstrap_param(_, nm, x, t), x != "self", x != "cls", bootstrap_broad_other(t), bootstrap_at(nm, p, l).
+violation("data-layer-schema-bootstrap-contracts", "bootstrap-contracts", "SBC002", p, l) :- bootstrap_param(f, nm, x, t), x != "self", x != "cls", bootstrap_ann(t, "Sequence"), !bootstrap_broad_other(t), !bootstrap_public_readonly(f, t), bootstrap_at(nm, p, l).
+bootstrap_public_readonly(f, t) :- bootstrap_param(f, _, _, t), bootstrap_fn(f, y), !prefix("_", y), bootstrap_readonly(t).
+violation("data-layer-schema-bootstrap-contracts", "bootstrap-contracts", "SBC006", p, l) :- bootstrap_param(f, nm, x, t), bootstrap_schema_txn_name(x), bootstrap_fn(f, y), !suffix("_lazy", y), bootstrap_ann(t, z), (z = "AsyncSchemaTransaction" ; z = "SyncSchemaTransaction"), bootstrap_at(nm, p, l).
+bootstrap_conn_param(f) :- bootstrap_param(f, _, x, _), x != "self", x != "cls", bootstrap_conn_name(x).
+bootstrap_conn_param(f) :- bootstrap_param(f, _, x, t), x != "self", x != "cls", bootstrap_ann(t, y), bootstrap_conn_type(y).
+bootstrap_txn_param(f) :- bootstrap_param(f, _, x, _), x != "self", x != "cls", bootstrap_txn_name(x).
+bootstrap_txn_param(f) :- bootstrap_param(f, _, x, t), x != "self", x != "cls", bootstrap_ann(t, y), bootstrap_txn_type(y).
+violation("data-layer-schema-bootstrap-contracts", "bootstrap-contracts", "SBC004", p, l) :- bootstrap_conn_param(f), bootstrap_txn_param(f), bootstrap_at(f, p, l).
+bootstrap_peel(c, g) :- node(d, c, "call", _, _), bootstrap_doc(d), field(c, "function", g).
+bootstrap_peel(c, i) :- bootstrap_peel(c, e), node(_, e, "parenthesized_expression", _, _), child(e, i, 0).
+bootstrap_callee(c, x) :- bootstrap_peel(c, u), node(_, u, "identifier", _, _), text(u, t), x = @nfkc(t).
+bootstrap_callee(c, x) :- bootstrap_peel(c, u), node(_, u, "attribute", _, _), field(u, "attribute", a), text(a, t), x = @nfkc(t).
+violation("data-layer-schema-bootstrap-contracts", "bootstrap-contracts", "SBC003", p, l) :- bootstrap_callee(c, x), (x = "delattr" ; x = "getattr" ; x = "hasattr" ; x = "setattr"), bootstrap_at(c, p, l).
+violation("data-layer-schema-bootstrap-contracts", "bootstrap-contracts", "SBC005", p, l) :- bootstrap_callee(c, x), (x = "isinstance" ; x = "issubclass"), bootstrap_at(c, p, l).

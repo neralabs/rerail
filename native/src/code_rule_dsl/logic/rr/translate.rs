@@ -14,7 +14,7 @@
 //! | `!@glob($s, {"a", "b"})`                 | `!glob("a", s), !glob("b", s)`                             |
 //! | `$s in {"a", "b"}`                       | `(s = "a" ; s = "b")`                                      |
 //! | `@iequals($s, "a")`                      | `iglob("a", s)`, the pattern's glob characters escaped     |
-//! | `@rx($s, re)`                            | `match("(?s).*(?:re).*", s)` (`match` is whole-string)     |
+//! | `@rx($s, re)`                            | `match("(?s:.*)(?:re)(?s:.*)", s)` (`match` is whole-string) |
 //! | `@cat($a, $b)`                           | `@dot(a, b)`                                               |
 //! | `$n = count { a(…) }`                    | `n = count : { a(…) }`                                     |
 //! | `ast($d, $n, { … }, X: $v)`              | `ast(d, n, { … }, X: v)`                                   |
@@ -22,7 +22,7 @@
 //! In comments, `$x` (a lower-case variable) becomes `x`, outside backticks, as `site/souffle.py` does.
 //! `logic::rr::tests` checks that every translated program lowers to the program the `.rdl` parsed to.
 
-use super::syntax::quote;
+use rerail_rr_syntax::syntax::quote;
 use crate::code_rule_dsl::logic::front::Error;
 use crate::code_rule_dsl::logic::strings::is_test;
 use std::collections::BTreeSet;
@@ -145,11 +145,11 @@ struct Translator<'s> {
 }
 
 /// The built-in constraints of `.rr`: a relation of the same name is renamed with a trailing `_`.
-pub(super) const RESERVED: [&str; 13] =
-    ["glob", "iglob", "prefix", "iprefix", "suffix", "isuffix", "contains", "icontains", "word", "iword", "match", "match_all", "split_dot"];
+pub(super) const RESERVED: [&str; 14] =
+    ["glob", "iglob", "prefix", "iprefix", "suffix", "isuffix", "contains", "icontains", "word", "iword", "match", "match_all", "match_group", "split_dot"];
 
 /// A relation's `.rr` name.
-pub(super) fn relation(r: &str) -> String {
+pub fn relation(r: &str) -> String {
     if RESERVED.contains(&r) { format!("{r}_") } else { r.to_owned() }
 }
 
@@ -200,8 +200,7 @@ fn test(op: &str, s: &T, pattern: &T, neg: bool) -> Result<String, Error> {
         Ok(match op {
             "equals" => format!("{s} {} {}", if neg { "!=" } else { "=" }, quote(p)),
             "iequals" => format!("{bang}iglob({}, {s})", quote(&super::print::glob_literal(p))),
-            "rx" => format!("{bang}match({}, {s})", quote(&format!("(?s).*(?:{p}).*"))),
-            "irx" => format!("{bang}match({}, {s})", quote(&format!("(?is).*(?:{p}).*"))),
+            "rx" | "irx" => format!("{bang}match({}, {s})", quote(&super::print::search(op, p))),
             _ => format!("{bang}{op}({}, {s})", quote(p)),
         })
     };
@@ -583,7 +582,7 @@ impl Translator<'_> {
 }
 
 /// The `.rr` text of an `.rdl` program.
-pub(in crate::code_rule_dsl) fn translate(src: &str) -> Result<String, Error> {
+pub fn translate(src: &str) -> Result<String, Error> {
     let mut t = Translator { src, toks: tokens(src)?, i: 0, out: String::new(), lattices: BTreeSet::new() };
     loop {
         let gap = t.gap();

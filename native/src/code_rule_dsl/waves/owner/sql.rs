@@ -4,7 +4,7 @@ use super::Database;
 use rusqlite::{CachedStatement, Connection};
 use std::{cell::RefCell, ops::Deref};
 
-pub(in crate::code_rule_dsl::waves) trait SqlOwner:
+pub trait SqlOwner:
     Deref<Target = Connection>
 {
     fn storage(&self) -> &RefCell<Storage>;

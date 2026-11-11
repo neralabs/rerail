@@ -2,7 +2,7 @@
 use super::Decision;
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(in crate::code_rule_dsl) type Keys = BTreeMap<String, Vec<Vec<usize>>>;
+pub type Keys = BTreeMap<String, Vec<Vec<usize>>>;
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub(in crate::code_rule_dsl) struct Input {
@@ -12,7 +12,7 @@ pub(in crate::code_rule_dsl) struct Input {
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize)]
-pub(in crate::code_rule_dsl) struct Projection {
+pub struct Projection {
     pub inputs: Vec<Input>,
     /// Direct column references only. Computed outputs cannot be inverted.
     pub outputs: Vec<Option<String>>,
@@ -23,7 +23,7 @@ pub(in crate::code_rule_dsl) struct Projection {
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
-pub(in crate::code_rule_dsl) struct Proof {
+pub struct Proof {
     pub decision: Decision,
     pub inputs: Vec<Input>,
     pub determined: BTreeSet<String>,
@@ -110,7 +110,7 @@ impl Projection {
 }
 
 /// Individually unique producers remain unique when literal head tags separate every pair.
-pub(in crate::code_rule_dsl) fn union_support(producers: &[(bool, Vec<super::scalars::Expression>)]) -> Decision {
+pub fn union_support(producers: &[(bool, Vec<super::scalars::Expression>)]) -> Decision {
     use super::scalars::Expression as E;
     if producers.is_empty() || producers.iter().any(|(unique,_)| !unique) {
         return Decision::new(false,"Every producer needs a witness uniqueness proof");

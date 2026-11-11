@@ -1,4 +1,4 @@
-mod semantic;
+pub mod semantic;
 
 use super::ast_rule::AST_RELATIONS;
 use super::order::AllOrderConflict;
@@ -8,8 +8,8 @@ use crate::code_rule_dsl::json::{invalid, non_empty_str, object, reject_unknown}
 use crate::code_rule_dsl::matcher::{
     Collation, CompareOp, CompareText, Comparison, CountBinding, UtilitySummary,
 };
-#[cfg(test)]
-use crate::code_rule_dsl::test_support::{Walk, record_walk};
+#[cfg(any(test, feature = "test-hooks"))]
+use crate::code_rule_dsl::walks::{Walk, record_walk};
 use napi::Result;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -438,7 +438,7 @@ pub(super) fn binding_site_index(
             Value::Object(fields) => {
                 let mut names = BTreeSet::new();
                 if let Some(pattern) = fields.get("pattern") {
-                    #[cfg(test)]
+                    #[cfg(any(test, feature = "test-hooks"))]
                     record_walk(Walk::BindingSitePatterns);
                     names.extend(pattern_names(pattern));
                 }
@@ -865,7 +865,7 @@ fn walk_sites<'a>(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use crate::code_rule_dsl::test_support::*;
     use serde_json::{Value, json};
     use std::cell::Cell;

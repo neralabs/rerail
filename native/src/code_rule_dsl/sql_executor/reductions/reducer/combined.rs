@@ -1,8 +1,8 @@
 //! One retained bag summary for compatible count/sum/min/max lookups.
 use super::*;
 use crate::code_rule_dsl::logic::{analysis::scalars, sql::properties};
-mod phase;
-pub(in crate::code_rule_dsl::sql_executor::reductions) mod publication;
+pub mod phase;
+pub mod publication;
 
 #[derive(Clone)]
 pub(super) struct Shared {

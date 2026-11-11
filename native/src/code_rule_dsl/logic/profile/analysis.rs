@@ -300,7 +300,7 @@ pub(super) fn render(findings: &[Finding]) -> String {
     out
 }
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     fn codes(i: &Input) -> Vec<&'static str> {
         analyze(i).iter().map(|f| f.code).collect()

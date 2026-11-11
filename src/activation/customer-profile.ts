@@ -210,15 +210,20 @@ export function verifyCustomerProfile(
   return { profile, envelope, trustRoots };
 }
 
+/** In the Rerail home: `rerail activate`'s profiles, one folder each. */
+export const PROFILES_DIR = "profiles";
+/** In the Rerail home: the name of the active profile. */
+export const ACTIVE_PROFILE_FILE = "active-profile";
+
 export class CustomerProfileStore {
   private readonly profilesRoot: string;
   private readonly locksRoot: string;
   private readonly activeProfilePath: string;
 
   constructor(private readonly home: string) {
-    this.profilesRoot = join(home, "profiles");
+    this.profilesRoot = join(home, PROFILES_DIR);
     this.locksRoot = join(this.profilesRoot, ".locks");
-    this.activeProfilePath = join(home, "active-profile");
+    this.activeProfilePath = join(home, ACTIVE_PROFILE_FILE);
   }
 
   private profileDirectory(profileName: string): string {

@@ -29,29 +29,29 @@ fn projections_and_mixed_scalars_use_one_retained_graph_with_exact_supports() {
         }
         assert_eq!(
             rows(
-                &e,
+                &mut e,
                 "SELECT count(*) FROM temp.sqlite_schema WHERE name IN('names','projected','total')"
             ),
             json!([[3]])
         );
         e.create_index("projected".into(), vec![1]).unwrap();
         let public = rows(
-            &e,
+            &mut e,
             "SELECT rootpage FROM temp.sqlite_schema WHERE name='projected'",
         );
         e.run(".decl total(n:number)\n.input total\n.decl guarded(v:number)\nguarded((n-3)+9223372036854775807) :- total(n).\n.output guarded\n".into(),"python".into(),None).unwrap();
-        let old_guard = rows(&e, "SELECT * FROM guarded");
+        let old_guard = rows(&mut e, "SELECT * FROM guarded");
         // The second program fails after the first program has published its new public roots.
         assert!(
             e.apply_changes(json!([{"name":"seed","insert":[[3,11]]}]).to_string(), None)
                 .is_err()
         );
-        assert_eq!(rows(&e, "SELECT * FROM total"), json!([[3]]));
+        assert_eq!(rows(&mut e, "SELECT * FROM total"), json!([[3]]));
         assert_eq!(
-            rows(&e, "SELECT * FROM names ORDER BY c0"),
+            rows(&mut e, "SELECT * FROM names ORDER BY c0"),
             json!([[7], [9]])
         );
-        assert_eq!(rows(&e, "SELECT * FROM guarded"), old_guard);
+        assert_eq!(rows(&mut e, "SELECT * FROM guarded"), old_guard);
         if recursive {
             assert!(
                 e.apply_changes(
@@ -60,9 +60,9 @@ fn projections_and_mixed_scalars_use_one_retained_graph_with_exact_supports() {
                 )
                 .is_err()
             );
-            assert_eq!(rows(&e, "SELECT count(*) FROM seed"), json!([[3]]));
+            assert_eq!(rows(&mut e, "SELECT count(*) FROM seed"), json!([[3]]));
             assert_eq!(
-                rows(&e, "SELECT * FROM names ORDER BY c0"),
+                rows(&mut e, "SELECT * FROM names ORDER BY c0"),
                 json!([[7], [9]])
             );
         }
@@ -76,17 +76,17 @@ fn projections_and_mixed_scalars_use_one_retained_graph_with_exact_supports() {
             (json!([{"name":"seed","insert":[[3,11]]}]), json!([[11]])),
         ] {
             e.apply_changes(patch.to_string(), None).unwrap();
-            assert_eq!(rows(&e, "SELECT * FROM names ORDER BY c0"), expected);
+            assert_eq!(rows(&mut e, "SELECT * FROM names ORDER BY c0"), expected);
             assert_eq!(
                 rows(
-                    &e,
+                    &mut e,
                     "SELECT rootpage FROM temp.sqlite_schema WHERE name='projected'"
                 ),
                 public
             );
             assert_eq!(
                 rows(
-                    &e,
+                    &mut e,
                     "SELECT count(*) FROM temp.sqlite_schema WHERE name='__sql_index_projected_1'"
                 ),
                 json!([[1]])
@@ -94,7 +94,7 @@ fn projections_and_mixed_scalars_use_one_retained_graph_with_exact_supports() {
             let (_cold_dir, mut cold) = executor();
             cold.cold_oracle = true;
             cold.bind_relation(
-                json!({"name":"seed","columns":["id","v"],"rows":rows(&e,"SELECT * FROM seed")})
+                json!({"name":"seed","columns":["id","v"],"rows":rows(&mut e,"SELECT * FROM seed")})
                     .to_string(),
             )
             .unwrap();
@@ -104,7 +104,7 @@ fn projections_and_mixed_scalars_use_one_retained_graph_with_exact_supports() {
                 "SELECT * FROM projected ORDER BY c0,c1",
                 "SELECT * FROM total",
             ] {
-                assert_eq!(rows(&e, sql), rows(&cold, sql), "{sql}");
+                assert_eq!(rows(&mut e, sql), rows(&mut cold, sql), "{sql}");
             }
         }
     }

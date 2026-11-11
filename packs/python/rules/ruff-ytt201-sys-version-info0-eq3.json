@@ -1,0 +1,483 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ytt201-sys-version-info0-eq3",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Compare sys.version_info against a tuple instead of testing whether its major version equals 3; the test breaks on a future major version.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "sys-version-info0-eq3",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "sys-version-info": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "sys.version_info"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "sys-version-info"
+                  }
+                }
+              ]
+            },
+            "eq-compare": {
+              "kind": "comparison_operator",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^==$"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "nthChild": {
+                      "position": 2,
+                      "ofRule": {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "kind": "line_continuation"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "matches": "three-literal"
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "nthChild": {
+                        "position": 3,
+                        "ofRule": {
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "kind": "line_continuation"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "left-operand": {
+              "any": [
+                {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "eq-compare"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "left-operand"
+                  }
+                }
+              ]
+            },
+            "target": {
+              "kind": "subscript",
+              "all": [
+                {
+                  "matches": "left-operand"
+                },
+                {
+                  "has": {
+                    "field": "value",
+                    "matches": "sys-version-info"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "subscript",
+                    "matches": "zero-literal"
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  }
+                }
+              ]
+            },
+            "in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "target",
+                      "capture": "C"
+                    },
+                    {
+                      "matches": "in-string"
+                    }
+                  ]
+                }
+              }
+            },
+            "zero-literal": {
+              "any": [
+                {
+                  "kind": "integer",
+                  "value": {
+                    "type": "int",
+                    "eq": 0
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "zero-literal"
+                  }
+                }
+              ]
+            },
+            "three-literal": {
+              "any": [
+                {
+                  "kind": "integer",
+                  "value": {
+                    "type": "int",
+                    "eq": 3
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "three-literal"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "target",
+                "pattern": "$C"
+              },
+              {
+                "matches": "in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "code": "YTT201",
+        "message": "Replace `sys.version_info[0] == 3` with `sys.version_info >= (3,)`; the equality is false on Python 4 and later.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "YTT201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "sys-version-info0-ne3",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "sys-version-info": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "sys.version_info"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "sys-version-info"
+                  }
+                }
+              ]
+            },
+            "eq-compare": {
+              "kind": "comparison_operator",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^!=$"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "nthChild": {
+                      "position": 2,
+                      "ofRule": {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "kind": "line_continuation"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "matches": "three-literal"
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "nthChild": {
+                        "position": 3,
+                        "ofRule": {
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "kind": "line_continuation"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "left-operand": {
+              "any": [
+                {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "eq-compare"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "left-operand"
+                  }
+                }
+              ]
+            },
+            "target": {
+              "kind": "subscript",
+              "all": [
+                {
+                  "matches": "left-operand"
+                },
+                {
+                  "has": {
+                    "field": "value",
+                    "matches": "sys-version-info"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "subscript",
+                    "matches": "zero-literal"
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  }
+                }
+              ]
+            },
+            "in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "target",
+                      "capture": "C"
+                    },
+                    {
+                      "matches": "in-string"
+                    }
+                  ]
+                }
+              }
+            },
+            "zero-literal": {
+              "any": [
+                {
+                  "kind": "integer",
+                  "value": {
+                    "type": "int",
+                    "eq": 0
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "zero-literal"
+                  }
+                }
+              ]
+            },
+            "three-literal": {
+              "any": [
+                {
+                  "kind": "integer",
+                  "value": {
+                    "type": "int",
+                    "eq": 3
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "three-literal"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "target",
+                "pattern": "$C"
+              },
+              {
+                "matches": "in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "code": "YTT201",
+        "message": "Replace `sys.version_info[0] != 3` with `sys.version_info < (3,)`; the inequality is true on Python 4 and later.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "YTT201"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

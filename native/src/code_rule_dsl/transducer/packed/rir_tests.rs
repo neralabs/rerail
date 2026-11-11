@@ -367,7 +367,7 @@ fn the_frontends_dumps_are_the_goldens() {
         dump.push_str(&round_trip(program, Some(&names)));
     }
     assert_eq!(assemble_all(&dump).unwrap().len(), programs.len());
-    let golden = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/transducer/packed/rir_goldens.rir");
+    let golden = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/transducer/packed/rir_goldens.rir");
     if std::env::var_os("RERAIL_BLESS").is_some() {
         std::fs::write(&golden, &dump).unwrap();
     }

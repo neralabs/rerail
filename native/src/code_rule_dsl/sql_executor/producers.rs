@@ -99,7 +99,7 @@ pub(super) fn take(program: &mut front::Program) -> Result<Vec<Producer>> {
 /// counts as the relations that view reads. Each query must give its declaration's columns.
 /// Per producer: the wave relations it reads, and every other table or view it reads (lowercased),
 /// which tuple maintenance watches for changes.
-fn resolve(db: &rusqlite::Connection, emitted: &plan::emit::Emitted, program: &front::Program, producers: &[Producer]) -> Result<Vec<(Vec<String>, Vec<String>)>> {
+fn resolve(db: &mut rusqlite::Connection, emitted: &plan::emit::Emitted, program: &front::Program, producers: &[Producer]) -> Result<Vec<(Vec<String>, Vec<String>)>> {
     use rusqlite::hooks::{AuthAction, Authorization};
     let tables: BTreeMap<String, String> =
         emitted.program.relations.iter().map(|(r, _)| (r.to_ascii_lowercase(), r.clone())).collect();
@@ -170,8 +170,8 @@ fn downstream(program: &front::Program, producers: &[Producer], reads: &[Vec<Str
     loop {
         let before = out.len();
         for r in &program.rules {
-            if r.body.iter().filter_map(front::Literal::atom).any(|a| out.contains(&a.rel)) {
-                out.insert(r.head.rel.clone());
+            if r.body.iter().filter_map(front::Literal::atom).any(|a| out.contains(a.rel.as_str())) {
+                out.insert(r.head.rel.to_string());
             }
         }
         for (p, reads) in producers.iter().zip(reads) {
@@ -187,7 +187,7 @@ fn downstream(program: &front::Program, producers: &[Producer], reads: &[Vec<Str
 
 /// Add each producer's step to the emitted program, and the typed views its query may read.
 /// Returns what each producer reads beyond the wave relations (`resolve`), by producer.
-pub(super) fn steps(db: &rusqlite::Connection, emitted: &mut plan::emit::Emitted, program: &front::Program, producers: &[Producer]) -> Result<BTreeMap<String, Vec<String>>> {
+pub(super) fn steps(db: &mut rusqlite::Connection, emitted: &mut plan::emit::Emitted, program: &front::Program, producers: &[Producer]) -> Result<BTreeMap<String, Vec<String>>> {
     if producers.is_empty() {
         return Ok(BTreeMap::new());
     }

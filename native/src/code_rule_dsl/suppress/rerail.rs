@@ -2,11 +2,11 @@
 //! honoured, for every code rule, whatever the repository's `suppressions` setting (which governs
 //! only other linters' comments, `suppress`). A directive covers a node of the file's tree:
 //!
-//! - before the file's first code (only comments, white space, a shebang and PHP's `<?php` before
-//!   it): the whole file;
+//! - before the file's first code (only comments, white space, a shebang and the family's
+//!   preamble tokens, PHP's `<?php`, before it): the whole file;
 //! - on its own line (leading): the next named sibling after it in its parent, comments passed
-//!   over (before a Python body's first statement, that statement); nothing where none follows
-//!   (the end of a block);
+//!   over (before the first statement of a body that starts there, Python's, that statement);
+//!   nothing where none follows (the end of a block);
 //! - after code on the line where it starts (trailing): the nearest preceding named sibling, when
 //!   only comments stand between them and it ends on that line; past a `,` or `;` ending a list
 //!   element or class field on that line, the elements before it on the line, from the one
@@ -19,13 +19,16 @@
 //!
 //! A file that embeds code (`embed`) is read document by document: its own tree's comments, then
 //! each embedded program's, whose covers are the file bytes the covered nodes stand for. Only the
-//! file's own tree's comments may cover the whole file.
+//! file's own tree's comments may cover the whole file. Each document's family names the node
+//! kinds it is read by (`Adapter::COMMENT_KINDS`, `PREAMBLE_KINDS` and `BODY_KINDS`).
 
 use crate::code_rule_dsl::embed::segments::FileRanges;
+use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::origin::InFile;
 use crate::code_rule_dsl::tape::{TapeDoc, tape_doc};
 use ast_grep_core::{AstGrep, Doc, Node};
 use std::ops::Range;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// The directive's name.
 const DIRECTIVE: &str = "rerail-ignore";
@@ -41,47 +44,57 @@ struct Cover {
 
 /// A file's `rerail-ignore` directives, as the ranges they cover.
 #[derive(Debug, Default)]
-pub(crate) struct RerailIgnores {
+pub struct RerailIgnores {
     covers: Vec<Cover>,
 }
 
 impl RerailIgnores {
     /// Reads every comment of the file whose own tree `root` is the root of (`source` is its
-    /// text), then each embedded program's (`embed`); every cover is a range of the file.
-    pub(crate) fn read<D: Doc>(root: &Node<'_, D>, source: &str) -> Self {
+    /// text), then each embedded program's (`embed`), each by its own family's kinds; every cover
+    /// is a range of the file.
+    pub fn read<D: Doc>(root: &Node<'_, D>, source: &str) -> Self {
         let file = InFile::of(root).expect("a file's own tree lies in its file");
-        let mut ignores = Self::read_tree(root, source, &file, true);
+        let kinds = Kinds::of(file.dialect());
+        let mut ignores = Self::read_tree(root, source, &file, kinds, true);
         let guests = tape_doc(root).and_then(TapeDoc::guests);
         for guest in guests.iter().flat_map(|guests| guests.iter()) {
             let program = AstGrep::doc(guest.doc.clone());
             let file = InFile::tape(&guest.doc);
-            let read = Self::read_tree(&program.root(), guest.doc.get_source(), &file, false);
+            let kinds = Kinds::of(*guest.doc.get_lang());
+            let read =
+                Self::read_tree(&program.root(), guest.doc.get_source(), &file, kinds, false);
             ignores.covers.extend(read.covers);
         }
         ignores
     }
 
-    /// Reads every comment of the tree `root` is the root of; `source` is its whole text, `file`
-    /// the file it lies in. A comment before the tree's first code covers the whole file only
-    /// where `whole`.
-    fn read_tree<D: Doc>(root: &Node<'_, D>, source: &str, file: &InFile<'_>, whole: bool) -> Self {
+    /// Reads every comment of the tree `root` is the root of, whose family's kinds are `kinds`;
+    /// `source` is its whole text, `file` the file it lies in. A comment before the tree's first
+    /// code covers the whole file only where `whole`.
+    fn read_tree<D: Doc>(
+        root: &Node<'_, D>,
+        source: &str,
+        file: &InFile<'_>,
+        kinds: Kinds,
+        whole: bool,
+    ) -> Self {
         let mut covers = Vec::new();
         // A file that never spells the directive holds none: no walk.
         if !source.contains(DIRECTIVE) {
             return Self { covers };
         }
         let mut first = if whole { None } else { Some(0) };
-        for comment in root.dfs().filter(is_comment) {
+        for comment in root.dfs().filter(|node| kinds.comment(node)) {
             let range = comment.range();
             let rules = rule_ids(&source[range.clone()]);
             if rules.is_empty() {
                 continue;
             }
-            let first = *first.get_or_insert_with(|| first_code(root, source));
+            let first = *first.get_or_insert_with(|| first_code(root, source, kinds));
             let covered = if range.end <= first {
                 Some(FileRanges::one(0..usize::MAX))
             } else {
-                covered(&comment, source, file)
+                covered(&comment, source, file, kinds)
             };
             // A covered node of a program standing for several file ranges covers each.
             for range in covered.iter().flat_map(FileRanges::iter) {
@@ -95,7 +108,7 @@ impl RerailIgnores {
     }
 
     /// Each directive's covered range and the code rules it names.
-    pub(crate) fn covers(&self) -> impl Iterator<Item = (&Range<usize>, &[String])> {
+    pub fn covers(&self) -> impl Iterator<Item = (&Range<usize>, &[String])> {
         self.covers.iter().map(|cover| (&cover.range, cover.rules.as_slice()))
     }
 
@@ -114,14 +127,28 @@ impl RerailIgnores {
     }
 }
 
-/// Comment kinds across Rerail's grammars: every grammar's `comment` (a Blade template's
-/// `<!-- -->` and its embedded PHP's), a script's `html_comment`, Blade's `{{-- --}}` and Rust's
-/// `line_comment` and `block_comment`.
-fn is_comment<D: Doc>(node: &Node<'_, D>) -> bool {
-    matches!(
-        node.kind().as_ref(),
-        "comment" | "html_comment" | "blade_comment" | "line_comment" | "block_comment"
-    )
+/// The node kinds a family's trees are read by (`Adapter::COMMENT_KINDS`, `PREAMBLE_KINDS` and
+/// `BODY_KINDS`).
+#[derive(Clone, Copy)]
+struct Kinds {
+    comments: &'static [&'static str],
+    preamble: &'static [&'static str],
+    bodies: &'static [&'static str],
+}
+
+impl Kinds {
+    /// The kinds of the family of `dialect`.
+    fn of(dialect: GrammarDialect) -> Self {
+        { let pack = language_pack::pack(Family::of(dialect)); Self {
+            comments: pack.comment_kinds(),
+            preamble: pack.preamble_kinds(),
+            bodies: pack.body_kinds(),
+        } }
+    }
+
+    fn comment<D: Doc>(self, node: &Node<'_, D>) -> bool {
+        self.comments.contains(&node.kind().as_ref())
+    }
 }
 
 /// The rule ids a comment's directive names, from the whole comment text (delimiters included):
@@ -179,15 +206,16 @@ fn before_reason(list: &str) -> &str {
 }
 
 /// The first byte of the file's code: the earliest leaf outside comments that is no shebang (`#!`
-/// line), PHP open tag or white space. The file's length where it has none.
-fn first_code<D: Doc>(root: &Node<'_, D>, source: &str) -> usize {
+/// line), preamble token (`kinds`: PHP's open tag) or white space. The file's length where it has
+/// none.
+fn first_code<D: Doc>(root: &Node<'_, D>, source: &str, kinds: Kinds) -> usize {
     let mut first = source.len();
     let mut stack = vec![root.clone()];
     while let Some(node) = stack.pop() {
         let range = node.range();
         // A comment's tokens (Blade's `{{--` and its text) are no code; nor is anything after
         // code already found.
-        if is_comment(&node) || range.start >= first {
+        if kinds.comment(&node) || range.start >= first {
             continue;
         }
         if !node.is_leaf() {
@@ -196,10 +224,7 @@ fn first_code<D: Doc>(root: &Node<'_, D>, source: &str) -> usize {
         }
         let text = &source[range.clone()];
         let shebang = range.start == 0 && text.starts_with("#!") && !text.trim_end().contains('\n');
-        if !text.trim().is_empty()
-            && !shebang
-            && !matches!(node.kind().as_ref(), "hash_bang_line" | "php_tag")
-        {
+        if !text.trim().is_empty() && !shebang && !kinds.preamble.contains(&node.kind().as_ref()) {
             first = range.start;
         }
     }
@@ -207,9 +232,9 @@ fn first_code<D: Doc>(root: &Node<'_, D>, source: &str) -> usize {
 }
 
 /// Whether a node is code a directive can cover: named, no comment, not white space alone.
-fn is_code<D: Doc>(node: &Node<'_, D>, source: &str) -> bool {
+fn is_code<D: Doc>(node: &Node<'_, D>, source: &str, kinds: Kinds) -> bool {
     node.is_named()
-        && !is_comment(node)
+        && !kinds.comment(node)
         && !source[node.range()].trim().is_empty()
         // An embedded program's node its embedder wrote whole (a Blade directive's marker) is no
         // code of the file's.
@@ -219,21 +244,28 @@ fn is_code<D: Doc>(node: &Node<'_, D>, source: &str) -> bool {
 /// The file range a directive comment past its tree's first code covers; the tree's nodes and
 /// lines are placed in `file` (an embedded program's comment on a line of its own is one in the
 /// file, whatever its embedder wrote before it).
-fn covered<D: Doc>(comment: &Node<'_, D>, source: &str, file: &InFile<'_>) -> Option<FileRanges> {
+fn covered<D: Doc>(
+    comment: &Node<'_, D>,
+    source: &str,
+    file: &InFile<'_>,
+    kinds: Kinds,
+) -> Option<FileRanges> {
     let start = file.node(comment).start;
     let lines = file.lines();
     let line = lines.line(start);
     let line_start = lines.start(line);
     let before = file.source().get(line_start..start)?;
     if before.trim().is_empty() {
-        // Leading: the next code among its siblings. Python places a comment before a body's
-        // first statement beside the body (`block`, which starts at that statement), not in it:
-        // the comment leads that statement.
+        // Leading: the next code among its siblings. A body that starts at its first statement
+        // (`kinds.bodies`: Python's `block`) has a comment before that statement beside it, not
+        // in it: the comment leads that statement.
         let mut next = comment.next();
         while let Some(node) = next {
-            if is_code(&node, source) {
-                let first = (node.kind() == "block")
-                    .then(|| node.children().find(|child| is_code(child, source)))
+            if is_code(&node, source, kinds) {
+                let first = kinds
+                    .bodies
+                    .contains(&node.kind().as_ref())
+                    .then(|| node.children().find(|child| is_code(child, source, kinds)))
                     .flatten()
                     .filter(|child| child.range().start == node.range().start);
                 return Some(file.place(&first.unwrap_or(node)));
@@ -253,7 +285,7 @@ fn covered<D: Doc>(comment: &Node<'_, D>, source: &str, file: &InFile<'_>) -> Op
     let mut previous = comment.prev();
     while let Some(node) = previous {
         previous = node.prev();
-        if is_comment(&node) || source[node.range()].trim().is_empty() {
+        if kinds.comment(&node) || source[node.range()].trim().is_empty() {
             continue;
         }
         let at = file.node(&node);
@@ -290,7 +322,7 @@ fn covered<D: Doc>(comment: &Node<'_, D>, source: &str, file: &InFile<'_>) -> Op
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::test_support::*;
@@ -335,7 +367,7 @@ mod tests {
         }
     }
 
-    /// The covered ranges of a TypeScript, Python or PHP source, as the texts they cover.
+    /// The covered ranges of a source in `language`, as the texts they cover.
     fn covered_texts(language: GrammarDialect, source: &str) -> Vec<(String, Vec<String>)> {
         let root = language.ast_grep(source);
         RerailIgnores::read(&root.root(), source)
@@ -392,6 +424,23 @@ mod tests {
                 cover("function f() {\n    return 1;\n}", &["lead"]),
                 cover("$b = g();", &["trail"]),
             ]
+        );
+    }
+
+    /// A leading directive before a block that starts at no statement covers the whole block:
+    /// SQL's `BEGIN … END` starts at `BEGIN`, a labelled Rust block at its label. Only Python's
+    /// `block` starts at its first statement, which the directive then leads.
+    #[test]
+    fn a_leading_directive_covers_a_whole_block_outside_python() {
+        let sql = "SELECT 0;\n-- rerail-ignore lead\nBEGIN;\nSELECT 1;\nEND;\nSELECT 2;\n";
+        assert_eq!(
+            covered_texts(GrammarDialect::Sql, sql),
+            [cover("BEGIN;\nSELECT 1;\nEND", &["lead"])]
+        );
+        let rust = "fn f(x: u8) {\n    match x {\n        _ =>\n        // rerail-ignore lead\n        'a: { g(); }\n    }\n}\n";
+        assert_eq!(
+            covered_texts(GrammarDialect::Rust, rust),
+            [cover("'a: { g(); }", &["lead"])]
         );
     }
 

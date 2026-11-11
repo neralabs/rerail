@@ -23,23 +23,23 @@ const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
 
 /// Test-only tallies, per thread, of the work a range does that must stay bounded on the untrusted
 /// ranges manifests give.
-#[cfg(test)]
-pub(crate) mod tally {
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod tally {
     use std::cell::Cell;
 
     thread_local! {
         /// Equality checks of comparator keys while `parse_range` deduplicates them.
         pub(crate) static KEY_COMPARISONS: Cell<usize> = const { Cell::new(0) };
         /// `Range::parse` calls.
-        pub(crate) static PARSES: Cell<usize> = const { Cell::new(0) };
+        pub static PARSES: Cell<usize> = const { Cell::new(0) };
         /// `simple_subset` calls.
-        pub(crate) static SIMPLE_SUBSETS: Cell<usize> = const { Cell::new(0) };
+        pub static SIMPLE_SUBSETS: Cell<usize> = const { Cell::new(0) };
     }
 }
 
 /// A node-semver 7.8.5 `Range` (loose = false, includePrerelease = false).
 #[derive(Clone, Debug)]
-pub(crate) struct Range {
+pub struct Range {
     /// The whitespace-normalized text it parsed from, which alone decides the parse.
     text: String,
     set: Vec<SimpleRange>,
@@ -91,8 +91,8 @@ enum Ident {
 
 impl Range {
     /// `new Range(text)`; None where node-semver throws.
-    pub(crate) fn parse(text: &str) -> Option<Self> {
-        #[cfg(test)]
+    pub fn parse(text: &str) -> Option<Self> {
+        #[cfg(any(test, feature = "test-hooks"))]
         tally::PARSES.set(tally::PARSES.get() + 1);
         let raw = collapse_whitespace(text);
         let mut set = raw
@@ -115,7 +115,7 @@ impl Range {
     }
 
     /// `subset(self, dom)` (ranges/subset.js) with `self` passed as a Range object.
-    pub(crate) fn is_subset_of(&self, dom: &Range) -> bool {
+    pub fn is_subset_of(&self, dom: &Range) -> bool {
         let mut saw_non_null = false;
         'sub: for sub in &self.set {
             for simple_dom in &dom.set {
@@ -133,7 +133,7 @@ impl Range {
     }
 
     /// The whitespace-normalized text: ranges with the same parse alike.
-    pub(crate) fn text(&self) -> &str {
+    pub fn text(&self) -> &str {
         &self.text
     }
 }
@@ -303,7 +303,7 @@ fn numeric_value(id: &Ident) -> Result<f64, &str> {
 
 /// `simpleSubset(sub, dom)`: `None` when `sub` is a null set.
 fn simple_subset(sub: &SimpleRange, dom: &SimpleRange) -> Option<bool> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     tally::SIMPLE_SUBSETS.set(tally::SIMPLE_SUBSETS.get() + 1);
     if sub.key.is_some() && sub.key == dom.key {
         return Some(true);
@@ -524,7 +524,7 @@ struct ComparatorKey(Op, String);
 
 impl PartialEq for ComparatorKey {
     fn eq(&self, other: &Self) -> bool {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         tally::KEY_COMPARISONS.set(tally::KEY_COMPARISONS.get() + 1);
         self.0 == other.0 && self.1 == other.1
     }
@@ -743,7 +743,7 @@ fn compile(source: &str) -> Regex {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::{Comparator, Op, Range, SemVer, satisfies, tally, test_set};
 
     /// `[configured, given, subset(new Range(configured), given)]` and `[text, parses]`, recorded

@@ -7,8 +7,8 @@
 //! The scope table parses each string it classifies as a type definition (see `scope::python`) and
 //! reads the names inside; `parse` reads the table's trees.
 
-use super::offsets::{self, Decode};
-use super::{Grammar, HostMap, PNode, SubTree, semantic};
+use super::offsets::Decode;
+use super::{HostMap, PNode, SubTree, semantic};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::value::Value;
 use ast_grep_language::LanguageExt;
@@ -47,7 +47,7 @@ pub(crate) fn parse<D: ast_grep_core::Doc>(
     offset: usize,
     host: &semantic::Host<'_>,
 ) -> Option<SubTree> {
-    let decoded = match offsets::decode_python(node) {
+    let decoded = match super::python_string::decode_python(node) {
         Decode::Known(decoded) => decoded,
         Decode::Unknown | Decode::NotString => return None,
     };
@@ -76,7 +76,7 @@ pub(crate) fn parse<D: ast_grep_core::Doc>(
         }
         None => error(0, text.len()),
     };
-    Some(SubTree::new(Grammar::Annotation, text, offset, root, map))
+    Some(SubTree::new(GRAMMAR, text, offset, root, map))
 }
 
 fn error(start: usize, end: usize) -> PNode {
@@ -272,11 +272,15 @@ fn breaks_line(root: &tree_sitter::Node<'_>, source: &str) -> bool {
     false
 }
 
-/// A tree-sitter subtree as a sub-tree node, its ranges passed through `clamp`.
+/// A tree-sitter subtree as a sub-tree node, its ranges passed through `clamp`. As a tape is
+/// written, no token the grammar implies is kept (RER-131): the gaps between the stored children
+/// say where it was.
 fn convert(root: tree_sitter::Node<'_>, clamp: &dyn Fn(Range<usize>) -> Range<usize>) -> PNode {
+    let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(crate::code_rule_dsl::language::GrammarDialect::Python);
     fn node(
         cursor: &mut tree_sitter::TreeCursor<'_>,
         clamp: &dyn Fn(Range<usize>) -> Range<usize>,
+        grammar: Option<&crate::code_rule_dsl::tape::tokens::TokenGrammar>,
     ) -> PNode {
         let current = cursor.node();
         let range = clamp(current.byte_range());
@@ -291,9 +295,14 @@ fn convert(root: tree_sitter::Node<'_>, clamp: &dyn Fn(Range<usize>) -> Range<us
             value: None,
             children: Vec::new(),
         };
+        let stored = grammar.and_then(|grammar| grammar.stored_children(current));
         if cursor.goto_first_child() {
+            let mut at = 0;
             loop {
-                built.children.push(node(cursor, clamp));
+                if stored.as_ref().is_none_or(|stored| stored.get(at).copied().unwrap_or(true)) {
+                    built.children.push(node(cursor, clamp, grammar));
+                }
+                at += 1;
                 if !cursor.goto_next_sibling() {
                     break;
                 }
@@ -303,11 +312,11 @@ fn convert(root: tree_sitter::Node<'_>, clamp: &dyn Fn(Range<usize>) -> Range<us
         built
     }
     let mut cursor = root.walk();
-    node(&mut cursor, clamp)
+    node(&mut cursor, clamp, grammar.as_deref())
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::oracle;
 
@@ -501,5 +510,57 @@ mod tests {
             "\n{}",
             mismatches.join("\n")
         );
+    }
+}
+
+/// The `annotation` grammar (`literal::LiteralGrammar`).
+pub(crate) struct AnnotationGrammar;
+
+/// Its handle, which the engine registers (`literal::install`).
+pub const GRAMMAR: super::Grammar = super::Grammar::new(&AnnotationGrammar);
+
+impl super::LiteralGrammar for AnnotationGrammar {
+    fn name(&self) -> &'static str {
+        "annotation"
+    }
+    fn kinds(&self) -> &'static [&'static str] {
+        // Python's own kinds, which the grammar checks when it compiles the rule.
+        &[]
+    }
+    fn host_language(&self) -> crate::code_rule_dsl::language::GrammarDialect {
+        crate::code_rule_dsl::language::GrammarDialect::Python
+    }
+    fn host(&self) -> &'static str {
+        "Python literals"
+    }
+    fn host_kinds(&self) -> &'static [&'static str] {
+        &["string", "concatenated_string"]
+    }
+    fn of_host_syntax(&self) -> bool {
+        true
+    }
+    fn reads_only_the_node(&self) -> bool {
+        false
+    }
+    fn own_kind_id(&self, kind: &str) -> Option<u16> {
+        Some(ast_grep_core::language::Language::kind_to_id(&crate::code_rule_dsl::language::GrammarDialect::Python, kind))
+    }
+    fn own_kind_name(&self, id: u16) -> Option<&'static str> {
+        Some(kind_name(id))
+    }
+    fn parse(&self, grammar: super::Grammar, text: &str) -> super::PNode {
+        // The scope table parses annotations (`annotation::parse`).
+        let _ = grammar;
+        super::PNode {
+            kind: ERROR_KIND,
+            start: 0,
+            end: text.len(),
+            named: true,
+            error: true,
+            extra: false,
+            field: 0,
+            value: None,
+            children: Vec::new(),
+        }
     }
 }

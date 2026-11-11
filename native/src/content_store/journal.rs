@@ -17,44 +17,161 @@
 
 use std::path::{Path, PathBuf};
 
-/// What changed under the roots since a cursor.
+/// What changed under the roots since a cursor. A cursor is the journal's own text: an FSEvents event id, or a
+/// Watchman clock.
 #[derive(Debug)]
-pub enum Since {
+pub enum Since<C = String> {
     /// The paths that changed (each a file or a directory, as the root's caller names it), and the cursor to ask
     /// from next time.
-    Changed { paths: Vec<PathBuf>, cursor: u64 },
+    Changed { paths: Vec<PathBuf>, cursor: C },
     /// The journal cannot say: everything may have changed. Next time, ask from `cursor`.
-    Lost { cursor: Option<u64>, why: &'static str },
+    Lost { cursor: Option<C>, why: &'static str },
 }
 
-/// A volume's identity, as the journal's ids are of it (an id is meaningless on another volume).
+/// The journal a process asks: macOS's FSEvents (the system's, no daemon), else Watchman where it is installed (a
+/// daemon outside rerail, its history kept while it runs), else none. `RERAIL_JOURNAL` = `fsevents`, `watchman` or
+/// `off` chooses; `RERAIL_WATCHMAN` names the Watchman binary.
+enum Backend {
+    #[cfg(target_os = "macos")]
+    FsEvents,
+    Watchman(PathBuf),
+    Off,
+}
+
+fn backend() -> Backend {
+    let watchman = || std::env::var_os("RERAIL_WATCHMAN").map(PathBuf::from).or_else(|| on_path("watchman")).map(Backend::Watchman);
+    match std::env::var("RERAIL_JOURNAL").unwrap_or_default().as_str() {
+        "off" => Backend::Off,
+        "watchman" => watchman().unwrap_or(Backend::Off),
+        #[cfg(target_os = "macos")]
+        _ => Backend::FsEvents,
+        #[cfg(not(target_os = "macos"))]
+        _ => watchman().unwrap_or(Backend::Off),
+    }
+}
+
+fn on_path(name: &str) -> Option<PathBuf> {
+    std::env::split_paths(&std::env::var_os("PATH")?).map(|d| d.join(name)).find(|p| p.is_file())
+}
+
+/// The identity a cursor is of: an FSEvents id is of its volume; a Watchman clock names its own instance, so one
+/// identity serves (and keeps its cursors apart from FSEvents').
 pub fn volume(path: &Path) -> Option<[u8; 16]> {
-    imp::volume(path)
+    match backend() {
+        #[cfg(target_os = "macos")]
+        Backend::FsEvents => fsevents::volume(path),
+        Backend::Watchman(_) => Some(*b"rerail-watchman\0"),
+        Backend::Off => None,
+    }
 }
 
 /// What changed under `roots` (each a directory, by the path the caller keeps its records under) since `cursor`
-/// (`None`: no earlier cursor), the journal synchronised by a cookie written in `cookie_dir`.
-pub fn since(roots: &[PathBuf], cursor: Option<u64>, cookie_dir: &Path) -> Since {
-    imp::since(roots, cursor, cookie_dir)
+/// (`None`: no earlier cursor), the journal synchronised by a cookie written in `cookie_dir` (Watchman syncs with its
+/// own).
+pub fn since(roots: &[PathBuf], cursor: Option<&str>, cookie_dir: &Path) -> Since {
+    match backend() {
+        #[cfg(target_os = "macos")]
+        Backend::FsEvents => match fsevents::since(roots, cursor.and_then(|c| c.parse().ok()), cookie_dir) {
+            Since::Changed { paths, cursor } => Since::Changed { paths, cursor: cursor.to_string() },
+            Since::Lost { cursor, why } => Since::Lost { cursor: cursor.map(|c| c.to_string()), why },
+        },
+        Backend::Watchman(bin) => {
+            let _ = cookie_dir;
+            watchman::since(&bin, roots, cursor)
+        }
+        Backend::Off => Since::Lost { cursor: None, why: "no journal on this system" },
+    }
 }
 
-#[cfg(not(target_os = "macos"))]
-mod imp {
+/// Watchman's JSON protocol over its command line (`watchman -j`): `watch-project` the root, then `query` with
+/// `since` the clock kept. Watchman's `sync_timeout` waits for its own cookie, so every change before the query is
+/// in its answer. A fresh instance (Watchman started again, or the root first watched) has no history: lost.
+mod watchman {
     use super::Since;
+    use serde_json::{Value, json};
+    use std::io::Write as _;
     use std::path::{Path, PathBuf};
+    use std::process::{Command, Stdio};
 
-    pub(super) fn volume(_: &Path) -> Option<[u8; 16]> {
-        None
+    fn call(bin: &Path, command: &Value) -> Option<Value> {
+        let mut child = Command::new(bin).args(["-j", "--no-pretty"]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+        child.stdin.take()?.write_all(command.to_string().as_bytes()).ok()?;
+        let out = child.wait_with_output().ok()?;
+        let answer: Value = serde_json::from_slice(&out.stdout).ok()?;
+        (out.status.success() && answer.get("error").is_none()).then_some(answer)
     }
 
-    pub(super) fn since(_: &[PathBuf], _: Option<u64>, _: &Path) -> Since {
-        Since::Lost { cursor: None, why: "no journal on this system" }
+    pub(super) fn since(bin: &Path, roots: &[PathBuf], cursor: Option<&str>) -> Since {
+        // A clock is of one watch: one root a query.
+        let [root] = roots else { return Since::Lost { cursor: None, why: "Watchman is asked one root at a time" } };
+        let Ok(real) = std::fs::canonicalize(root) else { return Since::Lost { cursor: None, why: "a root is not readable" } };
+        let Some(watched) = call(bin, &json!(["watch-project", real])) else { return Since::Lost { cursor: None, why: "Watchman did not answer" } };
+        let Some(watch) = watched.get("watch").and_then(Value::as_str) else { return Since::Lost { cursor: None, why: "Watchman named no watch" } };
+        let relative = watched.get("relative_path").and_then(Value::as_str);
+        let Some(cursor) = cursor else {
+            let clock = call(bin, &json!(["clock", watch, {"sync_timeout": 2000}])).and_then(|c| c.get("clock")?.as_str().map(str::to_owned));
+            return Since::Lost { cursor: clock, why: "no earlier cursor" };
+        };
+        let mut query = json!({"since": cursor, "fields": ["name"], "sync_timeout": 2000, "empty_on_fresh_instance": true});
+        if let Some(relative) = relative {
+            query["relative_root"] = json!(relative);
+        }
+        let Some(answer) = call(bin, &json!(["query", watch, query])) else { return Since::Lost { cursor: None, why: "Watchman did not answer the query" } };
+        let clock = answer.get("clock").and_then(Value::as_str).map(str::to_owned);
+        let Some(clock) = clock else { return Since::Lost { cursor: None, why: "Watchman gave no clock" } };
+        if answer.get("is_fresh_instance").and_then(Value::as_bool).unwrap_or(true) {
+            return Since::Lost { cursor: Some(clock), why: "Watchman has no history from the cursor (a fresh instance)" };
+        }
+        let names = answer.get("files").and_then(Value::as_array).cloned().unwrap_or_default();
+        let mut paths: Vec<PathBuf> = names.iter().filter_map(Value::as_str).map(|n| root.join(n)).collect();
+        paths.sort();
+        paths.dedup();
+        Since::Changed { paths, cursor: clock }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::super::Since;
+
+        /// Against a stand-in for Watchman that answers as its protocol documents: a cursor's first ask is lost and
+        /// gives a clock; a query since a clock names the files relative to the root's `relative_root`; a fresh
+        /// instance is lost.
+        #[test]
+        fn watchman_answers_are_read_as_its_protocol_says() {
+            let base = std::env::temp_dir().join(format!("rerail-watchman-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&base);
+            let root = base.join("repo/sub");
+            std::fs::create_dir_all(&root).unwrap();
+            let bin = base.join("watchman");
+            let real = std::fs::canonicalize(base.join("repo")).unwrap();
+            let fresh = base.join("fresh");
+            std::fs::write(
+                &bin,
+                format!(
+                    "#!/bin/sh\nread -r line\ncase \"$line\" in\n  *watch-project*) echo '{{\"watch\": \"{w}\", \"relative_path\": \"sub\"}}' ;;\n  *clock*) echo '{{\"clock\": \"c:1:1\"}}' ;;\n  *relative_root*sub*) if [ -e {f} ]; then echo '{{\"clock\": \"c:9:1\", \"is_fresh_instance\": true, \"files\": []}}'; else echo '{{\"clock\": \"c:1:2\", \"is_fresh_instance\": false, \"files\": [\"a.py\", \"pkg/b.py\"]}}'; fi ;;\n  *) echo '{{\"error\": \"no\"}}' ;;\nesac\n",
+                    w = real.display(),
+                    f = fresh.display()
+                ),
+            )
+            .unwrap();
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let roots = [root.clone()];
+            let Since::Lost { cursor: Some(first), .. } = super::since(&bin, &roots, None) else { panic!("no cursor without one") };
+            assert_eq!(first, "c:1:1");
+            let Since::Changed { paths, cursor } = super::since(&bin, &roots, Some(&first)) else { panic!("a query") };
+            assert_eq!((paths, cursor.as_str()), (vec![root.join("a.py"), root.join("pkg/b.py")], "c:1:2"));
+            std::fs::write(&fresh, "").unwrap();
+            let Since::Lost { cursor: Some(again), .. } = super::since(&bin, &roots, Some(&cursor)) else { panic!("a fresh instance is lost") };
+            assert_eq!(again, "c:9:1");
+            let _ = std::fs::remove_dir_all(&base);
+        }
     }
 }
 
 #[cfg(target_os = "macos")]
-mod imp {
-    use super::Since;
+mod fsevents {
+    type Since = super::Since<u64>;
     use std::ffi::{CStr, CString, c_char, c_void};
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Condvar, Mutex};
@@ -265,7 +382,9 @@ mod imp {
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
-    use super::*;
+    use super::Since;
+    use super::fsevents::since;
+    use std::path::PathBuf;
 
     /// The journal names a file written after the cursor; once every earlier event is in, a replay from a later
     /// cursor names nothing. A write just before a cursor may be named too (its event's id came after the cursor):

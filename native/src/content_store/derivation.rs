@@ -13,7 +13,7 @@
 //! - The readers of a name are found through `derivation_inputs_by_name`: the next wave's frontier.
 
 use super::{ContentStore, StoreError, StoreResult, Sym, bounded_insert};
-use rusqlite::{OptionalExtension, Transaction, params, types::Value};
+use rusqlite::{Connection, OptionalExtension, params, types::Value};
 use std::collections::{BTreeSet, HashMap};
 
 /// The digest an unbound name reads as: a derivation that probed a name nobody bound records it,
@@ -282,7 +282,7 @@ pub struct StoredDerivation {
 
 /// Writes each derivation, its inputs replaced, as a few statements whatever their number (a derivation listed twice
 /// is its last).
-fn write_derivations(transaction: &Transaction<'_>, derivations: &[(Sym, StoredDerivation)]) -> StoreResult<()> {
+fn write_derivations(transaction: &Connection, derivations: &[(Sym, StoredDerivation)]) -> StoreResult<()> {
     if derivations.is_empty() {
         return Ok(());
     }
@@ -320,7 +320,7 @@ fn write_derivations(transaction: &Transaction<'_>, derivations: &[(Sym, StoredD
 /// Binds each atom to its digest, in order, as a few statements whatever their number: one read of the digests held,
 /// the changes found in memory, one upsert of the names whose digest moved (a rebinding bumps its revision). Whether
 /// each binding changed its name's digest: a first binding to `ABSENT` is none (it read as that already).
-fn bind_all(transaction: &Transaction<'_>, bindings: &[(Sym, [u8; 32])]) -> StoreResult<Vec<bool>> {
+fn bind_all(transaction: &Connection, bindings: &[(Sym, [u8; 32])]) -> StoreResult<Vec<bool>> {
     if bindings.is_empty() {
         return Ok(Vec::new());
     }

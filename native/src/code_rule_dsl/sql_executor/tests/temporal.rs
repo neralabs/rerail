@@ -24,7 +24,7 @@ fn partial_lattice_folds_preserve_duplicate_support_composite_keys_and_retractio
             _ => crate::code_rule_dsl::logic::native::TOP,
         };
         assert_eq!(
-            rows(&e, "SELECT c2 FROM item WHERE c0=0 AND c1=2"),
+            rows(&mut e, "SELECT c2 FROM item WHERE c0=0 AND c1=2"),
             json!([[wire::integer(initial_value)]])
         );
         for patch in [
@@ -37,7 +37,7 @@ fn partial_lattice_folds_preserve_duplicate_support_composite_keys_and_retractio
         ] {
             change(&mut e, patch);
             check(
-                &e,
+                &mut e,
                 &p,
                 &[
                     ("seed", &["id", "g", "k", "v"]),
@@ -72,7 +72,7 @@ fn initial() -> (tempfile::TempDir, CodeRuleSqlExecutor) {
     assert!(e.executions[0].recursive.is_empty());
     (d, e)
 }
-fn check(e: &CodeRuleSqlExecutor, p: &str, inputs: &[(&str, &[&str])], outputs: &[&str]) {
+fn check(e: &mut CodeRuleSqlExecutor, p: &str, inputs: &[(&str, &[&str])], outputs: &[&str]) {
     let (_d, mut fresh) = executor();
     fresh.cold_oracle=true;
     for (name, columns) in inputs {
@@ -96,7 +96,7 @@ fn check(e: &CodeRuleSqlExecutor, p: &str, inputs: &[(&str, &[&str])], outputs: 
             .join(",");
         assert_eq!(
             rows(e, &format!("SELECT * FROM {r} ORDER BY {order}")),
-            rows(&fresh, &format!("SELECT * FROM {r} ORDER BY {order}"))
+            rows(&mut fresh, &format!("SELECT * FROM {r} ORDER BY {order}"))
         );
     }
 }
@@ -125,7 +125,7 @@ fn change(e: &mut CodeRuleSqlExecutor, patch: Value) -> Value {
 fn unpartitioned_lattices_remove_cyclic_support_and_extend_retained_iterations() {
     let (_d, mut e) = initial();
     assert_eq!(
-        rows(&e, "SELECT * FROM distance ORDER BY c0"),
+        rows(&mut e, "SELECT * FROM distance ORDER BY c0"),
         json!([[0, 0], [1, 2], [2, 1], [3, 4]])
     );
     for patch in [
@@ -137,20 +137,20 @@ fn unpartitioned_lattices_remove_cyclic_support_and_extend_retained_iterations()
         json!([{"name":"edge","insert":[[0,1,1]]},{"name":"root","insert":[[0]],"delete":[[2]]}]),
     ] {
         let slots = rows(
-            &e,
+            &mut e,
             "SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '*__it*'",
         );
         change(&mut e, patch);
         assert_eq!(
             rows(
-                &e,
+                &mut e,
                 "SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '*__it*'"
             ),
             slots,
             "extending retained iterations must reuse SQL slots"
         );
         check(
-            &e,
+            &mut e,
             SHORTEST,
             &[("edge", &["a", "b", "w"]), ("root", &["n"])],
             &["distance"],
@@ -161,7 +161,7 @@ fn unpartitioned_lattices_remove_cyclic_support_and_extend_retained_iterations()
 #[test]
 fn unpartitioned_iterations_restore_native_state_after_failure_and_can_retry() {
     let (_d, mut e) = initial();
-    let before = rows(&e, "SELECT * FROM distance ORDER BY c0");
+    let before = rows(&mut e, "SELECT * FROM distance ORDER BY c0");
     let patch = json!([{"name":"edge","delete":[[2,1,1]],"insert":[[3,4,1],[4,5,1],[5,6,1]]}]);
     e.connection().execute_batch("CREATE TEMP TRIGGER fail_temporal BEFORE INSERT ON distance BEGIN SELECT RAISE(ABORT,'fail temporal publish'); END").unwrap();
     assert!(
@@ -170,22 +170,22 @@ fn unpartitioned_iterations_restore_native_state_after_failure_and_can_retry() {
             .reason
             .contains("fail temporal publish")
     );
-    assert_eq!(rows(&e, "SELECT * FROM distance ORDER BY c0"), before);
+    assert_eq!(rows(&mut e, "SELECT * FROM distance ORDER BY c0"), before);
     e.connection()
         .execute_batch("DROP TRIGGER fail_temporal")
         .unwrap();
     assert!(e.apply_changes(patch.to_string(), Some(1)).is_err());
-    assert_eq!(rows(&e, "SELECT * FROM distance ORDER BY c0"), before);
+    assert_eq!(rows(&mut e, "SELECT * FROM distance ORDER BY c0"), before);
     change(&mut e, patch);
     check(
-        &e,
+        &mut e,
         SHORTEST,
         &[("edge", &["a", "b", "w"]), ("root", &["n"])],
         &["distance"],
     );
     e.run(SHORTEST.into(), "python".into(), None).unwrap();
     check(
-        &e,
+        &mut e,
         SHORTEST,
         &[("edge", &["a", "b", "w"]), ("root", &["n"])],
         &["distance"],
@@ -193,7 +193,7 @@ fn unpartitioned_iterations_restore_native_state_after_failure_and_can_retry() {
     e.reset().unwrap();
     assert_eq!(
         rows(
-            &e,
+            &mut e,
             "SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '*__it*'"
         ),
         json!([[0]])
@@ -211,7 +211,7 @@ fn unpartitioned_negative_cycles_preserve_widening_and_retract_from_top() {
     ] {
         change(&mut e, patch);
         check(
-            &e,
+            &mut e,
             SHORTEST,
             &[("edge", &["a", "b", "w"]), ("root", &["n"])],
             &["distance", "__sql_changes_distance"],
@@ -236,7 +236,7 @@ fn temporal_shortest_paths_match_cold_execution_through_many_simultaneous_edits(
         };
         change(&mut e, patch);
         check(
-            &e,
+            &mut e,
             SHORTEST,
             &[("edge", &["a", "b", "w"]), ("root", &["n"])],
             &["distance", "__sql_changes_distance"],
@@ -311,7 +311,7 @@ fn sparse_recursive_edits_do_not_scan_disconnected_unpartitioned_paths() {
     e.set_limits("{}".into()).unwrap();
     assert_eq!(
         rows(
-            &e,
+            &mut e,
             "SELECT * FROM distance WHERE c0>=170 AND c0<180 ORDER BY c0"
         ),
         json!([[170, 0], [171, 2], [172, 1], [173, 4]])
@@ -323,7 +323,7 @@ fn recursive_walks_keep_scalar_and_negative_blocks_in_iteration_caches() {
     let (_d, mut e) = executor();
     e.bind_snapshot(json!({"files":[{"path":"a.py","language":"python","source":"def first():\n    work()\n    def second():\n        other()\n"}]}).to_string()).unwrap();
     let functions = rows(
-        &e,
+        &mut e,
         "SELECT n FROM node WHERE kind_name('python',kind)='function_definition' ORDER BY n",
     );
     assert_eq!(functions.as_array().unwrap().len(), 2);
@@ -332,7 +332,7 @@ fn recursive_walks_keep_scalar_and_negative_blocks_in_iteration_caches() {
     let p = ".decl node(d:number,n:node,k:symbol,s:number,e:number)\n.decl tape(n:node,p:node,s:number,d:number)\n.decl field(p:node,f:symbol,c:node)\n.decl start(n:node)\n.decl blocked(n:node)\n.input node,tape,field,start,blocked\n.decl scope(k:symbol)\nscope(\"function_definition\").\n.decl distance(n:node,v:min<>) widen 4\ndistance(n,0) :- start(n).\ndistance(n,d+c) :- node(_,n,_,_,_), nearest(n,a,scope), distance(a,d), !blocked(n), c=count : {field(a,_,_)}.\n.output distance\n";
     e.run(p.into(), "python".into(), None).unwrap();
     assert!(!e.executions[0].temporal.is_empty());
-    let expected = rows(&e, "SELECT * FROM distance ORDER BY c0");
+    let expected = rows(&mut e, "SELECT * FROM distance ORDER BY c0");
     let nested = functions[1][0].clone();
     for patch in [
         json!([{"name":"blocked","insert":[[nested]]}]),
@@ -340,7 +340,7 @@ fn recursive_walks_keep_scalar_and_negative_blocks_in_iteration_caches() {
     ] {
         change(&mut e, patch);
     }
-    assert_eq!(rows(&e, "SELECT * FROM distance ORDER BY c0"), expected);
+    assert_eq!(rows(&mut e, "SELECT * FROM distance ORDER BY c0"), expected);
 }
 
 #[test]
@@ -357,7 +357,7 @@ fn recursive_global_aggregates_keep_physical_sentinels_and_cold_widening() {
     ] {
         change(&mut e, patch);
         check(
-            &e,
+            &mut e,
             p,
             &[("seed", &["v"])],
             &["amount", "item", "__sql_changes_amount"],
@@ -393,13 +393,13 @@ fn recursive_registered_joins_retract_unsupported_cycles_and_keep_empty_keys_abs
             &mut fresh,
             "edge",
             &["a", "b", "w"],
-            rows(&e, "SELECT * FROM edge"),
+            rows(&mut e, "SELECT * FROM edge"),
         );
-        bind(&mut fresh, "root", &["n"], rows(&e, "SELECT * FROM root"));
+        bind(&mut fresh, "root", &["n"], rows(&mut e, "SELECT * FROM root"));
         fresh.run(p.into(), "python".into(), None).unwrap();
         assert_eq!(
-            rows(&e, "SELECT * FROM mask ORDER BY c0"),
-            rows(&fresh, "SELECT * FROM mask ORDER BY c0")
+            rows(&mut e, "SELECT * FROM mask ORDER BY c0"),
+            rows(&mut fresh, "SELECT * FROM mask ORDER BY c0")
         );
     }
 }
@@ -425,7 +425,7 @@ fn recursive_aggregate_bodies_with_joins_use_retained_helpers() {
             "{report}"
         );
         check(
-            &e,
+            &mut e,
             p,
             &[
                 ("seed", &["g", "v"]),
@@ -452,17 +452,17 @@ fn recursive_splitters_retain_the_immutable_integer_domain() {
         change(&mut e, patch);
         let (_d, mut fresh) = executor();
     fresh.cold_oracle=true;
-        bind(&mut fresh, "owner", &["n"], rows(&e, "SELECT * FROM owner"));
+        bind(&mut fresh, "owner", &["n"], rows(&mut e, "SELECT * FROM owner"));
         bind(
             &mut fresh,
             "seed",
             &["s"],
-            rows(&e, "SELECT sym_text(s) FROM seed"),
+            rows(&mut e, "SELECT sym_text(s) FROM seed"),
         );
         fresh.run(p.into(), "python".into(), None).unwrap();
         assert_eq!(
-            rows(&e, "SELECT * FROM best ORDER BY c0"),
-            rows(&fresh, "SELECT * FROM best ORDER BY c0")
+            rows(&mut e, "SELECT * FROM best ORDER BY c0"),
+            rows(&mut fresh, "SELECT * FROM best ORDER BY c0")
         );
     }
 }
@@ -474,11 +474,10 @@ fn unsupported_checked_ctes_leave_existing_results_and_release_private_slots() {
         sql_ast::SqlExpression as E,
     };
     let (_d, e) = initial();
-    let before = rows(&e, "SELECT * FROM distance ORDER BY c0");
-    let slots = rows(
-        &e,
-        "SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '*__it*'",
-    );
+    // Read without `query`, whose step budget needs the connection mutably: `Work` borrows it below.
+    let read = |sql: &str| e.verification_rows(sql).unwrap();
+    let before = read("SELECT * FROM distance ORDER BY c0");
+    let slots = read("SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '*__it*'");
     let mut run = e.executions[0].clone();
     run.temporal.clear();
     let emitted = Arc::make_mut(&mut run.emitted);
@@ -515,14 +514,8 @@ fn unsupported_checked_ctes_leave_existing_results_and_release_private_slots() {
     work.versions = Some(&e.versions);
     super::super::temporal::prepare(&mut work, &e.versions, &mut run, 999).unwrap();
     assert!(run.temporal.is_empty());
-    assert_eq!(
-        rows(
-            &e,
-            "SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '*__it*'"
-        ),
-        slots
-    );
-    assert_eq!(rows(&e, "SELECT * FROM distance ORDER BY c0"), before);
+    assert_eq!(read("SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '*__it*'"), slots);
+    assert_eq!(read("SELECT * FROM distance ORDER BY c0"), before);
     work.cleanup().unwrap();
     tx.commit();
 }
@@ -538,7 +531,7 @@ fn lifting_an_unrelated_walk_preserves_constant_seed_timing_and_widening() {
     );
     e.run(full, "python".into(), None).unwrap();
     assert_eq!(
-        rows(&e, "SELECT c1>1000000 FROM level_value WHERE c0=1"),
+        rows(&mut e, "SELECT c1>1000000 FROM level_value WHERE c0=1"),
         json!([[1]])
     );
     for patch in [
@@ -547,7 +540,7 @@ fn lifting_an_unrelated_walk_preserves_constant_seed_timing_and_widening() {
     ] {
         change(&mut e, patch);
         check(
-            &e,
+            &mut e,
             numeric,
             &[("root", &["n"])],
             &["level_value", "__sql_changes_level_value"],
@@ -603,15 +596,15 @@ fn sparse_extended_iterations_keep_negative_reducer_inputs_after_empty_frontiers
         eprintln!("recursive negative count edit: {work:?}");
         e.set_limits("{}".into()).unwrap();
         assert_eq!(
-            rows(&e, "SELECT c1 FROM amount WHERE c0=17"),
+            rows(&mut e, "SELECT c1 FROM amount WHERE c0=17"),
             json!([[amount]])
         );
         assert_eq!(
-            rows(&e, "SELECT c1 FROM item WHERE c0=17 ORDER BY c1"),
+            rows(&mut e, "SELECT c1 FROM item WHERE c0=17 ORDER BY c1"),
             items
         );
         assert_eq!(
-            rows(&e, "SELECT count(*) FROM amount WHERE c0<>17 AND c1=5"),
+            rows(&mut e, "SELECT count(*) FROM amount WHERE c0<>17 AND c1=5"),
             json!([[2999]])
         );
     }
@@ -637,14 +630,14 @@ fn recursive_sum_caches_defer_unused_group_overflow_and_restore_native_state() {
             .reason
             .contains("integer overflow")
     );
-    assert_eq!(rows(&e, "SELECT * FROM owner"), json!([[1]]));
-    assert_eq!(rows(&e, "SELECT * FROM amount"), json!([[1, 3]]));
+    assert_eq!(rows(&mut e, "SELECT * FROM owner"), json!([[1]]));
+    assert_eq!(rows(&mut e, "SELECT * FROM amount"), json!([[1, 3]]));
     change(
         &mut e,
         json!([{"name":"event","delete":[[2,2,max]]},{"name":"owner","insert":[[2]]}]),
     );
     check(
-        &e,
+        &mut e,
         p,
         &[("event", &["id", "g", "v"]), ("owner", &["g"])],
         &["amount", "__sql_changes_amount"],
@@ -659,11 +652,11 @@ fn scalar_transitions_share_across_wave_frames_only_at_matching_cursors() {
     let p = ".decl event(id:number,g:number,v:number)\n.decl owner(g:number)\n.input event,owner\n.decl amount(g:number,v:max<>) widen 4\namount(g,0) :- owner(g).\namount(g,v+s+n) :- amount(g,v), v<10, n=count : {event(_,g,_)}, s=sum x : {event(_,g,x)}.\n.decl other(g:number,v:max<>) widen 4\nother(g,0) :- owner(g).\nother(g,v+s+n) :- other(g,v), v<10, n=count : {event(_,g,_)}, s=sum x : {event(_,g,x)}.\n.output amount,other\n";
     let initial:Value=serde_json::from_str(&e.run(p.into(),"python".into(),None).unwrap()).unwrap();
     assert!(initial["preparation"]["summary_transition_reuses"].as_u64().unwrap()>0,"{initial}");
-    let before=rows(&e,"SELECT * FROM amount");
+    let before=rows(&mut e,"SELECT * FROM amount");
     let failed=json!([{"name":"event","insert":[[99,0,1]]}]);
     assert!(e.apply_changes(failed.to_string(),Some(1)).is_err());
-    assert_eq!(rows(&e,"SELECT * FROM amount"),before);
-    assert_eq!(rows(&e,"SELECT count(*) FROM event WHERE id=99"),json!([[0]]));
+    assert_eq!(rows(&mut e,"SELECT * FROM amount"),before);
+    assert_eq!(rows(&mut e,"SELECT count(*) FROM event WHERE id=99"),json!([[0]]));
     let mut reuses=0;
     for patch in [
         json!([{"name":"event","insert":[[3,0,1]]}]),
@@ -672,7 +665,7 @@ fn scalar_transitions_share_across_wave_frames_only_at_matching_cursors() {
     ] {
         let report:Value = serde_json::from_str(&e.apply_changes(patch.to_string(),None).unwrap()).unwrap();
         reuses+=report["summary_transition_reuses"].as_u64().unwrap();
-        check(&e,p,&[("event",&["id","g","v"]),("owner",&["g"])],&["amount","__sql_changes_amount","other","__sql_changes_other"]);
+        check(&mut e,p,&[("event",&["id","g","v"]),("owner",&["g"])],&["amount","__sql_changes_amount","other","__sql_changes_other"]);
     }
     assert!(reuses>0,"the recursive gates must reuse a synchronized bag transition");
 }

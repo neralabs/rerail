@@ -1,8 +1,22 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
+.decl end_line(n: node, l: number)
+.decl examples_line(d: number, l: number)
+.decl examples_string(d: number, n: node, first: number, last: number)
+.decl imports_module(d: number)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
 .decl out_scope(d: number)
+.decl source(d: number, sp: node)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, line, value, value_type_of, source, end_line, node_text
+.output violation
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
@@ -104,4 +118,10 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
-.output violation
+tape_syntax_error(d) :- syntax_error(d).
+imports_module(d) :- node(d, m, "module", _, _), node_text(m, s), match("(?s:.*)(?:from api|import api)(?s:.*)", s).
+violation("data-layer-no-api-root-imports", "imports", "NARI001", p, l) :- node(d, n, "import_from_statement", _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), node_text(n, s), match("from\\s+\\.*api\\s+import\\b(?s:.*)", s), imports_module(d), doc(d, p, _), line(n, l).
+examples_string(d, n, first, last) :- node(d, n, "string", _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), value(n, v), value_type_of(n, "str"), match("(?s:.*)(?:(?m)^[ \t]*(?:from api import [^\n]+|import api\\s*(?:\n|$)))(?s:.*)", v), line(n, first), end_line(n, last).
+examples_line(d, l) :- examples_string(d, n, l, _), node_text(n, s), match("[rRuU]*[\"']{1,3}(?:from api import [^\n]+|import api\\s*(?:\n|$))(?s:.*)", s).
+examples_line(d, l) :- examples_string(d, _, first, last), source(d, sp), match_group("(?m)(?:^[ \t]*[rRuU]*[\"']{1,3}|^[ \t]*)(?<IMPORT>(?:from api import [^\n]+|import api\\s*(?:\n|$)))", sp, _, "IMPORT", g), line(g, l), l > first, l <= last.
+violation("data-layer-no-api-root-imports", "examples", "NARI001", p, l) :- examples_line(d, l), doc(d, p, _).

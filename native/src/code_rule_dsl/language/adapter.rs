@@ -7,83 +7,70 @@
 //! Rust names only as `<A as Adapter>::Value`; a function generic over `A: Adapter`, called
 //! there, names them `A::Value`.
 
-mod arguments;
-mod calls;
-mod format_args;
-#[cfg(test)]
-mod kit;
-mod json;
-mod rr;
-mod rust;
-mod scope;
-mod sql;
-mod syntax;
-mod value;
-mod vue;
+pub mod arguments;
+pub mod calls;
+pub mod format_args;
+// cratify: `kit` is rerail-engine's (it mounts it)
+// cratify: `json` is rerail-lang-json's (it mounts it)
+pub mod rr;
+// cratify: `rust` is rerail-lang-rust's (it mounts it)
+pub mod scope;
+// cratify: `sql` is rerail-lang-sql's (it mounts it)
+pub mod syntax;
+// The language pack interface the core asks (generated from the traits above: tools/cratify/packgen.py).
+pub mod pack;
+pub mod value;
+// cratify: `vue` is rerail-lang-ecma's (it mounts it)
 
-pub(crate) use super::with_adapter;
-pub(crate) use arguments::{ArgumentFeature, ArgumentRules};
-pub(crate) use calls::{CallFeature, CallRules};
-pub(crate) use format_args::{FormatArgFeature, FormatArgRules};
-// Read through `with_adapter!` only, whose arm for a family left out of the build is `unreachable!`.
-#[cfg_attr(not(feature = "lang-json"), allow(unused_imports))]
-pub(crate) use json::Json;
-// Read through `with_adapter!` only, whose arm for a family left out of the build is `unreachable!`.
+pub use arguments::{ArgumentFeature, ArgumentRules};
+pub use calls::{CallFeature, CallRules};
+pub use format_args::{FormatArgFeature, FormatArgRules};
+// Read through `with_adapter!` (tests) only, whose arm for a family left out of the build is `unreachable!`.
+// cratify: a re-export of rerail-lang-json's, which its facades of this module make
+// Read through `with_adapter!` (tests) only, whose arm for a family left out of the build is `unreachable!`.
+#[cfg(any(test, feature = "test-hooks"))]
 #[cfg_attr(not(feature = "lang-rr"), allow(unused_imports))]
-pub(crate) use rr::Rr;
-// Read through `with_adapter!` only, whose arm for a family left out of the build is `unreachable!`.
-#[cfg_attr(not(feature = "lang-rust"), allow(unused_imports))]
-pub(crate) use rust::Rust;
-pub(crate) use scope::{ScopeFeature, ScopeRules};
-// Read through `with_adapter!` only, whose arm for a family left out of the build is `unreachable!`.
-#[cfg_attr(not(feature = "lang-sql"), allow(unused_imports))]
-pub(crate) use sql::Sql;
-pub(crate) use syntax::{QueryWhen, SyntaxFeature, SyntaxRules};
-pub(crate) use value::{ValueFeature, ValueRules};
-// Read through `with_adapter!` only, whose arm for a family left out of the build is `unreachable!`.
-#[cfg_attr(not(feature = "lang-vue"), allow(unused_imports))]
-pub(crate) use vue::Vue;
+pub use rr::Rr;
+// Read through `with_adapter!` (tests) only, whose arm for a family left out of the build is `unreachable!`.
+// cratify: a re-export of rerail-lang-rust's, which its facades of this module make
+pub use scope::{ScopeFeature, ScopeRules};
+// Read through `with_adapter!` (tests) only, whose arm for a family left out of the build is `unreachable!`.
+// cratify: a re-export of rerail-lang-sql's, which its facades of this module make
+pub use syntax::{QueryWhen, SyntaxFeature, SyntaxRules};
+pub use value::{ValueFeature, ValueRules};
+// Read through `with_adapter!` (tests) only, whose arm for a family left out of the build is `unreachable!`.
+// cratify: a re-export of rerail-lang-ecma's, which its facades of this module make
 
 use super::{
     Family, GrammarDialect, PackageType, SourceType, is_declaration_file, language_not_supported,
 };
-use crate::code_rule_dsl::identifier::python_name;
+use crate::code_rule_dsl::identifier::{ecma_name, python_name};
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
-use crate::code_rule_dsl::matcher::{
-    file_biome_suppressions, file_eslint_directives, file_noqa, file_nosec, file_oxlint_directives,
-    file_phpcs, file_phpstan, file_psalm,
-};
+use crate::code_rule_dsl::matcher::{file_index};
 use crate::code_rule_dsl::model::{ViolationSpec, python_module_path_on_disk};
-use crate::code_rule_dsl::suppress::{
-    BiomeSuppressions, EslintDirectives, NoqaIndex, NosecIndex, OxlintDirectives, PhpcsIndex,
-    PhpstanIndex, PsalmIndex, Suppress, parent_statement, root,
-};
-use ast_grep_core::tree_sitter::StrDoc;
-use ast_grep_core::{AstGrep, Doc, Node};
-use ast_grep_language::LanguageExt;
+use crate::code_rule_dsl::suppress::{Suppress, root};
+use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
 use std::ops::Range;
 use std::path::Path;
+use std::sync::LazyLock;
+// cratify: `python` is rerail-lang-python's (it mounts it)
+// cratify: a re-export of rerail-lang-python's, which its facades of this module make
+// cratify: `ecma` is rerail-lang-ecma's (it mounts it)
+// cratify: a re-export of rerail-lang-ecma's, which its facades of this module make
+// cratify: `php` is rerail-lang-php's (it mounts it)
+// cratify: a re-export of rerail-lang-php's, which its facades of this module make
+// cratify: `blade` is rerail-lang-php's (it mounts it)
+// cratify: a re-export of rerail-lang-php's, which its facades of this module make
 
-/// Python's family: Ruff's semantics.
-pub(crate) struct Python;
-/// TypeScript, TSX and JavaScript: ESLint's semantics.
-pub(crate) struct Ecma;
-/// PHP's family.
-pub(crate) struct Php;
-/// Blade templates' own tree (`blade::forte`). A template's semantics are those of the PHP it
-/// embeds (`blade::view`), a guest document read with PHP's family (`embed`): a clause reads
-/// them with `ast.embedded` or `embedded`. The concerns name PHP's, which the compile refuses on
-/// the template's own tree (`compile::refuse_unavailable_semantics`).
-pub(crate) struct Blade;
 /// The adapter of a capability a family does not read (registry `refused` or `not-supported-yet`).
-pub(crate) struct Refused;
+pub struct Refused;
 
 /// A registry family's semantics.
-pub(crate) trait Adapter: 'static {
+pub trait Adapter: 'static {
     /// The family dispatch names it by; the adapter kit checks the two agree.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     const FAMILY: Family;
     /// The family's name in diagnostics.
     const LABEL: &'static str;
@@ -101,12 +88,34 @@ pub(crate) trait Adapter: 'static {
     /// Whether an ast query's `file` may ask for declaration files (`declaration`,
     /// typescript-eslint's `.d.ts` predicate). Python has stubs instead and refuses it.
     const DECLARATION_FILES: bool;
+    /// Whether the linter the family's ports follow strips a leading byte order mark from the
+    /// text its rules read (ESLint's `SourceCode`), so a `file.content` regex reads a file from
+    /// past it.
+    const STRIPS_BOM: bool;
+    /// The kinds of the family's comment nodes, where `rerail-ignore` directives are read
+    /// (`suppress::rerail`).
+    const COMMENT_KINDS: &'static [&'static str];
+    /// The leaf kinds that may stand before a file's first code without being code (a shebang
+    /// line, PHP's `<?php`): a `rerail-ignore` comment before them all covers the whole file.
+    const PREAMBLE_KINDS: &'static [&'static str];
+    /// The kinds of a body that starts at its first statement, a comment before that statement
+    /// standing beside it rather than in it (Python's `block`): a leading `rerail-ignore` comment
+    /// there covers that statement, not the whole body.
+    const BODY_KINDS: &'static [&'static str];
+    /// The comment kinds a token or sibling walk passes over (`is_comment_kind`).
+    const WALK_COMMENT_KINDS: &'static [&'static str] = Self::COMMENT_KINDS;
+    /// Whether an ast query may ask where a file's imports lead (`importTarget`, eslint-plugin-n's).
+    const IMPORT_TARGETS: bool = false;
+    /// Whether the family's files are parsed by Rerail's port of Forte rather than tree-sitter
+    /// (`parsed_by_forte`, the registry's `parser`).
+    const PARSED_BY_FORTE: bool = false;
     type Scope: ScopeRules;
     type Value: ValueRules;
     type Arguments: ArgumentRules;
     type Calls: CallRules;
     type FormatArgs: FormatArgRules;
-    /// An identifier's text as the family compares names (Python: NFKC; others: as written).
+    /// An identifier's text as the family compares names (Python: NFKC; ECMAScript: escapes
+    /// decoded; others: as written).
     fn name(text: Cow<'_, str>) -> Cow<'_, str>;
     /// The bytes tree-sitter parses for a file of the family, as long as `source` and with its
     /// character boundaries and line ends: `source` itself, but for PHP's view of a template
@@ -134,228 +143,22 @@ pub(crate) trait Adapter: 'static {
     fn source_type(_path: &str, _package: Option<PackageType>) -> Option<SourceType> {
         Some(SourceType::Module)
     }
-}
-
-impl Adapter for Python {
-    const FAMILY: Family = Family::Python;
-    const LABEL: &'static str = "python";
-    const TERMINATORS: Terminators = Terminators::Newlines;
-    const PACKAGES: bool = true;
-    const PACKAGE_MANIFESTS: bool = false;
-    const JSX_RUNTIMES: bool = false;
-    const DECLARATION_FILES: bool = false;
-    type Scope = Self;
-    type Value = Self;
-    type Arguments = Self;
-    type Calls = Self;
-    type FormatArgs = Self;
-
-    fn name(text: Cow<'_, str>) -> Cow<'_, str> {
-        python_name(text)
-    }
-
-    fn parse_input(source: &str) -> Cow<'_, str> {
-        Cow::Borrowed(source)
-    }
-
-    fn module_path(file: &Path) -> Option<serde_json::Value> {
-        python_module_path_on_disk(file)
-    }
-
-    fn suppresses<D: Doc>(
-        _: &ViolationSpec,
-        suppress: &Suppress,
-        node: &Node<'_, D>,
-        source: &str,
-        lines: &LineTable,
-        anchored: Range<usize>,
-        witness: (usize, usize),
-    ) -> bool {
-        let at = anchored.start;
-        // A project may run Ruff and Bandit together: either linter the violation names may
-        // suppress it. Bandit reads `# nosec` on the reported line and on the lines of the node it
-        // visited, here the witness.
-        suppress.noqa.as_ref().is_some_and(|noqa| {
-            let index = file_noqa(|| NoqaIndex::read(&root(node), source, lines));
-            let parent = noqa.parent.then(|| parent_statement(node, at)).flatten();
-            index.suppresses(&noqa.codes, at, parent)
-        }) || suppress.nosec.as_ref().is_some_and(|codes| {
-            let index = file_nosec(|| NosecIndex::read(&root(node), source, lines));
-            index.suppresses(codes, at, witness, lines)
-        })
-    }
-}
-
-impl Adapter for Ecma {
-    const FAMILY: Family = Family::Ecma;
-    const LABEL: &'static str = "typescript";
-    const TERMINATORS: Terminators = Terminators::Eslint;
-    const PACKAGES: bool = false;
-    const PACKAGE_MANIFESTS: bool = true;
-    const JSX_RUNTIMES: bool = true;
-    const DECLARATION_FILES: bool = true;
-    type Scope = Self;
-    type Value = Self;
-    type Arguments = Self;
-    type Calls = Refused;
-    type FormatArgs = Refused;
-
-    fn name(text: Cow<'_, str>) -> Cow<'_, str> {
-        text
-    }
-
-    fn parse_input(source: &str) -> Cow<'_, str> {
-        Cow::Borrowed(source)
-    }
-
-    fn module_path(_: &Path) -> Option<serde_json::Value> {
+    /// The module name its file's path gives it, where a path names a module (Python's dotted name).
+    fn path_module(_path: &str) -> Option<String> {
         None
     }
-
-    /// A project may run ESLint, oxlint (which also reads `eslint-` directives) or Biome: any
-    /// linter the violation names may suppress it. Oxlint and Biome ask about the anchored span:
-    /// an oxlint block covers a problem that overlaps it, a `biome-ignore-start` range one it
-    /// holds, a `biome-ignore` one that starts in what it covers.
-    fn suppresses<D: Doc>(
-        _: &ViolationSpec,
-        suppress: &Suppress,
-        node: &Node<'_, D>,
-        source: &str,
-        lines: &LineTable,
-        anchored: Range<usize>,
-        _: (usize, usize),
-    ) -> bool {
-        suppress.eslint.as_ref().is_some_and(|rules| {
-            let directives = file_eslint_directives(|| EslintDirectives::read(node, source, lines));
-            directives.suppresses(rules, anchored.start, lines)
-        }) || suppress.oxlint.as_ref().is_some_and(|rules| {
-            let directives = file_oxlint_directives(|| OxlintDirectives::read(&root(node), source));
-            directives.suppresses(rules, anchored.clone())
-        }) || suppress.biome.as_ref().is_some_and(|rules| {
-            let suppressions =
-                file_biome_suppressions(|| BiomeSuppressions::read(&root(node), source));
-            suppressions.suppresses(rules, anchored.clone())
-        })
-    }
-
-    /// `.cjs` and `.cts` (`.d.cts` declarations included) are CommonJS; `.mjs`, `.mts`, `.tsx`
-    /// and other declaration files modules. A `.js`, `.jsx` or `.ts` file follows its package's
-    /// `type`, as Node reads `.ts` files the same way as `.js` ones (type stripping), and is a
-    /// module without a manifest (ESLint's default config, which upstream fixtures assume); where
-    /// the manifest sets no valid `type`, Node's syntax detection decides.
-    fn source_type(path: &str, package: Option<PackageType>) -> Option<SourceType> {
-        let name = path.rsplit('/').next().unwrap_or(path);
-        match name.rsplit_once('.').map(|(_, extension)| extension) {
-            Some("cjs" | "cts") => Some(SourceType::CommonJs),
-            Some("ts") if is_declaration_file(name) => Some(SourceType::Module),
-            Some("js" | "jsx" | "ts") => match package {
-                None | Some(PackageType::Module) => Some(SourceType::Module),
-                Some(PackageType::CommonJs) => Some(SourceType::CommonJs),
-                Some(PackageType::Unset) => None,
-            },
-            _ => Some(SourceType::Module),
-        }
-    }
-}
-
-impl Adapter for Php {
-    const FAMILY: Family = Family::Php;
-    const LABEL: &'static str = "php";
-    const TERMINATORS: Terminators = Terminators::Newlines;
-    const PACKAGES: bool = false;
-    const PACKAGE_MANIFESTS: bool = false;
-    const JSX_RUNTIMES: bool = false;
-    const DECLARATION_FILES: bool = true;
-    type Scope = Self;
-    type Value = Self;
-    type Arguments = Self;
-    type Calls = Self;
-    type FormatArgs = Self;
-
-    fn name(text: Cow<'_, str>) -> Cow<'_, str> {
-        text
-    }
-
-    fn parse_input(source: &str) -> Cow<'_, str> {
-        crate::code_rule_dsl::php_view::view(source)
-    }
-
-    fn module_path(_: &Path) -> Option<serde_json::Value> {
+    /// A template literal chunk's cooked text (escapes decoded, lone surrogates replaced), where the family has
+    /// template literals (ECMAScript's).
+    fn cooked_template(_chunk: &str) -> Option<String> {
         None
-    }
-
-    /// A PHP project may run PHPStan, Psalm and PHP_CodeSniffer together: any of the linters a
-    /// violation names may suppress it. A PHPStan identifier ignores one error, so the
-    /// violation's witnesses on a line spend the identifiers listed for it, as they are met.
-    fn suppresses<D: Doc>(
-        violation: &ViolationSpec,
-        suppress: &Suppress,
-        node: &Node<'_, D>,
-        source: &str,
-        lines: &LineTable,
-        anchored: Range<usize>,
-        _: (usize, usize),
-    ) -> bool {
-        let at = anchored.start;
-        suppress.phpstan.as_ref().is_some_and(|identifiers| {
-            let index = file_phpstan(|| PhpstanIndex::read(&root(node), source, lines));
-            index.suppresses(&violation.code, identifiers, at, lines)
-        }) || suppress.psalm.as_ref().is_some_and(|psalm| {
-            let index = file_psalm(|| PsalmIndex::read(&root(node), source));
-            index.suppresses(&psalm.names, psalm.suppress_all, at)
-        }) || suppress.phpcs.as_ref().is_some_and(|phpcs| {
-            let index = file_phpcs(|| PhpcsIndex::read(&root(node), source, lines));
-            index.suppresses(&phpcs.codes, phpcs.version, at, lines)
-        })
-    }
-}
-
-impl Adapter for Blade {
-    const FAMILY: Family = Family::Blade;
-    const LABEL: &'static str = "blade";
-    const TERMINATORS: Terminators = Terminators::Newlines;
-    const PACKAGES: bool = false;
-    const PACKAGE_MANIFESTS: bool = false;
-    const JSX_RUNTIMES: bool = false;
-    const DECLARATION_FILES: bool = true;
-    type Scope = Php;
-    type Value = Php;
-    type Arguments = Php;
-    type Calls = Self;
-    type FormatArgs = Php;
-
-    fn name(text: Cow<'_, str>) -> Cow<'_, str> {
-        text
-    }
-
-    /// Forte parses a template (`blade::forte`), never tree-sitter.
-    fn parse_input(source: &str) -> Cow<'_, str> {
-        Cow::Borrowed(source)
-    }
-
-    fn module_path(_: &Path) -> Option<serde_json::Value> {
-        None
-    }
-
-    /// No linter reads a template's `{{-- --}}` comments for directives.
-    fn suppresses<D: Doc>(
-        _: &ViolationSpec,
-        _: &Suppress,
-        _: &Node<'_, D>,
-        _: &str,
-        _: &LineTable,
-        _: Range<usize>,
-        _: (usize, usize),
-    ) -> bool {
-        false
     }
 }
 
 /// The module a host sends for the file at `file` whose dialect's label is `label`: its
 /// family's `Adapter::module_path`; `None` for a label no dialect has.
-pub(crate) fn module_path(label: &str, file: &Path) -> Option<serde_json::Value> {
+pub fn module_path(label: &str, file: &Path) -> Option<serde_json::Value> {
     let dialect = super::dialect_by_label(label)?;
-    with_adapter!(Family::of(dialect), A => A::module_path(file))
+    super::base(Family::of(dialect)).module_path(file)
 }
 
 /// The module system of the file at `path` in the dialect labelled `label`
@@ -367,7 +170,7 @@ pub(crate) fn source_type(
 ) -> Option<SourceType> {
     match super::dialect_by_label(label) {
         Some(dialect) => {
-            with_adapter!(Family::of(dialect), A => A::source_type(path, package))
+            super::base(Family::of(dialect)).source_type(path, package)
         }
         None => Some(SourceType::Module),
     }
@@ -377,37 +180,71 @@ pub(crate) fn source_type(
 /// (`Adapter::PACKAGES`); `false` for a label no dialect has.
 pub(crate) fn packages(label: &str) -> bool {
     super::dialect_by_label(label)
-        .is_some_and(|dialect| with_adapter!(Family::of(dialect), A => A::PACKAGES))
+        .is_some_and(|dialect| super::base(Family::of(dialect)).packages())
 }
 
-/// What tree-sitter parses for a file of `dialect`: its family's `Adapter::parse_input`.
-pub(crate) fn parse_input(dialect: GrammarDialect, source: &str) -> Cow<'_, str> {
-    with_adapter!(Family::of(dialect), A => A::parse_input(source))
-}
-
-/// `dialect`'s ast-grep tree of `parse_input`, reading `source`'s text.
-pub(crate) fn ast_grep(dialect: GrammarDialect, source: &str) -> AstGrep<StrDoc<GrammarDialect>> {
-    match parse_input(dialect, source) {
-        Cow::Borrowed(_) => dialect.ast_grep(source),
-        Cow::Owned(input) => {
-            let mut doc = StrDoc::new(&input, dialect);
-            // The input has `source`'s length and character boundaries, so every node's range
-            // reads `source`.
-            doc.src = source.to_owned();
-            AstGrep::doc(doc)
+/// Every family's `kinds`, each once: the walks ask per node they visit, so the union is gathered
+/// once rather than per call.
+fn every_family_kind(kinds: impl Fn(Family) -> &'static [&'static str]) -> Vec<&'static str> {
+    let mut union = Vec::new();
+    for kind in Family::ALL.into_iter().filter(|&family| super::registered_base(family).is_some()).flat_map(kinds) {
+        if !union.contains(kind) {
+            union.push(*kind);
         }
     }
+    union
 }
+
+static WALK_COMMENT_KINDS: LazyLock<Vec<&'static str>> =
+    LazyLock::new(|| every_family_kind(|family| super::base(family).comment_kinds()));
+
+static PAREN_KINDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    every_family_kind(
+        |family| super::base(family).paren_kinds(),
+    )
+});
+
+/// Whether `kind` is a comment that a token or sibling walk passes over, in any family's grammar
+/// (`Adapter::WALK_COMMENT_KINDS`). The matchers that walk (`compare`, `layout`) hold no family, and
+/// a kind's name means a comment in every grammar that has it.
+pub fn is_comment_kind(kind: &str) -> bool {
+    WALK_COMMENT_KINDS.contains(&kind)
+}
+
+/// Whether `kind` is a parenthesized expression in any family's grammar
+/// (`ScopeRules::PAREN_KINDS`), for the matchers that hold no family.
+pub fn is_paren_kind(kind: &str) -> bool {
+    PAREN_KINDS.contains(&kind)
+}
+
+/// Whether a file of `dialect` is parsed by Forte: its family's `Adapter::PARSED_BY_FORTE`.
+pub fn parsed_by_forte(dialect: GrammarDialect) -> bool {
+    super::base(Family::of(dialect)).parsed_by_forte()
+}
+
+/// Whether an ast query in `dialect` may use `importTarget`: its family's `Adapter::IMPORT_TARGETS`.
+pub fn has_import_targets(dialect: GrammarDialect) -> bool {
+    super::base(Family::of(dialect)).import_targets()
+}
+
+pub use super::{ast_grep, parse_input};
 
 /// Whether files of the dialect labelled `label` read their nearest `package.json`
 /// (`Adapter::PACKAGE_MANIFESTS`); `false` for a label no dialect has.
-pub(crate) fn package_manifests(label: &str) -> bool {
+pub fn package_manifests(label: &str) -> bool {
     super::dialect_by_label(label)
-        .is_some_and(|dialect| with_adapter!(Family::of(dialect), A => A::PACKAGE_MANIFESTS))
+        .is_some_and(|dialect| super::base(Family::of(dialect)).package_manifests())
+}
+
+/// Whether files of the dialect labelled `label` are read past a leading byte order mark
+/// (`Adapter::STRIPS_BOM`); `false` for a label no dialect has.
+pub(crate) fn strips_bom(label: &str) -> bool {
+    super::dialect_by_label(label)
+        .is_some_and(|dialect| super::base(Family::of(dialect)).strips_bom())
 }
 
 /// Why a family refuses a DSL feature, with the message the refusal reports.
-pub(crate) enum Refusal {
+pub enum Refusal {
     /// The family has no such thing: the rule is invalid.
     Refused(Cow<'static, str>),
     /// Planned: the rule is `language-not-supported`, kept but inactive.
@@ -420,4 +257,50 @@ pub(crate) fn gate(path: &str, verdict: Result<(), Refusal>) -> napi::Result<()>
         Refusal::Refused(message) => invalid(format!("{path}: {message}")),
         Refusal::NotSupportedYet(message) => language_not_supported(format!("{path}: {message}")),
     })
+}
+
+/// Every adapter as the lang-level questions (`language::LanguageBase`), registered beside its pack.
+impl<A: Adapter> super::LanguageBase for pack::Pack<A> {
+    fn parse_input<'s>(&self, source: &'s str) -> Cow<'s, str> {
+        A::parse_input(source)
+    }
+    fn terminators(&self) -> Terminators {
+        A::TERMINATORS
+    }
+    fn source_type(&self, path: &str, package: Option<PackageType>) -> Option<SourceType> {
+        A::source_type(path, package)
+    }
+    fn comment_kinds(&self) -> &'static [&'static str] {
+        A::WALK_COMMENT_KINDS
+    }
+    fn path_module(&self, path: &str) -> Option<String> {
+        A::path_module(path)
+    }
+    fn cooked_template(&self, chunk: &str) -> Option<String> {
+        A::cooked_template(chunk)
+    }
+    fn module_path(&self, file: &Path) -> Option<serde_json::Value> {
+        A::module_path(file)
+    }
+    fn packages(&self) -> bool {
+        A::PACKAGES
+    }
+    fn package_manifests(&self) -> bool {
+        A::PACKAGE_MANIFESTS
+    }
+    fn strips_bom(&self) -> bool {
+        A::STRIPS_BOM
+    }
+    fn import_targets(&self) -> bool {
+        A::IMPORT_TARGETS
+    }
+    fn parsed_by_forte(&self) -> bool {
+        A::PARSED_BY_FORTE
+    }
+    fn paren_kinds(&self) -> &'static [&'static str] {
+        <<A as Adapter>::Scope as ScopeRules>::PAREN_KINDS
+    }
+    fn reads_values(&self) -> bool {
+        <<A as Adapter>::Value as ValueRules>::SUPPORTED
+    }
 }

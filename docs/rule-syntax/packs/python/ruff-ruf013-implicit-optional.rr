@@ -32,7 +32,7 @@ allows(t) :- head_q(t, "typing.Literal"), lit_none(t).
 allows(t) :- head_q(t, "typing.Union"), type_app(t, _, _, a), allows(a).
 allows(t) :- head_q(t, "typing.Annotated"), type_app(t, _, 0, a), allows(a).
 allows(t) :- type_app(t, h, 0, _), !known(h).
-allows(t) :- ann_strip(t, m), (kind(m, "binary_operator") ; kind(m, "union_type")), op(m, "|"), child(m, x, _), allows(x).
+allows(t) :- ann_strip(t, m), (kind(m, "binary_operator"), op(m, "|") ; kind(m, "union_type")), child(m, x, _), allows(x).
 allows(t) :- ann_strip(t, s), (kind(s, "string") ; kind(s, "concatenated_string")), (!parsed(s, "annotation", _) ;
     parsed(s, "annotation", r), allows(r)).
 allows(t) :- ann_strip(t, m), kind(m, k), !typed_kind(k).
