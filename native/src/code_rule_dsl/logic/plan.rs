@@ -853,6 +853,9 @@ fn near(then: &[f64], now: &[f64]) -> bool {
         && then.iter().zip(now).all(|(a, b)| {
             // Negative signatures distinguish unknown and proven-empty constant postings.
             if *a < 0.0 || *b < 0.0 { return a == b; }
+            // An empty relation is not near a filled one: a plan priced where it was empty takes any cross product
+            // after it as free (`text` crossed after an empty `rr_ast_5_1`: 6,240 -> 115M rows when it held one).
+            if (*a == 0.0) != (*b == 0.0) { return false; }
             let (a, b) = (a.max(1.0), b.max(1.0));
             a <= b * PRICE_DRIFT && b <= a * PRICE_DRIFT
         })

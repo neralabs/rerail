@@ -1199,3 +1199,12 @@ fn statistics_versions_accumulate_drift_and_publish_changed_keys() {
     model.stats.card.insert("a".into(),1000.0); watch.record(0,0,&model,"a");
     assert!(!watch.take(0)); watch.delta(0,1); assert!(watch.take(0));
 }
+
+#[test]
+fn a_plan_priced_on_an_empty_relation_is_not_kept_once_it_fills() {
+    // Within the drift, both ways; an empty relation against one row is not (a cross product after it was free).
+    assert!(near(&[1.0, 10.0], &[1.5, 19.0]));
+    assert!(near(&[0.0, 10.0], &[0.0, 10.0]));
+    assert!(!near(&[0.0, 10.0], &[1.0, 10.0]), "empty, then one row");
+    assert!(!near(&[1.0], &[0.0]), "one row, then empty");
+}
