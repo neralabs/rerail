@@ -1,7 +1,7 @@
 # 0116: What a one-line edit costs, and why
 
-Status: analysis (2026-11-11). Measured on the 20-file corpus. The fixes it found on the way are built (below).
-The changes it proposes are not.
+Status: analysis (2026-11-11). Measured on the 20-file corpus. The fixes it found on the way are built (below),
+and so is step 2 of what it proposes (plans kept across processes). The other steps are not.
 
 ## Intro
 
@@ -162,6 +162,36 @@ contributed. Only the edited file's entry is new.
 Also from this analysis:
 - **`RERAIL_REUSE_TRACE`** prints why the cutoff misses.
 - **`RERAIL_SPIKE_DELTA`** prints each input's delta size.
+
+## Built: plans kept across processes (step 2)
+
+**What it does.**
+- A run's plans are kept in the store under the prepared program, beside its whole-program choices (`plan::choices`):
+  one entry, one row per plan, read once before the first wave.
+- A plan is kept by its rule's key and by the scale it was priced at: the corpus's nodes, by powers of 4. An edit's run
+  plans its edited file's part at one file's scale, and a full run at the corpus's, so each keeps its own.
+- A rule the run has not planned yet takes the stored plan: its steps are the body's literals by position, since the
+  key digests the body. The kept-plan checks of decision 0038 then decide as they would within a run: reuse at the
+  kept price, re-price, or search again.
+- The plan key is now the same in every process: `derived::digest` is seeded with fixed keys, not per process. The
+  engine's build is in the entry's plan, so a new build plans afresh.
+- At the end of the run the plans are queued for the store's writer, only where the run changed any.
+
+**Measured** (20 files, one fresh store, unprofiled, load 20–80):
+
+| | Plan searches | Taken from the store | Instructions | CPU |
+|---|---|---|---|---|
+| Cold | 28,701 | 0 | 939.0 G | 77.3 s |
+| First edit | 41,474 | 17 | 300.8 G | 27.3 s |
+| Second edit | 1,295 | 41,463 | 246.0 G | 23.9 s |
+| Unchanged | (the whole-run cutoff) | | 10.6 G | 1.0 s |
+
+The findings are 62 in each. From the second edit on, 55 G instructions (18%) are gone, which is the planning this
+record measured. The first edit after a cold run still plans its rules: the maintenance rewrite's rules are not in a
+cold run, and its one-file part has not been planned at one file's scale.
+
+`RERAIL_PLAN_CACHE_COUNTS` prints each run's counts, now with "taken from the store". `RERAIL_PLAN_CACHE_WHY` prints
+the first rejections of a kept plan over 1,000 nodes, with the sizes on both sides.
 
 ## Not resolved
 

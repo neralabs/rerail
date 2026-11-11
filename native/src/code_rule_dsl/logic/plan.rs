@@ -762,8 +762,8 @@ pub(in crate::code_rule_dsl) fn sql_col(rel: &str, col: usize) -> String {
 
 /// The kept-plan outcomes of `plan_rule_reused` in this process, by `CacheOutcome`: `RERAIL_PLAN_CACHE_COUNTS`
 /// prints them at the end of each corpus run (`KeepPlans`).
-static PLAN_CACHE: [std::sync::atomic::AtomicU64; 7] = [const { std::sync::atomic::AtomicU64::new(0) }; 7];
-const PLAN_CACHE_NAMES: [&str; 7] = ["no cache", "first sight", "kept price", "re-priced", "replanned: cheaper start", "replanned: work grew", "replanned: no longer runs"];
+static PLAN_CACHE: [std::sync::atomic::AtomicU64; 8] = [const { std::sync::atomic::AtomicU64::new(0) }; 8];
+const PLAN_CACHE_NAMES: [&str; 8] = ["no cache", "first sight", "kept price", "re-priced", "replanned: cheaper start", "replanned: work grew", "replanned: no longer runs", "taken from the store"];
 fn plan_cache(outcome: usize) {
     PLAN_CACHE[outcome].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
@@ -914,7 +914,172 @@ type Kept = (Arc<[Step]>, f64, Option<super::profile::RulePlan>, f64, Option<Arc
 
 /// A run's kept plans, shared by the threads its strata run on (decision 0113): a stratum's job enters them
 /// (`enter_plans`). Each stratum plans its own rules, so no two jobs write one key.
-type SharedPlans = Arc<parking_lot::Mutex<rustc_hash::FxHashMap<PlanKey, Kept>>>;
+type SharedPlans = Arc<parking_lot::Mutex<RunPlans>>;
+
+/// A run's plans: those it made or took (`kept`), and those the store kept from earlier processes (`stored`,
+/// decision 0116 step 2), taken into `kept` when a rule is first planned.
+#[derive(Default)]
+struct RunPlans {
+    kept: rustc_hash::FxHashMap<PlanKey, Kept>,
+    stored: Arc<StoredPlans>,
+}
+
+impl std::ops::Deref for RunPlans {
+    type Target = rustc_hash::FxHashMap<PlanKey, Kept>;
+    fn deref(&self) -> &Self::Target {
+        &self.kept
+    }
+}
+
+impl std::ops::DerefMut for RunPlans {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.kept
+    }
+}
+
+impl RunPlans {
+    /// The plan kept for `key`: the run's, else the store's at the scale of `nodes`, its steps taken from `body`
+    /// by position (the key digests the body, so its literals are the planned ones).
+    fn find(&mut self, key: &PlanKey, body: &[Literal], nodes: f64) -> Option<Kept> {
+        if let Some(k) = self.kept.get(key) {
+            return Some(k.clone());
+        }
+        let k = self.stored.get(&(*key, scale(nodes)))?.kept(body)?;
+        plan_cache(7);
+        self.kept.insert(*key, k.clone());
+        Some(k)
+    }
+}
+
+/// A step as the store keeps it: its position in the body, and its mode.
+type StoredStep = (u16, Option<Mode>);
+
+/// A kept plan as the store keeps it across processes (decision 0116 step 2): `Kept` without its literals (they
+/// are the body's, by position) or its EXPLAIN. Plans are kept per prepared program, under the engine's build.
+#[derive(Clone, Debug, PartialEq)]
+pub(in crate::code_rule_dsl) struct StoredPlan {
+    order: Vec<StoredStep>,
+    per_node: f64,
+    gap: f64,
+    /// The last price: the sizes it read, its order, work and rows.
+    priced: Option<(Vec<f64>, Vec<StoredStep>, f64, f64)>,
+}
+
+/// The plans the store keeps for a prepared program, by plan key and the scale they were priced at (`scale`): an
+/// edit's run plans its edited file's part at that file's scale, and a full run at the corpus's, and each keeps its
+/// own (a plan priced over 20 files is not near one priced over one, so each would search the other's again).
+pub(in crate::code_rule_dsl) type StoredPlans = rustc_hash::FxHashMap<(PlanKey, u8), StoredPlan>;
+
+/// A scale's bucket: the corpus's nodes, by powers of 4.
+fn scale(nodes: f64) -> u8 {
+    (nodes.max(1.0).log2() / 2.0) as u8
+}
+
+impl StoredPlan {
+    fn of(k: &Kept) -> Option<StoredPlan> {
+        let steps = |order: &[Step]| order.iter().map(|s| Some((u16::try_from(s.at).ok().filter(|&a| a < 1 << 14)?, s.mode))).collect::<Option<Vec<_>>>();
+        let priced = match &k.4 {
+            Some(p) => Some((p.sizes.clone(), steps(&p.got.0.0)?, p.got.0.1, p.got.0.2)),
+            None => None,
+        };
+        Some(StoredPlan { order: steps(&k.0)?, per_node: k.1, gap: k.3, priced })
+    }
+
+    fn kept(&self, body: &[Literal]) -> Option<Kept> {
+        let steps = |order: &[StoredStep]| order.iter().map(|&(at, mode)| Some(Step { at: at.into(), lit: body.get(usize::from(at))?.clone(), mode })).collect::<Option<Vec<_>>>();
+        let priced = match &self.priced {
+            Some((sizes, order, work, rows)) => Some(Arc::new(Priced { sizes: sizes.clone(), got: ((steps(order)?, *work, *rows), None) })),
+            None => None,
+        };
+        Some((steps(&self.order)?.into(), self.per_node, None, self.gap, priced))
+    }
+
+    /// As integers, one row per plan: `[key high, key low, scale, per node, gap, steps, the steps four to an
+    /// integer, then when priced: work, rows, sizes, the sizes, steps, the steps]` (floats by their bits).
+    pub(in crate::code_rule_dsl) fn row((key, scale): (PlanKey, u8), p: &StoredPlan) -> Vec<i64> {
+        let mut row = vec![(key >> 64) as i64, key as i64, i64::from(scale), p.per_node.to_bits() as i64, p.gap.to_bits() as i64];
+        let steps = |row: &mut Vec<i64>, order: &[StoredStep]| {
+            row.push(order.len() as i64);
+            for four in order.chunks(4) {
+                let mut x = 0u64;
+                for (i, &(at, mode)) in four.iter().enumerate() {
+                    let m = match mode { None => 0u64, Some(Mode::Range) => 1, Some(Mode::Climb) => 2, Some(Mode::Descend) => 3 };
+                    x |= (u64::from(at) << 2 | m) << (16 * i);
+                }
+                row.push(x as i64);
+            }
+        };
+        steps(&mut row, &p.order);
+        if let Some((sizes, order, work, rows)) = &p.priced {
+            row.push(work.to_bits() as i64);
+            row.push(rows.to_bits() as i64);
+            row.push(sizes.len() as i64);
+            row.extend(sizes.iter().map(|s| s.to_bits() as i64));
+            steps(&mut row, order);
+        }
+        row
+    }
+
+    /// A row `row` made, or `None` where it is not one.
+    pub(in crate::code_rule_dsl) fn of_row(row: &[i64]) -> Option<((PlanKey, u8), StoredPlan)> {
+        let mut at = row.iter().copied();
+        let mut next = || at.next();
+        let key = ((next()? as u64 as u128) << 64 | next()? as u64 as u128, u8::try_from(next()?).ok()?);
+        let (per_node, gap) = (f64::from_bits(next()? as u64), f64::from_bits(next()? as u64));
+        let steps = |next: &mut dyn FnMut() -> Option<i64>| -> Option<Vec<StoredStep>> {
+            let n = usize::try_from(next()?).ok()?;
+            let mut out = Vec::with_capacity(n.min(1 << 10));
+            while out.len() < n {
+                let x = next()? as u64;
+                for i in 0..4.min(n - out.len()) {
+                    let v = (x >> (16 * i)) & 0xffff;
+                    let mode = match v & 3 { 0 => None, 1 => Some(Mode::Range), 2 => Some(Mode::Climb), _ => Some(Mode::Descend) };
+                    out.push(((v >> 2) as u16, mode));
+                }
+            }
+            Some(out)
+        };
+        let order = steps(&mut next)?;
+        let priced = match next() {
+            None => None,
+            Some(work) => {
+                let rows = f64::from_bits(next()? as u64);
+                let n = usize::try_from(next()?).ok()?;
+                let sizes = (0..n).map(|_| next().map(|b| f64::from_bits(b as u64))).collect::<Option<Vec<_>>>()?;
+                Some((sizes, steps(&mut next)?, f64::from_bits(work as u64), rows))
+            }
+        };
+        Some((key, StoredPlan { order, per_node, gap, priced }))
+    }
+}
+
+/// Gives this thread's run the plans the store kept (`plan::choices`, before the run's first wave).
+pub(in crate::code_rule_dsl) fn take_stored_plans(stored: Arc<StoredPlans>) {
+    PLANS.with(|p| {
+        if let Some(p) = p.borrow().as_ref() {
+            p.lock().stored = stored;
+        }
+    });
+}
+
+/// This thread's run's plans for the store: the stored ones with the run's over them, or `None` where the run
+/// changed none.
+pub(in crate::code_rule_dsl) fn plans_to_store() -> Option<StoredPlans> {
+    let plans = PLANS.with(|p| p.borrow().clone())?;
+    let plans = plans.lock();
+    let mut out: Option<StoredPlans> = None;
+    for (key, k) in &plans.kept {
+        // Its scale is the nodes its last price read (`read_sizes` and `live_sizes` start with them): a plan never
+        // priced is not kept.
+        let Some(nodes) = k.4.as_ref().and_then(|p| p.sizes.first().copied()) else { continue };
+        let Some(s) = StoredPlan::of(k) else { continue };
+        let key = (*key, scale(nodes));
+        if plans.stored.get(&key) != Some(&s) {
+            out.get_or_insert_with(|| (*plans.stored).clone()).insert(key, s);
+        }
+    }
+    out
+}
 
 /// This thread's kept plans, for a job on another thread to enter.
 pub(in crate::code_rule_dsl) fn share_plans() -> Option<SharedPlans> {
@@ -970,7 +1135,7 @@ impl KeepPlans {
     pub(in crate::code_rule_dsl) fn start(across: Option<u64>) -> Self {
         compose::clear();
         let kept = across.and_then(|g| SESSION_PLANS.with(|s| s.borrow_mut().take().filter(|(k, _)| *k == g).map(|(_, p)| p)));
-        PLANS.with(|p| *p.borrow_mut() = Some(Arc::new(parking_lot::Mutex::new(kept.unwrap_or_default()))));
+        PLANS.with(|p| *p.borrow_mut() = Some(Arc::new(parking_lot::Mutex::new(RunPlans { kept: kept.unwrap_or_default(), stored: Arc::default() }))));
         keeps::observing(true);
         KeepPlans(across)
     }
@@ -987,7 +1152,7 @@ impl Drop for KeepPlans {
         let plans = PLANS.with(|p| p.borrow_mut().take()).map(|p| Arc::try_unwrap(p).map_or_else(|p| std::mem::take(&mut *p.lock()), parking_lot::Mutex::into_inner));
         keeps::observing(false);
         if let (Some(g), Some(plans)) = (self.0, plans) {
-            SESSION_PLANS.with(|s| *s.borrow_mut() = Some((g, plans)));
+            SESSION_PLANS.with(|s| *s.borrow_mut() = Some((g, plans.kept)));
         }
     }
 }
@@ -1155,7 +1320,7 @@ impl Model {
     ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
         let key = self.plan_key("", head, body, first);
         let nodes = self.stats.nodes.max(1.0);
-        let Some(kept) = PLANS.with(|p| p.borrow().as_ref().map(|p| p.lock().get(&key).cloned())) else {
+        let Some(kept) = PLANS.with(|p| p.borrow().as_ref().map(|p| p.lock().find(&key, body, nodes))) else {
             plan_cache(0);
             return self.plan_inner(prog, head, body, first, None, true);
         };
@@ -1203,8 +1368,14 @@ impl Model {
                     remember(&key, &got);
                     return Ok(got);
                 }
-                Ok(_) => {
+                Ok(got) => {
                     plan_cache(5);
+                    static SHOWN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                    if std::env::var_os("RERAIL_PLAN_CACHE_WHY").is_some() && nodes >= 1000.0 && SHOWN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 12 {
+                        let cards = 1 + usize::from(first.is_some()) + body.iter().filter(|l| matches!(l, Literal::Atom(_) | Literal::Agg { .. })).count();
+                        let dist_near = previous.as_ref().map(|p| near(&p.sizes[cards.min(p.sizes.len())..], &sizes[cards.min(sizes.len())..]));
+                        eprintln!("replanned {head} :- {} literals, first {first:?}: nodes {nodes}, work {} (kept per node {per_node} -> {}), distributions near {dist_near:?}, live driver {}, sizes {:?}, kept sizes {:?}", body.len(), got.0.1, per_node * nodes, self.valid_live_driver(&got.0.0, body, first), sizes, previous.as_ref().map(|p| p.sizes.clone()));
+                    }
                     super::profile::decision("plan cache (decision 0038)", || format!("replanned: the kept order's work per node grew over {REPLAN}x, by over {REPLAN_ROWS} rows"))
                 }
                 Err(_) => {
@@ -1317,7 +1488,7 @@ impl Model {
         let sizes = self.live_sizes(body, first);
         let cardinalities = 1 + usize::from(first.is_some()) + body.iter().filter(|l| matches!(l,Literal::Atom(_) | Literal::Agg{..})).count();
         // The last price, and the work of the order when it was searched.
-        let kept = PLANS.with(|p| p.borrow().as_ref().and_then(|p| p.lock().get(&key).and_then(|k| Some((k.4.clone()?, k.1)))));
+        let kept = PLANS.with(|p| p.borrow().as_ref().and_then(|p| p.lock().find(&key, body, self.stats.nodes.max(1.0)).and_then(|k| Some((k.4.clone()?, k.1)))));
         if let Some((priced, searched)) = &kept {
             if near(&priced.sizes, &sizes) && self.valid_live_driver(&priced.got.0.0, body, first) {
                 super::profile::decision("plan cache (decision 0038)", || format!("a live replan kept: no size it reads moved over {PRICE_DRIFT}x"));

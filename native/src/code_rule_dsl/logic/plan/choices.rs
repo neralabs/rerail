@@ -103,6 +103,11 @@ impl Durable {
         DURABLE.with(|d| {
             *d.borrow_mut() = store.map(|s| {
                 let stored = read_all(&s, &prepared).unwrap_or_default();
+                // And the plans of its rules (decision 0116 step 2), for this thread's run to take.
+                let _span = super::super::profile::span(|| "kept plans, read from the store".into());
+                let plans = read_plans(&s, &prepared).unwrap_or_default();
+                super::super::profile::decision("kept plans (decision 0116)", || format!("{} plans read from the store", plans.len()));
+                super::take_stored_plans(Arc::new(plans));
                 (s, prepared, stored)
             })
         });
@@ -111,8 +116,18 @@ impl Durable {
 }
 
 impl Drop for Durable {
+    /// The run's plans, where it changed any, queued for the store (decision 0116 step 2): the run's plans are
+    /// still held here (`KeepPlans` is let before this).
     fn drop(&mut self) {
-        DURABLE.with(|d| d.borrow_mut().take());
+        if let Some((store, prepared, _)) = DURABLE.with(|d| d.borrow_mut().take())
+            && let Some(plans) = super::plans_to_store()
+        {
+            let _span = super::super::profile::span(|| "kept plans, queued for the store".into());
+            let rows: Vec<Vec<Value>> = plans.iter().map(|(k, p)| super::StoredPlan::row(*k, p).into_iter().map(Value::Int).collect()).collect();
+            let bytes = rows.iter().map(|r| 9 * r.len() + 8).sum();
+            super::super::profile::decision("kept plans (decision 0116)", || format!("{} plans queued for the store", rows.len()));
+            store.write_back("the kept plans", bytes, vec![(crate::content_store::write_back::Key::of(&[b"facts_memo/plans", &prepared]), None)], Box::new(move |store| write_plans(store, &prepared, &rows).map(drop)));
+        }
     }
 }
 
@@ -188,6 +203,41 @@ const REWRITTEN: &str = "rr_chosen_rewritten";
 fn read_all(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<HashMap<String, Chosen>> {
     let Some(source) = store.sources_by_hashes(&[HashKey::sha256(source_text(prepared).as_bytes())])?.pop().flatten() else { return Ok(HashMap::new()) };
     Ok(store.facts_results_of(source, SCHEMA, plan().plans[0])?.into_iter().filter_map(|(path, entry)| Some((path, decode_chosen(&entry)?))).collect())
+}
+
+/// The kept plans' schema, apart from the choices' so neither reads the other's entries.
+const PLANS_SCHEMA: u32 = 2;
+/// The kept plans' entry under the prepared program's source, and its relation: one row per plan
+/// (`StoredPlan::row`).
+const PLANS_PATH: &str = "rerail/plans";
+const PLANS_REL: &str = "rr_kept_plan";
+
+/// The plans kept under `prepared`: one read of the store.
+fn read_plans(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<super::StoredPlans> {
+    let Some(source) = store.sources_by_hashes(&[HashKey::sha256(source_text(prepared).as_bytes())])?.pop().flatten() else { return Ok(Default::default()) };
+    let Some((_, entry)) = store.facts_results_of(source, PLANS_SCHEMA, plan().plans[0])?.into_iter().find(|(path, _)| path == PLANS_PATH) else { return Ok(Default::default()) };
+    let Ok(facts) = program_facts::decode(&entry) else { return Ok(Default::default()) };
+    Ok(facts
+        .get(PLANS_REL)
+        .into_iter()
+        .flatten()
+        .filter_map(|row| super::StoredPlan::of_row(&row.iter().map(|v| match v { Value::Int(i) => Some(*i), Value::Str(_) => None }).collect::<Option<Vec<_>>>()?))
+        .collect())
+}
+
+fn write_plans(store: &ContentStore, prepared: &[u8; 32], rows: &[Vec<Value>]) -> StoreResult<bool> {
+    let mut facts = Facts::new();
+    facts.insert(PLANS_REL.to_owned(), rows.to_vec());
+    let text = source_text(prepared);
+    let hash = HashKey::sha256(text.as_bytes());
+    let source = match store.held_source_by_hash(hash)? {
+        Some(id) => id,
+        None => store.put_source_hashed(text.as_bytes(), hash, &[])?,
+    };
+    let set = plan();
+    let entry = program_facts::encode(&facts);
+    store.put_facts_memo(FactsMemoKey { source, fact_schema: PLANS_SCHEMA, path: PLANS_PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: true, entry }], &[])?;
+    Ok(true)
 }
 
 fn decode_chosen(entry: &[u8]) -> Option<Chosen> {
@@ -288,6 +338,45 @@ mod tests {
             assert!(lookup(&key, 10.0).is_some(), "a smaller run takes the choices");
             assert!(lookup(&key, 5000.0).is_none(), "a run over many more nodes chooses again");
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A plan kept in the store (decision 0116 step 2) reads back as it was written, by its rule and scale, and is
+    /// rebuilt over the rule's body with the body's own literals; over a shorter body it is not taken.
+    #[test]
+    fn kept_plans_read_back_from_the_store_by_rule_and_scale() {
+        use super::super::{Kept, Mode, Priced, Step, StoredPlan, scale};
+        let prog = super::super::super::rr::parse(".decl e(x: int, y: int)\n.decl f(x: int)\n.decl g(x: int)\n.output g\ng(x) :- e(x, y), f(y), x != y.\n").unwrap();
+        let body = &prog.rules[0].body;
+        let order = vec![
+            Step { at: 1, lit: body[1].clone(), mode: None },
+            Step { at: 0, lit: body[0].clone(), mode: Some(Mode::Range) },
+            Step { at: 2, lit: body[2].clone(), mode: Some(Mode::Descend) },
+        ];
+        let priced = Priced { sizes: vec![3700.0, 10.0, 0.0, -2.0], got: ((order.clone(), 12.5, 3.0), None) };
+        let kept: Kept = (order.clone().into(), 0.25, None, 1.5, Some(Arc::new(priced)));
+        let stored = StoredPlan::of(&kept).expect("a plan the store keeps");
+        assert_eq!((scale(3700.0), scale(55_000.0), scale(0.0)), (5, 7, 0), "scales by powers of 4");
+        let key = (0x0123_4567_89ab_cdef_fedc_ba98_7654_3210_u128, scale(3700.0));
+        let row = StoredPlan::row(key, &stored);
+        assert_eq!(StoredPlan::of_row(&row), Some((key, stored.clone())));
+        let back = stored.kept(body).expect("rebuilt over its body");
+        let same = |a: &[Step], b: &[Step]| a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.at == b.at && a.lit == b.lit && a.mode == b.mode);
+        assert!(same(&back.0, &order) && (back.1, back.3) == (0.25, 1.5));
+        let price = back.4.expect("its price");
+        assert!(same(&price.got.0.0, &order) && price.sizes == [3700.0, 10.0, 0.0, -2.0] && (price.got.0.1, price.got.0.2) == (12.5, 3.0));
+        assert!(stored.kept(&body[..2]).is_none(), "a step past the body");
+        let dir = std::env::temp_dir().join(format!("rerail-kept-plans-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
+        let prepared = [9u8; 32];
+        assert!(read_plans(&store, &prepared).unwrap().is_empty());
+        assert!(write_plans(&store, &prepared, &[row.into_iter().map(Value::Int).collect()]).unwrap());
+        let read = read_plans(&store, &prepared).unwrap();
+        assert_eq!((read.len(), read.get(&key)), (1, Some(&stored)));
+        assert!(read_plans(&store, &[8u8; 32]).unwrap().is_empty(), "another prepared program's are not taken");
+        assert!(read_all(&store, &prepared).unwrap().is_empty(), "the choices do not read the plans");
+        drop(store);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
