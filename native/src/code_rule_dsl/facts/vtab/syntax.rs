@@ -2236,7 +2236,8 @@ fn matched(
                 .collect()
         })
         .collect();
-    let docs: Vec<crate::code_rule_dsl::tape::TapeDoc> = held.iter().map(|&i| tapes[i].1.clone()).collect();
+    // Each read at its path, which a `filePath` test inside a matcher tests.
+    let docs: Vec<crate::code_rule_dsl::tape::TapeDoc> = held.iter().map(|&i| tapes[i].1.with_path(&tapes[i].2)).collect();
     let nodes: u64 = docs.iter().map(|d| d.transducer_len() as u64).sum();
     let (found, limited) = if docs.is_empty() || active.iter().all(|a| !a.iter().any(|&on| on)) {
         (vec![vec![BTreeSet::new(); docs.len()]; matchers.len()], Vec::new())

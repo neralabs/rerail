@@ -108,14 +108,29 @@ impl Fact {
     }
 
     /// Whether its findings on a file are a node set (`nth_bits`): a position among siblings
-    /// (`nthChild`) with no slot.
+    /// (`nthChild`) with no slot, or the file's path (`filePath`).
     pub(in crate::code_rule_dsl) fn is_node_set(&self) -> bool {
-        matches!(&self.producer, AstMatcher::NthChild(_)) && self.slots.is_empty()
+        matches!(&self.producer, AstMatcher::NthChild(_) | AstMatcher::Semantic(super::Semantic::FilePath(_))) && self.slots.is_empty()
     }
 
     /// Its nodes on `tape` where they are a node set (`is_node_set`), from the tape's sibling
     /// positions; asked once per tape where another fact asks the same (`question`).
     pub(in crate::code_rule_dsl) fn nth_bits(&self, tape: &crate::code_rule_dsl::tape::TapeDoc, siblings: &super::nth_child::SiblingPositions) -> Option<Arc<Vec<u64>>> {
+        // A `filePath` test is the document's: every node where its path passes, none where it fails or the run gave
+        // the tape no path (W's `file_path()` with none).
+        if let AstMatcher::Semantic(super::Semantic::FilePath(condition)) = &self.producer {
+            let nodes = tape.transducer_len();
+            let mut bits = vec![0u64; nodes.div_ceil(64)];
+            if tape.path().is_some_and(|path| condition.holds(path)) {
+                bits.iter_mut().for_each(|w| *w = !0);
+                if nodes % 64 != 0
+                    && let Some(last) = bits.last_mut()
+                {
+                    *last &= (1 << (nodes % 64)) - 1;
+                }
+            }
+            return Some(Arc::new(bits));
+        }
         let AstMatcher::NthChild(nth) = &self.producer else { return None };
         if !self.slots.is_empty() {
             return None;
@@ -528,8 +543,13 @@ impl Lowering {
         };
         let two_valued = match &mut producer {
             Semantic::Resolves(resolves) => !super::semantic::flow(resolves.language),
-            // A label's view has no host path to read.
-            Semantic::FilePath(_) => return Err(Unsupported(name)),
+            // The document's path, one verdict per document (`Fact::nth_bits`): every node, or none.
+            Semantic::FilePath(_) => {
+                let (digest, dialect) = &self.source;
+                let key = format!("{}|{dialect:?}|{}", digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>(), self.facts);
+                self.facts += 1;
+                return Ok(MatchTree::Fact(Arc::new(Fact { producer: AstMatcher::Semantic(producer), slots: Vec::new(), name, key, kinds: None })));
+            }
             Semantic::Value(_) | Semantic::Layout(_) | Semantic::Arguments(_) => false,
             Semantic::Binding(test) => {
                 if test.occurrence.is_some() {
