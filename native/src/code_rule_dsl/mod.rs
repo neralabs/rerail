@@ -103,7 +103,7 @@ mod vue;
 // Wired to the logic planner and the push path in a later slice; until then only tests call it.
 #[allow(dead_code)]
 mod waves;
-mod workspace;
+pub(crate) mod workspace;
 
 #[cfg(test)]
 pub(crate) mod fixtures;
@@ -592,6 +592,8 @@ pub(crate) fn install_languages() {
         core_rr::register_dialect_facts(Family::Ecma, &ecma_core::EcmaFacts);
         core_rr::register_dialect_facts(Family::Rr, &rr_core::RrFacts);
     }
+    // A workspace's project context of ECMAScript's files (manifests, project configurations, server graphs).
+    workspace::ingest::install_project(|| Box::new(workspace::ingest::ecma::EcmaProject::default()));
     // What compiles a program's `ast` matchers into the transducer wave facts runs (decision 0106).
     facts::vtab::syntax::install_ast_compiler(&facts::vtab::syntax::ast_wave::Compiler);
     // The literal grammars `parse` applies, in the order messages list them (`literal::LiteralGrammar`).

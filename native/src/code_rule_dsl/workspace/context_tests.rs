@@ -4407,11 +4407,12 @@ fn a_request_that_fails_partway_leaves_the_package_context_unchanged() {
     assert_eq!(reported(), ["app/a.ts", "app/page.tsx"]);
     let context = || {
         let state = workspace.state.lock().unwrap();
+        let project = state.project.as_any().downcast_ref::<super::ingest::ecma::EcmaProject>().expect("ECMAScript's project context");
         (
-            state.graph_entries.keys().cloned().collect::<Vec<_>>(),
-            state.server_graph_directories.clone(),
-            state.module_configs.clone(),
-            state
+            project.graph_entries.keys().cloned().collect::<Vec<_>>(),
+            project.server_graph_directories.clone(),
+            project.module_configs.clone(),
+            project
                 .manifests
                 .iter()
                 .map(|(directory, manifest)| (directory.clone(), *manifest.digest()))

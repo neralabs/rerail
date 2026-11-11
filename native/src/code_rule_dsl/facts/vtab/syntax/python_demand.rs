@@ -19,7 +19,7 @@ use std::{
     sync::Arc,
 };
 
-pub(super) struct Semantics {
+pub(crate) struct Semantics {
     root: AstGrep<TapeDoc>,
     table: ScopeTable,
     facts: BTreeMap<u32, NodeFacts>,

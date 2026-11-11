@@ -19,6 +19,76 @@ use crate::code_rule_dsl::package_manifest::{
     GITIGNORE, Manifest, NPMIGNORE, ignore_file_directory, manifest_directory,
     manifest_in,
 };
+pub(crate) mod ecma;
+
+/// A file a request's context changes moved to another context: its path, its input, and the context it reads now.
+pub(crate) type StaleContext = (String, FileInput, Option<crate::code_rule_dsl::language::FileManifest>);
+
+/// A workspace's project context of a language family's files besides the files themselves (ECMAScript's
+/// manifests, project configurations and server graphs), from which the workspace derives the context of a file
+/// the host sent none for. Registered at load (`install_project`); without one there is none.
+pub(crate) trait ProjectState: Send + Sync {
+    /// The paths of the request's `files` whose context the host left to the workspace.
+    fn unhosted(&self, files: &[WireFile]) -> HashSet<String>;
+    /// The request's changes of the context (`inputs` after it, `removed` the paths it removes), applied by
+    /// `apply` once nothing after can fail; gives `unhosted` inputs their context, and the files outside the
+    /// request whose context it changes, with the context they read now.
+    fn refresh(
+        &self,
+        state: &WorkspaceState,
+        inputs: &mut Vec<FileInput>,
+        unhosted: &HashSet<String>,
+        removed: &[String],
+    ) -> (Vec<StaleContext>, Box<dyn std::any::Any + Send>);
+    /// Holds the text of a file a request sent (a project configuration, an ignore file), as its context reads it.
+    fn hold(&mut self, path: &str, source: &Arc<String>);
+    /// Stops holding the text of a removed path.
+    fn release(&mut self, path: &str);
+    /// Applies the changes `refresh` gave.
+    fn apply(&mut self, changes: Box<dyn std::any::Any + Send>);
+    /// The context as its own type (tests read it).
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+
+/// No project context: a workspace of no family that derives one.
+struct NoProject;
+
+impl ProjectState for NoProject {
+    fn unhosted(&self, _: &[WireFile]) -> HashSet<String> {
+        HashSet::new()
+    }
+    fn refresh(
+        &self,
+        _: &WorkspaceState,
+        _: &mut Vec<FileInput>,
+        _: &HashSet<String>,
+        _: &[String],
+    ) -> (Vec<StaleContext>, Box<dyn std::any::Any + Send>) {
+        (Vec::new(), Box::new(()))
+    }
+    fn hold(&mut self, _: &str, _: &Arc<String>) {}
+    fn release(&mut self, _: &str) {}
+    fn apply(&mut self, _: Box<dyn std::any::Any + Send>) {}
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+static PROJECT: std::sync::OnceLock<fn() -> Box<dyn ProjectState>> = std::sync::OnceLock::new();
+
+/// Registers what makes a workspace's project context (once, at load).
+pub(crate) fn install_project(make: fn() -> Box<dyn ProjectState>) {
+    let _ = PROJECT.set(make);
+}
+
+impl Default for Box<dyn ProjectState> {
+    fn default() -> Self {
+        match PROJECT.get() {
+            Some(make) => make(),
+            None => Box::new(NoProject),
+        }
+    }
+}
 use crate::content_store::StoreError;
 use napi::Result;
 use serde::Deserialize;
@@ -548,429 +618,6 @@ fn refresh_package_context(
     Ok(refreshed)
 }
 
-/// A request's `package.json` changes, by directory: the manifest after it, or `None` where it
-/// removes the one there.
-type ManifestChanges = BTreeMap<String, Option<Arc<Manifest>>>;
-
-/// A request's changes of what server graphs read (`WorkspaceState::graph_entries`), by path:
-/// the entry after it, or `None` where it removes the path.
-type GraphEntryChanges = BTreeMap<String, Option<Option<module_graph::Summary>>>;
-
-/// A request's changes of the workspace's package context besides its files: its manifests,
-/// what server graphs read, and the directories joining (`true`) or leaving (`false`)
-/// `server_graph_directories`. `apply_request` applies them once nothing after can fail, so a
-/// request that fails leaves them as they were.
-#[derive(Default)]
-struct ContextChanges {
-    manifests: ManifestChanges,
-    graph_entries: GraphEntryChanges,
-    server_graph_directories: BTreeMap<String, bool>,
-}
-
-impl ContextChanges {
-    fn apply(self, state: &mut WorkspaceState) {
-        for (directory, change) in self.manifests {
-            match change {
-                Some(manifest) => state.manifests.insert(directory, manifest),
-                None => state.manifests.remove(&directory),
-            };
-        }
-        for (path, entry) in self.graph_entries {
-            match entry {
-                Some(summary) => state.graph_entries.insert(path, summary),
-                None => state.graph_entries.remove(&path),
-            };
-        }
-        for (directory, joined) in self.server_graph_directories {
-            if joined {
-                state.server_graph_directories.insert(directory);
-            } else {
-                state.server_graph_directories.remove(&directory);
-            }
-        }
-    }
-}
-
-/// Expand a `package.json` edit to the ECMA files whose nearest manifest it changes, and give an
-/// ECMA file the host sent no `package` for the workspace's nearest one. As package markers are
-/// the packages of JSON/buffer overlays, the workspace's `package.json` entries (whatever their
-/// language) are their manifests, read as on disk (`Manifest::parse`) with the `jsxImportSource`
-/// of the `tsconfig.json`-style entries beside them and the `.npmignore` and `.gitignore` entries
-/// in their folder (a change of one is a change of the manifest). A resident file follows them
-/// while its `package` equals their derivation before the request, so a host's own fact stays
-/// authoritative. The changes are the workspace's once the request applies (`ContextChanges`).
-fn refresh_manifest_context(
-    state: &mut WorkspaceState,
-    inputs: &mut Vec<FileInput>,
-    unhosted: &HashSet<String>,
-    removed: &[String],
-) -> Result<(BTreeSet<String>, ContextChanges)> {
-    let mut changes = ManifestChanges::new();
-    for path in removed {
-        if let Some(directory) = manifest_directory(path)
-            && state.manifests.contains_key(directory)
-        {
-            changes.insert(directory.to_owned(), None);
-        }
-    }
-    let config = |state: &WorkspaceState, directory: &str| {
-        module_graph::Config::read(directory, &|path| {
-            module_config_text(state, inputs, removed, path)
-        })
-    };
-    let ignore_files = |state: &WorkspaceState, directory: &str| {
-        let text = |name: &str| {
-            let path = if directory.is_empty() {
-                name.to_owned()
-            } else {
-                format!("{directory}/{name}")
-            };
-            request_text(&state.ignore_files, inputs, removed, &path)
-        };
-        (text(NPMIGNORE), text(GITIGNORE))
-    };
-    for input in inputs.iter() {
-        if let Some(directory) = manifest_directory(&input.path) {
-            let (npmignore, gitignore) = ignore_files(state, directory);
-            let manifest = Manifest::parse(directory.to_owned(), input.source.as_bytes())
-                .with_ignore_files(npmignore, gitignore)
-                .with_jsx_import_source(config(state, directory).jsx_import_source());
-            if state
-                .manifests
-                .get(directory)
-                .is_some_and(|current| **current == manifest)
-            {
-                changes.remove(directory);
-            } else {
-                changes.insert(directory.to_owned(), Some(Arc::new(manifest)));
-            }
-        }
-    }
-    let ignore_directories = inputs
-        .iter()
-        .map(|input| input.path.as_str())
-        .chain(removed.iter().map(String::as_str))
-        .filter_map(ignore_file_directory)
-        .collect::<BTreeSet<_>>();
-    for directory in ignore_directories {
-        if changes.contains_key(directory) {
-            continue;
-        }
-        let Some(current) = state.manifests.get(directory) else {
-            continue;
-        };
-        let (npmignore, gitignore) = ignore_files(state, directory);
-        let updated = (**current).clone().with_ignore_files(npmignore, gitignore);
-        if updated != **current {
-            changes.insert(directory.to_owned(), Some(Arc::new(updated)));
-        }
-    }
-    if inputs
-        .iter()
-        .map(|input| input.path.as_str())
-        .chain(removed.iter().map(String::as_str))
-        .any(module_graph::is_module_config)
-    {
-        for (directory, current) in &state.manifests {
-            if changes.contains_key(directory) {
-                continue;
-            }
-            let config = config(state, directory);
-            if current.jsx_import_source() != config.jsx_import_source() {
-                let updated = (**current)
-                    .clone()
-                    .with_jsx_import_source(config.jsx_import_source());
-                changes.insert(directory.clone(), Some(Arc::new(updated)));
-            }
-        }
-    }
-    let mut graph_entries = GraphEntryChanges::new();
-    let mut server_graph_directories = BTreeMap::new();
-    if state
-        .code_rules
-        .iter()
-        .any(|code_rule| code_rule.reads_server_graph())
-    {
-        for path in removed {
-            graph_entries.insert(path.clone(), None);
-        }
-        for input in inputs.iter() {
-            if unhosted.contains(&input.path) {
-                let summary = module_graph::summarize_bounded(&input.path, &input.source);
-                graph_entries.insert(input.path.clone(), Some(summary));
-            } else if !package_manifests(&input.language) {
-                graph_entries.insert(input.path.clone(), Some(None));
-            }
-        }
-        if !unhosted.is_empty() || !state.server_graph_directories.is_empty() || !changes.is_empty()
-        {
-            server_graph_directories = refresh_server_graphs(
-                state,
-                inputs,
-                unhosted,
-                removed,
-                &graph_entries,
-                &mut changes,
-            );
-        }
-    }
-    if changes.is_empty() && unhosted.is_empty() {
-        let context = ContextChanges {
-            manifests: changes,
-            graph_entries,
-            server_graph_directories,
-        };
-        return Ok((BTreeSet::new(), context));
-    }
-    let manifests = &state.manifests;
-    let before = |directory: &str| manifests.get(directory);
-    let after = |directory: &str| match changes.get(directory) {
-        Some(change) => change.as_ref(),
-        None => manifests.get(directory),
-    };
-    let requested = inputs
-        .iter()
-        .map(|input| input.path.clone())
-        .collect::<HashSet<_>>();
-    let mut paths = BTreeSet::new();
-    for directory in changes.keys() {
-        let start = if directory.is_empty() {
-            String::new()
-        } else {
-            format!("{directory}/")
-        };
-        let resident = state.files.range(start.clone()..).map(|(path, _)| path);
-        let evicted = state.evicted_inputs.range(start..).map(|(path, _)| path);
-        for path in resident
-            .take_while(|path| path_is_below(path, directory))
-            .chain(evicted.take_while(|path| path_is_below(path, directory)))
-        {
-            if !requested.contains(path) && !removed.contains(path) {
-                paths.insert(path.clone());
-            }
-        }
-    }
-    let mut stale = Vec::new();
-    for path in paths {
-        let input = match state.files.get(&path) {
-            Some(file) => &file.input,
-            None => &state.evicted_inputs[&path],
-        };
-        if !package_manifests(&input.language) || input.package != manifest_in(&path, before) {
-            continue;
-        }
-        let package = manifest_in(&path, after);
-        if package != input.package {
-            stale.push((path, input.clone(), package));
-        }
-    }
-    for input in inputs.iter_mut() {
-        if unhosted.contains(&input.path) {
-            input.package = manifest_in(&input.path, after);
-        }
-    }
-    let mut refreshed = BTreeSet::new();
-    for (path, mut input, package) in stale {
-        if input.source.is_empty() {
-            input.source = Arc::clone(&documents::load(state, &path)?.1.source);
-        }
-        input.package = package;
-        inputs.push(input);
-        refreshed.insert(path);
-    }
-    let context = ContextChanges {
-        manifests: changes,
-        graph_entries,
-        server_graph_directories,
-    };
-    Ok((refreshed, context))
-}
-
-/// Gives each workspace manifest naming `next` the server graph of the files the workspace holds
-/// below it, the request applied (`module_graph::in_file_set`), for files it derives `package`
-/// for: a directory some file of the request without a host `package` lies below joins
-/// `server_graph_directories`, and a joined directory's graph is derived again whenever the
-/// request changes what it reads (its manifest, a source below it, a project configuration
-/// anywhere, since one may be another's `extends` base), removals included. A manifest whose
-/// graph the request changes is a change of the manifest, so the files that read it are
-/// evaluated again. `graph_entries` are the request's changes of what the graphs read; returns
-/// the directories joining (`true`) or leaving `server_graph_directories`.
-fn refresh_server_graphs(
-    state: &WorkspaceState,
-    inputs: &[FileInput],
-    unhosted: &HashSet<String>,
-    removed: &[String],
-    graph_entries: &GraphEntryChanges,
-    changes: &mut ManifestChanges,
-) -> BTreeMap<String, bool> {
-    let mut directories = BTreeMap::new();
-    let after = state
-        .manifests
-        .iter()
-        .filter(|(directory, _)| !changes.contains_key(*directory))
-        .map(|(directory, manifest)| (directory.clone(), Some(Arc::clone(manifest))))
-        .chain(
-            changes
-                .iter()
-                .map(|(directory, change)| (directory.clone(), change.clone())),
-        )
-        .collect::<BTreeMap<_, _>>();
-    let manifest_directories = after
-        .iter()
-        .filter(|(_, manifest)| manifest.is_some())
-        .map(|(directory, _)| directory.clone())
-        .collect::<HashSet<_>>();
-    let requested = inputs
-        .iter()
-        .map(|input| input.path.as_str())
-        .collect::<HashSet<_>>();
-    let touched_paths = requested
-        .iter()
-        .copied()
-        .chain(removed.iter().map(String::as_str))
-        .collect::<Vec<_>>();
-    let configs_changed = touched_paths
-        .iter()
-        .any(|path| module_graph::is_module_config(path));
-    for (directory, manifest) in after {
-        let Some(manifest) = manifest.filter(|manifest| manifest.has_server_graph()) else {
-            if state.server_graph_directories.contains(&directory) {
-                directories.insert(directory, false);
-            }
-            continue;
-        };
-        // The workspace derives the graph for files it gives `package`: ones of this request,
-        // or, when the manifest changes, ones it already holds (a manifest that gains `next`
-        // after its sources arrived).
-        let derived = state.server_graph_directories.contains(&directory);
-        let needed = derived
-            || unhosted.iter().any(|path| path_is_below(path, &directory))
-            || (changes.contains_key(&directory) && derives_package_below(state, &directory));
-        // A nested manifest created or removed moves the boundary of this package's files, and any
-        // file below its root `app/` may make that folder present or absent (it hides `src/app`).
-        let root_app = if directory.is_empty() {
-            "app".to_owned()
-        } else {
-            format!("{directory}/app")
-        };
-        // A graph not derived yet is derived; a derived one, an absent one (`None`: past a
-        // bound) included, stays as it is until the request changes what it reads.
-        let touched = !derived
-            || changes.contains_key(&directory)
-            || configs_changed
-            || changes
-                .keys()
-                .any(|nested| nested != &directory && path_is_below(nested, &directory))
-            || touched_paths.iter().any(|path| {
-                path_is_below(path, &directory)
-                    && (module_graph::is_source(path) || path_is_below(path, &root_app))
-            });
-        if !needed || !touched {
-            continue;
-        }
-        directories.insert(directory.clone(), true);
-        let start = if directory.is_empty() {
-            String::new()
-        } else {
-            format!("{directory}/")
-        };
-        let config = module_graph::Config::read(&directory, &|path| {
-            module_config_text(state, inputs, removed, path)
-        });
-        // The workspace's entries, the request's changes applied.
-        let entries = state
-            .graph_entries
-            .range(start.clone()..)
-            .take_while(|(path, _)| path_is_below(path, &directory))
-            .filter(|(path, _)| !graph_entries.contains_key(*path))
-            .map(|(path, summary)| (path.as_str(), summary.clone()))
-            .chain(
-                graph_entries
-                    .range(start..)
-                    .take_while(|(path, _)| path_is_below(path, &directory))
-                    .filter_map(|(path, entry)| Some((path.as_str(), entry.as_ref()?.clone()))),
-            );
-        let members = module_graph::from_summaries(
-            &directory,
-            entries,
-            &|folder| manifest_directories.contains(folder),
-            &config,
-        );
-        let updated = Arc::new((*manifest).clone().with_server_graph(members));
-        if state
-            .manifests
-            .get(&directory)
-            .is_some_and(|current| **current == *updated)
-        {
-            changes.remove(&directory);
-        } else {
-            changes.insert(directory, Some(updated));
-        }
-    }
-    directories
-}
-
-/// Whether the workspace holds a file below `directory` whose `package` it derived from its own
-/// manifests (no host `package`), rather than one a host sent.
-fn derives_package_below(state: &WorkspaceState, directory: &str) -> bool {
-    let start = if directory.is_empty() {
-        String::new()
-    } else {
-        format!("{directory}/")
-    };
-    let derived = |path: &String, input: &FileInput| {
-        package_manifests(&input.language)
-            && input.package == manifest_in(path, |folder| state.manifests.get(folder))
-    };
-    state
-        .files
-        .range(start.clone()..)
-        .take_while(|(path, _)| path_is_below(path, directory))
-        .any(|(path, file)| derived(path, &file.input))
-        || state
-            .evicted_inputs
-            .range(start..)
-            .take_while(|(path, _)| path_is_below(path, directory))
-            .any(|(path, input)| derived(path, input))
-}
-
-/// The text of the project configuration at `path` once the request applies (`request_text`
-/// over `WorkspaceState::module_configs`).
-fn module_config_text(
-    state: &WorkspaceState,
-    inputs: &[FileInput],
-    removed: &[String],
-    path: &str,
-) -> Option<String> {
-    request_text(&state.module_configs, inputs, removed, path)
-}
-
-/// The text of the file at `path` once the request applies: the request's own, else the
-/// workspace's (`stored`) unless the request removes it.
-fn request_text(
-    stored: &BTreeMap<String, Arc<String>>,
-    inputs: &[FileInput],
-    removed: &[String],
-    path: &str,
-) -> Option<String> {
-    if let Some(input) = inputs.iter().find(|input| input.path == path) {
-        return Some(input.source.as_str().to_owned());
-    }
-    if removed.iter().any(|removed| removed == path) {
-        return None;
-    }
-    stored.get(path).map(|text| text.as_str().to_owned())
-}
-
-/// The ECMA files of a request the host sent no `package` for (`refresh_manifest_context`).
-fn unhosted_manifests(files: &[WireFile]) -> HashSet<String> {
-    files
-        .iter()
-        .filter(|wire| wire.package.is_none() && package_manifests(&wire.language))
-        .map(|wire| wire.path.clone())
-        .collect()
-}
-
 /// Applies `request` to `state`: the paths outside it whose module context it refreshed, and
 /// whether the store is busy for this apply: deleting its removals found it busy past the write
 /// deadline, or an earlier apply did and its window is still open (`store_cooling_down`).
@@ -985,7 +632,7 @@ pub(super) fn apply_request(
         .filter(|wire| packages(&wire.language) && wire.module.is_none())
         .map(|wire| wire.path.clone())
         .collect::<HashSet<_>>();
-    let unhosted_packages = unhosted_manifests(&request.files);
+    let unhosted_packages = state.project.unhosted(&request.files);
     let mut inputs = request
         .files
         .into_iter()
@@ -993,9 +640,19 @@ pub(super) fn apply_request(
         .map(|(index, wire)| wire.into_input(index))
         .collect::<Result<Vec<_>>>()?;
     let mut refreshed = refresh_package_context(state, &mut inputs, &unhosted, &request.removed)?;
-    let (repackaged, context_changes) =
-        refresh_manifest_context(state, &mut inputs, &unhosted_packages, &request.removed)?;
-    refreshed.extend(repackaged);
+    let (stale, context_changes) = {
+        let project = &*state.project;
+        project.refresh(state, &mut inputs, &unhosted_packages, &request.removed)
+    };
+    // The files the project context moved to another context, read again with it.
+    for (path, mut input, package) in stale {
+        if input.source.is_empty() {
+            input.source = Arc::clone(&documents::load(state, &path)?.1.source);
+        }
+        input.package = package;
+        inputs.push(input);
+        refreshed.insert(path);
+    }
     let mut released_candidates = false;
     let mut store_busy = false;
     if state.storage.is_some() {
@@ -1053,24 +710,14 @@ pub(super) fn apply_request(
     }
     // Nothing below fails: the request's context changes are the workspace's now.
     for input in &inputs {
-        if module_graph::is_module_config(&input.path) {
-            state
-                .module_configs
-                .insert(input.path.clone(), Arc::clone(&input.source));
-        }
-        if ignore_file_directory(&input.path).is_some() {
-            state
-                .ignore_files
-                .insert(input.path.clone(), Arc::clone(&input.source));
-        }
+        state.project.hold(&input.path, &input.source);
         state.hold_import_file(&input.path, &input.source);
     }
     for path in &request.removed {
-        state.module_configs.remove(path);
-        state.ignore_files.remove(path);
+        state.project.release(path);
         state.release_import_file(path);
     }
-    context_changes.apply(state);
+    state.project.apply(context_changes);
     for path in request.removed {
         state.versions.remove(&path);
         // This reaches both resident and evicted producer state.
@@ -1134,10 +781,12 @@ pub(super) fn inline_input(state: &mut WorkspaceState, file: WireFile) -> Result
         .then(|| file.path.clone())
         .into_iter()
         .collect::<HashSet<_>>();
-    let unhosted_packages = unhosted_manifests(std::slice::from_ref(&file));
+    let unhosted_packages = state.project.unhosted(std::slice::from_ref(&file));
     let mut inputs = vec![file.into_input(0)?];
     refresh_package_context(state, &mut inputs, &unhosted, &[])?;
-    refresh_manifest_context(state, &mut inputs, &unhosted_packages, &[])?;
+    // The file's context only: no other file's changes, and nothing the workspace keeps.
+    let project = &*state.project;
+    let _ = project.refresh(state, &mut inputs, &unhosted_packages, &[]);
     Ok(inputs.swap_remove(0))
 }
 
