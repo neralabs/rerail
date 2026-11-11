@@ -345,12 +345,6 @@ fn var_equalities(rule: &crate::code_rule_dsl::logic::front::Rule) -> Vec<(Strin
         .filter_map(|l| match l {
             Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } => Some((a.clone(), b.clone())),
             Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Call(f, xs) } if f == "doc" && let [Term::Var(b)] = xs.as_slice() => Some((a.clone(), b.clone())),
-            // `@doc(a) = @doc(b)`: a and b are of one document (a rule written for one file's nodes).
-            Literal::Cmp { l: Term::Call(f, xs), op: "=", r: Term::Call(g, ys) }
-                if f == "doc" && g == "doc" && let ([Term::Var(a)], [Term::Var(b)]) = (xs.as_slice(), ys.as_slice()) =>
-            {
-                Some((a.clone(), b.clone()))
-            }
             _ => None,
         })
         .collect()
