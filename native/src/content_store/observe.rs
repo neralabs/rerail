@@ -554,6 +554,10 @@ impl Observer {
     /// the run ends. A root the journal cannot speak for is checked by `stat`, and its unchecked answers forgotten
     /// at the run's end (`flush`). Without a store there is nothing kept across runs to trust.
     pub fn watch(&mut self, roots: &[PathBuf]) {
+        // Without the journal, every path is checked by its `stat`, as it is where the journal cannot say.
+        if !journal_on() {
+            return;
+        }
         let (Some(_), Some(cookies)) = (self.db.as_ref(), self.cookies.clone()) else { return };
         for root in roots {
             let root = self.abs(root);
@@ -1166,4 +1170,27 @@ mod tests {
         assert_eq!(decode_listing(&encode_listing(&[]).unwrap()).unwrap(), Vec::<(String, bool)>::new());
         assert!(encode_listing(&[("a\nb".to_owned(), false)]).is_none());
     }
+}
+
+/// Whether the observer asks the file system's journal (decision 0105). On unless `RERAIL_JOURNAL=off`, or turned off
+/// by `set_journal`: the engine's tests do (each run of a test waits for its cookie's event, up to `journal`'s `WAIT`, and a test
+/// makes many runs), and the journal's own tests here keep it on.
+static JOURNAL: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+fn journal_on() -> bool {
+    use std::sync::atomic::Ordering;
+    match JOURNAL.load(Ordering::Relaxed) {
+        1 => true,
+        2 => false,
+        _ => {
+            let on = !std::env::var("RERAIL_JOURNAL").is_ok_and(|v| v == "off");
+            JOURNAL.store(if on { 1 } else { 2 }, Ordering::Relaxed);
+            on
+        }
+    }
+}
+
+/// Turns the observer's use of the journal on or off for the process, whatever `RERAIL_JOURNAL` says.
+pub fn set_journal(on: bool) {
+    JOURNAL.store(if on { 1 } else { 2 }, std::sync::atomic::Ordering::Relaxed);
 }
