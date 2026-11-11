@@ -383,6 +383,12 @@ fn returns_chain_but_a_call_is_never_popped_at_once() {
     let compiled = crate::native_cpu_stream::compile(&native).expect("compiles: the return's block is a named loop head");
     assert!(compiled.heads.iter().any(|h| h.1 == crate::native_cpu_shape::Step::Return), "the return is a loop's head");
     assert_eq!(compiled.run(b"a a a", &t1).expect("parses"), nodes);
+    // A function a rule (`by_rules`): the calls native, the chain a return after a return.
+    let cut = crate::native_cpu_clusters::by_rules(&native);
+    assert!(cut.calls && cut.count > 1, "{cut:?}");
+    let rules = crate::native_cpu_stream::compile_cut(&native, &cut).expect("compiles a function a rule");
+    assert_eq!(rules.run(b"a a a", &t1).expect("parses"), nodes);
+    assert_eq!(rules.run(b"a a", &tier1(b"a a", &[0, 2], &[])).map_err(|r| r.pc), compiled.run(b"a a", &tier1(b"a a", &[0, 2], &[])).map_err(|r| r.pc));
     let popped = CHAINED.replace("  0014 GOTO @0009\n", "  0014 GOTO @0015\n");
     let e = crate::rir_asm::assemble(&popped).err().expect("a call popped at once");
     assert!(e.contains("NonProgressingCycle"), "{e}");

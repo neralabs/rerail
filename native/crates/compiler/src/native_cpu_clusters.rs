@@ -44,6 +44,9 @@ pub struct Cut {
     pub near: bool,
     /// Return addresses not signed.
     pub unsigned: bool,
+    /// A call of the grammar (`PUSH`) is a native call of its callee's function, and `RETURN`
+    /// a native return (`by_rules`): no stack of places, no compare tree over them.
+    pub calls: bool,
 }
 
 /// How a switch on a byte picks its arm.
@@ -60,7 +63,7 @@ pub enum Pick {
 impl Cut {
     /// Every word in one function: tier 2 as it was before clusters.
     pub fn one(words: usize) -> Self {
-        Self { of: vec![0; words], count: 1, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: Pick::Tree, pick_traffic: HashMap::new(), near: false, unsigned: false }
+        Self { of: vec![0; words], count: 1, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: Pick::Tree, pick_traffic: HashMap::new(), near: false, unsigned: false, calls: false }
     }
 }
 
@@ -190,7 +193,7 @@ pub fn by_traffic(native: &Structure, traffic: &HashMap<(u32, u32), u64>, cap: u
             bin_of.get(&r).copied().unwrap_or(0)
         })
         .collect();
-    Cut { of, count: (bins.len() as u32).max(1), held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: Pick::Tree, pick_traffic: HashMap::new(), near: false, unsigned: false }
+    Cut { of, count: (bins.len() as u32).max(1), held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: Pick::Tree, pick_traffic: HashMap::new(), near: false, unsigned: false, calls: false }
 }
 
 /// The share of `traffic`'s steps that leave their cluster, of all its steps between two words.
@@ -249,5 +252,72 @@ pub fn by_states(native: &Structure) -> Cut {
     }
     let count = count.max(1);
     let of: Vec<u32> = (0..n).map(|pc| of[at[pc]].unwrap_or(0)).collect();
-    Cut { of, count, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: Pick::Tree, pick_traffic: HashMap::new(), near: false, unsigned: false }
+    Cut { of, count, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: Pick::Tree, pick_traffic: HashMap::new(), near: false, unsigned: false, calls: false }
+}
+
+/// One function a grammar rule (docs/parser-generators/33-compiled-against-lean-shape.md): a
+/// rule is what a call (`PUSH`) runs, from the word after it (its callee, past `GOTO`s) to the
+/// `RETURN`s it reaches, and the file's start is one too. Inside a rule, a call goes on at its
+/// return's place (`Cut::calls`: the callee is called natively).
+///
+/// Rules share code: the states after a value are reached from every rule that has one. A word
+/// more than one rule reaches is a function of its own, entered by a tail call, where the rules
+/// that reach it meet; its `RETURN` returns from the rule that tail-called it. So no word is
+/// lowered twice, and each function has one entry.
+pub fn by_rules(native: &Structure) -> Cut {
+    use crate::native_cpu_stream::{callee, rule_successors};
+    use std::collections::BTreeSet;
+    let n = native.structural.len();
+    if n == 0 {
+        return Cut { calls: true, ..Cut::one(0) };
+    }
+    let mut entries: BTreeSet<usize> = std::iter::once(0)
+        .chain((0..n).filter(|&pc| matches!(native.structural[pc].operation, crate::native_ir::StructuralOperation::Push { .. })).map(|pc| callee(native, pc)))
+        .filter(|&e| e < n)
+        .collect();
+    let owners = |entries: &BTreeSet<usize>| -> Vec<Vec<usize>> {
+        let mut owners: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for &e in entries {
+            let mut seen = vec![false; n];
+            let mut work = vec![e];
+            while let Some(pc) = work.pop() {
+                if seen[pc] || (pc != e && entries.contains(&pc)) {
+                    continue;
+                }
+                seen[pc] = true;
+                owners[pc].push(e);
+                work.extend(rule_successors(native, pc));
+            }
+        }
+        owners
+    };
+    // Where rules meet: a word whose rules are not those of a word before it.
+    let owned = loop {
+        let owned = owners(&entries);
+        let mut meet = BTreeSet::new();
+        for pc in (0..n).filter(|&pc| !owned[pc].is_empty()) {
+            for q in rule_successors(native, pc) {
+                if owned[q].len() > 1 && owned[q] != owned[pc] {
+                    meet.insert(crate::native_cpu_stream::past_gotos(native, q));
+                }
+            }
+        }
+        let before = entries.len();
+        entries.extend(meet);
+        if entries.len() == before {
+            break owned;
+        }
+    };
+    let index: HashMap<usize, u32> = entries.iter().enumerate().map(|(i, &e)| (e, i as u32)).collect();
+    let mut of: Vec<u32> = (0..n).map(|pc| owned[pc].first().map_or(0, |e| index[e])).collect();
+    // A `GOTO` goes with the word it goes to: a jump to it is a jump there.
+    for pc in 0..n {
+        if matches!(native.structural[pc].operation, crate::native_ir::StructuralOperation::Goto { .. }) {
+            let t = crate::native_cpu_stream::past_gotos(native, pc);
+            if t < n {
+                of[pc] = of[t];
+            }
+        }
+    }
+    Cut { of, count: entries.len() as u32, calls: true, ..Cut::one(n) }
 }

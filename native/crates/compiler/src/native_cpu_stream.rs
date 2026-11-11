@@ -217,6 +217,46 @@ pub(crate) fn successors(native: &Structure, pushes: &[u16], pc: usize) -> Vec<u
     .collect()
 }
 
+/// Each word's successors within its rule (`Cut::calls`): a call (`PUSH`) goes on at its
+/// return's place and the one after (`RETURN m=1`), its callee called; `RETURN` leaves the
+/// rule; `TOKEN` goes on to the next word.
+pub fn rule_successors(native: &Structure, pc: usize) -> Vec<usize> {
+    match native.structural[pc].operation {
+        Op::Push { target } => vec![usize::from(target), usize::from(target) + 1],
+        Op::Return { .. } => vec![],
+        Op::Token { .. } => vec![pc + 1],
+        _ => successors(native, &[], pc),
+    }
+    .into_iter()
+    .filter(|&n| n < native.structural.len())
+    .collect()
+}
+
+/// The word `pc` runs as, past `GOTO`s.
+pub fn past_gotos(native: &Structure, mut pc: usize) -> usize {
+    for _ in 0..native.structural.len() {
+        match native.structural.get(pc).map(|w| w.operation) {
+            Some(Op::Goto { target }) => pc = usize::from(target),
+            _ => break,
+        }
+    }
+    pc
+}
+
+/// A call's callee: the word after its `PUSH`, past `GOTO`s.
+pub fn callee(native: &Structure, pc: usize) -> usize {
+    past_gotos(native, pc + 1)
+}
+
+/// A rule's native return (`Cut::calls`): to its call's place, or (`RETURN m=1`) the one after.
+/// Any other value a call gives back is the run's end (accepted, refused, out of room), passed on.
+pub const RETURNED: u64 = 1 << 62;
+
+/// Native calls nested at most this deep (`Cut::calls`): past it, the file is refused (to the
+/// fallback), as the machine's stack is the calls'. A rule's frame is at most about 350 bytes
+/// on `.rr`: some 360 KB at the most.
+pub const DEPTH: i64 = 1024;
+
 /// The program's `Bounds`: the most written between two `TOKEN`s, weighting `OPEN`, `LEAF` and
 /// `WRAP` (a node), `NODE_SUPER` and `PUSH`.
 ///
@@ -999,7 +1039,10 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         (0..n).map(|k| r.kinds.iter().position(|&x| usize::from(x) == k).unwrap_or(0) as u8).collect()
     });
 
-    let clustered = cut.count > 1;
+    let clustered = cut.count > 1 || cut.calls;
+    if cut.calls && !cut.pass.is_empty() {
+        return Err(Error::UnsupportedBackend);
+    }
     // In clusters, the state's address is in the pinned register (x21 on aarch64): never
     // allocated, so never spilled, as the one function's stack frame is never moved.
     // `Cut::speed`: Cranelift's optimizer (`opt_level = speed`: value numbering, dead code,
@@ -1063,7 +1106,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     let mut word_insts: Vec<u32> = vec![0; words.len()];
     let phase = std::time::Instant::now();
     let times = std::env::var_os("RERAIL_STREAM_TIMES").is_some();
-    let shared_all = shared_runs(native, &pushes);
+    // With native calls, a function a rule: no arms shared across them.
+    let shared_all = if cut.calls { SharedRuns { bodies: Vec::new(), at: Default::default(), ends: Default::default(), skipped: vec![false; words.len()] } } else { shared_runs(native, &pushes) };
     if times {
         eprintln!("tier 2: shared runs {:.2?}", phase.elapsed());
     }
@@ -1071,7 +1115,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     // targets.
     let n_words = words.len();
     let goes_to = |pc: usize| -> Vec<usize> {
-        let mut r = successors(native, &pushes, pc);
+        let mut r = if cut.calls { rule_successors(native, pc) } else { successors(native, &pushes, pc) };
         if matches!(words[pc].operation, Op::Token { .. }) {
             r.push(pc + 1);
         }
@@ -1089,6 +1133,13 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     let mut incoming: Vec<std::collections::BTreeSet<usize>> = vec![std::collections::BTreeSet::new(); cut.count as usize];
     if clustered {
         incoming[cut.of[0] as usize].insert(0);
+        // A call's callee: an entry of its function, wherever it is called from.
+        for pc in (0..n_words).filter(|&pc| cut.calls && matches!(words[pc].operation, Op::Push { .. })) {
+            let e = callee(native, pc);
+            if e < n_words {
+                incoming[cut.of[e] as usize].insert(e);
+            }
+        }
         for pc in (0..n_words).filter(|&pc| !shared_all.skipped[pc]) {
             for t in goes_to(pc) {
                 if cut.of[t] != cut.of[pc] {
@@ -1109,7 +1160,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         let mut named = vec![false; words.len()];
         for pc in (0..words.len()).filter(|&pc| cut.of[pc] == c && !shared_all.skipped[pc]) {
             named[pc] = true;
-            for t in successors(native, &pushes, pc).into_iter().chain([pc + 1, pc + 2]) {
+            let next = if cut.calls { rule_successors(native, pc) } else { successors(native, &pushes, pc) };
+            for t in next.into_iter().chain([pc + 1, pc + 2]) {
                 if t < words.len() {
                     named[t] = true;
                 }
@@ -1267,6 +1319,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         }
 
         let flags = MemFlags::trusted();
+        // The other functions this one calls or tail-calls, each imported once.
+        let mut call_refs: std::collections::HashMap<usize, cranelift_codegen::ir::FuncRef> = std::collections::HashMap::new();
         // Refuse at `pc` when `bad`; else go on in a new block.
         let guard = |f: &mut FunctionBuilder<'_>, bad: Value, pc: usize| {
             let ok = f.create_block();
@@ -2084,6 +2138,77 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     mset(&mut f, Mem::Supers, supers);
                     f.ins().jump(fall, &[]);
                 }
+                Op::Push { target } if cut.calls => {
+                    // A native call of the callee's function (`Cut::calls`): the calls open are
+                    // counted (`ACCEPT` and `RETURN` check them), the held state stored for the
+                    // callee and loaded again after, the level's word and flags kept in this
+                    // frame. Back at the return's place, or the one after; any other value is
+                    // the run's end, passed on. The call is a loop's head: back at the place after
+                    // the return's (`RETURN m=1`), a rule switches on the same token again, and
+                    // each turn calls a rule, which takes a token before it returns.
+                    heads.push((wb[pc].expect("its own place"), Step::Return));
+                    let ret = mget(&mut f, Mem::Ret);
+                    let deep = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, ret, DEPTH);
+                    guard(&mut f, deep, pc);
+                    let ret = f.ins().iadd_imm(ret, 1);
+                    mset(&mut f, Mem::Ret, ret);
+                    let kept = two_slots.then(|| (mget(&mut f, Mem::Word), mget(&mut f, Mem::Flags)));
+                    for (k, v) in vars.iter().enumerate() {
+                        if let Some(v) = *v {
+                            let x = f.use_var(v);
+                            let p = pinned(&mut f);
+                            f.ins().store(MemFlags::trusted(), x, p, STATE + 8 * k as i32);
+                        }
+                    }
+                    let e = callee(native, pc);
+                    let d = cut.of[e] as usize;
+                    let i = index[d][&e];
+                    let fref = *call_refs.entry(d).or_insert_with(|| {
+                        use cranelift_codegen::ir::{ExtFuncData, ExternalName, UserExternalName};
+                        let name = f.func.declare_imported_user_function(UserExternalName::new(0, cids[d].as_u32()));
+                        let signature = f.import_signature(csig.clone());
+                        f.import_function(ExtFuncData { name: ExternalName::user(name), signature, colocated: true })
+                    });
+                    let iv = f.ins().iconst(types::I64, i as i64);
+                    let call = f.ins().call(fref, &[ctx, iv]);
+                    let v = f.inst_results(call)[0];
+                    for (k, var) in vars.iter().enumerate() {
+                        if let Some(var) = *var {
+                            let p = pinned(&mut f);
+                            let x = f.ins().load(types::I64, MemFlags::trusted(), p, STATE + 8 * k as i32);
+                            f.def_var(var, x);
+                        }
+                    }
+                    if let Some((w, fl)) = kept {
+                        mset(&mut f, Mem::Word, w);
+                        mset(&mut f, Mem::Flags, fl);
+                    }
+                    let (other, not_next) = (f.create_block(), f.create_block());
+                    let back = f.ins().icmp_imm(IntCC::Equal, v, RETURNED as i64);
+                    f.ins().brif(back, word(target), &[], not_next, &[]);
+                    f.switch_to_block(not_next);
+                    let again = f.ins().icmp_imm(IntCC::Equal, v, RETURNED as i64 + 1);
+                    f.ins().brif(again, word(target + 1), &[], other, &[]);
+                    f.switch_to_block(other);
+                    f.set_cold_block(other);
+                    f.ins().return_(&[v]);
+                }
+                Op::Return { again } if cut.calls => {
+                    let ret = mget(&mut f, Mem::Ret);
+                    let none = f.ins().icmp_imm(IntCC::Equal, ret, 0);
+                    guard(&mut f, none, pc);
+                    let ret = f.ins().iadd_imm(ret, -1);
+                    mset(&mut f, Mem::Ret, ret);
+                    for (k, v) in vars.iter().enumerate() {
+                        if let Some(v) = *v {
+                            let x = f.use_var(v);
+                            let p = pinned(&mut f);
+                            f.ins().store(MemFlags::trusted(), x, p, STATE + 8 * k as i32);
+                        }
+                    }
+                    let v = f.ins().iconst(types::I64, RETURNED as i64 + i64::from(again));
+                    f.ins().return_(&[v]);
+                }
                 Op::Push { target } => {
                     let ret = mget(&mut f, Mem::Ret);
                     let t = f.ins().iconst(types::I64, i64::from(target));
@@ -2233,7 +2358,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
             // Each place of another cluster a word here goes to: the held fields stored, then
             // the tail call of its cluster with the place's index there.
             use cranelift_codegen::ir::{ExtFuncData, ExternalName, UserExternalName};
-            let mut refs: std::collections::HashMap<usize, cranelift_codegen::ir::FuncRef> = std::collections::HashMap::new();
+            let refs = &mut call_refs;
             let named_foreign: Vec<usize> = foreign.borrow().iter().copied().collect();
             for g in named_foreign {
                 let d = cluster_of(g);
@@ -2331,7 +2456,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     }
     let cluster_names: Vec<_> = cids.iter().map(|id| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())).collect();
     for l in &lowered {
-        crate::native_cpu_shape::check_tails(&l.func, &l.heads, &names, if clustered { &cluster_names } else { &[] }).map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
+        // With native calls, a rule's function calls the others as well as tail-calling them.
+        let callable: Vec<_> = names.iter().chain(if cut.calls { &cluster_names[..] } else { &[] }).cloned().collect();
+        crate::native_cpu_shape::check_tails(&l.func, &l.heads, &callable, if clustered { &cluster_names } else { &[] }).map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
     }
     if times {
         eprintln!("tier 2: joined and checked {:.2?}", phase.elapsed());

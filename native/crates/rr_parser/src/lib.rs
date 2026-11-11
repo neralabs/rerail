@@ -103,10 +103,16 @@ fn compile() -> Result<Compiled, String> {
     let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols))?;
     let program = rir::assemble(&compiled.text())?;
     let native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
-    // Tier 2 in clusters, cut by the samples' traffic.
+    // Tier 2 a function a grammar rule (`by_rules`): a call of the grammar is a native call,
+    // its return a native return; the optimizer on. Its entries and arms weighted by the
+    // samples' traffic. `RR_CUT=traffic`: the clusters cut by traffic instead, as before.
     let samples: Vec<&[u8]> = SAMPLES.iter().map(|s| s.as_bytes()).collect();
     let traffic = rerail_compiler::native_cpu_clusters::traffic(&program, &samples);
-    let cut = rerail_compiler::native_cpu_clusters::by_traffic(&native, &traffic, CLUSTER_CAP);
+    let cut = if std::env::var("RR_CUT").as_deref() == Ok("traffic") {
+        rerail_compiler::native_cpu_clusters::by_traffic(&native, &traffic, CLUSTER_CAP)
+    } else {
+        rerail_compiler::native_cpu_clusters::Cut { pick_traffic: traffic.clone(), near: true, unsigned: true, speed: true, ..rerail_compiler::native_cpu_clusters::by_rules(&native) }
+    };
     let parser = native_cpu_stream::Parser::with_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
     Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs[0].clone(), labels: compiled.labels.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone(), program })
 }
@@ -207,6 +213,19 @@ mod token_local_tests;
 pub mod tests {
     /// The compiled grammar's tape is the engine's, node for node (extras and parents too), on
     /// documents it parses; the ones it leaves to the engine come back from there.
+    /// Tier 2's grammar calls are the machine's (`by_rules`): nested past `DEPTH`, a file is
+    /// refused (to the fallback), not run off the stack. Nested within it, it parses.
+    #[test]
+    fn deep_nesting_is_refused_not_overflowed() {
+        let nested = |n: usize| format!(".decl r(x: number)\nr(x) :- x = {}1{}.\n", "(".repeat(n), ")".repeat(n));
+        let c = crate::compiled().expect("compiles");
+        let shallow = nested(100);
+        assert_eq!(c.parser.columns(shallow.as_bytes()).ok(), Some(crate::engine_columns(&crate::rr::tape(&shallow))), "100 deep parses as the engine's");
+        let deep = nested(3_000);
+        assert!(c.parser.columns(deep.as_bytes()).is_err(), "3,000 deep: refused");
+        // (The engine's parser, recursive too, runs off a test thread's stack at that depth.)
+    }
+
     #[test]
     fn tape_is_the_engines() {
         assert_eq!(super::compile_error(), None);
@@ -966,6 +985,7 @@ pub mod tests {
         // By the traffic, and by the program alone (no profile: its own edges, in order of place).
         let none = std::collections::HashMap::new();
         let mut shapes: Vec<(String, Cut)> = std::iter::once(("one".to_owned(), Cut::one(native.structural.len()))).chain(caps.iter().map(|&cap| (format!("cap {cap}"), by_traffic(&native, &traffic, cap)))).collect();
+        shapes.push(("rules".to_owned(), Cut { speed: true, ..rerail_compiler::native_cpu_clusters::by_rules(&native) }));
         if std::env::var_os("RR_STATES").is_some() {
             shapes.push(("states".to_owned(), rerail_compiler::native_cpu_clusters::by_states(&native)));
         }
