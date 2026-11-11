@@ -296,7 +296,7 @@ pub(super) fn found_all(store: &ContentStore, program: &[u8; 32], docs: &[(Sourc
     let digests = store.source_digests(&asked.iter().map(|i| docs[*i].0).collect::<Vec<_>>())?;
     let wanted: Vec<(usize, [u8; 32], i64)> = asked.iter().zip(&digests).filter_map(|(i, d)| d.map(|d| (*i, d, part_of(&d, docs[*i].1)))).collect();
     let (space, rel) = (crate::content_store::local_space(&plan), entry_rel(&plan));
-    let mut frames = store.admit_frame_parts(&space, &rel, &wanted.iter().map(|(_, _, p)| *p).collect::<Vec<_>>())?;
+    let mut frames = store.admit_parts_of(&space, &rel, &wanted.iter().map(|(_, _, p)| *p).collect::<Vec<_>>())?;
     let mut out: Vec<Option<Found>> = held.into_iter().map(|h| h.map(Found::Held)).collect();
     let mut used = Vec::new();
     for (i, digest, part) in wanted {
