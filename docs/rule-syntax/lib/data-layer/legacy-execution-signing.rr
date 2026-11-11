@@ -1,0 +1,52 @@
+// The signature covers the same allowlist relations used by the detector.
+#include "data-layer/signing.rr"
+multi_name("legacy-execution", p) :- leg_signed_part(p, _).
+.decl leg_signed_config(part: symbol, key: symbol)
+leg_signed_config("direct_legacy_surface_decorators", "direct-decorator").
+leg_signed_config("admin_eager_terminal_allowlist", "eager-terminal-allow").
+leg_signed_config("explicit_legacy_surface_predicate_source", "signed-predicate").
+leg_signed_config("explicit_eager_processing_boundary_allowlist", "boundary-call-allow").
+leg_signed_config("legacy_wrapper_imports", "wrapper-allow").
+leg_signed_config("legacy_delegate_files", "stub-allow").
+leg_signed_config("legacy_wrapper_decorators", "boundary-decorator").
+leg_signed_config("versioning_compat_files", "versioning-allow").
+leg_signed_config("graph_fallback_allowlist", "graph-fallback-allow").
+multi_entry("legacy-execution", part, value) :- leg_signed_config(part, key), leg_config(key, value).
+multi_entry("legacy-execution", "exact_file_name_allowlists", cat(name, ":", path)) :- leg_inventory_allow(name, path).
+multi_entry("legacy-execution", "raw_txn_scope_allowlists", cat(scope, ":", path)) :- leg_scope_allow("LEG-040", scope, path).
+multi_entry("legacy-execution", "raw_cursor_scope_allowlists", cat(scope, ":", path)) :- leg_scope_allow("LEG-050", scope, path).
+.decl leg_signature_override(sig: symbol)
+leg_signature_override(s) :- option("entryPoint", "_legacy_signature_contract"), option("legacySignature", s).
+.decl leg_signature(sig: symbol)
+leg_signature(s) :- leg_signature_override(s).
+leg_signature(s) :- leg_config("signed-signature", s), !leg_signature_override(_).
+multi_sig("legacy-execution", linter, sig) :- leg_config("signed-linter", linter), leg_signature(sig).
+.decl leg_verified()
+leg_verified() :- multi_status("legacy-execution", "valid").
+leg_verified() :- leg_signature("UNSIGNED").
+
+.decl leg_signature_stderr(text: symbol)
+leg_signature_stderr(cat("WARNING: Allowlists for ", name, " are unsigned\n")) :-
+    leg_config("signed-linter", name), leg_signature("UNSIGNED").
+leg_signature_stderr(cat("FAIL: WARNING: Allowlists for ", name, " are ", label, ". Sign with --sign-allowlist.\n")) :-
+    leg_config("signed-linter", name), leg_signature(s), unsigned_sig(s), s != "UNSIGNED",
+    (s = "NEEDS_SIGNING", label = "needs signing" ; s != "NEEDS_SIGNING", label = "unsigned").
+leg_signature_stderr(cat("FAIL: Allowlist signature verification failed for ", name, ": ", detail, "\n")) :-
+    leg_config("signed-linter", name), leg_signature(s), multi_status("legacy-execution", "invalid"),
+    multi_message("legacy-execution", payload), nera_key(key), detail = @ed25519_error(key, payload, s).
+
+.violation LegacySignature(at: span, payload: symbol, passed: number, stderr: symbol, linter: symbol, warn_only: number) code "LEG_SIGNATURE" "allowlist verification"
+LegacySignature(@place("",0), payload, passed, stderr, linter, warn) :-
+    option("entryPoint", "_legacy_signature_contract"), multi_message("legacy-execution", payload),
+    leg_config("signed-linter", linter),
+    (leg_signature("UNSIGNED"), warn = 1 ; !leg_signature("UNSIGNED"), warn = 0),
+    (leg_verified(), passed = 1 ; !leg_verified(), passed = 0),
+    (leg_signature_stderr(stderr) ; !leg_signature_stderr(_), stderr = "").
+
+LegacyExecution(@place("scripts/lint_legacy_execution_surfaces.py",1), "scripts/lint_legacy_execution_surfaces.py",
+    "LEG-000", "Signed allowlist verification failed", 0, "", 0) :- !option("entryPoint", _), !leg_verified().
+
+.violation LegacySigningPart(at: span, part: symbol, order: number) code "LEG_SIGN_PART" "signed part"
+LegacySigningPart(@place("",0), p, i) :- option("entryPoint", "_get_allowlists_for_signing"), leg_signed_part(p, i).
+.violation LegacySigningEntry(at: span, part: symbol, value: symbol) code "LEG_SIGN_ENTRY" "signed entry"
+LegacySigningEntry(@place("",0), p, e) :- option("entryPoint", "_get_allowlists_for_signing"), multi_entry("legacy-execution", p, e).

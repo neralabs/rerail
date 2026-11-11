@@ -87,6 +87,10 @@ def install(recorder):
     legacy.git_head_text = head_text
 
     def snapshot(module,entry,arguments):
+        if entry == 'scan_repo' and module is modules['legacy_execution_surfaces']:
+            from data_layer_rr.legacy_execution_port import repository_files
+            root = Path(arguments['root']).resolve()
+            return repository_files(root), root
         pairs=arguments.get('file_sources')
         if pairs is not None:
             root=Path(getattr(module,'ROOT',recorder.root)).resolve()
@@ -177,7 +181,7 @@ def install(recorder):
         'execution_authority_bypass':['scan_source'],
         'impl_direct_execution':['scan_file','scan_source','scan_fts_manager_direct_execution','scan_fts_manager_source'],
         'raw_execute_regression':['scan_file_content','_check_text','_check_ast'],
-        'legacy_execution_surfaces':['scan_file_content','scan_sql_post_fetch_filter_content'],
+        'legacy_execution_surfaces':['scan_file_content','scan_sql_post_fetch_filter_content','scan_repo'],
     }
     for check in ('serverplan_steps','serverplan_quality'):
         entries[check]=[name for name,value in vars(modules[check]).items() if inspect.isfunction(value) and

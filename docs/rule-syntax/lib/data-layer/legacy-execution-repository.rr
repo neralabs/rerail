@@ -1,0 +1,94 @@
+// The repository scanner demands one directory inventory, then reads its source
+// files in a batch. The standalone inventory APIs consume supplied paths.
+#include "project.rr"
+#include "python/source-range.rr"
+
+.decl leg_walk_mode(mode: symbol)
+leg_walk_mode(mode) :- env("data-layer.legacy-mode", mode).
+.decl leg_skip_dir(name: symbol)
+leg_skip_dir(n) :- leg_walk_mode("repo"), leg_config("repository-skip", n).
+leg_skip_dir(n) :- leg_walk_mode("python-inventory"),
+    (n = ".git" ; n = ".venv" ; n = "venv" ; n = "__pycache__" ; n = "tmp").
+.decl leg_walk(path: symbol)
+leg_walk(".") :- leg_walk_mode(_).
+leg_walk(@replace_all(cat(p, "/", n), "^\\./", "")) :-
+    leg_walk(p), dir_entry(p, n, 1), dir_metadata(p, n, _, 0, _), !leg_skip_dir(n).
+.decl leg_disk_file(path: symbol)
+leg_disk_file(@replace_all(cat(p, "/", n), "^\\./", "")) :-
+    leg_walk(p), dir_metadata(p, n, 1, _, _), !leg_skip_dir(n).
+.decl leg_python_file(path: symbol)
+leg_python_file(p) :- leg_disk_file(p), match("(?:.*/)?[^/]+\\.py", p).
+.decl leg_read_file(path: symbol)
+leg_read_file(p) :- leg_walk_mode("repo"), leg_disk_file(p), match("(?:.*/)?[^/]+\\.(?:py|md|rst)", p).
+load(p, cat("legacy-execution:", p), "python") :- leg_walk_mode("repo"), leg_python_file(p), !leg_disk_read_failed(p).
+leg_doc(d, p) :- option("entryPoint", "scan_repo"), leg_python_file(p),
+    loaded_doc(_, cat("legacy-execution:", p), "python", d), !leg_read_failure(p, _).
+
+.decl leg_inventory_input(path: symbol)
+leg_inventory_input(p) :- option("entryPoint", "scan_repo"), leg_disk_file(p).
+leg_inventory_input(p) :- option("entryPoint", "check_exact_file_inventory"), option_item("inventoryPaths", _, p).
+leg_inventory_input(p) :- option("entryPoint", "check_removed_sql_read_leaf_inventory"), option_item("inventoryPaths", _, p).
+.decl leg_exact_inventory()
+leg_exact_inventory() :- option("entryPoint", "scan_repo").
+leg_exact_inventory() :- option("entryPoint", "check_exact_file_inventory").
+.decl leg_removed_inventory()
+leg_removed_inventory() :- option("entryPoint", "scan_repo").
+leg_removed_inventory() :- option("entryPoint", "check_removed_sql_read_leaf_inventory").
+
+.decl leg_repo_finding(path: symbol, line: number, code: symbol, message: symbol, order: number)
+leg_repo_finding(p, 1, "LEG-001", cat("Unexpected ", n, " surfaced outside the surveyed inventory. Extend the migration plan before adding new legacy files."), i) :-
+    leg_exact_inventory(), leg_inventory_input(p), leg_inventory_name(n, i),
+    (p = n ; suffix(cat("/", n), p)), !leg_inventory_allow(n, p).
+leg_repo_finding(p, 1, "LEG-070", "Legacy l5200 SQL read leaf execution modules were removed; route read terminals through ServerPlan intents and grammar.", 0) :-
+    leg_removed_inventory(), leg_inventory_input(p), leg_config("removed-file", p).
+
+// File reads normalize CRLF and CR. Count the remaining Python splitlines
+// separators only for rows in a scope which uses the text scanner.
+.decl leg_disk_line(path: symbol, i: number, text: symbol)
+leg_disk_line(p, i, text) :- leg_read_file(p), file_line(p, i, text).
+.decl leg_disk_text(p: symbol, i: number, text: symbol)
+leg_disk_text(p, i, text) :- leg_disk_line(p, i, text), !leg_read_failure(p, _), leg_text_path(p).
+.decl leg_break(re: symbol)
+leg_break("[\\x{b}\\x{c}\\x{1c}-\\x{1e}\\x{85}\\x{2028}\\x{2029}]").
+.decl leg_extra_lines(path: symbol, line: number, n: number)
+leg_extra_lines(p, i, @count_matches(re, text)) :- leg_disk_text(p, i, text), leg_break(re), match(cat("(?s:.*)", re, "(?s:.*)"), text).
+.decl leg_filter_line(path: symbol, line: number, token: symbol, order: number)
+leg_filter_line(p, i + preceding + @count_matches(re, @slice(text, 0, start)), token, k) :-
+    leg_disk_text(p, i, text), leg_filter_token(token, k), contains(token, text), leg_break(re),
+    match_all("(?<fragment>[^\\x{b}\\x{c}\\x{1c}-\\x{1e}\\x{85}\\x{2028}\\x{2029}]+)", text, _, start, _),
+    contains(token, fragment), preceding = sum cnt : { leg_extra_lines(p, j, cnt), j < i }.
+leg_repo_finding(p, l, "LEG-071", cat(token, " is forbidden in SQL-facing permission surfaces; use get_policy_expression() and grammar pushdown instead."), k) :-
+    option("entryPoint", "scan_repo"), leg_filter_line(p, l, token, k).
+
+.decl leg_io_row(path: symbol, kind: symbol, errno: number, detail: symbol, hex: symbol, start: number, end: number, reason: symbol)
+leg_io_row(p, k, n, d, hex, s, e, r) :- leg_read_file(p), file_error(p, k, n, d, hex, s, e, r).
+.decl leg_disk_read_failed(path: symbol)
+leg_disk_read_failed(p) :- leg_io_row(p, _, _, _, _, _, _, _).
+.decl leg_utf8_reason(id: symbol, reason: symbol)
+leg_utf8_reason("invalid-start", "invalid start byte").
+leg_utf8_reason("invalid-continuation", "invalid continuation byte").
+leg_utf8_reason("unexpected-end", "unexpected end of data").
+.decl leg_read_failure(path: symbol, message: symbol)
+leg_read_failure(p, cat("'utf-8' codec can't decode byte 0x", @byte_slice(hex, 2*s, 2*e),
+    " in position ", to_string(s), ": ", reason)) :-
+    leg_io_row(p, "InvalidUtf8", _, _, hex, s, e, id), e = s+1, leg_utf8_reason(id, reason).
+leg_read_failure(p, cat("'utf-8' codec can't decode bytes in position ", to_string(s), "-", to_string(e-1), ": ", reason)) :-
+    leg_io_row(p, "InvalidUtf8", _, _, _, s, e, id), e > s+1, leg_utf8_reason(id, reason).
+leg_read_failure(p, cat("[Errno ", to_string(n), "] ", @replace_all(detail, " \\(os error [0-9]+\\)$", ""), ": ",
+    @python_repr(cat(root, "/", p)))) :-
+    leg_io_row(p, k, n, detail, _, _, _, _), k != "InvalidUtf8", workspace_root(root).
+leg_read_failure(p, m) :- option_item("readFailurePaths", i, p), option_item("readFailureMessages", i, m).
+leg_repo_finding(p, 1, "LEG-000", cat("Failed to read file: ", message), 0) :-
+    option("entryPoint", "scan_repo"), leg_read_failure(p, message).
+leg_repo_finding(p, 1, "LEG-002", cat("SyntaxError: ", detail, " (", filename, ", line ", to_string(l), ")"), 0) :-
+    option("entryPoint", "scan_repo"), leg_doc(d, p), syntax_error(d, l, detail),
+    detail != "source code string cannot contain null bytes", file_name(d, filename).
+leg_repo_finding(p, 1, "LEG-002", "SyntaxError: source code string cannot contain null bytes", 0) :-
+    option("entryPoint", "scan_repo"), leg_doc(d, p), syntax_error(d, _, "source code string cannot contain null bytes").
+
+LegacyExecution(@place(p,l), p, c, m, i, "", 0) :- leg_repo_finding(p, l, c, m, i).
+.violation LegacyPythonFile(at: span, path: symbol, order: number) code "LEG_PYTHON_FILE" "Python inventory"
+LegacyPythonFile(@place("",0), @replace_all(key, "\\x00", "/"), i) :-
+    option("entryPoint", "_iter_python_files"), ordered_rows(_, key, i, leg_python_order).
+.decl leg_python_order(group: number, path: symbol)
+leg_python_order(0, @replace_all(p, "/", "\u0000")) :- leg_python_file(p).

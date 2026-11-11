@@ -1,0 +1,274 @@
+// Source-level legacy execution collector and reporting.
+.decl leg_ast_entry()
+leg_ast_entry() :- option("entryPoint", "scan_file_content").
+leg_ast_entry() :- option("entryPoint", "scan_repo").
+leg_ast_entry() :- !option("entryPoint", _).
+.decl leg_doc(d: number, path: symbol)
+leg_doc(d, p) :- doc(d, _, _), doc_role(d, "primary"), option("inputPath", p).
+leg_doc(d, p) :- doc(d, p, _), doc_role(d, "primary"), !option("inputPath", _), !option("entryPoint", "scan_repo").
+.decl leg_path(d: number, path: symbol)
+leg_path(d, @replace_all(p, "^api/", "")) :- leg_doc(d, p).
+.decl leg_source(d: number, text: symbol)
+leg_source(d, t) :- leg_doc(d, _), source(d, s), text(s, t).
+.decl leg_triggered(d: number)
+leg_triggered(d) :- leg_source(d, t), leg_config("source-trigger", x), contains(x, t).
+.decl leg_production_doc(d: number)
+leg_production_doc(d) :- leg_doc(d, p), leg_config("production-root", root),
+    prefix(cat(root, "/"), p), suffix(".py", p), !leg_production_skipped(d).
+.decl leg_production_skipped(d: number)
+leg_production_skipped(d) :- path_part(d, part), leg_config("production-skip", part).
+.decl leg_ast_doc(d: number)
+leg_ast_doc(d) :- leg_ast_entry(), leg_doc(d, _), option("entryPoint", _).
+leg_ast_doc(d) :- leg_ast_entry(), leg_production_doc(d), leg_triggered(d), !option("entryPoint", _), leg_verified().
+.decl leg_valid(d: number)
+leg_valid(d) :- leg_ast_doc(d), !syntax_error(d, _, _).
+.decl leg_node(n: node, d: number, line: number, order: number)
+leg_node(n, d, l, i) :- leg_valid(d), leg_anchor_kind(k), kind(n, k), docof(n, d), line(n, l), visit_index(n, i).
+.decl leg_anchor_kind(kind: symbol)
+leg_anchor_kind("import_statement").
+leg_anchor_kind("import_from_statement").
+leg_anchor_kind("function_definition").
+leg_anchor_kind("call").
+leg_anchor_kind("if_statement").
+leg_anchor_kind("elif_clause").
+
+.decl leg_identifier(n: node, name: symbol)
+leg_identifier(n, @nfkc(x)) :- unparen(n, e), kind(e, "identifier"), text(e, x).
+.decl leg_attr(n: node, obj: node, name: symbol)
+leg_attr(n, o, @nfkc(x)) :- unparen(n, e), kind(e, "attribute"),
+    field(e, "object", o), field(e, "attribute", a), text(a, x).
+.decl leg_callable(n: node, name: symbol)
+leg_callable(n, x) :- leg_identifier(n, x).
+leg_callable(n, x) :- leg_attr(n, _, x).
+.decl leg_call(c: node, f: node)
+leg_call(c, f) :- leg_node(c, _, _, _), kind(c, "call"), field(c, "function", f).
+.decl leg_direct(c: node, name: symbol)
+leg_direct(c, x) :- leg_call(c, f), leg_identifier(f, x).
+.decl leg_method(c: node, obj: node, name: symbol)
+leg_method(c, o, x) :- leg_call(c, f), leg_attr(f, o, x).
+.decl leg_cast(n: node, args: node)
+leg_cast(n, a) :- unparen(n, c), kind(c, "call"), field(c, "function", f),
+    leg_callable(f, "cast"), field(c, "arguments", a).
+.decl leg_positional(args: node, n: node, i: number)
+leg_positional(a, n, i) :- child(a, n, i), !kind(n, "comment"), !kind(n, "line_continuation"),
+    !kind(n, "keyword_argument"), !kind(n, "dictionary_splat").
+.decl leg_cast_operand(n: node, operand: node)
+leg_cast_operand(n, o) :- leg_cast(n, a), leg_positional(a, o, i),
+    1 = count : { leg_positional(a, _, j), j < i }.
+.decl leg_receiver_step(n: node, child: node)
+leg_receiver_step(n, o) :- leg_attr(n, o, _).
+leg_receiver_step(n, o) :- unparen(n, e), kind(e, "subscript"), field(e, "value", o).
+leg_receiver_step(n, f) :- unparen(n, e), kind(e, "call"), field(e, "function", f), !leg_cast_operand(n, _).
+leg_receiver_step(n, o) :- leg_cast_operand(n, o).
+.decl leg_receiver(demand: node)
+leg_receiver(o) :- leg_method(_, o, _).
+leg_receiver(o) :- leg_graph_comparison(_, o).
+leg_receiver(o) :- leg_receiver(n), leg_receiver_step(n, o).
+.decl leg_token(n: node, token: symbol)
+leg_token(n, @lower(x)) :- leg_receiver(n), leg_callable(n, x).
+leg_token(n, x) :- leg_receiver(n), leg_receiver_step(n, o), leg_token(o, x).
+
+.decl leg_function(n: node, d: number, name: symbol, order: number)
+leg_function(f, d, @nfkc(x), i) :- leg_node(f, d, _, i), kind(f, "function_definition"), def_name(f, x).
+.decl leg_class_chain(n: node, name: symbol)
+leg_class_chain(c, @nfkc(x)) :- kind(c, "class_definition"), def_name(c, x), !nearest(c, _, "class_definition").
+leg_class_chain(c, @dot(p, @nfkc(x))) :- kind(c, "class_definition"), def_name(c, x),
+    nearest(c, parent, "class_definition"), leg_class_chain(parent, p).
+.decl leg_class_path(n: node, name: symbol)
+leg_class_path(n, q) :- nearest(n, c, "class_definition"), leg_class_chain(c, q).
+.decl leg_symbol(f: node, symbol: symbol)
+leg_symbol(f, @dot(q, x)) :- leg_function(f, _, x, _), leg_class_path(f, q).
+leg_symbol(f, x) :- leg_function(f, _, x, _), !leg_class_path(f, _).
+.decl leg_decorator(n: node, name: symbol)
+leg_decorator(n, x) :- leg_callable(n, x).
+leg_decorator(n, x) :- unparen(n, e), kind(e, "call"), field(e, "function", f), leg_decorator(f, x).
+.decl leg_marker(f: node, name: symbol)
+leg_marker(f, x) :- leg_function(f, _, _, _), decorator(f, e), leg_decorator(e, x).
+.decl leg_wrapper(f: node)
+leg_wrapper(f) :- leg_marker(f, x), leg_config("boundary-decorator", x).
+.decl leg_legacy(f: node)
+leg_legacy(f) :- leg_wrapper(f).
+leg_legacy(f) :- leg_marker(f, x), leg_config("direct-decorator", x).
+.decl leg_in_legacy(c: node)
+leg_in_legacy(c) :- leg_call(c, _), leg_legacy(f), within(c, f).
+leg_in_legacy(c) :- leg_call(c, _), leg_legacy(f), decorator(f, e), (c = e ; within(c, e)).
+.decl leg_valid_boundary(d: number)
+leg_valid_boundary(d) :- leg_wrapper(f), leg_function(f, d, _, _).
+leg_valid_boundary(d) :- leg_direct(c, x), leg_config("boundary-call", x), !leg_raw_boundary_call(c, _),
+    def_frame(c, f), leg_function(f, d, n, _), leg_function(_, d, @replace_all(n, "(?:_async)?$", "_lazy"), _).
+
+.decl leg_import_name(n: node, name: symbol, alias: symbol)
+leg_import_name(n, x, x) :- (kind(n, "dotted_name") ; kind(n, "identifier")), text(n, x).
+leg_import_name(n, x, @nfkc(alias)) :- kind(n, "aliased_import"), field(n, "name", a), text(a, x),
+    field(n, "alias", b), text(b, alias).
+leg_import_name(n, "*", "*") :- kind(n, "wildcard_import").
+.decl leg_wrapper_from(n: node, d: number, name: symbol)
+leg_wrapper_from(n, d, x) :- leg_node(n, d, _, _), from_module_raw(n, m), leg_config("wrapper-module", m),
+    field(n, "name", a), leg_import_name(a, x, _).
+leg_wrapper_from(n, d, "*") :- leg_node(n, d, _, _), from_module_raw(n, m), leg_config("wrapper-module", m),
+    child(n, a, _), kind(a, "wildcard_import").
+leg_wrapper_from(n, d, "legacy_wrappers") :- leg_node(n, d, _, _), from_module_raw(n, "l2050_transaction"),
+    field(n, "name", a), leg_import_name(a, "legacy_wrappers", _).
+.decl leg_wrapper_import(n: node, i: number)
+leg_wrapper_import(n, i) :- leg_wrapper_from(n, d, _), leg_node(n, d, _, i).
+leg_wrapper_import(n, i) :- kind(n, "import_statement"), leg_node(n, _, _, _), field(n, "name", a),
+    leg_import_name(a, x, _), leg_config("wrapper-module", x), visit_index(a, i).
+.decl leg_validation_only(d: number)
+leg_validation_only(d) :- leg_wrapper_from(_, d, "validate_legacy_delegates"), !leg_other_wrapper_import(d).
+.decl leg_other_wrapper_import(d: number)
+leg_other_wrapper_import(d) :- leg_wrapper_from(_, d, x), x != "validate_legacy_delegates".
+.decl leg_validate_test(d: number)
+leg_validate_test(d) :- leg_path(d, p), contains("/tests/", cat("/", p, "/")), leg_validation_only(d).
+
+.decl leg_boundary_import(n: node, d: number, alias: symbol, order: number)
+leg_boundary_import(n, d, x, i) :- leg_node(n, d, _, _), from_module_raw(n, m),
+    (m = "l2050_transaction.execution_boundary" ; m = "l2000_connection.execution_boundary"),
+    field(n, "name", a), leg_import_name(a, "legacy_execution_boundary", x), visit_index(a, i).
+.decl leg_raw_boundary_call(c: node, name: symbol)
+leg_raw_boundary_call(c, "legacy_execution_boundary") :- leg_direct(c, "legacy_execution_boundary").
+leg_raw_boundary_call(c, x) :- leg_direct(c, x), leg_node(c, d, _, _), leg_boundary_import(n, d, x, _), earlier(n, c).
+.decl leg_wrapper_context(f: node)
+leg_wrapper_context(f) :- leg_wrapper(f).
+leg_wrapper_context(f) :- leg_function(f, d, name, _), leg_function(g, d, name, _), leg_wrapper(g), earlier(g, f).
+.decl leg_other_call(f: node)
+leg_other_call(f) :- leg_call(c, target), def_frame(c, f), !leg_callable(target, "_legacy_delegate_stub").
+.decl leg_stub_excused(d: number, line: number)
+leg_stub_excused(d, l) :- leg_direct(c, "_legacy_delegate_stub"), leg_node(c, d, l, _),
+    def_frame(c, f), leg_wrapper_context(f), !leg_other_call(f).
+.decl leg_internal(d: number)
+.decl leg_internal_root(path: symbol)
+leg_internal_root(p) :- leg_path(_, p), (p = "impl" ; prefix("impl/", p) ; p = "data_layer" ; prefix("data_layer/", p)).
+leg_internal_root(p) :- leg_path(_, p), leg_config("layer-path", re), match(re, p).
+leg_internal(d) :- leg_path(d, p), leg_internal_root(p),
+    !contains("/tests/", cat("/", p, "/")), !leg_config("canonical-wrapper", p),
+    p != "l2050_transaction/execution_boundary.py".
+.decl leg_in_raw_scope(d: number, code: symbol, scope: symbol, order: number)
+leg_in_raw_scope(d, code, scope, i) :- leg_path(d, p), leg_raw_scope(code, scope, i),
+    (p = scope ; prefix(cat(scope, "/"), p)), !leg_scope_allow(code, scope, p).
+.decl leg_cursor(c: node)
+leg_cursor(c) :- leg_method(c, o, _), leg_cursor_receiver(o).
+.decl leg_cursor_receiver(o: node)
+leg_cursor_receiver(o) :- leg_token(o, t), contains("cursor", t).
+leg_cursor_receiver(o) :- leg_token(o, t),
+    (t = "db" ; t = "conn" ; t = "connection" ; t = "raw_conn" ; t = "raw_connection").
+.decl leg_plan(c: node)
+leg_plan(c) :- leg_method(c, o, _), leg_token(o, t),
+    (t = "server_plan" ; t = "plan" ; t = "read_plan" ; t = "write_plan").
+.decl leg_transaction(c: node)
+leg_transaction(c) :- leg_method(c, o, _), leg_token(o, t),
+    (t = "txn" ; t = "transaction" ; t = "read_txn" ; t = "write_txn" ; t = "plan_txn" ; t = "lazy_txn" ;
+     t = "scope" ; t = "query" ; t = "queries" ; t = "lazy_query" ; t = "typed_query" ; t = "sql_query").
+.decl leg_receiver_kind(c: node, kind: symbol)
+leg_receiver_kind(c, "cast-bypass") :- leg_method(c, o, _), leg_cast(o, _).
+leg_receiver_kind(c, "direct") :- leg_method(c, o, _), !leg_cast(o, _).
+.decl leg_eager(c: node, d: number, name: symbol, receiver: symbol)
+leg_eager(c, d, x, r) :- leg_method(c, _, x), leg_node(c, d, _, _), leg_internal(d),
+    leg_config("eager-method", x), leg_receiver_kind(c, r), !leg_in_legacy(c).
+.decl leg_graph_comparison(n: node, receiver: node)
+leg_graph_comparison(n, left) :- py_if(n, test, _), unparen(test, cmp), cmp_pair(cmp, 0, "is", left, right),
+    !cmp_pair(cmp, 1, _, _, _), unparen(right, r), kind(r, "none").
+.decl leg_graph_receiver(n: node)
+leg_graph_receiver(n) :- leg_token(n, t), (t = "mixin" ; t = "_plan_mixin" ; t = "plan_mixin").
+
+.decl leg_active(f: node, d: number, name: symbol, symbol: symbol)
+leg_active(f, d, x, s) :- leg_function(f, d, x, i), leg_symbol(f, s), i = max j : { leg_function(g, d, _, j), leg_symbol(g, s) }.
+.decl leg_active_call(c: node, f: node)
+leg_active_call(c, f) :- leg_call(c, _), def_frame(c, owner), leg_function(owner, d, _, _), leg_symbol(owner, s),
+    leg_active(f, d, _, s), earlier(f, c).
+.decl leg_boundary_symbol(c: node, symbol: symbol)
+leg_boundary_symbol(c, s) :- leg_call(c, _), def_frame(c, f), leg_symbol(f, s).
+leg_boundary_symbol(c, "<module>") :- leg_call(c, _), !def_frame(c, _).
+.decl leg_eager_seed(f: node, call: node, method: symbol)
+leg_eager_seed(f, c, x) :- leg_active_call(c, f), leg_method(c, _, x), (x = "resolve" ; x = "resolve_async"),
+    !leg_legacy(f), leg_active(f, d, _, _), leg_internal(d).
+.decl leg_terminal(f: node, call: node, method: symbol)
+leg_terminal(f, c, x) :- leg_eager_seed(f, c, x), visit_index(c, i),
+    i = min j : { leg_eager_seed(f, other, _), visit_index(other, j) }.
+.decl leg_dfs_target(f: node)
+leg_dfs_target(f) :- leg_terminal(f, _, _).
+.decl leg_call_candidate(c: node, name: symbol, order: number)
+leg_call_candidate(c, x, 0) :- leg_direct(c, x), x != "_legacy_delegate_stub", !leg_raw_boundary_call(c, _),
+    !leg_config("boundary-call", x).
+leg_call_candidate(c, x, 0) :- leg_method(c, _, x), x != "resolve", x != "resolve_async".
+leg_call_candidate(c, @dot(q, x), 1) :- leg_method(c, o, x), x != "resolve", x != "resolve_async",
+    leg_identifier(o, n), (n = "self" ; n = "cls"), leg_class_path(c, q).
+.decl leg_candidate_target(d: number, name: symbol, f: node)
+leg_candidate_target(d, x, f) :- leg_active(f, d, x, _).
+leg_candidate_target(d, s, f) :- leg_active(f, d, _, s).
+.decl leg_call_edge(f: node, g: node, order: number)
+leg_call_edge(f, g, 2*i+k) :- leg_active_call(c, f), leg_node(c, d, _, i), leg_internal(d),
+    leg_call_candidate(c, x, k), leg_candidate_target(d, x, g), f != g, !leg_legacy(f), !leg_legacy(g),
+    1 = count : { leg_candidate_target(d, x, _) }.
+.decl leg_dfs_root(f: node, order: symbol)
+leg_dfs_root(f, s) :- leg_active(f, d, _, s), leg_internal(d), leg_path(d, p), !leg_legacy(f),
+    !leg_config("eager-terminal-allow", cat(p, ":", s)).
+.decl leg_eager_hit(f: node, call: node, terminal: node, method: symbol)
+leg_eager_hit(f, c, f, x) :- leg_dfs_root(f, _), leg_terminal(f, c, x).
+leg_eager_hit(f, c, terminal, x) :- leg_dfs_root(f, _), !leg_dfs_target(f),
+    dfs_first_memo(f, terminal, i, leg_call_edge, leg_dfs_target, leg_dfs_root),
+    leg_active_call(c, f), visit_index(c, j), leg_call_candidate(c, _, k), i = 2*j+k, leg_terminal(terminal, _, x).
+
+.decl leg_result(d: number, line: number, code: symbol, message: symbol, family: number, label: symbol, order: number)
+leg_result(d, l, "LEG-010", "Importing legacy_wrappers is outside the surveyed migration inventory.", 0, "", i) :-
+    leg_wrapper_import(n, i), leg_node(n, d, l, _), leg_path(d, p), !leg_config("wrapper-allow", p),
+    !leg_valid_boundary(d), !leg_validate_test(d).
+leg_result(d, l, "LEG-020", "_legacy_delegate_stub definition is outside the surveyed inventory.", 0, "", i) :-
+    leg_function(n, d, "_legacy_delegate_stub", i), leg_node(n, d, l, _), leg_path(d, p),
+    !leg_config("canonical-wrapper", p), !leg_config("stub-allow", p).
+leg_result(d, l, "LEG-021", "_legacy_delegate_stub call is outside the surveyed inventory.", 0, "", i) :-
+    leg_direct(c, "_legacy_delegate_stub"), leg_node(c, d, l, i), leg_path(d, p), !leg_config("stub-allow", p),
+    !leg_stub_excused(d, l).
+leg_result(d, l, "LEG-030", cat("Compatibility wrapper ", x, "() was reintroduced outside the audited versioning_tools inventory."), 0, x, i) :-
+    leg_function(f, d, x, i), leg_node(f, d, l, _), leg_config("versioning-helper", x),
+    leg_path(d, p), !leg_config("versioning-allow", p).
+leg_result(d, l, "LEG-040", cat("Raw transaction method ", x, "() is forbidden in ", scope, "."), k, "", i) :-
+    leg_method(c, _, x), leg_node(c, d, l, i), leg_config("raw-transaction", x), leg_in_raw_scope(d, "LEG-040", scope, k).
+leg_result(d, l, "LEG-050", cat("Raw cursor method ", x, "() is forbidden in ", scope, "."), k, "", i) :-
+    leg_method(c, _, x), leg_node(c, d, l, i), leg_config("raw-cursor", x), leg_cursor(c),
+    leg_in_raw_scope(d, "LEG-050", scope, k).
+leg_result(d, l, "LEG-060", "Fallback-without-plan graph execution branch is forbidden after the sql_graph_query bridge deletion.", 0, "", i) :-
+    leg_graph_comparison(n, receiver), leg_node(n, d, l, i), leg_in_raw_scope(d, "LEG-060", _, _),
+    leg_graph_receiver(receiver).
+leg_result(d, l, "LEG-061", "Fallback grammar bridge call is forbidden after the sql_graph_query bridge deletion.", 0, "", 0) :-
+    leg_valid(d), leg_in_raw_scope(d, "LEG-060", _, _), split_line(d, l, t),
+    (contains("grammar_rows_lazy", t) ; contains("grammar_row_lazy", t) ;
+     contains("fetchone_via_plan", t) ; contains("fetchall_via_plan", t)).
+leg_result(d, l, "LEG-080", cat("Legacy eager transaction call ", x, "() is forbidden from internal data-layer execution paths (",
+    r, "). Use a *_lazy surface, SQL relation, or ServerPlan intent instead."), 0, "", i) :-
+    leg_eager(c, d, x, r), leg_transaction(c), !leg_plan(c), leg_node(c, d, l, i).
+leg_result(d, l, "LEG-081", cat("Direct ServerPlan execute()/execute_async()/fetch() is forbidden from internal execution paths (",
+    r, "). Route through explicit plan-scope or executor-authorized execution instead."), 0, "", i) :-
+    leg_eager(c, d, _, r), leg_plan(c), leg_node(c, d, l, i).
+leg_result(d, l, "LEG-082", cat(x, "() may not wrap internal data-path execution. It is not a substitute for SQL/ServerPlan carriers or explicit lifecycle execution."), 0, "", i) :-
+    leg_direct(c, x), leg_config("boundary-call", x), !leg_raw_boundary_call(c, _), leg_node(c, d, l, i),
+    leg_internal(d), leg_doc(d, p), leg_boundary_symbol(c, s), !leg_config("boundary-call-allow", cat(p, ":", s, ":", x)).
+leg_result(d, l, "LEG-083", cat(s, " reaches eager lazy-terminal ", x, "() in ", t, " without an explicit legacy boundary."), 0, s, i) :-
+    leg_eager_hit(f, c, terminal, x), leg_symbol(f, s), leg_symbol(terminal, t), leg_node(c, d, l, i).
+leg_result(d, l, "LEG-084", "legacy_execution_boundary() is reserved for legacy decorator internals and may not be imported by data-layer modules.", 0, "", i) :-
+    leg_boundary_import(n, d, _, i), leg_node(n, d, l, _), leg_internal(d).
+leg_result(d, l, "LEG-085", "legacy_execution_boundary() may not be called outside l2050_transaction.legacy_wrappers.", 0, "", i) :-
+    leg_raw_boundary_call(c, _), leg_node(c, d, l, i), leg_internal(d).
+
+.decl leg_text_candidate(path: symbol)
+leg_text_candidate(p) :- leg_doc(_, p).
+leg_text_candidate(p) :- leg_read_file(p).
+.decl leg_text_path(path: symbol)
+leg_text_path(raw) :- leg_text_candidate(raw), !prefix("docs/data_history/", raw), raw != "docs/data_history",
+    p = @replace_all(raw, "^api/", ""), leg_text_scope(scope), (p = scope ; prefix(cat(scope, "/"), p)).
+leg_result(d, l, "LEG-071", cat(token, " is forbidden in SQL-facing permission surfaces; use get_policy_expression() and grammar pushdown instead."), i, "", 0) :-
+    option("entryPoint", "scan_sql_post_fetch_filter_content"), leg_doc(d, p), leg_text_path(p),
+    split_line(d, l, text), leg_filter_token(token, i), contains(token, text).
+
+.violation LegacyExecution(at: span, path: symbol, code: symbol, message: symbol, family: number, label: symbol, order: number) code {code} "{message}"
+LegacyExecution(@place(physical,l), p, code, m, family, label, i) :-
+    leg_result(d, l, code, m, family, label, i), doc(d, physical, _), leg_doc(d, p).
+
+.violation LegacySyntax(at: span, path: symbol, detail: symbol) code "LEG_SYNTAX" "{detail}"
+LegacySyntax(@place(physical,l), p, m) :-
+    option("entryPoint", "scan_file_content"), leg_doc(d, p), doc(d, physical, _), syntax_error(d, l, m).
+
+#include "data-layer/legacy-execution-repository.rr"
+#include "data-layer/legacy-execution-signing.rr"
+#include "data-layer/legacy-execution-helpers.rr"
+#include "data-layer/legacy-execution-cli.rr"
+#include "data-layer/legacy-execution-config.rr"

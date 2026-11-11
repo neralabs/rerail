@@ -198,6 +198,7 @@ def main():
     from data_layer_rr_async_patterns import async_patterns
     from data_layer_rr_boundary import async_sync_boundary
     from data_layer_rr_target_architecture import serverplan_target_architecture
+    from data_layer_rr_legacy_execution import generate as legacy_execution
     from data_layer_rr_plan_ownership import plan_scope_ownership
     from data_layer_rr_transaction_closures import transaction_closures
     from data_layer_rr_callback_wrappers import transaction_callback_wrappers
@@ -242,6 +243,7 @@ def main():
                   ('async_patterns', lambda s, t: async_patterns(s, t, header)),
                   ('async_sync_boundary', lambda s, t: async_sync_boundary(s, t, header)),
                   ('serverplan_target_architecture', lambda s, t: serverplan_target_architecture(s, t, header)),
+                  ('legacy_execution_surfaces', lambda s, t: legacy_execution(s, t, header)),
                   ('plan_scope_ownership', lambda s, t: plan_scope_ownership(s, t, header)),
                   ('transaction_closures', lambda s, t: transaction_closures(s, t, header)),
                   ('transaction_callback_wrappers', lambda s, t: transaction_callback_wrappers(s, t, header)),
@@ -283,6 +285,18 @@ def main():
             entry.update(status='draft')
             entry.pop('evidence', None)
         entry.update(rulePath=path.as_posix(), ruleSha256=digest)
+        if check == 'legacy_execution_surfaces':
+            from data_layer_rr_legacy_execution import repository_program
+            companion = path.with_name(path.stem + '-repository.rr')
+            content = repository_program(text)
+            (ROOT / companion).write_text(content)
+            item = dict(destination=companion.as_posix(), sha256=sha(content.encode()), origin='authored',
+                        sourceCommit=PIN, upstreamPath='scripts/lint_legacy_execution_surfaces.py')
+            index = next((i for i, file in enumerate(manifest['files']) if file['destination'] == companion.as_posix()), None)
+            if index is None:
+                manifest['files'].append(item)
+            else:
+                manifest['files'][index] = dict(manifest['files'][index], **item)
         if check=='dynamic_module_loading':
             from data_layer_rr_dynamic import repository_program
             companion=path.with_name('dynamic-module-loading-repository.rr');content=repository_program(text)

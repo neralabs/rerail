@@ -1,0 +1,11 @@
+// Public configuration assertions read the same tables as the detector.
+.violation LegacyConfigValue(at: span, key: symbol, value: symbol) code "LEG_CONFIG" "configuration value"
+LegacyConfigValue(@place("",0), k, v) :- option("entryPoint", "_legacy_config"), leg_config(k, v).
+.violation LegacyConfigScope(at: span, rule_code: symbol, scope: symbol, order: number) code "LEG_CONFIG_SCOPE" "configuration scope"
+LegacyConfigScope(@place("",0), c, s, i) :- option("entryPoint", "_legacy_config"), leg_raw_scope(c, s, i).
+.violation LegacyConfigScopePath(at: span, rule_code: symbol, scope: symbol, path: symbol) code "LEG_CONFIG_SCOPE_PATH" "configuration scope exception"
+LegacyConfigScopePath(@place("",0), c, s, p) :- option("entryPoint", "_legacy_config"), leg_scope_allow(c, s, p).
+.violation LegacyConfigInventory(at: span, name: symbol, order: number) code "LEG_CONFIG_INVENTORY" "inventory name"
+LegacyConfigInventory(@place("",0), n, i) :- option("entryPoint", "_legacy_config"), leg_inventory_name(n, i).
+.violation LegacyConfigInventoryPath(at: span, name: symbol, path: symbol) code "LEG_CONFIG_INVENTORY_PATH" "inventory exception"
+LegacyConfigInventoryPath(@place("",0), n, p) :- option("entryPoint", "_legacy_config"), leg_inventory_allow(n, p).

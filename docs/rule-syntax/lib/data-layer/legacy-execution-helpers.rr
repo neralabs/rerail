@@ -1,0 +1,23 @@
+// Supplied helper syntax uses the detector's receiver and guard relations.
+.decl leg_input_expression(n: node)
+leg_input_expression(n) :- kind(a, "assignment"), field(a, "left", target), text(target, "_legacy_input"),
+    field(a, "right", n).
+.decl leg_helper_receiver(n: node)
+leg_helper_receiver(n) :- option("entryPoint", e), (e = "_receiver_tokens" ; e = "_looks_like_cursor_receiver"),
+    leg_input_expression(n).
+leg_receiver(n) :- leg_helper_receiver(n).
+.decl leg_receiver_part(n: node)
+leg_receiver_part(n) :- leg_helper_receiver(n).
+leg_receiver_part(n) :- leg_receiver_part(parent), leg_receiver_step(parent, n).
+
+.violation LegacyReceiverToken(at: span, value: symbol, depth: number) code "LEG_TOKEN" "{value}"
+LegacyReceiverToken(@place("",0), x, i) :- option("entryPoint", "_receiver_tokens"),
+    leg_receiver_part(n), leg_callable(n, x), ast_depth(n, i).
+
+.violation LegacyHelperTrue(at: span) code "LEG_HELPER_TRUE" "helper matched"
+LegacyHelperTrue(@place("",0)) :- option("entryPoint", "_looks_like_cursor_receiver"),
+    leg_helper_receiver(n), leg_cursor_receiver(n).
+LegacyHelperTrue(@place("",0)) :- option("entryPoint", "_is_graph_fallback_guard"),
+    leg_graph_comparison(n, receiver), ast_parent(n, m), kind(m, "module"), leg_graph_receiver(receiver).
+LegacyHelperTrue(@place("",0)) :- option("entryPoint", "_is_under"), option("path", p), option("scope", scope),
+    (p = scope ; prefix(cat(scope, "/"), p)).

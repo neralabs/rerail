@@ -11492,3 +11492,26 @@ These candidate results are intermediate and do not establish full DTO parity.
 All 120 policy files pass the rebuilt reader. The tooling suite passes 409 tests and 165 subtests.
 The [static progress receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-target-architecture-static-final9e5-progress.json.gz) records both APIs and the disabled-detector run.
 The inventory has 13 full admissions, 84 drafts, and three absent rules.
+
+### Legacy execution surfaces on Final 9e5, 2026-11-10
+
+The mechanical candidate matched 11 of 15 sampled observations by path, line, and code.
+The native draft uses the source collector's scopes, typed AST anchors, ordered receiver chains, and memoized depth-first call resolution.
+It returns the original diagnostic messages, file names, lines, ordering, and duplicates.
+Its first direct run exposed 21 missing findings from a whole-string path match. The corrected scope passes the direct suite.
+The production scope test also caught four extra snapshot findings. Both interfaces now apply the same scope and source triggers.
+
+Repository discovery, inventory, text scans, and read errors use one native repository request.
+The repository policy leaves primary loading to that request. A selected invalid UTF-8 file now reaches the same typed read-error reporter as an out-of-scope file.
+The signing verifier rebuilds its message from the detector's allowlists. The production detector and CLI use the native verdict.
+The original configuration assertions read 18 bindings from the native tables.
+
+Both APIs execute all 180 original tests. Each run passes 177 and compares all 76 recorded scanner and repository returns.
+The remaining tests exercise the two signing-administration paths and the collector's initial object state.
+The repository tests were repeated after limiting the Python I/O fixture transport to tests that patch the reader. All 22 pass per API.
+Each API also matches 11 scanner cases, six production and CLI cases, and five signature cases. The scanner cases include the six earlier text observations.
+The tooling suite passes 409 tests and 165 subtests.
+
+The [progress receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-legacy-execution-final9e5-progress.json.gz) binds the results to Final `9e5fa489e`.
+The inventory has 13 full admissions, 85 drafts, and two absent translations.
+Final advanced to `11ea0e0a7` during the cohort. The next merge has four engine conflicts in the merge preview.

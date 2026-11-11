@@ -1,0 +1,35 @@
+// The host transports findings and argument values to this report in one batch.
+.decl leg_cli_finding(i: number, path: symbol, line: symbol, code: symbol, message: symbol)
+leg_cli_finding(i, p, l, c, m) :- option_item("reportPaths", i, p), option_item("reportLines", i, l),
+    option_item("reportCodes", i, c), option_item("reportMessages", i, m).
+.decl leg_cli_verbose()
+leg_cli_verbose() :- option("verbose", "true").
+.decl leg_cli_pattern(message: symbol)
+leg_cli_pattern("multiple legacy/internal execution surface violations detected") :- leg_cli_finding(_, _, _, _, _),
+    !leg_cli_verbose().
+leg_cli_pattern(m) :- leg_cli_finding(0, _, _, _, m), leg_cli_verbose().
+
+.decl leg_feedback(pattern: symbol, text: symbol)
+leg_feedback(m, cat(before, "Bad pattern: ", m, "\n", after)) :-
+    leg_config("feedback-before", before), leg_config("feedback-after", after), m != "",
+    (leg_cli_pattern(m) ; leg_cli_finding(_, _, _, _, m)).
+leg_feedback("", cat(before, after)) :- leg_config("feedback-before", before), leg_config("feedback-after", after).
+
+.decl leg_cli_output(i: number, text: symbol)
+leg_cli_output(0, "No legacy/internal execution surface violations found.\n") :- !leg_cli_finding(_, _, _, _, _).
+leg_cli_output(0, cat(block, "\n", separator, "\nLEGACY / INTERNAL EXECUTION SURFACE VIOLATIONS: ",
+    to_string(n), "\n", separator, "\n\n")) :- leg_cli_pattern(pattern), leg_feedback(pattern, block),
+    leg_config("report-separator", separator), n = count : { leg_cli_finding(_, _, _, _, _) }.
+leg_cli_output(i + 1, cat(p, ":", l, ": ", c, " ", m, "\n")) :-
+    leg_cli_finding(i, p, l, c, m), !leg_cli_verbose().
+leg_cli_output(i + 1, cat(block, p, ":", l, ": ", c, " ", m,
+    "\n  This location must either be removed or explicitly surveyed first.\n")) :-
+    leg_cli_finding(i, p, l, c, m), leg_cli_verbose(), leg_feedback(m, block).
+.violation LegacyCLIOutput(at: span, order: number, text: symbol) code "LEG_CLI_OUTPUT" "CLI output"
+LegacyCLIOutput(@place("",0), i, text) :- option("entryPoint", "_legacy_report"), !option("verified", "false"), leg_cli_output(i, text).
+.violation LegacyCLIExit(at: span, status: number) code "LEG_CLI_EXIT" "CLI status"
+LegacyCLIExit(@place("",0), 1) :- option("entryPoint", "_legacy_report"), option("verified", "false").
+LegacyCLIExit(@place("",0), 1) :- option("entryPoint", "_legacy_report"), !option("verified", "false"), option("check", "true"),
+    leg_cli_finding(_, _, _, _, _).
+LegacyCLIExit(@place("",0), 0) :- option("entryPoint", "_legacy_report"), !option("verified", "false"),
+    (!option("check", "true") ; !leg_cli_finding(_, _, _, _, _)).

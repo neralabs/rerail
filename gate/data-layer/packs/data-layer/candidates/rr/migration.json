@@ -2896,6 +2896,20 @@
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_target_architecture.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/legacy-execution-surfaces.rr",
+      "sha256": "aaadfb0c122c57ea50ea249312fe293c977637a713e9cbde12d1f168dffce85b",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_legacy_execution_surfaces.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/legacy-execution-surfaces-repository.rr",
+      "sha256": "5ed9e03eae1d5708d50b4856d60bf152754599f01353bcb25860a7ea37f0ba64",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_legacy_execution_surfaces.py"
     }
   ],
   "rules": [
@@ -4232,8 +4246,9 @@
       "batch": 6,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-legacy-execution-surfaces.json",
       "legacySha256": "de41585f5b7a3f05666570665980055923b70e3f1c4c447636b50ce181d47866",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/legacy-execution-surfaces.rr",
+      "ruleSha256": "aaadfb0c122c57ea50ea249312fe293c977637a713e9cbde12d1f168dffce85b"
     },
     {
       "check": "post_op_side_effects",
