@@ -31,6 +31,35 @@ def enum_spans(path):
     return [(int(s), int(e)) for f, s, e, kind, name, mod, cfg in (l.split('\t') for l in out.splitlines()) if kind == 'enum']
 
 
+def item_name(item):
+    """The name an index symbol ends in (`a/b/Name#`, `a/b/f().`, `a/B#field.`)."""
+    m = re.findall(r'[A-Za-z_][A-Za-z_0-9]*', item.split('/')[-1])
+    return m[-1] if m else None
+
+
+def locate(lines, i, c, name, kind):
+    """The (line, column) of the item's name: the index's, when the file still has the name there, else the line
+    nearest to it where the name follows a keyword (a field: begins a `name:`). None: not found (refused)."""
+    if name is None:
+        return None
+    def ok(j, col):
+        if lines[j][col:col + len(name)] != name or re.match(r'[A-Za-z_0-9]', lines[j][col + len(name):col + len(name) + 1] or ' '):
+            return False
+        before = lines[j][:col]
+        if kind == 'field':
+            return re.fullmatch(r'\s*(?:pub(?:\s*\([^)]*\))?\s+)?', before) is not None and lines[j][col + len(name):].lstrip().startswith(':')
+        return KEYWORD.search(before) is not None
+    if i < len(lines) and ok(i, c):
+        return i, c
+    for d in range(1, 400):
+        for j in (i - d, i + d):
+            if 0 <= j < len(lines):
+                for m in re.finditer(r'\b' + re.escape(name) + r'\b', lines[j]):
+                    if ok(j, m.start()):
+                        return j, m.start()
+    return None
+
+
 def main(tsv, *flags):
     rows = collections.defaultdict(list)
     for line in list(open(tsv))[1:]:
@@ -53,10 +82,11 @@ def main(tsv, *flags):
         edits = []  # (line index, col start, col end, text)
         for l, c, kind, now, at, item in items:
             if now == 'private':
-                i = l - 1
-                if i >= len(lines):
-                    refused.append(f'{f}:{l} {item}: past the file\'s end (a stale index)')
+                found = locate(lines, l - 1, c, item_name(item), kind)
+                if found is None:
+                    refused.append(f'{f}:{l} {item}: not at the index\'s place nor near it (a stale index)')
                     continue
+                i, c = found
                 b = byte_start[i] + len(lines[i][:c].encode())
                 # anything in a trait or a trait's impl (SCIP's `static` is an associated fn without self, too)
                 if kind != 'field' and any(s <= b < e for s, e in traits):
@@ -78,6 +108,21 @@ def main(tsv, *flags):
                 pos, span = at.split(':')
                 i = int(pos) - 1
                 s, e = (int(x) for x in span.split('-'))
+                if i >= len(lines) or lines[i][s:e].replace(' ', '') != now:
+                    # moved: the nearest line with the name after this visibility
+                    name = item_name(item)
+                    found = None
+                    for d in range(0, 400):
+                        for j in (i - d, i + d):
+                            if 0 <= j < len(lines) and name:
+                                m = re.search(r'(pub\s*\([^)]*\))\s+(?:(?:unsafe|async|const|extern\s+"C")\s+)*(?:fn|struct|enum|trait|type|const|static|union|mod|use)?\s*' + re.escape(name) + r'\b', lines[j])
+                                if m and m.group(1).replace(' ', '') == now:
+                                    found = (j, m.start(1), m.end(1))
+                                    break
+                        if found:
+                            break
+                    if found:
+                        i, s, e = found
                 if i >= len(lines) or lines[i][s:e].replace(' ', '') != now:
                     refused.append(f'{f}:{l} {item}: expected `{now}` at {at}, found `{lines[i][s:e] if i < len(lines) else "(past the end)"}`')
                     continue
