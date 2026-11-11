@@ -632,11 +632,12 @@ impl Fresh {
         if settled == n {
             return;
         }
+        // The first order's sort (`runs::cmp_vals`: tagged, it sorts by the leading column, then the second's tag).
         let cols = &rel.idx[0].cols;
+        let tagged = runs::tagged(cols, k);
         let data = &self.data;
         let cmp = |a: u32, b: u32| -> std::cmp::Ordering {
-            let (ra, rb) = (&data[a as usize * k..][..k], &data[b as usize * k..][..k]);
-            cols.iter().map(|&c| ra[c].cmp(&rb[c])).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal)
+            runs::cmp_vals(cols, tagged, &data[a as usize * k..][..k], &data[b as usize * k..][..k])
         };
         let mut order: Vec<u32> = (settled as u32..n as u32).collect();
         order.sort_unstable_by(|&a, &b| cmp(a, b));
@@ -4545,7 +4546,7 @@ mod posted_tests {
     /// Decision 0112's shape: a relation's indexes are sorted orders, only for the key sets its probes bind, the
     /// first holding every column as its dedup test; a wave's rows are one run (its delta); a maintained relation
     /// started from a kept one shares the kept one's runs rather than copying them; an order holds under 4.5 bytes
-    /// a row (an id and its fences).
+    /// a row (an id and its fences; the full-row order 6.5, with its tags).
     #[test]
     fn indexes_are_orders_shared_by_a_maintained_relation() {
         let mut rel = Rel::new("t", b"iii");
@@ -4574,7 +4575,9 @@ mod posted_tests {
         let old = InRel::moved(rel);
         assert!(old.chains.iter().all(|ix| ix.runs() <= FROZEN_RUNS), "a frozen order holds a few runs");
         for ix in &old.chains {
-            assert!((ix.bytes() as f64) < 4.5 * old.n as f64, "{:?}: {} bytes a row", ix.cols, ix.bytes() as f64 / old.n as f64);
+            // The full-row order also keeps a 16-bit tag an id (`runs::tagged`).
+            let most = if runs::tagged(&ix.cols, old.k) { 6.5 } else { 4.5 };
+            assert!((ix.bytes() as f64) < most * old.n as f64, "{:?}: {} bytes a row", ix.cols, ix.bytes() as f64 / old.n as f64);
         }
         let based = Rel::based("t", b"iii", &old, None).expect("a kept relation to start from");
         for (ix, kept) in based.idx.iter().zip(&old.chains) {
