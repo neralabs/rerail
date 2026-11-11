@@ -57,6 +57,7 @@ fn original_cpython_programs_use_private_projections_and_bounded_join_work() {
                         facts: Arc::new(facts),
                         guest: None,
                         module: None,
+                        tape: None,
                     }
                 })
                 .collect();

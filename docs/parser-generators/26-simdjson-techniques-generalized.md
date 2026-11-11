@@ -110,9 +110,27 @@ error |= strings.non_quote_inside_string(unescaped);
 - **General rule.** The outputs read only as "any bit in the file" (Bitlex's errors and
   escapes, the fallback) need no alignment and no order. They fold into one accumulated word
   per file, at any delay.
-- **Where it applies.** `.rr` has 4 fallback outputs (one per delay), each its own running
-  word.
-- **Status: partial.** Each total has its own running word.
+- **Where it applies.** `.rr` has 4 fallback outputs, one per delay (2, 3, 4 and 8), and
+  each used to be its own running word, total and tier 2 test.
+- **Status: done.** The totals are one flag per file (`BlockProgram::totals`). Every
+  executor ORs all of them into one running word, the count after the extracts': the CPU
+  interpreter, Cranelift, and Metal's kernels and forward carry. Tier 2 tests it once
+  (`EMPTY 0`). Each fallback mask keeps its own delay and output: the flag needs no
+  alignment.
+
+  Bringing the masks to one delay first, so that they would be one output, was tried and
+  not taken. It needs a `prev` per mask, and on `.rr` that cost 28 carried bits and 73
+  more spills:
+
+  | `.rr` tier 1 | Instructions | Memory | Stack |
+  |---|---|---|---|
+  | A running word per total | 5498 | 485 | 570 |
+  | One output, by `prev`s | 5518 | 449 | 643 |
+  | One flag | 5471 | 482 | 556 |
+
+  CPU time over the repository's `.rr` files was 117.1 against 116.5 ms a pass at the same
+  load (41): no change beyond noise. The tests are `totals_tests` (the decision) and
+  `compile_tests::every_total_is_one_flag_on_every_executor`.
 
 ### 1.6 One stream of structural starts
 
@@ -130,8 +148,24 @@ simdjson's index is positions, not masks: stage 2 reads only what is there.
 
 - **General rule.** An output with a bit in under a few percent of blocks is written as
   positions, behind a branch, instead of a dense mask word per block.
-- **Where it applies.** The 15 marks, the rare ones above.
-- **Status: missing.**
+- **Where it applies.** `.rr`'s marks. Over the corpus (138,791 blocks), 7 of its 10 are
+  set in under 1% of blocks (`options_on`, `over_on` and `no_value` in none, `one_name`
+  0.04%, `fix_on` 0.08%, `empty_parens` 0.12%, `suppress_on` 0.87%); `json_bad` is in 35%,
+  `newline` in 52% and `line` in 56%.
+- **Status: measured, not taken.** The most it could save is what tier 1 does without the
+  7 masks at all, their making included. Over the corpus (8.82 MB):
+
+  | `.rr` tier 1 | Instructions | Memory | CPU | Metal GPU |
+  |---|---|---|---|---|
+  | With the 7 masks | 5471 | 482 | 57.0 ms | 41.1 ms |
+  | Without them | 5370 | 437 | 55.6 ms | 41.9 ms |
+
+  Neither executor is faster without them (load 110 to 127, best of 9 and of 5): a mask word
+  stored a block is not where the time goes. What they cost is room, 56 of the 128 bytes
+  tier 1 writes a block. Written as positions they would also cost tier 2 a merge at every
+  token, or a lookup at each mark's test, more than the stores. The test is
+  `rerail_rr_parser`'s `token_local_tests::rr_sparse_marks_bound`. Still open: the room, if
+  a batch's outputs press on the memory budget.
 
 ### 1.8 The fast carried operations
 
@@ -266,8 +300,8 @@ Each transformation is tested three ways:
 | 1 | Gated regions: an accurate cost (vector work counted), any sparse gate, more regions. Done (§5) | §1.1 |
 | 2 | Values remade in each pass, never stored: constants, `within` (positions measured, not taken) | §1.10 |
 | 3 | Delayed masks not held across the loop. Done (§7) | §1.4 |
-| 4 | The fallback's totals folded into one word | §1.5 |
-| 5 | Sparse outputs as positions | §1.6, §1.7 |
+| 4 | The fallback's totals folded into one word (done: one flag) | §1.5 |
+| 5 | Sparse outputs as positions (measured, not taken) | §1.6, §1.7 |
 | 6 | Local values minimized from their truth tables | §1.9 |
 | 7 | Cuts where few values cross | §1.11 |
 | 8 | Token-level checks to tier 2, by the cost model | §1.15 |

@@ -226,6 +226,177 @@ plans read it as one row. One recursive stratum (`attr_open`) then took 6.0 s in
 The skip now records the kept relation's row count and per-column statistics (`prior_stats`), as the opening
 path does.
 
+## Built: §4, a kept relation's statistics made when first planned with (2026-11-10)
+
+**The problem.** A session's run binds every kept relation as `r__old`. Each one not carried from the last
+run or kept by delta was counted or measured at binding. At O125's first edit, that was 819 counts and 168
+measures (1.8 s), and the patch after the run counted again (1.0 s). Many of those relations are read by
+no plan that step.
+
+**The change.** A kept relation is bound with its row count only. Its columns' statistics are made the
+first time a plan reads it (`plan::LazyStats`, `Model::resolve`), by the same count or measure as before:
+
+```rust
+// plan/corpus.rs, binding: its rows now, the rest on first use.
+stats.lazily(&rel, h.rows(), lazy.clone());
+// plan.rs, before a stratum's rules are planned: only what they read.
+self.model.resolve(prog, Model::read_by(rules.iter().copied()))?;
+```
+
+- **Who resolves.** A stratum's spec, a seed join, a view, the inline choice's cone, and `prior_stats`.
+- **What needs no columns.** A rule of one positive atom over distinct variables (a survivor,
+  `h :- h__old, !h__del`) has one order. Its estimate is the atom's rows.
+- **Deferred `prior_stats`.** A quiet or opened stratum's `h` takes its `h__old`'s columns only when a
+  reader is planned. They fill only what nothing set since (`live_stats` clears the deferral), as a later
+  write overrides them in the eager order.
+- **After the run.** What a plan made is kept as before (by delta, or as measured). A relation no plan read
+  is not patched; next run binds it lazily again.
+- **The switch.** `RERAIL_EAGER_KEPT_STATS` makes them all at binding, as before.
+
+**Measured** (O125 steps 01–03, debug build, load 65–139; spans with profiling on):
+
+| step 01 span | eager | lazy |
+|---|---:|---:|
+| bind and measure kept | 1.86 s | 0.06 s |
+| patch the maintained relations' statistics | 1.04 s | 0.45 s |
+| statistics made when first planned with (585 relations) | — | 1.18 s |
+| **sum** | **2.90 s** | **1.69 s** |
+
+| session CPU (no spans) | 01 | 02 | 03 |
+|---|---:|---:|---:|
+| eager | 13.0 s | 9.4 s | 5.9 s |
+| lazy | 11.8 s | 9.3 s | 6.3 s |
+
+Steps 02 and 03 do not move: by then a kept relation's statistics are carried or kept by delta, and
+binding was 0.17–0.19 s. Findings are the same as a full run's at each step, and the gate passes.
+
+## Built: §5, a base relation's sorted columns carried from the last run, not sorted again (2026-11-10)
+
+**What is sorted each step.** A span on each stored column's first sort (`sort a stored column`), at O125
+with profiling on:
+
+| step | sorts | rows sorted | CPU | of which: base inputs' join indexes | statistics of the base rows |
+|---|---:|---:|---:|---:|---:|
+| 01 | 576 | 3.33 M | 1.24 s | 0.97 s | 0.16 s |
+| 02 | 675 | 3.01 M | 1.09 s | 0.80 s | 0.17 s |
+| 03 | 349 | 2.15 M | 0.80 s | 0.54 s | 0.17 s |
+
+Nearly all of it is seven base relations of the whole corpus: `node` (5 columns), `node_order`, the four
+`rr_nearest_*` scopes (≈ 141 k rows each), and `text` (≈ 48 k). An unchanged input is already read from
+the last run in place, with its sorted columns (`retain::kept_source`, 0094 §4). But the test is the whole
+relation's digest, and one edited file changes it. So each step rebuilds these from every file's rows
+(`columns_source`) and sorts every column again, for a delta of one or two documents.
+
+**What the sibling work gives.**
+
+- **0104 rule 4, "kept is maintained".** Within a session, the engine keeps the program's facts and
+  maintains them from the inputs' delta. A base relation is one of those facts, so rebuilding it is the
+  case 0104 retires.
+- **rr-align's frames.** A relation's stored form is partitioned by document (`part`). A document's rows
+  are one unit, keyed by its content (0104 step 3).
+- **The rows are already per document.** They come one memo entry per file (`plan/corpus.rs`, the memo
+  hits), and a node id carries its document (`id >> 32`).
+
+**What was built** (it differs from the first proposal). This run's copy of a base relation is still made
+from every file's rows, as before. What changes is that last run's sorted columns are carried into it,
+patched where its rows changed (`carry_sorted` in `native/setfix.rs`, called from `retain::kept_source`):
+
+```text
+// Last run:  rows [doc 1 | doc 2 | doc 3]    column c sorted: (value, row) pairs
+// This run:  rows [doc 1 | doc 2' | doc 3]   doc 2 edited
+// Each run of one document's rows is compared with its old run, value for
+// value. A run that is the same keeps its rows' places; doc 2's old rows
+// drop out of each sorted column; doc 2''s rows are sorted alone (a few
+// hundred) and merged in by (value, row). No sort of 141 k rows.
+```
+
+- **Exact.** Each carried index is the one `Sorted::of` (or a multi-column `order`) would build over the
+  same rows. A unit test checks this (`carry_sorted_tests`) with a document gone, one changed and one added,
+  and with the runs out of order.
+- **Row order.** When the unchanged runs are in their old order, the rows keep this run's order, so nothing
+  downstream sees a change. When they are not (the files parsed this run come first), the rows are laid
+  out as the unchanged runs in their old order, then the rest: one copy, no sort. Joins, digests,
+  `document_delta` and `measured` do not depend on row order.
+- **Runs, not documents.** A document's rows can come in more than one run (its own node row apart), so
+  runs are matched as (document, which of its runs).
+- **Limits.** Nothing is carried when more than a quarter of the rows changed, or the two copies hold
+  other columns. `RERAIL_SORT_BASE_AGAIN` sorts again, as before.
+
+**Measured** (O125 steps 01–03, debug build, load 77–123):
+
+| with profiling spans | 01 | 02 | 03 |
+|---|---:|---:|---:|
+| rows sorted, sorted again | 3.33 M | 3.01 M | 2.15 M |
+| rows sorted, carried | 2.11 M | 1.21 M | 0.93 M |
+| sorts + carries, sorted again | 1.29 s | 1.12 s | 0.83 s |
+| sorts + carries, carried | 0.82 s | 0.57 s | 0.52 s |
+
+| session CPU, no spans | 01 | 02 | 03 |
+|---|---:|---:|---:|
+| sorted again | 12.6 s | 9.8 s | 6.7 s |
+| carried | 11.4 s | 6.8 s | 5.4 s |
+
+The session totals move by more than the sort spans do, and the load moved between the two runs, so
+trust the spans. Findings are the same as a full run's at step 03, and the gate passes.
+
+**What is left.** Each carry costs ≈ 25 ms in a debug build: the comparison of every run, value for value.
+The sorts still made are of columns last run never indexed, and of the smaller inputs that come in by
+another path (35–45 k rows). Each is under 0.12 s a step.
+
+
+## The profile after §4 and §5, and what it decided (2026-11-10)
+
+**How it was taken.** A `sample` of the engine process over all of O125 steps 02 and 03 (35 s, load 100).
+Spans inflate the cross part about 2x (8.2 s with them, 4.3 s without, at step 02), so the sample
+ranks the work and the spans locate it. Two threads do the work: the run's own thread (23.5 k busy
+samples), and one worker running the file-local part's strata, which the run's thread waits for (7.8 k).
+
+| where (the run's thread) | samples | share |
+|---|---:|---:|
+| the cross part's strata (`native_stratum_`) | 11,552 | 49% |
+| — opening a stratum (`open_spec`) | 3,835 | 16% |
+| —— of which the first sort of a stored column | 1,478 | 6% |
+| —— of which a survivor's copy of its old rows (`Rel::based`) | 1,020 | 4% |
+| — joins (`run_join`) | 2,125 | 9% |
+| — planning (`plan_rule_reused`) | 924 | 4% |
+| carrying sorted columns (§5) | 1,524 | 6% |
+| counting the edited files' statistics (`keptstats::Keeper::file`) | 857 | 4% |
+
+**What it decided.**
+
+- **§5's carry and the sorts left: built (below).** Together they were 12%.
+- **`Keeper::file`: not now.** At 4% it is proportional to the edited file's rows (0096's design):
+  counting out reads the old entry back and counts it again. Remembering the last count of a file
+  edited twice would save that half, at a memory cost; not worth it at this rank.
+- **§3 (one component per base stratum): not built.** What it would remove is the fixed cost per piece:
+  part of the 16% of opening, of planning (4%) and of the spec. A survivor's copy of its rows (4%) and the
+  sorts (6%) stay, so the most it could save is about 5–8%. And it needs new engine work: a component
+  whose relations run once each, in a fixed order. The profile does not rank it first.
+- **Not a lead: the SQL on a worker.** The sample also showed a worker in SQL (`sqlite3_step`, 7.3 k
+  samples) that the run waited for. That was the cold full run the replay ends with, inside the sample's window.
+  Sampled again without it (`O125_NO_FULL`), the edit steps spend 23 samples in SQLite. The two rules that ran
+  as SQL inside a native component (`py_qrest` and `py_qlast`, `modules.rr`) were there because `substr` had no
+  native function; it has one now (`rr_substr`, SQLite's `substr(s, i + 1, n)` exactly, checked against SQLite),
+  and the session's CPU is the same with it (four alternating runs within 0.3 s).
+
+**§5, extended.**
+
+- **The exports too.** The cross part's exports, counted by file (0096 step 3), were copied into a new
+  source every run and sorted again. They now go through `kept_source` like the base relations: reused
+  whole when unchanged, carried when not.
+- **Only where it pays.** In a debug build a merge costs about what a sort does unless it is written as
+  plain loops, so the merge loops are plain. A source under 32 k rows is sorted (`CARRY_AT`), and so is
+  a column already in row order (one pass in `Sorted::of`). Rows whose first column does not keep a
+  document's rows together are refused too: one export had 103 k runs in 141 k rows, and its carry cost
+  194 ms against about 120 ms of sorting.
+- **Runs kept.** A source's runs are computed once and kept with it (`Stored::runs`), so the next run's
+  carry reads the old ones.
+
+| sorts + carries, spans on | 01 | 02 | 03 |
+|---|---:|---:|---:|
+| sorted again | 1.50 s | 1.30 s | 0.97 s |
+| carried | 0.94 s | 0.60 s | 0.55 s |
+
 ## Built: a plan asks a source's sort without building it (2026-11-10)
 
 **Where the fixed cost was.** O125 step 07, θ off, by own time in "plan and evaluate" (9.0 s):

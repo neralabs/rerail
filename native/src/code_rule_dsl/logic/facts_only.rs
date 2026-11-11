@@ -59,9 +59,6 @@ const FACT_STORE: &[&str] = &[
 /// Tables made and dropped inside one statement, one lab or one older pipeline's query.
 const SCRATCH: &[&str] = &[
     "x",
-    // native_demand's tests' tables.
-    "keys",
-    "facts",
     "a",
     "b",
     "c",
@@ -118,11 +115,6 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("slice_match", "3"),
     ("slice_span", "3"),
     ("slice_fresh", "3"),
-    ("phase_record", "5"),
-    ("phase_granules", "5"),
-    ("phase_cones", "5"),
-    ("export_versions", "5"),
-    ("store_epoch", "5"),
     ("compiled_plans", "6"),
     ("compiled_plan_reads", "6"),
     ("plan_feedback", "6"),
@@ -158,7 +150,7 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("context_check_results", "8"),
 ];
 /// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised.
-const NOT_YET_TABLES_PIN: usize = 66;
+const NOT_YET_TABLES_PIN: usize = 61;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
@@ -195,6 +187,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "PROBES"),
     // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
     ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
+    ("code_rule_dsl/logic/native/setfix.rs", "FANOUT"),
     // A test process's own tape cache path (`corpus::test_tape_cache`): where the store is, not a result kept.
     ("code_rule_dsl/logic/plan/corpus.rs", "PATH"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
@@ -206,8 +199,14 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan.rs", "SETTING"),
     ("code_rule_dsl/logic/plan/choices.rs", "DURABLE"),
     ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),
-    ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),
+    // The build's Python grammar, and what follows from it and a matcher's text alone (its single-field answers, its
+    // lowered code): the process's code, as a compiled rule's, not a run's result.
+    ("code_rule_dsl/logic/plan/corpus/matchers.rs", "GRAMMAR"),
+    ("code_rule_dsl/logic/plan/corpus/matchers.rs", "KEPT"),
+    ("code_rule_dsl/logic/plan/corpus/matchers.rs", "LOWERED"),
+    // Profiling totals, consumed and cleared by each report; no reusable results.
     ("code_rule_dsl/logic/plan/corpus/memo.rs", "SIZES"),
+    ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "FACTS_DIR"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HANDED_DOWN"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "RUNNING"),
