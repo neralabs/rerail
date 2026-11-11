@@ -253,7 +253,7 @@ def adopt(root, source):
 
 def verify(root):
     manifest = read_json(root / MANIFEST)
-    verify_engine_alignment(root, manifest['engineSource'])
+    verify_engine_snapshot(root, manifest['engineSource'])
     actual = targets(root)
     fields = ['check', 'batch', 'legacyPath', 'legacySha256']
     if [{k: e[k] for k in fields} for e in manifest['rules']] != actual:
