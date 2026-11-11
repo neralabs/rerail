@@ -12,6 +12,7 @@ from textglob import text_test
 import json
 import os
 import re
+import sys
 
 from souffle import check_rule, whole
 from simplify import simplify
@@ -517,6 +518,11 @@ def passed_in_patterns(entries, helpers):
                 k[0] += 1
                 return f"text({m.group(1)}, t_{x.lower()}{k[0]}), text({x}, t_{x.lower()}{k[0]})"
             e["lits"] = [re.sub(r"(?<![\w$])([a-z][a-z0-9_]*) ~ `\$" + x + r"`", join, l) for l in e["lits"]]
+
+            def join_eq(m, x=x):
+                k[0] += 1
+                return f"text({m.group(1)}, t_{x.lower()}{k[0]}), text({x}, t_{x.lower()}{k[0]})"
+            e["lits"] = [re.sub(r"(?<![\w$@])" + x + r" = ([a-z][a-z0-9_]*)\b(?!\s*\()", join_eq, l) for l in e["lits"]]
 
 
 def drop_dead_columns(entries, helpers, decls, notes):
@@ -1162,6 +1168,18 @@ def _strip_strings_keep(s):
     return re.sub(r'"(?:[^"\\]|\\.)*"', lambda m: '"' + " " * (len(m.group(0)) - 2) + '"', s)
 
 
+def _top_binders(lits):
+    """Captures the body's own literals bind (not in a disjunction, under `!` or in an aggregate); a metavariable
+    only read there (`value(B, t)`) is not one."""
+    top = ", ".join(l for l in lits if not l.startswith(("(", "!")) and " : {" not in l)
+    out = set()
+    for x in _binders(top):
+        uses = re.findall(r"(\w*\()?(?<![\w$])\$?" + re.escape(x) + r"\b", top)
+        if not uses or not all(u in ("text(", "value(", "str(", "line(") for u in uses):
+            out.add(x)
+    return out
+
+
 def share_metavariables(entries, helpers):
     """ast-grep keeps one set of metavariables per match, shared by the rule and every util it calls; Datalog
     variables belong to one rule. So a helper relation gets a column for each metavariable that crosses its
@@ -1179,6 +1197,13 @@ def share_metavariables(entries, helpers):
         rules.append({"e": e, "owner": e["head"].split("(")[0], "head": head_vars,
                       "up": (_upper_vars(text) - local) | set(re.findall(r"\$\$?\$?([A-Z_][A-Z0-9_]*)", " ".join(e.get("edits") or []))),
                       "binds": _binders(text), "calls": calls, "local": local,
+                      # captures and calls of the body's own literals: not in a disjunction, under `!` or in an aggregate
+                      "tbinds": _top_binders(e["lits"]),
+                      "tcalls": sorted(set(re.findall(r"(?<![\w.!])([a-z_]\w*)\(", _mask_ticks(_strip_strings_keep(
+                          ", ".join(l for l in e["lits"] if not l.startswith(("(", "!")) and " : {" not in l))))) & set(helpers)),
+                      # calls that can bind a capture for the rule: not under `!` or in an aggregate
+                      "top_calls": sorted(set(re.findall(r"(?<![\w.!])([a-z_]\w*)\(",
+                                                         _mask_ticks(_strip_strings_keep(_drop_aggregates(text))))) & set(helpers)),
                       # a util's own `params` (`kw(n, N, V)`): the caller's arguments, local to the util
                       "params": _upper_vars(e["head"].split("(", 1)[1]) if e["head"].split("(")[0] in helpers else set()})
     by_owner = {}
@@ -1192,18 +1217,54 @@ def share_metavariables(entries, helpers):
     free_in = {h: set() for h in helpers}
     needed = {h: set() for h in helpers}
     iface = {h: set() for h in helpers}
+    # forced[h]: metavariables h captures that every caller has bound before the call. ast-grep binds a
+    # metavariable where the match first meets it, so in h the capture is a check against the caller's value
+    # (passed in, compared by text), not a new binding.
+    forced = {h: set() for h in helpers}
     for _ in range(50):
-        old = {h: (set(provides[h]), set(free_in[h]), set(needed[h])) for h in helpers}
+        old = {h: (set(provides[h]), set(free_in[h]), set(needed[h]), set(forced[h])) for h in helpers}
         # free_in is recomputed each round, not accumulated: a metavariable that looked free before a callee was
         # found to pass it out is bound after all (accumulating left it an input the caller fills with `_`).
         fresh = {h: set() for h in helpers}
         for h in helpers:
             for r in by_owner.get(h, ()):
-                bound = r["binds"] | r["params"] | r["local"] | set().union(*[provides[g] & iface[g] for g in r["calls"]] or [set()])
-                provides[h] |= (r["binds"] | set().union(*[provides[g] for g in r["calls"]] or [set()])) - r["params"]
+                own_binds = r["binds"] - forced[h]
+                bound = own_binds | r["params"] | r["local"] | set().union(*[provides[g] & iface[g] for g in r["calls"]] or [set()])
+                provides[h] |= (own_binds | set().union(*[provides[g] for g in r["calls"]] or [set()])) - r["params"]
                 use = r["up"] | set().union(*[free_in[g] for g in r["calls"]] or [set()])
                 fresh[h] |= use - bound
+            provides[h] -= forced[h]
+            fresh[h] |= forced[h]           # the caller's value comes in
         free_in = fresh
+        # always[g]: captures every rule of g binds outside disjunctions, `!` and aggregates
+        # (a greatest fixpoint: a recursive rule binds what its other rules bind)
+        every = set().union(set(), *[r["binds"] for r in rules])
+        always = {g: set(every) for g in helpers}
+        for _ in range(50):
+            prev = {g: set(v) for g, v in always.items()}
+            for g in helpers:
+                acc = None
+                for r in by_owner.get(g, ()):
+                    b = (r["tbinds"] - r["local"]).union(*[always[c] for c in r["tcalls"]])
+                    acc = b if acc is None else acc & b
+                always[g] = acc if acc is not None else set()
+            if always == prev:
+                break
+        for h in helpers:
+            if not callers[h]:
+                continue
+            tprov = set().union(set(), *[(r["binds"] - r["local"]) |
+                                         set().union(set(), *[provides[g] for g in r["top_calls"]])
+                                         for r in by_owner.get(h, ())])
+            for x in sorted(provides[h] & tprov):
+                if x.startswith("_"):     # `$_F`: matches anything, never compared
+                    continue
+                if all(x in (c["params"] | free_in.get(c["owner"], set())
+                             | (c["tbinds"] - c["local"] - forced.get(c["owner"], set()))
+                             | set().union(set(), *[always[g] for g in c["tcalls"] if g != h]))
+                       for c in callers[h]):
+                    forced[h].add(x)
+            provides[h] -= forced[h]
         for h in helpers:
             for r in callers[h]:
                 own = iface.get(r["owner"], set()) | needed.get(r["owner"], set())
@@ -1211,7 +1272,7 @@ def share_metavariables(entries, helpers):
                 needed[h] |= r["head"] | r["up"] | others | own
         for h in helpers:
             iface[h] = free_in[h] | (needed[h] & provides[h])
-        if all(old[h] == (provides[h], free_in[h], needed[h]) for h in helpers):
+        if all(old[h] == (provides[h], free_in[h], needed[h], forced[h]) for h in helpers):
             break
     order = {h: sorted(iface[h]) for h in helpers}
     share_metavariables.inputs = {h: set(free_in[h]) for h in helpers}
@@ -1538,6 +1599,94 @@ def demand(entries, helpers, inputs, decls, lib):
     return done
 
 
+def node_demand(entries, helpers, decls, lib):
+    """Magic sets on the node column, for a recursive helper that looks at every descendant or later sibling
+    (`has` / `precedes` with `stopBy: end` inside a recursion): bottom-up it holds at every node of the tree, each
+    with all it reaches. Its callers only ask at a few nodes, so each rule of the recursion starts with
+    demand_h(n): demand_h(x) :- <the positive literals in scope at a call h(x, ...)>, and inside the recursion
+    the caller's own demand. A recursion whose call sites cannot all say where they ask is left as it is."""
+    by = {}
+    for e in entries:
+        if not e.get("drop"):
+            by.setdefault(e["head"].split("(")[0], []).append(e)
+
+    def names(t):
+        return set(re.findall(r"(?<![\w.])([a-z_]\w*)\(", _mask_ticks(_strip_strings_keep(t))))
+    body_of = {h: ", ".join(l for e in by[h] for l in e["lits"]) for h in by}
+    edges = {h: names(body_of[h]) & set(by) for h in by}
+    reach = {}
+
+    def callees(h):
+        if h not in reach:
+            reach[h], todo = set(), [h]
+            while todo:
+                for g in edges.get(todo.pop(), ()):
+                    if g not in reach[h]:
+                        reach[h].add(g)
+                        todo.append(g)
+        return reach[h]
+    fan = re.compile(r"(?<![\w.])(?:within|within_stop)\(\w+, n\b|(?<![\w.])precedes(?:_stop)?\(n, ")
+    done, out, sccs = set(), [], []
+    for h in sorted(by):
+        if h in done or h not in helpers or h not in callees(h):
+            continue
+        scc = {g for g in callees(h) if h in callees(g)}
+        done |= scc
+        sccs.append(scc)
+    # callers first: a caller's own demand is what limits where it asks
+    for scc in sorted(sccs, key=lambda c: (-len(callees(min(c))), min(c))):
+        if any(g not in helpers for g in scc) or not any(fan.search(body_of[g]) for g in scc):
+            continue
+        if any(e["lits"] and e["lits"][0].startswith("demand_") for g in scc for e in by[g]):
+            continue
+        heads = {g: [a.strip() for a in by[g][0]["head"].split("(", 1)[1][:-1].split(",")] for g in scc}
+        if any(hp[0] != "n" for hp in heads.values()):
+            continue
+
+        def reaches(l):
+            return any(g in by and (g in scc or scc & callees(g)) for g in names(l))
+        rules, ok = {g: [] for g in scc}, True
+        for e in entries:
+            if e.get("drop") or not ok:
+                continue
+            owner = e["head"].split("(")[0]
+            for g in scc:
+                for site in _call_sites(e["lits"], g):
+                    if site is None:
+                        ok = False
+                        break
+                    scope, call = site
+                    x = _split_args(call[len(g) + 1:-1])[0]
+                    if x == "_":
+                        ok = False
+                        break
+                    lits = [l for l in scope if not reaches(l)]
+                    if owner in scc:
+                        hp = [a.strip() for a in e["head"].split("(", 1)[1][:-1].split(",")]
+                        lits = [f"demand_{owner}({hp[0]})"] + lits
+                    elif owner in callees(g) or not lits:
+                        ok = False
+                        break
+                    if check_rule(wrap(f"demand_{g}({x})", lits)):
+                        ok = False
+                        break
+                    rules[g].append((f"demand_{g}({x})", lits))
+                if not ok:
+                    break
+        if not ok or not all(rules[g] for g in scc):
+            continue
+        for g in sorted(scc):
+            col = decls[g][decls[g].index("(") + 1:-1].split(",")[0].strip()
+            lib[f"demand_{g}"] = (f".decl demand_{g}({col})",
+                                  [f"// demand_{g}: the nodes {g} is asked at (its recursion looks at every descendant)"],
+                                  [r for i, r in enumerate(rules[g]) if r not in rules[g][:i]])
+            for e in by[g]:
+                hp = [a.strip() for a in e["head"].split("(", 1)[1][:-1].split(",")]
+                e["lits"] = [f"demand_{g}({hp[0]})"] + e["lits"]
+        out += sorted(scc)
+    return out
+
+
 # ---- recursion through `!` or an aggregate --------------------------------------------------------------------
 
 UNROLL = 8   # levels of nesting a recursion through negation is exact for (tuples of tuples, nested parentheses)
@@ -1754,6 +1903,7 @@ def translate(doc):
     stop_with_columns(entries + helper_entries, prog.decls)
     inline_unsafe(entries + helper_entries, helpers)
     demand(entries + helper_entries, helpers, getattr(share_metavariables, "inputs", {}), prog.decls, prog.lib)
+    node_demand(entries + helper_entries, helpers, prog.decls, prog.lib)
     unrolled, empty = unroll_negative(entries + helper_entries, helpers, prog.decls,
                                       getattr(share_metavariables, "inputs", {}))
     body += [("rule", e) for e in unrolled]

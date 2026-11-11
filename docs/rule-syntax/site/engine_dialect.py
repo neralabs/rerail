@@ -208,7 +208,11 @@ def same_document_joins(text, base):
             inner = [(s, e) for s, e in spans if s < pos < e]
             return min(inner, key=lambda x: x[1] - x[0]) if inner else None
         by_t = {}
+        # a variable bound to a string (`X = @replace_all(…)`, `X = "…"`) is not a node: it has no document
+        string = lambda v: re.search(r"(?<![\w$])" + re.escape(v) + r' = [@"]', body)
         for u in TEXT_USE.finditer(body):
+            if string(u.group(1)):
+                continue
             by_t.setdefault(u.group(2), []).append((u.group(1), scope(u.start())))
         # one text variable's uses lie in nested scopes (it is bound in the outermost one): each pair's constraint
         # goes where the inner of its two nodes is bound
