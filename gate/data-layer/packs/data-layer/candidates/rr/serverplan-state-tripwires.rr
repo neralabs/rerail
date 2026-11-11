@@ -2062,10 +2062,10 @@ spt_planning_name("preprocess").
 .decl spt_provider_path(path: symbol)
 spt_provider_path("impl/common/l2070_server_plan/backend_profiles.py").
 .decl spt_provider_token(token: symbol)
-spt_provider_token("scores").
 spt_provider_token("component").
 spt_provider_token("components").
 spt_provider_token("score").
+spt_provider_token("scores").
 .decl spt_native_name(name: symbol)
 spt_native_name("create_usearch_index_class").
 spt_native_name("deserialize_embedding").

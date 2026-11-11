@@ -353,7 +353,7 @@ def helper_contracts(source):
     text += '.decl spt_provider_path(path: symbol)\n'
     text += f'spt_provider_path({json.dumps(values["BACKEND_PROVIDER_PURITY_FILE"])}).\n'
     text += '.decl spt_provider_token(token: symbol)\n'
-    for token in values['BACKEND_PROVIDER_PURITY_NAME_TOKENS']:
+    for token in sorted(values['BACKEND_PROVIDER_PURITY_NAME_TOKENS']):
         text += f'spt_provider_token({json.dumps(token)}).\n'
     text += '.decl spt_native_name(name: symbol)\n'
     for name in sorted(values['FORBIDDEN_NATIVE_PYTHON_CALL_NAMES']):
