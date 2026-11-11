@@ -18,16 +18,27 @@ It is a baseline only, not on the product's path.
 ## The lean parser
 
 `native/crates/rr_syntax/src/lean.rs` reads the same grammar
-and gives the same tape, node for node:
+and gives the same tape, node for node.
+It is written as a fast hand-written parser would be:
 
-- A token is a kind and a span. No token holds a string.
-  A word such as `code` is compared in the text.
+- A token is one 16-byte record: kind, span, line,
+  and the word it is when the grammar looks at that word
+  (`code`, `min`, `decl`, …), found once by the lexer.
+  The parser compares one-byte codes, never text.
+- The lexer classes bytes by a table.
+  It finds the ends of comments, strings and code literals
+  8 bytes a step, as `memchr` does without SIMD.
 - No statements are built. Each node is written in preorder as it opens.
   The open nodes and their children are a stack.
 - An operator found after its left operand (`a - b`, `x <= y`)
-  puts its node before the operand: those are the tape's last nodes.
+  puts its node before the operand.
+  When the operand is one leaf, the two nodes swap.
+  Only a larger operand (`f(x) = y`) moves the nodes after it.
 - Comments are placed as the parse passes them,
   by the same rules as the engine's flattening step.
+  The next comment's start is kept, so a node costs one compare for them.
+- An atom (a call read as a literal) renames its first child's field;
+  nothing else of it is visited again.
 - Backtracking cuts the tape, the stack and the comments back to a mark.
 
 Its test, `lean_tape_is_the_engines`, compares it with the engine's tape
@@ -35,8 +46,9 @@ on every `.rr` file of the repository.
 Each file is also cut at seven points, so the recovery paths run:
 10,896 texts in all.
 
-It is a first draft, with no tuning.
-Words are compared as strings, and each operator node shifts the nodes after it.
+The `memchr` crate itself is not used.
+The bench optimizes `rr_syntax` alone,
+so `memchr` would run unoptimized, and inflate the lexer threefold.
 
 ## The numbers
 
@@ -53,30 +65,47 @@ RR_ROUNDS=5 <test binary> rr_against_rust --ignored --nocapture
 
 | | instructions | cycles | a node | IPC |
 |---|---|---|---|---|
-| tier 1 | 532M | 136M | 280 / 71 | 3.9 |
-| tier 2 | 642M | 174M | 338 / 92 | 3.7 |
-| **compiled, both tiers** | **1,174M** | **310M** | **618 / 163** | |
-| lean: lexer alone | 409M | 79M | 216 / 42 | 5.2 |
-| lean: lexer and parse | 804M | 151M | 423 / 79 | 5.3 |
-| engine's Rust parser | 3,372M | 842M | 1,776 / 443 | 4.0 |
+| tier 1 | 532M | 106M | 280 / 56 | 5.0 |
+| tier 2 | 642M | 152M | 338 / 80 | 4.2 |
+| **compiled, both tiers** | **1,174M** | **259M** | **618 / 136** | |
+| lean: lexer alone | 130M | 34M | 68 / 18 | 3.9 |
+| lean: lexer and parse | 436M | 82M | 229 / 43 | 5.3 |
+| engine's Rust parser | 3,370M | 700M | 1,775 / 369 | 4.8 |
 
 "A node" is instructions / cycles per tape node.
-The load average was about 20 during the run.
+The load average was about 24 during the run.
 
 What it shows:
 
-- **The compiled grammar takes twice the lean parser's cycles**
-  (310M against 151M), and 1.5 times its instructions.
+- **The compiled grammar takes 3.2 times the lean parser's cycles**
+  (259M against 82M), and 2.7 times its instructions.
 - **Tier 2 against the lean parse alone** (the whole less the lexer:
-  395M instructions, 72M cycles):
-  1.6 times the instructions, 2.4 times the cycles.
-  Its IPC is lower too, 3.7 against 5.3:
+  306M instructions, 48M cycles):
+  2.1 times the instructions, 3.2 times the cycles.
+  Its IPC is lower too, 4.2 against 6.4:
   its branches are harder to predict and its loads wait longer.
-- **Tier 1 against a lexer that reads a byte at a time:**
-  1.3 times the instructions and 1.7 times the cycles.
-  The lean lexer does no batching and has no SIMD,
-  so tier 1 should beat it, not trail it.
-- The engine's parser costs 5.6 times the lean one.
+- **Tier 1 against a scalar lexer:**
+  4.1 times the instructions and 3.2 times the cycles.
+  The lean lexer has no SIMD and reads whitespace and words
+  a byte at a time, so tier 1 should beat it, not trail it.
+- The engine's parser costs 8.5 times the lean one.
+
+A first draft of the lean parser, which compared words as strings
+and scanned with byte loops, took 804M instructions and 151M cycles.
+Most of the difference was its lexer (409M instructions, 79M cycles).
+
+### Where the lean parser could still go
+
+It is not the floor:
+
+- whitespace, words and numbers are still read a byte at a time;
+- every token and node access is bounds-checked;
+- each term goes down four calls (`term`, `product`, `primary`
+  and the list it is in), as recursive descent does.
+
+A SIMD lexer is tier 1's own design,
+so the lexer's number is the bar tier 1 must clear by a margin.
+The parse's 200 instructions a token is a fair bar for tier 2.
 
 ## Why tier 2 is heavy
 
@@ -116,5 +145,5 @@ from the grammar file through the compiler:
 - switches on a token kind found once a token, not on the text;
 - the token state as values inside a rule's function.
 
-The lean parser can itself go further (words by kind, not strings;
-no shifting for operators): the target is lower still.
+Tier 1 needs its own look:
+it trails a scalar lexer threefold.

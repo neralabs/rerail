@@ -2,17 +2,21 @@
 //! (docs/parser-generators/30-a-lean-rust-baseline.md). It is not on the product's path.
 //!
 //! It reads the grammar `syntax::Parser` reads and gives the same tape (`crate::tape`), node for
-//! node, with none of the rest:
+//! node, written as a fast hand-written parser would be:
 //!
-//! - **Tokens are a kind and a span.** No token holds a `String`; a word is compared in the text.
-//!   Each token's line is counted as it is read, for the grammar's few line rules.
-//! - **No statements.** Only the tree is built, and only as the tape: each node is written in
-//!   preorder as it opens. The open nodes and their children are a stack.
-//! - **A wrap** (an operator found after its left operand: `a - b`, `x <= y`) puts its node before
-//!   its first operand: those are the tape's last few nodes.
-//! - **Comments** are placed as the parse passes them, by `tape::flatten`'s rules: before a child,
-//!   a comment that starts before it is its parent's; a leaf holds the comments inside it.
-//! - **Backtracking** puts the tape, the stack and the comments read back to a mark.
+//! - **A token is one 16-byte record**: kind, span, line, and the word it is when the grammar
+//!   looks at that word (`code`, `min`, `decl`, …), found once by the lexer. The parser compares
+//!   one-byte codes, never text.
+//! - **The lexer** finds the ends of comments, strings and literals 8 bytes a step (as `memchr`
+//!   does without SIMD), and classes bytes by a table.
+//! - **No statements.** Only the tape is built: each node is written in preorder as it opens.
+//!   The open nodes and their children are a stack.
+//! - **A wrap** (an operator found after its left operand: `a - b`, `x <= y`) puts its node
+//!   before the operand. When the operand is one leaf, the two swap; only a larger operand
+//!   moves the nodes after it.
+//! - **Comments** are placed as the parse passes them, by `tape::flatten`'s rules; the next
+//!   one's start is kept, so a node costs one compare for them.
+//! - **Backtracking** cuts the tape, the stack and the comments back to a mark.
 
 use crate::tape::{ERROR, FIRST_ANONYMOUS, Field, Kind, Node};
 
@@ -33,6 +37,7 @@ const FAT_ARROW: u8 = 1;
 const NE: u8 = 2;
 const LE: u8 = 3;
 const GE: u8 = 4;
+const SUBTYPE: u8 = 5;
 const ARROW: u8 = 6;
 const LPAREN: u8 = 7;
 const RPAREN: u8 = 8;
@@ -54,85 +59,221 @@ const SLASH: u8 = 26;
 const PERCENT: u8 = 27;
 const TILDE: u8 = 28;
 
-/// The tokens: kind, span, the line of the first byte and of the last.
-struct Tokens {
-    kind: Vec<u8>,
-    start: Vec<u32>,
-    end: Vec<u32>,
-    line: Vec<u32>,
-    last_line: Vec<u32>,
-    /// The line of the file's end (a token past the last).
-    eof_line: u32,
+// The words the grammar looks at. 1 to 18 are the reserved words, in the anonymous kinds' order
+// (`Kind::Must` on); 21 to 30 the directives, in their keywords' order (`Kind::DotDecl` on).
+const W_MUST: u8 = 1;
+const W_MAY: u8 = 2;
+const W_CODE: u8 = 3;
+const W_IN: u8 = 4;
+const W_TAG: u8 = 5;
+const W_FIX: u8 = 6;
+const W_SAFE: u8 = 7;
+const W_SUPPRESS: u8 = 8;
+const W_OVER: u8 = 9;
+const W_OPTIONS: u8 = 10;
+const W_BY: u8 = 11;
+const W_SEP: u8 = 12;
+const W_COUNT: u8 = 13;
+const W_MIN: u8 = 14;
+const W_MAX: u8 = 15;
+const W_SUM: u8 = 16;
+const W_MEAN: u8 = 17;
+const W_JOIN: u8 = 18;
+const W_PRODUCT: u8 = 19;
+const W_WILD: u8 = 20;
+const W_DECL: u8 = 21;
+const W_EDIT: u8 = 22;
+const W_FUNCTOR: u8 = 23;
+const W_TYPE: u8 = 24;
+const W_INPUT: u8 = 25;
+const W_OUTPUT: u8 = 26;
+const W_LATTICE: u8 = 27;
+const W_PRAGMA: u8 = 28;
+const W_VIOLATION: u8 = 29;
+const W_POLICY: u8 = 30;
+/// `#include`, on a `HASH` token.
+const W_INCLUDE: u8 = 31;
+
+fn word_of(w: &[u8]) -> u8 {
+    if w.len() > 9 {
+        return 0;
+    }
+    match w {
+        b"must" => W_MUST,
+        b"may" => W_MAY,
+        b"code" => W_CODE,
+        b"in" => W_IN,
+        b"tag" => W_TAG,
+        b"fix" => W_FIX,
+        b"safe" => W_SAFE,
+        b"suppress" => W_SUPPRESS,
+        b"over" => W_OVER,
+        b"options" => W_OPTIONS,
+        b"by" => W_BY,
+        b"sep" => W_SEP,
+        b"count" => W_COUNT,
+        b"min" => W_MIN,
+        b"max" => W_MAX,
+        b"sum" => W_SUM,
+        b"mean" => W_MEAN,
+        b"join" => W_JOIN,
+        b"product" => W_PRODUCT,
+        b"_" => W_WILD,
+        b"decl" => W_DECL,
+        b"edit" => W_EDIT,
+        b"functor" => W_FUNCTOR,
+        b"type" => W_TYPE,
+        b"input" => W_INPUT,
+        b"output" => W_OUTPUT,
+        b"lattice" => W_LATTICE,
+        b"pragma" => W_PRAGMA,
+        b"violation" => W_VIOLATION,
+        b"policy" => W_POLICY,
+        _ => 0,
+    }
+}
+
+fn is_aggregate_word(w: u8) -> bool {
+    matches!(w, W_MIN | W_MAX | W_SUM | W_PRODUCT | W_MEAN | W_JOIN)
+}
+
+// Byte classes.
+const WS: u8 = 1;
+const IDENT: u8 = 2;
+const DIGIT: u8 = 4;
+const START: u8 = 8;
+
+static CLASS: [u8; 256] = {
+    let mut c = [0u8; 256];
+    let mut i = 0;
+    while i < 256 {
+        let b = i as u8;
+        if matches!(b, b' ' | b'\t' | b'\n' | b'\x0c' | b'\r') {
+            c[i] = WS;
+        }
+        if b.is_ascii_alphanumeric() || b == b'_' {
+            c[i] |= IDENT;
+        }
+        if b.is_ascii_digit() {
+            c[i] |= DIGIT;
+        }
+        if b.is_ascii_alphabetic() || b == b'_' {
+            c[i] |= START;
+        }
+        i += 1;
+    }
+    c
+};
+
+/// One-byte punctuation, by byte: its place in `syntax::PUNCT` plus one (0: none).
+static PUNCT1: [u8; 256] = {
+    let mut t = [0u8; 256];
+    let s = b"(),.;:=<>!{}|@*[]-+/%~^&";
+    let mut i = 0;
+    while i < s.len() {
+        t[s[i] as usize] = 7 + i as u8 + 1;
+        i += 1;
+    }
+    t
+};
+
+#[derive(Clone, Copy)]
+struct Tok {
+    start: u32,
+    end: u32,
+    line: u32,
+    kind: u8,
+    word: u8,
+}
+
+struct Lexed {
+    toks: Vec<Tok>,
+    /// The tokens read; `toks` has `EOF`s after them, so a look ahead needs no bounds check.
+    n: usize,
     comments: Vec<(u32, u32)>,
 }
 
-fn newlines(b: &[u8]) -> u32 {
-    b.iter().filter(|&&c| c == b'\n').count() as u32
+// Searches 8 bytes a step, as `memchr`'s portable path does: each byte equal to the one
+// sought gets its top bit set, exactly (no carry from one byte to the next).
+const LO7: u64 = 0x7f7f_7f7f_7f7f_7f7f;
+const HI: u64 = 0x8080_8080_8080_8080;
+const ONES: u64 = 0x0101_0101_0101_0101;
+
+fn equal(word: u64, x: u8) -> u64 {
+    let v = word ^ (ONES * u64::from(x));
+    !(((v & LO7) + LO7) | v) & HI
 }
 
-/// The punctuation at `b[pos..]`, longest first, as `syntax::PUNCT` orders it.
-fn punct(b: &[u8], pos: usize) -> Option<(u8, usize)> {
-    let c = b[pos];
-    let d = b.get(pos + 1).copied().unwrap_or(0);
-    let two = match (c, d) {
-        (b':', b'-') => Some(TURNSTILE),
-        (b'=', b'>') => Some(FAT_ARROW),
-        (b'!', b'=') => Some(NE),
-        (b'<', b'=') => Some(LE),
-        (b'>', b'=') => Some(GE),
-        (b'<', b':') => Some(5),
-        (b'-', b'>') => Some(ARROW),
-        _ => None,
-    };
-    if let Some(p) = two {
-        return Some((p, 2));
+fn word_at(b: &[u8], i: usize) -> u64 {
+    u64::from_le_bytes(b[i..i + 8].try_into().expect("8 bytes"))
+}
+
+/// The first `x` in `b`.
+fn find(b: &[u8], x: u8) -> Option<usize> {
+    let mut i = 0;
+    while i + 8 <= b.len() {
+        let m = equal(word_at(b, i), x);
+        if m != 0 {
+            return Some(i + (m.trailing_zeros() / 8) as usize);
+        }
+        i += 8;
     }
-    let one = match c {
-        b'(' => 7,
-        b')' => 8,
-        b',' => 9,
-        b'.' => 10,
-        b';' => 11,
-        b':' => 12,
-        b'=' => 13,
-        b'<' => 14,
-        b'>' => 15,
-        b'!' => 16,
-        b'{' => 17,
-        b'}' => 18,
-        b'|' => 19,
-        b'@' => 20,
-        b'*' => 21,
-        b'[' => 22,
-        b']' => 23,
-        b'-' => 24,
-        b'+' => 25,
-        b'/' => 26,
-        b'%' => 27,
-        b'~' => 28,
-        b'^' => 29,
-        b'&' => 30,
-        _ => return None,
-    };
-    Some((one, 1))
+    b[i..].iter().position(|&c| c == x).map(|e| i + e)
+}
+
+/// The first `x` or `y` in `b`.
+fn find2(b: &[u8], x: u8, y: u8) -> Option<usize> {
+    let mut i = 0;
+    while i + 8 <= b.len() {
+        let w = word_at(b, i);
+        let m = equal(w, x) | equal(w, y);
+        if m != 0 {
+            return Some(i + (m.trailing_zeros() / 8) as usize);
+        }
+        i += 8;
+    }
+    b[i..].iter().position(|&c| c == x || c == y).map(|e| i + e)
+}
+
+/// The first place `needle` (not empty) starts in `b`: its first byte found, then the rest compared.
+fn find_str(b: &[u8], needle: &[u8]) -> Option<usize> {
+    let mut i = 0;
+    while let Some(e) = find(&b[i..], needle[0]) {
+        let at = i + e;
+        if b.len() - at < needle.len() {
+            return None;
+        }
+        if &b[at..at + needle.len()] == needle {
+            return Some(at);
+        }
+        i = at + 1;
+    }
+    None
+}
+
+fn newlines(b: &[u8]) -> u32 {
+    let (mut n, mut i) = (0, 0);
+    while i + 8 <= b.len() {
+        n += equal(word_at(b, i), b'\n').count_ones();
+        i += 8;
+    }
+    n + b[i..].iter().filter(|&&c| c == b'\n').count() as u32
 }
 
 /// `syntax::lex`'s tokens, without their text.
-fn lex(src: &str) -> Tokens {
+fn lex(src: &str) -> Lexed {
     let b = src.as_bytes();
     let n = b.len();
-    let mut t = Tokens { kind: Vec::new(), start: Vec::new(), end: Vec::new(), line: Vec::new(), last_line: Vec::new(), eof_line: 0, comments: Vec::new() };
+    let mut toks = Vec::with_capacity(n / 4 + 8);
+    let mut comments = Vec::new();
     let (mut pos, mut line) = (0usize, 1u32);
-    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
-    let push = |t: &mut Tokens, kind: u8, start: usize, end: usize, line: u32, inner: u32| {
-        t.kind.push(kind);
-        t.start.push(start as u32);
-        t.end.push(end as u32);
-        t.line.push(line);
-        t.last_line.push(line + inner);
-    };
-    loop {
-        while pos < n && b[pos].is_ascii_whitespace() {
+    macro_rules! tok {
+        ($kind:expr, $start:expr, $end:expr, $word:expr) => {
+            toks.push(Tok { start: $start as u32, end: $end as u32, line, kind: $kind, word: $word })
+        };
+    }
+    'read: loop {
+        while pos < n && CLASS[b[pos] as usize] & WS != 0 {
             line += u32::from(b[pos] == b'\n');
             pos += 1;
         }
@@ -141,119 +282,145 @@ fn lex(src: &str) -> Tokens {
         }
         let start = pos;
         let c = b[pos];
-        if c == b'/' && b.get(pos + 1) == Some(&b'/') {
-            pos = b[pos..].iter().position(|&x| x == b'\n').map_or(n, |e| pos + e);
-            t.comments.push((start as u32, pos as u32));
-            continue;
-        }
-        if c == b'/' && b.get(pos + 1) == Some(&b'*') {
-            // As `str::find("*/")` from the comment's first byte.
-            match b[pos + 1..].windows(2).position(|w| w == b"*/") {
+        let d = if pos + 1 < n { b[pos + 1] } else { 0 };
+        match c {
+            b'/' if d == b'/' => {
+                pos = find(&b[pos..], b'\n').map_or(n, |e| pos + e);
+                comments.push((start as u32, pos as u32));
+            }
+            // As `str::find("*/")` from the comment's first byte: `/*/` ends at once.
+            b'/' if d == b'*' => match find_str(&b[pos + 1..], b"*/") {
                 Some(e) => {
                     let end = pos + 1 + e + 2;
                     line += newlines(&b[pos..end]);
                     pos = end;
-                    t.comments.push((start as u32, pos as u32));
-                    continue;
+                    comments.push((start as u32, pos as u32));
                 }
                 None => {
-                    push(&mut t, BAD, start, n, line, newlines(&b[start..n.saturating_sub(1).max(start)]));
+                    tok!(BAD, start, n, 0);
                     break;
                 }
+            },
+            b'"' => {
+                // To the closing quote, past escapes; only a `\u` escape can be refused.
+                let (mut end, mut u) = (pos + 1, false);
+                loop {
+                    match find2(&b[end..], b'"', b'\\') {
+                        None => {
+                            end = n;
+                            break;
+                        }
+                        Some(e) => {
+                            end += e;
+                            if b[end] == b'"' {
+                                break;
+                            }
+                            u |= end + 1 < n && b[end + 1] == b'u';
+                            end += 2;
+                            if end >= n {
+                                break;
+                            }
+                        }
+                    }
+                }
+                if end >= n {
+                    tok!(BAD, start, n, 0);
+                    break 'read;
+                }
+                let ok = !u || crate::syntax::unescape(&src[pos + 1..end]).is_ok();
+                tok!(if ok { STR } else { BAD }, start, end + 1, 0);
+                line += newlines(&b[start..end]);
+                pos = end + 1;
             }
-        }
-        if c == b'"' {
-            let mut end = pos + 1;
-            while end < n && b[end] != b'"' {
-                end += if b[end] == b'\\' { 2 } else { 1 };
+            b'`' => {
+                let mut k = 1;
+                while pos + k < n && b[pos + k] == b'`' {
+                    k += 1;
+                }
+                let body = pos + k;
+                match find_str(&b[body..], &b[pos..pos + k]) {
+                    Some(close) => {
+                        let end = body + close + k;
+                        tok!(TICK, start, end, 0);
+                        line += newlines(&b[start..end]);
+                        pos = end;
+                    }
+                    None if k == 2 => {
+                        tok!(TICK, start, pos + 2, 0);
+                        pos += 2;
+                    }
+                    None => {
+                        tok!(BAD, start, n, 0);
+                        break;
+                    }
+                }
             }
-            if end >= n {
-                push(&mut t, BAD, start, n, line, newlines(&b[start..n - 1]));
-                break;
+            b'0'..=b'9' => {
+                let mut end = pos + 1;
+                while end < n && CLASS[b[end] as usize] & DIGIT != 0 {
+                    end += 1;
+                }
+                // `1.5`: a `.` between digits; `0.` ends a clause.
+                if end + 1 < n && b[end] == b'.' && b[end + 1].is_ascii_digit() {
+                    end += 2;
+                    while end < n && CLASS[b[end] as usize] & DIGIT != 0 {
+                        end += 1;
+                    }
+                    tok!(FLOAT, start, end, 0);
+                } else {
+                    let ok = end - pos < 19 || src[pos..end].parse::<i64>().is_ok();
+                    tok!(if ok { NUM } else { BAD }, start, end, 0);
+                }
+                pos = end;
             }
-            let body = &src[pos + 1..end];
-            // Only a `\u` escape can be refused.
-            let ok = !body.contains("\\u") || crate::syntax::unescape(body).is_ok();
-            let inner = newlines(&b[start..end]);
-            push(&mut t, if ok { STR } else { BAD }, start, end + 1, line, inner);
-            line += inner;
-            pos = end + 1;
-        } else if c == b'`' {
-            let k = b[pos..].iter().take_while(|&&x| x == b'`').count();
-            let fence = &src[pos..pos + k];
-            let body_start = pos + k;
-            match src[body_start..].find(fence) {
-                Some(close) => {
-                    let end = body_start + close + k;
-                    let inner = newlines(&b[start..end - 1]);
-                    push(&mut t, TICK, start, end, line, inner);
-                    line += newlines(&b[start..end]);
+            b'#' => {
+                let mut end = pos + 1;
+                while end < n && CLASS[b[end] as usize] & IDENT != 0 {
+                    end += 1;
+                }
+                tok!(HASH, start, end, if &b[pos + 1..end] == b"include" { W_INCLUDE } else { 0 });
+                pos = end;
+            }
+            _ if CLASS[c as usize] & START != 0 => {
+                let mut end = pos + 1;
+                while end < n && CLASS[b[end] as usize] & IDENT != 0 {
+                    end += 1;
+                }
+                tok!(ID, start, end, word_of(&b[pos..end]));
+                pos = end;
+            }
+            _ => {
+                let two = match (c, d) {
+                    (b':', b'-') => TURNSTILE,
+                    (b'=', b'>') => FAT_ARROW,
+                    (b'!', b'=') => NE,
+                    (b'<', b'=') => LE,
+                    (b'>', b'=') => GE,
+                    (b'<', b':') => SUBTYPE,
+                    (b'-', b'>') => ARROW,
+                    _ => u8::MAX,
+                };
+                if two != u8::MAX {
+                    tok!(P0 + two, start, pos + 2, 0);
+                    pos += 2;
+                } else if PUNCT1[c as usize] != 0 {
+                    tok!(P0 + PUNCT1[c as usize] - 1, start, pos + 1, 0);
+                    pos += 1;
+                } else {
+                    let end = pos + src[pos..].chars().next().map_or(1, char::len_utf8);
+                    tok!(BAD, start, end, 0);
                     pos = end;
                 }
-                None if k == 2 => {
-                    push(&mut t, TICK, start, pos + 2, line, 0);
-                    pos += 2;
-                }
-                None => {
-                    push(&mut t, BAD, start, n, line, newlines(&b[start..n - 1]));
-                    break;
-                }
             }
-        } else if c.is_ascii_digit() {
-            let end = pos + b[pos..].iter().take_while(|x| x.is_ascii_digit()).count();
-            if b.get(end) == Some(&b'.') && b.get(end + 1).is_some_and(u8::is_ascii_digit) {
-                let end = end + 1 + b[end + 1..].iter().take_while(|x| x.is_ascii_digit()).count();
-                push(&mut t, FLOAT, start, end, line, 0);
-                pos = end;
-                continue;
-            }
-            let ok = end - pos < 19 || src[pos..end].parse::<i64>().is_ok();
-            push(&mut t, if ok { NUM } else { BAD }, start, end, line, 0);
-            pos = end;
-        } else if c == b'#' {
-            let end = pos + 1 + b[pos + 1..].iter().take_while(|&&x| ident(x)).count();
-            push(&mut t, HASH, start, end, line, 0);
-            pos = end;
-        } else if let Some((p, len)) = punct(b, pos) {
-            push(&mut t, P0 + p, start, pos + len, line, 0);
-            pos += len;
-        } else if c.is_ascii_alphabetic() || c == b'_' {
-            let end = pos + b[pos..].iter().take_while(|&&x| ident(x)).count();
-            push(&mut t, ID, start, end, line, 0);
-            pos = end;
-        } else {
-            let end = pos + src[pos..].chars().next().map_or(1, char::len_utf8);
-            push(&mut t, BAD, start, end, line, 0);
-            pos = end;
         }
     }
-    t.eof_line = newlines(b) + 1;
-    t
-}
-
-/// The anonymous kind of a word the grammar reserves, else `identifier`.
-fn reserved(word: &str) -> u16 {
-    (match word {
-        "must" => Kind::Must,
-        "may" => Kind::May,
-        "code" => Kind::CodeWord,
-        "in" => Kind::In,
-        "tag" => Kind::Tag,
-        "fix" => Kind::Fix,
-        "safe" => Kind::Safe,
-        "suppress" => Kind::Suppress,
-        "over" => Kind::Over,
-        "options" => Kind::Options,
-        "by" => Kind::By,
-        "sep" => Kind::Sep,
-        "count" => Kind::Count,
-        "min" => Kind::Min,
-        "max" => Kind::Max,
-        "sum" => Kind::Sum,
-        "mean" => Kind::Mean,
-        "join" => Kind::Join,
-        _ => Kind::Identifier,
-    }) as u16
+    let real = toks.len();
+    // The file's end: its line counts every newline, also after a token that ended the read.
+    let eof_line = if pos >= n { line } else { newlines(b) + 1 };
+    for _ in 0..4 {
+        toks.push(Tok { start: n as u32, end: n as u32, line: eof_line, kind: EOF, word: 0 });
+    }
+    Lexed { toks, n: real, comments }
 }
 
 /// What a literal read was (`syntax::Lit`'s variant), for `!`.
@@ -280,8 +447,9 @@ struct Mark {
 }
 
 struct Parser<'s> {
-    src: &'s str,
-    t: Tokens,
+    b: &'s [u8],
+    t: Vec<Tok>,
+    n: usize,
     i: usize,
     no_named: bool,
     /// The tape so far, in preorder.
@@ -290,21 +458,24 @@ struct Parser<'s> {
     open: Vec<(u32, u32)>,
     /// The open nodes' children, by place in `out`.
     kids: Vec<u32>,
-    /// The next comment to place.
+    comments: Vec<(u32, u32)>,
+    /// The next comment to place, and where it starts (`u32::MAX`: none left).
     comment: usize,
+    next_comment: u32,
 }
 
 /// The lexer alone (its tokens' count), to measure apart from the parse.
 pub fn token_count(src: &str) -> usize {
-    lex(src).kind.len()
+    lex(src).n
 }
 
 /// `src`'s tape: `crate::tape(src)`, node for node.
 pub fn tape(src: &str) -> Vec<Node> {
-    let t = lex(src);
-    let mut out = Vec::with_capacity(t.kind.len() + t.comments.len() + 1);
+    let Lexed { toks, n, comments } = lex(src);
+    let mut out = Vec::with_capacity(n + n / 2 + comments.len() + 8);
     out.push(Node { kind: Kind::SourceFile as u16, field: 0, start: 0, end: src.len() as u32, parent: None, extra: false });
-    let mut p = Parser { src, t, i: 0, no_named: false, out, open: vec![(0, 0)], kids: Vec::new(), comment: 0 };
+    let next_comment = comments.first().map_or(u32::MAX, |c| c.0);
+    let mut p = Parser { b: src.as_bytes(), t: toks, n, i: 0, no_named: false, out, open: vec![(0, 0)], kids: Vec::with_capacity(64), comments, comment: 0, next_comment };
     while p.kind() != EOF {
         let save = p.mark();
         if p.statement().is_err() {
@@ -320,11 +491,15 @@ impl Parser<'_> {
     // Tokens.
 
     fn kind_at(&self, k: usize) -> u8 {
-        self.t.kind.get(self.i + k).copied().unwrap_or(EOF)
+        self.t.get(self.i + k).map_or(EOF, |t| t.kind)
     }
 
     fn kind(&self) -> u8 {
         self.kind_at(0)
+    }
+
+    fn word_at(&self, k: usize) -> u8 {
+        self.t.get(self.i + k).map_or(0, |t| if t.kind == ID { t.word } else { 0 })
     }
 
     fn is_p(&self, p: u8) -> bool {
@@ -335,12 +510,8 @@ impl Parser<'_> {
         self.kind_at(k) == P0 + p
     }
 
-    fn text(&self, j: usize) -> &str {
-        &self.src[self.t.start[j] as usize..self.t.end[j] as usize]
-    }
-
-    fn is_id(&self, word: &str) -> bool {
-        self.kind() == ID && self.text(self.i) == word
+    fn is_id(&self, w: u8) -> bool {
+        self.word_at(0) == w
     }
 
     fn is_id_at(&self, k: usize) -> bool {
@@ -348,45 +519,58 @@ impl Parser<'_> {
     }
 
     fn start(&self) -> u32 {
-        self.t.start.get(self.i).copied().unwrap_or(self.src.len() as u32)
+        self.t.get(self.i).map_or(self.b.len() as u32, |t| t.start)
     }
 
     fn line(&self) -> u32 {
-        self.t.line.get(self.i).copied().unwrap_or(self.t.eof_line)
+        self.t.get(self.i).map_or(self.t[self.n].line, |t| t.line)
     }
 
+    /// The line of the token before the next one's last byte.
     fn last_line(&self) -> u32 {
-        self.i.checked_sub(1).and_then(|j| self.t.last_line.get(j)).copied().unwrap_or(0)
+        let Some(j) = self.i.checked_sub(1) else { return 0 };
+        let Some(t) = self.t.get(j) else { return 0 };
+        if matches!(t.kind, STR | TICK | BAD) {
+            t.line + newlines(&self.b[t.start as usize..(t.end as usize).saturating_sub(1).max(t.start as usize)])
+        } else {
+            t.line
+        }
     }
 
     // The tape.
 
     fn comments_before(&mut self, parent: u32, before: u32) {
-        while let Some(&(start, end)) = self.t.comments.get(self.comment) {
-            if start >= before {
-                break;
-            }
-            self.comment += 1;
+        while self.next_comment < before {
+            let (start, end) = self.comments[self.comment];
             self.out.push(Node { kind: Kind::Comment as u16, field: 0, start, end, parent: Some(parent), extra: true });
+            self.comment += 1;
+            self.next_comment = self.comments.get(self.comment).map_or(u32::MAX, |c| c.0);
         }
     }
 
     fn skip_comments(&mut self, before: u32) {
-        while self.t.comments.get(self.comment).is_some_and(|c| c.0 < before) {
+        while self.next_comment < before {
             self.comment += 1;
+            self.next_comment = self.comments.get(self.comment).map_or(u32::MAX, |c| c.0);
         }
+    }
+
+    fn top(&self) -> (u32, u32) {
+        *self.open.last().expect("source_file stays open")
     }
 
     /// A child of the open node; it stays open when `open`.
     fn push(&mut self, kind: u16, start: u32, end: u32, open: bool) {
-        let parent = self.open.last().expect("source_file stays open").0;
-        self.comments_before(parent, start);
+        let parent = self.top().0;
+        if self.next_comment < start {
+            self.comments_before(parent, start);
+        }
         let id = self.out.len() as u32;
         self.out.push(Node { kind, field: 0, start, end, parent: Some(parent), extra: false });
         self.kids.push(id);
         if open {
             self.open.push((id, self.kids.len() as u32));
-        } else {
+        } else if self.next_comment < end {
             // A leaf's text is its own: a comment inside it is not a node.
             self.skip_comments(end);
         }
@@ -398,25 +582,30 @@ impl Parser<'_> {
     }
 
     fn close(&mut self) {
-        let end = self.i.checked_sub(1).and_then(|j| self.t.end.get(j)).copied().unwrap_or(0);
+        let end = match self.i.checked_sub(1) {
+            Some(j) => self.t.get(j).map_or(0, |t| t.end),
+            None => 0,
+        };
         let (id, base) = self.open.pop().expect("an open node");
         let node = &mut self.out[id as usize];
         node.end = end.max(node.start);
         let end = node.end;
-        if self.kids.len() > base as usize {
-            self.comments_before(id, end);
-        } else {
-            self.skip_comments(end);
+        if self.next_comment < end {
+            if self.kids.len() > base as usize {
+                self.comments_before(id, end);
+            } else {
+                self.skip_comments(end);
+            }
         }
         self.kids.truncate(base as usize);
     }
 
     fn here(&self) -> usize {
-        self.kids.len() - self.open.last().expect("open").1 as usize
+        self.kids.len() - self.top().1 as usize
     }
 
     fn last(&self) -> Option<u32> {
-        (self.here() > 0).then(|| *self.kids.last().expect("a child"))
+        if self.kids.len() > self.top().1 as usize { self.kids.last().copied() } else { None }
     }
 
     fn field(&mut self, field: Field) {
@@ -427,29 +616,40 @@ impl Parser<'_> {
 
     /// A node of `kind` around the open node's children from `from` on, open, before the first.
     fn wrap(&mut self, from: usize, kind: Kind) {
-        let (x, base) = *self.open.last().expect("open");
+        let (x, base) = self.top();
         let at = base as usize + from;
-        let (k, start, field) = match self.kids.get(at) {
-            Some(&k) => {
-                let first = &mut self.out[k as usize];
-                let (start, field) = (first.start, first.field);
-                first.field = 0;
-                (k, start, field)
-            }
-            None => (self.out.len() as u32, 0, 0),
+        let Some(&k) = self.kids.get(at) else {
+            // Nothing to wrap: an empty node at the end.
+            let id = self.out.len() as u32;
+            self.out.push(Node { kind: kind as u16, field: 0, start: 0, end: 0, parent: Some(x), extra: false });
+            self.kids.push(id);
+            self.open.push((id, self.kids.len() as u32));
+            return;
         };
-        // The nodes from the first moved on shift by one; the open node's children there are
-        // the new node's.
-        for node in &mut self.out[k as usize..] {
-            if let Some(p) = node.parent.as_mut() {
-                if *p >= k {
-                    *p += 1;
-                } else if *p == x {
-                    *p = k;
+        let mut first = self.out[k as usize];
+        let wrapper = Node { kind: kind as u16, field: first.field, start: first.start, end: first.start, parent: Some(x), extra: false };
+        first.field = 0;
+        first.parent = Some(k);
+        if k as usize + 1 == self.out.len() {
+            // One leaf: the two swap.
+            self.out[k as usize] = wrapper;
+            self.out.push(first);
+        } else {
+            // A larger operand: the nodes from it on shift by one, and the open node's children
+            // there are the new node's.
+            self.out[k as usize] = first;
+            for node in &mut self.out[k as usize + 1..] {
+                if let Some(p) = node.parent.as_mut() {
+                    if *p >= k {
+                        *p += 1;
+                    } else if *p == x {
+                        *p = k;
+                    }
                 }
             }
+            self.out[k as usize].parent = Some(k);
+            self.out.insert(k as usize, wrapper);
         }
-        self.out.insert(k as usize, Node { kind: kind as u16, field, start, end: start, parent: Some(x), extra: false });
         for c in &mut self.kids[at..] {
             *c += 1;
         }
@@ -467,11 +667,12 @@ impl Parser<'_> {
         self.kids.truncate(m.kids);
         self.out.truncate(m.out);
         self.comment = m.comment;
+        self.next_comment = self.comments.get(self.comment).map_or(u32::MAX, |c| c.0);
     }
 
     fn leaf_over(&mut self, kind: u16, from: usize, to: usize) {
-        if from < to && to <= self.t.kind.len() {
-            self.push(kind, self.t.start[from], self.t.end[to - 1], false);
+        if from < to && to <= self.n {
+            self.push(kind, self.t[from].start, self.t[to - 1].end, false);
         }
     }
 
@@ -481,9 +682,10 @@ impl Parser<'_> {
     }
 
     fn anon(&mut self) {
-        let kind = match self.kind() {
-            ID => reserved(self.text(self.i)),
-            HASH if self.text(self.i) == "#include" => Kind::HashInclude as u16,
+        let (k, w) = self.t.get(self.i).map_or((EOF, 0), |t| (t.kind, t.word));
+        let kind = match k {
+            ID if (W_MUST..=W_JOIN).contains(&w) => Kind::Must as u16 + u16::from(w - W_MUST),
+            HASH if w == W_INCLUDE => Kind::HashInclude as u16,
             k if k >= P0 => FIRST_ANONYMOUS + u16::from(k - P0),
             _ => Kind::Identifier as u16,
         };
@@ -540,7 +742,7 @@ impl Parser<'_> {
         }
     }
 
-    fn list(&mut self, close: u8, field: Field, item: fn(&mut Self) -> R<()>) -> R<()> {
+    fn list(&mut self, close: u8, field: Field, mut item: impl FnMut(&mut Self) -> R<()>) -> R<()> {
         if self.is_p(close) {
             return Ok(());
         }
@@ -583,7 +785,7 @@ impl Parser<'_> {
     fn brace_column(&mut self, field: Field) -> R<()> {
         let from = self.i;
         self.braces()?;
-        if self.i - from == 3 && self.t.kind[from + 1] == ID {
+        if self.i - from == 3 && self.t[from + 1].kind == ID {
             self.anon_over(LBRACE, from);
             self.leaf_over(Kind::Identifier as u16, from + 1, from + 2);
             self.field(field);
@@ -667,14 +869,14 @@ impl Parser<'_> {
     fn recover(&mut self, save: Mark) {
         let first = save.i;
         self.reset(save);
-        let b = self.src.as_bytes();
+        let b = self.b;
         let line_start = |at: usize| b[..at].iter().rev().take_while(|&&c| c != b'\n').all(|c| c.is_ascii_whitespace());
-        let n = self.t.kind.len();
+        let n = self.n;
         let mut k = first + 1;
         while k < n {
-            match self.t.kind[k] {
+            match self.t[k].kind {
                 HASH => break,
-                x if x == P0 + DOT && self.t.kind.get(k + 1) == Some(&ID) && line_start(self.t.start[k] as usize) => break,
+                x if x == P0 + DOT && self.t[k + 1].kind == ID && line_start(self.t[k].start as usize) => break,
                 x if x == P0 + DOT => {
                     k += 1;
                     break;
@@ -690,7 +892,7 @@ impl Parser<'_> {
     fn statement(&mut self) -> R<()> {
         let line = self.line();
         if self.kind() == HASH {
-            let include = self.text(self.i) == "#include";
+            let include = self.t[self.i].word == W_INCLUDE;
             self.open(Kind::Include);
             self.anon();
             if !include {
@@ -701,32 +903,32 @@ impl Parser<'_> {
             self.close();
             Ok(())
         } else if self.is_p(DOT) && self.is_id_at(1) {
-            let d = self.text(self.i + 1);
-            let policy = d == "policy" && self.is_p_at(2, LBRACE);
-            let (kind, keyword) = match d {
-                "decl" => (Kind::Declaration, Kind::DotDecl),
-                "edit" => (Kind::EditDeclaration, Kind::DotEdit),
-                "functor" => (Kind::FunctorDeclaration, Kind::DotFunctor),
-                "type" => (Kind::TypeDeclaration, Kind::DotType),
-                "input" => (Kind::IoDirective, Kind::DotInput),
-                "output" => (Kind::IoDirective, Kind::DotOutput),
-                "lattice" => (Kind::LatticeDeclaration, Kind::DotLattice),
-                "pragma" => (Kind::Pragma, Kind::DotPragma),
-                "violation" => (Kind::ViolationDeclaration, Kind::DotViolation),
-                "policy" if policy => (Kind::PolicyDocument, Kind::DotPolicy),
-                _ => (Kind::Setting, Kind::Identifier),
+            let d = self.t[self.i + 1].word;
+            let policy = d == W_POLICY && self.is_p_at(2, LBRACE);
+            let kind = match d {
+                W_DECL => Kind::Declaration,
+                W_EDIT => Kind::EditDeclaration,
+                W_FUNCTOR => Kind::FunctorDeclaration,
+                W_TYPE => Kind::TypeDeclaration,
+                W_INPUT | W_OUTPUT => Kind::IoDirective,
+                W_LATTICE => Kind::LatticeDeclaration,
+                W_PRAGMA => Kind::Pragma,
+                W_VIOLATION => Kind::ViolationDeclaration,
+                W_POLICY if policy => Kind::PolicyDocument,
+                _ => Kind::Setting,
             };
-            let word = self.i + 1;
+            // The keyword's kind: the directives' in their words' order.
+            let keyword = Kind::DotDecl as u16 + u16::from(d.wrapping_sub(W_DECL));
             self.open(kind);
             if kind == Kind::Setting {
                 self.anon();
                 self.bump_as(Kind::Identifier);
                 self.field(Field::Name);
             } else {
-                self.leaf_over(keyword as u16, self.i, self.i + 2);
+                self.leaf_over(keyword, self.i, self.i + 2);
                 self.i += 2;
             }
-            self.directive(line, word, kind)?;
+            self.directive(line, d, kind)?;
             self.close();
             Ok(())
         } else {
@@ -781,22 +983,21 @@ impl Parser<'_> {
         Ok(())
     }
 
-    fn directive(&mut self, line: u32, word: usize, kind: Kind) -> R<()> {
-        let d = self.text(word);
+    fn directive(&mut self, line: u32, d: u8, kind: Kind) -> R<()> {
         match d {
-            "decl" => {
+            W_DECL => {
                 self.id()?;
                 self.field(Field::Name);
                 self.columns()?;
                 let at = self.last_line();
                 self.rest_of_line(at, Field::Modifier)?;
             }
-            "edit" => {
+            W_EDIT => {
                 self.id()?;
                 self.field(Field::Name);
                 self.columns()?;
             }
-            "functor" => {
+            W_FUNCTOR => {
                 self.id()?;
                 self.field(Field::Name);
                 self.columns()?;
@@ -806,14 +1007,14 @@ impl Parser<'_> {
                 let at = self.last_line();
                 self.rest_of_line(at, Field::Modifier)?;
             }
-            "type" => {
+            W_TYPE => {
                 self.id()?;
                 self.field(Field::Name);
                 let at = self.last_line();
                 self.raw_line(at, Field::Definition)?;
             }
-            "input" | "output" => self.list(DOT, Field::Relation, Self::io_relation)?,
-            "lattice" => {
+            W_INPUT | W_OUTPUT => self.list(DOT, Field::Relation, Self::io_relation)?,
+            W_LATTICE => {
                 self.id()?;
                 self.field(Field::Name);
                 self.p(LT)?;
@@ -826,23 +1027,23 @@ impl Parser<'_> {
                 self.list(RBRACE, Field::Operation, Self::lattice_operation)?;
                 self.p(RBRACE)?;
             }
-            "pragma" => {
+            W_PRAGMA => {
                 while self.kind() == STR {
                     self.string()?;
                     self.field(Field::Argument);
                 }
             }
-            "violation" => self.violation()?,
-            "policy" if kind == Kind::PolicyDocument => {
+            W_VIOLATION => self.violation()?,
+            W_POLICY if kind == Kind::PolicyDocument => {
                 let from = self.i;
                 self.json(Field::Document)?;
                 // The document must be JSON.
-                let text = &self.src[self.t.start[from] as usize..self.t.end[self.i - 1] as usize];
-                serde_json::from_str::<serde_json::Value>(text).map_err(|_| ())?;
+                let text = &self.b[self.t[from].start as usize..self.t[self.i - 1].end as usize];
+                serde_json::from_slice::<serde_json::Value>(text).map_err(|_| ())?;
             }
             _ => {
                 let mut line = line;
-                while self.kind() != EOF && (self.line() == line || (self.i > 0 && self.t.kind[self.i - 1] == P0 + COMMA)) {
+                while self.kind() != EOF && (self.line() == line || (self.i > 0 && self.t[self.i - 1].kind == P0 + COMMA)) {
                     line = self.line();
                     if self.is_p(LBRACE) {
                         self.json(Field::Argument)?;
@@ -860,16 +1061,16 @@ impl Parser<'_> {
         self.field(Field::Name);
         self.columns()?;
         loop {
-            if self.is_id("code") && self.kind_at(1) == STR {
+            if self.is_id(W_CODE) && self.kind_at(1) == STR {
                 self.anon();
                 self.string()?;
                 self.field(Field::Code);
-            } else if (self.is_id("code") || self.is_id("tag")) && self.is_p_at(1, LBRACE) {
-                let is_code = self.is_id("code");
+            } else if (self.is_id(W_CODE) || self.is_id(W_TAG)) && self.is_p_at(1, LBRACE) {
+                let is_code = self.is_id(W_CODE);
                 self.open(if is_code { Kind::CodeColumn } else { Kind::TagColumn });
                 self.anon();
                 self.brace_column(Field::Column)?;
-                if is_code && self.is_id("in") && self.kind_at(1) == STR {
+                if is_code && self.is_id(W_IN) && self.kind_at(1) == STR {
                     self.anon();
                     self.string()?;
                     self.field(Field::Codes);
@@ -883,10 +1084,10 @@ impl Parser<'_> {
         self.string()?;
         self.field(Field::Message);
         loop {
-            if self.is_id("fix") && self.is_id_at(1) {
+            if self.is_id(W_FIX) && self.is_id_at(1) {
                 self.open(Kind::FixLine);
                 self.anon();
-                if self.is_id("safe") && self.is_id_at(1) {
+                if self.is_id(W_SAFE) && self.is_id_at(1) {
                     self.anon();
                 }
                 self.id()?;
@@ -895,7 +1096,7 @@ impl Parser<'_> {
                 self.field(Field::Description);
                 self.close();
                 self.field(Field::Fix);
-            } else if self.is_id("suppress") && self.is_id_at(1) && self.kind_at(2) == STR {
+            } else if self.is_id(W_SUPPRESS) && self.is_id_at(1) && self.kind_at(2) == STR {
                 self.open(Kind::SuppressLine);
                 self.anon();
                 self.id()?;
@@ -907,13 +1108,13 @@ impl Parser<'_> {
                     self.string()?;
                     self.field(Field::Rule);
                 }
-                if self.is_id("over") && self.is_p_at(1, LBRACE) {
+                if self.is_id(W_OVER) && self.is_p_at(1, LBRACE) {
                     self.anon();
                     self.brace_column(Field::Over)?;
                 }
                 self.close();
                 self.field(Field::Suppress);
-            } else if self.is_id("options") && self.is_p_at(1, LBRACE) {
+            } else if self.is_id(W_OPTIONS) && self.is_p_at(1, LBRACE) {
                 self.anon();
                 self.json(Field::Options)?;
             } else {
@@ -925,7 +1126,7 @@ impl Parser<'_> {
 
     fn head(&mut self) -> R<()> {
         self.open(Kind::Head);
-        if (self.is_id("must") || self.is_id("may")) && self.is_id_at(1) {
+        if (self.is_id(W_MUST) || self.is_id(W_MAY)) && self.is_id_at(1) {
             self.anon();
             self.field(Field::Modal);
         }
@@ -1049,10 +1250,13 @@ impl Parser<'_> {
     fn retag_atom(&mut self) {
         let Some(call) = self.last() else { return };
         self.out[call as usize].kind = Kind::Atom as u16;
-        // Its children: the nodes after it whose parent it is.
+        // Its function is its first child, after any comments.
         for node in &mut self.out[call as usize + 1..] {
-            if node.parent == Some(call) && !node.extra && node.field == Field::Function as u16 {
-                node.field = Field::Relation as u16;
+            if node.parent == Some(call) && !node.extra {
+                if node.field == Field::Function as u16 {
+                    node.field = Field::Relation as u16;
+                }
+                break;
             }
         }
     }
@@ -1097,7 +1301,7 @@ impl Parser<'_> {
             self.agg_part()?;
             self.field(Field::Value);
         }
-        if self.is_id("by") {
+        if self.is_id(W_BY) {
             self.anon();
             if self.is_p(LPAREN) {
                 self.anon();
@@ -1108,7 +1312,7 @@ impl Parser<'_> {
                 self.field(Field::Key);
             }
         }
-        if self.is_id("sep") {
+        if self.is_id(W_SEP) {
             self.anon();
             self.string()?;
             self.field(Field::Separator);
@@ -1189,11 +1393,11 @@ impl Parser<'_> {
                 return Ok(false);
             }
             ID => {
-                let s = self.text(self.i);
-                let aggregate_word = matches!(s, "min" | "max" | "sum" | "product" | "mean" | "join");
-                if s == "_" {
+                let w = self.word_at(0);
+                let aggregate_word = is_aggregate_word(w);
+                if w == W_WILD {
                     Kind::Wildcard
-                } else if s == "count" && self.is_p_at(1, COLON) {
+                } else if w == W_COUNT && self.is_p_at(1, COLON) {
                     return self.aggregate();
                 } else if aggregate_word && self.is_p_at(1, LPAREN) {
                     return self.call_or_aggregate();
@@ -1202,7 +1406,7 @@ impl Parser<'_> {
                 {
                     let save = self.mark();
                     self.i += 1;
-                    let aggregate = self.agg_part().is_ok() && (self.is_p(COLON) || self.is_id("by") || self.is_id("sep"));
+                    let aggregate = self.agg_part().is_ok() && (self.is_p(COLON) || self.is_id(W_BY) || self.is_id(W_SEP));
                     self.reset(save);
                     if aggregate {
                         return self.aggregate();
