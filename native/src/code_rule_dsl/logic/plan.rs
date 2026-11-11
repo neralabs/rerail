@@ -3215,9 +3215,39 @@ impl Run<'_, '_> {
         self.demands.read(self.db, input, &self.model.col(input, 0), source)
     }
 
+    fn retain_native_rows(&mut self, rel: &str, rows: Vec<Vec<i64>>, types: Vec<u8>) -> Result<usize> {
+        use super::native::component;
+        component::retain(self.db, rel, rows, types)?;
+        self.native_rels.insert(rel.to_owned());
+        let source = component::derived(self.db, rel).expect("just retained");
+        let stats = source.statistics().expect("retained relations own their statistics");
+        live_stats(&mut self.model, rel, LiveRel {
+            n: source.len() as i64,
+            ndv: stats.iter().map(|s| s.2).collect(),
+            sq: stats.iter().map(|s| s.3).collect(),
+            freq: Vec::new(),
+        });
+        Ok(source.len())
+    }
+
+    /// A request is complete at the stratum that publishes its answer.
+    fn completed_request(&mut self, rel: &str) -> Result<Vec<Vec<i64>>> {
+        let width = self.prog.decls[rel].len();
+        if self.native_rels.contains(rel) {
+            let source = super::native::component::derived(self.db, rel)
+                .ok_or_else(|| Error::Plan(format!("{rel}: completed request is not held")))?;
+            return Ok((0..source.len()).map(|i| (0..width).map(|c| source.value(i, c)).collect()).collect());
+        }
+        self.ensure(&[rel.to_owned()])?;
+        let cols = (0..width).map(|c| format!("c{c}")).collect::<Vec<_>>().join(", ");
+        let sql = format!("SELECT {cols} FROM {}", crate::code_rule_dsl::logic::sql::ident(rel));
+        let mut statement = self.db.prepare(&sql)?;
+        let rows = statement.query_map([], |r| (0..width).map(|c| r.get(c)).collect::<rusqlite::Result<Vec<i64>>>())?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// One producer invocation for a completed demand relation; native rows never take a SQL round trip.
     fn python_relation(&mut self, rel: &str, kind: &str, input: &str, targets: &Option<String>) -> Result<usize> {
-        use super::native::component;
         use crate::code_rule_dsl::facts::vtab;
         let ident = crate::code_rule_dsl::logic::sql::ident;
         let requests = self.native_demand(input)?;
@@ -3250,18 +3280,9 @@ impl Run<'_, '_> {
                 SqlValue::Integer(i) => Ok(i),
                 _ => Err(Error::Plan("Python fact producer returned a non-integer after interning".into())),
             }).collect()).collect::<Result<_>>()?;
-            component::retain(self.db, rel, values, vec![b'i'; self.prog.decls[rel].len()])?;
-            self.native_rels.insert(rel.to_owned());
-            let source = component::derived(self.db, rel).expect("just retained");
-            let stats = source.statistics().expect("retained relations own their statistics");
-            live_stats(&mut self.model, rel, LiveRel {
-                n: source.len() as i64,
-                ndv: stats.iter().map(|s| s.2).collect(),
-                sq: stats.iter().map(|s| s.3).collect(),
-                freq: Vec::new(),
-            });
-            super::profile::decision("native fact result", || format!("{rel}: retained rows={}", source.len()));
-            return Ok(source.len());
+            let count = self.retain_native_rows(rel, values, vec![b'i'; self.prog.decls[rel].len()])?;
+            super::profile::decision("native fact result", || format!("{rel}: retained rows={count}"));
+            return Ok(count);
         }
         // The legacy text-symbol backend reads SQL tables. Atom-backed production retains the typed rows above.
         self.ensure(&[rel.to_owned()])?;
@@ -6449,17 +6470,11 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         let produced = super::answers::produced(prog);
         if scc.iter().all(|r| produced.contains_key(r.as_str())) {
             for rel in scc {
-                let rows = match run.answered.remove(rel) {
+                let mut rows = match run.answered.remove(rel) {
                     Some(rows) => rows,
                     None => {
                         let req = produced[rel.as_str()].to_owned();
-                        run.materialize(std::slice::from_ref(&req))?;
-                        let width = prog.decls[&req].len();
-                        let cols = (0..width).map(|c| format!("c{c}")).collect::<Vec<_>>().join(", ");
-                        let asked: Vec<Vec<i64>> = db
-                            .prepare(&format!("SELECT {cols} FROM {}", crate::code_rule_dsl::logic::sql::ident(&req)))?
-                            .query_map([], |r| (0..width).map(|c| r.get::<_, i64>(c)).collect::<rusqlite::Result<Vec<_>>>())?
-                            .collect::<rusqlite::Result<_>>()?;
+                        let asked = run.completed_request(&req)?;
                         let answer = run.answer.as_deref_mut().ok_or_else(|| Error::Plan(format!("{req}: a request, and no one to answer it")))?;
                         let mut mine = Vec::new();
                         for (p, got) in answer(&req, &asked)? {
@@ -6475,11 +6490,17 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 if prog.inputs.contains(rel) || rows.is_empty() || !prog.rules.iter().any(|r| r.body.iter().filter_map(|l| l.atom()).any(|a| a.rel == *rel)) {
                     continue;
                 }
-                let width = prog.decls[rel].len();
-                let marks = vec!["?"; width].join(", ");
-                let mut insert = db.prepare(&format!("INSERT OR IGNORE INTO {} VALUES ({marks})", crate::code_rule_dsl::logic::sql::ident(rel)))?;
-                for row in &rows {
-                    insert.execute(rusqlite::params_from_iter(row.iter()))?;
+                if run.native_rels.contains(rel) {
+                    let types = prog_types(prog, rel).iter().map(|t| sym_char(&run.model.inputs, t) as u8).collect::<Vec<_>>();
+                    // Stated rows of a produced relation still participate in its set.
+                    if prog.facts.get(rel).is_some_and(|facts| !facts.is_empty()) {
+                        rows.extend(run.completed_request(rel)?);
+                    }
+                    run.retain_native_rows(rel, rows, types)?;
+                } else {
+                    run.ensure(std::slice::from_ref(rel))?;
+                    insert_many(db, &format!("INSERT OR IGNORE INTO {}", crate::code_rule_dsl::logic::sql::ident(rel)),
+                        rows.into_iter().map(|row| row.into_iter().map(SqlValue::Integer).collect()).collect())?;
                 }
             }
             continue;
