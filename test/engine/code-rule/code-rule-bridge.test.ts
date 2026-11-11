@@ -1110,6 +1110,40 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => edit.path))).toEqual(["wt/src/a.py"]);
   });
 
+  it("leaves the other worktrees' sources, and files a tool wrote outside its folder, out of the observations it shares once it closes", async () => {
+    const root = await twoBranches();
+    const roots: string[] = [];
+    for (const name of ["w1", "w2", "w3"]) {
+      const place = join(await workspace(), name);
+      git(root, "worktree", "add", "--quiet", "--detach", place, "other");
+      roots.push(await realpath(place));
+    }
+    const sibling = join(await workspace(), "sibling");
+    await mkdir(sibling);
+    const observations: SourceObservationCache = new Map();
+    const bridge = createBridge(root, {
+      ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))),
+      sourceRoot: path => [...roots, sibling].find(known => resolve(root, path).startsWith(`${known}${sep}`)) ?? root,
+      worktreeRoots: () => roots,
+    }, { worktreeWalkGapMs: 0, observations });
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await bridge.begin("call-1", "write", { path: join(sibling, "x.py") });
+    await writeFile(join(sibling, "x.py"), "after\n");
+    await bridge.finish("call-1");
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    const own = ["src/a.py", "src/gone.py"];
+    const others = roots.flatMap(worktree => ["a.py", "new.py"].map(file => relative(root, join(worktree, "src", file)).split(sep).join("/")));
+    const outside = relative(root, join(sibling, "x.py")).split(sep).join("/");
+    // While the session walks them, a session opening in its folder starts from the worktrees' sources too.
+    expect([...observations.get(root)?.keys() ?? []].sort()).toEqual([...others, ...own, outside].sort());
+    await bridge.close();
+    // The daemon keeps a folder's observations while it serves the folder, so each folder sessions started in held every
+    // file of every worktree: its heap grew with the folders times the files of all the repository's worktrees.
+    expect([...observations.get(root)?.keys() ?? []].sort()).toEqual(own);
+  });
+
   it("audits nothing when a worktree is removed, or of one Git adds later", async () => {
     const root = await twoBranches();
     const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));

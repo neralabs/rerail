@@ -1,0 +1,1 @@
+In a repository with many worktrees, Rerail's daemon no longer keeps what a session read of the other worktrees once the session ends. It kept a copy for every folder a session had run in, so its memory grew with each new folder until the daemon ran out and stopped.
