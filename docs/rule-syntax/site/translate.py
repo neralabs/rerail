@@ -1769,10 +1769,18 @@ def hoist_ancestor_steps(entries, lib):
             if not m or l not in out:
                 continue
             a, p = m.group(1), m.group(2)
+            if a != "n":     # a step up from the rule's own node; a descendant found from above is not one
+                continue
             ua = [x for x in list(out) + list(ctx) if _UNARY.match(x) and _UNARY.match(x).group(2) == a
                   and _UNARY.match(x).group(1) not in ("node",)]
-            up = [x for x in out if _UNARY.match(x) and _UNARY.match(x).group(2) == p]
+            up = [x for x in out if _UNARY.match(x) and _UNARY.match(x).group(2) == p
+                  or re.fullmatch(r'kind\(' + p + r', "\w+"\)', x)]
             if not ua or not up:
+                continue
+            # only an ancestor the step finds: one the body reaches from above (`child(n, c3, _)`) limits the
+            # step already, and is the better start
+            if any(re.fullmatch(r"(?:child\(n, " + p + r", \w+\)|field\(n, \"\w+\", " + p + r"\))", x)
+                   for x in list(out) + list(ctx)):
                 continue
             key = (tuple(ua), l, tuple(up))
             if key not in made:
@@ -1833,9 +1841,17 @@ def node_demand(entries, helpers, decls, lib):
         scc = {g for g in callees(h) if h in callees(g)}
         done |= scc
         sccs.append(scc)
+    # a helper that is only an `inside` step (`in_final(n) :- within_stop(n, p1, …), …`) holds bottom-up at
+    # every node with each of its ancestors: asked where its callers are
+    up = re.compile(r"^(?:within|within_stop|inside)\(n, ")
+    lone = set()
+    for h in sorted(by):
+        if h not in done and h in helpers and by[h] and all(e["lits"] and up.match(e["lits"][0]) for e in by[h]):
+            sccs.append({h})
+            lone.add(h)
     # callers first: a caller's own demand is what limits where it asks
     for scc in sorted(sccs, key=lambda c: (-len(callees(min(c))), min(c))):
-        if any(g not in helpers for g in scc) or not any(fan.search(body_of[g]) for g in scc):
+        if any(g not in helpers for g in scc) or not (scc & lone or any(fan.search(body_of[g]) for g in scc)):
             continue
         if any(e["lits"] and e["lits"][0].startswith("demand_") for g in scc for e in by[g]):
             continue
@@ -1844,7 +1860,12 @@ def node_demand(entries, helpers, decls, lib):
             continue
 
         def reaches(l):
-            return any(g in by and (g in scc or scc & callees(g)) for g in names(l))
+            # a helper that takes demand (or calls one) reads its demand relation, which may read this
+            # recursion's callers: kept out, as in demand()
+            return any(g in by and (g in scc or scc & callees(g) or
+                                    any(e["lits"] and e["lits"][0].startswith("demand_")
+                                        for x in callees(g) | {g} for e in by.get(x, ())))
+                       for g in names(l))
         rules, ok = {g: [] for g in scc}, True
         for e in entries:
             if e.get("drop") or not ok:
@@ -1878,7 +1899,7 @@ def node_demand(entries, helpers, decls, lib):
         for g in sorted(scc):
             col = decls[g][decls[g].index("(") + 1:-1].split(",")[0].strip()
             lib[f"demand_{g}"] = (f".decl demand_{g}({col})",
-                                  [f"// demand_{g}: the nodes {g} is asked at (its recursion looks at every descendant)"],
+                                  [f"// demand_{g}: the nodes {g} is asked at " + ("(it looks at every ancestor of every node)" if g in lone else "(its recursion looks at every descendant)")],
                                   [r for i, r in enumerate(rules[g]) if r not in rules[g][:i]])
             for e in by[g]:
                 hp = [a.strip() for a in e["head"].split("(", 1)[1][:-1].split(",")]
