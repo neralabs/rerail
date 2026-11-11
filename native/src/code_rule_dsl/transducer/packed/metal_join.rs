@@ -379,6 +379,23 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
     }
 }
 
+// Rows copied between column-major buffers (a binding table, a relation): `n` rows of `ncols` columns, column k of
+// the destination from source column `src[k]` (or the constant `konst[k]` where it is NONE), at `dst_off`.
+struct Copy {
+    long konst[16];
+    uint src[16];
+    uint n, ncols, src_stride, dst_stride, dst_off, pad0, pad1, pad2;
+};
+
+kernel void rows_copy(device const long* S [[buffer(0)]], device long* D [[buffer(1)]], constant Copy& c [[buffer(2)]],
+                      uint t [[thread_position_in_grid]]) {
+    if (t >= c.n) return;
+    for (uint k = 0; k < c.ncols && k < 16; k++) {
+        long v = c.src[k] == NONE ? c.konst[k] : S[ulong(c.src[k]) * c.src_stride + t];
+        D[ulong(k) * c.dst_stride + c.dst_off + t] = v;
+    }
+}
+
 // Slots set in place, in order: a later one may read an earlier one.
 kernel void stage_map(device long* B [[buffer(0)]], device const uint* totals [[buffer(1)]], constant Stage& s [[buffer(2)]],
                       uint t [[thread_position_in_grid]]) {
@@ -536,7 +553,55 @@ impl DevRel {
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
         8 * self.cols * self.rows
     }
+
+    /// A relation of `cols` columns and `rows` rows that the device fills (`Batch::copy_rows`).
+    pub(in crate::code_rule_dsl) fn empty(cols: usize, rows: usize) -> Result<DevRel, Error> {
+        Ok(DevRel { buffer: Held::new((8 * cols * rows).max(8))?, rows, cols })
+    }
+
+    /// Column `c`'s values, once the command buffer that wrote them completed.
+    pub(in crate::code_rule_dsl) fn column(&self, c: usize) -> &[i64] {
+        // SAFETY: the buffer holds `rows` values per column; the writer completed.
+        unsafe { std::slice::from_raw_parts(self.buffer.buffer.contents().cast::<i64>().add(c * self.rows), self.rows) }
+    }
 }
+
+/// Rows a copy reads or writes: a binding table's (its stride its capacity) or a relation's (its rows).
+pub(in crate::code_rule_dsl) enum Rows<'a> {
+    Table(&'a Table),
+    Rel(&'a DevRel),
+}
+
+impl Rows<'_> {
+    fn of(&self) -> (&BufferRef, usize) {
+        match self {
+            Rows::Table(t) => (&t.buffer.buffer, t.cap),
+            Rows::Rel(r) => (&r.buffer.buffer, r.rows.max(1)),
+        }
+    }
+}
+
+/// A destination column of a copy: a source column, or a constant.
+#[derive(Clone, Copy)]
+pub(in crate::code_rule_dsl) enum Col {
+    From(usize),
+    Const(i64),
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CopyParams {
+    konst: [i64; 16],
+    src: [u32; 16],
+    n: u32,
+    ncols: u32,
+    src_stride: u32,
+    dst_stride: u32,
+    dst_off: u32,
+    pad: [u32; 3],
+}
+
+const _: () = assert!(std::mem::size_of::<CopyParams>() == 224);
 
 /// A relation sorted on the device by the hash of key columns: the sorted order (`perm`), the runs of equal hashes
 /// and their count, and the hash's mask.
@@ -801,6 +866,32 @@ impl Batch {
         scan.encode(pass, &counts)?;
         pass.run_bytes(&scatter, &[t, &totals.buffer.buffer, &counts, &out.buffer.buffer], bytes, groups(n));
         self.keep.push(p);
+        Ok(())
+    }
+
+    /// `n` rows of `src` into `dst` at row `dst_off`, column k of `dst` as `cols[k]` says (a column of `src`, or a
+    /// constant): a head's rows into its union, a union's new rows onto its relation.
+    pub(in crate::code_rule_dsl) fn copy_rows(&mut self, src: Rows<'_>, n: usize, cols: &[Col], dst: Rows<'_>, dst_off: usize) -> Result<(), Error> {
+        if n == 0 {
+            return Ok(());
+        }
+        assert!(cols.len() <= 16);
+        let copy = pipeline("join", "rows_copy", || SOURCE.to_owned())?;
+        let (s, src_stride) = src.of();
+        let (d, dst_stride) = dst.of();
+        assert!(dst_off + n <= dst_stride, "a copy of {n} rows at {dst_off} into a destination of {dst_stride}");
+        let mut p = CopyParams { konst: [0; 16], src: [NONE; 16], n: n as u32, ncols: cols.len() as u32, src_stride: src_stride as u32, dst_stride: dst_stride as u32, dst_off: dst_off as u32, pad: [0; 3] };
+        for (k, c) in cols.iter().enumerate() {
+            match *c {
+                Col::From(c) => p.src[k] = c as u32,
+                Col::Const(v) => p.konst[k] = v,
+            }
+        }
+        // SAFETY: `CopyParams` is `repr(C)` integers with no padding (its size asserted above).
+        let bytes = unsafe { std::slice::from_raw_parts((&p as *const CopyParams).cast::<u8>(), std::mem::size_of::<CopyParams>()) };
+        let (s, d) = (s.to_owned(), d.to_owned());
+        let pass = self.pass(1)?;
+        pass.run_bytes(&copy, &[&s, &d], bytes, groups(n));
         Ok(())
     }
 

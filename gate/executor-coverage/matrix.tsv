@@ -196,9 +196,9 @@ negation of a pair	native	device	p(x, y) :- n(x), n(y), !e(x, y).
 semi-join (a column unread)	native	device	p(x) :- n(x), e(x, _).
 constant in an atom	native	device	p(y) :- e(2, y).
 constant in a head	native	device	p(x, 7) :- n(x).
-recursion (closure)	native	no recursion	p(x, y) :- e(x, y). p(x, z) :- p(x, y), e(y, z).
-recursion with a negation	native	no recursion	p(x, y) :- e(x, y), !m(y). p(x, z) :- p(x, y), e(y, z), !m(z).
-recursion with a comparison	native	no recursion	p(x, y) :- e(x, y). p(x, z) :- p(x, y), e(y, z), z < 5.
-recursion with a computed term	native	no recursion	p(x, 0) :- n(x). p(y, d + 1) :- p(x, d), e(x, y), d < 4.
+recursion (closure)	native	device	p(x, y) :- e(x, y). p(x, z) :- p(x, y), e(y, z).
+recursion with a negation	native	device	p(x, y) :- e(x, y), !m(y). p(x, z) :- p(x, y), e(y, z), !m(z).
+recursion with a comparison	native	device	p(x, y) :- e(x, y). p(x, z) :- p(x, y), e(y, z), z < 5.
+recursion with a computed term	native	device	p(x, 0) :- n(x). p(y, d + 1) :- p(x, d), e(x, y), d < 4.
 computed head	native	device	p(x + 1) :- n(x).
 computed symbol head	native	no computed term	p(@dot(a, "x")) :- s(a).

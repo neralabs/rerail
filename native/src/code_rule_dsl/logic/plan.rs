@@ -5155,15 +5155,15 @@ impl<'a> Run<'a, '_> {
         }
         let started = std::time::Instant::now();
         // Where it runs (decision 0095 §7, §8). A stratum the placement puts on the device says so in its spec
-        // (`device`): its seed joins run there, in one submission, unless the device refuses one of them, which the
-        // profile then names. Only a stratum of seeds alone can go: recursion, gates and requests are forms the device
-        // lacks.
+        // (`device`): its seed joins run there, in one submission, and a recursive one's rounds to its fixpoint
+        // (`device::fixpoint`), unless the device refuses one of them, which the profile then names. Gates and
+        // requests are forms the device lacks.
         let placed = placement::place(&shape);
         // Placed there but a shape the device's run does not take: named, as a refusal.
         let not_taken = if !placed.gpu {
             None
-        } else if !probes.is_empty() {
-            Some("a recursive component")
+        } else if sql_probe.iter().any(|p| *p) {
+            Some("a recursive component with a SQL probe")
         } else if !gates.is_empty() || answering {
             Some("a component with gates or requests")
         } else if orders.is_empty() {

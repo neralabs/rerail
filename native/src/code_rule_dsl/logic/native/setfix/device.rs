@@ -61,6 +61,9 @@ enum Kind {
     Filter,
     /// An atom: its relation and key columns, in key order.
     Atom { rel: Arc<InRel>, cols: Vec<usize> },
+    /// An atom over the component's own relation `rel` (recursion, `fixpoint`): its last round's new rows
+    /// (`delta`) or all of them, kept on the device by the rounds (`Own`).
+    Own { rel: usize, delta: bool, cols: Vec<usize> },
 }
 
 #[derive(Clone)]
@@ -211,8 +214,15 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
                 i += 1;
             }
             Step::Atom { src, neg, keys, binds: atom_binds, tests } => {
-                let Src::In(rel, _) = src else { return Err("an atom over the component's own relation (recursion)".into()) };
-                readable(rel, keys.len())?;
+                let own = match src {
+                    Src::In(rel, _) => {
+                        readable(rel, keys.len())?;
+                        None
+                    }
+                    Src::Delta(r) => Some((*r, true)),
+                    Src::Full(r) => Some((*r, false)),
+                    Src::FullMulti(..) => return Err("an atom over the component's own relation by several indexes".into()),
+                };
                 if keys.len() > mj::MAX_KEYS || tests.len() > mj::MAX_TESTS || atom_binds.len() > mj::MAX_BINDS {
                     return Err("an atom with more keys, tests or binds than a stage holds".into());
                 }
@@ -251,7 +261,12 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
                     }
                 }
                 let cols = keys.iter().map(|&(c, _)| c).collect();
-                stages.push(PStage { first: i, span, kind: Kind::Atom { rel: rel.clone(), cols }, desc: d, npassed });
+                let kind = match (own, src) {
+                    (Some((rel, delta)), _) => Kind::Own { rel, delta, cols },
+                    (None, Src::In(rel, _)) => Kind::Atom { rel: rel.clone(), cols },
+                    (None, _) => unreachable!("an own source has its relation"),
+                };
+                stages.push(PStage { first: i, span, kind, desc: d, npassed });
                 i += span;
             }
             Step::Let { .. } | Step::DocOf { bind: true, .. } => {
@@ -436,6 +451,8 @@ pub(in crate::code_rule_dsl) struct Report {
     /// Rows the heads made (before the store's set), and bindings the stages made.
     pub(in crate::code_rule_dsl) rows: u64,
     pub(in crate::code_rule_dsl) bindings: u64,
+    /// The rounds a recursive component ran on the device (`fixpoint`; 0 for seeds alone).
+    pub(in crate::code_rule_dsl) rounds: u32,
     /// Why the device refused the stratum (at open, or at run time: a table past its budget), which then ran on the
     /// CPU; `None` when it ran here.
     pub(in crate::code_rule_dsl) refused: Option<String>,
@@ -551,7 +568,7 @@ impl<'p> Run<'p> {
         for s in &plan.stages {
             match s.kind {
                 Kind::Pass | Kind::Map => io.push((slot, slot)),
-                Kind::Filter | Kind::Atom { .. } => {
+                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } => {
                     io.push((slot, slot + 1));
                     slot += 1;
                 }
@@ -586,7 +603,7 @@ impl<'p> Run<'p> {
     fn guess(&self, k: usize, cap_in: usize, nr: usize) -> usize {
         let s = &self.plan.stages[k];
         match &s.kind {
-            Kind::Atom { .. } if s.desc.mode == mj::JOIN => {
+            Kind::Atom { .. } | Kind::Own { .. } if s.desc.mode == mj::JOIN => {
                 let most = cap_in.saturating_mul(nr.max(1));
                 if s.desc.nkeys == 0 && cap_in == 1 {
                     return nr.max(1);
@@ -599,8 +616,8 @@ impl<'p> Run<'p> {
         }
     }
 
-    /// Encodes stages `from..` into `batch`.
-    fn encode(&mut self, from: usize, batch: &mut mj::Batch, rep: &mut Report) -> Result<(), String> {
+    /// Encodes stages `from..` into `batch`; the component's own relations are `own`'s.
+    fn encode(&mut self, from: usize, batch: &mut mj::Batch, rep: &mut Report, own: &mut Own) -> Result<(), String> {
         for k in from..self.plan.stages.len() {
             let s = &self.plan.stages[k];
             let (i, o) = self.io[k];
@@ -610,9 +627,13 @@ impl<'p> Run<'p> {
                     let t = self.tables[i].as_ref().expect("the map's table");
                     batch.map(s.desc, t, i, &self.totals).map_err(|e| format!("{e:?}"))?;
                 }
-                Kind::Filter | Kind::Atom { .. } => {
-                    if let (Kind::Atom { rel, cols }, None) = (&s.kind, &self.rels[k]) {
-                        self.rels[k] = Some(resident(rel, cols, batch, rep)?);
+                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } => {
+                    match (&s.kind, &self.rels[k]) {
+                        (Kind::Atom { rel, cols }, None) => self.rels[k] = Some(resident(rel, cols, batch, rep)?),
+                        (Kind::Own { rel, delta, cols }, None) => {
+                            self.rels[k] = Some(own.get(*rel, *delta, cols, batch, rep)?.ok_or("an own relation with no rows")?);
+                        }
+                        _ => {}
                     }
                     let right = self.rels[k].as_ref().map(|(r, ix)| (&**r, ix.as_deref()));
                     let cap_in = self.caps[i];
@@ -711,7 +732,7 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &mut [Fresh]
                 break;
             }
             let mut r = Run::new(plan)?;
-            r.encode(0, &mut batch, rep)?;
+            r.encode(0, &mut batch, rep, &mut Own::default())?;
             bytes += r.bytes();
             runs.push(r);
         }
@@ -746,7 +767,7 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &mut [Fresh]
         rep.reruns += again.len() as u32;
         pending = again.iter().map(|&(k, _)| k).collect();
         for (k, s) in again {
-            runs[k].encode(s, &mut batch, rep)?;
+            runs[k].encode(s, &mut batch, rep, &mut Own::default())?;
         }
     }
     // The rows into the store, and each step's counts.
@@ -776,40 +797,305 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &mut [Fresh]
         }
         out.push(n as u64);
         rep.rows += n as u64;
-        // Counts as the CPU's walk makes them: each stage's entries are the rows out of the stage before.
-        let get = |slot: usize| if slot == 0 { 1u64 } else { u64::from(r.totals.get(slot)) };
-        if plan.nsteps > 0 {
-            let c = &j.counts[0][0];
-            c.set(c.get() + 1);
-        }
-        for (k, s) in plan.stages.iter().enumerate() {
-            let (i, o) = r.io[k];
-            let n_in = get(i);
-            let n_out = get(o);
-            rep.bindings += if i != o { n_out } else { 0 };
-            let vals: Vec<u64> = match (&s.kind, r.counter[k]) {
-                (Kind::Pass | Kind::Map, _) => vec![n_in; s.span],
-                (Kind::Atom { .. }, Some(c)) => (0..=s.npassed).map(|m| u64::from(r.counters.get(c + m))).collect(),
-                (Kind::Filter, Some(c)) => (1..=s.npassed).map(|m| u64::from(r.counters.get(c + m))).collect(),
-                _ => vec![n_out],
-            };
-            for (m, v) in vals.into_iter().enumerate() {
-                let at = s.first + m;
-                let c = &j.counts[at][1];
-                c.set(c.get() + v);
-                if let Some(next) = j.counts.get(at + 1) {
-                    next[0].set(next[0].get() + v);
-                }
-            }
-            // The growth seen, for the next chunk's guess.
-            if i != o && r.caps[i] > 0 {
-                GROWTH.with_borrow_mut(|g| g.insert((plan.key, k), n_out as f64 / r.caps[i] as f64));
-            }
-        }
+        counted(r, plan, j, rep);
     }
     drop(_h);
     rep.decode_cpu += thread_cpu() - d0;
     Ok(out)
+}
+
+
+/// The most rounds a recursive component runs on the device before it is refused (and runs on the CPU).
+const ROUNDS_MAX: usize = 4096;
+
+/// A recursive component's relations on the device, between its rounds (`fixpoint`): each one's rows so far and its
+/// last round's new rows, and their sorts by the key columns the probes read them by.
+#[derive(Default)]
+struct Own {
+    total: HashMap<usize, Rc<mj::DevRel>>,
+    delta: HashMap<usize, Rc<mj::DevRel>>,
+    sorts: HashMap<(usize, bool, Vec<usize>), Rc<mj::DevIndex>>,
+}
+
+impl Own {
+    /// Relation `rel`'s rows (`delta`: its last round's) and their sort by `cols`, encoded into `batch` the first
+    /// time a round asks; `None` when it has no rows.
+    fn get(&mut self, rel: usize, delta: bool, cols: &[usize], batch: &mut mj::Batch, rep: &mut Report) -> Result<Option<(Rc<mj::DevRel>, Option<Rc<mj::DevIndex>>)>, String> {
+        let Some(dev) = (if delta { &self.delta } else { &self.total }).get(&rel).cloned() else { return Ok(None) };
+        if dev.rows == 0 {
+            return Ok(None);
+        }
+        if cols.is_empty() {
+            return Ok(Some((dev, None)));
+        }
+        let key = (rel, delta, cols.to_vec());
+        if let Some(ix) = self.sorts.get(&key) {
+            rep.sort_hits += 1;
+            return Ok(Some((dev, Some(ix.clone()))));
+        }
+        let ix = Rc::new(batch.index(&dev, cols).map_err(|e| format!("{e:?}: a sort of {} rows", dev.rows))?);
+        rep.sorts += 1;
+        self.sorts.insert(key, ix.clone());
+        Ok(Some((dev, Some(ix))))
+    }
+
+    /// Whether every own relation `plan` reads has rows: a probe over one without reads nothing, and is not run.
+    fn ready(&self, plan: &Plan) -> bool {
+        plan.stages.iter().all(|s| match &s.kind {
+            Kind::Own { rel, delta, .. } => (if *delta { &self.delta } else { &self.total }).get(rel).is_some_and(|d| d.rows > 0),
+            _ => true,
+        })
+    }
+}
+
+/// Whether `plan` reads the component's own relations (a delta probe's plan).
+pub(super) fn reads_own(plan: &Plan) -> bool {
+    plan.stages.iter().any(|s| matches!(s.kind, Kind::Own { .. }))
+}
+
+/// One round's rules run in one batch: each one's head rows made distinct on the device, with their count. A rule
+/// over an own relation with no rows is not run (`None`).
+fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, rep: &mut Report) -> Result<Vec<Option<(Run<'p>, usize)>>, String> {
+    let mut batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
+    let mut runs: Vec<Option<Run<'p>>> = Vec::with_capacity(rules.len());
+    for (plan, _, _) in rules {
+        if !own.ready(plan) {
+            runs.push(None);
+            continue;
+        }
+        let mut r = Run::new(plan)?;
+        r.encode(0, &mut batch, rep, own)?;
+        runs.push(Some(r));
+    }
+    let mut pending: Vec<usize> = (0..runs.len()).filter(|&k| runs[k].is_some()).collect();
+    loop {
+        let (t0, w0) = (Instant::now(), thread_cpu());
+        let done = batch.finish().map_err(|e| format!("{e:?}"))?;
+        rep.wait_wall += t0.elapsed().as_secs_f64();
+        rep.wait_cpu += thread_cpu() - w0;
+        rep.submissions += done.submissions;
+        rep.dispatches += done.dispatches;
+        rep.gpu_seconds += done.gpu_seconds;
+        let mut again = Vec::new();
+        for &k in &pending {
+            let r = runs[k].as_mut().expect("a run");
+            if let Some((s, n)) = r.overflow() {
+                let o = r.io[s].1;
+                r.caps[o] = n;
+                for later in s + 1..r.plan.stages.len() {
+                    let (i, o2) = r.io[later];
+                    if i != o2 {
+                        r.caps[o2] = 0;
+                    }
+                }
+                again.push((k, s));
+            }
+        }
+        if again.is_empty() {
+            break;
+        }
+        rep.reruns += again.len() as u32;
+        pending = again.iter().map(|&(k, _)| k).collect();
+        for (k, s) in again {
+            runs[k].as_mut().expect("a run").encode(s, &mut batch, rep, own)?;
+        }
+    }
+    let mut out = Vec::with_capacity(runs.len());
+    for (r, &(plan, j, _)) in runs.into_iter().zip(rules) {
+        out.push(r.map(|r| {
+            let last = r.io.last().map_or(0, |io| io.1);
+            rep.rows += u64::from(r.totals.get(last));
+            counted(&r, plan, j, rep);
+            let distinct = r.totals.get(r.totals.len - 1) as usize;
+            (r, distinct)
+        }));
+    }
+    Ok(out)
+}
+
+/// A recursive component's fixpoint on the device: its seed joins `seeds` once, then its delta joins `deltas` in
+/// rounds, each round's new rows (made distinct, less the rows the relation has) its next delta, until a round makes
+/// none. Each relation's rows stay on the device between rounds; the host reads one count per relation a round, and
+/// the new rows once, at the end, into `fresh` as the CPU's waves would add them. `heads` are the component's
+/// relations, which must be empty when it starts. Returns each rule's rows made, seeds then deltas.
+pub(super) fn fixpoint(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+    let _span = crate::code_rule_dsl::logic::profile::span(|| "device fixpoint".into());
+    let c0 = thread_cpu();
+    let mut rep = Report { rules: (seeds.len() + deltas.len()) as u32, stages: seeds.iter().chain(deltas).map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
+    for &h in heads {
+        let rel = &store.rels[h];
+        if rel.n > 0 {
+            return Err("a recursive component whose relations have rows before its run".into());
+        }
+        if rel.k > mj::MAX_KEYS {
+            return Err(format!("a recursive relation of {} columns (the device's keys hold {})", rel.k, mj::MAX_KEYS));
+        }
+    }
+    let mut own = Own::default();
+    let mut made = vec![0u64; seeds.len() + deltas.len()];
+    let mut rounds = 0;
+    let mut first = true;
+    loop {
+        rounds += 1;
+        if rounds > ROUNDS_MAX {
+            return Err(format!("a recursive component past {ROUNDS_MAX} rounds"));
+        }
+        let (rules, base) = if first { (seeds, 0) } else { (deltas, seeds.len()) };
+        let ran = round(rules, &mut own, &mut rep)?;
+        first = false;
+        // Each head's rows this round, from every rule that made some, into one union; made distinct; less the
+        // relation's rows: its new rows.
+        let mut batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
+        let mut news: Vec<(usize, mj::Table, mj::Words, bool)> = Vec::new();
+        // What the encoded work reads, held until it completes (a pooled buffer dropped early is written again).
+        let mut hold: Vec<mj::Table> = Vec::new();
+        for &h in heads {
+            let k = store.rels[h].k;
+            let from: Vec<(usize, &Run<'_>, usize)> = ran.iter().enumerate().filter_map(|(x, r)| {
+                let (r, n) = r.as_ref()?;
+                (rules[x].2 == h && *n > 0).then_some((x, r, *n))
+            }).collect();
+            let cap: usize = from.iter().map(|f| f.2).sum();
+            for (x, _, n) in &from {
+                made[base + x] += *n as u64;
+            }
+            if cap == 0 {
+                continue;
+            }
+            let union = mj::Table::new(k, cap).map_err(|e| format!("{e:?}: a union of {cap} rows"))?;
+            let mut at = 0;
+            for (x, r, n) in &from {
+                let plan = rules[*x].0;
+                let cols: Vec<mj::Col> = plan.head.iter().zip(&plan.head_slots).map(|(c, s)| match c {
+                    Some(v) => mj::Col::Const(*v),
+                    None => mj::Col::From(r.uniq_cols.iter().position(|u| u == s).unwrap_or(0)),
+                }).collect();
+                batch.copy_rows(mj::Rows::Table(r.uniq.as_ref().expect("the head's rows")), *n, &cols, mj::Rows::Table(&union), at).map_err(|e| format!("{e:?}"))?;
+                at += n;
+            }
+            let words = mj::Words::zeroed(3).map_err(|e| format!("{e:?}"))?;
+            words.set(0, cap as u32);
+            let distinct = mj::Table::new(k, cap).map_err(|e| format!("{e:?}"))?;
+            let all: Vec<usize> = (0..k).collect();
+            batch.dedup(&union, &all, 0, 1, &words, &distinct).map_err(|e| format!("{e:?}"))?;
+            match own.get(h, false, &all, &mut batch, &mut rep)? {
+                Some((total, ix)) => {
+                    let mut d = mj::Stage { mode: mj::ANTI, ..mj::Stage::default() };
+                    for c in 0..k {
+                        d.key_rcol[c] = c as u32;
+                        d.key_kind[c] = mj::SLOT;
+                        d.key_slot[c] = c as u32;
+                    }
+                    d.nkeys = k as u32;
+                    let fresh_rows = mj::Table::new(k, cap).map_err(|e| format!("{e:?}"))?;
+                    let counters = mj::Words::zeroed(1).map_err(|e| format!("{e:?}"))?;
+                    batch.stage(d, &distinct, Some((&total, ix.as_deref())), 1, 2, &words, &counters, None, &fresh_rows).map_err(|e| format!("{e:?}"))?;
+                    news.push((h, fresh_rows, words, true));
+                    hold.push(distinct);
+                }
+                None => news.push((h, distinct, words, false)),
+            }
+            hold.push(union);
+        }
+        let (t0, w0) = (Instant::now(), thread_cpu());
+        let done = batch.finish().map_err(|e| format!("{e:?}"))?;
+        rep.wait_wall += t0.elapsed().as_secs_f64();
+        rep.wait_cpu += thread_cpu() - w0;
+        rep.submissions += done.submissions;
+        rep.dispatches += done.dispatches;
+        rep.gpu_seconds += done.gpu_seconds;
+        drop(ran);
+        drop(hold);
+        // The new rows onto each relation, and as its next delta; a relation with none has no delta.
+        let mut batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
+        let mut any = false;
+        let mut old: Vec<Rc<mj::DevRel>> = std::mem::take(&mut own.delta).into_values().collect();
+        let mut rows_held: Vec<mj::Table> = Vec::new();
+        for (h, rows, words, anti) in news {
+            let n = words.get(if anti { 2 } else { 1 }) as usize;
+            if n == 0 {
+                continue;
+            }
+            any = true;
+            let k = store.rels[h].k;
+            let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
+            let had = own.total.get(&h).map_or(0, |t| t.rows);
+            let total = mj::DevRel::empty(k, had + n).map_err(|e| format!("{e:?}: a relation of {} rows", had + n))?;
+            if let Some(old) = own.total.get(&h) {
+                batch.copy_rows(mj::Rows::Rel(old), had, &ident, mj::Rows::Rel(&total), 0).map_err(|e| format!("{e:?}"))?;
+            }
+            batch.copy_rows(mj::Rows::Table(&rows), n, &ident, mj::Rows::Rel(&total), had).map_err(|e| format!("{e:?}"))?;
+            let delta = mj::DevRel::empty(k, n).map_err(|e| format!("{e:?}"))?;
+            batch.copy_rows(mj::Rows::Table(&rows), n, &ident, mj::Rows::Rel(&delta), 0).map_err(|e| format!("{e:?}"))?;
+            old.extend(own.total.insert(h, Rc::new(total)));
+            own.delta.insert(h, Rc::new(delta));
+            own.sorts.retain(|(r, _, _), _| *r != h);
+            rows_held.push(rows);
+        }
+        let done = batch.finish().map_err(|e| format!("{e:?}"))?;
+        drop((old, rows_held));
+        rep.submissions += done.submissions;
+        rep.dispatches += done.dispatches;
+        rep.gpu_seconds += done.gpu_seconds;
+        if !any {
+            break;
+        }
+    }
+    // The rows into the store, once.
+    let d0 = thread_cpu();
+    for &h in heads {
+        let Some(total) = own.total.get(&h) else { continue };
+        let k = store.rels[h].k;
+        let cols: Vec<&[i64]> = (0..k).map(|c| total.column(c)).collect();
+        let mut row = vec![0i64; k];
+        for x in 0..total.rows {
+            for c in 0..k {
+                row[c] = cols[c][x];
+            }
+            fresh[h].add(&row);
+        }
+        rep.distinct += total.rows as u64;
+    }
+    rep.decode_cpu += thread_cpu() - d0;
+    rep.rounds = rounds as u32;
+    rep.encode_cpu = (thread_cpu() - c0 - rep.wait_cpu - rep.decode_cpu - rep.upload_cpu).max(0.0);
+    LAST.with_borrow_mut(|l| *l = Some(rep));
+    Ok(made)
+}
+
+/// Each step's observed counts after `r` ran, as the CPU's walk makes them, into `j`'s (the replanner's fanouts),
+/// and the growth seen, for the next chunk's guesses.
+fn counted(r: &Run<'_>, plan: &Plan, j: &JoinRule, rep: &mut Report) {
+    // Counts as the CPU's walk makes them: each stage's entries are the rows out of the stage before.
+    let get = |slot: usize| if slot == 0 { 1u64 } else { u64::from(r.totals.get(slot)) };
+    if plan.nsteps > 0 {
+        let c = &j.counts[0][0];
+        c.set(c.get() + 1);
+    }
+    for (k, s) in plan.stages.iter().enumerate() {
+        let (i, o) = r.io[k];
+        let n_in = get(i);
+        let n_out = get(o);
+        rep.bindings += if i != o { n_out } else { 0 };
+        let vals: Vec<u64> = match (&s.kind, r.counter[k]) {
+            (Kind::Pass | Kind::Map, _) => vec![n_in; s.span],
+            (Kind::Atom { .. } | Kind::Own { .. }, Some(c)) => (0..=s.npassed).map(|m| u64::from(r.counters.get(c + m))).collect(),
+            (Kind::Filter, Some(c)) => (1..=s.npassed).map(|m| u64::from(r.counters.get(c + m))).collect(),
+            _ => vec![n_out],
+        };
+        for (m, v) in vals.into_iter().enumerate() {
+            let at = s.first + m;
+            let c = &j.counts[at][1];
+            c.set(c.get() + v);
+            if let Some(next) = j.counts.get(at + 1) {
+                next[0].set(next[0].get() + v);
+            }
+        }
+        // The growth seen, for the next chunk's guess.
+        if i != o && r.caps[i] > 0 {
+            GROWTH.with_borrow_mut(|g| g.insert((plan.key, k), n_out as f64 / r.caps[i] as f64));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -890,5 +1176,62 @@ mod tests {
         assert!(got[0].0.len() > 1000, "{} rows", got[0].0.len());
         assert_eq!(got[0].0, got[1].0, "the device's rows are the CPU's");
         assert_eq!(got[0].1, got[1].1, "the device's counts per step are the CPU's");
+    }
+
+    /// A recursive stratum on the device: its rounds to the fixpoint there, the same rows as the CPU's waves.
+    #[test]
+    fn a_recursive_stratum_on_the_device_is_the_cpus_fixpoint() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::prefilter::tests::temp();
+        drop(crate::code_rule_dsl::prefilter::tests::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        let mut x = 11u64;
+        let mut next = |m: i64| {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((x >> 33) as i64).rem_euclid(m)
+        };
+        db.execute_batch("CREATE TEMP TABLE e (c0, c1);").unwrap();
+        // A sparse graph of chains: its closure takes many rounds.
+        for v in 0..100 {
+            db.execute("INSERT INTO e VALUES (?1, ?2)", [v, v + 1]).unwrap();
+            if next(5) == 0 {
+                db.execute("INSERT INTO e VALUES (?1, ?2)", [v, next(100)]).unwrap();
+            }
+        }
+        let e = format!("t:x:{}:{}:ii", hex("temp.e"), hex("c0, c1"));
+        // h0(x, y) :- e(x, y).   h0(x, z) :- h0(x, y), h0(y, z), z != x (both atoms recursive: not a closure's walk).
+        let seed = format!("pos {e} v0 v1\nhead v0 v1");
+        let left = "pos d0 v0 v1\npos c0 v1 v2\nne v2 v0\nhead v0 v2".to_owned();
+        let right = "pos c0 v0 v1\npos d0 v1 v2\nne v2 v0\nhead v0 v2".to_owned();
+        let mut got = Vec::new();
+        for device in [false, true] {
+            db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+            let mut spec = vec!["name dev_rec".to_owned()];
+            if device {
+                spec.push("device".into());
+            }
+            spec.push("rel h0 ii empty".into());
+            spec.push(format!("seed 0 {}", hex(&seed)));
+            spec.push(format!("join 0 0 {}", hex(&left)));
+            spec.push(format!("join 0 0 {}", hex(&right)));
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, "dev_rec", 0).unwrap();
+            let report = super::take_report();
+            if device {
+                let r = report.as_ref().expect("a device report");
+                assert!(r.refused.is_none(), "{r:?}");
+                assert!(r.rounds > 5, "the closure takes rounds: {r:?}");
+            }
+            super::super::close(&db, "dev_rec").unwrap();
+            let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+            rows.sort_unstable();
+            got.push(rows);
+        }
+        assert!(got[0].len() > 1000, "{} rows", got[0].len());
+        assert_eq!(got[0], got[1], "the device's fixpoint is the CPU's");
     }
 }

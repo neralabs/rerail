@@ -1002,6 +1002,8 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     // `device`: the placement put the stratum on the device (decision 0095 §7); its seeds are parsed without the
     // CPU's indexes, and compiled for the device below.
     let mut device_wanted = false;
+    // The delta joins' specs, by probe, for the device's plans of a recursive component (their rules' keys).
+    let mut delta_specs: Vec<(usize, String)> = Vec::new();
     let mut leveled = false;
     let mut seed_specs: Vec<(usize, Arc<JoinSpec>)> = Vec::new();
     for line in &spec.lines {
@@ -1065,6 +1067,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
             Line::Gate { done, src, quiet, after } => gates.push(Gate { done: *done, src: *src, quiet: quiet.clone(), after: after.clone(), passed: 0 }),
             Line::Join { head, delta, join, whole } => {
                 let w = match whole { Some(w) => Some(joins(w, &mut syms)?), None => None };
+                if device_wanted { delta_specs.push((probes.len(), join.to_text())); }
                 probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Join(joins(join, &mut syms)?), whole: w, wkey: whole.clone() });
             }
             Line::Levels { cand, chk, held, gone, live } => levels.lines.push(LevelLine { cand: *cand, chk: *chk, held: *held, gone: *gone, live: *live,
@@ -1102,17 +1105,20 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     #[cfg(target_os = "macos")]
     let device_plans = if device_wanted {
         let _plan = crate::code_rule_dsl::logic::profile::span(|| "open: device plans".into());
+        let recursive = probes.iter().any(|p| p.delta != SEED);
         let refused = if !edges.is_empty() || !gates.is_empty() || !requests.is_empty() || !produced.is_empty() {
             Some("a component with gates, requests or edge rules".to_owned())
-        } else if probes.iter().any(|p| p.delta != SEED) {
-            Some("a recursive component".to_owned())
+        } else if recursive && (leveled || !levels.lines.is_empty()) {
+            Some("a recursive component that keeps levels (its maintenance runs on the CPU)".to_owned())
+        } else if recursive && probes.iter().any(|p| p.delta != SEED && matches!(p.body, Body::Sql(_))) {
+            Some("a recursive component with a SQL probe".to_owned())
         } else {
             None
         };
         let plans = match refused {
             Some(r) => Err(r),
-            None => seed_specs.iter().map(|(pi, js)| match &probes[*pi].body {
-                Body::Join(j) => device::compile(j, &js.to_text()).map(|p| (*pi, p)),
+            None => seed_specs.iter().map(|(pi, js)| (*pi, js.to_text())).chain(delta_specs.iter().cloned()).map(|(pi, text)| match &probes[pi].body {
+                Body::Join(j) => device::compile(j, &text).map(|p| (pi, p)),
                 Body::Sql(_) => Err("a SQL seed".to_owned()),
             }).collect::<std::result::Result<Vec<_>, String>>(),
         };
@@ -1185,8 +1191,14 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     reg.retain(|(k, _)| *k != key);
     let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, closure: None, waiting: None,
                                #[cfg(target_os = "macos")] device: device_plans, seed_specs, levels };
+    // A stratum placed on the device runs there whole: a recursive one as the device's rounds (`device::fixpoint`),
+    // not as a closure (decision 0098 §1's form, for a stratum on the CPU).
+    #[cfg(target_os = "macos")]
+    let on_device_rounds = comp.device.as_ref().is_some_and(|d| d.iter().any(|(_, p)| device::reads_own(p)));
+    #[cfg(not(target_os = "macos"))]
+    let on_device_rounds = false;
     // A levels stratum is run by its driver, step by step (`Levels`), not as a closure.
-    if comp.levels.lines.is_empty() {
+    if comp.levels.lines.is_empty() && !on_device_rounds {
         comp.closure = {
             let _h = crate::code_rule_dsl::logic::lanes::prof::host("closure", "plan: recognize the form");
             closure::recognize(&comp)
@@ -1384,6 +1396,8 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         // The seed joins on the device, in one batch, when the stratum was placed there (decision 0095, step 4).
         #[cfg(target_os = "macos")]
         let tried = !seeded && comp.device.is_some();
+        // The component's fixpoint ran on the device (a recursive one): its rows are all of them, and it is done.
+        let mut device_fixed = false;
         #[cfg(target_os = "macos")]
         let on_device = tried && {
             let plans = comp.device.as_ref().expect("device plans");
@@ -1394,7 +1408,21 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                 Body::Sql(_) => unreachable!("a device plan is a join's"),
             }).collect();
             let mut dev_fresh: Vec<Fresh> = vec![Fresh::default(); nrels];
-            match device::run(&rules, store, &mut dev_fresh) {
+            let (seeds, deltas): (Vec<_>, Vec<_>) = rules.iter().copied().partition(|r| !device::reads_own(r.0));
+            device_fixed = !deltas.is_empty();
+            let got = if device_fixed {
+                let mut heads: Vec<usize> = rules.iter().map(|r| r.2).collect();
+                heads.sort_unstable();
+                heads.dedup();
+                // Each rule's rows in `plans`' order, from the fixpoint's seeds-then-deltas order.
+                device::fixpoint(&seeds, &deltas, &heads, store, &mut dev_fresh).map(|made| {
+                    let (mut s, mut d) = (made[..seeds.len()].iter(), made[seeds.len()..].iter());
+                    rules.iter().map(|r| *if device::reads_own(r.0) { d.next() } else { s.next() }.expect("a count per rule")).collect::<Vec<u64>>()
+                })
+            } else {
+                device::run(&rules, store, &mut dev_fresh)
+            };
+            match got {
                 Ok(made) => {
                     let cpu = cpu_now() - c0;
                     let wall = tp.elapsed().as_secs_f64();
@@ -1414,6 +1442,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                 Err(why) => {
                     // Refused at run time (a table past the device's budget): the seeds run on the CPU, named.
                     device::refuse(why);
+                    device_fixed = false;
                     false
                 }
             }
@@ -1439,11 +1468,12 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             store = &mut *guard;
             syms = symbols.write().unwrap();
         }
-        // Join probes, natively; seed joins in the first wave only.
+        // Join probes, natively; seed joins in the first wave only (none when the device ran the fixpoint).
         let mut wholes_run: Vec<&Arc<JoinSpec>> = Vec::new();
         for (pi, p) in comp.probes.iter().enumerate() {
             let Body::Join(j) = &p.body else { continue };
             let tp = Instant::now();
+            if device_fixed { break; }
             if p.delta == SEED { if seeded || on_device { continue } }
             else if store.rels[p.delta].lo == store.rels[p.delta].hi { skips += 1; continue; }
             let j = match (&p.whole, &p.wkey) {
@@ -1556,6 +1586,11 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             gates[gi].passed = n;
         }
         for &r in &gates_done { let (lo, hi) = (lo_of[r], store.rels[r].n); store.rels[r].set_delta(lo, hi); }
+        if device_fixed {
+            for r in 0..nrels { let n = store.rels[r].n; store.rels[r].set_delta(n, n); }
+            done = true;
+            break;
+        }
         // Quiet: a recursive stratum's levels decide the next rows gone, or check the next level (`Levels`).
         if !any { any = levels.step(store); }
         if !any { done = true; break; }
