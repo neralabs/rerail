@@ -87,6 +87,8 @@ const SCRATCH: &[&str] = &[
 ];
 /// Caches between runs not yet facts: (table, the 0104 step that moves it).
 const NOT_YET_TABLES: &[(&str, &str)] = &[
+    // The cost model fitted from `samples`, per machine (planning's placement).
+    ("models", "6"),
     ("constant_rows", "1"),
     ("run_record", "1"),
     ("observed", "1"),
@@ -149,8 +151,9 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("local_check_results", "8"),
     ("context_check_results", "8"),
 ];
-/// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised.
-const NOT_YET_TABLES_PIN: usize = 61;
+/// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised. Raised once, 61 to 62, by the merge of
+/// the cost classifier's per-machine `models` (2026-11-10), which a move to facts has yet to take.
+const NOT_YET_TABLES_PIN: usize = 62;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
