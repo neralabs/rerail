@@ -28,18 +28,38 @@ def main(*outputs):
     total = 0
     for f, lines in by_file.items():
         src = open(f).read().split('\n')
+        # each error's whole `use` statement (it may span lines): its start and end lines, and the names
+        stmts = collections.defaultdict(set)
         for line, names in lines.items():
             i = line - 1
-            text = src[i]
-            g = re.match(r'^(\s*(?:pub(?:\([^)]*\))?\s+)?use\s+)(.*?)\{(.*)\};\s*$', text)
+            j = i
+            while j > 0 and not re.match(r'\s*(?:pub(?:\([^)]*\))?\s+)?use\s', src[j]):
+                j -= 1
+            k = i
+            while k < len(src) - 1 and not src[k].rstrip().endswith(';'):
+                k += 1
+            stmts[(j, k)] |= names
+        for (j, k), names in stmts.items():
+            text = ' '.join(x.strip() for x in src[j:k + 1])
+            indent = re.match(r'\s*', src[j]).group(0)
+            g = re.match(r'^((?:pub(?:\([^)]*\))?\s+)?use\s+)(.*?)\{(.*)\};\s*$', text)
+            new = None
             if g:
-                keep = [b.strip() for b in g.group(3).split(',') if b.strip() and b.strip().split(' as ')[-1].strip() not in names and b.strip().split(' as ')[0].split('::')[-1].strip() not in names]
-                src[i] = f'{g.group(1)}{g.group(2)}{{{", ".join(keep)}}};' if keep else ''
+                branches = [b.strip() for b in g.group(3).split(',') if b.strip()]
+                def named(b):
+                    return b.split(' as ')[-1].strip() in names or b.split(' as ')[0].split('::')[-1].strip() in names
+                keep = [b for b in branches if not named(b)]
+                new = f'{indent}{g.group(1)}{g.group(2)}{{{", ".join(keep)}}};' if keep else ''
             else:
-                one = re.match(r'^\s*(?:pub(?:\([^)]*\))?\s+)?use\s+(?:.*::)?([A-Za-z_][A-Za-z_0-9]*)(?:\s+as\s+([A-Za-z_][A-Za-z_0-9]*))?\s*;\s*$', text)
+                one = re.match(r'^(?:pub(?:\([^)]*\))?\s+)?use\s+(?:.*::)?([A-Za-z_][A-Za-z_0-9]*)(?:\s+as\s+([A-Za-z_][A-Za-z_0-9]*))?\s*;\s*$', text)
                 if one and (one.group(1) in names or one.group(2) in names):
-                    src[i] = ''
-            total += 1
+                    new = ''
+            if new is not None:
+                src[j] = new
+                for x in range(j + 1, k + 1):
+                    src[x] = None
+                total += 1
+        src = [l for l in src if l is not None]
         # a blank line left where a use was: its `#[allow(unused_imports)]` goes too
         out = []
         for l in src:

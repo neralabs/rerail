@@ -54,7 +54,7 @@ pub(crate) fn install(db: &rusqlite::Connection) -> rusqlite::Result<()> {
 
 /// Why a test could not be lowered: its spelling does not parse.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) struct Error(pub(in crate::code_rule_dsl) String);
+pub struct Error(pub(in crate::code_rule_dsl) String);
 
 /// A test lowered: its plan and key, and how it got there.
 pub(in crate::code_rule_dsl) struct Lowered {

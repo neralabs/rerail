@@ -169,7 +169,7 @@ pub(crate) struct Binding {
     pub(crate) writes: u32,
     /// TypeScript: a reference mutates a property of the value (`x.a = 1`, `x[0]++`,
     /// `x.push(1)`), as eslint-utils' `hasMutationInProperty` reads it.
-    pub(crate) mutated: bool,
+    pub mutated: bool,
     /// The name node, where a linter reports the binding: the identifier; for an unaliased
     /// Python import item its `dotted_name` (`os.path`, `x`), for an aliased one the alias.
     pub(crate) name: Option<NodeRef>,
@@ -189,7 +189,7 @@ pub(crate) struct Binding {
     pub(crate) import_kind: Option<ImportKind>,
     /// Python: a nested function's `nonlocal` statement names this binding (Ruff's rebinding
     /// scopes), so a bare annotation may be initialized there.
-    pub(crate) rebound: bool,
+    pub rebound: bool,
 }
 
 /// The import forms Ruff binds apart.
@@ -1222,7 +1222,7 @@ impl ScopeTable {
 
 /// What a Python read's scope walk meets (`ScopeTable::walk`).
 #[derive(Default)]
-pub(crate) struct Walk {
+pub struct Walk {
     /// The bare annotations it passed over or stopped at, which Ruff counts as read.
     pub(crate) annotations: Vec<(u32, usize)>,
     /// A function's bare annotation that stopped a load: the name is an unbound local.

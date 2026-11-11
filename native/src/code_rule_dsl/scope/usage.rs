@@ -97,7 +97,7 @@ pub(crate) struct PrivateDeclaration {
 }
 
 /// A binding's name node, for finding the binding from the node.
-struct NameSite {
+pub struct NameSite {
     start: u32,
     end: u32,
     kind: u16,

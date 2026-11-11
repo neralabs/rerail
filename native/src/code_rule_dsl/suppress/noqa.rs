@@ -10,7 +10,7 @@ use std::ops::Range;
 
 /// `noqa`: Ruff's `# noqa` and file-level `# ruff: noqa` comments.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Noqa {
+pub struct Noqa {
     /// The codes a directive must name (or name none) to suppress the violation.
     pub(crate) codes: Vec<String>,
     /// `parent: "statement"`: a directive where the enclosing statement starts also suppresses

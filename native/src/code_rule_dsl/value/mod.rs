@@ -223,7 +223,7 @@ pub(crate) type TableLookup<'a> =
 /// whether the value is an element of the site's value (a destructured or unpacked name) rather
 /// than all of it.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Followed {
+pub struct Followed {
     pub(crate) value: NodeRef,
     pub(crate) mutated: bool,
     pub(crate) destructured: bool,

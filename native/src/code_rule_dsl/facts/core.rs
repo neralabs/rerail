@@ -141,7 +141,7 @@ pub(crate) struct Facts {
 
 /// An anonymous child: a token the tape stores ([`Facts::tokens`]).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct Token {
+pub struct Token {
     pub kind: u32,
     pub field: u16,
     pub start: u32,

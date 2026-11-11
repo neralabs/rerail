@@ -16,7 +16,7 @@ struct Link {
     by: String,
 }
 
-pub(crate) struct Contracts {
+pub struct Contracts {
     pub(crate) canonical: Arc<str>,
     links: Vec<Link>,
     constructor: Option<(Regex, String)>,
