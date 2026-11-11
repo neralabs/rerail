@@ -11,6 +11,8 @@ pub(in crate::code_rule_dsl) mod analysis;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod front;
 pub(in crate::code_rule_dsl) mod costs;
+// The logic's device interface; the engine registers a device as it loads (`crate::install_devices`).
+pub(in crate::code_rule_dsl) mod device;
 pub(in crate::code_rule_dsl) mod lanes;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod answers;

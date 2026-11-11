@@ -16,6 +16,7 @@
 
 use super::front::{AggOp, Atom, Error, Literal, Program, Rule, Term, Value, cmp_binds, join, strata, tarjan};
 use std::collections::{BTreeMap, BTreeSet};
+pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{Gate, Report};
 
 /// T's environment switches.
 #[derive(Clone, Debug)]
@@ -38,28 +39,6 @@ impl Default for Options {
     fn default() -> Self {
         Self { coarse: false, key_only: false, nonkey: true, input_first: true, gate: false, exclude: Vec::new() }
     }
-}
-
-/// What `magic_adorn` did (T's `magic_report`).
-#[derive(Clone, Debug, Default, PartialEq)]
-pub(in crate::code_rule_dsl) struct Report {
-    pub(in crate::code_rule_dsl) adornments: Vec<String>,
-    pub(in crate::code_rule_dsl) magic_rules: usize,
-    pub(in crate::code_rule_dsl) full: Vec<String>,
-    pub(in crate::code_rule_dsl) extras_kept: usize,
-    pub(in crate::code_rule_dsl) gates: usize,
-    pub(in crate::code_rule_dsl) full_for_negation: Vec<String>,
-}
-
-/// A gated negation's gate: `done` copies `src` (the negated relation's demand) once `quiet` is quiet, after the
-/// gates in `deps`; `src` is `None` for a unit gate (`done_N(0)`).
-#[derive(Clone, Debug, PartialEq)]
-pub(in crate::code_rule_dsl) struct Gate {
-    pub(in crate::code_rule_dsl) src: Option<String>,
-    pub(in crate::code_rule_dsl) rel: String,
-    pub(in crate::code_rule_dsl) level: usize,
-    pub(in crate::code_rule_dsl) quiet: Vec<String>,
-    pub(in crate::code_rule_dsl) deps: Vec<String>,
 }
 
 fn vars(t: &Term) -> BTreeSet<String> {

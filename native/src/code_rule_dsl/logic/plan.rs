@@ -5088,14 +5088,9 @@ impl<'a> Run<'a, '_> {
         }
         // What the device did, or why it refused (taken whether or not profiling, so a report never outlives its
         // stratum).
-        #[cfg(target_os = "macos")]
         let device = super::native::component::device_report().or_else(|| {
             not_taken.map(|why| super::native::component::DeviceReport { refused: Some(why.to_owned()), ..Default::default() })
         });
-        #[cfg(not(target_os = "macos"))]
-        let _ = not_taken;
-        #[cfg(not(target_os = "macos"))]
-        let device: Option<()> = None;
         if profiling {
             let (u, s) = corpus::thread_usage();
             let work: u64 = counted.iter().flatten().map(|(a, _)| *a).sum();

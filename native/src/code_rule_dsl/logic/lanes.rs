@@ -35,8 +35,9 @@ static ALL: LazyLock<Executor> = LazyLock::new(|| {
     MADE[1].store(true, std::sync::atomic::Ordering::Relaxed);
     super::costs::start();
     // Every submission the executor makes is checked against the engine's launch budget (decision 0100 §2).
-    #[cfg(target_os = "macos")]
-    crate::code_rule_dsl::transducer::packed::metal_sort::install_guard();
+    if let Some(dev) = crate::code_rule_dsl::logic::device::solver() {
+        dev.install_launch_guard();
+    }
     Executor::new()
 });
 

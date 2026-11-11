@@ -18,7 +18,7 @@
 //! Not kept: T's `tape_load`/`tape_nearest` and per-kind seeds (`<p>_kseed`), which read a per-run copy of one
 //! tree. Ancestor climbs and other file-local work run in the transducer (Phase 4 item f), whose facts arrive here
 //! as seed rows.
-mod setfix;
+pub(in crate::code_rule_dsl) mod setfix;
 #[cfg(test)]
 pub(crate) use setfix::DERIVATIONS;
 pub(in crate::code_rule_dsl) use setfix::{forget_engine, forget_scope};
@@ -40,7 +40,6 @@ pub(in crate::code_rule_dsl) use setfix::symbol_text;
 pub(in crate::code_rule_dsl) mod component {
     pub(in crate::code_rule_dsl) use super::setfix::lab;
     pub(in crate::code_rule_dsl) use super::setfix::spec;
-    #[cfg(target_os = "macos")]
     pub(in crate::code_rule_dsl) use super::setfix::{DeviceReport, device_report};
     pub(in crate::code_rule_dsl) use super::setfix::probed;
     pub(in crate::code_rule_dsl) use super::setfix::{InRel, add, cat_symbols, adopt, adopted, close, carry_sorted, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, hold_as, hold_empty, live, materialize, open_spec, pending, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, run, step_counts, unindex, hold_rows, kept_rows, table_source, tables_built, output_rows, source_rows, finding_rows};
@@ -255,12 +254,11 @@ fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>, lat: &dyn 
         x
     };
     // The device work queue (one persistent dispatch, a cell an item) where it solves the same system.
-    #[cfg(target_os = "macos")]
-    if binding == Binding::Metal && flat && widen.is_none() && !absorb {
+    if let Some(dev) = crate::code_rule_dsl::logic::device::solver().filter(|_| binding == Binding::Metal && flat && widen.is_none() && !absorb) {
         let copies = copies.iter().map(|&(a, b)| (a as u32, b as u32)).collect::<Vec<_>>();
         let bins = bins.iter().map(|&(c, o, l, r)| (c as u32, o, l as u32, r as u32)).collect::<Vec<_>>();
-        let system = crate::code_rule_dsl::transducer::packed::metal_lattice::System { seeds: &seed, copies: &copies, bins: &bins };
-        let solved = crate::code_rule_dsl::transducer::packed::metal_lattice::solve(&system)
+        let system = crate::code_rule_dsl::logic::device::lattice::System { seeds: &seed, copies: &copies, bins: &bins };
+        let solved = dev.lattice(&system)
             .map_err(|error| user_err(format!("lattice_fixpoint on Metal: {error:?}")))?;
         crate::code_rule_dsl::prof::count("lattice.device_retries", solved.retries as usize);
         crate::code_rule_dsl::logic::profile::device("lattice_fixpoint (work queue)", solved.launches as u64, solved.gpu, solved.wall, n as u64);

@@ -66,6 +66,7 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
 /// The engine's SQL functions, for every connection the store opens (its crate, `rerail-store`): the text tests'
 /// and the prefilter's tapes. Set as the library loads, before any store is opened.
 fn install_store_functions() {
+    code_rule_dsl::install_devices();
     content_store::set_language_tags(code_rule_dsl::stored_tape_tag, code_rule_dsl::path_tape_tag);
     content_store::set_connection_functions(|db| {
         code_rule_dsl::text::install(db)?;

@@ -114,24 +114,18 @@ pub(super) fn resolve_plan(backend: ExecutionBackend, plan: PlanId, programs: &[
                 ExecutionBackend::CpuInterpreter
             }
         }
-        #[cfg(target_os = "macos")]
         ExecutionBackend::MetalBackground => {
-            use super::metal_program_backend as metal;
-            if ready(Binding::MetalJit, plan) || metal::jit_ready(programs)? {
+            let metal = super::device::required()?;
+            if ready(Binding::MetalJit, plan) || metal.jit_ready(programs)? {
                 ExecutionBackend::MetalJit
             } else {
                 // The fallback runs now, so it is built now (once per process).
-                metal::compile_interpreter_cached()?;
+                metal.compile_interpreter()?;
                 let owned = programs.to_vec();
-                request(Binding::MetalJit, plan, move || {
-                    metal::compile_sweep_cached()?;
-                    metal::compile_jit_cached(&owned).map(|_| ())
-                });
+                request(Binding::MetalJit, plan, move || metal.compile_background(&owned));
                 ExecutionBackend::MetalInterpreter
             }
         }
-        #[cfg(not(target_os = "macos"))]
-        ExecutionBackend::MetalBackground => return Err(Error::UnsupportedBackend),
         other => return Ok(other),
     };
     crate::code_rule_dsl::prof::count(

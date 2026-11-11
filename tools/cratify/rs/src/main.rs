@@ -1,0 +1,232 @@
+//! Byte-exact item spans for the crate split's codemods (tools/cratify).
+//!
+//! `cratify items <file>...` prints, per top-level item (and per item inside an inline `mod x { }`), one line:
+//!   file  start  end  kind  name  [path of inline mods]
+//! `start` includes the item's doc comments and attributes; `end` is exclusive. An impl's name is
+//! `Type` or `Trait for Type`. Macro invocations at item level are listed as `macro name!`.
+use std::fmt::Write as _;
+use syn::spanned::Spanned;
+
+fn offsets(src: &str) -> Vec<usize> {
+    let mut v = vec![0];
+    for (i, b) in src.bytes().enumerate() {
+        if b == b'\n' {
+            v.push(i + 1);
+        }
+    }
+    v
+}
+
+/// proc-macro2 columns count chars; the byte offset of (line, char column).
+fn byte(src: &str, lines: &[usize], lc: proc_macro2::LineColumn) -> usize {
+    let start = lines[lc.line - 1];
+    src[start..].char_indices().nth(lc.column).map_or(src.len(), |(i, _)| start + i)
+}
+
+fn ty(t: &syn::Type) -> String {
+    quote::quote!(#t).to_string().replace(' ', "")
+}
+
+fn describe(item: &syn::Item) -> (&'static str, String) {
+    use syn::Item::*;
+    match item {
+        Const(i) => ("const", i.ident.to_string()),
+        Enum(i) => ("enum", i.ident.to_string()),
+        ExternCrate(i) => ("extern_crate", i.ident.to_string()),
+        Fn(i) => ("fn", i.sig.ident.to_string()),
+        ForeignMod(_) => ("extern", String::new()),
+        Impl(i) => (
+            "impl",
+            match &i.trait_ {
+                Some((_, p, _)) => format!("{} for {}", quote::quote!(#p).to_string().replace(' ', ""), ty(&i.self_ty)),
+                None => ty(&i.self_ty),
+            },
+        ),
+        Macro(i) => ("macro", format!("{}!{}", i.mac.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default(), i.ident.as_ref().map(|x| format!(" {x}")).unwrap_or_default())),
+        Mod(i) => ("mod", i.ident.to_string()),
+        Static(i) => ("static", i.ident.to_string()),
+        Struct(i) => ("struct", i.ident.to_string()),
+        Trait(i) => ("trait", i.ident.to_string()),
+        TraitAlias(i) => ("trait_alias", i.ident.to_string()),
+        Type(i) => ("type", i.ident.to_string()),
+        Union(i) => ("union", i.ident.to_string()),
+        Use(i) => ("use", quote::quote!(#i).to_string().replace(' ', "")),
+        _ => ("other", String::new()),
+    }
+}
+
+fn attrs(item: &syn::Item) -> &[syn::Attribute] {
+    use syn::Item::*;
+    match item {
+        Const(i) => &i.attrs, Enum(i) => &i.attrs, ExternCrate(i) => &i.attrs, Fn(i) => &i.attrs,
+        ForeignMod(i) => &i.attrs, Impl(i) => &i.attrs, Macro(i) => &i.attrs, Mod(i) => &i.attrs,
+        Static(i) => &i.attrs, Struct(i) => &i.attrs, Trait(i) => &i.attrs, TraitAlias(i) => &i.attrs,
+        Type(i) => &i.attrs, Union(i) => &i.attrs, Use(i) => &i.attrs, _ => &[],
+    }
+}
+
+fn walk(file: &str, src: &str, lines: &[usize], items: &[syn::Item], path: &str, out: &mut String) {
+    for item in items {
+        let span = item.span();
+        let mut start = byte(src, lines, span.start());
+        for a in attrs(item) {
+            start = start.min(byte(src, lines, a.span().start()));
+        }
+        let end = byte(src, lines, span.end());
+        let (kind, name) = describe(item);
+        let cfg = attrs(item)
+            .iter()
+            .filter(|a| a.path().is_ident("cfg"))
+            .map(|a| quote::quote!(#a).to_string().replace(' ', ""))
+            .collect::<Vec<_>>()
+            .join("");
+        writeln!(out, "{file}\t{start}\t{end}\t{kind}\t{name}\t{path}\t{cfg}").unwrap();
+        if let syn::Item::Mod(m) = item
+            && let Some((_, inner)) = &m.content
+        {
+            let p = if path.is_empty() { m.ident.to_string() } else { format!("{path}::{}", m.ident) };
+            walk(file, src, lines, inner, &p, out);
+        }
+    }
+}
+
+
+/// One module of the tree: its path, its file (an inline module has its parent's), how its parent declares it.
+struct Module {
+    path: String,
+    file: std::path::PathBuf,
+    /// The declaration: in which file, its byte span (attributes included), visibility, cfg and path attributes.
+    decl_file: std::path::PathBuf,
+    decl: (usize, usize),
+    vis: String,
+    cfg: String,
+    path_attr: Option<String>,
+    inline: bool,
+}
+
+fn attr_str(attrs: &[syn::Attribute], name: &str) -> Option<String> {
+    attrs.iter().find(|a| a.path().is_ident(name)).and_then(|a| match &a.meta {
+        syn::Meta::NameValue(nv) => match &nv.value {
+            syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) => Some(s.value()),
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
+fn cfgs(attrs: &[syn::Attribute]) -> String {
+    attrs
+        .iter()
+        .filter(|a| a.path().is_ident("cfg") || a.path().is_ident("cfg_attr"))
+        .map(|a| quote::quote!(#a).to_string().replace(' ', ""))
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+/// The modules declared in `items`, which sit in `file` at module `path`. `dir` is where a child file without
+/// `#[path]` is looked for; `path_dir` is what a `#[path]` is relative to.
+fn modules(file: &std::path::Path, src: &str, lines: &[usize], items: &[syn::Item], path: &str, dir: &std::path::Path, path_dir: &std::path::Path, out: &mut Vec<Module>) {
+    for item in items {
+        let syn::Item::Mod(m) = item else { continue };
+        let name = m.ident.to_string().trim_start_matches("r#").to_owned();
+        let child = format!("{path}::{name}");
+        let span = item.span();
+        let mut start = byte(src, lines, span.start());
+        for a in &m.attrs {
+            start = start.min(byte(src, lines, a.span().start()));
+        }
+        let end = byte(src, lines, span.end());
+        let vis = match &m.vis {
+            syn::Visibility::Inherited => String::new(),
+            v => quote::quote!(#v).to_string().replace(' ', "").replace("pub(in", "pub(in "),
+        };
+        let path_attr = attr_str(&m.attrs, "path");
+        let cfg = cfgs(&m.attrs);
+        if let Some((_, inner)) = &m.content {
+            // An inline module: its children are in a directory named after it (or its `#[path]`).
+            let sub = match &path_attr { Some(p) => path_dir.join(p), None => dir.join(&name) };
+            out.push(Module { path: child.clone(), file: file.to_owned(), decl_file: file.to_owned(), decl: (start, end), vis, cfg, path_attr, inline: true });
+            modules(file, src, lines, inner, &child, &sub, &sub, out);
+            continue;
+        }
+        let (target, mod_rs) = match &path_attr {
+            // A file loaded by `#[path]` is read as a mod-rs file: its children sit beside it.
+            Some(p) => (path_dir.join(p), true),
+            None => {
+                let a = dir.join(format!("{name}.rs"));
+                let b = dir.join(&name).join("mod.rs");
+                if a.exists() { (a, false) } else { (b, true) }
+            }
+        };
+        out.push(Module { path: child.clone(), file: target.clone(), decl_file: file.to_owned(), decl: (start, end), vis, cfg, path_attr, inline: false });
+        load(&target, &child, mod_rs, out);
+    }
+}
+
+fn load(file: &std::path::Path, path: &str, mod_rs: bool, out: &mut Vec<Module>) {
+    let Ok(src) = std::fs::read_to_string(file) else {
+        eprintln!("missing {}", file.display());
+        return;
+    };
+    let parsed = match syn::parse_file(&src) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("{}: {e}", file.display());
+            return;
+        }
+    };
+    let here = file.parent().unwrap().to_owned();
+    let stem = file.file_stem().unwrap().to_string_lossy().into_owned();
+    // A mod-rs file's children are beside it; another file's are in the directory named after it. `#[path]`s are
+    // relative to the file's own directory either way.
+    let dir = if mod_rs { here.clone() } else { here.join(&stem) };
+    modules(file, &src, &offsets(&src), &parsed.items, path, &dir, &here, out);
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    match args.get(1).map(String::as_str) {
+        Some("items") => {
+            let mut out = String::new();
+            let mut bad = 0;
+            for file in &args[2..] {
+                let src = std::fs::read_to_string(file).expect(file);
+                match syn::parse_file(&src) {
+                    Ok(f) => walk(file, &src, &offsets(&src), &f.items, "", &mut out),
+                    Err(e) => {
+                        eprintln!("{file}: {e}");
+                        bad += 1;
+                    }
+                }
+            }
+            print!("{out}");
+            if bad > 0 {
+                std::process::exit(1);
+            }
+        }
+        Some("tree") => {
+            // `cratify tree <lib.rs>`: every module from the crate root, one line each.
+            let root = std::path::PathBuf::from(&args[2]);
+            let mut out = Vec::new();
+            load(&root, "crate", true, &mut out);
+            for m in out {
+                println!(
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    m.path,
+                    m.file.display(),
+                    m.decl_file.display(),
+                    m.decl.0,
+                    m.decl.1,
+                    m.vis,
+                    m.cfg,
+                    m.path_attr.unwrap_or_default(),
+                    if m.inline { "inline" } else { "file" }
+                );
+            }
+        }
+        _ => {
+            eprintln!("usage: cratify items <file>... | cratify tree <lib.rs>");
+            std::process::exit(2);
+        }
+    }
+}

@@ -2,8 +2,7 @@
 use super::metal_backend::{MetalExecutionGuard, metal_execution_guard};
 use super::metal_grid_plan::{ContinuationPoint, ExecutionPlan, ResidentInput, StageKind};
 use super::{Error, PackedExecution};
-
-pub(super) type PageConsumer<'a> = dyn FnMut(PackedExecution, usize) -> Result<(), Error> + 'a;
+pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::device::{PageConsumer};
 
 pub(super) struct GuardedExecutor {
     resident: ResidentInput,

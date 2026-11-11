@@ -35,7 +35,7 @@ pub(super) fn metrics() -> (usize, usize) {
 }
 
 #[path = "metal_label_passes.rs"]
-pub(super) mod label_passes;
+pub(in crate::code_rule_dsl) mod label_passes;
 #[cfg(test)]
 #[path = "metal_tape_tests.rs"]
 mod tape_tests;
@@ -347,7 +347,7 @@ pub(super) struct CachedProgramBuffers {
 pub(super) type ProgramBufferCache = Arc<Mutex<Option<CachedProgramBuffers>>>;
 
 #[derive(Clone)]
-pub(super) enum Engine {
+pub(in crate::code_rule_dsl) enum Engine {
     Interpreter {
         pipeline: ComputePipelineState,
         buffers: ProgramBufferCache,
@@ -600,7 +600,7 @@ pub(super) fn compile_resident_interpreter_cached() -> Result<Engine, Error> {
     Ok(engine)
 }
 
-pub(super) fn compile_interpreter() -> Result<Engine, Error> {
+pub(in crate::code_rule_dsl) fn compile_interpreter() -> Result<Engine, Error> {
     Ok(Engine::Interpreter {
         pipeline: pipeline_named(
             &kernel_source(
@@ -619,7 +619,7 @@ pub(super) fn compile_interpreter() -> Result<Engine, Error> {
 /// The interpreter with a recursive group's sweep kernel (`label_passes`, `label_sweep`), compiled
 /// once per process. A program whose flags carry a route (bit 31; bit 30 captured nodes, bits 8..30
 /// the label) marks its label as each result is published; other programs run as in `run_batch`.
-pub(super) fn compile_sweep_cached() -> Result<ComputePipelineState, Error> {
+pub(in crate::code_rule_dsl) fn compile_sweep_cached() -> Result<ComputePipelineState, Error> {
     static SWEEP: Mutex<Option<ComputePipelineState>> = Mutex::new(None);
     let mut cached = SWEEP.lock().map_err(|_| Error::BackendFailure)?;
     if let Some(pipeline) = &*cached {
@@ -671,7 +671,7 @@ pub(super) fn program_buffer_key(programs: &[Program]) -> Result<ProgramBufferKe
 }
 
 /// The interpreter, compiled once per process: a lowered matcher dispatches it once per pass.
-pub(super) fn compile_interpreter_cached() -> Result<Engine, Error> {
+pub(in crate::code_rule_dsl) fn compile_interpreter_cached() -> Result<Engine, Error> {
     static INTERPRETER: Mutex<Option<Engine>> = Mutex::new(None);
     let mut cached = INTERPRETER.lock().map_err(|_| Error::BackendFailure)?;
     if let Some(engine) = &*cached {
@@ -683,12 +683,12 @@ pub(super) fn compile_interpreter_cached() -> Result<Engine, Error> {
 }
 
 /// Whether `programs`' kernel is compiled (`compile_jit_cached`), without compiling it.
-pub(super) fn jit_ready(programs: &[Program]) -> Result<bool, Error> {
+pub(in crate::code_rule_dsl) fn jit_ready(programs: &[Program]) -> Result<bool, Error> {
     let key = jit_cache_key(programs)?;
     Ok(JIT_CACHE.lock().map_err(|_| Error::BackendFailure)?.contains_key(&key))
 }
 
-pub(super) fn compile_jit_cached(programs: &[Program]) -> Result<Engine, Error> {
+pub(in crate::code_rule_dsl) fn compile_jit_cached(programs: &[Program]) -> Result<Engine, Error> {
     let key = jit_cache_key(programs)?;
     if let Some(engine) = JIT_CACHE
         .lock()
@@ -721,7 +721,7 @@ pub(super) fn execute(
     execute_outcomes(engine, programs, files, anchors)?.into_result()
 }
 
-pub(super) fn execute_outcomes(
+pub(in crate::code_rule_dsl) fn execute_outcomes(
     engine: &Engine,
     programs: &[Program],
     files: &[TapeDoc],
@@ -739,7 +739,7 @@ pub(super) fn execute_packed(
     execute_packed_with_result_limits(engine, programs, files, anchors, None)
 }
 
-pub(super) fn execute_packed_with_result_limits(
+pub(in crate::code_rule_dsl) fn execute_packed_with_result_limits(
     engine: &Engine,
     programs: &[Program],
     files: &[TapeDoc],

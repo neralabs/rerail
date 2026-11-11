@@ -5,6 +5,9 @@ mod compile;
 mod crypto;
 mod cpython;
 mod demand;
+// Metal as the engine's device (`rerail-device-metal`): registered as the library loads (`install_devices`).
+#[cfg(target_os = "macos")]
+mod device_metal;
 mod embed;
 mod eval;
 mod facts;
@@ -530,4 +533,11 @@ impl CodeRuleDslEditor {
         self.snapshot.revision = revision;
         self.evaluate(mode)
     }
+}
+
+/// The engine's devices, into the logic's and the transducer's registries (`logic::device`,
+/// `transducer::packed::device`). Called as the library loads, before any run.
+pub(crate) fn install_devices() {
+    #[cfg(target_os = "macos")]
+    device_metal::register();
 }

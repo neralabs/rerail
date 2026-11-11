@@ -144,8 +144,7 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
     let n = trees.parent.len();
     let member = |k: usize, node: u32| sets[k].contains(&trees.kind[node as usize]);
     crate::code_rule_dsl::prof::count("nearest.cells", n * sets.len());
-    #[cfg(target_os = "macos")]
-    if binding == Binding::Metal {
+    if let Some(dev) = crate::code_rule_dsl::logic::device::solver().filter(|_| binding == Binding::Metal) {
         let _span = profile::span(|| "nearest on Metal (pointer jumping)".into());
         profile::decision("nearest ancestors", || format!("solved per piece of at most {CELLS} cells on Metal by pointer jumping, one dispatch and one wait"));
         let mut target = Vec::with_capacity(n * sets.len());
@@ -156,10 +155,10 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
                 done.push(u8::from(p == NONE || member(k, p)));
             }
         }
-        use crate::code_rule_dsl::transducer::packed::{Error, metal_nearest};
+        use crate::code_rule_dsl::logic::device::{Refused, nearest};
         // `RERAIL_NEAREST_BUFFERS=fresh`: buffers made per piece, to measure the pre-pinned blocks against.
-        let how = if std::env::var("RERAIL_NEAREST_BUFFERS").is_ok_and(|v| v == "fresh") { metal_nearest::Buffers::Fresh } else { metal_nearest::Buffers::Blocks };
-        match metal_nearest::solve_with(n, &target, &done, how) {
+        let how = if std::env::var("RERAIL_NEAREST_BUFFERS").is_ok_and(|v| v == "fresh") { nearest::Buffers::Fresh } else { nearest::Buffers::Blocks };
+        match dev.nearest(n, &target, &done, how) {
             Ok(solved) => {
                 let kernel = "nearest ancestors (pointer jumping)";
                 profile::device(kernel, solved.launches as u64, solved.gpu, solved.wall, target.len() as u64);
@@ -167,10 +166,10 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
                 crate::code_rule_dsl::prof::count("nearest.device_steps", solved.rounds as usize);
                 return Ok(solved.targets.chunks(n.max(1)).map(<[u32]>::to_vec).collect());
             }
-            Err(Error::UnsupportedBackend) => {
+            Err(Refused::NoDevice) => {
                 profile::decision("fallback", || "nearest ancestors: the Metal binding found no device and solved on the CPU".into());
             }
-            Err(error) => return Err(StoreError::Invalid(format!("nearest on the device: {error:?}"))),
+            Err(Refused::Failed(error)) => return Err(StoreError::Invalid(format!("nearest on the device: {error}"))),
         }
     }
     let _ = binding;

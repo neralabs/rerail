@@ -1,0 +1,199 @@
+# Module (under crate::code_rule_dsl, or crate:: for the engine root) -> crate.
+# The longest prefix wins. A module under transducer::packed whose declaration is cfg(target_os = "macos")
+# goes to rerail-device-metal whatever this table says (crate_map.py, `gated`).
+# Files stay where they are: each crate mounts its modules in place (docs/final-shape/proposals/crate-split/in-place-plan.md).
+#
+# prefix	crate
+crate::prof	rerail-prof
+crate::phase_clock	rerail-prof
+prof	rerail-prof
+phase_clock	rerail-prof
+logic::profile	rerail-prof
+
+# The .rr language's syntax and AST (front's types are cut into logic/front/ast.rs, below the parser)
+logic::front::ast	rerail-rr-syntax
+
+# The registry, tapes and what every crate reads
+language	rerail-lang
+tape	rerail-lang
+tree	rerail-lang
+lines	rerail-lang
+json	rerail-lang
+budget	rerail-lang
+value::text_regex	rerail-lang
+
+# Facts
+facts	rerail-facts
+producers	rerail-facts
+text	rerail-facts
+logic::strings	rerail-facts
+sql_profile	rerail-facts
+logic::plan::sketch	rerail-facts
+
+# The .rr lowering
+logic::front	rerail-rr
+logic::magic	rerail-rr
+logic::rr	rerail-rr
+
+# Logic
+logic	rerail-logic
+logic::rr::from_tape	rerail-logic
+typing	rerail-logic
+waves::owner	rerail-logic
+waves::schedule	rerail-logic
+waves::storage	rerail-logic
+crate::threads	rerail-logic
+threads	rerail-logic
+
+# Sessions (sql_executor.rs's #[napi] class is cut into sql_executor/napi.rs, which the engine mounts)
+sql_executor	rerail-sessions
+sql_executor::napi	rerail-engine
+
+# Transducer (CPU, Cranelift, Bitlex, verify, the batch format), demand, space
+transducer	rerail-transducer
+demand	rerail-transducer
+space	rerail-transducer
+residency	rerail-transducer
+
+# Metal (beyond the gated packed modules)
+residency::metal	rerail-device-metal
+residency::slabs	rerail-device-metal
+logic::native::setfix::device	rerail-device-metal
+transducer::packed::compile_matcher::matcher_metal	rerail-device-metal
+
+# W: the language-neutral evaluator
+blade	rerail-lang-php
+calls	rerail-w
+compile	rerail-w
+embed	rerail-w
+eval	rerail-w
+findings	rerail-w
+literal	rerail-w
+matcher	rerail-w
+model	rerail-w
+origin	rerail-w
+placement	rerail-w
+query	rerail-w
+scope	rerail-w
+soundness	rerail-w
+stats	rerail-w
+suppress	rerail-w
+value	rerail-w
+violations	rerail-w
+workspace	rerail-w
+hooks	rerail-w
+crypto	rerail-w
+profile	rerail-w
+test_support	rerail-w
+residency::admission	rerail-w
+transducer::semantic_facts	rerail-w
+language::adapter	rerail-w
+facts::facts_a	rerail-w
+
+# Language packs
+cpython	rerail-lang-python
+identifier	rerail-lang-python
+module_path	rerail-lang-python
+calls::python	rerail-lang-python
+facts::producers::python	rerail-lang-python
+facts::vtab::python	rerail-lang-python
+facts::vtab::syntax::cpython	rerail-lang-python
+facts::vtab::syntax::fstring	rerail-lang-python
+facts::vtab::syntax::python_demand	rerail-lang-python
+facts::vtab::syntax::python_parts	rerail-lang-python
+facts::vtab::syntax::python_syntax	rerail-lang-python
+literal::python_fstring	rerail-lang-python
+residency::admission::relational::python_ast	rerail-lang-python
+scope::python	rerail-lang-python
+value::python	rerail-lang-python
+value::python_ast	rerail-lang-python
+suppress::ruff	rerail-lang-python
+suppress::noqa	rerail-lang-python
+suppress::nosec	rerail-lang-python
+compile::binds::ruff	rerail-lang-python
+compile::format_args::ruff	rerail-lang-python
+compile::parse::ruff	rerail-lang-python
+language::adapter::python	rerail-lang-python
+
+import_target	rerail-lang-ecma
+compile::import_target	rerail-lang-ecma
+module_graph	rerail-lang-ecma
+npm_ignore	rerail-lang-ecma
+package_manifest	rerail-lang-ecma
+semver	rerail-lang-ecma
+scope::ecma	rerail-lang-ecma
+scope::usage::ecma	rerail-lang-ecma
+value::ecma	rerail-lang-ecma
+value::eslint_rules	rerail-lang-ecma
+suppress::biome	rerail-lang-ecma
+suppress::eslint	rerail-lang-ecma
+suppress::oxlint	rerail-lang-ecma
+suppress::vue	rerail-lang-ecma
+literal::eslint_directive	rerail-lang-ecma
+compile::binds::eslint	rerail-lang-ecma
+vue	rerail-lang-ecma
+language::adapter::vue	rerail-lang-ecma
+language::adapter::ecma	rerail-lang-ecma
+
+php_view	rerail-lang-php
+php_literal	rerail-lang-php
+calls::php	rerail-lang-php
+literal::phpdoc	rerail-lang-php
+literal::php_string	rerail-lang-php
+scope::php	rerail-lang-php
+scope::php_names	rerail-lang-php
+scope::usage::php	rerail-lang-php
+value::php	rerail-lang-php
+value::php_compare	rerail-lang-php
+value::php_structure	rerail-lang-php
+suppress::phpcs	rerail-lang-php
+suppress::phpstan	rerail-lang-php
+suppress::psalm	rerail-lang-php
+compile::format_args::php	rerail-lang-php
+language::adapter::php	rerail-lang-php
+
+calls::rust	rerail-lang-rust
+literal::rust_format	rerail-lang-rust
+matcher::arguments::rust	rerail-lang-rust
+matcher::format_args::rust	rerail-lang-rust
+scope::rust	rerail-lang-rust
+scope::usage::rust	rerail-lang-rust
+value::rust	rerail-lang-rust
+suppress::clippy	rerail-lang-rust
+language::adapter::rust	rerail-lang-rust
+
+scope::sql	rerail-lang-sql
+value::sql	rerail-lang-sql
+suppress::sqlfluff	rerail-lang-sql
+language::adapter::sql	rerail-lang-sql
+
+language::adapter::json	rerail-lang-json
+transducer::packed::json_parser	rerail-lang-json
+
+# The engine: napi, CLI, boot and the composition glue
+crate	rerail-engine
+dsl_root	rerail-engine
+slice	rerail-engine
+tools	rerail-engine
+prefilter	rerail-engine
+waves	rerail-engine
+logic::convert	rerail-engine
+logic::plan::corpus::references	rerail-engine
+transducer::packed::compile_matcher	rerail-transducer
+
+# Generic concepts every language reads (one canonical module path; embedded segments)
+module_path	rerail-lang
+embed	rerail-lang
+
+# Whole-file remaps found by moves.py / split.py (no item moves)
+transducer::packed::regex_block	rerail-facts
+demand::driver::catalog	rerail-w
+
+# logic/rr.rs (the module root, which reads phase0) is logic's; its children are the lowering
+logic::rr	rerail-logic
+logic::rr::lower	rerail-rr
+logic::rr::check	rerail-rr
+logic::rr::print	rerail-rr
+logic::rr::translate	rerail-rr
+logic::rr::aggregate_demand	rerail-rr
+logic::rr::tape_type	rerail-rr

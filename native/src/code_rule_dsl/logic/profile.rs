@@ -219,11 +219,8 @@ impl GpuTotal {
     }
 }
 
-/// What the device reported for a stratum (`setfix::device`).
-#[cfg(target_os = "macos")]
-pub(in crate::code_rule_dsl) type DeviceReport = crate::code_rule_dsl::logic::native::component::DeviceReport;
-#[cfg(not(target_os = "macos"))]
-pub(in crate::code_rule_dsl) type DeviceReport = ();
+/// What the device reported for a stratum (`logic::device`).
+pub(in crate::code_rule_dsl) type DeviceReport = crate::code_rule_dsl::logic::device::Report;
 
 #[derive(Default)]
 struct WaitTotal {
@@ -762,7 +759,6 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
     let mut state = STATE.lock().unwrap();
     let t = state.placements.entry(key.to_owned()).or_default();
     t.runs += 1;
-    #[cfg(target_os = "macos")]
     let ran = match device {
         Some(d) if d.refused.is_none() => {
             t.gpu.add(&GpuTotal {
@@ -795,8 +791,6 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
         }
         None => false,
     };
-    #[cfg(not(target_os = "macos"))]
-    let ran = device.is_some() && false;
     t.on_gpu += u64::from(ran);
     t.gpu_cheaper += u64::from(p.gpu_cheaper);
     t.device |= p.device;

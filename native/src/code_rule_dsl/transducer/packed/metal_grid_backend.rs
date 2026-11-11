@@ -37,7 +37,7 @@ pub(super) fn execute_packed_with_result_limits(
     .execute()
 }
 
-pub(super) fn execute_outcomes(
+pub(in crate::code_rule_dsl) fn execute_outcomes(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: &[Vec<Vec<u32>>],
@@ -54,7 +54,7 @@ pub(super) fn execute(
     execute_outcomes(programs, files, anchors)?.into_result()
 }
 
-pub(super) fn execute_shared_corpus(
+pub(in crate::code_rule_dsl) fn execute_shared_corpus(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: &[Vec<Arc<[u32]>>],
@@ -75,7 +75,7 @@ pub(super) fn execute_shared_corpus(
     .execute()
 }
 
-pub(super) fn execute_shared_corpus_pages(
+pub(in crate::code_rule_dsl) fn execute_shared_corpus_pages(
     programs: &[Program],
     files: &[TapeSource],
     anchors: &[Vec<Arc<[u32]>>],

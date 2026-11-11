@@ -49,15 +49,16 @@ pub(in crate::code_rule_dsl) mod metal_sort;
 #[cfg(target_os = "macos")]
 pub(in crate::code_rule_dsl) mod metal_join;
 #[cfg(target_os = "macos")]
-mod metal_program_backend;
+pub(in crate::code_rule_dsl) mod metal_program_backend;
 #[cfg(target_os = "macos")]
 pub(in crate::code_rule_dsl) use metal_program_backend::set_steps;
 #[cfg(target_os = "macos")]
 pub(in crate::code_rule_dsl) use metal_program_backend::lattice as metal_lattice;
 #[cfg(target_os = "macos")]
 pub(in crate::code_rule_dsl) use metal_program_backend::nearest as metal_nearest;
-#[cfg(target_os = "macos")]
-pub(in crate::code_rule_dsl) use metal_program_backend::label_passes::{RootJobs, RootsFound};
+// The transducer's device interface: Metal registers itself there (`rerail-device-metal`).
+pub(in crate::code_rule_dsl) mod device;
+pub(in crate::code_rule_dsl) use device::{RootJobs, RootsFound};
 #[cfg(target_os = "macos")]
 pub(in crate::code_rule_dsl) use metal_program_backend::label_passes::drop_pipelines as drop_label_pipelines;
 
@@ -101,6 +102,8 @@ mod scm;
 #[path = "packed/compile/matcher.rs"]
 #[cfg_attr(not(test), allow(dead_code))]
 mod compile_matcher;
+#[cfg(target_os = "macos")]
+pub(in crate::code_rule_dsl) use compile_matcher::matcher_metal;
 pub(in crate::code_rule_dsl) use compile_matcher::{Backend as MatcherBackend, LoweredMatcher, LoweredWave, WaveRun};
 // Label programs as node-set formulas (decision 0036).
 #[path = "packed/compile/sets.rs"]
@@ -186,7 +189,7 @@ mod metal_output_strip;
 #[cfg(target_os = "macos")]
 mod metal_position_order;
 #[cfg(target_os = "macos")]
-mod metal_grid_backend;
+pub(in crate::code_rule_dsl) mod metal_grid_backend;
 #[cfg(target_os = "macos")]
 mod metal_ready_batch;
 #[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
@@ -3940,34 +3943,13 @@ pub(in crate::code_rule_dsl) fn execute_planned(
             anchors,
             result_limits,
         ),
-        #[cfg(target_os = "macos")]
         ExecutionBackend::MetalInterpreter => {
-            let engine = metal_program_backend::compile_interpreter()?;
-            metal_program_backend::execute_packed_with_result_limits(
-                &engine,
-                programs,
-                files,
-                anchors,
-                result_limits,
-            )
+            device::required()?.execute_packed(device::Engine::Interpreter, programs, files, anchors, result_limits)
         }
-        #[cfg(target_os = "macos")]
         ExecutionBackend::MetalJit => {
-            let engine = crate::code_rule_dsl::prof::time("roots.jit", || metal_program_backend::compile_jit_cached(programs))?;
-            let _run = crate::code_rule_dsl::prof::Stage::start("roots.metal");
-            metal_program_backend::execute_packed_with_result_limits(
-                &engine,
-                programs,
-                files,
-                anchors,
-                result_limits,
-            )
+            device::required()?.execute_packed(device::Engine::Jit, programs, files, anchors, result_limits)
         }
         ExecutionBackend::Metal | ExecutionBackend::CpuBackground | ExecutionBackend::MetalBackground => {
-            Err(Error::UnsupportedBackend)
-        }
-        #[cfg(not(target_os = "macos"))]
-        ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit => {
             Err(Error::UnsupportedBackend)
         }
     }
@@ -3982,23 +3964,8 @@ fn execute_with_backend_outcomes(
     match compilation::resolve(backend, programs)? {
         ExecutionBackend::CpuInterpreter => execute_batch_outcomes(programs, files, anchors),
         ExecutionBackend::CpuJit => native_cpu::execute_batch_outcomes(programs, files, anchors),
-        #[cfg(target_os = "macos")]
-        ExecutionBackend::MetalInterpreter => {
-            let engine = metal_program_backend::compile_interpreter()?;
-            metal_program_backend::execute_outcomes(&engine, programs, files, anchors)
-        }
-        #[cfg(target_os = "macos")]
-        ExecutionBackend::MetalJit => {
-            let engine = metal_program_backend::compile_jit_cached(programs)?;
-            metal_program_backend::execute_outcomes(&engine, programs, files, anchors)
-        }
-        #[cfg(target_os = "macos")]
-        ExecutionBackend::Metal => {
-            metal_grid_backend::execute_outcomes(programs, files, anchors)
-        }
-        #[cfg(not(target_os = "macos"))]
-        ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::Metal => {
-            Err(Error::UnsupportedBackend)
+        backend @ (ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::Metal) => {
+            device::required()?.execute_outcomes(backend, programs, files, anchors)
         }
         ExecutionBackend::CpuBackground | ExecutionBackend::MetalBackground => Err(Error::UnsupportedBackend),
     }
@@ -4195,17 +4162,13 @@ fn execute_with_backend_bounded_limit(
 }
 
 pub(in crate::code_rule_dsl) fn warm_production_programs(programs: &[Program]) -> Result<(), Error> {
-    #[cfg(target_os = "macos")]
-    {
-        metal_program_backend::compile_jit_cached(programs).map(|_| ())
+    if let Some(device) = device::matcher() {
+        return device.warm(programs);
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        for program in programs {
-            native_cpu::warm_jit(program)?;
-        }
-        Ok(())
+    for program in programs {
+        native_cpu::warm_jit(program)?;
     }
+    Ok(())
 }
 
 pub(super) fn execute_production_corpus(
@@ -4214,11 +4177,9 @@ pub(super) fn execute_production_corpus(
     anchors: &[Vec<Arc<[u32]>>],
     result_limits: &[u32],
 ) -> Result<packed_batch::PackedExecution, Error> {
-    #[cfg(target_os = "macos")]
-    {
-        metal_grid_backend::execute_shared_corpus(programs, files, anchors, result_limits)
+    if let Some(device) = device::matcher() {
+        return device.execute_shared_corpus(programs, files, anchors, result_limits);
     }
-    #[cfg(not(target_os = "macos"))]
     {
         let anchors = anchors
             .iter()
@@ -4241,17 +4202,9 @@ pub(super) fn execute_production_corpus_pages(
     result_limits: &[u32],
     consumer: &mut dyn FnMut(PackedExecution, usize) -> Result<(), Error>,
 ) -> Result<(), Error> {
-    #[cfg(target_os = "macos")]
-    {
-        metal_grid_backend::execute_shared_corpus_pages(
-            programs,
-            files,
-            anchors,
-            result_limits,
-            consumer,
-        )
+    if let Some(device) = device::matcher() {
+        return device.execute_shared_corpus_pages(programs, files, anchors, result_limits, consumer);
     }
-    #[cfg(not(target_os = "macos"))]
     {
         let docs = files
             .iter()
