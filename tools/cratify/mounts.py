@@ -217,6 +217,10 @@ class Facades:
             lines.append(f'{cfg}{attr}{indent}{vis}mod {k.name};\n')
         elif self.need_inline(k):
             kd = child_dir(k) if not k.inline else os.path.join(my_dir, k.name)
+            # a directory the file system lacks (a file module with no children's directory): its children are all
+            # `#[path]` ones, and a path through it fails, so the facade's directory is its nearest existing one
+            while not k.inline and not os.path.isdir(kd) and kd != ROOT:
+                kd = os.path.dirname(kd)
             lines.append(f'{cfg}{indent}#[path = "{rel(kd, attr_dir)}"]\n{indent}{vis}mod {k.name} {{\n')
             self.body(k, indent + '    ', kd, lines)
             lines.append(f'{indent}}}\n')
