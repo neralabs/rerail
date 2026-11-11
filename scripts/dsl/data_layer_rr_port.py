@@ -45,16 +45,22 @@ dl_frame_kind("class_definition").
 .decl dl_frame(f: node, t: symbol, fn: number)
 dl_frame(f, t, 1) :- kind(f, "function_definition"), field(f, "name", m), text(m, t).
 dl_frame(f, t, 0) :- kind(f, "class_definition"), field(f, "name", m), text(m, t).
+// A frame's parent frame, from the frames: read from the parent, `nearest` would visit every node under it.
+.decl dl_frame_parent(f: node, a: node)
+dl_frame_parent(f, a) :- dl_frame(f, _, _), nearest(f, a, dl_frame_kind).
 .decl dl_in_frame(n: node)
-dl_in_frame(n) :- nearest(n, _, dl_frame_kind).
+dl_in_frame(n) :- dl_frame_parent(n, _).
 .decl dl_qual(f: node, q: symbol, d: number)
 dl_qual(f, t, k) :- dl_frame(f, t, k), !dl_in_frame(f).
-dl_qual(f, s, d) :- dl_frame(f, t, 1), nearest(f, a, dl_frame_kind), dl_qual(a, p, k), k > 0, d = k + 1,
+dl_qual(f, s, d) :- dl_frame(f, t, 1), dl_frame_parent(f, a), dl_qual(a, p, k), k > 0, d = k + 1,
     s = @concat(@concat(p, ".<locals>."), t).
-dl_qual(f, s, d) :- dl_frame(f, t, x), nearest(f, a, dl_frame_kind), dl_qual(a, p, k), (x = 0; k = 0), d = k + x,
+dl_qual(f, s, d) :- dl_frame(f, t, x), dl_frame_parent(f, a), dl_qual(a, p, k), (x = 0; k = 0), d = k + x,
     s = @concat(@concat(p, "."), t).
 .decl dl_qualname(f: node, q: symbol)
 dl_qualname(f, q) :- dl_qual(f, q, _).
+// @qualdepth: the function frames on the frame's chain, its own included.
+.decl dl_qualdepth(f: node, d: number)
+dl_qualdepth(f, d) :- dl_qual(f, _, d).
 """
 
 def call_end(t, i):
@@ -135,8 +141,8 @@ def rewrite_rule(rule, fresh):
     rule = out + rule[i:]
     # Tree builtins anywhere: a fresh variable from a relation (core's, or the shim's).
     extra = []
-    lifted = {"depth": "ast_depth", "line": "line", "class_path": "dl_class_path", "class_prefix": "dl_class_prefix", "qualname": "dl_qualname"}
-    while (m := re.search(r"@(depth|line|class_path|class_prefix|qualname)\(([^()]*)\)", rule)):
+    lifted = {"depth": "ast_depth", "line": "line", "class_path": "dl_class_path", "class_prefix": "dl_class_prefix", "qualname": "dl_qualname", "qualdepth": "dl_qualdepth"}
+    while (m := re.search(r"@(depth|line|class_path|class_prefix|qualname|qualdepth)\(([^()]*)\)", rule)):
         fresh[0] += 1
         v = f"dl_{m.group(1)}{fresh[0]}"
         extra.append(f"{lifted[m.group(1)]}({m.group(2)}, {v})")
