@@ -990,7 +990,8 @@ pub fn close(conn: &Connection, name: &str) -> Result<()> {
 
 /// Runs waves until the fixpoint, or until `max_waves` more have run (0: no bound). Rows are written to the
 /// relations' tables only at the fixpoint, so a bounded run can be resumed after the caller replans probes from
-/// `stats`.
+/// `stats`. A bounded run also returns when a multi-relation delta join outgrows the statistics available at
+/// entry. This prevents a later wave's first substantial demand from running several times before replanning.
 pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
     let t0 = Instant::now();
     let comp = component(conn, name)?;
@@ -1016,6 +1017,23 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
     let cpu_now = || if cpu_timed { crate::code_rule_dsl::logic::profile::now() } else { 0.0 };
     let mut row: Vec<i64> = Vec::new();
     let wave_trace = std::env::var_os("RDL_WAVE_TRACE").is_some();
+    // Whole-plan probes can start at a selective external input. Maintenance's delta-only probes cannot:
+    // their order depends on the delta's measured domain. Watch the existing index counts, without scanning
+    // rows or computing full statistics on every wave. Unbounded callers retain run-to-fixpoint semantics.
+    let planning_counts: Vec<(usize, Vec<usize>)> = if max_waves == 0 { Vec::new() } else {
+        let mut watched = vec![false; nrels];
+        for p in &comp.probes {
+            if p.delta == SEED || p.whole.is_some() { continue; }
+            if let Body::Join(j) = &p.body
+                && j.steps.iter().filter(|s| matches!(s, Step::Atom { neg: false, .. })).count() > 1 {
+                watched[p.delta] = true;
+            }
+        }
+        let store = comp.store.read().unwrap();
+        store.rels.iter().enumerate().filter(|(r,_)| watched[*r]).map(|(r,rel)| {
+            (r, std::iter::once(rel.n).chain(rel.idx[..rel.k].iter().map(|ix| ix.table.len())).collect())
+        }).collect()
+    };
     let mut gates = std::mem::take(&mut comp.gates);
     let mut levels = std::mem::take(&mut comp.levels);
     let gates_done: Vec<usize> = gates.iter().map(|g| g.done).collect();
@@ -1309,6 +1327,14 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
         if !any { any = levels.step(store); }
         if !any { done = true; break; }
         if max_waves > 0 && waves >= max_waves { break; }
+        if planning_counts.iter().any(|(r, before)| {
+            let rel = &store.rels[*r];
+            std::iter::once(rel.n).chain(rel.idx[..rel.k].iter().map(|ix| ix.table.len())).zip(before)
+                .any(|(now,then)| (*then == 0 && now > 0) || now as f64 > (*then).max(1) as f64 * crate::code_rule_dsl::logic::plan::PRICE_DRIFT)
+        }) {
+            if wave_trace { eprintln!("      {name}: return for planning after {waves} waves; delta statistics grew"); }
+            break;
+        }
     }
     comp.seeded = seeded;
     comp.gates = gates;

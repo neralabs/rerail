@@ -1429,3 +1429,155 @@ The containment estimate reads the binding column's unconditioned distinct count
 That estimate discounts probes whose filtered values can all hit the target relation.
 The next experiment must bound distinct counts by the filtered binding population before extending containment pricing.
 Both `retval` and `ifn` must pass, along with cold and incremental replay work and output parity.
+
+### Checks after the phase-space merge
+
+The merged engine builds. All ten admission and retention checks pass, including the previously failing import-cycle maintenance check.
+The growing-index check also passes.
+
+Three independent P3 processes produce identical findings and identical restored programs, splits, and relation identities.
+The later processes restore all three requested preparations from the store.
+Nevertheless, the phase-work gate fails: unchanged `struct` runs 19 of 36 strata, and `types` runs 34 of 110.
+The repeated third process has the same counts.
+
+`Retained::holds` excludes every framed output because frames contain raw facts, not decoded output text.
+This makes output-producing strata run again even when their inputs and stored results are unchanged.
+The candidate admits clean output facts with the other demanded frames, then uses the existing native decoder at the output boundary.
+It preserves the existing `finding` decoding path and applies the same snapshot checks to output admission.
+The new 130-output check requires bounded storage executions; the P3 gate still requires zero unchanged phase strata.
+
+The planner candidate bounds each binding's distinct count by measured rows surviving its constant filters.
+It uses existing kind and value frequencies, and computes these bounds once per plan search.
+It issues no additional SQL and does not recount input rows.
+The regression cases require early restriction of the name demand and prevent expansion from function definitions before selecting return statements.
+Both candidates are under validation; this entry does not claim that either gate passes.
+
+Artifact directory: `three-fixes-e78060842/merge-6a3d` for merge checks and `filtered-domain-output` for the candidates.
+The merge's O125 replay preserves output parity: 3.7 s cold CPU, 4.1 s maintenance CPU, and 3.6 s fresh CPU.
+These single observations are the comparison baseline, not a speedup claim.
+
+### The first candidates did not clear the gates
+
+The filtered-domain candidate preserves O125 parity and avoids the earlier return-value regression.
+Recorded cold work falls from 12,274,367 to 12,166,604. Maintenance work falls from 9,633,667 to 9,168,311.
+However, the targeted insertion probes still perform 184,851 work units; the limit is 2,000.
+This candidate does not resolve the amplified join.
+
+The live plan cache tracks relation sizes but omits distinct counts and fanouts.
+It can retain a bad order when the value distribution changes without a row-count change.
+Maintenance probes also miss the first live-statistics replan because that pass updates only whole plans.
+The next candidate includes distributions in the cache signature and replans nonempty delta probes after the seed wave.
+A regression test changes the value distribution at fixed cardinality and requires the cached order to change.
+
+Raw output reuse reduces restored structural work from 19 strata to 2, and typing work from 34 to 18.
+The zero-recomputation gate still fails. Three real processes retain identical programs, identities, and positive outputs.
+The remaining missing frames consume literal-only facts such as `env` and `gproto`.
+Publication requires runtime digests for these leaves, although their contents already belong to the compiled relation identity.
+The next candidate excludes only immutable literal leaves from runtime dependency checks.
+Inputs, native relations, produced facts, and derived relations still require runtime digests.
+A focused test requires reuse with the same literal, invalidation after a literal change, and refusal without an input digest.
+Both fixes await the pending build and the unchanged workload gates.
+
+### Restored phase work now clears the gate
+
+The three-process preparation test passes with the output and literal fixes.
+Both restored processes keep identical prepared programs, relation identities, and nonempty call results.
+Unchanged `struct` and `types` phases now execute zero strata.
+Previously they executed 19 and 34 strata after the integration merge, then 2 and 18 with output reuse alone.
+All 12 focused frame-admission and maintenance checks pass, including literal invalidation and replacement-payload rejection.
+All three planner regression tests also pass. The real O125 replay remains pending at this entry.
+
+The reusable work gate is `scripts/profiling/o125/gate.py BASELINE_PROFILE CANDIDATE_PROFILE`.
+It rejects the earlier filtered-domain candidate because the targeted insertion work remains above 2,000.
+It also requires both insertion plans, cold and incremental work without regression, and the return-value work counters.
+The replay itself checks output parity. Native step-count omissions remain a limitation; CPU is reported separately.
+
+### Live statistics alone still arrive too late
+
+The live-statistics candidate preserves O125 parity. Targeted insertion work falls from 184,851 to 45,930, so the gate still fails.
+Recorded cold work is 12,033,492; maintenance work is 8,854,687; fresh step-07 work is 12,129,853.
+Return-value work does not regress. Single-run CPU is 4.1 s cold, 4.9 s maintenance, and 3.9 s fresh.
+These CPU measurements do not establish a speedup over the earlier 3.7/4.1/3.6 s baseline.
+
+The wave trace identifies the remaining timing error. Within a four-wave chunk, the source insertion probe consumes deltas of 1, 86, and 29 rows.
+It expands those rows to 15,099 rows before the planner sees the new statistics.
+The annotation copies perform the same work. Later waves use the restrictive order and reject the names before expansion.
+The final profile order therefore describes only part of the accumulated step counts.
+
+The next candidate makes bounded native runs return when a multi-relation delta-only probe's demand grows beyond the planner's drift threshold.
+It reads row and distinct counts already held in indexes. It does not scan inputs or issue SQL for each wave.
+Unbounded callers retain run-to-fixpoint behavior. Whole-plan probes retain their existing scheduling.
+A new native test requires a checkpoint before a late demand reaches its consumer, then verifies resumed and uninterrupted output parity.
+The wave budget is capped because these early returns can create more checkpoints than exponential wave scheduling previously allowed.
+
+The first diagnostic trace stopped when the shared disk filled. The filtered retry completed with parity.
+Only this task's obsolete incremental cache and completed build objects were removed; binaries and measurements remain intact.
+Artifacts are under `live-stats-literal`; the checkpoint build and its gates are pending under `delta-checkpoint`.
+
+### Counts do not describe which keys can match
+
+The checkpoint-only candidate still fails: targeted insertion work is 67,092. O125 output parity holds.
+The estimates now see 87 delta rows, but still price the restrictive input at about 142 rows per binding.
+A small distinct count does not mean that the delta's names occur in the restrictive input.
+Single-run CPU is 3.4 s cold, 3.8 s maintenance, and 3.0 s fresh; a nearby baseline is still needed.
+The native checkpoint test initially used invalid spec syntax (`d:1` instead of `d1`), and failed before execution.
+The fixture is corrected. This setup failure is not evidence for or against checkpoint behavior.
+
+The next candidate uses complete small value sets already held in statistics.
+When the forced first atom and a later positive join have disjoint keys, the join is priced as rejecting the demand.
+This is an estimate only; it does not remove a rule or change evaluation.
+Only the forced first atom supplies this restriction. A future predicate with bound variables is not an already-applied filter.
+A partial constant memo cannot establish absence: its distinct count and summed frequencies must cover the whole input column.
+
+The plan cache key and live signature include this disjointness decision.
+Tests change only key values while keeping counts and fanouts fixed, then require the cached order to change.
+They also cover overlapping values and incomplete versus complete input histograms.
+Bounded runs now expose the first nonempty demand, even when it contains only one row.
+The corrected fixture, replay gate, and full-corpus budget await the `key-domains` build.
+The independently verified retention changes are committed as `c9b9ad7e0`.
+
+### Final qualification: all three targets pass
+
+Artifacts: `/Users/jeremy/orca/artifacts/async-family-comparison/three-fixes-e78060842/key-domains`.
+The corrected checkpoint test, request/resume test, three planner checks, and three-process preparation test pass.
+All 12 frame-admission and maintenance checks also pass with the final binary.
+
+| Recorded native work | Integration baseline | Final candidate |
+| --- | ---: | ---: |
+| Targeted source and annotation insertion probes | 184,851 | 633 |
+| All cold work, step 06 | 12,274,367 | 10,687,926 |
+| All maintenance work, step 07 | 9,633,667 | 8,802,587 |
+| All fresh step-07 work | 12,352,930 | 10,785,403 |
+| Cold return-value work | 12,070 | 12,070 |
+
+The targeted source probe now produces `199 -> 0` rows at `icall`, before reading `pv`.
+Its annotation copies produce `398 -> 0`. Their combined work is 633, below the 2,000 ceiling.
+This is approximately 292 times less recorded work for these probes, not a 292-fold whole-job speedup.
+The EXPLAIN output records eight disjoint-key estimates for the selected rule family.
+The cold `ifn` join work also falls from 1,512,651 to 74,457.
+
+The candidate and integration baseline have identical nonempty step-07 outputs: 4,934,123 bytes.
+SHA-256: `7878676325d3d9558dc6ac393d60b66be0153901e6f3fe714b4b52c9d9bc5714`.
+The replay reports incremental/full parity. Its existing test prints this result rather than asserting it.
+The work gate now requires that report and compares saved outputs with the baseline.
+A negative check with incorrect output and a failed parity report is rejected.
+
+A nearby baseline run measures 2.8 s cold CPU and 3.2 s maintenance CPU.
+The candidate measures 2.5 s and 3.1 s. These single observations support roughly unchanged total CPU, not a large throughput claim.
+In maintenance, attributed join execution falls from 0.766 s to 0.659 s, while replanning adds overhead.
+The nearby fresh/full run has different memo reuse: zero local chunks versus six for the candidate.
+Its 2.1 s versus 2.2 s CPU results are not a controlled fresh/full comparison.
+Native step counters also omit some whole-plan work and can accumulate across changed orders.
+
+The 5,725-file authored async job stays below the 100-execution ceiling:
+
+| Run | Core executions | Job CPU | Job wall |
+| --- | ---: | ---: | ---: |
+| Cold | 8 | 10.954 s | 3.724 s |
+| Warm | 20 | 0.286 s | 0.484 s |
+| Warm, profiled | 20 | 0.307 s | 0.619 s |
+
+These times cover the measured job; process startup is separate. Storage SQL remains outside the core budget.
+This corpus has no findings. The positive preparation fixture and nonempty O125 outputs provide the semantic checks.
+Both restored preparation processes execute zero unchanged `struct` and `types` strata, with stable programs and identities.
+Bulk admission still passes its bounded-query and metadata-consistency checks.

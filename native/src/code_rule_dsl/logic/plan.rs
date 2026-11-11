@@ -840,7 +840,7 @@ struct Priced {
 }
 
 /// How far a size may move before a kept price is worked out again.
-const PRICE_DRIFT: f64 = 2.0;
+pub(in crate::code_rule_dsl) const PRICE_DRIFT: f64 = 2.0;
 
 /// Whether sizes `now` are within `PRICE_DRIFT` of `then`, each counted as at least one row.
 fn near(then: &[f64], now: &[f64]) -> bool {
@@ -959,6 +959,63 @@ impl Model {
         (self.ndv.get(&(rel.to_owned(), c)).copied().unwrap_or(1.0) * skew(rel, c, 0)).max(1.0)
     }
 
+    /// Bound a binding's distinct values by measured rows surviving its constant filters. The full column's
+    /// domain is too wide after, for example, `kind(n, function_definition)`: those bindings are functions,
+    /// not random nodes. Treating them as random misses underprices expansion from each function to its body.
+    fn binding_domains(&self, prog: &Program, a: &Atom) -> Vec<Option<f64>> {
+        let mut cap = self.stats.card.get(&a.rel).copied().unwrap_or(f64::INFINITY);
+        for (c, t) in a.args.iter().enumerate() {
+            let Some(k) = constant(t) else { continue };
+            let measured = if a.rel == "kind" && c == 1 {
+                let key = match &k { Constant::Str(s) => s.clone(), Constant::Int(i) => i.to_string() };
+                self.stats.kfreq.get(&key).map(|n| *n as f64)
+            } else if let Some(freq) = self.stats.dfreq.get(&(a.rel.clone(), c)) {
+                Some(freq.get(&k).copied().unwrap_or(0) as f64)
+            } else if self.is_input(prog, &a.rel) {
+                self.stats.const_freq(&a.rel, &self.col(&a.rel, c), &k).map(|n| n as f64)
+            } else {
+                None
+            };
+            if let Some(n) = measured { cap = cap.min(n); }
+        }
+        (0..a.args.len()).map(|c| self.ndv.get(&(a.rel.clone(), c)).map(|n| n.min(cap))).collect()
+    }
+
+    /// Complete small value sets already in statistics. SQL can load only the constants requested by a rule,
+    /// so an absent memo entry proves nothing unless both its distinct count and total cover the column.
+    fn small_values(&self, rel: &str, c: usize) -> Option<Vec<&Constant>> {
+        if let Some(freq) = self.stats.dfreq.get(&(rel.to_owned(), c)) {
+            return Some(freq.iter().filter(|(_, n)| **n > 0).map(|(v, _)| v).collect());
+        }
+        if self.stats.solving.contains(rel) { return None; }
+        let col = self.col(rel, c);
+        let [rows, ndv, _, _] = *self.stats.col.get(&(rel.to_owned(), col.clone()))?;
+        if ndv > 64 { return None; }
+        let values: Vec<_> = self.stats.memo.get(rel)?.iter().filter(|((name, _), n)| *name == col && **n > 0).collect();
+        if values.len() as i64 != ndv || values.iter().map(|(_, n)| **n).sum::<i64>() != rows { return None; }
+        Some(values.into_iter().map(|((_, v), _)| v).collect())
+    }
+
+    /// Positive joins whose keys cannot occur in the forced first atom's values. Only that atom is a binding
+    /// source: a later predicate whose variables happen to be bound has not yet restricted the demand.
+    fn delta_misses(&self, body: &[Literal], first: Option<usize>) -> Vec<usize> {
+        let first = first.or_else(|| body.iter().position(|l| matches!(l, Literal::Atom(a) if !a.neg && a.rel.contains("rr_demand_agg_"))));
+        let Some(first) = first else { return Vec::new() };
+        let Some(delta) = body[first].atom() else { return Vec::new() };
+        let values: Vec<_> = delta.args.iter().enumerate().map(|(c, _)| self.small_values(&delta.rel, c)).collect();
+        body.iter().enumerate().filter_map(|(i, l)| {
+            let Literal::Atom(a) = l else { return None };
+            if i == first || a.neg { return None; }
+            delta.args.iter().enumerate().any(|(c, t)| {
+                let Term::Var(v) = t else { return false };
+                let Some(from) = &values[c] else { return false };
+                if from.is_empty() { return false; }
+                a.args.iter().enumerate().any(|(at, t)| matches!(t, Term::Var(x) if x == v)
+                    && self.small_values(&a.rel, at).is_some_and(|to| !to.is_empty() && from.iter().all(|v| !to.contains(v))))
+            }).then_some(i)
+        }).collect()
+    }
+
     /// Orders a rule body (T's `plan_rule`). Dynamic programming over subsets of the join literals (Selinger): the
     /// cheapest order of each subset, with the filters applied as early as they can run. Work counts rows produced per
     /// step plus tape reads for `nearest` (climb: steps per row; descent: mean subtree size per row). With `first`
@@ -1074,6 +1131,8 @@ impl Model {
             d.u64(first.map_or(u64::MAX, |f| f as u64));
             d.u64(self.stats.solving_digest as u64);
             d.u64((self.stats.solving_digest >> 64) as u64);
+            // A changed key domain can make another order cheaper while row and distinct counts stay fixed.
+            for i in self.delta_misses(body, first) { d.u64(i as u64); }
         })
     }
 
@@ -1087,20 +1146,30 @@ impl Model {
             .collect()
     }
 
-    /// The sizes a live replan reads (`plan_rule_live`): the corpus's nodes and each atom's rows. The delta atom is
-    /// read first and priced by its live size; every later step's rows are per binding of it, so its size scales
-    /// every order alike and does not change which is cheapest. It is left out (one row) unless the body reads its
-    /// relation again: a wave that only grew the delta keeps the plan. Callers read the order only, so the kept
-    /// price is not scaled.
-    pub(in crate::code_rule_dsl) fn live_sizes(&self, body: &[Literal], first: Option<usize>) -> Vec<f64> {
-        let delta_rel = first.and_then(|f| body[f].atom()).map(|a| a.rel.as_str());
-        let once = delta_rel.is_some_and(|d| body.iter().filter(|l| l.atom().is_some_and(|a| a.rel == d)).count() == 1);
-        std::iter::once(self.stats.nodes.max(1.0))
-            .chain(body.iter().enumerate().filter_map(|(i, l)| match l {
-                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(if once && Some(i) == first { 1.0 } else { self.card(&a.rel) }),
-                _ => None,
-            }))
-            .collect()
+    /// Live cardinalities followed by the distributions the price reads. A delta's size affects whether a
+    /// search pays for itself; its distinct values and fanouts can change the cheapest order even at fixed size.
+    pub(in crate::code_rule_dsl) fn live_sizes(&self, body: &[Literal], _first: Option<usize>) -> Vec<f64> {
+        let mut sizes = self.read_sizes(body);
+        for a in body.iter().filter_map(Literal::atom) {
+            for (c,t) in a.args.iter().enumerate() {
+                sizes.push(self.ndv.get(&(a.rel.clone(),c)).copied().unwrap_or(1.0));
+                sizes.push(self.stats.fan.get(&(a.rel.clone(),c)).copied().unwrap_or(1.0));
+                if let Some(k) = constant(t) {
+                    let n = if a.rel == "kind" && c == 1 {
+                        let key = match &k {Constant::Str(s)=>s.clone(),Constant::Int(i)=>i.to_string()};
+                        self.stats.kfreq.get(&key).copied()
+                    } else {
+                        self.stats.dfreq.get(&(a.rel.clone(),c)).map(|f|f.get(&k).copied().unwrap_or(0))
+                            .or_else(||self.stats.const_freq(&a.rel,&self.col(&a.rel,c),&k))
+                    };
+                    sizes.push(n.unwrap_or(1) as f64);
+                }
+            }
+        }
+        let misses = self.delta_misses(body, _first);
+        // One bit per literal; 1 -> 4 crosses PRICE_DRIFT and also changes the driver's exact signature.
+        sizes.extend((0..body.len()).map(|i| if misses.contains(&i) { 4.0 } else { 1.0 }));
+        sizes
     }
 
     /// A stratum's plan searched again from its live counts between waves (`plan_rule_explained`), kept with the
@@ -1119,6 +1188,7 @@ impl Model {
         }
         let key = self.plan_key("live ", head, body, first);
         let sizes = self.live_sizes(body, first);
+        let cardinalities = 1 + body.iter().filter(|l| matches!(l,Literal::Atom(_) | Literal::Agg{..})).count();
         // The last price, and the work of the order when it was searched.
         let kept = PLANS.with(|p| p.borrow().as_ref().and_then(|p| p.get(&key)).and_then(|k| Some((k.4.clone()?, k.1))));
         if let Some((priced, searched)) = &kept {
@@ -1136,6 +1206,7 @@ impl Model {
                 self.plan_inner(prog, head, body, first, Some(&priced.got.0.0), false)
             };
             if let Ok((plan, _)) = repriced
+                && near(&priced.sizes[cardinalities..], &sizes[cardinalities..])
                 && (plan.1 <= REPLAN * then.max(1.0) || plan.1 - then <= REPLAN_ROWS)
             {
                 super::profile::decision("plan cache (decision 0038)", || "a live replan kept, re-priced: its work grew little".into());
@@ -1228,7 +1299,17 @@ impl Model {
                 });
             }
         }
+        // The same binding domains are used by many candidate prefixes. Read the existing statistics once
+        // per search, with no input recount and no additional SQL.
+        let binding_domains: Vec<_> = body.iter().filter_map(|l| match l { Literal::Atom(a) if !a.neg => Some(a), _ => None })
+            .map(|a| (a, a.vars(), self.binding_domains(prog, a))).collect();
+        let delta_misses = self.delta_misses(body, first);
+        let delta_vars = first.and_then(|f| body[f].atom()).map(Atom::vars);
         let atom_rows_ = |a: &Atom, bound: &BTreeSet<String>| -> f64 {
+            if delta_vars.as_ref().is_some_and(|v| v.is_subset(bound))
+                && delta_misses.iter().any(|&i| body[i].atom() == Some(a)) {
+                return 0.01;
+            }
             // An atom that shares no bound variable, read after bindings exist, is a cross product: its fanout
             // observed in one wave or chunk is the relation's size then (none before a guest round makes the rows),
             // not a property of the join, so it is priced from the relation's own estimate (below).
@@ -1286,25 +1367,24 @@ impl Model {
                     rows /= self.ndv_or_1(&a.rel, c);
                 }
             }
-            // A relation of the component being solved, probed by a value an earlier step bound: a column's fanout
+            // A relation probed by a value an earlier step bound: a column's fanout
             // is the rows per value it holds (`fan`), so a probe is priced as if it always hits. Most do not where
             // the binding ranges over more values than the column holds: `fbind`'s `fcall($c, $f, $i, $a)` by `$a`,
             // 399 rows, probed by `pv($a, "inst", $k)`'s 280,000, was priced at a row a probe and planned after
             // `tfix` by `$k` (19 M rows of work for 220). The probes that hit are the column's share of the binding's
             // values (containment): its distinct values over the binding's, where both are measured (live counts),
-            // the binding's by the fewest distinct values of an atom of bound variables that holds it.
-            if stats.solving.contains(&a.rel) {
+            // the binding's by the fewest distinct values of an atom of bound variables that holds it, capped
+            // by its constant filters. This also applies to restrictive inputs outside the recursive component.
+            {
                 let mut hit = 1.0f64;
                 for &c in &cols {
                     let Term::Var(v) = &a.args[c] else { continue };
                     let Some(&here) = self.ndv.get(&(a.rel.clone(), c)) else { continue };
-                    let from = body
+                    let from = binding_domains
                         .iter()
-                        .filter_map(|l| match l {
-                            Literal::Atom(b) if !b.neg && !std::ptr::eq(b, a) && b.vars().iter().all(|x| bound.contains(x)) => {
-                                b.args.iter().position(|t| matches!(t, Term::Var(x) if x == v)).and_then(|c2| self.ndv.get(&(b.rel.clone(), c2)).copied())
-                            }
-                            _ => None,
+                        .filter_map(|(b, vars, domains)| {
+                            if std::ptr::eq(*b, a) || !vars.iter().all(|x| bound.contains(x)) { return None; }
+                            b.args.iter().position(|t| matches!(t, Term::Var(x) if x == v)).and_then(|c2| domains[c2])
                         })
                         .fold(f64::INFINITY, f64::min);
                     if from.is_finite() && from > here.max(1.0) {
@@ -1768,6 +1848,7 @@ impl Model {
             // The chosen order's estimates step by step, and every two-step prefix's, for this head's rules.
             if let Some((work, rows, order, _, _)) = best_of.get(&full) {
                 eprintln!("EXPLAIN {head} (delta {first:?}): work {work:.0} rows {rows:.1}");
+                for &i in &delta_misses { eprintln!("    disjoint delta key domains: {}", body[i]); }
                 let mut bound = BTreeSet::new();
                 let mut r = 1.0;
                 for s in order {
@@ -4668,7 +4749,9 @@ impl<'a> Run<'a, '_> {
             }
             let text_symbols = |i: usize, c: usize| self.model.inputs.atoms.is_none() && prog_types(prog, rels[i]).get(c) == Some(&"sym");
             let live = self.fx().stats(&name, &text_symbols)?;
+            let mut nonempty = BTreeSet::new();
             for (r, l) in rels.iter().zip(live) {
+                if l.n > 0 { nonempty.insert(r.as_str()); }
                 live_stats(&mut self.model, r, l);
             }
             if f.last() == Some(&"1") || chunk == 0 {
@@ -4699,14 +4782,17 @@ impl<'a> Run<'a, '_> {
                     };
                     self.fx().reprobe(&name, nseeds + k, &Reprobe::Whole(spec))?;
                 }
-                chunk = 2;
-                continue;
+                // Maintenance probes deliberately have no whole plan. They must also use the seed wave's
+                // measured domains before their first delta runs, rather than waiting two further waves.
             }
             for k in 0..probes.len() {
                 if sql_probe[k] {
                     continue;
                 }
                 let (r, ai) = (probes[k].0, probes[k].1);
+                if chunk == 1 && r.body[ai].atom().is_some_and(|a| !nonempty.contains(a.rel.as_str())) {
+                    continue;
+                }
                 // No size it reads moved since its last replan: `plan_rule_live` would give the plan it gave then
                 // (kept with those sizes, while plans are kept), which the probe runs.
                 if keeping_plans {
@@ -4735,7 +4821,9 @@ impl<'a> Run<'a, '_> {
                 self.fx().reprobe(&name, nseeds + k, &Reprobe::Join(spec))?;
                 probes[k].2 = new;
             }
-            chunk *= 2;
+            // Statistics can now end a chunk early. Bound its wave budget even in a long sequence of such
+            // checkpoints; casting an overflowing budget to u32 would accidentally request an unbounded run.
+            chunk = (chunk * 2).min(u32::MAX as i64);
         }
         // What each rule's steps produced and each relation holds, for a later chunk's choice of what a relation
         // keeps (decision 0099, `keeps::observe`).

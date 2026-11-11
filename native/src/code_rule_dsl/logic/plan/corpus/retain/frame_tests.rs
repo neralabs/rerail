@@ -70,6 +70,57 @@ fn k4_admission_batches_input_digests_derived_rows_and_mixed_granules() {
 }
 
 #[test]
+fn k4_clean_outputs_are_admitted_together_without_rerunning_their_producers() {
+    let _run=profile::one_run();
+    profile::set(true);
+    let dir=tempfile::tempdir().unwrap();
+    let store=ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
+    let (mut prog,_,_)=fixture(&store,130);
+    prog.outputs=(0..130).map(|i|format!("result{i}")).collect();
+    profile::reset(); profile::set(true);
+    let wave=profile::waves();
+    let span=profile::span(||"bulk output admission".into());
+    let mut kept=Retained::from_frames(&store,SPACE,KEY,&prog).unwrap();
+    assert!(prog.outputs.iter().all(|r|kept.holds(r,&prog)),"raw output facts are sufficient to keep a derivation");
+    let cut=Cut{clean:prog.outputs.iter().cloned().collect(),strata:(0,130),changed:vec![]};
+    assert_eq!(kept.load(&store,&cut,&prog).unwrap(),Some((130,390)));
+    for i in 0..130 {
+        let rel=&kept.rels[&format!("result{i}")];
+        let source=rel.source(&format!("result{i}"));
+        assert_eq!((0..source.len()).map(|r|source.value(r,0)).collect::<Vec<_>>(),(1..=3).map(|d|(d<<32)|i as i64).collect::<Vec<_>>());
+        assert!(rel.output.is_none(),"decoding belongs at the output boundary");
+    }
+    drop(span); drop(wave);
+    let statements:u64=profile::sql_waits().iter().filter(|(p,s,_,_)|p.starts_with("bulk output admission")&&s.starts_with("store:")).map(|x|x.2).sum();
+    profile::set(false);
+    assert!(statements>0 && statements<=16,"130 outputs must be admitted in bounded batches: {statements}");
+}
+
+#[test]
+fn k4_retains_consumers_of_literal_facts_and_invalidates_them_when_the_literal_changes() {
+    let dir=tempfile::tempdir().unwrap();
+    let store=ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
+    let text=".decl literal(x:number)\nliteral(1).\n.decl result(x:number)\nresult(x) :- literal(x), x > 0.\n.output result\n";
+    let prog=rr::parse(text).unwrap();
+    let empty=Retained::from_frames(&store,SPACE,KEY,&prog).unwrap();
+    let initial=cut(Some(&empty),KEY,&prog,&HashMap::new()).unwrap();
+    let computed=Retained{key:KEY,rels:HashMap::from([("result".into(),Kept{
+        rel:InRel::flat(&[vec![1]],vec![b'i']),width:1,output:None,
+    })]),..Default::default()};
+    assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&prog,&initial,&[],&HashMap::new()).unwrap(),1);
+    let restored=Retained::from_frames(&store,SPACE,KEY,&prog).unwrap();
+    assert_eq!(cut(Some(&restored),KEY,&prog,&HashMap::new()).unwrap().strata,(0,1));
+    let changed=rr::parse(&text.replace("literal(1).","literal(2).")).unwrap();
+    let restored=Retained::from_frames(&store,SPACE,KEY,&changed).unwrap();
+    assert_eq!(cut(Some(&restored),KEY,&changed,&HashMap::new()).unwrap().strata,(1,1),"literal rows participate in the relation's identity");
+    let external=rr::parse(&format!("{text}\n.input literal\n")).unwrap();
+    let empty=Retained::from_frames(&store,[52;32],KEY,&external).unwrap();
+    let initial=cut(Some(&empty),KEY,&external,&HashMap::new()).unwrap();
+    assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&external,&initial,&[],&HashMap::new()).unwrap(),0,
+        "a relation with literal rows AND external inputs still needs a runtime dependency digest");
+}
+
+#[test]
 fn k4_rejects_a_derived_frame_replaced_after_metadata_admission() {
     let dir=tempfile::tempdir().unwrap();
     let store=ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
