@@ -445,7 +445,8 @@ def main(tree_tsv, join_out, *flags):
             os.makedirs(os.path.dirname(lib), exist_ok=True)
             open(lib, 'w').write(text)
             mf = os.path.join(d, 'Cargo.toml')
-            open(mf, 'w').write(manifest(c, engine) if c not in EXISTING else merge_manifest(mf, c, engine))
+            mtext = manifest(c, engine) if c not in EXISTING else merge_manifest(mf, c, engine)
+            open(mf, 'w').write(mtext)
         print(f'{c:22} lib.rs {text.count(chr(10)):5} lines')
     if write:
         open(os.path.join(NATIVE, 'Cargo.toml'), 'w').write(engine_manifest_edits(engine_text, crates))
