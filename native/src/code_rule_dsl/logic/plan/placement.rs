@@ -272,7 +272,9 @@ impl Shape {
         if recursive {
             self.note(Form::Recursion, || "recursion".into());
         }
-        if let Some(op) = head.iter().find_map(not_row) {
+        // A cat of row terms in a head is made on the device (`mj::MAKE`), its text stored as a symbol after the run;
+        // not in a recursive stratum, whose rounds would join it before it is one.
+        if let Some(op) = head.iter().filter(|t| recursive || !is_cat_of_rows(t)).find_map(not_row) {
             self.note(Form::Computed, || format!("{op} in a head"));
         }
         for step in order {
@@ -294,10 +296,10 @@ impl Shape {
                     self.note(Form::TextTest, || format!("text test @{f}"));
                 }
                 // A cat's text compared with a name (`=`, `!=`): the device compares the names' bytes (`CATEQ`).
-                // The other side a constant or a variable an atom binds: a comparison, not the cat's text bound
-                // into a variable (a symbol the device does not make).
+                // The other side a constant or a variable: a comparison of names, or (a variable no atom binds) the
+                // text bound, made on the device when the head alone reads it; not in a recursive stratum.
                 Literal::Cmp { l, op: "=" | "!=", r } if [(l, r), (r, l)].iter().any(|(c, o)| is_cat_of_rows(c) && match o {
-                    Term::Var(v) => order.iter().any(|s| matches!(&s.lit, Literal::Atom(a) if !a.neg && a.args.iter().any(|t| matches!(t, Term::Var(w) if w == v)))),
+                    Term::Var(v) => !recursive || order.iter().any(|s| matches!(&s.lit, Literal::Atom(a) if !a.neg && a.args.iter().any(|t| matches!(t, Term::Var(w) if w == v)))),
                     Term::Call(..) => false,
                     _ => true,
                 }) => {
@@ -542,8 +544,8 @@ mod tests {
         // A large join with a negation, a text test and a computed head: the GPU's price is lower, and the computed
         // term is the form it lacks.
         let mut big = Shape::default();
-        let cat = Term::Call("cat".into(), vec![Term::Var("x".into()), Term::Var("x".into())]);
-        big.add(&[atom("kind", false), atom("strtest_3", false), atom("within", true)], &[cat], 4e6, false);
+        let len = Term::Call("strlen".into(), vec![Term::Var("x".into())]);
+        big.add(&[atom("kind", false), atom("strtest_3", false), atom("within", true)], &[len], 4e6, false);
         assert_eq!(big.forms, [Form::Join, Form::Negation, Form::Computed, Form::TextTest].into_iter().collect());
         let p = place(&big);
         assert!(p.gpu_cheaper && !p.gpu, "{p:?}");
@@ -558,15 +560,23 @@ mod tests {
         set_device(was);
         assert!(p.gpu && p.missing.is_empty(), "{p:?}");
         assert!(!place(&plain).gpu, "the CPU binding keeps it");
-        // `@doc(x) = @doc(y)` and `@in(x, {…})` are row code; `@cat(x, y)` is not.
+        // `@doc(x) = @doc(y)` and `@in(x, {…})` are row code, and so is `z = cat(x, y)` (a text the device makes);
+        // `strlen(x)` is not, nor a cat in a recursive stratum (its rounds would join the text before it is a symbol).
         let cmp = |l: Term, r: Term| Step { at: 0, lit: Literal::Cmp { l, op: "=", r }, mode: None };
         let doc = |v: &str| Term::Call("doc".into(), vec![Term::Var(v.into())]);
         let mut docs = Shape::default();
         docs.add(&[atom("kind", false), cmp(doc("x"), doc("y"))], &[], 1.0, false);
         assert!(docs.forms.contains(&Form::Comparison) && !docs.forms.contains(&Form::Computed));
+        let made = || cmp(Term::Var("z".into()), Term::Call("cat".into(), vec![Term::Var("x".into()), Term::Var("y".into())]));
         let mut cat = Shape::default();
-        cat.add(&[atom("kind", false), cmp(Term::Var("z".into()), Term::Call("cat".into(), vec![Term::Var("x".into()), Term::Var("y".into())]))], &[], 1.0, false);
-        assert!(cat.forms.contains(&Form::Computed));
+        cat.add(&[atom("kind", false), made()], &[], 1.0, false);
+        assert!(cat.forms.contains(&Form::Comparison) && !cat.forms.contains(&Form::Computed), "{:?}", cat.forms);
+        let mut rec = Shape::default();
+        rec.add(&[atom("kind", false), made()], &[], 1.0, true);
+        assert!(rec.forms.contains(&Form::Computed));
+        let mut len = Shape::default();
+        len.add(&[atom("kind", false), cmp(Term::Var("z".into()), Term::Call("strlen".into(), vec![Term::Var("x".into())]))], &[], 1.0, false);
+        assert!(len.forms.contains(&Form::Computed));
         // A tiny stratum stays on the CPU: the submission costs more than the work, even under the Metal binding.
         let mut small = Shape::default();
         small.add(&[atom("kind", false)], &[], 10.0, false);

@@ -48,9 +48,9 @@ builtin to_number/1	native	no computed term	p(v) :- t(a), v = to_number(a).
 builtin substr/3	native	no computed term	p(v) :- t(a), m(y), m(w), v = substr(a, y, w).
 builtin max/2	native	device	p(v) :- m(x), m(y), v = max(x, y).
 builtin min/2	native	device	p(v) :- m(x), m(y), v = min(x, y).
-builtin cat/2	native	no computed term	p(v) :- t(a), t(b), v = cat(a, b).
-functor @dot/2	native	no computed term	p(v) :- t(a), t(b), v = @dot(a, b).
-functor @concat/2	native	no computed term	p(v) :- t(a), t(b), v = @concat(a, b).
+builtin cat/2	native	device	p(v) :- t(a), t(b), v = cat(a, b).
+functor @dot/2	native	device	p(v) :- t(a), t(b), v = @dot(a, b).
+functor @concat/2	native	device	p(v) :- t(a), t(b), v = @concat(a, b).
 functor @replace_all/3	native	no computed term	p(v) :- t(a), t(b), t(c), v = @replace_all(a, b, c).
 functor @json_str/1	native	no computed term	p(v) :- t(a), v = @json_str(a).
 functor @nfkc/1	native	no computed term	p(v) :- t(a), v = @nfkc(a).
@@ -178,7 +178,7 @@ text test iword: a bound pattern	native	refused: the text test @iword of a patte
 text test match: a constant pattern	native	device	p(a) :- s(a), match("a", a).
 text test match: negated	native	device	p(a) :- s(a), !match("a", a).
 text test match: a set of patterns	native	device	p(a) :- s(a), (match("a", a) ; match("B", a)).
-text test match: a bound pattern	native	refused: a cat's text read past an eq or ne has no device form (the device makes no symbol)	p(a, b) :- s(a), t(b), match(b, a).
+text test match: a bound pattern	native	refused: a cat's text read past an eq or ne and the head has no device form (the device makes no symbol)	p(a, b) :- s(a), t(b), match(b, a).
 aggregate count	native	device	p(a, c) :- s(a), c = count : { p(a, _) }.
 aggregate sum	native	device	p(a, c) :- s(a), c = sum v : { p(a, v) }.
 aggregate min	native	device	p(a, c) :- t(a), c = min v : { p(a, v) }.
@@ -201,4 +201,4 @@ recursion with a negation	native	device	p(x, y) :- e(x, y), !m(y). p(x, z) :- p(
 recursion with a comparison	native	device	p(x, y) :- e(x, y). p(x, z) :- p(x, y), e(y, z), z < 5.
 recursion with a computed term	native	device	p(x, 0) :- n(x). p(y, d + 1) :- p(x, d), e(x, y), d < 4.
 computed head	native	device	p(x + 1) :- n(x).
-computed symbol head	native	no computed term	p(@dot(a, "x")) :- s(a).
+computed symbol head	native	device	p(@dot(a, "x")) :- s(a).

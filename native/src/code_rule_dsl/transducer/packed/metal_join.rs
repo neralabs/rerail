@@ -73,6 +73,15 @@ pub(in crate::code_rule_dsl) const STRCMP: u32 = 6;
 /// Whether symbol x's name is made of a's and b's (keys 0, 1, 2: a, b, x), as `agg[0]` wants (1: equal), by the
 /// form `agg[1]`.
 pub(in crate::code_rule_dsl) const CATEQ: u32 = 7;
+/// A text made of two names, a's and b's (keys 0 and 1) by the form `agg[1]`, into `bind_slot[0]` as a made value
+/// (`MADE`): the parts' symbols, not yet a symbol (the device makes none). Its counter word is set when a part is no
+/// symbol a made value holds (`MADE_PART`).
+pub(in crate::code_rule_dsl) const MAKE: u32 = 8;
+/// A made value: this bit, the form at `MADE_FORM`, a's symbol from bit 30, b's from bit 0.
+pub(in crate::code_rule_dsl) const MADE: i64 = 1 << 62;
+pub(in crate::code_rule_dsl) const MADE_FORM: u32 = 61;
+/// One past the greatest part a made value holds.
+pub(in crate::code_rule_dsl) const MADE_PART: i64 = 1 << 30;
 /// `cat`'s form: b's name alone when a's is empty, else a's, ".", b's.
 pub(in crate::code_rule_dsl) const CAT_DOT: u32 = 0;
 /// `str_concat`'s form: a's name then b's.
@@ -416,6 +425,15 @@ static inline bool cateq_pass(constant Stage& s, device const long* L, uint t, d
     return eq == (s.agg[0] != 0);
 }
 
+// Mode 8: the made value of a's and b's symbols by form agg[1] (`MADE`); -1 when a part is none a made value holds.
+static inline long make_value(constant Stage& s, device const long* L, uint t) {
+    long v[2];
+    for (uint k = 0; k < 2; k++) v[k] = s.key_kind[k] == 1 ? L[ulong(s.key_slot[k]) * s.cap_in + t] : s.key_const[k];
+    const long part = 1l << 30;
+    if (v[0] < 0 || v[0] >= part || v[1] < 0 || v[1] >= part) return -1;
+    return (1l << 62) | (long(s.agg[1] & 1) << 61) | (v[0] << 30) | v[1];
+}
+
 // Whether binding t's symbol in slot agg[0] has its verdict bit (mode 5), as agg[1] wants.
 static inline bool text_pass(constant Stage& s, device const long* L, uint t, device const long* R) {
     long v = L[ulong(s.agg[0]) * s.cap_in + t];
@@ -435,6 +453,11 @@ kernel void stage_count(device const long* L [[buffer(0)]], device const long* R
     if (s.mode == 5) { counts[t] = uint(text_pass(s, L, t, R)); return; }
     if (s.mode == 6) { counts[t] = 1; return; }
     if (s.mode == 7) { counts[t] = uint(cateq_pass(s, L, t, R)); return; }
+    if (s.mode == 8) {
+        if (make_value(s, L, t) < 0 && s.counter != NONE) atomic_store_explicit(&counters[s.counter], 1u, memory_order_relaxed);
+        counts[t] = 1;
+        return;
+    }
     candidates(s, L, t, starts, rkeys, nruns, kv, lo, hi);
     if (s.mode == 4) {
         long v = 0;
@@ -500,6 +523,12 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
         O[ulong(s.bind_slot[0]) * s.cap_out + at] = strcmp_value(s, L, t, R);
         return;
     }
+    if (s.mode == 8) {
+        if (offsets[t + 1] <= at) return;
+        write_row(s, L, t, R, 0, O, at);
+        O[ulong(s.bind_slot[0]) * s.cap_out + at] = make_value(s, L, t);
+        return;
+    }
     if (s.mode == 4) {
         if (offsets[t + 1] <= at) return;
         candidates(s, L, t, starts, rkeys, nruns, kv, lo, hi);
@@ -527,6 +556,29 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
         write_row(s, L, t, R, r, O, at);
         at++;
     }
+}
+
+// The texts of made values (mode 8's), one a thread: V's n values, each one's bytes into its `width` bytes of `out`
+// (its length into `lens`), from the parts' names in T. The host stores them as symbols; it makes no text.
+kernel void text_make(device const long* V [[buffer(0)]], device const long* T [[buffer(1)]], device uint* lens [[buffer(2)]],
+                      device uchar* out [[buffer(3)]], constant uint2& p [[buffer(4)]], uint t [[thread_position_in_grid]]) {
+    if (t >= p.x) return;
+    long v = V[t];
+    uint form = uint((v >> 61) & 1);
+    long a = (v >> 30) & ((1l << 30) - 1), b = v & ((1l << 30) - 1);
+    uint ao, al, bo, bl;
+    text_find(T, a, ao, al);
+    text_find(T, b, bo, bl);
+    device const uchar* c = text_chars(T);
+    device uchar* o = out + ulong(t) * p.y;
+    bool dot = form == 0 && al > 0;
+    uint n = al + (dot ? 1 : 0) + bl;
+    if (n > p.y) { lens[t] = 0xffffffffu; return; }
+    uint at = 0;
+    for (uint k = 0; k < al; k++) o[at++] = c[ao + k];
+    if (dot) o[at++] = uchar('.');
+    for (uint k = 0; k < bl; k++) o[at++] = c[bo + k];
+    lens[t] = n;
 }
 
 // A text test's verdicts, once per distinct term (decision 0038's chunked matching): a SIMD group per term walks it
@@ -779,6 +831,8 @@ pub(in crate::code_rule_dsl) struct DevText {
     pub(in crate::code_rule_dsl) terms: usize,
     /// One past the greatest symbol: the verdicts' bits.
     pub(in crate::code_rule_dsl) span: usize,
+    /// The longest name's bytes.
+    pub(in crate::code_rule_dsl) longest: usize,
 }
 
 impl DevText {
@@ -809,7 +863,8 @@ impl DevText {
         let span = ids.last().map_or(0, |&m| m.max(0) as usize + 1);
         let rows = out.len().div_ceil(8);
         let held = Held::of(out.into_iter()).map_err(|_| Error::BackendCapacity)?;
-        Ok(DevText { packed: std::rc::Rc::new(DevRel { buffer: held, rows, cols: 1 }), terms: n, span })
+        let longest = offs.windows(2).map(|w| (w[1] - w[0]) as usize).max().unwrap_or(0);
+        Ok(DevText { packed: std::rc::Rc::new(DevRel { buffer: held, rows, cols: 1 }), terms: n, span, longest })
     }
 
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
@@ -1185,6 +1240,22 @@ impl Batch {
         let pass = self.pass(1)?;
         pass.run_bytes(&kernel, &[&text.packed.buffer.buffer, &table.table.buffer, &bits.buffer.buffer, &scratch.buffer], bytes, (groups * 32).div_ceil(256));
         self.keep.push(scratch);
+        Ok(())
+    }
+
+    /// The texts of made values `vals` (`MAKE`'s), their parts' names in `text`: each one's length into `lens` (one
+    /// a row) and its bytes into `width` bytes of `out`.
+    pub(in crate::code_rule_dsl) fn make_texts(&mut self, vals: &DevRel, text: &DevText, width: usize, lens: &DevRel, out: &DevRel) -> Result<(), Error> {
+        if vals.rows == 0 {
+            return Ok(());
+        }
+        assert!(lens.rows * 2 >= vals.rows && out.rows * 8 >= vals.rows * width);
+        let kernel = pipeline("join", "text_make", || SOURCE.to_owned())?;
+        let p: [u32; 2] = [vals.rows as u32, width as u32];
+        // SAFETY: plain integers.
+        let bytes = unsafe { std::slice::from_raw_parts(p.as_ptr().cast::<u8>(), 8) };
+        let pass = self.pass(1)?;
+        pass.run_bytes(&kernel, &[&vals.buffer.buffer, &text.packed.buffer.buffer, &lens.buffer.buffer, &out.buffer.buffer], bytes, vals.rows.div_ceil(256));
         Ok(())
     }
 

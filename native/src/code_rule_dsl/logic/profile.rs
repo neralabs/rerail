@@ -197,6 +197,8 @@ struct GpuTotal {
     rows: u64,
     distinct: u64,
     bindings: u64,
+    /// Texts made on the device into heads, stored as symbols.
+    made: u64,
 }
 
 impl GpuTotal {
@@ -221,6 +223,7 @@ impl GpuTotal {
         self.rows += o.rows;
         self.distinct += o.distinct;
         self.bindings += o.bindings;
+        self.made += o.made;
     }
 
     /// The host's CPU on the device's work: encoding, uploads, waiting, reading back.
@@ -938,6 +941,7 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
                 rows: d.rows,
                 distinct: d.distinct,
                 bindings: d.bindings,
+                made: d.made,
             });
             true
         }
@@ -997,8 +1001,8 @@ fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
         ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns);
     let _ = writeln!(r, "  host CPU {:.1} ms: encode {:.1}, uploads {:.1}, wait {:.1} ({:.1} ms wall), rows back into the store {:.1}",
         ms(sum.host()), ms(sum.encode), ms(sum.upload), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
-    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), found resident {}; sorts made {}, found resident {}; bindings {}, head rows {} ({} distinct, made so on the device)",
-        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.resident, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct);
+    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), found resident {}; sorts made {}, found resident {}; bindings {}, head rows {} ({} distinct, made so on the device); texts made {}",
+        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.resident, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.made);
     let mut top = ran.clone();
     top.sort_by(|a, b| b.1.cpu.total_cmp(&a.1.cpu));
     let _ = writeln!(r, "{:>8} {:>8} {:>8} {:>8} {:>5} {:>6} {:>6} {:>10}  stratum (costliest 25 on the GPU)", "cpu ms", "host ms", "gpu ms", "est ms", "runs", "rules", "subm", "rows");

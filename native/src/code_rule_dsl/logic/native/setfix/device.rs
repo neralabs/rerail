@@ -115,6 +115,9 @@ pub(super) struct Plan {
     stages: Vec<PStage>,
     head: Vec<Option<i64>>,
     head_slots: Vec<usize>,
+    /// Per head column, when its values are made texts (`mj::MAKE`'s): the columns and constants whose names make
+    /// them. Their texts are made on the device after the run, and stored as symbols as the rows are.
+    made: Vec<Option<(Vec<(Arc<InRel>, usize)>, Vec<i64>)>>,
     nslots: usize,
     nsteps: usize,
     /// The rule's spec, hashed: its stages' observed fanouts are kept by it (`GROWTH`), for the next chunk's guesses.
@@ -240,6 +243,8 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
     let mut origin: Vec<Option<(Arc<InRel>, usize)>> = vec![None; j.nslots];
     // `cat`s held back, by the slot they bind: each read only by an `eq` or `ne` after, which compares names.
     let mut deferred: HashMap<usize, (Key, Key, u32)> = HashMap::new();
+    // Slots whose values are made texts (`MAKE`'s), read by the head alone.
+    let mut made: Vec<usize> = Vec::new();
     let mut stages = Vec::new();
     let mut i = 0;
     while i < j.steps.len() {
@@ -421,16 +426,25 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
             _ if joined(step).is_some() => {
                 let (out, a, b, bind, form) = joined(step).expect("a joined text");
                 let (out, a, b, bind) = (&out, &a, &b, &bind);
-                // A text made of two names: no symbol is made on the device, so the text is compared where it is
-                // read, by an `eq` or `ne` (`CATEQ`); bound already, it is that comparison here.
-                let read_only_by_comparisons = j.steps[i + 1..].iter().all(|s| !mentions(s, *out) || matches!(s, Step::Eq { .. } | Step::Ne { .. }))
-                    && !j.out.iter().any(|t| matches!(*t, Term::Slot(s) if s == *out) || matches!(*t, Term::Cat(x, y) if x == *out || y == *out));
-                if [a, b].iter().any(|k| matches!(k, Key::Slot(s) if deferred.contains_key(s))) {
+                // A text made of two names. Read by an `eq` or `ne`, it is compared where it is read (`CATEQ`); bound
+                // already, it is that comparison here. Read by the head alone, it is made (`MAKE`): its parts kept,
+                // its text made after the run.
+                let later: Vec<&Step> = j.steps[i + 1..].iter().filter(|s| mentions(s, *out)).collect();
+                let in_head = j.out.iter().any(|t| matches!(*t, Term::Slot(s) if s == *out));
+                let in_head_cat = j.out.iter().any(|t| matches!(*t, Term::Cat(x, y) if x == *out || y == *out));
+                if [a, b].iter().any(|k| matches!(k, Key::Slot(s) if deferred.contains_key(s) || made.contains(s))) {
                     return Err("cat of a cat's text has no device form".into());
                 }
-                if *bind {
-                    if !read_only_by_comparisons {
-                        return Err("a cat's text read past an eq or ne has no device form (the device makes no symbol)".into());
+                if *bind && later.is_empty() && in_head && !in_head_cat {
+                    let mut d = mj::Stage { mode: mj::MAKE, ..mj::Stage::default() };
+                    let kind = text_keys(&mut d, &[*a, *b], &origin, "cat")?;
+                    d.agg = [0, form];
+                    d.bind_slot[0] = *out as u32;
+                    made.push(*out);
+                    stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
+                } else if *bind {
+                    if in_head || in_head_cat || !later.iter().all(|s| matches!(s, Step::Eq { .. } | Step::Ne { .. })) {
+                        return Err("a cat's text read past an eq or ne and the head has no device form (the device makes no symbol)".into());
                     }
                     deferred.insert(*out, (*a, *b, form));
                     stages.push(PStage { first: i, span: 1, kind: Kind::Pass, desc: mj::Stage::default(), npassed: 0 });
@@ -536,11 +550,38 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
     }
     let mut head = Vec::new();
     let mut head_slots = Vec::new();
+    let mut made_cols = Vec::new();
+    let mut nslots = j.nslots;
     for t in &j.out {
         match *t {
-            Term::Slot(s) => { head.push(None); head_slots.push(s); }
-            Term::Const(c) => { head.push(Some(c)); head_slots.push(0); }
-            Term::Cat(..) => return Err("a head that joins text".into()),
+            Term::Slot(s) => {
+                head.push(None);
+                head_slots.push(s);
+                made_cols.push(match stages.iter().find(|st| st.desc.mode == mj::MAKE && st.desc.bind_slot[0] as usize == s) {
+                    Some(PStage { kind: Kind::Names { cols, consts }, .. }) => Some((cols.clone(), consts.clone())),
+                    _ => None,
+                });
+            }
+            Term::Const(c) => {
+                head.push(Some(c));
+                head_slots.push(0);
+                made_cols.push(None);
+            }
+            Term::Cat(x, y) => {
+                // `cat` in the head: made into a slot of its own after the steps (a stage that counts no step).
+                if [x, y].iter().any(|s| deferred.contains_key(s) || made.contains(s)) {
+                    return Err("cat of a cat's text has no device form".into());
+                }
+                let mut d = mj::Stage { mode: mj::MAKE, ..mj::Stage::default() };
+                let Kind::Names { cols, consts } = text_keys(&mut d, &[Key::Slot(x), Key::Slot(y)], &origin, "cat")? else { unreachable!("names") };
+                d.agg = [0, mj::CAT_DOT];
+                d.bind_slot[0] = nslots as u32;
+                head.push(None);
+                head_slots.push(nslots);
+                made_cols.push(Some((cols.clone(), consts.clone())));
+                stages.push(PStage { first: j.steps.len(), span: 0, kind: Kind::Names { cols, consts }, desc: d, npassed: 0 });
+                nslots += 1;
+            }
         }
     }
     let key = {
@@ -549,7 +590,7 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
         spec.hash(&mut h);
         h.finish()
     };
-    Ok(Plan { stages, head, head_slots, nslots: j.nslots, nsteps: j.steps.len(), key })
+    Ok(Plan { stages, head, head_slots, made: made_cols, nslots, nsteps: j.steps.len(), key })
 }
 
 /// Whether `step` reads slot `x`.
@@ -632,6 +673,8 @@ impl Resident {
 #[derive(Clone, Debug, Default)]
 pub(in crate::code_rule_dsl) struct Report {
     pub(in crate::code_rule_dsl) rules: u32,
+    /// Texts made on the device (`cat` into a head) and stored as symbols.
+    pub(in crate::code_rule_dsl) made: u64,
     pub(in crate::code_rule_dsl) stages: u32,
     pub(in crate::code_rule_dsl) submissions: u32,
     pub(in crate::code_rule_dsl) dispatches: u32,
@@ -861,8 +904,8 @@ impl<'p> Run<'p> {
                     slot += 1;
                 }
             }
-            if s.desc.mode == mj::AGG {
-                // Its word: set when a sum passed 64 bits.
+            if s.desc.mode == mj::AGG || s.desc.mode == mj::MAKE {
+                // Its word: set when a sum passed 64 bits, or a made text's part is past what a made value holds.
                 counter.push(Some(ncounters));
                 ncounters += 1;
             } else if s.npassed > 0 {
@@ -940,7 +983,7 @@ impl<'p> Run<'p> {
                     }
                     let out = mj::Table::new(self.plan.nslots, cap).map_err(|e| format!("{e:?}: a binding table of {cap} rows, {} slots", self.plan.nslots))?;
                     if let Some(c) = self.counter[k] {
-                        for w in c..c + 1 + if s.desc.mode == mj::AGG { 0 } else { s.npassed } {
+                        for w in c..c + 1 + if s.desc.mode == mj::AGG || s.desc.mode == mj::MAKE { 0 } else { s.npassed } {
                             self.counters.set(w, 0);
                         }
                     }
@@ -961,8 +1004,11 @@ impl<'p> Run<'p> {
 
     /// Why its rows are not the CPU's, once it ran: an aggregate's sum past 64 bits (the CPU's fold holds 128).
     fn failed(&self) -> Option<String> {
-        self.plan.stages.iter().zip(&self.counter).any(|(s, c)| s.desc.mode == mj::AGG && c.is_some_and(|c| self.counters.get(c) != 0))
-            .then(|| "an aggregate's sum past 64 bits".to_owned())
+        let set = |mode| self.plan.stages.iter().zip(&self.counter).any(|(s, c)| s.desc.mode == mode && c.is_some_and(|c| self.counters.get(c) != 0));
+        if set(mj::AGG) {
+            return Some("an aggregate's sum past 64 bits".to_owned());
+        }
+        set(mj::MAKE).then(|| format!("a made text's part past symbol {}", mj::MADE_PART))
     }
 
     /// The device bytes of its tables.
@@ -1093,8 +1139,10 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, f
     // The rows into the store, and each step's counts.
     let d0 = thread_cpu();
     let _h = crate::code_rule_dsl::logic::lanes::prof::host("device join (decision 0095)", "decode: rows into the store");
+    // The made texts' symbols first: a refusal leaves the store as it was.
+    let symbols = made_symbols(&runs, rep, names)?;
     let mut out = Vec::with_capacity(runs.len());
-    for (r, &(plan, j, head)) in runs.iter().zip(rules) {
+    for ((r, &(plan, j, head)), symbols) in runs.iter().zip(rules).zip(&symbols) {
         let last = r.io.last().map_or(0, |io| io.1);
         let n = r.totals.get(last) as usize;
         let distinct = r.totals.get(r.totals.len - 1) as usize;
@@ -1110,6 +1158,9 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, f
         for x in 0..distinct {
             for (c, h) in plan.head.iter().enumerate() {
                 row[c] = h.unwrap_or_else(|| cols[c][x]);
+                if let Some(m) = &symbols[c] {
+                    row[c] = m[&row[c]];
+                }
             }
             if !rel.contains(&row) {
                 fresh[head].add(&row);
@@ -1124,6 +1175,75 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, f
     Ok(out)
 }
 
+
+/// The symbols of the made texts in each run's head columns (`Plan::made`), by made value: the texts made on the
+/// device (`text_make`, one batch for every column), then stored as symbols, all at once.
+fn made_symbols(runs: &[Run<'_>], rep: &mut Report, names: &Interner) -> Result<Vec<Vec<Option<HashMap<i64, i64>>>>, String> {
+    struct Job {
+        run: usize,
+        col: usize,
+        vals: Vec<i64>,
+        width: usize,
+        lens: mj::DevRel,
+        out: mj::DevRel,
+    }
+    let mut jobs = Vec::new();
+    let mut batch: Option<mj::Batch> = None;
+    let mut held = Vec::new();
+    for (k, r) in runs.iter().enumerate() {
+        if r.plan.made.iter().all(Option::is_none) {
+            continue;
+        }
+        let distinct = r.totals.get(r.totals.len - 1) as usize;
+        let uniq = r.uniq.as_ref().expect("the head's distinct rows");
+        for (c, m) in r.plan.made.iter().enumerate() {
+            let Some((cols, consts)) = m else { continue };
+            let s = r.plan.head_slots[c];
+            let column = uniq.column(r.uniq_cols.iter().position(|u| *u == s).unwrap_or(0), distinct);
+            let mut seen = std::collections::HashSet::new();
+            let vals: Vec<i64> = column.iter().copied().filter(|v| seen.insert(*v)).collect();
+            if vals.iter().any(|v| v & mj::MADE == 0) {
+                return Err("a made column holding a value no text made".into());
+            }
+            let text = texts(cols, consts, rep, names)?;
+            let width = 2 * text.longest + 1;
+            if vals.len().saturating_mul(width) > TABLE_MAX {
+                return Err(format!("{} made texts of up to {width} bytes past the device's budget", vals.len()));
+            }
+            let dev = mj::DevRel::upload(1, vals.len(), |v| v.copy_from_slice(&vals)).map_err(|e| format!("{e:?}"))?;
+            let lens = mj::DevRel::empty(1, vals.len().div_ceil(2)).map_err(|e| format!("{e:?}"))?;
+            let out = mj::DevRel::empty(1, (vals.len() * width).div_ceil(8)).map_err(|e| format!("{e:?}"))?;
+            let b = match &mut batch {
+                Some(b) => b,
+                None => batch.insert(mj::Batch::new().map_err(|e| format!("{e:?}"))?),
+            };
+            b.make_texts(&dev, &text, width, &lens, &out).map_err(|e| format!("{e:?}"))?;
+            held.push((dev, text));
+            jobs.push(Job { run: k, col: c, vals, width, lens, out });
+        }
+    }
+    let mut maps: Vec<Vec<Option<HashMap<i64, i64>>>> = runs.iter().map(|r| vec![None; r.plan.head.len()]).collect();
+    let Some(mut b) = batch else { return Ok(maps) };
+    b.finish().map_err(|e| format!("{e:?}"))?;
+    drop(held);
+    for job in jobs {
+        // SAFETY: the batch that wrote them completed; `lens` holds a u32 per value, `out` `width` bytes per value.
+        let lens = unsafe { std::slice::from_raw_parts(job.lens.column(0).as_ptr().cast::<u32>(), job.vals.len()) };
+        let bytes = unsafe { std::slice::from_raw_parts(job.out.column(0).as_ptr().cast::<u8>(), job.vals.len() * job.width) };
+        let mut strs = Vec::with_capacity(job.vals.len());
+        for (x, &n) in lens.iter().enumerate() {
+            if n as usize > job.width {
+                return Err("a made text past its width".into());
+            }
+            let at = x * job.width;
+            strs.push(std::str::from_utf8(&bytes[at..at + n as usize]).map_err(|_| "a made text that is not UTF-8".to_owned())?);
+        }
+        let ids = names.atoms.intern_all(&strs).map_err(|e| format!("the made texts' symbols: {e}"))?;
+        rep.made += strs.len() as u64;
+        maps[job.run][job.col] = Some(job.vals.iter().zip(ids).map(|(&v, id)| (v, i64::from(id))).collect());
+    }
+    Ok(maps)
+}
 
 /// The most rounds a recursive component runs on the device before it is refused (and runs on the CPU).
 const ROUNDS_MAX: usize = 4096;
@@ -1249,6 +1369,9 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device fixpoint".into());
     let c0 = thread_cpu();
     let mut rep = Report { rules: (seeds.len() + deltas.len()) as u32, stages: seeds.iter().chain(deltas).map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
+    if seeds.iter().chain(deltas).any(|r| r.0.made.iter().any(Option::is_some)) {
+        return Err("a made text in a recursive component (its rounds would join texts not yet symbols)".into());
+    }
     for &h in heads {
         let rel = &store.rels[h];
         if rel.n > 0 {
@@ -1405,6 +1528,7 @@ fn counted(r: &Run<'_>, plan: &Plan, j: &JoinRule, rep: &mut Report) {
         let n_out = get(o);
         rep.bindings += if i != o { n_out } else { 0 };
         let vals: Vec<u64> = match (&s.kind, r.counter[k]) {
+            _ if s.span == 0 => Vec::new(),
             (Kind::Pass | Kind::Map, _) => vec![n_in; s.span],
             _ if s.desc.mode == mj::AGG => vec![n_out],
             (Kind::Atom { .. } | Kind::Own { .. }, Some(c)) => (0..=s.npassed).map(|m| u64::from(r.counters.get(c + m))).collect(),
@@ -1629,9 +1753,15 @@ mod tests {
             format!("pos {n} v0 v1\nfunc str_concat v2 v0 {}\neq v2 {}\nhead v0 v1", sym("ts"), sym("foots")),
             format!("pos {m} v0\npos {n} v1 v2\nfunc str_concat v3 v0 {}\neq v3 v1\nhead v1 v2", sym("x9")),
             format!("pos {n} v0 v1\nfunc str_concat v2 {} v0\nne v2 {}\nhead v0 v1", sym("a"), sym("afoo")),
+            // Texts made into the head, new symbols: a cat bound, a cat in the head (an empty part among them), a
+            // concatenation.
+            format!("pos {n} v0 v1\nlt v1 i:700\ncat v2 v0 {}\nhead v2 v1", sym("made")),
+            format!("pos {m} v0\npos {n} v1 v2\nlt v2 i:25\nhead cat:v0:v1 v2"),
+            format!("pos {n} v0 v1\nlt v1 i:300\nfunc str_concat v2 v0 {}\nhead v2 v1", sym("!")),
         ];
         let mut got = Vec::new();
-        for device in [false, true] {
+        // The device first: the texts it makes are new symbols.
+        for device in [true, false] {
             db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
             let mut spec = vec!["name dev_text".to_owned()];
             if device {
@@ -1643,6 +1773,9 @@ mod tests {
             super::super::run(&db, "dev_text", 0).unwrap();
             let report = super::take_report();
             assert_eq!(report.as_ref().is_some_and(|r| r.refused.is_none()), device, "{report:?}");
+            if device {
+                assert!(report.as_ref().is_some_and(|r| r.made > 1000), "texts made on the device: {report:?}");
+            }
             let counts = super::super::step_counts(&db, "dev_text").unwrap();
             super::super::close(&db, "dev_text").unwrap();
             let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
@@ -1652,7 +1785,7 @@ mod tests {
         assert!(got[0].0.len() > 500, "{} rows", got[0].0.len());
         let longest: i64 = db.query_row("SELECT max(length(CAST(c0 AS BLOB))) FROM temp.n", [], |r| r.get(0)).unwrap();
         assert!(longest > 64, "a name past two chunks: {longest} bytes");
-        assert_eq!(got[0].0, got[1].0, "the device's text tests are the CPU's");
-        assert_eq!(got[0].1, got[1].1, "the device's counts per step are the CPU's");
+        assert_eq!(got[1].0, got[0].0, "the device's text tests are the CPU's");
+        assert_eq!(got[1].1, got[0].1, "the device's counts per step are the CPU's");
     }
 }
