@@ -21,7 +21,9 @@ pub const LIBRARY_NAME: &str = "randomforest_kernels";
 
 /// The trainer's kernels (`randomforest_kernels.metal`), in the order a tree's training runs them, then the
 /// forest's prediction and the feature space's columns.
-pub const KERNELS: [&str; 14] = [
+pub const KERNELS: [&str; 16] = [
+    "bagRowsKernel",
+    "rootWeightsKernel",
     "decompressRowsKernel",
     "testFeatureKernel",
     "getPartitionSplitsKernel",

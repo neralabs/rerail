@@ -607,15 +607,45 @@ impl GridComputeKernelSpecialization {
         let err = |e: String| format!("Error planning Grid kernel {}: {e}", self.kernel.kernel_name);
         let mut rec = RecordingBindContext::default();
         let mut buffers = Vec::new();
+        let mut positions = Vec::new();
         for action in &self.bind_actions {
             match (&action.action, ) {
                 (GridBindActionType::SetFromArg(arg_num), ) if matches!(args.get(*arg_num).copied().flatten(), Some(ComputeKernelArgument::Buffer(_))) => {
-                    buffers.push((action.compute_function_arg_index, self.kernel.params[*arg_num].name.clone()));
+                    let name = &self.kernel.params[*arg_num].name;
+                    let at = named.iter().position(|(n, _)| n == name).ok_or_else(|| err(format!("no argument {name}")))?;
+                    positions.push((action.compute_function_arg_index, at, named[at].0.as_ptr() as usize));
+                    buffers.push((action.compute_function_arg_index, name.clone()));
                 }
                 _ => action.apply(&args, &knowns, &mut rec).map_err(err)?,
             }
         }
-        Ok(GridLaunchPlan { primitives: rec.primitives, thread_groups: rec.thread_groups, buffers, grid: mtl_grid, block: mtl_block })
+        Ok(GridLaunchPlan { primitives: rec.primitives, thread_groups: rec.thread_groups, buffers, positions, grid: mtl_grid, block: mtl_block })
+    }
+
+    /// Replays a plan with the arguments of the call it was planned from, in the same order (the same call site):
+    /// each buffer taken by its place in `named`, its name checked by address (a literal's), so a replay compares
+    /// no strings; a list in another order falls back to the names.
+    pub fn launch_plan_in_order(&self, plan: &GridLaunchPlan, named: &[(&str, ComputeKernelArgument)], ctx: &mut dyn GridBindContext) -> Result<(), String> {
+        for (i, bytes) in &plan.primitives {
+            ctx.set_primitive(*i, bytes);
+        }
+        for &(i, n) in &plan.thread_groups {
+            ctx.set_thread_group_memory(i, n);
+        }
+        for (k, &(i, at, name)) in plan.positions.iter().enumerate() {
+            let b = match named.get(at) {
+                Some((n, ComputeKernelArgument::Buffer(b))) if n.as_ptr() as usize == name => *b,
+                _ => {
+                    let want = &plan.buffers[k].1;
+                    match named.iter().find(|(n, _)| n == want) {
+                        Some((_, ComputeKernelArgument::Buffer(b))) => *b,
+                        _ => return Err(format!("Grid kernel {}: no buffer {want} for the plan", self.kernel.kernel_name)),
+                    }
+                }
+            };
+            ctx.set_buffer(i, b);
+        }
+        ctx.launch(&plan.grid, &plan.block)
     }
 
     /// Replays a plan with these buffers (each of the plan's buffer arguments by name).
@@ -685,6 +715,8 @@ pub struct GridLaunchPlan {
     primitives: Vec<(u64, Vec<u8>)>,
     thread_groups: Vec<(u64, u64)>,
     buffers: Vec<(u64, String)>,
+    /// Each buffer argument's index, its place in the planned call's arguments, and its name's address there.
+    positions: Vec<(u64, usize, usize)>,
     grid: Vec<u64>,
     block: Vec<u64>,
 }

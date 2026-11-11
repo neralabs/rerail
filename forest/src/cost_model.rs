@@ -23,7 +23,7 @@ use crate::bucket::CellValue;
 use crate::dataset_feature_space::{ColumnData, DatasetFeatureSpace, FeatureType};
 use crate::memory_region::Pod;
 use crate::randomforest_predict::{BucketRules, BucketizerColumn, DeviceBucketizer, DeviceForest, FlatForest, PredictNode};
-use crate::randomforest_procedure::{train_regression_forest, Qos, RandomForestProcedureConfig, TargetScale};
+use crate::randomforest_procedure::{train_regression_flat, Qos, RandomForestProcedureConfig, TargetScale};
 
 /// A finished job, as the model trains on it.
 #[derive(Clone, Debug, PartialEq)]
@@ -234,8 +234,8 @@ impl CostModel {
         let ln = |v: f64| v.max(MIN_SECONDS).ln() as f32;
         let wall_targets: Vec<f32> = used.iter().map(|s| ln(s.wall)).collect();
         let cpu_targets: Vec<f32> = used.iter().map(|s| ln(s.cpu)).collect();
-        let wall = train_regression_forest(fs.clone(), &wall_targets, None, None, &config.forest)?;
-        let cpu = train_regression_forest(fs.clone(), &cpu_targets, None, None, &config.forest)?;
+        let (wall, wall_scale) = train_regression_flat(fs.clone(), &wall_targets, None, None, &config.forest)?;
+        let (cpu, cpu_scale) = train_regression_flat(fs.clone(), &cpu_targets, None, None, &config.forest)?;
         let mut known: HashMap<(String, String), u32> = HashMap::new();
         for s in used.iter().filter(|s| !s.cold) {
             *known.entry((s.lane.clone(), s.forms.clone())).or_default() += 1;
@@ -244,10 +244,10 @@ impl CostModel {
         Ok(CostModel {
             index: Index::new(&known, config.min_samples, &rules),
             rules,
-            wall_scale: wall.target_scale.ok_or("no target scale")?,
-            cpu_scale: cpu.target_scale.ok_or("no target scale")?,
-            wall: FlatForest::new(&wall)?,
-            cpu: FlatForest::new(&cpu)?,
+            wall_scale,
+            cpu_scale,
+            wall,
+            cpu,
             known,
             min_samples: config.min_samples,
             host_batch: config.host_batch,
@@ -587,7 +587,7 @@ mod tests {
         for qos in [Qos::Background, Qos::Utility, Qos::Inherit] {
             for threads in [2, 0] {
                 let config = RandomForestProcedureConfig { qos, max_threads: threads, ..CostConfig::default().forest };
-                t(&format!("one forest, {qos:?}, threads {threads}"), || train_regression_forest(fs.clone(), &targets, None, None, &config).unwrap());
+                t(&format!("one forest, {qos:?}, threads {threads}"), || train_regression_flat(fs.clone(), &targets, None, None, &config).unwrap());
             }
         }
         let model = t("CostModel::train (2 forests, default)", || CostModel::train(&train, &CostConfig::default()).unwrap());
@@ -604,6 +604,28 @@ mod tests {
             let (_, gpu) = t("  predict_values_timed", || d.0.predict_values_timed(&d.1, &columns).unwrap());
             eprintln!("    (its own GPU seconds: {:.3} ms)", gpu * 1e3);
         }
+    }
+
+    /// Trains one forest over and over for `PROFILE_SECONDS` (default 6): a process to sample.
+    #[test]
+    #[ignore = "for a profiler: PROFILE_SECONDS=6 --ignored"]
+    fn train_for_a_profiler() {
+        if crate::gpu::shared::get().is_none() {
+            return;
+        }
+        let secs: f64 = std::env::var("PROFILE_SECONDS").ok().and_then(|v| v.parse().ok()).unwrap_or(6.0);
+        let train = samples(12000);
+        let named: Vec<(String, Vec<CellValue>)> = FEATURES.iter().map(|n| n.to_string()).zip(cells(train.iter().map(query_of))).collect();
+        let fs = Arc::new(DatasetFeatureSpace::from_columns(&named, FeatureType::Real).unwrap());
+        let targets: Vec<f32> = train.iter().map(|s| s.wall.max(MIN_SECONDS).ln() as f32).collect();
+        let config = CostConfig::default().forest;
+        let (t, c, g) = (std::time::Instant::now(), crate::process_cpu(), crate::compute_kernel_metal::gpu_seconds_awaited());
+        let mut n = 0;
+        while t.elapsed().as_secs_f64() < secs {
+            train_regression_flat(fs.clone(), &targets, None, None, &config).unwrap();
+            n += 1;
+        }
+        eprintln!("PROFILED {n} forests: {:.1} ms wall {:.1} ms CPU {:.1} ms GPU a forest", t.elapsed().as_secs_f64() * 1e3 / n as f64, (crate::process_cpu() - c) * 1e3 / n as f64, (crate::compute_kernel_metal::gpu_seconds_awaited() - g) * 1e3 / n as f64);
     }
 
     /// The model learns the costs (within a few percent on samples like those it trained on), the host's and the

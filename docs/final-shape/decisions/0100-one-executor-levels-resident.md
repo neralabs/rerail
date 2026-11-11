@@ -514,7 +514,11 @@ A model that wins is trained again on every sample, put in place and saved (tabl
 for each machine); the next run puts the saved one in place at once. One that loses is taken out with the saved
 one. Training runs on a thread of its own at the utility quality of service, in a pool of two threads apart from
 the engine's, and again once 2,000 more samples are written, at most every ten minutes. A comparison on 20,000
-samples takes 0.53 s wall and 0.85 s CPU at a load of 25–90 (debug build). The background quality of service was
+samples takes 0.50 s wall and 0.32 s CPU (debug build). The host does nothing per row per tree: each tree's bag is
+drawn on the GPU (a hash of the bag and the example, kept with the sampling's proportion and counted Poisson(1)
+times; not upstream's Mersenne Twister draws, as diverse), the root's total summed there, each launch replayed
+from a plan made once, and each tree built flat from the GPU's splits. One forest of 100 trees on 12,000 rows:
+380 → 100 ms CPU. The background quality of service was
 tried first and refused: it holds the threads to the efficiency cores and the GPU's lowest priority, 4–10× the
 wall and twice the GPU seconds on an idle machine, 22 s under load. The prediction kernels are compiled on the
 training thread before a model is put in place, so placement never waits on a compile. A batch of up to 4 jobs
