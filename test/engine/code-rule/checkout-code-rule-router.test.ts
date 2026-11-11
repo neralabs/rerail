@@ -578,6 +578,22 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     expect(auditor.worktreeRoots()).toEqual([worktree]);
   });
 
+  it("names a worktree Git made, while the session is open, at a folder the session looked up while it was plain", async () => {
+    const { root, databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    const later = join(root, "elsewhere", "later");
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+    await auditor.openWorkspace("later");
+    expect(auditor.worktreeRoots()).toEqual([worktree]);
+    await mkdir(join(later, "api"), { recursive: true });
+    expect(auditor.acceptsPath(join(later, "api", "x.py"))).toBe(false);
+    await rm(later, { recursive: true });
+
+    git(session, "worktree", "add", "--quiet", "-b", "later", later);
+
+    expect(auditor.worktreeRoots().toSorted()).toEqual([await realpath(later), worktree].toSorted());
+  });
+
   it.skipIf(!caseInsensitiveFilesystem())("names a worktree Git registered under a path typed in another case than the folder has", async () => {
     const { root, databasePath, session, worktree } = await repositoryWithWorktree(outside);
     const typed = join(root, "Elsewhere", "typed");

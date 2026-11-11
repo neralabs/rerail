@@ -13,7 +13,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { storedPath } from "../catalog/checkout-control.js";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
-import { worktreeRegistry } from "../catalog/repository-identity.js";
+import { worktreeFolderStamp, worktreeRegistry, type WorktreeRegistry } from "../catalog/repository-identity.js";
 import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
 import type {
   AuditorCloseOptions,
@@ -72,6 +72,10 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   readonly #sessionRoot: string;
   readonly #lanes = new Map<string, Lane>();
   readonly #eligibility = new Map<string, CheckoutEligibility>();
+  /** Git's worktree registry for the session's checkout as `#registered` last read it. */
+  #registry: WorktreeRegistry | undefined;
+  /** Its `worktrees` folder's stamp (`worktreeFolderStamp`) at the last event; an event reads the registry again when it changes. */
+  #registryStamp: number | undefined;
   #settings: Required<AuditSettings>;
   #sessionId: string | undefined;
   #closing = false;
@@ -101,6 +105,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    */
   refreshCodeRules(): void {
     if (this.#closing) return;
+    this.#noticeAddedWorktrees();
     for (const root of this.#eligibility.keys()) this.#eligibility.set(root, this.#options.catalogs.refresh(root));
     for (const lane of [...this.#lanes.values()]) {
       if (this.#mayRun(lane.root)) {
@@ -147,9 +152,39 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    */
   worktreeRoots(): string[] {
     const starting = this.#options.startingCheckout;
-    return (worktreeRegistry(starting)?.worktrees ?? [])
+    return (this.#registered()?.worktrees ?? [])
       .map(worktree => storedPath(worktree))
       .filter(root => root !== starting && existsSync(root) && this.#owner(root)?.checkoutRoot === root && this.#mayRun(root));
+  }
+
+  /**
+   * Git's worktree registry for the session's checkout, read now. When it changed since the last read, the owners look
+   * again at each folder it lists (`CheckoutOwners.lookAgainAt`): one looked up while it was a plain folder, before
+   * `git worktree add` made it a worktree, would otherwise keep its files unchecked and out of the walk for as long as
+   * the runtime keeps its answers. That costs a lookup per listed folder once per change of the registry.
+   */
+  #registered(): WorktreeRegistry | undefined {
+    const known = this.#registry;
+    const registry = worktreeRegistry(this.#options.startingCheckout);
+    this.#registry = registry;
+    if (registry !== undefined && registry !== known) {
+      for (const worktree of registry.worktrees) this.#options.owners.lookAgainAt(storedPath(worktree));
+    }
+    return registry;
+  }
+
+  /**
+   * Reads Git's registry again at an event when its `worktrees` folder changed since the last one, so a worktree Git
+   * added meanwhile owns the files a tool call writes there from this event on, not from the session's next walk. One
+   * stat per event; the registry is first read by the session's first walk.
+   */
+  #noticeAddedWorktrees(): void {
+    const registry = this.#registry;
+    if (registry === undefined) return;
+    const stamp = worktreeFolderStamp(registry.commonDirectory);
+    if (stamp === this.#registryStamp) return;
+    this.#registryStamp = stamp;
+    this.#registered();
   }
 
   /**

@@ -70,6 +70,21 @@ export class CheckoutOwners {
     for (const [directory, root] of this.#confirmed) if (root === undefined) this.#confirmed.delete(directory);
   }
 
+  /**
+   * Drops every answer at and below `root` when `root` holds a `.git` entry that those answers do not take for a checkout
+   * top level, so the next lookup asks the disk and Git again. Answers from before `git worktree add` made a plain folder
+   * there a worktree name no checkout for its files, or the checkout around it, and stay until the recorded checkouts
+   * change. The router calls this for the folders Git's worktree registry lists, once per change of the registry.
+   * Returns whether it dropped them.
+   */
+  lookAgainAt(root: string): boolean {
+    if (!holdsGitEntry(root) || this.ownerOf(root)?.checkoutRoot === root) return false;
+    for (const answers of [this.#roots, this.#confirmed, this.#submodules]) {
+      for (const folder of answers.keys()) if (within(root, folder)) answers.delete(folder);
+    }
+    return true;
+  }
+
   /** How many folders it holds an answer for. */
   cachedFolders(): number {
     return new Set([...this.#roots.keys(), ...this.#confirmed.keys()]).size;

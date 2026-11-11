@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, realpath, writeFile } from "node:fs/promises";
+import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
@@ -41,6 +41,16 @@ async function repositoryWithWorktrees(root: string, databasePath: string): Prom
   return { main, worktrees };
 }
 
+/** Writes `text` to `path` in a Write tool call of `sessionId`; the lines of the steers its result brings that name a file. */
+async function write(runtime: RerailRuntime, sessionId: string, path: string, text: string): Promise<string[]> {
+  const toolCallId = `write-${path}`;
+  await runtime.ingest({ kind: "call", eventId: `call-${path}`, sessionId, toolCallId, toolName: "Write", input: { file_path: path, content: text } });
+  await mkdir(join(path, ".."), { recursive: true });
+  await writeFile(path, text);
+  const deliveries = await runtime.ingest({ kind: "result", eventId: `result-${path}`, sessionId, toolCallId, toolName: "Write", output: "ok" });
+  return deliveries.flatMap(delivery => delivery.content.split("\n").filter(line => line.includes("No print")));
+}
+
 /** The one object of `type` among a spy's `this` values: the runtime's own. */
 function instanceOf<T>(contexts: readonly unknown[], type: abstract new (...args: never[]) => T): T {
   const found = contexts.filter((context): context is T => context instanceof type);
@@ -75,6 +85,35 @@ describe("a runtime's checkout lookups", () => {
       // The runtime serves its folder long after its sessions, so a folder each walk looked up stayed for as long: every
       // folder of every worktree, in each runtime a session had walked them from.
       expect(owners.cachedFolders()).toBe(checkouts);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("find a worktree Git made, while a session is open, where the session had written to a plain folder", { timeout: 120_000 }, async () => {
+    const root = await realpath(await temporaryDirectory({ started: false }));
+    const databasePath = join(root, "rerail.sqlite");
+    const { main } = await repositoryWithWorktrees(root, databasePath);
+    const runtime = new RerailRuntime({
+      storageRoot: join(root, "sessions"), databasePath, workspaceRoot: main, embedder: testEmbedder, autostart: false, startGate: true,
+    });
+    const session = { host: "claude-code" as const, sessionId: "session-1", cwd: main };
+    const later = join(root, "later");
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      await runtime.codeRulesOpened(session.sessionId);
+      // The turn's end waits for the session's first walk, which reads Git's worktree registry.
+      await runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId: session.sessionId, text: "" });
+      const plain = await write(runtime, session.sessionId, join(later, ...FOLDERS.at(-1)!, "a.py"), "print(1)\n");
+      await rm(later, { recursive: true, force: true });
+      git(main, "worktree", "add", "--quiet", "--detach", later);
+
+      const worktree = await write(runtime, session.sessionId, join(later, ...FOLDERS.at(-1)!, "b.py"), "print(1)\n");
+
+      // The first write looked up each folder from the file up while `later` was a plain one. Those answers named no
+      // checkout and stayed for as long as the session was open, so its writes in the worktree were not checked.
+      expect({ plain, worktree }).toEqual({ plain: [], worktree: [expect.stringMatching(/later\/src\/a\/b\/c\/b\.py:1:1/u)] });
+      await runtime.ingest({ kind: "session-end", eventId: "end", sessionId: session.sessionId });
     } finally {
       await runtime.dispose();
     }
