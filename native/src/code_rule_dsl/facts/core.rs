@@ -654,3 +654,17 @@ impl LeBytes for u16 {
 
 #[cfg(test)]
 mod tests;
+
+/// The relations `core.rr` declares (the engine's names, decision 0047), as the rule language reads them;
+/// registered at load (`install_core_names`). Empty without one.
+pub(crate) fn core_names() -> &'static std::collections::BTreeSet<String> {
+    static EMPTY: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    CORE_NAMES.get().map_or(&EMPTY, |names| names())
+}
+
+static CORE_NAMES: std::sync::OnceLock<fn() -> &'static std::collections::BTreeSet<String>> = std::sync::OnceLock::new();
+
+/// Registers what reads `core.rr`'s names (once, at load).
+pub(crate) fn install_core_names(names: fn() -> &'static std::collections::BTreeSet<String>) {
+    let _ = CORE_NAMES.set(names);
+}

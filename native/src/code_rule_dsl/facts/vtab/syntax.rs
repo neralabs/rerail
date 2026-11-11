@@ -114,7 +114,7 @@ impl Projection {
     /// T's for one that declares its base relations itself (T's programs, the converter's, O74).
     pub(crate) fn of(program: &crate::code_rule_dsl::logic::front::Program, reads: BTreeSet<String>) -> Self {
         crate::code_rule_dsl::logic::profile::projection_plan(program, &reads);
-        let core = crate::code_rule_dsl::logic::rr::core_names();
+        let core = crate::code_rule_dsl::facts::core::core_names();
         let shape = if !core.is_empty() && core.iter().all(|r| program.decls.contains_key(r)) { Shape::Core } else { Shape::T };
         let partial = program.facts.get(GUEST_POLICY).into_iter().flatten().filter_map(|row| match row.as_slice() {
             [Value::Str(k), Value::Str(v)] if v == "partial" => k.strip_prefix("errors").map(|g| g.strip_prefix(':').unwrap_or("*").to_owned()),

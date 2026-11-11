@@ -753,26 +753,4 @@ fn builtin_program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
     Ok((out, read_files))
 }
 
-/// A pattern's single-node metavariables (`$X`, not `$$$X` nor `$_X`), each once, in order.
-pub(in crate::code_rule_dsl) fn single_metavars(pattern: &str) -> Vec<String> {
-    let b = pattern.as_bytes();
-    let mut out: Vec<String> = Vec::new();
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] != b'$' {
-            i += 1;
-            continue;
-        }
-        let mut j = i;
-        while j < b.len() && b[j] == b'$' {
-            j += 1;
-        }
-        let k = j + b[j..].iter().take_while(|c| c.is_ascii_alphanumeric() || **c == b'_').count();
-        let name = &pattern[j..k];
-        if j - i == 1 && name.starts_with(|c: char| c.is_ascii_uppercase()) && !out.iter().any(|x| x == name) {
-            out.push(name.to_owned());
-        }
-        i = k.max(i + 1);
-    }
-    out
-}
+pub(in crate::code_rule_dsl) use crate::code_rule_dsl::facts::vtab::syntax::core_rr::single_metavars;

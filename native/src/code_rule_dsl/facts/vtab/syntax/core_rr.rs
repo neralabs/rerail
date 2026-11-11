@@ -837,7 +837,7 @@ impl CoreRows {
         let empty = string("") as i64;
         for (text, pattern) in patterns {
             let pat = string(text) as i64;
-            let names = crate::code_rule_dsl::logic::rr::single_metavars(text);
+            let names = single_metavars(text);
             for m in tree.root().find_all(pattern) {
                 let Some(n) = node_of(&m) else { continue };
                 let captures: Option<Vec<(i64, i64)>> = names
@@ -1084,4 +1084,28 @@ mod tests {
         assert_eq!(parts(&["f'{x=}'"]), [("x=".to_owned(), 0, 0)]);
         assert!(parts(&["b'x'"]).is_empty());
     }
+}
+
+/// A pattern's single-node metavariables (`$X`, not `$$$X` nor `$_X`), each once, in order.
+pub(crate) fn single_metavars(pattern: &str) -> Vec<String> {
+    let b = pattern.as_bytes();
+    let mut out: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] != b'$' {
+            i += 1;
+            continue;
+        }
+        let mut j = i;
+        while j < b.len() && b[j] == b'$' {
+            j += 1;
+        }
+        let k = j + b[j..].iter().take_while(|c| c.is_ascii_alphanumeric() || **c == b'_').count();
+        let name = &pattern[j..k];
+        if j - i == 1 && name.starts_with(|c: char| c.is_ascii_uppercase()) && !out.iter().any(|x| x == name) {
+            out.push(name.to_owned());
+        }
+        i = k.max(i + 1);
+    }
+    out
 }

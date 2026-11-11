@@ -623,6 +623,8 @@ pub(crate) fn install_languages() {
     compile::resolve::install_flow_resolves(compile::resolve::php::compile_php_resolves);
     // The containment relations' `nearest` solve (the file-local FIX's).
     facts::nearest::install_nearest(typing::file_local::nearest);
+    // `core.rr`'s names, as the rule language reads them.
+    facts::core::install_core_names(logic::rr::core_names);
     // What compiles a program's `ast` matchers into the transducer wave facts runs (decision 0106).
     facts::vtab::syntax::install_ast_compiler(&facts::vtab::syntax::ast_wave::Compiler);
     // The literal grammars `parse` applies, in the order messages list them (`literal::LiteralGrammar`).
