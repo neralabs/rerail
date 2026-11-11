@@ -55,6 +55,20 @@ interface Lane {
   refreshed: number;
 }
 
+/** The other worktrees that own their files, as worked out at Git's `registry` and the recorded checkouts' version. */
+interface OwnedWorktrees {
+  readonly registry: WorktreeRegistry | undefined;
+  readonly recorded: string;
+  readonly roots: readonly string[];
+  /** The registered folders that had no `.git` entry (or did not exist) then: none of them is in `roots`. */
+  readonly missing: readonly string[];
+}
+
+/** Whether `folder` holds a `.git` entry: a registered worktree whose folder is gone, or lost it, holds none. */
+function hasGitEntry(folder: string): boolean {
+  return existsSync(join(folder, ".git"));
+}
+
 function merged(revision: number, responses: readonly CodeRuleResponse[]): CodeRuleResponse {
   return {
     revision,
@@ -76,8 +90,8 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   readonly #eligibility = new Map<string, CheckoutEligibility>();
   /** How many times `refreshCodeRules` ran; a lane whose `refreshed` is lower reads its rules again at its next use. */
   #refreshes = 0;
-  /** `worktreeRoots` before its eligibility filter, with the registry and the recorded checkouts' version it was worked out at. */
-  #ownedWorktrees: { readonly registry: WorktreeRegistry | undefined; readonly recorded: string; readonly roots: readonly string[] } | undefined;
+  /** `worktreeRoots` before its eligibility filter, with what it was worked out from. */
+  #ownedWorktrees: OwnedWorktrees | undefined;
   #settings: Required<AuditSettings>;
   #sessionId: string | undefined;
   #closing = false;
@@ -158,20 +172,28 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    * session wrote a file, so what it finds there is recorded under the repository and steers no session.
    */
   worktreeRoots(): string[] {
-    const starting = this.#options.startingCheckout;
-    const registry = worktreeRegistry(starting);
+    const registry = worktreeRegistry(this.#options.startingCheckout);
     const recorded = this.#options.catalogs.recordedCheckoutsVersion();
     let known = this.#ownedWorktrees;
-    // Which worktrees own their files changes only with Git's registry or the recorded checkouts. Working it out looks
-    // up each worktree's folders on disk, so it is done again only when one of those two changed, not at every walk.
-    if (known === undefined || known.registry !== registry || known.recorded !== recorded) {
-      const roots = (registry?.worktrees ?? []).map(worktree => storedPath(worktree))
-        .filter(root => root !== starting && existsSync(root) && this.#owner(root)?.checkoutRoot === root);
-      known = { registry, recorded, roots };
+    // Which worktrees own their files changes only with Git's registry, the recorded checkouts, or a registered folder
+    // that had no `.git` entry gaining one: `git worktree add -f` creates a worktree again at a path Git still lists
+    // without changing the registry. Working it out looks up each worktree's folders on disk, so it is done again only
+    // then, not at every walk.
+    if (known === undefined || known.registry !== registry || known.recorded !== recorded || known.missing.some(hasGitEntry)) {
+      known = this.#workOutOwnedWorktrees(registry, recorded);
       this.#ownedWorktrees = known;
     }
     // A folder removed without `git worktree remove` stays registered until Git prunes it.
-    return known.roots.filter(root => existsSync(join(root, ".git")) && this.#mayRun(root));
+    return known.roots.filter(root => hasGitEntry(root) && this.#mayRun(root));
+  }
+
+  /** The registered worktrees other than the session's that own their files, and those with no `.git` entry yet. */
+  #workOutOwnedWorktrees(registry: WorktreeRegistry | undefined, recorded: string): OwnedWorktrees {
+    const starting = this.#options.startingCheckout;
+    const registered = (registry?.worktrees ?? []).map(worktree => storedPath(worktree)).filter(root => root !== starting);
+    const missing = registered.filter(root => !hasGitEntry(root));
+    const roots = registered.filter(root => !missing.includes(root) && this.#owner(root)?.checkoutRoot === root);
+    return { registry, recorded, roots, missing };
   }
 
   /**

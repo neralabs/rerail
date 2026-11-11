@@ -214,6 +214,19 @@ describe("CheckoutCodeRuleRouter in a repository with many worktrees", () => {
     expect(second.acceptsPath(join(worktree!, "api", "x.py"))).toBe(false);
   }, 60_000);
 
+  it("walks a worktree Git creates again at the path it still lists, though the walks worked the list out while it was gone", async () => {
+    const { base, main, worktrees: [worktree], auditor } = await sessionWithWorktrees(1);
+    await rm(worktree!, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    // Another worktree changes Git's registry, so the next walk works the list out again without the removed one.
+    git(main, "worktree", "add", "--quiet", "--detach", join(base, "worktrees", "other"), "HEAD");
+    expect(auditor.worktreeRoots()).not.toContain(worktree);
+    expect(auditor.worktreeRoots()).not.toContain(worktree);
+    // Over the entry Git still lists, `add -f` writes the same name and Git folder: the registry reads as it did.
+    git(main, "worktree", "add", "--quiet", "-f", "--detach", worktree!, "HEAD");
+    auditor.refreshCodeRules();
+    expect(auditor.worktreeRoots()).toContain(worktree);
+  }, 60_000);
+
   it("closes the lane of a worktree another process stops at the next event, and audits with a setting changed elsewhere", async () => {
     const { databasePath, worktrees: [stopped, turnedOff], auditor } = await sessionWithWorktrees(2);
     const needle = (worktree: string) => [{ path: join(worktree, "api", "x.py"), language: "python" as const, generatedText: "NEEDLE\n" }];
