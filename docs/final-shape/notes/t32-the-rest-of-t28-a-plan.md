@@ -139,6 +139,10 @@ After both, on the same 54 files at load 137 to 160: 92.3 s CPU cold (its first 
 schema moved), 31.7 s, 29.8 s; the second process no longer runs the struct phase's local part (6.2 s cold, 0 after)
 or the types phase (0 of 110 strata).
 
+The larger corpus (84 files, 6,410 calls agreeing, load about 90): 78.75 s CPU cold (321 s wall), 23.18 s warm, 20.28 s
+the third time (33 s wall). Still open: warm runs find inputs changed every time — `doc, node` (34 of the types
+phase's 110 strata) and `doc, types__wgen` (429 of P3's 481), so the 99-relation stratum costs 3.1 s warm.
+
 This is the same for P2, for calls_cx's cross part and for the pack (t31 B4). t31's "column blocks" would be the
 kept relations' encoding, not a format of their own.
 
