@@ -4212,6 +4212,7 @@ fn run_observed(
             Vec::new(),
             Box::new(move |store| {
                 let mut ids = Vec::with_capacity(read.len());
+                // A busy-store retry must leave the captured inputs available.
                 for (path, stat, content) in &read {
                     if let Some(id) = content.resolve(store)? {
                         ids.push((path.clone(), *stat, id));

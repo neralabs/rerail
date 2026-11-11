@@ -186,7 +186,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix/device.rs", "GROWTH"),
     ("code_rule_dsl/logic/native/setfix.rs", "PROBES"),
     ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
-    ("code_rule_dsl/logic/native/setfix.rs", "FANOUT"),
+    ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT"),
     ("code_rule_dsl/logic/native/setfix/level.rs", "PENDING"),
@@ -234,6 +234,8 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "THREAD_CONNECTIONS"),
     ("content_store/connection.rs", "WAIT_SPENT"),
     ("content_store/hazards.rs", "HAZARDS"),
+    // The run each frame space last counted in this process, so a run's programs count it once.
+    ("content_store/frames.rs", "COUNTED"),
     ("content_store/observe.rs", "OBSERVERS"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
