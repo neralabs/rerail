@@ -120,12 +120,12 @@ pub enum GlobalSetting {
 /// Compiled `languageOptions`: the effective configured globals, as ESLint's
 /// `applyLanguageOptions` merges them (ecmaVersion builtins, then CommonJS, then `globals`).
 #[derive(Debug)]
-pub(crate) struct LanguageOptions {
+pub struct LanguageOptions {
     /// The year-based `ecmaVersion` (3 and 5 stay as they are).
-    pub(crate) ecma_version: u16,
+    pub ecma_version: u16,
     /// The query's `sourceType`; `None` leaves it to each file (`SourceType::of_file`), which the
     /// readers below take as `file`.
-    pub(crate) source_type: Option<SourceType>,
+    pub source_type: Option<SourceType>,
     /// `moduleSystem: "package-type"`: without a `sourceType`, a file's module system is the one
     /// its extension and its package's `type` give it (`SourceType::by_package_type`), not its own
     /// (`SourceType::of_file`, Node's syntax detection where `type` is unset, a module without a

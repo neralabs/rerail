@@ -646,8 +646,12 @@ def main(tree_tsv, join_out, *flags):
         open(ws, 'w').write(t)
     # the edits in the files
     edits = Edits()
+    # the engine's own files keep `cfg(test)`: nothing builds the engine under test-hooks but its own tests
+    file_owner = {n.file: n.owner for n in nodes.values() if not n.inline}
     for f, s, e, old, new in mounts.file_edits(nodes, v):
-        edits.add(f, s, e, hooks(new, False, {nodes[p].name for p in keep}), 'declaration')
+        if file_owner.get(f) != ENGINE:
+            new = hooks(new, False, {nodes[p].name for p in keep})
+        edits.add(f, s, e, new, 'declaration')
     module_vis_edits(nodes, edits)
     use_vis_edits(nodes, edits)
     upward_use_edits(nodes, edits)
