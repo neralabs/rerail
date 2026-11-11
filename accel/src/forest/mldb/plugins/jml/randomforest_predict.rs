@@ -13,7 +13,7 @@
 
 use crate::forest::bucket::{BucketList, CellValue};
 use crate::forest::compute_kernel_grid::ComputeKernelArgument;
-use crate::forest::compute_kernel_metal::{alloc_uninitialized_array_sync, transfer_to_device_immutable, transfer_to_host_sync, MetalComputeQueue};
+use crate::forest::compute_kernel_metal::{alloc_uninitialized_array_sync, transfer_to_device_immutable, MetalComputeQueue};
 use crate::forest::dataset_feature_space::DatasetFeatureSpace;
 use crate::forest::jml::committee::Committee;
 use crate::forest::jml::decision_tree::DecisionTree;
@@ -214,38 +214,102 @@ pub fn lanes_per_row(num_rows: usize, num_trees: usize) -> u32 {
     1 << (usize::BITS - 1 - want.leading_zeros())
 }
 
-/// A flattened forest resident on the device: uploaded once, predicting batch after batch.
+/// Flattened forests resident on the device, uploaded once and predicting batch after batch: every forest over
+/// every row in one dispatch (a model of several forests, such as the K-bucket regressor's, is one wait). The rows'
+/// and the predictions' buffers are kept from call to call (grown when a batch needs more), so a call allocates
+/// nothing on the device: it writes the rows into the kept buffer, dispatches, waits and reads the predictions.
 pub struct DeviceForest {
     nodes: metal::Buffer,
     roots: metal::Buffer,
     weights: metal::Buffer,
     leaves: metal::Buffer,
     subsets: metal::Buffer,
-    num_trees: u32,
+    forest_tree_start: metal::Buffer,
+    num_forests: u32,
+    /// The most trees a forest has (the lanes a prediction takes).
+    max_trees: u32,
     max_depth: u32,
     num_features: usize,
     feature_bits: Vec<u32>,
+    scratch: std::sync::Mutex<Scratch>,
+}
+
+/// The kept buffers: the rows' bucket columns and the predictions, with their capacities (in u32 and f32).
+#[derive(Default)]
+struct Scratch {
+    data: Option<(metal::Buffer, usize)>,
+    out: Option<(metal::Buffer, usize)>,
+}
+
+/// A kept buffer of at least `n` elements of `T` (`slot`'s when it is big enough, else a new one, twice the size).
+fn kept<T>(device: &metal::DeviceRef, slot: &mut Option<(metal::Buffer, usize)>, n: usize) -> metal::Buffer {
+    match slot {
+        Some((b, cap)) if *cap >= n => b.clone(),
+        _ => {
+            let cap = (n * 2).max(1024);
+            let b = alloc_uninitialized_array_sync::<T>(device, cap);
+            *slot = Some((b.clone(), cap));
+            b
+        }
+    }
 }
 
 impl DeviceForest {
     pub fn new(flat: &FlatForest) -> Result<Self, String> {
+        Self::new_many(&[flat])
+    }
+
+    /// Several forests over the same feature space, predicted together: `predict` gives each row's predictions
+    /// forest after forest.
+    pub fn new_many(flats: &[&FlatForest]) -> Result<Self, String> {
+        let first = flats.first().ok_or("no forest")?;
+        let mut all = FlatForest { num_features: first.num_features, feature_bits: first.feature_bits.clone(), ..Default::default() };
+        let mut starts = vec![0u32];
+        for f in flats {
+            if f.num_features != first.num_features || f.feature_bits != first.feature_bits {
+                return Err("forests over different feature spaces".into());
+            }
+            let (node0, leaf0, subset0) = (all.nodes.len() as i32, (all.leaf_preds.len() / 2) as i32, (all.subsets.len() / 16) as u32);
+            // A child is a node (at least 0) or a leaf (-(leaf + 1)): each moves past the forests before.
+            let moved = |c: i32| if c >= 0 { c + node0 } else { c - leaf0 };
+            all.nodes.extend(f.nodes.iter().map(|n| PredictNode {
+                child_true: moved(n.child_true),
+                child_false: moved(n.child_false),
+                split_bucket: if n.ordinal == 2 { n.split_bucket + subset0 } else { n.split_bucket },
+                ..*n
+            }));
+            all.roots.extend(f.roots.iter().map(|&r| moved(r)));
+            all.weights.extend_from_slice(&f.weights);
+            all.leaf_preds.extend_from_slice(&f.leaf_preds);
+            all.subsets.extend_from_slice(&f.subsets);
+            all.max_depth = all.max_depth.max(f.max_depth);
+            starts.push(all.roots.len() as u32);
+        }
         let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
         let device = &shared.device;
         let one = [PredictNode::default()];
         Ok(DeviceForest {
-            nodes: transfer_to_device_immutable(device, if flat.nodes.is_empty() { &one[..] } else { &flat.nodes }),
-            roots: transfer_to_device_immutable(device, &flat.roots),
-            weights: transfer_to_device_immutable(device, &flat.weights),
-            leaves: transfer_to_device_immutable(device, &flat.leaf_preds),
-            subsets: transfer_to_device_immutable(device, if flat.subsets.is_empty() { &[0u32; 16][..] } else { &flat.subsets }),
-            num_trees: flat.roots.len() as u32,
-            max_depth: flat.max_depth,
-            num_features: flat.num_features,
-            feature_bits: flat.feature_bits.clone(),
+            nodes: transfer_to_device_immutable(device, if all.nodes.is_empty() { &one[..] } else { &all.nodes }),
+            roots: transfer_to_device_immutable(device, &all.roots),
+            weights: transfer_to_device_immutable(device, &all.weights),
+            leaves: transfer_to_device_immutable(device, &all.leaf_preds),
+            subsets: transfer_to_device_immutable(device, if all.subsets.is_empty() { &[0u32; 16][..] } else { &all.subsets }),
+            forest_tree_start: transfer_to_device_immutable(device, &starts),
+            num_forests: flats.len() as u32,
+            max_trees: starts.windows(2).map(|w| w[1] - w[0]).max().unwrap_or(0),
+            max_depth: all.max_depth,
+            num_features: all.num_features,
+            feature_bits: all.feature_bits,
+            scratch: Default::default(),
         })
     }
 
-    /// The predictions for a batch of rows: their buckets uploaded, one dispatch, one wait.
+    pub fn num_forests(&self) -> usize {
+        self.num_forests as usize
+    }
+
+    /// The predictions for a batch of rows: their buckets written to the kept buffer, one dispatch, one wait. Row
+    /// `r`'s prediction by forest `f` is at `r * num_forests() + f`.
     pub fn predict(&self, rows: &RowBuckets) -> Result<Vec<[f32; 2]>, String> {
         Ok(self.predict_timed(rows)?.0)
     }
@@ -264,40 +328,43 @@ impl DeviceForest {
         }
         let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
         let device = &shared.device;
+        let mut scratch = self.scratch.lock().map_err(|_| "a prediction panicked")?;
         // Every column at the same stride (the widest column's words), so a node finds its column without a load.
         let stride = rows.columns.iter().map(|c| c.storage.data().len()).max().unwrap_or(0) + 1;
-        let mut data = vec![0u32; stride * rows.columns.len() + 1];
+        let words = stride * rows.columns.len() + 1;
+        let d_data = kept::<u32>(device, &mut scratch.data, words);
+        let data = unsafe { std::slice::from_raw_parts_mut(d_data.contents().cast::<u32>(), words) };
         for (i, c) in rows.columns.iter().enumerate() {
             data[i * stride..i * stride + c.storage.data().len()].copy_from_slice(c.storage.data());
         }
-        let nr = rows.num_rows as u32;
-        let d_data = transfer_to_device_immutable(device, &data);
-        let d_out = alloc_uninitialized_array_sync::<f32>(device, rows.num_rows * 2);
+        let items = rows.num_rows * self.num_forests as usize;
+        let d_out = kept::<f32>(device, &mut scratch.out, items * 2);
         let mut queue = MetalComputeQueue::new(&shared.queue);
         let k = kernel("predictForest")?;
         let mut ctx = queue.new_bind_context(k.function);
         k.enqueue(&[
-            ("numRows", Int(nr as i64)),
-            ("numTrees", Int(self.num_trees as i64)),
+            ("numItems", Int(items as i64)),
+            ("numForests", Int(self.num_forests as i64)),
             ("maxDepth", Int(self.max_depth as i64 + 1)),
-            ("lanesPerRow", Int(lanes_per_row(rows.num_rows, self.num_trees as usize) as i64)),
+            ("lanesPerRow", Int(lanes_per_row(items, self.max_trees as usize) as i64)),
             ("columnStride", Int(stride as i64)),
             ("bucketData", B(&d_data)),
             ("nodes", B(&self.nodes)),
             ("subsets", B(&self.subsets)),
+            ("forestTreeStart", B(&self.forest_tree_start)),
             ("treeRoots", B(&self.roots)),
             ("treeWeights", B(&self.weights)),
             ("leafPreds", B(&self.leaves)),
             ("predictionsOut", B(&d_out)),
-        ], &[nr], &mut ctx)?;
+        ], &[items as u32], &mut ctx)?;
         drop(ctx);
         let event = queue.flush();
         event.await_()?;
-        let out = transfer_to_host_sync::<f32>(&d_out, rows.num_rows * 2);
-        if out.iter().any(|v| v.is_nan()) {
+        let out = unsafe { std::slice::from_raw_parts(d_out.contents().cast::<[f32; 2]>(), items) };
+        if out.iter().any(|v| v[0].is_nan()) {
             return Err("a walk did not reach a leaf".into());
         }
-        Ok((out.chunks(2).map(|c| [c[0], c[1]]).collect(), event.gpu_seconds()))
+        Ok((out.to_vec(), event.gpu_seconds()))
     }
 }
 
@@ -348,10 +415,12 @@ mod tests {
         assert_eq!(fs.column(2).unwrap().info, FeatureType::Categorical);
         assert!(fs.column(0).unwrap().distinct_values <= 256);
         let all = training_data(fs.clone(), &labels, None, None).unwrap();
+        let mut flats = Vec::new();
         for subsets in [false, true] {
         let config = RandomForestProcedureConfig { feature_vector_samplings: 3, feature_samplings: 4, max_depth: 10, feature_sampling_prop: 0.7, categorical_subsets: subsets, ..Default::default() };
         let forest = train_forest(&all, &config).unwrap();
         let flat = FlatForest::new(&forest).unwrap();
+        flats.push(flat.clone());
         assert!(flat.max_depth >= 3, "{}", flat.max_depth);
         assert_eq!(!flat.subsets.is_empty(), subsets, "categorical subset splits to predict with");
 
@@ -382,6 +451,23 @@ mod tests {
             assert!(right > 0.75, "{what}: {right} right");
             eprintln!("{what}, subsets {subsets}: {right:.3} right");
         }
+        }
+        // Both forests (one with subset splits) in one dispatch: each row's predictions are each forest's alone, and
+        // the kept buffers serve batches that shrink and grow.
+        let both = DeviceForest::new_many(&[&flats[0], &flats[1]]).unwrap();
+        let alone: Vec<DeviceForest> = flats.iter().map(|f| DeviceForest::new(f).unwrap()).collect();
+        for b in [3000usize, 7, 3000, 1] {
+            let few: Vec<Vec<CellValue>> = cols.iter().map(|col| col[..b].to_vec()).collect();
+            let rows = RowBuckets::from_values(&fs, &few).unwrap();
+            let p = both.predict(&rows).unwrap();
+            assert_eq!(p.len(), 2 * b);
+            for (f, a) in alone.iter().enumerate() {
+                let q = a.predict(&rows).unwrap();
+                for r in 0..b {
+                    // (Within rounding: more items give a row fewer lanes, so its trees sum in another order.)
+                    assert!((p[2 * r + f][1] - q[r][1]).abs() < 1e-6, "batch {b}, row {r}, forest {f}: {:?} {:?}", p[2 * r + f], q[r]);
+                }
+            }
         }
         let config = RandomForestProcedureConfig { feature_vector_samplings: 3, feature_samplings: 4, max_depth: 10, feature_sampling_prop: 0.7, ..Default::default() };
 
@@ -640,6 +726,61 @@ mod tests {
         (0..n).map(|i| if a[i * n + i].abs() < 1e-300 { 0.0 } else { b[i] / a[i * n + i] }).collect()
     }
 
+    /// A probability's log odds, the probability kept off 0 and 1 (a leaf of one label's rows gives either).
+    fn log_odds(p: f32) -> f64 {
+        let p = (p as f64).clamp(1e-4, 1.0 - 1e-4);
+        (p / (1.0 - p)).ln()
+    }
+
+    /// The logistic curve `1 / (1 + exp(-(a x + b)))` of least log loss over `(x, label)` (Platt 1999): the labels
+    /// smoothed to Platt's targets, `(n+ + 1) / (n+ + 2)` and `1 / (n- + 2)`, so that separable data has a finite
+    /// fit; Newton's method, each step halved until the loss falls.
+    fn platt(x: &[f64], labels: &[f32]) -> (f64, f64) {
+        let pos = labels.iter().filter(|&&l| l != 0.0).count() as f64;
+        let neg = labels.len() as f64 - pos;
+        let (hi, lo) = ((pos + 1.0) / (pos + 2.0), 1.0 / (neg + 2.0));
+        let y: Vec<f64> = labels.iter().map(|&l| if l != 0.0 { hi } else { lo }).collect();
+        let loss = |a: f64, b: f64| -> f64 {
+            x.iter().zip(&y).map(|(&x, &y)| {
+                let z = a * x + b;
+                // log(1 + e^z) - y z, stably
+                (if z > 0.0 { z + (-z).exp().ln_1p() } else { z.exp().ln_1p() }) - y * z
+            }).sum()
+        };
+        let (mut a, mut b) = (1.0, 0.0);
+        let mut current = loss(a, b);
+        for _ in 0..100 {
+            let (mut ga, mut gb, mut haa, mut hab, mut hbb) = (0.0, 0.0, 1e-12, 0.0, 1e-12);
+            for (&x, &y) in x.iter().zip(&y) {
+                let q = 1.0 / (1.0 + (-(a * x + b)).exp());
+                let (g, h) = (q - y, q * (1.0 - q));
+                ga += g * x;
+                gb += g;
+                haa += h * x * x;
+                hab += h * x;
+                hbb += h;
+            }
+            let det = haa * hbb - hab * hab;
+            let (da, db) = ((hbb * ga - hab * gb) / det, (haa * gb - hab * ga) / det);
+            let mut step = 1.0;
+            while step > 1e-8 && loss(a - step * da, b - step * db) > current {
+                step /= 2.0;
+            }
+            if step <= 1e-8 {
+                break;
+            }
+            a -= step * da;
+            b -= step * db;
+            let next = loss(a, b);
+            let done = current - next < 1e-12 * current.abs().max(1.0);
+            current = next;
+            if done {
+                break;
+            }
+        }
+        (a, b)
+    }
+
     /// `cols` cycled to `n` rows.
     fn cycled(cols: &[Vec<CellValue>], n: usize) -> Vec<Vec<CellValue>> {
         cols.iter().map(|c| (0..n).map(|i| c[i % c.len()].clone()).collect()).collect()
@@ -647,16 +788,14 @@ mod tests {
 
     /// Batch prediction on resident forests (one dispatch and wait each): per batch size, the call's wall and CPU
     /// and the GPU's time, the mean of several calls.
-    fn batch_timings(what: &str, fs: &DatasetFeatureSpace, forests: &[DeviceForest], test_cols: &[Vec<CellValue>]) {
+    fn batch_timings(what: &str, fs: &DatasetFeatureSpace, forests: &DeviceForest, test_cols: &[Vec<CellValue>]) {
         for b in [1usize, 16, 256, 4096, 65536] {
             let rows = RowBuckets::from_values(fs, &cycled(test_cols, b)).unwrap();
             let reps = if b <= 256 { 20 } else { 3 };
             let (gpu, w, c) = timed(|| {
                 let mut gpu = 0.0;
                 for _ in 0..reps {
-                    for f in forests {
-                        gpu += f.predict_timed(&rows).unwrap().1;
-                    }
+                    gpu += forests.predict_timed(&rows).unwrap().1;
                 }
                 gpu
             });
@@ -691,10 +830,27 @@ mod tests {
         // Warm the kernels.
         train_forest(&training_data(fs_class.clone(), &s.train_labels, None, None).unwrap(), &RandomForestProcedureConfig { feature_vector_samplings: 1, feature_samplings: 2, ..Default::default() }).unwrap();
         let nt = s.test.len();
-        for depth in [20, 8] {
+        // The rows a calibrated model trains on (80% of the training rows) and calibrates on (the other 20%).
+        let fit: Vec<usize> = (0..s.train.len()).filter(|&i| h(i, 13) % 5 != 0).collect();
+        let cal: Vec<usize> = (0..s.train.len()).filter(|&i| h(i, 13) % 5 == 0).collect();
+        let pick = |cols: &[(String, Vec<CellValue>)], rows: &[usize]| -> Vec<Vec<CellValue>> { cols.iter().map(|(_, c)| rows.iter().map(|&i| c[i].clone()).collect()).collect() };
+        let fit_cols = named(pick(&train_cols, &fit));
+        let cal_cols: Vec<Vec<CellValue>> = pick(&train_cols, &cal);
+        let fs_fit = Arc::new(DatasetFeatureSpace::from_columns(&fit_cols, FeatureType::Boolean).unwrap());
+        // BENCH_MIN_LEAF: the fewest rows a leaf may have; BENCH_PER_TREE: a row sample per tree (100 bags of one
+        // tree) rather than upstream's 5 bags of 20.
+        let min_leaf: u32 = std::env::var("BENCH_MIN_LEAF").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+        let per_tree = std::env::var("BENCH_PER_TREE").is_ok();
+        let depths: Vec<i32> = std::env::var("BENCH_DEPTHS").ok().map(|v| v.split(',').map(|x| x.parse().unwrap()).collect()).unwrap_or(vec![20, 8]);
+        let tag = format!("{}{}", if min_leaf > 1 { format!("-leaf{min_leaf}") } else { String::new() }, if per_tree { "-pertree" } else { "" });
+        for &depth in &depths {
             for subsets in [false, true] {
-                let config = RandomForestProcedureConfig { max_depth: depth, categorical_subsets: subsets, feature_sampling_prop: fsp, ..Default::default() };
-                let kind = if subsets { "cart" } else { "one-vs-rest" };
+                let mut config = RandomForestProcedureConfig { max_depth: depth, categorical_subsets: subsets, feature_sampling_prop: fsp, min_leaf_examples: min_leaf, ..Default::default() };
+                if per_tree {
+                    config.feature_vector_samplings = 100;
+                    config.feature_samplings = 1;
+                }
+                let kind = format!("{}{tag}", if subsets { "cart" } else { "one-vs-rest" });
                 if want("classification") {
                     let (forest, w, c) = timed(|| train_forest(&training_data(fs_class.clone(), &s.train_labels, None, None).unwrap(), &config).unwrap());
                     let flat = FlatForest::new(&forest).unwrap();
@@ -704,6 +860,27 @@ mod tests {
                     let ll = p.iter().zip(&s.test_labels).map(|(p, &l)| -((if l != 0.0 { p[1] } else { p[0] }).clamp(1e-6, 1.0) as f64).ln()).sum::<f64>() / p.len() as f64;
                     eprintln!("RESULT {} rerail-{kind} classification depth {depth}: train {:.0} ms wall {:.0} ms CPU; {} nodes; predict {nt} {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; accuracy {:.4} logloss {:.4}",
                         s.name, w * 1e3, c * 1e3, flat.nodes.len(), pw * 1e3, pc * 1e3, gpu * 1e3, right(&p, &s.test_labels), ll);
+                }
+                if want("calibrated") {
+                    // The forest on 80% of the training rows; a logistic curve over its log odds fitted on the other
+                    // 20% (Platt's calibration, mldb's GLZ probabilizer with a logit link).
+                    let fit_labels: Vec<f32> = fit.iter().map(|&i| s.train_labels[i]).collect();
+                    let cal_labels: Vec<f32> = cal.iter().map(|&i| s.train_labels[i]).collect();
+                    let ((resident, a, b), w, c) = timed(|| {
+                        let forest = train_forest(&training_data(fs_fit.clone(), &fit_labels, None, None).unwrap(), &config).unwrap();
+                        let resident = DeviceForest::new(&FlatForest::new(&forest).unwrap()).unwrap();
+                        let p = resident.predict(&RowBuckets::from_values(&fs_fit, &cal_cols).unwrap()).unwrap();
+                        let (a, b) = platt(&p.iter().map(|p| log_odds(p[1])).collect::<Vec<_>>(), &cal_labels);
+                        (resident, a, b)
+                    });
+                    let rows = RowBuckets::from_values(&fs_fit, &test_cols).unwrap();
+                    let ((p, gpu), pw, pc) = timed(|| {
+                        let (p, gpu) = resident.predict_timed(&rows).unwrap();
+                        (p.iter().map(|p| { let q = 1.0 / (1.0 + (-(a * log_odds(p[1]) + b)).exp()); [(1.0 - q) as f32, q as f32] }).collect::<Vec<_>>(), gpu)
+                    });
+                    let ll = p.iter().zip(&s.test_labels).map(|(p, &l)| -((if l != 0.0 { p[1] } else { p[0] }).clamp(1e-6, 1.0) as f64).ln()).sum::<f64>() / p.len() as f64;
+                    eprintln!("RESULT {} rerail-{kind}-platt classification depth {depth}: train {:.0} ms wall {:.0} ms CPU; curve {a:.3} x + {b:.3}; predict {nt} {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; accuracy {:.4} logloss {:.4}",
+                        s.name, w * 1e3, c * 1e3, pw * 1e3, pc * 1e3, gpu * 1e3, right(&p, &s.test_labels), ll);
                 }
                 if want("regression") {
                     let (forest, w, c) = timed(|| train_regression_forest(fs_real.clone(), &s.train_targets, None, None, &config).unwrap());
@@ -716,50 +893,36 @@ mod tests {
                     eprintln!("RESULT {} rerail-{kind} regression depth {depth}: train {:.0} ms wall {:.0} ms CPU; {} nodes; predict {nt} {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; rmse {rmse:.4} r2 {r2:.4}",
                         s.name, w * 1e3, c * 1e3, flat.nodes.len(), pw * 1e3, pc * 1e3, gpu * 1e3);
                     if depth == 20 && !subsets && want("batch") {
-                        batch_timings(&format!("{} regression depth {depth}", s.name), &fs_real, &[resident], &test_cols);
+                        batch_timings(&format!("{} regression depth {depth}", s.name), &fs_real, &resident, &test_cols);
                     }
                 }
                 if !want("kbucket") {
                     continue;
                 }
                 let ks: Vec<usize> = std::env::var("BENCH_K").ok().map(|v| v.split(',').map(|x| x.parse().unwrap()).collect()).unwrap_or(vec![2, 4, 8, 16]);
-                let fit: Vec<usize> = (0..s.train.len()).filter(|&i| h(i, 13) % 5 != 0).collect();
-                let cal: Vec<usize> = (0..s.train.len()).filter(|&i| h(i, 13) % 5 == 0).collect();
-                let pick = |cols: &[(String, Vec<CellValue>)], rows: &[usize]| -> Vec<Vec<CellValue>> { cols.iter().map(|(_, c)| rows.iter().map(|&i| c[i].clone()).collect()).collect() };
-                let fit_cols = named(pick(&train_cols, &fit));
-                let cal_cols: Vec<Vec<CellValue>> = pick(&train_cols, &cal);
-                let fs = Arc::new(DatasetFeatureSpace::from_columns(&fit_cols, FeatureType::Boolean).unwrap());
+                let fs = &fs_fit;
                 let mut sorted: Vec<f32> = fit.iter().map(|&i| s.train_targets[i]).collect();
                 sorted.sort_by(f32::total_cmp);
                 for &k in &ks {
                     let thresholds: Vec<f32> = (1..k).map(|q| sorted[q * sorted.len() / k]).collect();
                     // Each bucket's median target, bucket b holding the targets between thresholds b - 1 and b.
                     let medians: Vec<f64> = (0..k).map(|b| sorted[(2 * b + 1) * sorted.len() / (2 * k)] as f64).collect();
+                    // The K - 1 forests, resident together: one dispatch predicts them all.
                     let ((forests, nodes), w, c) = timed(|| {
-                        let mut forests = Vec::new();
-                        let mut nodes = 0;
+                        let mut flats = Vec::new();
                         for &t in &thresholds {
                             let labels: Vec<f32> = fit.iter().map(|&i| (s.train_targets[i] > t) as u8 as f32).collect();
                             let forest = train_forest(&training_data(fs.clone(), &labels, None, None).unwrap(), &config).unwrap();
-                            let flat = FlatForest::new(&forest).unwrap();
-                            nodes += flat.nodes.len();
-                            forests.push(DeviceForest::new(&flat).unwrap());
+                            flats.push(FlatForest::new(&forest).unwrap());
                         }
-                        (forests, nodes)
+                        let nodes: usize = flats.iter().map(|f| f.nodes.len()).sum();
+                        (DeviceForest::new_many(&flats.iter().collect::<Vec<_>>()).unwrap(), nodes)
                     });
                     // The probabilities "above threshold k", per row, for a set of rows.
                     let probs = |cols: &[Vec<CellValue>]| -> (Vec<Vec<f64>>, f64) {
                         let rows = RowBuckets::from_values(&fs, cols).unwrap();
-                        let mut gpu = 0.0;
-                        let mut out = vec![Vec::with_capacity(k - 1); rows.num_rows];
-                        for f in &forests {
-                            let (p, g) = f.predict_timed(&rows).unwrap();
-                            gpu += g;
-                            for (o, p) in out.iter_mut().zip(&p) {
-                                o.push(p[1] as f64);
-                            }
-                        }
-                        (out, gpu)
+                        let (p, gpu) = forests.predict_timed(&rows).unwrap();
+                        (p.chunks(k - 1).map(|r| r.iter().map(|p| p[1] as f64).collect()).collect(), gpu)
                     };
                     // Least squares over [1, p_1 .. p_{K-1}] on the calibration rows (a little ridge).
                     let (cal_p, _) = probs(&cal_cols);

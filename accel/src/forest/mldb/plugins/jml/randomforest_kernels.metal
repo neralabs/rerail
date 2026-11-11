@@ -313,8 +313,8 @@ fixupBucketsKernel(__constant const TreeTrainingInfo & treeTrainingInfo,
 }
 
 struct PredictForestArgs {
-    uint32_t numRows;
-    uint32_t numTrees;
+    uint32_t numItems;
+    uint32_t numForests;
     uint32_t maxDepth;
     uint32_t lanesPerRow;
     uint32_t columnStride;
@@ -326,6 +326,7 @@ predictForestKernel(__constant const PredictForestArgs & args,
                     __global const uint32_t * bucketData,
                     __global const PredictNode * nodes,
                     __global const uint32_t * subsets,
+                    __global const uint32_t * forestTreeStart,
                     __global const int32_t * treeRoots,
                     __global const float * treeWeights,
                     __global const float * leafPreds,
@@ -335,8 +336,8 @@ predictForestKernel(__constant const PredictForestArgs & args,
                     uint32_t tid [[thread_position_in_threadgroup]],
                     uint32_t ntid [[threads_per_threadgroup]])
 {
-    predictForestImpl(args.numRows, args.numTrees, args.maxDepth, args.lanesPerRow, args.columnStride, bucketData,
-                      nodes, subsets, treeRoots, treeWeights, leafPreds, predictionsOut, partials,
+    predictForestImpl(args.numItems, args.numForests, args.maxDepth, args.lanesPerRow, args.columnStride, bucketData,
+                      nodes, subsets, forestTreeStart, treeRoots, treeWeights, leafPreds, predictionsOut, partials,
                       group, tid, ntid);
 }
 

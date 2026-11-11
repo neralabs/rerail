@@ -2028,14 +2028,15 @@ typedef struct PredictNode {
 // lane a row suits a batch that fills the device by itself. Each walk is at most maxDepth steps; a walk that has not
 // reached a leaf by then gives NaN.
 SYNC_FUNCTION(v1,void,
-predictForestImpl) (uint32_t numRows,
-                    uint32_t numTrees,
+predictForestImpl) (uint32_t numItems,     // rows times forests: item r is row r / numForests, forest r % numForests
+                    uint32_t numForests,
                     uint32_t maxDepth,
                     uint32_t lanesPerRow,
                     uint32_t columnStride,
                     ROBUFFER(uint32_t) bucketData,
                     ROBUFFER(PredictNode) nodes,
                     ROBUFFER(uint32_t) subsets,  // [numSubsets * CATEGORY_SET_WORDS]
+                    ROBUFFER(uint32_t) forestTreeStart,  // [numForests + 1]: forest f's trees are [f], [f + 1])
                     ROBUFFER(int32_t) treeRoots,
                     ROBUFFER(float) treeWeights,
                     ROBUFFER(float) leafPreds,
@@ -2047,18 +2048,21 @@ predictForestImpl) (uint32_t numRows,
 {
     uint32_t rowsPerGroup = threadsPerGroup / lanesPerRow;
     uint32_t lane = threadId % lanesPerRow;
-    uint32_t r = groupId * rowsPerGroup + threadId / lanesPerRow;
+    uint32_t r = groupId * rowsPerGroup + threadId / lanesPerRow;  // the item
+    uint32_t row = r / numForests;
 
     float p0 = 0.0f, p1 = 0.0f;
-    if (r < numRows) {
-        for (uint32_t t = lane;  t < numTrees;  t += lanesPerRow) {
+    if (r < numItems) {
+        uint32_t forest = r - row * numForests;
+        uint32_t endTree = forestTreeStart[forest + 1];
+        for (uint32_t t = forestTreeStart[forest] + lane;  t < endTree;  t += lanesPerRow) {
             int32_t at = treeRoots[t];
             // Each step: the node, then its feature's bucket for the row (column `feature` starts at
             // feature * columnStride; the bits are the node's).
             for (uint32_t d = 0;  d < maxDepth && at >= 0;  ++d) {
                 PredictNode node = nodes[at];
                 uint16_t bucket = extract16BitRange32(bucketData + (uint32_t)node.feature * columnStride,
-                                                      node.bucketBits, r);
+                                                      node.bucketBits, row);
                 bool isTrue = node.ordinal == 1 ? bucket < node.splitBucket
                     : node.ordinal == 0 ? bucket == node.splitBucket
                     : inCategorySet(subsets + (uint32_t)node.splitBucket * CATEGORY_SET_WORDS, bucket);
@@ -2079,7 +2083,7 @@ predictForestImpl) (uint32_t numRows,
 
     ukl_threadgroup_barrier();
 
-    if (r < numRows && lane == 0) {
+    if (r < numItems && lane == 0) {
         float s0 = 0.0f, s1 = 0.0f;
         for (uint32_t l = 0;  l < lanesPerRow;  ++l) {
             s0 += partials[2 * (threadId + l)];
