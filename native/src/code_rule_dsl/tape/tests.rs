@@ -256,10 +256,11 @@ fn persisted_image_round_trips_without_parsing() {
     // `_member_name_here`, `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them; a tape
     // format (7: one document per tape; 9: v9np's columns, decision 0025; 10: memberships in the codes;
     // 11: columns at 16 bytes, decision 0032; 12: named-only, no source digest, RER-131; 13: the
-    // version alone; 14: the tokens the grammar implies never written, RER-131) changes the bytes.
+    // version alone; 14: the tokens the grammar implies never written, RER-131; 15: delimiters left out where
+    // implied, other tokens only where always implied, RER-131) changes the bytes.
     assert_eq!(
         digest,
-        "8130b6d232a1f27b2793af26815049ae4701c911bb90037246c3f09b90d271c1"
+        "df11d157b5916832e7ccd615205d8c0ff9ed1418c11a1716f3dab476a51d257e"
     );
 }
 

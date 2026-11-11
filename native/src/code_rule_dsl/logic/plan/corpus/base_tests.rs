@@ -958,7 +958,8 @@ ops(k, l, i, s) :- op_at(n, i, s), kind(n, k), line(n, l).
 
 /// `prev_token(n, s)` is the text of the child right before n among its parent's stored children, and `token(p, i, s,
 /// start, end)` p's stored children in order. A named-only tape stores no token the grammar implies (RER-131), and
-/// no relation holds one: the call's `(`, `)` and `,`, the `import`, `from` and the import list's `,` are in neither.
+/// no relation holds one: the call's `(`, `)` and `,`, the `from` and the import list's `,` are in neither. A keyword
+/// some other word of its gap holds is stored where implied too: `from m import (a, b)` makes `import` one.
 #[test]
 fn tokens_are_the_stored_neighbours() {
     let files = [("i.py", "from m import a, b\nimport x, y.z\nf(a, b, c=1)  # done\n")];
@@ -976,8 +977,9 @@ at(k, i, t) :- node(_, p, k, _, _), token(p, i, t, _, _).
     // The stored neighbours: the keyword argument follows `b`, the comment the call's statement.
     assert!(after.iter().any(|r| r == "keyword_argument\tb"), "{after:?}");
     assert!(at.iter().any(|r| r == "argument_list\t2\tc=1"), "{at:?}");
+    assert!(at.iter().any(|r| r == "import_from_statement\t1\timport"), "{at:?}");
     // No implied token, in either relation.
-    for implied in ["(", ")", ",", "import", "from"] {
+    for implied in ["(", ")", ",", "from"] {
         assert!(!after.iter().chain(&at).any(|r| r.ends_with(&format!("\t{implied}"))), "{implied}: {after:?} {at:?}");
     }
     let _ = std::fs::remove_dir_all(&dir);

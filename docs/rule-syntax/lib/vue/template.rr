@@ -68,7 +68,8 @@ vhas_attr(e, l) :- vplain(e, _, x), vlower(x, l).
 .decl vdir_name(a: node, d: symbol)
 vdir_name(a, d) :- kind(a, "directive_attribute"), child(a, n, 0), kind(n, "directive_name"), text(n, t),
     match("v-(?<d>.*)", t).
-vdir_name(a, d) :- kind(a, "directive_attribute"), !has_directive_name(a), first_token(a, t), text(t, s), shorthand(s, d).
+vdir_name(a, d) :- kind(a, "directive_attribute"), !has_directive_name(a), text(a, x), match("(?s)(?<s>[:.@#]).*", x),
+    shorthand(s, d).
 .decl shorthand(s: symbol, d: symbol)
 shorthand(":", "bind"). shorthand(".", "bind"). shorthand("@", "on"). shorthand("#", "slot").
 .decl has_directive_name(a: node)

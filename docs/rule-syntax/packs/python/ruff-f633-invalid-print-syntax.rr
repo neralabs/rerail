@@ -15,7 +15,7 @@
     suppress ruff "F633"
 // tree-sitter still parses the Python 2 statement: a print_statement with a `>>` chevron. Its `print` is a
 // keyword token, not a name, so the lookup is done here.
-F633(kw) :- kind(p, "print_statement"), child(p, ch, _), kind(ch, "chevron"), first_token(p, kw), !print_bound(p).
+F633(kw) :- kind(p, "print_statement"), child(p, ch, _), kind(ch, "chevron"), match("(?s)(?<kw>print)\\b.*", p), !print_bound(p).
 // Elsewhere it is an expression: `print >> f` as an operand, `(print) >> f`.
 F633(n) :- kind(b, "binary_operator"), op(b, ">>"), field(b, "left", l), unparen(l, n), kind(n, "identifier"),
     text(n, "print"), !print_bound(n).

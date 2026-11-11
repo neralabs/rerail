@@ -42,6 +42,7 @@
 // Builds on tsx/react (and through it tsx/eslint-a-common: deparen, call_arg, function_kind, function_node) and
 // tsx/names (ref, ref_site, decl_site: a JSX component tag is a reference there).
 #include "tsx/react.rr"
+#include "tsx/slots.rr"
 
 // ---- Hooks and the functions around them ----------------------------------------------------------------------
 .decl hook_named(n: node)  // n's text is a Hook's name: "use", "useState", "use3d"; not "user"
@@ -290,10 +291,7 @@ deps_stable_site(p) :- kind(d, "variable_declarator"), field(d, "name", ap), dep
     (x = "useReducer" ; x = "useActionState" ; x = "useTransition" ; x = "useState", !deps_rewritten(p)).
 // deps_second(ap, p): p is the second of exactly two elements, a hole counting as one: [a, b] and [, b].
 .decl deps_second(ap: node, p: node)
-deps_second(ap, p) :- kind(ap, "array_pattern"), child(ap, p, i), kind(p, "identifier"), token_before(p, t1),
-    text(t1, ","), token_after(p, t2), text(t2, "]"), token_before(t1, t0),
-    (i = 0, text(t0, "[") ; i = 1, child(ap, q, 0), last_token(q, t0), first_token(q, f), token_before(f, b),
-    text(b, "[")).
+deps_second(ap, p) :- kind(ap, "array_pattern"), slot(ap, p, 1), kind(p, "identifier"), slot_count(ap, 2).
 .decl deps_init_hook(d: node, x: symbol)  // d = useRef(…), React.useRef(…), …
 deps_init_hook(d, x) :- field(d, "value", w), deps_bare(w, v), kind(v, "call_expression"), field(v, "function", f),
     deps_name(f, x).

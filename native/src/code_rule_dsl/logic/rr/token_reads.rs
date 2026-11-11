@@ -12,6 +12,11 @@
 //! Where it gives none, any kind; for a neighbour (`prev_token`) or a leaf of the node (the four leaf relations),
 //! any kind the token may sit under.
 //!
+//! A leaf relation read for its place, with no test on the token's text (`first_token(n, t), line(t, l)`, an edit at
+//! `t`), is refused the same way where the tape may leave out a token there: the stored leaf it gives is a later
+//! one, so a line, a column or an edit lands elsewhere. The rule reads the node's own span or the source around it
+//! (`structural_before`, `structural_after`) instead.
+//!
 //! A relation whose rules read a token where the grammar keeps it says so, as a JSON rule's `stored` does:
 //! `.stored perf_paren_target "a one-element tuple_pattern's comma is its trailing comma"`. Its rules' reads are
 //! not refused; the reason is required.
@@ -337,6 +342,11 @@ pub(super) fn refuse(files: &[(std::path::PathBuf, Vec<super::syntax::Statement>
                 }
                 _ => Vec::new(),
             };
+            // Read for its place: any token the tape leaves out there moves it.
+            let placed = regexes.is_empty() && text.is_none();
+            if placed {
+                regexes.push("(?s)^.*$".to_owned());
+            }
             regexes.sort();
             regexes.dedup();
             let at = args.get(node).and_then(var).and_then(|n| given.get(n));
@@ -353,7 +363,8 @@ pub(super) fn refuse(files: &[(std::path::PathBuf, Vec<super::syntax::Statement>
                 if let Some((kind, token)) = found.iter().next() {
                     let more = if found.len() > 1 { format!(" (and {} more)", found.len() - 1) } else { String::new() };
                     let parent = if parents.is_some() { "" } else { ", and the clause names no parent kind" };
-                    refused.insert(format!("{}:{}: {rel} reads `{token}`, which the tape leaves out in {kind}{more}{parent}", clause.file.display(), clause.line));
+                    let what = if placed { format!("is read for its place, and the tape leaves out `{token}`") } else { format!("reads `{token}`, which the tape leaves out") };
+                    refused.insert(format!("{}:{}: {rel} {what} in {kind}{more}{parent}", clause.file.display(), clause.line));
                 }
             }
         }

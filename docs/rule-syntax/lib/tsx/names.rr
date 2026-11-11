@@ -220,9 +220,6 @@ import_binding(sp, l, m, x) :- kind(sp, "import_specifier"), field(sp, "name", n
 .decl spec_name(n: node, x: symbol)
 spec_name(n, x) :- (field(sp, "name", n) ; field(sp, "alias", n)), (kind(sp, "import_specifier") ;
     kind(sp, "export_specifier")), (kind(n, "string"), str(n, x) ; !kind(n, "string"), text(n, x)).
-// `import { default as foo }`: tree-sitter writes `default` as an anonymous token, so there is no name field.
-import_binding(sp, l, m, "default") :- kind(sp, "import_specifier"), !field(sp, "name", _), op(sp, "default"),
-    local_of(sp, l), source_of(sp, m).
 // Default import: the clause's first child is the identifier (in `import D, { a } from "m"` that is D).
 import_binding(c, l, m, "default") :- kind(c, "import_clause"), child(c, id, 0), kind(id, "identifier"),
     text(id, l), source_of(c, m).

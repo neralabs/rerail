@@ -1,0 +1,41 @@
+// tsx/slots: the slots of an array or array pattern, as ESTree counts them (holes included).
+
+// ---- array slots -------------------------------------------------------------------------------------------------
+// ESTree's `elements` keeps holes as null: `[a, , b]` has b at index 2. tree-sitter has no node for a hole, so
+// slot counts the commas before an element. The tape keeps a hole's commas and leaves out the separators the
+// grammar implies (RER-131): those are in the source before a child (structural_before), the others are stored.
+//   slot(a, e, i)          e is element i of array or array pattern a
+//   slot_count(a, k)       a has k slots: `[]` 0, `[a]` 1, `[a, ]` 1, `[a, ,]` 2
+.decl array_kind(k: symbol)
+array_kind("array"). array_kind("array_pattern").
+// slot_gap(a, at, n): n commas lie in the source before a's child starting at offset at (a comment included), or,
+// with at the array's end, after its last child.
+.decl slot_gap(a: node, at: number, n: number)
+slot_gap(a, cs, n) :- kind(a, k), array_kind(k), child(a, c, _), node(_, c, _, cs, _), structural_before(c, g),
+    n = strlen(g) - strlen(@replace_all(g, ",", "")).
+slot_gap(a, e, n) :- kind(a, k), array_kind(k), child(a, c, i), !child(a, _, i + 1), node(_, a, _, _, e),
+    structural_after(c, g), n = strlen(g) - strlen(@replace_all(g, ",", "")).
+// slot_comma(a, at): a stored comma of a, at offset at: one the source between children does not hold.
+.stored slot_comma "the commas the gaps between an array's children leave out are the stored ones"
+.decl slot_comma(a: node, at: number)
+slot_comma(a, at) :- kind(a, k), array_kind(k), token(a, _, ",", at, _).
+.decl slot(a: node, e: node, i: number)
+slot(a, e, i) :- child(a, e, _), !kind(e, "comment"), kind(a, k), array_kind(k), node(_, e, _, s, _),
+    x = sum n : { slot_gap(a, at, n), at <= s }, y = count : { slot_comma(a, at), at < s }, i = x + y.
+// k: the commas, and one more where the last element has no comma after it.
+.decl slot_count(a: node, k: number)
+slot_count(a, k) :- kind(a, ak), array_kind(ak), x = sum n : { slot_gap(a, _, n) }, y = count : { slot_comma(a, _) },
+    slot_last(a, w), k = x + y + w.
+.decl slot_last(a: node, w: number)
+slot_last(a, 1) :- slot_open_end(a).
+slot_last(a, 0) :- kind(a, k), array_kind(k), !slot_open_end(a).
+.decl slot_open_end(a: node)  // no comma after a's last element
+slot_open_end(a) :- slot_end(a, s), x = sum n : { slot_gap(a, at, n), at > s }, x = 0, !slot_comma_after(a, s).
+// slot_end(a, s): a's last element starts at s.
+.decl slot_end(a: node, s: number)
+slot_end(a, s) :- kind(a, k), array_kind(k), child(a, e, _), !kind(e, "comment"), node(_, e, _, s, _),
+    !slot_later(a, s).
+.decl slot_later(a: node, s: number)
+slot_later(a, s) :- child(a, e, _), node(_, e, _, s, _), child(a, f, _), !kind(f, "comment"), node(_, f, _, t, _), t > s.
+.decl slot_comma_after(a: node, s: number)
+slot_comma_after(a, s) :- slot_end(a, s), slot_comma(a, at), at > s.

@@ -109,17 +109,39 @@ call_arg(c, a, i) :- (kind(c, "call_expression") ; kind(c, "new_expression")), f
 call_arg_count(c, k) :- (kind(c, "call_expression") ; kind(c, "new_expression")), field(c, "arguments", al),
     kind(al, "arguments"), k = count : { child(al, o, _), !not_stmt(o) }.
 
+// ---- arrows --------------------------------------------------------------------------------------------------------
+// arrow_op(f, m): where arrow function f's `=>` is, for a finding: the source line it is on (a finding is keyed by
+// its line). The tape keeps no `=>` (the kind implies it): it is in the source before the body, so its line is the
+// body's less the line breaks after it.
+.decl arrow_op(f: node, m: span)
+arrow_op(f, m) :- kind(f, "arrow_function"), field(f, "body", b), structural_before(b, g), match("(?s).*=>.*", g),
+    w = @replace_all(g, "(?s)^.*=>", ""), line(b, lb), l = lb - (strlen(w) - strlen(@replace_all(w, "\\n", ""))), node(d, f, _, _, _),
+    src_line(d, l, m).
+
 // ---- tokens --------------------------------------------------------------------------------------------------------
 // token_text(n, s): `a  /* x */ + b` and `a+b` both give "a + b": comments and spacing drop out, as when ESLint
 // compares two nodes token by token. `[`${0} `]` and `[`${0}`]` differ. Asked only of the nodes in token_text_ask,
 // which the including library or rule fills: tokens are a walk per node, so only compared nodes take it.
 .decl token_text_ask(n: node)
 .decl token_text(n: node, s: symbol)
-token_text(n, s) :- token_text_ask(n),
-    s = join x by (l, c) sep " " : { node_token(n, t), text(t, x), line(t, l), col(t, c) }.
-.decl node_token(n: node, t: span)  // the tokens of an asked node, first to last
-node_token(n, t) :- token_text_ask(n), first_token(n, t).
-node_token(n, u) :- node_token(n, t), !last_token(n, t), token_after(t, u).
+// The tape keeps no token its grammar implies, so the pieces are the stored leaves and the source between stored
+// children (spacing taken out), in source order: what the tape leaves out is in that source.
+token_text(n, s) :- token_text_ask(n), s = join x by (p, q) sep " " : { tt_piece(n, p, q, x) }.
+.decl tt_part(n: node, p: node)  // p is n or a node inside it
+tt_part(n, n) :- token_text_ask(n).
+tt_part(n, p) :- token_text_ask(n), within(p, n).
+.decl tt_piece(n: node, p: number, q: number, x: symbol)
+// A stored child with no stored children of its own: an anonymous token, a leaf. Comments drop out.
+tt_piece(n, 2 * st, 0, x) :- tt_part(n, p), token(p, _, x, st, _), !tt_inner(p, st).
+.decl tt_inner(p: node, st: number)  // p's child at st is a comment, or has stored children (it gives their pieces)
+tt_inner(p, st) :- tt_part(_, p), child(p, c, _), node(_, c, _, st, _), (comment(c, _) ; token(c, _, _, _, _)).
+// The source before each stored named child, and after the last one.
+tt_piece(n, 2 * cs - 1, 0, x) :- tt_part(n, p), child(p, c, _), node(_, c, _, cs, _), structural_before(c, g),
+    x = @replace_all(g, "\\s+", ""), x != "".
+tt_piece(n, 2 * ce + 1, 0, x) :- tt_part(n, p), child(p, c, i), !tt_later(p, i), node(_, c, _, _, ce),
+    structural_after(c, g), x = @replace_all(g, "\\s+", ""), x != "".
+.decl tt_later(p: node, i: number)
+tt_later(p, i) :- tt_part(_, p), child(p, _, i), child(p, _, j), j > i.
 
 // ---- this ----------------------------------------------------------------------------------------------------------
 // Arrow functions have no `this` of their own, and a method's computed key is outside the method (fn_region).

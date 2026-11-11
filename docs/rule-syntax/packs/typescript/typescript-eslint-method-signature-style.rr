@@ -36,8 +36,10 @@ fn_property(p, f) :- kind(p, "property_signature"), field(p, "type", ta), child(
 // The parts of the rewrite: the key with `[…]`, `?` and `readonly` as written; type parameters and parameters;
 // the return type, `any` when there is none.
 .decl key_text(m: node, k: symbol)
-key_text(m, k) :- field(m, "name", n), text(n, x), (op(m, "?"), q = "?" ; !op(m, "?"), q = ""),
-    (op(m, "readonly"), r = "readonly " ; !op(m, "readonly"), r = ""), k = cat(r, cat(x, q)).
+key_text(m, k) :- field(m, "name", n), text(n, x), (sig_op(m, "?"), q = "?" ; !sig_op(m, "?"), q = ""),
+    (sig_op(m, "readonly"), r = "readonly " ; !sig_op(m, "readonly"), r = ""), k = cat(r, cat(x, q)).
+.decl sig_op(m: node, o: symbol)  // `?` or `readonly` on a signature
+sig_op(m, o) :- (kind(m, "method_signature") ; kind(m, "property_signature")), op(m, o), (o = "?" ; o = "readonly").
 .decl params_text(f: node, s: symbol)
 params_text(f, cat(t, p)) :- field(f, "parameters", ps), text(ps, p), field(f, "type_parameters", tp), text(tp, t).
 params_text(f, p) :- field(f, "parameters", ps), text(ps, p), !field(f, "type_parameters", _).

@@ -24,8 +24,11 @@ default_case(s) :- kind(s, "switch_statement"), field(s, "body", b), child(b, c,
 .decl excused(b: node)
 excused(b) :- last_comment(b, c), comment(c, v), note(@replace_all(v, "^\\s+|\\s+$", "")).
 .decl last_comment(b: node, c: node)
-last_comment(b, c) :- kind(b, "switch_body"), last_token(b, t), within(c, b), is_comment(c), token_after(c, t),
-    count : { within(o, b), is_comment(o), token_after(o, t), earlier(c, o) } = 0.
+// The code after c is the body's `}` (the tape keeps none: it is in the source after the case c ends), and no
+// comment of b comes later.
+last_comment(b, c) :- kind(b, "switch_body"), within(c, b), is_comment(c), after_stop(c, a, g), child(b, a, _),
+    match("\\s*\\}\\s*", g), count : { within(o, b), is_comment(o), earlier(c, o) } = 0.
+layout_at(c) :- kind(b, "switch_body"), within(c, b), is_comment(c).
 // note(v): the trimmed text matches the pattern. ESLint's test is a search, so `.*` goes round it.
 .decl note(v: symbol)
 note(v) :- comment(_, w), v = @replace_all(w, "^\\s+|\\s+$", ""), !option("commentPattern", _),

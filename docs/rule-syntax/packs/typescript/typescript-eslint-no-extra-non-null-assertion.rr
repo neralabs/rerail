@@ -19,4 +19,4 @@
     suppress biome "lint/suspicious/noExtraNonNullAssertion"
     fix safe drop_bang "Remove the extra `!`"
 no_extra_non_null_assertion(n) :- non_null(n, _), (non_null(p, _), estree_child(p, n) ; optional_on(_, n)).
-drop_bang(n) :- last_token(n, t) => delete(t).
+drop_bang(n) :- match("(?s).*(?<t>!)", n) => delete(t).   // n's last character (the tape keeps no `!`)
