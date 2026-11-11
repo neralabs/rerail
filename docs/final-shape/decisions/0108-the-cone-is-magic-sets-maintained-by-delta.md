@@ -269,6 +269,10 @@ turns them off in one phase. `RERAIL_CONE_STILL=off` turns off the journal's kep
   equal that symbol would be taken too.
 - `fs_dir` and `fs_line` as relations of the cone's fact space (t33's K2). The answers are the
   join `r :- m_r, fs_r` above, but the native step still answers from `World`'s maps.
+- **A segfault in phase 1, once.** After the hub merge (`03125d2d1`), one unchanged run of the
+  workload crashed: SIGSEGV, 1.1 s user, after phase 0's profile was written. Phase 1 holds the
+  cone. It left no crash report. Nine more runs, four of them after an edit was made and taken
+  back, did not crash. Next time: run under `lldb` or with `MallocScribble`.
 
 ## Building on it
 

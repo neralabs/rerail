@@ -156,6 +156,9 @@ pub(crate) struct Writer {
     lane: Mutex<Option<Lane>>,
     /// The handles and holds of the store.
     handles: std::sync::atomic::AtomicUsize,
+    /// The store's identity (`store_identity`), set by its first handle: a store created again at the path has
+    /// another, and a writer of its own (as it has atoms of its own).
+    identity: std::sync::OnceLock<i64>,
 }
 
 /// The process's writers, by store path.
@@ -164,10 +167,24 @@ fn writers() -> &'static Mutex<HashMap<PathBuf, Arc<Writer>>> {
     WRITERS.get_or_init(Default::default)
 }
 
-/// The writer of the store at `path`, counted as one more of its handles.
+/// The writer of the store at `path`, counted as one more of its handles (a `Hold`, which names no store).
 pub(super) fn register(path: &Path) -> Arc<Writer> {
     let mut all = writers().lock().expect("the writers");
     let w = Arc::clone(all.entry(path.to_path_buf()).or_default());
+    w.handles.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    w
+}
+
+/// The writer of the store at `path` whose identity is `identity`, counted as one more of its handles. The path's
+/// writer of a store since deleted stays its handles' alone: this store gets a new one.
+pub(super) fn register_store(path: &Path, identity: i64) -> Arc<Writer> {
+    let mut all = writers().lock().expect("the writers");
+    let entry = all.entry(path.to_path_buf()).or_default();
+    if *entry.identity.get_or_init(|| identity) != identity {
+        *entry = Arc::default();
+        entry.identity.get_or_init(|| identity);
+    }
+    let w = Arc::clone(entry);
     w.handles.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     w
 }
