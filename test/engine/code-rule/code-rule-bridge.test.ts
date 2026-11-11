@@ -847,8 +847,11 @@ describe("CodeRuleBridge", () => {
   it("costs each session a table of the shared observations, not copies of them or of their paths", { timeout: 60_000 }, async () => {
     const root = await workspace();
     const files = 2_000;
-    for (let index = 0; index < files; index += 1) await writeFile(join(root, "src", `module_${index}.py`), "stable\n");
-    await awaitClockAfter(join(root, "src", `module_${files - 1}.py`));
+    // Names of about 165 characters: a path string of a session's own then costs more than the session's table, so a
+    // session that keys its table by the walk's own path strings fails the bound by a wide margin.
+    const name = (index: number): string => `module_${index}_${"x".repeat(150)}.py`;
+    for (let index = 0; index < files; index += 1) await writeFile(join(root, "src", name(index)), "stable\n");
+    await awaitClockAfter(join(root, "src", name(files - 1)));
     const observations: SourceObservationCache = new Map();
     const open = async (sessionId: string): Promise<void> => {
       const published = observations.get(root);
@@ -864,8 +867,8 @@ describe("CodeRuleBridge", () => {
     const before = await heapInUse();
     const sessions = 5;
     for (let index = 0; index < sessions; index += 1) await open(`session-${index + 3}`);
-    // Each session's table holds about 90 bytes a source. A path string of its own would add about 40 more, and an
-    // observation of its own about 125 more: a session in a checkout of 100,000 files would hold 4 to 13 MB of copies.
+    // Each session's tables hold 60 to 69 bytes a source. A path string of its own brings that to about 250, and an
+    // observation of its own, which "keeps one observation of an unchanged source" also catches, to about 195.
     expect((await heapInUse() - before) / sessions / files).toBeLessThan(105);
   });
 
