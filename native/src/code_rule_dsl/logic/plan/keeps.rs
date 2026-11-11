@@ -1318,13 +1318,14 @@ mod tests {
     }
 
     /// The two-chunk regression's shape (0099, "The regression"): `ctx` is small, read by one reader that binds its
-    /// columns. Estimated, the copy's probe of `look` by name and scope keeps a binding in a hundred and the reader's
-    /// own probe of `binding` fans out widely, so inlining looks cheap. Once the stored side has run, with what the
-    /// copy's step patterns did elsewhere (each probe of `look` by name and scope kept 4 rows a binding, the
-    /// comparison kept every row), the copy is priced by those selectivities, and `ctx` stays stored. Its decision
-    /// line says which side was observed.
+    /// columns. What the steps really do (below: each probe of `look` by name and scope keeps 4 rows a binding,
+    /// `binding` 3, the comparison every row) makes the copy about 66 k rows of work against about 18 k stored, so
+    /// `ctx` should stay stored. Before the measured key domains (2ab61d7b4, O148) the estimate priced the copy's
+    /// probe of `look` as keeping a binding in a hundred and inlined it, and only the observed side took that back.
+    /// The estimate now bounds the bindings by their constant filters and applies containment to every probe, and
+    /// keeps `ctx` stored from the start; once the stored side has run, the copy is priced by those selectivities,
+    /// and `ctx` still stays stored. (`the_side_that_ran_is_believed` pins `weigh`'s taking an estimate back.)
     #[test]
-    #[ignore = "Open item O148: 2ab61d7b4 (measured key domains) prices joins apart from T; T parity or the new estimate is the user's call (it flips the estimated copy price)"]
     fn observed_selectivities_price_a_copy_that_never_ran() {
         use super::super::{Inputs, Stats, make_plan};
         let prog = super::super::super::rr::parse(
@@ -1355,7 +1356,7 @@ mod tests {
         let reader = prog.rules.iter().find(|r| r.head.rel == "agg").unwrap();
         let def = prog.rules.iter().find(|r| r.head.rel == "ctx").unwrap();
         let copy = &unfold(reader, 0, &[def], 0).unwrap()[0];
-        // Estimates alone: inlined.
+        // Estimates alone: stored, as the steps' real selectivities say.
         observing(true);
         let priced = |model: &mut Model| {
             let mut rules_of: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();
@@ -1367,7 +1368,7 @@ mod tests {
             got
         };
         let shown = priced(&mut model);
-        assert_eq!(decided(&mut model), ["ctx"], "estimated, inlining looks cheaper: {shown}");
+        assert!(decided(&mut model).is_empty(), "estimated, the copy is priced above the stored side: {shown}");
         // The stored side ran: the reader and the build, with the rows each step made.
         let nodes = model.stats.nodes;
         let ran = |rule: &Rule, factors: &dyn Fn(&Literal) -> f64| -> Vec<(u64, u64)> {

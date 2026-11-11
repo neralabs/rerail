@@ -82,3 +82,71 @@ fn no_rule_reads_a_token_the_tape_may_leave_out() {
     });
     assert!(unanswered.is_empty(), "token tests nothing answers: {unanswered:#?}");
 }
+
+/// RER-131 (ignored): what the tape writer leaves out, over real files. For each file of
+/// `RERAIL_FILES` (one path per line) it parses with tree-sitter and asks the writer's own filter
+/// (`TokenGrammar::stored_children`) which children are kept. To `RERAIL_DROP_CENSUS` (a TSV): per
+/// language, parent kind and anonymous token, how often it occurs and how often it is left out; on
+/// stderr, per language, the files, named children, and anonymous children kept and left out.
+#[test]
+#[ignore = "census: RERAIL_FILES=<list> RERAIL_DROP_CENSUS=<tsv>"]
+fn drop_census() {
+    use ast_grep_language::LanguageExt;
+    let list = std::fs::read_to_string(std::env::var("RERAIL_FILES").expect("RERAIL_FILES")).unwrap();
+    let out = std::env::var("RERAIL_DROP_CENSUS").expect("RERAIL_DROP_CENSUS");
+    let mut tally: BTreeMap<(String, String, String), (u64, u64, u64)> = BTreeMap::new();
+    let mut totals: BTreeMap<String, [u64; 5]> = BTreeMap::new();
+    for path in list.lines().filter(|l| !l.is_empty()) {
+        let Some(label) = crate::code_rule_dsl::language::label_of_path(path) else { continue };
+        let Some(lang) = crate::code_rule_dsl::language::dialect_by_label(label) else { continue };
+        let Ok(source) = std::fs::read_to_string(path) else { continue };
+        let Ok(grammar) = super::Grammar::new(lang) else { continue };
+        let Some(filter) = grammar.kinds.grammar().and_then(|language| super::tokens::TokenGrammar::of(lang, language)) else { continue };
+        let mut parser = tree_sitter::Parser::new();
+        if parser.set_language(&lang.get_ts_language()).is_err() {
+            continue;
+        }
+        let parsed = crate::code_rule_dsl::language::adapter::parse_input(lang, &source);
+        let Some(tree) = parser.parse(parsed.as_bytes(), None) else { continue };
+        let t = totals.entry(label.to_owned()).or_default();
+        t[0] += 1;
+        t[4] += source.len() as u64;
+        let mut stack = vec![tree.root_node()];
+        while let Some(node) = stack.pop() {
+            let stored = filter.stored_children(node);
+            let mut cursor = node.walk();
+            for (i, child) in node.children(&mut cursor).enumerate() {
+                let kept = stored.as_ref().is_none_or(|s| s[i]);
+                if child.is_named() {
+                    t[1] += 1;
+                } else {
+                    let e = tally.entry((label.to_owned(), node.kind().to_owned(), child.kind().to_owned())).or_default();
+                    e.0 += 1;
+                    if stored.is_none() {
+                        e.2 += 1;
+                    }
+                    if kept {
+                        t[2] += 1;
+                    } else {
+                        e.1 += 1;
+                        t[3] += 1;
+                    }
+                }
+                if kept {
+                    stack.push(child);
+                }
+            }
+        }
+    }
+    // whole: kept because the writer keeps all of the node's children (an error inside, or children
+    // its automaton cannot walk).
+    let mut tsv = String::from("language\tparent\ttoken\tseen\tdropped\twhole\n");
+    for ((label, parent, token), (seen, dropped, whole)) in &tally {
+        let token = token.replace('\t', "\\t").replace('\n', "\\n");
+        writeln!(tsv, "{label}\t{parent}\t{token}\t{seen}\t{dropped}\t{whole}").unwrap();
+    }
+    std::fs::write(&out, tsv).unwrap();
+    for (label, [files, named, kept, dropped, bytes]) in &totals {
+        eprintln!("{label}\tfiles {files}\tbytes {bytes}\tnamed {named}\tanonymous kept {kept}\tanonymous dropped {dropped}");
+    }
+}

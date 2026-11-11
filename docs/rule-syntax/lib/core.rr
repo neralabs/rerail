@@ -191,6 +191,16 @@
 .decl token_before(x: loc, t: span)                     // the token just before node or token x
 .decl token_after(x: loc, t: span)                      // the token just after node or token x
 .input first_token, last_token, token_before, token_after
+// The source around a node, for layout questions (a line break, a `;`, spacing): structural_before(n, s) holds
+// the source between n's start and the end of the node just before it among its parent's stored children (or
+// the parent's start, for a first child); structural_after(n, s) the source between n's end and the start of
+// the next stored child (or the parent's end, for a last child). A root's run to the source's edges. Comments
+// are nodes, so a gap stops at one. In `f(a, b)` (tokens the tape leaves out are no children):
+// structural_before(a, "("), structural_after(a, ", "), structural_after(b, ")"). It is the source, not tokens:
+// a rule that asks which token stands there asks the kind, the children or the fields instead.
+.decl structural_before(n: node, s: symbol)
+.decl structural_after(n: node, s: symbol)
+.input structural_before, structural_after
 
 // ---- the Python reference graph (across files) --------------------------------------------------------------
 // Which definition refers to which, over the policy's files, as the linker resolves names: through imports,

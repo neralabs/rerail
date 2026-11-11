@@ -132,7 +132,6 @@ fn chosen_line(c: &Chosen) -> String {
 
 /// On T's facts, the port chooses T's plans (anchor, walks, estimated work, rule for rule) and derives T's outputs.
 #[test]
-#[ignore = "Open item O148: 2ab61d7b4 (measured key domains) prices joins apart from T; T parity or the new estimate is the user's call"]
 fn t_programs_plan_and_run_like_t() {
     if !t_numbering("t_programs_plan_and_run_like_t") {
         return;
@@ -279,7 +278,6 @@ fn outputs_match(name: &str, got: &Outcome, first: &HashMap<i64, i64>, failures:
 /// O13: lowered to atoms and run over the base-relation vtabs of the same files (`facts::vtab::syntax`), T's programs
 /// get T's plans and, decoded, T's outputs.
 #[test]
-#[ignore = "Open item O148: 2ab61d7b4 (measured key domains) prices joins apart from T; T parity or the new estimate is the user's call"]
 fn t_programs_over_atoms_plan_and_run_like_t() {
     if !t_numbering("t_programs_over_atoms_plan_and_run_like_t") {
         return;
@@ -2046,4 +2044,52 @@ fn a_plan_priced_on_an_empty_relation_is_not_kept_once_it_fills() {
     assert!(near(&[0.0, 10.0], &[0.0, 10.0]));
     assert!(!near(&[0.0, 10.0], &[1.0, 10.0]), "empty, then one row");
     assert!(!near(&[1.0], &[0.0]), "one row, then empty");
+}
+
+/// A planner change's measurement (O148): T's programs on T's facts, each statement's SQLite VM steps, the plans
+/// chosen and whether each output is T's. Run on a build before the change and one after (`O148_OUT`, with
+/// `RERAIL_NODE_IDS=preorder`) and compare them (`scripts/profiling/o148/compare.py`): the goldens (`rules.txt`) pin
+/// plans that did no more work than the ones they replace.
+#[test]
+#[ignore = "measurement: a planner change's plans and their work, compared across two builds"]
+fn o148_plans_and_their_work() {
+    use rusqlite::ffi;
+    use std::sync::Mutex;
+    static COSTS: Mutex<Vec<(String, u64, u64)>> = Mutex::new(Vec::new());
+    unsafe extern "C" fn trace(event: u32, _: *mut std::ffi::c_void, p: *mut std::ffi::c_void, x: *mut std::ffi::c_void) -> std::ffi::c_int {
+        if event == ffi::SQLITE_TRACE_PROFILE as u32 {
+            let stmt = p.cast::<ffi::sqlite3_stmt>();
+            // SAFETY: for SQLITE_TRACE_PROFILE, P is the statement and X its time in nanoseconds.
+            let (ns, vm, text) = unsafe {
+                (*x.cast::<i64>() as u64, ffi::sqlite3_stmt_status(stmt, ffi::SQLITE_STMTSTATUS_VM_STEP, 1) as u64,
+                 std::ffi::CStr::from_ptr(ffi::sqlite3_sql(stmt)).to_string_lossy().split_whitespace().collect::<Vec<_>>().join(" "))
+            };
+            COSTS.lock().unwrap().push((text, vm, ns));
+        }
+        0
+    }
+    let out = std::env::var("O148_OUT").expect("O148_OUT: the file to write");
+    let mut lines = Vec::new();
+    let facts = facts();
+    for name in ["workload", "workload_demand", "calls"] {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute("ATTACH ?1 AS f", [format!("file:{}?mode=ro", facts.display())]).unwrap();
+        db.execute_batch("PRAGMA f.mmap_size = 4294967296; PRAGMA temp_store = MEMORY;").unwrap();
+        // SAFETY: the connection outlives the run; the callback reads only its arguments.
+        unsafe { ffi::sqlite3_trace_v2(db.handle(), ffi::SQLITE_TRACE_PROFILE as u32, Some(trace), std::ptr::null_mut()) };
+        COSTS.lock().unwrap().clear();
+        let got = super::run(&program(name), &db, Inputs::file(), None, Hooks::default()).unwrap_or_else(|e| panic!("{name}: {e}"));
+        for c in &got.chosen {
+            lines.push(format!("PLAN\t{name}\t{}", chosen_line(c)));
+        }
+        for (rel, rows) in &got.outputs {
+            let expected = std::fs::read_to_string(root().join(format!("plan/golden/{name}/{rel}.csv"))).unwrap();
+            let same = rows.iter().map(String::as_str).collect::<Vec<_>>() == expected.lines().collect::<Vec<_>>();
+            lines.push(format!("OUT\t{name}\t{rel}\t{}\t{same}", rows.len()));
+        }
+        for (text, vm, ns) in COSTS.lock().unwrap().drain(..) {
+            lines.push(format!("STMT\t{name}\t{vm}\t{ns}\t{text}"));
+        }
+    }
+    std::fs::write(out, lines.join("\n") + "\n").unwrap();
 }

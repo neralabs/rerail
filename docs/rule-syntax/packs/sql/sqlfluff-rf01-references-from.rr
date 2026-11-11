@@ -18,7 +18,7 @@
 
 .violation RF01(at: node, q: node) code "RF01" "Reference '{q}' refers to table/view not found in the FROM clause or found in ancestor statement."
     suppress sqlfluff "RF01", "L026", "all", "core", "references", "references.from"
-RF01(q, q) :- qualified_ref(c, s, q), block_of(c, _), !op(c, "("), !select_into(c), !trigger_row(q),
+RF01(q, q) :- qualified_ref(c, s, q), block_of(c, _), !row_field(c), !select_into(c), !trigger_row(q),
     ident_name(q, x), count : { visible(c, s, x) } = 0.
 
 // qualified_ref(c, s, q): c is q.col, or s.q.col with schema s (else s is unset()).
@@ -40,6 +40,10 @@ table_ref(o, o, n) :- kind(o, "object_reference"), child(p, o, _), (kind(p, "fro
     field(o, "name", n).                                     // DELETE FROM t, CREATE POLICY p ON t
 .decl scope(k: symbol)
 scope("statement"). scope("subquery"). scope("cte").
+// row_field(c): c is `(x).key`, a row value's field: its qualifier starts after the field does, past the `(`.
+.decl row_field(c: node)
+row_field(c) :- kind(c, "field"), child(c, o, _), kind(o, "object_reference"), node(_, c, _, cs, _),
+    node(_, o, _, os, _), os > cs.
 .decl select_into(c: node)  // SELECT a.x INTO …
 select_into(c) :- inside(c, e, "select_expression"), next_sibling(e, k), kind(k, "keyword_into").
 .decl trigger_row(q: node)  // NEW.x and OLD.x in a trigger body

@@ -101,6 +101,8 @@ rr_kind_function_definition("function_definition").
 .decl rr_agg5(dn: node, i: number, x: symbol)
 .decl rr_ctx2(h: node, st: number)
 .decl rr_ctx4(h: node, i: number)
+.decl rr_demand_agg_rr_agg1(h: node, st: number)
+.decl rr_demand_agg_rr_agg3(h: node, i: number)
 .decl source(d: number, sp: node)
 .decl src_line_lf(d: number, l: number, sp: node)
 .decl syntax_error(d: number)
@@ -162,10 +164,10 @@ optimizer_fslot_at(h, s, st) :- optimizer_fstr(h), node(_, h, "string", _, _), c
 optimizer_fslot_at(h, s, st) :- optimizer_fstr(h), optimizer_part_of(p, h), child(p, s, _), node(_, s, "interpolation", st, _).
 optimizer_fslot_at(h, s, st) :- node(_, h, "format_specifier", _, _), child(h, s, _), node(_, s, "format_expression", st, _).
 rr_ctx2(h, st) :- optimizer_fslot_at(h, s, st).
-rr_agg1(h, st, t) :- rr_ctx2(h, st), optimizer_fslot_at(h, _, t), t < st.
+rr_agg1(h, st, t) :- rr_demand_agg_rr_agg1(h, st), rr_ctx2(h, st), optimizer_fslot_at(h, _, t), t < st.
 optimizer_fslot(h, k, s) :- optimizer_fslot_at(h, s, st), k = count : { rr_agg1(h, st, _) }.
 rr_ctx4(h, i) :- fstring_piece(h, i, "literal", v).
-rr_agg3(h, i, j) :- rr_ctx4(h, i), fstring_piece(h, j, "interpolation", _), j < i.
+rr_agg3(h, i, j) :- rr_demand_agg_rr_agg3(h, i), rr_ctx4(h, i), fstring_piece(h, j, "interpolation", _), j < i.
 optimizer_flit(h, i, v, k) :- optimizer_fhost(h), fstring_piece(h, i, "literal", v), k = count : { rr_agg3(h, i, _) }.
 optimizer_fcontent(h, c, st) :- optimizer_fstr(h), node(_, h, "string", _, _), child(h, c, _), node(_, c, "string_content", st, _).
 optimizer_fcontent(h, c, st) :- optimizer_fstr(h), optimizer_part_of(p, h), child(p, c, _), node(_, c, "string_content", st, _).
@@ -302,3 +304,5 @@ violation("data-layer-plan-optimizer-v2", "optimizer-invariant-registry", "PV2-0
 violation("data-layer-plan-optimizer-v2", "optimizer-invariant-registry", "PV2-052", p, l) :- oir_any(1), oir_registered(n, v), oir_doc(_), !oir_cited(v), oir_at(n, p, l).
 violation("data-layer-plan-optimizer-v2", "optimizer-invariant-registry", "PV2-050", "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md", 1) :- oir_run(1), !oir_doc(_).
 violation("data-layer-plan-optimizer-v2", "optimizer-invariant-registry", "PV2-051", p, 1) :- oir_run(1), oir_doc_code(c), !oir_code(c), oir_doc(d), doc(d, p, _).
+rr_demand_agg_rr_agg1(h, st) :- optimizer_fslot_at(h, s, st).
+rr_demand_agg_rr_agg3(h, i) :- optimizer_fhost(h), fstring_piece(h, i, "literal", v).

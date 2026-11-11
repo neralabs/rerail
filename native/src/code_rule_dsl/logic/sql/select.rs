@@ -95,7 +95,7 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "doc" => &["d", "path", "module"],
         "child" => &["p", "c", "idx"],
         "field" => &["p", "f", "c"],
-        "text" | "name" | "str" | "strprefix" | "node_text" | "comment" => &["n", "s"],
+        "text" | "name" | "str" | "strprefix" | "node_text" | "comment" | "structural_before" | "structural_after" => &["n", "s"],
         // W's values (`facts::vtab::syntax::Extra`).
         "value" | "static_value" => &["n", "v"],
         "value_type_of" => &["n", "t"],

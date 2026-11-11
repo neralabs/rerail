@@ -2066,6 +2066,7 @@ impl Batch {
             spread: !projection.wants("spread"),
             name: !projection.wants("name"),
             literal: !wants_any(&["str", "strprefix", "value", "static_value", "value_type", "text"]),
+            structural: !wants_any(&["structural_before", "structural_after"]),
         };
         c.long_text = projection.long_text.clone();
         c.long_text_any = projection.long_text_any;

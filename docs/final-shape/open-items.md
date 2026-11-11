@@ -3553,6 +3553,27 @@ The three tests are ignored with this item: `t_programs_plan_and_run_like_t`,
 **Closure:** decide whether the port keeps T's estimates where T's plans are the test (and the new estimate only
 where T has no plan), or takes the new estimate and records new goldens. Then stop ignoring the tests.
 
+**Closed (2026-11-11): the new estimate, with goldens of plans measured to do no more work.** The user's call was
+the new estimate, on condition that the new plans are shown to be better, not just recorded. Measured with
+`o148_plans_and_their_work` (each statement's SQLite VM steps, deterministic) on a build at 2ab61d7b4's parent,
+whose plans are T's goldens exactly, against the hub:
+
+| Program | VM steps, T's plans | VM steps, the new plans | |
+|---|---|---|---|
+| `workload` | 55.75 M | 55.37 M | 0.993x |
+| `workload_demand` | 5.68 M | 5.46 M | 0.962x |
+| `calls` | 10.91 M | 10.38 M | 0.951x |
+
+Every output equals T's in both. By head, the plans that changed order do no more work: `classmeth` 82 → 35,
+`pv` 527 k → 514 k, `attr_open` 21.6 k → 20.2 k, `vopen` 1.71 M → 1.25 M, `returns` 1.07 M → 0.70 M, `lookup`
+(demand) 1.72 M → 1.51 M; the largest increase is `decl` +0.7% (3,070 → 3,093). On O125 steps 1–8 (the native engine,
+the estimate switched alone): join work 0.94x on the full runs and 0.999x on the session steps, instructions retired
+within ±1% across three rounds (the user CPU moved with the machine's load, 36–79). `keeps`'s copy-pricing test
+flipped because the new estimate gets its case right from the start: by the test's own selectivities the copy is
+about 66 k rows against 18 k stored, and `ctx` now stays stored without needing the observed side (the test says
+so; `the_side_that_ran_is_believed` keeps `weigh`'s correction covered). The three tests run again; the goldens
+are the new plans; `scripts/profiling/o148/compare.py` compares two builds' measurements.
+
 ## O-wave-b602-nosec. The wave misses B602 on a line whose `# nosec` names another code
 
 **Seen (2026-11-10).** `the_findings_are_ws_violations` had not run on any worktree for a while: the bandit and

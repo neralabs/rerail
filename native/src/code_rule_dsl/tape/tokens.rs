@@ -12,6 +12,16 @@
 //! tree-sitter has it. So `f(a, b)` stores none of its punctuation, `f(a, b,)` stores its trailing
 //! `,` and `)`, and `a + b` stores its `+` (as short as `-`).
 //!
+//! Two classes of token, by text alone ([`is_delimiter`]):
+//! - a **delimiter** (a bracket, a separator, a terminator, a quote) is left out wherever its gap
+//!   is implied: where it is stored, the shape alone does not say it is there (`f(a,)`);
+//! - every other token (a keyword, an operator, `:` `.` `::` `..` `=>`) is left out only where its
+//!   kind implies it in every gap it can stand in ([`kept`]): `return` in Python's
+//!   `return_statement`, `=` in a keyword argument. Where some gap holds it beside a choice
+//!   (`async def`, `export default function f`), it is stored in every gap. So such a token is
+//!   either always stored under its kind or never, and a rule that reads it reads it exactly; one
+//!   its kind always implies is the kind's question (`kind(n, "return_statement")`).
+//!
 //! No reader rebuilds an implied token as a node. A rule that asks about one asks the grammar
 //! instead: [`TokenGrammar::gaps`] walks a parent's stored children through its automaton and says
 //! which word each gap holds, from the kinds and fields alone (the gap test, t31). A node
@@ -43,6 +53,96 @@ struct Automaton {
     moves: Vec<FxHashMap<Label, u32>>,
     accepting: Vec<bool>,
     implied: Implied,
+    /// The tokens other than delimiters that some gap holds beside a choice ([`kept`]): stored
+    /// wherever they stand, implied gaps included.
+    kept: rustc_hash::FxHashSet<Label>,
+}
+
+impl Automaton {
+    /// The tokens a tape of this kind may leave out: those of its implied words it does not keep.
+    fn dropped(&self) -> impl Iterator<Item = &Label> + '_ {
+        self.implied.to.values().chain(self.implied.end.iter().flatten()).flatten().filter(|label| !self.kept.contains(label))
+    }
+}
+
+/// Whether a token is a delimiter (see the module): a bracket, a separator, a terminator or a
+/// quote, whose place the shape records. Every other token is kept wherever a gap holds it beside
+/// a choice.
+pub(in crate::code_rule_dsl) fn is_delimiter(text: &str) -> bool {
+    matches!(
+        text,
+        "(" | ")" | "[" | "]" | "{" | "}" | "<" | ">" | "," | ";" | "|" | "\"" | "'" | "`" | "\\'" | "${" | "{|" | "|}" | "#[" | "{{" | "}}" | "</" | "/>"
+    )
+}
+
+/// The tokens other than delimiters ([`is_delimiter`]) that are not implied in every gap they
+/// can stand in: from the start or after a named child (where a gap starts), some token word to
+/// the next named child (or the end) holds the token and is not the implied word. Words are
+/// walked to a bound; a gap whose words pass it, or loop, keeps every token it can hold.
+fn kept(moves: &[FxHashMap<Label, u32>], accepting: &[bool], implied: &Implied, texts: &[String]) -> rustc_hash::FxHashSet<Label> {
+    const LONGEST: usize = 8;
+    const WORDS: usize = 512;
+    let mut kept = rustc_hash::FxHashSet::default();
+    let mut starts: BTreeSet<u32> = BTreeSet::from([0]);
+    for state_moves in moves {
+        starts.extend(state_moves.iter().filter(|(label, _)| !label.token).map(|(_, &to)| to));
+    }
+    let keep = |word: &[Label], kept: &mut rustc_hash::FxHashSet<Label>| {
+        kept.extend(word.iter().filter(|label| !is_delimiter(&texts[label.name as usize])));
+    };
+    for from in starts {
+        // Depth first over token moves: (state, word so far).
+        let mut stack: Vec<(u32, Vec<Label>, Vec<u32>)> = vec![(from, Vec::new(), vec![from])];
+        let mut words = 0usize;
+        let mut bounded = true;
+        while let Some((state, word, path)) = stack.pop() {
+            words += 1;
+            if words > WORDS {
+                bounded = false;
+                break;
+            }
+            let targets = moves[state as usize].keys().filter(|label| !label.token).map(|label| implied.to.get(&(from, *label)));
+            let ends = accepting[state as usize].then(|| implied.end[from as usize].as_ref());
+            for implied_word in targets.chain(ends) {
+                if !word.is_empty() && implied_word.is_none_or(|implied_word| **implied_word != *word) {
+                    keep(&word, &mut kept);
+                }
+            }
+            for (label, &to) in &moves[state as usize] {
+                if !label.token {
+                    continue;
+                }
+                let mut next = word.clone();
+                next.push(*label);
+                if path.contains(&to) || next.len() > LONGEST {
+                    bounded = false;
+                    break;
+                }
+                let mut next_path = path.clone();
+                next_path.push(to);
+                stack.push((to, next, next_path));
+            }
+            if !bounded {
+                break;
+            }
+        }
+        if !bounded {
+            // Every token a gap from here can hold.
+            let mut seen = BTreeSet::from([from]);
+            let mut todo = vec![from];
+            while let Some(state) = todo.pop() {
+                for (label, &to) in &moves[state as usize] {
+                    if label.token {
+                        keep(std::slice::from_ref(label), &mut kept);
+                        if seen.insert(to) {
+                            todo.push(to);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    kept
 }
 
 /// Per state, the implied token word to each named child (and to the end) it reaches through
@@ -346,8 +446,9 @@ impl TokenGrammar {
                 continue;
             };
             let implied = implied(&moves, &accepting);
+            let kept = kept(&moves, &accepting, &implied, &builder.texts);
             let sym = builder.sym(name);
-            kinds.insert(sym, Automaton { moves, accepting, implied });
+            kinds.insert(sym, Automaton { moves, accepting, implied, kept });
         }
         let extras = grammar["extras"].as_array().into_iter().flatten().filter_map(|extra| extra["name"].as_str().map(str::to_owned)).collect();
         let Builder { names, texts, .. } = builder;
@@ -356,8 +457,7 @@ impl TokenGrammar {
             .collect();
         let implied_texts = kinds
             .values()
-            .flat_map(|automaton| automaton.implied.to.values().chain(automaton.implied.end.iter().flatten()))
-            .flatten()
+            .flat_map(Automaton::dropped)
             .map(|label| texts[label.name as usize].clone())
             .collect();
         let mut interned: Vec<&'static str> = texts.iter().map(|text| &*Box::leak(text.clone().into_boxed_str())).collect();
@@ -444,7 +544,7 @@ impl TokenGrammar {
     /// Whether `regex` tests a token the grammar implies in `field` somewhere: a `has` in a field
     /// whose implied words hold no such token asks only for stored children.
     pub(in crate::code_rule_dsl) fn tests_implied_in(&self, regex: &regex::Regex, field: &str) -> bool {
-        self.kinds.values().flat_map(|automaton| automaton.implied.to.values().chain(automaton.implied.end.iter().flatten())).flatten().any(|label| self.texts[label.field as usize] == field && regex.is_match(&self.texts[label.name as usize]))
+        self.kinds.values().flat_map(Automaton::dropped).any(|label| self.texts[label.field as usize] == field && regex.is_match(&self.texts[label.name as usize]))
     }
 
     /// Whether `kind` is one of the grammar's extras (a comment and the like).
@@ -472,6 +572,7 @@ impl TokenGrammar {
             }
             Some(state)
         };
+        let kept_of = |implied: &[Label]| implied.iter().filter(|label| automaton.kept.contains(label)).copied().collect::<Vec<_>>();
         let mut gaps = Gaps::default();
         let (mut state, mut pending) = (0u32, Vec::<Label>::new());
         for (named, child, field) in children {
@@ -495,13 +596,22 @@ impl TokenGrammar {
                     None => return None,
                 }
             } else {
-                state = walk(state, &pending)?;
+                // A stored gap, or an implied one whose kept tokens ([`kept`]) are stored.
+                match walk(state, &pending) {
+                    Some(to) => state = to,
+                    None => {
+                        let implied = automaton.implied.to.get(&(state, label)).filter(|implied| kept_of(implied) == pending)?;
+                        *gaps.before.last_mut()? = word(implied);
+                        state = walk(state, implied)?;
+                    }
+                }
                 pending.clear();
             }
             state = *automaton.moves[state as usize].get(&label)?;
         }
-        if pending.is_empty() {
-            gaps.end = automaton.implied.end[state as usize].as_deref().map(word).unwrap_or_default();
+        let end = automaton.implied.end[state as usize].as_deref();
+        if pending.is_empty() || walk(state, &pending).is_none() && end.is_some_and(|implied| kept_of(implied) == pending) {
+            gaps.end = end.map(word).unwrap_or_default();
         }
         Some(gaps)
     }
@@ -525,8 +635,10 @@ fn gap_end(automaton: &Automaton, state: u32, gap: &[(usize, Label)], next: Opti
         None => automaton.implied.end[state as usize].as_ref(),
     };
     if implied.is_some_and(|word| word.len() == gap.len() && word.iter().zip(gap).all(|(a, (_, b))| a == b)) {
-        for &(position, _) in gap {
-            stored[position] = false;
+        for (position, label) in gap {
+            if !automaton.kept.contains(label) {
+                stored[*position] = false;
+            }
         }
     }
     Some(after)
@@ -602,14 +714,14 @@ fn implied(moves: &[FxHashMap<Label, u32>], accepting: &[bool]) -> Implied {
 /// What the automata say about where tokens are implied, for the check of rules that test
 /// tokens (`compile::token_tests`).
 impl TokenGrammar {
-    /// Per kind: the (token, field) pairs some implied word of its automaton holds. `""` is no
+    /// Per kind: the (token, field) pairs a tape of it may leave out: those some implied word of
+    /// its automaton holds, less the kept ones ([`kept`]). `""` is no
     /// field.
     pub(in crate::code_rule_dsl) fn implied_tokens(&self) -> BTreeMap<String, BTreeSet<(String, String)>> {
         let mut out: BTreeMap<String, BTreeSet<(String, String)>> = BTreeMap::new();
         for (kind, automaton) in &self.kinds {
-            let words = automaton.implied.to.values().chain(automaton.implied.end.iter().flatten());
             let entry = out.entry(self.texts[*kind as usize].clone()).or_default();
-            for label in words.flatten() {
+            for label in automaton.dropped() {
                 entry.insert((self.texts[label.name as usize].clone(), self.texts[label.field as usize].clone()));
             }
         }
