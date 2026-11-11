@@ -123,6 +123,8 @@ pub struct FlatForest {
     pub roots: Vec<i32>,
     pub weights: Vec<f32>,
     pub leaf_preds: Vec<f32>,
+    /// The categorical subset splits' sets, 16 words each (`PredictNode::split_bucket` of an `ordinal` 2 node).
+    pub subsets: Vec<u32>,
     /// The deepest walk (nodes from a root to a leaf).
     pub max_depth: u32,
     pub num_features: usize,
@@ -167,11 +169,22 @@ impl FlatForest {
                 if node.split_bucket > u16::MAX as i32 || feature > u16::MAX as usize {
                     return Err("a split past 65535 buckets or features".into());
                 }
+                // A categorical subset split: its set's place among the subsets.
+                let (split_bucket, ordinal) = if !node.split_subset.is_empty() {
+                    let at = self.subsets.len() / 16;
+                    if at > u16::MAX as usize || node.split_subset.len() != 16 {
+                        return Err("more than 65536 subset splits, or a subset not of 512 buckets".into());
+                    }
+                    self.subsets.extend_from_slice(&node.split_subset);
+                    (at as u16, 2)
+                } else {
+                    (node.split_bucket as u16, (node.split.op() == Op::Less) as u16)
+                };
                 self.nodes.push(PredictNode {
                     feature: feature as u16,
                     bucket_bits: prediction_bucket_bits(column) as u16,
-                    split_bucket: node.split_bucket as u16,
-                    ordinal: (node.split.op() == Op::Less) as u16,
+                    split_bucket,
+                    ordinal,
                     child_true: 0,
                     child_false: 0,
                 });
@@ -206,6 +219,7 @@ pub struct DeviceForest {
     roots: metal::Buffer,
     weights: metal::Buffer,
     leaves: metal::Buffer,
+    subsets: metal::Buffer,
     num_trees: u32,
     max_depth: u32,
     num_features: usize,
@@ -222,6 +236,7 @@ impl DeviceForest {
             roots: transfer_to_device_immutable(device, &flat.roots),
             weights: transfer_to_device_immutable(device, &flat.weights),
             leaves: transfer_to_device_immutable(device, &flat.leaf_preds),
+            subsets: transfer_to_device_immutable(device, if flat.subsets.is_empty() { &[0u32; 16][..] } else { &flat.subsets }),
             num_trees: flat.roots.len() as u32,
             max_depth: flat.max_depth,
             num_features: flat.num_features,
@@ -268,6 +283,7 @@ impl DeviceForest {
             ("columnStride", Int(stride as i64)),
             ("bucketData", B(&d_data)),
             ("nodes", B(&self.nodes)),
+            ("subsets", B(&self.subsets)),
             ("treeRoots", B(&self.roots)),
             ("treeWeights", B(&self.weights)),
             ("leafPreds", B(&self.leaves)),
@@ -335,6 +351,7 @@ mod tests {
         let forest = train_forest(&all, &config).unwrap();
         let flat = FlatForest::new(&forest).unwrap();
         assert!(flat.max_depth >= 3, "{}", flat.max_depth);
+        assert!(!flat.subsets.is_empty(), "categorical subset splits to predict with");
 
         let (mut test, test_labels) = columns(3000, 2);
         test[2][7] = CellValue::String("violet".into());

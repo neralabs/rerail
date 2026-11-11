@@ -70,6 +70,19 @@ impl Accum for f64 {
 /// score differs (`SplitCriterion`).
 pub type RowWeights = [f32; 2];
 
+/// A categorical split's buckets on its left side (CART's subset split), a bit per bucket: a categorical feature has
+/// at most 512 buckets.
+pub type CategorySet = [u32; 16];
+
+/// The most buckets a categorical feature may have (`CategorySet`).
+pub const MAX_CATEGORICAL_BUCKETS: usize = 512;
+
+/// Whether bucket `b` is in a set (none past the set's 512).
+#[inline(always)]
+pub fn in_category_set(set: &CategorySet, b: u32) -> bool {
+    (b as usize) < MAX_CATEGORICAL_BUCKETS && (set[(b >> 5) as usize] >> (b & 31)) & 1 != 0
+}
+
 /// How a split is scored (lower is better), from its sides' weights.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -677,15 +690,18 @@ pub enum PartitionSplitDirection {
 pub struct PartitionSplit {
     pub score: f32,
     pub feature: i16,
+    /// An ordinal split's bucket (the left is below it); a categorical split's number of buckets on the left.
     pub value: i16,
     /// 12 bytes: true, false, count.
     pub left: W,
     pub right: W,
+    /// A categorical split's buckets on the left (`CategorySet`; rerail's addition, CART's subset split).
+    pub subset: CategorySet,
 }
 
 impl Default for PartitionSplit {
     fn default() -> Self {
-        PartitionSplit { score: f32::INFINITY, feature: -1, value: -1, left: W::default(), right: W::default() }
+        PartitionSplit { score: f32::INFINITY, feature: -1, value: -1, left: W::default(), right: W::default(), subset: [0; 16] }
     }
 }
 
@@ -881,7 +897,7 @@ pub fn get_leaf(tree: &mut Tree, w: &W) -> Ptr {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn get_node(tree: &mut Tree, best_score: f32, best_feature: i32, best_split: i32, left: Ptr, right: Ptr, w_left: W, w_right: W, features: &[Feature], fs: &DatasetFeatureSpace) -> Result<Ptr, String> {
+pub fn get_node(tree: &mut Tree, best_score: f32, best_feature: i32, best_split: i32, subset: &CategorySet, left: Ptr, right: Ptr, w_left: W, w_right: W, features: &[Feature], fs: &DatasetFeatureSpace) -> Result<Ptr, String> {
     let f = &features[best_feature as usize];
     let hash = f.info.ok_or("get_node: feature without a column")?;
     let column = fs.column_info.get(&hash).ok_or("get_node: feature's column not in the feature space")?;
@@ -901,9 +917,9 @@ pub fn get_node(tree: &mut Tree, best_score: f32, best_feature: i32, best_split:
     };
     let split = Split::new(feature, split_val, if f.ordinal { Op::Less } else { Op::Equal })?;
     // A missing value is a null, which training put in bucket 0: on the left of an ordinal split (whose bucket is
-    // at least 1), and on the left of a categorical one only when that is bucket 0. Upstream gave the missing
+    // at least 1), and on the left of a categorical one when bucket 0 is in its subset. Upstream gave the missing
     // branch an empty leaf (a 0/0 prediction).
-    let missing = if f.ordinal || best_split == 0 { left } else { right };
+    let missing = if f.ordinal || in_category_set(subset, 0) { left } else { right };
     let node = tree.new_node();
     {
         let n = tree.node_mut(node).unwrap();
@@ -913,6 +929,9 @@ pub fn get_node(tree: &mut Tree, best_score: f32, best_feature: i32, best_split:
         n.child_missing = missing;
         n.z = best_score;
         n.split_bucket = best_split;
+        if !f.ordinal {
+            n.split_subset = subset.to_vec();
+        }
     }
     fill_in_base(tree, node, &(w_left + w_right));
     Ok(node)
@@ -943,14 +962,15 @@ mod tests {
         assert_eq!(size_of::<PartitionIndex>(), 4);
         assert_eq!(align_of::<PartitionIndex>(), 4);
         assert_eq!(size_of::<WIndexed>(), 16);
-        assert_eq!(size_of::<PartitionSplit>(), 32);
-        assert_eq!(size_of::<IndexedPartitionSplit>(), 36);
+        assert_eq!(size_of::<PartitionSplit>(), 96);
+        assert_eq!(size_of::<IndexedPartitionSplit>(), 100);
         assert_eq!(offset_of!(PartitionSplit, score), 0);
         assert_eq!(offset_of!(PartitionSplit, feature), 4);
         assert_eq!(offset_of!(PartitionSplit, value), 6);
         assert_eq!(offset_of!(PartitionSplit, left), 8);
         assert_eq!(offset_of!(PartitionSplit, right), 20);
-        assert_eq!(offset_of!(IndexedPartitionSplit, index), 32);
+        assert_eq!(offset_of!(PartitionSplit, subset), 32);
+        assert_eq!(offset_of!(IndexedPartitionSplit, index), 96);
         // The kernels' own structs (randomforest_kernels_common.h).
         assert_eq!(size_of::<TreeDepthInfo>(), 28);
         assert_eq!(size_of::<TreeTrainingInfo>(), 28);

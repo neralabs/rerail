@@ -122,6 +122,7 @@ pub fn template(name: &str) -> Option<GridComputeKernelTemplate> {
                 .add_parameter("columnStride", "r", "u32")
                 .add_parameter("bucketData", "r", "u32[bucketDataLength]")
                 .add_parameter("nodes", "r", "PredictNode[numNodes]")
+                .add_parameter("subsets", "r", "u32[numSubsetWords]")
                 .add_parameter("treeRoots", "r", "i32[numTrees]")
                 .add_parameter("treeWeights", "r", "f32[numTrees]")
                 .add_parameter("leafPreds", "r", "f32[numLeafPreds]")

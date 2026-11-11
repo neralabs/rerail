@@ -69,8 +69,8 @@ pub fn compare_trees(lt: &Tree, left: Ptr, rt: &Tree, right: Ptr, index: Partiti
     }
     match (lt.node(left), rt.node(right)) {
         (Some(l), Some(r)) => {
-            if l.split != r.split {
-                let _ = writeln!(stream, "different split: {:?} vs {:?}", l.split, r.split);
+            if l.split != r.split || l.split_subset != r.split_subset {
+                let _ = writeln!(stream, "different split: {:?} {:?} vs {:?} {:?}", l.split, l.split_subset, r.split, r.split_subset);
                 different = true;
             }
             if l.z != r.z {
@@ -198,6 +198,9 @@ impl<'a> FeatureSamplingTrainerKernel<'a> {
             let buckets = &f.buckets;
             bucket_entry_bits.push(buckets.entry_bits as u32);
             feature_is_ordinal.push(f.ordinal as u32);
+            if f.active && !f.ordinal && f.buckets.num_buckets as usize > MAX_CATEGORICAL_BUCKETS {
+                return Err(format!("a categorical feature with {} buckets (at most {MAX_CATEGORICAL_BUCKETS})", f.buckets.num_buckets));
+            }
             if !f.active {
                 // Never read: its buckets need not be in the bucket memory (a bag carries none).
                 bucket_memory_offsets.push(0);
@@ -803,14 +806,14 @@ impl PartitionData {
     }
 
     /// Splits the rows between two datasets by the split, keeping the example numbers (so the buckets are shared).
-    pub fn split_without_reindex(&self, feature_to_split_on: usize, split_value: i32, serializer: &mut MemorySerializer) -> [PartitionData; 2] {
+    pub fn split_without_reindex(&self, feature_to_split_on: usize, split_value: i32, subset: &CategorySet, serializer: &mut MemorySerializer) -> [PartitionData; 2] {
         let f = &self.features[feature_to_split_on];
         let highest = self.rows.highest_example_num() as usize;
         let mut writers = [0, 1].map(|_| self.rows.get_row_writer(self.rows.row_count(), highest, serializer, false, 1.0));
         let mut it = self.rows.get_row_iterator();
         for _ in 0..self.rows.row_count() {
             let row = it.get_row();
-            let side = side_of(f.buckets.get(row.example_num()), split_value, f.ordinal);
+            let side = side_of(f.buckets.get(row.example_num()), split_value, subset, f.ordinal);
             writers[side as usize].add_row_with(&row, self.rows.target_of(row.label(), row.example_num()));
         }
         let [w0, w1] = writers;
@@ -819,7 +822,7 @@ impl PartitionData {
 
     /// Splits the rows between two datasets by the split, numbering each side's examples from zero and re-encoding
     /// the active features' buckets over each side's rows.
-    pub fn split_and_reindex(&self, feature_to_split_on: usize, split_value: i32, serializer: &mut MemorySerializer) -> [PartitionData; 2] {
+    pub fn split_and_reindex(&self, feature_to_split_on: usize, split_value: i32, subset: &CategorySet, serializer: &mut MemorySerializer) -> [PartitionData; 2] {
         let f = &self.features[feature_to_split_on];
         let n = self.rows.row_count();
         let mut lr = vec![false; n];
@@ -828,7 +831,7 @@ impl PartitionData {
         let mut it = self.rows.get_row_iterator();
         for side_of_row in lr.iter_mut() {
             let mut row = it.get_row();
-            let side = side_of(f.buckets.get(row.example_num()), split_value, f.ordinal);
+            let side = side_of(f.buckets.get(row.example_num()), split_value, subset, f.ordinal);
             *side_of_row = side;
             // The target by the row's example number here, before the side numbers it.
             let target = self.rows.target_of(row.label(), row.example_num());
@@ -857,12 +860,12 @@ impl PartitionData {
 
     /// Splits the rows by the split: re-indexed when the example numbers are sparse (fewer than a quarter used),
     /// when random access over the old ones would kill the cache.
-    pub fn split(&self, feature_to_split_on: i32, split_value: i32, serializer: &mut MemorySerializer) -> Result<[PartitionData; 2], String> {
+    pub fn split(&self, feature_to_split_on: i32, split_value: i32, subset: &CategorySet, serializer: &mut MemorySerializer) -> Result<[PartitionData; 2], String> {
         if feature_to_split_on < 0 || feature_to_split_on as usize >= self.features.len() {
             return Err(format!("split on feature {feature_to_split_on} of {}", self.features.len()));
         }
         let use_ratio = self.rows.row_count() as f64 / self.rows.highest_example_num() as f64;
-        Ok(if use_ratio < 0.25 { self.split_and_reindex(feature_to_split_on as usize, split_value, serializer) } else { self.split_without_reindex(feature_to_split_on as usize, split_value, serializer) })
+        Ok(if use_ratio < 0.25 { self.split_and_reindex(feature_to_split_on as usize, split_value, subset, serializer) } else { self.split_without_reindex(feature_to_split_on as usize, split_value, subset, serializer) })
     }
 
     /// Trains the tree under this data: partitioned (from the root, on the device), or recursively (the best split
@@ -885,12 +888,12 @@ impl PartitionData {
             }
             _ => {}
         }
-        let (best_score, best_feature, best_split, w_left, w_right, _new_active) = test_all(depth, &self.features, &self.rows, SplitCriterion::of(&self.fs));
+        let (best_score, best_feature, best_split, w_left, w_right, _new_active, best_subset) = test_all(depth, &self.features, &self.rows, SplitCriterion::of(&self.fs));
         if best_feature == -1 {
             return Ok(get_leaf(tree, &self.rows.w_all));
         }
         let mut serializer = MemorySerializer;
-        let [mut left_data, mut right_data] = self.split(best_feature, best_split, &mut serializer)?;
+        let [mut left_data, mut right_data] = self.split(best_feature, best_split, &best_subset, &mut serializer)?;
         let (left_rows, right_rows) = (left_data.rows.row_count(), right_data.rows.row_count());
         if left_rows == 0 || right_rows == 0 {
             return Err(format!("Invalid split in random forest: leftRows {left_rows} rightRows {right_rows} bestFeature {best_feature} bestSplit {best_split} wLeft {:?} wRight {:?}", w_left, w_right));
@@ -901,7 +904,7 @@ impl PartitionData {
         let right = right_data.train(feature_vector_sampling, feature_sampling, debug_name, depth + 1, max_depth, tree, scheme)?;
         right_data.clear();
         let result = if left.is_some() && right.is_some() {
-            get_node(tree, best_score as f32, best_feature, best_split, left, right, w_left, w_right, &self.features, &self.fs)?
+            get_node(tree, best_score as f32, best_feature, best_split, &best_subset, left, right, w_left, w_right, &self.features, &self.fs)?
         } else {
             get_leaf(tree, &(w_left + w_right))
         };
@@ -1197,6 +1200,19 @@ pub(crate) mod tests {
         assert!(widths.iter().any(|&w| w > 254), "a level wider than 254 partitions: {widths:?}");
     }
 
+    /// The nodes whose split is a categorical subset of more than one bucket (CART's).
+    pub(crate) fn subset_splits(t: &Tree) -> usize {
+        let mut n = 0;
+        let mut stack = vec![t.root];
+        while let Some(p) = stack.pop() {
+            if let Some(node) = t.node(p) {
+                n += (node.split_subset.iter().map(|w| w.count_ones()).sum::<u32>() > 1) as usize;
+                stack.extend([node.child_true, node.child_false]);
+            }
+        }
+        n
+    }
+
     /// `d` as a regression: each row's target in [0, 1] a function of its buckets with noise, its weight kept, the
     /// label real.
     pub(crate) fn as_regression(d: &PartitionData) -> PartitionData {
@@ -1225,6 +1241,9 @@ pub(crate) mod tests {
             for max_depth in depths {
                 let device = train_with(&d, max_depth, "device");
                 assert!(device.node(device.root).is_some(), "a root split");
+                if max_depth >= 6 {
+                    assert!(subset_splits(&device) > 0, "max depth {max_depth}: no categorical split of several buckets");
+                }
                 if max_depth <= 6 {
                     same(&device, &train_on_host(&d, max_depth), &d.fs, &format!("host schedule, max depth {max_depth}"));
                 }

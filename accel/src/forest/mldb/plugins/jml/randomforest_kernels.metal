@@ -125,9 +125,11 @@ getPartitionSplitsKernel(__constant const TreeTrainingInfo & treeTrainingInfo,
                          uint3 local_size [[threads_per_threadgroup]])
 {
     __local WIndexed wStartBest[2];
+    __local WIndexed wRanked[MAX_CATEGORICAL_BUCKETS];
+    __local uint16_t ranked[MAX_CATEGORICAL_BUCKETS];
     getPartitionSplitsImpl(&treeTrainingInfo, bucketNumbers, activeFeatureList, featureIsOrdinal,
                            buckets, wAll, featurePartitionSplitsOut,
-                           &treeDepthInfo, wLocal, args.wLocalSize, wStartBest,
+                           &treeDepthInfo, wLocal, args.wLocalSize, wStartBest, wRanked, ranked,
                            get_global_id(1), get_global_size(1),
                            get_local_id(0), get_local_size(0),
                            get_global_id(2), get_global_size(2));
@@ -323,6 +325,7 @@ __kernel void
 predictForestKernel(__constant const PredictForestArgs & args,
                     __global const uint32_t * bucketData,
                     __global const PredictNode * nodes,
+                    __global const uint32_t * subsets,
                     __global const int32_t * treeRoots,
                     __global const float * treeWeights,
                     __global const float * leafPreds,
@@ -333,7 +336,7 @@ predictForestKernel(__constant const PredictForestArgs & args,
                     uint32_t ntid [[threads_per_threadgroup]])
 {
     predictForestImpl(args.numRows, args.numTrees, args.maxDepth, args.lanesPerRow, args.columnStride, bucketData,
-                      nodes, treeRoots, treeWeights, leafPreds, predictionsOut, partials,
+                      nodes, subsets, treeRoots, treeWeights, leafPreds, predictionsOut, partials,
                       group, tid, ntid);
 }
 

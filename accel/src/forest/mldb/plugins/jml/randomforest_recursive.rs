@@ -27,7 +27,7 @@ use crate::forest::bucket::{BucketList, BucketListRef, WritableBucketList};
 use crate::forest::memory_region::MemorySerializer;
 use crate::forest::randomforest_kernels::score_split;
 use crate::forest::dataset_feature_space::DatasetFeatureSpace;
-use crate::forest::randomforest_types::{decode_row_arr, decode_row_iter, get_leaf, get_node, Feature, IndexedPartitionSplit, PartitionEntry, PartitionIndex, PartitionSplit, PartitionSplitDirection, RowIterator, RowPartitionInfo, RowWeights, Rows, SplitCriterion, W};
+use crate::forest::randomforest_types::{decode_row_arr, decode_row_iter, get_leaf, get_node, Feature, IndexedPartitionSplit, PartitionEntry, PartitionIndex, PartitionSplit, PartitionSplitDirection, RowIterator, RowPartitionInfo, RowWeights, Rows, SplitCriterion, W, CategorySet, MAX_CATEGORICAL_BUCKETS, in_category_set};
 use crate::forest::tree::{Ptr, Tree};
 use std::collections::BTreeMap;
 
@@ -107,14 +107,62 @@ pub fn test_feature_kernel<R: RowSource, B: BucketSource + ?Sized>(row_iterator:
     test_feature_kernel_cpu(row_iterator, num_rows, buckets, w)
 }
 
-/// Chooses which is the best split for a given feature: (best score, best split, best left, best right).
-pub fn choose_split_kernel(w: &[W] /* at least max_bucket + 1 entries */, max_bucket: i32, ordinal: bool, w_all: &W, criterion: SplitCriterion) -> (f64, i32, W, W) {
+/// Chooses which is the best split for a given feature: (best score, best split, best left, best right, the
+/// categorical split's subset).
+///
+/// A categorical feature's split is CART's: its buckets ranked by their mean target (`category_order`), the best
+/// prefix of that order found as an ordinal split is, and the prefix is the subset on the left (the split's value
+/// is its number of buckets). With two labels or a variance, and a concave impurity (both criteria), the best
+/// subset is such a prefix (Breiman et al. 1984, 9.4). Upstream tried each bucket alone against the rest.
+pub fn choose_split_kernel(w: &[W] /* at least max_bucket + 1 entries */, max_bucket: i32, ordinal: bool, w_all: &W, criterion: SplitCriterion) -> (f64, i32, W, W, CategorySet) {
+    if ordinal {
+        let (s, b, l, r) = choose_ordinal_split(w, max_bucket, w_all, criterion);
+        return (s, b, l, r, [0; 16]);
+    }
+    let n = (max_bucket + 1).max(0) as usize;
+    assert!(n <= MAX_CATEGORICAL_BUCKETS, "a categorical feature with {n} buckets");
+    let order = category_order(&w[..n]);
+    let ranked: Vec<W> = order.iter().map(|&b| w[b as usize]).collect();
+    let (s, k, l, r) = choose_ordinal_split(&ranked, max_bucket, w_all, criterion);
+    let mut subset = [0u32; 16];
+    for &b in &order[..k.max(0) as usize] {
+        subset[(b >> 5) as usize] |= 1 << (b & 31);
+    }
+    (s, k, l, r, subset)
+}
+
+/// A categorical feature's buckets in the order of their mean target (the true side's share of the weight), then
+/// the empty buckets; ties by bucket number. Shares compare exactly, in the accumulators' fixed point
+/// (`t_a (f_b + t_b) < t_b (f_a + t_a)` in i64), as the device's `chooseSplit` ranks them.
+pub fn category_order(w: &[W]) -> Vec<u32> {
+    let mut order: Vec<u32> = (0..w.len() as u32).collect();
+    order.sort_by(|&a, &b| category_before(&w[a as usize], a, &w[b as usize], b));
+    order
+}
+
+/// `category_order`'s comparison.
+#[inline]
+pub fn category_before(wa: &W, a: u32, wb: &W, b: u32) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    match (wa.count() == 0, wb.count() == 0) {
+        (true, false) => return Ordering::Greater,
+        (false, true) => return Ordering::Less,
+        (true, true) => return a.cmp(&b),
+        _ => {}
+    }
+    let (fa, ta) = (wa.v[0].rep as i64, wa.v[1].rep as i64);
+    let (fb, tb) = (wb.v[0].rep as i64, wb.v[1].rep as i64);
+    (ta * (fb + tb)).cmp(&(tb * (fa + ta))).then(a.cmp(&b))
+}
+
+/// The best split of buckets in order: (best score, the number of buckets on the left, left, right).
+fn choose_ordinal_split(w: &[W], max_bucket: i32, w_all: &W, criterion: SplitCriterion) -> (f64, i32, W, W) {
     let mut best_score = f64::INFINITY;
     let mut best_split = -1;
     let mut best_left = W::default();
     let mut best_right = W::default();
 
-    if ordinal {
+    {
         // Calculate best split point for ordered values.
         let mut w_false = *w_all;
         let mut w_true = W::default();
@@ -134,45 +182,27 @@ pub fn choose_split_kernel(w: &[W] /* at least max_bucket + 1 entries */, max_bu
                 w_true += w[j as usize];
             }
         }
-    } else {
-        // Calculate best split point for non-ordered values. Now test split points one by one.
-        for j in 0..=max_bucket.max(-1) {
-            let wj = w[j as usize];
-            if wj.empty() {
-                continue;
-            }
-            let w_false = *w_all - wj;
-            if w_false.count() == 0 || wj.count() == 0 {
-                continue;
-            }
-            let s = score_split(&w_false, &wj, criterion) as f64;
-            if s < best_score {
-                best_score = s;
-                best_split = j;
-                best_right = w_false;
-                best_left = wj;
-            }
-        }
     }
     (best_score, best_split, best_left, best_right)
 }
 
-/// Tests one feature over the rows: (best score, best split, best left, best right, feature is still active).
-pub fn test_feature_number(feature_num: usize, features: &[Feature], row_iterator: RowIterator<'_>, num_rows: usize, w_all: &W, criterion: SplitCriterion) -> (f64, i32, W, W, bool) {
+/// Tests one feature over the rows: (best score, best split, best left, best right, feature is still active, the
+/// categorical split's subset).
+pub fn test_feature_number(feature_num: usize, features: &[Feature], row_iterator: RowIterator<'_>, num_rows: usize, w_all: &W, criterion: SplitCriterion) -> (f64, i32, W, W, bool, CategorySet) {
     let feature = &features[feature_num];
     let buckets = &feature.buckets;
     let nb = buckets.num_buckets.max(0) as usize;
     let mut w = vec![W::default(); nb];
     if !feature.active {
-        return (f64::INFINITY, -1, W::default(), W::default(), false);
+        return (f64::INFINITY, -1, W::default(), W::default(), false, [0; 16]);
     }
     // Is the feature still active?
     let (is_active, max_bucket) = test_feature_kernel(row_iterator, num_rows, buckets, &mut w);
     if is_active {
-        let (s, b, l, r) = choose_split_kernel(&w, max_bucket, feature.ordinal, w_all, criterion);
-        return (s, b, l, r, true);
+        let (s, b, l, r, subset) = choose_split_kernel(&w, max_bucket, feature.ordinal, w_all, criterion);
+        return (s, b, l, r, true, subset);
     }
-    (f64::INFINITY, -1, W::default(), W::default(), false)
+    (f64::INFINITY, -1, W::default(), W::default(), false, [0; 16])
 }
 
 /// Decodes the rows to their weights to false and true (`RowWeights`; upstream had one float, the weight negated
@@ -221,46 +251,46 @@ pub fn extract_tree(depth: i32, max_depth: i32, tree: &mut Tree, root: Partition
     if !right.is_some() {
         right = get_leaf(tree, &s.right);
     }
-    get_node(tree, s.score, s.feature as i32, s.value as i32, left, right, s.left, s.right, features, fs)
+    get_node(tree, s.score, s.feature as i32, s.value as i32, &s.subset, left, right, s.left, s.right, features, fs)
 }
 
 /// The best split over every active feature, the rows read from the row iterator: (score, feature, split, left,
 /// right, which features are still active). Features are searched in parallel near the root, and reduced in order
 /// so that the choice is deterministic (the first feature with the lowest score).
-pub fn test_all_cpu(depth: i32, features: &[Feature], rows: &Rows, criterion: SplitCriterion) -> (f64, i32, i32, W, W, Vec<u8>) {
+pub fn test_all_cpu(depth: i32, features: &[Feature], rows: &Rows, criterion: SplitCriterion) -> (f64, i32, i32, W, W, Vec<u8>, CategorySet) {
     let mut new_active: Vec<u8> = features.iter().map(|f| f.active as u8).collect();
     // We have no impurity in our bucket. Time to stop.
     if rows.w_all.v[0].to_f32() == 0.0 || rows.w_all.v[1].to_f32() == 0.0 {
-        return (1.0, -1, -1, rows.w_all, W::default(), vec![0; features.len()]);
+        return (1.0, -1, -1, rows.w_all, W::default(), vec![0; features.len()], [0; 16]);
     }
     let nf = features.len();
     let do_feature = |i: usize| test_feature_number(i, features, rows.get_row_iterator(), rows.row_count(), &rows.w_all, criterion);
-    let results: Vec<(f64, i32, W, W, bool)> = if depth < 4 || rows.row_count() as u64 * nf as u64 > 20000 {
+    let results: Vec<(f64, i32, W, W, bool, CategorySet)> = if depth < 4 || rows.row_count() as u64 * nf as u64 > 20000 {
         use rayon::prelude::*;
         (0..nf).into_par_iter().map(do_feature).collect()
     } else {
         (0..nf).map(do_feature).collect()
     };
-    let (mut best_score, mut best_feature, mut best_split, mut best_left, mut best_right) = (f64::INFINITY, -1, -1, W::default(), W::default());
-    for (i, (score, split, left, right, still_active)) in results.into_iter().enumerate() {
+    let (mut best_score, mut best_feature, mut best_split, mut best_left, mut best_right, mut best_subset) = (f64::INFINITY, -1, -1, W::default(), W::default(), [0; 16]);
+    for (i, (score, split, left, right, still_active, subset)) in results.into_iter().enumerate() {
         new_active[i] = still_active as u8;
         if score < best_score {
-            (best_score, best_feature, best_split, best_left, best_right) = (score, i as i32, split, left, right);
+            (best_score, best_feature, best_split, best_left, best_right, best_subset) = (score, i as i32, split, left, right, subset);
         }
     }
-    (best_score, best_feature, best_split, best_left, best_right, new_active)
+    (best_score, best_feature, best_split, best_left, best_right, new_active, best_subset)
 }
 
 /// `testAll`: upstream's only form is the CPU one.
-pub fn test_all(depth: i32, features: &[Feature], rows: &Rows, criterion: SplitCriterion) -> (f64, i32, i32, W, W, Vec<u8>) {
+pub fn test_all(depth: i32, features: &[Feature], rows: &Rows, criterion: SplitCriterion) -> (f64, i32, i32, W, W, Vec<u8>, CategorySet) {
     test_all_cpu(depth, features, rows, criterion)
 }
 
 /// Which side of a split a bucket is on: `true` is right (ordinal: at or above the split value; categorical: not
-/// the split value).
+/// in the split's subset).
 #[inline(always)]
-pub fn side_of(bucket: u32, split_value: i32, ordinal: bool) -> bool {
-    if ordinal { bucket as i32 >= split_value } else { bucket as i32 != split_value }
+pub fn side_of(bucket: u32, split_value: i32, subset: &CategorySet, ordinal: bool) -> bool {
+    if ordinal { bucket as i32 >= split_value } else { !in_category_set(subset, bucket) }
 }
 
 /// Moves each partition's buckets and wAll to its new place, then gives each row its new partition and moves the
@@ -319,7 +349,7 @@ pub fn update_buckets(features: &[Feature], partitions: &mut [RowPartitionInfo],
         assert!(left_partition != -1 && right_partition != -1);
         let weights = decoded_rows[i];
         let f = &features[split_feature as usize];
-        let side = side_of(f.buckets.get(i as u32), s.split.value as i32, f.ordinal);
+        let side = side_of(f.buckets.get(i as u32), s.split.value as i32, &s.split.subset, f.ordinal);
         *p = (if side { right_partition } else { left_partition } as u16).into();
         // false = left to right, true = right to left.
         let direction = rl(s);
@@ -422,16 +452,16 @@ pub fn get_partition_splits(buckets: &[W] /* [np][nab] */, num_active_buckets: u
         if wa.empty() {
             continue;
         }
-        let do_feature = |af: usize| -> (i32, f64, i32, W, W) {
+        let do_feature = |af: usize| -> (i32, f64, i32, W, W, CategorySet) {
             let f = active_feature_list[af] as usize;
             if wa.v[0].to_f32() != 0.0 && wa.v[1].to_f32() != 0.0 {
                 let start = bucket_offsets[f] as usize;
                 let max_bucket = (bucket_offsets[f + 1] as usize - start) as i32 - 1;
                 let base = partition * num_active_buckets as usize + start;
-                let (s, b, l, r) = choose_split_kernel(&buckets[base..base + max_bucket as usize + 1], max_bucket, features[f].ordinal, &wa, criterion);
-                return (f as i32, s, b, l, r);
+                let (s, b, l, r, subset) = choose_split_kernel(&buckets[base..base + max_bucket as usize + 1], max_bucket, features[f].ordinal, &wa, criterion);
+                return (f as i32, s, b, l, r, subset);
             }
-            (f as i32, f64::INFINITY, -1, W::default(), W::default())
+            (f as i32, f64::INFINITY, -1, W::default(), W::default(), [0; 16])
         };
         let results: Vec<_> = if parallel {
             use rayon::prelude::*;
@@ -439,16 +469,16 @@ pub fn get_partition_splits(buckets: &[W] /* [np][nab] */, num_active_buckets: u
         } else {
             (0..active_feature_list.len()).map(do_feature).collect()
         };
-        let (mut best_feature, mut best_score, mut best_split, mut best_left, mut best_right) = (-1, f64::INFINITY, -1, W::default(), W::default());
-        for (f, score, split, left, right) in results {
+        let (mut best_feature, mut best_score, mut best_split, mut best_left, mut best_right, mut best_subset) = (-1, f64::INFINITY, -1, W::default(), W::default(), [0; 16]);
+        for (f, score, split, left, right, subset) in results {
             if score == f64::INFINITY {
                 continue;
             }
             if score < best_score {
-                (best_feature, best_score, best_split, best_left, best_right) = (f, score, split, left, right);
+                (best_feature, best_score, best_split, best_left, best_right, best_subset) = (f, score, split, left, right, subset);
             }
         }
-        partition_splits[partition] = IndexedPartitionSplit { split: PartitionSplit { score: best_score as f32, feature: best_feature as i16, value: best_split as i16, left: best_left, right: best_right }, index: indexes[partition] };
+        partition_splits[partition] = IndexedPartitionSplit { split: PartitionSplit { score: best_score as f32, feature: best_feature as i16, value: best_split as i16, left: best_left, right: best_right, subset: best_subset }, index: indexes[partition] };
     }
     partition_splits
 }
@@ -570,10 +600,10 @@ pub fn descend_small_partition(examples: &mut [PartitionExample], entry: Partiti
             let mut split = PartitionSplit::default();
             for &f in active_features {
                 let (off, end) = (bucket_offsets[f as usize] as usize, bucket_offsets[f as usize + 1] as usize);
-                let (score, value, left, right) = choose_split_kernel(&buckets[off..end], (end - off) as i32 - 1, features[f as usize].ordinal, &w_all, criterion);
+                let (score, value, left, right, subset) = choose_split_kernel(&buckets[off..end], (end - off) as i32 - 1, features[f as usize].ordinal, &w_all, criterion);
                 let score = score as f32;
                 if score < split.score {
-                    split = PartitionSplit { score, feature: f as i16, value: value as i16, left, right };
+                    split = PartitionSplit { score, feature: f as i16, value: value as i16, left, right, subset };
                 }
             }
             if split.feature == -1 {
@@ -588,7 +618,7 @@ pub fn descend_small_partition(examples: &mut [PartitionExample], entry: Partiti
             let rows = &mut examples[start..start + num_examples];
             let mut mid = 0;
             for k in 0..rows.len() {
-                if side_of(sf.buckets.get(rows[k].ex as u32), split.value as i32, sf.ordinal) {
+                if side_of(sf.buckets.get(rows[k].ex as u32), split.value as i32, &split.subset, sf.ordinal) {
                     rows.swap(mid, k);
                     mid += 1;
                 }
@@ -655,7 +685,7 @@ pub fn train_small_partitions(depth: i32, max_depth: i32, tree: &mut Tree, featu
             continue;
         }
         let f = &features[s.feature as usize];
-        let side = side_of(f.buckets.get(i as u32), s.value as i32, f.ordinal);
+        let side = side_of(f.buckets.get(i as u32), s.value as i32, &s.subset, f.ordinal);
         all.push((small * 2 + side as i32, i as i32, decoded_rows[i]));
     }
     assert_eq!(all.len(), kept_rows);
