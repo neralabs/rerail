@@ -168,7 +168,10 @@ export interface AdapterSession {
   cwd: string;
 }
 
-/** Host hook payloads are untyped JSON; nonblank text is the only accepted field value. */
+/**
+ * Reads a text field of a host's hook payload, which is untyped JSON: only nonblank text is accepted. A field the host
+ * sends as another JSON type, such as Claude Code's `MessageDisplay` `index` (a number), needs a reader of its own.
+ */
 export function hookText(host: string) {
   return {
     required(input: Readonly<Record<string, unknown>>, field: string): string {

@@ -17,6 +17,16 @@ function session(input: ClaudeHookInput): AdapterSession {
   return { host: "claude-code", sessionId: requiredText(input, "session_id"), cwd: claudeWorkspace(input.cwd) };
 }
 
+/** `MessageDisplay`'s `index`, the batch's place in its message: Claude Code sends it as a JSON number, from 0. */
+function batchIndex(input: ClaudeHookInput): number {
+  const { index } = input;
+  if (index === undefined) throw new Error("Claude hook omitted index");
+  if (typeof index !== "number" || !Number.isSafeInteger(index) || index < 0) {
+    throw new Error(`Claude hook index must be a whole number from 0, not ${typeof index === "number" ? index : typeof index}`);
+  }
+  return index;
+}
+
 /**
  * The turn end `Stop` or `StopFailure` reports. A Stop after a Stop hook kept the turn going (`stop_hook_active`) ends
  * the same prompt again, so it is a turn end of its own, as is each continuation after it (`stopContinuation`).
@@ -54,7 +64,7 @@ export function claudeHookEvents(input: ClaudeHookInput): readonly AdapterEvent[
   if (hook === "MessageDisplay") {
     return [{
       kind: "assistant-delta",
-      eventId: `${sessionId}:message:${requiredText(input, "message_id")}:${requiredText(input, "index")}`,
+      eventId: `${sessionId}:message:${requiredText(input, "message_id")}:${batchIndex(input)}`,
       sessionId,
       session: descriptor,
       messageId: requiredText(input, "message_id"),

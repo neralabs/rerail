@@ -1,0 +1,1 @@
+Rerail now records Claude Code's replies as they stream and checks them against conversation rules sentence by sentence and message by message. Before, its hook failed on every reply, so a session's history held only the last message of each turn.

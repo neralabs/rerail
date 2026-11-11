@@ -98,6 +98,31 @@ describe("Claude Code one-shot hook", () => {
     expect(new Set(turnEnds).size).toBe(3);
   });
 
+  it("records a MessageDisplay batch as Claude Code sends it, with its index a number", async () => {
+    const root = await temporaryDirectory();
+    const options = hookOptions(root);
+    await runClaudeHook({ session_id: "claude-session", cwd: root, hook_event_name: "SessionStart", source: "startup" }, options);
+
+    // The fields of MessageDisplay's input in Claude Code's hooks reference, with the prompt_id a session has after its
+    // first prompt.
+    expect(await runClaudeHook({
+      session_id: "claude-session",
+      transcript_path: "/Users/me/.claude/projects/my-project/transcript.jsonl",
+      cwd: root,
+      prompt_id: "550e8400-e29b-41d4-a716-446655440000",
+      hook_event_name: "MessageDisplay",
+      turn_id: "0c9e6a2f-7d41-4f4e-9a15-3f4f7c2b8d10",
+      message_id: "5b2a9c8e-1f63-4d8a-b7c4-9e0d2a6f1c3b",
+      index: 0,
+      final: false,
+      delta: "Here is the plan:\n",
+    }, options)).toEqual({});
+
+    expect(eventRows(root, ["assistant-delta"])).toEqual([
+      ["claude-session:message:5b2a9c8e-1f63-4d8a-b7c4-9e0d2a6f1c3b:0", "assistant-delta"],
+    ]);
+  });
+
   it("ignores hook events the adapter does not model without touching storage", async () => {
     const root = await temporaryDirectory();
     const output = await runClaudeHook(
@@ -224,7 +249,7 @@ describe("Claude Code one-shot hook", () => {
     const common = { session_id: "claude-session", cwd: root };
     const { receipts, serve } = receiptServer(join(root, "sessions"));
     await serve(
-      { ...common, hook_event_name: "MessageDisplay", message_id: "m1", index: "0", delta: "text", final: true },
+      { ...common, hook_event_name: "MessageDisplay", message_id: "m1", index: 0, delta: "text", final: true },
       scriptedLoop({ "assistant-delta": [delivery("steer", editSteer("a", "Fix a."), ["a"])] }),
     );
 
@@ -293,7 +318,7 @@ describe("Claude Code one-shot hook", () => {
       ...common,
       hook_event_name: "MessageDisplay",
       message_id: "m1",
-      index: "0",
+      index: 0,
       delta: "text",
       final: true,
     }, displayLoop, storageRoot)).toEqual({});

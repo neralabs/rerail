@@ -28,6 +28,15 @@ describe("lifecycle event adapters", () => {
     expect(ingest).toHaveBeenCalledWith(claudeHookEvents(input)[0]);
   });
 
+  it("takes a Claude MessageDisplay index only as the whole number from 0 that Claude Code sends", () => {
+    const batch = { hook_event_name: "MessageDisplay", session_id: "claude-1", cwd: "/workspace", message_id: "m1", delta: "Done.", final: true };
+    expect(claudeHookEvents({ ...batch, index: 2 }).map(event => event.eventId)).toEqual(["claude-1:message:m1:2"]);
+    expect(() => claudeHookEvents(batch)).toThrow("Claude hook omitted index");
+    for (const index of ["0", -1, 1.5, null, true]) {
+      expect(() => claudeHookEvents({ ...batch, index }), String(index)).toThrow("Claude hook index must be a whole number from 0");
+    }
+  });
+
   it("maps one Codex stop hook to ordered assistant and turn events", async () => {
     const ingest = vi.fn<(event: AdapterEvent) => Promise<readonly []>>().mockResolvedValue([]);
     const input = {
