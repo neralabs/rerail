@@ -533,25 +533,19 @@ fn interpolated<D: Doc>(
     }
     let source = node.text();
     let base = node.range().start;
-    let children: Vec<_> = node.parts().filter(|part| part.named().is_none_or(|child| !trivia(child))).collect();
-    // The literal text sits between the opening and the closing delimiter.
-    let delimiters: Vec<_> = children
-        .iter()
-        .filter(|part| part.token().is_some() && matches!(part.kind().as_ref(), "\"" | "`"))
-        .collect();
-    let (Some(open), Some(close)) = (delimiters.first(), delimiters.last()) else {
-        return None;
-    };
-    if open.range() == close.range() {
-        return None;
-    }
+    // The literal text sits between the opening and the closing delimiter: the node's first `"` or
+    // `` ` `` (after a `b` prefix) and its last byte. Read off the node's own source: the tape
+    // leaves an implied delimiter out, and nothing here makes one up.
+    let bytes = source.as_bytes();
+    let open = bytes.iter().position(|&b| b == b'"' || b == b'`')?;
+    let close = bytes.len().checked_sub(1).filter(|&close| close > open && bytes[close] == bytes[open])?;
+    let (open_end, close_start) = (base + open + 1, base + close);
     out.push(Tok::Open(if kind == "shell_command_expression" {
         "#shell".into()
     } else {
         "#interpolated".into()
     }));
-    let mut literal_start = open.range().end;
-    let mut index = 0;
+    let mut literal_start = open_end;
     let push_literal = |from: usize, to: usize, out: &mut Vec<Tok>| -> Option<()> {
         if from < to {
             let raw = source.as_bytes().get(from - base..to - base)?;
@@ -562,40 +556,27 @@ fn interpolated<D: Doc>(
         }
         Some(())
     };
-    while index < children.len() {
-        let child = &children[index];
-        if child.range().start < open.range().end || child.range().start >= close.range().start {
-            index += 1;
-            continue;
-        }
-        if child.named().is_some() && matches!(child.kind().as_ref(), "string_content" | "escape_sequence")
-        {
-            index += 1;
+    let byte_at = |at: usize| at.checked_sub(base).and_then(|at| bytes.get(at)).copied();
+    for child in node.named().filter(|child| !trivia(child)) {
+        let range = child.range();
+        if range.start < open_end || range.start >= close_start || matches!(child.kind().as_ref(), "string_content" | "escape_sequence") {
             continue;
         }
         // `{$expr}`: the braces delimit an expression.
-        if child.token().is_some() && child.kind() == "{" {
-            let expression = children.get(index + 1)?.named()?;
-            let closing = children.get(index + 2)?;
-            if closing.kind() != "}" {
+        if range.start > open_end && byte_at(range.start - 1) == Some(b'{') {
+            if byte_at(range.end) != Some(b'}') {
                 return None;
             }
-            push_literal(literal_start, child.range().start, out)?;
-            walk(expression, context, out)?;
-            literal_start = closing.range().end;
-            index += 3;
+            push_literal(literal_start, range.start - 1, out)?;
+            walk(&child, context, out)?;
+            literal_start = range.end + 1;
             continue;
         }
-        let Some(child) = child.named() else {
-            index += 1;
-            continue;
-        };
-        push_literal(literal_start, child.range().start, out)?;
-        simple_interpolation(child, context, out)?;
-        literal_start = child.range().end;
-        index += 1;
+        push_literal(literal_start, range.start, out)?;
+        simple_interpolation(&child, context, out)?;
+        literal_start = range.end;
     }
-    push_literal(literal_start, close.range().start, out)?;
+    push_literal(literal_start, close_start, out)?;
     out.push(Tok::Close);
     Some(())
 }

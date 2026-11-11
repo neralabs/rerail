@@ -94,7 +94,7 @@ fn drop_census() {
     use ast_grep_language::LanguageExt;
     let list = std::fs::read_to_string(std::env::var("RERAIL_FILES").expect("RERAIL_FILES")).unwrap();
     let out = std::env::var("RERAIL_DROP_CENSUS").expect("RERAIL_DROP_CENSUS");
-    let mut tally: BTreeMap<(String, String, String), (u64, u64)> = BTreeMap::new();
+    let mut tally: BTreeMap<(String, String, String), (u64, u64, u64)> = BTreeMap::new();
     let mut totals: BTreeMap<String, [u64; 5]> = BTreeMap::new();
     for path in list.lines().filter(|l| !l.is_empty()) {
         let Some(label) = crate::code_rule_dsl::language::label_of_path(path) else { continue };
@@ -122,6 +122,9 @@ fn drop_census() {
                 } else {
                     let e = tally.entry((label.to_owned(), node.kind().to_owned(), child.kind().to_owned())).or_default();
                     e.0 += 1;
+                    if stored.is_none() {
+                        e.2 += 1;
+                    }
                     if kept {
                         t[2] += 1;
                     } else {
@@ -135,10 +138,12 @@ fn drop_census() {
             }
         }
     }
-    let mut tsv = String::from("language\tparent\ttoken\tseen\tdropped\n");
-    for ((label, parent, token), (seen, dropped)) in &tally {
+    // whole: kept because the writer keeps all of the node's children (an error inside, or children
+    // its automaton cannot walk).
+    let mut tsv = String::from("language\tparent\ttoken\tseen\tdropped\twhole\n");
+    for ((label, parent, token), (seen, dropped, whole)) in &tally {
         let token = token.replace('\t', "\\t").replace('\n', "\\n");
-        writeln!(tsv, "{label}\t{parent}\t{token}\t{seen}\t{dropped}").unwrap();
+        writeln!(tsv, "{label}\t{parent}\t{token}\t{seen}\t{dropped}\t{whole}").unwrap();
     }
     std::fs::write(&out, tsv).unwrap();
     for (label, [files, named, kept, dropped, bytes]) in &totals {

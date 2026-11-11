@@ -9,7 +9,7 @@ fn tape_v8_persists_abstract_tree_sitter_supertypes() {
     let (_, tape, image, grammar) = fixture(source, GrammarDialect::Python);
     let bytes = image.to_bytes().unwrap();
     assert_eq!(&bytes[..8], b"TMPTAP9N");
-    assert_eq!(TAPE_FORMAT_VERSION, 14);
+    assert_eq!(TAPE_FORMAT_VERSION, 15);
 
     let memberships = tape.transducer_supertypes().collect::<Vec<_>>();
     assert!(!memberships.is_empty());
