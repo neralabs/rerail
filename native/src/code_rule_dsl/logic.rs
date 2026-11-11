@@ -11,11 +11,13 @@ pub mod analysis;
 #[path = "logic/front"]
 pub mod front {
     pub use rerail_rr::code_rule_dsl::logic::front::*;
-    #[path = "caches"]
+    // `front/caches/` is not a directory (caches.rs has no children's directory): a path through it fails, so the
+    // facade's directory is `front` (as Cratification's mounts.py, e2ab5d26b).
+    #[path = "."]
     pub mod caches {
         pub use rerail_rr::code_rule_dsl::logic::front::caches::*;
         #[cfg(test)]
-        #[path = "../caches_tests.rs"]
+        #[path = "caches_tests.rs"]
         pub mod tests;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::logic::front::{Error, Literal, Program, Term};

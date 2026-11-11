@@ -28,11 +28,13 @@ pub use rerail_rr::code_rule_dsl::logic::rr::print;
 // The parser and the tape's tree, the `.rr` parser crate's (`rerail_rr_syntax`).
 use rerail_rr_syntax::syntax;
 pub use rerail_rr_syntax::tape;
-#[path = "rr/tape_type"]
+// `rr/tape_type/` is not a directory: a path through it fails, so the facade's directory is `rr` (as
+// Cratification's mounts.py, e2ab5d26b).
+#[path = "rr"]
 pub mod tape_type {
     pub use rerail_rr::code_rule_dsl::logic::rr::tape_type::*;
     #[cfg(test)]
-    #[path = "../tape_type_tests.rs"]
+    #[path = "tape_type_tests.rs"]
     pub mod tests;
     #[allow(unused_imports)]
     use std::collections::{BTreeMap, BTreeSet};
