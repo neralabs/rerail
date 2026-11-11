@@ -85,7 +85,7 @@ pub(super) struct Within {
     /// An axis's set: per dialect tag, whether each kind code is in it.
     members: FxHashMap<u8, Box<[bool]>>,
     /// Where the batch's solve runs.
-    binding: crate::code_rule_dsl::typing::file_local::Binding,
+    binding: crate::code_rule_dsl::facts::nearest::Binding,
     /// The `n` lookups the planner expects, summed over its plans (`expect_lookups`).
     expected: Mutex<f64>,
     /// The batch's solve chosen: the next `n` lookup reads it.
@@ -128,7 +128,7 @@ impl Within {
             shape: OnceLock::new(),
             len: AtomicUsize::new(0),
             members: FxHashMap::default(),
-            binding: crate::code_rule_dsl::typing::file_local::Binding::Cpu,
+            binding: crate::code_rule_dsl::facts::nearest::Binding::Cpu,
             expected: Mutex::new(0.0),
             chosen: std::sync::atomic::AtomicBool::new(false),
             solved: OnceLock::new(),
@@ -137,7 +137,7 @@ impl Within {
 
     /// The axis `axis` over the set of kind atoms `kinds`, its batch's solve run on `binding`. Nothing is made until
     /// a join reads it.
-    pub(super) fn axis(batch: Arc<Batch>, axis: Axis, kinds: &[i64], binding: crate::code_rule_dsl::typing::file_local::Binding) -> Self {
+    pub(super) fn axis(batch: Arc<Batch>, axis: Axis, kinds: &[i64], binding: crate::code_rule_dsl::facts::nearest::Binding) -> Self {
         use crate::code_rule_dsl::facts::core::{KIND_STRIDE, kind_atom};
         let kinds: rustc_hash::FxHashSet<i64> = kinds.iter().copied().collect();
         let members = batch
@@ -168,7 +168,7 @@ impl Within {
     fn solved(&self) -> &Solved {
         self.solved.get_or_init(|| {
             use crate::code_rule_dsl::logic::profile;
-            use crate::code_rule_dsl::typing::file_local::{self, Binding, Trees};
+            use crate::code_rule_dsl::facts::nearest::{self as file_local, Binding, Trees};
             let _span = profile::span(|| "kind-set axis solved for the batch".into());
             let n = self.batch.nodes.last().copied().unwrap_or(0);
             let (mut parent, mut kind) = (Vec::with_capacity(n), Vec::with_capacity(n));

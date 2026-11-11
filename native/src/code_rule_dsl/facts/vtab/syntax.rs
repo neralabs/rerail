@@ -2924,7 +2924,7 @@ pub(crate) fn with_nearest(
     documents: Vec<Document>,
     sets: &[(String, Vec<i64>)],
     tests: &crate::code_rule_dsl::logic::strings::Vocabulary,
-    binding: crate::code_rule_dsl::typing::file_local::Binding,
+    binding: crate::code_rule_dsl::facts::nearest::Binding,
     projection: &Projection,
 ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
     with_matchers(store, documents, sets, &Matchers::default(), tests, binding, projection)
@@ -2942,7 +2942,7 @@ pub(crate) trait AstWave: Send + Sync {
         &self,
         batch: &Batch,
         tapes: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
-        binding: crate::code_rule_dsl::typing::file_local::Binding,
+        binding: crate::code_rule_dsl::facts::nearest::Binding,
         atoms: &crate::content_store::atoms::Atoms,
     ) -> StoreResult<Vec<(String, Arc<dyn Source>)>>;
 }
@@ -2994,11 +2994,11 @@ pub(crate) fn with_matchers(
     sets: &[(String, Vec<i64>)],
     matchers: &Matchers,
     tests: &crate::code_rule_dsl::logic::strings::Vocabulary,
-    binding: crate::code_rule_dsl::typing::file_local::Binding,
+    binding: crate::code_rule_dsl::facts::nearest::Binding,
     projection: &Projection,
 ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
     let built = crate::code_rule_dsl::logic::profile::span(|| "project and intern".into());
-    let metal = matches!(binding, crate::code_rule_dsl::typing::file_local::Binding::Metal);
+    let metal = matches!(binding, crate::code_rule_dsl::facts::nearest::Binding::Metal);
     let tapes: Vec<(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)> = if matchers.is_empty() {
         Vec::new()
     } else {

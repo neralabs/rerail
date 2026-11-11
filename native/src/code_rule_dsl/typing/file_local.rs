@@ -15,35 +15,12 @@
 
 use crate::content_store::{StoreError, StoreResult};
 
-/// No node: a root's parent, or a node with no ancestor in the set.
-pub(crate) const NONE: u32 = u32::MAX;
+pub(crate) use crate::code_rule_dsl::facts::nearest::{Binding, NONE, Trees};
 /// The flat lattice's absent and top values (`logic::native::BOT`, `TOP`).
 const BOT: i64 = i64::MIN;
 const TOP: i64 = 1 << 62;
 
-/// Where the file-local FIX runs.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Binding {
-    Cpu,
-    /// The device work queue; the CPU where there is no device.
-    Metal,
-}
 
-impl Binding {
-    pub(crate) fn of(backend: crate::code_rule_dsl::transducer::packed::ExecutionBackend) -> Self {
-        use crate::code_rule_dsl::transducer::packed::ExecutionBackend as B;
-        match backend {
-            B::MetalInterpreter | B::MetalJit => Binding::Metal,
-            _ => Binding::Cpu,
-        }
-    }
-}
-
-/// A chunk's trees: per node (a cell of the chunk), its parent's cell or `NONE`, and its kind atom.
-pub(crate) struct Trees<'a> {
-    pub(crate) parent: &'a [u32],
-    pub(crate) kind: &'a [i64],
-}
 
 /// The flat-lattice system: seeds, and copies `(cell, source)`.
 struct System {
