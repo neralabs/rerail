@@ -260,6 +260,12 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
     Ok((facts, runs))
 }
 
+/// The facts handed down to the innermost phase under way on this thread (phase 1's `observer__source_file`), as text:
+/// a phase's run is a function of them as of its program, so the whole-run cutoff keys its record by them too.
+pub(super) fn handed_down_text() -> String {
+    HANDED_DOWN.with(|h| h.borrow().last().map(|(n, f)| format!("{n}\0{f:?}")).unwrap_or_default())
+}
+
 /// Whether a phase's run is under way on this thread (its documents are its own: phase 1 does not run inside it).
 pub(super) fn in_phase() -> bool {
     RUNNING.with(|r| !r.borrow().is_empty())

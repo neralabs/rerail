@@ -50,6 +50,10 @@ fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &st
     h.update([0]);
     h.update(modes.as_bytes());
     h.update(format!("\0{typing:?}\0").as_bytes());
+    // A phase's run is a function of the facts handed down to it (its files, for phase 1), which no consulted file
+    // names: the same program over other files is another run.
+    h.update(super::phases::handed_down_text().as_bytes());
+    h.update([0]);
     h.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
     h.update([u8::from(crate::code_rule_dsl::facts::vtab::syntax::definition_ids())]);
     // What can change the outputs from outside the text: every engine switch (a sample of the corpus, decision 0091's

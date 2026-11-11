@@ -288,7 +288,11 @@ pub(crate) fn unchanged(programs: &[&str], root: &Path, typing: &Typing, options
 /// anything else changed, or the run cannot be compared (its documents named, typing, phases read).
 pub(crate) fn changes(programs: &[&str], root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)]) -> Result<Option<Vec<String>>> {
     let trace = |why: String| if std::env::var_os("RERAIL_REUSE_TRACE").is_some() { eprintln!("rerail: changes: {why}"); };
-    if options.get("inputFiles").is_some() || consulted.is_empty() {
+    // A run given no file of its own (`inputFiles: []`, a phase's: phase 1 loads its documents by request) has no
+    // listed documents to compare; what it loaded is among its requests, checked below. Other named files are not
+    // compared.
+    let none_named = options.get("inputFiles").and_then(|v| v.as_array()).is_some_and(Vec::is_empty);
+    if (options.get("inputFiles").is_some() && !none_named) || consulted.is_empty() {
         trace(format!("not comparable: input files {}, {} consulted", options.get("inputFiles").is_some(), consulted.len()));
         return Ok(None);
     }
@@ -304,7 +308,7 @@ pub(crate) fn changes(programs: &[&str], root: &Path, typing: &Typing, options: 
     let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned());
     let found = scoped(corpus_files(root)?, &prog, options);
     let label = corpus_language(language.as_deref(), typing, &found);
-    let files = found.of(label);
+    let files = if none_named { Default::default() } else { found.of(label) };
     let docs: Vec<&(String, String, String)> = consulted.iter().filter(|c| c.0 == "doc").collect();
     if files.len() != docs.len() || files.iter().zip(&docs).any(|(f, d)| *f != d.1) {
         trace(format!("the documents differ: {} files, {} kept", files.len(), docs.len()));
@@ -3138,22 +3142,26 @@ fn run_observed(
     });
     // The entries the statistics keeper counted for files changed or gone since (`keptstats`), found before the
     // first wave too: it counts them out in the waves, and reads none of them from SQLite there.
-    let counted_before: HashMap<String, memo::Found> = match (memo, keeper.borrow().as_ref()) {
+    // A file looked up here and not found is kept as `None`: the waves do not ask SQLite again for what it has not.
+    // That includes a file whose content is unchanged but whose entry the run's plan does not have (a new build
+    // over an older store): the keeper counts it out against the entry it was counted under.
+    let counted_before: HashMap<String, Option<memo::Found>> = match (memo, keeper.borrow().as_ref()) {
         (Some(memo @ memo::Memo::Stored(_)), Some(k)) if looking => {
             let _before = crate::code_rule_dsl::logic::profile::span(|| "memo lookup, before the first wave".into());
             let now = before.lock();
-            let changed: Vec<(String, memo::Content)> = k.counted_files().into_iter().filter(|(p, c, _)| now.get(p).is_none_or(|b| b.content != Some(*c))).map(|(p, c, _)| (p, c)).collect();
+            let changed: Vec<(String, memo::Content)> = k.counted_files().into_iter().filter(|(p, c, _)| now.get(p).is_none_or(|b| b.content != Some(*c) || b.found.is_none())).map(|(p, c, _)| (p, c)).collect();
             drop(now);
             let keys: Vec<(memo::Content, &str)> = changed.iter().map(|(p, c)| (*c, world::store_path(p))).collect();
             let found = memo.found_all(&memo_program, &keys).map_err(|e| Error::Plan(e.to_string()))?;
-            changed.iter().map(|(p, _)| p.clone()).zip(found).filter_map(|(p, f)| f.map(|f| (p, f))).collect()
+            changed.iter().map(|(p, _)| p.clone()).zip(found).collect()
         }
         _ => HashMap::new(),
     };
     // The entry a file was counted under: found before the first wave, else (a session's, in memory) looked up.
     let counted_entry = |path: &str, c: memo::Content, key: i64| -> Option<memo::Entry> {
         match counted_before.get(path) {
-            Some(found) => found.entry(key).ok().flatten(),
+            Some(Some(found)) => found.entry(key).ok().flatten(),
+            Some(None) => None,
             None => memo.and_then(|m| m.lookup(c, world::store_path(path), key, &memo_program).ok().flatten()),
         }
     };
