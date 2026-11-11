@@ -6,6 +6,7 @@ use crate::code_rule_dsl::scope::usage::{BindingId, Usage};
 use crate::code_rule_dsl::scope::{Form, ScopeKind};
 use ast_grep_core::tree_sitter::LanguageExt;
 use serde_json::Value;
+use crate::code_rule_dsl::scope::usage::lang_rust::RustUsage as _;
 
 fn source(path: &str) -> &'static str {
     match path.rsplit('/').next().unwrap_or_default() {

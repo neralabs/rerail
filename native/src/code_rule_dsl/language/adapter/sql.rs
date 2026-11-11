@@ -38,6 +38,7 @@ use std::cmp::Ordering;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
+use crate::code_rule_dsl::scope::usage::lang_sql::SqlUsage as _;
 
 /// SQL's family: SQLFluff's semantics.
 pub(crate) struct Sql;

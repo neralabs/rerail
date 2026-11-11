@@ -1,6 +1,7 @@
 //! Moved from `scope.rs` by the crate split (tools/cratify/moves.tsv).
 
 use super::*;
+use crate::code_rule_dsl::scope::usage::lang_python::PythonUsage as _;
 
 impl ScopeRules for Python {
     const SUPPORTED: bool = true;

@@ -1,6 +1,7 @@
 //! Moved from `scope.rs` by the crate split (tools/cratify/moves.tsv).
 
 use super::*;
+use crate::code_rule_dsl::scope::usage::lang_php::PhpUsage as _;
 
 /// The verdict of a family whose variables are PHP's, named `label`, on `feature`;
 /// `last_write` and `same_import` are its messages for those two.

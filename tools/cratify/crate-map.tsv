@@ -250,3 +250,8 @@ facts::vtab::syntax::ecma_core	rerail-lang-ecma
 facts::vtab::syntax::rr_core	rerail-logic
 workspace::ingest::ecma	rerail-lang-ecma
 eval::ecma	rerail-lang-ecma
+scope::usage::lang_ecma	rerail-lang-ecma
+scope::usage::lang_rust	rerail-lang-rust
+scope::usage::lang_php	rerail-lang-php
+scope::usage::lang_sql	rerail-lang-sql
+scope::usage::lang_python	rerail-lang-python
