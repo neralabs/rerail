@@ -1,0 +1,13 @@
+.policy "retained-world-demand-regression" revision 1
+.language python
+.scope dirs "__no_primary__"
+.decl desired(path: symbol)
+desired("pkg/a.py").
+.decl probe(path: symbol, directory: symbol, name: symbol)
+probe(p,d,n) :- desired(p),match("(?<d>.*)/(?<n>[^/]+)",p).
+.decl parent(directory: symbol)
+parent(d) :- probe(_,d,_).
+.decl present(path: symbol)
+present(p) :- parent(d),probe(p,d,n),dir_metadata(d,n,1,_,_).
+.violation Present(at: span) "present"
+Present(@place(p,1)) :- present(p).

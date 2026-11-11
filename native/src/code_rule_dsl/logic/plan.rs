@@ -5584,8 +5584,8 @@ pub(in crate::code_rule_dsl) fn leaf_identity(prog: &Program, rel: &str) -> [u8;
 }
 
 /// Holds clean relation `rel` in the run as the earlier run kept it, with its statistics; its rows' count.
-fn kept_strata_hold(ks: &mut dyn KeptStrata, db: &Connection, run: &mut Run, rel: &str) -> Result<usize> {
-    let (types, rows, n) = ks.rows(rel).ok_or_else(|| Error::Plan(format!("{rel}: kept as clean, but its rows are not kept")))?;
+fn kept_strata_hold(ks: &mut dyn KeptStrata, db: &Connection, run: &mut Run, rel: &str, reader: &str) -> Result<usize> {
+    let (types, rows, n) = ks.rows(rel).ok_or_else(|| Error::Plan(format!("{rel}: kept as clean, but its rows are not kept (reader: {reader})")))?;
     let k = types.len();
     let mut ndv = Vec::with_capacity(k);
     for c in 0..k {
@@ -6581,7 +6581,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                     fresh.insert(r.clone(), ks.was(r));
                     // A view's relations are held now: the view reads them in place.
                     if viewed {
-                        held_rows += kept_strata_hold(ks, db, &mut run, r)?;
+                        held_rows += kept_strata_hold(ks, db, &mut run, r, &key)?;
                     } else {
                         unheld.insert(r.clone());
                     }
@@ -6596,7 +6596,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             // A clean relation this stratum reads is held now, as the last run derived it.
             let wanted: Vec<String> = reads.iter().filter(|r| unheld.contains(*r)).cloned().collect();
             for r in wanted {
-                held_rows += kept_strata_hold(ks, db, &mut run, &r)?;
+                held_rows += kept_strata_hold(ks, db, &mut run, &r, &key)?;
                 unheld.remove(&r);
                 held_again += 1;
             }
@@ -6828,7 +6828,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         // What stays to the run's end (outputs, relations kept for the caller) is held again if it was clean.
         let wanted: Vec<String> = unheld.iter().filter(|r| stays.contains(*r)).cloned().collect();
         for r in wanted {
-            held_rows += kept_strata_hold(ks, db, &mut run, &r)?;
+            held_rows += kept_strata_hold(ks, db, &mut run, &r, "final outputs")?;
             unheld.remove(&r);
             held_again += 1;
         }
