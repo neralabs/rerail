@@ -3457,3 +3457,25 @@ No rule reads `encl` any more. `bound` and `defined` are refused because no rule
 
 **Closure:** find which change made `within` (and so `uses`) cross-file, and whether that change is right.
 Then give the test a program whose export factorizes, or restore the split, and stop ignoring the test.
+
+## O148. Measured key domains price joins apart from T
+
+Commit 2ab61d7b4 ("Plan delta joins from measured key domains before expansion") changes the estimate on purpose:
+a binding's distinct values are capped by the rows its constant filters leave, and containment applies to every
+relation, not only to the component being solved. That moves T's recorded plans under T's numbering:
+
+```text
+// workload plan 16: estimated work 417 (T) → 412 (port)
+bound_in($f, $x)  kind($f, "function_definition")  []  412
+// calls plan 54: a different anchor
+classmeth($f)  builtin_ref($e, "classmethod")   (T: dexpr($f, $e))
+```
+
+About 20 lines of `workload`, `workload_demand` and `calls` differ. `keeps`'s copy-pricing test flips with the same
+estimate: the copy is now priced above the reader, so it is no longer inlined.
+
+The three tests are ignored with this item: `t_programs_plan_and_run_like_t`,
+`t_programs_over_atoms_plan_and_run_like_t` and `observed_selectivities_price_a_copy_that_never_ran`.
+
+**Closure:** decide whether the port keeps T's estimates where T's plans are the test (and the new estimate only
+where T has no plan), or takes the new estimate and records new goldens. Then stop ignoring the tests.

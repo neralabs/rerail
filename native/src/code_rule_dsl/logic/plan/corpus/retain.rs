@@ -849,7 +849,8 @@ fn read_digest(read: &str, known: &HashMap<String, u64>, derived: &BTreeSet<&Str
     if let Some(d) = known.get(read) {
         return Some(*d);
     }
-    if derived.iter().any(|r| r.as_str() == read) || !prog.facts.contains_key(read) {
+    // A relation with literal rows that is also an input is named by its bound rows' digest, never by its literals.
+    if derived.iter().any(|r| r.as_str() == read) || !prog.facts.contains_key(read) || prog.inputs.iter().any(|i| i == read) {
         return None;
     }
     let id = crate::code_rule_dsl::logic::plan::leaf_identity(prog, read);
