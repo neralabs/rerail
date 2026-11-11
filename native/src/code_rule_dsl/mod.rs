@@ -640,6 +640,11 @@ pub(crate) fn install_languages() {
     waves::owner::database::install_connection_setup(demand::vtab::set_up_connection);
     // Python's reference graph, a program's cross-file relations.
     logic::plan::corpus::install_cross_file(logic::plan::corpus::references::make);
+    // A snapshot's files, as an SQL session binds them.
+    sql_executor::documents::install_snapshot_files(|json| {
+        let (snapshot, _) = eval::parse_snapshot(json, false)?;
+        Ok(snapshot.files.into_iter().map(|f| sql_executor::documents::File { path: f.path, language: f.language, source: f.source }).collect())
+    });
     // What compiles a program's `ast` matchers into the transducer wave facts runs (decision 0106).
     facts::vtab::syntax::install_ast_compiler(&facts::vtab::syntax::ast_wave::Compiler);
     // The literal grammars `parse` applies, in the order messages list them (`literal::LiteralGrammar`).

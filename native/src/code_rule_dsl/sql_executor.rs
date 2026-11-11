@@ -22,7 +22,7 @@ mod constants;
 // A row of a corpus binding is `PROBE | document << 32 | row`: a 64-bit target only.
 #[cfg(target_pointer_width = "64")]
 mod corpus;
-mod documents;
+pub(crate) mod documents;
 mod indexes;
 mod live;
 mod maintenance;
