@@ -743,7 +743,8 @@ impl ContentStore {
             atoms: atoms::Atoms::for_database(path, Some(identity)),
             working_set: working_set::WorkingSet::default(),
             holder: parking_lot::Mutex::new(None),
-            write_back: Some(write_back::register(path)),
+            // A store created again at its path has a writer of its own too.
+            write_back: Some(write_back::register_store(path, identity)),
             lease: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             git_tree_lookup_count: AtomicUsize::new(0),
