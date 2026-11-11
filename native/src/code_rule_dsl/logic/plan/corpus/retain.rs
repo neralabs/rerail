@@ -849,7 +849,8 @@ fn read_digest(read: &str, known: &HashMap<String, u64>, derived: &BTreeSet<&Str
     if let Some(d) = known.get(read) {
         return Some(*d);
     }
-    if derived.iter().any(|r| r.as_str() == read) || !prog.facts.contains_key(read) {
+    // An input's rows are the run's, whatever literal rows the program adds: only its runtime digest names them.
+    if derived.iter().any(|r| r.as_str() == read) || !prog.facts.contains_key(read) || prog.inputs.iter().any(|i| i == read) {
         return None;
     }
     let id = crate::code_rule_dsl::logic::plan::leaf_identity(prog, read);

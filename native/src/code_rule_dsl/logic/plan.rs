@@ -5657,6 +5657,10 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
         if prog.lattice.contains_key(rel) || prog.facts.contains_key(rel) {
             continue;
         }
+        // A gate's relations (its ask, its done) are written by the gated fixpoint: tables, never views.
+        if prog.gates.iter().any(|(g, d)| g == rel || d.src.as_deref() == Some(rel) || d.rel == rel) {
+            continue;
+        }
         let (h, b) = (&rule.head, &rule.body);
         let [Literal::Atom(a)] = b.as_slice() else { continue };
         if a.neg || !prog.inputs.contains(&a.rel) {

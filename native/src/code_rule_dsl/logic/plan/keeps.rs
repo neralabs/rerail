@@ -1338,7 +1338,9 @@ mod tests {
         for (rel, n) in [("load", 200_000.0), ("look", 500_000.0), ("binding", 30_000.0)] {
             model.stats.card.insert(rel.into(), n);
         }
-        for (rel, ndvs) in [("load", vec![200_000.0, 500.0]), ("look", vec![5_000.0, 400.0, 800.0]), ("binding", vec![1_000.0, 700.0, 3_000.0])] {
+        // `ctx` is estimated over both join columns: 200 k x 500 k / (200 k x 400) = 1,250 rows, above `SMALL`, so
+        // it is priced.
+        for (rel, ndvs) in [("load", vec![200_000.0, 300.0]), ("look", vec![5_000.0, 400.0, 800.0]), ("binding", vec![1_000.0, 700.0, 3_000.0])] {
             for (c, d) in ndvs.into_iter().enumerate() {
                 model.ndv.insert((rel.into(), c), d);
             }
