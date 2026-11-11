@@ -63,8 +63,8 @@ fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &st
 /// The programs with the root's settings (`<root>/rerail.env`, the `env` option), as the run reads them.
 fn with_settings(programs: &[&str], root: &Path, options: &serde_json::Value) -> Result<Vec<String>> {
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
-    let settings = crate::code_rule_dsl::tools::settings(root, &flags).map_err(Error::Plan)?;
-    Ok(programs.iter().map(|p| crate::code_rule_dsl::tools::with_settings(p, &settings)).collect())
+    let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
+    Ok(programs.iter().map(|p| crate::code_rule_dsl::logic::settings::with_settings(p, &settings)).collect())
 }
 
 /// The library files the programs include, each with its digest now: the record's `rule` entries.

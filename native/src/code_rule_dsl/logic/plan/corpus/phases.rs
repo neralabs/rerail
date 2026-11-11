@@ -140,7 +140,7 @@ fn source(name: &str, dir: Option<&Path>) -> Result<Option<String>> {
     let Some(path) = dir.into_iter().chain([builtin.as_path()]).map(|d| d.join(format!("{name}.rr"))).find(|p| p.exists()) else {
         return Ok(None);
     };
-    crate::code_rule_dsl::tools::program_text(&path).map(Some).map_err(Error::Plan)
+    crate::code_rule_dsl::logic::settings::program_text(&path).map(Some).map_err(Error::Plan)
 }
 
 /// The relations `prog` reads from earlier phases, by phase: `(the reader's relation, the export)`. A relation named

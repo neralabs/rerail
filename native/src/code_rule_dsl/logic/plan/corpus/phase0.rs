@@ -350,7 +350,7 @@ mod tests {
         // A text made from a program file keeps the graph a run of `bootstrap.rr` would give it (`keep_text`).
         let programs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/typing/programs");
         for file in [programs.join("calls_cx.rr"), lib.join("python/conditions.rr")] {
-            let text = crate::code_rule_dsl::tools::program_text(&file).unwrap();
+            let text = crate::code_rule_dsl::logic::settings::program_text(&file).unwrap();
             let seed = crate::code_rule_dsl::logic::rr::text_seed(&text).unwrap().expect("includes");
             let kept = super::graph(&seed).unwrap().digest();
             let derived = super::derive(std::slice::from_ref(&seed)).unwrap().of(&seed, 0).digest();
@@ -379,7 +379,7 @@ mod benchmarks {
         });
         let start = super::super::thread_usage();
         let refs: Vec<&std::path::Path> = files.iter().map(|p| p.as_path()).collect();
-        let texts = crate::code_rule_dsl::tools::program_texts(&refs).unwrap();
+        let texts = crate::code_rule_dsl::logic::settings::program_texts(&refs).unwrap();
         let resolved = super::super::thread_usage();
         let seeds: Vec<super::Seed> = texts.iter().filter_map(|t| crate::code_rule_dsl::logic::rr::text_seed(t).unwrap()).collect();
         let graphs = super::graphs(&seeds).unwrap();

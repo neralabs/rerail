@@ -26,6 +26,7 @@ pub(in crate::code_rule_dsl) mod profile;
 pub(in crate::code_rule_dsl) mod program_facts;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod rr;
+pub(crate) mod settings;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod sql;
 pub(in crate::code_rule_dsl) mod simplify;

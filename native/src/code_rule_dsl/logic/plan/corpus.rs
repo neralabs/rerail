@@ -291,8 +291,8 @@ pub(crate) fn changes(programs: &[&str], root: &Path, typing: &Typing, options: 
         return Ok(None);
     }
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
-    let settings = crate::code_rule_dsl::tools::settings(root, &flags).map_err(Error::Plan)?;
-    let with_settings: Vec<String> = programs.iter().map(|p| crate::code_rule_dsl::tools::with_settings(p, &settings)).collect();
+    let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
+    let with_settings: Vec<String> = programs.iter().map(|p| crate::code_rule_dsl::logic::settings::with_settings(p, &settings)).collect();
     let programs: Vec<&str> = with_settings.iter().map(String::as_str).collect();
     let prog = combine(&programs, "")?;
     if prog.decls.contains_key("declared_ret") || !phases::wanted(&prog, None)?.is_empty() {
@@ -1730,8 +1730,8 @@ fn run_observed(
     // command line's `--env`).
     let setting = crate::code_rule_dsl::logic::profile::span(|| "the run's settings".into());
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
-    let settings = crate::code_rule_dsl::tools::settings(root, &flags).map_err(Error::Plan)?;
-    let with_settings: Vec<String> = programs.iter().map(|p| crate::code_rule_dsl::tools::with_settings(p, &settings)).collect();
+    let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
+    let with_settings: Vec<String> = programs.iter().map(|p| crate::code_rule_dsl::logic::settings::with_settings(p, &settings)).collect();
     let programs: &[&str] = &with_settings.iter().map(String::as_str).collect::<Vec<_>>();
     drop(setting);
     // The main thread's own CPU (the chunk builder's jobs' is theirs, below; the jobs the main thread runs for the
@@ -1742,11 +1742,11 @@ fn run_observed(
     let mut phases: Vec<(&'static str, f64, f64, f64, usize)> = Vec::new();
     let mut phase_instructions: Vec<(&'static str, u64)> = Vec::new();
     let mut last = began;
-    let mut last_instructions = crate::code_rule_dsl::tools::process_counters().map_or(0, |c| c.0);
+    let mut last_instructions = crate::code_rule_dsl::logic::settings::process_counters().map_or(0, |c| c.0);
     let mut counted = 0;
     let mut phase = |name: &'static str, statements: usize| {
         let now = main_usage();
-        let instructions = crate::code_rule_dsl::tools::process_counters().map_or(0, |c| c.0);
+        let instructions = crate::code_rule_dsl::logic::settings::process_counters().map_or(0, |c| c.0);
         match phase_instructions.iter_mut().find(|p| p.0 == name) {
             Some(p) => p.1 += instructions - last_instructions,
             None => phase_instructions.push((name, instructions - last_instructions)),

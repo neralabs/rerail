@@ -59,7 +59,7 @@ fn wanted(prog: &Program) -> Vec<Bridged> {
 fn source(name: &str) -> Result<String> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("src/code_rule_dsl/typing/programs/{name}.rr"));
     // Its `#include`s read in (`python/modules.rr`, …).
-    crate::code_rule_dsl::tools::program_text(&path).map_err(Error::Plan)
+    crate::code_rule_dsl::logic::settings::program_text(&path).map_err(Error::Plan)
 }
 
 /// The rows of the bridged relations, by relation: added to the rule's facts as they are, not printed and parsed.

@@ -542,7 +542,7 @@ fn product_programs_derive_t_outputs() {
     ).unwrap();
     let mut failures = Vec::new();
     for name in ["workload", "workload_demand", "calls"] {
-        let src = crate::code_rule_dsl::tools::program_text(&root().join(format!("../typing/programs/{name}.rr"))).unwrap();
+        let src = crate::code_rule_dsl::logic::settings::program_text(&root().join(format!("../typing/programs/{name}.rr"))).unwrap();
         let mut p = prune(parse(&src).unwrap());
         // T has no library stage (decision 0059): with no `stage` fact, the rules it opens are dead, and their
         // unbound reads of demanded relations (`need_attr(c, a) :- stage("library"), found(c, a, _)`) are not asked.
@@ -602,7 +602,7 @@ fn own_ingestion_derives_what_t_facts_do() {
     };
     let read = |out: &std::path::Path, rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_else(|e| panic!("{}: {rel}: {e}", out.display()));
     for name in ["workload", "calls"] {
-        let src = crate::code_rule_dsl::tools::program_text(&root().join(format!("../typing/programs/{name}.rr"))).unwrap();
+        let src = crate::code_rule_dsl::logic::settings::program_text(&root().join(format!("../typing/programs/{name}.rr"))).unwrap();
         let with_t = dir.join(format!("out-{name}-t"));
         let report = corpus::run(&src, &dir, Some(&facts), &with_t, "program", Binding::Cpu, 1 << 18).unwrap();
         assert!(report.rows.values().any(|&n| n > 0), "{name}: no outputs");
