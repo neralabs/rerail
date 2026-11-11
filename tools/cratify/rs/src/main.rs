@@ -4,6 +4,7 @@
 //!   file  start  end  kind  name  [path of inline mods]
 //! `start` includes the item's doc comments and attributes; `end` is exclusive. An impl's name is
 //! `Type` or `Trait for Type`. Macro invocations at item level are listed as `macro name!`.
+mod packify;
 use std::fmt::Write as _;
 use syn::spanned::Spanned;
 
@@ -247,6 +248,96 @@ impl<'ast> syn::visit::Visit<'ast> for CfgTests<'_> {
     }
 }
 
+/// `cratify traits <file>...`: per trait in the files (top level), one JSON line: its name, supertraits, and items
+/// (consts with type and whether defaulted, associated types with bounds, fns with generics, receiver, inputs as
+/// (pattern, type), output, whether defaulted). Types are token strings, as written.
+fn traits_json(src: &str) -> Vec<String> {
+    fn q<T: quote::ToTokens>(t: &T) -> String {
+        t.to_token_stream().to_string()
+    }
+    fn esc(s: &str) -> String {
+        let mut o = String::from("\"");
+        for c in s.chars() {
+            match c {
+                '"' => o.push_str("\\\""),
+                '\\' => o.push_str("\\\\"),
+                '\n' => o.push_str("\\n"),
+                c => o.push(c),
+            }
+        }
+        o.push('"');
+        o
+    }
+    let f = syn::parse_file(src).expect("parses");
+    let mut out = Vec::new();
+    for item in &f.items {
+        let syn::Item::Trait(t) = item else { continue };
+        let mut items = Vec::new();
+        for ti in &t.items {
+            match ti {
+                syn::TraitItem::Const(c) => items.push(format!(
+                    "{{\"kind\":\"const\",\"name\":{},\"ty\":{},\"default\":{}}}",
+                    esc(&c.ident.to_string()), esc(&q(&c.ty)), c.default.as_ref().map_or("null".to_owned(), |(_, e)| esc(&q(e)))
+                )),
+                syn::TraitItem::Type(ty) => items.push(format!(
+                    "{{\"kind\":\"type\",\"name\":{},\"bounds\":{}}}",
+                    esc(&ty.ident.to_string()), esc(&q(&ty.bounds))
+                )),
+                syn::TraitItem::Fn(m) => {
+                    let sig = &m.sig;
+                    let cfg: Vec<String> =
+                        m.attrs.iter().filter(|a| a.path().is_ident("cfg")).map(|a| esc(&q(a))).collect();
+                    let mut inputs = Vec::new();
+                    let mut receiver = "null".to_owned();
+                    for a in &sig.inputs {
+                        match a {
+                            syn::FnArg::Receiver(r) => receiver = esc(&q(r)),
+                            syn::FnArg::Typed(p) => inputs.push(format!("[{},{}]", esc(&q(&p.pat)), esc(&q(&p.ty)))),
+                        }
+                    }
+                    let output = match &sig.output {
+                        syn::ReturnType::Default => "null".to_owned(),
+                        syn::ReturnType::Type(_, t) => esc(&q(t)),
+                    };
+                    let generics: Vec<String> = sig.generics.params.iter().map(|g| esc(&q(g))).collect();
+                    items.push(format!(
+                        "{{\"kind\":\"fn\",\"name\":{},\"generics\":[{}],\"where\":{},\"receiver\":{},\"inputs\":[{}],\"output\":{},\"default\":{},\"cfg\":[{}]}}",
+                        esc(&sig.ident.to_string()), generics.join(","),
+                        sig.generics.where_clause.as_ref().map_or("null".to_owned(), |w| esc(&q(w))),
+                        receiver, inputs.join(","), output, m.default.is_some(), cfg.join(",")
+                    ));
+                }
+                _ => {}
+            }
+        }
+        out.push(format!(
+            "{{\"trait\":{},\"supertraits\":{},\"items\":[{}]}}",
+            esc(&t.ident.to_string()), esc(&q(&t.supertraits)), items.join(",")
+        ));
+    }
+    out
+}
+
+/// `cratify uses <file>`: each name the file's top-level `use` items bring in, and its path as written: `name\tpath`
+/// (a glob is `*\tpath`).
+fn use_leaves(tree: &syn::UseTree, prefix: &str, out: &mut Vec<(String, String)>) {
+    let join = |p: &str, s: &str| if p.is_empty() { s.to_owned() } else { format!("{p}::{s}") };
+    match tree {
+        syn::UseTree::Path(p) => use_leaves(&p.tree, &join(prefix, &p.ident.to_string()), out),
+        syn::UseTree::Name(n) => {
+            let name = n.ident.to_string();
+            if name == "self" {
+                out.push((prefix.rsplit("::").next().unwrap_or(prefix).to_owned(), prefix.to_owned()));
+            } else {
+                out.push((name.clone(), join(prefix, &name)));
+            }
+        }
+        syn::UseTree::Rename(r) => out.push((r.rename.to_string(), join(prefix, &r.ident.to_string()))),
+        syn::UseTree::Glob(_) => out.push(("*".to_owned(), prefix.to_owned())),
+        syn::UseTree::Group(g) => g.items.iter().for_each(|t| use_leaves(t, prefix, out)),
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
@@ -286,6 +377,28 @@ fn main() {
                     m.path_attr.unwrap_or_default(),
                     if m.inline { "inline" } else { "file" }
                 );
+            }
+        }
+        Some("packify") => packify::main(&args[2..]),
+        Some("uses") => {
+            let src = std::fs::read_to_string(&args[2]).expect("file");
+            let f = syn::parse_file(&src).expect("parses");
+            for item in &f.items {
+                if let syn::Item::Use(u) = item {
+                    let mut out = Vec::new();
+                    use_leaves(&u.tree, if u.leading_colon.is_some() { "::" } else { "" }, &mut out);
+                    for (n, p) in out {
+                        println!("{n}\t{p}");
+                    }
+                }
+            }
+        }
+        Some("traits") => {
+            for file in &args[2..] {
+                let src = std::fs::read_to_string(file).expect(file);
+                for line in traits_json(&src) {
+                    println!("{line}");
+                }
             }
         }
         Some("cfgtest") => {

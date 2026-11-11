@@ -2,6 +2,7 @@ use super::{
     Arguments, BindingTest, Binds, EmbeddedTest, FormatArgs, HostTest, Layout, ParseTest, Resolves,
     ValueTest,
 };
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Rerail's semantic predicates: the rule terms that read a file's scopes, bindings, values,
 /// parsed literals, layout or call graph rather than its syntax alone. The structural rule
@@ -200,6 +201,6 @@ impl Semantic {
 /// Whether `language`'s family reads the file's flow, which may leave a read unknown
 /// (`ScopeRules::FLOW`).
 pub(super) fn flow(language: crate::code_rule_dsl::language::GrammarDialect) -> bool {
-    use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
-    with_adapter!(crate::code_rule_dsl::language::Family::of(language), A => <<A as Adapter>::Scope as ScopeRules>::FLOW)
+    
+    { let pack = language_pack::pack(crate::code_rule_dsl::language::Family::of(language)); pack.scope_flow() }
 }

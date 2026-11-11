@@ -3,7 +3,6 @@ use super::GrammarMatcher;
 use super::util::{UNKNOWN, UTIL_EXCEEDED, UTIL_STEPS_LEFT, UtilLimit};
 use crate::code_rule_dsl::budget;
 use crate::code_rule_dsl::identifier::{name_in, python_identifier};
-use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::language::{
     JsxRuntime, SourceType, has_module_syntax, is_stub_file, jsx_runtime_in_source,
@@ -31,6 +30,7 @@ use std::collections::BTreeSet;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// `resolves`: file-local name resolution (a Rerail extension). It binds and reads no captures.
 #[derive(Clone)]
@@ -244,12 +244,12 @@ enum ThisBoundary {
 
 impl Resolves {
     pub(super) fn holds<D: Doc>(&self, node: &Node<'_, D>) -> bool {
-        with_adapter!(Family::of(self.language), A => self.holds_in::<<A as Adapter>::Scope, D>(node))
+        { let pack = language_pack::pack(Family::of(self.language)); self.holds_in::<D>(pack, node) }
     }
 
     /// `holds`, where `S` reads the family's scope.
-    fn holds_in<S: ScopeRules, D: Doc>(&self, node: &Node<'_, D>) -> bool {
-        if S::FLOW {
+    fn holds_in<D: Doc>(&self, pack: &dyn language_pack::LanguagePack, node: &Node<'_, D>) -> bool {
+        if pack.scope_flow() {
             return self.php_holds(node);
         }
         if self.item {
@@ -289,10 +289,10 @@ impl Resolves {
             return false;
         }
         if let Some(mode) = self.unresolved {
-            return !self.attribute_kinds.contains(&kind) && self.is_unresolved::<S, D>(node, mode);
+            return !self.attribute_kinds.contains(&kind) && self.is_unresolved::<D>(pack, node, mode);
         }
         let chain = (!self.imports.is_empty() || self.import_any)
-            && (S::IMPORT_PATHS || self.import_chain(node).is_some());
+            && (pack.scope_import_paths() || self.import_chain(node).is_some());
         let text = name_in(self.language, node.text());
         // A `/* global */` comment makes a name a global variable of that name, never one of the
         // listed names: the list decides, and an unlisted name needs no table.
@@ -311,19 +311,19 @@ impl Resolves {
             return false;
         };
         (global && self.is_global(&table, node, text.as_ref()))
-            || (chain && S::IMPORT_PATHS && self.is_import_path::<S, D>(&table, node))
-            || (chain && !S::IMPORT_PATHS && self.is_import(&table, node))
+            || (chain && pack.scope_import_paths() && self.is_import_path::<D>(pack, &table, node))
+            || (chain && !pack.scope_import_paths() && self.is_import(&table, node))
     }
 
     /// Rust: the path the read at `node` names through the file's imports is listed (or with
     /// `import: true`, there is one).
-    fn is_import_path<S: ScopeRules, D: Doc>(
+    fn is_import_path<D: Doc>(
         &self,
-        table: &ScopeTable,
+        pack: &dyn language_pack::LanguagePack, table: &ScopeTable,
         node: &Node<'_, D>,
     ) -> bool {
         let file = file_path();
-        S::import_path(table, node, file.as_deref()).is_some_and(|path| {
+        language_pack::scope_import_path(pack, table, node, file.as_deref()).is_some_and(|path| {
             self.import_any
                 || self.imports.contains(&path)
                 || (self.prefix
@@ -335,7 +335,7 @@ impl Resolves {
 
     /// Ruff's F821 and F405, ESLint's no-undef: `node` reads a name with no binding (or one an
     /// unconditional `del` unbound) that is no builtin, declared global or implicit name.
-    fn is_unresolved<S: ScopeRules, D: Doc>(&self, node: &Node<'_, D>, mode: Unresolved) -> bool {
+    fn is_unresolved<D: Doc>(&self, pack: &dyn language_pack::LanguagePack, node: &Node<'_, D>, mode: Unresolved) -> bool {
         let Some(table) = file_table(node, self.language, self.reading()) else {
             return false;
         };
@@ -346,14 +346,14 @@ impl Resolves {
         // A function's bare annotation ends a load: an unbound local, whatever an outer scope,
         // builtin or star import binds, unless a nested `nonlocal` may initialize it (Ruff's
         // `annotation_binding_id` with rebinding scopes).
-        if let Some(annotation) = S::unbound_annotation(&table, reference, &name) {
+        if let Some(annotation) = pack.scope_unbound_annotation(&table, reference, &name) {
             return mode == Unresolved::Unbound && !table.binding_at(annotation, &name).rebound;
         }
-        if let Some(binding) = S::resolve(&table, reference, &name) {
+        if let Some(binding) = pack.scope_resolve(&table, reference, &name) {
             // Ruff stops at a deletion: the name is unbound, whatever a star import binds.
             return binding.is_deletion() && mode == Unresolved::Unbound;
         }
-        S::unresolved(
+        pack.scope_unresolved(
             &table,
             reference,
             &name,
@@ -1808,12 +1808,12 @@ pub(crate) fn calls_tables<D: Doc>(
     node: &Node<'_, D>,
     language: GrammarDialect,
 ) -> Option<crate::code_rule_dsl::calls::FileTables> {
-    use crate::code_rule_dsl::language::adapter::CallRules;
-    with_adapter!(Family::of(language), A => <<A as Adapter>::Calls as CallRules>::tables(
+    
+    { let pack = language_pack::pack(Family::of(language)); language_pack::calls_tables(pack, 
         || file_table(node, language, Reading::default()),
         file_module,
         || file_php_names(node, language),
-    ))
+    ) }
 }
 
 /// The table of `node`'s file under `reading`, charging its build to the current clause's
@@ -1828,10 +1828,10 @@ pub(super) fn file_table<D: Doc>(
     if UTIL_EXCEEDED.get().is_some() {
         return None;
     }
-    let (stubs, flow) = with_adapter!(Family::of(language), A => (
-        <<A as Adapter>::Scope as ScopeRules>::STUBS,
-        <<A as Adapter>::Scope as ScopeRules>::FLOW,
-    ));
+    let (stubs, flow) = { let pack = language_pack::pack(Family::of(language)); (
+        pack.scope_stubs(),
+        pack.scope_flow(),
+    ) };
     let stub = stubs && FILE_SCOPES.with_borrow(|slot| slot.as_ref().is_some_and(|slot| slot.stub));
     let reading = Reading {
         stub,

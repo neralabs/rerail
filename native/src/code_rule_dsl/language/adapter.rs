@@ -18,6 +18,8 @@ mod rust;
 mod scope;
 mod sql;
 mod syntax;
+// The language pack interface the core asks (generated from the traits above: tools/cratify/packgen.py).
+pub(crate) mod pack;
 mod value;
 mod vue;
 

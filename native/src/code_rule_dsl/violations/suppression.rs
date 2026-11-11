@@ -4,7 +4,6 @@
 
 use super::{Witness, anchored_span};
 use crate::code_rule_dsl::language::Family;
-use crate::code_rule_dsl::language::adapter::{Adapter, with_adapter};
 use crate::code_rule_dsl::matcher::file_rerail_ignores;
 use crate::code_rule_dsl::model::{Anchor, ViolationSpec};
 use crate::code_rule_dsl::origin::InFile;
@@ -12,6 +11,7 @@ use crate::code_rule_dsl::suppress::{RerailIgnores, root};
 use crate::code_rule_dsl::tape::tape_doc;
 use ast_grep_core::{AstGrep, Doc, Node};
 use std::rc::Rc;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Whether the violation's `suppress` removes a witness: another linter's comments suppress the
 /// violation at its anchor's start (oxlint's and Biome's: over the anchored span). `node` is the
@@ -38,7 +38,7 @@ pub(crate) fn suppresses<D: Doc>(
     };
     // Compiling checked that the query's family honours each linter `suppress` names.
     let span = (span.start_byte, span.end_byte);
-    with_adapter!(Family::of(file.dialect()), A => A::suppresses(violation, suppress, node, file.source(), file.lines(), anchored.start_byte..anchored.end_byte, span))
+    { let pack = language_pack::pack(Family::of(file.dialect())); language_pack::suppresses(pack, violation, suppress, node, file.source(), file.lines(), anchored.start_byte..anchored.end_byte, span) }
 }
 
 /// Whether a `rerail-ignore` comment naming the violation's code rule covers the byte a witness's

@@ -517,6 +517,25 @@ impl CodeRuleDslEditor {
     }
 }
 
+/// The engine's language packs, into the core's registry (`language::adapter::pack`). Called as the library
+/// loads, before any run: the core asks a family's questions of the pack registered here.
+pub(crate) fn install_languages() {
+    use language::Family;
+    use language::adapter::pack::{Pack, pack, register};
+    use language::adapter::{Blade, Ecma, Json, Php, Python, Rr, Rust, Sql, Vue};
+    register(Family::Python, &Pack::<Python>::NEW);
+    register(Family::Ecma, &Pack::<Ecma>::NEW);
+    register(Family::Php, &Pack::<Php>::NEW);
+    register(Family::Blade, &Pack::<Blade>::NEW);
+    register(Family::Rust, &Pack::<Rust>::NEW);
+    register(Family::Sql, &Pack::<Sql>::NEW);
+    register(Family::Vue, &Pack::<Vue>::NEW);
+    register(Family::Rr, &Pack::<Rr>::NEW);
+    register(Family::Json, &Pack::<Json>::NEW);
+    // Every family the build has, registered (`pack` refuses one that is not).
+    Family::ALL.into_iter().for_each(|family| _ = pack(family));
+}
+
 /// The engine's devices, into the logic's and the transducer's registries (`logic::device`,
 /// `transducer::packed::device`). Called as the library loads, before any run.
 pub(crate) fn install_devices() {

@@ -23,12 +23,12 @@
 //! kinds it is read by (`Adapter::COMMENT_KINDS`, `PREAMBLE_KINDS` and `BODY_KINDS`).
 
 use crate::code_rule_dsl::embed::segments::FileRanges;
-use crate::code_rule_dsl::language::adapter::{Adapter, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::origin::InFile;
 use crate::code_rule_dsl::tape::{TapeDoc, tape_doc};
 use ast_grep_core::{AstGrep, Doc, Node};
 use std::ops::Range;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// The directive's name.
 const DIRECTIVE: &str = "rerail-ignore";
@@ -139,11 +139,11 @@ struct Kinds {
 impl Kinds {
     /// The kinds of the family of `dialect`.
     fn of(dialect: GrammarDialect) -> Self {
-        with_adapter!(Family::of(dialect), A => Self {
-            comments: A::COMMENT_KINDS,
-            preamble: A::PREAMBLE_KINDS,
-            bodies: A::BODY_KINDS,
-        })
+        { let pack = language_pack::pack(Family::of(dialect)); Self {
+            comments: pack.comment_kinds(),
+            preamble: pack.preamble_kinds(),
+            bodies: pack.body_kinds(),
+        } }
     }
 
     fn comment<D: Doc>(self, node: &Node<'_, D>) -> bool {

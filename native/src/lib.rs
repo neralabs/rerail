@@ -69,6 +69,7 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
 fn install_store_functions() {
     code_rule_dsl::build_ids::set(env!("RERAIL_ENGINE_BUILD_ID"), env!("RERAIL_GRAMMAR_BUILD_ID"));
     code_rule_dsl::install_devices();
+    code_rule_dsl::install_languages();
     content_store::set_language_tags(code_rule_dsl::stored_tape_tag, code_rule_dsl::path_tape_tag);
     content_store::set_connection_functions(|db| {
         code_rule_dsl::text::install(db)?;

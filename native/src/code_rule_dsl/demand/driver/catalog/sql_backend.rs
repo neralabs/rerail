@@ -32,6 +32,7 @@ use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 #[cfg(test)]
 const MODULE_NAME: &CStr = c"rerail_matches";
@@ -1175,11 +1176,11 @@ impl PackedDemand {
                                             Adapter, CallRules, with_adapter,
                                         };
                                         facts.rows.clear();
-                                        let callee = with_adapter!(Family::of(test.language), A => <<A as Adapter>::Calls as CallRules>::callee_at(
+                                        let callee = { let pack = language_pack::pack(Family::of(test.language)); language_pack::calls_callee_at(pack, 
                                             &node,
                                             summary,
                                             || crate::code_rule_dsl::matcher::calls_tables(&node, test.language),
-                                        ));
+                                        ) };
                                         match callee {
                                             Some(Some(Callee::Name(name))) => {
                                                 let mut pending = summary
@@ -1511,14 +1512,11 @@ impl PackedDemand {
                                                     if family == Family::Ecma {
                                                         return None;
                                                     }
-                                                    let tokens = with_adapter!(
-                                                        family,
-                                                        A => <<A as Adapter>::Value as ValueRules>::structure(
+                                                    let tokens = { let pack = language_pack::pack(family); language_pack::value_structure(pack, 
                                                             &node,
                                                             Equality::Plain,
                                                             &mut context,
-                                                        )
-                                                    );
+                                                        ) };
                                                     (!context.exhausted())
                                                         .then_some(tokens)
                                                         .flatten()
@@ -1733,14 +1731,11 @@ impl PackedDemand {
                                         if family == Family::Ecma {
                                             return None;
                                         }
-                                        let tokens = with_adapter!(
-                                            family,
-                                            A => <<A as Adapter>::Value as ValueRules>::structure(
+                                        let tokens = { let pack = language_pack::pack(family); language_pack::value_structure(pack, 
                                                 &node,
                                                 Equality::Plain,
                                                 &mut context,
-                                            )
-                                        );
+                                            ) };
                                         (!context.exhausted())
                                             .then_some(tokens)
                                             .flatten()

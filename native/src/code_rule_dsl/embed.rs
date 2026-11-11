@@ -43,13 +43,13 @@ pub(crate) use script_block::ScriptBlock;
 #[cfg(test)]
 pub(crate) use test_script::TestScript;
 
-use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::scope::{BuildError, Builder, Reading};
 use ast_grep_core::{Doc, Node};
 use segments::SegmentMap;
 use std::ops::Range;
 use tree_sitter::Node as TsNode;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// A program an embedder built from a host file.
 pub(crate) struct Program {
@@ -87,7 +87,7 @@ pub(crate) trait Embedder {
         root: &Node<'_, D>,
         reading: Reading,
     ) -> Result<(), BuildError> {
-        with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::visit(builder, root, reading))
+        { let pack = language_pack::pack(family); language_pack::scope_visit(pack, builder, root, reading) }
     }
 }
 

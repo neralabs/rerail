@@ -2,7 +2,7 @@ use super::binds::{FILTER_KEYS, compile_filter, validate_filter};
 use super::utils::UtilScope;
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
 use crate::code_rule_dsl::language::adapter::{
-    Adapter, Refusal, ScopeFeature, ScopeRules, gate, with_adapter,
+    Refusal, ScopeFeature, gate,
 };
 use crate::code_rule_dsl::language::kind_ids;
 use crate::code_rule_dsl::language::{Family, GrammarDialect, language_not_supported};
@@ -14,6 +14,7 @@ use napi::Result;
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Names one `resolves` list may hold.
 pub(super) const MAX_RESOLVE_NAMES: usize = 1024;
@@ -357,7 +358,7 @@ fn gate_run_on(at: &str, verdict: std::result::Result<(), Refusal>) -> Result<()
 }
 
 /// How a validated `resolves.binding` object reads the binding, for the family `S` reads.
-fn binding_lookup<S: ScopeRules>(binding: &Value, path: &str) -> Result<Lookup> {
+fn binding_lookup(pack: &dyn language_pack::LanguagePack, binding: &Value, path: &str) -> Result<Lookup> {
     let flag = |name: &str| binding.get(name).and_then(Value::as_bool) == Some(true);
     let lookup = Lookup {
         stop_at_global: flag("stopAtGlobal"),
@@ -367,13 +368,13 @@ fn binding_lookup<S: ScopeRules>(binding: &Value, path: &str) -> Result<Lookup> 
     if binding.get("stopAtGlobal") == Some(&Value::Bool(false)) {
         gate(
             &format!("{path}/stopAtGlobal"),
-            S::feature(ScopeFeature::ThroughGlobal),
+            pack.scope_feature(ScopeFeature::ThroughGlobal),
         )?;
     }
     if lookup.stop_at_global {
         gate(
             &format!("{path}/stopAtGlobal"),
-            S::feature(ScopeFeature::StopAtGlobal),
+            pack.scope_feature(ScopeFeature::StopAtGlobal),
         )?;
     }
     Ok(lookup)
@@ -390,14 +391,14 @@ pub(super) fn compile_binding(
     utils: &UtilScope,
     write: bool,
 ) -> Result<AstMatcher> {
-    with_adapter!(Family::of(language), A => compile_binding_in::<<A as Adapter>::Scope>(
+    { let pack = language_pack::pack(Family::of(language)); compile_binding_in(pack, 
         binding, path, language, rules, occurrence, utils, write,
-    ))
+    ) }
 }
 
 /// `compile_binding`, for the family `S` reads.
-fn compile_binding_in<S: ScopeRules>(
-    binding: &Value,
+fn compile_binding_in(
+    pack: &dyn language_pack::LanguagePack, binding: &Value,
     path: &str,
     language: GrammarDialect,
     [site, value, annotation]: [Option<AstMatcher>; 3],
@@ -405,19 +406,19 @@ fn compile_binding_in<S: ScopeRules>(
     utils: &UtilScope,
     write: bool,
 ) -> Result<AstMatcher> {
-    gate_occurrence_and_write::<S>(path, occurrence.is_some(), write)?;
-    let lookup = binding_lookup::<S>(binding, path)?;
-    let destructured_value = gated_destructured_value::<S>(binding, path)?;
-    let filter = compile_filter::<S>(object(binding, path)?, language, path, utils)?;
+    gate_occurrence_and_write(pack, path, occurrence.is_some(), write)?;
+    let lookup = binding_lookup(pack, binding, path)?;
+    let destructured_value = gated_destructured_value(pack, binding, path)?;
+    let filter = compile_filter(pack, object(binding, path)?, language, path, utils)?;
     Ok(AstMatcher::Semantic(Semantic::Binding(Box::new(
         BindingTest {
             lookup,
             language,
             destructured_value: destructured_value.unwrap_or(true),
             write_last: write,
-            name_kinds: kind_ids_if(write, language, S::NAME_KINDS),
-            reference_kinds: kind_ids(language, S::REFERENCE_KINDS),
-            paren_kinds: kind_ids(language, S::PAREN_KINDS),
+            name_kinds: kind_ids_if(write, language, pack.scope_name_kinds()),
+            reference_kinds: kind_ids(language, pack.scope_reference_kinds()),
+            paren_kinds: kind_ids(language, pack.scope_paren_kinds()),
             options: utils.options.clone(),
             python: utils.python.clone(),
             filter,
@@ -430,34 +431,34 @@ fn compile_binding_in<S: ScopeRules>(
 }
 
 /// Gates `resolves.binding.occurrence` and `resolves.write` on the family `S` reads.
-fn gate_occurrence_and_write<S: ScopeRules>(
-    path: &str,
+fn gate_occurrence_and_write(
+    pack: &dyn language_pack::LanguagePack, path: &str,
     occurrence: bool,
     write: bool,
 ) -> Result<()> {
     if occurrence {
         gate(
             &format!("{path}/occurrence"),
-            S::feature(ScopeFeature::Occurrence),
+            pack.scope_feature(ScopeFeature::Occurrence),
         )?;
     }
     if write {
         let resolves = path.strip_suffix("/binding").unwrap_or(path);
         gate(
             &format!("{resolves}/write"),
-            S::feature(ScopeFeature::LastWrite),
+            pack.scope_feature(ScopeFeature::LastWrite),
         )?;
     }
     Ok(())
 }
 
 /// `resolves.binding.destructuredValue`, gated on the family `S` reads.
-fn gated_destructured_value<S: ScopeRules>(binding: &Value, path: &str) -> Result<Option<bool>> {
+fn gated_destructured_value(pack: &dyn language_pack::LanguagePack, binding: &Value, path: &str) -> Result<Option<bool>> {
     let destructured_value = binding.get("destructuredValue").and_then(Value::as_bool);
     if destructured_value.is_some() {
         gate(
             &format!("{path}/destructuredValue"),
-            S::feature(ScopeFeature::DestructuredValue),
+            pack.scope_feature(ScopeFeature::DestructuredValue),
         )?;
     }
     Ok(destructured_value)
@@ -480,49 +481,49 @@ pub(super) fn compile_resolves(
     options: Option<&Arc<LanguageOptions>>,
     python: Option<&Arc<PythonOptions>>,
 ) -> Result<AstMatcher> {
-    with_adapter!(Family::of(language), A => {
-        type S = <A as Adapter>::Scope;
-        if <S as ScopeRules>::FLOW {
-            compile_php_resolves::<S>(value, language, path)
+    { let pack = language_pack::pack(Family::of(language)); {
+        
+        if pack.scope_flow() {
+            compile_php_resolves(pack, value, language, path)
         } else {
-            compile_lexical_resolves::<S>(value, language, path, options, python)
+            compile_lexical_resolves(pack, value, language, path, options, python)
         }
-    })
+    } }
 }
 
 /// Compiles a validated `resolves` for a family whose reads a lexical scope resolves.
-fn compile_lexical_resolves<S: ScopeRules>(
-    value: &Value,
+fn compile_lexical_resolves(
+    pack: &dyn language_pack::LanguagePack, value: &Value,
     language: GrammarDialect,
     path: &str,
     options: Option<&Arc<LanguageOptions>>,
     python: Option<&Arc<PythonOptions>>,
 ) -> Result<AstMatcher> {
-    let unresolved = gate_lexical_keys::<S>(value, path)?;
+    let unresolved = gate_lexical_keys(pack, value, path)?;
     // Asking about every name needs the declared set: the query's settings or their defaults.
     let defaults = value.get("global") == Some(&Value::Bool(true)) || unresolved.is_some();
-    let declared_python = defaults.then(|| S::ruff_options(python)).flatten();
+    let declared_python = defaults.then(|| pack.scope_ruff_options(python)).flatten();
     let python = declared_python.as_ref().or(python);
-    let declared_options = defaults.then(|| S::eslint_options(options)).flatten();
+    let declared_options = defaults.then(|| pack.scope_eslint_options(options)).flatten();
     let options = declared_options.as_ref().or(options);
-    check_global_keys::<S>(value, path, options, python)?;
-    check_imports::<S>(value, path)?;
-    let resolves = lexical_resolves::<S>(value, language, path, unresolved, options, python)?;
+    check_global_keys(pack, value, path, options, python)?;
+    check_imports(pack, value, path)?;
+    let resolves = lexical_resolves(pack, value, language, path, unresolved, options, python)?;
     Ok(AstMatcher::Semantic(Semantic::Resolves(Box::new(resolves))))
 }
 
 /// Gates the `resolves` keys some lexical family has no counterpart for, and returns what
 /// `unresolved` asks for.
-fn gate_lexical_keys<S: ScopeRules>(value: &Value, path: &str) -> Result<Option<Unresolved>> {
+fn gate_lexical_keys(pack: &dyn language_pack::LanguagePack, value: &Value, path: &str) -> Result<Option<Unresolved>> {
     if value.get("beforeLocal").is_some() {
         gate_run_on(
             &format!("{path}/beforeLocal"),
-            S::feature(ScopeFeature::BeforeLocal),
+            pack.scope_feature(ScopeFeature::BeforeLocal),
         )?;
     }
-    let unresolved = gated_unresolved::<S>(value, path)?;
+    let unresolved = gated_unresolved(pack, value, path)?;
     // Keys a family without their counterpart refuses (`ScopeRules::feature`).
-    gate_present_keys::<S>(
+    gate_present_keys(pack, 
         value,
         path,
         &[
@@ -536,7 +537,7 @@ fn gate_lexical_keys<S: ScopeRules>(value: &Value, path: &str) -> Result<Option<
 }
 
 /// What `resolves.unresolved` asks for, gated on the family `S` reads.
-fn gated_unresolved<S: ScopeRules>(value: &Value, path: &str) -> Result<Option<Unresolved>> {
+fn gated_unresolved(pack: &dyn language_pack::LanguagePack, value: &Value, path: &str) -> Result<Option<Unresolved>> {
     let unresolved = match value.get("unresolved") {
         Some(Value::Bool(true)) => Some(Unresolved::Unbound),
         Some(_) => Some(Unresolved::Star),
@@ -545,21 +546,21 @@ fn gated_unresolved<S: ScopeRules>(value: &Value, path: &str) -> Result<Option<U
     if unresolved == Some(Unresolved::Star) {
         gate(
             &format!("{path}/unresolved"),
-            S::feature(ScopeFeature::StarImports),
+            pack.scope_feature(ScopeFeature::StarImports),
         )?;
     }
     Ok(unresolved)
 }
 
 /// Gates each key of `features` that `value` holds on its feature, in order.
-fn gate_present_keys<S: ScopeRules>(
-    value: &Value,
+fn gate_present_keys(
+    pack: &dyn language_pack::LanguagePack, value: &Value,
     path: &str,
     features: &[(&str, ScopeFeature)],
 ) -> Result<()> {
     for (key, feature) in features {
         if value.get(*key).is_some() {
-            gate(&format!("{path}/{key}"), S::feature(*feature))?;
+            gate(&format!("{path}/{key}"), pack.scope_feature(*feature))?;
         }
     }
     Ok(())
@@ -567,27 +568,27 @@ fn gate_present_keys<S: ScopeRules>(
 
 /// Checks the `resolves` keys over globals: `this`, `declared`, `scriptDeclarations` and
 /// `directives`.
-fn check_global_keys<S: ScopeRules>(
-    value: &Value,
+fn check_global_keys(
+    pack: &dyn language_pack::LanguagePack, value: &Value,
     path: &str,
     options: Option<&Arc<LanguageOptions>>,
     python: Option<&Arc<PythonOptions>>,
 ) -> Result<()> {
-    check_this::<S>(value, path, options)?;
+    check_this(pack, value, path, options)?;
     check_declared(value, path, options, python)?;
-    check_script_declarations::<S>(value, path, options)?;
-    gate_present_keys::<S>(value, path, &[("directives", ScopeFeature::GlobalComments)])
+    check_script_declarations(pack, value, path, options)?;
+    gate_present_keys(pack, value, path, &[("directives", ScopeFeature::GlobalComments)])
 }
 
 /// Gates `this` and refuses it without the `languageOptions` its global object depends on.
-fn check_this<S: ScopeRules>(
-    value: &Value,
+fn check_this(
+    pack: &dyn language_pack::LanguagePack, value: &Value,
     path: &str,
     options: Option<&Arc<LanguageOptions>>,
 ) -> Result<()> {
     let this_global = value.get("this").is_some();
     if this_global {
-        gate(&format!("{path}/this"), S::feature(ScopeFeature::This))?;
+        gate(&format!("{path}/this"), pack.scope_feature(ScopeFeature::This))?;
     }
     if this_global && options.is_none() {
         return Err(invalid(format!(
@@ -615,8 +616,8 @@ fn check_declared(
 
 /// Gates `scriptDeclarations` and refuses it without the `languageOptions` that say whether a
 /// file is a script.
-fn check_script_declarations<S: ScopeRules>(
-    value: &Value,
+fn check_script_declarations(
+    pack: &dyn language_pack::LanguagePack, value: &Value,
     path: &str,
     options: Option<&Arc<LanguageOptions>>,
 ) -> Result<()> {
@@ -624,7 +625,7 @@ fn check_script_declarations<S: ScopeRules>(
     if script_declarations {
         gate(
             &format!("{path}/scriptDeclarations"),
-            S::feature(ScopeFeature::ScriptDeclarations),
+            pack.scope_feature(ScopeFeature::ScriptDeclarations),
         )?;
     }
     if script_declarations && options.is_none() {
@@ -636,24 +637,24 @@ fn check_script_declarations<S: ScopeRules>(
 }
 
 /// Gates `import` and `imported` and refuses the names they list in another family's shape.
-fn check_imports<S: ScopeRules>(value: &Value, path: &str) -> Result<()> {
+fn check_imports(pack: &dyn language_pack::LanguagePack, value: &Value, path: &str) -> Result<()> {
     for key in ["import", "imported"] {
         let Some(listed) = value.get(key) else {
             continue;
         };
-        gate(&format!("{path}/{key}"), S::feature(ScopeFeature::Imports))?;
-        if S::IMPORT_PATHS && key == "imported" {
+        gate(&format!("{path}/{key}"), pack.scope_feature(ScopeFeature::Imports))?;
+        if pack.scope_import_paths() && key == "imported" {
             return Err(invalid(format!(
                 "{path}/imported: `imported` matches the names Python's import statements write; a Rust `use` path is no read, and `import` lists the paths reads name through it"
             )));
         }
-        check_import_shapes::<S>(listed, path, key)?;
+        check_import_shapes(pack, listed, path, key)?;
     }
     Ok(())
 }
 
 /// Refuses the first name `{path}/{key}` lists in another family's import shape.
-fn check_import_shapes<S: ScopeRules>(listed: &Value, path: &str, key: &str) -> Result<()> {
+fn check_import_shapes(pack: &dyn language_pack::LanguagePack, listed: &Value, path: &str, key: &str) -> Result<()> {
     for (index, name) in listed
         .as_array()
         .into_iter()
@@ -661,7 +662,7 @@ fn check_import_shapes<S: ScopeRules>(listed: &Value, path: &str, key: &str) -> 
         .filter_map(Value::as_str)
         .enumerate()
     {
-        let refusal = if S::IMPORT_PATHS {
+        let refusal = if pack.scope_import_paths() {
             import_path_refusal(name)
         } else {
             dotted_import_refusal(name)
@@ -734,8 +735,8 @@ fn listed_name_set(
 }
 
 /// The `Resolves` of a checked lexical `resolves`, with the declared settings it reads.
-fn lexical_resolves<S: ScopeRules>(
-    value: &Value,
+fn lexical_resolves(
+    pack: &dyn language_pack::LanguagePack, value: &Value,
     language: GrammarDialect,
     path: &str,
     unresolved: Option<Unresolved>,
@@ -750,7 +751,7 @@ fn lexical_resolves<S: ScopeRules>(
     let dotted_kinds = kind_ids_if(
         !imported.is_empty() && !seen_before,
         language,
-        S::DOTTED_NAME_KINDS,
+        pack.scope_dotted_name_kinds(),
     );
     let globals = listed_name_set(
         value.get("global").filter(|_| !global_any),
@@ -764,8 +765,8 @@ fn lexical_resolves<S: ScopeRules>(
         "import",
         true,
     )?;
-    let attribute_kinds = kind_ids(language, S::ATTRIBUTE_KINDS);
-    let reference_kinds = lexical_reference_kinds::<S>(
+    let attribute_kinds = kind_ids(language, pack.scope_attribute_kinds());
+    let reference_kinds = lexical_reference_kinds(pack, 
         language,
         &attribute_kinds,
         !imports.is_empty() || import_any,
@@ -777,13 +778,13 @@ fn lexical_resolves<S: ScopeRules>(
         directives: value.get("directives").is_some(),
         language,
         reference_kinds,
-        paren_kinds: kind_ids(language, S::PAREN_KINDS),
+        paren_kinds: kind_ids(language, pack.scope_paren_kinds()),
         options: options.cloned(),
         python: python.cloned(),
         this_global,
         this_scope: value.get("this").and_then(Value::as_str) == Some("globalScope"),
         sloppy_functions: value.get("sloppyFunctions").is_some(),
-        this_kinds: kind_ids_if(this_global, language, S::THIS_KINDS),
+        this_kinds: kind_ids_if(this_global, language, pack.scope_this_kinds()),
         imported,
         declared: value
             .get("declared")
@@ -796,7 +797,7 @@ fn lexical_resolves<S: ScopeRules>(
         global_any,
         import_any,
         unresolved,
-        string_kinds: kind_ids_if(unresolved.is_some(), language, S::ANNOTATION_STRING_KINDS),
+        string_kinds: kind_ids_if(unresolved.is_some(), language, pack.scope_annotation_string_kinds()),
         before_local: value.get("beforeLocal").is_some(),
         seen_before,
         item: false,
@@ -804,12 +805,12 @@ fn lexical_resolves<S: ScopeRules>(
 }
 
 /// The kinds of a lexical family's reads; an import resolves a read's attribute chain too.
-fn lexical_reference_kinds<S: ScopeRules>(
-    language: GrammarDialect,
+fn lexical_reference_kinds(
+    pack: &dyn language_pack::LanguagePack, language: GrammarDialect,
     attribute_kinds: &BTreeSet<u16>,
     imports_asked: bool,
 ) -> BTreeSet<u16> {
-    let mut reference_kinds = kind_ids(language, S::REFERENCE_KINDS);
+    let mut reference_kinds = kind_ids(language, pack.scope_reference_kinds());
     if imports_asked {
         reference_kinds.extend(attribute_kinds.iter().copied());
     }
@@ -840,16 +841,16 @@ const FLOW_RESOLVES_FEATURES: &[(&str, ScopeFeature)] = &[
 /// `global`, a superglobal; `unresolved: true`, a read no path defines, as PHPStan's
 /// `variable.undefined` reports it (`scope/php.rs`). `binding` compiles apart
 /// (`compile_binding`). Blade resolves the names and variables of the PHP its template embeds.
-fn compile_php_resolves<S: ScopeRules>(
-    value: &Value,
+fn compile_php_resolves(
+    pack: &dyn language_pack::LanguagePack, value: &Value,
     language: GrammarDialect,
     path: &str,
 ) -> Result<AstMatcher> {
     let keys = object(value, path)?;
-    gate_present_keys::<S>(value, path, FLOW_RESOLVES_FEATURES)?;
+    gate_present_keys(pack, value, path, FLOW_RESOLVES_FEATURES)?;
     let variables_asked = php_variables_asked(keys, path)?;
-    let unresolved = gated_unresolved::<S>(value, path)?;
-    let resolves = php_resolves::<S>(value, language, path, variables_asked, unresolved)?;
+    let unresolved = gated_unresolved(pack, value, path)?;
+    let resolves = php_resolves(pack, value, language, path, variables_asked, unresolved)?;
     Ok(AstMatcher::Semantic(Semantic::Resolves(Box::new(resolves))))
 }
 
@@ -867,8 +868,8 @@ fn php_variables_asked(keys: &Map<String, Value>, path: &str) -> Result<bool> {
 }
 
 /// The `Resolves` of a checked PHP `resolves`.
-fn php_resolves<S: ScopeRules>(
-    value: &Value,
+fn php_resolves(
+    pack: &dyn language_pack::LanguagePack, value: &Value,
     language: GrammarDialect,
     path: &str,
     variables_asked: bool,
@@ -891,7 +892,7 @@ fn php_resolves<S: ScopeRules>(
         directives: false,
         language,
         reference_kinds,
-        paren_kinds: kind_ids(language, S::PAREN_KINDS),
+        paren_kinds: kind_ids(language, pack.scope_paren_kinds()),
         options: None,
         python: None,
         this_global: false,

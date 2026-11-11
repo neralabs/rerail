@@ -21,7 +21,6 @@ pub(crate) mod usage;
 pub(crate) use lookup::Lookup;
 
 use crate::code_rule_dsl::identifier::{name_in, nfkc};
-use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::value::{Followed, NodeRef};
@@ -32,6 +31,7 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::ops::Range;
 use std::sync::{Arc, OnceLock};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// The value namespace: variables, functions, parameters, imports, classes, enums.
 pub(crate) const VALUE: u8 = 1;
@@ -588,12 +588,12 @@ impl ScopeTable {
                 crate::code_rule_dsl::language::with_embedder!(via, E => <E as crate::code_rule_dsl::embed::Embedder>::scope(family, &mut builder, &root, reading))?
             }
             None => {
-                with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::visit(&mut builder, &root, reading))?
+                { let pack = language_pack::pack(family); language_pack::scope_visit(pack, &mut builder, &root, reading) }?
             }
         }
         let mut table = builder.table;
         table.sort_references();
-        with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::finish(&mut table, &root));
+        { let pack = language_pack::pack(family); language_pack::scope_finish(pack, &mut table, &root) };
         Ok(table)
     }
 
@@ -743,7 +743,7 @@ impl ScopeTable {
     /// The binding `name` resolves to at `reference`, or `None` for a global or builtin. A Python
     /// `del` resolves in its own scope only; a `Deletion` binding may be the answer.
     pub(crate) fn resolve(&self, reference: &Reference, name: &str) -> Option<&Binding> {
-        with_adapter!(self.family, A => <<A as Adapter>::Scope as ScopeRules>::resolve(self, reference, name))
+        { let pack = language_pack::pack(self.family); pack.scope_resolve(self, reference, name) }
     }
 
     /// PHP: the one binding every path reaches a read with, as its scope and its index among that
@@ -762,7 +762,7 @@ impl ScopeTable {
     #[cfg(test)]
     pub(crate) fn unbound(&self, reference: &Reference, name: &str) -> bool {
         if reference.access != Access::Del
-            && let Some(annotation) = with_adapter!(self.family, A => <<A as Adapter>::Scope as ScopeRules>::unbound_annotation(self, reference, name))
+            && let Some(annotation) = { let pack = language_pack::pack(self.family); pack.scope_unbound_annotation(self, reference, name) }
         {
             return !self.binding_at(annotation, name).rebound;
         }
@@ -778,7 +778,7 @@ impl ScopeTable {
     /// annotation no nested `nonlocal` may initialize.
     #[cfg(test)]
     pub(crate) fn unbound_locally(&self, reference: &Reference, name: &str, builtin: bool) -> bool {
-        with_adapter!(self.family, A => <<A as Adapter>::Scope as ScopeRules>::unbound_locally(self, reference, name, builtin))
+        { let pack = language_pack::pack(self.family); pack.scope_unbound_locally(self, reference, name, builtin) }
     }
 
     /// Ruff's lookup of `name` at `reference` (`unbound_locally`).
@@ -1145,7 +1145,7 @@ impl ScopeTable {
         reference: &Reference,
         name: &str,
     ) -> Option<(&Binding, Option<NodeRef>)> {
-        with_adapter!(self.family, A => <<A as Adapter>::Scope as ScopeRules>::binding(self, reference, name))
+        { let pack = language_pack::pack(self.family); pack.scope_binding(self, reference, name) }
     }
 }
 

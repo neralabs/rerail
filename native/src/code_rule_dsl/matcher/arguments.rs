@@ -2,7 +2,6 @@ use crate::code_rule_dsl::tree::Tree;
 use super::util::UNKNOWN;
 use super::value::spend_step;
 use crate::code_rule_dsl::identifier::python_identifier;
-use crate::code_rule_dsl::language::adapter::{Adapter, ArgumentRules, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::value::{Context, Value};
 use crate::code_rule_dsl::value::{php, python};
@@ -10,6 +9,7 @@ use ast_grep_core::meta_var::MetaVarEnv;
 use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
 use std::collections::BTreeSet;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// How a signature slot may be passed.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -78,7 +78,7 @@ impl Arguments {
         {
             return None;
         }
-        let passed = with_adapter!(Family::of(self.language), A => passed::<A, D>(self, &node))?;
+        let passed = { let pack = language_pack::pack(Family::of(self.language)); passed::<D>(pack, self, &node) }?;
         let mut unknown = false;
         for &slot in &self.absent {
             match passed[slot] {
@@ -444,11 +444,11 @@ impl Arguments {
 }
 
 /// What `call` passes for `arguments`' slots, as `A`'s family binds a call's arguments.
-fn passed<'r, A: Adapter, D: Doc>(
-    arguments: &Arguments,
+fn passed<'r, D: Doc>(
+    pack: &dyn language_pack::LanguagePack, arguments: &Arguments,
     call: &Node<'r, D>,
 ) -> Option<Vec<Passed<'r, D>>> {
-    <A::Arguments as ArgumentRules>::passed(arguments, call)
+    language_pack::arguments_passed(pack, arguments, call)
 }
 
 /// A PHP call's argument list: a function or method call's `arguments`, or the `arguments` of

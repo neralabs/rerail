@@ -28,7 +28,6 @@ pub(crate) mod projection;
 mod semantic;
 mod suppression;
 pub(crate) use super::lines::Span;
-use crate::code_rule_dsl::language::adapter::{Adapter, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::origin::InFile;
 use ast_grep_core::matcher::NodeMatch;
@@ -46,6 +45,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 use std::sync::Arc;
 pub(super) use suppression::{names_rerail_ignore, rerail_ignores, suppresses};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 #[cfg(test)]
 thread_local! {
@@ -464,7 +464,7 @@ pub(super) fn bind(
             Some(via) => via.host_family(),
             None => Family::of(grammar.language),
         });
-        let language = family.map_or("empty", |family| with_adapter!(family, A => A::LABEL));
+        let language = family.map_or("empty", |family| { let pack = language_pack::pack(family); pack.label() });
         for linter in suppress.requested() {
             if !family.is_some_and(|family| family.honours(linter)) {
                 return Err(invalid(format!(

@@ -20,7 +20,6 @@ mod python_tests;
 mod tests;
 
 use crate::code_rule_dsl::json::{invalid, object};
-use crate::code_rule_dsl::language::adapter::{Adapter, CallRules, with_adapter};
 use crate::code_rule_dsl::language::is_stub_file;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::lines::Span;
@@ -38,6 +37,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 use summary::{ASYNC, CLASS, Callee, Summary};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Which definitions a chain may pass through: the callee and every definition after it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -373,10 +373,10 @@ pub(crate) fn seed_query(
     if mentions(inner, &|key, _| key == "calls") {
         return Err(nested());
     }
-    let (seed_language, function_kinds) = with_adapter!(family, A => (
-        <<A as Adapter>::Calls as CallRules>::SEED_LANGUAGE,
-        <<A as Adapter>::Calls as CallRules>::FUNCTION_KINDS,
-    ));
+    let (seed_language, function_kinds) = { let pack = language_pack::pack(family); (
+        pack.calls_seed_language(),
+        pack.calls_function_kinds(),
+    ) };
     let language = seed_language.unwrap_or(language);
     let mut seed = Map::new();
     seed.insert("language".into(), Value::String(language.into()));
@@ -1217,7 +1217,7 @@ const MAX_TABLE_NODES: usize = 5_000_000;
 /// Whether `calls` follows the calls of files in `language`: those of a family whose calls join
 /// the call graph (`CallRules::SUPPORTED`).
 pub(crate) fn summarizes(language: GrammarDialect) -> bool {
-    with_adapter!(Family::of(language), A => <<A as Adapter>::Calls as CallRules>::SUPPORTED)
+    { let pack = language_pack::pack(Family::of(language)); pack.calls_supported() }
 }
 
 /// The document a `language` file's calls are read from, and its dialect: of a file that embeds
@@ -1264,9 +1264,9 @@ pub(crate) fn summarize<D: Doc>(
         .ok()
     });
     let table = known.or(built.as_ref().and_then(Option::as_ref));
-    let mut summary = with_adapter!(Family::of(language), A => {
-        <<A as Adapter>::Calls as CallRules>::summary(&root, path, module, table, has_errors)
-    });
+    let mut summary = { let pack = language_pack::pack(Family::of(language)); {
+        language_pack::calls_summary(pack, &root, path, module, table, has_errors)
+    } };
     summary.bytes = u32::try_from(bytes).unwrap_or(u32::MAX);
     (summary, built.flatten())
 }
@@ -1400,16 +1400,16 @@ pub(crate) fn holds<'t, D: Doc>(
         Some(callee) => callee,
         None => {
             // A table that cannot be built fails the clause for the file (`UTIL_EXCEEDED`).
-            let Some(callee) = with_adapter!(test.family, A => <<A as Adapter>::Calls as CallRules>::callee_at(
+            let Some(callee) = ({ let pack = language_pack::pack(test.family); language_pack::calls_callee_at(pack, 
                 node,
                 &summary,
                 || tables(node, test.language),
-            )) else {
+            ) }) else {
                 return Reach::Unknown;
             };
             // A callee's name is in the namespace of the family's summaries (Blade's are PHP's).
             let names =
-                with_adapter!(test.family, A => <<A as Adapter>::Calls as CallRules>::NAMES);
+                { let pack = language_pack::pack(test.family); pack.calls_names() };
             let callee = callee.map(|callee| match callee {
                 Callee::Open => None,
                 Callee::Name(name) => names.map(|family| Name::new(family, &name)),

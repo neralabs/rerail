@@ -4,7 +4,6 @@
 //! calls `xFilter` with the batch token. The first call executes the packed backend and stores its
 //! normalized relation. No host callback or semantic matcher can be registered here.
 
-use super::super::language::adapter::{Adapter, ValueRules, with_adapter};
 use super::super::language::Family;
 use super::super::transducer::packed::{
     Error as PackedError, ExecutionBackend, PlanId, Program, execute_planned,
@@ -29,6 +28,7 @@ use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 #[cfg(test)]
 const MODULE_NAME: &CStr = c"rerail_matches";
@@ -148,10 +148,7 @@ fn terminal_structure_key(tape: &TapeDoc, node: u32) -> String {
         if family == Family::Ecma {
             return None;
         }
-        let tokens = with_adapter!(
-            family,
-            A => <<A as Adapter>::Value as ValueRules>::structure(&node, Equality::Plain, &mut context)
-        );
+        let tokens = { let pack = language_pack::pack(family); language_pack::value_structure(pack, &node, Equality::Plain, &mut context) };
         (!context.exhausted()).then_some(tokens).flatten().map(|tokens| structure_digest(&format!("{tokens:?}")))
     })();
     serde_json::json!({
@@ -1138,14 +1135,11 @@ impl PackedDemand {
                                                         if family == Family::Ecma {
                                                             return None;
                                                         }
-                                                        let tokens = with_adapter!(
-                                                            family,
-                                                            A => <<A as Adapter>::Value as ValueRules>::structure(
+                                                        let tokens = { let pack = language_pack::pack(family); language_pack::value_structure(pack, 
                                                                 &node,
                                                                 Equality::Plain,
                                                                 &mut context,
-                                                            )
-                                                        );
+                                                            ) };
                                                         (!context.exhausted())
                                                             .then_some(tokens)
                                                             .flatten()

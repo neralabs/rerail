@@ -59,6 +59,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 pub(super) use utils::UtilScope;
 use utils::{UtilDef, UtilIds, reachable, reject_util_cycles, rule_map, util_map};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Parses a code-rule document. An object with two equal keys is an error: a plain `Value` keeps the
 /// last one, so the first term would vanish silently (ast-grep 0.45.3 rejects such a rule).
@@ -827,7 +828,7 @@ fn compile_query_as(
                 .get("rule")
                 .ok_or_else(|| invalid(format!("{path}/ast/rule is required")))?;
             let (host_grammars, grammar) = language_capability(language_name, capabilities)?;
-            use super::language::adapter::{Adapter, SyntaxFeature, SyntaxRules, with_adapter};
+            use super::language::adapter::SyntaxFeature;
             // The documents a file of the language is (`embed`): its own tree, and the program it
             // embeds, if its language embeds one.
             let embedding = Embedding::of(&host_grammars);
@@ -864,34 +865,31 @@ fn compile_query_as(
                 Some(value) => {
                     gate(
                         &format!("{path}/ast/languageOptions"),
-                        with_adapter!(family, A => <A as SyntaxRules>::feature(SyntaxFeature::LanguageOptions)),
+                        { let pack = language_pack::pack(family); pack.syntax_feature(SyntaxFeature::LanguageOptions) },
                     )?;
-                    with_adapter!(family, A => <A as SyntaxRules>::compile_language_options(
+                    { let pack = language_pack::pack(family); pack.syntax_compile_language_options(
                         value,
                         &format!("{path}/ast"),
-                    ))?
+                    ) }?
                 }
             };
             let (applies, source_types) = ast
                 .get("when")
                 .map(|when| {
-                    with_adapter!(family, A => <A as SyntaxRules>::compile_when(
+                    { let pack = language_pack::pack(family); pack.syntax_compile_when(
                         when,
                         &format!("{path}/ast"),
                         options.as_deref(),
                         python.as_deref(),
                         &defines.options,
-                    ))
+                    ) }
                 })
                 .transpose()?
                 .unwrap_or((true, None));
             let file = ast
                 .get("file")
                 .map(|file| {
-                    let (packages, declarations, manifests, jsx_runtimes) = with_adapter!(
-                        family,
-                        A => (A::PACKAGES, A::DECLARATION_FILES, A::PACKAGE_MANIFESTS, A::JSX_RUNTIMES)
-                    );
+                    let (packages, declarations, manifests, jsx_runtimes) = { let pack = language_pack::pack(family); (pack.packages(), pack.declaration_files(), pack.package_manifests(), pack.jsx_runtimes()) };
                     options::compile_file_condition(
                         file,
                         &format!("{path}/ast"),

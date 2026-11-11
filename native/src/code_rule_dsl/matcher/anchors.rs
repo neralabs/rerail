@@ -1,6 +1,5 @@
 use super::{AstMatcher, StopBy, UtilRef};
 use crate::code_rule_dsl::budget;
-use crate::code_rule_dsl::language::adapter::{Adapter, ValueRules, with_adapter};
 #[cfg(test)]
 use crate::code_rule_dsl::test_support::{Walk, record_walk};
 mod semantic;
@@ -105,6 +104,7 @@ impl<'tree> AnchorNode<'tree> for crate::code_rule_dsl::tape::TapeNode<'tree> {
 }
 
 use crate::code_rule_dsl::prefilter::probes::TextProbe;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 #[cfg(test)]
 mod tests;
@@ -599,10 +599,10 @@ impl AnchorPlan {
 /// The kinds whose value `reading` can know, as the grammar's symbol ids: those the decoder reads
 /// and, following bindings, the names it follows.
 fn value_kinds(reading: &super::Reading) -> BTreeSet<u16> {
-    let (values, names) = with_adapter!(reading.family, A => (
-        <<A as Adapter>::Value as ValueRules>::VALUE_KINDS,
-        <<A as Adapter>::Value as ValueRules>::NAME_KINDS,
-    ));
+    let (values, names) = { let pack = language_pack::pack(reading.family); (
+        pack.value_value_kinds(),
+        pack.value_name_kinds(),
+    ) };
     let mut kinds = crate::code_rule_dsl::language::kind_ids(reading.language, values);
     if reading.follow {
         kinds.extend(crate::code_rule_dsl::language::kind_ids(

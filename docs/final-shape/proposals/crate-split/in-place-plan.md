@@ -135,6 +135,37 @@ Packs, one per family (about 71k production lines in all):
 
 `.rr`'s own adapter stays in the core: it is the rule language.
 
+#### As built (prep, no stop needed)
+
+- **The interface is generated.** `tools/cratify/packgen.py` reads the seven traits with syn and writes
+  `language/adapter/pack.rs`: 46 constants as methods, 37 methods as they are, and 16 methods that are generic
+  over the document. Each of the 16 gets one method per document type (`_tape`, `_sub`, `_str`), and a free
+  function of the same name picks one by `D`'s `TypeId`. A document type no pack takes stops with a message.
+  `impl Trait` arguments become boxed trait objects. The generator also writes `pack-methods.tsv`, the table
+  the rewrite reads.
+- **Registration is at load**, as with the devices: `install_languages()`, beside `install_devices()`,
+  registers `&Pack::<A>::NEW` per family into a `OnceLock` table. It then checks that every family in
+  `Family::ALL` has a pack. Once split, each language crate exports its own `register()`, and the engine calls
+  those.
+- **The core's dispatch is rewritten by `cratify packify`** (syn, byte spans):
+  - `with_adapter!(family, A => body)` becomes `{ let pack = language_pack::pack(family); body }`;
+  - the ~30 functions generic over an adapter trait (`fn f<S: ScopeRules, D: Doc>`) lose the parameter and
+    take `pack: &dyn LanguagePack` first;
+  - their callers drop the type argument from the turbofish and pass `pack`;
+  - a local `type S = <A as Adapter>::Scope;` goes, and `S` is read as the scope rules.
+
+  It prints anything it cannot rewrite. At this commit that is nothing: 79 sites, 472 edits. One site that
+  passed `literal::<A>` as a value was first written as a closure by hand.
+- **Imports.** `unused_adapter_imports.py` removes the trait imports the rewrite leaves unused, from rustc's
+  suggestions. Leaves rustc gives no suggestion for are removed by their reported positions.
+- **Checked:** macOS lib and lib tests, and `wasm32-wasip1`, all with 0 errors.
+
+What remains for the language crates is the language-specific *state* the core still names. This is concepts A–H
+of the survey (`lang-surface.txt`, 784 sites): the project manifest, the suppression indexes, identifiers,
+values, scope and names, the Blade tree, the fact producers and the admission producers. Each becomes a
+generic interface in the core with registered implementations, the same pattern as the packs above. The core's
+`Suppress`, for example, holds the specs by linter kind, not one field per linter.
+
 The dynamic dispatch is new cost on paths that today compile to a constant. Hot sites (per node rather than per
 file) take the `&dyn LanguagePack` once per file. The data-layer replay is compared before and after in
 instructions retired.

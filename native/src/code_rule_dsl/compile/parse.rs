@@ -10,7 +10,7 @@ use super::resolve::{compile_resolves, validate_resolves};
 use super::utils::{UtilIds, UtilScope};
 use super::value::{compile_value_with, validate_value};
 use crate::code_rule_dsl::json::{bounded_text, invalid, non_empty_str, object};
-use crate::code_rule_dsl::language::adapter::{SyntaxFeature, SyntaxRules, gate, with_adapter};
+use crate::code_rule_dsl::language::adapter::{SyntaxFeature, gate};
 use crate::code_rule_dsl::language::kind_ids;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::literal::{Grammar, LiteralHost};
@@ -27,6 +27,7 @@ use regex::Regex;
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Keys a rule inside `parse` may use, whatever the grammar.
 const SUB_RULE_KEYS: &[&str] = &[
@@ -336,7 +337,7 @@ pub(super) fn compile_parse(
     let family = Family::of(language);
     gate(
         &format!("{path}/grammar"),
-        with_adapter!(family, A => <A as SyntaxRules>::feature(SyntaxFeature::Parse(grammar))),
+        { let pack = language_pack::pack(family); pack.syntax_feature(SyntaxFeature::Parse(grammar)) },
     )?;
     let rule = if grammar == Grammar::Annotation {
         // An annotation's nodes are Python's: its rule compiles as the host's does.

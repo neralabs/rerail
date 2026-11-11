@@ -4,7 +4,6 @@ use super::resolve::{
     file_declaration_sites, file_source_type_for, file_table, file_usage, table_reading,
 };
 use super::util::{THREE_VALUED, UNKNOWN};
-use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::scope::usage::{BindingId, PrivateMember, Usage};
@@ -15,6 +14,7 @@ use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// A scope a filter names: a table scope kind, or (TypeScript) eslint-scope's global scope, a
 /// script's top level, told apart from a module's (`ScopeKind::Module`).
@@ -673,7 +673,7 @@ impl Binds {
                     continue;
                 }
             }
-            let shadowed_only = with_adapter!(table.family, A => <<A as Adapter>::Scope as ScopeRules>::REDEFINES_SHADOWED);
+            let shadowed_only = { let pack = language_pack::pack(table.family); pack.scope_redefines_shadowed() };
             let shadowed = match self.redefines.as_deref().filter(|_| shadowed_only) {
                 None => None,
                 Some(redefines) => match Self::shadowed(redefines, &table, &usage, id, &region) {
@@ -741,7 +741,7 @@ impl Binds {
 
 /// Whether `family` reads the file's flow (`ScopeRules::FLOW`).
 fn flow(family: Family) -> bool {
-    with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::FLOW)
+    { let pack = language_pack::pack(family); pack.scope_flow() }
 }
 
 impl Binds {

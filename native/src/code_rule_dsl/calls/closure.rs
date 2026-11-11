@@ -8,10 +8,10 @@ use super::php;
 use super::python::path_module;
 use super::summary::{BASE, CLASS, DECORATED, METACLASS, OPEN, Summary, UNKNOWN_BASE};
 use crate::code_rule_dsl::language::Family;
-use crate::code_rule_dsl::language::adapter::{Adapter, CallRules, with_adapter};
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Terms of one dense closure: bit `i` is the `i`th term.
 #[cfg(test)]
@@ -146,12 +146,12 @@ impl Contribution {
         };
         for (local, def) in summary.defs.iter().enumerate() {
             let name = summary.interned(def.name);
-            with_adapter!(name.family(), A => <<A as Adapter>::Calls as CallRules>::definition_keys(
+            { let pack = language_pack::pack(name.family()); language_pack::calls_definition_keys(pack, 
                 name,
                 def.flags,
                 names,
                 |key| contribution.defs.entry(key).or_default().push((local as u32, def.flags)),
-            ));
+            ) };
         }
         for (key, target, kind) in &summary.supers {
             let target = summary.interned(*target);
@@ -1385,7 +1385,7 @@ impl Graph {
             .summary_of(def.file)
             .expect("a reached definition is linked");
         let name = summary.interned(summary.defs[def.local as usize].name);
-        with_adapter!(name.family(), A => <<A as Adapter>::Calls as CallRules>::label(name))
+        { let pack = language_pack::pack(name.family()); pack.calls_label(name) }
     }
 
     /// What a call of `name` links to, in number order, and whether it may be a module member no
@@ -1516,9 +1516,9 @@ impl Graph {
                 open: true,
             };
         }
-        with_adapter!(name.family(), A => <<A as Adapter>::Calls as CallRules>::link(
+        { let pack = language_pack::pack(name.family()); pack.calls_link(
             self, name, hops, followed,
-        ))
+        ) }
     }
 
     /// Links a PHP callee name. A namespace fallback (`\ns\f|\f`) is the namespaced function
@@ -2522,7 +2522,7 @@ impl Graph {
     fn python_class(&self, class: &Name) -> Option<ClassMemo> {
         let entries = self.supers.get(class)?;
         // A class is keyed by its module's name and by its path's: index it once.
-        if !with_adapter!(class.family(), A => <<A as Adapter>::Calls as CallRules>::SUBCLASSES)
+        if !{ let pack = language_pack::pack(class.family()); pack.calls_subclasses() }
             || self.own_name(class).as_ref() != Some(class)
         {
             return None;

@@ -12,6 +12,7 @@ use serde_json::Value;
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// The failure code of an output cap: a clause found more witnesses (or regex matches) than
 /// `maxWitnesses` lets it report. Apart from `budget-exceeded`, which is running out of work: the
@@ -864,8 +865,8 @@ impl FileInput {
                 ))
             })?),
             None => crate::code_rule_dsl::language::dialect_by_label(&language).and_then(|dialect| {
-                use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
-                with_adapter!(crate::code_rule_dsl::language::Family::of(dialect), A => <<A as Adapter>::Scope as ScopeRules>::unpackaged_module(&path))
+                
+                { let pack = language_pack::pack(crate::code_rule_dsl::language::Family::of(dialect)); pack.scope_unpackaged_module(&path) }
             }),
         };
         Ok(Self {

@@ -864,10 +864,10 @@ impl Dialect {
     }
 
     fn new(tag: u8) -> StoreResult<Self> {
-        use crate::code_rule_dsl::language::adapter::{Adapter, ValueRules, with_adapter};
+        
         let dialect = from_tape_tag(tag).ok_or_else(|| StoreError::Invalid(format!("no dialect has tape tag {tag}")))?;
         let catalog = dialect.kinds();
-        let values = with_adapter!(crate::code_rule_dsl::language::Family::of(dialect), A => <<A as Adapter>::Value as ValueRules>::SUPPORTED);
+        let values = { let pack = language_pack::pack(crate::code_rule_dsl::language::Family::of(dialect)); pack.value_supported() };
         let classes = (0..catalog.kind_count()).map(|k| catalog.kind_name(k as u16).map_or(Class::Other, Class::of)).collect();
         let canonical: Vec<u16> = (0..catalog.kind_count() as u16)
             .map(|k| match catalog.kind_name(k) {
@@ -972,6 +972,7 @@ struct DefIds {
 }
 
 use granules::INDEX_BITS;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Whether this process numbers nodes per definition: the default; `RERAIL_NODE_IDS=preorder` numbers them in
 /// preorder, to compare.

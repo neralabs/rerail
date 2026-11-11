@@ -6,7 +6,6 @@ use super::spend_util_step;
 use super::util::{THREE_VALUED, UNKNOWN};
 use crate::code_rule_dsl::identifier::name_in;
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
 use crate::code_rule_dsl::scope::Lookup;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::scope::{Reference, ScopeTable};
@@ -19,6 +18,7 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// `resolves.binding` (a Rerail extension): the node is a reference to a file-local binding, and
 /// each listed sub-rule matches that binding's node: its site, its value, its annotation. The
@@ -222,13 +222,13 @@ fn resolved_index(
     name: &str,
     lookup: Lookup,
 ) -> Option<(u32, usize)> {
-    with_adapter!(table.family, A => <<A as Adapter>::Scope as ScopeRules>::index(table, reference, name, lookup))
+    { let pack = language_pack::pack(table.family); pack.scope_index(table, reference, name, lookup) }
 }
 
 /// Whether a read's binding is not known, though some binding may reach it (PHP's flow: several
 /// may, a path may reach none, or PHP's dynamic symbol table may decide).
 fn undecided(table: &ScopeTable, reference: &Reference) -> bool {
-    with_adapter!(table.family, A => <<A as Adapter>::Scope as ScopeRules>::undecided(table, reference))
+    { let pack = language_pack::pack(table.family); pack.scope_undecided(table, reference) }
 }
 
 /// Matches `rule` at the first of `occurrences` (nodes of `anchor`'s file) where it matches,

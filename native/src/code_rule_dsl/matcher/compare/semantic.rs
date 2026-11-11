@@ -1,11 +1,11 @@
 use super::super::Reading;
 use super::super::exported::exported_text;
 use super::{Collation, CompareOp, Comparison};
-use crate::code_rule_dsl::language::adapter::{Adapter, ValueRules, with_adapter};
 use crate::code_rule_dsl::value::Value;
 use crate::code_rule_dsl::value::structure::Equality;
 use ast_grep_core::meta_var::MetaVarEnv;
 use ast_grep_core::{Doc, Node};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// The text modes that read what the captures mean rather than their text.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -53,20 +53,20 @@ pub(super) fn unbound<D: Doc>(
         return None;
     }
     let reading = comparison.reading.as_ref()?;
-    Some(with_adapter!(reading.family, A => unbound_names::<A, D>(comparison, env)))
+    Some({ let pack = language_pack::pack(reading.family); unbound_names::<D>(pack, comparison, env) })
 }
 
 /// `name` where a side is not a bound node, `A` reading the bound ones.
-fn unbound_names<A: Adapter, D: Doc>(
-    comparison: &Comparison,
+fn unbound_names<D: Doc>(
+    pack: &dyn language_pack::LanguagePack, comparison: &Comparison,
     env: &MetaVarEnv<'_, D>,
 ) -> Option<bool> {
     // `None` for a node Blade wrote tokens into (`ValueRules::spelled`): its name is not known.
     let name = |side: &str| -> Option<Option<Option<Vec<u16>>>> {
         match env.get_match(side) {
             Some(node) => Some(
-                <A::Value as ValueRules>::spelled(node)
-                    .then(|| <A::Value as ValueRules>::node_name(node)),
+                language_pack::value_spelled(pack, node)
+                    .then(|| language_pack::value_node_name(pack, node)),
             ),
             None => exported_text(env, side).map(|text| Some(Some(text.encode_utf16().collect()))),
         }
@@ -95,24 +95,24 @@ pub(super) fn name<D: Doc>(
     node: &Node<'_, D>,
 ) -> Option<Option<Vec<u16>>> {
     let reading = comparison.reading.as_ref()?;
-    with_adapter!(reading.family, A => name_in::<A, D>(reading, text, node))
+    { let pack = language_pack::pack(reading.family); name_in::<D>(pack, reading, text, node) }
 }
 
 /// `name` read with `reading`, whose family's adapter is `A`.
-fn name_in<A: Adapter, D: Doc>(
-    reading: &Reading,
+fn name_in<D: Doc>(
+    pack: &dyn language_pack::LanguagePack, reading: &Reading,
     text: SemanticText,
     node: &Node<'_, D>,
 ) -> Option<Option<Vec<u16>>> {
-    if !<A::Value as ValueRules>::spelled(node) {
+    if !language_pack::value_spelled(pack, node) {
         return None;
     }
     Some(match text {
         SemanticText::Key => {
             let mut read = |node: &Node<'_, D>| reading.value(node).as_ref().clone();
-            <A::Value as ValueRules>::key_name(node, &mut read)
+            language_pack::value_key_name(pack, node, &mut read)
         }
-        SemanticText::Name => <A::Value as ValueRules>::node_name(node),
+        SemanticText::Name => language_pack::value_node_name(pack, node),
         _ => unreachable!("`name` reads `key` and `name` only"),
     })
 }
@@ -125,12 +125,12 @@ pub(super) fn holds<D: Doc>(
     right: &Node<'_, D>,
 ) -> Option<bool> {
     let reading = comparison.reading.as_ref()?;
-    with_adapter!(reading.family, A => holds_in::<A, D>(comparison, reading, text, left, right))
+    { let pack = language_pack::pack(reading.family); holds_in::<D>(pack, comparison, reading, text, left, right) }
 }
 
 /// `holds` read with `reading`, whose family's adapter is `A`.
-fn holds_in<A: Adapter, D: Doc>(
-    comparison: &Comparison,
+fn holds_in<D: Doc>(
+    pack: &dyn language_pack::LanguagePack, comparison: &Comparison,
     reading: &Reading,
     text: SemanticText,
     left: &Node<'_, D>,
@@ -138,15 +138,15 @@ fn holds_in<A: Adapter, D: Doc>(
 ) -> Option<bool> {
     // Blade's values are decoded with the view's tokens; every other mode reads tokens.
     if text != SemanticText::Value
-        && !(<A::Value as ValueRules>::spelled(left) && <A::Value as ValueRules>::spelled(right))
+        && !(language_pack::value_spelled(pack, left) && language_pack::value_spelled(pack, right))
     {
         return None;
     }
     match text {
         SemanticText::Key | SemanticText::Name => {
             match (
-                name_in::<A, D>(reading, text, left)?,
-                name_in::<A, D>(reading, text, right)?,
+                name_in::<D>(pack, reading, text, left)?,
+                name_in::<D>(pack, reading, text, right)?,
             ) {
                 (Some(left), Some(right)) => {
                     Some(comparison.op.test(comparison.units_order(&left, &right)))
@@ -162,14 +162,14 @@ fn holds_in<A: Adapter, D: Doc>(
         }
         SemanticText::Value => values(comparison, left, right),
         SemanticText::Reference { static_keys } => {
-            let same = <A::Value as ValueRules>::same_reference(left, right, static_keys)?;
+            let same = language_pack::value_same_reference(pack, left, right, static_keys)?;
             Some(same != (comparison.op == CompareOp::Ne))
         }
         SemanticText::Member => {
             let mut read = |node: &Node<'_, D>| reading.value(node).as_ref().clone();
             let (left, right) = (
-                <A::Value as ValueRules>::member_name(left, &mut read)?,
-                <A::Value as ValueRules>::member_name(right, &mut read)?,
+                language_pack::value_member_name(pack, left, &mut read)?,
+                language_pack::value_member_name(pack, right, &mut read)?,
             );
             Some(comparison.op.test(comparison.units_order(&left, &right)))
         }
@@ -230,7 +230,7 @@ fn values<D: Doc>(
     match comparison.op {
         CompareOp::Eq => left.equals(&right, lang),
         CompareOp::Ne => left.equals(&right, lang).map(|equal| !equal),
-        op => with_adapter!(lang, A => <<A as Adapter>::Value as ValueRules>::relation(
+        op => { let pack = language_pack::pack(lang); pack.value_relation(
             match op {
                 CompareOp::Lt => "<",
                 CompareOp::Le => "<=",
@@ -239,6 +239,6 @@ fn values<D: Doc>(
             },
             &left,
             &right,
-        )),
+        ) },
     }
 }
