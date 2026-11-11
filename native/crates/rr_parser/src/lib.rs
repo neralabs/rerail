@@ -682,10 +682,13 @@ pub mod tests {
         }
         let before = compiles();
         for k in 0..4 {
+            let made = rerail_metal::pool::made();
             let (t, w) = (thread_cpu(), std::time::Instant::now());
             let mut sum = [0.0; 6];
             parts(c, &batch, &digests, &mut sum);
             let (cpu, wall) = (thread_cpu() - t, w.elapsed());
+            let now = rerail_metal::pool::made();
+            eprintln!("run {k}: {} blocks made, {} MB", now.0 - made.0, (now.1 - made.1) >> 20);
             let gpu = sum[0] + sum[1] + sum[2];
             eprintln!(
                 "run {k}: {mb:.2} MB, {} batches; GPU {:.1} ms ({:.2} GB/s): first {:.1}, again {:.1}, positions {:.1}; {} launches, {} rounds; host {:.1?} CPU, {:.1?} wall",

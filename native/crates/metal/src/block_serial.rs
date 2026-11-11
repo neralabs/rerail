@@ -1335,7 +1335,11 @@ fn exact_unset() -> bool {
 
 /// After a first pass with wrong starts: each program's scans wrong in more than one segment in
 /// `PROMOTE` (their carry bit in the start differs from the end before) join its `LEARNED`.
-fn learn(forms: &[BlockNative], rows: &[FileRow], segs: &[[u32; 4]], records: &[u64], sw: usize) {
+///
+/// A source whose runs promoted nothing new is settled: its runs learn no more (what they would
+/// find is what it holds), and their records are not read back.
+fn learn(key: u64, forms: &[BlockNative], rows: &[FileRow], segs: &[[u32; 4]], records: &[u64], sw: usize) {
+    let mut grew = false;
     for (p, native) in forms.iter().enumerate() {
         let state = State::of(native);
         let mut wrong = vec![0usize; state.parts.len()];
@@ -1355,10 +1359,58 @@ fn learn(forms: &[BlockNative], rows: &[FileRow], segs: &[[u32; 4]], records: &[
         let promoted: Vec<usize> = state.parts.iter().zip(&wrong).filter(|&(_, &n)| n * PROMOTE > seen).map(|(&(at, ..), _)| at).collect();
         if !promoted.is_empty() {
             if let Ok(mut m) = LEARNED.lock() {
-                m.entry(fingerprint(native)).or_default().extend(promoted);
+                let known = m.entry(fingerprint(native)).or_default();
+                for at in promoted {
+                    if !known.contains(&at) {
+                        known.push(at);
+                        grew = true;
+                    }
+                }
             }
         }
     }
+    if !grew {
+        if let Ok(mut m) = SETTLED.lock() {
+            m.insert(key);
+        }
+    }
+}
+
+/// The sources (`serial_source`'s keys) whose runs learn nothing more (`learn`).
+static SETTLED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<u64>>> = std::sync::LazyLock::new(Default::default);
+
+fn settled(key: u64) -> bool {
+    SETTLED.lock().is_ok_and(|m| m.contains(&key))
+}
+
+/// What a run's buffers and launches take from its programs' levels, made once a source.
+struct Shape {
+    /// The most scans of a program (the tables' words a segment).
+    most: usize,
+    /// The deepest level (`cones_on`: else none).
+    depth: usize,
+    /// The fixed-point tables' words a segment (`group_stride`).
+    stride: usize,
+    /// The levels with a fixed point (`group_levels`).
+    with_groups: std::collections::BTreeSet<usize>,
+}
+
+fn shape_of(key: u64, programs: &[&BlockNative]) -> std::sync::Arc<Shape> {
+    static SHAPES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u64, std::sync::Arc<Shape>>>> = std::sync::LazyLock::new(Default::default);
+    if let Some(hit) = SHAPES.lock().ok().and_then(|m| m.get(&key).cloned()) {
+        return hit;
+    }
+    let levels: Vec<Levels> = programs.iter().map(|n| Levels::of(n)).collect();
+    let shape = std::sync::Arc::new(Shape {
+        most: levels.iter().map(|l| l.scans.len()).max().unwrap_or(0).max(1),
+        depth: if cones_on() { levels.iter().map(|l| l.depth).max().unwrap_or(0) } else { 0 },
+        stride: group_stride(programs),
+        with_groups: group_levels(programs),
+    });
+    if let Ok(mut m) = SHAPES.lock() {
+        m.insert(key, shape.clone());
+    }
+    shape
 }
 
 /// Whether the runs are in lanes form (`lanes_function`); `RERAIL_SERIAL_LANES=0` runs each
@@ -1563,7 +1615,7 @@ fn run_passes(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[std
         })
         .max()
         .unwrap_or(0);
-    let out = crate::pool::zeroed::<u64>((offset + widest * total_blocks).max(1))?;
+    let out = crate::pool::zeroed_on_device::<u64>((offset + widest * total_blocks).max(1))?;
     fit(offset + widest * total_blocks)?;
     // The segments, as `run_serial_io` cuts them: (file, first block, end, index in the file).
     let mut rows = Vec::with_capacity(files.len());
@@ -1748,13 +1800,12 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     // last position.
     let tot = crate::pool::zeroed::<u32>(tot_base + 2)?;
     let positions = crate::pool::zeroed::<u32>(pos_base + 2)?;
-    let most = forms.iter().map(|n| Levels::of(n).scans.len()).max().unwrap_or(0).max(1);
-    let depth = if cones_on() { forms.iter().map(|n| Levels::of(n).depth).max().unwrap_or(0) } else { 0 };
+    let shape = shape_of(source_key, &refs);
+    let (most, depth, stride, with_groups) = (shape.most, shape.depth, shape.stride, &shape.with_groups);
     let tables = crate::pool::zeroed::<u32>(total * 2 * most)?;
     let cins = crate::pool::zeroed::<u64>(total)?;
     let cws = crate::pool::zeroed::<u64>(total)?;
-    let gtabs = crate::pool::zeroed::<u32>(total * group_stride(&refs))?;
-    let with_groups = group_levels(&refs);
+    let gtabs = crate::pool::zeroed::<u32>(total * stride)?;
     let marks = crate::pool::zeroed::<u32>(total)?;
     // Segments run again in all, and the most one thread ran.
     let hopped = crate::pool::zeroed::<u32>(2)?;
@@ -1839,8 +1890,8 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
         unsafe { std::ptr::write_bytes(cws.host().cast::<u64>(), 0, total) };
     }
     let first_seconds = encode_passes(&first)?;
-    if listed.read::<u32>(1)[0] > 0 && exact_unset() {
-        learn(&forms, &rows, &segs, &records.read::<u64>(total * 2 * sw), sw);
+    if listed.read::<u32>(1)[0] > 0 && exact_unset() && !settled(source_key) {
+        learn(source_key, &forms, &rows, &segs, &records.read::<u64>(total * 2 * sw), sw);
     }
     if std::env::var("RERAIL_SERIAL_DEBUG").is_ok() {
         let lv = Levels::of(&forms[0]);
