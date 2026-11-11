@@ -6,8 +6,8 @@
 //!
 //! - **A token is one 12-byte record**: kind, span, and the word it is when the grammar looks
 //!   at that word (`code`, `min`, `decl`, …), found once by the lexer from one 8-byte load.
-//!   The parser compares one-byte codes, never text. A line is asked only by a few
-//!   statements, from an index of the newlines made when first asked.
+//!   The parser compares one-byte codes, never text. Only a few statements ask whether a
+//!   token is on a line: the bytes from the line's last token to it hold no newline.
 //! - **The lexer** is simdjson's shape over Bitlex's 64-byte block masks (`micro`): a block's
 //!   token starts found at once and taken one at a time (`lex`). A word ends at its run of
 //!   word bits; a comment, string or backtick literal by its micro-lexer, run from its start.
@@ -596,8 +596,6 @@ struct Parser<'s> {
     /// The next comment to place, and where it starts (`u32::MAX`: none left).
     comment: usize,
     next_comment: u32,
-    /// Where each newline is, made when a line is first asked (`micro::newline_positions`).
-    lines: std::cell::OnceCell<Vec<u32>>,
 }
 
 /// The lexer alone (its tokens' count), to measure apart from the parse.
@@ -611,7 +609,7 @@ pub fn tape(src: &str) -> Vec<Node> {
     let mut out = Vec::with_capacity(n + n / 2 + comments.len() + 8);
     out.push(Node { kind: Kind::SourceFile as u16, field: 0, start: 0, end: src.len() as u32, parent: None, extra: false });
     let next_comment = comments.first().map_or(u32::MAX, |c| c.0);
-    let mut p = Parser { b: src.as_bytes(), t: toks, n, i: 0, no_named: false, out, open: vec![(0, 0)], kids: Vec::with_capacity(64), comments, comment: 0, next_comment, lines: Default::default() };
+    let mut p = Parser { b: src.as_bytes(), t: toks, n, i: 0, no_named: false, out, open: vec![(0, 0)], kids: Vec::with_capacity(64), comments, comment: 0, next_comment };
     while p.kind() != EOF {
         let save = p.mark();
         if p.statement().is_err() {
@@ -658,26 +656,25 @@ impl Parser<'_> {
         self.t.get(self.i).map_or(self.b.len() as u32, |t| t.start)
     }
 
-    /// The line of byte `at`, from 1, as `syntax::Lines` gives it.
-    fn line_of(&self, at: u32) -> u32 {
-        let lines = self.lines.get_or_init(|| micro::newline_positions(self.b));
-        lines.partition_point(|&newline| newline < at) as u32 + 1
+    /// Whether the next token is on the line of byte `*seen`, the bytes up to `*seen` known
+    /// to be on it: no newline from there to the token's start. `*seen` moves to the start, so
+    /// a line's bytes are read once. As `syntax::Lines` compares lines, with no index of them.
+    fn on_line(&self, seen: &mut u32) -> bool {
+        let start = self.start();
+        let same = !self.b[(*seen as usize).min(start as usize)..start as usize].contains(&b'\n');
+        *seen = start;
+        same
     }
 
-    fn line(&self) -> u32 {
-        self.line_of(self.start())
-    }
-
-    /// The line of the token before the next one's last byte.
-    fn last_line(&self) -> u32 {
-        match self.i.checked_sub(1).and_then(|j| self.t.get(j)) {
-            Some(t) => self.line_of(t.end.saturating_sub(1)),
-            None => 0,
-        }
+    /// Where the token before the next one ends: the bytes to it are on its line (`on_line`).
+    fn last_end(&self) -> Option<u32> {
+        self.i.checked_sub(1).and_then(|j| self.t.get(j)).map(|t| t.end)
     }
 
     // The tape.
 
+    #[cold]
+    #[inline(never)]
     fn comments_before(&mut self, parent: u32, before: u32) {
         while self.next_comment < before {
             let (start, end) = self.comments[self.comment];
@@ -687,6 +684,8 @@ impl Parser<'_> {
         }
     }
 
+    #[cold]
+    #[inline(never)]
     fn skip_comments(&mut self, before: u32) {
         while self.next_comment < before {
             self.comment += 1;
@@ -698,8 +697,26 @@ impl Parser<'_> {
         *self.open.last().expect("source_file stays open")
     }
 
-    /// A child of the open node; it stays open when `open`.
+    /// A child of the open node; it stays open when `open`. Inline, as every node is made by
+    /// it; a comment near it (rare) goes the long way.
+    #[inline(always)]
     fn push(&mut self, kind: u16, start: u32, end: u32, open: bool) {
+        if self.next_comment < end.max(start) {
+            return self.push_near_comment(kind, start, end, open);
+        }
+        let parent = self.top().0;
+        let id = self.out.len() as u32;
+        self.out.push(Node { kind, field: 0, start, end, parent: Some(parent), extra: false });
+        self.kids.push(id);
+        if open {
+            self.open.push((id, self.kids.len() as u32));
+        }
+    }
+
+    /// `push`, with a comment before the node's end: placed before it, or inside its text.
+    #[cold]
+    #[inline(never)]
+    fn push_near_comment(&mut self, kind: u16, start: u32, end: u32, open: bool) {
         let parent = self.top().0;
         if self.next_comment < start {
             self.comments_before(parent, start);
@@ -715,11 +732,13 @@ impl Parser<'_> {
         }
     }
 
+    #[inline(always)]
     fn open(&mut self, kind: Kind) {
         let at = self.start();
         self.push(kind as u16, at, at, true);
     }
 
+    #[inline(always)]
     fn close(&mut self) {
         let end = match self.i.checked_sub(1) {
             Some(j) => self.t.get(j).map_or(0, |t| t.end),
@@ -745,6 +764,7 @@ impl Parser<'_> {
         if self.kids.len() > self.top().1 as usize { self.kids.last().copied() } else { None }
     }
 
+    #[inline(always)]
     fn field(&mut self, field: Field) {
         if let Some(last) = self.last() {
             self.out[last as usize].field = field as u16;
@@ -807,6 +827,7 @@ impl Parser<'_> {
         self.next_comment = self.comments.get(self.comment).map_or(u32::MAX, |c| c.0);
     }
 
+    #[inline(always)]
     fn leaf_over(&mut self, kind: u16, from: usize, to: usize) {
         if from < to && to <= self.n {
             self.push(kind, self.t[from].start, self.t[to - 1].end, false);
@@ -818,6 +839,7 @@ impl Parser<'_> {
         self.i += 1;
     }
 
+    #[inline(always)]
     fn anon(&mut self) {
         let (k, w) = self.t.get(self.i).map_or((EOF, 0), |t| (t.kind, t.word));
         let kind = match k {
@@ -998,16 +1020,18 @@ impl Parser<'_> {
         Ok(())
     }
 
-    fn rest_of_line(&mut self, line: u32, field: Field) -> R<()> {
-        while self.kind() != EOF && self.line() == line {
+    fn rest_of_line(&mut self, from: Option<u32>, field: Field) -> R<()> {
+        let Some(mut seen) = from else { return Ok(()) };
+        while self.kind() != EOF && self.on_line(&mut seen) {
             self.word(field)?;
         }
         Ok(())
     }
 
-    fn raw_line(&mut self, line: u32, field: Field) -> R<()> {
+    fn raw_line(&mut self, at: Option<u32>, field: Field) -> R<()> {
         let from = self.i;
-        while self.kind() != EOF && self.line() == line {
+        let mut seen = at.unwrap_or(0);
+        while self.kind() != EOF && at.is_some() && self.on_line(&mut seen) {
             if self.kind() == BAD {
                 return Err(());
             }
@@ -1157,7 +1181,7 @@ impl Parser<'_> {
                 self.id()?;
                 self.field(Field::Name);
                 self.columns()?;
-                let at = self.last_line();
+                let at = self.last_end();
                 self.rest_of_line(at, Field::Modifier)?;
             }
             W_EDIT => {
@@ -1172,13 +1196,13 @@ impl Parser<'_> {
                 self.p_stored(COLON)?;
                 self.ty()?;
                 self.field(Field::ReturnType);
-                let at = self.last_line();
+                let at = self.last_end();
                 self.rest_of_line(at, Field::Modifier)?;
             }
             W_TYPE => {
                 self.id()?;
                 self.field(Field::Name);
-                let at = self.last_line();
+                let at = self.last_end();
                 self.raw_line(at, Field::Definition)?;
             }
             W_INPUT | W_OUTPUT => self.list(DOT, Field::Relation, Self::io_relation)?,
@@ -1210,9 +1234,8 @@ impl Parser<'_> {
                 serde_json::from_slice::<serde_json::Value>(text).map_err(|_| ())?;
             }
             _ => {
-                let mut line = self.line_of(self.t[first].start);
-                while self.kind() != EOF && (self.line() == line || (self.i > 0 && self.t[self.i - 1].kind == P0 + COMMA)) {
-                    line = self.line();
+                let mut seen = self.t[first].start;
+                while self.kind() != EOF && (self.on_line(&mut seen) || (self.i > 0 && self.t[self.i - 1].kind == P0 + COMMA)) {
                     if self.is_p(LBRACE) {
                         self.json(Field::Argument)?;
                     } else {

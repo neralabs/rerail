@@ -847,6 +847,45 @@ pub mod tests {
         }
     }
 
+    /// One form over the corpus, again and again for `RR_SECONDS` (10) of CPU, for a profiler
+    /// (`xctrace record --template 'Time Profiler' --launch -- <binary> rr_profile_loop
+    /// --ignored`). `RR_FORM`: `lean` (the lean parser whole, by default), `lexer` (its lexer),
+    /// `tier1` or `tier2` (the compiled grammar's, on buffers made before). Build as
+    /// `rr_against_rust` says.
+    #[test]
+    #[ignore = "a profile's load: run by hand"]
+    fn rr_profile_loop() {
+        let form = std::env::var("RR_FORM").unwrap_or_else(|_| "lean".into());
+        let seconds: f64 = std::env::var("RR_SECONDS").ok().and_then(|v| v.parse().ok()).unwrap_or(10.0);
+        let c = crate::compiled().expect("compiles");
+        let files = corpus();
+        let ours: Vec<&String> = files.iter().filter(|f| crate::compiled_tape(f).is_some()).collect();
+        let p = &c.parser;
+        let mut batches: Vec<_> = ours.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()])).collect();
+        for b in &mut batches {
+            b.call(&p.tier1);
+        }
+        let mut tapes: Vec<_> = batches.iter().map(|b| p.tape(b)).collect();
+        let retired = rerail_compiler::native_cpu_codegen::retired;
+        let (t0, (i0, c0)) = (thread_cpu(), retired());
+        let (mut rounds, mut n) = (0usize, 0usize);
+        while (thread_cpu() - t0).as_secs_f64() < seconds {
+            match form.as_str() {
+                "lean" => ours.iter().for_each(|f| n += super::rr::lean::tape(f).len()),
+                "lexer" => ours.iter().for_each(|f| n += super::rr::lean::token_count(f)),
+                "tier1" => batches.iter_mut().for_each(|b| b.call(&p.tier1)),
+                "tier2" => batches.iter().zip(&mut tapes).for_each(|(b, t)| {
+                    let _ = p.words(b, t);
+                }),
+                other => panic!("RR_FORM={other}: lean, lexer, tier1 or tier2"),
+            }
+            rounds += 1;
+        }
+        std::hint::black_box(n);
+        let (t1, (i1, c1)) = (thread_cpu(), retired());
+        eprintln!("{form}: {rounds} rounds, {:.1}M instructions and {:.1}M cycles a round, {:?} CPU", (i1 - i0) as f64 / rounds as f64 / 1e6, (c1 - c0) as f64 / rounds as f64 / 1e6, (t1 - t0) / rounds as u32);
+    }
+
     /// Cranelift's optimizer on `.rr`'s tier 1 (doc 28): tier 1 compiled with it and without, in
     /// one process, timed in turns over the corpus, each its best round.
     #[test]

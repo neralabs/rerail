@@ -284,6 +284,7 @@ impl Window {
 }
 
 /// Where each newline of `b` is: a block's `eq` mask, its bits taken one at a time.
+#[cfg(test)]
 pub(crate) fn newline_positions(b: &[u8]) -> Vec<u32> {
     let mut out = Vec::with_capacity(b.len() / 32);
     let mut i = 0;
