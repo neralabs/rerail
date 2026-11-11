@@ -3272,6 +3272,7 @@ name = "rerail-rr-parser"
 version = "0.1.0"
 dependencies = [
  "bitlex",
+ "cranelift-codegen",
  "libc",
  "rerail-compiler",
  "rerail-metal",

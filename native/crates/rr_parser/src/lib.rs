@@ -361,8 +361,12 @@ pub mod tests {
         let _t1 = rerail_compiler::native_cpu_block::compile(&native.block_programs[0]).expect("tier 1");
         let t1 = thread_cpu() - t;
         let t = thread_cpu();
+        let _ = cranelift_codegen::timing::take_current();
         let _t2 = rerail_compiler::native_cpu_stream::compile(&native).expect("tier 2");
         eprintln!("Cranelift: tier 1 {t1:.2?} CPU, tier 2 {:.2?} CPU", thread_cpu() - t);
+        // Where tier 2's compile goes, by Cranelift's passes (the register allocator's share
+        // is what grows faster than the function).
+        eprintln!("tier 2's passes:\n{}", cranelift_codegen::timing::take_current());
         let words = &program.words;
         let refuse = rerail_compiler::stream_ir::REFUSE;
         let flag = rerail_compiler::program::FLAG;
