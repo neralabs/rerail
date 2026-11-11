@@ -265,7 +265,7 @@ impl<'a> Reads<'a> {
 
     fn of_scc(&self, scc: &BTreeSet<String>) -> BTreeSet<String> {
         let rules = || scc.iter().filter_map(|rel| self.by_head.get(rel.as_str())).flatten();
-        let mut out: BTreeSet<String> = rules().flat_map(|r| &r.body).filter_map(|l| l.atom().map(|a| a.rel.clone())).collect();
+        let mut out: BTreeSet<String> = rules().flat_map(|r| &r.body).filter_map(|l| l.atom().map(|a| a.rel.to_string())).collect();
         // A `nearest` literal climbs the tree: it reads `node` and `child`, which an edit changes.
         if rules().any(|r| r.body.iter().any(|l| matches!(l, front::Literal::Nearest { .. }))) {
             out.extend(TREE.iter().map(|r| (*r).to_owned()));
@@ -317,12 +317,12 @@ impl Cut {
     /// left to `outputs`.
     pub(in crate::code_rule_dsl) fn program(&self, cross: &lower::Lowered) -> lower::Lowered {
         let mut program = cross.program.clone();
-        program.rules.retain(|r| !self.clean.contains(&r.head.rel));
+        program.rules.retain(|r| !self.clean.contains(r.head.rel.as_str()));
         program.natives.retain(|rel, _| !self.clean.contains(rel));
         if self.strata.0 == 0 {
             program.gates.clear();
         }
-        let read: BTreeSet<String> = program.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom().map(|a| a.rel.clone())).collect();
+        let read: BTreeSet<String> = program.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom().map(|a| a.rel.to_string())).collect();
         for rel in self.clean.iter().filter(|r| read.contains(*r)) {
             if !program.inputs.contains(rel) {
                 program.inputs.push(rel.clone());
@@ -963,9 +963,9 @@ impl Retained {
     pub(in crate::code_rule_dsl) fn load(&mut self, store: &ContentStore, cut: &Cut, prog: &front::Program) -> Result<(usize, usize)> {
         let Some(frames) = self.frames.as_ref() else { return Ok((0, 0)) };
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the kept part's rows, from the frames".into());
-        let running: Vec<&front::Rule> = prog.rules.iter().filter(|r| !cut.clean.contains(&r.head.rel)).collect();
-        let mut wanted: BTreeSet<String> = running.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.clone()).filter(|r| cut.clean.contains(r)).collect();
-        wanted.extend(running.iter().map(|r| r.head.rel.clone()));
+        let running: Vec<&front::Rule> = prog.rules.iter().filter(|r| !cut.clean.contains(r.head.rel.as_str())).collect();
+        let mut wanted: BTreeSet<String> = running.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.to_string()).filter(|r| cut.clean.contains(r.as_str())).collect();
+        wanted.extend(running.iter().map(|r| r.head.rel.to_string()));
         let (mut rels, mut rows) = (0, 0);
         let wanted: Vec<String> = wanted.into_iter().filter(|r| frames.derived.contains_key(r) && !self.rels.contains_key(r)).collect();
         let inputs: Vec<String> = cut.changed.iter().filter(|r| frames.inputs.contains_key(*r) && !self.input_srcs.contains_key(*r)).cloned().collect();

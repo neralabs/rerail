@@ -147,7 +147,7 @@ fn edges(rule: &Rule, moves: &Moves) -> BTreeMap<String, Vec<(String, Option<Ste
     for literal in &rule.body {
         match literal {
             Literal::Atom(a) if !a.neg => {
-                for (&(i, j), ms) in moves.get(&a.rel).into_iter().flatten() {
+                for (&(i, j), ms) in moves.get(a.rel.as_str()).into_iter().flatten() {
                     if let (Some(Term::Var(x)), Some(Term::Var(y))) = (a.args.get(i), a.args.get(j)) {
                         ms.iter().for_each(|&m| add(x, y, Some(m)));
                     }
@@ -245,7 +245,7 @@ fn depth_edges(rule: &Rule, depths: &Depths) -> BTreeMap<String, Vec<(String, Sp
     for literal in &rule.body {
         match literal {
             Literal::Atom(a) if !a.neg => {
-                for (&(i, j), &d) in depths.get(&a.rel).into_iter().flatten() {
+                for (&(i, j), &d) in depths.get(a.rel.as_str()).into_iter().flatten() {
                     if let (Some(Term::Var(x)), Some(Term::Var(y))) = (a.args.get(i), a.args.get(j)) {
                         add(x, y, d);
                     }
@@ -421,8 +421,8 @@ fn flow(rules: &[&Rule], component: &BTreeSet<String>) -> Vec<(Column, Column, b
                 for (i, t) in a.args.iter().enumerate() {
                     if let Term::Var(v) = t {
                         bound.insert(v.clone());
-                        if component.contains(&a.rel) && !finite.contains(v) {
-                            from.entry(v.clone()).or_default().insert(((a.rel.clone(), i), false));
+                        if component.contains(a.rel.as_str()) && !finite.contains(v) {
+                            from.entry(v.clone()).or_default().insert(((a.rel.to_string(), i), false));
                         }
                     }
                 }
@@ -467,7 +467,7 @@ fn flow(rules: &[&Rule], component: &BTreeSet<String>) -> Vec<(Column, Column, b
                 continue;
             }
             for (c, made) in sources(t, &from) {
-                out.push((c, (rule.head.rel.clone(), j), made));
+                out.push((c, (rule.head.rel.to_string(), j), made));
             }
         }
     }
@@ -603,7 +603,7 @@ fn finite_vars<'a>(rule: &'a Rule, component: &BTreeSet<String>) -> BTreeSet<&'a
     rule.body
         .iter()
         .filter_map(|l| match l {
-            Literal::Atom(a) if !a.neg && !component.contains(&a.rel) => Some(a),
+            Literal::Atom(a) if !a.neg && !component.contains(a.rel.as_str()) => Some(a),
             _ => None,
         })
         .flat_map(|a| a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }))
@@ -750,7 +750,7 @@ fn bounded(
         // The variables an atom before the head binds, for the functions' inputs.
         let mut before = BTreeSet::<&String>::new();
         for literal in &rule.body {
-            let Some(a) = literal.atom().filter(|a| component.contains(&a.rel) && !functions.contains_key(a.rel.as_str())) else { continue };
+            let Some(a) = literal.atom().filter(|a| component.contains(a.rel.as_str()) && !functions.contains_key(a.rel.as_str())) else { continue };
             match lies(a) {
                 Some(Lies::Before) => {
                     if matches!(literal, Literal::Atom(x) if !x.neg) {
@@ -833,14 +833,14 @@ fn constant_keyed(rules: &[&Rule], component: &BTreeSet<String>) -> bool {
         let Some(c) = (0..arity(rel)).find(|&c| atoms.iter().all(|a| a.args.get(c).and_then(key).is_some())) else { return false };
         columns.insert(rel.as_str(), c);
     }
-    let node = |a: &super::Atom| key(&a.args[columns[a.rel.as_str()]]).map(|k| (a.rel.clone(), k));
+    let node = |a: &super::Atom| key(&a.args[columns[a.rel.as_str()]]).map(|k| (a.rel.to_string(), k));
     let mut graph = BTreeMap::<(String, String), BTreeSet<(String, String)>>::new();
     for rule in rules {
         let Some(head) = node(&rule.head) else { return false };
         let to = graph.entry(head).or_default();
         for l in &rule.body {
             if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
-                && component.contains(&a.rel)
+                && component.contains(a.rel.as_str())
             {
                 let Some(n) = node(a) else { return false };
                 to.insert(n);

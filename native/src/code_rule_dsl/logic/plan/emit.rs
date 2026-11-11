@@ -133,9 +133,9 @@ pub(in crate::code_rule_dsl) fn emit_inputs(prog:&Program, db:&Connection, name:
             if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = &s.lit
                 && derived(&a.rel)
                 && keep(&a.rel)
-                && !out.contains(&a.rel)
+                && !out.iter().any(|x| x == &a.rel)
             {
-                out.push(a.rel.clone());
+                out.push(a.rel.to_string());
             }
         }
         out
@@ -193,7 +193,7 @@ pub(in crate::code_rule_dsl) fn emit_inputs(prog:&Program, db:&Connection, name:
             record(rule,"full query",explain,started.map_or(0.0,|t|super::super::profile::now()-t));
             planned.push((rule, order));
         }
-        let own = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg && scc.contains(&a.rel));
+        let own = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg && scc.contains(a.rel.as_str()));
         let recursive = scc.len() > 1 || planned.iter().flat_map(|(_, o)| o).any(|s| own(&s.lit));
         for (rule, order) in &planned {
             let query = model.checked_query(prog, &rule.head, order, None, None)?;
@@ -216,7 +216,7 @@ pub(in crate::code_rule_dsl) fn emit_inputs(prog:&Program, db:&Connection, name:
                     let at = order.iter().position(|s| s.at == i).ok_or_else(|| Error::Plan(format!("{}: no delta atom", rule.head)))?;
                     let query = model.checked_query(prog, &rule.head, &order, Some(at), None)?;
                     let Literal::Atom(a) = l else { unreachable!("an own atom") };
-                    step(&rule.head.rel, stratum, vec![a.rel.clone()], &query.render(), Some(query));
+                    step(&rule.head.rel, stratum, vec![a.rel.to_string()], &query.render(), Some(query));
                 }
             }
             model.stats.solve(BTreeSet::new());

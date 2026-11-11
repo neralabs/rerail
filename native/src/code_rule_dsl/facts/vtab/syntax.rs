@@ -279,7 +279,7 @@ fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::Program, match
             for (c, t) in rule.head.args.iter().enumerate() {
                 let Term::Var(v) = t else { continue };
                 let kinds = of_var(&columns, &rule.body, v);
-                let entry = columns.entry((rule.head.rel.clone(), c)).or_insert(Some(BTreeSet::new()));
+                let entry = columns.entry((rule.head.rel.to_string(), c)).or_insert(Some(BTreeSet::new()));
                 let joined = match (&*entry, kinds) {
                     (None, _) | (_, None) => None,
                     (Some(a), Some(b)) => Some(a.union(&b).cloned().collect()),
@@ -331,7 +331,7 @@ fn span_text_demand(program: &crate::code_rule_dsl::logic::front::Program) -> BT
             for atom in rule.body.iter().filter_map(Literal::atom).filter(|atom| !atom.neg) {
                 for (column, term) in atom.args.iter().enumerate() {
                     if let Term::Var(value) = term {
-                        *vars.entry(value.clone()).or_default() |= columns.get(&(atom.rel.clone(), column)).copied().unwrap_or(0);
+                        *vars.entry(value.clone()).or_default() |= columns.get(&(atom.rel.to_string(), column)).copied().unwrap_or(0);
                     }
                 }
             }
@@ -353,7 +353,7 @@ fn span_text_demand(program: &crate::code_rule_dsl::logic::front::Program) -> BT
                 if let Term::Var(value) = term {
                     let mask = vars.get(value).copied().unwrap_or(0);
                     if mask != 0 {
-                        let entry = columns.entry((rule.head.rel.clone(), column)).or_default();
+                        let entry = columns.entry((rule.head.rel.to_string(), column)).or_default();
                         changed |= *entry != (*entry | mask);
                         *entry |= mask;
                     }

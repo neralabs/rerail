@@ -6,11 +6,11 @@ use std::collections::{BTreeMap, BTreeSet};
 fn dependencies(p: &Program) -> BTreeMap<String, BTreeSet<String>> {
     let mut deps: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for r in &p.rules {
-        deps.entry(r.head.rel.clone()).or_default().extend(
+        deps.entry(r.head.rel.to_string()).or_default().extend(
             r.body
                 .iter()
                 .filter_map(Literal::atom)
-                .map(|a| a.rel.clone()),
+                .map(|a| a.rel.to_string()),
         );
     }
     for (name, native) in &p.natives {
@@ -127,15 +127,15 @@ pub(super) fn optimize(program: &mut Program) {
         .iter()
         .flat_map(|r| &r.body)
         .filter_map(|l| match l {
-            Literal::Agg { atom, .. } if atom.rel.contains("rr_agg") => Some(atom.rel.clone()),
+            Literal::Agg { atom, .. } if atom.rel.contains("rr_agg") => Some(atom.rel.to_string()),
             _ => None,
         })
         .collect();
     for name in names {
         if program.outputs.contains(&name)
             || program.inputs.contains(&name)
-            || program.natives.contains_key(&name)
-            || program.facts.contains_key(&name)
+            || program.natives.contains_key(name.as_str())
+            || program.facts.contains_key(name.as_str())
             || program.decls.contains_key(&format!("rr_demand_agg_{name}"))
         {
             continue;
@@ -183,7 +183,7 @@ pub(super) fn optimize(program: &mut Program) {
                 };
                 demands.push(Rule {
                     head: Atom {
-                        rel: format!("rr_demand_agg_{name}"),
+                        rel: format!("rr_demand_agg_{name}").into(),
                         args,
                         neg: false,
                         gated: false,
@@ -210,14 +210,14 @@ pub(super) fn optimize(program: &mut Program) {
             demand.clone(),
             positions
                 .iter()
-                .map(|&i| program.decls[&name][i].clone())
+                .map(|&i| program.decls[name.as_str()][i].clone())
                 .collect(),
         );
         for rule in next.rules.iter_mut().filter(|r| r.head.rel == name) {
             rule.body.insert(
                 0,
                 Literal::Atom(Atom {
-                    rel: demand.clone(),
+                    rel: demand.clone().into(),
                     args: positions
                         .iter()
                         .map(|&i| rule.head.args[i].clone())

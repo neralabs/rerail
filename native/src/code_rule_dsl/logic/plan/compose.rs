@@ -117,9 +117,9 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
         .collect();
     let needed = super::super::front::needed(prog, outputs.clone());
     let mut uses = HashMap::<String, usize>::new();
-    for r in prog.rules.iter().filter(|r| needed.contains(&r.head.rel)) {
+    for r in prog.rules.iter().filter(|r| needed.contains(r.head.rel.as_str())) {
         for a in r.body.iter().filter_map(Literal::atom) {
-            *uses.entry(a.rel.clone()).or_default() += 1;
+            *uses.entry(a.rel.to_string()).or_default() += 1;
         }
     }
     for r in &outputs {
@@ -150,7 +150,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
         frames.insert(input, name);
     }
     let keys_only = |rel: &str| {
-        frames.contains_key(rel) && !outputs.iter().any(|r|r==rel) && prog.rules.iter().filter(|r|r.body.iter().filter_map(Literal::atom).any(|a|a.rel==rel)).all(|r|matches!(prog.natives.get(&r.head.rel),Some(super::super::front::Native::Python{input,targets,..}) if input==rel && targets.as_deref()!=Some(rel)))
+        frames.contains_key(rel) && !outputs.iter().any(|r|r==rel) && prog.rules.iter().filter(|r|r.body.iter().filter_map(Literal::atom).any(|a|a.rel==rel)).all(|r|matches!(prog.natives.get(r.head.rel.as_str()),Some(super::super::front::Native::Python{input,targets,..}) if input==rel && targets.as_deref()!=Some(rel)))
     };
     let mut reads = Vec::new();
     let mut defs = Vec::new();

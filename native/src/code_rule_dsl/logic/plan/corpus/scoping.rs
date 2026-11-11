@@ -93,8 +93,8 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
         let reads: Vec<String> = all
             .rules
             .iter()
-            .filter(|r| shared.contains(&r.head.rel))
-            .flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| a.rel.clone()))
+            .filter(|r| shared.contains(r.head.rel.as_str()))
+            .flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()))
             .chain(all.natives.iter().filter(|(rel, _)| shared.contains(*rel)).flat_map(|(_, n)| n.reads().into_iter().map(str::to_owned)))
             .filter(|rel| owned.contains(rel))
             .collect();
@@ -127,7 +127,7 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
     }
     let (_, locations, _) = crate::code_rule_dsl::typing::file_local::split_located(all);
     let typed = |rel: &str, c: usize, ty: &[&str]| all.decls.get(rel).and_then(|cols| cols.get(c)).is_some_and(|(_, t)| ty.contains(&t.as_str()));
-    let derived: BTreeSet<String> = all.rules.iter().map(|r| r.head.rel.clone()).chain(all.natives.keys().cloned()).filter(|r| !all.inputs.contains(r)).collect();
+    let derived: BTreeSet<String> = all.rules.iter().map(|r| r.head.rel.to_string()).chain(all.natives.keys().cloned()).filter(|r| !all.inputs.contains(r)).collect();
     // Per relation, where a row's document is read: (document columns, node columns, span or node columns). A node's
     // document is its id's high half (`@doc`); a span's is `docof`'s, as `file_local::locate` reads it.
     let place = |rel: &str| -> (Vec<usize>, Vec<usize>, Vec<usize>) {
@@ -145,14 +145,14 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
     let guard_rule = |rule: &mut front::Rule, covers: &BTreeSet<String>, outside: &str| -> usize {
         let var = |t: Option<&Term>| if let Some(Term::Var(v)) = t { Some(v.clone()) } else { None };
         let mut covered: BTreeSet<String> = BTreeSet::new();
-        for a in rule.body.iter().filter_map(|l| if let Literal::Atom(a) = l { Some(a) } else { None }).filter(|a| !a.neg && covers.contains(&a.rel)) {
+        for a in rule.body.iter().filter_map(|l| if let Literal::Atom(a) = l { Some(a) } else { None }).filter(|a| !a.neg && covers.contains(a.rel.as_str())) {
             let (docs, nodes, spans) = place(&a.rel);
             covered.extend(docs.into_iter().chain(nodes).chain(spans).filter_map(|c| var(a.args.get(c))));
         }
         let mut guards: Vec<(usize, Vec<Literal>)> = Vec::new();
         let mut fresh = 0;
         // A check of a bound document, never a relation to start from: the documents out of the scope, negated.
-        let at = |d: &str| Literal::Atom(Atom { rel: outside.to_owned(), args: vec![Term::Var(d.to_owned())], neg: true, gated: false });
+        let at = |d: &str| Literal::Atom(Atom { rel: outside.to_owned().into(), args: vec![Term::Var(d.to_owned())], neg: true, gated: false });
         let of_node = |n: &str, fresh: &mut usize| -> Vec<Literal> {
             let g = format!("{}{}", crate::code_rule_dsl::logic::simplify::GUARD_VAR, *fresh);
             *fresh += 1;
@@ -161,17 +161,17 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
         let of_span = |n: &str, fresh: &mut usize| -> Vec<Literal> {
             let g = format!("{}{}", crate::code_rule_dsl::logic::simplify::GUARD_VAR, *fresh);
             *fresh += 1;
-            vec![Literal::Atom(Atom { rel: "docof".to_owned(), args: vec![Term::Var(n.to_owned()), Term::Var(g.clone())], neg: false, gated: false }), at(&g)]
+            vec![Literal::Atom(Atom { rel: "docof".to_owned().into(), args: vec![Term::Var(n.to_owned()), Term::Var(g.clone())], neg: false, gated: false }), at(&g)]
         };
         for (k, l) in rule.body.iter().enumerate() {
             match l {
-                Literal::Atom(a) if !a.neg && !covers.contains(&a.rel) && !machinery(&a.rel) => {
+                Literal::Atom(a) if !a.neg && !covers.contains(a.rel.as_str()) && !machinery(&a.rel) => {
                     let (docs, nodes, spans) = place(&a.rel);
                     let dvs: Vec<String> = docs.iter().filter_map(|&c| var(a.args.get(c))).collect();
                     let nvs: Vec<String> = nodes.iter().filter_map(|&c| var(a.args.get(c))).collect();
                     let svs: Vec<String> = spans.iter().filter_map(|&c| var(a.args.get(c))).collect();
                     let mut g = Vec::new();
-                    if !derived.contains(&a.rel) {
+                    if !derived.contains(a.rel.as_str()) {
                         // A base row is one document's: one guard, unless a location of it is covered.
                         if !dvs.iter().chain(&nvs).chain(&svs).any(|v| covered.contains(v)) {
                             // By the node where there is one (a shift: the read stays a test of that node, which

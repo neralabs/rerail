@@ -166,7 +166,7 @@ pub(in crate::code_rule_dsl) fn print(prog: &Program) -> Result<String, Error> {
             if let Some(cols)=logical.decls.get_mut(name){cols.clear();}
             for row in logical.facts.get_mut(name).into_iter().flatten(){row.clear();}
         }
-        let decode=|a:&mut Atom|{if prog.nullary.contains(&a.rel){a.args.clear();}};
+        let decode=|a:&mut Atom|{if prog.nullary.contains(a.rel.as_str()){a.args.clear();}};
         for rule in &mut logical.rules {
             decode(&mut rule.head);
             for lit in &mut rule.body{if let Literal::Atom(a)|Literal::Agg{atom:a,..}=lit{decode(a);}}
@@ -243,7 +243,7 @@ pub(in crate::code_rule_dsl) fn print(prog: &Program) -> Result<String, Error> {
     }
     for rule in &prog.rules {
         // A relation made natively is printed as what made it: its rule only orders it after its inputs.
-        if let Some(native) = prog.natives.get(&rule.head.rel) {
+        if let Some(native) = prog.natives.get(rule.head.rel.as_str()) {
             writeln!(out, "{}", native_rule(&rule.head, native, &kindsets)?).expect("a string");
             continue;
         }

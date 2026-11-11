@@ -639,7 +639,7 @@ fn authored() -> Vec<(String, String, PathBuf)> {
 /// test merged (both keep the program's meaning).
 fn normalized(mut p: front::Program) -> front::Program {
     let r = |name: &str| translate::relation(name);
-    let rename = |a: &mut front::Atom| a.rel = r(&a.rel);
+    let rename = |a: &mut front::Atom| a.rel = r(&a.rel).into();
     p.decls = std::mem::take(&mut p.decls).into_iter().map(|(k, v)| (r(&k), v)).collect();
     p.lattice = std::mem::take(&mut p.lattice).into_iter().map(|(k, v)| (r(&k), v)).collect();
     p.facts = std::mem::take(&mut p.facts).into_iter().map(|(k, v)| (r(&k), v)).collect();
@@ -665,7 +665,7 @@ fn normalized(mut p: front::Program) -> front::Program {
     ] {
         if p.inputs.iter().any(|i| i == rel) && p.decls.contains_key("node") {
             p.inputs.retain(|i| i != rel);
-            let atom = |rel: &str, args: Vec<front::Term>| front::Atom { rel: rel.to_owned(), args, neg: false, gated: false };
+            let atom = |rel: &str, args: Vec<front::Term>| front::Atom { rel: rel.into(), args, neg: false, gated: false };
             p.rules.insert(at, front::Rule { head: atom(rel, head.to_vec()), body: vec![Literal::Atom(atom("node", args.to_vec()))] });
             at += 1;
         }
@@ -680,9 +680,9 @@ fn normalized(mut p: front::Program) -> front::Program {
 fn without_requests(mut p: front::Program) -> front::Program {
     let mut gone: BTreeSet<String> = ["rr_embed_req", "rr_parse_req", "rr_splice_req"].into_iter().map(str::to_owned).chain(super::WORLD.iter().map(|(_, d)| (*d).to_owned())).collect();
     loop {
-        p.rules.retain(|r| !gone.contains(&r.head.rel));
+        p.rules.retain(|r| !gone.contains(r.head.rel.as_str()));
         let read: BTreeSet<&str> = p.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.as_str()).collect();
-        let more: Vec<String> = p.rules.iter().map(|r| r.head.rel.clone()).filter(|h| h.starts_with("rr_ctx") && !read.contains(h.as_str()) && !gone.contains(h)).collect();
+        let more: Vec<String> = p.rules.iter().map(|r| r.head.rel.to_string()).filter(|h| h.starts_with("rr_ctx") && !read.contains(h.as_str()) && !gone.contains(h.as_str())).collect();
         if more.is_empty() {
             break;
         }

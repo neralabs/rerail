@@ -123,7 +123,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
         .rules
         .iter()
         .filter(|r| r.head.rel.starts_with("rr_agg"))
-        .map(|r| r.head.rel.clone())
+        .map(|r| r.head.rel.to_string())
         .collect();
     p.outputs.extend(helpers.iter().cloned());
     let file = crate::code_rule_dsl::prefilter::tests::temp();
@@ -151,7 +151,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
     assert_eq!(result.outputs["absent"], ["3\t1\t1"]);
     for h in &helpers {
         assert_eq!(
-            result.outputs[h].len(),
+            result.outputs[h.as_str()].len(),
             3,
             "unrequested groups published in {h}"
         );
@@ -248,7 +248,7 @@ fn multiple_consumers_union_their_safe_demands() {
         .rel
         .clone();
     p.rules.retain(|r| r.head.rel != demand);
-    p.decls.remove(&demand);
+    p.decls.remove(demand.as_str());
     for r in &mut p.rules {
         r.body.retain(|l| l.atom().is_none_or(|a| a.rel != demand));
     }

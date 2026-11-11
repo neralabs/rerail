@@ -121,7 +121,7 @@ fn rule_vars(prog: &Program, cols: &BTreeMap<String, Vec<Option<Domain>>>, rule:
         changed = false;
         for a in std::iter::once(&r.head).chain(r.body.iter().flat_map(atoms)) {
             for (c, t) in a.args.iter().enumerate() {
-                if let (Term::Var(v), Some(Some(d))) = (t, cols.get(&a.rel).and_then(|ds| ds.get(c))) {
+                if let (Term::Var(v), Some(Some(d))) = (t, cols.get(a.rel.as_str()).and_then(|ds| ds.get(c))) {
                     changed |= vars.set(v, *d)?;
                 }
                 changed |= vars.call(t)?;
@@ -196,7 +196,7 @@ pub(in crate::code_rule_dsl) fn domains(prog: &Program) -> Result<Domains> {
         let r = &prog.rules[i];
         let mut gained: Vec<&str> = Vec::new();
         for a in std::iter::once(&r.head).chain(r.body.iter().flat_map(atoms)) {
-            let Some(ds) = cols.get_mut(&a.rel) else { continue };
+            let Some(ds) = cols.get_mut(a.rel.as_str()) else { continue };
             for (c, t) in a.args.iter().enumerate() {
                 if let (Term::Var(v), Some(slot @ None)) = (t, ds.get_mut(c))
                     && let Some(&d) = vars.get(v)
@@ -406,7 +406,7 @@ impl Lowered {
                 if let Literal::Nearest { n, a, kindset } = literal {
                     used.insert(kindset.clone());
                     *literal = Literal::Atom(Atom {
-                        rel: format!("{}{kindset}", crate::code_rule_dsl::logic::front::NEAREST),
+                        rel: format!("{}{kindset}", crate::code_rule_dsl::logic::front::NEAREST).into(),
                         args: vec![Term::Var(n.clone()), Term::Var(a.clone())],
                         neg: false,
                         gated: false,

@@ -107,7 +107,7 @@ pub(super) fn component(
     for (head, order) in planned {
         let q = run.model.checked_query(run.prog, head, order, None, None)?;
         p.steps.push(schedule::Step {
-            output: head.rel.clone(),
+            output: head.rel.to_string(),
             stratum: 0,
             reads: vec![],
             sql: String::new(),
@@ -120,7 +120,7 @@ pub(super) fn component(
             for (i, l) in rule.body.iter().enumerate() {
                 if let Literal::Atom(a) = l
                     && !a.neg
-                    && scc.contains(&a.rel)
+                    && scc.contains(a.rel.as_str())
                 {
                     let (order, _, _) =
                         run.model
@@ -130,9 +130,9 @@ pub(super) fn component(
                         run.model
                             .checked_query(run.prog, &rule.head, &order, Some(at), None)?;
                     p.steps.push(schedule::Step {
-                        output: rule.head.rel.clone(),
+                        output: rule.head.rel.to_string(),
                         stratum: 0,
-                        reads: vec![a.rel.clone()],
+                        reads: vec![a.rel.to_string()],
                         sql: String::new(),
                     });
                     queries.push(Some(q));

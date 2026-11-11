@@ -170,8 +170,8 @@ fn downstream(program: &front::Program, producers: &[Producer], reads: &[Vec<Str
     loop {
         let before = out.len();
         for r in &program.rules {
-            if r.body.iter().filter_map(front::Literal::atom).any(|a| out.contains(&a.rel)) {
-                out.insert(r.head.rel.clone());
+            if r.body.iter().filter_map(front::Literal::atom).any(|a| out.contains(a.rel.as_str())) {
+                out.insert(r.head.rel.to_string());
             }
         }
         for (p, reads) in producers.iter().zip(reads) {

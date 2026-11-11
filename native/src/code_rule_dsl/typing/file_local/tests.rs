@@ -84,11 +84,11 @@ fn t_programs_split_into_file_local_and_cross_file() {
         let global: Vec<&&str> = derived.iter().filter(|r| !local.contains(**r)).collect();
         let mut reads_base = std::collections::BTreeSet::new();
         let mut reads_local = std::collections::BTreeSet::new();
-        for rule in prog.rules.iter().filter(|r| !local.contains(&r.head.rel)) {
+        for rule in prog.rules.iter().filter(|r| !local.contains(r.head.rel.as_str())) {
             for l in &rule.body {
                 if let Some(a) = l.atom() {
-                    if prog.inputs.contains(&a.rel) { reads_base.insert(a.rel.clone()); }
-                    if local.contains(&a.rel) { reads_local.insert(a.rel.clone()); }
+                    if prog.inputs.iter().any(|x| x == &a.rel) { reads_base.insert(a.rel.to_string()); }
+                    if local.contains(a.rel.as_str()) { reads_local.insert(a.rel.to_string()); }
                 }
             }
         }
@@ -380,7 +380,7 @@ finding(f, x) :- node(_, f, "decorated_definition", _, _), field(f, "decorator",
     let body = &finding[0].body;
     let equal = body.iter().any(|l| matches!(l, Literal::Cmp { l: Term::Var(_), op: "=", r: Term::Var(_) }));
     assert!(!equal, "the equality stays in the cross-file rule: {}", finding[0]);
-    let pushed: Vec<&str> = body.iter().filter_map(|l| l.atom()).filter(|a| made.contains(&a.rel)).map(|a| a.rel.as_str()).collect();
+    let pushed: Vec<&str> = body.iter().filter_map(|l| l.atom()).filter(|a| made.iter().any(|x| x == &a.rel)).map(|a| a.rel.as_str()).collect();
     assert_eq!(pushed.len(), 1, "one pushed join, not one per piece: {}", finding[0]);
 }
 

@@ -20,6 +20,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 pub(in crate::code_rule_dsl) mod caches;
+pub(in crate::code_rule_dsl) mod name;
+pub(in crate::code_rule_dsl) use name::Name;
 pub(in crate::code_rule_dsl) mod cycles;
 
 /// A token and the byte offset where it starts.
@@ -132,7 +134,7 @@ impl Term {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(in crate::code_rule_dsl) struct Atom {
-    pub(in crate::code_rule_dsl) rel: String,
+    pub(in crate::code_rule_dsl) rel: Name,
     pub(in crate::code_rule_dsl) args: Vec<Term>,
     pub(in crate::code_rule_dsl) neg: bool,
     /// A negation held until its relation's `done_` gate passes (magic sets, row 4): not a negative edge.
@@ -678,11 +680,11 @@ impl Parser<'_> {
             let set = self.id()?;
             self.p(")")?;
             let (axis, args) = if rel == "inside" { (AXIS, vec![x, y]) } else { (DESCENDANTS, vec![y, x]) };
-            return Ok(Atom { rel: format!("{axis}{set}"), args, neg, gated: false });
+            return Ok(Atom { rel: format!("{axis}{set}").into(), args, neg, gated: false });
         }
         let args = self.list(Self::term)?;
         self.p(")")?;
-        Ok(Atom { rel, args, neg, gated: false })
+        Ok(Atom { rel: rel.into(), args, neg, gated: false })
     }
 
     /// The source text of a balanced `{ … }`, braces included.
@@ -902,7 +904,7 @@ pub(in crate::code_rule_dsl) fn parse(src: &str) -> Result<Program, Error> {
                     other => Err(Error::Syntax(format!("fact {} has a non-constant {other:?}", head.rel))),
                 })
                 .collect::<Result<_, _>>()?;
-            prog.facts.entry(head.rel).or_default().push(row);
+            prog.facts.entry(head.rel.to_string()).or_default().push(row);
             continue;
         }
         p.p(":-")?;
@@ -930,7 +932,7 @@ fn order_nodes(prog: &mut Program) {
     }
     let decls = prog.decls.clone();
     let typed = |a: &Atom, nodes: &mut BTreeSet<String>| {
-        for (t, (_, ty)) in a.args.iter().zip(decls.get(&a.rel).map_or(&[][..], Vec::as_slice)) {
+        for (t, (_, ty)) in a.args.iter().zip(decls.get(a.rel.as_str()).map_or(&[][..], Vec::as_slice)) {
             if let Term::Var(v) = t
                 && ty == "node"
             {
@@ -938,7 +940,7 @@ fn order_nodes(prog: &mut Program) {
             }
         }
     };
-    let order = |n: &str, k: &str| Literal::Atom(Atom { rel: NODE_ORDER.to_owned(), args: vec![Term::Var(n.to_owned()), Term::Var(k.to_owned())], neg: false, gated: false });
+    let order = |n: &str, k: &str| Literal::Atom(Atom { rel: NODE_ORDER.to_owned().into(), args: vec![Term::Var(n.to_owned()), Term::Var(k.to_owned())], neg: false, gated: false });
     let mut used = false;
     let mut helpers: Vec<(Rule, Vec<(String, String)>)> = Vec::new();
     let mut fresh = 0usize;
@@ -985,7 +987,7 @@ fn order_nodes(prog: &mut Program) {
                 } =>
                 {
                     // The rows aggregated, each with its node's key.
-                    let cols = decls.get(&atom.rel).cloned().unwrap_or_default();
+                    let cols = decls.get(atom.rel.as_str()).cloned().unwrap_or_default();
                     let mut head_args: Vec<Term> = Vec::new();
                     let mut head_cols: Vec<(String, String)> = Vec::new();
                     let mut agg_args: Vec<Term> = Vec::new();
@@ -1007,8 +1009,8 @@ fn order_nodes(prog: &mut Program) {
                     head_args.push(Term::Var(k.clone()));
                     agg_args.push(Term::Var(k.clone()));
                     head_cols.push(("k".to_owned(), "int".to_owned()));
-                    helpers.push((Rule { head: Atom { rel: name.clone(), args: head_args, neg: false, gated: false }, body: vec![Literal::Atom(atom), order(&o, &k)] }, head_cols));
-                    body.push(Literal::Agg { var: kv.clone(), op, over: Some(k), atom: Atom { rel: name, args: agg_args, neg: false, gated: false } });
+                    helpers.push((Rule { head: Atom { rel: name.clone().into(), args: head_args, neg: false, gated: false }, body: vec![Literal::Atom(atom), order(&o, &k)] }, head_cols));
+                    body.push(Literal::Agg { var: kv.clone(), op, over: Some(k), atom: Atom { rel: name.into(), args: agg_args, neg: false, gated: false } });
                     body.push(order(&var, &kv));
                     used = true;
                 }
@@ -1018,7 +1020,7 @@ fn order_nodes(prog: &mut Program) {
         r.body = body;
     }
     for (rule, cols) in helpers {
-        prog.decls.insert(rule.head.rel.clone(), cols);
+        prog.decls.insert(rule.head.rel.to_string(), cols);
         prog.rules.push(rule);
     }
     if used {
@@ -1050,7 +1052,7 @@ pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Err
         }
     }
     // The tree axes' relations are inputs, made by the transducer.
-    let axes: Vec<String> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.clone()).filter(|r| is_axis(r)).collect();
+    let axes: Vec<String> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.to_string()).filter(|r| is_axis(r)).collect();
     for rel in axes {
         if !prog.decls.contains_key(&rel) {
             prog.decls.insert(rel.clone(), vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
@@ -1073,7 +1075,7 @@ pub(in crate::code_rule_dsl) fn declared(prog: &Program) -> Result<(), Error> {
         });
         // The import components' relations (`rr_cx_reach`, decision 0076) are added by the run to a program that reads
         // them: declared there.
-        if let Some(a) = read.find(|a| !prog.decls.contains_key(&a.rel) && !is_transduced(&a.rel) && !a.rel.starts_with("rr_cx_")) {
+        if let Some(a) = read.find(|a| !prog.decls.contains_key(a.rel.as_str()) && !is_transduced(&a.rel) && !a.rel.starts_with("rr_cx_")) {
             return Err(Error::Syntax(format!("relation {} is read by the rule for {} and not declared: declare it with `.decl`", a.rel, rule.head.rel)));
         }
     }
@@ -1169,7 +1171,7 @@ fn first_unstratified(sccs: &[BTreeSet<String>], edges: &Edges, aggs: &BTreeSet<
 
 /// The program's components (dependencies first), its dependency edges, and its non-monotone aggregation edges.
 fn components(prog: &Program) -> (Vec<BTreeSet<String>>, Edges, BTreeSet<(String, String)>) {
-    let mut derived: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
+    let mut derived: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
     let mut edges = Edges::new();
     // An answer is an edge: each produced relation reads its request (decision 0065 §2a).
     for (request, produced) in &prog.answers {
@@ -1188,19 +1190,19 @@ fn components(prog: &Program) -> (Vec<BTreeSet<String>>, Edges, BTreeSet<(String
     for r in &prog.rules {
         for l in &r.body {
             let Some(a) = l.atom() else { continue };
-            if !derived.contains(&a.rel) {
+            if !derived.contains(a.rel.as_str()) {
                 continue;
             }
             let agg = match l {
-                Literal::Agg { op, .. } => !prog.lattice.get(&r.head.rel).is_some_and(|d| {
+                Literal::Agg { op, .. } => !prog.lattice.get(r.head.rel.as_str()).is_some_and(|d| {
                     matches!((op, d.lattice()), (AggOp::Count | AggOp::Max, "max") | (AggOp::Min, "min"))
                 }),
                 _ => false,
             };
             if agg && !a.gated {
-                aggs.insert((r.head.rel.clone(), a.rel.clone()));
+                aggs.insert((r.head.rel.to_string(), a.rel.to_string()));
             }
-            edges.entry(r.head.rel.clone()).or_default().insert((a.rel.clone(), (a.neg || agg) && !a.gated));
+            edges.entry(r.head.rel.to_string()).or_default().insert((a.rel.to_string(), (a.neg || agg) && !a.gated));
         }
     }
     let sccs = tarjan(&derived, &edges);
@@ -1283,7 +1285,7 @@ pub(in crate::code_rule_dsl) fn needed(prog: &Program, roots: Vec<String>) -> BT
             todo.extend(native.reads().into_iter().map(str::to_owned));
         }
         for body in body_of.get(r.as_str()).into_iter().flatten() {
-            todo.extend(body.iter().filter_map(Literal::atom).map(|a| a.rel.clone()));
+            todo.extend(body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()));
         }
     }
     need
@@ -1304,10 +1306,10 @@ pub(in crate::code_rule_dsl) fn prune(mut prog: Program) -> Program {
             todo.extend(native.reads().into_iter().map(str::to_owned));
         }
         for body in body_of.get(r.as_str()).into_iter().flatten() {
-            todo.extend(body.iter().filter_map(Literal::atom).map(|a| a.rel.clone()));
+            todo.extend(body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()));
         }
     }
-    prog.rules.retain(|r| need.contains(&r.head.rel));
+    prog.rules.retain(|r| need.contains(r.head.rel.as_str()));
     // Native metadata owns real dependency edges. A dead producer must not keep its demands
     // alive in the file-local split or cause them to be exported across every chunk.
     prog.natives.retain(|rel, _| need.contains(rel));

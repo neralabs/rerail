@@ -303,7 +303,7 @@ fn vocabulary_columns(prog: &Program) -> HashMap<String, HashSet<usize>> {
                 let copied = writers.iter().all(|rule| {
                     let Some(Term::Var(value)) = rule.head.args.get(column) else { return false };
                     rule.body.iter().filter_map(Literal::atom).filter(|a| !a.neg).any(|atom| {
-                        columns.get(&atom.rel).is_some_and(|cols| cols.iter().any(|&col| {
+                        columns.get(atom.rel.as_str()).is_some_and(|cols| cols.iter().any(|&col| {
                             matches!(atom.args.get(col), Some(Term::Var(other)) if other == value)
                         }))
                     })
@@ -383,14 +383,14 @@ fn constant_domain(prog: &Program, rel: &str, col: usize, visiting: &mut Vec<(St
                 }
                 let c = a.args.iter().position(|t| matches!(t, Term::Var(x) if x == v))?;
                 // A fact relation read with constants: only the rows that hold them.
-                if !prog.rules.iter().any(|r| r.head.rel == a.rel) && let Some(rows) = prog.facts.get(&a.rel) {
+                if !prog.rules.iter().any(|r| r.head.rel == a.rel) && let Some(rows) = prog.facts.get(a.rel.as_str()) {
                     let matches = |row: &Vec<super::front::Value>| a.args.iter().zip(row).all(|(t, v)| match (t, v) {
                         (Term::Str(x), super::front::Value::Str(y)) => x == y,
                         (Term::Int(x), super::front::Value::Int(y)) => x == y,
                         (Term::Str(_) | Term::Int(_), _) => false,
                         _ => true,
                     });
-                    if prog.inputs.contains(&a.rel) {
+                    if prog.inputs.iter().any(|x| x == &a.rel) {
                         return None;
                     }
                     return rows.iter().filter(|r| matches(r)).map(|row| match row.get(c) { Some(super::front::Value::Str(s)) => Some(s.clone()), _ => None }).collect();
@@ -465,7 +465,7 @@ pub(in crate::code_rule_dsl) fn node_subject_tests(prog: &mut Program) {
                 _ => None,
             })
             .flat_map(|a| {
-                let types = decls.get(&a.rel);
+                let types = decls.get(a.rel.as_str());
                 a.args.iter().enumerate().filter_map(move |(c, t)| match (t, types.and_then(|ts| ts.get(c))) {
                     (Term::Var(v), Some((_, ty))) if ty == "node" || ty == "loc" => Some(v.clone()),
                     _ => None,
@@ -508,7 +508,7 @@ pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocab
                 _ => None,
             })
             .flat_map(|a| {
-                vocabulary_columns.get(&a.rel).into_iter().flatten()
+                vocabulary_columns.get(a.rel.as_str()).into_iter().flatten()
                     .filter_map(|&c| if let Some(Term::Var(v)) = a.args.get(c) { Some(v.clone()) } else { None })
             })
             .collect();
@@ -536,7 +536,7 @@ pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocab
                     rel
                 }
             };
-            *literal = Literal::Atom(Atom { rel, args: vec![Term::Var(s.to_owned())], neg: !holds, gated: false });
+            *literal = Literal::Atom(Atom { rel: rel.into(), args: vec![Term::Var(s.to_owned())], neg: !holds, gated: false });
         }
     }
     for (rel, _) in &tests {

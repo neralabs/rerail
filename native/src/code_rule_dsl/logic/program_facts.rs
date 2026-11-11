@@ -461,7 +461,7 @@ impl<'a> Reader<'a> {
     fn atom(&self, a: i64) -> Result<Atom, String> {
         let row = self.atoms.get(&a).ok_or_else(|| bad(format!("no atom {a}")))?;
         let args = self.args.get(&a).map(|args| args.values().map(|t| self.term(*t)).collect::<Result<Vec<_>, _>>()).transpose()?.unwrap_or_default();
-        Ok(Atom { rel: text(&row[1])?, args, neg: int(&row[2])? != 0, gated: int(&row[3])? != 0 })
+        Ok(Atom { rel: text(&row[1])?.into(), args, neg: int(&row[2])? != 0, gated: int(&row[3])? != 0 })
     }
 
     /// Rows of `rel` keyed by their first column (an id), each row less that column.

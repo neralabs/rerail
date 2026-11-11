@@ -7,7 +7,7 @@ pub(in crate::code_rule_dsl::logic::plan) fn run(prog: &Program, db: &Connection
     let roots: BTreeSet<String> = prog.outputs.iter().chain(&inputs.kept).cloned().collect();
     let needed = super::super::super::front::needed(prog,roots.iter().cloned().collect());
     let sccs = strata(prog)?.0;
-    let rules: Vec<Vec<&Rule>> = sccs.iter().map(|s|prog.rules.iter().filter(|r|s.contains(&r.head.rel)).collect()).collect();
+    let rules: Vec<Vec<&Rule>> = sccs.iter().map(|s|prog.rules.iter().filter(|r|s.contains(r.head.rel.as_str())).collect()).collect();
 
     // A composed boundary's provenance is its transitive input facts. Internal CTEs are not
     // exported just to cache them. This also permits a different program to reuse the same output.
@@ -18,7 +18,7 @@ pub(in crate::code_rule_dsl::logic::plan) fn run(prog: &Program, db: &Connection
         // Native and tree leaves can read document state beyond their explicit demand relation.
         // Until that state has versioned input provenance, do not certify their outputs as unchanged.
         let explicit = !reads.iter().any(|r|prog.natives.contains_key(r)) && !prog.rules.iter()
-            .filter(|r|reads.contains(&r.head.rel)).any(|r|r.body.iter().any(|l|matches!(l,Literal::Ast{..}|Literal::Nearest{..})));
+            .filter(|r|reads.contains(r.head.rel.as_str())).any(|r|r.body.iter().any(|l|matches!(l,Literal::Ast{..}|Literal::Nearest{..})));
         let digests: Option<Vec<(String,u64)>> = explicit.then(|| reads.iter().filter(|r|prog.inputs.contains(*r))
             .map(|r|ks.input(r).map(|d|(r.clone(),d))).collect()).flatten();
         provenance.insert(root.clone(),digests);
@@ -41,7 +41,7 @@ pub(in crate::code_rule_dsl::logic::plan) fn run(prog: &Program, db: &Connection
     }
     clean.retain(|r|restored.contains_key(r));
     let mut cut = prog.clone();
-    cut.rules.retain(|r|!clean.contains(&r.head.rel));
+    cut.rules.retain(|r|!clean.contains(r.head.rel.as_str()));
     for rel in &clean {
         cut.facts.remove(rel);
         cut.natives.remove(rel);

@@ -260,7 +260,7 @@ impl Shape {
                 // "lookup on (c0, c1)", "membership on (c0)", "range in document on (c0)"; a scan has no key.
                 let keys = priced.access.split_once('(').map_or(0, |(_, cols)| cols.split(',').count());
                 if keys > 0 {
-                    self.joins.push(JoinEst { rel: a.rel.clone(), input, relation: card(&a.rel), output: priced.rows, keys, range: step.mode == Some(Mode::Range) });
+                    self.joins.push(JoinEst { rel: a.rel.to_string(), input, relation: card(&a.rel), output: priced.rows, keys, range: step.mode == Some(Mode::Range) });
                 }
             }
             input = priced.rows;
@@ -372,7 +372,7 @@ mod tests {
     use crate::code_rule_dsl::logic::front::Atom;
 
     fn atom(rel: &str, neg: bool) -> Step {
-        Step { at: 0, lit: Literal::Atom(Atom { rel: rel.to_owned(), args: vec![Term::Var("x".into())], neg, gated: false }), mode: None }
+        Step { at: 0, lit: Literal::Atom(Atom { rel: rel.into(), args: vec![Term::Var("x".into())], neg, gated: false }), mode: None }
     }
 
     #[test]

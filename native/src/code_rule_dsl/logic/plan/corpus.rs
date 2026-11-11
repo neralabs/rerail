@@ -438,9 +438,9 @@ fn embed_slice(local: &front::Program) -> Option<front::Program> {
         let more: BTreeSet<String> = local
             .rules
             .iter()
-            .filter(|r| need.contains(&r.head.rel))
-            .flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()))
-            .filter(|rel| !need.contains(rel))
+            .filter(|r| need.contains(r.head.rel.as_str()))
+            .flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()))
+            .filter(|rel| !need.contains(rel.as_str()))
             .collect();
         if more.is_empty() {
             break;
@@ -448,7 +448,7 @@ fn embed_slice(local: &front::Program) -> Option<front::Program> {
         need.extend(more);
     }
     let mut slice = local.clone();
-    slice.rules.retain(|r| need.contains(&r.head.rel));
+    slice.rules.retain(|r| need.contains(r.head.rel.as_str()));
     slice.outputs = wanted.iter().map(|r| (*r).to_owned()).collect();
     Some(slice)
 }
@@ -579,7 +579,7 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
     let cross = &split.cross;
     let Ok((sccs, _)) = front::strata(cross) else { return };
     let scc_of = |rel: &str| sccs.iter().find(|s| s.contains(rel));
-    let derived: BTreeSet<String> = cross.rules.iter().map(|r| r.head.rel.clone()).collect();
+    let derived: BTreeSet<String> = cross.rules.iter().map(|r| r.head.rel.to_string()).collect();
     // The columns of a relation that name a document or a node of one (a node id holds its document).
     let carriers = |rel: &str| -> Vec<usize> {
         let mut c: BTreeSet<usize> = split.same_doc.get(rel).or_else(|| split.locations.get(rel)).cloned().unwrap_or_default().into_iter().collect();
@@ -616,7 +616,7 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
                 continue;
             }
             seen.extend(vars.iter().cloned());
-            if one_doc_known(&a.rel) || unit.contains(&a.rel) {
+            if one_doc_known(&a.rel) || unit.contains(a.rel.as_str()) {
                 let r0 = find(&mut parent, &vars[0]);
                 for v in &vars[1..] {
                     let r = find(&mut parent, v);
@@ -637,7 +637,7 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
     let mut unit: BTreeSet<String> = derived.clone();
     loop {
         let before = unit.len();
-        let gone: Vec<String> = cross.rules.iter().filter(|r| unit.contains(&r.head.rel) && classes(r, &unit).is_none_or(|n| n > 1)).map(|r| r.head.rel.clone()).collect();
+        let gone: Vec<String> = cross.rules.iter().filter(|r| unit.contains(r.head.rel.as_str()) && classes(r, &unit).is_none_or(|n| n > 1)).map(|r| r.head.rel.to_string()).collect();
         for g in gone {
             unit.remove(&g);
         }
@@ -647,7 +647,7 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
     }
     let own = |rule: &front::Rule| -> &'static str {
         let scc = scc_of(&rule.head.rel);
-        let recursive = rule.body.iter().filter_map(|l| l.atom()).any(|a| scc.is_some_and(|s| s.contains(&a.rel)));
+        let recursive = rule.body.iter().filter_map(|l| l.atom()).any(|a| scc.is_some_and(|s| s.contains(a.rel.as_str())));
         let n = classes(rule, &unit);
         let one = n.is_some_and(|n| n <= 1);
         let others = |k: usize| -> BTreeSet<String> {
@@ -702,7 +702,7 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
                 own_worst = o;
             }
             for a in rule.body.iter().filter_map(|l| l.atom()) {
-                if let Some((_, i)) = class.get(&a.rel)
+                if let Some((_, i)) = class.get(a.rel.as_str())
                     && rank(i) > rank(inherited)
                 {
                     inherited = i;
@@ -715,13 +715,13 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
         }
         let inherited = if rank(own_worst) > rank(inherited) { own_worst } else { inherited };
         for rel in scc {
-            class.insert(rel.clone(), (own_worst, inherited));
+            class.insert(rel.to_string(), (own_worst, inherited));
         }
     }
     let mut out = String::new();
     for rule in &cross.rules {
-        let (o, i) = class.get(&rule.head.rel).copied().unwrap_or(("config", "config"));
-        let output = cross.outputs.contains(&rule.head.rel);
+        let (o, i) = class.get(rule.head.rel.as_str()).copied().unwrap_or(("config", "config"));
+        let output = cross.outputs.iter().any(|x| x == &rule.head.rel);
         out.push_str(&format!("{}\t{}\t{}\t{}\t{}\n", rule.head.rel, o, i, if output { "output" } else { "-" }, rule.to_string().replace('\n', " ")));
     }
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
@@ -900,7 +900,7 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
             }
             if k != n {
                 // Another program asked the same: read its copy.
-                prog.rules.retain(|r| !unit.contains(&r.head.rel));
+                prog.rules.retain(|r| !unit.contains(r.head.rel.as_str()));
                 prog.decls.retain(|r, _| !unit.contains(r));
                 prog.facts.retain(|r, _| !unit.contains(r));
                 prog.natives.retain(|r, _| !unit.contains(r));
@@ -994,7 +994,7 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
                 None => rel.to_owned(),
             }
         };
-        let atom = |a: &mut front::Atom| a.rel = rename(&a.rel);
+        let atom = |a: &mut front::Atom| a.rel = rename(&a.rel).into();
         for rule in &mut prog.rules {
             atom(&mut rule.head);
             for l in &mut rule.body {
@@ -1032,7 +1032,7 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
         }
         // A rule `core.rr` gives (its head is the engine's) is taken once.
         for rule in prog.rules {
-            if !(core.contains(&rule.head.rel) && all.rules.contains(&rule)) {
+            if !(core.contains(rule.head.rel.as_str()) && all.rules.contains(&rule)) {
                 all.rules.push(rule);
             }
         }
@@ -1097,7 +1097,7 @@ fn own_part(prog: &mut front::Program, modules: &crate::code_rule_dsl::logic::rr
         r.body
             .iter()
             .filter_map(|l| match l {
-                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.clone()),
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.to_string()),
                 _ => None,
             })
             .collect()
@@ -1105,8 +1105,8 @@ fn own_part(prog: &mut front::Program, modules: &crate::code_rule_dsl::logic::rr
     let edges: Vec<(String, Vec<String>)> = prog
         .rules
         .iter()
-        .map(|r| (r.head.rel.clone(), reads(r)))
-        .chain(prog.natives.iter().map(|(rel, n)| (rel.clone(), n.reads().into_iter().map(str::to_owned).collect())))
+        .map(|r| (r.head.rel.to_string(), reads(r)))
+        .chain(prog.natives.iter().map(|(rel, n)| (rel.to_string(), n.reads().into_iter().map(str::to_owned).collect())))
         .collect();
     let mut cone: BTreeSet<String> = modules.heads.iter().filter(|h| library.contains(h.as_str())).cloned().collect();
     loop {
@@ -1130,10 +1130,11 @@ fn own_part(prog: &mut front::Program, modules: &crate::code_rule_dsl::logic::rr
     let candidates: BTreeSet<String> = prog
         .decls
         .keys()
-        .chain(prog.rules.iter().map(|r| &r.head.rel))
-        .chain(prog.natives.keys())
-        .filter(|r| !library.contains(r.as_str()) && !core.contains(*r) && !cone.contains(*r))
-        .cloned()
+        .map(String::as_str)
+        .chain(prog.rules.iter().map(|r| r.head.rel.as_str()))
+        .chain(prog.natives.keys().map(String::as_str))
+        .filter(|r| !library.contains(*r) && !core.contains(*r) && !cone.contains(*r))
+        .map(str::to_owned)
         .collect();
     loop {
         let before = part.len();
@@ -1147,7 +1148,7 @@ fn own_part(prog: &mut front::Program, modules: &crate::code_rule_dsl::logic::rr
         }
     }
     let taken = part.iter().filter(|r| prog.decls.contains_key(*r) || prog.rules.iter().any(|x| &x.head.rel == *r)).count();
-    prog.rules.retain(|r| !part.contains(&r.head.rel));
+    prog.rules.retain(|r| !part.contains(r.head.rel.as_str()));
     prog.decls.retain(|r, _| !part.contains(r));
     prog.facts.retain(|r, _| !part.contains(r));
     prog.natives.retain(|r, _| !part.contains(r));
@@ -1165,10 +1166,11 @@ fn own_names(prog: &front::Program, core: &BTreeSet<String>) -> BTreeSet<String>
     let file_inputs = file_inputs(prog);
     prog.decls
         .keys()
-        .chain(prog.facts.keys())
-        .chain(prog.rules.iter().map(|r| &r.head.rel))
-        .filter(|r| (!prog.inputs.contains(r) || file_inputs.contains(*r)) && !shared_outputs.contains(&r.as_str()) && !core.contains(*r) && !bridge::is_bridged(r) && !phases::is_phased(r) && !guests::SHARED.contains(&r.as_str()))
-        .cloned()
+        .map(String::as_str)
+        .chain(prog.facts.keys().map(String::as_str))
+        .chain(prog.rules.iter().map(|r| r.head.rel.as_str()))
+        .filter(|r| (!prog.inputs.iter().any(|i| i == r) || file_inputs.contains(*r)) && !shared_outputs.contains(r) && !core.contains(*r) && !bridge::is_bridged(r) && !phases::is_phased(r) && !guests::SHARED.contains(r))
+        .map(str::to_owned)
         .collect()
 }
 
@@ -1195,7 +1197,7 @@ fn request_unit(prog: &front::Program, cone: &BTreeSet<String>, core: &BTreeSet<
         for r in prog.rules.iter().filter(|r| r.head.rel == rel) {
             for l in &r.body {
                 if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l {
-                    reads.push(a.rel.clone());
+                    reads.push(a.rel.to_string());
                 }
             }
         }
@@ -1215,7 +1217,7 @@ fn request_unit(prog: &front::Program, cone: &BTreeSet<String>, core: &BTreeSet<
     if alone || outside {
         hash.update(format!("program {i}\n"));
     }
-    let mut rules: Vec<String> = prog.rules.iter().filter(|r| unit.contains(&r.head.rel)).map(|r| format!("{r:?}")).collect();
+    let mut rules: Vec<String> = prog.rules.iter().filter(|r| unit.contains(r.head.rel.as_str())).map(|r| format!("{r:?}")).collect();
     rules.sort();
     for rule in rules {
         hash.update(rule);
@@ -2035,7 +2037,7 @@ fn run_observed(
     // is such a program: an edit costs it what the exports' delta does, not a pass over every file.
     let constants_only = {
         let constant = crate::code_rule_dsl::typing::file_local::constant_relations(&lowered.program);
-        split.local.rules.iter().all(|r| constant.contains(&r.head.rel))
+        split.local.rules.iter().all(|r| constant.contains(r.head.rel.as_str()))
     };
     if t.is_none() && constants_only && split.base.iter().all(|r| crate::code_rule_dsl::typing::file_local::run_constant(&prog, r)) && !docs.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("documents", || format!("none read: no rule reads a document, so the run is over none of the {} files", docs.len()));
@@ -2133,7 +2135,7 @@ fn run_observed(
         (Err(blocked), _) => format!("off: rows of {blocked:?} name no document"),
         _ => format!("off ({})", if memo.is_none() { "no persistent store" } else if t.is_some() { "T's facts" } else if unlocated.is_empty() { "typing, RERAIL_CORPUS_MEMO=off or the run's `memo: off`" } else { "a relation without a location column" }),
     });
-    let read: BTreeSet<String> = lowered.program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())).collect();
+    let read: BTreeSet<String> = lowered.program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string())).collect();
     let part = |program: front::Program| lower::Lowered { program, domains: lowered.domains.clone(), ops: lowered.ops, dialect: lowered.dialect };
     crate::code_rule_dsl::logic::profile::decision("file-local split", || {
         format!(
@@ -2173,7 +2175,7 @@ fn run_observed(
             .iter()
             .flat_map(|r| &r.body)
             .filter_map(|l| l.atom())
-            .map(|a| a.rel.clone())
+            .map(|a| a.rel.to_string())
             .filter(|r| (split.exports.contains(r) || split.base.contains(r)) && !crate::code_rule_dsl::typing::file_local::run_constant(&prog, r))
             .collect();
         if let Some(base) = per_file.iter().find(|r| split.base.contains(*r)) {
@@ -2210,7 +2212,7 @@ fn run_observed(
         .outputs
         .iter()
         .filter(|o| split.cross.outputs.contains(o) && !loading.as_ref().is_some_and(|(load, _)| load.rules.iter().any(|r| &r.head.rel == *o)))
-        .find(|o| !split.cross.rules.iter().filter(|r| &r.head.rel == *o).all(|r| matches!(r.body.as_slice(), [front::Literal::Atom(a)] if !a.neg && split.exports.contains(&a.rel))))
+        .find(|o| !split.cross.rules.iter().filter(|r| &r.head.rel == *o).all(|r| matches!(r.body.as_slice(), [front::Literal::Atom(a)] if !a.neg && split.exports.iter().any(|x| x == &a.rel))))
         .cloned();
     let (mut local, mut cross) = (part(split.local), part(split.cross));
     // The run's constants made of earlier phases' exports (`v_enum(q, n) :- struct__base(q, _, b), …, n = count :
@@ -2229,9 +2231,9 @@ fn run_observed(
                 .program
                 .rules
                 .iter()
-                .filter(|r| constant.contains(&r.head.rel) && !once.contains(&r.head.rel) && !prog.outputs.contains(&r.head.rel))
-                .filter(|r| r.body.iter().filter_map(front::Literal::atom).any(|a| of_phase(&a.rel) || once.contains(&a.rel)))
-                .map(|r| r.head.rel.clone())
+                .filter(|r| constant.contains(r.head.rel.as_str()) && !once.contains(r.head.rel.as_str()) && !prog.outputs.iter().any(|x| x == &r.head.rel))
+                .filter(|r| r.body.iter().filter_map(front::Literal::atom).any(|a| of_phase(&a.rel) || once.contains(a.rel.as_str())))
+                .map(|r| r.head.rel.to_string())
                 .collect();
             if more.is_empty() {
                 break;
@@ -2245,9 +2247,9 @@ fn run_observed(
                 .program
                 .rules
                 .iter()
-                .filter(|r| cone.contains(&r.head.rel))
-                .flat_map(|r| r.body.iter().filter_map(front::Literal::atom).map(|a| a.rel.clone()))
-                .filter(|rel| constant.contains(rel) && !cone.contains(rel))
+                .filter(|r| cone.contains(r.head.rel.as_str()))
+                .flat_map(|r| r.body.iter().filter_map(front::Literal::atom).map(|a| a.rel.to_string()))
+                .filter(|rel| constant.contains(rel.as_str()) && !cone.contains(rel.as_str()))
                 .collect();
             if more.is_empty() {
                 break;
@@ -2256,12 +2258,12 @@ fn run_observed(
         }
         (!once.is_empty()).then(|| {
             let mut p = local.program.clone();
-            p.rules.retain(|r| cone.contains(&r.head.rel));
+            p.rules.retain(|r| cone.contains(r.head.rel.as_str()));
             p.gates.retain(|(rel, _)| cone.contains(rel));
             p.lattice.retain(|rel, _| cone.contains(rel));
             p.outputs = once.iter().cloned().collect();
             for part in [&mut local.program, &mut cross.program] {
-                part.rules.retain(|r| !once.contains(&r.head.rel));
+                part.rules.retain(|r| !once.contains(r.head.rel.as_str()));
                 for rel in &once {
                     if !part.inputs.contains(rel) {
                         part.inputs.push(rel.clone());
@@ -2276,7 +2278,7 @@ fn run_observed(
     };
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "guests and the tree's projection".into()));
     let slice = embed_slice(&lowered.program).map(part);
-    let slice_reads: BTreeSet<String> = slice.iter().flat_map(|s| &s.program.rules).flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.clone()).collect();
+    let slice_reads: BTreeSet<String> = slice.iter().flat_map(|s| &s.program.rules).flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.to_string()).collect();
     crate::code_rule_dsl::logic::profile::decision("guests", || match &slice {
         Some(s) => format!("an embed slice of {} rules runs per chunk, up to {} rounds, before the file-local part (decision 0055)", s.program.rules.len(), guests::DEPTH),
         None => "no rule asks for a guest".into(),
@@ -2380,7 +2382,7 @@ fn run_observed(
     let joined_tests: BTreeSet<String> = {
         use crate::code_rule_dsl::logic::front::{Literal, Term};
         use crate::code_rule_dsl::logic::strings::RELATION;
-        let mut tests: BTreeSet<String> = cross.program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom())).map(|a| a.rel.clone()).filter(|r| r.starts_with(RELATION)).collect();
+        let mut tests: BTreeSet<String> = cross.program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom())).map(|a| a.rel.to_string()).filter(|r| r.starts_with(RELATION)).collect();
         for rule in &cross.program.rules {
             for (i, l) in rule.body.iter().enumerate() {
                 let Some(a) = l.atom().filter(|a| !a.neg && a.rel.starts_with(RELATION)) else { continue };
@@ -2389,7 +2391,7 @@ fn run_observed(
                     j != i && matches!(m, Literal::Atom(b) if !b.neg && !b.rel.starts_with(RELATION) && b.args.iter().any(|t| matches!(t, Term::Var(x) if x == v)))
                 });
                 if !joined {
-                    tests.remove(&a.rel);
+                    tests.remove(a.rel.as_str());
                 }
             }
         }
@@ -4018,7 +4020,7 @@ fn run_observed(
             .iter()
             .flat_map(|r| &r.body)
             .filter_map(|l| l.atom())
-            .map(|a| a.rel.clone())
+            .map(|a| a.rel.to_string())
             .collect::<BTreeSet<String>>()
             .into_iter()
             .filter(|r| phased.contains_key(r))
@@ -4730,10 +4732,10 @@ fn run_observed(
                     let levels = maintain::levels_wanted();
                     for rel in cross.program.rules.iter().map(|r| r.head.rel.clone()).collect::<std::collections::BTreeSet<_>>() {
                         if levels {
-                            stored.program.qualifiers.entry(rel.clone()).or_default().insert("levels".to_owned());
+                            stored.program.qualifiers.entry(rel.to_string()).or_default().insert("levels".to_owned());
                         }
-                        if !inline_too && !declared_inline.contains(&rel) {
-                            stored.program.qualifiers.entry(rel).or_default().insert("no_inline".to_owned());
+                        if !inline_too && !declared_inline.contains(rel.as_str()) {
+                            stored.program.qualifiers.entry(rel.to_string()).or_default().insert("no_inline".to_owned());
                         }
                     }
                     let cross = stored;
@@ -4816,8 +4818,8 @@ fn run_observed(
                     };
                     step(&format!("cut: {} of {} strata to run; inputs changed: {}", cut.strata.0, cut.strata.1, cut.changed.len()));
                     if std::env::var_os("RERAIL_CROSS_VERIFY").is_some() {
-                        let read: BTreeSet<&String> = cross.program.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| &a.rel).collect();
-                        let undigested: Vec<&String> = cross.program.inputs.iter().filter(|r| !digests.contains_key(*r) && read.contains(r)).collect();
+                        let read: BTreeSet<&str> = cross.program.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.as_str()).collect();
+                        let undigested: Vec<&String> = cross.program.inputs.iter().filter(|r| !digests.contains_key(*r) && read.contains(r.as_str())).collect();
                         eprintln!("O125_VERIFY inputs read but not digested: {undigested:?}");
                     }
                     // Changed strata maintain their rows from deltas where they can (stage 2, `maintain`).
@@ -4877,7 +4879,7 @@ fn run_observed(
                     if maintain::levels_wanted() {
                         let program = &mut maintained.program.program;
                         for rel in program.rules.iter().map(|r| r.head.rel.clone()).collect::<BTreeSet<_>>() {
-                            program.qualifiers.entry(rel).or_default().insert("levels".to_owned());
+                            program.qualifiers.entry(rel.to_string()).or_default().insert("levels".to_owned());
                         }
                     }
                     crate::code_rule_dsl::logic::profile::decision("input deltas", || match &changes {
@@ -5161,10 +5163,10 @@ fn run_observed(
                         // (`__minus` + `__plus`), truly deleted, truly inserted].
                         let mut counts = [0usize; 6];
                         let olds: HashMap<&str, usize> = maintained.sources.iter().map(|(rel, s, _)| (rel.as_str(), s.len())).collect();
-                        let derived_here: BTreeSet<&String> = part.program.rules.iter().map(|r| &r.head.rel).collect();
+                        let derived_here: BTreeSet<&str> = part.program.rules.iter().map(|r| r.head.rel.as_str()).collect();
                         let rows_of = |rel: &str| held_rows(&db, &got, rel, part.program.decls[rel].len()).unwrap_or_default();
                         for (rel, cols) in &part.program.decls {
-                            if !derived_here.contains(rel) || cols.is_empty() {
+                            if !derived_here.contains(rel.as_str()) || cols.is_empty() {
                                 continue;
                             }
                             if rel.ends_with("__minus") || rel.ends_with("__plus") {
@@ -5469,7 +5471,7 @@ fn run_observed(
             let round_prog = match cross_rounds::pre_split(&cone.cone) {
                 Some(ps) => {
                     let pre_span = crate::code_rule_dsl::logic::profile::span(|| "before the rounds".into());
-                    let pre_derived: BTreeSet<String> = ps.pre.rules.iter().map(|r| r.head.rel.clone()).collect();
+                    let pre_derived: BTreeSet<String> = ps.pre.rules.iter().map(|r| r.head.rel.to_string()).collect();
                     let copied: BTreeSet<String> = ps.reads.iter().chain(cone.reads.iter().filter(|r| pre_derived.contains(*r))).cloned().collect();
                     let mut pre_held: BTreeSet<String> = held.iter().filter(|r| pre_derived.contains(*r)).cloned().collect();
                     pre_held.extend(copied.iter().cloned());
@@ -6458,12 +6460,12 @@ impl Own {
         let mut out: BTreeMap<(String, String), BTreeSet<i64>> = BTreeMap::new();
         for literal in prog.rules.iter().flat_map(|r| &r.body) {
             let Some(atom) = literal.atom() else { continue };
-            if !prog.inputs.contains(&atom.rel) {
+            if !prog.inputs.iter().any(|x| x == &atom.rel) {
                 continue;
             }
             for (i, arg) in atom.args.iter().enumerate() {
                 if let front::Term::Int(v) = arg {
-                    out.entry((atom.rel.clone(), super::sql_col(&atom.rel, i))).or_default().insert(*v);
+                    out.entry((atom.rel.to_string(), super::sql_col(&atom.rel, i))).or_default().insert(*v);
                 }
             }
         }
@@ -7247,7 +7249,7 @@ uses(n, f) :- imp(n, q), def(f, q).
         assert!(!prog.rules.iter().any(|r| r.head.rel.starts_with('p') && r.head.rel.ends_with("_cmp_same")));
         // Each asker reads its request's copy; the quiet one reads the library's.
         let reads = |head: &str| -> Vec<String> {
-            prog.rules.iter().filter(|r| r.head.rel == head).flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())).collect()
+            prog.rules.iter().filter(|r| r.head.rel == head).flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string())).collect()
         };
         let (one, two, three) = (reads("p0_one"), reads("p1_two"), reads("p2_three"));
         assert_eq!(one, two);

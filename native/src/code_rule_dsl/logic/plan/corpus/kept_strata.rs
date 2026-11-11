@@ -274,7 +274,7 @@ fn cones(prog: &crate::code_rule_dsl::logic::front::Program, sccs: &[std::collec
     let by_stratum = crate::code_rule_dsl::logic::front::rules_by_stratum(prog, sccs);
     for (scc, rules) in sccs.iter().zip(&by_stratum) {
         let mut cone = std::collections::BTreeSet::new();
-        let reads = rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom().map(|a| a.rel.clone()));
+        let reads = rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom().map(|a| a.rel.to_string()));
         let natives = scc.iter().filter_map(|r| prog.natives.get(r)).flat_map(|n| n.reads().into_iter().map(str::to_owned).collect::<Vec<_>>());
         let tree = rules.iter().any(|r| r.body.iter().any(|l| matches!(l, crate::code_rule_dsl::logic::front::Literal::Nearest { .. })));
         let tree = tree.then(|| super::retain::TREE.iter().map(|r| (*r).to_owned()).collect::<Vec<_>>()).unwrap_or_default();

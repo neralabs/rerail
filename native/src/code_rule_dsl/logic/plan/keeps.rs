@@ -268,15 +268,15 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
         let mut next = Vec::with_capacity(rules.len());
         let mut next_origin = Vec::with_capacity(rules.len());
         for (rule, from) in rules.into_iter().zip(origin) {
-            let at = rule.body.iter().position(|l| l.atom().is_some_and(|a| inline.contains(&a.rel)));
+            let at = rule.body.iter().position(|l| l.atom().is_some_and(|a| inline.contains(a.rel.as_str())));
             match at {
                 Some(i) => {
                     let rel = rule.body[i].atom().map(|a| a.rel.clone()).unwrap_or_default();
-                    let defs: Vec<&Rule> = bodies[&rel].iter().collect();
+                    let defs: Vec<&Rule> = bodies[rel.as_str()].iter().collect();
                     match unfold(&rule, i, &defs, pass) {
                         Some(copies) => {
                             let mut into = from.1.clone();
-                            into.insert(rel);
+                            into.insert(rel.to_string());
                             next_origin.extend(copies.iter().map(|_| (from.0, into.clone())));
                             next.extend(copies);
                             changed = true;
@@ -301,14 +301,14 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
     }
     let unfinished: BTreeSet<String> = rules
         .iter()
-        .filter(|r| !inline.contains(&r.head.rel))
+        .filter(|r| !inline.contains(r.head.rel.as_str()))
         .flat_map(|r| r.body.iter().filter_map(Literal::atom))
-        .filter(|a| inline.contains(&a.rel))
-        .map(|a| a.rel.clone())
+        .filter(|a| inline.contains(a.rel.as_str()))
+        .map(|a| a.rel.to_string())
         .collect();
     // An inlined relation some reader still reads (a chain deeper than the passes) keeps its rules.
     let mut out = prog.clone();
-    let kept: Vec<(Rule, (usize, BTreeSet<String>))> = rules.into_iter().zip(origin).filter(|(r, _)| !inline.contains(&r.head.rel) || unfinished.contains(&r.head.rel)).collect();
+    let kept: Vec<(Rule, (usize, BTreeSet<String>))> = rules.into_iter().zip(origin).filter(|(r, _)| !inline.contains(r.head.rel.as_str()) || unfinished.contains(r.head.rel.as_str())).collect();
     copied(kept.iter().filter(|(_, (_, into))| !into.is_empty()).map(|(r, (o, into))| (super::obs_rule(&r.head, &r.body), super::obs_rule(&prog.rules[*o].head, &prog.rules[*o].body), into)));
     out.rules = kept.into_iter().map(|(r, _)| r).collect();
     let done: Vec<String> = inline.into_iter().filter(|r| !unfinished.contains(r)).collect();
@@ -371,9 +371,9 @@ fn price_all(
             // relation's own inputs, which no delta plan can: `rr_cx_reach(d, f) :- rr_cx_reach(d, e),
             // rr_cx_edge(e, f)` priced whole joined `rr_cx_edge`'s imports and modules first, and inlining it looked
             // 7.8 M work cheaper; run, each new reach row scanned every document's module (277 s of calls_cx).
-            let scc = sccs.iter().find(|s| s.contains(&reader.head.rel));
+            let scc = sccs.iter().find(|s| s.contains(reader.head.rel.as_str()));
             let deltas: Vec<usize> = (0..reader.body.len())
-                .filter(|&k| k != i && reader.body[k].atom().is_some_and(|a| !a.neg && scc.is_some_and(|s| s.contains(&a.rel))))
+                .filter(|&k| k != i && reader.body[k].atom().is_some_and(|a| !a.neg && scc.is_some_and(|s| s.contains(a.rel.as_str()))))
                 .collect();
             let firsts: Vec<Option<usize>> = if deltas.is_empty() { vec![None] } else { deltas.iter().map(|&k| Some(k)).collect() };
             let (mut own_est, mut est) = (0.0, 0.0);
@@ -533,7 +533,7 @@ fn refusals(prog: &Program, rules_of: &BTreeMap<&str, Vec<&Rule>>, sccs: &[BTree
             || prog.natives.contains_key(rel)
             || natives_read.contains(rel)
             // A native's rows are read by the strata its readers open (`components`, `dfs_first`): not copied into others.
-            || rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| prog.natives.contains_key(&a.rel))))
+            || rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| prog.natives.contains_key(a.rel.as_str()))))
         {
             Some("a lattice or a native's")
         } else if demanded.contains(rel) {
@@ -565,13 +565,13 @@ fn refusals(prog: &Program, rules_of: &BTreeMap<&str, Vec<&Rule>>, sccs: &[BTree
         for l in &r.body {
             match l {
                 Literal::Atom(a) if a.gated => {
-                    why.insert(a.rel.clone(), "read by a gated negation");
+                    why.insert(a.rel.to_string(), "read by a gated negation");
                 }
                 Literal::Agg { atom, .. } => {
-                    why.insert(atom.rel.clone(), "read inside an aggregate");
+                    why.insert(atom.rel.to_string(), "read inside an aggregate");
                 }
                 Literal::Atom(a) if a.args.iter().any(|t| matches!(t, Term::Call(..) | Term::Top)) => {
-                    why.insert(a.rel.clone(), "read with a computed argument");
+                    why.insert(a.rel.to_string(), "read with a computed argument");
                 }
                 _ => {}
             }
@@ -609,7 +609,7 @@ fn factorizable(prog: &Program, rules_of: &BTreeMap<&str, Vec<&Rule>>, estimates
                     for part in &parts {
                         let mut vars: BTreeSet<String> = BTreeSet::new();
                         part.iter().for_each(|l| vars.extend(l.vars()));
-                        let head = Atom { rel: format!("{rel}_part"), args: vars.into_iter().map(Term::Var).collect(), neg: false, gated: false };
+                        let head = Atom { rel: format!("{rel}_part").into(), args: vars.into_iter().map(Term::Var).collect(), neg: false, gated: false };
                         let rows = model.plan_rule(prog, &head, part, None).map_or(f64::INFINITY, |p| p.2);
                         parts_rows += rows;
                         texts.push(format!("{} [{rows:.0}]", part.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")));
@@ -1186,7 +1186,7 @@ fn estimate(prog: &Program, model: &mut Model, rules_of: &BTreeMap<&str, Vec<&Ru
                                 && !a.neg
                                 && let Some(k) = a.args.iter().position(|t| matches!(t, Term::Var(x) if x == v))
                             {
-                                if let Some(&d) = model.ndv.get(&(a.rel.clone(), k)) {
+                                if let Some(&d) = model.ndv.get(&(a.rel.to_string(), k)) {
                                     ndv = ndv.min(d);
                                 }
                             }
@@ -1262,7 +1262,7 @@ mod tests {
         )
         .unwrap();
         let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
-        let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
+        let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
         let mut model = Model { docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&prog), ndv: HashMap::new(), docof: HashMap::new(), view_src: HashMap::new(), inputs, derived };
         model.stats.nodes = 450_000.0;
         // Measured rows (an earlier chunk's), then distinct values by column.
