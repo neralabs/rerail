@@ -487,4 +487,29 @@ c(n, x) :- ast(d, n, {"language": "python", "rule": {"pattern": "f($X)"}}, X: x)
         assert_eq!(columns("rr_ast_0"), &["n"]);
         assert!(prog.inputs.contains(rel) && prog.decls.contains_key(rel));
     }
+
+    /// A `filePath` test below a matcher's root conjuncts (here in an `any`) is the document's: the matcher holds in
+    /// a file its path passes, by that branch, and elsewhere only by the other.
+    #[test]
+    fn a_nested_file_path_is_the_documents() {
+        let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("nested-file-path");
+        std::fs::create_dir_all(root.join("a")).unwrap();
+        std::fs::create_dir_all(root.join("b")).unwrap();
+        std::fs::write(root.join("a/x.py"), "f()\n").unwrap();
+        std::fs::write(root.join("b/y.py"), "f()\nzz()\n").unwrap();
+        let policy = root.with_extension("policy.rr");
+        let rule = r#"{"language": "python", "rule": {"all": [{"kind": "call"}, {"any": [{"filePath": {"regex": "^a/"}}, {"has": {"field": "function", "regex": "^zz"}}]}]}}"#;
+        std::fs::write(&policy, format!(".language python\n.violation hit(at: node) code \"X1\" \"hit\"\nhit(n) :- ast(d, n, {rule}).\n")).unwrap();
+        let report = crate::code_rule_dsl::tools::run_policies(&[policy.clone()], &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_file(&policy);
+        let mut hits: Vec<(String, i64)> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| (d["file"].as_str().or(d["path"].as_str()).unwrap_or("").rsplit('/').next().unwrap_or("").to_owned(), d["line"].as_i64().or(d["start_line"].as_i64()).unwrap_or(-1)))
+            .collect();
+        hits.sort();
+        assert_eq!(hits.iter().map(|h| h.0.as_str()).collect::<Vec<_>>(), ["x.py", "y.py"], "{report:#}");
+    }
 }

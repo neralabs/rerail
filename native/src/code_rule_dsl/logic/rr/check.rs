@@ -26,6 +26,8 @@ fn term_needs(t: &Term, bound: &BTreeSet<String>) -> BTreeSet<String> {
         Term::Call { args, .. } => args.iter().flat_map(|a| term_needs(a, bound)).collect(),
         Term::Bin { l, r, .. } => term_needs(l, bound).union(&term_needs(r, bound)).cloned().collect(),
         Term::Named(_, t) => term_needs(t, bound),
+        // `top` no literal binds is the lattice's top, a constant (`unbound`): `a = top` binds `a`.
+        Term::Var(v) if v == "top" && !bound.contains(v) => BTreeSet::new(),
         t => vars_of(t),
     }
 }
@@ -159,6 +161,17 @@ fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>,
                 && lv.is_subset(bound)
             {
                 return (BTreeSet::from([x.clone()]), lv, true);
+            }
+            // `m = @dot(q, x)` with `m` bound splits it at each dot (`split_dot`, the engine's `@cat` split: T's
+            // `cmp_binds`), binding `q` and `x`.
+            for (whole, parts) in [(l, r), (r, l)] {
+                if let (Term::Var(m), Term::Call { name, args, .. }) = (whole, parts)
+                    && name == "dot"
+                    && args.iter().all(|a| matches!(a, Term::Var(_)))
+                {
+                    let ready = force || bound.contains(m);
+                    return (args.iter().flat_map(vars_of).collect(), BTreeSet::from([m.clone()]), ready);
+                }
             }
             let vs: BTreeSet<String> = lv.union(&rv).cloned().collect();
             let ready = force || vs.is_subset(bound);

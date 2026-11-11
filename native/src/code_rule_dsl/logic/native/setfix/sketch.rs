@@ -1,4 +1,4 @@
-//! A column's statistics for the planner (decision 0110), in a fixed size whatever the rows: its distinct values
+//! A column's statistics for the planner (decision 0112), in a fixed size whatever the rows: its distinct values
 //! (a HyperLogLog of 256 registers, about 6.5% off), the sum of its values' row counts squared (a count sketch of 256
 //! counters, about 9% off), and, while it holds at most `SMALL` values, each value's exact count (then the distinct
 //! values and the sum are exact too). About 1.3 KB a column, so no index is kept for statistics.

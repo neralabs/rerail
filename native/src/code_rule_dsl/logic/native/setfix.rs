@@ -40,10 +40,10 @@ mod scalars;
 mod liveness;
 /// The index-cost spike: column orders as sorted runs of row ids (`RERAIL_INDEX_SPIKE`).
 mod ordered;
-/// A relation's indexes (decision 0110): sorted orders of row ids for the key sets probes bind, one run a wave.
+/// A relation's indexes (decision 0112): sorted orders of row ids for the key sets probes bind, one run a wave.
 mod runs;
 use runs::Index;
-/// A column's statistics in a fixed size (decision 0110): no index is kept for them.
+/// A column's statistics in a fixed size (decision 0112): no index is kept for them.
 mod sketch;
 use sketch::Sketch;
 pub(in crate::code_rule_dsl) mod rowcode;
@@ -272,7 +272,7 @@ fn kill(dead: &mut Vec<u64>, id: u32) -> bool {
     !was
 }
 /// A relation's tuples in insertion order, flat (`k` columns each); `lo..hi` is the previous wave's delta, the rows
-/// added in wave `wave`. `idx`: its orders (decision 0110), sorted row ids, one for each chain of key sets its probes
+/// added in wave `wave`. `idx`: its orders (decision 0112), sorted row ids, one for each chain of key sets its probes
 /// bind (`want`); the first holds every column and is the dedup test. Each is a list of runs: a wave's rows become one
 /// run when its delta is set (`set_delta`), so rows `indexed..n`, pushed since, are in none yet: `pending` holds them
 /// for the dedup test until then. `sketches`: each column's statistics (`Sketch`), over rows `..indexed`.
@@ -4450,7 +4450,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
 mod posted_tests {
     use super::*;
 
-    /// Decision 0110's shape: a relation's indexes are sorted orders, only for the key sets its probes bind, the
+    /// Decision 0112's shape: a relation's indexes are sorted orders, only for the key sets its probes bind, the
     /// first holding every column as its dedup test; a wave's rows are one run (its delta); a maintained relation
     /// started from a kept one shares the kept one's runs rather than copying them; an order holds under 4.5 bytes
     /// a row (an id and its fences).

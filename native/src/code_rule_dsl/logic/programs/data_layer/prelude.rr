@@ -17,11 +17,31 @@ docof(n, d) :- node(d, n, _, _, _).
 start(n, s) :- node(_, n, _, s, _).
 
 // Facts the rules read that no producer makes yet (t17, census category `facts:crossfile`).
-// `module_of`: the document's module from the package roots (W's `file.module`; facts-a refused it at compile).
 // `reference_edge`: W's `references` linker, a definition referring to another, across files.
-.decl module_of(d: number, m: symbol)
 .decl reference_edge(n: node, t: node)
-.input module_of, reference_edge
+.input reference_edge
+
+// `module_of`: W's `file.module` (`python_module_path`). The packages are the directories holding an `__init__.py`
+// ("" for the root's). From a file's directory, climbing while each directory is a package, the highest reached is
+// the package root; the module is the path below the root's parent, the file by its stem, with dots. Outside a
+// package, or where the climb reaches the root's own package, it is the stem.
+.decl dl_package(x: symbol)
+dl_package(x) :- doc(_, p), @rx_matches(p, "(^|/)__init__[.]py$") = 1, x = @rx_replace(p, "/?__init__[.]py$", "").
+.decl dl_package_root(x: symbol, r: symbol)
+dl_package_root(x, x) :- dl_package(x), x != "", y = @rx_replace(x, "(^|/)[^/]*$", ""), !dl_package(y).
+dl_package_root(x, r) :- dl_package(x), x != "", y = @rx_replace(x, "(^|/)[^/]*$", ""), y != "", dl_package(y),
+    dl_package_root(y, r).
+.decl dl_rooted(x: symbol)
+dl_rooted(x) :- dl_package_root(x, _).
+.decl dl_module_file(d: number, p: symbol, x: symbol)
+dl_module_file(d, p, x) :- doc(d, p), @rx_matches(p, "[.]pyi?$") = 1, x = @rx_replace(p, "(^|/)[^/]*$", "").
+.decl dl_module_path(d: number, q: symbol)
+dl_module_path(d, q) :- dl_module_file(d, p, x), dl_package_root(x, r), @rx_replace(r, "(^|/)[^/]*$", "") = "", q = p.
+dl_module_path(d, q) :- dl_module_file(d, p, x), dl_package_root(x, r), b = @rx_replace(r, "(^|/)[^/]*$", ""), b != "",
+    q = @substr(p, @length(b) + 2, @length(p)).
+dl_module_path(d, q) :- dl_module_file(d, p, x), !dl_rooted(x), q = @rx_replace(p, "^.*/", "").
+.decl module_of(d: number, m: symbol)
+module_of(d, m) :- dl_module_path(d, q), m = @replace(@rx_replace(q, "(.)[.][^./]*$", "$1"), "/", ".").
 
 // The document's module from its path alone, as the rules' SQL computes it.
 .decl path_module(d: number, m: symbol)

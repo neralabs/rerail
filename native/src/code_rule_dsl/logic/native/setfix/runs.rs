@@ -1,4 +1,4 @@
-//! A relation's indexes (decision 0110): sorted orders of its row ids, only for the key sets its probes bind. An
+//! A relation's indexes (decision 0112): sorted orders of its row ids, only for the key sets its probes bind. An
 //! order sorts the rows by its columns in turn (then by id), so every prefix of its columns is a range of it: one order
 //! answers each key set that is a prefix of it, in any column order. The first order holds every column, so it also
 //! answers "is this row already here?" (the dedup test): no hash set is kept.

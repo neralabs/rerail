@@ -85,6 +85,9 @@ pub(crate) struct Projection {
     /// reads the text of a node of any kind.
     long_text: BTreeSet<String>,
     long_text_any: bool,
+    /// The nodes whose `text` a rule reads (`TextDemand::read`): those of these kinds, or in these fields of their
+    /// parent. `None` is every node.
+    text_nodes: Option<TextNodes>,
     /// The grammars whose guests keep their partial tree when they do not parse (`.on guest_error partial`,
     /// decision 0055 §6); `"*"` is every grammar. Any other broken guest is withheld.
     pub(crate) partial: BTreeSet<String>,
@@ -92,7 +95,7 @@ pub(crate) struct Projection {
 
 impl Projection {
     pub(crate) fn core() -> Self {
-        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), ast_patterns: Vec::new(), text_spans: None, long_text: BTreeSet::new(), long_text_any: false, partial: BTreeSet::new() }
+        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), ast_patterns: Vec::new(), text_spans: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: BTreeSet::new() }
     }
     fn wants(&self, rel: &str) -> bool {
         self.reads.as_ref().is_none_or(|r| r.contains(rel))
@@ -111,18 +114,25 @@ impl Projection {
             [Value::Str(k), Value::Str(v)] if v == "partial" => k.strip_prefix("errors").map(|g| g.strip_prefix(':').unwrap_or("*").to_owned()),
             _ => None,
         });
-        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), ast_patterns: program.ast_patterns.iter().cloned().collect(), text_spans: Some(span_text_demand(program)), long_text: BTreeSet::new(), long_text_any: false, partial: partial.collect() }
+        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), ast_patterns: program.ast_patterns.iter().cloned().collect(), text_spans: Some(span_text_demand(program)), long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: partial.collect() }
     }
 
     /// This projection, with `text` made at any length for the node kinds whose text the program's rules read
     /// ([`text_kind_demand`]; `matchers` are the program's `ast` relations, by relation, as `matchers::lower` gives them).
     pub(crate) fn with_long_text(mut self, program: &crate::code_rule_dsl::logic::front::Program, matchers: &[(String, String, Vec<String>)]) -> Self {
-        let any;
-        (self.long_text, any) = text_kind_demand(program, matchers);
+        let TextDemand { long, any, read, wide } = text_kind_demand(program, matchers);
+        self.long_text = long;
         self.long_text_any = !any.is_empty();
         crate::code_rule_dsl::logic::profile::decision("text past the inline bound", || {
             if self.long_text_any { format!("every node ({} rules read the text of a node of any kind)", any.len()) } else { format!("{} kinds: {}", self.long_text.len(), self.long_text.iter().take(12).cloned().collect::<Vec<_>>().join(", ")) }
         });
+        crate::code_rule_dsl::logic::profile::decision("nodes with text", || match &read {
+            None => format!("every node ({} reads the text of a node it does not narrow)", wide.as_deref().unwrap_or("a rule")),
+            Some(TextNodes { kinds, fields }) => format!("{} kinds ({}), and the nodes in {} fields ({})", kinds.len(), kinds.iter().take(8).cloned().collect::<Vec<_>>().join(", "), fields.len(), fields.iter().take(8).cloned().collect::<Vec<_>>().join(", ")),
+        });
+        if !std::env::var("RERAIL_TEXT_NODES").is_ok_and(|v| v == "all") {
+            self.text_nodes = read;
+        }
         self
     }
 
@@ -133,6 +143,25 @@ impl Projection {
             |spans| spans.contains(&within),
         )
     }
+}
+
+/// The nodes whose text a rule reads: those of `kinds`, and those in a field of `fields` of their parent.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct TextNodes {
+    pub(crate) kinds: BTreeSet<String>,
+    pub(crate) fields: BTreeSet<String>,
+}
+
+/// What the rules read of `text` (`text_kind_demand`).
+struct TextDemand {
+    /// The kinds whose text is read at any length.
+    long: BTreeSet<String>,
+    /// The text atoms (rule, body position) of a node of any kind, no twin reading its long text.
+    any: Vec<(usize, usize)>,
+    /// The nodes whose text (within the bound) is read; `None` every node.
+    read: Option<TextNodes>,
+    /// Where `read` is every node: the first rule that reads the text of a node it does not narrow.
+    wide: Option<String>,
 }
 
 /// Whether `v` is a node in a field whose every kind is a leaf (`field(x, "attribute", v)`): a token's text, which
@@ -159,12 +188,13 @@ fn short_constant(text: &crate::code_rule_dsl::logic::front::Atom) -> bool {
 pub(crate) fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::Program, matchers: &[(String, String, Vec<String>)]) -> usize {
     use crate::code_rule_dsl::logic::front::{Literal, Term};
     const MAX: usize = 3;
-    let (_, any) = text_kind_demand(program, matchers);
+    let TextDemand { any, .. } = text_kind_demand(program, matchers);
     let mut by_rule: std::collections::BTreeMap<usize, Vec<usize>> = Default::default();
     for (r, i) in any {
         by_rule.entry(r).or_default().push(i);
     }
-    let mut twins = Vec::new();
+    // Each rule's twins follow it, so a rule's place does not depend on what other rules the program holds.
+    let mut twins: std::collections::BTreeMap<usize, Vec<crate::code_rule_dsl::logic::front::Rule>> = Default::default();
     let mut fresh = 0usize;
     for (r, atoms) in by_rule.into_iter().filter(|(_, a)| a.len() <= MAX) {
         for set in 1..(1u32 << atoms.len()) {
@@ -181,11 +211,17 @@ pub(crate) fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::
                 };
                 twin.body[i] = Literal::Cmp { l: t, op: "=", r: Term::Call("rr_node_text".into(), vec![v]) };
             }
-            twins.push(twin);
+            twins.entry(r).or_default().push(twin);
         }
     }
-    let made = twins.len();
-    program.rules.extend(twins);
+    let made = twins.values().map(Vec::len).sum();
+    if made > 0 {
+        let rules = std::mem::take(&mut program.rules);
+        for (r, rule) in rules.into_iter().enumerate() {
+            program.rules.push(rule);
+            program.rules.extend(twins.remove(&r).unwrap_or_default());
+        }
+    }
     made
 }
 
@@ -226,7 +262,7 @@ pub(crate) fn long_node_text(n: i64) -> Option<String> {
 /// `text(v, …)` then demands `v`'s kinds (`core_rr::TEXT_INLINE` holds below them only). Fixed by the same body only,
 /// `text(w, t)` over `classes(c, _), child(w, c, _), kind(w, "decorated_definition")` was demanded, but a rule reading
 /// `text(n, t)` of `nodes(n)` was not, and saw no text past the bound.
-fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::Program, matchers: &[(String, String, Vec<String>)]) -> (BTreeSet<String>, Vec<(usize, usize)>) {
+fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::Program, matchers: &[(String, String, Vec<String>)]) -> TextDemand {
     use crate::code_rule_dsl::logic::front::{Literal, Term};
     // A kind as the program holds it (`python:call`) or as a grammar names it (`call`).
     let bare = |k: &str| k.rsplit(':').next().unwrap_or(k).to_owned();
@@ -300,22 +336,124 @@ fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::Program, match
             r.body.iter().any(|l| matches!(l, Literal::Cmp { r: Term::Call(f, args), .. } if f == "rr_node_text" && matches!(args.first(), Some(Term::Var(x)) if x == v)))
         })
     };
+    // Whether `v` is a span (a `span` column binds it): its text is a span's (`text_spans`), not a node's.
+    let span = |body: &[Literal], v: &str| {
+        body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel != "text").any(|a| {
+            let types = program.decls.get(&a.rel);
+            a.args.iter().enumerate().any(|(c, t)| matches!(t, Term::Var(x) if x == v) && types.and_then(|ts| ts.get(c)).is_some_and(|(_, ty)| ty == "span"))
+        })
+    };
+    // A matcher capture's node: the kinds and fields its matcher gives it (`{"pattern": "$N", "field": "name"}`, or a
+    // `kind` or `field` beside the pattern in an `all`). Columns past the root are the captures, in order. An
+    // `inside`'s `field` is where the node it holds sits in that ancestor, not the ancestor's own.
+    let captured = |body: &[Literal], v: &str| -> (BTreeSet<String>, BTreeSet<String>) {
+        fn own(o: &serde_json::Map<String, serde_json::Value>, ancestor: bool, kinds: &mut BTreeSet<String>, fields: &mut BTreeSet<String>) {
+            kinds.extend(o.get("kind").and_then(|k| k.as_str()).map(str::to_owned));
+            if !ancestor {
+                fields.extend(o.get("field").and_then(|k| k.as_str()).map(str::to_owned));
+            }
+        }
+        // The constraints on the node `$name` matches, read where its pattern sits.
+        type Outer<'a> = Option<(&'a serde_json::Map<String, serde_json::Value>, bool)>;
+        fn find(v: &serde_json::Value, name: &str, ancestor: bool, outer: Outer<'_>, out: &mut Option<(BTreeSet<String>, BTreeSet<String>)>) {
+            match v {
+                serde_json::Value::Object(o) => {
+                    if o.get("pattern").and_then(|p| p.as_str()) == Some(name) {
+                        let (mut kinds, mut fields) = (BTreeSet::new(), BTreeSet::new());
+                        for (m, ancestor) in [Some((o, ancestor)), outer].into_iter().flatten() {
+                            own(m, ancestor, &mut kinds, &mut fields);
+                            for sib in m.get("all").and_then(|a| a.as_array()).into_iter().flatten().filter_map(|x| x.as_object()) {
+                                own(sib, false, &mut kinds, &mut fields);
+                            }
+                        }
+                        // Two sites of one capture: either constrains it, or none does.
+                        *out = Some(match out.take() {
+                            None => (kinds, fields),
+                            Some((k, f)) if k.is_empty() && f.is_empty() || kinds.is_empty() && fields.is_empty() => Default::default(),
+                            Some((k, f)) => (k.union(&kinds).cloned().collect(), f.union(&fields).cloned().collect()),
+                        });
+                    }
+                    for (key, x) in o {
+                        if key == "all" {
+                            for m in x.as_array().into_iter().flatten() {
+                                find(m, name, false, Some((o, ancestor)), out);
+                            }
+                        } else {
+                            find(x, name, key == "inside", None, out);
+                        }
+                    }
+                }
+                serde_json::Value::Array(a) => a.iter().for_each(|x| find(x, name, false, None, out)),
+                _ => {}
+            }
+        }
+        let mut got: Option<(BTreeSet<String>, BTreeSet<String>)> = None;
+        for a in body.iter().filter_map(Literal::atom).filter(|a| !a.neg) {
+            let Some((_, text, names)) = matchers.iter().find(|(rel, _, _)| *rel == a.rel) else { continue };
+            for (c, t) in a.args.iter().enumerate().skip(1) {
+                if !matches!(t, Term::Var(x) if x == v) {
+                    continue;
+                }
+                let Some(name) = names.get(c - 1) else { continue };
+                let mut out = None;
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(text) {
+                    find(&json, &format!("${name}"), false, None, &mut out);
+                }
+                let (kinds, fields) = out.unwrap_or_default();
+                if kinds.is_empty() && fields.is_empty() {
+                    continue;
+                }
+                // Bound by two captures: the narrower is enough, the first is kept.
+                got.get_or_insert((kinds.iter().map(|k| bare(k)).collect(), fields));
+            }
+        }
+        got.unwrap_or_default()
+    };
+    // The fields `v` is a node in (`field(_, "F", v)`).
+    let fields_of = |body: &[Literal], v: &str| -> BTreeSet<String> {
+        body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel == "field").filter_map(|a| match (a.args.get(1), a.args.get(2)) {
+            (Some(Term::Str(f)), Some(Term::Var(x))) if x == v => Some(f.clone()),
+            _ => None,
+        }).collect()
+    };
     let (mut kinds, mut any) = (BTreeSet::new(), Vec::new());
+    let mut read = Some(TextNodes::default());
+    let mut wide = None;
     for (r, rule) in program.rules.iter().enumerate() {
         for (i, l) in rule.body.iter().enumerate() {
             let Literal::Atom(text) = l else { continue };
             if text.neg || text.rel != "text" {
                 continue;
             }
-            let Some(Term::Var(v)) = text.args.first() else { continue };
-            match of_var(&columns, &rule.body, v) {
+            let Some(Term::Var(v)) = text.args.first() else {
+                read = None;
+                wide.get_or_insert_with(|| rule.head.rel.clone());
+                continue;
+            };
+            let fixed = of_var(&columns, &rule.body, v);
+            if let Some(nodes) = &mut read {
+                match &fixed {
+                    Some(k) => nodes.kinds.extend(k.iter().cloned()),
+                    None if span(&rule.body, v) => {}
+                    None => match (fields_of(&rule.body, v), captured(&rule.body, v)) {
+                        (f, _) if !f.is_empty() => nodes.fields.extend(f),
+                        (_, (k, _)) if !k.is_empty() => nodes.kinds.extend(k),
+                        (_, (_, f)) if !f.is_empty() => nodes.fields.extend(f),
+                        _ => {
+                            wide = Some(format!("{}, reading text({v}, …)", rule.head.rel));
+                            read = None
+                        }
+                    },
+                }
+            }
+            match fixed {
                 Some(k) => kinds.extend(k),
                 None if leaf_field(&rule.body, v) || short_constant(text) || twinned(&rule.head.rel, v) => {}
                 None => any.push((r, i)),
             }
         }
     }
-    (kinds, any)
+    TextDemand { long: kinds, any, read, wide }
 }
 
 /// Plan-time provenance, not a per-file scan. Only copying a span (including variable equality)
@@ -1147,6 +1285,7 @@ impl Batch {
         };
         c.long_text = projection.long_text.clone();
         c.long_text_any = projection.long_text_any;
+        c.text_nodes = projection.text_nodes.as_ref().map(|t| (t.kinds.clone(), t.fields.clone()));
         let wants_text = core && projection.wants("text");
         let wants_source_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::SpanIn::Source);
         let wants_line_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::SpanIn::Line);
@@ -2097,7 +2236,8 @@ fn matched(
                 .collect()
         })
         .collect();
-    let docs: Vec<crate::code_rule_dsl::tape::TapeDoc> = held.iter().map(|&i| tapes[i].1.clone()).collect();
+    // Each read at its path, which a `filePath` test inside a matcher tests.
+    let docs: Vec<crate::code_rule_dsl::tape::TapeDoc> = held.iter().map(|&i| tapes[i].1.with_path(&tapes[i].2)).collect();
     let nodes: u64 = docs.iter().map(|d| d.transducer_len() as u64).sum();
     let (found, limited) = if docs.is_empty() || active.iter().all(|a| !a.iter().any(|&on| on)) {
         (vec![vec![BTreeSet::new(); docs.len()]; matchers.len()], Vec::new())

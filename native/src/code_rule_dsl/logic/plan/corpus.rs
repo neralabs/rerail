@@ -4951,7 +4951,9 @@ fn run_observed(
                         let (loaded, p) = kept_strata::load(store, root, ckey, &cross.program, &cross_inputs, &digests)?;
                         (cell, kept_frames) = (loaded, Some(p));
                     }
-                    let frames_space = kept_strata::program_space(root, &ckey);
+                    // The phase's space (phase 1's `sources` its own): one per program would start every edited
+                    // program from no frame, and two programs could not share a relation.
+                    let frames_space = kept_strata::space(root);
                     if cell.is_none() && from_frames.is_some() {
                         let _s = span("the kept part, from the frames");
                         cell = Some(retain::Retained::from_frames(store, frames_space, ckey, &cross.program, &digests)?);

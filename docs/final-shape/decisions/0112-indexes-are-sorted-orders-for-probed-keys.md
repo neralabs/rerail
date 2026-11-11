@@ -1,4 +1,4 @@
-# 0110: A relation's indexes are sorted orders for the keys its probes bind, 4.5–8 bytes a row
+# 0112: A relation's indexes are sorted orders for the keys its probes bind, 4.5–8 bytes a row
 
 Status: being built (2026-11-10).
 
