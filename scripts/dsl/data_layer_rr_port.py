@@ -147,11 +147,16 @@ def rewrite_rule(rule, fresh):
         args = args_of(rule[m.end():end - 1])
         fmt = args[0]
         assert fmt.startswith('"') and fmt.endswith('"'), fmt
-        pieces = re.split(r"(%[sd])", fmt[1:-1])
+        pieces = re.split(r"(%[sd]|%0[1-9][0-9]*d)", fmt[1:-1])
         parts, k = [], 1
         for piece in pieces:
             if piece in ("%s", "%d"):
                 parts.append(args[k] if piece == "%s" else f"@rr_to_string({args[k]})"); k += 1
+            elif re.fullmatch(r"%0[1-9][0-9]*d", piece):
+                # Zero-padded to width w (a non-negative number below 10^w, as the ordinals it formats are): the last
+                # w characters of w zeros and the number, as SQLite's substr takes a negative start.
+                w = int(piece[2:-1])
+                parts.append(f'@sql_substr(@concat("{"0" * w}", @rr_to_string({args[k]})), -{w}, {w})'); k += 1
             elif piece:
                 assert "%" not in piece, fmt
                 parts.append(f'"{piece}"')
@@ -185,6 +190,13 @@ for f in files:
     t = t.replace('node_id(n, id) :- nodes(n), node(_, n, k, s, e), id = @printf("%s:%d:%d", k, s, e).',
                   'node_id(n, id) :- nodes(n), id = @rr_to_string(n).')
     t = re.sub(r"\bdoc\(\s*([^,()]+?)\s*,\s*([^,()]+?|\"[^\"]*\")\s*\)", r"doc(\1, \2, _)", t)
+    # `in_list("NAME", v)`, one relation over every list, holds kinds in one list and field names in another: its
+    # column cannot be both. Each list becomes its own relation, `in_list_NAME(v)`.
+    if re.search(r"^\.decl in_list\(list: symbol, v: symbol\)", t, re.M):
+        names = sorted(set(re.findall(r'\bin_list\("(\w+)",', t)))
+        assert not re.search(r'\bin_list\((?!")(?!list: symbol)', t), "a list named by a variable"
+        t = re.sub(r'\bin_list\("(\w+)",\s*', r"in_list_\1(", t)
+        t = re.sub(r"^\.decl in_list\(list: symbol, v: symbol\)\n", "".join(f".decl in_list_{n}(v: symbol)\n" for n in names), t, flags=re.M)
     fresh = [0]
     t = "".join(rewrite_rule(s, fresh) if ":-" in s else s for s in statements(t))
     if f != main:
