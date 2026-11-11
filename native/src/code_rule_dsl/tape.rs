@@ -1635,11 +1635,32 @@ pub struct HostLink {
 /// from its first leaf to its last. A node's span may run past those leaves: a root's holds the
 /// white space after its last statement, and a statement ending in a `;` its embedder wrote over
 /// no bytes holds the white space before it, which stands for nothing of the node's.
+///
+/// The tape stores no implied token (RER-131, `tokens`): `echo` and `;` a Blade echo is written as,
+/// the `;` marker Vue's script and template programs start with. Their text is in the gaps a node's
+/// stored children leave in its span, the source `structural_before` and `structural_after` hold
+/// (core.rr): comments are nodes, so a gap is implied tokens and white space only, and each run of
+/// it that is not white space (`implied`) is read as a leaf. Which tokens a run holds does not
+/// matter here (`TokenGrammar::gaps` would say): only whether its bytes stand for the file's.
 fn node_extents(doc: &TapeDoc, segments: &SegmentMap) -> Vec<(u32, u32)> {
     let nodes = &doc.data[..];
     const NONE_YET: (u32, u32) = (u32::MAX, 0);
     let join = |into: &mut (u32, u32), (start, end): (u32, u32)| {
         *into = (into.0.min(start), into.1.max(end));
+    };
+    let text = doc.source.as_bytes();
+    // The implied tokens of `start..end`, a gap between a node's stored children (a
+    // `structural_before`/`structural_after` source): its runs of text that are not white space.
+    let implied = |start: u32, end: u32, leaf: &mut dyn FnMut(u32, u32)| {
+        let gap = text.get(start as usize..end as usize).unwrap_or_default();
+        let mut at = 0;
+        while at < gap.len() {
+            let Some(from) = gap[at..].iter().position(|b| !b.is_ascii_whitespace()) else { break };
+            let from = at + from;
+            let to = gap[from..].iter().position(|b| b.is_ascii_whitespace()).map_or(gap.len(), |n| from + n);
+            leaf(start + from as u32, start + to as u32);
+            at = to;
+        }
     };
     // Per node: the extent of its leaves standing for bytes, and of all its leaves.
     let mut standing = vec![NONE_YET; nodes.len()];
@@ -1650,6 +1671,30 @@ fn node_extents(doc: &TapeDoc, segments: &SegmentMap) -> Vec<(u32, u32)> {
             all[index] = (rec.start, rec.end);
             if segments.stands_for(rec.start as usize..rec.end as usize) {
                 standing[index] = (rec.start, rec.end);
+            }
+        } else {
+            // The gaps its stored children leave in its span.
+            let mut at = rec.start;
+            let mut child = rec.first;
+            let mut gaps = Vec::new();
+            while child != NONE {
+                let c = &nodes[child as usize];
+                if c.start > at {
+                    gaps.push((at, c.start));
+                }
+                at = at.max(c.end);
+                child = c.next;
+            }
+            if rec.end > at {
+                gaps.push((at, rec.end));
+            }
+            for (start, end) in gaps {
+                implied(start, end, &mut |from, to| {
+                    join(&mut all[index], (from, to));
+                    if segments.stands_for(from as usize..to as usize) {
+                        join(&mut standing[index], (from, to));
+                    }
+                });
             }
         }
         if rec.parent != NONE {
