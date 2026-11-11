@@ -31,13 +31,19 @@ def enum_spans(path):
     return [(int(s), int(e)) for f, s, e, kind, name, mod, cfg in (l.split('\t') for l in out.splitlines()) if kind == 'enum']
 
 
+def struct_spans(path):
+    """Byte spans of the file's structs and unions (where a field is declared)."""
+    out = subprocess.run([TOOL, 'items', path], capture_output=True, text=True, check=True).stdout
+    return [(int(s), int(e)) for f, s, e, kind, name, mod, cfg in (l.split('\t') for l in out.splitlines()) if kind in ('struct', 'union')]
+
+
 def item_name(item):
     """The name an index symbol ends in (`a/b/Name#`, `a/b/f().`, `a/B#field.`)."""
     m = re.findall(r'[A-Za-z_][A-Za-z_0-9]*', item.split('/')[-1])
     return m[-1] if m else None
 
 
-def locate(lines, i, c, name, kind):
+def locate(lines, i, c, name, kind, byte_start=None, structs=()):
     """The (line, column) of the item's name: the index's, when the file still has the name there, else the line
     nearest to it where the name follows a keyword (a field: begins a `name:`). None: not found (refused)."""
     if name is None:
@@ -47,6 +53,9 @@ def locate(lines, i, c, name, kind):
             return False
         before = lines[j][:col]
         if kind == 'field':
+            b = byte_start[j] + len(lines[j][:col].encode())
+            if not any(s <= b < e for s, e in structs):
+                return False  # a struct literal's field, a pattern's: not a declaration
             return re.fullmatch(r'\s*(?:pub(?:\s*\([^)]*\))?\s+)?', before) is not None and lines[j][col + len(name):].lstrip().startswith(':')
         return KEYWORD.search(before) is not None
     if i < len(lines) and ok(i, c):
@@ -79,10 +88,16 @@ def main(tsv, *flags):
             byte_start.append(byte_start[-1] + len(x.encode()) + 1)
         traits = trait_spans(p)
         enums = enum_spans(p)
+        structs = struct_spans(p)
         edits = []  # (line index, col start, col end, text)
         for l, c, kind, now, at, item in items:
             if now == 'private':
-                found = locate(lines, l - 1, c, item_name(item), kind)
+                if kind == 'field' and l - 1 < len(lines):
+                    b0 = byte_start[l - 1] + len(lines[l - 1][:c].encode())
+                    if any(s <= b0 < e for s, e in enums) and not any(s <= b0 < e for s, e in structs):
+                        done['variant field'] += 1
+                        continue
+                found = locate(lines, l - 1, c, item_name(item), kind, byte_start, structs)
                 if found is None:
                     refused.append(f'{f}:{l} {item}: not at the index\'s place nor near it (a stale index)')
                     continue
