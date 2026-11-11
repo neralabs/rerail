@@ -806,7 +806,6 @@ impl CompiledCodeRule {
             }
             ClauseKind::Budget { query, .. } => query.ast.query.reads_import_targets(),
             ClauseKind::Llm => false,
-            #[cfg(test)]
             ClauseKind::Relational(plan) => plan
                 .inputs
                 .iter()
@@ -824,7 +823,6 @@ impl CompiledCodeRule {
             }
             ClauseKind::Budget { query, .. } => query.ast.query.reads_text(),
             ClauseKind::Llm => false,
-            #[cfg(test)]
             ClauseKind::Relational(plan) => plan
                 .inputs
                 .iter()

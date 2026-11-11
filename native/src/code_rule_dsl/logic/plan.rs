@@ -6000,14 +6000,43 @@ fn temp_in_memory(db: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// At a run's end: its connection is in `TEMP_LEFT` when the run made a table or a view, or kept one.
+/// At a run's end: its connection is in `TEMP_LEFT` when the run made a table or a view, or kept one. While the run
+/// lasts, SQLite's authorizer on its connection notes each table or view made (`TempLeft::watch`), with no statement
+/// of its own; the run's end takes it away.
 struct TempLeft {
     scope: usize,
     made: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    db: *mut rusqlite::ffi::sqlite3,
+}
+
+/// The authorizer's callback: notes a table or view made in `made` (an `AtomicBool`); every action is allowed.
+unsafe extern "C" fn note_made(made: *mut std::ffi::c_void, action: std::ffi::c_int, _: *const std::ffi::c_char, _: *const std::ffi::c_char,
+                               _: *const std::ffi::c_char, _: *const std::ffi::c_char) -> std::ffi::c_int {
+    use rusqlite::ffi::*;
+    if matches!(action, SQLITE_CREATE_TEMP_TABLE | SQLITE_CREATE_TEMP_VIEW | SQLITE_CREATE_TEMP_INDEX | SQLITE_CREATE_TABLE | SQLITE_CREATE_VIEW) {
+        // SAFETY: `made` is the `AtomicBool` of the `TempLeft` that installed this callback, which removes it before
+        // its `Arc` is dropped.
+        unsafe { (*(made as *const std::sync::atomic::AtomicBool)).store(true, std::sync::atomic::Ordering::Relaxed) };
+    }
+    SQLITE_OK
+}
+
+impl TempLeft {
+    /// Notes the tables and views `db` makes until the guard drops. rusqlite 0.41's `authorizer` takes the connection
+    /// mutably (a run holds it shared), so the callback is SQLite's own, set and taken away here.
+    fn watch(db: &Connection, scope: usize) -> Self {
+        let made = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        // SAFETY: the handle is the open connection's, which outlives the run (the guard is the run's local).
+        let handle = unsafe { db.handle() };
+        unsafe { rusqlite::ffi::sqlite3_set_authorizer(handle, Some(note_made), std::sync::Arc::as_ptr(&made) as *mut std::ffi::c_void) };
+        TempLeft { scope, made, db: handle }
+    }
 }
 
 impl Drop for TempLeft {
     fn drop(&mut self) {
+        // SAFETY: as in `watch`; no callback reads `made` once this returns.
+        unsafe { rusqlite::ffi::sqlite3_set_authorizer(self.db, None, std::ptr::null_mut()) };
         let made = self.made.load(std::sync::atomic::Ordering::Relaxed);
         if let Ok(mut m) = TEMP_LEFT.lock() {
             m.entry(self.scope).or_default().temp = made;
@@ -6187,18 +6216,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
             .collect::<rusqlite::Result<_>>()?
     };
-    let made_temp = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    {
-        use rusqlite::hooks::{AuthAction, Authorization};
-        let made = std::sync::Arc::clone(&made_temp);
-        db.authorizer(Some(move |ctx: rusqlite::hooks::AuthContext<'_>| {
-            if matches!(ctx.action, AuthAction::CreateTempTable { .. } | AuthAction::CreateTempView { .. } | AuthAction::CreateTempIndex { .. } | AuthAction::CreateTable { .. } | AuthAction::CreateView { .. }) {
-                made.store(true, std::sync::atomic::Ordering::Relaxed);
-            }
-            Authorization::Allow
-        }))?;
-    }
-    let _left_after = TempLeft { scope, made: std::sync::Arc::clone(&made_temp) };
+    let _left_after = TempLeft::watch(db, scope);
     let mut old_views: HashMap<String, String> = HashMap::new();
     for (ty, name, sql) in temp {
         if ty == "view" {
@@ -6341,7 +6359,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         // SQLite keeps a temp view's statement without `TEMP`.
         if old_views.remove(&rel).as_deref() == Some(&view.replacen("CREATE TEMP VIEW", "CREATE VIEW", 1)) {
             // Kept as the last run made it: still in SQL, so the next run asks what is left.
-            made_temp.store(true, std::sync::atomic::Ordering::Relaxed);
+            _left_after.made.store(true, std::sync::atomic::Ordering::Relaxed);
         } else {
             db.execute_batch(&format!("DROP VIEW IF EXISTS temp.{}; {view}", crate::code_rule_dsl::logic::sql::ident(&rel)))?;
         }

@@ -665,7 +665,7 @@ impl ContentStore {
     fn sibling(&self) -> ContentStore {
         ContentStore {
             database_path: self.database_path.clone(),
-            connection: ThreadConnection { database_path: self.database_path.clone() },
+            connection: ThreadConnection::new(self.database_path.clone(), self.connection.identity()),
             compression_level: self.compression_level,
             decompressed_cache: Mutex::new(DecompressedReadCache::new(DEFAULT_READ_CACHE_BYTES, DEFAULT_DECOMPRESSED_CACHE_TTL)),
             local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),

@@ -174,7 +174,7 @@ pub(in crate::code_rule_dsl) fn intern_batch<'a>(conn: &Connection, texts: impl 
 pub fn sym_text_of(conn: &Connection, a: i64) -> Result<String> {
     let syms = symbols(conn)?;
     let s = syms.read().unwrap();
-    if a < 0 || a as usize >= s.len() {
+    if !s.known(a)? {
         return Err(err(format!("no symbol {a}")));
     }
     Ok(s.name(a))
@@ -224,7 +224,7 @@ pub fn register_symbols(conn: &Connection) -> Result<()> {
 pub(in crate::code_rule_dsl) fn symbol_text(conn: &Connection, atom: i64) -> Result<String> {
     let symbols=symbols(conn)?;
     let s=symbols.read().unwrap();
-    if atom<0 || atom as usize>=s.len(){return Err(err(format!("no symbol {atom}")))}
+    if !s.known(atom)? {return Err(err(format!("no symbol {atom}")))}
     Ok(s.name(atom).to_owned())
 }
 
@@ -2196,7 +2196,7 @@ pub fn output_rows(conn: &Connection, table: &str, text: &[bool]) -> Result<Opti
         let mut vals = Vec::with_capacity(row.len());
         for (c, &v) in row.iter().enumerate() {
             vals.push(if text.get(c).copied().unwrap_or(false) {
-                if v < 0 || v as usize >= syms.len() {
+                if !syms.known(v)? {
                     return Err(err(format!("{table}: no symbol {v}")));
                 }
                 Value::Text(syms.name(v))
@@ -2221,7 +2221,7 @@ pub fn source_rows(conn: &Connection, src: &dyn crate::code_rule_dsl::facts::vta
         for c in 0..k {
             let v = src.value(row, c);
             vals.push(if text.get(c).copied().unwrap_or(false) {
-                if v < 0 || v as usize >= syms.len() {
+                if !syms.known(v)? {
                     return Err(err(format!("no symbol {v}")));
                 }
                 Value::Text(syms.name(v))
@@ -2244,7 +2244,7 @@ pub fn finding_rows(conn: &Connection) -> Result<Option<Vec<(String, String, i64
     let (Some(nn), Some(nd), Some(ns), Some(dd), Some(dp)) = (col(node.as_ref(), "n"), col(node.as_ref(), "d"), col(node.as_ref(), "start"), col(doc.as_ref(), "d"), col(doc.as_ref(), "path")) else { return Ok(None) };
     let syms = symbols(conn)?;
     let syms = syms.read().unwrap();
-    let name = |v: i64| if v < 0 || v as usize >= syms.len() { Err(err(format!("finding: no symbol {v}"))) } else { Ok(syms.name(v)) };
+    let name = |v: i64| if !syms.known(v)? { Err(err(format!("finding: no symbol {v}"))) } else { Ok(syms.name(v)) };
     let mut out = Vec::with_capacity(rel.rows());
     for id in 0..rel.len() {
         if is_dead(&rel.dead, id as u32) {

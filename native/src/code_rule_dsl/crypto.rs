@@ -41,9 +41,8 @@ pub(super) fn register(db: &Connection) -> rusqlite::Result<()> {
             | FunctionFlags::SQLITE_DETERMINISTIC
             | FunctionFlags::SQLITE_INNOCUOUS,
         |context| {
-            use sha2::{Digest, Sha256};
             let text: Option<String> = context.get(0)?;
-            Ok(text.map(|s| format!("{:x}", Sha256::digest(s.as_bytes()))))
+            Ok(text.map(|s| super::json::hex_digest(s.as_bytes())))
         },
     )?;
     db.create_scalar_function(

@@ -750,6 +750,7 @@ fn projection_axes_and_token_spans_are_demanded_without_renumbering() {
         assert_eq!(p.size(l),p.core[l+1..].iter().filter(|&&id|id<subtree_end).count() as u32);
     }
     assert!(p.fielded.get().is_none(),"reading other axes must not build field rows");
+}
 
 /// `Extra`'s span ids (`granules::ExtraSpan`) never equal a node's or a position's: each kind's slots are neither the
 /// positions' (`span_of` reads none of them) nor any slot a document's nodes take, even one folded past the granules'

@@ -283,6 +283,11 @@ impl ThreadConnection {
         Self { database_path, identity }
     }
 
+    /// The store's identity when this handle opened it (a sibling handle shares it).
+    pub(super) fn identity(&self) -> i64 {
+        self.identity
+    }
+
     /// The handle closes (`ContentStore::drop`). Returns whether it was the store's last: then every thread's idle
     /// connection to it is closed.
     pub(super) fn close(&self) -> bool {

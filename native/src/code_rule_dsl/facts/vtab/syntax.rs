@@ -1537,7 +1537,7 @@ impl Extra {
                     continue;
                 }
                 if self.line_rows() {
-                    self.lines.push([n, i64::from(f.start_line[id as usize])]);
+                    self.lines.push([n, i64::from(f.start_line(id))]);
                 }
                 if self.end_line {
                     self.end_lines.push([n, f.lines.line(end) as i64 + 1]);
@@ -1647,7 +1647,7 @@ impl Extra {
                         let c = span(ExtraSpan::Comment, k)?;
                         let (start, end) = (f.start[id as usize] as usize, f.end[id as usize] as usize);
                         let col = start - f.lines.start(f.lines.line(start));
-                        self.span(c, f.start_line[id as usize] as usize, f.lines.line(end) + 1, col, whole, true, text, string);
+                        self.span(c, f.start_line(id) as usize, f.lines.line(end) + 1, col, whole, true, text, string);
                         if self.node_text {
                             self.node_texts.push([c, string(whole) as i64]);
                         }
@@ -2684,14 +2684,6 @@ impl Viewed {
             (View::Field, 1) => i64::from(field_atom(p.tag, p.facts.field[id])),
             (View::Tape, 2) => i64::from(p.size(l)),
             (View::Tape, 3) => i64::from(p.depth(l)),
-            (View::Visit, 1) => {
-                let dialect = &self.batch.dialects[&p.tag];
-                if self.batch.shape == Shape::Core && dialect.family == Family::Python {
-                    i64::from(p.python_visit.get_or_init(|| python_order::ranks(p, dialect))[local as usize])
-                } else {
-                    i64::from(local)
-                }
-            },
             (View::Depth, 1) => i64::from(p.depth(l)),
             (View::Order, 1) => i64::from(p.key) << 32 | i64::from(local),
             _ => p.global(local),

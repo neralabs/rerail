@@ -15,7 +15,7 @@
 
 use super::{Dialect, Projected, Relation};
 use crate::code_rule_dsl::facts::core::Facts;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 /// A document's text may be long: `text` holds a node's when it is at most this many bytes, or the node is
 /// token-like (a leaf, a comment, a string literal). Longer texts have no symbol: interning them all is

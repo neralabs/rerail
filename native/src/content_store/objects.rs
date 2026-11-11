@@ -11,6 +11,7 @@ use super::{
 use rusqlite::Connection;
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::collections::{BTreeSet, HashMap};
+use std::io::Cursor;
 use std::sync::Arc;
 
 /// A stored tape's frames as residency admits them (PIAT §20.3): the tape's and its source's zstd

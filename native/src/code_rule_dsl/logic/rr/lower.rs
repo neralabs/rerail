@@ -373,6 +373,7 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     }
     // A program lowered without `core.rr` (its own part, `parse_own`) still declares the `within` it reads.
     if reads_within {
+        use crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
         l.prog.decls.entry(WITHIN.to_owned()).or_insert_with(|| vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
         if !l.prog.inputs.iter().any(|i| i == WITHIN) {
             l.prog.inputs.push(WITHIN.to_owned());

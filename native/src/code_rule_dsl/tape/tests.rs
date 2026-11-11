@@ -1907,7 +1907,7 @@ fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
         assert!(TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), image, &|| false).is_err());
         assert!(core::from_image(Arc::clone(&source), &grammar, image, Arc::clone(&lines)).is_err());
     };
-    let mut corrupt = image.clone(); corrupt.source_digest[0] ^= 1; reject(&corrupt);
+    let mut corrupt = image.clone(); corrupt.source_digest.as_mut().expect("the image holds its source's digest")[0] ^= 1; reject(&corrupt);
     let mut corrupt = image.clone(); corrupt.code.pop(); reject(&corrupt);
     let mut corrupt = image.clone(); corrupt.size[0..2].copy_from_slice(&0u16.to_le_bytes()); reject(&corrupt);
     let mut corrupt = image.clone(); corrupt.codes[0].alias = SENTINEL - 1; reject(&corrupt);

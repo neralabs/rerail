@@ -531,7 +531,9 @@ fn shortlex_min_orders_symbols_by_length_then_bytes() {
     use super::Lattice;
     let dir = std::env::temp_dir().join(format!("rerail-shortlex-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let atoms = crate::content_store::atoms::Atoms::fresh(&dir.join("atoms.sqlite"));
+    let _ = std::fs::remove_file(dir.join("atoms.sqlite"));
+    let mut db = rusqlite::Connection::open(dir.join("atoms.sqlite")).unwrap();
+    let atoms = crate::content_store::atoms::Atoms::install(&mut db).unwrap();
     let s = atoms.intern_all(&["b.c", "zz", "ab", "é"]).unwrap();
     let (bc, zz, ab, e) = (i64::from(s[0]), i64::from(s[1]), i64::from(s[2]), i64::from(s[3]));
     let l = super::ShortlexMin(atoms);
