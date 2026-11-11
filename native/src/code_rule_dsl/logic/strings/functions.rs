@@ -107,6 +107,16 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     // `.rr`'s `substr(s, i, n)`: n characters from the i-th, counted from 0, as SQL's `substr(s, i + 1, n)` gives
     // them (`substr`).
     ("rr_substr", &[Text, Number, Number], Text),
+    // `core.rr`'s semver functors, as node-semver reads ranges (`semver::Range`): `semver_valid` 1 or 0;
+    // `semver_subset` none unless both are ranges (an evaluation error in W, which gives no row).
+    ("semver_valid", &[Text], Number),
+    ("semver_subset", &[Text, Text], Number),
+    // JavaScript's `Number(n).toPrecision(digits)` (`value::ecma::to_precision`); none for a digit count
+    // outside 1 to 100 (a RangeError) or a text that is no number.
+    ("to_precision", &[Text, Number], Text),
+    // Python's `repr` of a string (`cpython::value::str_repr`), and an Ed25519 signature's check (`crypto`).
+    ("py_repr", &[Text], Text),
+    ("ed25519_ok", &[Text, Text, Text], Number),
 ];
 
 /// The function the native engine computes `.rr`'s call `f` with: `f` itself when it is one of these, or its
@@ -252,6 +262,25 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "rr_to_string" => Some(numbers[0].to_string()),
         "rr_node_text" => crate::code_rule_dsl::facts::vtab::syntax::long_node_text(numbers[0]),
         "rr_substr" => Some(substr(t(0), numbers[0], numbers[1])),
+        "semver_valid" => return Value::Integer(i64::from(crate::code_rule_dsl::semver::Range::parse(t(0)).is_some())),
+        "semver_subset" => {
+            use crate::code_rule_dsl::semver::Range;
+            return match (Range::parse(t(0)), Range::parse(t(1))) {
+                (Some(a), Some(b)) => Value::Integer(i64::from(a.is_subset_of(&b))),
+                _ => Value::Null,
+            };
+        }
+        "to_precision" => {
+            let digits = u32::try_from(numbers[0]).ok().filter(|d| (1..=100).contains(d));
+            match (t(0).trim().parse::<f64>(), digits) {
+                (Ok(n), Some(d)) if n.is_finite() => Some(crate::code_rule_dsl::value::ecma::to_precision(n, d)),
+                (Ok(n), Some(_)) if n.is_nan() => Some("NaN".to_owned()),
+                (Ok(n), Some(_)) => Some(if n > 0.0 { "Infinity" } else { "-Infinity" }.to_owned()),
+                _ => None,
+            }
+        }
+        "py_repr" => Some(crate::code_rule_dsl::cpython::value::str_repr(&crate::code_rule_dsl::cpython::value::PyStr::Text(t(0).to_owned()))),
+        "ed25519_ok" => return Value::Integer(i64::from(crate::code_rule_dsl::logic::crypto::ed25519_ok(t(0), t(1), t(2)))),
         "to_float" => return t(0).trim().parse::<f64>().ok().filter(|f| !f.is_nan()).map_or(Value::Null, |f| Value::Integer(float_key(f))),
         "float_add" | "float_sub" | "float_mul" | "float_div" => {
             let (a, b) = (float_of(numbers[0]), float_of(numbers[1]));

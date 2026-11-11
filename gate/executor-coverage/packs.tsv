@@ -77,21 +77,23 @@
 7	shipped functor @length/1	not on the device: no computed term	data-layer (engine) 7
 6	aggregate sum	not on the device: no aggregate	lib 4, data-layer 1, python 1
 6	function @qname/2	not on the device: no computed term	lib 4, node 1, rule-syntax 1
+6	function @semver_subset/2	not on the device: no computed term	node 5, lib 1
 6	shipped functor @printf/2	not native: sqlite: error: no SQL for @printf($a, $b)	data-layer (engine) 6
 6	shipped functor @printf/3	not native: sqlite: error: no SQL for @printf($a, $b, $c)	data-layer (engine) 6
 6	shipped functor @printf/4	not native: sqlite: error: no SQL for @printf($a, $b, $c, $a)	data-layer (engine) 6
 6	shipped functor @printf/5	not native: sqlite: error: no SQL for @printf($a, $b, $c, $a, $b)	data-layer (engine) 6
-6	shipped functor @semver_subset/2	not native: sqlite: error: no SQL for @semver_subset($a, $b)	node 5, lib 1
 5	function @rx_replace/3	not on the device: no computed term	data-layer (engine) 5
 5	functor @rx_replace/3	not on the device: no computed term	data-layer (engine) 5
-5	lattice relation (shortest)	not native: unparsed: unbounded lattice: cov_184_p has no finite height and no `widen k`	data-layer (engine) 5
+5	lattice relation (shortest)	not native: sqlite: a lattice relation (the native engine declined: a lattice relation: the native set engine holds sets only)	data-layer (engine) 5
 4	shipped functor @cast_int/1	not on the device: no computed term	data-layer (engine) 4
+3	function @ed25519_ok/3	not on the device: no computed term	data-layer 2, lib 1
 3	function @join/2	not on the device: no computed term	lib 3
-3	functor @ed25519_ok/3	not native: sqlite: function @ed25519_ok (the native engine declined: rule #0000: $v = @ed25519_ok($a, $b, $c) has no native step)	data-layer 2, lib 1
+3	functor @ed25519_ok/3	not on the device: no computed term	data-layer 2, lib 1
 3	shipped functor @replace/3	not on the device: no computed term	data-layer (engine) 3
 2	function @dir/1	not on the device: no computed term	lib 2
 2	function @json_str/1	not on the device: no computed term	data-layer 1, lib 1
 2	function @nfkc/1	not on the device: no computed term	data-layer 1, lib 1
+2	function @semver_valid/1	not on the device: no computed term	lib 1, node 1
 2	function @sha256/1	not on the device: no computed term	data-layer 1, lib 1
 2	functor @json_str/1	not on the device: no computed term	data-layer 1, lib 1
 2	functor @nfkc/1	not on the device: no computed term	data-layer 1, lib 1
@@ -99,7 +101,6 @@
 2	shipped functor @drop_components/2	not native: sqlite: error: no SQL for @drop_components($a, $b)	data-layer (engine) 2
 2	shipped functor @join_nonempty/4	not native: sqlite: error: no SQL for @join_nonempty($a, $b, $c, $a)	data-layer (engine) 2
 2	shipped functor @ltrim/2	not on the device: no computed term	data-layer (engine) 2
-2	shipped functor @semver_valid/1	not native: sqlite: error: no SQL for @semver_valid($a)	lib 1, node 1
 2	text test iprefix: a bound pattern	not on the device: no text test	javascript 1, react 1
 2	text test iprefix: a constant pattern	not on the device: no text test	javascript 1, react 1
 2	text test iprefix: a set of patterns	not on the device: no text test	javascript 1, react 1
@@ -108,13 +109,13 @@
 1	function @convert/3	not on the device: no computed term	vue 1
 1	function @glob_sub/3	not on the device: no computed term	lib 1
 1	function @package_of/1	not on the device: no computed term	lib 1
+1	function @to_precision/2	not on the device: no computed term	lib 1
 1	shipped functor @char/1	not on the device: no computed term	data-layer (engine) 1
 1	shipped functor @class_prefix/1	not native: sqlite: error: no SQL for @class_prefix($a)	data-layer (engine) 1
 1	shipped functor @like/2	not on the device: no computed term	data-layer (engine) 1
 1	shipped functor @qualdepth/1	not native: sqlite: error: no SQL for @qualdepth($a)	data-layer (engine) 1
 1	shipped functor @qualname/1	not native: sqlite: error: no SQL for @qualname($a)	data-layer (engine) 1
 1	shipped functor @substr_bytes/3	not on the device: no computed term	data-layer (engine) 1
-1	shipped functor @to_precision/2	not native: sqlite: error: no SQL for @to_precision($a, $y)	lib 1
 1	shipped functor @upper/1	not on the device: no computed term	data-layer (engine) 1
 1	text test isuffix: a bound pattern	not on the device: no text test	python 1
 1	text test isuffix: a constant pattern	not on the device: no text test	python 1

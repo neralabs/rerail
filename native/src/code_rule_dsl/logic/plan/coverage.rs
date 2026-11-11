@@ -217,7 +217,7 @@ fn probes() -> Vec<Probe> {
         out.push(aggregate(&op));
     }
     out.push(probe("membership of a constant set", &["test equals"], "a: symbol", "{HEAD}(a) :- s(a), (a = \"alpha\" ; a = \"x_1\")."));
-    out.push(probe("lattice relation (shortest)", &["lattice"], "a: number, d: min<>", "{HEAD}(x, 0) :- n(x), x = 1.\n{HEAD}(y, d + 1) :- {HEAD}(x, d), e(x, y)."));
+    out.push(probe("lattice relation (shortest)", &["lattice"], "a: number, d: min<>| widen 8", "{HEAD}(x, 0) :- n(x), x = 1.\n{HEAD}(y, d + 1) :- {HEAD}(x, d), e(x, y)."));
     out.push(probe("aggregate count = 0 (a negation)", &["agg count"], "a: symbol", "{HEAD}(a) :- s(a), count : { p(a, _) } = 0."));
     out.push(probe("aggregate over two atoms' bag", &["agg count"], "a: symbol, c: number", "{HEAD}(a, c) :- t(a), c = count : { q(a, _) }."));
     let a = Atom { rel: "n".into(), args: Vec::new(), neg: false, gated: false };
@@ -384,7 +384,9 @@ fn every_operation_runs_on_every_executor() {
     for (k, pr) in all.iter().enumerate() {
         let rel = format!("cov_{k:03}_p");
         let rule = pr.rule.replace("{HEAD}", &rel);
-        let src = format!("{FACTS}.decl {rel}({})\n{rule}\n.output {rel}\n", pr.cols);
+        // `cols` may carry the declaration's tail after a `|` (a lattice's `widen k`).
+        let (cols, tail) = pr.cols.split_once('|').unwrap_or((pr.cols, ""));
+        let src = format!("{FACTS}.decl {rel}({cols}){tail}\n{rule}\n.output {rel}\n");
         let (native, device) = match run_probe(&src, &rel) {
             Ok(v) => (v.native, v.device),
             Err(e) => (e.clone(), e),
@@ -394,7 +396,11 @@ fn every_operation_runs_on_every_executor() {
         }
         native_gaps += usize::from(native != "native");
         device_gaps += usize::from(device != "device");
-        let _ = writeln!(rows, "{}\t{}\t{}\t{}", pr.name, cell(&native), cell(&device), rule.replace('\n', " "));
+        // The rule as written with its head named `p`, and the cells without the probe's own name: a probe added
+        // renumbers the others, and the ledger does not churn with it.
+        let shown = pr.rule.replace("{HEAD}", "p").replace('\n', " ");
+        let unnamed = |c: &str| cell(c).replace(&rel, "p");
+        let _ = writeln!(rows, "{}\t{}\t{}\t{shown}", pr.name, unnamed(&native), unnamed(&device));
     }
     eprintln!("{} probes: {native_gaps} not native, {device_gaps} not on the device", all.len());
     assert!(wrong.is_empty(), "an executor's rows differ from SQLite's:\n{}", wrong.join("\n"));
