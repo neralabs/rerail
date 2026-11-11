@@ -203,7 +203,7 @@ def value(prog, val, v, vs, opt_alts, match):
             lits.append(alts[0] if len(alts) == 1 else "(" + " ; ".join(alts) + ")")
         elif op in ("gt", "ge", "lt", "le") and isinstance(arg, (int, float)) and not isinstance(arg, bool):
             sym = {"lt": "<", "le": "<=", "gt": ">", "ge": ">="}[op]
-            lits += [NUMERIC.format(x=x), f"{x} {sym} {arg}"]
+            lits += [NUMERIC.format(x=x), f"to_number({x}) {sym} {arg}"]     # value is a symbol: "255" for 0xff
         elif op in ("gt", "ge", "lt", "le"):
             sym = {"lt": "<", "le": "<=", "gt": ">", "ge": ">="}[op]
             lits.append(opt_alts(arg, lambda c: f"{x} {sym} {_q(c)}"))

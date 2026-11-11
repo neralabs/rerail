@@ -278,6 +278,10 @@ def lower(prog, rule, v, vs, skip=()):
             lits.extend(main_terms.layout(prog, val, v, vs))
         elif k == "nthChild" and isinstance(val, dict) and isinstance(val.get("position"), int):
             lits.extend(nth_child(prog, val, v, vs))
+        elif k == "binds" and val == {}:
+            # the name binds (an assignment or for target, a parameter, an import, `x += 1`)
+            prog.use("names")
+            lits.append(f"(bind_only({v}) ; aug_target({v}))")
         elif k == "binds" and isinstance(val, dict):
             prog.use("names")
             lits.extend(site_filters(prog, val, v, vs))
@@ -306,7 +310,9 @@ def lower(prog, rule, v, vs, skip=()):
         elif k == "value" and isinstance(val, dict) and len(val) == 1:
             op, arg = next(iter(val.items()))
             if op == "eq":
-                lits.append(opt_alts(arg, lambda c: f"value({v}, {q(c)})"))
+                # value is a symbol, numbers normalised ("255" for 0xff): a JSON number compares as its text
+                num = lambda c: q(str(c)) if isinstance(c, (int, float)) and not isinstance(c, bool) else q(c)
+                lits.append(opt_alts(arg, lambda c: f"value({v}, {num(c)})"))
             elif op in ("ne", "lt", "le", "gt", "ge"):
                 x = vs.fresh("v")
                 sym = {"ne": "!=", "lt": "<", "le": "<=", "gt": ">", "ge": ">="}[op]
@@ -705,6 +711,48 @@ def relation(prog, k, sub, v, vs):
         else:
             lits.extend(stop_axis(prog, "precedes", a, b, stop, vs))
     lits.extend(lower(prog, sub, c, vs, skip=skip))
+    if set(sub) - {"field", "stopBy"} == {"regex"} and not f and stop in ("neighbor", "end") \
+            and not (k in ("has", "inside") and stop == "end") and k != "inside":
+        # ast-grep's siblings and children include anonymous tokens (`:`, `,`, `in`); the tape's are named
+        # only, so a regex-only target may also be a token: op(p, s) for a child, token_before/after for a sibling
+        t = vs.fresh("t")
+        if k == "has":
+            tok = [f"op({v}, {t})"]
+        else:
+            step = "token_after" if k == "precedes" else "token_before"
+            if stop == "neighbor":
+                tok = [f"{step}({v}, {t})"]
+            else:
+                # the token before (after) v, the one before that, or the one before (after) a sibling that
+                # precedes (follows) v: a relation of its own (a disjunction inside an aggregate miscounts)
+                name = f"sibling_{step}"
+                sib = "precedes(s, n)" if k == "follows" else "precedes(n, s)"
+                side = "earlier" if k == "follows" else "later"
+                prog.lib[name] = (f".decl {name}(n: loc, t: span)",
+                                  [f"// {name}(n, t): an anonymous token among n's {side} siblings (approximately: "
+                                   f"the next two tokens, and the one next to each sibling)"],
+                                  [(f"{name}(n, t)", [f"{step}(n, t)"]),
+                                   (f"{name}(n, t)", [f"{step}(n, t0)", f"{step}(t0, t)"]),
+                                   (f"{name}(n, t)", [sib, f"{step}(s, t)"])])
+                tok = [f"{name}({v}, {t})"]
+        if k == "has" and isinstance(sub["regex"], str):     # op's token is a symbol: matched, not globbed
+            tok.append(f"match({q(whole(caps(sub['regex'])))}, {t})")
+        else:
+            tok += lower(prog, {"regex": sub["regex"]}, t, vs)
+        # one relation with a rule per form (a disjunction inside an aggregate is not counted right)
+        ren = lambda ls: [re.sub(r"(?<![\w$])" + re.escape(v) + r"\b", "n", l) for l in ls]
+        rules = [("{0}(n)", ren(lits)), ("{0}(n)", ren(tok))]
+        sig = repr(rules)
+        seen = prog.__dict__.setdefault("token_rels", {})
+        if sig not in seen:
+            seen[sig] = f"tok_{k}_{len(seen) + 1}"
+            name = seen[sig]
+            what = {"has": "a child", "precedes": "a later sibling", "follows": "an earlier sibling"}[k]
+            prog.lib[name] = (f".decl {name}(n: node)",
+                              [f"// {name}(n): {what} of n, a named node or an anonymous token, matches "
+                               f"{json.dumps(sub['regex'])}"],
+                              [(h.format(name), b) for h, b in rules])
+        lits = [f"{seen[sig]}({v})"]
     return lits
 
 
@@ -1284,7 +1332,7 @@ def share_metavariables(entries, helpers):
         hit = [h for h in r["calls"] if order[h]]
         if not hit:
             continue
-        relevant = r["head"] | r["up"] | r["binds"] | iface.get(r["owner"], set())
+        relevant = r["head"] | r["up"] | r["binds"] | r["local"] | iface.get(r["owner"], set())
         new = []
         for l in e["lits"]:
             for h in hit:
@@ -1967,7 +2015,9 @@ def translate(doc):
                         continue
                     branches = _split_top_text(t[1:-1], ";")
                     # (a named group under `!match` binds nothing)
+                    # (a helper call passing x out binds it too)
                     binding = [x in _binders(re.sub(r'!\s*match\("(?:[^"\\]|\\.)*"', "", b)) or f"unset({x})" in b
+                               or re.search(r"(?<![!\w.@])[a-z_]\w*\([^()]*(?<![\w$])" + x + r"\b[^()]*\)", b)
                                for b in branches]
                     if len(branches) > 1 and any(binding):
                         lits[i] = "(" + " ; ".join(b.strip() if ok else f"{b.strip()}, unset({x})"
