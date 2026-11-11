@@ -1,5 +1,6 @@
 use super::super::owner::Backing;
 use super::*;
+use crate::code_rule_dsl::demand::vtab::PackedDemand;
 use crate::code_rule_dsl::facts::vtab::syntax::tests::documents;
 use crate::code_rule_dsl::transducer::packed::ExecutionBackend;
 use crate::content_store::{Binding, ContentStore};
