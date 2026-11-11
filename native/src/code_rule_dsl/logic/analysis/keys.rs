@@ -12,7 +12,7 @@ pub(in crate::code_rule_dsl) struct Input {
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize)]
-pub(in crate::code_rule_dsl) struct Projection {
+pub struct Projection {
     pub inputs: Vec<Input>,
     /// Direct column references only. Computed outputs cannot be inverted.
     pub outputs: Vec<Option<String>>,

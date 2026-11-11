@@ -47,7 +47,7 @@ impl SqlAstNodeKind {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl) struct SqlRelationRef(u32);
+pub struct SqlRelationRef(u32);
 
 impl SqlRelationRef {
     pub(in crate::code_rule_dsl) const fn new(value: u32) -> Self {
@@ -76,7 +76,7 @@ pub(in crate::code_rule_dsl) enum PhysicalRelation {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) enum SqlParameter {
+pub enum SqlParameter {
     Batch,
     Files,
 }

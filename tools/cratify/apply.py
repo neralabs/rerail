@@ -191,6 +191,11 @@ def upward_use_edits(nodes, edits):
             up = sorted(o for o in (use_owners(a, nodes) if a else ()) if o not in sees(n.owner))
             o = up[0] if up else None
             if o is not None:
+                narrowed = without_unseen(a, nodes, sees(n.owner))
+                if narrowed is not None:
+                    # some of the group is the crate's: the rest is the facades' (as a whole use is)
+                    edits.add(n.file, int(s), int(e), narrowed.strip(), 'upward use')
+                    continue
                 edits.add(n.file, int(s), int(e), f'// cratify: a re-export of {o}\'s, which its facades of this module make', 'upward use')
 
 
@@ -251,6 +256,51 @@ def absolute_use(text, mod, nodes):
     return text
 
 
+def split_group(text):
+    """A `use prefix::{a, b::{c}, d};`'s (head through `{`, its top-level branches, tail from `}`), or None."""
+    m = re.search(r'use\s+(crate(?:::[A-Za-z_][A-Za-z_0-9]*)*)::\{', text)
+    if not m:
+        return None
+    branches, depth, cur, i = [], 0, '', m.end()
+    while i < len(text):
+        ch = text[i]
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            if depth == 0:
+                break
+            depth -= 1
+        elif ch == ',' and depth == 0:
+            branches.append(cur)
+            cur = ''
+            i += 1
+            continue
+        cur += ch
+        i += 1
+    branches.append(cur)
+    return text[:m.end()], m.group(1), [b for b in branches if b.strip()], text[i:]
+
+
+def without_unseen(text, nodes, sees_):
+    """`text` (an absolute use) without the branches of its group a crate seeing `sees_` does not see: the text
+    (unchanged, or narrowed), or None when nothing of it is seen."""
+    g = split_group(text)
+    if g is None:
+        o = use_owner(text, nodes)
+        return None if o is not None and o not in sees_ else text
+    head, prefix, branches, tail = g
+    keep = []
+    for b in branches:
+        o = use_owner(f'use {prefix}::' + re.sub(r'\s+', '', b).split('{')[0].rstrip(':'), nodes)
+        if o is None or o in sees_:
+            keep.append(b.strip())
+    if not keep:
+        return None
+    if len(keep) == len(branches):
+        return text
+    return head + ', '.join(keep) + tail
+
+
 def use_owners(text, nodes):
     """The crates of a `use crate::...`'s paths, a brace group's branches each (one level)."""
     m = re.search(r'use\s+(crate(?:::[A-Za-z_][A-Za-z_0-9]*)*)::\{', text)
@@ -307,8 +357,8 @@ class Facades(mounts.Facades):
             a = absolute_use(u, n.path, self.nodes)
             if a is None:
                 continue
-            o = use_owner(a, self.nodes)
-            if o is not None and o not in sees(self.c):
+            a = without_unseen(a, self.nodes, sees(self.c))
+            if a is None:
                 continue
             body = '\n'.join(indent + l for l in a.strip().split('\n'))
             lines.append(f'{indent}#[allow(unused_imports)]\n{body}\n')

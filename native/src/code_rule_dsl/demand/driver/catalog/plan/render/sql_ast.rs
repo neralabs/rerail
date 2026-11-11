@@ -47,7 +47,7 @@ impl SqlAstNodeKind {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl::demand::driver::catalog) struct SqlRelationRef(u32);
+pub struct SqlRelationRef(u32);
 
 impl SqlRelationRef {
     pub(in crate::code_rule_dsl::demand::driver::catalog) const fn new(value: u32) -> Self {
@@ -76,7 +76,7 @@ pub(in crate::code_rule_dsl::demand::driver::catalog) enum PhysicalRelation {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl::demand::driver::catalog) enum SqlParameter {
+pub enum SqlParameter {
     Batch,
     Files,
 }

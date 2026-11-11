@@ -137,7 +137,7 @@ pub(in crate::code_rule_dsl) struct Layout {
     pub max: bool,
 }
 #[derive(Clone, Debug, serde::Serialize)]
-pub(in crate::code_rule_dsl) struct Family {
+pub struct Family {
     pub members: Vec<usize>,
     pub witness: usize,
     pub layout: Layout,

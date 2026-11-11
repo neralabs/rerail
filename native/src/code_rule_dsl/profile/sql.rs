@@ -101,7 +101,7 @@ pub(in crate::code_rule_dsl) fn index_build(rows: usize) -> IndexBuild {
     IndexBuild(started)
 }
 
-pub(in crate::code_rule_dsl) struct IndexBuild(Option<Started>);
+pub struct IndexBuild(Option<Started>);
 
 impl Drop for IndexBuild {
     fn drop(&mut self) {
