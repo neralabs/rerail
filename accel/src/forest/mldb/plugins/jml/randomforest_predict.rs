@@ -475,6 +475,13 @@ mod tests {
         let names = ["lane", "forms", "launches", "units", "cold", "load", "threads"];
         let named: Vec<(String, Vec<CellValue>)> = names.iter().zip(cols).map(|(n, c)| (n.to_string(), c.clone())).collect();
         let (fs, w0, c0) = timed(|| Arc::new(DatasetFeatureSpace::from_columns(&named, FeatureType::Boolean).unwrap()));
+        let typed: Vec<(String, crate::forest::dataset_feature_space::ColumnData)> = named.iter().map(|(n, v)| (n.clone(), crate::forest::dataset_feature_space::ColumnData::from_values(n, v).unwrap())).collect();
+        let _ = DatasetFeatureSpace::from_columns_device(&typed[..1], FeatureType::Boolean).unwrap();
+        let (fsd, wd, cd) = timed(|| DatasetFeatureSpace::from_columns_device(&typed, FeatureType::Boolean).unwrap());
+        for i in 0..names.len() {
+            assert_eq!(format!("{:?}", fs.column(i).unwrap().bucket_descriptions), format!("{:?}", fsd.column(i).unwrap().bucket_descriptions));
+        }
+        eprintln!("feature space {what}, {} rows: host {:.0} ms ({:.0} ms CPU), device {:.0} ms ({:.0} ms CPU)", labels.len(), w0 * 1e3, c0 * 1e3, wd * 1e3, cd * 1e3);
         let (all, w1, c1) = timed(|| training_data(fs.clone(), labels, None, None).unwrap());
         let (forest, w2, c2) = timed(|| train_forest(&all, config).unwrap());
         for (i, t) in forest.trees.iter().enumerate() {

@@ -129,6 +129,41 @@ pub fn template(name: &str) -> Option<GridComputeKernelTemplate> {
             r.set_grid_expression("[ceilDiv(numRows,threadsPerGroup / lanesPerRow)]", "[threadsPerGroup]").allow_grid_padding();
             r.set_compute_function("randomforest_kernels", "predictForestKernel");
         }
+        "numericBuckets" => {
+            r.add_dimension("r", "numRows");
+            r.add_parameter("numRows", "r", "u32")
+                .add_parameter("numSplits", "r", "u32")
+                .add_parameter("numericOffset", "r", "u32")
+                .add_parameter("keys", "r", "i64[numRows]")
+                .add_parameter("splitKeys", "r", "i64[numSplitKeys]")
+                .add_parameter("bucketsOut", "w", "u32[numRows]");
+            r.add_tuneable("threadsPerBlock", 256);
+            r.set_grid_expression("[ceilDiv(numRows,threadsPerBlock)]", "[threadsPerBlock]").allow_grid_padding();
+            r.set_compute_function("randomforest_kernels", "numericBucketsKernel");
+        }
+        "markCodes" | "categoricalBuckets" => {
+            r.add_dimension("r", "numRows");
+            r.add_parameter("numRows", "r", "u32").add_parameter("numCodes", "r", "u32").add_parameter("codes", "r", "u32[numRows]");
+            if name == "markCodes" {
+                r.add_parameter("presentOut", "w", "u32[numCodes + 1]");
+            } else {
+                r.add_parameter("codeBuckets", "r", "u32[numCodes + 1]").add_parameter("bucketsOut", "w", "u32[numRows]");
+            }
+            r.add_tuneable("threadsPerBlock", 256);
+            r.set_grid_expression("[ceilDiv(numRows,threadsPerBlock)]", "[threadsPerBlock]").allow_grid_padding();
+            r.set_compute_function("randomforest_kernels", if name == "markCodes" { "markCodesKernel" } else { "categoricalBucketsKernel" });
+        }
+        "packBuckets" => {
+            r.add_dimension("w", "numWords");
+            r.add_parameter("numRows", "r", "u32")
+                .add_parameter("entryBits", "r", "u32")
+                .add_parameter("numWords", "r", "u32")
+                .add_parameter("buckets", "r", "u32[numRows]")
+                .add_parameter("wordsOut", "w", "u32[numWords]");
+            r.add_tuneable("threadsPerBlock", 256);
+            r.set_grid_expression("[ceilDiv(numWords,threadsPerBlock)]", "[threadsPerBlock]").allow_grid_padding();
+            r.set_compute_function("randomforest_kernels", "packBucketsKernel");
+        }
         "updatePartitionNumbers" => {
             r.add_dimension("r", "numRows");
             r.add_parameter("treeTrainingInfo", "r", "TreeTrainingInfo[1]")
@@ -200,7 +235,7 @@ pub fn template(name: &str) -> Option<GridComputeKernelTemplate> {
 /// The threads of a prediction group (`predictForest`): rows times their lanes.
 pub const PREDICT_GROUP_THREADS: u32 = 128;
 
-pub const GRID_KERNELS: [&str; 10] = ["decodeRows", "testFeature", "getPartitionSplits", "bestPartitionSplit", "assignPartitionNumbers", "clearBuckets", "updatePartitionNumbers", "updateBuckets", "fixupBuckets", "predictForest"];
+pub const GRID_KERNELS: [&str; 14] = ["decodeRows", "testFeature", "getPartitionSplits", "bestPartitionSplit", "assignPartitionNumbers", "clearBuckets", "updatePartitionNumbers", "updateBuckets", "fixupBuckets", "predictForest", "numericBuckets", "markCodes", "categoricalBuckets", "packBuckets"];
 
 /// Grid kernel `name`, specialized against its Metal function (once).
 pub fn kernel(name: &str) -> Result<&'static GridComputeKernelSpecialization, String> {

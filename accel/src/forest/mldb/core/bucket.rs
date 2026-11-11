@@ -178,6 +178,18 @@ pub struct WritableBucketList {
     pub num_entries: usize,
 }
 
+impl BucketList {
+    /// A list of `num_entries` buckets below `num_buckets` already packed as `WritableBucketList` writes them (the
+    /// feature space's columns built on the device), copied from `words`.
+    pub fn from_packed(num_entries: usize, num_buckets: u32, words: &[u32], serializer: &mut impl MappedSerializer) -> BucketList {
+        let mut w = WritableBucketList::new(num_entries, num_buckets, serializer);
+        let n = words.len().min(w.storage.length());
+        w.storage.data_mut()[..n].copy_from_slice(&words[..n]);
+        w.written = num_entries * w.entry_bits as usize;
+        w.freeze(serializer)
+    }
+}
+
 impl WritableBucketList {
     /// How many words (`u32`) are required for the given number of buckets each containing a number up to
     /// `num_elements`?

@@ -1952,3 +1952,94 @@ predictForestImpl) (uint32_t numRows,
         predictionsOut[2 * r + 1] = s1;
     }
 }
+
+
+// The feature space's columns built on the device (rerail's addition): each row's bucket, then the rows' buckets
+// bit-packed as WritableBucketList writes them (least significant bits first, entryBits each).
+
+// A row's key that stands for a null (no number orders below it).
+#define NULL_ORDER_KEY ((int64_t)0x8000000000000000UL)
+
+// [row]: a numeric column's bucket: 0 for a null; else the numeric buckets' offset plus the split points below the
+// value (the keys order as the values do, so the comparison is exact). A bounded binary search.
+UKL_FUNCTION(v1,void,
+numericBucketsImpl) (uint32_t numRows,
+                     ROBUFFER(int64_t) keys,
+                     ROBUFFER(int64_t) splitKeys,
+                     uint32_t numSplits,
+                     uint32_t numericOffset,
+                     RWBUFFER(uint32_t) bucketsOut,
+                     uint32_t r)
+{
+    if (r >= numRows)
+        return;
+    int64_t k = keys[r];
+    if (k == NULL_ORDER_KEY) {
+        bucketsOut[r] = 0;
+        return;
+    }
+    uint32_t lo = 0, hi = numSplits;
+    for (uint32_t step = 0;  step < 32 && lo < hi;  ++step) {
+        uint32_t mid = (lo + hi) / 2;
+        if (splitKeys[mid] < k)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    bucketsOut[r] = numericOffset + lo;
+}
+
+// [row]: marks the codes a categorical column holds (code numCodes for a null).
+UKL_FUNCTION(v1,void,
+markCodesImpl) (uint32_t numRows,
+                uint32_t numCodes,
+                ROBUFFER(uint32_t) codes,
+                RWBUFFER(uint32_t) presentOut,
+                uint32_t r)
+{
+    if (r >= numRows)
+        return;
+    uint32_t c = codes[r];
+    presentOut[c < numCodes ? c : numCodes] = 1;
+}
+
+// [row]: a categorical column's bucket, its code's (code numCodes for a null).
+UKL_FUNCTION(v1,void,
+categoricalBucketsImpl) (uint32_t numRows,
+                         uint32_t numCodes,
+                         ROBUFFER(uint32_t) codes,
+                         ROBUFFER(uint32_t) codeBuckets,
+                         RWBUFFER(uint32_t) bucketsOut,
+                         uint32_t r)
+{
+    if (r >= numRows)
+        return;
+    uint32_t c = codes[r];
+    bucketsOut[r] = codeBuckets[c < numCodes ? c : numCodes];
+}
+
+// [word]: one 32-bit word of the packed buckets: the entries whose bits fall in it (at most 32 / entryBits + 2, a
+// bounded loop), zero past the last entry.
+UKL_FUNCTION(v1,void,
+packBucketsImpl) (uint32_t numRows,
+                  uint32_t entryBits,
+                  uint32_t numWords,
+                  ROBUFFER(uint32_t) buckets,
+                  RWBUFFER(uint32_t) wordsOut,
+                  uint32_t w)
+{
+    if (w >= numWords)
+        return;
+    uint32_t firstBit = 32 * w;
+    uint32_t first = firstBit / entryBits;
+    uint32_t word = 0;
+    for (uint32_t i = 0;  i < 34;  ++i) {
+        uint32_t e = first + i;
+        if (e >= numRows || e * entryBits >= firstBit + 32)
+            break;
+        int32_t shift = (int32_t)(e * entryBits) - (int32_t)firstBit;
+        uint32_t b = buckets[e];
+        word |= shift >= 0 ? b << shift : b >> (-shift);
+    }
+    wordsOut[w] = word;
+}

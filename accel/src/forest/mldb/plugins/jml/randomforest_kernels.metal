@@ -332,3 +332,62 @@ predictForestKernel(__constant const PredictForestArgs & args,
                       nodes, treeRoots, treeWeights, leafPreds, predictionsOut, partials,
                       group, tid, ntid);
 }
+
+struct NumericBucketsArgs {
+    uint32_t numRows;
+    uint32_t numSplits;
+    uint32_t numericOffset;
+};
+
+// [row]
+__kernel void
+numericBucketsKernel(__constant const NumericBucketsArgs & args,
+                     __global const int64_t * keys,
+                     __global const int64_t * splitKeys,
+                     __global uint32_t * bucketsOut,
+                     uint32_t id [[thread_position_in_grid]])
+{
+    numericBucketsImpl(args.numRows, keys, splitKeys, args.numSplits, args.numericOffset, bucketsOut, id);
+}
+
+struct CodesArgs {
+    uint32_t numRows;
+    uint32_t numCodes;
+};
+
+// [row]
+__kernel void
+markCodesKernel(__constant const CodesArgs & args,
+                __global const uint32_t * codes,
+                __global uint32_t * presentOut,
+                uint32_t id [[thread_position_in_grid]])
+{
+    markCodesImpl(args.numRows, args.numCodes, codes, presentOut, id);
+}
+
+// [row]
+__kernel void
+categoricalBucketsKernel(__constant const CodesArgs & args,
+                         __global const uint32_t * codes,
+                         __global const uint32_t * codeBuckets,
+                         __global uint32_t * bucketsOut,
+                         uint32_t id [[thread_position_in_grid]])
+{
+    categoricalBucketsImpl(args.numRows, args.numCodes, codes, codeBuckets, bucketsOut, id);
+}
+
+struct PackBucketsArgs {
+    uint32_t numRows;
+    uint32_t entryBits;
+    uint32_t numWords;
+};
+
+// [word]
+__kernel void
+packBucketsKernel(__constant const PackBucketsArgs & args,
+                  __global const uint32_t * buckets,
+                  __global uint32_t * wordsOut,
+                  uint32_t id [[thread_position_in_grid]])
+{
+    packBucketsImpl(args.numRows, args.entryBits, args.numWords, buckets, wordsOut, id);
+}
