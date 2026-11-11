@@ -27,14 +27,20 @@ export function installedOnDisk(root) {
   };
 }
 
+const NODE_MODULES = "node_modules/";
+
+/** Whether a lockfile entry is a package npm installs in a node_modules folder, not a link to a workspace. */
+const installedPackage = ([location, entry]) => location.startsWith(NODE_MODULES) && entry.link !== true;
+
+/** Whether what npm installed (`installedOnDisk`'s answer) ships its addon prebuilt and tells npm not to build it. */
+const shipsPrebuilt = own => own !== undefined && own.manifest.gypfile === false && own.bindingGyp && own.prebuilds;
+
 /** Each installed package, name and version once, that ships its addon prebuilt and tells npm not to build it. */
 export function installedAddons(lock, installed = installedOnDisk(ROOT)) {
   const addons = new Map();
-  for (const [location, entry] of Object.entries(lock.packages ?? {})) {
-    if (!location.startsWith("node_modules/") || entry.link === true) continue;
-    const own = installed(location);
-    if (own === undefined || own.manifest.gypfile !== false || !own.bindingGyp || !own.prebuilds) continue;
-    const name = location.slice(location.lastIndexOf("node_modules/") + "node_modules/".length);
+  for (const [location, entry] of Object.entries(lock.packages ?? {}).filter(installedPackage)) {
+    if (!shipsPrebuilt(installed(location))) continue;
+    const name = location.slice(location.lastIndexOf(NODE_MODULES) + NODE_MODULES.length);
     addons.set(`${name}@${entry.version}`, { name, version: entry.version });
   }
   return [...addons.values()];

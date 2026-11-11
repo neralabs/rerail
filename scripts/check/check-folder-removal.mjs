@@ -14,11 +14,10 @@
 //            imported. Removing one file (`rm(file)`, `rm(file, { force: true })`) is not a folder removal.
 //
 //   node scripts/check/check-folder-removal.mjs   (npm run check:folder-removal; part of npm run check)
-import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { CODE, codeFiles, FS_MODULES, lineOf, parseSource } from "./source-files.mjs";
 
 export const HELPER = "test/support/platform/remove-folder.ts";
 /** Files left to remove folders themselves, each with the reason. */
@@ -26,29 +25,45 @@ export const EXEMPT = new Map([
   ["test/scripts/ensure-sqlite.test.mjs", "runs under `node --test`, which cannot load the TypeScript helper"],
   ["test/support/platform/remove-folder.test.ts", "shows the one try the helper replaces failing while a process runs in the folder"],
 ]);
-const MODULES = new Set(["node:fs", "node:fs/promises", "fs", "fs/promises"]);
+const MODULES = new Set(FS_MODULES);
 const REMOVALS = new Set(["rm", "rmSync", "rmdir", "rmdirSync"]);
-const CODE = /\.(?:[cm]?[jt]s)$/u;
+const DIRECT_MESSAGE = `removes a folder directly; use removeFolder or removeFolderSync from ${HELPER}, which names a process the test left running in it and waits out any other holder on Windows`;
+
+/** The `{ ... }` elements of an import clause; none for a default or namespace import alone. */
+function namedElements(clause) {
+  const bindings = clause.namedBindings;
+  return bindings !== undefined && ts.isNamedImports(bindings) ? bindings.elements : [];
+}
+
+/** The name an import element takes from its module: `rm` in both `{ rm }` and `{ rm as remove }`. */
+const importedName = element => (element.propertyName ?? element.name).text;
 
 /** The names a declaration binds to a whole fs module (`* as fs`, a default import, `{ promises }`). */
 function moduleBindings(clause) {
-  const names = [];
-  if (clause.name !== undefined) names.push(clause.name.text);
   const bindings = clause.namedBindings;
-  if (bindings !== undefined && ts.isNamespaceImport(bindings)) names.push(bindings.name.text);
-  if (bindings !== undefined && ts.isNamedImports(bindings)) {
-    for (const element of bindings.elements) if ((element.propertyName ?? element.name).text === "promises") names.push(element.name.text);
-  }
-  return names;
+  const namespace = bindings !== undefined && ts.isNamespaceImport(bindings) ? [bindings.name] : [];
+  const promises = namedElements(clause).filter(element => importedName(element) === "promises").map(element => element.name);
+  return [clause.name, ...namespace, ...promises].filter(name => name !== undefined).map(name => name.text);
 }
 
 /** Each local name an fs import binds to a removal (`rm`, `rmSync as remove`), with the removal it is. */
 function removalBindings(clause) {
-  const bindings = clause.namedBindings;
-  if (bindings === undefined || !ts.isNamedImports(bindings)) return [];
-  return bindings.elements
-    .filter(element => !element.isTypeOnly && REMOVALS.has((element.propertyName ?? element.name).text))
-    .map(element => [element.name.text, (element.propertyName ?? element.name).text]);
+  return namedElements(clause)
+    .filter(element => !element.isTypeOnly && REMOVALS.has(importedName(element)))
+    .map(element => [element.name.text, importedName(element)]);
+}
+
+/** The text of an options property's name, when it is a plain name or a string. */
+function propertyKey(property) {
+  const name = property.name;
+  return name !== undefined && (ts.isIdentifier(name) || ts.isStringLiteral(name)) ? name.text : undefined;
+}
+
+/** Whether an options property may set `recursive`: a spread may hold it, and any value but `false` asks for it. */
+function mayRecurse(property) {
+  if (ts.isSpreadAssignment(property)) return true;
+  if (propertyKey(property) !== "recursive") return false;
+  return !ts.isPropertyAssignment(property) || property.initializer.kind !== ts.SyntaxKind.FalseKeyword;
 }
 
 /** Whether a call of `removal` with `args` removes a folder: any `rmdir`, or an `rm` whose options ask for `recursive`. */
@@ -56,73 +71,73 @@ function removesFolder(removal, args) {
   if (removal === "rmdir" || removal === "rmdirSync") return true;
   const options = args[1];
   if (options === undefined) return false;
-  if (!ts.isObjectLiteralExpression(options)) return true;
-  return options.properties.some(property => {
-    // Spread options may hold `recursive`.
-    if (ts.isSpreadAssignment(property)) return true;
-    const name = property.name;
-    if (name === undefined || !(ts.isIdentifier(name) || ts.isStringLiteral(name)) || name.text !== "recursive") return false;
-    return !ts.isPropertyAssignment(property) || property.initializer.kind !== ts.SyntaxKind.FalseKeyword;
-  });
+  return !ts.isObjectLiteralExpression(options) || options.properties.some(mayRecurse);
+}
+
+/** The plain name a call's target starts from, through one `.promises` (`fs`, `fs.promises`); undefined for any other. */
+function rootName(target) {
+  const root = ts.isPropertyAccessExpression(target) && target.name.text === "promises" ? target.expression : target;
+  return ts.isIdentifier(root) ? root.text : undefined;
 }
 
 /** The removal a call's callee names, through `bound` names or `namespaces`; undefined for any other call. */
 function calledRemoval(callee, bound, namespaces) {
   if (ts.isIdentifier(callee)) return bound.get(callee.text);
   if (!ts.isPropertyAccessExpression(callee) || !REMOVALS.has(callee.name.text)) return undefined;
-  const target = callee.expression;
-  const root = ts.isPropertyAccessExpression(target) && target.name.text === "promises" ? target.expression : target;
-  return ts.isIdentifier(root) && namespaces.has(root.text) ? callee.name.text : undefined;
+  return namespaces.has(rootName(callee.expression)) ? callee.name.text : undefined;
 }
 
-/** The lines of `text` that remove a folder without the helper. */
-function directRemovals(path, text) {
-  const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, /\.[cm]?js$/u.test(path) ? ts.ScriptKind.JS : ts.ScriptKind.TS);
-  const lines = [];
-  const namespaces = new Set();
-  const bound = new Map();
-  const line = node => source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+/** The module an import statement names; undefined for any other statement. */
+function importedModule(statement) {
+  return ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier) ? statement.moduleSpecifier.text : undefined;
+}
+
+/**
+ * What `source`'s imports bind: the names of whole fs modules (`namespaces`), each name bound to a removal (`bound`),
+ * and every import of rimraf. A type-only import binds nothing.
+ */
+function fsImports(source) {
+  const imports = { namespaces: new Set(), bound: new Map(), rimraf: [] };
   for (const statement of source.statements) {
-    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
-    const module = statement.moduleSpecifier.text;
-    if (module === "rimraf") lines.push(line(statement));
-    const clause = statement.importClause;
-    if (!MODULES.has(module) || clause === undefined || clause.isTypeOnly) continue;
-    for (const name of moduleBindings(clause)) namespaces.add(name);
-    for (const [name, removal] of removalBindings(clause)) bound.set(name, removal);
+    const module = importedModule(statement);
+    if (module === "rimraf") imports.rimraf.push(statement);
+    if (MODULES.has(module) && statement.importClause?.isTypeOnly === false) addFsBindings(imports, statement.importClause);
   }
+  return imports;
+}
+
+/** Adds what an fs import's clause binds to `imports`. */
+function addFsBindings(imports, clause) {
+  for (const name of moduleBindings(clause)) imports.namespaces.add(name);
+  for (const [name, removal] of removalBindings(clause)) imports.bound.set(name, removal);
+}
+
+/** The lines of `text` that remove a folder without the helper: each rimraf import, then each removal call. */
+function directRemovals(path, text) {
+  const source = parseSource(path, text);
+  const { namespaces, bound, rimraf } = fsImports(source);
+  const lines = rimraf.map(statement => lineOf(source, statement));
   const visit = (node) => {
-    if (ts.isCallExpression(node)) {
-      const removal = calledRemoval(node.expression, bound, namespaces);
-      if (removal !== undefined && removesFolder(removal, node.arguments)) lines.push(line(node));
-    }
+    const removal = ts.isCallExpression(node) ? calledRemoval(node.expression, bound, namespaces) : undefined;
+    if (removal !== undefined && removesFolder(removal, node.arguments)) lines.push(lineOf(source, node));
     ts.forEachChild(node, visit);
   };
   visit(source);
   return lines;
 }
 
+/** Whether the check reads `path`: a code file under test/, but the helper and the files EXEMPT names. */
+const checked = path => path.startsWith("test/") && CODE.test(path) && path !== HELPER && !EXEMPT.has(path);
+
 /** Every problem in `files` (`{ path, text }`, repository-relative `/`-separated paths), as `{ path, line, rule, message }`. */
 export function folderRemovalProblems(files) {
-  const problems = [];
-  for (const { path, text } of files) {
-    if (!path.startsWith("test/") || !CODE.test(path) || path === HELPER || EXEMPT.has(path)) continue;
-    for (const line of directRemovals(path, text)) {
-      problems.push({
-        path, line, rule: "direct",
-        message: `removes a folder directly; use removeFolder or removeFolderSync from ${HELPER}, which names a process the test left running in it and waits out any other holder on Windows`,
-      });
-    }
-  }
-  return problems;
+  return files
+    .filter(({ path }) => checked(path))
+    .flatMap(({ path, text }) => directRemovals(path, text).map(line => ({ path, line, rule: "direct", message: DIRECT_MESSAGE })));
 }
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-  // Untracked files too, so a new test is checked before its first commit.
-  const listed = spawnSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "test"], { cwd: root, encoding: "utf8", maxBuffer: 1 << 28 });
-  if (listed.status !== 0) throw new Error(`git ls-files failed: ${listed.stderr}`);
-  const files = listed.stdout.split("\0").filter(path => CODE.test(path)).map(path => ({ path, text: readFileSync(resolve(root, path), "utf8") }));
+  const files = codeFiles(resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."), "test");
   const problems = folderRemovalProblems(files);
   for (const { path, line, rule, message } of problems) console.error(`${path}:${line}: [${rule}] ${message}`);
   console.log(problems.length === 0

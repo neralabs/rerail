@@ -30,14 +30,11 @@
 // it. Type-only imports and `typeof import(...)` load nothing.
 //
 //   node scripts/check/check-owned-builtins.mjs   (npm run check:owned-builtins; part of npm run check)
-import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { CODE, codeFiles, FS_MODULES as FS, lineOf, parseSource } from "./source-files.mjs";
 
-const FS = ["node:fs", "node:fs/promises", "fs", "fs/promises"];
-const CODE = /\.(?:[cm]?[jt]s)$/u;
 /** An absolute POSIX path, a drive-letter path or a UNC path. */
 const ABSOLUTE = /^(?:\/|[A-Za-z]:[\\/]|\\\\)/u;
 const STARTERS = new Set(["spawn", "spawnSync", "execFile", "execFileSync", "spawnShown"]);
@@ -161,7 +158,7 @@ class Walk {
   }
 
   line(node) {
-    return this.source.getLineAndCharacterOfPosition(node.getStart(this.source)).line + 1;
+    return lineOf(this.source, node);
   }
 
   report(at, rule, message = rule.message, id = rule.id) {
@@ -312,10 +309,6 @@ class Walk {
   }
 }
 
-function parse(path, text) {
-  return ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, /\.[cm]?js$/u.test(path) ? ts.ScriptKind.JS : ts.ScriptKind.TS);
-}
-
 /**
  * Every problem in `files` (`{ path, text }`, repository-relative `/`-separated paths) under `rules`, as `{ path, line,
  * rule, message }`, in file order and then by line. Each file is parsed once, for all the rules that cover it.
@@ -326,7 +319,7 @@ export function ownedBuiltinProblems(files, rules = RULES) {
     if (!CODE.test(path)) continue;
     const applying = rules.filter(rule => rule.owner !== path && rule.covers(path));
     if (applying.length === 0) continue;
-    const walk = new Walk(parse(path, text), applying);
+    const walk = new Walk(parseSource(path, text), applying);
     walk.bind();
     walk.check();
     const found = [...walk.found.values()].sort((a, b) => a.line - b.line);
@@ -336,11 +329,7 @@ export function ownedBuiltinProblems(files, rules = RULES) {
 }
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-  // Untracked files too, so a new module is checked before its first commit.
-  const listed = spawnSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "src"], { cwd: root, encoding: "utf8", maxBuffer: 1 << 28 });
-  if (listed.status !== 0) throw new Error(`git ls-files failed: ${listed.stderr}`);
-  const files = listed.stdout.split("\0").filter(path => CODE.test(path)).map(path => ({ path, text: readFileSync(resolve(root, path), "utf8") }));
+  const files = codeFiles(resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."), "src");
   const problems = ownedBuiltinProblems(files);
   for (const { path, line, rule, message } of problems) console.error(`${path}:${line}: [${rule}] ${message}`);
   console.log(problems.length === 0
