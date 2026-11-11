@@ -1939,17 +1939,6 @@ fn run_observed(
                 }
             }
             let matchers = matchers::lower(&mut prog);
-            // `RERAIL_DUMP_MATCHERS=<file>`: the rules reading a matcher's relation, and each matcher (a debugging aid).
-            if let Ok(path) = std::env::var("RERAIL_DUMP_MATCHERS") {
-                let mut text = String::new();
-                for rule in prog.rules.iter().filter(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| a.rel.starts_with(matchers::PREFIX)))) {
-                    text.push_str(&format!("{rule}\n"));
-                }
-                for (rel, matcher, captures) in &matchers {
-                    text.push_str(&format!("{rel}\t{captures:?}\t{matcher}\n"));
-                }
-                let _ = std::fs::write(path, text);
-            }
             // Text tests over text relations become relations the batches fill from their vocabulary (decision 0037).
             let vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut prog).map_err(Error::Plan)?;
             let lowering = crate::code_rule_dsl::logic::profile::span(|| "lower the program".into());
@@ -2015,6 +2004,17 @@ fn run_observed(
         (false, _) => "prepared".to_owned(),
     });
     let Prepared { prog, vocabulary, lowered, sets, matchers, demanded, pushed, factorized, located, merged: (remerged, reshared), mut split, interned: _ } = prepared;
+    // `RERAIL_DUMP_MATCHERS=<file>`: the rules reading a matcher's relation, and each matcher (a debugging aid), from the prepared program, made or kept.
+    if let Ok(path) = std::env::var("RERAIL_DUMP_MATCHERS") {
+        let mut text = String::new();
+        for rule in prog.rules.iter().filter(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| a.rel.starts_with(matchers::PREFIX)))) {
+            text.push_str(&format!("{rule}\n"));
+        }
+        for (rel, matcher, captures) in &matchers {
+            text.push_str(&format!("{rel}\t{captures:?}\t{matcher}\n"));
+        }
+        let _ = std::fs::write(path, text);
+    }
     // A program none of whose rules reads a document runs over none: its file-local rules make only constants (which
     // both parts derive: `file_local::constant_relations`), and the cross-file part reads no base relation but the
     // run's constants (an earlier phase's exports, the options). A later phase reading only an earlier one's exports
