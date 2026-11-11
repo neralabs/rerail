@@ -989,20 +989,22 @@ struct Lowered {
     heads: Vec<(Block, Step)>,
     /// Each word's block, and each shared body's entry: where a place of the cluster is lowered,
     /// or (another cluster's) where the call of its cluster goes.
-    wb: Vec<Block>,
+    wb: Vec<Option<Block>>,
     entries: Vec<Block>,
     off_end: Block,
     /// The block that picks the place a call enters at, by its index in the cluster's entries.
     dispatch: Block,
     /// The places of other clusters this one names (a word's place; a body's, past the words).
     foreign: std::collections::BTreeSet<usize>,
-    params: [Value; 3],
+    /// `ctx`, and the entry's index (in clusters).
+    params: [Value; 2],
 }
 
 /// Tier 2 lowered in the clusters of `cut` (`native_cpu_clusters`): one function a cluster.
 /// One cluster is the one function `tempo_stream(ctx)`, its state in its stack frame. With
 /// more, `tempo_stream` holds the state and calls the cluster of the first word; a cluster's
-/// function takes `ctx`, the state's address and the index of the place it enters at, and a jump
+/// function takes `ctx` and the index of the place it enters at, the state's address in the
+/// pinned register (x21: no cluster allocates it, so none spills it), and a jump
 /// to a word of another cluster is a tail call of that cluster (`return_call`, the `tail`
 /// calling convention): no stack grows, and every function returns the run's result to
 /// `tempo_stream`.
@@ -1017,19 +1019,22 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     // The mask `SPAN m=1` names, as its output's index.
     let lasts = named(|o| if let Op::Span { last: true, len } = *o { Some(len) } else { None }).and_then(|m| native.block_programs.first().and_then(|b| b.masks.get(m).copied()));
 
-    let builder = JITBuilder::new(default_libcall_names()).map_err(|_| Error::BackendFailure)?;
+    let clustered = cut.count > 1;
+    // In clusters, the state's address is in the pinned register (x21 on aarch64): never
+    // allocated, so never spilled, as the one function's stack frame is never moved.
+    let flags: &[(&str, &str)] = if clustered { &[("enable_pinned_reg", "true")] } else { &[] };
+    let builder = JITBuilder::with_flags(flags, default_libcall_names()).map_err(|_| Error::BackendFailure)?;
     let mut module = JITModule::new(builder);
     let pointer = module.target_config().pointer_type();
     let mut signature = module.make_signature();
     signature.params.push(AbiParam::new(pointer));
     signature.returns.push(AbiParam::new(types::I64));
     let id = module.declare_function("tempo_stream", Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
-    let clustered = cut.count > 1;
-    // A cluster's function: (ctx, the state's address, the entry's index), the `tail` convention.
+    // A cluster's function: (ctx, the entry's index), the `tail` convention.
     let csig = if clustered {
         let mut c = module.make_signature();
         c.call_conv = cranelift_codegen::isa::CallConv::Tail;
-        c.params.extend([AbiParam::new(pointer), AbiParam::new(types::I64), AbiParam::new(types::I64)]);
+        c.params.extend([AbiParam::new(pointer), AbiParam::new(types::I64)]);
         c.returns.push(AbiParam::new(types::I64));
         c
     } else {
@@ -1046,18 +1051,40 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     let mut table_fn: Option<(cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)> = None;
     let mut span_fn = None;
     let mut lowered: Vec<Lowered> = Vec::new();
+    let shared_all = shared_runs(native, &pushes);
     for c in 0..cut.count {
+        // The places this cluster's function names: its own words and every place they can go
+        // on to. A block each, and no more: Cranelift's passes size their tables by the blocks.
+        let mut named = vec![false; words.len()];
+        for pc in (0..words.len()).filter(|&pc| cut.of[pc] == c && !shared_all.skipped[pc]) {
+            named[pc] = true;
+            for t in successors(native, &pushes, pc).into_iter().chain([pc + 1, pc + 2]) {
+                if t < words.len() {
+                    named[t] = true;
+                }
+            }
+            if let Some(&b) = shared_all.ends.get(&pc) {
+                for &t in &shared_all.bodies[b].targets {
+                    if usize::from(t) < words.len() {
+                        named[usize::from(t)] = true;
+                    }
+                }
+            }
+        }
+        if let Some(first) = named.first_mut() {
+            *first |= cut.of[0] == c;
+        }
         let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, cids[c as usize].as_u32()), csig.clone());
         let mut heads: Vec<(Block, Step)> = Vec::new();
         let foreign = std::cell::RefCell::new(std::collections::BTreeSet::new());
-        let (wb_kept, entries_kept, off_end_kept, pick_kept, params): (Vec<Block>, Vec<Block>, Block, Block, [Value; 3]);
+        let (wb_kept, entries_kept, off_end_kept, pick_kept, params): (Vec<Option<Block>>, Vec<Block>, Block, Block, [Value; 2]);
         {
         let mut f = FunctionBuilder::new(&mut func, &mut fctx);
         let entry = f.create_block();
         f.append_block_params_for_function_params(entry);
         let refuse = f.create_block();
         f.append_block_param(refuse, types::I64);
-        let wb: Vec<Block> = (0..words.len()).map(|_| f.create_block()).collect();
+        let wb: Vec<Option<Block>> = named.iter().map(|&n| n.then(|| f.create_block())).collect();
         // A place past the words refuses, as the interpreter's `STOP`.
         let off_end = f.create_block();
         // A word's block: its own, in its cluster; else the block that calls its cluster (made
@@ -1065,12 +1092,13 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         let goto = |pc: usize| -> Block {
             match wb.get(pc) {
                 None => off_end,
-                Some(&b) => {
+                Some(&Some(b)) => {
                     if cut.of[pc] != c {
                         foreign.borrow_mut().insert(pc);
                     }
                     b
                 }
+                Some(None) => unreachable!("place {pc}: not among the places cluster {c} names"),
             }
         };
         let word = |t: u16| -> Block { if t == REFUSE { off_end } else { goto(usize::from(t)) } };
@@ -1116,22 +1144,36 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         let zero = f.ins().iconst(types::I64, 0);
         // The state few words touch, in memory (`Mem`): not carried through every block where
         // paths meet, as an SSA variable is.
-        // In clusters, the state is `tempo_stream`'s, at the address each call passes.
-        let memp = clustered.then(|| f.block_params(entry)[1]);
+        // In clusters, the state is `tempo_stream`'s, at the address in the pinned register.
         let slot = (!clustered).then(|| f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * Mem::COUNT, 3)));
-        let mget = |f: &mut FunctionBuilder<'_>, k: Mem| match (memp, slot) {
-            (Some(p), _) => f.ins().load(types::I64, MemFlags::trusted(), p, 8 * k as i32),
-            (None, Some(s)) => f.ins().stack_load(types::I64, s, 8 * k as i32),
-            (None, None) => unreachable!("the state is in a slot or at an address"),
-        };
-        let mset = |f: &mut FunctionBuilder<'_>, k: Mem, x: Value| match (memp, slot) {
-            (Some(p), _) => {
-                f.ins().store(MemFlags::trusted(), x, p, 8 * k as i32);
+        // The register read once a block: a move each, and the value dies with its block.
+        let pinned_at: std::cell::Cell<Option<(Block, Value)>> = std::cell::Cell::new(None);
+        let pinned = |f: &mut FunctionBuilder<'_>| -> Value {
+            let here = f.current_block().expect("in a block");
+            match pinned_at.get() {
+                Some((b, v)) if b == here => v,
+                _ => {
+                    let v = f.ins().get_pinned_reg(types::I64);
+                    pinned_at.set(Some((here, v)));
+                    v
+                }
             }
-            (None, Some(s)) => {
+        };
+        let mget = |f: &mut FunctionBuilder<'_>, k: Mem| match slot {
+            Some(s) => f.ins().stack_load(types::I64, s, 8 * k as i32),
+            None => {
+                let p = pinned(f);
+                f.ins().load(types::I64, MemFlags::trusted(), p, 8 * k as i32)
+            }
+        };
+        let mset = |f: &mut FunctionBuilder<'_>, k: Mem, x: Value| match slot {
+            Some(s) => {
                 f.ins().stack_store(x, s, 8 * k as i32);
             }
-            (None, None) => unreachable!("the state is in a slot or at an address"),
+            None => {
+                let p = pinned(f);
+                f.ins().store(MemFlags::trusted(), x, p, 8 * k as i32);
+            }
         };
         let one = f.ins().iconst(types::I64, 1);
         let before_first = f.ins().iconst(types::I64, -1);
@@ -1144,8 +1186,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
             }
             mset(&mut f, Mem::Need, one);
             mset(&mut f, Mem::Lw, before_first);
-            match wb.first() {
-                Some(&b) => f.ins().jump(b, &[]),
+            match wb.first().copied().flatten() {
+                Some(b) => f.ins().jump(b, &[]),
                 None => f.ins().jump(off_end, &[]),
             };
         }
@@ -1184,7 +1226,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         // Shared arms (`shared_runs`): each run's code is made once, at its first place; every
         // place enters it with the run's next place (an index into its targets) and the shift
         // of its words from the first place's, for a refusal's word.
-        let shared = shared_runs(native, &pushes);
+        let shared = &shared_all;
         let entries: Vec<Block> = shared.bodies.iter().map(|_| f.create_block()).collect();
         // A body's entry: its own, where its first place is in this cluster; else the call of its
         // cluster.
@@ -1200,7 +1242,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
             }
             if let Some(&(body, ti)) = shared.at.get(&pc) {
                 let first = shared.bodies[body].start;
-                f.switch_to_block(wb[pc]);
+                f.switch_to_block(wb[pc].expect("its own place"));
                 let i = f.ins().iconst(types::I64, ti as i64);
                 mset(&mut f, Mem::Sel, i);
                 let sh = f.ins().iconst(types::I64, pc as i64 - first as i64);
@@ -1211,7 +1253,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                 }
                 f.switch_to_block(entries[body]);
             } else {
-                f.switch_to_block(wb[pc]);
+                f.switch_to_block(wb[pc].expect("its own place"));
             }
             if let Some(&body) = shared.ends.get(&pc) {
                 // The run's end: its place's next word, by the index the place gave.
@@ -1233,7 +1275,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
             let fall = goto(pc + 1);
             match w.operation {
                 Op::Token { .. } => {
-                    heads.push((wb[pc], Step::Token));
+                    heads.push((wb[pc].expect("its own place"), Step::Token));
                     // The path from here to the next token word writes at most `bound`'s nodes,
                     // supertypes and returns: past the tape's room, the run stops for a bigger
                     // tape. Three compares a token, not one a write.
@@ -1919,7 +1961,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                 }
                 Op::Return { again } => {
                     if chains {
-                        heads.push((wb[pc], Step::Return));
+                        heads.push((wb[pc].expect("its own place"), Step::Return));
                     }
                     let ret = mget(&mut f, Mem::Ret);
                     let none = f.ins().icmp_imm(IntCC::Equal, ret, 0);
@@ -2063,7 +2105,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         f.ins().return_(&[pc]);
         f.seal_all_blocks();
         let p = f.block_params(entry).to_vec();
-        params = [p[0], p.get(1).copied().unwrap_or(p[0]), p.get(2).copied().unwrap_or(p[0])];
+        params = [p[0], p.get(1).copied().unwrap_or(p[0])];
         f.finalize();
         (wb_kept, entries_kept, off_end_kept, pick_kept) = (wb, entries, off_end, pick);
         }
@@ -2071,7 +2113,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     }
     let own: Vec<_> = reorder_fn.into_iter().chain(table_fn).chain(span_fn).collect();
     let names: Vec<_> = own.iter().map(|(id, _, _)| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())).collect();
-    let crossings = if clustered { join_clusters(&mut lowered, cut, &cids, &csig, words.len(), &shared_runs(native, &pushes))? } else { 0 };
+    let crossings = if clustered { join_clusters(&mut lowered, cut, &cids, &csig, words.len(), &shared_all)? } else { 0 };
     let cluster_names: Vec<_> = cids.iter().map(|id| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())).collect();
     for l in &lowered {
         crate::native_cpu_shape::check_tails(&l.func, &l.heads, &names, if clustered { &cluster_names } else { &[] }).map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
@@ -2094,10 +2136,15 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
             f.ins().stack_store(one, slot, 8 * Mem::Need as i32);
             let before_first = f.ins().iconst(types::I64, -1);
             f.ins().stack_store(before_first, slot, 8 * Mem::Lw as i32);
+            // The state's address in the pinned register for the clusters, the caller's value
+            // kept (x21 is callee-saved, and Cranelift saves no pinned register).
             let state = f.ins().stack_addr(types::I64, slot, 0);
+            let kept = f.ins().get_pinned_reg(types::I64);
+            f.ins().set_pinned_reg(state);
             // The first word is its cluster's first entry (`join_clusters`).
             let first = f.ins().iconst(types::I64, 0);
-            let r = call_own(&mut f, cids[cut.of[0] as usize], &csig, &[ctx, state, first]);
+            let r = call_own(&mut f, cids[cut.of[0] as usize], &csig, &[ctx, first]);
+            f.ins().set_pinned_reg(kept);
             f.ins().return_(&[r[0]]);
             f.seal_all_blocks();
             f.finalize();
@@ -2165,7 +2212,7 @@ fn join_clusters(lowered: &mut [Lowered], cut: &crate::native_cpu_clusters::Cut,
     use cranelift_codegen::cursor::{Cursor, FuncCursor};
     use cranelift_codegen::ir::{ExtFuncData, ExternalName, JumpTableData, UserExternalName};
     let cluster_of = |g: usize| (if g < n_words { cut.of[g] } else { cut.of[shared.bodies[g - n_words].start] }) as usize;
-    let block_of = |wb: &[Block], entries: &[Block], g: usize| if g < n_words { wb[g] } else { entries[g - n_words] };
+    let block_of = |wb: &[Option<Block>], entries: &[Block], g: usize| if g < n_words { wb[g].expect("a place named") } else { entries[g - n_words] };
     // The places of other clusters each cluster jumps to (a block a jump kept), and so each
     // cluster's entries.
     let mut used: Vec<Vec<usize>> = Vec::with_capacity(lowered.len());
@@ -2183,7 +2230,7 @@ fn join_clusters(lowered: &mut [Lowered], cut: &crate::native_cpu_clusters::Cut,
     let mut crossings = 0usize;
     let mut edges: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
     for (c, l) in lowered.iter_mut().enumerate() {
-        let [ctx, mem, at] = l.params;
+        let [ctx, at] = l.params;
         let (wb, entries) = (l.wb.clone(), l.entries.clone());
         let mut exits: std::collections::HashMap<Block, usize> = std::collections::HashMap::new();
         let mut refs: std::collections::HashMap<usize, cranelift_codegen::ir::FuncRef> = std::collections::HashMap::new();
@@ -2198,7 +2245,7 @@ fn join_clusters(lowered: &mut [Lowered], cut: &crate::native_cpu_clusters::Cut,
             l.func.layout.append_block(b);
             let mut pos = FuncCursor::new(&mut l.func).at_bottom(b);
             let i = pos.ins().iconst(types::I64, index[d][&g] as i64);
-            pos.ins().return_call(fref, &[ctx, mem, i]);
+            pos.ins().return_call(fref, &[ctx, i]);
             exits.insert(b, g);
             crossings += 1;
         }
@@ -2210,8 +2257,8 @@ fn join_clusters(lowered: &mut [Lowered], cut: &crate::native_cpu_clusters::Cut,
         let mut pos = FuncCursor::new(&mut l.func).at_bottom(l.dispatch);
         let i = pos.ins().ireduce(types::I32, at);
         pos.ins().br_table(i, jt);
-        for (&g, &b) in incoming[c].iter().zip(&targets) {
-            edges.insert(g, crate::native_cpu_shape::exits(&l.func, &l.heads, b, &exits));
+        for (&g, reach) in incoming[c].iter().zip(crate::native_cpu_shape::exits(&l.func, &l.heads, &targets, &exits)) {
+            edges.insert(g, reach);
         }
     }
     crate::native_cpu_shape::acyclic(&edges).map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
@@ -2497,6 +2544,12 @@ impl Parser {
     pub fn new(native: &Structure) -> Result<Self, Error> {
         let block = native.block_programs.first().ok_or(Error::UnsupportedBackend)?;
         Ok(Parser { tier1: crate::native_cpu_block::compile(block)?, tier2: compile(native)? })
+    }
+
+    /// `new`, with tier 2 in the clusters of `cut` (`compile_cut`).
+    pub fn with_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) -> Result<Self, Error> {
+        let block = native.block_programs.first().ok_or(Error::UnsupportedBackend)?;
+        Ok(Parser { tier1: crate::native_cpu_block::compile(block)?, tier2: compile_cut(native, cut)? })
     }
 
     /// The node table of `bytes` as tier 2 wrote it, or the word that refused it (the file goes

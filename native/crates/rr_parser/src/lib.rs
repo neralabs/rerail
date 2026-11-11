@@ -699,6 +699,95 @@ pub mod tests {
         eprintln!("load: {}", String::from_utf8_lossy(&std::process::Command::new("uptime").output().map(|o| o.stdout).unwrap_or_default()).trim());
     }
 
+    /// Tier 2 in clusters (`native_cpu_clusters`, doc 28) on `.rr`: the traffic from every
+    /// fourth file of the corpus, a cut at each cap, and for each the compile (CPU, Cranelift's
+    /// register allocation), the code (instructions, stack loads and stores), the share of steps
+    /// that cross, and tier 2's time over the whole corpus with tier 1's buffers made before.
+    /// Every file's table equals the one function's. Run by hand, at nice 19.
+    #[test]
+    #[ignore = "a benchmark: run by hand"]
+    fn rr_tier2_clusters() {
+        use rerail_compiler::native_cpu_clusters::{by_traffic, crossings, traffic, Cut};
+        use rerail_compiler::native_cpu_stream::Parser;
+        let c = super::compiled().expect("compiles");
+        let native = rerail_compiler::native_ir::lower(&c.program, 0, 0).expect("lowers");
+        let files = corpus();
+        let sample: Vec<&[u8]> = files.iter().step_by(4).map(|f| f.as_bytes()).collect();
+        let t = thread_cpu();
+        let traffic = traffic(&c.program, &sample);
+        eprintln!("{} words; the profile of {} files: {:.2?} CPU", native.structural.len(), sample.len(), thread_cpu() - t);
+        let caps: Vec<usize> = std::env::var("RR_CAPS").ok().map(|v| v.split(',').filter_map(|x| x.parse().ok()).collect()).unwrap_or_else(|| vec![600, 1200, 2500]);
+        let cuts: Vec<(String, Cut)> = std::iter::once(("one function".to_owned(), Cut::one(native.structural.len()))).chain(caps.iter().map(|&cap| (format!("cap {cap}"), by_traffic(&native, &traffic, cap)))).collect();
+        // Tier 1's buffers, a batch a file, made once.
+        let one = &c.parser;
+        let batches: Vec<_> = files
+            .iter()
+            .map(|f| {
+                let mut b = rerail_compiler::native_cpu_block::Batch::new(&one.tier1, &[f.as_bytes()]);
+                b.call(&one.tier1);
+                b
+            })
+            .collect();
+        let want: Vec<_> = batches.iter().map(|b| {
+            let mut tape = one.tape(b);
+            one.words(b, &mut tape).map(|_| tape.columns()).map_err(|r| r.pc)
+        }).collect();
+        let asm = |text: &str| {
+            let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.ends_with(':') && !l.starts_with(';')).collect();
+            (lines.len(), lines.iter().filter(|l| ["[sp", "[fp", "spillslot"].iter().any(|p| l.contains(p))).count())
+        };
+        let mut made = Vec::new();
+        for (name, cut) in &cuts {
+            let _ = cranelift_codegen::timing::take_current();
+            // Tier 2's compile alone (tier 1's is the same for every form).
+            let t = thread_cpu();
+            let tier2 = rerail_compiler::native_cpu_stream::compile_cut(&native, cut).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+            let compile = thread_cpu() - t;
+            let timing = cranelift_codegen::timing::take_current().to_string();
+            let p = Parser { tier1: rerail_compiler::native_cpu_block::compile(&native.block_programs[0]).expect("tier 1"), tier2 };
+            if std::env::var_os("RR_TIMING").is_some() {
+                eprintln!("{name}:\n{timing}");
+            }
+            let regalloc = timing.lines().find(|l| l.contains("Register allocation")).map(|l| l.split_whitespace().next().unwrap_or("?").to_owned()).unwrap_or_default();
+            let (code, stack) = asm(&p.tier2.disassembly);
+            if let Ok(dir) = std::env::var("RR_DUMP") {
+                let tag = name.replace(' ', "-");
+                std::fs::write(format!("{dir}/tier2-{tag}.s"), &p.tier2.disassembly).expect("writes");
+                std::fs::write(format!("{dir}/tier2-{tag}.clif"), &p.tier2.clif).expect("writes");
+            }
+            // The state's own loads and stores, in one function's stack frame: not spills.
+            let state = p.tier2.clif.lines().filter(|l| l.contains("stack_load") || l.contains("stack_store")).count();
+            for (k, b) in batches.iter().enumerate() {
+                let mut tape = p.tape(b);
+                let got = p.words(b, &mut tape).map(|_| tape.columns()).map_err(|r| r.pc);
+                assert!(got == want[k], "{name}: file {k} differs from the one function's");
+            }
+            eprintln!(
+                "{name:>12}: {:>3} functions, {:>4} tail calls, {:.3} of the steps cross; compile {compile:.2?} CPU (register allocation {regalloc} s); {code} instructions, {} stack loads/stores, {state} of them the state's",
+                p.tier2.clusters, p.tier2.crossings, crossings(&native, cut, &traffic), stack
+            );
+            made.push((name, p));
+        }
+        // Tier 2's time over the corpus, the forms in turn (the machine's load moves): each
+        // form's best of the rounds.
+        let rounds: usize = std::env::var("RR_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(5);
+        let mut best = vec![std::time::Duration::MAX; made.len()];
+        for _ in 0..rounds {
+            for (i, (_, p)) in made.iter().enumerate() {
+                let t = thread_cpu();
+                for b in &batches {
+                    let mut tape = p.tape(b);
+                    let _ = p.words(b, &mut tape);
+                }
+                best[i] = best[i].min(thread_cpu() - t);
+            }
+        }
+        for ((name, _), t) in made.iter().zip(&best) {
+            eprintln!("{name:>12}: tier 2 {t:.1?} CPU over the corpus (the best of {rounds})");
+        }
+        eprintln!("load: {}", String::from_utf8_lossy(&std::process::Command::new("uptime").output().map(|o| o.stdout).unwrap_or_default()).trim());
+    }
+
     /// Throughput over the repository's `.rr` files, a pass's mean of `REPEAT`, CPU (this thread)
     /// and wall: the hand-written Rust reader (`rr::tape`), the compiled grammar file by file,
     /// the corpus as one batch with tier 1 on the CPU, and as one batch with tier 1 on Metal

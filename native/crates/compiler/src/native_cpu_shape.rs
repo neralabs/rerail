@@ -106,29 +106,37 @@ pub fn check_tails(func: &Function, heads: &[(Block, Step)], own: &[UserExternal
     Ok(())
 }
 
-/// The `exits` (a block that leaves the function, and where to) reached from `from` before any
-/// of `heads`: none if `from` is one.
-pub fn exits(func: &Function, heads: &[(Block, Step)], from: Block, exits: &HashMap<Block, usize>) -> Vec<usize> {
+/// For each block of `from`, the `exits` (a block that leaves the function, and where to) it
+/// reaches before any of `heads`: none from a head. The graph with the heads taken out is
+/// acyclic (`check`), so each block's exits are its successors' and their own, found once.
+pub fn exits(func: &Function, heads: &[(Block, Step)], from: &[Block], exits: &HashMap<Block, usize>) -> Vec<Vec<usize>> {
     let cfg = ControlFlowGraph::with_function(func);
     let named: HashMap<Block, Step> = heads.iter().copied().collect();
-    let mut out = Vec::new();
-    if named.contains_key(&from) {
-        return out;
-    }
-    let mut seen = std::collections::HashSet::from([from]);
-    let mut work = vec![from];
-    while let Some(b) = work.pop() {
-        if let Some(&x) = exits.get(&b) {
-            out.push(x);
-        }
-        for s in cfg.succ_iter(b) {
-            if !named.contains_key(&s) && seen.insert(s) {
-                work.push(s);
+    let mut memo: HashMap<Block, std::rc::Rc<Vec<usize>>> = HashMap::new();
+    // Post-order, without recursion: a block's exits once its successors' are known.
+    let mut reach = |root: Block| -> std::rc::Rc<Vec<usize>> {
+        let mut stack: Vec<(Block, bool)> = vec![(root, false)];
+        while let Some((b, done)) = stack.pop() {
+            if memo.contains_key(&b) {
+                continue;
             }
+            let succs: Vec<Block> = cfg.succ_iter(b).filter(|s| !named.contains_key(s)).collect();
+            if !done {
+                stack.push((b, true));
+                stack.extend(succs.iter().filter(|s| !memo.contains_key(s)).map(|&s| (s, false)));
+                continue;
+            }
+            let mut out: Vec<usize> = exits.get(&b).copied().into_iter().collect();
+            for s in succs {
+                out.extend(memo.get(&s).map(|v| v.as_slice()).unwrap_or(&[]));
+            }
+            out.sort_unstable();
+            out.dedup();
+            memo.insert(b, std::rc::Rc::new(out));
         }
-    }
-    out.sort_unstable();
-    out
+        memo.get(&root).cloned().unwrap_or_default()
+    };
+    from.iter().map(|&b| if named.contains_key(&b) { Vec::new() } else { reach(b).as_ref().clone() }).collect()
 }
 
 /// Functions that pass control to each other: no cycle of `edges` (an entry to the entries it
