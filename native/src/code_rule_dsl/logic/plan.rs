@@ -1352,6 +1352,17 @@ impl Model {
         // relation is T's choice on its programs (`dec1` before `pv`: work 67, not 7,001).
         let connected = |l: &Literal, bound: &BTreeSet<String>| bound.is_empty() || !l.vars().is_disjoint(bound);
         let full_mask: u64 = (0..joins.len()).map(|i| 1u64 << i).sum();
+        // A gate (`answers::gate`'s `done_N_ad(t)` before `!N(t)`) holds only keys its rule's own literals give
+        // (its `ask` is the body before the negation), so it never yields a row they would not: it is a test of a
+        // bound key, joined once its key is bound and never crossed in to bind it. Its size is the size of what is
+        // answered so far, which the stats of an earlier wave do not know. As the delta, it anchors as any atom.
+        let gate_waits = |i: usize, bound: &dyn Fn(&str) -> bool| -> bool {
+            matches!(&body[joins[i]], Literal::Atom(a) if super::answers::is_gate(&a.rel))
+                && body.iter().any(|l| matches!(l, Literal::Atom(n) if n.neg && n.gated))
+                && first != Some(joins[i])
+                && body[joins[i]].vars().iter().any(|v| !bound(v))
+                && (0..joins.len()).any(|j| j != i)
+        };
         let disconnected = |i: usize, prev: u64, bound: &BTreeSet<String>| {
             !connected(&body[joins[i]], bound) && (0..joins.len()).any(|j| j != i && prev & (1 << j) == 0 && connected(&body[joins[j]], bound))
         };
@@ -1374,7 +1385,7 @@ impl Model {
                     if done & (1 << i) != 0 || order.is_empty() && (!matches!(l, Literal::Atom(_)) || first.is_some_and(|f| f != joins[i])) {
                         continue;
                     }
-                    if disconnected(i, done, &bound) {
+                    if disconnected(i, done, &bound) || gate_waits(i, &|v: &str| bound.contains(v)) {
                         continue;
                     }
                     let Some((w, out, mode)) = step(l, rows, &bound) else { continue };
@@ -1546,6 +1557,9 @@ impl Model {
                         continue; // semi-naive: the delta first
                     }
                     let (bound, h_prev) = &closed[prev as usize];
+                    if gate_waits(i, &|v: &str| bound >> var_ids[v] & 1 == 1) {
+                        continue;
+                    }
                     let Some((w, mut out, mode)) = priced(price(i, *bound), from.rows) else { continue };
                     candidates += 1;
                     // `close`'s halving filters newly placed by this join.

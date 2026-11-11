@@ -897,3 +897,80 @@ fn an_equality_binds_its_right_side_before_the_next_join() {
     assert_eq!(o.len(), 2, "{o:?}");
     assert_eq!(out.outputs["o2"].len(), 1);
 }
+
+/// A concatenation given its inverse and a function made a join key (`simplify::concat_inverses`, `function_keys`)
+/// derive the rows the rule did: a module's stub file found from its head (`modules.rr`'s `py_try` "stubs"), and
+/// the rest of a name by `substr`, which runs natively.
+#[test]
+fn join_keys_from_functions_derive_the_rules_rows() {
+    let src = r#"
+        .decl want(q: symbol)
+        want("a.b"). want("c.d"). want("e"). want("zz").
+        .decl stubs(r: symbol)
+        stubs("s").
+        .decl sub(r: symbol, w: symbol)
+        sub("s", "x"). sub("s", "y").
+        .decl entry(d: symbol, n: symbol)
+        entry("s/x", "a.pyi"). entry("s/x", "e.pyi"). entry("s/y", "zz.pyi"). entry("s/y", "c"). entry("t/x", "a.pyi").
+        .decl hit(q: symbol, b: symbol, h: symbol)
+        hit(q, b, h) :- want(q), stubs(r), sub(r, w), b = cat(r, "/", w), h = @head(q), x = cat(h, ".pyi"), entry(b, x).
+        .decl rest(q: symbol, m: symbol)
+        rest(q, m) :- want(q), h = @head(q), m = substr(q, strlen(h), strlen(q) - strlen(h)).
+        .output hit
+        .output rest
+    "#;
+    let plain = parse(src).unwrap();
+    let mut keyed = plain.clone();
+    let report = crate::code_rule_dsl::logic::simplify::simplify(&mut keyed);
+    assert!(report.inverses >= 3, "the concatenations' parts: {report:?}");
+    assert_eq!(report.keyed_by, ["want__key_head0"], "{report:?}");
+    let rows = |p: &Program, modes: Option<&str>| -> Vec<Vec<String>> {
+        let path = crate::code_rule_dsl::prefilter::tests::temp();
+        let store = ContentStore::open(&path).unwrap();
+        let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let lowered = lower::lower(p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let db = Connection::open(&path).unwrap();
+        super::super::native::register(&db).unwrap();
+        super::super::native::register_symbols(&db).unwrap();
+        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), modes.unwrap_or("")).unwrap();
+        if modes.is_some() {
+            assert!(got.native.contains("hit") && got.native.contains("rest"), "native: {:?}", got.native);
+        }
+        let mut out: Vec<Vec<String>> = ["hit", "rest"].iter().flat_map(|o| got.outputs[*o].iter().map(move |r| vec![o.to_string(), format!("{r:?}")])).collect();
+        out.sort();
+        out
+    };
+    let want = rows(&plain, None);
+    assert_eq!(want.iter().filter(|r| r[0] == "hit").count(), 3, "{want:?}");
+    assert_eq!(rows(&keyed, None), want);
+    assert_eq!(rows(&keyed, Some("program")), want);
+}
+
+/// A gate (`answers::gate`'s `done_N_ad(t)` before `!N(t)`) holds only keys the rule's own literals give: after the
+/// delta it is joined once its key is bound, not crossed in because an earlier wave's stats priced it at one row
+/// (`py_try`'s "stubs": 404 rows crossed to 4 M, then rejected to 151).
+#[test]
+fn a_gate_is_joined_once_its_key_is_bound() {
+    let mut p = parse(
+        ".decl dir(b: symbol, x: symbol)\n.decl done_n_b(q: symbol)\n.decl n(q: symbol)\n.decl k(h: symbol, q: symbol)\n.decl o(q: symbol, b: symbol)\n\
+         o(q, b) :- dir(b, x), done_n_b(q), !n(q), k(h, q), h = @str_between(x, \"\", \".pyi\").\n.output o\n",
+    )
+    .unwrap();
+    for l in &mut p.rules[0].body {
+        if let Literal::Atom(a) = l
+            && a.neg
+        {
+            a.gated = true;
+        }
+    }
+    let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
+    let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.clone()).collect();
+    let mut model = Model { docs_by_shift: false, analysis: Default::default(), stats: Stats::empty(&p), ndv: HashMap::new(), docof: HashMap::new(), view_src: HashMap::new(), inputs, derived };
+    for (rel, rows) in [("dir", 400.0), ("done_n_b", 1.0), ("n", 10.0), ("k", 10_000.0)] {
+        model.stats.card.insert(rel.to_owned(), rows);
+    }
+    let r = &p.rules[0];
+    let ((order, _, _), _) = model.plan_rule_explained(&p, &r.head, &r.body, Some(0)).unwrap();
+    let atoms: Vec<&str> = order.iter().filter_map(|s| s.lit.atom()).filter(|a| !a.neg).map(|a| a.rel.as_str()).collect();
+    assert_eq!(atoms, ["dir", "k", "done_n_b"], "{:?}", order.iter().map(|s| s.lit.to_string()).collect::<Vec<_>>());
+}

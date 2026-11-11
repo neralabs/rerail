@@ -20,6 +20,12 @@ fn atom(rel: String, args: Vec<Term>) -> Atom {
     Atom { rel, args, neg: false, gated: false }
 }
 
+/// Whether `rel` is a gate's `done` relation (`gate`): a test of keys its rule's literals bind, which the planner
+/// joins only once they are bound.
+pub(in crate::code_rule_dsl) fn is_gate(rel: &str) -> bool {
+    rel.starts_with("done_")
+}
+
 /// Every produced relation, with its request.
 pub(in crate::code_rule_dsl) fn produced(prog: &Program) -> BTreeMap<&str, &str> {
     prog.answers.iter().flat_map(|(req, ps)| ps.iter().map(move |p| (p.as_str(), req.as_str()))).collect()

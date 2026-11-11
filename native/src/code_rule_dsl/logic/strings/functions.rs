@@ -31,6 +31,9 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("replace_all", &[Text, Text, Text], Text),
     ("convert", &[Text, Text, Text], Text),
     ("slice", &[Text, Number, Number], Text),
+    // Soufflé's `substr(s, i, n)`: `n` characters from the `i`th (from 0), as the SQL path's `substr(s, i + 1, n)`.
+    // (`rr_` as SQL's own `substr` is not replaced: each function here is SQL's of that name too.)
+    ("rr_substr", &[Text, Number, Number], Text),
     ("count_matches", &[Text, Text], Number),
     ("sha256", &[Text], Text),
     ("ed25519_ok", &[Text, Text, Text], Number),
@@ -44,6 +47,9 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("lower", &[Text], Text),
     // `.rr`'s `cat(a, b, …)`, two at a time: the native engine's concatenation (SQL concatenates with `||`).
     ("str_concat", &[Text, Text], Text),
+    // `str_concat` run backwards: the text between a prefix and a suffix, none when the text has not both
+    // (`simplify::concat_inverses`: `$v = cat($a, $x, $b)` with `$v` bound binds `$x`).
+    ("str_between", &[Text, Text, Text], Text),
     // -1, 0 or 1 as `a` sorts before, with or after `b` (by bytes): the order of two symbols (`plan::lower`).
     ("str_cmp", &[Text, Text], Number),
     // Soufflé's `to_number`: a decimal integer's value; no value for other text.
@@ -77,7 +83,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
 /// `rr_` name (`@add`, `@strlen`, …).
 pub(in crate::code_rule_dsl) fn native_call(f: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
     match f {
-        "add" | "sub" | "mul" | "div" | "max" | "min" | "strlen" | "to_string" => signature(&format!("rr_{f}")),
+        "add" | "sub" | "mul" | "div" | "max" | "min" | "strlen" | "to_string" | "substr" => signature(&format!("rr_{f}")),
         _ => signature(f),
     }
 }
@@ -183,6 +189,37 @@ fn call(name: &str, kinds: &[Kind], ctx: &Context) -> Value {
     eval(name, &text, &numbers)
 }
 
+/// `substr(s, i, n)` as SQLite's `substr(s, i + 1, n)` gives it, by characters: a negative start counts from the
+/// end, a negative length takes the characters before the start (SQLite's `substrFunc`).
+fn substr(s: &str, i: i64, n: i64) -> String {
+    let len = s.chars().count() as i64;
+    let (mut p1, mut p2) = (i.saturating_add(1), n);
+    let neg = p2 < 0;
+    if neg {
+        p2 = p2.saturating_neg();
+    }
+    if p1 < 0 {
+        p1 += len;
+        if p1 < 0 {
+            p2 += p1;
+            p2 = p2.max(0);
+            p1 = 0;
+        }
+    } else if p1 > 0 {
+        p1 -= 1;
+    } else if p2 > 0 {
+        p2 -= 1;
+    }
+    if neg {
+        p1 -= p2;
+        if p1 < 0 {
+            p2 += p1;
+            p1 = 0;
+        }
+    }
+    s.chars().skip(p1.max(0) as usize).take(p2.max(0) as usize).collect()
+}
+
 /// Function `name` of its text and number arguments, in its signature's order within each kind (`signature`):
 /// the value SQL's function of that name gives, NULL for none. The native engine's `func` step calls it too.
 pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
@@ -191,6 +228,7 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "qname" => Some(format!("{}#{}", t(0), t(1))),
         "pkg_up" => Some(pkg_up(t(0), numbers[0])),
         "head" => Some(t(0).split('.').next().unwrap_or("").to_owned()),
+        "str_between" => t(0).strip_prefix(t(1)).and_then(|rest| rest.strip_suffix(t(2))).map(str::to_owned),
         "dir" => Some(t(0).rsplit_once('/').map_or("", |(d, _)| d).to_owned()),
         "join" => Some(join(t(0), t(1))),
         "glob_sub" => Some(glob_sub(t(0), t(1), t(2))),
@@ -198,6 +236,7 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "replace_all" => with_regex(t(1), |re| re.replace_all(t(0), t(2)).into_owned()),
         "convert" => Some(convert(t(0), t(1), t(2))),
         "slice" => Some(slice(t(0), numbers[0], numbers[1])),
+        "rr_substr" => Some(substr(t(0), numbers[0], numbers[1])),
         "rx_group" => super::group(t(0), t(1), t(2)),
         "str_cmp" => return Value::Integer(t(0).cmp(t(1)) as i64),
         "ed25519_ok" => return Value::Integer(i64::from(super::signatures::verifies(t(0), t(1), t(2)))),
@@ -385,4 +424,21 @@ pub(in crate::code_rule_dsl) fn json_str(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+#[cfg(test)]
+mod substr_tests {
+    /// The native `substr` gives what SQLite's `substr(s, i + 1, n)` gives, which the SQL path computes.
+    #[test]
+    fn substr_is_sqlites() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        for s in ["", "a", "abc.def", "héllo wörld"] {
+            for i in -14..14i64 {
+                for n in -14..14i64 {
+                    let sql: String = conn.query_row("SELECT substr(?1, ?2 + 1, ?3)", rusqlite::params![s, i, n], |r| r.get(0)).unwrap();
+                    assert_eq!(super::substr(s, i, n), sql, "substr({s:?}, {i}, {n})");
+                }
+            }
+        }
+    }
 }
