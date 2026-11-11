@@ -30,15 +30,13 @@
 //! `embedded` relation (from a host node); a guest node reads the host through `host`.
 
 pub(crate) mod compiled_view;
-mod script_block;
+pub(crate) mod script_block;
 pub(crate) mod segments;
 #[cfg(test)]
 pub(crate) mod test_script;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use compiled_view::CompiledView;
-pub(crate) use script_block::ScriptBlock;
 #[cfg(test)]
 pub(crate) use test_script::TestScript;
 

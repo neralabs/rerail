@@ -2051,7 +2051,7 @@ impl Lowerer {
                 let name=|t:&STerm|match t{STerm::Var(v)=>Ok(v.clone()),_=>Err(Error::Syntax("Python candidate inputs are relation names".into()))};
                 let literal=|t:&STerm|match t{STerm::Str(v)=>Ok(v.clone()),_=>Err(Error::Syntax("Python candidate context and member must be string literals".into()))};
                 let (input,targets,context,member)=(name(input)?,name(targets)?,literal(context)?,literal(member)?);
-                if !crate::code_rule_dsl::facts::producers::python::families::CONTEXTS.contains(&context.as_str()) {return Err(Error::Syntax(format!("unknown Python execution context {context}")));}
+                if !crate::code_rule_dsl::logic::front::PYTHON_CONTEXTS.contains(&context.as_str()) {return Err(Error::Syntax(format!("unknown Python execution context {context}")));}
                 for name in [&input,&targets] {
                     if !self.prog.decls.get(name).is_some_and(|cols|cols.len()==1) {return Err(Error::Syntax(format!("python_candidates: {name} must be a declared unary relation")));}
                 }

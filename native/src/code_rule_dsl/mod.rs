@@ -565,9 +565,9 @@ pub(crate) fn install_languages() {
     // The embedders, by `Via` (`embed::Embedder`), and the program scopes an embedding gives a meaning of its own.
     embed::install_embedders(vec![
         #[cfg(feature = "lang-blade")]
-        (language::Via::CompiledView, &embed::CompiledView),
+        (language::Via::CompiledView, &embed::compiled_view::CompiledView),
         #[cfg(feature = "lang-vue")]
-        (language::Via::ScriptBlock, &embed::ScriptBlock),
+        (language::Via::ScriptBlock, &embed::script_block::ScriptBlock),
         #[cfg(any(test, feature = "test-hooks"))]
         (language::Via::TestScript, &embed::TestScript),
     ]);

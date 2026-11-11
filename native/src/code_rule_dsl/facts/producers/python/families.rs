@@ -25,8 +25,7 @@ use crate::code_rule_dsl::language::KindCatalog;
 /// The rows' version: a change to what they hold changes the families' producer (`families::py_producer`).
 pub(crate) const VERSION: u32 = 3;
 
-/// `py_exec_context.kind`'s names, by `ContextKind` order.
-pub(crate) const CONTEXTS: [&str; 5] = ["module", "sync_function", "async_function", "class", "lambda"];
+pub(crate) use crate::code_rule_dsl::logic::front::PYTHON_CONTEXTS as CONTEXTS;
 /// `py_call_arg.spread`'s names: none, `*x`, `**x`.
 pub(crate) const SPREADS: [&str; 3] = ["none", "positional", "keywords"];
 
