@@ -61,6 +61,8 @@ mod rf_kernel_test;
 
 pub use randomforest_kernels_metal::{function, library, KERNELS, SOURCE};
 
+pub mod cost_model;
+
 /// The process's Metal device, and the forest's queue (its own, apart from the engine's).
 pub mod gpu {
     pub mod shared {

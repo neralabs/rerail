@@ -120,7 +120,7 @@ unsafe impl Pod for PredictNode {}
 
 /// A forest flattened for the device: every tree's nodes in one array, each tree's root, the trees' weights and
 /// the leaves' distributions (two per leaf).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct FlatForest {
     pub nodes: Vec<PredictNode>,
     pub roots: Vec<i32>,
@@ -136,6 +136,35 @@ pub struct FlatForest {
 }
 
 impl FlatForest {
+    /// The forest's prediction for one row on the host, from the row's bucket in each feature (the device's walk,
+    /// `predictForestImpl`, tree after tree: the same leaves; the sums may differ in the last bit, in another order).
+    pub fn predict_row(&self, buckets: &[u32]) -> Result<[f32; 2], String> {
+        let (mut p0, mut p1) = (0f32, 0f32);
+        for (&root, &w) in self.roots.iter().zip(&self.weights) {
+            let mut at = root;
+            for _ in 0..self.max_depth + 1 {
+                if at < 0 {
+                    break;
+                }
+                let n = &self.nodes[at as usize];
+                let b = buckets[n.feature as usize];
+                let is_true = match n.ordinal {
+                    1 => b < n.split_bucket,
+                    0 => b == n.split_bucket,
+                    _ => b < 512 && (self.subsets[n.split_bucket as usize * 16 + (b >> 5) as usize] >> (b & 31)) & 1 != 0,
+                };
+                at = if is_true { n.child_true } else { n.child_false };
+            }
+            if at >= 0 {
+                return Err("a walk did not reach a leaf".into());
+            }
+            let leaf = (-(at + 1)) as usize;
+            p0 += w * self.leaf_preds[2 * leaf];
+            p1 += w * self.leaf_preds[2 * leaf + 1];
+        }
+        Ok([p0, p1])
+    }
+
     pub fn new(forest: &Forest) -> Result<Self, String> {
         let nf = forest.fs.column_info.len();
         let feature_bits = (0..nf).map(|i| forest.fs.column(i).map_or(0, prediction_bucket_bits)).collect();
@@ -257,28 +286,32 @@ struct Scratch {
 /// The words describing a column to `rowBuckets` (`ROW_BUCKET_WORDS` in the kernels).
 const ROW_BUCKET_WORDS: usize = 8;
 
-/// A feature space's columns as the device bucketizes prediction rows (`DeviceForest::predict_values`): built once
-/// per feature space, the bucket rules of `ColumnInfo::bucket_of` (numbers by the numeric splits, strings by name,
-/// a null in bucket 0 when the column had nulls, anything else in the unseen bucket).
-pub struct DeviceBucketizer {
-    columns: Vec<BucketizerColumn>,
-    split_keys: metal::Buffer,
+/// A feature space's bucket rules for prediction rows (`ColumnInfo::bucket_of`): numbers by the numeric splits,
+/// strings by name, a null in bucket 0 when the column had nulls, anything else in the unseen bucket. Plain data,
+/// built once per feature space: the host bucketizes by them (`bucket_of_number`, `bucket_of_name`) and the device
+/// takes them (`DeviceBucketizer`), and they give the same buckets.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BucketRules {
+    pub columns: Vec<BucketizerColumn>,
+    /// Every numeric column's split keys (`order_key`), column after column.
+    pub split_keys: Vec<i64>,
 }
 
-struct BucketizerColumn {
-    bits: u32,
-    split_start: u32,
-    num_splits: u32,
-    numeric_offset: u32,
-    null_bucket: u32,
-    unseen: u32,
-    strings: HashMap<String, u32>,
+/// One column's rules (`BucketRules`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BucketizerColumn {
+    pub bits: u32,
+    pub split_start: u32,
+    pub num_splits: u32,
+    pub numeric_offset: u32,
+    pub null_bucket: u32,
+    pub unseen: u32,
+    pub strings: HashMap<String, u32>,
 }
 
-impl DeviceBucketizer {
+impl BucketRules {
     pub fn new(fs: &DatasetFeatureSpace) -> Result<Self, String> {
         use crate::dataset_feature_space::{order_key, unseen_bucket};
-        let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
         let mut keys: Vec<i64> = Vec::new();
         let mut columns = Vec::new();
         for i in 0..fs.column_info.len() {
@@ -299,8 +332,46 @@ impl DeviceBucketizer {
                 keys.extend(d.numeric.splits.iter().map(|&s| order_key(s)));
             }
         }
+        Ok(BucketRules { columns, split_keys: keys })
+    }
+
+    /// Column `c`'s bucket for a number (a NaN is a null), as `rowBucketOf` gives it.
+    pub fn bucket_of_number(&self, c: usize, v: f64) -> u32 {
+        let col = &self.columns[c];
+        if v.is_nan() {
+            return col.null_bucket;
+        }
+        let k = crate::dataset_feature_space::order_key(v);
+        let splits = &self.split_keys[col.split_start as usize..(col.split_start + col.num_splits) as usize];
+        col.numeric_offset + splits.partition_point(|&s| s < k) as u32
+    }
+
+    /// Column `c`'s bucket for a string (`None`: a null).
+    pub fn bucket_of_name(&self, c: usize, name: Option<&str>) -> u32 {
+        let col = &self.columns[c];
+        match name {
+            None => col.null_bucket,
+            Some(n) => col.strings.get(n).copied().unwrap_or(col.unseen),
+        }
+    }
+}
+
+/// The bucket rules on the device (`DeviceForest::predict_values`).
+pub struct DeviceBucketizer {
+    columns: Vec<BucketizerColumn>,
+    split_keys: metal::Buffer,
+}
+
+impl DeviceBucketizer {
+    pub fn new(fs: &DatasetFeatureSpace) -> Result<Self, String> {
+        Self::from_rules(&BucketRules::new(fs)?)
+    }
+
+    pub fn from_rules(rules: &BucketRules) -> Result<Self, String> {
+        let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
+        let mut keys = rules.split_keys.clone();
         keys.push(0);
-        Ok(DeviceBucketizer { columns, split_keys: transfer_to_device_immutable(&shared.device, &keys) })
+        Ok(DeviceBucketizer { columns: rules.columns.clone(), split_keys: transfer_to_device_immutable(&shared.device, &keys) })
     }
 }
 
