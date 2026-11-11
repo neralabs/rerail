@@ -23,6 +23,8 @@ use std::path::{Path, PathBuf};
 const FACT_STORE: &[&str] = &[
     "atoms",
     "atom_segment",
+    "atom_key",
+    "atom_key_end",
     "strings",
     "hashes",
     "paths",
