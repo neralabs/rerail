@@ -267,7 +267,7 @@ impl GrammarMatcher {
 /// matches, each constrained metavariable bound to a single node must also match its rule, applied
 /// to the captured node with the same environment. Unbound and multi-node captures are not checked.
 #[derive(Clone)]
-pub(super) struct Constrained {
+pub struct Constrained {
     pub(super) rule: AstMatcher,
     pub(super) constraints: Vec<(String, AstMatcher)>,
 }
@@ -334,7 +334,7 @@ pub(super) enum AstMatcher {
 
 /// A grammar supertype's id and the concrete kinds its members can have (`AstMatcher::Supertype`).
 #[derive(Clone, Debug)]
-pub(super) struct Supertype {
+pub struct Supertype {
     pub(super) class: u16,
     pub(super) kinds: Arc<std::collections::BTreeSet<u16>>,
 }

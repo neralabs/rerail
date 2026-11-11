@@ -640,7 +640,7 @@ mod tests {
 }
 
 /// Python's format styles (`FormatPreparer`): `brace` (`str.format`) or `%`.
-pub(crate) struct Python {
+pub struct Python {
     brace: bool,
 }
 

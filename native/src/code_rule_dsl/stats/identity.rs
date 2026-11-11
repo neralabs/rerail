@@ -91,7 +91,7 @@ impl IdentityDomain for DocumentDomain {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl) struct CompiledPlanDomain;
+pub struct CompiledPlanDomain;
 
 impl IdentityDomain for CompiledPlanDomain {
     const TAG: u8 = 17;
@@ -187,7 +187,7 @@ impl<D: IdentityDomain> fmt::Debug for SemanticId<D> {
     }
 }
 
-pub(in crate::code_rule_dsl) struct IdentityBuilder<D> {
+pub struct IdentityBuilder<D> {
     digest: Sha256,
     domain: PhantomData<D>,
 }

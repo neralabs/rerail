@@ -52,7 +52,7 @@ impl Limits {
 }
 
 #[derive(Clone)]
-pub(super) struct Capabilities {
+pub struct Capabilities {
     pub(super) raw: Value,
     pub(super) limits: Limits,
 }
@@ -426,7 +426,7 @@ fn split_meta_var(source: &str) -> Option<(String, bool, usize)> {
 
 /// A clause's suggested fix, compiled once. A fix replaces the witness span (as ast-grep's
 /// replacement replaces the matched node) whatever the violation's anchor.
-pub(super) enum FixPlan {
+pub enum FixPlan {
     /// ast-grep `TemplateFix` per grammar dialect the rule compiled for, and the literal texts a
     /// braced template moved into transform variables (`Template::upstream`).
     Ast(Vec<(GrammarDialect, TemplateFix)>, Vec<(String, String)>),
@@ -503,7 +503,7 @@ pub(super) struct NameClosure {
 }
 
 #[derive(Clone)]
-pub(super) struct AstRelation {
+pub struct AstRelation {
     /// A `Query::Ast`.
     pub(super) query: Query,
     /// The files the relation reads, within the code rule's scope; `None` reads all of it.

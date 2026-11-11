@@ -9,7 +9,7 @@ use rusqlite::{Connection, Result};
 use std::collections::BTreeMap;
 mod contexts;
 #[derive(Default)]
-pub(super) struct Storage {
+pub struct Storage {
     contexts: contexts::Contexts,
     objects: BTreeMap<String, Object>,
     pub(super) owner: Option<usize>,

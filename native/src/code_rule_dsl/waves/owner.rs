@@ -33,9 +33,9 @@ struct Inner<'s> {
     db: OnceCell<Database>,
 }
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Pool<'s>(Rc<Inner<'s>>);
+pub struct Pool<'s>(Rc<Inner<'s>>);
 /// One execution's hold on the backing: the owner returns to it on drop, if clean.
-pub(in crate::code_rule_dsl) struct Scope<'s> {
+pub struct Scope<'s> {
     pool: Option<Pool<'s>>,
     backing: ArcMutexGuard<RawMutex, Option<Database>>,
 }

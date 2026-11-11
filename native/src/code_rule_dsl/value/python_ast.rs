@@ -8,7 +8,7 @@ use std::{
 };
 
 #[derive(Debug, Clone)]
-pub(crate) struct Error(pub String);
+pub struct Error(pub String);
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Request {
@@ -26,7 +26,7 @@ pub(crate) struct Document {
 pub(crate) type Row = BTreeMap<String, String>;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Response {
+pub struct Response {
     version: [u8; 2],
     pub documents: Vec<Vec<Row>>,
     pub parses: usize,

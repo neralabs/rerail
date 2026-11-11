@@ -73,7 +73,7 @@ pub(in crate::code_rule_dsl) const REFERENCE_FIELDS: &[&str] = &[
 ];
 
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Plan {
+pub struct Plan {
     pub(in crate::code_rule_dsl) require_nonempty: Option<usize>,
     pub(in crate::code_rule_dsl) syntax: Option<Arc<syntax::Spec>>,
     pub(in crate::code_rule_dsl) per_file: bool,

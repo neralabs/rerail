@@ -45,7 +45,7 @@ pub(in crate::code_rule_dsl) enum Place {
 }
 
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct GapTest {
+pub struct GapTest {
     pub(in crate::code_rule_dsl) place: Place,
     pub(in crate::code_rule_dsl) regex: Regex,
     pub(in crate::code_rule_dsl) grammar: Arc<TokenGrammar>,

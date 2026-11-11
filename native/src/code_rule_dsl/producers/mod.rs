@@ -21,7 +21,7 @@ pub(crate) struct Definition {
     pub implementation: BTreeMap<String, String>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct Order {
+pub struct Order {
     pub column: String,
     pub direction: String,
     pub nulls: String,

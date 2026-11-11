@@ -277,7 +277,7 @@ impl MatchTree {
 
 /// An operator the lowering does not express, named for the coverage count.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl) struct Unsupported(pub(in crate::code_rule_dsl) &'static str);
+pub struct Unsupported(pub(in crate::code_rule_dsl) &'static str);
 
 /// The match tree of a clause's matcher.
 pub(in crate::code_rule_dsl) fn match_tree(grammar: &GrammarMatcher) -> Result<MatchTree, Unsupported> {

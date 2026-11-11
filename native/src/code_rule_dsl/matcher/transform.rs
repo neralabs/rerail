@@ -53,7 +53,7 @@ pub(crate) struct Source {
 /// A `value` source whose value is not known and that has no default.
 pub(crate) struct UnknownValue;
 
-pub(crate) struct TransformLimit;
+pub struct TransformLimit;
 
 /// Why a transformation computed no text: its source's value is not known, or its output exceeds
 /// the budget.

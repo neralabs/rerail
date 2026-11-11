@@ -41,7 +41,7 @@ pub fn is_main_thread() -> bool {
 
 /// Jobs on the one pool that borrow the caller's data, within [`scope`]: every one has ended when it returns. Each is
 /// handed the scope again, to start more.
-pub(crate) struct Jobs<'s, 'r>(
+pub struct Jobs<'s, 'r>(
     #[cfg(not(target_family = "wasm"))] &'r rayon::Scope<'s>,
     #[cfg(target_family = "wasm")] std::marker::PhantomData<(&'s (), &'r ())>,
 );

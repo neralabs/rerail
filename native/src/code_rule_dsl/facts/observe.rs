@@ -20,7 +20,7 @@ pub(crate) fn tree_name(scope: &str, prefix: &str) -> String {
 
 /// What one push did: trees the comparison read, names it rebound, and the propagation.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct Push {
+pub struct Push {
     pub trees_read: usize,
     pub rebound: usize,
     pub work: Work,
