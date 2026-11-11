@@ -230,10 +230,11 @@ Each step compares finding keys with a baseline recorded before the step:
 - Four rules came in with the integration merge using the `tokens:` syntax that `1b9c360dc`
   deleted: `eslint-max-params`, `typescript-eslint-max-params`, `eslint-max-statements` and
   `eslint-no-unexpected-multiline`. The compiler ignores the unknown key, so those tests are
-  dropped silently. They are rewritten like the rest, and an unknown rule key becomes a compile
-  error.
-- Ten candidate rules still carry `a124ac96a`'s edits. They are restored, then rewritten like the
-  rest.
+  dropped silently. They are rewritten like the rest; no pack rule uses the key now, and an
+  unknown rule key is a compile error.
+- No rule carries `a124ac96a`'s edits any more: of the subtrees it added to 24 rules, only two
+  generic ones (`{kind: comment}` and a `raise` test in E722) remain, put there on purpose by the
+  later rewrite.
 - `compare` with `text: "tokens"` (`matcher::compare::tokens`) already reads the text between
   leaves, so it sees implied tokens without any tree change. It stays.
 - `tree.rs` had token helpers that nothing called (`count_tokens_before`, `count_tokens`,

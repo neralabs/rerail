@@ -132,8 +132,19 @@ fn compare_parsed(source: &str, language: GrammarDialect, rules: &[Value], damag
     compare_matchers(source, language, &matchers, damaged);
 }
 
-/// Each matcher (named for its failures) selects the same nodes from the anchor index of the
-/// native tree and of the restored tape as a full walk does.
+/// A source as the engine reads it: tree-sitter's tree written to a tape and restored, with no
+/// token the grammar implies (RER-131).
+fn tape_doc(source: &str, language: GrammarDialect) -> AstGrep<TapeDoc> {
+    let parsed = StrDoc::new(source, language);
+    let grammar = Grammar::new(language).unwrap();
+    let image = TapeImage::encode(parsed.tree.root_node(), &grammar, source, &|| false).unwrap();
+    AstGrep::doc(TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap())
+}
+
+
+/// Each matcher (named for its failures) selects, from the anchor index of the restored tape, the
+/// nodes a full walk of that tape matches, visiting each stored node once. A tape is named-only
+/// (RER-131), and so is every tree the engine reads: tree-sitter's own tree is no oracle here.
 fn compare_matchers(
     source: &str,
     language: GrammarDialect,
@@ -149,16 +160,12 @@ fn compare_matchers(
     let grammar = Grammar::new(language).unwrap();
     let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
     let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
-    // The tree\'s nodes: a stored image is named-only (RER-131).
     let tree_nodes = tape.transducer_len();
-    let native = AstGrep::doc(native);
     let tape = AstGrep::doc(tape);
-    assert_eq!(native.root().dfs().count(), tree_nodes);
+    assert_eq!(tape.root().dfs().count(), tree_nodes);
     for &(rule, matcher) in matchers {
         let plan = AnchorPlan::compile(matcher);
-        let expected = actual(&native, matcher);
-        let (native_found, _, native_visited, native_complete, _) =
-            selected(&native, matcher, &plan, usize::MAX, || false);
+        let expected = actual(&tape, matcher);
         let (tape_found, _, tape_visited, tape_complete, _) =
             selected(&tape, matcher, &plan, usize::MAX, || false);
         let sql_index = sql::FileAnchorIndex::build(&tape, &[&plan], usize::MAX, || false);
@@ -172,23 +179,9 @@ fn compare_matchers(
             .filter_map(|&pre| matched(sql_index.node(pre), matcher))
             .collect();
         assert_eq!(sql_found, expected, "SQL selection {language:?} {rule}");
-        assert!(native_complete && tape_complete, "{language:?} {rule}");
-        assert_eq!(
-            native_visited,
-            tree_nodes,
-            "charge anonymous nodes too"
-        );
-        assert_eq!(tape_visited, native_visited);
-        assert_eq!(
-            native_found, expected,
-            "native selection {language:?} {rule}"
-        );
+        assert!(tape_complete, "{language:?} {rule}");
+        assert_eq!(tape_visited, tree_nodes, "charge every stored node");
         assert_eq!(tape_found, expected, "tape selection {language:?} {rule}");
-        assert_eq!(
-            actual(&tape, matcher),
-            expected,
-            "unchanged matcher {language:?} {rule}"
-        );
     }
 }
 
@@ -223,7 +216,7 @@ fn damaged_trees_select_identically_on_native_and_restored_tape() {
 fn ordered_alternatives_conjunction_pattern_captures_and_unrestricted_branches() {
     let source = "foo(1); bar(2);";
     let rule = json!({"any": [{"pattern": "foo($FIRST)"}, {"pattern": "foo($SECOND)"}]});
-    let native = AstGrep::doc(StrDoc::new(source, GrammarDialect::TypeScript));
+    let native = tape_doc(source, GrammarDialect::TypeScript);
     let matcher = compile_rule(
         &rule,
         GrammarDialect::TypeScript,
@@ -264,7 +257,7 @@ fn ordered_alternatives_conjunction_pattern_captures_and_unrestricted_branches()
         json!({"all": [regex.clone(), capturing.clone()]}),
         json!({"all": [capturing, regex]}),
     ];
-    let native = AstGrep::doc(StrDoc::new(&dense, GrammarDialect::Python));
+    let native = tape_doc(&dense, GrammarDialect::Python);
     let seventh = dense.find("print(value_7)").unwrap();
     let thirty_first = dense.find("print(value_31)").unwrap();
     let expected = vec![
@@ -342,7 +335,7 @@ fn nearest_relations_use_real_immediate_children_and_siblings() {
             "call",
         ),
     ] {
-        let native = AstGrep::doc(StrDoc::new(source, language));
+        let native = tape_doc(source, language);
         let first = source.find("foo(1)").unwrap();
         let middle = source.find("bar(2)").unwrap();
         let last = source.find("foo(3)").unwrap();
@@ -426,7 +419,7 @@ fn string_comments_unicode_prefixes_long_residue_and_python_variadics() {
             json!({"pattern": "const é = $VALUE"}),
         ],
     );
-    let root = AstGrep::doc(StrDoc::new(&long, GrammarDialect::TypeScript));
+    let root = tape_doc(&long, GrammarDialect::TypeScript);
     let rule = json!({"kind": "string", "regex": "^'αβγ.*needle'$"});
     let matcher = compile_rule(
         &rule,
@@ -595,7 +588,7 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
                     .map(move |grammar| (query.as_str(), &grammar.matcher))
             })
             .collect();
-        let root = AstGrep::doc(StrDoc::new(source, language));
+        let root = tape_doc(source, language);
         assert!(
             matchers
                 .iter()
@@ -698,7 +691,6 @@ fn deep_assignment_chain_has_exact_bounded_visits_and_incomplete_fallback() {
     let grammar = Grammar::new(GrammarDialect::TypeScript).unwrap();
     let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap();
     let tape = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
-    // The tree\'s nodes: a stored image is named-only (RER-131).
     let tree_nodes = tape.transducer_len();
     let rule = json!({"kind": "class_declaration"});
     let matcher = compile_rule(
@@ -709,7 +701,6 @@ fn deep_assignment_chain_has_exact_bounded_visits_and_incomplete_fallback() {
     )
     .unwrap();
     let plan = AnchorPlan::compile(&matcher);
-    let native = AstGrep::doc(native);
     let tape = AstGrep::doc(tape);
     assert!(tree_nodes > 1024);
     println!(
@@ -719,20 +710,11 @@ fn deep_assignment_chain_has_exact_bounded_visits_and_incomplete_fallback() {
     );
     for max_nodes in [0, 1, 7, 513, tree_nodes - 1] {
         let (found, roots, visited, complete, all) =
-            selected(&native, &matcher, &plan, max_nodes, || false);
-        assert!(found.is_empty() && !complete && all);
-        assert_eq!(visited, max_nodes + 1);
-        assert_eq!(roots, max_nodes);
-        let (found, roots, visited, complete, all) =
             selected(&tape, &matcher, &plan, max_nodes, || false);
         assert!(found.is_empty() && !complete && all);
         assert_eq!(visited, max_nodes + 1);
         assert_eq!(roots, max_nodes);
     }
-    let (found, _, visited, complete, all) =
-        selected(&native, &matcher, &plan, usize::MAX, || false);
-    assert!(found.is_empty() && complete && !all);
-    assert_eq!(visited, tree_nodes);
     let (found, _, visited, complete, all) = selected(&tape, &matcher, &plan, usize::MAX, || false);
     assert!(found.is_empty() && complete && !all);
     assert_eq!(visited, tree_nodes);
@@ -772,15 +754,14 @@ where
             };
             let matcher = sibling_matcher(rule.clone(), *root.root().get_doc().get_lang());
             let plan = AnchorPlan::compile(&matcher);
-            assert!(plan.exact, "{rule}");
+            // A relation to a token regex also asks its gap (t31): an inexact plan, a superset.
             let index = FileAnchorIndex::build(root, &[&plan], usize::MAX, || false);
             let selection = index.select(&plan);
             let mut matched = Vec::new();
             for ordinal in 0..index.len() {
                 let found = matcher.match_node(index.node(ordinal)).is_some();
-                assert_eq!(
-                    selection.contains(ordinal),
-                    found,
+                assert!(
+                    if plan.exact { selection.contains(ordinal) == found } else { !found || selection.contains(ordinal) },
                     "{source:?} {rule} node {ordinal} {:?}",
                     index.node(ordinal).range()
                 );
@@ -795,9 +776,8 @@ where
 #[test]
 fn sibling_projections_are_exact_around_zero_width_nodes_and_the_root() {
     // `regex: ""` admits every node, zero-width MISSING tokens included, so each sibling
-    // walk is exercised from and onto them. A sound plan selects every matching node; an
-    // exact one (used under `not`) selects nothing else. The restored tape must project,
-    // and match, exactly as the native tree does.
+    // walk is exercised from and onto them. A sound plan selects every matching node of the
+    // restored tape; an exact one (used under `not`) selects nothing else.
     let mut rules = Vec::new();
     for relation in ["precedes", "follows"] {
         for stop in ["neighbor", "end"] {
@@ -813,9 +793,7 @@ fn sibling_projections_are_exact_around_zero_width_nodes_and_the_root() {
             TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
         let tape =
             TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
-        let native = exact_sibling_projection(&AstGrep::doc(native), source, &rules);
-        let tape = exact_sibling_projection(&AstGrep::doc(tape), source, &rules);
-        assert_eq!(native, tape, "{source:?}");
+        exact_sibling_projection(&AstGrep::doc(tape), source, &rules);
     }
 }
 
@@ -853,16 +831,13 @@ fn sibling_projections_are_exact_in_both_blade_documents() {
 
 // ast-grep's sibling walks are byte-positioned on the native tree: `next` skips zero-width
 // siblings at the node's end, and `next_all`/`prev_all` start from the first child of the
-// parent that ends after the node's start. The tape reproduces each walk.
+// parent that ends after the node's start. The tape stores no implied token (RER-131), so its
+// walks are tree-sitter's over the nodes it stores.
 #[test]
 fn tape_sibling_walks_match_native_around_zero_width_nodes() {
-    fn walks<D: Doc>(root: &AstGrep<D>) -> Vec<[Vec<Range<usize>>; 4]> {
-        let ranges = |nodes: Vec<Node<'_, D>>| {
-            nodes
-                .into_iter()
-                .map(|node| node.range())
-                .collect::<Vec<_>>()
-        };
+    type Walks = Vec<[Vec<Range<usize>>; 4]>;
+    fn tape_walks<D: Doc>(root: &AstGrep<D>) -> Walks {
+        let ranges = |nodes: Vec<Node<'_, D>>| nodes.into_iter().map(|node| node.range()).collect::<Vec<_>>();
         root.root()
             .dfs()
             .map(|node| {
@@ -872,6 +847,27 @@ fn tape_sibling_walks_match_native_around_zero_width_nodes() {
                     ranges(node.next_all().collect()),
                     ranges(node.prev_all().collect()),
                 ]
+            })
+            .collect()
+    }
+    fn stored_walks<D: Doc>(root: &AstGrep<D>, stored: &std::collections::BTreeSet<(String, usize, usize)>) -> Walks {
+        let kept = |node: &Node<'_, D>| stored.contains(&(node.kind().to_string(), node.range().start, node.range().end));
+        let ranges = |nodes: Vec<Node<'_, D>>| nodes.into_iter().filter(|node| kept(node)).map(|node| node.range()).collect::<Vec<_>>();
+        root.root()
+            .dfs()
+            .filter(|node| kept(node))
+            .map(|node| {
+                let next_all = ranges(node.next_all().collect());
+                let prev_all = ranges(node.prev_all().collect());
+                // `next` and `prev` are tree-sitter's own steps, past the tokens the tape leaves out; they
+                // differ from `next_all`/`prev_all` at the root and at zero-width nodes.
+                let step = |mut at: Option<Node<'_, D>>, forward: bool| {
+                    while let Some(node) = at.as_ref().filter(|node| !kept(node)) {
+                        at = if forward { node.next() } else { node.prev() };
+                    }
+                    at.map(|node| node.range()).into_iter().collect()
+                };
+                [step(node.next(), true), step(node.prev(), false), next_all, prev_all]
             })
             .collect()
     }
@@ -887,13 +883,11 @@ fn tape_sibling_walks_match_native_around_zero_width_nodes() {
         let grammar = Grammar::new(GrammarDialect::TypeScript).unwrap();
         let image =
             TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
-        let tape =
-            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
-        assert_eq!(
-            walks(&AstGrep::doc(native)),
-            walks(&AstGrep::doc(tape)),
-            "{source:?}"
+        let tape = AstGrep::doc(
+            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap(),
         );
+        let stored = tape.root().dfs().map(|node| (node.kind().to_string(), node.range().start, node.range().end)).collect();
+        assert_eq!(stored_walks(&AstGrep::doc(native), &stored), tape_walks(&tape), "{source:?}");
     }
 }
 
@@ -908,7 +902,10 @@ fn zero_width_end_sibling_selection_is_linear_in_the_run() {
     let statements = 2000;
     // The unclosed body's statements run from its `{` to a zero-width MISSING `}`.
     let source = format!("function f() {{\n{}", "a();\n".repeat(statements));
-    let native = AstGrep::doc(StrDoc::new(&source, GrammarDialect::TypeScript));
+    let parsed = StrDoc::new(&source, GrammarDialect::TypeScript);
+    let grammar = Grammar::new(GrammarDialect::TypeScript).unwrap();
+    let image = TapeImage::encode(parsed.tree.root_node(), &grammar, &source, &|| false).unwrap();
+    let native = AstGrep::doc(TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false).unwrap());
     let mut rules = Vec::new();
     for relation in ["precedes", "follows"] {
         for target in ["^\\{$", "^$"] {
@@ -1024,7 +1021,7 @@ fn anchor_plans_inline_references_and_stay_unrestricted_where_they_recurse() {
 fn utility_plans_select_as_precisely_as_the_rule_written_inline() {
     let mut source: String = (0..200).map(|n| format!("bar{n}(baz{n});\n")).collect();
     source.push_str("foo(x);\n");
-    let native = AstGrep::doc(StrDoc::new(source.as_str(), GrammarDialect::TypeScript));
+    let native = tape_doc(source.as_str(), GrammarDialect::TypeScript);
     let selection = |ast: Value| {
         let compiled = compiled(ast);
         let grammar = &grammar_matchers(&compiled)[0];
@@ -1090,7 +1087,7 @@ fn utility_plans_select_as_precisely_as_the_rule_written_inline() {
 #[test]
 fn field_plans_select_the_actual_edge_including_through_utilities() {
     let source = "const target = other; const other = target; target(other); other(target);\n";
-    let root = AstGrep::doc(StrDoc::new(source, GrammarDialect::TypeScript));
+    let root = tape_doc(source, GrammarDialect::TypeScript);
     for (rule, expected) in [
         (
             json!({ "kind": "variable_declarator", "has": {
@@ -1195,10 +1192,10 @@ fn utility_diamonds_select_in_linear_visits() {
         linear_walk, reset_walks, walks,
     };
     let bound = linear_walk(DIAMOND_DEPTH);
-    let native = AstGrep::doc(StrDoc::new(
+    let native = tape_doc(
         "foo(x);\nbar(y, z);\n",
         GrammarDialect::TypeScript,
-    ));
+    );
     for compiled in [
         compiled_utility_diamonds(DIAMOND_DEPTH),
         compiled_parameterized_utility_diamonds(DIAMOND_DEPTH),
@@ -1236,7 +1233,7 @@ fn utility_plans_reached_from_disjoint_scopes_test_only_those_scopes() {
         .map(|n| format!("function f{n}(a{n}) {{ return a{n}.p{n}.q + [n{n}, {n}]; }}\n"))
         .collect();
     source.push_str("zzz.zzz;\n");
-    let native = AstGrep::doc(StrDoc::new(source.as_str(), GrammarDialect::TypeScript));
+    let native = tape_doc(source.as_str(), GrammarDialect::TypeScript);
     let visits = |ast: Value| {
         let compiled = compiled(ast);
         let grammar = &grammar_matchers(&compiled)[0];
@@ -1334,7 +1331,7 @@ fn relation_selections_spend_units_on_the_related_nodes_only() {
         let plan = AnchorPlan::compile(&matcher);
         let units = |filler: usize| {
             let source = source(filler);
-            let native = AstGrep::doc(StrDoc::new(&source, GrammarDialect::TypeScript));
+            let native = tape_doc(&source, GrammarDialect::TypeScript);
             let index = FileAnchorIndex::build(&native, &[&plan], usize::MAX, || false);
             let budget = MatchBudget::work(&Arc::new(AtomicBool::new(false)), u64::MAX);
             let selection = index.select(&plan);
@@ -1382,7 +1379,7 @@ fn a_pattern_selection_spends_a_unit_per_256_roots_not_per_root() {
     let source = (0..roots)
         .map(|n| format!("send(a{n}, {});\n", n % 3))
         .collect::<String>();
-    let native = AstGrep::doc(StrDoc::new(&source, GrammarDialect::TypeScript));
+    let native = tape_doc(&source, GrammarDialect::TypeScript);
     let index = FileAnchorIndex::build(&native, &[&plan], usize::MAX, || false);
     let budget = MatchBudget::work(&Arc::new(AtomicBool::new(false)), u64::MAX);
     let selection = index.select(&plan);

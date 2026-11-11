@@ -679,10 +679,12 @@ fn descendant_relations_use_subtree_ranges_instead_of_ancestor_closures() {
 #[test]
 fn kindless_inner_relations_read_only_tree_neighbours() {
     use crate::code_rule_dsl::test_support::{compiled, grammar_matchers};
-    let source = "f(g(target(x)));";
+    // `item` is no keyword: `target` is one in TypeScript (`new.target`), and a relation to a
+    // keyword also asks the gaps (t31).
+    let source = "f(g(item(x)));";
     for (rule, expected) in [
         (
-            serde_json::json!({"kind":"call_expression","has":{"regex":"^target$"}}),
+            serde_json::json!({"kind":"call_expression","has":{"regex":"^item$"}}),
             1,
         ),
         (
@@ -690,7 +692,7 @@ fn kindless_inner_relations_read_only_tree_neighbours() {
             1,
         ),
         (
-            serde_json::json!({"kind":"call_expression","has":{"regex":"^target$","stopBy":"end"}}),
+            serde_json::json!({"kind":"call_expression","has":{"regex":"^item$","stopBy":"end"}}),
             3,
         ),
         (
