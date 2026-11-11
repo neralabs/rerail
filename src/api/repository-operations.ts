@@ -66,6 +66,7 @@ import {
   libraryUpsertResultSchema,
   linkBodySchema,
   quarantinedRuleSchema,
+  repositoryCheckoutSchema,
   repositoryContextSchema,
   repositoryRulesSchema,
   repositorySummarySchema,
@@ -501,6 +502,22 @@ export const repositoryOperations: readonly Operation[] = [
           state: stateOf(stateAt(target.checkout.checkoutPath).status),
         },
       };
+    },
+  }),
+  defineOperation({
+    id: "repository_checkout_get",
+    method: "GET",
+    path: "/api/repository/checkout",
+    summary: "Show the repository key and the checkout's own folder for a path inside a checkout, as dashboard links name them. It reads that one checkout, so it answers as fast in a repository with hundreds of worktrees; repository_context_get lists them all. Without a checkout an MCP call uses the calling agent's.",
+    query: z.object({ checkout: targetShape.checkout }).strict(),
+    output: repositoryCheckoutSchema,
+    handler: (stores, input, caller) => {
+      const path = input.checkout ?? (caller.kind === "agent" ? caller.checkout : undefined);
+      if (path === undefined) throw new ApiError(400, "target-required", "name a checkout");
+      const { checkout } = checkoutAt(stores, path, false);
+      // Only a coding agent needs the repository's row, for its guard; a person's read stays at the one checkout.
+      if (caller.kind === "agent") guardAgentRepository(stores, caller, requireRepository(stores.database(), checkout.repositoryKey), checkout, "reads");
+      return { repositoryKey: checkout.repositoryKey, checkoutPath: checkout.checkoutPath };
     },
   }),
   defineOperation({

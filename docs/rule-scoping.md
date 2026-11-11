@@ -302,6 +302,7 @@ A checkout wins, then the repository, then the calling agent's checkout. A repos
 |---|---|---|
 | `repositories_list` | `GET /api/repositories` | Every repository: key, name, aliases, set up, started, checkout count. |
 | `repository_context_get` | `GET /api/repository` | One repository with its clones and checkouts (own and effective state), and the caller's checkout and folder. |
+| `repository_checkout_get` | `GET /api/repository/checkout` | The repository key and the checkout's own folder for a path; it reads that one checkout, for dashboard links. |
 | `repository_rules_get` | `GET /api/repository/rules` | Effective rules with on, mode, suppressions and config, what decided each, and unavailable references. |
 | `repository_settings_set` | `PUT /api/repository/settings` | Owner `repository` or `checkout`, folder, targets (rule or pack), `on`, `mode`, `suppressions` and `config` (null clears; omitted keeps). |
 | `repository_attachments_set` | `PUT /api/repository/attachments` | Add or remove packs and rules per folder, with optional repository settings. The first addition, or `configure: true`, sets the repository up. |
