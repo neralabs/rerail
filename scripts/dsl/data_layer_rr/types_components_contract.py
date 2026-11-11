@@ -27,6 +27,7 @@ def cases(_module):
         [dict(hit,file_path=p) for p in ['a/../b.py','/absolute.py','','//network/a.py','./a//./b.py/.','///a/b.py/','//','/','.']]]
     rows.extend(dict(kind='report',id='report-'+str(i),bundles=[dict(path='bundle.py',value=value)]) for i,value in enumerate(values))
     rows.extend([dict(kind='report',id='missing-namespace',bundles=[dict(path='a.py',facts={})]),dict(kind='report',id='foreign-namespace',bundles=[dict(path='a.py',facts={'other':[hit]})]),dict(kind='report',id='stable-message-order',bundles=[dict(path='bundle.py',value=[dict(hit,suggestion=s) for s in ['b','a','a']])])])
+    rows.extend([dict(kind='report',id='foreign-line-field',bundles=[dict(path='a.py',value=[dict(hit,line=7)])]),dict(kind='report',id='foreign-line-only',bundles=[dict(path='a.py',value=[dict(line=7)])]),dict(kind='load',id='load-foreign-line-field',fact=dict(hit,line=7)),dict(kind='load',id='load-foreign-line-only',fact={k:v for k,v in dict(hit,line=7).items() if k!='line_number'})])
     return rows
 
 

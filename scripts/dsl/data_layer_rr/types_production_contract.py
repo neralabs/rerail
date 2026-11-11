@@ -10,6 +10,7 @@ def cases(_module):
         nested=[file('impl/'+p+'/a.py') for p in ['tests','test','tmp','vendor','venv','.venv','.git','__pycache__','conform','.hidden']],
         suffixes=[file('impl/'+p) for p in ['.py','.hidden.py','a.py','a.pyi','a.PY','a.txt']],
         file_links=[file('impl/a.py'),dict(path='impl/link.py',symlink='a.py')],
+        alias_allowlist=[file('impl/common/l2060_query_spec/query_spec.py'),dict(path='impl/alias.py',symlink='common/l2060_query_spec/query_spec.py')],
         directory_link=[file('impl/sub/a.py'),dict(path='impl/link',symlink='sub')],
         clean=[file('impl/a.py','pass\n')],trigger_only=[file('impl/a.py','# Expression\n')],
         invalid=[file('impl/a.py','def broken(: # str | Expression\n')],
