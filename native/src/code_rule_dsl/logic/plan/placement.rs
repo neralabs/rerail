@@ -215,16 +215,21 @@ pub(in crate::code_rule_dsl) struct Shape {
     pub(in crate::code_rule_dsl) rows: f64,
 }
 
-/// Whether a term is row code on the device: a variable, a constant, `@doc(x)` of a variable, or a set of constants
-/// (`@in(x, {…})`). Anything else computes a value the device has no form for.
+/// Whether a term is row code on the device: a variable, a constant, `@doc(x)` of a variable, a set of constants
+/// (`@in(x, {…})`), or integer arithmetic of row code (`setfix::device`'s arithmetic binds). Anything else computes
+/// a value the device has no form for.
 fn row_term(t: &Term) -> bool {
     match t {
         Term::Call(f, args) if f == "doc" => matches!(args.as_slice(), [Term::Var(_)]),
         Term::Call(f, args) if f == crate::code_rule_dsl::logic::strings::SET => args.iter().all(|a| !matches!(a, Term::Call(..))),
+        Term::Call(f, args) if DEVICE_ARITHMETIC.contains(&f.as_str()) && args.len() == 2 => args.iter().all(row_term),
         Term::Call(..) => false,
         _ => true,
     }
 }
+
+/// The integer functions the device computes (`.rr`'s `+ - * / %`, Soufflé's `max` and `min`).
+const DEVICE_ARITHMETIC: [&str; 7] = ["add", "sub", "mul", "div", "mod", "max", "min"];
 
 impl Shape {
     /// Adds one planned rule: its steps in order, its head's terms and its planned work.
@@ -235,7 +240,7 @@ impl Shape {
         if recursive {
             self.forms.insert(Form::Recursion);
         }
-        if head.iter().any(|t| matches!(t, Term::Call(..))) {
+        if head.iter().any(|t| matches!(t, Term::Call(..)) && !row_term(t)) {
             self.forms.insert(Form::Computed);
         }
         for step in order {

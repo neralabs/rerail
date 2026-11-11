@@ -66,6 +66,20 @@ pub(in crate::code_rule_dsl) const LEFT: u32 = 1;
 pub(in crate::code_rule_dsl) const BIND_COLUMN: u32 = 0;
 pub(in crate::code_rule_dsl) const BIND_PARAM: u32 = 1;
 pub(in crate::code_rule_dsl) const BIND_RIGHT: u32 = 2;
+/// A bind's value computed by integer arithmetic (`Stage::arith[bind_idx]`): a row where it has no value (an
+/// overflow, a zero divisor) is dropped, as the CPU's `Func` step drops it.
+pub(in crate::code_rule_dsl) const BIND_ARITH: u32 = 3;
+/// The most arithmetic binds a stage holds.
+pub(in crate::code_rule_dsl) const MAX_ARITH: usize = 8;
+/// An arithmetic bind's operation (`Stage::arith[j][0]`), and its operands' sources (`[j][3]`: bit 0 the first is a
+/// parameter, else a program column; bit 1 the second).
+pub(in crate::code_rule_dsl) const ARITH_ADD: u32 = 0;
+pub(in crate::code_rule_dsl) const ARITH_SUB: u32 = 1;
+pub(in crate::code_rule_dsl) const ARITH_MUL: u32 = 2;
+pub(in crate::code_rule_dsl) const ARITH_DIV: u32 = 3;
+pub(in crate::code_rule_dsl) const ARITH_MOD: u32 = 4;
+pub(in crate::code_rule_dsl) const ARITH_MAX: u32 = 5;
+pub(in crate::code_rule_dsl) const ARITH_MIN: u32 = 6;
 /// A key's or a parameter's source: a slot of the binding, or a constant.
 pub(in crate::code_rule_dsl) const SLOT: u32 = 1;
 pub(in crate::code_rule_dsl) const CONST: u32 = 0;
@@ -123,9 +137,11 @@ pub(in crate::code_rule_dsl) struct Stage {
     pub(in crate::code_rule_dsl) noutputs: u32,
     pub(in crate::code_rule_dsl) ncols: u32,
     pub(in crate::code_rule_dsl) pad: [u32; 2],
+    /// The arithmetic binds: `[operation, first operand, second operand, sources]` (`ARITH_*`).
+    pub(in crate::code_rule_dsl) arith: [[u32; 4]; MAX_ARITH],
 }
 
-const _: () = assert!(std::mem::size_of::<Stage>() == 2160 && std::mem::size_of::<Stage>() % 16 == 0);
+const _: () = assert!(std::mem::size_of::<Stage>() == 2288 && std::mem::size_of::<Stage>() % 16 == 0);
 
 impl Default for Stage {
     fn default() -> Self {
@@ -159,6 +175,7 @@ struct Stage {
     uint bind_slot[16]; uint bind_kind[16]; uint bind_idx[16];
     uint passed[16]; uint outputs[16];
     uint noutputs; uint ncols; uint pad[2];
+    uint4 arith[8];
 };
 
 constant uint NONE = 0xffffffffu;
@@ -181,6 +198,50 @@ static inline long colval(constant Stage& s, uint k, device const long* L, uint 
 static inline long parval(constant Stage& s, uint k, device const long* L, uint t) {
     long v = s.par_kind[k] == 0 ? s.par_const[k] : L[ulong(s.par_slot[k]) * s.cap_in + t];
     return s.par_doc[k] != 0 ? (v >> 32) : v;
+}
+
+// Arithmetic bind j's value for one row, as the CPU's checked arithmetic gives it: false where it has none (an
+// overflow, a zero divisor). Wrapping operations on ulong, then the overflow tested, so nothing is undefined.
+static inline bool arith(constant Stage& s, uint j, device const long* L, uint t, device const long* R, uint r, thread long& out) {
+    uint4 a = s.arith[j];
+    long x = (a.w & 1u) != 0 ? parval(s, a.y, L, t) : colval(s, a.y, L, t, R, r);
+    long y = (a.w & 2u) != 0 ? parval(s, a.z, L, t) : colval(s, a.z, L, t, R, r);
+    ulong ux = as_type<ulong>(x), uy = as_type<ulong>(y);
+    bool min_by_neg = x == long(0x8000000000000000ul) && y == -1;
+    bool ok = true;
+    long v = 0;
+    if (a.x == 0u) {
+        v = as_type<long>(ux + uy);
+        ok = ((x ^ v) & (y ^ v)) >= 0;
+    } else if (a.x == 1u) {
+        v = as_type<long>(ux - uy);
+        ok = ((x ^ y) & (x ^ v)) >= 0;
+    } else if (a.x == 2u) {
+        v = as_type<long>(ux * uy);
+        ok = mulhi(x, y) == (v >> 63);
+    } else if (a.x == 3u) {
+        ok = y != 0 && !min_by_neg;
+        v = ok ? x / y : 0;
+    } else if (a.x == 4u) {
+        ok = y != 0 && !min_by_neg;
+        v = ok ? x % y : 0;
+    } else if (a.x == 5u) {
+        v = max(x, y);
+    } else {
+        v = min(x, y);
+    }
+    out = v;
+    return ok;
+}
+
+// Whether every arithmetic bind of the stage has a value for this row.
+static inline bool defined(constant Stage& s, device const long* L, uint t, device const long* R, uint r) {
+    for (uint b = 0; b < s.nbinds && b < 16; b++) {
+        if (s.bind_kind[b] != 3) continue;
+        long v = 0;
+        if (!arith(s, s.bind_idx[b], L, t, R, r, v)) return false;
+    }
+    return true;
 }
 
 // The row program's operations for one row: bit x of the result is operation x's value.
@@ -262,9 +323,10 @@ kernel void stage_count(device const long* L [[buffer(0)]], device const long* R
         if (s.mode != 3 && !matches(s, R, r, kv)) continue;
         if (exists) { found = true; break; }
         p0++;
+        bool ok = defined(s, L, t, R, r);
         ulong v = s.nops > 0 ? eval(s, L, t, R, r) : 0;
-        for (uint m = 0; m < s.npassed && m < 16; m++) q_counts[m] += s.passed[m] == NONE ? 1u : uint(out_bit(s, v, s.passed[m]));
-        if (s.last != NONE && !out_bit(s, v, s.last)) continue;
+        for (uint m = 0; m < s.npassed && m < 16; m++) q_counts[m] += s.passed[m] == NONE ? uint(ok) : uint(ok && out_bit(s, v, s.passed[m]));
+        if (!ok || (s.last != NONE && !out_bit(s, v, s.last))) continue;
         c++;
     }
     if (exists) c = uint(found != (s.mode == 2));
@@ -279,7 +341,9 @@ static inline void write_row(constant Stage& s, device const long* L, uint t, de
     for (uint k = 0; k < s.nslots; k++) O[ulong(k) * s.cap_out + at] = L[ulong(k) * s.cap_in + t];
     for (uint b = 0; b < s.nbinds && b < 16; b++) {
         uint kind = s.bind_kind[b];
-        long v = kind == 0 ? colval(s, s.bind_idx[b], L, t, R, r) : (kind == 1 ? parval(s, s.bind_idx[b], L, t) : R[ulong(s.bind_idx[b]) * s.nr + r]);
+        long v = 0;
+        if (kind == 3) arith(s, s.bind_idx[b], L, t, R, r, v);
+        else v = kind == 0 ? colval(s, s.bind_idx[b], L, t, R, r) : (kind == 1 ? parval(s, s.bind_idx[b], L, t) : R[ulong(s.bind_idx[b]) * s.nr + r]);
         O[ulong(s.bind_slot[b]) * s.cap_out + at] = v;
     }
 }
@@ -305,6 +369,7 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
     for (uint q = lo; q < hi && at < s.cap_out; q++) {
         uint r = keyed ? perm[q] : q;
         if (s.mode != 3 && !matches(s, R, r, kv)) continue;
+        if (!defined(s, L, t, R, r)) continue;
         if (s.last != NONE) {
             ulong v = eval(s, L, t, R, r);
             if (!out_bit(s, v, s.last)) continue;

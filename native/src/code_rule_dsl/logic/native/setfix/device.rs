@@ -106,6 +106,20 @@ fn step_name(s: &Step) -> &'static str {
     }
 }
 
+/// The device's operation for an integer function the native engine computes (`strings::functions`' names).
+pub(in crate::code_rule_dsl) fn arith_op(name: &str) -> Option<u32> {
+    Some(match name {
+        "rr_add" => mj::ARITH_ADD,
+        "rr_sub" => mj::ARITH_SUB,
+        "rr_mul" => mj::ARITH_MUL,
+        "rr_div" => mj::ARITH_DIV,
+        "mod" => mj::ARITH_MOD,
+        "rr_max" | "max" => mj::ARITH_MAX,
+        "rr_min" | "min" => mj::ARITH_MIN,
+        _ => return None,
+    })
+}
+
 /// The program's columns, parameters, operations and outputs of a fused row program, into `d`; the source of a
 /// column (`Word::Col(c)`) is `kind` (a candidate's column, or the binding's slot `c`).
 fn program(d: &mut mj::Stage, f: &rowcode::Fused, kind: u32) -> Result<(), String> {
@@ -287,6 +301,52 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
                 for &(s, _) in &f.binds { bound[s] = true; }
                 stages.push(PStage { first: i, span: f.steps, kind: Kind::Filter, desc: d, npassed: f.steps });
                 i += f.steps;
+            }
+            Step::Func { name, kinds, args, out, bind } => {
+                // Integer arithmetic: a filter of its own whose bind computes the value (`mj::BIND_ARITH`); a row
+                // where it has none is dropped, as on the CPU.
+                let op = arith_op(name).filter(|_| kinds.iter().all(|k| *k == crate::code_rule_dsl::logic::strings::functions::Kind::Number) && args.len() == 2);
+                let Some(op) = op else { return Err(format!("the function {name} has no device form")) };
+                if !*bind {
+                    return Err(format!("the function {name}'s value tested (not bound) has no device form"));
+                }
+                let mut d = mj::Stage { mode: mj::FILTER, ..mj::Stage::default() };
+                let mut ops = [0u32; 2];
+                let mut sources = 0u32;
+                for (k, a) in args.iter().enumerate() {
+                    match *a {
+                        Key::Slot(x) => {
+                            if !bound.get(x).copied().unwrap_or(false) {
+                                return Err(format!("the function {name} of an unbound slot"));
+                            }
+                            let c = d.ncols as usize;
+                            d.col_kind[c] = mj::LEFT;
+                            d.col_idx[c] = x as u32;
+                            d.ncols += 1;
+                            ops[k] = c as u32;
+                        }
+                        Key::Const(v) => {
+                            let p = d.nparams as usize;
+                            d.par_kind[p] = mj::CONST;
+                            d.par_const[p] = v;
+                            d.nparams += 1;
+                            ops[k] = p as u32;
+                            sources |= 1 << k;
+                        }
+                    }
+                }
+                d.arith[0] = [op, ops[0], ops[1], sources];
+                d.bind_slot[0] = *out as u32;
+                d.bind_kind[0] = mj::BIND_ARITH;
+                d.bind_idx[0] = 0;
+                d.nbinds = 1;
+                d.npassed = 1;
+                if *out >= bound.len() {
+                    bound.resize(*out + 1, false);
+                }
+                bound[*out] = true;
+                stages.push(PStage { first: i, span: 1, kind: Kind::Filter, desc: d, npassed: 1 });
+                i += 1;
             }
             other => return Err(format!("{} has no device form", step_name(other))),
         }
@@ -800,6 +860,10 @@ mod tests {
             format!("pos {a} v0 v1\npos {c} v0\nne v1 i:5\neq v2 v1\ndocof v3 v0\nhead v1 v2"),
             // h0(x, z) :- a(x, y), b(y, z): many rows (past the first guess of its table).
             format!("pos {a} v0 v1\npos {b} v1 v2\nhead v0 v2"),
+            // h0(x, w) :- a(x, y), s = x + y, w = s / (y - 3), w < x: integer arithmetic, a zero divisor dropped.
+            format!("pos {a} v0 v1\nfunc rr_add v2 v0 v1\nfunc rr_sub v3 v1 i:3\nfunc rr_div v4 v2 v3\nlt v4 v0\nhead v0 v4"),
+            // h0(x, w) :- a(x, y), w = x * x % 7, max and min: the product overflows past the first document.
+            format!("pos {a} v0 v1\nfunc rr_mul v2 v0 v0\nfunc mod v3 v2 i:7\nfunc rr_max v4 v3 v1\nfunc rr_min v5 v4 i:100\nhead v0 v5"),
         ];
         let mut got = Vec::new();
         for device in [false, true] {
