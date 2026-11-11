@@ -1447,7 +1447,7 @@ fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store
             let mut sources = sources.clone();
             sources.extend(late.lock().expect("the late sources").iter().copied());
             let recorded = store
-                .record_corpus_run_naming(&root, &sources, crate::code_rule_dsl::workspace::grammar_version(), i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION), plan, &also, now)
+                .record_corpus_run_naming(&root, &sources, crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION), plan, &also, now)
                 .and_then(|_| store.record_corpus_relations(plan, &relations));
             // The manifest now protects the sources. Release before collection, including warm runs
             // that must resume a pass deferred by another active reader.
@@ -3069,7 +3069,7 @@ fn run_observed(
                 let _tapes = crate::code_rule_dsl::logic::profile::span(|| "tapes, by their sources".into());
                 let ids: Vec<crate::content_store::SourceId> = asked.iter().map(|i| content[*i].and_then(memo::Content::stored).expect("stored")).collect();
                 let frames = cache
-                    .tape_frames_for(&ids, i64::from(tag), crate::code_rule_dsl::workspace::grammar_version(), i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION))
+                    .tape_frames_for(&ids, i64::from(tag), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION))
                     .map_err(|e| Error::Plan(e.to_string()))?;
                 for (i, f) in asked.into_iter().zip(frames) {
                     tape[i] = f;

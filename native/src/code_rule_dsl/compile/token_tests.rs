@@ -28,61 +28,11 @@
 //! since a gap's tokens are left out only when they are exactly the grammar's implied word. It is
 //! then `declared`.
 
-use crate::code_rule_dsl::tape::tokens::TokenGrammar;
-use crate::code_rule_dsl::language::{GrammarDialect, dialect_by_label};
+use crate::code_rule_dsl::language::dialect_by_label;
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// One dialect's automata, as the census asks them.
-struct Lang {
-    dialect: GrammarDialect,
-    implied: BTreeMap<String, BTreeSet<(String, String)>>,
-    parents: BTreeMap<String, BTreeSet<String>>,
-    tokens: BTreeSet<String>,
-}
-
-impl Lang {
-    /// Built once per dialect, like its `TokenGrammar` (every rule compiled reads it).
-    fn of(lang: GrammarDialect) -> Option<&'static Self> {
-        static BY_DIALECT: [std::sync::OnceLock<Option<Lang>>; 256] = [const { std::sync::OnceLock::new() }; 256];
-        BY_DIALECT
-            .get(lang as usize)?
-            .get_or_init(|| {
-                let grammar = TokenGrammar::of_dialect(lang)?;
-                Some(Self { dialect: lang, implied: grammar.implied_tokens(), parents: grammar.parents(), tokens: grammar.token_texts() })
-            })
-            .as_ref()
-    }
-
-    /// The parents among `parents` (all kinds where `None`) where a token `regex` matches is
-    /// implied, under `field` where one is given: (parent, token) pairs.
-    fn implied_in(&self, parents: Option<&BTreeSet<String>>, regex: &regex::Regex, field: Option<&str>) -> BTreeSet<(String, String)> {
-        let mut out = BTreeSet::new();
-        let kinds: Box<dyn Iterator<Item = &String>> = match parents {
-            Some(parents) => Box::new(parents.iter()),
-            None => Box::new(self.implied.keys()),
-        };
-        for kind in kinds {
-            for (token, token_field) in self.implied.get(kind).into_iter().flatten() {
-                if regex.is_match(token) && field.is_none_or(|field| field == token_field) {
-                    out.insert((kind.clone(), token.clone()));
-                }
-            }
-        }
-        out
-    }
-}
-
-/// The (parent kind, token) pairs where `dialect`'s grammar may leave out a token `regex` matches: under `kinds`, or
-/// under any kind where `None`. A `.rr` program's token reads are refused by this (`logic::rr::token_reads`).
-pub(in crate::code_rule_dsl) fn implied(dialect: GrammarDialect, kinds: Option<&BTreeSet<String>>, regex: &regex::Regex) -> BTreeSet<(String, String)> {
-    Lang::of(dialect).map(|lang| lang.implied_in(kinds, regex, None)).unwrap_or_default()
-}
-
-/// The kinds that have one of `kinds` as a named child, in `dialect`'s grammar.
-pub(in crate::code_rule_dsl) fn parents_of(dialect: GrammarDialect, kinds: &BTreeSet<String>) -> BTreeSet<String> {
-    Lang::of(dialect).map(|lang| kinds.iter().flat_map(|kind| lang.parents.get(kind).into_iter().flatten().cloned()).collect()).unwrap_or_default()
-}
+use crate::code_rule_dsl::tape::token_census::Lang;
 
 /// How the node a sub-rule tests was reached from the node before it.
 #[derive(Clone, Debug)]

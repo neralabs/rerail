@@ -48,7 +48,7 @@ fn plan() -> FactsPlanSet {
     let mut hash = Sha256::new();
     hash.update(b"rerail.combined/v1\0");
     hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
-    hash.update(crate::code_rule_dsl::workspace::grammar_version().to_le_bytes());
+    hash.update(crate::code_rule_dsl::build_ids::grammar_version().to_le_bytes());
     hash.update(rr::library().to_string_lossy().as_bytes());
     for switch in ["RERAIL_LIBRARIES", "RERAIL_REQUESTS"] {
         hash.update(b"\0");

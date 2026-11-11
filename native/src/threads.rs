@@ -53,9 +53,9 @@ impl<'s> Jobs<'s, '_> {
         #[cfg(not(target_family = "wasm"))]
         {
             // The job's span is under the one open where it was started, on whichever thread runs it.
-            let under = crate::code_rule_dsl::profile_here();
+            let under = crate::code_rule_dsl::logic::profile::here();
             self.0.spawn(move |s| {
-                let _span = crate::code_rule_dsl::profile_span_at(under.as_deref(), || format!("{name} (job)"));
+                let _span = crate::code_rule_dsl::logic::profile::span_at(under.as_deref(), || format!("{name} (job)"));
                 rerail_accel::exec::as_job(name, || f(&Jobs(s)))
             });
         }
@@ -92,10 +92,10 @@ pub(crate) struct Beside<T> {
 pub(crate) fn beside<T: Send + 'static>(name: &'static str, f: impl FnOnce() -> T + Send + 'static) -> Beside<T> {
     let slot = std::sync::Arc::new((parking_lot::Mutex::new(None), std::sync::atomic::AtomicBool::new(false)));
     let held = std::sync::Arc::clone(&slot);
-    let under = crate::code_rule_dsl::profile_here();
+    let under = crate::code_rule_dsl::logic::profile::here();
     let run = move || {
         held.1.store(true, std::sync::atomic::Ordering::Release);
-        let _span = crate::code_rule_dsl::profile_span_at(under.as_deref(), || format!("{name} (job)"));
+        let _span = crate::code_rule_dsl::logic::profile::span_at(under.as_deref(), || format!("{name} (job)"));
         let r = rerail_accel::exec::as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
         *held.0.lock() = Some(r);
     };

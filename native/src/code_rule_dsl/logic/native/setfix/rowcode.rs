@@ -18,7 +18,7 @@
 //! step's running mask, and its popcount is the rows that step passed on.
 
 use super::{Key, ScalarKind, Step};
-use crate::code_rule_dsl::transducer::packed::block::{BlockOp, BlockProgram, CmpOp, Rhs, RowBatch, RowShape};
+use rerail_compiler::block::{BlockOp, BlockProgram, CmpOp, Rhs, RowBatch, RowShape};
 
 /// The rows gathered before the program runs over them.
 pub(super) const CHUNK: usize = 1024;

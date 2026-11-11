@@ -253,12 +253,30 @@ def absolute_use(text, mod, nodes):
 
 def use_owners(text, nodes):
     """The crates of a `use crate::...`'s paths, a brace group's branches each (one level)."""
-    m = re.search(r'use\s+(crate(?:::[A-Za-z_][A-Za-z_0-9]*)*)::\{([^{}]*)\}', text)
+    m = re.search(r'use\s+(crate(?:::[A-Za-z_][A-Za-z_0-9]*)*)::\{', text)
     if not m:
         return {use_owner(text, nodes)} - {None}
+    # the group's top-level branches (a nested group's prefix is its branch's path)
+    branches, depth, cur = [], 0, ''
+    for ch in text[m.end():]:
+        if ch == '{':
+            depth += 1
+            continue
+        if ch == '}':
+            if depth == 0:
+                break
+            depth -= 1
+            continue
+        if ch == ',' and depth == 0:
+            branches.append(cur)
+            cur = ''
+            continue
+        if depth == 0:
+            cur += ch
+    branches.append(cur)
     out = set()
-    for b in m.group(2).split(','):
-        b = b.strip()
+    for b in branches:
+        b = re.sub(r'\s+', '', b).rstrip(':')
         if b:
             o = use_owner(f'use {m.group(1)}::{b}', nodes)
             if o:

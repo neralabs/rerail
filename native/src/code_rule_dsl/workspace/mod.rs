@@ -20,7 +20,6 @@ mod index;
 pub(crate) mod ingest;
 mod memory;
 mod persisted;
-pub(in crate::code_rule_dsl) use persisted::grammar_version;
 mod results;
 mod secret_names;
 mod storage;

@@ -22,7 +22,7 @@ pub(in crate::code_rule_dsl) mod magic;
 pub(in crate::code_rule_dsl) mod native;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod plan;
-pub(in crate::code_rule_dsl) mod profile;
+pub(crate) mod profile;
 pub(in crate::code_rule_dsl) mod program_facts;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod rr;

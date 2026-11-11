@@ -354,12 +354,12 @@ pub(super) fn refuse(files: &[(std::path::PathBuf, Vec<super::syntax::Statement>
             // token beside it).
             let parents = match (own || matches!(rel, "first_token" | "last_token"), at) {
                 (true, Some(kinds)) => Some(kinds.clone()),
-                (false, Some(kinds)) => Some(crate::code_rule_dsl::compile::token_tests::parents_of(dialect, kinds)),
+                (false, Some(kinds)) => Some(crate::code_rule_dsl::tape::token_census::parents_of(dialect, kinds)),
                 _ => None,
             };
             for re in regexes {
                 let Ok(regex) = regex::Regex::new(&re) else { continue };
-                let found = crate::code_rule_dsl::compile::token_tests::implied(dialect, parents.as_ref(), &regex);
+                let found = crate::code_rule_dsl::tape::token_census::implied(dialect, parents.as_ref(), &regex);
                 if let Some((kind, token)) = found.iter().next() {
                     let more = if found.len() > 1 { format!(" (and {} more)", found.len() - 1) } else { String::new() };
                     let parent = if parents.is_some() { "" } else { ", and the clause names no parent kind" };

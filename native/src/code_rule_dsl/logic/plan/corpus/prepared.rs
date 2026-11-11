@@ -44,7 +44,7 @@ fn pointer_plan(key: &[u8; 32]) -> FactsPlanSet {
     let mut hash = Sha256::new();
     hash.update(b"rerail.prepared/v2\0");
     hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
-    hash.update(crate::code_rule_dsl::workspace::grammar_version().to_le_bytes());
+    hash.update(crate::code_rule_dsl::build_ids::grammar_version().to_le_bytes());
     hash.update(key);
     FactsPlanSet::new(vec![hash.finalize().into()])
 }
@@ -60,7 +60,7 @@ pub(super) fn plans(key: &[u8; 32]) -> Vec<[u8; 32]> {
 fn facts_plan() -> FactsPlanSet {
     let mut hash = Sha256::new();
     hash.update(b"rerail.program-facts/v1\0");
-    hash.update(crate::code_rule_dsl::workspace::grammar_version().to_le_bytes());
+    hash.update(crate::code_rule_dsl::build_ids::grammar_version().to_le_bytes());
     FactsPlanSet::new(vec![hash.finalize().into()])
 }
 

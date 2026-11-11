@@ -97,6 +97,7 @@ mod tokens_tests;
 mod token_readers;
 pub(in crate::code_rule_dsl) mod resident;
 pub(in crate::code_rule_dsl) mod validated;
+pub(in crate::code_rule_dsl) mod token_census;
 pub(super) use wire::index_span;
 use wire::{CHECKPOINT_STRIDE, WIDTH};
 const ERROR_SYMBOL: u16 = u16::MAX;
