@@ -6,6 +6,14 @@ use crate::code_rule_dsl::language::adapter::php::Php;
 impl ValueRules for Php {
     const SUPPORTED: bool = true;
     const LANG: Family = Family::Php;
+    fn parse_string_value(
+        bytes: Vec<u8>,
+        whole: std::ops::Range<usize>,
+        grammar: crate::code_rule_dsl::literal::Grammar,
+        spend: &mut dyn FnMut(usize) -> bool,
+    ) -> Option<crate::code_rule_dsl::literal::Parsed> {
+        crate::code_rule_dsl::literal::php_string::parse_value(bytes, whole, grammar, spend)
+    }
     const EXPRESSION_KINDS: &'static [&'static str] = value::php::EXPRESSION_KINDS;
     const VALUE_KINDS: &'static [&'static str] = value::php::VALUE_KINDS;
     const NAME_KINDS: &'static [&'static str] = &[

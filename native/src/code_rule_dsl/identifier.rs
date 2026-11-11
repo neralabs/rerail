@@ -77,5 +77,14 @@ pub(crate) fn name_in(dialect: GrammarDialect, text: Cow<'_, str>) -> Cow<'_, st
     { let pack = language_pack::pack(Family::of(dialect)); pack.name(text) }
 }
 
+/// A PHP label: a letter, `_` or a byte from 0x80, then those or digits.
+pub(crate) fn php_label(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_' || !first.is_ascii())
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || !c.is_ascii())
+}
+
 #[cfg(test)]
 mod tests;

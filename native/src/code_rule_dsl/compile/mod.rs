@@ -21,7 +21,7 @@ mod order;
 #[cfg(test)]
 mod params_tests;
 mod parse;
-mod resolve;
+pub(crate) mod resolve;
 mod shared;
 mod transform;
 mod utils;

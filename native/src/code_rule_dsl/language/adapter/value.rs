@@ -101,6 +101,16 @@ pub(crate) trait ValueRules {
     ) -> Option<bool>;
     /// Whether the family reads `feature`.
     fn feature(feature: ValueFeature<'_>) -> Result<(), Refusal>;
+    /// The tree `grammar` parses of a string value's bytes (PHP's `Value::PhpStr`), its nodes mapped to `whole`;
+    /// `None` where the budget ran out. A family whose values hold no such string never reads one.
+    fn parse_string_value(
+        _bytes: Vec<u8>,
+        _whole: std::ops::Range<usize>,
+        _grammar: crate::code_rule_dsl::literal::Grammar,
+        _spend: &mut dyn FnMut(usize) -> bool,
+    ) -> Option<crate::code_rule_dsl::literal::Parsed> {
+        None
+    }
 }
 
 /// Type names `type` accepts: Python's `type(v).__name__`.

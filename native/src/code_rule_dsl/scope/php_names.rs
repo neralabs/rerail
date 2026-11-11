@@ -993,14 +993,8 @@ fn parse<D: Doc>(node: &Node<'_, D>) -> Option<(Form, Vec<String>)> {
         .then_some((form, parts))
 }
 
-/// A PHP label: a letter, `_` or a byte from 0x80, then those or digits.
-pub(crate) fn is_label(text: &str) -> bool {
-    let mut chars = text.chars();
-    chars
-        .next()
-        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_' || !first.is_ascii())
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || !c.is_ascii())
-}
+/// A PHP label (`identifier::php_label`).
+pub(crate) use crate::code_rule_dsl::identifier::php_label as is_label;
 
 /// A namespace name's segments joined by `\`, without whitespace or comments between them.
 fn segments_text<D: Doc>(node: &Node<'_, D>) -> String {

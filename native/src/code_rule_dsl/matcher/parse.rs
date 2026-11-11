@@ -336,7 +336,7 @@ pub(super) fn parsed_value_tree<D: Doc>(
         Value::Unknown => return Some(Parsed::Unknown),
         _ => return Some(Parsed::NotString),
     };
-    let Some(parsed) = literal::php_string::parse_value(bytes, node.range(), grammar, &mut spend_steps)
+    let Some(parsed) = crate::code_rule_dsl::language::adapter::pack::pack(reading.family).value_parse_string_value(bytes, node.range(), grammar, &mut spend_steps)
     else {
         return UTIL_EXCEEDED.get().is_none().then_some(Parsed::Unknown);
     };

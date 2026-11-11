@@ -43,6 +43,7 @@ pub(crate) trait LanguagePack: Send + Sync {
     fn suppresses_sub(&self, violation: &crate::code_rule_dsl::model::ViolationSpec, suppress: &crate::code_rule_dsl::suppress::Suppress, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::literal::SubDoc>, source: &str, lines: &crate::code_rule_dsl::lines::LineTable, anchored: std::ops::Range<usize>, witness: (usize, usize)) -> bool;
     fn suppresses_str(&self, violation: &crate::code_rule_dsl::model::ViolationSpec, suppress: &crate::code_rule_dsl::suppress::Suppress, node: &ast_grep_core::Node<'_, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>, source: &str, lines: &crate::code_rule_dsl::lines::LineTable, anchored: std::ops::Range<usize>, witness: (usize, usize)) -> bool;
     fn source_type(&self, _path: &str, _package: Option<crate::code_rule_dsl::language::PackageType>) -> Option<crate::code_rule_dsl::language::SourceType>;
+    fn path_module(&self, _path: &str) -> Option<String>;
     // SyntaxRules
     fn syntax_parse_literal_tape(&self, grammar: crate::code_rule_dsl::literal::Grammar, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::tape::TapeDoc>, interpolation: &str, spend: &mut dyn FnMut (usize) -> bool) -> Option<crate::code_rule_dsl::literal::Parsed>;
     fn syntax_parse_literal_sub(&self, grammar: crate::code_rule_dsl::literal::Grammar, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::literal::SubDoc>, interpolation: &str, spend: &mut dyn FnMut (usize) -> bool) -> Option<crate::code_rule_dsl::literal::Parsed>;
@@ -143,6 +144,7 @@ pub(crate) trait LanguagePack: Send + Sync {
     fn value_same_reference_sub(&self, left: &ast_grep_core::Node<'_, crate::code_rule_dsl::literal::SubDoc>, right: &ast_grep_core::Node<'_, crate::code_rule_dsl::literal::SubDoc>, static_keys: bool) -> Option<bool>;
     fn value_same_reference_str(&self, left: &ast_grep_core::Node<'_, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>, right: &ast_grep_core::Node<'_, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>, static_keys: bool) -> Option<bool>;
     fn value_feature(&self, feature: crate::code_rule_dsl::language::adapter::value::ValueFeature<'_>) -> Result<(), crate::code_rule_dsl::language::adapter::Refusal>;
+    fn value_parse_string_value(&self, _bytes: Vec<u8>, _whole: std::ops::Range<usize>, _grammar: crate::code_rule_dsl::literal::Grammar, _spend: &mut dyn FnMut (usize) -> bool) -> Option<crate::code_rule_dsl::literal::Parsed>;
     // ArgumentRules
     fn arguments_supported(&self) -> bool;
     fn arguments_call_kinds(&self) -> &'static [ &'static str ];
@@ -246,6 +248,9 @@ impl<A: Adapter + SyntaxRules> LanguagePack for Pack<A> {
     }
     fn source_type(&self, _path: &str, _package: Option<crate::code_rule_dsl::language::PackageType>) -> Option<crate::code_rule_dsl::language::SourceType> {
         <A as Adapter>::source_type(_path, _package)
+    }
+    fn path_module(&self, _path: &str) -> Option<String> {
+        <A as Adapter>::path_module(_path)
     }
     // SyntaxRules
     fn syntax_parse_literal_tape(&self, grammar: crate::code_rule_dsl::literal::Grammar, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::tape::TapeDoc>, interpolation: &str, spend: &mut dyn FnMut (usize) -> bool) -> Option<crate::code_rule_dsl::literal::Parsed> {
@@ -538,6 +543,9 @@ impl<A: Adapter + SyntaxRules> LanguagePack for Pack<A> {
     }
     fn value_feature(&self, feature: crate::code_rule_dsl::language::adapter::value::ValueFeature<'_>) -> Result<(), crate::code_rule_dsl::language::adapter::Refusal> {
         <<A as Adapter>::Value as ValueRules>::feature(feature)
+    }
+    fn value_parse_string_value(&self, _bytes: Vec<u8>, _whole: std::ops::Range<usize>, _grammar: crate::code_rule_dsl::literal::Grammar, _spend: &mut dyn FnMut (usize) -> bool) -> Option<crate::code_rule_dsl::literal::Parsed> {
+        <<A as Adapter>::Value as ValueRules>::parse_string_value(_bytes, _whole, _grammar, _spend)
     }
     // ArgumentRules
     fn arguments_supported(&self) -> bool {
