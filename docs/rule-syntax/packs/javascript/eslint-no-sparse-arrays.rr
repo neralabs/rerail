@@ -17,8 +17,12 @@ no_sparse_arrays(t) :- hole(_, t).
 
 // hole(a, t): comma t of array a closes a hole. sep(a, c): c is one of a's commas, after an element or a hole.
 //   [ /* x */ , ⏎ , ]    both commas are holes: the first follows `[`, the second a hole
+// A gap with a hole is never the word the grammar implies, so the tape keeps all its tokens: the commas, and the
+// `[` when the gap is the first.
+.stored hole "a gap holding a hole differs from the implied word, so the tape keeps every token in it"
+.stored sep "a comma after an element is stored only where its gap holds a hole or ends the array"
 .decl hole(a: node, t: span)
-hole(a, t) :- kind(a, "array"), first_token(a, b), token_after(b, t), text(t, ",").
+hole(a, t) :- kind(a, "array"), first_token(a, b), text(b, "["), token_after(b, t), text(t, ",").
 hole(a, t) :- sep(a, c), token_after(c, t), text(t, ",").
 .decl sep(a: node, c: span)
 sep(a, c) :- hole(a, c).

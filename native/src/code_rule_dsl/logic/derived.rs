@@ -19,7 +19,7 @@ use std::cell::RefCell;
 use std::hash::{BuildHasher, Hasher};
 
 use foldhash::quality::RandomState;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
@@ -27,13 +27,32 @@ use rustc_hash::FxHashMap;
 /// thousands).
 const MOST: usize = 1 << 16;
 
-struct Memo {
+pub(in crate::code_rule_dsl) struct Memo {
     keys: (RandomState, RandomState),
-    values: FxHashMap<(&'static str, u128), Rc<dyn Any>>,
+    values: FxHashMap<(&'static str, u128), Arc<dyn Any + Send + Sync>>,
 }
 
+/// The memo of a run, shared by the threads its strata run on (decision 0113): a stratum's job enters it (`enter`).
+pub(in crate::code_rule_dsl) type Shared = Arc<parking_lot::Mutex<Memo>>;
+
 thread_local! {
-    static MEMO: RefCell<Option<Memo>> = const { RefCell::new(None) };
+    static MEMO: RefCell<Option<Shared>> = const { RefCell::new(None) };
+}
+
+/// This thread's memo, for a job on another thread to `enter`.
+pub(in crate::code_rule_dsl) fn share() -> Option<Shared> {
+    MEMO.with(|m| m.borrow().clone())
+}
+
+/// While the guard lives, this thread keeps derived values in `memo` (another thread's, `share`).
+pub(in crate::code_rule_dsl) fn enter(memo: Option<Shared>) -> impl Drop {
+    struct Entered(Option<Shared>);
+    impl Drop for Entered {
+        fn drop(&mut self) {
+            MEMO.with(|m| *m.borrow_mut() = self.0.take());
+        }
+    }
+    Entered(MEMO.with(|m| std::mem::replace(&mut *m.borrow_mut(), memo)))
 }
 
 /// Derived values kept on this thread while held; for a session's run (`across`, the session's generation), the
@@ -48,14 +67,15 @@ thread_local! {
 impl Keep {
     pub(in crate::code_rule_dsl) fn start(across: Option<u64>) -> Self {
         let kept = across.and_then(|g| SESSION_MEMO.with(|s| s.borrow_mut().take().filter(|(k, _)| *k == g).map(|(_, m)| m)));
-        MEMO.with(|m| *m.borrow_mut() = Some(kept.unwrap_or_else(|| Memo { keys: (RandomState::default(), RandomState::default()), values: FxHashMap::default() })));
+        MEMO.with(|m| *m.borrow_mut() = Some(Arc::new(parking_lot::Mutex::new(kept.unwrap_or_else(|| Memo { keys: (RandomState::default(), RandomState::default()), values: FxHashMap::default() })))));
         Keep(across)
     }
 }
 
 impl Drop for Keep {
     fn drop(&mut self) {
-        let memo = MEMO.with(|m| m.borrow_mut().take());
+        // Every job that entered it has ended: the run's thread holds the last handle.
+        let memo = MEMO.with(|m| m.borrow_mut().take()).map(|m| Arc::try_unwrap(m).map_or_else(|m| std::mem::replace(&mut *m.lock(), Memo { keys: (RandomState::default(), RandomState::default()), values: FxHashMap::default() }), parking_lot::Mutex::into_inner));
         if let (Some(g), Some(memo)) = (self.0, memo) {
             SESSION_MEMO.with(|s| *s.borrow_mut() = Some((g, memo)));
         }
@@ -111,33 +131,31 @@ pub(in crate::code_rule_dsl) fn digest(inputs: impl FnOnce(&mut Inputs)) -> u128
 
 /// The value `name` over the inputs `inputs` writes: kept from an earlier request with the same digest, or `make`'s.
 /// Counted per name as a hit or a miss in the profile's decisions ("derived values").
-pub(in crate::code_rule_dsl) fn value<V: Clone + 'static>(name: &'static str, inputs: impl FnOnce(&mut Inputs), make: impl FnOnce() -> V) -> V {
-    let digest = MEMO.with(|m| {
-        let m = m.borrow();
-        let m = m.as_ref()?;
-        Some(Inputs::over(&m.keys, |d| {
+pub(in crate::code_rule_dsl) fn value<V: Clone + Send + Sync + 'static>(name: &'static str, inputs: impl FnOnce(&mut Inputs), make: impl FnOnce() -> V) -> V {
+    let memo = MEMO.with(|m| m.borrow().clone());
+    let digest = memo.as_ref().map(|m| {
+        let keys = m.lock().keys.clone();
+        Inputs::over(&keys, |d| {
             d.str(name);
             inputs(d);
-        }))
+        })
     });
-    let Some(digest) = digest else {
+    let (Some(digest), Some(memo)) = (digest, memo) else {
         return make();
     };
-    let kept = MEMO.with(|m| m.borrow().as_ref().and_then(|m| m.values.get(&(name, digest)).cloned()));
+    let kept = memo.lock().values.get(&(name, digest)).cloned();
     if let Some(v) = kept.and_then(|v| v.downcast_ref::<V>().cloned()) {
         super::profile::decision("derived values", || format!("{name}: kept"));
         return v;
     }
     super::profile::decision("derived values", || format!("{name}: made"));
     let v = make();
-    MEMO.with(|m| {
-        if let Some(m) = m.borrow_mut().as_mut() {
-            if m.values.len() >= MOST {
-                m.values.clear();
-            }
-            m.values.insert((name, digest), Rc::new(v.clone()));
-        }
-    });
+    let mut m = memo.lock();
+    if m.values.len() >= MOST {
+        m.values.clear();
+    }
+    m.values.insert((name, digest), Arc::new(v.clone()));
+    drop(m);
     v
 }
 

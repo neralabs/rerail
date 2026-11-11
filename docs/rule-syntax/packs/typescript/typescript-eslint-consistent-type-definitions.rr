@@ -34,17 +34,24 @@ object_alias(a, n, b) :- kind(a, "type_alias_declaration"), field(a, "name", n),
     type_literal(b).
 
 // type T<X> = { a: X };  →  interface T<X> { a: X }: the keyword changes, the `=` and a final `;` go.
-to_interface(n, _, _) :- object_alias(a, n, _), first_token(a, t), field(a, "value", v), token_before(v, e)
+// The kind implies `type` and `=` (the tape keeps neither): the first word, and the last `=` before the value.
+to_interface(n, _, _) :- object_alias(a, n, _), match("(?s)(?<t>type)\\b.*", a), field(a, "value", v), alias_eq(a, v, e)
     => replace(t, `interface`), delete(e).
+// e: the `=` after the name and its type parameters (nested to three levels of `<…>`).
+.decl alias_eq(a: node, v: node, e: span)
+alias_eq(a, v, e) :- object_alias(a, _, _), field(a, "value", v), kind(a, "type_alias_declaration"),
+    match("(?s)type\\s+[A-Za-z0-9_$]+\\s*(<(?:[^<>]|<(?:[^<>]|<[^<>]*>)*>)*>)?\\s*(?<e>=).*", a).
 to_interface(n, _, _) :- object_alias(a, n, _), last_token(a, s), text(s, ";") => delete(s).
 // interface I<X> extends A, B { c: 1 }  →  type I<X> = { c: 1 } & A & B. The body is rewritten once (edits on
 // one node must not overlap): `= `, the body, its heritage, and for `export default interface` the export moved
 // after it.
-to_type(n, _, _) :- interface_fix(i, n, b), first_token(i, t), text(b, x), heritage_tail(i, h), default_tail(i, d),
+to_type(n, _, _) :- interface_fix(i, n, b), match("(?s)(?<t>interface)\\b.*", i), text(b, x), heritage_tail(i, h), default_tail(i, d),
     z = cat("= ", cat(x, cat(h, d))) => replace(t, `type`), replace(b, `$z`).
 to_type(n, _, _) :- interface_fix(i, n, _), child(i, x, _), kind(x, "extends_type_clause") => delete(x).
-to_type(n, _, _) :- interface_fix(i, n, _), field(e, "declaration", i), op(e, "default"), first_token(e, x),
-    token_after(x, y) => delete(x), delete(y).
+to_type(n, _, _) :- interface_fix(i, n, _), field(e, "declaration", i), default_export(e),
+    match("(?s)(?<x>export\\s+default\\s+).*", e) => delete(x).
+.decl default_export(e: node)
+default_export(e) :- kind(e, "export_statement"), op(e, "default").
 .decl heritage_tail(i: node, h: symbol)
 heritage_tail(i, h) :- interface_fix(i, _, _), extended(i, _), h = join y by c sep "" : { extended(i, c), text(c, w),
     y = cat(" & ", w) }.
@@ -52,13 +59,14 @@ heritage_tail(i, "") :- interface_fix(i, _, _), !extended(i, _).
 .decl extended(i: node, c: node)
 extended(i, c) :- child(i, x, _), kind(x, "extends_type_clause"), child(x, c, _), !kind(c, "comment").
 .decl default_tail(i: node, d: symbol)
-default_tail(i, cat("\nexport default ", x)) :- interface_fix(i, n, _), field(e, "declaration", i), op(e, "default"),
+default_tail(i, cat("\nexport default ", x)) :- interface_fix(i, n, _), field(e, "declaration", i), default_export(e),
     text(n, x).
 default_tail(i, "") :- interface_fix(i, _, _), !default_iface(i).
 .decl default_iface(i: node)
-default_iface(i) :- field(e, "declaration", i), op(e, "default").
+default_iface(i) :- field(e, "declaration", i), default_export(e).
 .decl interface_fix(i: node, n: node, b: node)  // interface i named n with body b, outside `declare global`
 interface_fix(i, n, b) :- kind(i, "interface_declaration"), field(i, "name", n), field(i, "body", b),
     !in_global(i).
 .decl in_global(i: node)
-in_global(i) :- kind(i, "interface_declaration"), inside(i, g, "ambient_declaration"), op(g, "global").
+in_global(i) :- kind(i, "interface_declaration"), inside(i, g, "ambient_declaration"), child(g, b, 0),
+    kind(b, "statement_block").   // `declare global { }`: the kind and the block imply `global`

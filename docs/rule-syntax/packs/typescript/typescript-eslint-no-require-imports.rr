@@ -22,7 +22,7 @@ no_require_imports(c) :- kind(c, "call_expression"), field(c, "function", e), de
     text(f, "require"), !ref_site(f, _), !allowed_call(c).
 // `import x = require("m")`: ESTree's TSExternalModuleReference starts at `require`, two tokens before the string.
 no_require_imports(t) :- kind(r, "import_require_clause"), field(r, "source", s), !allowed(s),
-    !option("allowAsImport", "true"), token_before(s, p), token_before(p, t).
+    !option("allowAsImport", "true"), match("(?s).*?=\\s*(?<t>require)\\b.*", r).
 
 .decl allowed_call(c: node)
 allowed_call(c) :- call_arg(c, a, 0), allowed(a).

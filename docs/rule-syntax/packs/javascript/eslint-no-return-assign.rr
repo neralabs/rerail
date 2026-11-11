@@ -28,7 +28,8 @@ no_return_assign(s, "Arrow function should not return assignment.") :- checked(a
 checked(a) :- assignment(a), option("option", "always").
 checked(a) :- assignment(a), !option("option", "always"), !parenthesised(a).
 .decl parenthesised(a: node)  // ESLint's isParenthesised: the tokens around a are ( and )
-parenthesised(a) :- token_before(a, p), text(p, "("), token_after(a, q), text(q, ")").
+parenthesised(a) :- in_parens(a).
+layout_at(a) :- assignment(a).
 
 // sentinel: ESLint's /^(?:[a-zA-Z]+?Statement|ArrowFunctionExpression|FunctionExpression|ClassExpression)$/,
 // as tree-sitter kinds. A method is its own FunctionExpression.

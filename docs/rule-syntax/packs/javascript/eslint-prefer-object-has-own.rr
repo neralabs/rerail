@@ -4,6 +4,7 @@
 .mode steer
 .scope include "**/*"
 #include "tsx/eslint-b-objects.rr"
+#include "layout.rr"
 //   deparen, static_prop, global_at
 
 // ESLint's prefer-object-has-own: `hasOwnProperty.call` read off Object, Object.prototype or `{}`, where the name
@@ -37,5 +38,5 @@ left_object(x) :- static_prop(x, o, "prototype"), deparen(o, i), kind(i, "identi
 has_own(c) :- has_own_call(c, m), !has(m, _, "comment"), !callee_glued(m) => replace(m, `Object.hasOwn`).
 has_own(c) :- has_own_call(c, m), !has(m, _, "comment"), callee_glued(m) => replace(m, ` Object.hasOwn`).
 .decl callee_glued(m: node)  // the token before m is a word that ends where m starts
-callee_glued(m) :- has_own_call(_, m), token_before(m, t), match("[\\s\\S]*[A-Za-z0-9_$]", t), line(t, l), line(m, l),
-    col(t, a), text(t, s), col(m, a + strlen(s)).
+callee_glued(m) :- has_own_call(_, m), touch_before(m, t), match("(?s).*[A-Za-z0-9_$]", t).
+layout_at(m) :- has_own_call(_, m).

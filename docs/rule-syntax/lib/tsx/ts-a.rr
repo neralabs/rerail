@@ -133,10 +133,13 @@ rest_annotation(t) :- kind(r, "required_parameter"), field(r, "pattern", x), kin
 assertion(n, e, "as") :- kind(n, "as_expression"), child(n, x, 0), deparen(x, e).
 assertion(n, e, "angle-bracket") :- kind(n, "type_assertion"), child(n, x, 1), deparen(x, e).
 .decl const_cast(n: node)
-const_cast(n) :- kind(n, "as_expression"), op(n, "const").
-const_cast(n) :- kind(n, "type_assertion"), child(n, a, 0), op(a, "const").
+// `x as const`, `<const>x`: the tape keeps no `const` there (the grammar implies it where no type follows).
+const_cast(n) :- kind(n, "as_expression"), !as_type(n, _).
+const_cast(n) :- kind(n, "type_assertion"), child(n, a, 0), kind(a, "type_arguments"), !child(a, _, _).
+.decl as_type(n: node, t: node)  // the type after `as`: its second child, comments aside
+as_type(n, t) :- kind(n, "as_expression"), child(n, t, i), i > 0, !kind(t, "comment").
 .decl cast_type(n: node, t: node)
-cast_type(n, t) :- kind(n, "as_expression"), !op(n, "const"), child(n, t, 1).
+cast_type(n, t) :- as_type(n, t).
 cast_type(n, t) :- kind(n, "type_assertion"), child(n, a, 0), child(a, t, 0).
 .decl cast_text(n: node, s: symbol)
 cast_text(n, s) :- cast_type(n, t), text(t, s).
@@ -213,7 +216,10 @@ last_decorator(m, d) :- field(m, "decorator", _), d = max e : { field(m, "decora
 // body are already outside m, so only a field's or a parameter's own decorators are skipped.
 //   class A { @d x = 1; m(@e private y) {} }     x's head is `x`, y's is `private`
 .decl member_head(m: node, h: span)
-member_head(m, h) :- head_holder(m), !field(m, "decorator", _), first_token(m, h).
+// With no decorator the head is m itself, which starts at its first token (a computed key's `[` is no token the
+// tape keeps); an edit `replace(h, `public $h`)` puts the word before all of it.
+.stored member_head "after a member's decorators every modifier is optional, so the tape keeps the next token"
+member_head(m, m) :- head_holder(m), !field(m, "decorator", _).
 member_head(m, h) :- head_holder(m), last_decorator(m, d), token_after(d, h).
 .decl head_holder(m: node)
 head_holder(m) :- ts_member(_, m, _).

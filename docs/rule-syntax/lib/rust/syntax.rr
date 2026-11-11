@@ -109,8 +109,9 @@ has_comment(n) :- child(n, c, _), kind(c, k), comment_kind(k).
 paren_inner(p, e) :- kind(p, "parenthesized_expression"), child(p, e, _), kind(e, k), !comment_kind(k).
 // sole_group(p, t): t comes right after p's opening bracket and right before its closing one.
 .decl sole_group(p: node, t: node)
-sole_group(p, t) :- kind(p, "token_tree"), child(p, t, _), kind(t, "token_tree"),
-    first_token(p, o), token_before(t, o), last_token(p, c), token_after(t, c).
+// The opener is a choice the tape keeps (p's token 0); the closer it implies is in the source after t.
+sole_group(p, t) :- kind(p, "token_tree"), child(p, t, _), kind(t, "token_tree"), node(_, p, _, ps, _),
+    node(_, t, _, ts, _), token(p, 0, _, ps, _), token(p, 1, _, ts, _), structural_after(t, h), match("\\s*[)\\]}]\\s*", h).
 
 // The operator is the binary expression's one anonymous token.
 .decl binary(e: node, op: symbol, l: node, r: node)

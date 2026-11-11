@@ -3586,3 +3586,16 @@ blessed `wave.rir` (B403–B413 imports and five ruff rules), and 140 families c
 wave drops B602 for the comment, or the clause's lowering misses this call. The test is ignored with this item.
 
 **Closure:** the wave reports B602 on that line, or the difference is shown to be W's, and the test runs again.
+
+## O-p0-stats-flake. Phase 0 sometimes finds no statistics for `p0_file_t_shape` under parallel tests
+
+Under the test harness's parallel threads, `corpus::base_tests` fails intermittently with `phase 0: no
+statistics for p0_file_t_shape.c0`. Each time it is a different test (`fstrings_are_ws_python_fstring_trees`,
+`match_group_joined_on_its_match_column`, `a_lines_regex_is_src_line_text_and_match`, and others). It happened in
+8 of 20 runs on the pre-merge hub engine, with or without strands (decision 0113), and never with
+`--test-threads=1`. The failing model is built in `make_plan` from the caller's given statistics, which have
+neither the relation's columns nor a lazy entry. The run comes through `cone_rounds` on a pool thread
+(`maintained::run`). So something process-wide is suspected, shared between concurrent runs: a store keyed by
+connection address or by path (`""` for in-memory databases). Not yet traced.
+
+**Closure:** the shared state is found and keyed per run, and `base_tests` passes 20 of 20 in parallel.

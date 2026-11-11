@@ -312,6 +312,30 @@ pub(crate) fn forget_identity(path: &str) {
     IDENTITIES.lock().remove(path);
 }
 
+thread_local! {
+    static HELD_ONLY: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// While the guard lives, this thread gives out no new atoms (decision 0113 §4): a component of strata run ahead
+/// of the run's order reads the atoms there are, and one that would make a new atom stops, to run again in order on
+/// the run's thread. So atoms are given out in the run's order, as a serial run gives them, and no commit on
+/// another thread meets atoms pending that it did not write (decision 0049).
+pub fn held_only() -> impl Drop {
+    struct Held;
+    impl Drop for Held {
+        fn drop(&mut self) {
+            HELD_ONLY.set(HELD_ONLY.get() - 1);
+        }
+    }
+    HELD_ONLY.set(HELD_ONLY.get() + 1);
+    Held
+}
+
+/// Whether this thread gives out no new atoms now (`held_only`).
+pub fn held_only_now() -> bool {
+    HELD_ONLY.get() > 0
+}
+
 static REGISTRY: LazyLock<Mutex<HashMap<PathBuf, Weak<Atoms>>>> = LazyLock::new(Default::default);
 /// The atoms of in-memory databases: one set for the process, as the planner's symbols had.
 static MEMORY: LazyLock<Arc<Atoms>> = LazyLock::new(|| Arc::new(Atoms::new(None, None)));
@@ -644,6 +668,13 @@ impl Atoms {
             if let Some(found) = values.iter().map(|value| state.atoms.get(value)).collect::<Option<Vec<_>>>() {
                 return Ok(found);
             }
+        }
+        // Held atoms only (`held_only`): a stored one is found, a new one is refused.
+        if HELD_ONLY.get() > 0 {
+            return values
+                .iter()
+                .map(|value| self.lookup(value)?.ok_or_else(|| StoreError::Invalid(format!("a new atom off the run's thread (decision 0113 §4): {value:?}"))))
+                .collect();
         }
         // The lease is held while ids are given out, so a flush on another thread cannot give it
         // back between the check and the new ids.

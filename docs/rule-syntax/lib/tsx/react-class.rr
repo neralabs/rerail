@@ -169,7 +169,9 @@ cap_name(x) :- (kind(n, "identifier") ; kind(n, "property_identifier")), text(n,
 .decl fn_expr(f: node)
 fn_expr(f) :- kind(f, "arrow_function") ; kind(f, "function_expression") ; kind(f, "generator_function").
 .decl async_generator(f: node)
-async_generator(f) :- op(f, "async"), op(f, "*").
+// A generator function's kind says `*` (the tape keeps none there); a method's `*` is stored.
+async_generator(f) :- op(f, "async"), (kind(f, "generator_function") ; kind(f, "generator_function_declaration") ;
+    kind(f, "method_definition"), op(f, "*")).
 .decl comp_bind(p: node, f: node, x: symbol)  // p binds f to the plain name x
 comp_bind(p, f, x) :- kind(p, "variable_declarator"), field(p, "value", v), deparen(v, f), field(p, "name", n),
     kind(n, "identifier"), text(n, x).
