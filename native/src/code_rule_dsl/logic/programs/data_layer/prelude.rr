@@ -7,7 +7,8 @@
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
-.input doc, node, child, field, text
+.decl source(d: number, sp: node)
+.input doc, node, child, field, text, source
 .decl kind(n: node, k: symbol)
 kind(n, k) :- node(_, n, k, _, _).
 .decl docof(n: node, d: number)
