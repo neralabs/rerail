@@ -28,7 +28,8 @@ def visibility(f, l, c, sl, sc):
     """The visibility written between the item's start (sl, sc) and its name (l, c), and its position."""
     L = lines(f)
     best = None
-    for i in range(sl, l + 1):
+    # a stale index may point past the file's end: what is there is read (widen.py finds the item by its name)
+    for i in range(sl, min(l, len(L) - 1) + 1):
         text = L[i]
         lo = sc if i == sl else 0
         hi = c if i == l else len(text)
