@@ -935,3 +935,23 @@ fn cpu_now() -> f64 {
     unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
     t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
 }
+
+/// A rule reading the text of a node whose kind no body fixes gets a twin reading `@rr_node_text` (decision 0109);
+/// a fixed kind, a field of leaves only, a short constant, and the twin itself need none. With the twin, no rule
+/// asks for every node's text at any length.
+#[test]
+fn long_text_twins_where_no_body_fixes_the_kind() {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
+    for (body, twins) in [
+        ("out(t) :- node(_, n, _, _, _), text(n, t).", 1),
+        ("out(t) :- node(_, n, _, _, _), text(n, t), field(n, \"object\", o), text(o, t).", 3),
+        ("out(t) :- kind(n, \"call\"), text(n, t).", 0),
+        ("out(t) :- field(_, \"attribute\", n), text(n, t).", 0),
+        ("out(\"doc\") :- node(_, n, _, _, _), text(n, \"doc\").", 0),
+    ] {
+        let mut program = crate::code_rule_dsl::logic::rr::parse(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
+        assert_eq!(long_text_twins(&mut program, &[]), twins, "{body}");
+        assert!(text_kind_demand(&program, &[]).1.is_empty(), "{body}: every text is read");
+        assert_eq!(long_text_twins(&mut program, &[]), 0, "{body}: twinned once");
+    }
+}

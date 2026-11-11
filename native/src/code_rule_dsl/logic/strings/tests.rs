@@ -270,6 +270,10 @@ fn sqlite_functions_as_sqlite_has_them() {
         for (y, z) in [(1, 1), (0, 3), (-3, 2), (2, -1), (5, 100), (-20, 4), (3, 0), (1, -2)] {
             assert_eq!(eval("sql_substr", &[s], &[y, z]), sql("SELECT substr(?1, ?2, ?3)", &[&s, &y, &z]), "substr({s:?}, {y}, {z})");
             assert_eq!(eval("sql_substr2", &[s], &[y]), sql("SELECT substr(?1, ?2)", &[&s, &y]), "substr({s:?}, {y})");
+            if s.is_ascii() {
+                let bytes = sql("SELECT CAST(substr(CAST(?1 AS BLOB), ?2, ?3) AS TEXT)", &[&s, &y, &z]);
+                assert_eq!(eval("sql_substr_bytes", &[s], &[y, z]), bytes, "substr_bytes({s:?}, {y}, {z})");
+            }
         }
         for sub in ["", "l", "wö", "z", "lazy"] {
             assert_eq!(eval("sql_instr", &[s, sub], &[]), sql("SELECT instr(?1, ?2)", &[&s, &sub]), "instr({s:?}, {sub:?})");

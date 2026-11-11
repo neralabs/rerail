@@ -9,7 +9,8 @@
 //
 // Builtins: @rx_replace, @replace, @qualname (tape: the `name` texts of f's function_definition/class_definition
 // ancestors-or-self, outermost first, joined by "." and by ".<locals>." before a function_definition that has a
-// function_definition ancestor). A builtin with no value (SQL NULL) binds nothing.
+// function_definition ancestor), @qualdepth (the function frames among them). A builtin with no value (SQL NULL)
+// binds nothing.
 // Tape form (convention 10): `contexts`' `scopes`, a string path-fold over `parents` (E0 § 2.5 row 1), is @qualname;
 // E0's non-recursive form (ancestor frames by containment + ordered group_concat) needs an ordered string aggregate.
 // LIMIT/choice: `parents` and `sites` (ORDER BY __start DESC LIMIT 1) are max aggregates; frame starts are distinct
@@ -42,26 +43,14 @@ frames(f, s, e, n, 1) :- raw_function(f, n), !raw_function_wrapper(f, _), node(_
 frames(c, ls, e, n, 0) :- raw_class(c, n), raw_class_wrapper(c, w), start(w, ls), node(_, c, _, _, e).
 frames(c, s, e, n, 0) :- raw_class(c, n), !raw_class_wrapper(c, _), node(_, c, _, s, e).
 
-// ---- parents: the frame p with p.__start < f.__start AND p.__end >= f.__end, ORDER BY p.__start DESC LIMIT 1 ----
-// Frame starts are distinct within a file, so the max start is one frame (no choice).
-.decl frame_ancestor(f: node, p: node)
-frame_ancestor(f, p) :- frames(f, _, fe, _, _), docof(f, d), frames(p, _, pe, _, _), docof(p, d), start(f, fs), start(p, ps),
-    ps < fs, pe >= fe.
-.decl frame_ancestor_start(f: node, s: number)
-frame_ancestor_start(f, s) :- frame_ancestor(f, p), start(p, s).
-.decl parent_start(f: node, s: number)
-parent_start(f, s) :- frame_ancestor_start(f, _), s = max t : { frame_ancestor_start(f, t) }.
-.decl parents(f: node, parent: node)
-parents(f, p) :- frame_ancestor(f, p), start(p, s), parent_start(f, s).
-
-// ---- contexts: (path, start, qualname, depth) per frame ----
+// ---- parents and contexts: (path, start, qualname, depth) per frame ----
+// `parents` is the frame p with p.__start < f.__start AND p.__end >= f.__end, ORDER BY p.__start DESC LIMIT 1: the
+// SQL's tree ancestry, by span. Here it is the tree's: the nearest function or class ancestor (`dl_frame_parent`).
 // `scopes` folds qualname down `parents` from the roots (parent IS NULL); depth counts the function frames on the
-// chain, the frame included. qualname is @qualname (header); depth is a count over the frame's ancestors-or-self.
-.decl context_function(f: node, a: node)
-context_function(f, f) :- frames(f, _, _, _, 1).
-context_function(f, a) :- frame_ancestor(f, a), frames(a, _, _, _, 1).
+// chain, the frame included. Both are one fold down the tree's frames (@qualname, @qualdepth): as spans, the frame
+// pairs of a document were a product (45.9 M rows over the repository).
 .decl contexts(f: node, qualname: symbol, depth: number)
-contexts(f, q, k) :- frames(f, _, _, _, _), q = @qualname(f), k = count : { context_function(f, _) }.
+contexts(f, q, k) :- frames(f, _, _, _, _), q = @qualname(f), k = @qualdepth(f).
 
 // ---- sites ----
 .decl site(r: node, issue: symbol)
