@@ -197,7 +197,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/hnsw-architecture.rr",
-      "sha256": "70159a44e04340bf6b478084645ed4d8ec906e21d257649e5167523df55207c1",
+      "sha256": "01a9d33febd72f136281df9cf19994be2a11ef3fd359ba212cdc6cec935376b9",
       "importedSha256": "7f6aa1428a8c1ffb9b1f1e806213b05bf3ab9d2286e167e76a4ffbd07f2c5147",
       "repairs": [
         {
@@ -4590,7 +4590,7 @@
       "legacySha256": "c7545b1fb8197b746548e00b4318a65710dd54c39bee35790a1ebd8a7e80ebd6",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/hnsw-architecture.rr",
-      "ruleSha256": "70159a44e04340bf6b478084645ed4d8ec906e21d257649e5167523df55207c1"
+      "ruleSha256": "01a9d33febd72f136281df9cf19994be2a11ef3fd359ba212cdc6cec935376b9"
     },
     {
       "check": "embedding_vector_orchestration",

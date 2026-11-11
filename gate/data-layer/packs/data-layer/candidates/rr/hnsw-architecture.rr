@@ -3,6 +3,7 @@
 .language python
 .mode block
 .scope include "impl/common/**/*.py", "l5200_vector_index/**/*.py", "vector_types.py/**/*.py"
+.scope dirs option("apiInputDirs")
 .scope exclude "**/tests/**", "**/test/**", "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**"
 // Python linter: scripts/lint_hnsw_architecture.py. One pass over the module's `ast` nodes:
 //   HNSW001 a Name, an attribute or a def/class name in the deleted pseudo-HNSW names
@@ -53,15 +54,22 @@ hn_deleted_file("search_program.py"). hn_deleted_file("sqlite_construction.py").
 hn_deleted_file("sqlite_frontier.py").
 
 // ---- 1. documents ------------------------------------------------------------------------------------------------
+// Supplied buffers carry the caller's path separately from the workspace path.
+.decl hn_api_path(d: number, path: symbol, name: symbol)
+hn_api_path(d, p, f) :- doc(d, buffer, _), option_item("apiBuffers", i, buffer),
+    option_item("apiSourcePaths", i, p), option_item("apiSourceNames", i, f).
+.decl hn_path(d: number, path: symbol, name: symbol)
+hn_path(d, p, f) :- hn_api_path(d, p, f).
+hn_path(d, p, f) :- doc(d, p, _), file_name(d, f), !hn_api_path(d, _, _).
 // hn_deleted(d, p): document d, at path p, is a deleted module. hn_doc(d): any other document that is checked.
 .decl hn_deleted(d: number, p: symbol)
-hn_deleted(d, p) :- doc(d, p, _), file_name(d, f), hn_deleted_file(f),
+hn_deleted(d, buffer) :- doc(d, buffer, _), hn_path(d, p, f), hn_deleted_file(f),
     p = cat("impl/common/l2100_sql_grammar/domain/sql_table_hnsw/", f),
     option("entryPoint", "find_hnsw_architecture_findings"), !option_item("cwdExternalPaths", _, p).
 .decl hn_doc(d: number)
 hn_doc(d) :- doc(d, _, _), hn_selected(d), !hn_deleted(d, _), !hn_generated(d), !syntax_error(d, _, _).
 .decl hn_generated(d: number)                       // rust_bridge/…/generated_*.py
-hn_generated(d) :- path_part(d, "rust_bridge"), file_name(d, f), prefix("generated_", f).
+hn_generated(d) :- hn_path(d, p, f), contains("/rust_bridge/", cat("/", p, "/")), prefix("generated_", f).
 .decl hn_selected(d: number)
 hn_selected(d) :- doc(d, _, _), option("entryPoint", _).
 hn_selected(d) :- doc(d, p, _), !option("entryPoint", _), file_name(d, f), suffix(".py", f),
@@ -80,11 +88,11 @@ hn_trigger(d) :- source(d, sp), text(sp, t),
     (contains("hnsw", t) ; contains("Hnsw", t) ; contains("HNSW", t) ; contains("json", t) ; contains("Json", t) ; contains("JSON", t)).
 // hn_algorithm(d): a file named algorithm.py, wherever it is.
 .decl hn_algorithm(d: number)
-hn_algorithm(d) :- hn_doc(d), file_name(d, "algorithm.py").
+hn_algorithm(d) :- hn_doc(d), hn_path(d, _, "algorithm.py").
 // hn_hnsw_module(d): "hnsw" in the stem, any case, or a sql_table_hnsw directory on the path.
 .decl hn_hnsw_module(d: number)
-hn_hnsw_module(d) :- hn_doc(d), file_name(d, f), icontains("hnsw", f).   // f is *.py: the suffix holds no "hnsw"
-hn_hnsw_module(d) :- hn_doc(d), path_part(d, "sql_table_hnsw").
+hn_hnsw_module(d) :- hn_doc(d), hn_path(d, _, f), icontains("hnsw", f).   // f is *.py: the suffix holds no "hnsw"
+hn_hnsw_module(d) :- hn_doc(d), hn_path(d, p, _), contains("/sql_table_hnsw/", cat("/", p, "/")).
 // hn_in(n, d): node n is in a checked document d.
 .decl hn_in(n: node, d: number)
 hn_in(n, d) :- docof(n, d), hn_doc(d).

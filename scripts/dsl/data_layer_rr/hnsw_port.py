@@ -4,21 +4,26 @@ from pathlib import Path
 
 def scan(suite, entry, module, args):
     originals, files, errors = {}, [], {}
-    external = []
+    external, source_paths, source_names = [], [], []
     cwd = Path.cwd()
-    for path in args['paths']:
+    for index, path in enumerate(args['paths']):
         path = Path(path)
         name = path.relative_to(cwd).as_posix() if path.is_absolute() and path.is_relative_to(cwd) else path.as_posix().lstrip('/')
-        originals[name] = path
+        buffer = f'input/{index}/source.py'
+        originals[buffer] = path
+        source_paths.append(name)
+        source_names.append(path.name)
         if path.is_absolute() and not path.is_relative_to(cwd):
             external.append(name)
         try:
             source = path.read_text(encoding='utf-8')
         except (OSError, UnicodeError) as error:
             # The native inventory rule decides whether a forbidden path bypasses file IO.
-            errors[name], source = error, ''
-        files.append(dict(path=name, source=source))
-    rows = suite.native('hnsw_architecture', entry, files, dict(cwdExternalPaths=external))
+            errors[buffer], source = error, ''
+        files.append(dict(path=buffer, source=source))
+    rows = suite.native('hnsw_architecture', entry, files,
+                        dict(apiInputDirs=['input'], apiBuffers=list(originals), apiSourcePaths=source_paths,
+                             apiSourceNames=source_names, cwdExternalPaths=external))
     if any(r['code'] not in {'HNSW001', 'HNSW002', 'HNSW003', 'HNSW004', 'HNSW005', 'HNSW006', 'HNSW007'} for r in rows):
         raise AssertionError('Unexpected HNSW diagnostic')
     inventory = {r['path'] for r in rows if r['code'] == 'HNSW006'}
