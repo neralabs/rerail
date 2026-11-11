@@ -878,7 +878,7 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
             .collect::<Vec<_>>();
         let _ = writeln!(
             out,
-            "#[cfg(not(test))]\npub const PLANNED_LANGUAGES: &[&str] = &[{}];\n",
+            "#[cfg(not(any(test, feature = \"test-hooks\")))]\npub const PLANNED_LANGUAGES: &[&str] = &[{}];\n",
             planned.join(", ")
         );
         let _ = writeln!(
@@ -1231,7 +1231,7 @@ mod tests {
         let tested =
             std::fs::read_to_string(out.0.join("out/language_registry.rs")).expect("generated");
         assert!(tested.contains(&format!(
-            "#[cfg(not(test))]\npub const PLANNED_LANGUAGES: &[&str] = &[{planned}];"
+            "#[cfg(not(any(test, feature = \"test-hooks\")))]\npub const PLANNED_LANGUAGES: &[&str] = &[{planned}];"
         )));
         assert!(tested.contains(&format!(
             "#[cfg(any(test, feature = \"test-hooks\"))]\npub const PLANNED_LANGUAGES: &[&str] = &[{tested_planned}];"
@@ -1288,7 +1288,7 @@ mod tests {
         .with_test_languages(&[planned("three", ".three")])
         .generate();
         assert!(generated.contains(
-            "#[cfg(not(test))]\npub const PLANNED_LANGUAGES: &[&str] = &[\"two\"];"
+            "#[cfg(not(any(test, feature = \"test-hooks\")))]\npub const PLANNED_LANGUAGES: &[&str] = &[\"two\"];"
         ));
         assert!(generated.contains(
             "#[cfg(any(test, feature = \"test-hooks\"))]\npub const PLANNED_LANGUAGES: &[&str] = &[\"two\", \"three\"];"

@@ -151,7 +151,10 @@ def cfg_test_edits(nodes, files, keep_test_mods, edits):
             continue  # done already
         if gated.startswith('mod '):
             p = by_decl.get((os.path.abspath(f), gated[4:]))
-            if p is None or p not in keep_test_mods:
+            # a test module stays its crate's test build's, unless another crate reads it or its own file does by
+            # path (`tally::PARSES` under a converted cfg)
+            read_here = re.search(rb'(?<![A-Za-z0-9_:])' + gated[4:].encode() + rb'::', data[:int(s)] + data[int(e) + 200:]) is not None
+            if p is None or (p not in keep_test_mods and not read_here):
                 continue
         edits.add(os.path.abspath(f), int(s), int(e), HOOKS, 'cfg test')
 
