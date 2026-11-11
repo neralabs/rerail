@@ -2242,7 +2242,7 @@ impl Lowerer {
         // Only the literals tied to `vars` through shared variables: one tied to none tests that some row exists
         // anywhere (`ann_root(_)` once `(s = a ; within(s, a))` is left out), which makes every row of the context
         // depend on every document. Leaving it out widens the context, which the rule joins with its own literals.
-        let context = Self::connected(context, vars);
+        let context = Self::connected(Self::placed_texts(Self::connected(context, vars), vars), vars);
         let ctx = self.fresh("ctx");
         let alts = self.conjunction(&context, &vars.iter().cloned().collect())?;
         let types = vars.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
@@ -2252,6 +2252,28 @@ impl Lowerer {
             self.prog.rules.push(Rule { head: head.clone(), body: b });
         }
         Ok(head)
+    }
+
+    /// `context` without a `text(v, t)` whose node `v` nothing else in it binds: a text is read of a bound node
+    /// (`t = @rr_node_text(v)` past the inline bound, decision 0109), and such a `v` is bound by the rule, not the
+    /// context (`perf101_rebinding(n, NAME) :- demand(n, NAME), within_stop(c6, n, …), field(c6, "name", c7),
+    /// text(c7, t), text(NAME, t)`, a context of `c6`). Left out, it widens the context, which the rule joins with
+    /// its own literals.
+    fn placed_texts(context: Vec<Lit>, vars: &[String]) -> Vec<Lit> {
+        let text_of = |l: &Lit| match l {
+            Lit::Atom { rel, neg: false, args, .. } if rel == "text" => match args.first() {
+                Some(STerm::Var(v)) => Some(v.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        let binders: Vec<Lit> = context
+            .iter()
+            .filter(|l| matches!(l, Lit::Atom { rel, neg: false, .. } if rel != "text" && test_of(rel).is_none()))
+            .cloned()
+            .collect();
+        let bound = body_vars(&binders);
+        context.into_iter().filter(|l| text_of(l).is_none_or(|v| bound.contains(&v) || vars.contains(&v))).collect()
     }
 
     /// The literals of `context` reachable from `vars` through shared variables, in their order.
