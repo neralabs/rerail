@@ -6313,7 +6313,10 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 && reads.iter().filter(|r| !scc.contains(*r) || input_set.contains(r.as_str())).all(|r| {
                     let now = if unchanged.contains(r) { ks.was(r) }
                         else if input_set.contains(r.as_str()) { ks.input(r) }
-                        else if rules_by.contains_key(r.as_str()) { None }
+                        // A native answer has no deriving rule, but its rows can
+                        // change when the request is replayed against the world.
+                        // It is not an immutable literal fact.
+                        else if rules_by.contains_key(r.as_str()) || produced_here.contains_key(r.as_str()) || prog.natives.contains_key(r) { None }
                         else { Some(0) };
                     now.is_some() && scc.iter().all(|x| ks.read_was(x, r) == now)
                 });
