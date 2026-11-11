@@ -256,7 +256,8 @@ def use_owner(text, nodes):
     if not m:
         return None
     segs = m.group(1).split('::')
-    for k in range(len(segs), 0, -1):
+    # Not the root itself: an item there (`crate::content_store`, the store's re-export) is every crate's own.
+    for k in range(len(segs), 1, -1):
         p = '::'.join(segs[:k])
         if p in nodes:
             return nodes[p].owner

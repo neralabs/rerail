@@ -32,7 +32,7 @@ use crate::code_rule_dsl::facts::core::{Facts, KIND_STRIDE, NONE, TEXT, kind_ato
 use crate::code_rule_dsl::language::{KindCatalog, from_tape_tag};
 use crate::content_store::{ContentStore, StoreError, StoreResult};
 use rusqlite::Connection;
-use crate::code_rule_dsl::logic::front::Value;
+use crate::code_rule_dsl::logic::front::ast::Value;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, OnceLock};
 
@@ -73,12 +73,12 @@ pub(crate) struct Projection {
     pub(crate) reads: Option<BTreeSet<String>>,
     /// The regexes the program runs over `source` or `src_line` spans (`front::Program::rx_spans`): their matches'
     /// groups are spans, rows of `rx_span`.
-    pub(crate) rx_spans: Vec<(crate::code_rule_dsl::logic::front::SpanIn, String)>,
+    pub(crate) rx_spans: Vec<(crate::code_rule_dsl::logic::front::ast::SpanIn, String)>,
     /// The AST patterns the program matches (`front::Program::ast_patterns`): rows of `ast_match`.
     pub(crate) ast_patterns: Vec<String>,
     /// Source/line spans whose complete text a rule reads, traced through copied relation columns.
     /// None is the unprojected test/export interface; AST subtree text keeps its independent bound.
-    text_spans: Option<BTreeSet<crate::code_rule_dsl::logic::front::SpanIn>>,
+    text_spans: Option<BTreeSet<crate::code_rule_dsl::logic::front::ast::SpanIn>>,
     /// The node kinds whose text a rule reads (`text_kind_demand`): their nodes' `text` is made at any length. Any
     /// other node's is made up to `core_rr::TEXT_INLINE` bytes, unless it is token-like, or `long_text_any`: some rule
     /// reads the text of a node of any kind.
@@ -112,7 +112,7 @@ impl Projection {
     }
     /// `core.rr`'s shape for a program that includes `core.rr` (declares every relation it declares as an input),
     /// T's for one that declares its base relations itself (T's programs, the converter's, O74).
-    pub(crate) fn of(program: &crate::code_rule_dsl::logic::front::Program, reads: BTreeSet<String>) -> Self {
+    pub(crate) fn of(program: &crate::code_rule_dsl::logic::front::ast::Program, reads: BTreeSet<String>) -> Self {
         crate::code_rule_dsl::logic::profile::projection_plan(program, &reads);
         let core = crate::code_rule_dsl::facts::core::core_names();
         let shape = if !core.is_empty() && core.iter().all(|r| program.decls.contains_key(r)) { Shape::Core } else { Shape::T };
@@ -128,7 +128,7 @@ impl Projection {
 
     /// This projection, with `text` made at any length for the node kinds whose text the program's rules read
     /// ([`text_kind_demand`]; `matchers` are the program's `ast` relations, by relation, as `matchers::lower` gives them).
-    pub(crate) fn with_long_text(mut self, program: &crate::code_rule_dsl::logic::front::Program, matchers: &[(String, String, Vec<String>)]) -> Self {
+    pub(crate) fn with_long_text(mut self, program: &crate::code_rule_dsl::logic::front::ast::Program, matchers: &[(String, String, Vec<String>)]) -> Self {
         let TextDemand { long, any, read, wide } = text_kind_demand(program, matchers);
         self.long_text = long;
         self.long_text_any = !any.is_empty();
@@ -155,8 +155,8 @@ impl Projection {
         crate::code_rule_dsl::facts::core::input_columns(rel)
     }
 
-    fn wants_span_text(&self, within: crate::code_rule_dsl::logic::front::SpanIn) -> bool {
-        use crate::code_rule_dsl::logic::front::SpanIn;
+    fn wants_span_text(&self, within: crate::code_rule_dsl::logic::front::ast::SpanIn) -> bool {
+        use crate::code_rule_dsl::logic::front::ast::SpanIn;
         self.wants("text") && self.text_spans.as_ref().map_or_else(
             || self.wants(match within { SpanIn::Source => "source", SpanIn::Line => "src_line", _ => "text" }),
             |spans| spans.contains(&within),
@@ -185,18 +185,18 @@ struct TextDemand {
 
 /// Whether `v` is a node in a field whose every kind is a leaf (`field(x, "attribute", v)`): a token's text, which
 /// `text` holds at any length (`core_rr::TEXT_INLINE`).
-fn leaf_field(body: &[crate::code_rule_dsl::logic::front::Literal], v: &str) -> bool {
-    use crate::code_rule_dsl::logic::front::Term;
+fn leaf_field(body: &[crate::code_rule_dsl::logic::front::ast::Literal], v: &str) -> bool {
+    use crate::code_rule_dsl::logic::front::ast::Term;
     use crate::code_rule_dsl::facts::grammar_shape::{field_kinds, leaf_kind};
-    body.iter().filter_map(crate::code_rule_dsl::logic::front::Literal::atom).filter(|a| !a.neg && a.rel == "field").any(|a| match (a.args.get(1), a.args.get(2)) {
+    body.iter().filter_map(crate::code_rule_dsl::logic::front::ast::Literal::atom).filter(|a| !a.neg && a.rel == "field").any(|a| match (a.args.get(1), a.args.get(2)) {
         (Some(Term::Str(f)), Some(Term::Var(x))) if x == v => field_kinds(f).is_some_and(|k| !k.is_empty() && k.iter().all(|k| leaf_kind(k))),
         _ => false,
     })
 }
 
 /// Whether `text(v, "s")` names a text within the bound: no long text equals it.
-fn short_constant(text: &crate::code_rule_dsl::logic::front::Atom) -> bool {
-    matches!(text.args.get(1), Some(crate::code_rule_dsl::logic::front::Term::Str(s)) if s.len() <= core_rr::TEXT_INLINE)
+fn short_constant(text: &crate::code_rule_dsl::logic::front::ast::Atom) -> bool {
+    matches!(text.args.get(1), Some(crate::code_rule_dsl::logic::front::ast::Term::Str(s)) if s.len() <= core_rr::TEXT_INLINE)
 }
 
 /// Rules reading `text(v, t)` of a node `v` whose kind no body fixes see `text` within its bound only
@@ -204,8 +204,8 @@ fn short_constant(text: &crate::code_rule_dsl::logic::front::Atom) -> bool {
 /// such rule gets twins, one per non-empty set of those atoms, reading `t = @rr_node_text(v)` in their place: the
 /// text of the nodes the rule binds, when past the bound (`long_node_text`). The rule and its twins together read every
 /// text, each once. More than `MAX` such atoms in one rule keep the any-kind projection instead. Returns the twins made.
-pub(crate) fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::Program, matchers: &[(String, String, Vec<String>)]) -> usize {
-    use crate::code_rule_dsl::logic::front::{Literal, Term};
+pub(crate) fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::ast::Program, matchers: &[(String, String, Vec<String>)]) -> usize {
+    use crate::code_rule_dsl::logic::front::ast::{Literal, Term};
     const MAX: usize = 3;
     let TextDemand { any, .. } = text_kind_demand(program, matchers);
     let mut by_rule: std::collections::BTreeMap<usize, Vec<usize>> = Default::default();
@@ -221,7 +221,7 @@ pub(crate) fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::
         by_rule.entry(r).or_default().push(i);
     }
     // Each rule's twins follow it, so a rule's place does not depend on what other rules the program holds.
-    let mut twins: std::collections::BTreeMap<usize, Vec<crate::code_rule_dsl::logic::front::Rule>> = Default::default();
+    let mut twins: std::collections::BTreeMap<usize, Vec<crate::code_rule_dsl::logic::front::ast::Rule>> = Default::default();
     let mut fresh = 0usize;
     for (r, atoms) in by_rule.into_iter().filter(|(_, a)| a.len() <= MAX) {
         for set in 1..(1u32 << atoms.len()) {
@@ -289,8 +289,8 @@ pub(crate) fn long_node_text(n: i64) -> Option<String> {
 /// `text(v, …)` then demands `v`'s kinds (`core_rr::TEXT_INLINE` holds below them only). Fixed by the same body only,
 /// `text(w, t)` over `classes(c, _), child(w, c, _), kind(w, "decorated_definition")` was demanded, but a rule reading
 /// `text(n, t)` of `nodes(n)` was not, and saw no text past the bound.
-fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::Program, matchers: &[(String, String, Vec<String>)]) -> TextDemand {
-    use crate::code_rule_dsl::logic::front::{Literal, Term};
+fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Program, matchers: &[(String, String, Vec<String>)]) -> TextDemand {
+    use crate::code_rule_dsl::logic::front::ast::{Literal, Term};
     // A kind as the program holds it (`python:call`) or as a grammar names it (`call`).
     let bare = |k: &str| k.rsplit(':').next().unwrap_or(k).to_owned();
     // A matcher's root kind: its rule's own `kind`, or one of its top-level `all`'s.
@@ -485,8 +485,8 @@ fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::Program, match
 
 /// Plan-time provenance, not a per-file scan. Only copying a span (including variable equality)
 /// carries its origin. Regex captures have their own bounded ranges and do not demand the container text.
-fn span_text_demand(program: &crate::code_rule_dsl::logic::front::Program) -> BTreeSet<crate::code_rule_dsl::logic::front::SpanIn> {
-    use crate::code_rule_dsl::logic::front::{Literal, SpanIn, Term};
+fn span_text_demand(program: &crate::code_rule_dsl::logic::front::ast::Program) -> BTreeSet<crate::code_rule_dsl::logic::front::ast::SpanIn> {
+    use crate::code_rule_dsl::logic::front::ast::{Literal, SpanIn, Term};
     let mut columns: HashMap<(String, usize), u8> = [( ("source".to_owned(), 1), 1), (("src_line".to_owned(), 2), 2)].into();
     let mut requested = 0;
     loop {
@@ -1925,7 +1925,7 @@ impl Extra {
         while !done.iter().all(|d| *d) {
             let mut progressed = false;
             for (i, (within, pattern, re, prefilter)) in rx.iter().enumerate() {
-                use crate::code_rule_dsl::logic::front::SpanIn;
+                use crate::code_rule_dsl::logic::front::ast::SpanIn;
                 if done[i] {
                     continue;
                 }
@@ -2192,7 +2192,7 @@ impl Batch {
         // `syntax_error(d)`: the documents whose parse has an error (`Facts::syntax_errors`); `core.rr`'s
         // `syntax_error(d, l, msg)` (`core_rr`): the first error's line and message.
         let mut errors = Vec::new();
-        let span_text = [crate::code_rule_dsl::logic::front::SpanIn::Source, crate::code_rule_dsl::logic::front::SpanIn::Line].map(|within| !core || projection.wants_span_text(within));
+        let span_text = [crate::code_rule_dsl::logic::front::ast::SpanIn::Source, crate::code_rule_dsl::logic::front::ast::SpanIn::Line].map(|within| !core || projection.wants_span_text(within));
         let mut extra = Extra::new(reads, matches, shape, span_text);
         let mut tree = tree::Tree::new(reads);
         let mut produced: Vec<(Option<u8>, Box<dyn ProducerRun>)> =
@@ -2217,8 +2217,8 @@ impl Batch {
         c.long_text_any = projection.long_text_any;
         c.text_nodes = projection.text_nodes.as_ref().map(|t| (t.kinds.clone(), t.fields.clone()));
         let wants_text = core && projection.wants("text");
-        let wants_source_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::SpanIn::Source);
-        let wants_line_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::SpanIn::Line);
+        let wants_source_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::ast::SpanIn::Source);
+        let wants_line_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::ast::SpanIn::Line);
         let wants_split_lines = core && projection.wants("split_line");
         // Asked once for the batch, not per node (a lookup in the program's set of read relations).
         let (wants_parts, wants_part_starts, wants_words) = (projection.wants("str_part"), projection.wants("str_part_start"), projection.wants("str_part_word"));
@@ -2236,7 +2236,7 @@ impl Batch {
                 .rx_spans
                 .iter()
                 .map(|(within, re)| {
-                    use crate::code_rule_dsl::logic::front::SpanIn;
+                    use crate::code_rule_dsl::logic::front::ast::SpanIn;
                     let on = std::env::var("RERAIL_SPAN_PREFILTER").map_or(true, |v| v != "off");
                     let prefilter = match within {
                         SpanIn::Source | SpanIn::Line if on => crate::code_rule_dsl::transducer::packed::regex_block::SpanPrefilter::compile(re, *within == SpanIn::Line).map(Arc::new),
@@ -3042,7 +3042,7 @@ pub(crate) fn with_matchers(
     // The kind-set axes, made per looked-up node like containment (decision 0050): a set no join reads, and the nodes
     // no join binds, cost nothing. Their statistics come from the tree.
     let _nearest = crate::code_rule_dsl::logic::profile::span(|| "nearest".into());
-    use crate::code_rule_dsl::logic::front::{AXIS, DESCENDANTS};
+    use crate::code_rule_dsl::logic::front::ast::{AXIS, DESCENDANTS};
     for (name, members) in sets {
         let axis = if name.starts_with(DESCENDANTS) {
             within::Axis::Has

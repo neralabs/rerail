@@ -779,7 +779,7 @@ pub(crate) fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "within" => &["n", "a"],
         "span_within" => &["inner", "outer"],
         // The transducer's `nearest` rows, and the tree axes' (`facts::vtab::syntax::with_nearest`).
-        rel if crate::code_rule_dsl::logic::front::is_transduced(rel) => &["n", "a"],
+        rel if crate::code_rule_dsl::logic::front::ast::is_transduced(rel) => &["n", "a"],
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) => &["s"],
         // An `ast` matcher's matched nodes (decision 0106).
         rel if rel.starts_with(ast_matches::PREFIX) => ast_matches::columns(rel),
