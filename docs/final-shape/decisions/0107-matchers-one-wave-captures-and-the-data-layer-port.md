@@ -143,6 +143,9 @@ Load was 30–60 throughout.
 
 ## Open items
 
+Decision 0108 closes the capture cost, `shortlex_min`, the tripwire options and the relaxed
+matchers' cost, and records where the remaining programs stop.
+
 - **`shortlex_min`.** Two tripwire part files declare a lattice over symbols ordered
   by text (length, then lexicographic). Lattices hold integers; this one needs the
   atoms' text in its join.
