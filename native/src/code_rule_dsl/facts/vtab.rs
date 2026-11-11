@@ -289,7 +289,9 @@ impl Modules {
         let at = connection_scope(db);
         let shape = (source.columns(), (0..source.columns().len()).map(|c| source.text_column(c)).collect::<Vec<_>>(), source.writable());
         let kept = REGISTERED.lock().remove(&(at, name.to_owned()));
-        if let Some(binding) = kept.filter(|b| !shape.2 && (b.schema.columns.clone(), b.schema.text.clone(), b.schema.writable) == shape) {
+        // (A writable table's `temp` virtual table is there still: the run's clean-up drops none it binds, and one it
+        // drops is no longer kept, `dropped_temp`.)
+        if let Some(binding) = kept.filter(|b| (b.schema.columns.clone(), b.schema.text.clone(), b.schema.writable) == shape) {
             binding.set(source)?;
             BOUND.lock().insert((at, name.to_owned()), binding.clone());
             bindings.insert(name.into(), binding);
@@ -393,6 +395,19 @@ pub(crate) struct UnmadeView {
 /// The tables a kept connection's last run bound, emptied (`reuse`), by connection and name: their modules stay
 /// registered until the connection closes, and the next run's `bind` of a table of the same shape takes one back.
 static REGISTERED: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), Binding>>> = std::sync::LazyLock::new(Default::default);
+
+/// Whether `name` is a table of `db`'s connection's own, bound now or kept for a later bind (`REGISTERED`): its
+/// `temp` virtual table (a writable one's) is the binding's, not what an earlier run left. (A run binds some of
+/// its tables as it goes: the kept strata's `load` hook.)
+pub(crate) fn is_bound(db: &Connection, name: &str) -> bool {
+    let key = (connection_scope(db), name.to_owned());
+    BOUND.lock().contains_key(&key) || REGISTERED.lock().contains_key(&key)
+}
+
+/// A run dropped `temp.<name>` on `db`'s connection: a kept binding of that name is gone with it.
+pub(crate) fn dropped_temp(db: &Connection, name: &str) {
+    REGISTERED.lock().remove(&(connection_scope(db), name.to_owned()));
+}
 
 /// A connection's deferred set-up (`defer_setup`): the statements still to run, each with what undoes it, and what
 /// undoes those already run (`reuse`).

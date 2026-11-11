@@ -5760,8 +5760,11 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     for (ty, name, sql) in temp {
         if ty == "view" {
             old_views.insert(name, sql);
-        } else {
+        } else if !crate::code_rule_dsl::facts::vtab::is_bound(db, &name) {
+            // A table of the connection's own (a writable one's `temp` virtual table, `vtab::register`), bound now
+            // or kept for this run's bind, is not what an earlier run left.
             db.execute_batch(&format!("DROP TABLE IF EXISTS temp.{}", crate::code_rule_dsl::logic::sql::ident(&name)))?;
+            crate::code_rule_dsl::facts::vtab::dropped_temp(db, &name);
         }
     }
     let atoms = inputs.atoms.is_some();
@@ -5942,10 +5945,14 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             None => (0..cols.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", "),
         };
         let create = format!("CREATE TEMP TABLE {}({names}, PRIMARY KEY ({key})) WITHOUT ROWID", crate::code_rule_dsl::logic::sql::ident(rel));
-        // A rule's head is made when SQL first needs it; a relation of facts alone, or of neither, now.
+        // A rule's head is made when SQL first needs it; a relation of facts alone now.
         // (Over atoms: T's extension, over text, reads its relations' tables itself.)
         // A request's produced relation too: its answers go to the engine's component, or to its table (made then).
-        if atoms && (rules_by.contains_key(rel.as_str()) || produced_rels.contains_key(rel.as_str())) && prog.facts.get(rel).is_none_or(|f| f.is_empty()) {
+        // A relation of neither in a run with no native reader too (the cone's `load`): a run that reads it in SQL
+        // has it made then; one that does not makes no table its next run on the connection drops. (With a native
+        // reader it is held empty in the engine, below.)
+        let neither = native.is_empty() && !rules_by.contains_key(rel.as_str());
+        if atoms && (rules_by.contains_key(rel.as_str()) || produced_rels.contains_key(rel.as_str()) || neither) && prog.facts.get(rel).is_none_or(|f| f.is_empty()) {
             run.pending.insert(rel.clone(), create);
             continue;
         }
@@ -6453,13 +6460,21 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                     Some(rows) => rows,
                     None => {
                         let req = produced[rel.as_str()].to_owned();
-                        run.materialize(std::slice::from_ref(&req))?;
                         let width = prog.decls[&req].len();
-                        let cols = (0..width).map(|c| format!("c{c}")).collect::<Vec<_>>().join(", ");
-                        let asked: Vec<Vec<i64>> = db
-                            .prepare(&format!("SELECT {cols} FROM {}", crate::code_rule_dsl::logic::sql::ident(&req)))?
-                            .query_map([], |r| (0..width).map(|c| r.get::<_, i64>(c)).collect::<rusqlite::Result<Vec<_>>>())?
-                            .collect::<rusqlite::Result<_>>()?;
+                        // The request's rows where they are: the engine's (a relation it holds), none (one still to be
+                        // made: no table, no rows), or its table's.
+                        let native = run.native_rels.contains(&req).then(|| super::native::component::kept_rows(db, &req)).flatten();
+                        let asked: Vec<Vec<i64>> = if let Some((_, flat, _)) = native.filter(|_| width > 0) {
+                            flat.chunks(width).map(<[i64]>::to_vec).collect()
+                        } else if run.pending.contains_key(&req) && !run.native_rels.contains(&req) {
+                            Vec::new()
+                        } else {
+                            run.materialize(std::slice::from_ref(&req))?;
+                            let cols = (0..width).map(|c| format!("c{c}")).collect::<Vec<_>>().join(", ");
+                            db.prepare(&format!("SELECT {cols} FROM {}", crate::code_rule_dsl::logic::sql::ident(&req)))?
+                                .query_map([], |r| (0..width).map(|c| r.get::<_, i64>(c)).collect::<rusqlite::Result<Vec<_>>>())?
+                                .collect::<rusqlite::Result<_>>()?
+                        };
                         let answer = run.answer.as_deref_mut().ok_or_else(|| Error::Plan(format!("{req}: a request, and no one to answer it")))?;
                         let mut mine = Vec::new();
                         for (p, got) in answer(&req, &asked)? {
