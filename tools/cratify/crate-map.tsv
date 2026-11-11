@@ -257,3 +257,7 @@ scope::usage::lang_sql	rerail-lang-sql
 scope::usage::lang_python	rerail-lang-python
 residency::admission::relational::ast_stage	rerail-w
 literal::semantic	rerail-lang-python
+crate::git_ignore	rerail-w
+crate::panic_boundary	rerail-w
+crate::content_store	rerail-store
+crate::git_workspace	rerail-store
