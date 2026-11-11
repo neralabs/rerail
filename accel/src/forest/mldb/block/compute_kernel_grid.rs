@@ -591,6 +591,51 @@ impl GridComputeKernelSpecialization {
     /// `bind` and `GridComputeQueue::enqueue`: binds the arguments (by parameter name) and launches over `grid`
     /// (one range per dimension) on the bind context.
     pub fn enqueue(&self, named: &[(&str, ComputeKernelArgument)], grid: &[u32], ctx: &mut dyn GridBindContext) -> Result<(), String> {
+        let (args, knowns, mtl_grid, mtl_block) = self.resolve(named, grid)?;
+        let err = |e: String| format!("Error launching Grid kernel {}: {e}", self.kernel.kernel_name);
+        for action in &self.bind_actions {
+            action.apply(&args, &knowns, ctx).map_err(err)?;
+        }
+        ctx.launch(&mtl_grid, &mtl_block).map_err(err)
+    }
+
+    /// A launch resolved once and replayed (`GridLaunchPlan`): the solve, the grid and every value argument's
+    /// bytes, for these arguments. A replay binds only the buffers, which may change from launch to launch; the
+    /// values may not (a launch with other values needs its own plan).
+    pub fn plan(&self, named: &[(&str, ComputeKernelArgument)], grid: &[u32]) -> Result<GridLaunchPlan, String> {
+        let (args, knowns, mtl_grid, mtl_block) = self.resolve(named, grid)?;
+        let err = |e: String| format!("Error planning Grid kernel {}: {e}", self.kernel.kernel_name);
+        let mut rec = RecordingBindContext::default();
+        let mut buffers = Vec::new();
+        for action in &self.bind_actions {
+            match (&action.action, ) {
+                (GridBindActionType::SetFromArg(arg_num), ) if matches!(args.get(*arg_num).copied().flatten(), Some(ComputeKernelArgument::Buffer(_))) => {
+                    buffers.push((action.compute_function_arg_index, self.kernel.params[*arg_num].name.clone()));
+                }
+                _ => action.apply(&args, &knowns, &mut rec).map_err(err)?,
+            }
+        }
+        Ok(GridLaunchPlan { primitives: rec.primitives, thread_groups: rec.thread_groups, buffers, grid: mtl_grid, block: mtl_block })
+    }
+
+    /// Replays a plan with these buffers (each of the plan's buffer arguments by name).
+    pub fn launch_plan(&self, plan: &GridLaunchPlan, buffers: &[(&str, &BufferRef)], ctx: &mut dyn GridBindContext) -> Result<(), String> {
+        for (i, bytes) in &plan.primitives {
+            ctx.set_primitive(*i, bytes);
+        }
+        for &(i, n) in &plan.thread_groups {
+            ctx.set_thread_group_memory(i, n);
+        }
+        for (i, name) in &plan.buffers {
+            let b = buffers.iter().find(|(n, _)| n == name).ok_or_else(|| format!("Grid kernel {}: no buffer {name} for the plan", self.kernel.kernel_name))?.1;
+            ctx.set_buffer(*i, b);
+        }
+        ctx.launch(&plan.grid, &plan.block)
+    }
+
+    /// The arguments in parameter order, the knowns solved from them, and the launch's grid and block.
+    #[allow(clippy::type_complexity)]
+    fn resolve<'b>(&self, named: &[(&str, ComputeKernelArgument<'b>)], grid: &[u32]) -> Result<(Vec<Option<ComputeKernelArgument<'b>>>, Knowns, Vec<u64>, Vec<u64>), String> {
         let kernel = &self.kernel;
         let err = |e: String| format!("Error launching Grid kernel {}: {e}", kernel.kernel_name);
         let mut args: Vec<Option<ComputeKernelArgument>> = vec![None; kernel.params.len()];
@@ -629,10 +674,38 @@ impl GridComputeKernelSpecialization {
         if mtl_block.is_empty() {
             mtl_block.push(1);
         }
-        for action in &self.bind_actions {
-            action.apply(&args, &knowns, ctx).map_err(err)?;
-        }
-        ctx.launch(&mtl_grid, &mtl_block).map_err(err)
+        Ok((args, knowns, mtl_grid, mtl_block))
+    }
+}
+
+/// A resolved launch (`GridComputeKernelSpecialization::plan`): the value arguments' bytes and threadgroup memory
+/// by argument index, the buffer arguments' indexes by name, and the grid.
+#[derive(Clone, Debug, Default)]
+pub struct GridLaunchPlan {
+    primitives: Vec<(u64, Vec<u8>)>,
+    thread_groups: Vec<(u64, u64)>,
+    buffers: Vec<(u64, String)>,
+    grid: Vec<u64>,
+    block: Vec<u64>,
+}
+
+/// Records what the bind actions set (for a plan).
+#[derive(Default)]
+struct RecordingBindContext {
+    primitives: Vec<(u64, Vec<u8>)>,
+    thread_groups: Vec<(u64, u64)>,
+}
+
+impl GridBindContext for RecordingBindContext {
+    fn set_primitive(&mut self, arg_num: u64, bytes: &[u8]) {
+        self.primitives.push((arg_num, bytes.to_vec()));
+    }
+    fn set_buffer(&mut self, _arg_num: u64, _buffer: &BufferRef) {}
+    fn set_thread_group_memory(&mut self, arg_num: u64, n_bytes: u64) {
+        self.thread_groups.push((arg_num, n_bytes));
+    }
+    fn launch(&mut self, _grid: &[u64], _block: &[u64]) -> Result<(), String> {
+        Ok(())
     }
 }
 

@@ -176,17 +176,30 @@ impl<'a> FeatureSamplingTrainerKernel<'a> {
     }
 
     /// `init`, the device splitting at most `max_device_levels` levels (at most `MAX_DEVICE_LEVELS`).
-    pub fn init_with_device_levels(_debug_name: &str, max_depth: i32, rows: &Rows, features: &'a [Feature], bucket_memory: FrozenMemoryRegionT<u32>, fs: &'a DatasetFeatureSpace, max_device_levels: u32) -> Result<Self, String> {
-        let shared = shared()?;
-        let device = &shared.device;
-        let num_rows = rows.row_count() as u32;
-        let nf = features.len() as u32;
-        if max_depth < 1 {
-            return Err(format!("max depth {max_depth}"));
-        }
+    pub fn init_with_device_levels(debug_name: &str, max_depth: i32, rows: &Rows, features: &'a [Feature], bucket_memory: FrozenMemoryRegionT<u32>, fs: &'a DatasetFeatureSpace, max_device_levels: u32) -> Result<Self, String> {
         // The kernels read each row's buckets at its row number.
         if rows.example_num_bits != 0 && (0..rows.row_count()).any(|i| rows.get_example_num(i) != i as u32) {
             return Err("the rows' example numbers are not their row numbers".into());
+        }
+        Self::init_over(debug_name, max_depth, rows, None, features, bucket_memory, fs, max_device_levels)
+    }
+
+    /// A trainer for trees that each weigh the rows themselves (`TreeRows`, `init_with_rows`): over every example
+    /// number of the rows (a tree's row r is example r; the examples the rows leave out have no weight in any
+    /// tree), the rows not decoded.
+    pub fn init_for_tree_rows(debug_name: &str, max_depth: i32, rows: &Rows, features: &'a [Feature], bucket_memory: FrozenMemoryRegionT<u32>, fs: &'a DatasetFeatureSpace) -> Result<Self, String> {
+        let num_examples = (0..rows.row_count()).map(|i| rows.get_example_num(i) + 1).max().unwrap_or(0);
+        Self::init_over(debug_name, max_depth, rows, Some(num_examples), features, bucket_memory, fs, Self::MAX_DEVICE_LEVELS)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn init_over(_debug_name: &str, max_depth: i32, rows: &Rows, num_examples: Option<u32>, features: &'a [Feature], bucket_memory: FrozenMemoryRegionT<u32>, fs: &'a DatasetFeatureSpace, max_device_levels: u32) -> Result<Self, String> {
+        let shared = shared()?;
+        let device = &shared.device;
+        let num_rows = num_examples.unwrap_or(rows.row_count() as u32);
+        let nf = features.len() as u32;
+        if max_depth < 1 {
+            return Err(format!("max depth {max_depth}"));
         }
         let device_levels = (max_depth as u32).min(max_device_levels.clamp(1, Self::MAX_DEVICE_LEVELS));
         let max_partition_count = (1u32 << device_levels).min(Self::MAX_DEVICE_WIDTH);
@@ -197,8 +210,8 @@ impl<'a> FeatureSamplingTrainerKernel<'a> {
         for f in features {
             let buckets = &f.buckets;
             bucket_entry_bits.push(buckets.entry_bits as u32);
-            feature_is_ordinal.push(f.ordinal as u32);
-            if f.active && !f.ordinal && f.buckets.num_buckets as usize > MAX_CATEGORICAL_BUCKETS {
+            feature_is_ordinal.push(f.kind());
+            if f.active && !f.ordinal && f.subsets && f.buckets.num_buckets as usize > MAX_CATEGORICAL_BUCKETS {
                 return Err(format!("a categorical feature with {} buckets (at most {MAX_CATEGORICAL_BUCKETS})", f.buckets.num_buckets));
             }
             if !f.active {
@@ -226,6 +239,7 @@ impl<'a> FeatureSamplingTrainerKernel<'a> {
         let device_targets = transfer_to_device_immutable(device, if targets.is_empty() { &[0f32][..] } else { targets });
 
         let mut queue = MetalComputeQueue::new(&shared.queue);
+        if num_examples.is_none() {
         run(&queue, "decodeRows", &[
             ("rowData", B(&row_data)),
             ("rowDataLength", Int(rows.row_data.length() as i64)),
@@ -239,6 +253,7 @@ impl<'a> FeatureSamplingTrainerKernel<'a> {
             ("targets", B(&device_targets)),
             ("decodedRowsOut", B(&expanded_row_data)),
         ], &[num_rows])?;
+        }
         let device_bucket_entry_bits = transfer_to_device_immutable(device, &bucket_entry_bits);
         let device_bucket_data_offsets = transfer_to_device_immutable(device, &bucket_memory_offsets);
         queue.flush().await_()?;
@@ -310,6 +325,47 @@ pub struct PartitionControlData {
     pub tree_depth_info0: TreeDepthInfo,
     pub num_active_features: u32,
     pub num_active_buckets: u32,
+    /// The tree's own row weights (`TreeRows`), when it has them; else the trainer's rows.
+    pub rows: Option<TreeRows>,
+}
+
+/// A tree's rows as the weights it gives the trainer's rows (a row sample per tree, `train_weighted`): each row's
+/// weights to false and true (`row_weights`; both zero for a row the tree leaves out, which then counts nothing and
+/// goes in no partition), on the device, and their total.
+#[derive(Clone, Debug)]
+pub struct TreeRows {
+    pub decoded_rows: Buffer,
+    pub w_all: W,
+}
+
+impl TreeRows {
+    /// The rows weighed by `weight(i)` (zero to leave row i out), with the targets `target(i)`.
+    pub fn new(num_rows: usize, weight: impl Fn(usize) -> f32, target: impl Fn(usize) -> f32) -> Result<Self, String> {
+        let shared = shared()?;
+        let decoded_rows = alloc_uninitialized_array_sync::<RowWeights>(&shared.device, num_rows);
+        let out = unsafe { std::slice::from_raw_parts_mut(decoded_rows.contents().cast::<RowWeights>(), num_rows) };
+        let mut w_all = W::default();
+        for (i, o) in out.iter_mut().enumerate() {
+            let w = weight(i);
+            *o = if w == 0.0 { [0.0; 2] } else { row_weights(w, target(i)) };
+            if w != 0.0 {
+                w_all.add_weights(*o);
+            }
+        }
+        Ok(TreeRows { decoded_rows, w_all })
+    }
+}
+
+impl PartitionControlData {
+    /// The tree's rows' weights on the device.
+    pub fn decoded_rows<'b>(&'b self, o: &'b FeatureSamplingTrainerKernel) -> &'b Buffer {
+        self.rows.as_ref().map_or(&o.expanded_row_data, |r| &r.decoded_rows)
+    }
+
+    /// The tree's rows' total weight.
+    pub fn w_all(&self, o: &FeatureSamplingTrainerKernel) -> W {
+        self.rows.as_ref().map_or(o.rows.w_all, |r| r.w_all)
+    }
 }
 
 /// The device memory one tree's training works in, reused tree after tree (each tree's work is queued after the
@@ -418,7 +474,12 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
 
     /// Sets up one tree: its training info, active features and bucket numbering, the root's wAll and buckets, and
     /// the root's buckets accumulated (`testFeature`), all enqueued.
-    pub fn init(&mut self, feature_sampling: i32, feature_vector_sampling: i32, _debug_name: &str, active_features_in: &[i32]) -> Result<PartitionControlData, String> {
+    pub fn init(&mut self, feature_sampling: i32, feature_vector_sampling: i32, debug_name: &str, active_features_in: &[i32]) -> Result<PartitionControlData, String> {
+        self.init_with_rows(feature_sampling, feature_vector_sampling, debug_name, active_features_in, None)
+    }
+
+    /// `init`, the tree weighing the rows as `rows` does (else as the trainer's rows are).
+    pub fn init_with_rows(&mut self, feature_sampling: i32, feature_vector_sampling: i32, _debug_name: &str, active_features_in: &[i32], rows: Option<TreeRows>) -> Result<PartitionControlData, String> {
         let o = self.owner;
         let nf = o.nf as usize;
         // In feature order: the kernels take the first of equal scores in this list's order, and the tree of a set of
@@ -427,7 +488,7 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
         let mut active_features_in = active_features_in.to_vec();
         active_features_in.sort_unstable();
         active_features_in.dedup();
-        let mut data = PartitionControlData { active_feature_list: active_features_in.iter().map(|&f| f as u32).collect(), active_features_in, bucket_numbers: vec![0], feature_is_active: vec![0; nf], ..Default::default() };
+        let mut data = PartitionControlData { active_feature_list: active_features_in.iter().map(|&f| f as u32).collect(), active_features_in, bucket_numbers: vec![0], feature_is_active: vec![0; nf], rows, ..Default::default() };
         let active_feature_set: BTreeSet<i32> = data.active_features_in.iter().copied().collect();
         let num_active_features = data.active_feature_list.len() as u32;
         let mut num_active_buckets = 0u32;
@@ -453,7 +514,7 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
             num_rows: o.num_rows,
             feature_sampling: feature_sampling as u16,
             feature_vector_sampling: feature_vector_sampling as u16,
-            split_criterion: SplitCriterion::of(o.fs) as u32,
+            split_criterion: SplitCriterion::of(o.fs).0,
         };
         data.tree_depth_info0.num_active_partitions = 1;
 
@@ -462,11 +523,11 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
         q.enqueue_copy_from_host(&self.device_bucket_numbers, 0, bytes_of(&data.bucket_numbers));
         q.enqueue_copy_from_host(&self.device_feature_is_active, 0, bytes_of(&data.feature_is_active));
         q.enqueue_copy_from_host(&self.device_active_feature_list, 0, bytes_of(&data.active_feature_list));
-        q.enqueue_fill_array(&self.device_w_all_pool, &o.rows.w_all, 0, Some(1));
+        q.enqueue_fill_array(&self.device_w_all_pool, &data.w_all(o), 0, Some(1));
         q.enqueue_fill_array(&self.device_partition_bucket_pool, &W::default(), 0, Some(num_active_buckets as usize));
         q.enqueue_fill_array(&self.device_tree_depth_info, &data.tree_depth_info0, 0, Some(1));
         run(q, "testFeature", &[
-            ("decodedRows", B(&o.expanded_row_data)),
+            ("decodedRows", B(data.decoded_rows(o))),
             ("numRows", Int(o.num_rows as i64)),
             ("bucketData", B(&o.bucket_data)),
             ("bucketDataOffsets", B(&o.device_bucket_data_offsets)),
@@ -547,7 +608,7 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
                 ("bucketNumbers", B(&self.device_bucket_numbers)),
                 ("bucketEntryBits", B(&o.device_bucket_entry_bits)),
                 ("featureIsOrdinal", B(&o.device_feature_is_ordinal)),
-                ("decodedRows", B(&o.expanded_row_data)),
+                ("decodedRows", B(data.decoded_rows(o))),
             ], &[nr])?;
             // Now the small side buckets are clear, we can accumulate their weights.
             run(q, "updateBuckets", &[
@@ -561,7 +622,7 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
                 ("wAll", B(&self.device_w_all_pool)),
                 ("smallSideIndexes", B(&self.small_side_indexes)),
                 ("smallSideIndexToPartition", B(&self.small_side_index_to_partition_numbers)),
-                ("decodedRows", B(&o.expanded_row_data)),
+                ("decodedRows", B(data.decoded_rows(o))),
                 ("bucketData", B(&o.bucket_data)),
                 ("bucketDataOffsets", B(&o.device_bucket_data_offsets)),
                 ("bucketNumbers", B(&self.device_bucket_numbers)),
@@ -624,7 +685,7 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
             let partitions = transfer_to_host_sync::<RowPartitionInfo>(partitions, o.num_rows as usize);
             let w_all = transfer_to_host_sync::<W>(w_all, nap);
             let indexes = transfer_to_host_sync::<PartitionIndex>(indexes, nap);
-            let decoded_rows = transfer_to_host_sync::<RowWeights>(&o.expanded_row_data, o.num_rows as usize);
+            let decoded_rows = transfer_to_host_sync::<RowWeights>(data.decoded_rows(o), o.num_rows as usize);
             let mut features = o.features.to_vec();
             for (i, f) in features.iter_mut().enumerate() {
                 f.active = data.feature_is_active[i] != 0;
@@ -694,6 +755,14 @@ impl PartitionData {
         PartitionData { fs, rows: Rows::default(), bucket_memory: Default::default(), features }
     }
 
+    /// Whether the categorical features' splits are CART's subsets (rerail's extension) or upstream's one bucket
+    /// against the rest (the default).
+    pub fn set_categorical_subsets(&mut self, subsets: bool) {
+        for f in &mut self.features {
+            f.subsets = subsets && !f.ordinal;
+        }
+    }
+
     pub fn clear(&mut self) {
         self.rows.clear();
         self.features.clear();
@@ -711,6 +780,32 @@ impl PartitionData {
     /// buckets, so the two disagreed; the bucket lists were sized by the column's distinct values but written with
     /// the feature's bucket count. Inactive features carry no buckets (upstream kept the old ones, outside the
     /// bag's memory). The weights must total less than 2 (W32 accumulates them with 30 fraction bits).
+    /// The data with its active features' buckets in one block (`bucket_memory`, as the device trainer takes
+    /// them), copied as they are (every example's bucket; the rows unchanged).
+    pub fn with_bucket_memory(&self, serializer: &mut MemorySerializer) -> PartitionData {
+        let words: usize = self.features.iter().filter(|f| f.active).map(|f| f.buckets.storage.data().len()).sum();
+        let mut block = serializer.allocate_writable_t::<u32>(words.max(1), 4096 /* page aligned */);
+        let mut spans = Vec::new();
+        let mut at = 0;
+        for f in &self.features {
+            spans.push(f.active.then(|| {
+                let d = f.buckets.storage.data();
+                block.data_mut()[at..at + d.len()].copy_from_slice(d);
+                at += d.len();
+                (at - d.len(), d.len())
+            }));
+        }
+        let bucket_memory = serializer.freeze_t(&mut block);
+        let features = self.features.iter().zip(spans).map(|(f, span)| {
+            let buckets = match span {
+                Some((start, len)) => BucketList { storage: FrozenMemoryRegionT::new(bucket_memory.raw().range(start * 4, (start + len) * 4)), ..f.buckets.clone() },
+                None => BucketList::default(),
+            };
+            Feature { buckets, ..f.clone() }
+        }).collect();
+        PartitionData { fs: self.fs.clone(), rows: self.rows.clone(), bucket_memory, features }
+    }
+
     pub fn reweight_and_compact(&self, counts: &[u32], scale: f64, serializer: &mut MemorySerializer) -> Result<PartitionData, String> {
         let n = self.rows.row_count();
         if counts.len() != n {
@@ -800,7 +895,7 @@ impl PartitionData {
                 Some((start, len, entry_bits, num_buckets)) => BucketList { storage: FrozenMemoryRegionT::new(bucket_memory.raw().range(start * 4, (start + len) * 4)), entry_bits, num_buckets, num_entries: num_non_zero },
                 None => BucketList::default(),
             };
-            Feature { active: f.active, ordinal: f.ordinal, info: f.info, buckets }
+            Feature { active: f.active, ordinal: f.ordinal, subsets: f.subsets, info: f.info, buckets }
         }).collect();
         Ok(PartitionData { fs: self.fs.clone(), rows: src_rows, bucket_memory, features })
     }
@@ -813,7 +908,7 @@ impl PartitionData {
         let mut it = self.rows.get_row_iterator();
         for _ in 0..self.rows.row_count() {
             let row = it.get_row();
-            let side = side_of(f.buckets.get(row.example_num()), split_value, subset, f.ordinal);
+            let side = side_of(f.buckets.get(row.example_num()), split_value, subset, f);
             writers[side as usize].add_row_with(&row, self.rows.target_of(row.label(), row.example_num()));
         }
         let [w0, w1] = writers;
@@ -831,7 +926,7 @@ impl PartitionData {
         let mut it = self.rows.get_row_iterator();
         for side_of_row in lr.iter_mut() {
             let mut row = it.get_row();
-            let side = side_of(f.buckets.get(row.example_num()), split_value, subset, f.ordinal);
+            let side = side_of(f.buckets.get(row.example_num()), split_value, subset, f);
             *side_of_row = side;
             // The target by the row's example number here, before the side numbers it.
             let target = self.rows.target_of(row.label(), row.example_num());
@@ -996,7 +1091,7 @@ pub(crate) mod tests {
             let mut bucket_descriptions = crate::forest::bucket::BucketDescriptions::default();
             bucket_descriptions.initialize_from(false, (0..nb).map(|v| v as f64).collect(), vec![], nb as i32).unwrap();
             let info = fs.add_column(ColumnInfo { column_name: format!("f{f}"), info: if ordinal { FeatureType::Real } else { FeatureType::Categorical }, index: -1, distinct_values: nb as i32, buckets: buckets.clone(), bucket_descriptions, ..Default::default() });
-            features.push(Feature { active: true, ordinal, info: Some(info), buckets });
+            features.push(Feature { active: true, ordinal, subsets: false, info: Some(info), buckets });
         }
         PartitionData { fs: Arc::new(fs), rows, bucket_memory, features }
     }
@@ -1051,14 +1146,14 @@ pub(crate) mod tests {
         let all: &[u32] = d.bucket_memory.data();
         let offsets: Vec<u32> = d.features.iter().map(|f| ((f.buckets.storage.data().as_ptr() as usize - base) / 4) as u32).chain([all.len() as u32 * 2]).collect();
         let entry_bits: Vec<u32> = d.features.iter().map(|f| f.buckets.entry_bits as u32).collect();
-        let ordinal: Vec<u32> = d.features.iter().map(|f| f.ordinal as u32).collect();
+        let ordinal: Vec<u32> = d.features.iter().map(|f| f.kind()).collect();
         let active: Vec<u32> = (0..nf as u32).collect();
         let mut numbers = vec![0u32];
         for f in &d.features {
             numbers.push(numbers.last().unwrap() + f.buckets.num_buckets as u32);
         }
         let nab = *numbers.last().unwrap();
-        let tti = [TreeTrainingInfo { num_rows: nr, max_depth: max_depth as u16, num_active_features: nf as u16, num_features: nf as u16, max_num_active_partitions: mpc as u16, num_active_buckets: nab, max_num_finished_partitions: u32::MAX, split_criterion: SplitCriterion::of(&d.fs) as u32, ..Default::default() }];
+        let tti = [TreeTrainingInfo { num_rows: nr, max_depth: max_depth as u16, num_active_features: nf as u16, num_features: nf as u16, max_num_active_partitions: mpc as u16, num_active_buckets: nab, max_num_finished_partitions: u32::MAX, split_criterion: SplitCriterion::of(&d.fs).0, ..Default::default() }];
         let mut tdi = [TreeDepthInfo { num_active_partitions: 1, ..Default::default() }];
         let mut buckets = vec![W::default(); mpc * nab as usize];
         let mut w_all = vec![W::default(); mpc];
@@ -1179,11 +1274,18 @@ pub(crate) mod tests {
             eprintln!("no Metal device: skipped");
             return;
         }
-        let d = dataset(2000);
-        for max_depth in [1, 3, 6] {
-            let device = train_with(&d, max_depth, "device");
-            same(&device, &train_with(&d, max_depth, "cpu"), &d.fs, &format!("cpu, max depth {max_depth}"));
-            same(&device, &train_with(&d, max_depth, "recursive"), &d.fs, &format!("recursive, max depth {max_depth}"));
+        // Upstream's categorical splits (one bucket against the rest), then CART's subsets.
+        for d in with_both_categorical_splits(dataset(2000)) {
+            let cart = d.features.iter().any(|f| f.subsets);
+                let kind = if cart { "subsets" } else { "one vs rest" };
+            for max_depth in [1, 3, 6] {
+                let device = train_with(&d, max_depth, "device");
+                // (Its categorical feature's 3 buckets split best one against two here; the regression test finds
+                // wider subsets.)
+                assert!(cart || subset_splits(&device) == 0, "{kind}, max depth {max_depth}: subset splits");
+                same(&device, &train_with(&d, max_depth, "cpu"), &d.fs, &format!("{kind}: cpu, max depth {max_depth}"));
+                same(&device, &train_with(&d, max_depth, "recursive"), &d.fs, &format!("{kind}: recursive, max depth {max_depth}"));
+            }
         }
         let d = deep_dataset(20000);
         let device = train_with(&d, 10, "device");
@@ -1198,6 +1300,33 @@ pub(crate) mod tests {
             }
         }
         assert!(widths.iter().any(|&w| w > 254), "a level wider than 254 partitions: {widths:?}");
+    }
+
+    /// `d` with upstream's categorical splits, and with CART's.
+    pub(crate) fn with_both_categorical_splits(d: PartitionData) -> [PartitionData; 2] {
+        let mut cart = d.clone();
+        cart.set_categorical_subsets(true);
+        [d, cart]
+    }
+
+    /// `d` with leaves of at least `m` rows.
+    pub(crate) fn with_min_leaf(d: &PartitionData, m: u32) -> PartitionData {
+        let mut d = d.clone();
+        d.fs = Arc::new(DatasetFeatureSpace { min_leaf_examples: m, ..(*d.fs).clone() });
+        d
+    }
+
+    /// The nodes of a tree.
+    pub(crate) fn node_count(t: &Tree) -> usize {
+        let mut n = 0;
+        let mut stack = vec![t.root];
+        while let Some(p) = stack.pop() {
+            if let Some(node) = t.node(p) {
+                n += 1;
+                stack.extend([node.child_true, node.child_false]);
+            }
+        }
+        n
     }
 
     /// The nodes whose split is a categorical subset of more than one bucket (CART's).
@@ -1237,18 +1366,32 @@ pub(crate) mod tests {
             eprintln!("no Metal device: skipped");
             return;
         }
-        for (d, depths) in [(as_regression(&dataset(2000)), vec![1, 3, 6]), (as_regression(&deep_dataset(20000)), vec![10])] {
-            for max_depth in depths {
-                let device = train_with(&d, max_depth, "device");
-                assert!(device.node(device.root).is_some(), "a root split");
-                if max_depth >= 6 {
-                    assert!(subset_splits(&device) > 0, "max depth {max_depth}: no categorical split of several buckets");
+        let sets = [(as_regression(&dataset(2000)), vec![1, 3, 6]), (as_regression(&deep_dataset(20000)), vec![10])];
+        for (d0, depths) in sets {
+            let mut variants: Vec<PartitionData> = with_both_categorical_splits(d0).into();
+            variants.push(with_min_leaf(&variants[0], 5));
+            for d in variants {
+                let min_leaf = d.fs.min_leaf_examples;
+                let cart = d.features.iter().any(|f| f.subsets);
+                let kind = format!("{}, min leaf {min_leaf}", if cart { "subsets" } else { "one vs rest" });
+                for &max_depth in &depths {
+                    let device = train_with(&d, max_depth, "device");
+                    assert!(device.node(device.root).is_some(), "a root split");
+                    if max_depth >= 6 {
+                        assert_eq!(subset_splits(&device) > 0, cart, "{kind}, max depth {max_depth}: subset splits");
+                    }
+                    if max_depth <= 6 {
+                        same(&device, &train_on_host(&d, max_depth), &d.fs, &format!("{kind}: host schedule, max depth {max_depth}"));
+                    }
+                    if min_leaf > 1 {
+                        let unlimited = train_with(&with_min_leaf(&d, 1), max_depth, "device");
+                        if max_depth >= 10 {
+                            assert!(node_count(&device) < node_count(&unlimited), "min leaf {min_leaf}, max depth {max_depth}: {} nodes, {} without", node_count(&device), node_count(&unlimited));
+                        }
+                    }
+                    same(&device, &train_with(&d, max_depth, "cpu"), &d.fs, &format!("{kind}: cpu, max depth {max_depth}"));
+                    same(&device, &train_with(&d, max_depth, "recursive"), &d.fs, &format!("{kind}: recursive, max depth {max_depth}"));
                 }
-                if max_depth <= 6 {
-                    same(&device, &train_on_host(&d, max_depth), &d.fs, &format!("host schedule, max depth {max_depth}"));
-                }
-                same(&device, &train_with(&d, max_depth, "cpu"), &d.fs, &format!("cpu, max depth {max_depth}"));
-                same(&device, &train_with(&d, max_depth, "recursive"), &d.fs, &format!("recursive, max depth {max_depth}"));
             }
         }
     }

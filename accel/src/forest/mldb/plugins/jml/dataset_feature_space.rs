@@ -83,6 +83,10 @@ impl fmt::Display for ColumnInfo {
 pub struct DatasetFeatureSpace {
     pub column_info: HashMap<ColumnHash, ColumnInfo>,
     pub label_info: FeatureType,
+    /// The fewest rows a tree's leaf may have when training over this space (rerail's addition: upstream splits
+    /// down to single rows; 0 is 1). It rides with the label because the split criterion is the label's
+    /// (`SplitCriterion::of`).
+    pub min_leaf_examples: u32,
 }
 
 impl DatasetFeatureSpace {

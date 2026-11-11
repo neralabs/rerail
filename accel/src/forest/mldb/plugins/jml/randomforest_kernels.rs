@@ -18,7 +18,7 @@ use crate::forest::bucket::BucketListRef;
 use crate::forest::fixed_point_accum::FixedPointAccum32;
 use crate::forest::memory_region::FrozenMemoryRegionT;
 use crate::forest::randomforest_types::{
-    IndexedPartitionSplit, PartitionIndex, PartitionInfo, PartitionSplit, PartitionSplitDirection, RowPartitionInfo, Rows, TreeDepthInfo, TreeTrainingInfo, UpdateWorkEntry, WeightFormat, W, RowWeights, SplitCriterion, in_category_set,
+    IndexedPartitionSplit, PartitionIndex, PartitionInfo, PartitionSplit, PartitionSplitDirection, RowPartitionInfo, Rows, TreeDepthInfo, TreeTrainingInfo, UpdateWorkEntry, WeightFormat, W, RowWeights, SplitCriterion, in_category_set, FEATURE_KIND_ORDINAL, FEATURE_KIND_SUBSETS,
 };
 use std::ops::Range;
 
@@ -40,14 +40,22 @@ pub fn sqrt3(mut val: f32) -> f32 {
 }
 
 #[inline]
+/// A split's score; infinite (no split) when a side has fewer rows than the criterion's leaves may, or for the
+/// variance when the split does not lower the node's own error (`scoreSplit` on the device).
 pub fn score_split(w_false: &W, w_true: &W, criterion: SplitCriterion) -> f32 {
-    match criterion {
-        SplitCriterion::Sqrt => {
-            let f = |w: &W, i: usize| FixedPointAccum32::to_f32(w.v[i]);
-            2.0 * (sqrt3(f(w_false, 0) * f(w_false, 1)) + sqrt3(f(w_true, 0) * f(w_true, 1)))
-        }
-        SplitCriterion::Variance => (variance_fixed(w_false) + variance_fixed(w_true)) as f32 * (1.0 / (1u64 << 30) as f32),
+    let m = criterion.min_leaf();
+    if w_false.count() < m || w_true.count() < m {
+        return f32::INFINITY;
     }
+    if criterion.kind() == SplitCriterion::Variance {
+        let q = variance_fixed(w_false) + variance_fixed(w_true);
+        if q >= variance_fixed(&(*w_false + *w_true)) {
+            return f32::INFINITY;
+        }
+        return q as f32 * (1.0 / (1u64 << 30) as f32);
+    }
+    let f = |w: &W, i: usize| FixedPointAccum32::to_f32(w.v[i]);
+    2.0 * (sqrt3(f(w_false, 0) * f(w_false, 1)) + sqrt3(f(w_true, 0) * f(w_true, 1)))
 }
 
 /// A side's squared error about its mean target, less the part every split shares: `f t / (f + t)` in the
@@ -113,8 +121,8 @@ pub fn get_partition_splits_kernel(fidx: u32, naf: u32, tree_training_info: &[Tr
         let end_bucket = bucket_numbers[f + 1] as usize;
         let max_bucket = end_bucket as i32 - start_bucket as i32 - 1;
         let w_feature = &buckets[p * total_buckets + start_bucket..];
-        let criterion = if tree_training_info[0].split_criterion == SplitCriterion::Variance as u32 { SplitCriterion::Variance } else { SplitCriterion::Sqrt };
-        let (score, value, left, right, subset) = choose_split_kernel(w_feature, max_bucket, feature_is_ordinal[f] != 0, &w_all[p], criterion);
+        let criterion = SplitCriterion(tree_training_info[0].split_criterion);
+        let (score, value, left, right, subset) = choose_split_kernel(w_feature, max_bucket, feature_is_ordinal[f] == FEATURE_KIND_ORDINAL, feature_is_ordinal[f] == FEATURE_KIND_SUBSETS, &w_all[p], criterion);
         result.score = score as f32;
         result.value = value as i16;
         result.subset = subset;
@@ -315,12 +323,13 @@ pub fn update_partition_numbers_kernel(row_range: Range<u32>, _tree_training_inf
         let split_feature = split_feature as usize;
         let split_value = partition_splits[partition as usize].split.value as u32;
         let subset = partition_splits[partition as usize].split.subset;
-        let ordinal = feature_is_ordinal[split_feature] != 0;
+        let kind = feature_is_ordinal[split_feature];
+        let ordinal = kind == FEATURE_KIND_ORDINAL;
 
         // Get buckets for the split feature.
         let buckets = *feature_buckets_cache[split_feature].get_or_insert_with(|| feature_buckets(split_feature, all_bucket_data, bucket_data_offsets, bucket_numbers, bucket_entry_bits));
         let bucket = buckets.get(r);
-        let side = if ordinal { bucket >= split_value } else { !in_category_set(&subset, bucket) }; // false = left, true = right
+        let side = if ordinal { bucket >= split_value } else if kind == FEATURE_KIND_SUBSETS { !in_category_set(&subset, bucket) } else { bucket != split_value }; // false = left, true = right
 
         // Set the new partition number.
         let new_partition_number = (if side { info.right } else { info.left }) as u16;
@@ -628,7 +637,12 @@ mod tests {
         let mut pure = W::default();
         pure.add_weight(true, 0.5);
         assert_eq!(score_split(&pure, &pure, SplitCriterion::Sqrt), 0.0);
-        assert_eq!(score_split(&pure, &pure, SplitCriterion::Variance), 0.0);
+        // A pure node's split doesn't lower its error: none.
+        assert_eq!(score_split(&pure, &pure, SplitCriterion::Variance), f32::INFINITY);
+        let mut other = W::default();
+        other.add_weight(false, 0.5);
+        assert_eq!(score_split(&pure, &other, SplitCriterion::Variance), 0.0);
+        assert_eq!(score_split(&pure, &other, SplitCriterion::Sqrt.with_min_leaf(2)), f32::INFINITY);
         assert_eq!(HOST_KERNELS.len(), 10);
     }
 

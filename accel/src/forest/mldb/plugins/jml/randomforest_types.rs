@@ -83,23 +83,54 @@ pub fn in_category_set(set: &CategorySet, b: u32) -> bool {
     (b as usize) < MAX_CATEGORICAL_BUCKETS && (set[(b >> 5) as usize] >> (b & 31)) & 1 != 0
 }
 
-/// How a split is scored (lower is better), from its sides' weights.
-#[repr(u32)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SplitCriterion {
-    /// upstream's: `2 (sqrt(f0 t0) + sqrt(f1 t1))` over the sides' false and true weights, for classification.
-    #[default]
-    Sqrt = 0,
-    /// The rows' squared error about their side's mean target: `sum over sides of f t / (f + t)`, in the
-    /// accumulators' fixed point and exact (the sum of `w t^2` is the same for every split, and leaves out). For
-    /// regression; the Gini impurity for classification.
-    Variance = 1,
+/// A feature's kind as the device reads it (`featureIsOrdinal`): categorical with upstream's one-vs-rest splits,
+/// ordinal, or categorical with CART's subset splits.
+pub const FEATURE_KIND_ONE_VS_REST: u32 = 0;
+pub const FEATURE_KIND_ORDINAL: u32 = 1;
+pub const FEATURE_KIND_SUBSETS: u32 = 2;
+
+impl Feature {
+    /// The feature's kind (`FEATURE_KIND_*`).
+    pub fn kind(&self) -> u32 {
+        if self.ordinal { FEATURE_KIND_ORDINAL } else if self.subsets { FEATURE_KIND_SUBSETS } else { FEATURE_KIND_ONE_VS_REST }
+    }
 }
 
+/// How a split is scored (lower is better), from its sides' weights, and which splits may be made at all. The
+/// device reads the same word (`TreeTrainingInfo::split_criterion`): the score's kind in the low 8 bits, the
+/// fewest rows a side may have above them.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SplitCriterion(pub u32);
+
+#[allow(non_upper_case_globals)]
 impl SplitCriterion {
-    /// The criterion for a feature space's label: the variance for a real label, else upstream's.
+    /// upstream's: `2 (sqrt(f0 t0) + sqrt(f1 t1))` over the sides' false and true weights, for classification.
+    pub const Sqrt: SplitCriterion = SplitCriterion(0);
+    /// The rows' squared error about their side's mean target: `sum over sides of f t / (f + t)`, in the
+    /// accumulators' fixed point and exact (the sum of `w t^2` is the same for every split, and leaves out). For
+    /// regression; the Gini impurity for classification. A split must lower the node's own error (exactly).
+    pub const Variance: SplitCriterion = SplitCriterion(1);
+
+    /// The criterion for a feature space's label (the variance for a real label, else upstream's), with its
+    /// fewest rows a leaf may have (`DatasetFeatureSpace::min_leaf_examples`).
     pub fn of(fs: &DatasetFeatureSpace) -> SplitCriterion {
-        if fs.label_info == crate::forest::dataset_feature_space::FeatureType::Real { SplitCriterion::Variance } else { SplitCriterion::Sqrt }
+        let kind = if fs.label_info == crate::forest::dataset_feature_space::FeatureType::Real { SplitCriterion::Variance } else { SplitCriterion::Sqrt };
+        kind.with_min_leaf(fs.min_leaf_examples)
+    }
+
+    /// The score's kind (`Sqrt` or `Variance`).
+    pub fn kind(self) -> SplitCriterion {
+        SplitCriterion(self.0 & 0xff)
+    }
+
+    /// The fewest rows a split's side may have (at least 1).
+    pub fn min_leaf(self) -> u32 {
+        (self.0 >> 8).max(1)
+    }
+
+    pub fn with_min_leaf(self, m: u32) -> SplitCriterion {
+        SplitCriterion((self.0 & 0xff) | (m.min(0xff_ffff) << 8))
     }
 }
 
@@ -215,6 +246,9 @@ pub struct Feature {
     pub active: bool,
     /// If true, it's continuous valued; else categorical.
     pub ordinal: bool,
+    /// A categorical feature's splits are CART's subsets (`choose_split_kernel`), not upstream's one bucket against
+    /// the rest (rerail's extension; `RandomForestProcedureConfig::categorical_subsets`).
+    pub subsets: bool,
     /// The feature's column in the feature space.
     pub info: Option<ColumnHash>,
     /// List of bucket numbers, per example.
@@ -223,7 +257,7 @@ pub struct Feature {
 
 impl Default for Feature {
     fn default() -> Self {
-        Feature { active: false, ordinal: true, info: None, buckets: BucketList::default() }
+        Feature { active: false, ordinal: true, subsets: false, info: None, buckets: BucketList::default() }
     }
 }
 
@@ -919,7 +953,7 @@ pub fn get_node(tree: &mut Tree, best_score: f32, best_feature: i32, best_split:
     // A missing value is a null, which training put in bucket 0: on the left of an ordinal split (whose bucket is
     // at least 1), and on the left of a categorical one when bucket 0 is in its subset. Upstream gave the missing
     // branch an empty leaf (a 0/0 prediction).
-    let missing = if f.ordinal || in_category_set(subset, 0) { left } else { right };
+    let missing = if f.ordinal || (if f.subsets { in_category_set(subset, 0) } else { best_split == 0 }) { left } else { right };
     let node = tree.new_node();
     {
         let n = tree.node_mut(node).unwrap();
@@ -929,7 +963,7 @@ pub fn get_node(tree: &mut Tree, best_score: f32, best_feature: i32, best_split:
         n.child_missing = missing;
         n.z = best_score;
         n.split_bucket = best_split;
-        if !f.ordinal {
+        if !f.ordinal && f.subsets {
             n.split_subset = subset.to_vec();
         }
     }

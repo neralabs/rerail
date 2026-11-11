@@ -114,22 +114,24 @@ pub fn template(name: &str) -> Option<GridComputeKernelTemplate> {
             r.set_compute_function("randomforest_kernels", "clearBucketsKernel");
         }
         "predictForest" => {
-            r.add_dimension("r", "numRows");
-            r.add_parameter("numRows", "r", "u32")
-                .add_parameter("numTrees", "r", "u32")
+            // An item is a row and a forest (row * numForests + forest).
+            r.add_dimension("r", "numItems");
+            r.add_parameter("numItems", "r", "u32")
+                .add_parameter("numForests", "r", "u32")
                 .add_parameter("maxDepth", "r", "u32")
                 .add_parameter("lanesPerRow", "r", "u32")
                 .add_parameter("columnStride", "r", "u32")
                 .add_parameter("bucketData", "r", "u32[bucketDataLength]")
                 .add_parameter("nodes", "r", "PredictNode[numNodes]")
                 .add_parameter("subsets", "r", "u32[numSubsetWords]")
+                .add_parameter("forestTreeStart", "r", "u32[numForests + 1]")
                 .add_parameter("treeRoots", "r", "i32[numTrees]")
                 .add_parameter("treeWeights", "r", "f32[numTrees]")
                 .add_parameter("leafPreds", "r", "f32[numLeafPreds]")
-                .add_parameter("predictionsOut", "w", "f32[numRows * 2]");
+                .add_parameter("predictionsOut", "w", "f32[numItems * 2]");
             r.add_tuneable("threadsPerGroup", PREDICT_GROUP_THREADS as i64);
             r.add_parameter("partials", "w", "f32[threadsPerGroup * 2]");
-            r.set_grid_expression("[ceilDiv(numRows,threadsPerGroup / lanesPerRow)]", "[threadsPerGroup]").allow_grid_padding();
+            r.set_grid_expression("[ceilDiv(numItems,threadsPerGroup / lanesPerRow)]", "[threadsPerGroup]").allow_grid_padding();
             r.set_compute_function("randomforest_kernels", "predictForestKernel");
         }
         "numericBuckets" => {
@@ -155,6 +157,22 @@ pub fn template(name: &str) -> Option<GridComputeKernelTemplate> {
             r.add_tuneable("threadsPerBlock", 256);
             r.set_grid_expression("[ceilDiv(numRows,threadsPerBlock)]", "[threadsPerBlock]").allow_grid_padding();
             r.set_compute_function("randomforest_kernels", if name == "markCodes" { "markCodesKernel" } else { "categoricalBucketsKernel" });
+        }
+        "rowBuckets" => {
+            // Prediction rows' bucket columns, packed at predictForest's stride (an item is a column's word).
+            r.add_dimension("i", "numColumnWords");
+            r.add_parameter("numRows", "r", "u32")
+                .add_parameter("numColumns", "r", "u32")
+                .add_parameter("columnStride", "r", "u32")
+                .add_parameter("columns", "r", "u32[numColumns * 8]")
+                .add_parameter("numbers", "r", "u64[numNumbers]")
+                .add_parameter("codes", "r", "u32[numCodes]")
+                .add_parameter("splitKeys", "r", "i64[numSplitKeys]")
+                .add_parameter("codeTables", "r", "u32[numTableEntries]")
+                .add_parameter("bucketDataOut", "w", "u32[numColumns * columnStride]");
+            r.add_tuneable("threadsPerBlock", 256);
+            r.set_grid_expression("[ceilDiv(numColumns * columnStride,threadsPerBlock)]", "[threadsPerBlock]").allow_grid_padding();
+            r.set_compute_function("randomforest_kernels", "rowBucketsKernel");
         }
         "packBuckets" => {
             r.add_dimension("w", "numWords");
@@ -238,7 +256,7 @@ pub fn template(name: &str) -> Option<GridComputeKernelTemplate> {
 /// The threads of a prediction group (`predictForest`): rows times their lanes.
 pub const PREDICT_GROUP_THREADS: u32 = 128;
 
-pub const GRID_KERNELS: [&str; 14] = ["decodeRows", "testFeature", "getPartitionSplits", "bestPartitionSplit", "assignPartitionNumbers", "clearBuckets", "updatePartitionNumbers", "updateBuckets", "fixupBuckets", "predictForest", "numericBuckets", "markCodes", "categoricalBuckets", "packBuckets"];
+pub const GRID_KERNELS: [&str; 15] = ["rowBuckets", "decodeRows", "testFeature", "getPartitionSplits", "bestPartitionSplit", "assignPartitionNumbers", "clearBuckets", "updatePartitionNumbers", "updateBuckets", "fixupBuckets", "predictForest", "numericBuckets", "markCodes", "categoricalBuckets", "packBuckets"];
 
 /// Grid kernel `name`, specialized against its Metal function (once).
 pub fn kernel(name: &str) -> Result<&'static GridComputeKernelSpecialization, String> {
@@ -377,9 +395,9 @@ mod tests {
         }
         let total = *numbers.last().unwrap();
         let active: Vec<u32> = (0..nf as u32).collect();
-        let ordinal = vec![1u32, 0, 1];
+        let ordinal = vec![1u32, crate::forest::randomforest_types::FEATURE_KIND_SUBSETS, 1];
         let max_parts = 8usize;
-        let tti = [TreeTrainingInfo { num_rows: nr, max_depth: 4, num_active_features: nf as u16, num_features: nf as u16, max_num_active_partitions: max_parts as u16, num_active_buckets: total, max_num_finished_partitions: u32::MAX, split_criterion: if regression { SplitCriterion::Variance } else { SplitCriterion::Sqrt } as u32, ..Default::default() }];
+        let tti = [TreeTrainingInfo { num_rows: nr, max_depth: 4, num_active_features: nf as u16, num_features: nf as u16, max_num_active_partitions: max_parts as u16, num_active_buckets: total, max_num_finished_partitions: u32::MAX, split_criterion: if regression { SplitCriterion::Variance } else { SplitCriterion::Sqrt }.0, ..Default::default() }];
         let mut tdi = [TreeDepthInfo::default()];
         let (d_bucket_data, d_offsets, d_numbers, d_entry_bits, d_active, d_ordinal) = (buf(&all_bucket_data), buf(&offsets), buf(&numbers), buf(&entry_bits), buf(&active), buf(&ordinal));
         let d_tti = buf(&tti);
