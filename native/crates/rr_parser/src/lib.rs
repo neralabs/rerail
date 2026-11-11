@@ -361,8 +361,12 @@ pub mod tests {
         let _t1 = rerail_compiler::native_cpu_block::compile(&native.block_programs[0]).expect("tier 1");
         let t1 = thread_cpu() - t;
         let t = thread_cpu();
+        let _ = cranelift_codegen::timing::take_current();
         let _t2 = rerail_compiler::native_cpu_stream::compile(&native).expect("tier 2");
         eprintln!("Cranelift: tier 1 {t1:.2?} CPU, tier 2 {:.2?} CPU", thread_cpu() - t);
+        // Where tier 2's compile goes, by Cranelift's passes (the register allocator's share
+        // is what grows faster than the function).
+        eprintln!("tier 2's passes:\n{}", cranelift_codegen::timing::take_current());
         let words = &program.words;
         let refuse = rerail_compiler::stream_ir::REFUSE;
         let flag = rerail_compiler::program::FLAG;
@@ -587,6 +591,109 @@ pub mod tests {
                 eprintln!("{n} files, run {k}: {:.2?} wall, {:.2?} CPU; {ok}", w.elapsed(), thread_cpu() - t);
             }
         }
+    }
+
+    /// Tier 1's passes: each forward pass's instructions, scans, groups and `prev`s, and the
+    /// cone of `RR_CONE` (an instruction of the pass `RR_PASS`).
+    #[test]
+    #[ignore = "a probe: run by hand"]
+    fn rr_tier1_shape() {
+        use rerail_compiler::block_native::{BlockInst, Pass};
+        let c = super::compiled().expect("compiles");
+        let passes = c.native.passes();
+        let want: Option<(usize, usize)> = std::env::var("RR_PASS").ok().and_then(|p| Some((p.parse().ok()?, std::env::var("RR_CONE").ok()?.parse().ok()?)));
+        for (k, pass) in passes.passes.iter().enumerate() {
+            match pass {
+                Pass::Back(fills) => eprintln!("pass {k}: back, {} fills", fills.len()),
+                Pass::Forward { body, stores } => {
+                    let b = body.planes_form();
+                    let count = |f: &dyn Fn(&BlockInst) -> bool| b.insts.iter().filter(|i| f(i)).count();
+                    eprintln!(
+                        "pass {k}: forward, {} insts, {} toggles, {} escapes, {} fills, {} prevs, {} groups ({:?} members), {} outputs, {} stores",
+                        b.insts.len(),
+                        count(&|i| matches!(i, BlockInst::Toggle(_))),
+                        count(&|i| matches!(i, BlockInst::Escaped(_))),
+                        count(&|i| matches!(i, BlockInst::Fill(..))),
+                        count(&|i| matches!(i, BlockInst::Prev(..))),
+                        b.groups.len(),
+                        b.groups.iter().map(|g| (g.members.len(), g.carries.len())).collect::<Vec<_>>(),
+                        b.outputs.len(),
+                        stores.len()
+                    );
+                    if let Some((p, at)) = want.filter(|w| w.0 == k) {
+                        let mut inside = vec![false; b.insts.len()];
+                        inside[at] = true;
+                        for x in (0..=at).rev() {
+                            if inside[x] {
+                                for o in b.insts[x].operands() {
+                                    inside[o] = true;
+                                }
+                            }
+                        }
+                        let _ = p;
+                        for (x, i) in b.insts.iter().enumerate().filter(|(x, _)| inside[*x]) {
+                            eprintln!("  %{x} = {i:?}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Tier 1 of `.rr` on Metal, its kernels made first: `prewarm` over a sample (`RR_SAMPLE`)
+    /// runs the program, learns, and compiles the learned program's kernels, as a
+    /// process would off the parse's path. The timed runs then must compile nothing
+    /// (`compiles`). Each run: the corpus (`RR_REPEAT` times) as batches under the device's
+    /// budget, halved where refused; its GPU seconds by kind (the first pass, the runs again,
+    /// the positions), its launches and rounds, and the host's CPU and wall.
+    #[test]
+    #[ignore = "a benchmark: run by hand"]
+    fn rr_metal_bench() {
+        use rerail_metal::block_program::serial::{compiles, prewarm, run_resident_digested, SerialRun};
+        let c = super::compiled().expect("compiles");
+        let n: usize = std::env::var("RR_REPEAT").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+        let files: Vec<String> = (0..n).flat_map(|_| corpus()).collect();
+        let batch: Vec<_> = files.iter().map(|f| rerail_compiler::block::BatchFile { bytes: f.as_bytes(), program: 0 }).collect();
+        let digests: Vec<[u8; 32]> = files.iter().map(|f| <sha2::Sha256 as sha2::Digest>::digest(f.as_bytes()).into()).collect();
+        let mb = files.iter().map(String::len).sum::<usize>() as f64 / 1e6;
+        let w = std::time::Instant::now();
+        // The sample: every `RR_SAMPLE`th file (every file by default: what a run learns
+        // depends on the files, and a sample of a quarter left 12 kernels to the timed runs).
+        let every: usize = std::env::var("RR_SAMPLE").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+        let sample: Vec<_> = batch.iter().step_by(every).cloned().collect();
+        prewarm(&[&c.native], &sample, super::SEGMENTS).expect("prewarm");
+        eprintln!("prewarm: {:.2?} wall, {} sources and kernels made", w.elapsed(), compiles());
+        // One run of the batch, halved where the device refuses it: summed.
+        fn parts(c: &super::Compiled, b: &[rerail_compiler::block::BatchFile<'_>], d: &[[u8; 32]], sum: &mut [f64; 6]) {
+            match run_resident_digested(&[&c.native], b, Some(d), super::SEGMENTS) {
+                Ok((r, _)) => {
+                    let r: SerialRun = r;
+                    for (x, v) in sum.iter_mut().zip([r.first_seconds, r.rerun_seconds, r.sink_seconds, r.run.launches as f64, r.rounds as f64, 1.0]) {
+                        *x += v;
+                    }
+                }
+                Err(rerail_metal::Error::BackendCapacity) if b.len() > 1 => {
+                    let h = b.len() / 2;
+                    parts(c, &b[..h], &d[..h], sum);
+                    parts(c, &b[h..], &d[h..], sum);
+                }
+                Err(e) => panic!("{e:?}"),
+            }
+        }
+        let before = compiles();
+        for k in 0..4 {
+            let (t, w) = (thread_cpu(), std::time::Instant::now());
+            let mut sum = [0.0; 6];
+            parts(c, &batch, &digests, &mut sum);
+            let (cpu, wall) = (thread_cpu() - t, w.elapsed());
+            let gpu = sum[0] + sum[1] + sum[2];
+            eprintln!(
+                "run {k}: {mb:.2} MB, {} batches; GPU {:.1} ms ({:.2} GB/s): first {:.1}, again {:.1}, positions {:.1}; {} launches, {} rounds; host {:.1?} CPU, {:.1?} wall",
+                sum[5], gpu * 1e3, mb / 1e3 / gpu, sum[0] * 1e3, sum[1] * 1e3, sum[2] * 1e3, sum[3], sum[4], cpu, wall
+            );
+        }
+        eprintln!("made during the timed runs: {}", compiles() - before);
+        eprintln!("load: {}", String::from_utf8_lossy(&std::process::Command::new("uptime").output().map(|o| o.stdout).unwrap_or_default()).trim());
     }
 
     /// Throughput over the repository's `.rr` files, a pass's mean of `REPEAT`, CPU (this thread)

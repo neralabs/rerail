@@ -66,6 +66,21 @@ often.
 Compiling the grammar takes 2.4 s of CPU in a debug build. Cranelift takes 0.69 s on tier 2's
 one function and 0.69 s on tier 1's.
 
+Cranelift's own timings for tier 2 (`cranelift_codegen::timing`, its passes over tier 2's
+function and its outlined helpers):
+
+| pass | s |
+|---|---|
+| register allocation | 0.580 |
+| emission | 0.123 |
+| verifying the IR | 0.092 |
+| lowering, CFG, dominators, the rest | 0.104 |
+| all | 0.899 |
+
+Register allocation is two thirds of the compile. It is the part that grows faster than the
+function: its live ranges span the whole function, and a value live across the hot loop
+competes with every state's values. A cluster's function has only its own.
+
 ## What it says
 
 - **`.rr`'s states do fall into dense clusters.** About 14,000 instructions a cluster keeps all
