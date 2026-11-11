@@ -14,26 +14,26 @@ cmp !=: computed number	native	device	p(x) :- n(x), x + 1 != 3.
 cmp !=: computed symbol	native	no computed term	p(a) :- s(a), cat(a, "!") != "alpha!".
 cmp <: numbers	native	device	p(x, y) :- n(x), n(y), x < y.
 cmp <: number and constant	native	device	p(x) :- n(x), x < 2.
-cmp <: symbols	native	no computed term	p(a, b) :- s(a), t(b), a < b.
-cmp <: symbol and constant	native	no computed term	p(a) :- s(a), a < "alpha".
+cmp <: symbols	native	device	p(a, b) :- s(a), t(b), a < b.
+cmp <: symbol and constant	native	device	p(a) :- s(a), a < "alpha".
 cmp <: computed number	native	device	p(x) :- n(x), x + 1 < 3.
 cmp <: computed symbol	native	no computed term	p(a) :- s(a), cat(a, "!") < "alpha!".
 cmp <=: numbers	native	device	p(x, y) :- n(x), n(y), x <= y.
 cmp <=: number and constant	native	device	p(x) :- n(x), x <= 2.
-cmp <=: symbols	native	no computed term	p(a, b) :- s(a), t(b), a <= b.
-cmp <=: symbol and constant	native	no computed term	p(a) :- s(a), a <= "alpha".
+cmp <=: symbols	native	device	p(a, b) :- s(a), t(b), a <= b.
+cmp <=: symbol and constant	native	device	p(a) :- s(a), a <= "alpha".
 cmp <=: computed number	native	device	p(x) :- n(x), x + 1 <= 3.
 cmp <=: computed symbol	native	no computed term	p(a) :- s(a), cat(a, "!") <= "alpha!".
 cmp >: numbers	native	device	p(x, y) :- n(x), n(y), x > y.
 cmp >: number and constant	native	device	p(x) :- n(x), x > 2.
-cmp >: symbols	native	no computed term	p(a, b) :- s(a), t(b), a > b.
-cmp >: symbol and constant	native	no computed term	p(a) :- s(a), a > "alpha".
+cmp >: symbols	native	device	p(a, b) :- s(a), t(b), a > b.
+cmp >: symbol and constant	native	device	p(a) :- s(a), a > "alpha".
 cmp >: computed number	native	device	p(x) :- n(x), x + 1 > 3.
 cmp >: computed symbol	native	no computed term	p(a) :- s(a), cat(a, "!") > "alpha!".
 cmp >=: numbers	native	device	p(x, y) :- n(x), n(y), x >= y.
 cmp >=: number and constant	native	device	p(x) :- n(x), x >= 2.
-cmp >=: symbols	native	no computed term	p(a, b) :- s(a), t(b), a >= b.
-cmp >=: symbol and constant	native	no computed term	p(a) :- s(a), a >= "alpha".
+cmp >=: symbols	native	device	p(a, b) :- s(a), t(b), a >= b.
+cmp >=: symbol and constant	native	device	p(a) :- s(a), a >= "alpha".
 cmp >=: computed number	native	device	p(x) :- n(x), x + 1 >= 3.
 cmp >=: computed symbol	native	no computed term	p(a) :- s(a), cat(a, "!") >= "alpha!".
 arithmetic +	native	device	p(x, y, z) :- n(x), n(y), z = x + y.
@@ -78,7 +78,7 @@ function @nfkc/1	native	no computed term	p(v) :- t(a), v = @nfkc(a).
 function @lower/1	native	no computed term	p(v) :- t(a), v = @lower(a).
 function @str_concat/2	native	no computed term	p(v) :- t(a), t(b), v = @str_concat(a, b).
 function @str_between/3	native	no computed term	p(v) :- t(a), t(b), t(c), v = @str_between(a, b, c).
-function @str_cmp/2	native	no computed term	p(v) :- t(a), t(b), v = @str_cmp(a, b).
+function @str_cmp/2	native	device	p(v) :- t(a), t(b), v = @str_cmp(a, b).
 function @to_number/1	native	no computed term	p(v) :- t(a), v = @to_number(a).
 function @max/2	native	device	p(v) :- m(x), m(y), v = @max(x, y).
 function @min/2	native	device	p(v) :- m(x), m(y), v = @min(x, y).

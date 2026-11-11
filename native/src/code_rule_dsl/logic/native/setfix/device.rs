@@ -67,6 +67,8 @@ enum Kind {
     /// A text test of a slot bound from column `col` of `rel`: the verdicts of `table` (keyed `key`) for the
     /// column's distinct symbols, made on the device and kept with the relation.
     Text { rel: Arc<InRel>, col: usize, table: Arc<crate::code_rule_dsl::text::table::Table>, key: String },
+    /// `str_cmp`: the texts of the columns that bound its slots and of its constants, on the device together.
+    Strcmp { cols: Vec<(Arc<InRel>, usize)>, consts: Vec<i64> },
 }
 
 #[derive(Clone)]
@@ -399,6 +401,38 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
                 stages.push(PStage { first: i, span: f.steps, kind: Kind::Filter, desc: d, npassed: f.steps });
                 i += f.steps;
             }
+            Step::Func { name: "str_cmp", args, out, bind: true, .. } => {
+                // The order of two symbols' names: compared on the device a word of eight bytes at a time, their
+                // texts those of the columns that bound the slots (and the constants').
+                let mut d = mj::Stage { mode: mj::STRCMP, ..mj::Stage::default() };
+                let (mut cols, mut consts) = (Vec::new(), Vec::new());
+                for (k, a) in args.iter().enumerate() {
+                    match *a {
+                        Key::Slot(x) => {
+                            let Some(o) = origin.get(x).cloned().flatten() else {
+                                return Err("str_cmp of a slot no input relation's column bound has no device form".into());
+                            };
+                            if !cols.iter().any(|(r, c): &(Arc<InRel>, usize)| Arc::ptr_eq(r, &o.0) && *c == o.1) {
+                                cols.push(o);
+                            }
+                            d.key_kind[k] = mj::SLOT;
+                            d.key_slot[k] = x as u32;
+                        }
+                        Key::Const(c) => {
+                            consts.push(c);
+                            d.key_kind[k] = mj::CONST;
+                            d.key_const[k] = c;
+                        }
+                    }
+                }
+                d.bind_slot[0] = *out as u32;
+                if *out >= bound.len() {
+                    bound.resize(*out + 1, false);
+                }
+                bound[*out] = true;
+                stages.push(PStage { first: i, span: 1, kind: Kind::Strcmp { cols, consts }, desc: d, npassed: 0 });
+                i += 1;
+            }
             Step::Func { name, kinds, args, out, bind } => {
                 // Integer arithmetic: a filter of its own whose bind computes the value (`mj::BIND_ARITH`); a row
                 // where it has none is dropped, as on the CPU.
@@ -481,6 +515,8 @@ struct Entry {
 #[derive(Default)]
 struct Resident {
     entries: Vec<Entry>,
+    /// The texts of several columns and constants together (`str_cmp`'s), by the columns and the constants.
+    unions: Vec<(Vec<(Weak<InRel>, usize)>, Vec<i64>, Rc<mj::DevText>)>,
     bytes: usize,
     clock: u64,
 }
@@ -496,6 +532,10 @@ impl Resident {
     /// Drops entries whose relation the engine dropped, then the least recently used while over the budget.
     fn trim(&mut self, room: usize) {
         self.entries.retain(|e| e.rel.strong_count() > 0);
+        self.unions.retain(|(cols, _, _)| cols.iter().all(|(r, _)| r.strong_count() > 0));
+        if self.bytes() + room > RESIDENT_MAX {
+            self.unions.clear();
+        }
         while self.bytes() + room > RESIDENT_MAX && !self.entries.is_empty() {
             let at = self.entries.iter().enumerate().min_by_key(|(_, e)| e.used).map(|(k, _)| k).expect("an entry");
             self.entries.swap_remove(at);
@@ -504,7 +544,7 @@ impl Resident {
     }
 
     fn bytes(&self) -> usize {
-        self.entries.iter().map(|e| e.bytes).sum()
+        self.entries.iter().map(|e| e.bytes).sum::<usize>() + self.unions.iter().map(|u| u.2.bytes()).sum::<usize>()
     }
 }
 
@@ -662,17 +702,7 @@ fn verdicts(rel: &Arc<InRel>, col: usize, table: &Arc<crate::code_rule_dsl::text
             Some((_, t)) => t.clone(),
             None => {
                 let c0 = thread_cpu();
-                let mut seen = std::collections::HashSet::new();
-                let mut ids = Vec::new();
-                for id in 0..rel.len() {
-                    if is_dead(&rel.dead, id as u32) {
-                        continue;
-                    }
-                    let v = if rel.view.is_none() { rel.row(id)[col] } else { rel.at(id).read().at(col) };
-                    if seen.insert(v) {
-                        ids.push(v);
-                    }
-                }
+                let ids = column_symbols(rel, col);
                 let t = Rc::new(mj::DevText::upload(&ids, |v, out| out.extend_from_slice(names.name(v).as_bytes())).map_err(|e| format!("{e:?}: the names of {} symbols", ids.len()))?);
                 rep.uploads += 1;
                 rep.upload_bytes += t.bytes() as u64;
@@ -694,6 +724,49 @@ fn verdicts(rel: &Arc<InRel>, col: usize, table: &Arc<crate::code_rule_dsl::text
     })
 }
 
+/// Column `col`'s distinct values, of its live rows.
+fn column_symbols(rel: &InRel, col: usize) -> Vec<i64> {
+    let mut seen = std::collections::HashSet::new();
+    let mut ids = Vec::new();
+    for id in 0..rel.len() {
+        if is_dead(&rel.dead, id as u32) {
+            continue;
+        }
+        let v = if rel.view.is_none() { rel.row(id)[col] } else { rel.at(id).read().at(col) };
+        if seen.insert(v) {
+            ids.push(v);
+        }
+    }
+    ids
+}
+
+/// The texts of columns `cols`' symbols and of `consts`, on the device together (`str_cmp` reads them), copied once
+/// and kept while the relations are.
+fn texts(cols: &[(Arc<InRel>, usize)], consts: &[i64], rep: &mut Report, names: &Interner) -> Result<Rc<mj::DevText>, String> {
+    RESIDENT.with_borrow_mut(|res| {
+        let found = res.unions.iter().find(|(cs, ks, _)| {
+            ks == consts && cs.len() == cols.len() && cs.iter().zip(cols).all(|((w, c), (r, c2))| c == c2 && Weak::ptr_eq(w, &Arc::downgrade(r)))
+        });
+        if let Some((_, _, t)) = found {
+            rep.resident_hits += 1;
+            return Ok(t.clone());
+        }
+        let c0 = thread_cpu();
+        let mut ids: Vec<i64> = consts.to_vec();
+        for (rel, col) in cols {
+            ids.extend(column_symbols(rel, *col));
+        }
+        let t = Rc::new(mj::DevText::upload(&ids, |v, out| out.extend_from_slice(names.name(v).as_bytes())).map_err(|e| format!("{e:?}: the names of {} symbols", ids.len()))?);
+        rep.uploads += 1;
+        rep.upload_bytes += t.bytes() as u64;
+        rep.upload_cpu += thread_cpu() - c0;
+        res.trim(t.bytes());
+        res.unions.push((cols.iter().map(|(r, c)| (Arc::downgrade(r), *c)).collect(), consts.to_vec(), t.clone()));
+        res.bytes = res.bytes();
+        Ok(t)
+    })
+}
+
 impl<'p> Run<'p> {
     fn new(plan: &'p Plan) -> Result<Run<'p>, String> {
         let mut io = Vec::new();
@@ -703,7 +776,7 @@ impl<'p> Run<'p> {
         for s in &plan.stages {
             match s.kind {
                 Kind::Pass | Kind::Map => io.push((slot, slot)),
-                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Text { .. } => {
+                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Text { .. } | Kind::Strcmp { .. } => {
                     io.push((slot, slot + 1));
                     slot += 1;
                 }
@@ -766,8 +839,9 @@ impl<'p> Run<'p> {
                     let t = self.tables[i].as_ref().expect("the map's table");
                     batch.map(s.desc, t, i, &self.totals).map_err(|e| format!("{e:?}"))?;
                 }
-                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Text { .. } => {
+                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Text { .. } | Kind::Strcmp { .. } => {
                     match (&s.kind, &self.rels[k]) {
+                        (Kind::Strcmp { cols, consts }, None) => self.rels[k] = Some((texts(cols, consts, rep, names)?.rel(), None)),
                         (Kind::Atom { rel, cols }, None) => self.rels[k] = Some(resident(rel, cols, batch, rep)?),
                         (Kind::Text { rel, col, table, key }, None) => self.rels[k] = Some((verdicts(rel, *col, table, key, batch, rep, names)?, None)),
                         (Kind::Own { rel, delta, cols }, None) => {
@@ -1446,7 +1520,14 @@ mod tests {
             let name: String = (0..len).map(|_| parts[next(parts.len() as u64) as usize]).collect();
             db.execute("INSERT INTO n VALUES (?1, ?2)", rusqlite::params![name, k]).unwrap();
         }
+        db.execute_batch("CREATE TEMP TABLE m (c0);").unwrap();
+        for k in 0..60 {
+            let len = 1 + next(4);
+            let name: String = (0..len).map(|_| parts[next(parts.len() as u64) as usize]).collect();
+            db.execute("INSERT INTO m VALUES (?1)", rusqlite::params![if k == 0 { String::new() } else { name }]).unwrap();
+        }
         let n = format!("t:x:{}:{}:si", hex("temp.n"), hex("c0, c1"));
+        let m = format!("t:x:{}:{}:s", hex("temp.m"), hex("c0"));
         let sym = |t: &str| format!("x:{}", hex(t));
         let rules = [
             format!("pos {n} v0 v1\ntest prefix v0 {} 1\nhead v0 v1", sym("foo")),
@@ -1456,6 +1537,10 @@ mod tests {
             format!("pos {n} v0 v1\neq v2 v0\ntest iprefix v2 {} 1\nhead v0 v1", sym("SRC")),
             format!("pos {n} v0 v1\ntest glob v0 {} 1\nhead v0 v1", sym("src/lib*.ts")),
             format!("pos {n} v0 v1\ntest contains v0 {} 1\ntest suffix v0 {} 0\nhead v0 v1", sym("αβ"), sym("x9")),
+            // Ordering by names: against a constant, and between two relations' symbols (an empty name among them).
+            format!("pos {n} v0 v1\nfunc str_cmp v2 v0 {}\nlt v2 i:0\nhead v0 v1", sym("foo_bar")),
+            format!("pos {m} v0\npos {n} v1 v2\nfunc str_cmp v3 v1 v0\neq v3 i:0\nhead v1 v2"),
+            format!("pos {m} v0\npos {n} v1 v2\nlt v2 i:40\nfunc str_cmp v3 v0 v1\nlt i:0 v3\nhead v0 v2"),
         ];
         let mut got = Vec::new();
         for device in [false, true] {

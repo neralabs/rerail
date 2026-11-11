@@ -67,6 +67,9 @@ pub(in crate::code_rule_dsl) const AGG_MAX: u32 = 3;
 /// A text test of a slot (`Stage::agg`: `[slot, want]`): a binding passes when its symbol's verdict bit (the right
 /// relation, a bitset of 64 bits a row, by symbol) is `want`.
 pub(in crate::code_rule_dsl) const TEXT: u32 = 5;
+/// `str_cmp` of two symbols, each a slot or a constant (keys 0 and 1), their texts the right relation's (a
+/// `DevText`): the order into `bind_slot[0]`.
+pub(in crate::code_rule_dsl) const STRCMP: u32 = 6;
 
 /// A program column's or a bind's source: a candidate's column, or the binding's slot.
 pub(in crate::code_rule_dsl) const RIGHT: u32 = 0;
@@ -341,6 +344,48 @@ static inline uint aggregate(constant Stage& s, device const long* L, uint t, de
     return 0;
 }
 
+// A text buffer (`DevText`): its terms' count, their symbols ascending, each one's offset into its bytes, the bytes.
+static inline uint text_count(device const long* T) { return uint(T[0]); }
+static inline device const uint* text_offs(device const long* T) { return (device const uint*)(T + 1 + T[0]); }
+static inline device const uchar* text_chars(device const long* T) { return (device const uchar*)(text_offs(T) + T[0] + 1); }
+
+// Symbol `id`'s text in T (none: the empty text, as a name the store does not hold).
+static inline void text_find(device const long* T, long id, thread uint& off, thread uint& len) {
+    uint n = text_count(T), a = 0, b = n;
+    for (uint k = 0; k < 40 && a < b; k++) { uint m = (a + b) / 2; if (T[1 + m] < id) a = m + 1; else b = m; }
+    if (a < n && T[1 + a] == id) { device const uint* o = text_offs(T); off = o[a]; len = o[a + 1] - o[a]; }
+    else { off = 0; len = 0; }
+}
+
+// Eight bytes of a text from `at`, big-endian, zero past `end`: a window compared at once.
+static inline ulong text_word(device const uchar* p, uint at, uint end) {
+    ulong w = 0;
+    for (uint k = 0; k < 8; k++) w = (w << 8) | ((at + k) < end ? ulong(p[at + k]) : 0ul);
+    return w;
+}
+
+// The order of two texts by their bytes (-1, 0, 1), as Rust's `str::cmp`: a word of eight bytes at a time over the
+// shorter's length, then the lengths.
+static inline long text_cmp(device const uchar* p, uint a, uint alen, uint b, uint blen) {
+    uint m = min(alen, blen);
+    for (uint at = 0; at < m; at += 8) {
+        ulong x = text_word(p + a, at, m), y = text_word(p + b, at, m);
+        if (x != y) return x < y ? -1 : 1;
+    }
+    return alen == blen ? 0 : (alen < blen ? -1 : 1);
+}
+
+// `str_cmp` of two symbols (mode 6): each a slot or a constant (`key_kind`, `key_slot`, `key_const` 0 and 1), their
+// texts in R; the order into `bind_slot[0]`.
+static inline long strcmp_value(constant Stage& s, device const long* L, uint t, device const long* R) {
+    long v[2];
+    for (uint k = 0; k < 2; k++) v[k] = s.key_kind[k] == 1 ? L[ulong(s.key_slot[k]) * s.cap_in + t] : s.key_const[k];
+    uint ao, al, bo, bl;
+    text_find(R, v[0], ao, al);
+    text_find(R, v[1], bo, bl);
+    return text_cmp(text_chars(R), ao, al, bo, bl);
+}
+
 // Whether binding t's symbol in slot agg[0] has its verdict bit (mode 5), as agg[1] wants.
 static inline bool text_pass(constant Stage& s, device const long* L, uint t, device const long* R) {
     long v = L[ulong(s.agg[0]) * s.cap_in + t];
@@ -358,6 +403,7 @@ kernel void stage_count(device const long* L [[buffer(0)]], device const long* R
     long kv[8];
     uint lo, hi;
     if (s.mode == 5) { counts[t] = uint(text_pass(s, L, t, R)); return; }
+    if (s.mode == 6) { counts[t] = 1; return; }
     candidates(s, L, t, starts, rkeys, nruns, kv, lo, hi);
     if (s.mode == 4) {
         long v = 0;
@@ -417,6 +463,12 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
         if (offsets[t + 1] > at) write_row(s, L, t, R, 0, O, at);
         return;
     }
+    if (s.mode == 6) {
+        if (offsets[t + 1] <= at) return;
+        write_row(s, L, t, R, 0, O, at);
+        O[ulong(s.bind_slot[0]) * s.cap_out + at] = strcmp_value(s, L, t, R);
+        return;
+    }
     if (s.mode == 4) {
         if (offsets[t + 1] <= at) return;
         candidates(s, L, t, starts, rkeys, nruns, kv, lo, hi);
@@ -453,9 +505,12 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
 // persistent: `groups` of them over the terms.
 struct TextParams { uint nterms; uint states; uint classes; uint start; uint groups; uint pad0; uint pad1; uint pad2; };
 
-kernel void text_verdicts(device const uint* offs [[buffer(0)]], device const uchar* bytes [[buffer(1)]], device const long* ids [[buffer(2)]],
-                          device const uchar* table [[buffer(3)]], device atomic_uint* bits [[buffer(4)]], device uchar* scratch [[buffer(5)]],
-                          constant TextParams& p [[buffer(6)]], uint t [[thread_position_in_grid]], uint lane [[thread_index_in_simdgroup]]) {
+kernel void text_verdicts(device const long* T [[buffer(0)]], device const uchar* table [[buffer(1)]], device atomic_uint* bits [[buffer(2)]],
+                          device uchar* scratch [[buffer(3)]], constant TextParams& p [[buffer(4)]], uint t [[thread_position_in_grid]],
+                          uint lane [[thread_index_in_simdgroup]]) {
+    device const long* ids = T + 1;
+    device const uint* offs = text_offs(T);
+    device const uchar* bytes = text_chars(T);
     uint sg = t / 32;
     if (sg >= p.groups) return;
     uint S = p.states, C = p.classes;
@@ -685,36 +740,54 @@ impl DevRel {
     }
 }
 
-/// A column's distinct symbols and their names' bytes on the device: the terms a text test's verdicts are made for.
+/// Distinct symbols and their names' bytes on the device, in one buffer: their count, the symbols ascending (a
+/// symbol's text is found by search), each one's offset into the bytes, the bytes. The terms a text test's verdicts
+/// are made for, and the texts `str_cmp` orders.
 pub(in crate::code_rule_dsl) struct DevText {
-    offs: Held,
-    bytes: Held,
-    ids: Held,
+    packed: std::rc::Rc<DevRel>,
     pub(in crate::code_rule_dsl) terms: usize,
     /// One past the greatest symbol: the verdicts' bits.
     pub(in crate::code_rule_dsl) span: usize,
 }
 
 impl DevText {
-    /// The terms `ids`, each named by `name` (copied to the device: the host evaluates nothing).
+    /// The distinct symbols `ids` (in any order), each named by `name` (copied to the device: the host evaluates
+    /// nothing).
     pub(in crate::code_rule_dsl) fn upload(ids: &[i64], mut name: impl FnMut(i64, &mut Vec<u8>)) -> Result<DevText, Error> {
-        let mut bytes = Vec::new();
-        let mut offs = Vec::with_capacity(ids.len() + 1);
+        let mut ids = ids.to_vec();
+        ids.sort_unstable();
+        ids.dedup();
+        let n = ids.len();
+        let mut chars = Vec::new();
+        let mut offs = Vec::with_capacity(n + 1);
         offs.push(0u32);
-        for &id in ids {
-            name(id, &mut bytes);
-            offs.push(u32::try_from(bytes.len()).map_err(|_| Error::BackendCapacity)?);
+        for &id in &ids {
+            name(id, &mut chars);
+            offs.push(u32::try_from(chars.len()).map_err(|_| Error::BackendCapacity)?);
         }
-        let span = ids.iter().copied().max().map_or(0, |m| m.max(0) as usize + 1);
-        bytes.push(0);
-        let mut idv = ids.to_vec();
-        idv.push(0);
-        let held = |r: Result<Held, String>| r.map_err(|_| Error::BackendCapacity);
-        Ok(DevText { offs: held(Held::of(offs.into_iter()))?, bytes: held(Held::of(bytes.into_iter()))?, ids: held(Held::of(idv.into_iter()))?, terms: ids.len(), span })
+        let mut out: Vec<u8> = Vec::with_capacity(8 * (n + 1) + 4 * (n + 1) + chars.len() + 1);
+        out.extend_from_slice(&(n as i64).to_le_bytes());
+        for id in &ids {
+            out.extend_from_slice(&id.to_le_bytes());
+        }
+        for o in &offs {
+            out.extend_from_slice(&o.to_le_bytes());
+        }
+        out.extend_from_slice(&chars);
+        out.push(0);
+        let span = ids.last().map_or(0, |&m| m.max(0) as usize + 1);
+        let rows = out.len().div_ceil(8);
+        let held = Held::of(out.into_iter()).map_err(|_| Error::BackendCapacity)?;
+        Ok(DevText { packed: std::rc::Rc::new(DevRel { buffer: held, rows, cols: 1 }), terms: n, span })
     }
 
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
-        self.offs.buffer.length() as usize + self.bytes.buffer.length() as usize + self.ids.buffer.length() as usize
+        self.packed.buffer.buffer.length() as usize
+    }
+
+    /// The text as a stage's right relation (`STRCMP` reads it).
+    pub(in crate::code_rule_dsl) fn rel(&self) -> std::rc::Rc<DevRel> {
+        self.packed.clone()
     }
 }
 
@@ -1079,7 +1152,7 @@ impl Batch {
         // SAFETY: plain integers.
         let bytes = unsafe { std::slice::from_raw_parts(p.as_ptr().cast::<u8>(), 32) };
         let pass = self.pass(1)?;
-        pass.run_bytes(&kernel, &[&text.offs.buffer, &text.bytes.buffer, &text.ids.buffer, &table.table.buffer, &bits.buffer.buffer, &scratch.buffer], bytes, (groups * 32).div_ceil(256));
+        pass.run_bytes(&kernel, &[&text.packed.buffer.buffer, &table.table.buffer, &bits.buffer.buffer, &scratch.buffer], bytes, (groups * 32).div_ceil(256));
         self.keep.push(scratch);
         Ok(())
     }

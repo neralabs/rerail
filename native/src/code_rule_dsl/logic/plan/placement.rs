@@ -232,13 +232,16 @@ fn not_row(t: &Term) -> Option<String> {
 }
 
 /// Whether a term is row code on the device: a variable, a constant, `@doc(x)` of a variable, a set of constants
-/// (`@in(x, {…})`), or integer arithmetic of row code (`setfix::device`'s arithmetic binds). Anything else computes
+/// (`@in(x, {…})`), integer arithmetic of row code (`setfix::device`'s arithmetic binds), or `str_cmp` of variables
+/// and constants (the device compares the names). Anything else computes
 /// a value the device has no form for.
 fn row_term(t: &Term) -> bool {
     match t {
         Term::Call(f, args) if f == "doc" => matches!(args.as_slice(), [Term::Var(_)]),
         Term::Call(f, args) if f == crate::code_rule_dsl::logic::strings::SET => args.iter().all(|a| !matches!(a, Term::Call(..))),
         Term::Call(f, args) if DEVICE_ARITHMETIC.contains(&f.as_str()) && args.len() == 2 => args.iter().all(row_term),
+        // The order of two symbols' names (`<` of symbols lowers to it): their texts are the device's.
+        Term::Call(f, args) if f == "str_cmp" && args.len() == 2 => args.iter().all(|a| !matches!(a, Term::Call(..))),
         Term::Call(..) => false,
         _ => true,
     }
