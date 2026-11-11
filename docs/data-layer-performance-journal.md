@@ -11531,7 +11531,7 @@ The workspace API dropped supplied source files before detection for facade puri
 Their policies now accept the caller's buffer directory through a scope option.
 All 29 original cases pass for these three rules through each API, with 10 matched positive returns per API.
 A run with default options reads zero files from that buffer directory for each rule.
-Connection caches uses the same scope option. Both APIs pass the three original cases that exposed its scope defect.
+Connection caches uses the same scope option. Both APIs pass all 151 original connection cache cases after that change.
 
 The DynamicModuleLoading undecodable-file test fails in both APIs with `no such table: file_error`.
 A small native program reproduces the error when its load depends on the read error.
@@ -11549,7 +11549,8 @@ A runtime probe exposes a file-path condition inside a matcher traversal stop.
 Widening that stop in the prototype lets the conditional program match one original positive by location and code.
 The complete candidate also needs native projections for the f-string and quoted-annotation captures.
 
-The census has 130 reports from 29 rules, including the HNSW and PR-monitor suites.
+The [census](../gate/data-layer/fixtures/host/data-layer-port/rr-final419-suite-census.json.gz) has 130 reports from 29 rules.
+It includes the HNSW and PR-monitor suites.
 It records 1,505 passing pytest cases and 388 matched positive returns in snapshot mode.
 Workspace mode records 1,497 passing pytest cases and 350 matched positive returns.
 Twenty shards hit the 111-second limit and produced no complete report.
