@@ -94,11 +94,6 @@ impl Interner {
     fn id(&mut self, s: &str) -> i64 {
         match self.atoms.intern(s) {
             Ok(atom) => i64::from(atom),
-            // A strand's refusal stays its thread's: the symbols are shared with the run's thread.
-            Err(e) if crate::content_store::atoms::held_only_now() => {
-                HELD_FAILED.with_borrow_mut(|f| { f.get_or_insert_with(|| e.to_string()); });
-                -1
-            }
             Err(e) => {
                 self.failed.get_or_insert_with(|| e.to_string());
                 -1
@@ -120,16 +115,10 @@ impl Interner {
     }
     /// The first interning that failed since the last check.
     fn check(&mut self) -> Result<()> {
-        if let Some(e) = HELD_FAILED.with_borrow_mut(Option::take) { return Err(err(e)); }
         match self.failed.take() { Some(e) => Err(err(e)), None => Ok(()) }
     }
 }
-thread_local! {
-    /// This thread's refused new atom (`atoms::held_only`), until checked.
-    static HELD_FAILED: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
-}
-/// Forgets this thread's refused new atom: a strand's component ended.
-pub fn held_failed_clear() { HELD_FAILED.with_borrow_mut(|f| *f = None); }
+
 /// The process's symbols of each database, kept from run to run with their arena: a run need not read a large
 /// store's atoms again. They hold no file open: the store's last handle closes them (`ContentStore`'s drop).
 static SYMS: LazyLock<Mutex<HashMap<String, Arc<RwLock<Interner>>>>> = LazyLock::new(Default::default);
@@ -163,10 +152,11 @@ fn conn_path(conn: impl Scoped) -> Arc<str> {
 
 /// What a stratum off the run's thread reads of its connection, found here first (decision 0113): its path and its
 /// symbols, kept by its scope.
-pub fn prime(conn: &Connection) -> Result<()> {
+pub fn prime(conn: &Connection) -> Result<Arc<crate::content_store::atoms::Atoms>> {
     conn_path(conn);
-    symbols(conn)?;
-    Ok(())
+    let syms = symbols(conn)?;
+    let arena = Arc::clone(&syms.read().unwrap().atoms);
+    Ok(arena)
 }
 static SCOPE_PATHS: std::sync::LazyLock<Mutex<HashMap<usize, Arc<str>>>> = std::sync::LazyLock::new(Default::default);
 /// Each live connection's symbols (`symbols`), by its scope.

@@ -294,27 +294,78 @@ pub struct Atoms {
 }
 
 thread_local! {
-    static HELD_ONLY: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    /// The atoms this thread made while reserving (`reserving`), by arena.
+    static RESERVING: std::cell::RefCell<Option<(usize, Vec<(usize, Vec<Sym>)>)>> = const { std::cell::RefCell::new(None) };
 }
 
-/// While the guard lives, this thread gives out no new atoms (decision 0113 §4): a component of strata run ahead
-/// of the run's order reads the atoms there are, and one that would make a new atom stops, to run again in order on
-/// the run's thread. So atoms are given out in the run's order, as a serial run gives them, and no commit on
-/// another thread meets atoms pending that it did not write (decision 0049).
-pub fn held_only() -> impl Drop {
-    struct Held;
-    impl Drop for Held {
-        fn drop(&mut self) {
-            HELD_ONLY.set(HELD_ONLY.get() - 1);
+/// Atoms reserved by components not yet retired, by arena (its address): pending, but no row a commit writes holds
+/// them yet (decision 0114 §4).
+static RESERVED: LazyLock<parking_lot::Mutex<HashMap<usize, std::collections::BTreeSet<Sym>>>> = LazyLock::new(Default::default);
+
+/// Atoms made ahead of the run's order, by a component of strata (decision 0114 §4: the atoms' publication model).
+///
+/// - **Allocation.** Ids come from the shared arena, on any thread, as any atom's: unique, and never reused.
+/// - **Visibility.** An atom's string is readable by every thread as soon as it is made; rows that hold it are
+///   visible to other strata only when its component retires (the component's relations are published then).
+/// - **Publication.** Until then the atom is reserved: pending, and written by any flush, but not counted by
+///   the commit check of decision 0049, since no row a committing transaction writes can hold it yet. At retire
+///   (`Reserved`'s drop) it is an ordinary pending atom, which the next commit writing rows must append first.
+///
+/// So ids follow the order atoms were first made in, which under parallel strata is not the serial run's: an id
+/// names a string, and nothing reads its order.
+///
+/// Only atoms made in `arena` (the component's scope's) are reserved: another run's work this thread helps with
+/// while its component waits makes its atoms pending as usual.
+pub fn reserving(arena: &Arc<Atoms>) -> Reservation {
+    RESERVING.with_borrow_mut(|r| {
+        assert!(r.is_none(), "one reservation per thread at a time");
+        *r = Some((Arc::as_ptr(arena) as usize, Vec::new()));
+    });
+    Reservation(())
+}
+
+/// A thread's reservation in progress (`reserving`): `end` gives what it made.
+pub struct Reservation(());
+
+impl Reservation {
+    pub fn end(self) -> Reserved {
+        let made = RESERVING.with_borrow_mut(Option::take).map(|r| r.1).unwrap_or_default();
+        std::mem::forget(self);
+        Reserved(made)
+    }
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        drop(Reserved(RESERVING.with_borrow_mut(Option::take).map(|r| r.1).unwrap_or_default()));
+    }
+}
+
+/// The atoms a component reserved: published (counted as pending) when dropped, as the component retires.
+#[derive(Default)]
+pub struct Reserved(Vec<(usize, Vec<Sym>)>);
+
+impl Reserved {
+    pub fn len(&self) -> usize {
+        self.0.iter().map(|(_, ids)| ids.len()).sum()
+    }
+}
+
+impl Drop for Reserved {
+    fn drop(&mut self) {
+        if self.0.is_empty() {
+            return;
+        }
+        let mut all = RESERVED.lock();
+        for (at, ids) in self.0.drain(..) {
+            if let Some(set) = all.get_mut(&at) {
+                ids.iter().for_each(|id| { set.remove(id); });
+                if set.is_empty() {
+                    all.remove(&at);
+                }
+            }
         }
     }
-    HELD_ONLY.set(HELD_ONLY.get() + 1);
-    Held
-}
-
-/// Whether this thread gives out no new atoms now (`held_only`).
-pub fn held_only_now() -> bool {
-    HELD_ONLY.get() > 0
 }
 
 static REGISTRY: LazyLock<Mutex<HashMap<PathBuf, Weak<Atoms>>>> = LazyLock::new(Default::default);
@@ -570,7 +621,18 @@ impl Atoms {
 
     /// Whether atoms are pending (given out, not yet in the database).
     pub fn pending(&self) -> bool {
-        self.path.is_some() && self.state.read().atoms.pending().0 > 0
+        if self.path.is_none() {
+            return false;
+        }
+        let state = self.state.read();
+        let (n, _) = state.atoms.pending();
+        if n == 0 {
+            return false;
+        }
+        // Atoms a component reserves (`reserving`) are no row's that a commit may write yet: not counted.
+        let base = state.atoms.base() as Sym;
+        let reserved = RESERVED.lock().get(&(self as *const Atoms as usize)).map_or(0, |r| r.range(base..).count());
+        n > reserved
     }
 
     /// The atom of `value`, if the database or this process holds it. A miss in memory asks the database (decision
@@ -636,13 +698,6 @@ impl Atoms {
                 return Ok(found);
             }
         }
-        // Held atoms only (`held_only`): a stored one is found, a new one is refused.
-        if HELD_ONLY.get() > 0 {
-            return values
-                .iter()
-                .map(|value| self.lookup(value)?.ok_or_else(|| StoreError::Invalid(format!("a new atom off the run's thread (decision 0113 §4): {value:?}"))))
-                .collect();
-        }
         // The lease is held while ids are given out, so a flush on another thread cannot give it
         // back between the check and the new ids.
         let mut lease = self.lease.lock();
@@ -656,10 +711,23 @@ impl Atoms {
             self.find(&missing)?;
         }
         let mut state = self.state.write();
-        let ids = values.iter().map(|value| state.atoms.intern(value)).collect();
+        let before = state.atoms.len() as Sym;
+        let ids: Vec<Sym> = values.iter().map(|value| state.atoms.intern(value)).collect();
         if state.since.is_none() && state.atoms.pending().0 > 0 {
             state.since = Some(Instant::now());
         }
+        // Made while this thread reserves (`reserving`): the ids are its component's until it retires.
+        RESERVING.with_borrow_mut(|r| {
+            if let Some((arena, r)) = r.as_mut()
+                && *arena == self as *const Atoms as usize
+            {
+                let new: Vec<Sym> = ids.iter().copied().filter(|&id| id >= before).collect();
+                if !new.is_empty() {
+                    RESERVED.lock().entry(self as *const Atoms as usize).or_default().extend(new.iter().copied());
+                    r.push((self as *const Atoms as usize, new));
+                }
+            }
+        });
         Ok(ids)
     }
 

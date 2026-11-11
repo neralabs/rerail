@@ -20,7 +20,7 @@ use super::*;
 use rerail_accel::stream::{Handle, Stream};
 
 /// What a component's job gives back: its strand, how many members ran natively, and what stopped the next.
-pub(super) type Out<'a> = (Strand<'a>, usize, Option<Result<(Option<String>, Option<String>)>>, Vec<(Instant, Instant)>);
+pub(super) type Out<'a> = (Strand<'a>, usize, Option<Result<(Option<String>, Option<String>)>>, Vec<(Instant, Instant)>, crate::content_store::atoms::Reserved);
 use std::time::Instant;
 
 enum State<'a> {
@@ -55,6 +55,8 @@ pub(super) struct Counts {
     pub largest: usize,
     pub ran: usize,
     pub here: usize,
+    /// Atoms the components made, published at their retire.
+    pub atoms: usize,
 }
 
 pub(super) struct Board<'a> {
@@ -85,6 +87,8 @@ struct Trace {
     at: Option<(usize, Instant)>,
     by_component: bool,
     rows: Vec<Option<(f64, f64, u8)>>,
+    /// Why a stratum ran on the loop's thread, if it was looked at.
+    why: std::cell::RefCell<Vec<&'static str>>,
 }
 
 fn env_f(name: &str, or: f64) -> f64 {
@@ -127,7 +131,7 @@ impl<'a> Board<'a> {
             parallel: !matches!(std::env::var("RERAIL_STRATA_PARALLEL").as_deref(), Ok("off")),
             counts: Counts::default(),
             from: producers,
-            trace: std::env::var_os("RERAIL_STRATA_TRACE").map(|_| Trace { t0: Instant::now(), at: None, by_component: false, rows: vec![None; sccs.len()] }),
+            trace: std::env::var_os("RERAIL_STRATA_TRACE").map(|_| Trace { t0: Instant::now(), at: None, by_component: false, rows: vec![None; sccs.len()], why: std::cell::RefCell::new(vec![""; sccs.len()]) }),
         }
     }
 
@@ -158,7 +162,9 @@ impl<'a> Board<'a> {
             let (a, b, w) = row.unwrap_or((-1.0, -1.0, 9));
             let comp = self.member_of[j].map_or(-1, |c| c as i64);
             let from: Vec<String> = self.from[j].iter().map(usize::to_string).collect();
-            out.push_str(&format!("s\t{j}\t{}\t{a:.7}\t{b:.7}\t{w}\t{comp}\t{}\t{}\n", level_of[j], from.join(","), sccs[j].iter().next().map_or("", String::as_str)));
+            let why = t.why.borrow()[j];
+            let why = if why.is_empty() && comp < 0 { "not offered" } else { why };
+            out.push_str(&format!("s\t{j}\t{}\t{a:.7}\t{b:.7}\t{w}\t{comp}\t{}\t{}\t{why}\n", level_of[j], from.join(","), sccs[j].iter().next().map_or("", String::as_str)));
         }
         let _ = f.write_all(out.as_bytes());
     }
@@ -256,7 +262,12 @@ impl<'a> Board<'a> {
             let digests: Vec<u64> = rules.iter().flatten().map(|r| obs_rule(&r.head, &r.body)).collect();
             let all: Vec<&Rule> = rules.iter().flatten().copied().collect();
             // A component whose statistics cannot be made for its strand runs on the loop's thread, as it would.
-            let Ok(strand) = run.strand(&reads, &digests, &Model::read_by(all.iter().copied())) else { continue };
+            let Ok(strand) = run.strand(&reads, &digests, &Model::read_by(all.iter().copied())) else {
+                if let Some(t) = &self.trace {
+                    members.iter().for_each(|&m| t.why.borrow_mut()[m] = "its statistics not made");
+                }
+                continue;
+            };
             let c = self.comps.len();
             for &m in &members {
                 self.member_of[m] = Some(c);
@@ -303,8 +314,9 @@ impl<'a> Board<'a> {
                 let _in = ambient.enter();
                 let mut strand = strand;
                 let mut times = Vec::new();
-                let (n, stop) = strand.run_members(&data, &mut times);
-                (strand, n, stop, times)
+                let mut reserved = Default::default();
+                let (n, stop) = strand.run_members(&data, &mut times, &mut reserved);
+                (strand, n, stop, times, reserved)
             }));
         }
         Ok(())
@@ -315,10 +327,21 @@ impl<'a> Board<'a> {
     #[allow(clippy::too_many_arguments)]
     fn eligible(&self, j: usize, run: &Run<'a, '_>, sccs: &[BTreeSet<String>], rules_of: &dyn Fn(usize) -> Vec<&'a Rule>, load: &mut dyn FnMut(usize) -> Result<()>, held: &BTreeSet<String>) -> Result<Option<BTreeSet<String>>> {
         if sccs[j].iter().all(|r| run.views.contains(r)) {
+            if let Some(t) = &self.trace {
+                t.why.borrow_mut()[j] = "views only";
+            }
             return Ok(None);
         }
         load(j)?;
-        Ok(run.strand_reads_with(&sccs[j], &rules_of(j), held))
+        match run.strand_reads_with(&sccs[j], &rules_of(j), held) {
+            Ok(reads) => Ok(Some(reads)),
+            Err(why) => {
+                if let Some(t) = &self.trace {
+                    t.why.borrow_mut()[j] = why;
+                }
+                Ok(None)
+            }
+        }
     }
 
     /// The stratum at `at`, as its component left it: waited for (or run here) when it is the component's first.
@@ -326,20 +349,24 @@ impl<'a> Board<'a> {
         let Some(c) = self.member_of[at] else { return Ok(Got::Not) };
         let comp = &mut self.comps[c];
         if !matches!(comp.state, State::Done(..)) {
-            let (strand, n, stop, times, inline) = match std::mem::replace(&mut comp.state, State::Done(0, None)) {
+            let (strand, n, stop, times, reserved, inline) = match std::mem::replace(&mut comp.state, State::Done(0, None)) {
                 State::Job(h) => {
-                    let (s, n, stop, times) = stream.wait(h).map_err(Error::Plan)?;
-                    (s, n, stop, times, false)
+                    let (s, n, stop, times, reserved) = stream.wait(h).map_err(Error::Plan)?;
+                    (s, n, stop, times, reserved, false)
                 }
                 State::Inline(mut strand, data) => {
                     let mut times = Vec::new();
-                    let (n, stop) = strand.run_members(&data, &mut times);
-                    (strand, n, stop, times, true)
+                    let mut reserved = Default::default();
+                    let (n, stop) = strand.run_members(&data, &mut times, &mut reserved);
+                    (strand, n, stop, times, reserved, true)
                 }
                 State::Done(..) => unreachable!(),
             };
             // Its strand's relations are those its members that ran made: the others' are not held.
             run.absorb(strand, &comp.own, &comp.digests);
+            // Its relations are published: so are its atoms (decision 0114 §4).
+            self.counts.atoms += reserved.len();
+            drop(reserved);
             self.in_flight -= comp.members.len();
             self.counts.ran += n;
             if let Some(t) = self.trace.as_mut() {
@@ -359,6 +386,9 @@ impl<'a> Board<'a> {
             return Ok(Got::Ran);
         }
         self.counts.here += 1;
+        if let Some(t) = &self.trace {
+            t.why.borrow_mut()[at] = if k == *n { match stop { Some(Ok(_)) => "declined", Some(Err(_)) => "read SQL or made an atom", None => "after one that stopped" } } else { "after one that stopped" };
+        }
         if k == *n {
             match stop.take() {
                 Some(Ok((why, class))) => return Ok(Got::Declined(why, class)),

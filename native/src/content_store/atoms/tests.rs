@@ -348,3 +348,41 @@ fn probe_a_store() {
     let id = atoms.intern(&fresh).unwrap();
     eprintln!("a new atom: {id} of {} in {:.3} s; held {:.1} MB", atoms.len(), t.elapsed().as_secs_f64(), atoms.bytes() as f64 / 1e6);
 }
+
+/// Decision 0114 §4: atoms a component makes ahead of the run's order are reserved, not counted by the commit
+/// check, until it retires; then they are pending as any, and the next commit writing rows appends them.
+#[test]
+fn reserved_atoms_wait_for_their_component_then_commit_with_rows() {
+    let path = path("reserved");
+    let store = ContentStore::open(&path).unwrap();
+    let arena = std::sync::Arc::clone(&store.atoms);
+    // Made on another thread inside a reservation: held there, not pending to a commit here.
+    let reserved = std::thread::scope(|s| {
+        s.spawn(|| {
+            let r = super::reserving(&arena);
+            assert_eq!(arena.intern_all(&["r1", "r2"]).unwrap(), [1, 2]);
+            r.end()
+        })
+        .join()
+        .unwrap()
+    });
+    assert_eq!(reserved.len(), 2);
+    assert!(!store.atoms.pending(), "reserved atoms are no row's yet");
+    // A commit that writes rows meanwhile is not refused.
+    let connection = store.open_connection().unwrap();
+    connection.execute_batch("BEGIN; INSERT INTO name_bindings(name_atom, digest, revision) VALUES (0, zeroblob(32), 0); COMMIT;").unwrap();
+    // Retired: pending, so a commit that does not append them is refused again.
+    drop(reserved);
+    assert!(store.atoms.pending());
+    connection.execute_batch("BEGIN; INSERT INTO name_bindings(name_atom, digest, revision) VALUES (1, zeroblob(32), 1);").unwrap();
+    assert!(connection.execute_batch("COMMIT").is_err());
+    connection.execute_batch("BEGIN; INSERT INTO name_bindings(name_atom, digest, revision) VALUES (1, zeroblob(32), 1);").unwrap();
+    super::commit(&connection).unwrap();
+    assert!(!store.atoms.pending());
+    // Another arena's atoms are not this reservation's.
+    let other = ContentStore::open(&self::path("reserved-other")).unwrap();
+    let r = super::reserving(&arena);
+    other.intern_atoms(&["o"]).unwrap();
+    assert!(other.atoms.pending(), "made in another arena: pending as usual");
+    assert_eq!(r.end().len(), 0);
+}

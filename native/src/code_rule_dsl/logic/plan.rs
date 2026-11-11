@@ -4044,7 +4044,8 @@ fn const_tok(t: &Term) -> Option<Tok> {
 /// What it shares with the run (the program, the views, the inputs, the rules' numbers) is read-only while the strata
 /// run. The engine's relations and components it makes are the run's (they are kept by scope), and what it learnt
 /// goes back to the run when it retires (`Run::absorb`), in program order.
-struct Strand<'a>(Run<'a, 'static>);
+/// A stratum's run off the run's thread, and the atoms' arena of its scope (whose new atoms it reserves).
+struct Strand<'a>(Run<'a, 'static>, Arc<crate::content_store::atoms::Atoms>);
 
 // SAFETY: a strand holds no connection (`Db::detached`, whose SQL is an error) and no answer hook (`strand` makes it
 // with neither). Its model, relations and maps are its own. What it shares with the run is read-only while it runs: the
@@ -4086,21 +4087,32 @@ impl<'a> Run<'a, '_> {
     /// reads no SQL (every relation its rules read is the engine's, its own, or an input bound in place), answers no
     /// request, and runs no native operator. `None`: it runs here.
     fn strand_reads(&self, scc: &BTreeSet<String>, rules: &[&Rule]) -> Option<BTreeSet<String>> {
-        self.strand_reads_with(scc, rules, &BTreeSet::new())
+        self.strand_reads_with(scc, rules, &BTreeSet::new()).ok()
     }
 
-    /// `strand_reads`, with the relations `held` (a component's earlier members', decision 0113 §2) taken as held.
-    fn strand_reads_with(&self, scc: &BTreeSet<String>, rules: &[&Rule], held_too: &BTreeSet<String>) -> Option<BTreeSet<String>> {
+    /// `strand_reads`, with the relations `held` (a component's earlier members', decision 0113 §2) taken as held;
+    /// else why it runs here.
+    fn strand_reads_with(&self, scc: &BTreeSet<String>, rules: &[&Rule], held_too: &BTreeSet<String>) -> std::result::Result<BTreeSet<String>, &'static str> {
         let prog = self.prog;
-        if std::env::var_os("RERAIL_RELATIONAL_LAB").is_some() || !self.model.inputs.atoms.is_some() {
-            return None;
+        if std::env::var_os("RERAIL_RELATIONAL_LAB").is_some() {
+            return Err("the relational lab");
+        }
+        if self.model.inputs.atoms.is_none() {
+            return Err("no atoms (a SQL run)");
         }
         let produced = super::answers::produced(prog);
-        if scc.iter().any(|r| prog.lattice.contains_key(r) || prog.natives.contains_key(r) || prog.answers.contains_key(r) || produced.contains_key(r.as_str()) || prog.facts.get(r).is_some_and(|f| !f.is_empty()) || self.views.contains(r)) {
-            return None;
+        for r in scc {
+            let why = if prog.lattice.contains_key(r) { "a lattice" }
+                else if prog.natives.contains_key(r) { "a native operator" }
+                else if prog.answers.contains_key(r) { "a request answered" }
+                else if produced.contains_key(r.as_str()) { "an answer produced" }
+                else if prog.facts.get(r).is_some_and(|f| !f.is_empty()) { "facts" }
+                else if self.views.contains(r) { "a view" }
+                else { continue };
+            return Err(why);
         }
         if rules.iter().any(|r| r.body.iter().any(|l| matches!(l, Literal::Ast { .. }))) {
-            return None;
+            return Err("an Ast literal");
         }
         let mut reads: BTreeSet<String> = scc.clone();
         for r in rules {
@@ -4113,7 +4125,7 @@ impl<'a> Run<'a, '_> {
                 let bound = self.inputs.contains(rel) && crate::code_rule_dsl::facts::vtab::bound_source(self.db, rel).is_some();
                 let viewed = self.in_place(rel) && self.model.view_src.get(rel).is_some_and(|(base, _)| crate::code_rule_dsl::facts::vtab::bound_source(self.db, base).is_some());
                 if !(held || bound || viewed) {
-                    return None;
+                    return Err(if self.inputs.contains(rel) { "reads an input not bound in place" } else { "reads a relation not held (SQL's)" });
                 }
                 reads.insert(rel.to_owned());
                 if let Some((base, _)) = self.model.view_src.get(rel) {
@@ -4124,12 +4136,12 @@ impl<'a> Run<'a, '_> {
         for r in scc {
             reads.insert(format!("{}__old", r.strip_suffix("__live").unwrap_or(r)));
         }
-        Some(reads)
+        Ok(reads)
     }
 
     /// A strand for a stratum that reads `reads` (`strand_reads`) and whose rules' digests are `rules`.
     fn strand(&mut self, reads: &BTreeSet<String>, rules: &[u64], resolve: &[&str]) -> Result<Strand<'a>> {
-        super::native::component::prime(&self.db)?;
+        let arena = super::native::component::prime(&self.db)?;
         let model = self.model.fork(self.prog, reads, rules, resolve.iter().copied())?;
         Ok(Strand(Run {
             prog: self.prog,
@@ -4151,13 +4163,13 @@ impl<'a> Run<'a, '_> {
             answered: BTreeMap::new(),
             logging: None,
             answer_logs: HashMap::new(),
-        }))
+        }, arena))
     }
 
     /// Takes back a strand of the stratum `scc` that ran: its relations, and what its model learnt of them and of
     /// its rules (`rules`, their digests).
     fn absorb(&mut self, s: Strand<'a>, scc: &BTreeSet<String>, rules: &[u64]) {
-        let Strand(run) = s;
+        let Strand(run, _) = s;
         self.model.absorb(self.prog, run.model, scc, rules);
         self.native_rels.extend(run.native_rels.into_iter().filter(|r| scc.contains(r)));
     }
@@ -4167,19 +4179,20 @@ impl<'a> Strand<'a> {
     /// Runs a component's members (decision 0113 §2) in program order on this thread, each to its fixpoint (its
     /// device waves go out as its own batches): how many ran natively, and what stopped the next, if one did (a
     /// decline and its reason, or an error).
-    fn run_members(&mut self, members: &[(BTreeSet<String>, Vec<&'a Rule>)], times: &mut Vec<(std::time::Instant, std::time::Instant)>) -> (usize, Option<Result<(Option<String>, Option<String>)>>) {
+    fn run_members(&mut self, members: &[(BTreeSet<String>, Vec<&'a Rule>)], times: &mut Vec<(std::time::Instant, std::time::Instant)>, reserved: &mut crate::content_store::atoms::Reserved) -> (usize, Option<Result<(Option<String>, Option<String>)>>) {
         let t0 = std::time::Instant::now();
         times.clear();
         times.resize(members.len(), (t0, t0));
-        // Ahead of the run's order, it gives out no new atom (decision 0113 §4): a member that would stops here.
-        let _held = crate::content_store::atoms::held_only();
-        struct Clear;
-        impl Drop for Clear {
+        // The atoms it makes are its own until it retires (decision 0114 §4): reserved, then published.
+        struct End<'r>(Option<crate::content_store::atoms::Reservation>, &'r mut crate::content_store::atoms::Reserved);
+        impl Drop for End<'_> {
             fn drop(&mut self) {
-                super::native::component::held_failed_clear();
+                if let Some(r) = self.0.take() {
+                    *self.1 = r.end();
+                }
             }
         }
-        let _clear = Clear;
+        let _end = End(Some(crate::content_store::atoms::reserving(&self.1)), reserved);
         // Members that wait on their device wave (decision 0113 §3): the next members run meanwhile, and their
         // launches go out as one wave, when a member reads a waiting one or the component ends.
         let mut waiting: Vec<(usize, Box<Driving<'a>>)> = Vec::new();

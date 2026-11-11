@@ -206,8 +206,10 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
     ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
-    // A strand's refused new atom, until its component checks it (decision 0113 §4): an error in flight.
-    ("code_rule_dsl/logic/native/setfix.rs", "HELD_FAILED"),
+    // Atoms reserved by components not yet retired, and this thread's reservation (decision 0114 §4): which
+    // pending atoms no committed row may hold yet, not a result kept.
+    ("content_store/atoms.rs", "RESERVED"),
+    ("content_store/atoms.rs", "RESERVING"),
     ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
     ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),
     // A test process's own tape cache path (`corpus::test_tape_cache`): where the store is, not a result kept.
