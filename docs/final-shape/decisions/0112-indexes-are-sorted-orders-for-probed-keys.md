@@ -1,6 +1,6 @@
 # 0112: A relation's indexes are sorted orders for the keys its probes bind, 4.5–8 bytes a row
 
-Status: being built (2026-11-10).
+Status: built and accepted (2026-11-11): 5.9–9.7 bytes a row at O125, about 1.08× today's CPU.
 
 ## Intro
 
@@ -13,7 +13,8 @@ Status: being built (2026-11-10).
 A hash index stores a 4-byte link per row and a 16-byte record per key. At O125 that is 46–65 bytes a
 row. Copying it is most of a maintained step's fixed cost (11 ms of a 17 ms delta path).
 
-**The target.** 4.5–8 bytes a row of index per relation, about a 90% cut. A variant that misses it is
+**The target.** 4.5–8 bytes a row of index per relation, about a 90% cut, and 2 bytes more for 16
+bits of hash on the full-row order (approved 2026-11-11; no more). A variant that misses it is
 reported as missing it. It is not re-targeted.
 
 **The rule.** A relation keeps an *order* only for the key sets its probes bind:
@@ -40,6 +41,19 @@ run (wave 2): ids [12, 15]
 - **A delta probe** reads the current wave's run only.
 - **A probe whose key no order answers** uses the order leading with the most of its columns. Every
   key is checked on the candidates. With none, it reads every row of the delta or of the relation.
+- **The full-row order is tagged.** It sorts by 16 bits of the leading value's hash first, then by
+  the columns, and keeps each id's tag (2 bytes) instead of fences. A key's span is found among the
+  tags, and only its ids' rows are read. Equal leading values share a tag, so every prefix is still
+  a range. Its sorts and merges compare tags as integers and read rows only within one tag.
+
+```text
+order [a, b, c], tagged: ids sorted by (tag(a), a, b, c), tags [t of id 7, t of id 2, …]
+find (a = 7): the span of tag(7) among the tags, then the rows of that span
+```
+
+- **Probes come in sorted batches where they can.** Each join step keeps its place in each run it
+  probes and searches from there, galloping either way. A step that scans 256 rows or more reads
+  them in the next step's key order, so the next step's probes are one pass over each run.
 
 ## Where an order comes from
 
@@ -68,9 +82,10 @@ four.
 
 ## The dedup test
 
-A pushed row is looked up in the first order. A row pushed since the last wave is not in an order
-yet, so it is looked up in a hash set of those rows only. That set is emptied when the wave's runs
-are made.
+A wave at a time. A rule's derived rows are kept unchecked; at the wave's end (or past 65,536 rows)
+they are sorted as the full-row order sorts, repeats dropped, and each run of that order is searched
+once, in order. The wave's new rows go in already sorted. A gate's relation, whose rows are read
+before its wave ends, also keeps them in a hash set of those rows only until its wave's run is made.
 
 ## Statistics
 
@@ -126,3 +141,30 @@ full" held on all 8 steps of all 4 runs. The load average was 24–87.
   much is the dedup test (a lookup in the full-row order for each row derived).
 - **Next:** test the dedup once per wave, by sorting the wave's rows and merging them against the
   full-row order, as the first spike proposed. Then split the probe cost.
+
+## Measured (2026-11-11)
+
+O125 steps 1–8, the same program and planner fix on every engine, alternating in each round, "same as
+full" on all 8 steps. Today's index was built on the same program by taking the engine's index code
+from before this decision. Load averages 10–80, so rounds are compared within themselves.
+
+| | Today's index | This decision |
+|---|---|---|
+| Bytes a row, "other" (~1.08M rows) | 53–66 | 5.9–7.4 |
+| Bytes a row, "supports" (~0.80M rows) | 53–64 | 3.7–9.7 |
+| Index at step 8 | 44 + 62 MB | 7.2 + 7.4 MB |
+| Peak RSS | 2.0 GB | 1.62 GB |
+| User CPU, one round (s) | 31.8, 31.4 | 33.5, 34.5 |
+
+- **Bytes:** within 8 + 2. "Supports" is past 8 only by the full-row order's tags.
+- **CPU:** about 1.07–1.10× today (1.13× before the batch dedup's sort, the tags and the batched
+  probes). Accepted (2026-11-11).
+- **Where the rest is** (share of the run): probes 10.7% against today's 4.3%; within them the index
+  search is 5.6%, about half of it the loop over a probe's several runs. The batch dedup and run
+  building are 5.6%, against today's hash push 5.6%.
+- **What did not pay:** a tag on the second column within the leading value, and freezing kept
+  relations to one run an order, were both neutral. Every approach tried, with its numbers, is in
+  `../index-shape-exploration.md`.
+- **Fixed on the way:** the plan cache held an empty relation "near" a one-row one, so a plan priced
+  while a relation was empty was reused once it filled (O125 step 2: 32.5 s instead of 0.2 s). It
+  affected every engine.

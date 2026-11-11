@@ -29,10 +29,66 @@ const FENCE: usize = 64;
 /// id merged).
 const PROBE_PER_MERGED_ID: u64 = 8;
 
-/// One run: row ids sorted by the order's columns (then id), and the leading value of every `FENCE`th id.
+/// One run: row ids sorted by the order's columns (then id), and the leading value of every `FENCE`th id. A tagged
+/// run (the order on every column, of two or more: the dedup test) sorts by 16 bits of the leading value's hash
+/// (`tag`) first, then the columns in turn, and keeps each id's tag (`tags`) instead of fences: a key's ids are found
+/// by its tag among the tags (placed by interpolation, as hash order spreads them evenly), and only the ids of that
+/// tag are read. Equal leading values have equal tags, so every prefix of the columns is still a range.
 pub(super) struct Run {
     ids: Vec<u32>,
     fences: Vec<i64>,
+    tags: Vec<u16>,
+}
+
+/// 16 bits of a value's hash (Fibonacci hashing: the product's high bits).
+#[inline]
+pub(super) fn tag(v: i64) -> u16 {
+    ((v as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 48) as u16
+}
+
+/// Whether an order on `cols` of a relation of `k` columns is tagged: the order on every column, of two or more.
+#[inline]
+pub(super) fn tagged(cols: &[usize], k: usize) -> bool {
+    cols.len() >= 2 && cols.len() == k
+}
+
+/// Rows `ra` and `rb` (their values) in an order on `cols`: (tagged) the leading column's tag, then the columns in
+/// turn.
+#[inline]
+pub(super) fn cmp_vals(cols: &[usize], tagged: bool, ra: &[i64], rb: &[i64]) -> Ordering {
+    let Some(&lead) = cols.first() else { return Ordering::Equal };
+    (if tagged { tag(ra[lead]).cmp(&tag(rb[lead])) } else { Ordering::Equal })
+        .then_with(|| cols.iter().map(|&c| ra[c].cmp(&rb[c])).find(|o| o.is_ne()).unwrap_or(Ordering::Equal))
+}
+
+/// The span of `tags` (sorted) equal to `t`, searched from `from`: a galloping search forward from there, or (with
+/// `place`) from where an even spread of tags would put it.
+#[inline]
+fn tag_span(tags: &[u16], t: u16, from: usize, place: bool) -> (usize, usize) {
+    let n = tags.len();
+    if from >= n {
+        return (n, n);
+    }
+    let mut at = if place { from.max(((t as usize) * n) >> 16) } else { from };
+    // Back while the place is past the span's start (it can be, placed by interpolation).
+    let mut step = 1;
+    while at > from && tags[at.min(n - 1)] >= t {
+        at = at.saturating_sub(step).max(from);
+        step *= 2;
+    }
+    // Forward, galloping, to the first tag at or past `t`.
+    let mut bound = 1;
+    while at + bound <= n && tags[at + bound - 1] < t {
+        bound *= 2;
+    }
+    let lo = if bound > 1 { at + bound / 2 } else { at };
+    let hi = (at + bound - 1).min(n);
+    let s = lo + tags[lo..hi].partition_point(|&x| x < t);
+    let mut e = s;
+    while e < n && tags[e] == t {
+        e += 1;
+    }
+    (s, e)
 }
 
 /// An order on the columns `cols` (every key set it answers is a prefix of them).
@@ -50,24 +106,33 @@ impl Clone for Index {
     }
 }
 
-/// Rows `a` and `b` compared on `cols`, in order, then by id (so a sort is the same whatever order it came in).
+/// Rows `a` and `b` in the order on `cols` (`cmp_vals`), then by id (so a sort is the same whatever order it came in).
 #[inline]
 fn cmp_rows(data: &[i64], k: usize, cols: &[usize], a: u32, b: u32) -> Ordering {
     let (ra, rb) = (&data[a as usize * k..][..k], &data[b as usize * k..][..k]);
-    cols.iter().map(|&c| ra[c].cmp(&rb[c])).find(|o| o.is_ne()).unwrap_or_else(|| a.cmp(&b))
+    cmp_vals(cols, tagged(cols, k), ra, rb).then_with(|| a.cmp(&b))
 }
 
 impl Run {
     fn fenced(data: &[i64], k: usize, cols: &[usize], ids: Vec<u32>) -> Run {
+        if tagged(cols, k) {
+            let tags = ids.iter().map(|&id| tag(data[id as usize * k + cols[0]])).collect();
+            return Run { ids, fences: Vec::new(), tags };
+        }
         let fences = match cols.first() {
             Some(&lead) => ids.iter().step_by(FENCE).map(|&id| data[id as usize * k + lead]).collect(),
             None => Vec::new(),
         };
-        Run { ids, fences }
+        Run { ids, fences, tags: Vec::new() }
     }
 
     /// The ids of `ids` sorted by `cols` (then id).
     fn of(data: &[i64], k: usize, cols: &[usize], mut ids: Vec<u32>) -> Run {
+        if tagged(cols, k) {
+            let lead = cols[0];
+            let tags = sort_by_tag(&mut ids, |id| tag(data[id as usize * k + lead]), |a, b| cmp_rows(data, k, cols, a, b));
+            return Run { ids, fences: Vec::new(), tags };
+        }
         ids.sort_unstable_by(|&a, &b| cmp_rows(data, k, cols, a, b));
         Run::fenced(data, k, cols, ids)
     }
@@ -77,24 +142,57 @@ impl Run {
     fn find(&self, data: &[i64], k: usize, cols: &[usize], key: &[i64]) -> &[u32] {
         // No columns: every row (a relation of no columns holds one row at most).
         let Some(&lead) = key.first() else { return &self.ids };
-        // The rows of `lead` start in the block before the first fence at or past it, and end before the first fence
-        // past it.
-        let a = self.fences.partition_point(|&f| f < lead);
-        let b = a + self.fences[a..].partition_point(|&f| f == lead);
-        let window = &self.ids[a.saturating_sub(1) * FENCE..(b * FENCE).min(self.ids.len())];
         let cmp = |id: u32| -> Ordering {
             let r = &data[id as usize * k..][..k];
             cols.iter().zip(key).map(|(&c, v)| r[c].cmp(v)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
+        };
+        let window = if !self.tags.is_empty() {
+            // The leading value's tag among the tags: only its ids are read.
+            let (s, e) = tag_span(&self.tags, tag(lead), 0, true);
+            &self.ids[s..e]
+        } else {
+            // The rows of `lead` start in the block before the first fence at or past it, and end before the first
+            // fence past it.
+            let a = self.fences.partition_point(|&f| f < lead);
+            let b = a + self.fences[a..].partition_point(|&f| f == lead);
+            &self.ids[a.saturating_sub(1) * FENCE..(b * FENCE).min(self.ids.len())]
         };
         let s = window.partition_point(|&id| cmp(id) == Ordering::Less);
         let e = s + window[s..].partition_point(|&id| cmp(id) == Ordering::Equal);
         &window[s..e]
     }
 
+    /// `find`, from where the last key of a sequence was found (`hint`, a position in this run, set past this key's
+    /// ids): the tags or fences are searched galloping from there, either way, so a key near the last one (a sorted
+    /// batch of keys, decision 0112) reads only what is near, and a far one costs about a search from scratch.
+    #[inline]
+    fn find_at(&self, data: &[i64], k: usize, cols: &[usize], key: &[i64], hint: &mut u32) -> &[u32] {
+        let Some(&lead) = key.first() else { return &self.ids };
+        let n = self.ids.len();
+        let cmp = |id: u32| -> Ordering {
+            let r = &data[id as usize * k..][..k];
+            cols.iter().zip(key).map(|(&c, v)| r[c].cmp(v)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
+        };
+        let (lo, hi) = if !self.tags.is_empty() {
+            let t = tag(lead);
+            let s = gallop(&self.tags, (*hint as usize).min(n), |&x| x < t);
+            (s, s + gallop(&self.tags[s..], 0, |&x| x == t))
+        } else {
+            let a = gallop(&self.fences, (*hint as usize / FENCE).min(self.fences.len()), |&f| f < lead);
+            let b = a + gallop(&self.fences[a..], 0, |&f| f == lead);
+            (a.saturating_sub(1) * FENCE, (b * FENCE).min(n))
+        };
+        let window = &self.ids[lo..hi];
+        let s = window.partition_point(|&id| cmp(id) == Ordering::Less);
+        let e = s + window[s..].partition_point(|&id| cmp(id) == Ordering::Equal);
+        *hint = (lo + e) as u32;
+        &window[s..e]
+    }
+
     /// Sets `held[i]` when a live id (`live`) holds row `order[i]` of `rows` (flat, `k` columns each): `order` lists
-    /// distinct rows sorted by `cols`, so each row's search starts where the last one's ended. The fences (leading
-    /// values, inline) find a row's block from there; within it the search gallops, so rows near each other in the
-    /// order read few rows of `data`.
+    /// distinct rows sorted as this run is (`cmp_vals`), so each row's search starts where the last one's ended. Its
+    /// block is found by the fences (leading values, inline), or in a tagged run its tag's span by the tags; within it
+    /// the search gallops, so rows near each other in the order read few rows of `data`.
     fn held_sorted(&self, data: &[i64], k: usize, cols: &[usize], rows: &[i64], order: &[u32], live: &impl Fn(u32) -> bool, held: &mut [bool]) {
         let n = self.ids.len();
         let Some(&lead) = cols.first() else {
@@ -104,6 +202,7 @@ impl Run {
             }
             return;
         };
+        let tagged = !self.tags.is_empty();
         let mut at = 0;
         for (i, &q) in order.iter().enumerate() {
             if at >= n {
@@ -113,10 +212,15 @@ impl Run {
                 continue;
             }
             let row = &rows[q as usize * k..][..k];
-            let cmp = |id: u32| -> Ordering {
-                let r = &data[id as usize * k..][..k];
-                cols.iter().map(|&c| r[c].cmp(&row[c])).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
-            };
+            let cmp = |id: u32| -> Ordering { cmp_vals(cols, tagged, &data[id as usize * k..][..k], row) };
+            if tagged {
+                // The row's tag span, from where the last row's search ended; within it, the rows read in order.
+                let (s, e) = tag_span(&self.tags, tag(row[lead]), at, false);
+                let p = s + self.ids[s..e].partition_point(|&id| cmp(id).is_lt());
+                at = p;
+                held[i] = self.ids[p..e].iter().take_while(|&&id| cmp(id).is_eq()).any(|&id| live(id));
+                continue;
+            }
             // The first id at or past the row is past the block before the first fence at or past its leading value.
             let v = row[lead];
             let from = at / FENCE;
@@ -137,18 +241,29 @@ impl Run {
     /// Two runs as one.
     fn merge(data: &[i64], k: usize, cols: &[usize], a: &Run, b: &Run) -> Run {
         let mut ids = Vec::with_capacity(a.ids.len() + b.ids.len());
+        let tagged = !a.tags.is_empty() && !b.tags.is_empty();
+        let mut tags = Vec::with_capacity(if tagged { ids.capacity() } else { 0 });
         let (mut i, mut j) = (0, 0);
         while i < a.ids.len() && j < b.ids.len() {
-            if cmp_rows(data, k, cols, a.ids[i], b.ids[j]).is_le() {
+            // Tagged, the tags decide unless equal: rows are read only for ids of one tag.
+            let first = if tagged && a.tags[i] != b.tags[j] { a.tags[i] < b.tags[j] } else { cmp_rows(data, k, cols, a.ids[i], b.ids[j]).is_le() };
+            if first {
                 ids.push(a.ids[i]);
+                if tagged { tags.push(a.tags[i]); }
                 i += 1;
             } else {
                 ids.push(b.ids[j]);
+                if tagged { tags.push(b.tags[j]); }
                 j += 1;
             }
         }
         ids.extend_from_slice(&a.ids[i..]);
         ids.extend_from_slice(&b.ids[j..]);
+        if tagged {
+            tags.extend_from_slice(&a.tags[i..]);
+            tags.extend_from_slice(&b.tags[j..]);
+            return Run { ids, fences: Vec::new(), tags };
+        }
         Run::fenced(data, k, cols, ids)
     }
 
@@ -194,6 +309,63 @@ impl<'a> Found<'a> {
     pub(super) fn parts(&self) -> impl Iterator<Item = &'a [u32]> + '_ {
         self.first[..self.n.min(self.first.len())].iter().copied().chain(self.rest.iter().copied())
     }
+}
+
+/// The first position of `v` (partitioned: `less` holds before it, not from it) not `less`: a galloping search from
+/// `start`, forward or back, so its cost grows with the distance from `start`, not with `v`'s length.
+#[inline]
+fn gallop<T>(v: &[T], start: usize, less: impl Fn(&T) -> bool) -> usize {
+    let n = v.len();
+    let start = start.min(n);
+    if start < n && less(&v[start]) {
+        // Forward: the first not `less` is past `start`.
+        let mut step = 1;
+        let mut lo = start + 1;
+        while lo + step <= n && less(&v[lo + step - 1]) {
+            lo += step;
+            step *= 2;
+        }
+        let hi = (lo + step).min(n);
+        lo + v[lo..hi].partition_point(|x| less(x))
+    } else {
+        // Back: the first not `less` is at or before `start`.
+        let mut step = 1;
+        let mut hi = start;
+        while hi >= step && !less(&v[hi - step]) {
+            hi -= step;
+            step *= 2;
+        }
+        let lo = hi.saturating_sub(step);
+        lo + v[lo..hi].partition_point(|x| less(x))
+    }
+}
+
+/// Runs an order's probes keep their place in (`Index::find_at`); past them, a run is searched from scratch.
+pub(super) const HINTS: usize = 8;
+
+/// `ids` sorted by `cmp` where `cmp` orders by `tag_of` first (a tagged order): the ids sorted by (tag, id) as plain
+/// integers, then each stretch of one tag by `cmp`, so rows are read only to order ids of equal tags. The sorted
+/// ids' tags are returned.
+pub(super) fn sort_by_tag(ids: &mut [u32], tag_of: impl Fn(u32) -> u16, cmp: impl Fn(u32, u32) -> Ordering) -> Vec<u16> {
+    let mut keys: Vec<u64> = ids.iter().map(|&id| (u64::from(tag_of(id)) << 32) | u64::from(id)).collect();
+    keys.sort_unstable();
+    let mut tags = Vec::with_capacity(keys.len());
+    for (slot, key) in ids.iter_mut().zip(&keys) {
+        *slot = *key as u32;
+        tags.push((key >> 32) as u16);
+    }
+    let mut at = 0;
+    while at < ids.len() {
+        let mut end = at + 1;
+        while end < ids.len() && tags[end] == tags[at] {
+            end += 1;
+        }
+        if end - at > 1 {
+            ids[at..end].sort_unstable_by(|&a, &b| cmp(a, b));
+        }
+        at = end;
+    }
+    tags
 }
 
 impl Index {
@@ -242,7 +414,7 @@ impl Index {
             let b = parts.pop().expect("a run");
             parts.push(Arc::new(Run::merge(data, k, &self.cols, &a, &b)));
         }
-        Arc::try_unwrap(parts.pop().expect("a run")).unwrap_or_else(|r| Run { ids: r.ids.clone(), fences: r.fences.clone() })
+        Arc::try_unwrap(parts.pop().expect("a run")).unwrap_or_else(|r| Run { ids: r.ids.clone(), fences: r.fences.clone(), tags: r.tags.clone() })
     }
 
     /// At most `max` runs, the two smallest merged at a time (a relation's frozen order: its probes cannot merge it
@@ -298,6 +470,33 @@ impl Index {
         found
     }
 
+    /// `find`, each run searched from where this sequence of probes last was in it (`hints`, one a run, set past this
+    /// key's ids): a sorted batch of keys reads each run once, in order.
+    #[inline]
+    pub(super) fn find_at<'a>(&'a self, data: &[i64], k: usize, key: &[i64], delta: Option<u32>, hints: &mut [u32; HINTS]) -> Found<'a> {
+        let mut found = Found::default();
+        let mut read = 0u64;
+        for (r, (run, w)) in self.runs.iter().enumerate() {
+            if delta.is_some_and(|d| d != *w) {
+                continue;
+            }
+            read += 1;
+            let s = if r < HINTS { run.find_at(data, k, &self.cols, key, &mut hints[r]) } else { run.find(data, k, &self.cols, key) };
+            if !s.is_empty() {
+                found.add(s);
+            }
+        }
+        if read > 1 {
+            self.rent.fetch_add(read - 1, AtomicOrdering::Relaxed);
+        }
+        found
+    }
+
+    /// Whether this order is tagged (`tagged`) for a relation of `k` columns.
+    pub(super) fn is_tagged(&self, k: usize) -> bool {
+        tagged(&self.cols, k)
+    }
+
     /// Sets `held[i]` when a live id (`live`) of this order holds row `order[i]` of `rows` (flat, `k` columns each):
     /// `order` lists distinct rows sorted by this order's columns, which are every column (the first order, the dedup
     /// test). Each run is searched once, in order (decision 0112: the dedup test a wave at a time).
@@ -336,9 +535,10 @@ impl Index {
         self.runs.iter().all(|(r, _)| other.runs.iter().any(|(o, _)| Arc::ptr_eq(r, o)))
     }
 
-    /// Bytes held: an id a row and its fences, and each run's own allocation (shared runs counted by each holder).
+    /// Bytes held: an id a row, its tag (a tagged order), its fences, and each run's own allocation (shared runs
+    /// counted by each holder).
     pub(super) fn bytes(&self) -> usize {
-        self.runs.iter().map(|(r, _)| r.ids.capacity() * 4 + r.fences.capacity() * 8 + 64).sum::<usize>() + self.runs.capacity() * 16
+        self.runs.iter().map(|(r, _)| r.ids.capacity() * 4 + r.tags.capacity() * 2 + r.fences.capacity() * 8 + 64).sum::<usize>() + self.runs.capacity() * 16
     }
 }
 
@@ -387,5 +587,59 @@ mod tests {
         by10.tier(&rows, k, 2);
         assert_eq!(by10.runs(), 2);
         assert_eq!(by10.find(&rows, k, &[3], None).len(), (0..2000).filter(|i| i % 7 == 3).count());
+    }
+
+    /// The order on every column is tagged (decision 0112, the dedup test sorted by 16 bits of the leading value's
+    /// hash first): keys are found by their tags, long spans of one leading value included, and every prefix is still
+    /// a range.
+    #[test]
+    fn a_tagged_order_finds_keys_in_long_spans_of_one_leading_value() {
+        let k = 3;
+        let rows: Vec<i64> = (0..20_000i64).flat_map(|i| [i % 3, (i * 7919) % 500, i]).collect();
+        let mut ix = Index::new(vec![0, 1, 2]);
+        ix.add_run(&rows, k, 0, 12_000, 1);
+        ix.add_run(&rows, k, 12_000, 20_000, 2);
+        assert!(ix.runs.iter().all(|(r, _)| r.tags.len() == r.ids.len()), "the full-row order keeps a tag an id");
+        let want = |a: i64, b: Option<i64>| (0..20_000i64).filter(|i| i % 3 == a && b.is_none_or(|b| (i * 7919) % 500 == b)).count();
+        for a in 0..4 {
+            assert_eq!(ix.find(&rows, k, &[a], None).len(), want(a, None));
+            for b in [0, 7, 251, 499, 500] {
+                assert_eq!(ix.find(&rows, k, &[a, b], None).len(), want(a, Some(b)), "({a}, {b})");
+            }
+        }
+        assert_eq!(ix.find(&rows, k, &[1, (4 * 7919) % 500, 4], None).len(), 1);
+        assert_eq!(ix.find(&rows, k, &[1, (4 * 7919) % 500, 5], None).len(), 0);
+        // The dedup test, a sorted batch: rows held and not, sorted as the order sorts them.
+        let probe: Vec<i64> = [[1, (4 * 7919) % 500, 4], [1, (4 * 7919) % 500, 5], [2, (5 * 7919) % 500, 5], [0, 3, 20_001]].concat();
+        let mut order: Vec<u32> = (0..4).collect();
+        order.sort_by(|&a, &b| cmp_vals(&ix.cols, true, &probe[a as usize * k..][..k], &probe[b as usize * k..][..k]));
+        let mut held = vec![false; 4];
+        ix.held_sorted(&rows, k, &probe, &order, |_| true, &mut held);
+        let by: Vec<bool> = (0..4u32).map(|q| held[order.iter().position(|&o| o == q).unwrap()]).collect();
+        assert_eq!(by, [true, false, true, false]);
+        let (mut groups, mut seen) = (0, 0);
+        ix.each_group(&rows, k, 2, |ids| {
+            groups += 1;
+            seen += ids.len();
+        });
+        assert_eq!((groups, seen), (1500, 20_000), "each (a, b) one group");
+    }
+
+    /// A tagged order sorted by its tags as integers, then rows only within a tag, is the comparator's sort; a merge
+    /// keeps each id's tag beside it.
+    #[test]
+    fn sorting_by_tag_is_the_orders_sort() {
+        let k = 3;
+        let rows: Vec<i64> = (0..30_000i64).flat_map(|i| [(i * 37) % 1009, i % 5, (i * 7) % 11]).collect();
+        let cols = [0usize, 1, 2];
+        let run = Run::of(&rows, k, &cols, (0..30_000u32).collect());
+        let mut want: Vec<u32> = (0..30_000).collect();
+        want.sort_unstable_by(|&a, &b| cmp_rows(&rows, k, &cols, a, b));
+        assert_eq!(run.ids, want);
+        assert!(run.ids.iter().zip(&run.tags).all(|(&id, &t)| t == tag(rows[id as usize * k])));
+        let (a, b) = (Run::of(&rows, k, &cols, (0..12_000).collect()), Run::of(&rows, k, &cols, (12_000..30_000).collect()));
+        let merged = Run::merge(&rows, k, &cols, &a, &b);
+        assert_eq!(merged.ids, want);
+        assert_eq!(merged.tags, run.tags);
     }
 }
