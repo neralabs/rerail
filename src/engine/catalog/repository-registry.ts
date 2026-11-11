@@ -359,12 +359,111 @@ export function checkoutStatus(db: Reader, checkout: CheckoutContext | undefined
   if (checkout === undefined) return { started: false, setUp: false, startedBy: "repository" };
   const repository = db.select({ started: repositories.started, configuredAt: repositories.configuredAt })
     .from(repositories).where(eq(repositories.repositoryKey, checkout.repositoryKey)).get();
+  const own = db.select({ started: checkouts.started }).from(checkouts).where(eq(checkouts.checkoutPath, checkout.checkoutPath)).get()?.started ?? null;
+  return statusOf(repository, own, own === null ? parentCheckouts(db, checkout) : []);
+}
+
+/** The status a checkout's own on/off, its parents' (nearest first) and its repository's row give it. */
+function statusOf(
+  repository: { readonly started: boolean | null; readonly configuredAt: number | null } | undefined,
+  own: boolean | null,
+  parents: readonly Pick<CheckoutRecord, "started">[],
+): RepositoryStatus {
   const setUp = repository?.configuredAt != null;
-  const own = db.select({ started: checkouts.started }).from(checkouts).where(eq(checkouts.checkoutPath, checkout.checkoutPath)).get()?.started;
-  if (own != null) return { started: own, setUp, startedBy: "checkout" };
-  const parent = parentCheckouts(db, checkout).find(row => row.started !== null);
-  if (parent?.started != null) return { started: parent.started, setUp, startedBy: "parent" };
+  if (own !== null) return { started: own, setUp, startedBy: "checkout" };
+  const parent = parents.find(row => row.started !== null)?.started;
+  if (parent != null) return { started: parent, setUp, startedBy: "parent" };
   return { started: repository?.started === true, setUp, startedBy: "repository" };
+}
+
+/** A recorded checkout as {@link recordedCheckoutsReader} reads it. */
+export interface RecordedCheckoutStatus {
+  readonly repositoryKey: RepositoryKey;
+  readonly cloneId: string;
+  /** The recorded checkouts of its repository whose folder holds it, nearest first ({@link parentCheckouts}). */
+  readonly parents: readonly string[];
+  /** {@link checkoutStatus} of the checkout. */
+  readonly status: RepositoryStatus;
+}
+
+/** A row at a checkout's path or a folder above it, with its repository's start state and set-up. */
+interface CheckoutStateRow {
+  readonly checkoutPath: string;
+  readonly repositoryKey: RepositoryKey;
+  readonly cloneId: string;
+  readonly started: boolean | null;
+  readonly repositoryStarted: boolean | null;
+  readonly configuredAt: number | null;
+}
+
+/** The paths one read asks for: the checkouts, each with the folders above it, and all of them as the statement's parameter. */
+interface CheckoutsQuestion {
+  readonly asked: readonly string[];
+  readonly folders: ReadonlyMap<string, readonly string[]>;
+  readonly parameter: string;
+}
+
+/** `last` when it asks the same checkouts; each checkout's folders come from `known`, worked out once per checkout. */
+function checkoutsQuestion(asked: readonly string[], last: CheckoutsQuestion | undefined, known: Map<string, readonly string[]>): CheckoutsQuestion {
+  if (last !== undefined && last.asked.length === asked.length && last.asked.every((path, index) => path === asked[index])) return last;
+  const folders = new Map(asked.map(path => {
+    let above = known.get(path);
+    if (above === undefined) {
+      above = enclosingFolders(path);
+      known.set(path, above);
+    }
+    return [path, above];
+  }));
+  return { asked: [...asked], folders, parameter: JSON.stringify([...new Set([...asked, ...[...folders.values()].flat()])]) };
+}
+
+/** Each asked checkout that has a row, with its parents and status from the rows at the folders above it. */
+function recordedStatuses(question: CheckoutsQuestion, rows: ReadonlyMap<string, CheckoutStateRow>): Map<string, RecordedCheckoutStatus> {
+  const read = new Map<string, RecordedCheckoutStatus>();
+  for (const path of question.asked) {
+    const own = rows.get(path);
+    if (own === undefined) continue;
+    // The folders run from the parent folder up, so the parents found are nearest first.
+    const parents = question.folders.get(path)!.flatMap(folder => {
+      const row = rows.get(folder);
+      return row?.repositoryKey === own.repositoryKey ? [row] : [];
+    });
+    read.set(path, {
+      repositoryKey: own.repositoryKey,
+      cloneId: own.cloneId,
+      parents: parents.map(row => row.checkoutPath),
+      status: statusOf({ started: own.repositoryStarted, configuredAt: own.configuredAt }, own.started, parents),
+    });
+  }
+  return read;
+}
+
+/**
+ * {@link parentCheckouts} and {@link checkoutStatus} of many recorded checkouts in one statement, prepared once for the
+ * connection: the rows at each checkout's path and at the folders above it, with their repository's start state and
+ * set-up. A reader that asks after every checkout it knows on every event pays one statement, not five per checkout,
+ * and asking the same checkouts as last time works out their folders once. A path with no row is left out.
+ */
+export function recordedCheckoutsReader(db: Reader): (checkoutPaths: readonly string[]) => Map<string, RecordedCheckoutStatus> {
+  const query = db.select({
+    checkoutPath: checkouts.checkoutPath,
+    repositoryKey: checkouts.repositoryKey,
+    cloneId: checkouts.cloneId,
+    started: checkouts.started,
+    repositoryStarted: repositories.started,
+    configuredAt: repositories.configuredAt,
+  }).from(checkouts)
+    .leftJoin(repositories, eq(repositories.repositoryKey, checkouts.repositoryKey))
+    .where(sql`${checkouts.checkoutPath} IN (SELECT value FROM json_each(${sql.placeholder("paths")}))`)
+    .prepare();
+  const folders = new Map<string, readonly string[]>();
+  let last: CheckoutsQuestion | undefined;
+  return checkoutPaths => {
+    const question = checkoutsQuestion(checkoutPaths, last, folders);
+    last = question;
+    const rows = new Map(query.all({ paths: question.parameter }).map(row => [row.checkoutPath, row]));
+    return recordedStatuses(question, rows);
+  };
 }
 
 /** Whether audits of `checkout`'s repository leave out files Git ignores: its setting, on for a checkout not recorded. */

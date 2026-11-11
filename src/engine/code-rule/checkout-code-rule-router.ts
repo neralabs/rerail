@@ -13,7 +13,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { storedPath } from "../catalog/checkout-control.js";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
-import { worktreeRegistry } from "../catalog/repository-identity.js";
+import { worktreeRegistry, type WorktreeRegistry } from "../catalog/repository-identity.js";
 import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
 import type {
   AuditorCloseOptions,
@@ -51,6 +51,8 @@ interface Lane {
   readonly root: string;
   readonly enforcer: NativeCodeRuleEnforcer;
   readonly opening: Promise<void>;
+  /** The count of `refreshCodeRules` calls when its rules were last read; it reads them again at its next use after another. */
+  refreshed: number;
 }
 
 function merged(revision: number, responses: readonly CodeRuleResponse[]): CodeRuleResponse {
@@ -72,6 +74,10 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   readonly #sessionRoot: string;
   readonly #lanes = new Map<string, Lane>();
   readonly #eligibility = new Map<string, CheckoutEligibility>();
+  /** How many times `refreshCodeRules` ran; a lane whose `refreshed` is lower reads its rules again at its next use. */
+  #refreshes = 0;
+  /** `worktreeRoots` before its eligibility filter, with the registry and the recorded checkouts' version it was worked out at. */
+  #ownedWorktrees: { readonly registry: WorktreeRegistry | undefined; readonly recorded: string; readonly roots: readonly string[] } | undefined;
   #settings: Required<AuditSettings>;
   #sessionId: string | undefined;
   #closing = false;
@@ -95,18 +101,18 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   }
 
   /**
-   * Re-read every known checkout's eligibility. A lane whose checkout may no longer run rules (stopped, not set up, or
-   * the session's own checkout stopped) is closed, so its last result stops reaching later responses; it opens again
-   * if the checkout becomes eligible.
+   * Re-read every known checkout's eligibility, in one statement however many the session knows: its walks come to
+   * know every worktree of its repository. A lane whose checkout may no longer run rules (stopped, not set up, or the
+   * session's own checkout stopped) is closed, so its last result stops reaching later responses; it opens again if
+   * the checkout becomes eligible. Every other lane reads its rules again at its next use (`#lane`), before it answers
+   * or audits anything, so a tool call reads the rules of the lanes it uses, not of every lane open.
    */
   refreshCodeRules(): void {
     if (this.#closing) return;
-    for (const root of this.#eligibility.keys()) this.#eligibility.set(root, this.#options.catalogs.refresh(root));
+    for (const [root, eligibility] of this.#options.catalogs.refreshAll([...this.#eligibility.keys()])) this.#eligibility.set(root, eligibility);
+    this.#refreshes += 1;
     for (const lane of [...this.#lanes.values()]) {
-      if (this.#mayRun(lane.root)) {
-        lane.enforcer.refreshCodeRules();
-        continue;
-      }
+      if (this.#mayRun(lane.root)) continue;
       this.#lanes.delete(lane.root);
       lane.enforcer.interrupt();
       void lane.opening.catch(() => undefined).then(() => lane.enforcer.close()).catch(() => undefined);
@@ -147,9 +153,19 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    */
   worktreeRoots(): string[] {
     const starting = this.#options.startingCheckout;
-    return (worktreeRegistry(starting)?.worktrees ?? [])
-      .map(worktree => storedPath(worktree))
-      .filter(root => root !== starting && existsSync(root) && this.#owner(root)?.checkoutRoot === root && this.#mayRun(root));
+    const registry = worktreeRegistry(starting);
+    const recorded = this.#options.catalogs.recordedCheckoutsVersion();
+    let known = this.#ownedWorktrees;
+    // Which worktrees own their files changes only with Git's registry or the recorded checkouts. Working it out looks
+    // up each worktree's folders on disk, so it is done again only when one of those two changed, not at every walk.
+    if (known === undefined || known.registry !== registry || known.recorded !== recorded) {
+      const roots = (registry?.worktrees ?? []).map(worktree => storedPath(worktree))
+        .filter(root => root !== starting && existsSync(root) && this.#owner(root)?.checkoutRoot === root);
+      known = { registry, recorded, roots };
+      this.#ownedWorktrees = known;
+    }
+    // A folder removed without `git worktree remove` stays registered until Git prunes it.
+    return known.roots.filter(root => existsSync(join(root, ".git")) && this.#mayRun(root));
   }
 
   /**
@@ -339,13 +355,18 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   }
 
   /**
-   * The lane of an eligible checkout, opened on first use; undefined while the checkout may not run rules, and for
-   * every checkout while the session's own checkout is stopped (the gate stays on the starting checkout).
+   * The lane of an eligible checkout, opened on first use and reading its rules again on its first use after each
+   * `refreshCodeRules`; undefined while the checkout may not run rules, and for every checkout while the session's own
+   * checkout is stopped (the gate stays on the starting checkout).
    */
   #lane(root: string): Lane | undefined {
     const sessionId = this.#sessionId;
     if (sessionId === undefined || this.#closing || !this.#mayRun(root)) return undefined;
     let lane = this.#lanes.get(root);
+    if (lane !== undefined && lane.refreshed !== this.#refreshes) {
+      lane.refreshed = this.#refreshes;
+      lane.enforcer.refreshCodeRules();
+    }
     if (lane === undefined) {
       const enforcer = new NativeCodeRuleEnforcer(this.#options.catalogs.catalog(root), {
         workspaceRoot: root,
@@ -358,7 +379,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
         nestedCheckouts: () => this.#nestedCheckoutsOf(root),
       });
       // The enforcer registers its code rules synchronously, so the new lane answers `acceptsPath` at once.
-      lane = { root, enforcer, opening: enforcer.openWorkspace(sessionId) };
+      lane = { root, enforcer, opening: enforcer.openWorkspace(sessionId), refreshed: this.#refreshes };
       lane.opening.catch(() => undefined);
       this.#lanes.set(root, lane);
     }
