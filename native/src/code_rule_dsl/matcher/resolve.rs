@@ -238,7 +238,7 @@ enum ThisBoundary {
 }
 
 impl Resolves {
-    pub(super) fn holds<D: Doc>(&self, node: &Node<'_, D>) -> bool {
+    pub(crate) fn holds<D: Doc>(&self, node: &Node<'_, D>) -> bool {
         { let pack = language_pack::pack(Family::of(self.language)); self.holds_in::<D>(pack, node) }
     }
 

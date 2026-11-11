@@ -62,7 +62,7 @@ fn every<'r, D: Doc>(count: usize, make: impl Fn() -> Passed<'r, D>) -> Vec<Pass
 
 
 impl Arguments {
-    pub(super) fn match_node<'tree, D: Doc>(
+    pub(crate) fn match_node<'tree, D: Doc>(
         &self,
         node: Node<'tree, D>,
         env: &mut Cow<MetaVarEnv<'tree, D>>,

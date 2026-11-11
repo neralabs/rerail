@@ -26,7 +26,7 @@ thread_local! {
     /// as it found it; one that fails leaves it set if it was set on entry or its own failure is
     /// unknown. Readers (`not`, relations, `count`) clear it before the sub-rule they read and
     /// restore it after.
-    pub(super) static UNKNOWN: Cell<bool> = const { Cell::new(false) };
+    pub(crate) static UNKNOWN: Cell<bool> = const { Cell::new(false) };
     /// Whether the root being matched can reach an unknown verdict (it reads values). Without one,
     /// no matcher touches `UNKNOWN`, so rules that read no values match exactly as they did.
     pub(super) static THREE_VALUED: Cell<bool> = const { Cell::new(false) };

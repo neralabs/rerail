@@ -91,7 +91,7 @@ impl Layout {
             || self.context.is_some()
     }
 
-    pub(super) fn match_node<'t, D: Doc>(
+    pub(crate) fn match_node<'t, D: Doc>(
         &self,
         node: Node<'t, D>,
         env: &mut Cow<MetaVarEnv<'t, D>>,

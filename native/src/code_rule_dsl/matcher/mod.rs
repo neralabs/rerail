@@ -44,7 +44,7 @@ mod semantic;
 #[cfg(test)]
 mod tests;
 pub(in crate::code_rule_dsl) mod transform;
-mod util;
+pub(crate) mod util;
 mod value;
 
 use super::budget;
@@ -102,8 +102,6 @@ pub(super) use run::{Stopped, enumerate, node_at, run_clause};
 #[cfg(test)]
 pub(crate) use run::{reset_roots_matched, roots_matched};
 pub(super) use semantic::Semantic;
-#[cfg(test)]
-pub(crate) use semantic::producer_facts;
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::sync::Arc;
