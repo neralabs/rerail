@@ -162,6 +162,17 @@ fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>,
             {
                 return (BTreeSet::from([x.clone()]), lv, true);
             }
+            // `m = @dot(q, x)` with `m` bound splits it at each dot (`split_dot`, the engine's `@cat` split: T's
+            // `cmp_binds`), binding `q` and `x`.
+            for (whole, parts) in [(l, r), (r, l)] {
+                if let (Term::Var(m), Term::Call { name, args, .. }) = (whole, parts)
+                    && name == "dot"
+                    && args.iter().all(|a| matches!(a, Term::Var(_)))
+                {
+                    let ready = force || bound.contains(m);
+                    return (args.iter().flat_map(vars_of).collect(), BTreeSet::from([m.clone()]), ready);
+                }
+            }
             let vs: BTreeSet<String> = lv.union(&rv).cloned().collect();
             let ready = force || vs.is_subset(bound);
             (none(), vs, ready)
