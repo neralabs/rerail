@@ -1560,7 +1560,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/async-executor.rr",
-      "sha256": "1a62227537854952d9324502e079f376e8a1bd854fb76d9f83b1b536769f304f",
+      "sha256": "9aa0a04c332c3e38f8d8717138d54cda7eed1b586426971017cf90cf2fb3d764",
       "origin": "authored",
       "upstreamPath": "scripts/lint_async_executor.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -1588,7 +1588,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/type-safety-patterns.rr",
-      "sha256": "263e57fbe02603c6000cd64a32a8abea2ac9e5859c46a334c213f388b952e373",
+      "sha256": "a0bd632185eafb87804ec3ff22704d53948ed2118c60e7aecc518b6bd2212b37",
       "origin": "authored",
       "upstreamPath": "scripts/lint_type_safety_patterns.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -3534,7 +3534,7 @@
       "legacySha256": "311eda52dff8cfc9108b52fcb2971412c59f1ea97c1784d6b4e47173ac8e61ca",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/type-safety-patterns.rr",
-      "ruleSha256": "263e57fbe02603c6000cd64a32a8abea2ac9e5859c46a334c213f388b952e373"
+      "ruleSha256": "a0bd632185eafb87804ec3ff22704d53948ed2118c60e7aecc518b6bd2212b37"
     },
     {
       "check": "conn_or_txn_union",
@@ -3552,7 +3552,7 @@
       "legacySha256": "0e64fd634326c0bb3676f2cf8ed817f4508cde8a5dbc33ea8934afae6b88751b",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/async-executor.rr",
-      "ruleSha256": "1a62227537854952d9324502e079f376e8a1bd854fb76d9f83b1b536769f304f"
+      "ruleSha256": "9aa0a04c332c3e38f8d8717138d54cda7eed1b586426971017cf90cf2fb3d764"
     },
     {
       "check": "async_patterns",
@@ -4717,7 +4717,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "7330552f8b3aa8769ca3e10a2587c13df5f4068b",
-    "status": "Final 7330552f8 merged. Rebuilding to check retained native request answers.",
+    "status": "Final 7330552f8 root CLI rebuilt with retained request answers.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -5048,6 +5048,24 @@
         "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
         "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
       }
+    },
+    "cliArtifact": {
+      "format": "rerail.root-engine-build/v1",
+      "engineCommit": "2a09faba87bac060fc2795608094289fad9dddf5",
+      "upstreamCommit": "7330552f8b3aa8769ca3e10a2587c13df5f4068b",
+      "sourceTrees": {
+        "native": "de907b372b7ab640af4ddc32718968873618160e",
+        "accel": "81d49bce9e756ba3c44b85d319be41cf37779a53",
+        "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
+        "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
+        "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
+      },
+      "path": ".rerail/modern-engine-alignment/cli-b5fc6feb1a934585",
+      "sha256": "b5fc6feb1a9345854ff46b33699f1059f37e9c06000185ceac8893cad121e47d",
+      "command": "nice -n 19 rustup run 1.95.0 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling",
+      "wallSeconds": 223.44,
+      "userCpuSeconds": 672.5,
+      "systemCpuSeconds": 24.49
     }
   },
   "engineSourceSnapshots": [

@@ -466,7 +466,8 @@ class Suite:
                 except Exception as error:
                     print(f'Warning: Could not read {path}: {error}', file=sys.stderr)
                     return []
-            rows = self.native(check, entry, [dict(path=path.name, source=source)])
+            rows = self.native(check, entry, [dict(path='input/source.py', source=source)],
+                               dict(apiInputDirs=['input']))
             rows.sort(key=lambda r: r['line'])
             return [(r['line'], r['parameters']['source']) for r in rows]
         if check == 'admin_async_purity':

@@ -3,6 +3,15 @@ import os
 from pathlib import Path
 
 
+def supplied_files(suite, check, entry, sources, options=None):
+    files = [dict(path=f'input/{i}/source.py', source=source) for i, (_, _, source) in enumerate(sources)]
+    options = dict(options or {}, apiInputDirs=['input'], apiBuffers=[f['path'] for f in files],
+                   apiSourcePaths=[p for p, _, _ in sources], apiSourceNames=[p.name for _, p, _ in sources])
+    rows = suite.native(check, entry, files, options)
+    originals = {file['path']: original for file, (_, original, _) in zip(files, sources, strict=True)}
+    return rows, originals
+
+
 def scan(suite, entry, module, args):
     check = 'type_safety_patterns'
     if entry == 'normalize_path':
@@ -20,12 +29,12 @@ def scan(suite, entry, module, args):
         root = Path(args['directory'])
         # Enumerate without the source scanner's pruning. SQL owns the complete filter.
         paths = [Path(parent) / name for parent, _, names in os.walk(root) for name in names]
-        names = [p.relative_to(root).as_posix() for p in paths]
-        rows = suite.native(check, entry, [dict(path=name, source='') for name in names])
+        rows, originals = supplied_files(suite, check, entry,
+            [(path.relative_to(root).as_posix(), path, '') for path in paths])
         if any(r['code'] != 'TSP_DISCOVERED' for r in rows):
             raise AssertionError('Invalid native discovery output')
         selected = {r['path'] for r in rows}
-        return iter(path for name, path in zip(names, paths) if name in selected)
+        return iter(path for name, path in originals.items() if name in selected)
     if entry == '_dedupe_issues':
         issues = args['issues']
         rows = suite.native(check, entry, [], dict(issuePaths=[str(v.file_path) for v in issues],
@@ -38,7 +47,7 @@ def scan(suite, entry, module, args):
     else:
         paths = [Path(args['file_path'])]
     root = Path(args['base_dir'])
-    files, originals = [], {}
+    sources = []
     for path in paths:
         try:
             content = (args['content'] if entry == 'check_file_content_for_patterns' else path.read_text())
@@ -46,13 +55,12 @@ def scan(suite, entry, module, args):
             continue
         name = (path.relative_to(root).as_posix() if path.is_relative_to(root)
                 else '__outside_root__/' + path.as_posix().lstrip('/'))
-        originals[name] = path
-        files.append(dict(path=name, source=content))
+        sources.append((name, path, content))
     options = dict(callSource=args['content']) if entry == 'check_function_signature_content' else {}
-    rows = suite.native(check, entry, files, options)
+    rows, originals = supplied_files(suite, check, entry, sources, options)
     if any(r['code'] != 'TSP001' for r in rows):
         raise AssertionError('Unexpected native type-safety diagnostic')
-    order = {f['path']: i for i, f in enumerate(files)}
+    order = {path: i for i, path in enumerate(originals)}
     def key(row):
         ordinal = row['parameters']['ordinal']
         return (order[row['path']], 0, row['line'], ordinal) if ordinal < 5 else (order[row['path']], 1, ordinal, 0)

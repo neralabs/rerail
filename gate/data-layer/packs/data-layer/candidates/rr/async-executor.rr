@@ -6,6 +6,7 @@
 .scope include "impl/sqlite/**/*.py", "impl/postgres/**/*.py", "impl/mariadb/**/*.py", "impl/doltdb/**/*.py", "impl/mongodb/**/*.py", "impl/neo4j/**/*.py", "impl/l1595_llm_cache/**/*.py"
 .scope exclude "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**", "**/test/**", "**/tests/**", "impl/common/**", "impl/read_through/**", "impl/sqlite/native_async_wrapper.py", "impl/sqlite/connection.py"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_async_executor.py
+.scope dirs option("apiInputDirs")
 .decl executor_path(p: symbol)
 executor_path(p) :- doc(_, p, _).
 executor_path(p) :- option("path", p).

@@ -314,6 +314,7 @@ def async_executor(source, target, header):
     _, space, _ = classes()
     q = json.dumps
     text = header('async_executor', target).replace('#include "python/ast.rr"\n', '')
+    text += '.scope dirs option("apiInputDirs")\n'
     text += '.decl executor_path(p: symbol)\nexecutor_path(p) :- doc(_, p, _).\nexecutor_path(p) :- option("path", p).\n'
     text += '.decl executor_strict(p: symbol)\n.decl executor_allowed(p: symbol)\n'
     for directory in original.STRICT_DIRECTORIES:

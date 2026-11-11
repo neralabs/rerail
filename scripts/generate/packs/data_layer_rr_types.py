@@ -42,6 +42,7 @@ def type_safety_patterns(source, target, header):
     # dynamic layer-package discovery, including pinned Unicode decimal digits.
     text = re.sub(r'^\.scope include .*$', '.scope include "impl/**/*.py", "data_layer/**/*.py", "_internal/**/*.py", "l*/**/*.py"', text, flags=re.M)
     text = re.sub(r'^\.scope exclude .*$', '.scope exclude "**/tests/**", "**/test/**", "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**"', text, flags=re.M)
+    text += '.scope dirs option("apiInputDirs")\n'
     digits = character_class(str.isdecimal)
     text += '.decl tsp_policy_doc(d: number)\n'
     layer = '(?s)l' + digits + r'{4}_[^/\n][^/]*/.*'
@@ -69,7 +70,14 @@ tsp_text_mode(d) :- doc(d, _, _), option("entryPoint", e),
     (e = "check_file_for_patterns" ; e = "check_file_content_for_patterns").
 tsp_text_mode(d) :- tsp_fact_file(d), option("entryPoint", "_issues_for_files"), !syntax_error(d, _, _).
 .decl tsp_fact_file(d: number)
-tsp_fact_file(d) :- file_name(d, n), suffix(".py", n), !path_part(d, "tests"), !path_part(d, "test").
+tsp_fact_file(d) :- tsp_path(d, p, n), suffix(".py", n),
+    !contains("/tests/", cat("/", p, "/")), !contains("/test/", cat("/", p, "/")).
+.decl tsp_api_path(d: number, path: symbol, name: symbol)
+tsp_api_path(d, p, n) :- doc(d, buffer, _), option_item("apiBuffers", i, buffer),
+    option_item("apiSourcePaths", i, p), option_item("apiSourceNames", i, n).
+.decl tsp_path(d: number, path: symbol, name: symbol)
+tsp_path(d, p, n) :- tsp_api_path(d, p, n).
+tsp_path(d, p, n) :- doc(d, p, _), file_name(d, n), !tsp_api_path(d, _, _).
 .decl tsp_signature_mode(d: number)
 tsp_signature_mode(d) :- tsp_policy_doc(d), !option("entryPoint", _).
 tsp_signature_mode(d) :- tsp_fact_file(d), option("entryPoint", e),
@@ -91,7 +99,7 @@ tsp_signature_gate(d) :- tsp_signature_trigger(d), !option("callSource", _).
         ('DEPRECATED_FILTER_METHOD_PATTERN', 'DEPRECATED_FILTER_METHOD', 'Use .filter(field(Model.col) > value) or .filter(IN(field(Model.col), values))')]
     for ordinal, (name, category, suggestion) in enumerate(patterns):
         rx = q(regex_search(getattr(original, name)))
-        text += f'tsp_issue(d, l, {q(category)}, 0, {ordinal}, {q(suggestion)}, @replace_all(t, {q(trim)}, "")) :- tsp_text_mode(d), tsp_pattern_trigger(d), split_line(d, l, t), doc(d, p, _), !tsp_allowed({q(category)}, p), match({rx}, t).\n'
+        text += f'tsp_issue(d, l, {q(category)}, 0, {ordinal}, {q(suggestion)}, @replace_all(t, {q(trim)}, "")) :- tsp_text_mode(d), tsp_pattern_trigger(d), split_line(d, l, t), tsp_path(d, p, _), !tsp_allowed({q(category)}, p), match({rx}, t).\n'
         text += f'.violation TspPattern{ordinal}(at: span) code "TSP_PATTERN" "pattern"\nTspPattern{ordinal}(@place("input.py", 1)) :- option("entryPoint", "pattern_search"), option("patternOrdinal", "{ordinal}"), option("patternText", t), match({rx}, t).\n'
     text += r'''
 // The scanner reads splitlines(), rather than the function node's source span.
@@ -121,7 +129,7 @@ tsp_window(f, t) :- tsp_function(f, d, l, "order_by", _),
     text += '.decl tsp_signature_match(f: node, c: symbol, suggestion: symbol)\n'
     for name, pattern, suggestion in signature_patterns:
         category = 'STR_IN_' + name.upper()
-        text += f'tsp_signature_match(f, {q(category)}, {q(suggestion)}) :- tsp_function(f, d, _, {q(name)}, _), doc(d, p, _), !tsp_allowed({q(category)}, p), tsp_window(f, t), match({q(regex_search(re.compile(pattern)))}, t).\n'
+        text += f'tsp_signature_match(f, {q(category)}, {q(suggestion)}) :- tsp_function(f, d, _, {q(name)}, _), tsp_path(d, p, _), !tsp_allowed({q(category)}, p), tsp_window(f, t), match({q(regex_search(re.compile(pattern)))}, t).\n'
     text += f'tsp_issue(d, l, c, column, 5 + i, suggestion, @replace_all(t, {q(trim)}, "")) :- tsp_signature_match(f, c, suggestion), tsp_function(f, d, l, _, _), visit_index(f, i), col(f, column), split_line(d, l, t), !tsp_earlier_signature(f, c).\n'
     text += r'''
 .decl tsp_earlier_signature(f: node, c: symbol)
@@ -141,10 +149,14 @@ tsp_normalized(p) :- option("filePath", p), option("basePath", b), p != b,
 .violation TspNormalized(at: span, result: symbol) code "TSP_NORMALIZED" "relative path"
 TspNormalized(@place("input.py", 1), p) :- option("entryPoint", "normalize_path"), tsp_normalized(p).
 .violation TspDiscovered(at: span) code "TSP_DISCOVERED" "source file"
-TspDiscovered(@place(p, 1)) :- option("entryPoint", "find_python_files"), doc(d, p, _), file_name(d, n),
+TspDiscovered(@place(p, 1)) :- option("entryPoint", "find_python_files"), doc(d, p, _), tsp_path(d, _, n),
     suffix(".py", n), !prefix("test_", n), !suffix("_test.py", n), !tsp_excluded(d).
 .decl tsp_excluded(d: number)
-tsp_excluded(d) :- path_part(d, p), (p = "tests" ; p = "test" ; p = "vendor" ; p = "__pycache__" ; p = ".git" ; p = "tmp"), !file_name(d, p).
+.decl tsp_excluded_part(p: symbol)
+tsp_excluded_part("tests"). tsp_excluded_part("test"). tsp_excluded_part("vendor").
+tsp_excluded_part("__pycache__"). tsp_excluded_part(".git"). tsp_excluded_part("tmp").
+tsp_excluded(d) :- tsp_path(d, path, name), tsp_excluded_part(p), p != name,
+    contains(cat("/", p, "/"), cat("/", path, "/")).
 .violation TspDedupe(at: span, ordinal: number) code "TSP_DEDUPE" "first issue"
 TspDedupe(@place("input.py", 1), i) :- option("entryPoint", "_dedupe_issues"), option_item("issuePaths", i, _), !tsp_duplicate(i).
 .decl tsp_duplicate(i: number)
