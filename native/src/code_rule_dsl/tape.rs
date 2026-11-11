@@ -85,6 +85,7 @@ pub(in crate::code_rule_dsl) const ERROR_CODE: u16 = 0;
 // P's index columns, read by `prefilter`'s `nera_tree` (the §17 SQL fallback, tests only so far).
 #[allow(dead_code)]
 mod index;
+pub(crate) mod navigation;
 #[allow(unused_imports)]
 pub(in crate::code_rule_dsl) use index::IndexImage;
 mod wire;
@@ -2418,7 +2419,7 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
                 child.rec().field == field_id
             });
             #[cfg(feature = "code-rule-profile")]
-            super::profile::navigation::record(examined, found.is_some());
+            navigation::record(examined, found.is_some());
             found
         }
     }

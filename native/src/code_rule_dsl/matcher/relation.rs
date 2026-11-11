@@ -923,7 +923,7 @@ impl FieldRelation {
             if let Some(tape) = super::memo::file_node(&expected) {
                 let found = tape.get_inner_node().is_first_field(self.field);
                 #[cfg(feature = "code-rule-profile")]
-                crate::code_rule_dsl::profile::navigation::record_edge(found);
+                crate::code_rule_dsl::tape::navigation::record_edge(found);
                 return found;
             }
             candidate
