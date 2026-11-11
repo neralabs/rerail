@@ -160,13 +160,16 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("rx_extract", &[Text, Text, Number], Text),
     ("rx_replace", &[Text, Text, Text], Text),
     ("rr_to_string", &[Number], Text),
+    // `.rr`'s `substr(s, i, n)`: n characters from the i-th, counted from 0, as SQL's `substr(s, i + 1, n)` gives
+    // them (`substr`).
+    ("rr_substr", &[Text, Number, Number], Text),
 ];
 
 /// The function the native engine computes `.rr`'s call `f` with: `f` itself when it is one of these, or its
 /// `rr_` name (`@add`, `@strlen`, …).
 pub(in crate::code_rule_dsl) fn native_call(f: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
     match f {
-        "add" | "sub" | "mul" | "div" | "max" | "min" | "strlen" | "to_string" => signature(&format!("rr_{f}")),
+        "add" | "sub" | "mul" | "div" | "max" | "min" | "strlen" | "to_string" | "substr" => signature(&format!("rr_{f}")),
         _ => signature(f),
     }
 }
@@ -328,6 +331,7 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         }
         "rx_replace" => with_regex(t(1), |re| re.replace_all(t(0), t(2)).into_owned()),
         "rr_to_string" => Some(numbers[0].to_string()),
+        "rr_substr" => Some(substr(t(0), numbers[0], numbers[1])),
         "mod" => return numbers[0].checked_rem(numbers[1]).map_or(Value::Null, Value::Integer),
         "to_float" => return t(0).trim().parse::<f64>().ok().filter(|f| !f.is_nan()).map_or(Value::Null, |f| Value::Integer(float_key(f))),
         "float_add" | "float_sub" | "float_mul" | "float_div" => {
@@ -481,6 +485,57 @@ pub(in crate::code_rule_dsl) fn glob_sub(pat: &str, to: &str, s: &str) -> String
 }
 
 /// `@slice("_name", 1, 5)` = `"name"`: characters `start` to `end - 1`, a negative position counting from the end.
+/// `.rr`'s `substr(s, i, n)` as SQLite's `substr(s, i + 1, n)` computes it (its `substrFunc`), over characters: a
+/// start before the text counts from its end, a negative length takes the characters before the start.
+pub(in crate::code_rule_dsl) fn substr(s: &str, i: i64, n: i64) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let len = chars.len() as i64;
+    let (mut p1, mut p2) = (i.saturating_add(1), n);
+    let neg = p2 < 0;
+    if neg {
+        p2 = p2.saturating_neg();
+    }
+    if p1 < 0 {
+        p1 += len;
+        if p1 < 0 {
+            p2 = (p2 + p1).max(0);
+            p1 = 0;
+        }
+    } else if p1 > 0 {
+        p1 -= 1;
+    } else if p2 > 0 {
+        p2 -= 1;
+    }
+    if neg {
+        p1 -= p2;
+        if p1 < 0 {
+            p2 += p1;
+            p1 = 0;
+        }
+    }
+    let a = p1.clamp(0, len);
+    let b = p1.saturating_add(p2).clamp(a, len);
+    chars[a as usize..b as usize].iter().collect()
+}
+
+#[cfg(test)]
+mod substr_tests {
+    /// `substr` gives what SQLite's `substr(s, i + 1, n)` does, over the corners: starts before, at and past the
+    /// text, negative and zero lengths, and characters of more than one byte.
+    #[test]
+    fn substr_is_sqlites() {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        for s in ["", "a", "a.b.c", "pkg.mod.name", "é.ü.x"] {
+            for i in -7..8 {
+                for n in -7..8 {
+                    let want: String = db.query_row("SELECT substr(?1, ?2 + 1, ?3)", rusqlite::params![s, i, n], |r| r.get(0)).unwrap();
+                    assert_eq!(super::substr(s, i, n), want, "substr({s:?}, {i}, {n})");
+                }
+            }
+        }
+    }
+}
+
 pub(in crate::code_rule_dsl) fn slice(s: &str, start: i64, end: i64) -> String {
     let chars: Vec<char> = s.chars().collect();
     let n = chars.len() as i64;

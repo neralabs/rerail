@@ -1,0 +1,41 @@
+[
+  {
+    "test": "code_rule_dsl::logic::plan::corpus::session::tests::a_session_keeps_its_part_around_an_inlined_relation",
+    "mode": "composed",
+    "exit": 101,
+    "wall": 2.388679250027053,
+    "counts": [
+      [
+        "0",
+        "1",
+        "0"
+      ]
+    ]
+  },
+  {
+    "test": "a_cache_in_a_session_is_facts_and_a_version_bump_derives_it_again",
+    "mode": "composed",
+    "exit": 101,
+    "wall": 2.001320792012848,
+    "counts": [
+      [
+        "0",
+        "1",
+        "0"
+      ]
+    ]
+  },
+  {
+    "test": "cross_file_strata_are_kept_across_runs_in_the_tape_cache",
+    "mode": "composed",
+    "exit": 101,
+    "wall": 1.7936435419833288,
+    "counts": [
+      [
+        "0",
+        "1",
+        "0"
+      ]
+    ]
+  }
+]

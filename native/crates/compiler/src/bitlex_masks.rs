@@ -354,7 +354,7 @@ pub fn compile(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols<'_>>) 
         // The last bytes, then each mark's: `MARK`'s operand.
         low.program.masks = vec![at[l]];
         low.program.masks.extend((0..mark_masks.len()).map(|k| at[l + 1 + k]));
-        // The fallback's totals, in `fallback()`'s order: `EMPTY t` reads total `t`.
+        // The fallback's outputs, one per delay, are the totals: one flag, which `EMPTY 0` reads.
         low.program.totals = vals.iter().zip(&at).filter(|((label, _), _)| label == FALLBACK).map(|(_, &v)| v).collect();
         words = lowered;
         machine = text;
@@ -1699,7 +1699,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // tells apart by their start masks (`ROW`) only the rows a state can meet that begin
     // with one byte. A first lowering finds them; their masks follow the marks'.
     let meets = row_modes(low, &token_rows, &rows, &states, &arms, &mark_kinds)?;
-    let empties = low.fallback()?.len() as u16;
+    // The totals are one flag (`BlockRun::totals`), tested once: `EMPTY 0`.
+    let empties = 1;
     let tested = bitlex_tier2::lower(&states, &arms, &rows, &marks, &meets, empties, whole, true)?.tested;
     for (j, &r) in tested.iter().enumerate() {
         rows[r].mask = Some(1 + marks.len() as u16 + j as u16);

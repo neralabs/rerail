@@ -487,6 +487,9 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
     // is compared by them (macOS; nothing elsewhere).
     if let Some((instructions, cycles)) = process_counters() {
         text += &format!("  process {:.2} G instructions, {:.2} G cycles\n", instructions as f64 / 1e9, cycles as f64 / 1e9);
+        for (phase, n) in &report.phase_instructions {
+            text += &format!("    {phase:<6} {:.2} G instructions\n", *n as f64 / 1e9);
+        }
     }
     for (name, _) in &report.typing_runs {
         text += &format!("  typing program {name} run first, for the relations it gives\n");
@@ -501,7 +504,7 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
 }
 
 /// The process's retired instructions and cycles so far (macOS `proc_pid_rusage`).
-fn process_counters() -> Option<(u64, u64)> {
+pub(crate) fn process_counters() -> Option<(u64, u64)> {
     #[cfg(target_os = "macos")]
     {
         // SAFETY: a zeroed `rusage_info_v4` is a valid out-value, and the flavour matches it.

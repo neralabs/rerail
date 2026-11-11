@@ -219,6 +219,12 @@ fn key(programs: &[&str], root: &Path, options: &serde_json::Value, wanted: &BTr
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// The file the constants are kept in, beside the content store: `<content store>.phases`, where the phase store
+/// was (its tables are gone; t33 step 1 moves these rows to the facts).
+fn store_path() -> Option<std::path::PathBuf> {
+    super::tape_cache_path().map(|p| std::path::PathBuf::from(format!("{}.phases", p.display())))
+}
+
 fn table(db: &rusqlite::Connection) -> Result<()> {
     db.execute_batch("CREATE TABLE IF NOT EXISTS constant_rows(key TEXT PRIMARY KEY, rows TEXT, consulted TEXT) WITHOUT ROWID;")?;
     Ok(())
@@ -226,7 +232,7 @@ fn table(db: &rusqlite::Connection) -> Result<()> {
 
 /// The constants kept under `key`, when what their run consulted is as it was.
 fn kept(key: &str, root: &Path, prog: &Program) -> Result<Option<Derived>> {
-    let Some(path) = super::phases::store_path().filter(|p| p.exists()) else { return Ok(None) };
+    let Some(path) = store_path().filter(|p| p.exists()) else { return Ok(None) };
     let db = rusqlite::Connection::open(&path)?;
     table(&db)?;
     let Some((rows, consulted)): Option<(String, String)> = db.query_row("SELECT rows, consulted FROM constant_rows WHERE key=?1", [key], |r| Ok((r.get(0)?, r.get(1)?))).ok() else { return Ok(None) };
@@ -239,7 +245,7 @@ fn kept(key: &str, root: &Path, prog: &Program) -> Result<Option<Derived>> {
 }
 
 fn keep(key: &str, rows: &std::collections::BTreeMap<String, String>, consulted: &[(String, String, String)]) -> Result<()> {
-    let Some(path) = super::phases::store_path() else { return Ok(()) };
+    let Some(path) = store_path() else { return Ok(()) };
     let db = rusqlite::Connection::open(&path)?;
     table(&db)?;
     db.execute("INSERT OR REPLACE INTO constant_rows VALUES (?1, ?2, ?3)", rusqlite::params![key, serde_json::to_string(rows).unwrap_or_default(), serde_json::to_string(consulted).unwrap_or_default()])?;

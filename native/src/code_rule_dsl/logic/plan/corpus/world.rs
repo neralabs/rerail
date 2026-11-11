@@ -132,6 +132,9 @@ impl World {
                 }
             }
         }
+        // What the requests may read is watched (decision 0105): a directory listed or a file read that the
+        // journal says is unchanged is not statted.
+        super::observe(|o| o.watch(&roots));
         let snapshot_metadata = prog.rules.iter().any(|r| r.head.rel == "rr_dir_metadata_req");
         let read_errors = prog.rules.iter().any(|r| r.head.rel == "rr_file_error_req") || prog.facts.contains_key("rr_file_error_req");
         World { roots, root: root.to_path_buf(), budget, snapshot_metadata, read_errors, ..World::default() }

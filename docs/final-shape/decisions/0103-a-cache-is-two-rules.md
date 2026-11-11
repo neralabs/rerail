@@ -136,8 +136,8 @@ program's own rules, run for the key.
 | Tapes and their indexes (`tape_objects`, `tree_pages`, `term_*`, `vocabulary_*`, …) | `tape_key(d, g, h) :- document(d, path), grammar(d, g), content(d, h)` | the document's facts, from the parser for `(g, h)` | syntax |
 | The per-file memo (`facts_results`, `facts_plan_sets`, `facts_completions`) | `local_key(d, h, p) :- tape_key(d, _, h), program(p)` | the file-local part's rows for `d`: `@run(p, d)` | engine |
 | Compiled plans (`compiled_plans`, `compiled_plan_reads`, `plan_feedback`) | `plan_key(p, s) :- program(p), scale(s)` | the plan's choices for `p` at scale `s` | engine |
-| A phase's per-document rows (`phase_granules`, `.owner`) | `granule_key(ph, d, h) :- phase(ph), owner document d with content h` | the phase's file-local rows for `d` | this branch |
-| A phase's run record (`phase_record`, `export_versions`, `store_epoch`, `phase_cones`) | not a cache: the phase's exports are relations (§5) | — | this branch |
+| A phase's per-document rows (`phase_granules`, `.owner`) | **moved** (t32 3.2): none needed; the phase's run keeps its file-local rows per document in its memo | — | this branch |
+| A phase's run record (`phase_record`, `export_versions`, `store_epoch`, `phase_cones`) | **moved** (t32 3.1): gone; the phase's run keeps its relations as any run's | — | this branch |
 | Kept strata and the cross part (`kept_strata`, `cross_*`) | not a cache: the relations' own storage (§2) | — | engine |
 | Statistics (`stat_blob`, `fact_stats`, `corpus_stats`, …) | `stat_key(rel, h) :- relation rel with rows digest h` | the statistics of `rel` | engine |
 | Checks and completed trees (`local_check_results`, `completed_*`, `tree_result_segments`) | `check_key(d, h, c) :- local_key(d, h, _), check(c)` | the check's verdicts for `d` | engine |

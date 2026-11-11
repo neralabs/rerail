@@ -227,8 +227,10 @@ impl Vocabulary {
         let words = self.tests.len().div_ceil(64);
         let (mut tested, t0) = (0, super::plan::corpus::thread_usage());
         // The strings not seen before, tested by every test's plans at once (the text layer's vocabulary engine).
-        // `seen` is held only to read and to add: testing runs on the pool, and a worker waiting in it may take
-        // another batch's `rows`, which would wait for the lock (a deadlock). Two batches may test one string twice.
+        // `seen` is not held while they are tested: the searchers run on the thread pool, and a pool thread waiting
+        // there runs other queued jobs, among them another batch's call here. Held, that call waited on the lock
+        // its own thread's earlier frame held, and the run hung (every pool thread asleep in a join). Two batches
+        // may then test one new string each; the answer is the same.
         let mut fresh: Vec<(u32, &str)> = Vec::new();
         {
             let seen = self.seen.lock().unwrap();
@@ -239,7 +241,7 @@ impl Vocabulary {
                 }
             }
         }
-        let mut tested_bits: Vec<(u32, Box<[u64]>)> = Vec::new();
+        let mut learned: Vec<(u32, Box<[u64]>)> = Vec::new();
         if !fresh.is_empty() {
             tested += fresh.len();
             let compiled = self.compiled.get_or_init(|| self.compile_with(None));
@@ -252,12 +254,10 @@ impl Vocabulary {
                     bits[t as usize][k / 64] |= 1 << (k % 64);
                 }
             }
-            tested_bits.extend(fresh.iter().map(|(sym, _)| *sym).zip(bits));
+            learned.extend(fresh.iter().map(|(sym, _)| *sym).zip(bits));
         }
         let mut seen = self.seen.lock().unwrap();
-        for (sym, b) in tested_bits {
-            seen.entry(sym).or_insert(b);
-        }
+        seen.extend(learned);
         for &sym in symbols {
             let bits = &seen[&sym];
             for (k, rows) in out.iter_mut().enumerate() {
@@ -266,6 +266,7 @@ impl Vocabulary {
                 }
             }
         }
+        drop(seen);
         let t1 = super::plan::corpus::thread_usage();
         let mut total = self.tested.lock().unwrap();
         total.0 += tested;
