@@ -4,7 +4,7 @@ use std::ops::Deref;
 
 type ProgramCache =
     std::collections::BTreeMap<Vec<(String, String)>, std::sync::Arc<Vec<super::Stage>>>;
-pub(in crate::code_rule_dsl) struct Database {
+pub struct Database {
     #[cfg(feature = "code-rule-profile")]
     profiler: Option<Box<crate::code_rule_dsl::profile::sql::Profiler>>,
     connection: Connection,
