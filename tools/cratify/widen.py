@@ -25,6 +25,12 @@ def trait_spans(path):
     return spans
 
 
+def enum_spans(path):
+    """Byte spans of the file's enums (their variants' fields take no visibility)."""
+    out = subprocess.run([TOOL, 'items', path], capture_output=True, text=True, check=True).stdout
+    return [(int(s), int(e)) for f, s, e, kind, name, mod, cfg in (l.split('\t') for l in out.splitlines()) if kind == 'enum']
+
+
 def main(tsv, *flags):
     rows = collections.defaultdict(list)
     for line in list(open(tsv))[1:]:
@@ -41,6 +47,7 @@ def main(tsv, *flags):
         for x in lines:
             byte_start.append(byte_start[-1] + len(x.encode()) + 1)
         traits = trait_spans(p)
+        enums = enum_spans(p)
         edits = []  # (line index, col start, col end, text)
         for l, c, kind, now, at, item in items:
             if now == 'private':
@@ -51,6 +58,9 @@ def main(tsv, *flags):
                 b = byte_start[i] + len(lines[i][:c].encode())
                 if kind == 'method' and any(s <= b < e for s, e in traits):
                     done['trait method'] += 1
+                    continue
+                if kind == 'field' and any(s <= b < e for s, e in enums):
+                    done['variant field'] += 1
                     continue
                 before = lines[i][:c]
                 if kind == 'field':

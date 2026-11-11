@@ -340,6 +340,50 @@ def manifest(c, engine):
     return '\n'.join(lines) + '\n'
 
 
+def merge_manifest(path, c, engine):
+    """An existing crate's own Cargo.toml with what its mounted files need: the engine's dependencies it lacks (per
+    table, after the table's header, or as a new table), the crates it now stands on, and the engine's features."""
+    text = open(path).read()
+    have = tomllib.loads(text)
+    d = os.path.dirname(path)
+    tables = {'dependencies': {k: rebase(v, d) for k, v in engine['dependencies'].items() if not k.startswith('rerail-') or (k not in DIRS and k != 'rerail-metal')}}
+    for x in direct(c):
+        dep = {'path': os.path.relpath(os.path.join(ROOT, DIRS[x]), d)}
+        if x not in EXISTING:
+            dep['default-features'] = False
+        tables['dependencies'][x] = dep
+    for target, t in engine.get('target', {}).items():
+        if 'dependencies' in t:
+            tables[f"target.'{target}'.dependencies"] = {k: rebase(v, d) for k, v in t['dependencies'].items() if k != 'rerail-metal'}
+    def existing(name):
+        node = have
+        for part in re.findall(r"'[^']*'|[^.]+", name):
+            node = node.get(part.strip("'"), {})
+        return node
+    for name, deps in tables.items():
+        lacking = {k: v for k, v in deps.items() if k not in existing(name) and k != c}
+        if not lacking:
+            continue
+        block = ''.join(f'{k} = {toml_value(v)}\n' for k, v in lacking.items())
+        header = f'[{name}]\n'
+        if header in text:
+            i = text.index(header) + len(header)
+            text = text[:i] + block + text[i:]
+        else:
+            text = text.rstrip('\n') + f'\n\n{header}' + block
+    feats = have.get('features', {})
+    lacking = {f: body for f, body in engine['features'].items() if f not in feats}
+    if lacking:
+        block = ''.join(f'{f} = {toml_value(list(body) if f == "default" else [])}\n' for f, body in lacking.items())
+        if '[features]\n' in text:
+            i = text.index('[features]\n') + len('[features]\n')
+            text = text[:i] + block + text[i:]
+        else:
+            i = text.index('\n[', text.index('[package]') + 1) + 1
+            text = text[:i] + '[features]\n' + block + '\n' + text[i:]
+    return text
+
+
 def engine_manifest_edits(engine_text, crates):
     """The engine's dependencies on the crates (default features off, its features forwarded) and its own
     dev-dependency with test-hooks (every test build turns them on)."""
@@ -400,8 +444,8 @@ def main(tree_tsv, join_out, *flags):
         if write:
             os.makedirs(os.path.dirname(lib), exist_ok=True)
             open(lib, 'w').write(text)
-            if c not in EXISTING:
-                open(os.path.join(d, 'Cargo.toml'), 'w').write(manifest(c, engine))
+            mf = os.path.join(d, 'Cargo.toml')
+            open(mf, 'w').write(manifest(c, engine) if c not in EXISTING else merge_manifest(mf, c, engine))
         print(f'{c:22} lib.rs {text.count(chr(10)):5} lines')
     if write:
         open(os.path.join(NATIVE, 'Cargo.toml'), 'w').write(engine_manifest_edits(engine_text, crates))
