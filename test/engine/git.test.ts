@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
+import type * as FileSystem from "node:fs/promises";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +20,21 @@ vi.mock("node:child_process", async importOriginal => {
     return (actual.execFile as (...forwarded: unknown[]) => ReturnType<typeof actual.execFile>)(...call);
   };
   return { ...actual, execFile };
+});
+/** How many more reads of each path fail as a file another program holds fails on Windows (`EBUSY`). */
+const heldFiles = vi.hoisted(() => new Map<string, number>());
+vi.mock("node:fs/promises", async importOriginal => {
+  const actual = await importOriginal<typeof FileSystem>();
+  const readFile = async (...args: Parameters<typeof actual.readFile>) => {
+    const path = String(args[0]);
+    const held = heldFiles.get(path) ?? 0;
+    if (held > 0) {
+      heldFiles.set(path, held - 1);
+      throw Object.assign(new Error(`EBUSY: resource busy or locked, open '${path}'`), { code: "EBUSY" });
+    }
+    return await actual.readFile(...args);
+  };
+  return { ...actual, readFile };
 });
 
 const roots: string[] = [];
@@ -352,6 +368,8 @@ describe("gitUnmergedReader", () => {
 });
 
 describe("gitHeadReader", () => {
+  afterEach(() => { heldFiles.clear(); });
+
   /** `HEAD` as `git rev-parse --verify --quiet HEAD` names it in `cwd`, or undefined where it names no commit. */
   function gitAnswer(cwd: string): string | undefined {
     try {
@@ -414,6 +432,25 @@ describe("gitHeadReader", () => {
     git(root, "pack-refs", "--all");
     git(root, "commit", "--quiet", "--allow-empty", "-m", "three");
     git(root, "pack-refs", "--all");
+    expect(await processes(read, root)).toBe(1);
+    expect(await processes(read, root)).toBe(0);
+  });
+
+  it("asks Git each time it cannot read the branch's file, and keeps nothing from that read", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    const branch = git(root, "symbolic-ref", "HEAD").trim();
+    const seed = gitAnswer(root)!;
+    git(root, "commit", "--quiet", "--allow-empty", "-m", "two");
+    const two = gitAnswer(root)!;
+    const read = gitHeadReader();
+    await processes(read, root);
+    // Another program holds the branch's file each time the reader looks, as Windows lets one while Git replaces it.
+    heldFiles.set(join(root, ".git", ...branch.split("/")), 2);
+    git(root, "update-ref", branch, seed);
+    expect(await processes(read, root)).toBe(1);
+    git(root, "update-ref", branch, two);
+    expect(await processes(read, root)).toBe(1);
+    // Neither held read kept an answer: the next read asks Git once more, and the one after it does not.
     expect(await processes(read, root)).toBe(1);
     expect(await processes(read, root)).toBe(0);
   });
