@@ -146,10 +146,13 @@ each overwrote (a space per program now), and an input bound from an earlier pha
 a pattern (`node`) is in no rule's body nor `prog.inputs`, so it had no frame name (the bound inputs are named now).
 Warm on the 54 files: inputs changed none; 14.5 s CPU.
 
-Still open: with no input changed, the same strata still run (34 of 110, 429 of 481). Outputs run by design (the
-frames hold no output's decoded rows). The rest are derived relations whose frame is not current: a read is an
-`__sup` relation (or one below it, `pbase__sup0`, `doc_tape__sup0`) that has no frame, so the chain above it is
-taken from no frame and derived again.
+With no input changed, the same strata still ran (34 of 110, 429 of 481): a derived relation's frame was current
+only when each read had a digest, and two kinds had none. An input bound with no frame (an option's `env`, phase 0's
+`p0_resolved`) is now read by its bound digest, and a program fact by its identity; a relation with no rows to keep
+(a view such as `gproto`, `blocking`; one past the budget) is named by its reads' digests, on writing and on loading
+alike, so the chain above it (`pbase__sup0`, `pbase`, `explicit`, …) stays current. The input digests checked are the
+frames' (the state the old rows are of), so a changed stratum is still maintained from them. Warm on the 54 files,
+steady: 15 of 481 and 18 of 110 strata run, none derived again; 12.4 to 14.6 s CPU; 4,815 agreeing.
 
 This is the same for P2, for calls_cx's cross part and for the pack (t31 B4). t31's "column blocks" would be the
 kept relations' encoding, not a format of their own.
