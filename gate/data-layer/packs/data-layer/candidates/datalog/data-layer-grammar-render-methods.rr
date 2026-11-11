@@ -1,0 +1,125 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl rm_call_kind(kind: symbol)
+rm_call_kind("call").
+.decl rm_class_kind(kind: symbol)
+rm_class_kind("class_definition").
+.decl rm_cstr_kind(kind: symbol)
+rm_cstr_kind("concatenated_string").
+.decl rm_fn_kind(kind: symbol)
+rm_fn_kind("function_definition").
+.decl rm_string_kind(kind: symbol)
+rm_string_kind("string").
+.decl child(p: node, c: node, i: number)
+.decl concat_cand(d: number, b: node)
+.decl concat_hidden(n: node)
+.decl concat_operand(o: node)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl end_line(n: node, l: number)
+.decl field(p: node, f: symbol, c: node)
+.decl format_cand(d: number, c: node)
+.decl format_hidden(n: node)
+.decl fstring_cand(d: number, n: node)
+.decl fstring_first_part(cs: node, s: node)
+.decl fstring_hidden(n: node)
+.decl fstring_in_gexc(n: node)
+.decl fstring_spec_sameline(n: node)
+.decl fstring_string_before(cs: node, i: number)
+.decl in_scope(d: number)
+.decl join_cand(d: number, c: node)
+.decl join_hidden(n: node)
+.decl join_object(o: node)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl op(n: node, s: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
+.decl option_on(name: symbol)
+.decl out_scope(d: number)
+.decl rm_base_sql(b: node)
+.decl rm_cstr_fpart(n: node)
+.decl rm_fshape(n: node)
+.decl rm_fstring_part(s: node)
+.decl rm_gate(d: number)
+.decl rm_in_cstr(n: node)
+.decl rm_in_render(n: node)
+.decl rm_listed(c: node, o: symbol)
+.decl rm_render(f: node)
+.decl rm_sql_class(c: node)
+.decl rm_strlit(n: node)
+.decl runtime_static_callee(f: node)
+.decl runtime_static_cand(d: number, c: node)
+.decl runtime_static_hidden(n: node)
+.decl runtime_static_skip(a: node)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl template_cand(d: number, c: node)
+.decl template_hidden(n: node)
+.decl text(n: node, s: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, text, op, line, value_type_of, end_line, node_text
+.output violation
+option_on("sourceGate").
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2100_sql_grammar/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+tape_syntax_error(d) :- syntax_error(d).
+rm_base_sql(b) :- node(_, b, "identifier", _, _), text(b, s), contains("Sql", s).
+rm_base_sql(b) :- node(_, b, "attribute", _, _), field(b, "attribute", a), text(a, s), contains("Sql", s).
+rm_base_sql(b) :- node(_, b, "subscript", _, _), field(b, "value", v), rm_base_sql(v).
+rm_sql_class(c) :- node(_, c, "class_definition", _, _), field(c, "superclasses", a), child(a, b, _), rm_base_sql(b).
+rm_render(f) :- node(_, f, "function_definition", _, _), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "render"), nearest(f, c, rm_class_kind), rm_sql_class(c), !rm_listed(c, "LEGACY_ALLOWLISTED_CLASSES").
+rm_listed(c, o) :- node(_, c, "class_definition", _, _), field(c, "name", i), node(_, i, "identifier", _, _), text(i, x), option_item(o, _, x).
+rm_in_render(n) :- rm_render(f), inside(n, f, rm_fn_kind).
+rm_gate(d) :- node(d, m, "module", _, _), node_text(m, s), (contains("render(", s) ; contains("SqlFragment.static", s) ; contains("SF.static", s) ; contains(".join(", s) ; contains(".format(", s) ; contains("Template", s)).
+rm_gate(d) :- doc(d, _, _), !option_on("sourceGate").
+rm_in_cstr(n) :- child(p, n, _), node(_, p, "concatenated_string", _, _).
+rm_fstring_part(s) :- node(_, s, "string", _, _), node_text(s, t), match("(?i)[rub]*f(?s:.*)", t).
+rm_fshape(n) :- rm_fstring_part(n), !rm_in_cstr(n).
+rm_fshape(n) :- node(_, n, "concatenated_string", _, _), child(n, s, _), rm_fstring_part(s).
+rm_fshape(n) :- node(_, n, "format_specifier", _, _).
+rm_strlit(n) :- node(_, n, "string", _, _), !rm_fstring_part(n), !rm_in_cstr(n), value_type_of(n, "str").
+rm_strlit(n) :- node(_, n, "concatenated_string", _, _), !rm_cstr_fpart(n), !rm_in_cstr(n), value_type_of(n, "str").
+rm_cstr_fpart(n) :- node(_, n, "concatenated_string", _, _), child(n, s, _), rm_fstring_part(s).
+fstring_in_gexc(n) :- rm_fshape(n), inside(n, c, rm_call_kind), field(c, "function", f), node(_, f, "identifier", _, _), text(f, "GrammarException").
+fstring_spec_sameline(n) :- node(_, n, "format_specifier", _, _), line(n, l), inside(n, s, rm_string_kind), !rm_in_cstr(s), child(s, st, _), node(_, st, "string_start", _, _), end_line(st, l).
+fstring_spec_sameline(n) :- node(_, n, "format_specifier", _, _), line(n, l), inside(n, cs, rm_cstr_kind), fstring_first_part(cs, s), child(s, st, _), node(_, st, "string_start", _, _), end_line(st, l).
+fstring_first_part(cs, s) :- node(_, cs, "concatenated_string", _, _), child(cs, s, i), node(_, s, "string", _, _), !fstring_string_before(cs, i).
+fstring_string_before(cs, i) :- node(_, cs, "concatenated_string", _, _), child(cs, _, i), child(cs, s, j), node(_, s, "string", _, _), j < i.
+fstring_cand(d, n) :- rm_fshape(n), rm_in_render(n), !fstring_in_gexc(n), !fstring_spec_sameline(n), node(d, n, _, _, _).
+fstring_hidden(n) :- fstring_cand(d, n), node(d, n, _, s, _), line(n, l), fstring_cand(d, x), node(d, x, _, _, e), e <= s, end_line(x, l).
+violation("data-layer-grammar-render-methods", "fstring", "F_STRING", p, l) :- fstring_cand(d, n), !fstring_hidden(n), rm_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+join_object(o) :- rm_strlit(o).
+join_object(o) :- node(_, o, "integer", _, _).
+join_object(o) :- node(_, o, "float", _, _).
+join_object(o) :- node(_, o, "true", _, _).
+join_object(o) :- node(_, o, "false", _, _).
+join_object(o) :- node(_, o, "none", _, _).
+join_object(o) :- node(_, o, "ellipsis", _, _).
+join_cand(d, c) :- node(d, c, "call", _, _), field(c, "function", a), node(_, a, "attribute", _, _), field(a, "attribute", i), node(_, i, "identifier", _, _), text(i, "join"), field(a, "object", o), join_object(o), rm_in_render(c).
+join_hidden(n) :- join_cand(d, n), node(d, n, _, s, _), line(n, l), join_cand(d, x), node(d, x, _, _, e), e <= s, end_line(x, l).
+violation("data-layer-grammar-render-methods", "join", "STRING_JOIN", p, l) :- join_cand(d, n), !join_hidden(n), rm_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+format_cand(d, c) :- node(d, c, "call", _, _), field(c, "function", a), node(_, a, "attribute", _, _), field(a, "attribute", i), node(_, i, "identifier", _, _), text(i, "format"), rm_in_render(c).
+format_hidden(n) :- format_cand(d, n), node(d, n, _, s, _), line(n, l), format_cand(d, x), node(d, x, _, _, e), e <= s, end_line(x, l).
+violation("data-layer-grammar-render-methods", "format", "STRING_FORMAT", p, l) :- format_cand(d, n), !format_hidden(n), rm_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+template_cand(d, c) :- node(d, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, s), (s = "Template" ; s = "t"), rm_in_render(c).
+template_hidden(n) :- template_cand(d, n), node(d, n, _, s, _), line(n, l), template_cand(d, x), node(d, x, _, _, e), e <= s, end_line(x, l).
+violation("data-layer-grammar-render-methods", "template", "T_STRING", p, l) :- template_cand(d, n), !template_hidden(n), rm_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+concat_operand(o) :- rm_strlit(o).
+concat_operand(o) :- rm_fshape(o).
+concat_cand(d, b) :- node(d, b, "binary_operator", _, _), op(b, "+"), field(b, "left", x), concat_operand(x), field(b, "right", y), concat_operand(y), rm_in_render(b).
+concat_hidden(n) :- concat_cand(d, n), node(d, n, _, s, _), line(n, l), concat_cand(d, x), node(d, x, _, _, e), e <= s, end_line(x, l).
+violation("data-layer-grammar-render-methods", "concat", "STRING_CONCAT", p, l) :- concat_cand(d, n), !concat_hidden(n), rm_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+runtime_static_callee(f) :- node(_, f, "identifier", _, _), text(f, "static").
+runtime_static_callee(f) :- node(_, f, "attribute", _, _), field(f, "attribute", i), node(_, i, "identifier", _, _), text(i, "static"), field(f, "object", o), node(_, o, "identifier", _, _), text(o, s), (s = "SF" ; s = "SqlFragment").
+runtime_static_callee(f) :- node(_, f, "attribute", _, _), field(f, "attribute", i), node(_, i, "identifier", _, _), text(i, "static"), field(f, "object", o), node(_, o, "attribute", _, _).
+runtime_static_cand(d, c) :- node(d, c, "call", _, _), field(c, "function", f), runtime_static_callee(f), rm_in_render(c), nearest(c, k, rm_class_kind), !rm_listed(k, "ALLOWLISTED_STATIC_CLASSES"), field(c, "arguments", args), child(args, a, _), !runtime_static_skip(a), !rm_strlit(a).
+runtime_static_skip(a) :- node(_, a, "keyword_argument", _, _).
+runtime_static_skip(a) :- node(_, a, "dictionary_splat", _, _).
+runtime_static_hidden(n) :- runtime_static_cand(d, n), node(d, n, _, s, _), line(n, l), runtime_static_cand(d, x), node(d, x, _, _, e), e <= s, end_line(x, l).
+violation("data-layer-grammar-render-methods", "runtime-static", "STATIC_RUNTIME_VALUE", p, l) :- runtime_static_cand(d, n), !runtime_static_hidden(n), rm_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).

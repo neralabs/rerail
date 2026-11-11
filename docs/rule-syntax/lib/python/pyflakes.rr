@@ -1,0 +1,274 @@
+// python/pyflakes: the vocabulary of Ruff's pyflakes (F) and pycodestyle (E7) rules: where code runs (loop,
+// function, class, module, comprehension), what a literal is and what it equals, which names are bound, and
+// `__all__`. The format-string rules (F50x, F52x) add python/pyflakes-format.
+//
+// Interface
+//   1. Handlers:  bare_except(x, kw)        an `except:` with no type; kw its keyword token (E722, F707)
+//                 handler_block(x, b)       the body of except clause x
+//                 ambiguous_name(x)         "l", "I" or "O" (E741-E743)
+//   2. Contexts:  outside_loop(s)           a break/continue with no loop body around it in its scope (F701, F702)
+//                 run_scope(n, s, k)        n runs in scope s of kind k, as CPython compiles it: "function", "lambda",
+//                                           "class", "module", "comprehension" or "generator" (F704, F706, F823)
+//                 first_iter(c, e)          e is comprehension c's first iterable, which runs outside c
+//                 branch_block(b)           the body of an if/elif/else/try/except/case (Ruff's branches; F402)
+//   3. Literals:  py_literal(e), py_const(e), singleton(e), const_non_singleton(e), mutable_literal(e)
+//                                           Ruff's is_literal, is_constant, … (F632, E711)
+//                 nonempty_tuple(e)         e, through parentheses, is a tuple with an element (F631, F634)
+//   4. Names:     unbound_ref(n, x)         load n of x finds no binding in the file, in Ruff's order (F405)
+//                 load_ref(n, x)            n reads x (a load, or the target of `x += 1`)
+//                 bare_annotation(a, l, x, s)  `x: T` with no value, in scope s (F823, F842)
+//                 resolves_builtin(e, x)    e is the name x and reads the builtin (E721)
+//                 star_reach(n)             a scope around n, or its module, has `from m import *` (F405)
+//                 star_import(i, m)         i is `from m import *` (F403, F406)
+//   5. __all__:   all_entry(s, x)           string s names x in the module's `__all__` (F405, F822)
+//   6. noqa:      noqa(st, code)            statement st's first line has `# noqa` covering code (F822)
+//   7. Keys:      literal_key(e, k)         literal e's value as a dict key: 1, 1.0, True, 1+0j are one (F601)
+//                 number(e, re, im)         a (signed, complex) number literal's canonical parts
+//
+// Python background
+//   - `break` and `continue` belong to the innermost loop *body*: a loop's `else` clause is outside it, and a def or
+//     class in between hides the loop.
+//   - Scopes as CPython builds them: a def's decorators, defaults and annotations run in the enclosing scope; a
+//     comprehension is a scope of its own, except its first iterable, which runs outside it.
+//   - Ruff's tree has no parentheses: `assert (a, b)` and `assert ((a, b))` are the same tuple test.
+#include "python/ast.rr"
+
+// ---- 1. handlers -------------------------------------------------------------------------------------------------
+// bare_except(x, kw): `except:`. The clause has no `value` (the type, or `T as e`); kw is the `except` token,
+// which is where Ruff reports.
+//   try: f()
+//   except: pass          bare_except(<except clause>, <except>)
+.decl bare_except(x: node, kw: span)
+bare_except(x, kw) :- kind(x, "except_clause"), !field(x, "value", _), match("(?s)(?<kw>except)\\b.*", x).
+// handler_block(x, b): the body of except clause x.
+.decl handler_block(x: node, b: node)
+handler_block(x, b) :- kind(x, "except_clause"), child(x, b, _), kind(b, "block").
+
+// ambiguous_name(x): a name pycodestyle reads as a digit in many fonts (E741, E742, E743).
+.decl ambiguous_name(x: symbol)
+ambiguous_name("l"). ambiguous_name("I"). ambiguous_name("O").
+
+// ---- 2. contexts -------------------------------------------------------------------------------------------------
+// outside_loop(s): break or continue s has no loop body between it and its def, class or module. A loop's
+// `else` is not its body: `for x in xs: pass` / `else: break` is F701.
+//   while c:
+//       def f(): break      outside_loop: the def hides the loop
+.decl loop_stop(n: node)
+loop_stop(b) :- (kind(l, "for_statement") ; kind(l, "while_statement")), field(l, "body", b).
+loop_stop(f) :- kind(f, "function_definition").
+loop_stop(c) :- kind(c, "class_definition").
+.decl outside_loop(s: node)
+outside_loop(s) :- (kind(s, "break_statement") ; kind(s, "continue_statement")), !in_loop_body(s).
+.decl in_loop_body(s: node)
+in_loop_body(s) :- nearest(s, b, loop_stop), kind(b, "block").
+
+// run_scope(n, s, k): n runs in scope s, of kind k: "function", "lambda", "class", "module", "comprehension"
+// (a list, set or dict comprehension) or "generator" (a generator expression). As CPython compiles it, not as the
+// text nests: a def's decorators, defaults and annotations run where the def is; a comprehension's first
+// iterable runs outside the comprehension.
+//   @deco                                 deco: the module
+//   def f(x=d): return [y for y in g(x)]  d: the module; y: the comprehension; g(x): f
+// A region root is the first node of a scope's own code; run_scope is the nearest one above n (or n itself).
+.decl region(r: node, s: node, k: symbol)
+region(b, f, "function") :- kind(f, "function_definition"), field(f, "body", b).
+region(b, c, "class") :- kind(c, "class_definition"), field(c, "body", b).
+region(b, l, "lambda") :- kind(l, "lambda"), field(l, "body", b).
+region(m, m, "module") :- kind(m, "module").
+// A comprehension's own code: its element and each `if` (r), the first `for`'s target, every later `for`.
+region(r, c, k) :- comp_kind(ck, k), kind(c, ck), child(c, r, _), !kind(r, "comment"), !kind(r, "for_in_clause").
+region(r, c, k) :- comp_kind(ck, k), kind(c, ck), first_for(c, fc), field(fc, "left", r).
+region(fc, c, k) :- comp_kind(ck, k), kind(c, ck), child(c, fc, _), kind(fc, "for_in_clause"), !first_for(c, fc).
+.decl comp_kind(ck: symbol, k: symbol)
+comp_kind("list_comprehension", "comprehension"). comp_kind("set_comprehension", "comprehension").
+comp_kind("dictionary_comprehension", "comprehension"). comp_kind("generator_expression", "generator").
+// first_iter(c, e): e is the iterable of comprehension c's first `for` (python/names' first_for: a comment may
+// come before it, so it is not always child 1).
+.decl first_iter(c: node, e: node)
+first_iter(c, e) :- first_for(c, fc), field(fc, "right", e).
+.decl region_root(r: node)
+region_root(r) :- region(r, _, _).
+.decl run_scope(n: node, s: node, k: symbol)
+run_scope(n, s, k) :- nearest(n, r, region_root), region(r, s, k), !region_root(n).
+run_scope(r, s, k) :- region(r, s, k), r != s.
+// branch_block(b): a block that runs on some paths only: the body of an if, elif, else, try, except or match
+// case (python/flow's in_branch). Ruff's same_branch compares the innermost one around two nodes.
+.decl branch_block(b: node)
+branch_block(b) :- kind(b, "block"), child(p, b, _), kind(p, k), branch_kind(k).
+
+// ---- 3. literals -------------------------------------------------------------------------------------------------
+// The literal tests of Ruff's helpers (is_constant, is_singleton, is_mutable_iterable_initializer). Ruff's
+// tree has no parentheses, so each test looks through them. `-1` and f-strings are not literals there: `-1` is a
+// unary operation, and an f-string is an f-string even without a placeholder.
+.decl py_literal(e: node)
+py_literal(e) :- kind(e, k), const_kind(k).                              // numbers, True, False, None, `...`
+py_literal(e) :- string_form(e, f), (f = "str" ; f = "bytes").
+py_literal(e) :- kind(e, "concatenated_string"), !fstring(e),
+    count : { child(e, s, _), string_form(s, "tstr") } = 0.
+// py_const(e): a literal, or a tuple of them at any depth: `("a", (1, None))`.
+.decl py_const(e: node)
+py_const(e) :- unparen(e, m), py_literal(m).
+py_const(e) :- unparen(e, m), kind(m, "tuple"), !open_tuple(m).
+// open_tuple(t): some element of tuple t, at any depth, is not a literal.
+.decl open_tuple(t: node)
+open_tuple(t) :- kind(t, "tuple"), child(t, c, _), !kind(c, "comment"), unparen(c, m), !py_literal(m),
+    !kind(m, "tuple").
+open_tuple(t) :- kind(t, "tuple"), child(t, c, _), unparen(c, m), kind(m, "tuple"), open_tuple(m).
+.decl singleton(e: node)  // None, True, False or `...`
+singleton(e) :- unparen(e, m), (kind(m, "none") ; kind(m, "true") ; kind(m, "false") ; kind(m, "ellipsis")).
+.decl const_non_singleton(e: node)  // `"abc"`, `1`, `()`, `(None,)`: compared with `is`, it is F632
+const_non_singleton(e) :- py_const(e), !singleton(e).
+.decl mutable_literal(e: node)  // a list, set or dict display or comprehension
+mutable_literal(e) :- unparen(e, m), kind(m, k), mutable_kind(k).
+.decl mutable_kind(k: symbol)
+mutable_kind("list"). mutable_kind("list_comprehension"). mutable_kind("set"). mutable_kind("set_comprehension").
+mutable_kind("dictionary"). mutable_kind("dictionary_comprehension").
+// nonempty_tuple(e): e is, through parentheses, a tuple with an element: always true as a test (F631, F634).
+.decl nonempty_tuple(e: node)
+nonempty_tuple(e) :- unparen(e, m), kind(m, "tuple"), child(m, c, _), !kind(c, "comment"),
+    !kind(c, "line_continuation").
+
+
+// identifier(x): x, the value of some str literal or the text of a name, is a Python identifier (str.isidentifier)
+// that is not a keyword, as Ruff's is_identifier: an XID_Start character or `_`, then XID_Continue characters.
+//   "x_1", "ſ": identifier       "1x", "a-b": not       "class": not, a keyword
+.decl identifier(x: symbol)
+identifier(x) :- field_name(x), match("[_\\p{XID_Start}]\\p{XID_Continue}*", x), !py_keyword(x).
+.decl field_name(x: symbol)  // the strings identifier is asked about: every str literal's value, every name
+field_name(x) :- plain_str(_, x).
+field_name(x) :- kind(n, "identifier"), text(n, x).
+
+// ---- 4. names ----------------------------------------------------------------------------------------------------
+// unbound_ref(n, x): n reads x and Ruff finds no binding for it. Ruff reads code in order and visits function
+// bodies last, so either no scope on n's LEGB chain binds x, or n runs as it is read (module or class body,
+// comprehensions in them included) before every binding of x in that scope, and no outer scope binds x.
+// A bare annotation `x: int` on the chain does count as a binding here: Ruff reports the read as F821.
+//   def f(): return g      unbound_ref(<g>, "g") when the file binds no g
+//   print(later)           unbound_ref: the module binds later only below
+//   later = 1
+.decl unbound_ref(n: node, x: symbol)
+unbound_ref(n, x) :- load_ref(n, x), miss(n, x), !annotated_on_chain(n, x).
+unbound_ref(n, x) :- load_ref(n, x), look(n, x, s), nearest(n, s, scope), (kind(s, "module") ; kind(s, "class_definition")),
+    x != "__qualname__", x != "__module__",
+    count : { binding(s, x, b, _), b < n, !within(n, b) } = 0, !outer_bound(s, x),
+    !annotated_on_chain(n, x).
+// outer_bound(s, x): an enclosing scope of s binds x; asked only for the (s, x) unbound_ref's second rule tests.
+.decl ub_cand(s: node, x: symbol)
+ub_cand(s, x) :- load_ref(n, x), look(n, x, s), nearest(n, s, scope), (kind(s, "module") ; kind(s, "class_definition")).
+.decl outer_bound(s: node, x: symbol)
+outer_bound(s, x) :- ub_cand(s, x), inside(s, p, lfscope), bound_in(p, x).
+// load_ref(n, x): n reads x: an `ast.Name` in load context, or the target of `x += 1`, which reads x first.
+// The names of `from __future__ import ...` are not reads.
+.decl load_ref(n: node, x: symbol)
+load_ref(n, x) :- ast_name(n, x), expr_ctx(n, "load"), !inside(n, _, future_stmt).
+load_ref(n, x) :- kind(a, "augmented_assignment"), field(a, "left", n), kind(n, "identifier"), text(n, x).
+.decl future_stmt(k: symbol)
+future_stmt("future_import_statement").
+// bare_annotation(a, l, x, s): `x: T` with no value, statement a, target l, in scope s. It binds nothing at run
+// time, but makes x local to a function (F842, F823) and Ruff records it as an (unbound) binding.
+.decl bare_annotation(a: node, l: node, x: symbol, s: node)
+bare_annotation(a, l, x, s) :- kind(a, "assignment"), field(a, "type", _), !field(a, "right", _), field(a, "left", l),
+    kind(l, "identifier"), text(l, x), nearest(a, s, scope).
+.decl annotated_on_chain(n: node, x: symbol)
+annotated_on_chain(n, x) :- walk(n, x, s), bare_annotation(_, _, x, s).
+// resolves_builtin(e, x): e is the name x, unbound in the file, and x is a builtin: `type`, `int`, `print`.
+// Ruff's has_builtin_binding. A star import does not change it: Ruff binds no name for one.
+.decl resolves_builtin(e: node, x: symbol)
+resolves_builtin(e, x) :- unbound_ref(e, x), builtin(x).
+// star_reach(n): `from m import *` in n's module, or in a def or class around n: the import may bind any name.
+.decl star_reach(n: node)
+star_reach(n) :- docof(n, d), modnode(d, m), star(m).
+star_reach(n) :- inside(n, s, scope), star(s).
+// star_import(i, m): i is `from m import *`, with m as written: "os.path", ".", "..pkg". `__future__` is not a
+// module one imports from (tree-sitter gives it a statement kind of its own).
+.decl star_import(i: node, m: symbol)
+star_import(i, m) :- kind(i, "import_from_statement"), child(i, w, _), kind(w, "wildcard_import"),
+    field(i, "module_name", mn), text(mn, m).
+
+// ---- 5. __all__ ----------------------------------------------------------------------------------------------------
+// all_entry(s, x): string s, in a module-level definition of `__all__`, names x. Ruff reads these forms:
+//   __all__ = ["a", "b"]           __all__ = ("a",)          __all__ = list(["a"])   (or tuple, builtins.list)
+//   __all__ += ["c"]               __all__.extend(["d"])     __all__.append("e")     __all__ = ["a"] + ["b"]
+// A `.pyi` stub's `__all__: list[str] = [...]` is the same.
+.decl all_value(v: node)
+all_value(v) :- kind(a, k), (k = "assignment" ; k = "augmented_assignment"), field(a, "left", l), text(l, "__all__"),
+    field(a, "right", v), nearest(a, m, scope), kind(m, "module").
+all_value(v) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, meth), (meth = "extend" ; meth = "append"),
+    text(o, "__all__"), field(c, "arguments", al), child(al, v, 0), nearest(c, m, scope), kind(m, "module").
+all_value(v) :- all_value(b), unparen(b, m), kind(m, "binary_operator"), op(m, "+"), child(m, v, _).
+all_value(v) :- all_value(c), unparen(c, m), kind(m, "call"), field(m, "function", f), dotted_expr(f, q),
+    (q = "list" ; q = "tuple" ; q = "builtins.list" ; q = "builtins.tuple"), field(m, "arguments", al), child(al, v, 0).
+.decl all_entry(s: node, x: symbol)
+all_entry(s, x) :- all_value(v), unparen(v, m), (kind(m, "list") ; kind(m, "tuple")), child(m, s, _), str(s, x).
+all_entry(s, x) :- all_value(s), str(s, x).                                      // __all__.append("e")
+
+// ---- 6. noqa -------------------------------------------------------------------------------------------------------
+// noqa(st, code): the first line of statement st carries `# noqa` (every code) or `# noqa: …code…`. For the few
+// rules whose findings inside a statement Ruff also lets the statement's first line silence (F822 in a
+// multi-line `__all__`), which `suppress` (the finding's own line) does not cover. A rule asks for the
+// statements it needs with noqa_ask(st, code), so only those are looked at.
+//   __all__ = [  # noqa: F822
+//       "Missing",              not reported
+//   ]
+.decl noqa_ask(st: node, code: symbol)
+.decl noqa(st: node, code: symbol)
+noqa(st, c) :- noqa_ask(st, c), line(st, l), docof(st, d), kind(n, "comment"), line(n, l), docof(n, d), comment(n, t),
+    (match("(?i)\\s*noqa\\s*", t) ; match("(?i)\\s*noqa\\s*:[\\s\\S]*", t), contains(c, t)).
+
+// ---- 7. literal keys ---------------------------------------------------------------------------------------------
+// literal_key(e, k): literal e (through parentheses) has the value k, compared as Python compares dict keys:
+// numbers by numeric value across int, float, complex and bool (`1 == 1.0 == True == 1 + 0j`), str and bytes by
+// their decoded value, tuples element by element. Ruff's F601 compares keys this way.
+//   {1: a, 1.0: b}          both keys are "n:1:0"
+//   {"a": x, "\x61": y}     both are "s:a"
+// Limits: a float in exponent form (`1e3`) keeps its text, and tuples are compared one level deep.
+.decl literal_key(e: node, k: symbol)
+literal_key(e, k) :- unparen(e, m), atom_key(m, k).
+literal_key(e, k) :- unparen(e, m), kind(m, "tuple"),
+    count : { child(m, c0, _), !kind(c0, "comment"), !elem_key(c0, _) } = 0,
+    j = join x by i sep "," : { child(m, c, i), elem_key(c, x) }, k = cat("(", cat(j, ")")).
+.decl elem_key(c: node, k: symbol)
+elem_key(c, k) :- child(t, c, _), kind(t, "tuple"), unparen(c, m), atom_key(m, k).
+// atom_key(e, k): a literal that is not a tuple.
+.decl atom_key(e: node, k: symbol)
+atom_key(e, cat("s:", v)) :- plain_str(e, v).
+atom_key(e, cat("b:", v)) :- string_form(e, "bytes"), value(e, v).
+// An f-string is compared as written: `f"a"` repeats `f"a"`, and `f"{x}"` repeats `f"{x}"`.
+atom_key(e, cat("f:", t)) :- kind(e, "string"), fstring(e), text(e, t).
+atom_key(e, "None") :- kind(e, "none").
+atom_key(e, "...") :- kind(e, "ellipsis").
+atom_key(e, cat("n:", cat(re, cat(":", im)))) :- number(e, re, im).
+// number(e, re, im): e is a real or complex number literal, possibly signed, with canonical real and imaginary
+// parts: `-1 + 2j` gives ("-1", "2"), True gives ("1", "0").
+.decl number(e: node, re: symbol, im: symbol)
+number(e, "1", "0") :- kind(e, "true").
+number(e, "0", "0") :- kind(e, "false").
+number(e, r, "0") :- (kind(e, "integer") ; kind(e, "float")), text(e, t), !match("[\\s\\S]*[jJ]", t), num_text(e, r).
+number(e, "0", i) :- (kind(e, "integer") ; kind(e, "float")), text(e, t), match("(?<b>[\\s\\S]*)[jJ]", t),
+    canon_number(b, i).
+number(e, r, i) :- kind(e, "unary_operator"), op(e, "-"), field(e, "argument", a), unparen(a, m),
+    number(m, r0, i0), negate(r0, r), negate(i0, i).
+number(e, r, i) :- kind(e, "unary_operator"), op(e, "+"), field(e, "argument", a), unparen(a, m), number(m, r, i).
+// `a + bj` and `a - bj`: a real part and an imaginary literal. A complex's parts are floats, so an integer
+// part longer than a float holds exactly (15 digits) is kept apart: `2**53 + 1` is not `2**53 + 1 + 0j`.
+number(e, r, i) :- kind(e, "binary_operator"), field(e, "left", l), field(e, "right", rt), unparen(l, lm),
+    number(lm, r0, "0"), unparen(rt, rm), number(rm, "0", i0), (op(e, "+"), i = i0 ; op(e, "-"), negate(i0, i)),
+    (strlen(r0) <= 15, r = r0 ; strlen(r0) > 15, r = cat(r0, "~float")).
+// negate(a, b): b is -a as canonical text; -0 is 0.
+.decl negate(a: symbol, b: symbol)
+negate("0", "0").
+negate(a, b) :- (number(_, a, _) ; number(_, _, a)), a != "0", prefix("-", a), b = @replace_all(a, "^-", "").
+negate(a, cat("-", a)) :- (number(_, a, _) ; number(_, _, a)), a != "0", !prefix("-", a).
+// num_text(e, r): an integer's value (core normalises `0x10` to "16"), or a float's canonical decimal text.
+.decl num_text(e: node, r: symbol)
+num_text(e, v) :- kind(e, "integer"), value(e, v).
+num_text(e, r) :- kind(e, "float"), (value(e, v) ; !value(e, _), text(e, v)), canon_number(v, r).
+// canon_number(t, r): decimal text without underscores, trailing fractional zeros or a bare leading dot:
+// "1.50" -> "1.5", "10.0" -> "10", ".5" -> "0.5", "1_000" -> "1000". Text with an exponent is kept.
+.decl canon_number(t: symbol, r: symbol)
+canon_number(t, r) :- num_source(t), u = @replace_all(t, "_", ""), match("[0-9]*\\.[0-9]*", u),
+    s = @replace_all(@replace_all(u, "0+$", ""), "\\.$", ""),
+    (prefix(".", s), r = cat("0", s) ; !prefix(".", s), r = s).
+canon_number(t, u) :- num_source(t), u = @replace_all(t, "_", ""), !match("[0-9]*\\.[0-9]*", u).
+.decl num_source(t: symbol)
+num_source(v) :- kind(e, "float"), (value(e, v) ; !value(e, _), text(e, v)).
+num_source(b) :- (kind(e, "integer") ; kind(e, "float")), text(e, t), match("(?<b>[\\s\\S]*)[jJ]", t).

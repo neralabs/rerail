@@ -1,0 +1,139 @@
+{
+  "scope": "Snapshot capture costs are separate; root costs are inclusive and non-additive.",
+  "runs": {
+    "replay/cases/runs.jsonl": {
+      "fixed_order": {
+        "runs": 1,
+        "cpu": 0.0018720000000000125,
+        "wall": 0.001874334,
+        "prepareCpu": 6.0000000000060005e-06,
+        "vm": 69146,
+        "scans": 3458,
+        "sorts": 15,
+        "autoindex": 713,
+        "reprepare": 0,
+        "rows": 360,
+        "failures": [],
+        "parity_checks": 1,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "doc": [
+            242,
+            0,
+            288,
+            696
+          ],
+          "line": [
+            240,
+            0,
+            240,
+            600
+          ],
+          "node": [
+            240,
+            0,
+            240,
+            960
+          ],
+          "py_attribute": [
+            144,
+            0,
+            120,
+            384
+          ],
+          "py_call_site": [
+            168,
+            0,
+            168,
+            624
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ],
+          "strtest_0": [
+            24,
+            0,
+            24,
+            24
+          ],
+          "text": [
+            120,
+            0,
+            120,
+            240
+          ]
+        }
+      },
+      "batch_receiver_membership": {
+        "runs": 1,
+        "cpu": 0.0020710000000000173,
+        "wall": 0.002117625,
+        "prepareCpu": 0.0034490000000000076,
+        "vm": 71220,
+        "scans": 4010,
+        "sorts": 15,
+        "autoindex": 690,
+        "reprepare": 0,
+        "rows": 360,
+        "failures": [],
+        "parity_checks": 1,
+        "parity_failures": 0,
+        "root_count": 0,
+        "inputs": {
+          "doc": [
+            242,
+            0,
+            288,
+            696
+          ],
+          "line": [
+            240,
+            0,
+            240,
+            600
+          ],
+          "node": [
+            240,
+            0,
+            240,
+            960
+          ],
+          "py_attribute": [
+            1,
+            1,
+            120,
+            408
+          ],
+          "py_call_site": [
+            168,
+            0,
+            168,
+            624
+          ],
+          "py_exec_context": [
+            1,
+            0,
+            144,
+            864
+          ],
+          "strtest_0": [
+            24,
+            0,
+            24,
+            24
+          ],
+          "text": [
+            120,
+            0,
+            120,
+            240
+          ]
+        }
+      }
+    }
+  }
+}

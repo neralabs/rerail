@@ -1,0 +1,123 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl str_params_class_kind(kind: symbol)
+str_params_class_kind("class_definition").
+.decl str_params_fn_kind(kind: symbol)
+str_params_fn_kind("function_definition").
+.decl child(p: node, c: node, i: number)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
+.decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl op(n: node, s: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
+.decl out_scope(d: number)
+.decl str_call_at(c: node)
+.decl str_call_has_init(c: node)
+.decl str_call_slot(c: node, slot: symbol)
+.decl str_params_after_sep(n: node)
+.decl str_params_allow_pair(x: symbol, cls: symbol)
+.decl str_params_allowed(n: node)
+.decl str_params_ann(n: node)
+.decl str_params_before_posonly(n: node)
+.decl str_params_def(f: node, x: symbol)
+.decl str_params_grammar_class(c: node)
+.decl str_params_grammarish(c: node)
+.decl str_params_listed_class(c: node)
+.decl str_params_member(st: node, f: node, x: symbol)
+.decl str_params_param(n: node, x: symbol)
+.decl str_params_sep(s: node)
+.decl str_params_splat(n: node)
+.decl str_params_sql_name(s: symbol)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, text, op, line, node_text
+.output violation
+option_item("ALLOWLISTED_STR_CLASSES", 0, "CheckExpressionLexer").
+option_item("ALLOWLISTED_STR_CLASSES", 1, "SqlAdminToolRawStatement").
+option_item("ALLOWLISTED_STR_CLASSES", 10, "SqlQuotedIdentifier").
+option_item("ALLOWLISTED_STR_CLASSES", 11, "SqlTypeRef").
+option_item("ALLOWLISTED_STR_CLASSES", 12, "ViewDefinition").
+option_item("ALLOWLISTED_STR_CLASSES", 13, "sql_ddl_comment").
+option_item("ALLOWLISTED_STR_CLASSES", 2, "SqlColumnConstraint").
+option_item("ALLOWLISTED_STR_CLASSES", 3, "SqlColumnType").
+option_item("ALLOWLISTED_STR_CLASSES", 4, "SqlEscapedLiteral").
+option_item("ALLOWLISTED_STR_CLASSES", 5, "SqlExplain").
+option_item("ALLOWLISTED_STR_CLASSES", 6, "SqlFragment").
+option_item("ALLOWLISTED_STR_CLASSES", 7, "SqlHybridSearchQuery").
+option_item("ALLOWLISTED_STR_CLASSES", 8, "SqlIntegerLiteral").
+option_item("ALLOWLISTED_STR_CLASSES", 9, "SqlPreRenderedFragment").
+str_params_allow_pair("generation_type", "SqlAlterColumnAddIdentity").
+str_params_allow_pair("value", "SqlAlterColumnSet").
+str_params_allow_pair("value", "SqlAlterTableSet").
+str_params_allow_pair("key", "SqlAlterTableSetOption").
+str_params_allow_pair("operation", "SqlBootstrapProtectTrigger").
+str_params_allow_pair("session_id", "SqlBootstrapProtectTrigger").
+str_params_allow_pair("event", "SqlCreateTriggerIfNotExists").
+str_params_allow_pair("timing", "SqlCreateTriggerIfNotExists").
+str_params_allow_pair("event", "SqlCreateTriggerStmt").
+str_params_allow_pair("timing", "SqlCreateTriggerStmt").
+str_params_allow_pair("name", "SqlCteDefinitionGrammar").
+str_params_allow_pair("name", "SqlJoinType").
+str_params_allow_pair("mode", "SqlMatchAgainstExpr").
+str_params_allow_pair("event", "SqlPgCreateBeforeTrigger").
+str_params_allow_pair("name", "SqlSetSessionVar").
+str_params_allow_pair("value", "SqlSetSessionVar").
+str_params_allow_pair("name", "SqlSysVar").
+str_params_allow_pair("name", "SqlSystemTableRef").
+str_params_allow_pair("language", "SqlTsQueryExpr").
+str_params_allow_pair("mode", "SqlTsQueryExpr").
+str_params_allow_pair("config", "TsVectorConfig").
+str_params_allow_pair("file_path", "sql_load_data_infile").
+str_params_allow_pair("arg", "sql_pragma").
+str_params_allow_pair("name", "sql_pragma").
+str_params_allow_pair("name", "sql_pragma_set").
+str_params_allow_pair("value", "sql_pragma_set").
+str_params_allow_pair("definition", "sql_schema_view_definition").
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2100_sql_grammar/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+tape_syntax_error(d) :- syntax_error(d).
+str_params_ann(n) :- node(_, n, "identifier", _, _), text(n, "str").
+str_params_ann(n) :- node(_, n, "binary_operator", _, _), op(n, "|"), field(n, "left", c), str_params_ann(c).
+str_params_ann(n) :- node(_, n, "binary_operator", _, _), op(n, "|"), field(n, "right", c), str_params_ann(c).
+str_params_ann(n) :- node(_, n, "union_type", _, _), child(n, c, _), str_params_ann(c).
+str_params_ann(n) :- node(_, n, "type", _, _), child(n, c, _), str_params_ann(c).
+str_params_ann(n) :- node(_, n, "parenthesized_expression", _, _), child(n, c, _), str_params_ann(c).
+str_params_def(f, x) :- node(_, f, "function_definition", _, _), node_text(f, t), match("def\\s(?s:.*)", t), field(f, "name", i), node(_, i, "identifier", _, _), text(i, x).
+str_params_member(st, st, x) :- str_params_def(st, x).
+str_params_member(st, f, x) :- node(_, st, "decorated_definition", _, _), field(st, "definition", f), str_params_def(f, x).
+str_params_param(n, x) :- node(_, n, "typed_parameter", _, _), child(n, i, _), node(_, i, "identifier", _, _), text(i, x), x != "self", field(n, "type", t), str_params_ann(t), !str_params_splat(n), !str_params_after_sep(n), !str_params_before_posonly(n), !str_params_allowed(n).
+str_params_param(n, x) :- node(_, n, "typed_default_parameter", _, _), field(n, "name", i), node(_, i, "identifier", _, _), text(i, x), x != "self", field(n, "type", t), str_params_ann(t), !str_params_after_sep(n), !str_params_before_posonly(n), !str_params_allowed(n).
+str_params_splat(n) :- node(_, n, "typed_parameter", _, _), child(n, c, _), node(_, c, "list_splat_pattern", _, _).
+str_params_splat(n) :- node(_, n, "typed_parameter", _, _), child(n, c, _), node(_, c, "dictionary_splat_pattern", _, _).
+str_params_sep(s) :- node(_, s, "positional_separator", _, _).
+str_params_sep(s) :- node(_, s, "keyword_separator", _, _).
+str_params_sep(s) :- node(_, s, "list_splat_pattern", _, _).
+str_params_sep(s) :- node(_, s, "typed_parameter", _, _), child(s, c, _), node(_, c, "list_splat_pattern", _, _).
+str_params_after_sep(n) :- child(p, n, i), child(p, s, j), j < i, str_params_sep(s).
+str_params_before_posonly(n) :- child(p, n, i), child(p, s, j), j > i, node(_, s, "positional_separator", _, _).
+str_params_allowed(n) :- child(n, i, _), node(_, i, "identifier", _, _), text(i, x), str_params_allow_pair(x, cls), inside(n, f, str_params_fn_kind), str_params_def(f, "__init__"), nearest(f, c, str_params_class_kind), field(c, "name", ci), node(_, ci, "identifier", _, _), text(ci, cls).
+str_params_sql_name(s) :- text(_, s), (prefix("Sql", s) ; prefix("_Sql", s)).
+str_params_grammar_class(c) :- node(_, c, "class_definition", _, _), !str_params_listed_class(c), str_params_grammarish(c).
+str_params_listed_class(c) :- node(_, c, "class_definition", _, _), field(c, "name", i), node(_, i, "identifier", _, _), text(i, x), option_item("ALLOWLISTED_STR_CLASSES", _, x).
+str_params_grammarish(c) :- node(_, c, "class_definition", _, _), field(c, "superclasses", a), child(a, b, _), node(_, b, "identifier", _, _), text(b, s), str_params_sql_name(s).
+str_params_grammarish(c) :- node(_, c, "class_definition", _, _), field(c, "superclasses", a), child(a, b, _), node(_, b, "attribute", _, _), field(b, "attribute", i), text(i, s), str_params_sql_name(s).
+str_params_grammarish(c) :- node(_, c, "class_definition", _, _), field(c, "body", bd), child(bd, st, _), str_params_member(st, _, "render").
+violation("data-layer-grammar-str-params", "parameter", "STR_PARAM", p, l) :- str_params_param(n, _), nearest(n, f, str_params_fn_kind), str_params_def(f, "__init__"), nearest(f, c, str_params_class_kind), str_params_grammar_class(c), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+str_call_has_init(c) :- node(_, c, "class_definition", _, _), field(c, "body", bd), child(bd, st, _), str_params_member(st, _, "__init__").
+str_call_slot(c, slot) :- node(_, c, "class_definition", _, _), field(c, "body", bd), child(bd, st, _), str_params_member(st, f, "__init__"), field(f, "parameters", ps), child(ps, pn, _), str_params_param(pn, x), slot = @concat("_", x).
+str_call_slot(c, slot) :- node(_, c, "class_definition", _, _), field(c, "body", bd), child(bd, st, _), str_params_member(st, f, "__init__"), field(f, "parameters", ps), child(ps, pn, _), str_params_param(pn, slot), !prefix("_", slot).
+str_call_at(c) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, "str"), field(c, "arguments", a), child(a, at, _), node(_, at, "attribute", _, _), field(at, "object", o), node(_, o, "identifier", _, _), text(o, "self"), field(at, "attribute", s), node(_, s, "identifier", _, _), text(s, slot), inside(c, r, str_params_fn_kind), str_params_def(r, "render"), nearest(r, k, str_params_class_kind), str_params_grammar_class(k), !str_call_has_init(k).
+str_call_at(c) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, "str"), field(c, "arguments", a), child(a, at, _), node(_, at, "attribute", _, _), field(at, "object", o), node(_, o, "identifier", _, _), text(o, "self"), field(at, "attribute", s), node(_, s, "identifier", _, _), text(s, slot), inside(c, r, str_params_fn_kind), str_params_def(r, "render"), nearest(r, k, str_params_class_kind), str_params_grammar_class(k), str_call_slot(k, slot).
+violation("data-layer-grammar-str-params", "str-call", "STR_CALL_IN_RENDER", p, l) :- str_call_at(c), node(d, c, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(c, l).
+violation("data-layer-grammar-str-params", "str-concat", "STR_CONCAT_IN_RENDER", p, l) :- node(d, b, "binary_operator", _, _), op(b, "+"), field(b, "left", x), str_call_at(x), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(b, l).
+violation("data-layer-grammar-str-params", "str-concat", "STR_CONCAT_IN_RENDER", p, l) :- node(d, b, "binary_operator", _, _), op(b, "+"), field(b, "right", x), str_call_at(x), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(b, l).

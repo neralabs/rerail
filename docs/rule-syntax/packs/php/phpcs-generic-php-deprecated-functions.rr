@@ -1,0 +1,20 @@
+.policy "phpcs-generic-php-deprecated-functions" revision 2
+.description "Replace calls to deprecated built-in PHP functions, such as strftime(), utf8_encode() and curl_close(); they raise deprecation notices and will be removed."
+.language php
+.mode steer
+.scope include "**/*.php"
+.scope exclude "**/*.blade.php"
+
+#include "php/names.rr"
+//   php_call_written(c, x)   c is written as x(…) or \x(…), x lowercase
+#include "../packs/php/phpcs-generic-php-deprecated-functions.facts.rr"   // deprecated_fn(x), from the JSON
+
+// PHP_CodeSniffer's Generic.PHP.DeprecatedFunctions (code Deprecated): a call of a function the running PHP marks
+// deprecated (ReflectionFunction::isDeprecated). The list is the one PHP 8.5 gives, as the policy pins it:
+//   libxml_disable_entity_loader();     reported, deprecated in PHP 8.0
+//   create_function();                  not reported: removed in PHP 8.0, so no longer a function to reflect on
+// The sniff reads tokens, as ForbiddenFunctions does: `x(…)` and `\x(…)`, not methods or qualified names.
+.violation deprecated(at: node, x: symbol) code "Generic.PHP.DeprecatedFunctions"
+    "Function {x}() has been deprecated: replace it with its current equivalent, or delete the call if it is now a no-op like curl_close()."
+    suppress phpcs "Generic.PHP.DeprecatedFunctions.Deprecated"
+deprecated(c, x) :- php_call_written(c, x), deprecated_fn(x).

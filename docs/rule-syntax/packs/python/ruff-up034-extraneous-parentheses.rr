@@ -1,0 +1,43 @@
+.policy "ruff-up034-extraneous-parentheses" revision 2
+.description "Remove doubled parentheses around an expression; the outer pair already groups it."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP034 (pyupgrade): a pair of parentheses directly inside another, `((x))` or `print(("x"))`: the
+// outer `(` is followed by the inner one, and the inner `)` by the outer one. The inner pair may not hold a
+// tuple (`((1, 2))`, `(())`) or a bare `yield`, which need it. A generator's own parentheses count as a pair:
+// `print((x for x in y))`. Ruff scans the tokens left to right and resumes after the inner pair of each
+// attempt, so only the outermost of nested doubles is reported (`print((("a")))` once), and nothing inside
+// an attempt that failed (`f(((1)), 2)` is not reported). The finding is at the inner `(`.
+//   x = ((1))          ← UP034 at the second `(`
+//   print((1,))        f((yield))        f((1), 2)        not reported
+#include "python/ast.rr"
+
+.violation UP034(at: node) code "UP034"
+    "Delete the highlighted inner pair of parentheses; the enclosing parentheses already group this expression, so the meaning is unchanged."
+    suppress ruff "UP034"
+UP034(n) :- double(m, n), redundant(n), !scanned(m).
+
+// attempt(m, n): bracket node m opens with `(` and its next token opens n: where the scan tries a double.
+// double(m, n): the attempt succeeds: n's `)` is followed by m's `)`.
+// The tape leaves parentheses out where the grammar implies them (RER-131), so the source around n says where
+// they stand: before m's first child n, `(` and blanks; after it, blanks and m's `)`.
+.decl attempt(m: node, n: node)
+attempt(m, n) :- bracket(m), child(m, n, 0), inner(n), structural_before(n, s), match("\\(\\s*", s).
+.decl double(m: node, n: node)
+double(m, n) :- attempt(m, n), structural_after(n, s), match("\\s*\\)", s).
+.decl bracket(m: node)  // nodes whose first token may be a `(` of their own
+bracket(m) :- kind(m, k), (k = "argument_list" ; k = "parenthesized_expression" ; k = "tuple" ;
+    k = "generator_expression" ; k = "parameters" ; k = "tuple_pattern").
+.decl inner(n: node)  // a node that is a pair of parentheses and what they hold
+inner(n) :- kind(n, k), (k = "parenthesized_expression" ; k = "tuple" ; k = "generator_expression"),
+    prefix("(", n).
+// redundant(n): removing n's parentheses keeps the meaning: not a tuple, not `(yield …)`.
+.decl redundant(n: node)
+redundant(n) :- inner(n), !kind(n, "tuple"), !yield_pair(n).
+.decl yield_pair(n: node)
+yield_pair(n) :- kind(n, "parenthesized_expression"), child(n, y, 0), kind(y, "yield").
+// scanned(m): m's `(` lies inside the inner pair of an earlier attempt, which the scan has passed over.
+.decl scanned(m: node)
+scanned(m) :- double(m, _), attempt(_, n0), (m = n0 ; within(m, n0)).

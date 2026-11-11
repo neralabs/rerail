@@ -25,9 +25,9 @@ use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::language::adapter::parsed_by_forte;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
-use crate::code_rule_dsl::matcher::{
-    AnchorPlan, FileAnchorIndex, FileGates, FileScopeSlot, GrammarMatcher, Selection, UtilLimit,
-};
+use crate::code_rule_dsl::matcher::{FileGates, FileScopeSlot, GrammarMatcher, UtilLimit};
+#[cfg(not(all(test, feature = "p-anchor-corpus")))]
+use crate::code_rule_dsl::matcher::{AnchorPlan, FileAnchorIndex, Selection};
 use crate::code_rule_dsl::model::{
     ClauseKind, CompiledCodeRule, FILE_BUDGET_EXCEEDED, FileInput, INPUT_LIMIT, Metrics, Query,
     RegexSource, WITNESS_LIMIT,
@@ -40,7 +40,6 @@ use crate::code_rule_dsl::value::names;
 use crate::code_rule_dsl::violations::{Captures, Witness};
 use crate::code_rule_dsl::{query, tape, violations};
 use crate::content_store::{CandidateCatalogIdentity, HashKey, StoredLocalResult};
-use crate::{WORK_POOL, WORKER_THREADS};
 use ast_grep_core::AstGrep as Root;
 use ast_grep_language::LanguageExt;
 use napi::Result;
@@ -52,6 +51,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use tree_sitter::{ParseOptions, Parser, Point};
 
+/// Fewer jobs than this run one after another: too few to be worth the pool.
+const PARALLEL_FROM: usize = 4;
+
 /// The matcher and anchor plan for this file's grammar; candidates only exist for supported grammars.
 pub(super) fn candidate_grammar<'a>(
     code_rule: &'a CompiledCodeRule,
@@ -62,6 +64,113 @@ pub(super) fn candidate_grammar<'a>(
         unreachable!()
     };
     grammar_matcher(matchers, file).expect("AST candidate has a grammar matcher")
+}
+
+/// A file prepared before the workers run: its document, line table and the budget and metrics of
+/// its preparation. Only the `p-anchor-corpus` path prepares files (open item O20).
+#[cfg_attr(not(all(test, feature = "p-anchor-corpus")), allow(dead_code))]
+pub(super) struct PreparedAst {
+    doc: Option<tape::TapeDoc>,
+    lines: Arc<LineTable>,
+    failures: BTreeMap<ClauseId, LocalFailure>,
+    context: Option<crate::code_rule_dsl::budget::Context>,
+    metrics: Metrics,
+    had_tape: bool,
+}
+
+#[cfg(all(test, feature = "p-anchor-corpus"))]
+fn prepare_candidates(jobs: &mut [Job], context: &JobContext<'_>) -> Result<()> {
+    use crate::code_rule_dsl::{budget::Context, matcher::CorpusSlot};
+    let _corpus = CorpusSlot::install(Arc::clone(context.anchor_corpus));
+    let mut demands = BTreeMap::new();
+    let mut grammars = BTreeMap::new();
+    for job in jobs {
+        let file = &mut job.file;
+        if file.selector_skipped
+            || !file.candidates.ast.iter().any(|id| {
+                let limits = &context.code_rules[id.0].capabilities.limits;
+                file.input.source.len() <= limits.max_source_bytes && limits.max_files != 0
+            })
+        {
+            continue;
+        }
+        let mut work = Context::work(context.closed, file_work_budget(file.input.source.len()));
+        let mut metrics = Metrics::default();
+        let language = file_language(&file.input).expect("eligible AST source");
+        let lines = Arc::new(LineTable::new(
+            &file.input.source,
+            Terminators::of(language),
+        ));
+        #[cfg(test)]
+        crate::code_rule_dsl::matcher::note_line_table_construction();
+        let old_failures = std::mem::take(&mut file.failures);
+        let had_tape = file.tape.is_some();
+        let doc = work.run(|| {
+            restore_ast_doc(
+                file,
+                &mut grammars,
+                context.closed,
+                Arc::clone(&lines),
+                &mut metrics,
+            )
+        })?;
+        let failures = std::mem::replace(&mut file.failures, old_failures);
+        if let Some(doc) = &doc
+            && let Err(error) = work.run(|| {
+                context
+                    .anchor_corpus
+                    .put(&file.input.path, doc, &matcher_budget_exhausted)
+            })
+        {
+            eprintln!("SQL AST batch publication unavailable: {error}");
+        }
+        if let Some(doc) = &doc {
+            let errors = SyntaxErrors::of_doc(doc);
+            let root = Root::doc(doc.clone());
+            let gates = FileGates::new(&file.input, root.root());
+            let mut searched = rustc_hash::FxHashMap::default();
+            let plans = file
+                .candidates
+                .ast
+                .iter()
+                .filter_map(|id| {
+                    let grammar = candidate_grammar(&context.code_rules[id.0], id.1, &file.input);
+                    let limits = &context.code_rules[id.0].capabilities.limits;
+                    (file.input.source.len() <= limits.max_source_bytes
+                        && limits.max_files != 0
+                        && !file.failures.contains_key(id)
+                        && !failures.contains_key(id)
+                        && grammar.admits_source(&file.input.source, &errors, &mut searched)
+                        && gates.admit(grammar))
+                    .then(|| crate::code_rule_dsl::matcher::p_anchors::plan_for(grammar))
+                })
+                .collect::<Vec<_>>();
+            demands.insert(file.input.path.clone(), plans);
+        }
+        file.prepared = Some(Box::new(PreparedAst {
+            doc,
+            lines,
+            failures,
+            context: Some(work),
+            metrics,
+            had_tape,
+        }));
+    }
+    // One broad rule frontier for all published files, before workers consume any candidates.
+    let mut work = Context::work(
+        context.closed,
+        super::CLAUSE_WORK_BUDGET
+            .saturating_mul(demands.values().map(Vec::len).sum::<usize>() as u64)
+            .max(1),
+    );
+    #[cfg(feature = "code-rule-profile")]
+    context
+        .anchor_corpus
+        .record_origins(context.code_rules.iter().map(Arc::as_ref));
+    if let Err(error) = work.run(|| context.anchor_corpus.prepare_files(&demands)) {
+        eprintln!("SQL AST batch unavailable; retaining authoritative candidates: {error}");
+    }
+    Ok(())
 }
 
 /// One file to evaluate in an apply.
@@ -81,6 +190,9 @@ pub(super) struct JobContext<'a> {
     pub(super) closed: &'a Arc<AtomicBool>,
     /// Extract each Python file's call summary (a code rule holds `calls` terms).
     pub(super) summarize: bool,
+    /// P's anchor corpus (the `p-anchor-corpus` path, open item O20).
+    #[cfg(all(test, feature = "p-anchor-corpus"))]
+    pub(super) anchor_corpus: &'a Arc<crate::code_rule_dsl::matcher::Corpus>,
     /// What import targets resolve among (`import_target::fs::View`), where a clause reads them.
     pub(super) import_view: Option<&'a Arc<View>>,
     /// The clauses that read import targets: their results are never stored.
@@ -100,6 +212,7 @@ struct Prefetched {
 
 /// Restores what the store holds for each job and evaluates the rest: serially for a few files,
 /// on the worker pool for more.
+#[cfg(not(all(test, feature = "p-anchor-corpus")))]
 pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<Evaluated> {
     let catalog = candidate_catalog(context.code_rules)?;
     let prefetched = Prefetched {
@@ -110,17 +223,17 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
     let work = |job: Job, grammars: &mut BTreeMap<String, Arc<tape::Grammar>>| {
         run_job(job, grammars, context, &prefetched)
     };
-    Ok(if jobs.len() < WORKER_THREADS {
+    Ok(if jobs.len() < PARALLEL_FROM {
         let mut grammars = BTreeMap::new();
         jobs.into_iter()
             .map(|job| work(job, &mut grammars))
             .collect()
     } else {
-        WORK_POOL.install(|| {
+        (|| {
             jobs.into_par_iter()
                 .map_init(BTreeMap::new, |grammars, job| work(job, grammars))
                 .collect()
-        })
+        })()
     })
 }
 
@@ -171,8 +284,71 @@ fn prefetch_documents(
     })
 }
 
+/// Restores what the store holds for each job and evaluates the rest: serially for a few files,
+/// on the worker pool for more.
+/// P's: every file's stored state is read first, then its document published to the anchor
+/// corpus and the corpus prepared for all rules, before workers consume any candidates (the
+/// `p-anchor-corpus` path, open item O20).
+#[cfg(all(test, feature = "p-anchor-corpus"))]
+pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<Evaluated> {
+    let catalog = candidate_catalog(context.code_rules)?;
+    let prefetched = Prefetched {
+        result_manifest: prefetch_results(jobs, context, catalog)?,
+        stored_documents: prefetch_documents(jobs, context)?,
+    };
+    let mut storage_times = Vec::with_capacity(jobs.len());
+    for job in jobs.iter_mut() {
+        let storage_started = Instant::now();
+        #[cfg(feature = "code-rule-profile")]
+        let _storage_read_timer = profile::PhaseTimer::start(profile::Phase::StoreRead);
+        if let Some(storage) = context.storage {
+            restore_job(&job.path, &mut job.file, &mut BTreeMap::new(), context, storage, &prefetched)?;
+        }
+        #[cfg(feature = "code-rule-profile")]
+        drop(_storage_read_timer);
+        storage_times.push(storage_started.elapsed().as_nanos() as u64);
+    }
+    prepare_candidates(jobs, context)?;
+    let jobs = std::mem::take(jobs);
+    let work = |(job, storage_read_nanoseconds): (Job, u64),
+                grammars: &mut BTreeMap<String, Arc<tape::Grammar>>| {
+        let Job {
+            path,
+            mut file,
+            consumes,
+            crossfile,
+        } = job;
+        let _corpus =
+            crate::code_rule_dsl::matcher::CorpusSlot::install(Arc::clone(context.anchor_corpus));
+        let work = check_closed(context.closed).and_then(|()| {
+            #[cfg(feature = "code-rule-profile")]
+            let _worker_profile = profile::WorkerProfile::start();
+            let mut metrics = evaluate_job(&mut file, consumes, crossfile, grammars, context)?;
+            metrics.storage_read_nanoseconds = storage_read_nanoseconds;
+            Ok(metrics)
+        });
+        CrossFileScheduler::retain_scopes(&mut file, consumes);
+        (path, file, work)
+    };
+    Ok(if jobs.len() < PARALLEL_FROM {
+        let mut grammars = BTreeMap::new();
+        jobs.into_iter()
+            .zip(storage_times)
+            .map(|job| work(job, &mut grammars))
+            .collect()
+    } else {
+        (|| {
+            jobs.into_par_iter()
+                .zip(storage_times.into_par_iter())
+                .map_init(BTreeMap::new, |grammars, job| work(job, grammars))
+                .collect()
+        })()
+    })
+}
+
 /// Restores and evaluates one job's file unless the workspace closed, then keeps the scopes its
 /// consumers' pass reads.
+#[cfg(not(all(test, feature = "p-anchor-corpus")))]
 fn run_job(
     job: Job,
     grammars: &mut BTreeMap<String, Arc<tape::Grammar>>,
@@ -195,6 +371,7 @@ fn run_job(
 }
 
 /// Restores what the store holds for the job's file, then evaluates it.
+#[cfg(not(all(test, feature = "p-anchor-corpus")))]
 fn restore_and_evaluate(
     path: &str,
     file: &mut FileState,
@@ -278,8 +455,17 @@ fn evaluate_job(
     context: &JobContext<'_>,
 ) -> Result<Metrics> {
     let closed = context.closed;
-    // The shared steps' budget grows with the file; each clause has its own allowance.
-    let budget = MatchBudget::work(closed, file_work_budget(file.input.source.len()));
+    // The shared steps' budget grows with the file; each clause has its own allowance. A file
+    // prepared before the workers ran (the `p-anchor-corpus` path) goes on with its preparation's.
+    let budget = match file.prepared.as_mut().and_then(|p| p.context.take()) {
+        Some(context) => MatchBudget::resume(context),
+        None => MatchBudget::work(closed, file_work_budget(file.input.source.len())),
+    };
+    let preparation_metrics = file
+        .prepared
+        .as_mut()
+        .map(|p| std::mem::take(&mut p.metrics))
+        .unwrap_or_default();
     let transient = file.transient_failure && crossfile.is_some();
     // A consumers' pass, or a pass over the clauses the store did not answer, runs some of the
     // file's clauses only.
@@ -309,6 +495,7 @@ fn evaluate_job(
         super::TEST_CLAUSE_WORK_BUDGET.set(previous);
     }
     let mut metrics = evaluated?;
+    metrics.merge(preparation_metrics);
     mark_import_clauses_unstored(file, context.import_clauses);
     // A consumers' pass after a transient evaluation of the file stays transient.
     file.transient_failure |= transient;
@@ -417,9 +604,17 @@ pub(super) fn evaluate_file(
     let terminators = file_language(&file.input)
         .map(Terminators::of)
         .unwrap_or(Terminators::Eslint);
-    let lines = needs_lines.then(|| Arc::new(LineTable::new(&file.input.source, terminators)));
+    let prepared_lines = file
+        .prepared
+        .as_ref()
+        .map(|prepared| Arc::clone(&prepared.lines));
+    let lines = needs_lines.then(|| {
+        prepared_lines
+            .clone()
+            .unwrap_or_else(|| Arc::new(LineTable::new(&file.input.source, terminators)))
+    });
     #[cfg(test)]
-    if lines.is_some() {
+    if lines.is_some() && prepared_lines.is_none() {
         crate::code_rule_dsl::matcher::note_line_table_construction();
     }
     metrics.line_index_nanoseconds = line_index_started.elapsed().as_nanos() as u64;
@@ -436,8 +631,12 @@ pub(super) fn evaluate_file(
         let witnesses = file.witnesses.entry(id).or_default();
         witnesses.clear();
         let limits = &code_rule.capabilities.limits;
-        let (regex, source) = match &clause.kind {
-            ClauseKind::Forbid(Query::Regex { regex, source }) => (regex, source),
+        let (regex, source, options) = match &clause.kind {
+            ClauseKind::Forbid(Query::Regex {
+                regex,
+                source,
+                options,
+            }) => (regex, source, options),
             // The file itself is the witness: no content is read, so no source cap applies.
             ClauseKind::Forbid(Query::File) => {
                 if limits.max_files == 0 {
@@ -445,6 +644,7 @@ pub(super) fn evaluate_file(
                         .insert(id, (INPUT_LIMIT, "file input budget exceeded"));
                 } else if !file.failures.contains_key(&id) {
                     witnesses.push(Witness {
+                        sql_violation: None,
                         path: file.input.path.clone(),
                         span: None,
                         captures: Captures::default(),
@@ -458,6 +658,13 @@ pub(super) fn evaluate_file(
             }
             _ => unreachable!("a regex candidate is a regex or file forbid"),
         };
+        if options
+            .paths
+            .as_ref()
+            .is_some_and(|paths| !paths.matches(&file.input.path))
+        {
+            continue;
+        }
         if file.input.source.len() > limits.max_source_bytes || limits.max_files == 0 {
             file.failures
                 .insert(id, (INPUT_LIMIT, "file input budget exceeded"));
@@ -480,10 +687,11 @@ pub(super) fn evaluate_file(
         // Each clause scans under its own allowance, so one clause's matches spend none of
         // another's; the file's clause-work ceiling bounds them together.
         let Some(((matches, complete), ran)) = work.run(haystack.len(), || {
-            query::regex_matches(
+            query::regex_query_matches(
                 regex,
                 source,
                 haystack,
+                options,
                 limits.max_witnesses.saturating_add(1),
             )
         }) else {
@@ -495,7 +703,20 @@ pub(super) fn evaluate_file(
         let plain =
             regex.capture_names().flatten().next().is_none() && clause.violation.fix.is_none();
         let mut stopped = false;
-        for range in matches {
+        for matched in matches {
+            let range = matched.range;
+            let offset = matched.context.start;
+            let context = &haystack[matched.context];
+            let span = |start, end| {
+                let mut result = span(offset + start, offset + end);
+                if let (Some(line), Some(result)) = (matched.line, result.as_mut()) {
+                    result.start_line = line;
+                    result.end_line = line;
+                    result.start_column = start;
+                    result.end_column = end;
+                }
+                result
+            };
             if witnesses.len() >= limits.max_witnesses {
                 // An output cap, not a work limit: the clause found more than it may report.
                 file.failures
@@ -504,11 +725,12 @@ pub(super) fn evaluate_file(
                 break;
             }
             let found = regex
-                .captures_at(haystack, range.start)
+                .captures_at(context, range.start)
                 .expect("a regex match has captures");
             assert_eq!(found.get(0).expect("whole match").range(), range);
             if plain {
                 witnesses.push(Witness {
+                    sql_violation: None,
                     path: file.input.path.clone(),
                     span: span(range.start, range.end),
                     captures: Captures::default(),
@@ -559,7 +781,11 @@ pub(super) fn evaluate_file(
         }
     }
     if !file.candidates.ast.is_empty() && !file.selector_skipped {
-        metrics.restored_tapes += usize::from(file.tape.is_some());
+        metrics.restored_tapes += usize::from(
+            file.prepared
+                .as_ref()
+                .map_or(file.tape.is_some(), |p| p.had_tape),
+        );
         if any_eligible {
             *restored = evaluate_ast_file(
                 file,
@@ -595,18 +821,14 @@ pub(super) fn evaluate_file(
     Ok(metrics)
 }
 
-/// The document the clauses were read on, `None` where none was restored.
-fn evaluate_ast_file(
+pub(super) fn restore_ast_doc(
     file: &mut FileState,
-    code_rules: &[Arc<CompiledCodeRule>],
     grammars: &mut BTreeMap<String, Arc<tape::Grammar>>,
     closed: &AtomicBool,
-    lines: Option<Arc<LineTable>>,
-    work: &mut ClauseWork,
+    lines: Arc<LineTable>,
     metrics: &mut Metrics,
 ) -> Result<Option<tape::TapeDoc>> {
     let language = file_language(&file.input).expect("AST candidate has a supported language");
-    let lines = lines.expect("eligible AST file has a line index");
     let grammar = if let Some(grammar) = grammars.get(&file.input.language) {
         Arc::clone(grammar)
     } else {
@@ -674,6 +896,34 @@ fn evaluate_ast_file(
         drop(_decode_timer);
         profile::record_transient(doc.navigation_bytes());
     }
+    Ok(Some(doc))
+}
+
+/// The document the clauses were read on, `None` where none was restored.
+fn evaluate_ast_file(
+    file: &mut FileState,
+    code_rules: &[Arc<CompiledCodeRule>],
+    grammars: &mut BTreeMap<String, Arc<tape::Grammar>>,
+    closed: &AtomicBool,
+    lines: Option<Arc<LineTable>>,
+    work: &mut ClauseWork,
+    metrics: &mut Metrics,
+) -> Result<Option<tape::TapeDoc>> {
+    let _projections = violations::projection::Scope::enter();
+    let lines = lines.expect("eligible AST file has a line index");
+    let doc = if let Some(prepared) = file.prepared.take() {
+        file.failures.extend(prepared.failures);
+        let Some(doc) = prepared.doc else {
+            return Ok(None);
+        };
+        doc
+    } else {
+        let Some(doc) = restore_ast_doc(file, grammars, closed, Arc::clone(&lines), metrics)?
+        else {
+            return Ok(None);
+        };
+        doc
+    };
     #[cfg(feature = "code-rule-profile")]
     let _doc_owner = profile::DocOwner::start();
     // A file that embeds code is several documents (`embed`): its own tree, then each program it
@@ -790,7 +1040,9 @@ fn evaluate_document(
     let errors = SyntaxErrors::of_doc(&doc);
     record_syntax_reading(file, slots, &errors, lines);
     let root = Root::doc(doc.clone());
-    fail_incomplete_candidates(file, slots, &root, &errors, file_errors);
+    // The gates' file facts are read once for the document, whichever candidate reads them.
+    let gates = FileGates::new(&file.input, root.root());
+    fail_incomplete_candidates(&mut file.failures, &file.candidates.ast, slots, &gates, &errors, file_errors);
     #[cfg(test)]
     pause_at_test_phase("restored-doc", &file.input.source);
     // A document's node and utility visits grow with it (`Limits::visits_for`).
@@ -806,41 +1058,77 @@ fn evaluate_document(
     // clauses share many literals, each searched for once.
     let text = ast_grep_core::Doc::get_source(&doc).as_str();
     let mut searched = rustc_hash::FxHashMap::<&str, bool>::default();
-    let mut found = |text: &str, literal| {
-        *searched
-            .entry(literal)
-            .or_insert_with(|| memchr::memmem::find(text.as_bytes(), literal.as_bytes()).is_some())
-    };
     let runs = slots
         .iter()
         .map(|&(slot, grammar)| {
+            let read = if grammar.crosses {
+                file_errors
+            } else {
+                &errors
+            };
             !file.failures.contains_key(&file.candidates.ast[slot])
-                && grammar
-                    .text
-                    .as_ref()
-                    .is_none_or(|required| required.holds_with(text, &mut found))
+                && grammar.admits_source(text, read, &mut searched)
+                && gates.admit(grammar)
         })
         .collect::<Vec<_>>();
+    #[cfg(not(all(test, feature = "p-anchor-corpus")))]
     let plans = slots
         .iter()
         .zip(&runs)
         .filter(|(_, runs)| **runs)
         .map(|((_, grammar), _)| grammar.anchors.as_ref())
         .collect::<Vec<_>>();
+    // P's plans for W's grammars, as P's corpus keys them (the `p-anchor-corpus` path, O20).
+    #[cfg(all(test, feature = "p-anchor-corpus"))]
+    let p_plans = slots
+        .iter()
+        .zip(&runs)
+        .filter(|(_, runs)| **runs)
+        .map(|((_, grammar), _)| crate::code_rule_dsl::matcher::p_anchors::plan_for(grammar))
+        .collect::<Vec<_>>();
+    #[cfg(all(test, feature = "p-anchor-corpus"))]
+    let plans = p_plans.iter().map(Arc::as_ref).collect::<Vec<_>>();
     #[cfg(feature = "code-rule-profile")]
     let index_timer = profile::PhaseTimer::start(profile::Phase::Index);
+    #[cfg(not(all(test, feature = "p-anchor-corpus")))]
     let index = FileAnchorIndex::build(&root, &plans, max_nodes, matcher_budget_exhausted);
+    // The corpus holds each file's primary document under its path; a document it does not
+    // hold (an embedded program, whose digest differs) selects no roots and is walked whole.
+    #[cfg(all(test, feature = "p-anchor-corpus"))]
+    let index = crate::code_rule_dsl::matcher::p_anchors::sql::FileAnchorIndex::build_at(
+        &root,
+        &plans,
+        max_nodes,
+        matcher_budget_exhausted,
+        &file.input.path,
+    );
     metrics.visited_nodes += index.visited_nodes();
     #[cfg(feature = "code-rule-profile")]
     drop(index_timer);
     #[cfg(feature = "code-rule-profile")]
     profile::record_index(index.len(), index.estimated_bytes(), index.complete());
     // A clause's anchor selection is its own work: it runs under the clause's allowance.
+    #[cfg(not(all(test, feature = "p-anchor-corpus")))]
     let select = |position: usize| -> Option<Arc<[u32]>> {
         if !runs[position] {
             return Some(Arc::from([]));
         }
         select_roots(&index, &slots[position].1.anchors)
+    };
+    #[cfg(all(test, feature = "p-anchor-corpus"))]
+    let select = |position: usize| -> Option<Arc<[u32]>> {
+        if !runs[position] {
+            return Some(Arc::from([]));
+        }
+        #[cfg(feature = "code-rule-profile")]
+        let _selection_timer = profile::PhaseTimer::start(profile::Phase::Selection);
+        let roots = index.selected(&crate::code_rule_dsl::matcher::p_anchors::plan_for(slots[position].1));
+        #[cfg(feature = "code-rule-profile")]
+        profile::record_selection(
+            roots.as_ref().map_or(index.len(), |roots| roots.len()),
+            roots.is_none(),
+        );
+        roots
     };
     let mut util_work = file
         .candidates
@@ -895,10 +1183,13 @@ fn record_syntax_reading(
             // No AST clause runs on a document the parser did not read, sound or not; the failure
             // reports `file.syntax` in place of its static message (`results::failure_message`).
             SyntaxReading::Unread(message) => {
-                for &(slot, _) in slots {
-                    file.failures
-                        .entry(file.candidates.ast[slot])
-                        .or_insert(("source-incomplete", UNREAD));
+                // A whole-file syntax gate (`invalid_syntax`) reads the errors as content.
+                for &(slot, grammar) in slots {
+                    if grammar.invalid_syntax.is_none() {
+                        file.failures
+                            .entry(file.candidates.ast[slot])
+                            .or_insert(("source-incomplete", UNREAD));
+                    }
                 }
                 file.syntax.get_or_insert(message);
             }
@@ -911,27 +1202,30 @@ fn record_syntax_reading(
 
 /// Fails the candidate clauses `slots` that are unsound around the syntax errors they read.
 fn fail_incomplete_candidates(
-    file: &mut FileState,
+    failures: &mut BTreeMap<ClauseId, LocalFailure>,
+    candidates: &[ClauseId],
     slots: &[(usize, &GrammarMatcher)],
-    root: &Root<tape::TapeDoc>,
+    gates: &FileGates<'_, '_, tape::TapeDoc>,
     errors: &SyntaxErrors,
     file_errors: &SyntaxErrors,
 ) {
-    // The gates' file facts are read once for the document, whichever candidate reads them.
-    let gates = FileGates::new(&file.input, root.root());
     for &(slot, grammar) in slots {
-        let id = file.candidates.ast[slot];
+        let id = candidates[slot];
         // A clause reads around its document's errors, or, crossing to the file's other document,
         // every document's. A file the query's file gates exclude matches nothing, errors or not.
         let read = if grammar.crosses { file_errors } else { errors };
-        if !file.failures.contains_key(&id) && read.incomplete(grammar) && gates.admit(grammar) {
-            file.failures
-                .insert(id, ("source-incomplete", SYNTAX_ERRORS));
+        if !failures.contains_key(&id)
+            && grammar.invalid_syntax.is_none()
+            && read.incomplete(grammar)
+            && gates.admit(grammar)
+        {
+            failures.insert(id, ("source-incomplete", SYNTAX_ERRORS));
         }
     }
 }
 
 /// The node ids of the roots `index` selects for a clause's anchor `plan`; `None` for every root.
+#[cfg(not(all(test, feature = "p-anchor-corpus")))]
 fn select_roots(
     index: &FileAnchorIndex<'_, tape::TapeDoc>,
     plan: &AnchorPlan,
@@ -1000,6 +1294,9 @@ pub(super) fn encode_tape(
             Ok(image) => Some(image),
             Err(failure) => return Ok(Err(failure)),
         }
+    } else if language == GrammarDialect::Rr {
+        // A `.rr` file: the rule engine's own parser (decision 0061).
+        tape::TapeImage::parse(grammar, &file.input.source, &interrupted)
     } else {
         encode_tree_sitter_image(file, language, grammar, &interrupted, metrics)?
     };
@@ -1256,7 +1553,9 @@ fn evaluate_clauses(
                                 *work = crate::code_rule_dsl::matcher::end_clause().0;
                             }
                             let errors = if grammar.crosses { file_errors } else { errors };
-                            if errors.meets(&place.place(matched.get_node())) {
+                            if grammar.invalid_syntax != Some(true)
+                                && errors.meets(&place.place(matched.get_node()))
+                            {
                                 return Ok(true);
                             }
                             let matched_node = matched.get_node();

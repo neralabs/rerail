@@ -36,6 +36,8 @@ pub(super) fn ast_captures<'a>(
         Semantic::Resolves(_)
         | Semantic::Value(_)
         | Semantic::Layout(_)
+        | Semantic::FilePath(_)
+        | Semantic::Gap(_)
         | Semantic::Host(_)
         | Semantic::ImportTarget(_) => {}
     }
@@ -77,6 +79,8 @@ pub(super) fn parse_exports<'a>(
         Semantic::Resolves(_)
         | Semantic::Value(_)
         | Semantic::Layout(_)
+        | Semantic::FilePath(_)
+        | Semantic::Gap(_)
         | Semantic::Host(_)
         | Semantic::ImportTarget(_) => {}
     }

@@ -1,0 +1,104 @@
+.policy "eslint-no-magic-numbers" revision 4
+.description "Replace unexplained numeric literals in JavaScript expressions with named constants."
+.language typescript
+.mode steer
+.scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+#include "tsx/eslint-a-expressions.rr"
+
+// ESLint's no-magic-numbers: a number that is not given a name. A sign belongs to the number (`-1`).
+//   total * 1.07    f(-1)    x = 5    → No magic number: 1.07.   const TAX = 1.07; var a = 5;  → not
+// Never reported: a variable's initialiser, an object property (`{ n: 5 }`), an assignment to a member
+// (`o.n = 5`; with `detectObjects` these three are reported too), parseInt's radix, a number in JSX.
+// Options, each "false" by default unless a list:
+//   ignore: [0, 1, "-2n"]          these values (numbers as their JSON text, BigInts with an `n`)
+//   ignoreArrayIndexes             a[0], a[-0]: integer indexes 0 ≤ i < 2^32 − 1
+//   ignoreDefaultValues            f(a = 5), const { a = 5 } = o
+//   ignoreClassFieldInitialValues  class C { n = 5 }
+//   enforceConst                   var a = 5 → Number constants declarations must use 'const'.
+//   TypeScript: ignoreEnums (enum E { A = 1 }), ignoreNumericLiteralTypes (type T = 1 | 2),
+//   ignoreReadonlyClassProperties (readonly n = 5), ignoreTypeIndexes (T[0]).
+.violation no_magic_numbers(at: node, msg: symbol) code "no-magic-numbers" "{msg}"
+    suppress eslint "no-magic-numbers"
+    suppress oxlint "no-magic-numbers"
+no_magic_numbers(f, cat("No magic number: ", cat(raw, "."))) :- signed(n, f, raw, _), estree_parent(f, p), !excused(f),
+    !kind(p, "variable_declarator"), !named(f, p).
+no_magic_numbers(f, "Number constants declarations must use 'const'.") :- signed(n, f, _, _), estree_parent(f, p),
+    !excused(f), kind(p, "variable_declarator"), option("enforceConst", "true"), estree_parent(p, d), !const_decl(d).
+.decl const_decl(d: node)
+const_decl(d) :- kind(d, "lexical_declaration"), op(d, "const").
+
+// signed(n, f, raw, v): literal n, or the unary -n / +n holding it, is the number f, written raw, of value v.
+// A BigInt's value ends in n (-2n), so it never equals a Number's.
+.decl signed(n: node, f: node, raw: symbol, v: symbol)
+signed(n, n, t, v) :- literal_value(n, v), text(n, t), !sign(n, _, _).
+signed(n, u, cat(o, t), sv) :- literal_value(n, v), text(n, t), sign(n, u, o),
+    (o = "+", sv = v ; o = "-", zero_value(v), sv = v ; o = "-", !zero_value(v), sv = cat("-", v)).
+.decl zero_value(v: symbol)  // -0 is 0 to the ignore list (SameValueZero), and -0n is 0n
+zero_value("0"). zero_value("0n").
+.decl sign(n: node, u: node, o: symbol)
+sign(n, u, o) :- kind(n, "number"), estree_parent(n, u), kind(u, "unary_expression"), op(u, o), (o = "-" ; o = "+").
+.decl literal_value(n: node, v: symbol)
+literal_value(n, v) :- number_lit(n), value(n, v).
+literal_value(n, cat(v, "n")) :- bigint_lit(n), value(n, v).
+
+// named(f, p): the number already has a name or a place, as ESLint's okTypes (unless detectObjects): it is a
+// property's value or key (in a literal or a destructuring pattern, both ESTree Properties: `({ 1: a } = o)`), or the right side of an assignment to anything but a plain variable.
+.decl named(f: node, p: node)
+named(f, p) :- !option("detectObjects", "true"), estree_parent(f, p), (kind(p, "pair") ; kind(p, "pair_pattern") ; object_key(f)).
+named(f, p) :- !option("detectObjects", "true"), estree_parent(f, p),
+    (kind(p, "assignment_expression") ; kind(p, "augmented_assignment_expression")),
+    field(p, "left", l), deparen(l, x), !kind(x, "identifier").
+// object_key(f): `{ [5]: x }` or `{ 5() {} }`, whose ESTree parent is a Property. A class's `5() {}` is a
+// MethodDefinition, which is no excuse.
+.decl object_key(f: node)
+object_key(f) :- estree_parent(f, c), kind(c, "computed_property_name"), estree_parent(c, p), (kind(p, "pair") ; kind(p, "pair_pattern") ; object_method(p)).
+object_key(f) :- estree_parent(f, m), field(m, "name", f), object_method(m).
+.decl object_method(m: node)
+object_method(m) :- kind(m, "method_definition"), estree_parent(m, o), kind(o, "object").
+
+// excused(f): the options and the fixed exceptions.
+.decl excused(f: node)
+excused(f) :- signed(_, f, _, v), option_item("ignore", _, i), ignored(i, v).
+excused(f) :- option("ignoreDefaultValues", "true"), default_value(f).
+excused(f) :- option("ignoreClassFieldInitialValues", "true"), estree_parent(f, p), field_value(p, f).
+excused(f) :- option("ignoreArrayIndexes", "true"), estree_parent(f, p), kind(p, "subscript_expression"),
+    field(p, "index", i), deparen(i, f), signed(_, f, _, v), array_index(v).
+excused(f) :- parse_radix(f).
+excused(f) :- estree_parent(f, p), kind(p, k), prefix("jsx_", k).
+excused(f) :- option("ignoreEnums", "true"), estree_parent(f, p), kind(p, "enum_assignment").
+excused(f) :- option("ignoreReadonlyClassProperties", "true"), estree_parent(f, p), field_value(p, f), kind(p, "public_field_definition"),
+    op(p, "readonly").
+excused(f) :- option("ignoreNumericLiteralTypes", "true"), estree_parent(f, l), kind(l, "literal_type"),
+    nearest(l, a, union_climb_stop), kind(a, "type_alias_declaration").
+excused(f) :- option("ignoreTypeIndexes", "true"), estree_parent(f, l), kind(l, "literal_type"),
+    nearest(l, a, type_climb_stop), kind(a, "lookup_type").
+
+// The option's text: "1", "-1.5"; a BigInt "+2n" is 2n.
+.decl ignored(i: symbol, v: symbol)
+ignored(i, i) :- option_item("ignore", _, i).
+ignored(i, @slice(i, 1, strlen(i))) :- option_item("ignore", _, i), prefix("+", i).
+ignored("-0", "0") :- option_item("ignore", _, "-0").
+ignored("-0n", "0n") :- option_item("ignore", _, "-0n").
+// a[i] for a whole number 0 ≤ i < 2^32 − 1 (4294967295): at most ten digits, compared as text.
+.decl array_index(v: symbol)
+array_index(v) :- signed(_, _, _, v), match("[0-9]+n?", v), w = @replace_all(v, "n$", ""),
+    (strlen(w) < 10 ; strlen(w) = 10, w < "4294967295").
+// The forms of a default: JavaScript's assignment patterns, `{ a = 5 }`, and TypeScript's parameters.
+.decl default_value(f: node)
+default_value(f) :- estree_parent(f, p), (kind(p, "assignment_pattern") ; kind(p, "object_assignment_pattern")),
+    field(p, "right", r), deparen(r, f).
+default_value(f) :- estree_parent(f, p), (kind(p, "required_parameter") ; kind(p, "optional_parameter")),
+    field(p, "value", r), deparen(r, f).
+.decl field_value(p: node, f: node)  // class C { n = 5 }: field_definition in JavaScript, public_… in TypeScript
+field_value(p, f) :- (kind(p, "field_definition") ; kind(p, "public_field_definition")), field(p, "value", r), deparen(r, f).
+// parseInt(s, 10), Number.parseInt(s, 10): the second argument.
+.decl parse_radix(f: node)
+parse_radix(f) :- kind(c, "call_expression"), call_arg(c, x, 1), deparen(x, f), field(c, "function", g), deparen(g, h),
+    (kind(h, "identifier"), text(h, "parseInt") ; static_prop(h, b, "parseInt"), text(b, "Number")).
+// A literal type climbs unions (and parentheses, which ESTree does not have) to what holds it: type T = 1 | 2.
+// ignoreNumericLiteralTypes climbs unions only, so `type T = 1 & 2` is reported; ignoreTypeIndexes climbs
+// intersections too: `T[0 & 1]`.
+.decl union_climb_stop(n: node)
+union_climb_stop(n) :- kind(n, k), k != "union_type", k != "parenthesized_type".
+.decl type_climb_stop(n: node)
+type_climb_stop(n) :- kind(n, k), k != "union_type", k != "intersection_type", k != "parenthesized_type".

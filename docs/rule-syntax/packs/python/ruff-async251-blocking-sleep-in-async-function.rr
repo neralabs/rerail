@@ -1,0 +1,17 @@
+.policy "ruff-async251-blocking-sleep-in-async-function" revision 2
+.description "Don't call time.sleep() inside async functions; await the async library's sleep so other tasks keep running."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ASYNC251 (flake8-async): `time.sleep(…)` inside an async def. It blocks the event loop; await the async
+// library's sleep instead. Reported at the callee.
+//   async def f(): time.sleep(1)           ← ASYNC251
+//   async def f(): await asyncio.sleep(1)  not reported
+//   def f(): time.sleep(1)                 not reported: not a coroutine
+#include "python/misc2-async.rr"
+
+.violation ASYNC251(at: node) code "ASYNC251"
+    "Async functions should not call `time.sleep`"
+    suppress ruff "ASYNC251"
+ASYNC251(f) :- async_blocking(_, f, "time.sleep").

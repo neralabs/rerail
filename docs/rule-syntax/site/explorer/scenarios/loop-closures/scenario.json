@@ -1,0 +1,5 @@
+{
+  "title": "Closures over a loop variable",
+  "rule": "ruff-b023-function-uses-loop-variable",
+  "note": "B023 flags a function or lambda defined in a loop that reads the loop's variable: it sees the last value, not the one at definition. Binding it as a default argument fixes it."
+}

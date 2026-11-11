@@ -358,9 +358,10 @@ pub(crate) struct Reference {
 
 /// Names in string type definitions have ranges of their own: this bit, then the annotation's
 /// index (`ScopeTable::annotations`) above the low 24 bits, which hold the offset into its text.
-/// No source position has them.
-pub(crate) const ANNOTATION_RANGE: usize = 1 << 62;
-const ANNOTATION_SHIFT: u32 = 24;
+/// No source position has them. On wasm32 (the browser build) the bit is bit 30 and the offset keeps 16 bits,
+/// so 16,384 annotations of up to 64 KiB each, below 1 GiB of source.
+pub(crate) const ANNOTATION_RANGE: usize = 1 << (usize::BITS - 2);
+const ANNOTATION_SHIFT: u32 = if usize::BITS == 32 { 16 } else { 24 };
 
 /// Where the names of the annotation with this index start.
 pub(crate) fn annotation_offset(index: usize) -> usize {
@@ -416,6 +417,8 @@ pub(crate) struct ScopeTable {
     pub(crate) module_imports: Vec<ModuleImport>,
     /// Python usedness, built on first use.
     pub(crate) usage: OnceLock<Arc<usage::Usage>>,
+    /// Declaration names alone, without resolving every read in the file.
+    pub(crate) declaration_sites: OnceLock<Arc<usage::Usage>>,
     /// PHP: what reaches each read of a variable.
     pub(crate) php: Option<Box<php::Flow>>,
     /// SQL: the file's query blocks, relations and qualified references, which resolve a
@@ -557,6 +560,7 @@ impl ScopeTable {
                 locals_scopes: Vec::new(),
                 module_imports: Vec::new(),
                 usage: OnceLock::new(),
+                declaration_sites: OnceLock::new(),
                 php: None,
                 sql: None,
             },

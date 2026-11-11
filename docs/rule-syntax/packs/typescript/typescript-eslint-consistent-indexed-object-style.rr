@@ -1,0 +1,131 @@
+.policy "typescript-eslint-consistent-indexed-object-style" revision 2
+.description "Use a Record type instead of an interface or object type whose only member is an index signature, or a mapped type that ignores its keys."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/ts-a.rr"
+//   ts_member, type_literal, mapped_type, type_parent, type_child
+
+// typescript-eslint's consistent-indexed-object-style: an object type that is only an index signature is a Record.
+//   "record" (the default):   interface A { [k: string]: T }  type B = { [k: string]: T }  { [K in X]: T }
+//                             → type A = Record<string, T>;   Record<string, T>           Record<X, T>
+//   "index-signature":        Record<string, T>   → { [key: string]: T }
+// A type that refers to itself through the index signature stays (a Record cannot be circular), and so does a
+// mapped type over `keyof T` (it keeps T's modifiers) or whose value uses its key.
+.violation consistent_indexed_object_style(at: node, id: symbol, msg: symbol) code "@typescript-eslint/consistent-indexed-object-style"
+    "{msg}"
+    suppress eslint "@typescript-eslint/consistent-indexed-object-style"
+    fix safe to_record "Use a Record type"
+    fix safe to_signature "Use an index signature"
+    fix signature_suggestion "Change into an index signature instead of a record."
+consistent_indexed_object_style(n, "preferRecord", "Use a `Record` type here instead of an object type whose only member is an index signature.") :-
+    !option("option", "index-signature"), (lone_signature(n, _), !circular(n) ; free_mapped(n)).
+consistent_indexed_object_style(g, "preferIndexSignature", "An index signature is preferred over a record.") :-
+    option("option", "index-signature"), record_ref(g, _, _).
+
+// lone_signature(n, s): an interface or type literal n whose one member is `[k: K]: V`.
+.decl lone_signature(n: node, s: node)
+lone_signature(n, s) :- kind(n, "interface_declaration"), field(n, "body", b), only_signature(b, s).
+lone_signature(b, s) :- type_literal(b), only_signature(b, s).
+.decl only_signature(b: node, s: node)
+only_signature(b, s) :- ts_member(b, s, 0), !ts_member(b, _, 1), kind(s, "index_signature"),
+    field(s, "name", k), kind(k, "identifier"), field(s, "index_type", _), field(s, "type", _).
+// The type it belongs to: an interface's own name, or the alias a type literal is part of, unless a type
+// annotation comes first (`type F = { a: { [k: string]: F } }` is not circular in this sense).
+.decl owner_name(n: node, x: symbol)
+owner_name(n, x) :- kind(n, "interface_declaration"), field(n, "name", i), text(i, x).
+owner_name(b, x) :- kind(b, "object_type"), nearest(b, a, decl_stop), kind(a, "type_alias_declaration"),
+    field(a, "name", i), text(i, x).
+// A mapped type's value has no annotation node in TSESTree, so its `: V` does not stop the climb.
+.decl decl_stop(a: node)
+decl_stop(a) :- kind(a, k), (k = "type_alias_declaration" ; k = "function_type" ; k = "constructor_type").
+decl_stop(a) :- kind(a, k), (k = "type_annotation" ; k = "opting_type_annotation" ; k = "omitting_type_annotation" ;
+    k = "adding_type_annotation"), child(s, a, _), !mapped_signature(s).
+.decl mapped_signature(s: node)
+mapped_signature(s) :- kind(s, "index_signature"), child(s, c, _), kind(c, "mapped_type_clause").
+.decl circular(n: node)
+circular(n) :- lone_signature(n, _), owner_name(n, x), deep(n, x).
+circular(b) :- mapped_type(b, _), owner_name(b, x), type_parent(b, p), deep(p, x).
+
+// deep(r, x): isDeeplyReferencingType. Type x is named under r through unions, intersections, conditionals,
+// indexed access, generic arguments and index signatures' values, also through the aliases and interfaces
+// named on the way. A property, array or function type stops the search.
+.decl deep_root(r: node)
+deep_root(n) :- lone_signature(n, _).
+deep_root(p) :- mapped_type(b, _), type_parent(b, p).
+deep_root(d) :- deep_root(r), reach(r, t), kind(t, "type_identifier"), text(t, y), type_decl(y, d).
+.decl reach(r: node, t: node)
+reach(r, c) :- deep_root(r), walk(r, c).
+reach(r, c) :- reach(r, m), walk(m, c).
+.decl walk(p: node, c: node)
+walk(p, s) :- (kind(p, "object_type") ; kind(p, "interface_body")), child(p, s, _), kind(s, "index_signature").
+walk(p, b) :- kind(p, "interface_declaration"), field(p, "body", b).
+walk(p, c) :- kind(p, "index_signature"), field(p, "type", a), child(a, c, _), !kind(c, "comment").
+walk(p, c) :- kind(p, "type_alias_declaration"), field(p, "value", c).
+walk(p, c) :- kind(p, k), deep_kind(k), child(p, c, _), !kind(c, "comment").
+.decl deep_kind(k: symbol)
+deep_kind("union_type"). deep_kind("intersection_type"). deep_kind("conditional_type"). deep_kind("lookup_type").
+deep_kind("parenthesized_type"). deep_kind("generic_type"). deep_kind("type_arguments"). deep_kind("type_annotation").
+.decl type_decl(x: symbol, d: node)
+type_decl(x, d) :- (kind(d, "type_alias_declaration") ; kind(d, "interface_declaration")), field(d, "name", i), text(i, x).
+.decl deep(r: node, x: symbol)
+deep(r, x) :- reach(r, t), kind(t, "type_identifier"), text(t, x).
+deep(r, x) :- reach(r, t), kind(t, "type_identifier"), text(t, y), y != x, type_decl(y, d), deep(d, x).
+
+// free_mapped(b): `{ [K in X]: V }` that a Record can say: V does not use K, X is no bare `keyof T`, and the type
+// is not circular.
+.decl free_mapped(b: node)
+free_mapped(b) :- mapped_type(b, c), field(c, "name", k), text(k, x), !uses_key(b, k, x),
+    field(c, "type", t), !kind(t, "index_type_query"), !circular(b).
+.decl uses_key(b: node, k: node, x: symbol)
+uses_key(b, k, x) :- mapped_type(b, c), field(c, "name", k), text(k, x), has(b, u, "type_identifier"), u != k, text(u, x).
+
+// The fixes. A Record drops a mapped type's `-readonly` (there is no Mutable), so that one is not fixed.
+to_record(n, _, _) :- lone_signature(n, s), !circular(n), type_literal(n), record_text(s, r) => replace(n, `$r`).
+to_record(n, _, _) :- lone_signature(n, s), !circular(n), kind(n, "interface_declaration"), record_text(s, r),
+    !extends_clause(n), !default_export(n), field(n, "name", i), text(i, x),
+    generics(n, g) => replace(n, `type $x$g = $r;`).
+to_record(b, _, _) :- mapped_record(b, r) => replace(b, `$r`).
+.decl record_text(s: node, r: symbol)
+record_text(s, r) :- field(s, "index_type", k), text(k, kt), field(s, "type", a), child(a, v, _), !kind(v, "comment"),
+    text(v, vt), r0 = cat("Record<", cat(kt, cat(", ", cat(vt, ">")))),
+    (ro(s), r = cat("Readonly<", cat(r0, ">")) ; !ro(s), r = r0).
+.decl ro(s: node)
+ro(s) :- kind(s, "index_signature"), op(s, "readonly").
+.decl extends_clause(n: node)
+extends_clause(n) :- kind(n, "interface_declaration"), child(n, e, _), kind(e, "extends_type_clause").
+.decl default_export(n: node)
+default_export(n) :- child(e, n, _), kind(e, "export_statement"), op(e, "default").
+.decl generics(n: node, g: symbol)
+generics(n, g) :- field(n, "type_parameters", p), text(p, g).
+generics(n, "") :- kind(n, "interface_declaration"), !field(n, "type_parameters", _).
+.decl mapped_value(s: node, v: symbol)
+mapped_value(s, v) :- field(s, "type", a), child(a, t, _), !kind(t, "comment"), text(t, v).
+mapped_value(s, "any") :- kind(s, "index_signature"), !field(s, "type", _).
+.decl mapped_record(b: node, r: symbol)
+mapped_record(b, r) :- free_mapped(b), mapped_type(b, c), child(b, s, _), kind(s, "index_signature"), !op(s, "-"),
+    field(c, "type", t), text(t, kt), mapped_value(s, v), r0 = cat("Record<", cat(kt, cat(", ", cat(v, ">")))),
+    optional(s, w), (w = "", r1 = r0 ; w != "", r1 = cat(w, cat("<", cat(r0, ">")))),
+    (op(s, "readonly"), r = cat("Readonly<", cat(r1, ">")) ; !op(s, "readonly"), r = r1).
+// optional(s, w): `?:` and `+?:` make it Partial, `-?:` Required.
+.decl optional(s: node, w: symbol)
+optional(s, "Partial") :- field(s, "type", a), (kind(a, "opting_type_annotation") ; kind(a, "adding_type_annotation")).
+optional(s, "Required") :- field(s, "type", a), kind(a, "omitting_type_annotation").
+optional(s, "") :- field(s, "type", a), kind(a, "type_annotation").
+optional(s, "") :- kind(s, "index_signature"), !field(s, "type", _).
+
+// record_ref(g, k, v): `Record<K, V>`, the plain name with two arguments, as a type (not an `extends` or
+// `implements` entry, which TSESTree holds as heritage). Fixed when K is string, number or
+// symbol; otherwise suggested (`{ [key: K]: V }` only holds for those keys).
+.decl record_ref(g: node, k: node, v: node)
+record_ref(g, k, v) :- kind(g, "generic_type"), !heritage(g), field(g, "name", n), kind(n, "type_identifier"),
+    text(n, "Record"),
+    field(g, "type_arguments", a), ts_arg(a, k, 0), ts_arg(a, v, 1), !ts_arg(a, _, 2).
+.decl ts_arg(a: node, t: node, i: number)
+ts_arg(a, t, i) :- child(a, t, _), !kind(t, "comment"), i = count : { child(a, o, _), o < t, !kind(o, "comment") }.
+.decl key_keyword(k: node)
+key_keyword(k) :- kind(k, "predefined_type"), (text(k, "string") ; text(k, "number") ; text(k, "symbol")).
+to_signature(g, _, _) :- record_ref(g, k, v), key_keyword(k), text(k, x), text(v, y) => replace(g, `{ [key: $x]: $y }`).
+signature_suggestion(g, _, _) :- record_ref(g, k, v), !key_keyword(k), text(k, x), text(v, y)
+    => replace(g, `{ [key: $x]: $y }`).

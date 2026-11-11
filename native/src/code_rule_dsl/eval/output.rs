@@ -48,8 +48,11 @@ fn violation_identity(
 pub(crate) fn violation_from_witness(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
-    witness: Witness,
+    mut witness: Witness,
 ) -> Value {
+    if let Some(violation) = witness.sql_violation.take() {
+        return violation;
+    }
     let (id, span, fallback) = violation_identity(code_rule, clause, &witness);
     let mode = code_rule
         .scope
@@ -77,7 +80,7 @@ pub(crate) fn violation_from_witness(
     violation
 }
 
-pub(super) fn violation_id(
+pub(in crate::code_rule_dsl) fn violation_id(
     code_rule: &str,
     clause: &str,
     code: &str,
@@ -124,6 +127,10 @@ pub(crate) fn evaluation_json(
                 "astParseNanoseconds": evaluation.metrics.ast_parse_nanoseconds,
                 "astMatchNanoseconds": evaluation.metrics.ast_match_nanoseconds,
                 "astMatcherCalls": evaluation.metrics.ast_matcher_calls,
+                "pythonAstParses": evaluation.metrics.python_ast_parses,
+                "pythonAstModuleWalks": evaluation.metrics.python_ast_module_walks,
+                "syntaxLoads": evaluation.metrics.syntax_loads,
+                "relationalMaterializations": evaluation.metrics.relational_materializations,
                 "storageRetries": evaluation.metrics.storage_retries,
                 "storageRetryWaitNanoseconds": evaluation.metrics.storage_retry_wait_nanoseconds,
                 "storageUnpublishedFiles": evaluation.metrics.storage_unpublished_files,

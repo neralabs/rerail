@@ -88,7 +88,7 @@ struct FileMemo {
     excluding: rustc_hash::FxHashMap<Key, Entry>,
     generation: u64,
     /// The file's nodes by kind, in preorder, listed on first use.
-    kinds: Option<rustc_hash::FxHashMap<u16, Vec<u32>>>,
+    kinds: Option<Arc<crate::code_rule_dsl::tape::KindPostings>>,
     /// The nodes passing each walk filter (by its address), in preorder.
     postings: rustc_hash::FxHashMap<usize, Arc<[u32]>>,
     /// `nthChild`'s counted siblings by counting term and parent (`siblings`).
@@ -188,7 +188,9 @@ unsafe fn same<T, U>(value: T) -> U {
 const POLL_INTERVAL: usize = 256;
 
 /// A file's nodes by kind, in preorder; `None` where the deadline passed first.
-fn kind_index(tape: &TapeDoc) -> Option<rustc_hash::FxHashMap<u16, Vec<u32>>> {
+fn kind_index(tape: &TapeDoc) -> Option<Arc<crate::code_rule_dsl::tape::KindPostings>> {
+    #[cfg(feature = "code-rule-profile")]
+    let _span = crate::code_rule_dsl::profile::trace::Span::start("input-kind-index", "build");
     let mut kinds = rustc_hash::FxHashMap::<u16, Vec<u32>>::default();
     for ordinal in 0..tape.transducer_len() as u32 {
         if (ordinal as usize).is_multiple_of(POLL_INTERVAL) && budget::matcher_budget_exhausted() {
@@ -199,6 +201,7 @@ fn kind_index(tape: &TapeDoc) -> Option<rustc_hash::FxHashMap<u16, Vec<u32>>> {
             .or_default()
             .push(ordinal);
     }
+    let kinds = Arc::new(kinds);
     Some(kinds)
 }
 
@@ -288,12 +291,12 @@ pub(super) fn nodes_of_kinds(
     let address = std::ptr::from_ref(file) as usize;
     MEMO.with_borrow_mut(|memo| {
         if memo.root != address {
-            return kind_index(tape).as_ref().map_or_else(Vec::new, collect);
+            return kind_index(tape).as_deref().map_or_else(Vec::new, collect);
         }
         if memo.kinds.is_none() {
             memo.kinds = kind_index(tape);
         }
-        memo.kinds.as_ref().map_or_else(Vec::new, collect)
+        memo.kinds.as_deref().map_or_else(Vec::new, collect)
     })
 }
 

@@ -1,5 +1,6 @@
 mod semantic;
 
+use crate::code_rule_dsl::tree::Tree;
 use super::collate::natural_compare;
 use super::exported::exported_text;
 use super::transform::Transform;
@@ -33,7 +34,7 @@ pub(crate) struct Comparison {
     pub(crate) commute: Vec<String>,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CompareOp {
     Lt,
     Le,
@@ -45,7 +46,7 @@ pub(crate) enum CompareOp {
 
 /// How texts are ordered. Every collation compares UTF-16 code units after its fold, as
 /// JavaScript's `<` does, so JavaScript linters' orderings port exactly.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Collation {
     Ordinal,
     /// `toLowerCase()` first.
@@ -60,7 +61,7 @@ pub(crate) enum Collation {
     NaturalFoldLower,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CompareText {
     /// The captured node's source text.
     Source,
@@ -123,6 +124,12 @@ impl Comparison {
                     .get_match(name)
                     .map(|node| node.text().into_owned())
                     .or_else(|| exported_text(env, name))
+                    .or_else(|| {
+                        env.get_transformed(name).map(|bytes| {
+                            <D::Source as ast_grep_core::source::Content>::encode_bytes(bytes)
+                                .into_owned()
+                        })
+                    })
                 {
                     return Some(Some(text));
                 }
@@ -327,29 +334,29 @@ fn outside_parentheses<'t, D: Doc>(node: &Node<'t, D>) -> Option<(Node<'t, D>, N
     Some((node, parent))
 }
 
-/// The `,` tokens among `list`'s children before its child `element`; `None` where `element` is
-/// not one of them.
-fn commas_before<D: Doc>(list: &Node<'_, D>, element: &Node<'_, D>) -> Option<usize> {
-    let mut commas = 0;
-    for child in list.children() {
-        if child.node_id() == element.node_id() {
-            return Some(commas);
-        }
-        if !child.is_named() && child.text() == "," {
+/// The `,` tokens among `list`'s children before its child `element`.
+/// The commas before `element` in `list`: those a tape stores (a hole's, a leading one's), and the
+/// one between two elements that none separates, which the grammar implies (RER-131).
+fn commas_before<'r, D: Doc>(list: &Node<'r, D>, element: &Node<'r, D>) -> Option<usize> {
+    let start = element.range().start;
+    let (mut commas, mut after_element) = (0, false);
+    for child in list.children().take_while(|child| child.range().end <= start) {
+        if child.kind() == "," {
             commas += 1;
+            after_element = false;
+        } else if child.is_named() && !super::util::is_comment_kind(&child.kind()) {
+            commas += usize::from(after_element);
+            after_element = true;
         }
     }
-    None
+    Some(commas + usize::from(after_element))
 }
 
 /// The node inside any parentheses: ESTree has none.
 fn unparenthesized<'t, D: Doc>(node: &Node<'t, D>) -> Node<'t, D> {
     let mut node = node.clone();
     while super::util::is_paren_kind(&node.kind()) {
-        let Some(inner) = node
-            .children()
-            .find(|child| child.is_named() && !super::util::is_comment_kind(&child.kind()))
-        else {
+        let Some(inner) = node.first_code() else {
             break;
         };
         node = inner;
@@ -362,7 +369,7 @@ fn listed_operands<'t, D: Doc>(
     node: &Node<'t, D>,
     commute: &[String],
 ) -> Option<(Node<'t, D>, String, Node<'t, D>)> {
-    let operator = node.field("operator")?.text().into_owned();
+    let operator = node.operator_token()?.text().into_owned();
     if !commute.contains(&operator) {
         return None;
     }

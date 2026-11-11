@@ -1,0 +1,42 @@
+.policy "eslint-no-return-assign" revision 5
+.description "Don't assign inside a return statement or an arrow function's expression body unless it is wrapped in parentheses; it reads like a mistyped comparison."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-control.rr"
+//   assignment
+
+// ESLint's no-return-assign: an assignment whose nearest enclosing statement (or function or class expression)
+// is a `return`, or that is part of an arrow's expression body. option("option"): "except-parens" (the default)
+// allows an assignment written directly inside parentheses, its own or a call's; "always" reports those too.
+//   return a = b;                 → reported at the return
+//   () => a = b                   → reported at the arrow
+//   return (a = b);   return f(a = b);    fine by default
+//   return function () { a = b; };        fine: the assignment's statement is inside the function
+.violation no_return_assign(at: node, msg: symbol) code "no-return-assign" "{msg}"
+    suppress eslint "no-return-assign"
+    suppress oxlint "no-return-assign"
+    suppress biome "lint/suspicious/noReturnAssign"
+no_return_assign(s, "Return statement should not contain assignment.") :- checked(a), nearest(a, s, sentinel),
+    kind(s, "return_statement").
+no_return_assign(s, "Arrow function should not return assignment.") :- checked(a), nearest(a, s, sentinel),
+    kind(s, "arrow_function"), field(s, "body", b), (b = a ; within(a, b)).
+
+// checked(a): every assignment under "always"; otherwise those not directly between `(` and `)`.
+.decl checked(a: node)
+checked(a) :- assignment(a), option("option", "always").
+checked(a) :- assignment(a), !option("option", "always"), !parenthesised(a).
+.decl parenthesised(a: node)  // ESLint's isParenthesised: the tokens around a are ( and )
+parenthesised(a) :- in_parens(a).
+layout_at(a) :- assignment(a).
+
+// sentinel: ESLint's /^(?:[a-zA-Z]+?Statement|ArrowFunctionExpression|FunctionExpression|ClassExpression)$/,
+// as tree-sitter kinds. A method is its own FunctionExpression.
+.decl sentinel(k: symbol)
+sentinel("expression_statement"). sentinel("statement_block"). sentinel("empty_statement"). sentinel("if_statement").
+sentinel("for_statement"). sentinel("for_in_statement"). sentinel("while_statement"). sentinel("do_statement").
+sentinel("return_statement"). sentinel("break_statement"). sentinel("continue_statement").
+sentinel("throw_statement"). sentinel("try_statement"). sentinel("switch_statement"). sentinel("labeled_statement").
+sentinel("debugger_statement"). sentinel("with_statement"). sentinel("arrow_function").
+sentinel("function_expression"). sentinel("generator_function"). sentinel("class"). sentinel("method_definition").

@@ -29,7 +29,9 @@
 
 pub(crate) mod adapter;
 
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::blade::forte::tree::{self as blade_tree, BladeLang};
+use crate::code_rule_dsl::logic::rr::tape as rr_tree;
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::package_manifest::{Manifest, node_range_is_subset_of};
 use crate::code_rule_dsl::semver::Range;
@@ -72,11 +74,17 @@ impl Language for GrammarDialect {
     }
 
     /// Blade's patterns are Forte trees (`blade::forte::tree`), whose kinds are numbered as Blade's
-    /// tapes number them; every other dialect's are tree-sitter trees.
+    /// tapes number them; every other dialect's are tapes of tree-sitter trees, written as documents
+    /// are: no token the grammar implies (`tape::pattern_doc`, RER-131).
     fn build_pattern(&self, builder: &PatternBuilder) -> Result<Pattern, PatternError> {
         match self {
             Self::Blade => BladeLang.build_pattern(builder),
-            _ => builder.build(|source| StrDoc::try_new(source, *self)),
+            _ => {
+                let (doc, shape) = crate::code_rule_dsl::tape::pattern_doc(*self, builder.source()).map_err(PatternError::Parse)?;
+                let ends = |node: usize| shape.ends.get(node).copied().unwrap_or(false);
+                let single = |node: usize| shape.single.get(node).copied().unwrap_or(false);
+                builder.build_doc(doc, &ast_grep_core::matcher::PatternShape { ends: Some(&ends), single: Some(&single) })
+            }
         }
     }
 }
@@ -95,8 +103,12 @@ impl LanguageExt for GrammarDialect {
 }
 
 impl GrammarDialect {
-    /// The dialect's tree-sitter grammar; `None` for one Rerail parses itself (Blade).
+    /// The dialect's tree-sitter grammar; `None` for one Rerail parses itself (Blade), or one left out of this
+    /// build (its `lang-*` feature off: `corpus` refuses to run it, so its kinds are never read).
     fn ts_language(self) -> Option<TSLanguage> {
+        if !self.built() {
+            return None;
+        }
         registry_grammar(self).or_else(|| self.support().map(|lang| lang.get_ts_language()))
     }
 }
@@ -107,6 +119,19 @@ impl GrammarDialect {
 enum OwnKinds {
     Grammar(&'static TSLanguage),
     Blade,
+    /// `.rr` rule files' tree (`logic::rr::tape`, decision 0061).
+    Rr,
+}
+
+impl OwnKinds {
+    /// A dialect Rerail parses itself: its kind names by id, its first anonymous id, and its field names by id.
+    fn table(self) -> Option<(&'static [&'static str], u16, &'static [&'static str])> {
+        match self {
+            OwnKinds::Grammar(_) => None,
+            OwnKinds::Blade => Some((blade_tree::KIND_NAMES, blade_tree::FIRST_ANONYMOUS, blade_tree::FIELD_NAMES)),
+            OwnKinds::Rr => Some((rr_tree::KIND_NAMES, rr_tree::FIRST_ANONYMOUS, rr_tree::FIELD_NAMES)),
+        }
+    }
 }
 
 /// The kind id every grammar gives ERROR (tree-sitter's `ts_builtin_sym_error`); Blade's tree
@@ -127,14 +152,14 @@ impl KindCatalog {
     pub(crate) fn grammar(self) -> Option<&'static TSLanguage> {
         match self.own {
             OwnKinds::Grammar(grammar) => Some(grammar),
-            OwnKinds::Blade => None,
+            OwnKinds::Blade | OwnKinds::Rr => None,
         }
     }
 
     pub(crate) fn kind_count(self) -> usize {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.node_kind_count(),
-            OwnKinds::Blade => blade_tree::KIND_NAMES.len(),
+            own => own.table().expect("own kinds").0.len(),
         }
     }
 
@@ -142,12 +167,15 @@ impl KindCatalog {
     pub(crate) fn kind_id(self, kind: &str) -> u16 {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.id_for_node_kind(kind, true),
-            OwnKinds::Blade if kind == "ERROR" => ERROR_ID,
-            OwnKinds::Blade => blade_tree::KIND_NAMES[..usize::from(blade_tree::FIRST_ANONYMOUS)]
-                .iter()
-                .skip(1)
-                .position(|name| *name == kind)
-                .map_or(0, |index| index as u16 + 1),
+            _ if kind == "ERROR" => ERROR_ID,
+            own => {
+                let (names, first_anonymous, _) = own.table().expect("own kinds");
+                names[..usize::from(first_anonymous)]
+                    .iter()
+                    .skip(1)
+                    .position(|name| *name == kind)
+                    .map_or(0, |index| index as u16 + 1)
+            }
         }
     }
 
@@ -171,8 +199,8 @@ impl KindCatalog {
     pub(crate) fn kind_name(self, id: u16) -> Option<&'static str> {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.node_kind_for_id(id),
-            OwnKinds::Blade if id == ERROR_ID => Some("ERROR"),
-            OwnKinds::Blade => blade_tree::KIND_NAMES
+            _ if id == ERROR_ID => Some("ERROR"),
+            own => own.table().expect("own kinds").0
                 .get(usize::from(id))
                 .copied()
                 .filter(|name| !name.is_empty()),
@@ -182,28 +210,48 @@ impl KindCatalog {
     pub(crate) fn kind_is_named(self, id: u16) -> bool {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.node_kind_is_named(id),
-            OwnKinds::Blade => id == ERROR_ID || (id != 0 && id < blade_tree::FIRST_ANONYMOUS),
+            own => id == ERROR_ID || (id != 0 && id < own.table().expect("own kinds").1),
         }
     }
 
     pub(crate) fn kind_is_visible(self, id: u16) -> bool {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.node_kind_is_visible(id),
-            OwnKinds::Blade => id != 0 && usize::from(id) < blade_tree::KIND_NAMES.len(),
+            own => id != 0 && usize::from(id) < own.table().expect("own kinds").0.len(),
         }
     }
 
     pub(crate) fn kind_is_supertype(self, id: u16) -> bool {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.node_kind_is_supertype(id),
-            OwnKinds::Blade => false,
+            OwnKinds::Blade | OwnKinds::Rr => false,
         }
+    }
+
+    /// The concrete kinds under supertype `id`, through nested supertypes: every kind a member of
+    /// it can have (a node's own memberships are a subset; decision 0025).
+    pub(crate) fn supertype_kinds(self, id: u16) -> std::collections::BTreeSet<u16> {
+        let mut kinds = std::collections::BTreeSet::new();
+        let OwnKinds::Grammar(grammar) = self.own else { return kinds };
+        let (mut pending, mut seen) = (vec![id], std::collections::BTreeSet::from([id]));
+        while let Some(supertype) = pending.pop() {
+            for &kind in grammar.subtypes_for_supertype(supertype) {
+                if grammar.node_kind_is_supertype(kind) {
+                    if seen.insert(kind) {
+                        pending.push(kind);
+                    }
+                } else {
+                    kinds.insert(kind);
+                }
+            }
+        }
+        kinds
     }
 
     pub(crate) fn field_count(self) -> usize {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.field_count(),
-            OwnKinds::Blade => blade_tree::FIELD_NAMES.len() - 1,
+            own => own.table().expect("own kinds").2.len() - 1,
         }
     }
 
@@ -211,7 +259,7 @@ impl KindCatalog {
     pub(crate) fn field_id(self, name: &str) -> Option<u16> {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.field_id_for_name(name).map(|id| id.get()),
-            OwnKinds::Blade => blade_tree::FIELD_NAMES
+            own => own.table().expect("own kinds").2
                 .iter()
                 .skip(1)
                 .position(|field| *field == name)
@@ -222,8 +270,8 @@ impl KindCatalog {
     pub(crate) fn field_name(self, id: u16) -> Option<&'static str> {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.field_name_for_id(id),
-            OwnKinds::Blade => (id != 0)
-                .then(|| blade_tree::FIELD_NAMES.get(usize::from(id)).copied())
+            own => (id != 0)
+                .then(|| own.table().expect("own kinds").2.get(usize::from(id)).copied())
                 .flatten(),
         }
     }
@@ -249,6 +297,7 @@ impl GrammarDialect {
         KindCatalog {
             own: match self.grammar() {
                 Some(grammar) => OwnKinds::Grammar(grammar),
+                None if self == GrammarDialect::Rr => OwnKinds::Rr,
                 None => OwnKinds::Blade,
             },
         }
@@ -272,6 +321,10 @@ impl GrammarDialect {
 
     pub(crate) fn kind_is_supertype(self, id: u16) -> bool {
         self.kinds().kind_is_supertype(id)
+    }
+
+    pub(crate) fn supertype_kinds(self, id: u16) -> std::collections::BTreeSet<u16> {
+        self.kinds().supertype_kinds(id)
     }
 
     /// Every dialect, test-only grammars included.
@@ -336,7 +389,6 @@ grammar_dialect! {
     Html => SupportLang::Html,
     Css => SupportLang::Css,
     Lua => SupportLang::Lua,
-    Json => SupportLang::Json,
     Go => SupportLang::Go,
 }
 
@@ -383,6 +435,18 @@ fn dialect(lang: GrammarDialect) -> Option<&'static Dialect> {
 }
 
 /// The dialect a file label names (`FileInput.language`, the store's file language).
+/// A fragment grammar the registry declares (decision 0082): its dialect, and its start symbol (`expression`: the
+/// text inside a written `( … )`).
+pub(crate) fn fragment(name: &str) -> Option<(GrammarDialect, &'static str)> {
+    FRAGMENTS.iter().find(|(n, _, _)| *n == name).map(|(_, dialect, start)| (*dialect, *start))
+}
+
+/// Whether `name` is a grammar a rule may name in `embed`, `sub_tape` or `parsed`: a supported dialect's label, or
+/// a fragment (decision 0082). A dialect this build leaves out is still a name.
+pub(crate) fn is_grammar(name: &str) -> bool {
+    fragment(name).is_some() || DIALECTS.iter().any(|dialect| dialect.label == name)
+}
+
 pub(crate) fn dialect_by_label(label: &str) -> Option<GrammarDialect> {
     DIALECTS
         .iter()
@@ -396,7 +460,8 @@ pub(crate) fn label(lang: GrammarDialect) -> Option<&'static str> {
 }
 
 /// The file label a path's suffix selects, as the host's table does for dialect files: the
-/// longest matching suffix.
+/// longest matching suffix. A dialect this build leaves out (`GrammarDialect::built`) selects none: its files are
+/// not read, as a planned language's are not.
 pub(crate) fn label_of_path(path: &str) -> Option<&'static str> {
     let path = path.to_ascii_lowercase();
     DIALECTS
@@ -404,7 +469,14 @@ pub(crate) fn label_of_path(path: &str) -> Option<&'static str> {
         .flat_map(|dialect| dialect.suffixes.iter().map(move |suffix| (suffix, dialect)))
         .filter(|(suffix, _)| path.ends_with(**suffix))
         .max_by_key(|(suffix, _)| suffix.len())
+        .filter(|(_, dialect)| dialect.lang.built())
         .map(|(_, dialect)| dialect.label)
+}
+
+/// The label of the dialect `name` names, when this build parses it (`GrammarDialect::built`): a program's
+/// `.language`.
+pub(crate) fn label_named(name: &str) -> Option<&'static str> {
+    DIALECTS.iter().find(|dialect| dialect.label == name && dialect.lang.built()).map(|dialect| dialect.label)
 }
 
 /// A dialect's persisted tape tag.
@@ -932,7 +1004,7 @@ pub(crate) struct TextCondition {
 }
 
 impl TextCondition {
-    fn holds(&self, text: &str) -> bool {
+    pub(crate) fn holds(&self, text: &str) -> bool {
         self.regex.as_ref().is_none_or(|regex| regex.is_match(text))
             && self
                 .not_regex
@@ -1333,8 +1405,7 @@ mod tests {
             .dfs()
             .filter(|node| node.kind() == "string")
             .map(|node| {
-                node.children()
-                    .filter(|child| child.is_named())
+                node.named()
                     .map(|child| format!("{}:{}", child.kind(), child.text()))
                     .collect::<Vec<_>>()
                     .join(" ")
@@ -1413,8 +1484,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("{dialect:?}: {source} has parameters"));
             let function = parameters.parent().expect("parameters have a parent");
             let parameter = parameters
-                .children()
-                .find(|child| child.is_named())
+                .first_named()
                 .unwrap_or_else(|| panic!("{dialect:?}: {source} has a parameter"));
             let pattern = parameter
                 .field("pattern")
@@ -1660,8 +1730,7 @@ mod tests {
             .dfs()
             .filter(|node| node.kind() == "string")
             .map(|node| {
-                node.children()
-                    .filter(|child| child.is_named())
+                node.named()
                     .map(|child| format!("{}:{}", child.kind(), child.text()))
                     .collect::<Vec<_>>()
                     .join(" ")
@@ -2979,8 +3048,7 @@ mod tests {
                 .and_then(|module| module.field("body"))
                 .expect("the module has a body");
             let statements = body
-                .children()
-                .filter(|node| node.is_named())
+                .named()
                 .map(|node| node.kind().into_owned())
                 .collect::<Vec<_>>();
             assert_eq!(statements, ["expression_statement", "statement_block"]);

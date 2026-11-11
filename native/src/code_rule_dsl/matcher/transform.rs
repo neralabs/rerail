@@ -314,6 +314,12 @@ impl Trans {
     }
 }
 
+/// `text` with each match of `regex` replaced by `by` (`$1`, `${name}` its groups, `$$` a dollar), unbounded: the
+/// `replace` transform's rewrite, as `.rr`'s `@replace_all` computes it (`logic::plan`).
+pub(in crate::code_rule_dsl) fn replace(text: &str, regex: &Regex, by: &str) -> String {
+    replace_bounded(text, regex, by, usize::MAX).unwrap_or_else(|_| unreachable!("no output limit"))
+}
+
 /// A variable's name, `$` sigils aside.
 fn variable_name(variable: &MetaVariable) -> &str {
     match variable {
@@ -478,6 +484,27 @@ pub(crate) struct Transform {
 }
 
 impl Transform {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn simple_case(&self, name: &str) -> Option<(&str, StringCase)> {
+        let (
+            _,
+            Trans::Convert {
+                source,
+                case,
+                separators,
+            },
+        ) = self.steps.iter().find(|(key, _)| key == name)?
+        else {
+            return None;
+        };
+        let source_name = match &source.variable {
+            MetaVariable::Capture(name, _) | MetaVariable::MultiCapture(name) => name.as_str(),
+            MetaVariable::Dropped(_) | MetaVariable::Multiple => return None,
+        };
+        (source.default.is_none() && source.value.is_none() && separators.is_none())
+            .then_some((source_name, *case))
+    }
+
     pub(crate) fn contains(&self, name: &str) -> bool {
         self.steps.iter().any(|(key, _)| key == name)
     }

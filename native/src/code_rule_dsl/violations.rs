@@ -23,6 +23,8 @@ use super::model::{
 };
 #[cfg(test)]
 use super::test_support::{Walk, record_walk};
+/// P's column batches for projected facts: P's typed evidence projections (its `violations` delta).
+pub(crate) mod projection;
 mod semantic;
 mod suppression;
 pub(crate) use super::lines::Span;
@@ -106,7 +108,7 @@ pub(super) fn ast_captures<'a>(
     match matcher {
         AstMatcher::Pattern(pattern) => names.extend(pattern.defined_vars()),
         AstMatcher::Semantic(semantic) => semantic::ast_captures(semantic, utils, summaries, names),
-        AstMatcher::Kind(_)
+        AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Not(_)
         | AstMatcher::Compare(_)
@@ -325,7 +327,7 @@ fn node_regexes_in<'a>(
         }
         AstMatcher::Constrained(core) => node_regexes_in(&core.rule, utils, summaries, regexes),
         AstMatcher::Pattern(_)
-        | AstMatcher::Kind(_)
+        | AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Not(_)
         | AstMatcher::Compare(_)
         | AstMatcher::Count(_)
@@ -389,6 +391,7 @@ pub(super) fn bind(
     let query = match kind {
         ClauseKind::Forbid(query) => Some(emitting(query)),
         ClauseKind::RequireEach { .. } | ClauseKind::Budget { .. } | ClauseKind::Llm => None,
+        ClauseKind::Relational(_) => None,
     };
     let mut names = BTreeSet::new();
     // The values counts bind (`as`): text a message alone may interpolate.
@@ -594,6 +597,7 @@ pub(super) fn bind(
         return Ok(());
     };
     let template = Template::parse(fix);
+    let fix_template = template.clone();
     references(&template, "fix")?;
     let upstream = template.upstream();
     if upstream.is_some()
@@ -655,6 +659,7 @@ pub(super) fn bind(
             )));
         }
     };
+    violation.fix_template = Some(fix_template);
     violation.fix = Some(Arc::new(plan));
     Ok(())
 }
@@ -940,7 +945,7 @@ fn fix_target<'t, D: Doc>(
     binding_range(env, name).map(|range| (range, None))
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub(crate) struct Witness {
     pub(crate) path: String,
     /// Where in the file's content the witness lies; `None` for one that stands for the whole
@@ -954,10 +959,25 @@ pub(crate) struct Witness {
     /// A `rerail-ignore` naming the code rule covers it, where its violation marks such witnesses
     /// instead of dropping them (`ViolationSpec::ignore_marks`: a `budget`'s rows).
     pub(crate) ignored: bool,
+    /// A complete violation projected by SQL. Publication returns it without host reconstruction.
+    pub(crate) sql_violation: Option<Value>,
 }
 
 /// The key under which a witness of an evidence producer carries its projected row.
 const PROJECTION: &str = "$project";
+
+#[cfg(test)]
+#[test]
+fn cloned_evidence_shares_its_projection_until_replaced() {
+    let mut original = Captures::default();
+    original.set_projection(Some(json!({"text":"payload".repeat(4096)})));
+    let mut cloned = original.clone();
+    assert!(original.projection().unwrap().identity() == cloned.projection().unwrap().identity());
+    cloned.set_projection(Some(json!({"text":"replacement"})));
+    assert_ne!(original.projection(), cloned.projection());
+    let encoded = serde_json::to_value(&original).unwrap();
+    assert_eq!(Captures::from_value(&encoded), Some(original));
+}
 
 /// A witness's captures: each bound name's spans, and an evidence projection when its clause
 /// projects one. It serializes as the JSON object of each name's span list and the projection
@@ -966,10 +986,19 @@ const PROJECTION: &str = "$project";
 pub(crate) struct Captures {
     /// Each name's spans, in name order.
     spans: Vec<(Box<str>, Vec<Span>)>,
-    projection: Option<Box<Value>>,
+    projection: Option<projection::Row>,
 }
 
 impl Captures {
+    pub(crate) fn owned_heap_bytes(&self) -> usize {
+        self.spans.capacity() * std::mem::size_of::<(Box<str>, Vec<Span>)>()
+            + self
+                .spans
+                .iter()
+                .map(|(name, spans)| name.len() + spans.capacity() * std::mem::size_of::<Span>())
+                .sum::<usize>()
+    }
+
     pub(crate) fn from_spans(spans: BTreeMap<String, Vec<Span>>) -> Self {
         Self {
             spans: spans
@@ -988,12 +1017,22 @@ impl Captures {
             .map(|index| self.spans[index].1.as_slice())
     }
 
-    pub(crate) fn projection(&self) -> Option<&Value> {
-        self.projection.as_deref()
+    pub(crate) fn projection(&self) -> Option<&projection::Row> {
+        self.projection.as_ref()
     }
 
     pub(crate) fn set_projection(&mut self, projection: Option<Value>) {
-        self.projection = projection.map(Box::new);
+        self.projection = projection.map(projection::Row::from_json);
+    }
+
+    // Read by P's relational inputs (test-only, open item O18).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn take_projection(&mut self) -> Option<projection::Row> {
+        self.projection.take()
+    }
+
+    pub(crate) fn set_typed_projection(&mut self, row: projection::Row) {
+        self.projection = Some(row);
     }
 
     /// The captures a stored witness's JSON object holds; `None` for any other shape.
@@ -1001,7 +1040,7 @@ impl Captures {
         let mut captures = Self::default();
         for (name, value) in value.as_object()? {
             if name == PROJECTION {
-                captures.projection = Some(Box::new(value.clone()));
+                captures.projection = Some(projection::Row::from_json(value.clone()));
             } else {
                 let spans = value
                     .as_array()?
@@ -1024,7 +1063,7 @@ impl Serialize for Captures {
         let mut map = serializer.serialize_map(Some(
             self.spans.len() + usize::from(self.projection.is_some()),
         ))?;
-        let mut projection = self.projection.as_deref();
+        let mut projection = self.projection.as_ref();
         for (name, spans) in &self.spans {
             if let Some(value) = projection.filter(|_| PROJECTION < name.as_ref()) {
                 map.serialize_entry(PROJECTION, value)?;
@@ -1078,6 +1117,7 @@ pub(super) fn regex_witness(
         _ => None,
     };
     Witness {
+        sql_violation: None,
         path: path.to_owned(),
         span,
         captures: Captures::from_spans(captures),

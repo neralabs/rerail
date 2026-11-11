@@ -1,0 +1,29 @@
+.policy "eslint-no-useless-catch" revision 4
+.description "Remove catch clauses that only rethrow the caught error; they add nothing but nesting."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-control.rr"
+//   first_stmt, deparen
+
+// ESLint's no-useless-catch: a catch clause whose first statement rethrows its parameter, unchanged. With a
+// finally, the catch clause is reported (the try still has a use); without one, the whole try statement.
+//   try { f(); } catch (e) { throw e; }                     → reported at `try`
+//   try { f(); } catch (e) { throw e; } finally { g(); }    → reported at `catch`
+//   try { f(); } catch (e) { log(e); throw e; }             fine
+//   try { f(); } catch ({ message }) { throw message; }     fine: a pattern, not a name
+// No options.
+.violation no_useless_catch(at: node, msg: symbol) code "no-useless-catch" "{msg}"
+    suppress eslint "no-useless-catch"
+    suppress oxlint "no-useless-catch"
+    suppress biome "lint/complexity/noUselessCatch"
+no_useless_catch(t, "Unnecessary try/catch wrapper.") :- rethrows(c), field(t, "handler", c),
+    !field(t, "finalizer", _).
+no_useless_catch(c, "Unnecessary catch clause.") :- rethrows(c), field(t, "handler", c), field(t, "finalizer", _).
+
+// rethrows(c): `catch (e) { throw e; … }`. ESTree has no parentheses: `throw (e)` counts.
+.decl rethrows(c: node)
+rethrows(c) :- kind(c, "catch_clause"), field(c, "parameter", p), kind(p, "identifier"), text(p, x),
+    field(c, "body", b), first_stmt(b, s), kind(s, "throw_statement"), child(s, e, 0), deparen(e, a),
+    kind(a, "identifier"), text(a, x).

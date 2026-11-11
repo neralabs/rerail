@@ -2,6 +2,7 @@
 //! `func_arg_expr`, `extract_list`, `position_list`, `substr_list`, `overlay_list`, `trim_list`)
 //! reads them, over the DerekStride grammar's `invocation`, and the signature slots they fill.
 
+use crate::code_rule_dsl::tree::Tree;
 use super::{Arguments, Passed};
 use crate::code_rule_dsl::value::sql;
 use ast_grep_core::{Doc, Node};
@@ -161,7 +162,7 @@ fn read_operand<'r, D: Doc>(operand: &Node<'r, D>) -> Option<SqlArgument<'r, D>>
 fn all_quantified_operand<'r, D: Doc>(value: &Node<'r, D>) -> Option<Node<'r, D>> {
     (value.kind() == "unary_expression"
         && value
-            .field("operator")
+            .operator_token()
             .is_some_and(|op| op.kind() == "keyword_all"))
     .then(|| value.field("operand"))
     .flatten()

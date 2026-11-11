@@ -3,7 +3,7 @@
 use super::parse::capture_name;
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
 use crate::code_rule_dsl::matcher::Semantic;
-use crate::code_rule_dsl::matcher::{AstMatcher, Gap, Layout, LineCount, Neighbour};
+use crate::code_rule_dsl::matcher::{AstMatcher, Gap, Layout, LineContext, LineCount, Neighbour};
 use napi::Result;
 use serde_json::Value;
 
@@ -98,7 +98,19 @@ fn gap(value: &Value, path: &str) -> Result<Gap> {
 
 fn layout(value: &Value, path: &str) -> Result<Layout> {
     let layout = object(value, path)?;
-    reject_unknown(layout, &["span", "start", "before", "after"], path)?;
+    reject_unknown(
+        layout,
+        &[
+            "span",
+            "start",
+            "before",
+            "after",
+            "line",
+            "previousLine",
+            "context",
+        ],
+        path,
+    )?;
     if layout.is_empty() {
         return Err(invalid(format!(
             "{path} must hold span, start, before or after"
@@ -116,15 +128,89 @@ fn layout(value: &Value, path: &str) -> Result<Layout> {
             .map(|value| gap(value, &format!("{path}/{key}")))
             .transpose()
     };
+    let text = |key: &str| -> Result<Option<regex::Regex>> {
+        layout
+            .get(key)
+            .map(|value| {
+                let pattern = value
+                    .as_str()
+                    .ok_or_else(|| invalid(format!("{path}/{key} must be a regex string")))?;
+                regex::Regex::new(pattern)
+                    .map_err(|error| invalid(format!("{path}/{key}: {error}")))
+            })
+            .transpose()
+    };
     Ok(Layout {
         span: count("span")?,
         start: count("start")?,
         before: side("before")?,
         after: side("after")?,
+        line: text("line")?,
+        previous_line: text("previousLine")?,
+        context: layout
+            .get("context")
+            .map(|value| -> Result<LineContext> {
+                let at = format!("{path}/context");
+                let spec = object(value, &at)?;
+                reject_unknown(spec, &["before", "after", "through", "regex"], &at)?;
+                let number = |key: &str| -> Result<usize> {
+                    match spec.get(key) {
+                        None => Ok(0),
+                        Some(v) => v
+                            .as_u64()
+                            .filter(|n| *n <= 64)
+                            .map(|n| n as usize)
+                            .ok_or_else(|| {
+                                invalid(format!("{at}/{key} must be an integer from 0 to 64"))
+                            }),
+                    }
+                };
+                let regex = |key: &str| -> Result<regex::Regex> {
+                    let pattern = spec
+                        .get(key)
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| invalid(format!("{at}/{key} must be a regex string")))?;
+                    regex::Regex::new(pattern).map_err(|e| invalid(format!("{at}/{key}: {e}")))
+                };
+                Ok(LineContext {
+                    before: number("before")?,
+                    after: number("after")?,
+                    through: spec.get("through").map(|_| regex("through")).transpose()?,
+                    regex: regex("regex")?,
+                })
+            })
+            .transpose()?,
     })
 }
 
-pub(super) fn validate_layout(value: &Value, path: &str) -> Result<()> {
+pub(super) fn validate_layout(
+    value: &Value,
+    path: &str,
+    limits: &crate::code_rule_dsl::model::Limits,
+) -> Result<()> {
+    for key in ["line", "previousLine"] {
+        if value
+            .get(key)
+            .and_then(Value::as_str)
+            .is_some_and(|pattern| pattern.len() > limits.max_regex_pattern_bytes)
+        {
+            return Err(invalid(format!(
+                "{path}/{key}: regex exceeds maxRegexPatternBytes"
+            )));
+        }
+    }
+    for key in ["regex", "through"] {
+        if value
+            .get("context")
+            .and_then(|v| v.get(key))
+            .and_then(Value::as_str)
+            .is_some_and(|p| p.len() > limits.max_regex_pattern_bytes)
+        {
+            return Err(invalid(format!(
+                "{path}/context/{key}: regex exceeds maxRegexPatternBytes"
+            )));
+        }
+    }
     layout(value, path).map(|_| ())
 }
 

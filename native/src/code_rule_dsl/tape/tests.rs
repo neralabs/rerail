@@ -1,14 +1,95 @@
 use super::*;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use ast_grep_core::AstGrep;
-use ast_grep_core::matcher::Pattern;
 use ast_grep_core::tree_sitter::StrDoc;
+
+#[test]
+fn tape_v8_persists_abstract_tree_sitter_supertypes() {
+    let source = "value = left + right\n";
+    let (_, tape, image, grammar) = fixture(source, GrammarDialect::Python);
+    let bytes = image.to_bytes().unwrap();
+    assert_eq!(&bytes[..8], b"TMPTAP9N");
+    assert_eq!(TAPE_FORMAT_VERSION, 15);
+
+    let memberships = tape.transducer_supertypes().collect::<Vec<_>>();
+    assert!(!memberships.is_empty());
+    assert!(memberships.iter().any(|&(node, kind)| {
+        tape.transducer_has_supertype(node, kind) && grammar.kind_name(kind) == Some("expression")
+    }));
+
+    let persisted = TapeImage::from_bytes(&bytes, &grammar).unwrap();
+    let restored =
+        TapeDoc::restore(Arc::new(source.to_owned()), Arc::clone(&grammar), &persisted, &|| false).unwrap();
+    assert_eq!(
+        restored.transducer_supertypes().collect::<Vec<_>>(),
+        memberships
+    );
+
+    // Memberships live in the codes: corrupt ones are rejected, in memory and in bytes.
+    let source = Arc::new(source.to_owned());
+    let reject = |candidate: &TapeImage| {
+        assert!(TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), candidate, &|| false).is_err());
+        assert!(TapeImage::from_bytes(&candidate.to_bytes().unwrap(), &grammar).map_or(true, |read| {
+            TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), &read, &|| false).is_err()
+        }));
+    };
+    let member = image.codes.iter().position(|code| code.class_count > 0).expect("a code with memberships");
+    let concrete = (0..grammar.kinds.kind_count() as u16).find(|&kind| !grammar.kinds.kind_is_supertype(kind)).unwrap();
+    let mut broken = image.clone();
+    broken.codes[member].classes[0] = concrete;
+    reject(&broken);
+    let mut broken = image.clone();
+    broken.codes[member].classes[0] = u16::MAX;
+    reject(&broken);
+    let mut broken = image.clone();
+    let class = broken.codes[member].classes[0];
+    let count = usize::from(broken.codes[member].class_count);
+    broken.codes[member].classes[count] = class;
+    broken.codes[member].class_count += 1;
+    reject(&broken);
+    let mut broken = image.clone();
+    broken.codes[member].class_count = MAX_NODE_SUPERTYPES as u8 + 1;
+    assert!(TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), &broken, &|| false).is_err());
+    let mut broken = image.clone();
+    broken.codes[member].classes[MAX_NODE_SUPERTYPES - 1] = class;
+    assert!(TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), &broken, &|| false).is_err());
+    // A code table whose stated length disagrees with its codes.
+    let mut corrupt = bytes.clone();
+    let slot = header::CODE_BYTES..header::CODE_BYTES + 8;
+    let stated = u64::from_le_bytes(corrupt[slot.clone()].try_into().unwrap());
+    corrupt[slot].copy_from_slice(&(stated + 2).to_le_bytes());
+    assert!(TapeImage::from_bytes(&corrupt, &grammar).is_err());
+}
+
+#[test]
+fn packed_backend_accessors_read_text_named_leaves_and_structure() {
+    let source = "f(a); g(b); h(a, b);\n";
+    let (_, tape, _, grammar) = fixture(source, GrammarDialect::TypeScript);
+    let calls: Vec<u32> = (0..tape.transducer_len() as u32)
+        .filter(|&node| grammar.kind_name(tape.transducer_kind(node)) == Some("call_expression"))
+        .collect();
+    assert_eq!(calls.len(), 3);
+    for node in 0..tape.transducer_len() as u32 {
+        assert_eq!(tape.transducer_text(node), tape.transducer_text_str(node).as_bytes());
+        let leaf = tape.transducer_children(node).next().is_none();
+        let name = grammar.kind_name(tape.transducer_kind(node));
+        if name == Some("identifier") {
+            assert!(tape.transducer_is_named_leaf(node));
+        }
+        if !leaf {
+            assert!(!tape.transducer_is_named_leaf(node));
+        }
+    }
+    let keys: Vec<_> = calls.iter().map(|&call| tape.transducer_structural_key(call)).collect();
+    assert_eq!(keys[0], keys[1], "same shape, different identifiers");
+    assert_ne!(keys[0], keys[2], "an extra argument changes the structure");
+}
 
 #[test]
 fn scala_contextual_aliases_preserve_native_node_identity() {
     let source = "object A { def f(x: Int) = g(x) }";
     let (native, _, image, grammar) = fixture(source, GrammarDialect::Scala);
-    assert!(!image.kind_overrides.is_empty());
+    assert!(image.aliased_nodes() > 0);
     let persisted = TapeImage::from_bytes(&image.to_bytes().unwrap(), &grammar).unwrap();
     let tape =
         TapeDoc::restore(Arc::new(source.to_owned()), grammar, &persisted, &|| false).unwrap();
@@ -38,6 +119,25 @@ fn scala_contextual_aliases_preserve_native_node_identity() {
     }
 }
 
+/// The nodes of tree-sitter's tree a tape holds, in preorder: the tokens the grammar implies left
+/// out (`stored_children_for_test`).
+fn stored<'r>(native: &'r AstGrep<StrDoc<GrammarDialect>>) -> Vec<ast_grep_core::Node<'r, StrDoc<GrammarDialect>>> {
+    let kept = kept(native);
+    native.root().dfs().filter(|node| kept.contains(&node.get_inner_node().id())).collect()
+}
+
+/// The ids of the tree-sitter nodes a tape holds (`stored`).
+fn kept(native: &AstGrep<StrDoc<GrammarDialect>>) -> std::collections::HashSet<usize> {
+    let lang = *native.root().get_doc().get_lang();
+    let mut kept = std::collections::HashSet::new();
+    let mut stack = vec![native.root().get_doc().tree.root_node()];
+    while let Some(node) = stack.pop() {
+        kept.insert(node.id());
+        stack.extend(stored_children_for_test(lang, node).into_iter().map(|(child, _)| child));
+    }
+    kept
+}
+
 fn fixture(
     source: &str,
     lang: GrammarDialect,
@@ -57,10 +157,45 @@ fn fixture(
     (native, tape, image, grammar)
 }
 
+#[test]
+fn known_field_edges_match_native_first_child_without_larger_records() {
+    assert_eq!(std::mem::size_of::<Rec>(), 40);
+    for (lang, source) in [
+        (
+            GrammarDialect::Python,
+            "import alpha, beta, gamma\ndef f(a: int, b=2): return a + b\n",
+        ),
+        (
+            GrammarDialect::TypeScript,
+            "const x = f(a, b); if (x) { g(x); }",
+        ),
+    ] {
+        let (native, tape, _, grammar) = fixture(source, lang);
+        let native = AstGrep::doc(native);
+        let restored = AstGrep::doc(tape);
+        for (left, right) in stored(&native).into_iter().zip(restored.root().dfs()) {
+            for field in 0..=grammar.kinds.field_count() as u16 {
+                let expected = left
+                    .parent()
+                    .and_then(|parent| parent.child_by_field_id(field))
+                    .is_some_and(|first| first.node_id() == left.node_id());
+                assert_eq!(
+                    right.get_inner_node().is_first_field(field),
+                    expected,
+                    "{lang:?} {:?} field {field}",
+                    right.range()
+                );
+            }
+        }
+    }
+}
+
 type MatchResult = (Range<usize>, Vec<(String, Vec<Range<usize>>)>);
 
-fn matches<D: Doc>(doc: D, pattern: &str, lang: GrammarDialect) -> Vec<MatchResult> {
-    let matcher = Pattern::try_new(pattern, lang).unwrap();
+/// `pattern`'s matches over `doc`: a tape's pattern over a tape, the unfiltered one over tree-sitter's
+/// tree (`test_support::pattern_for`).
+fn matches<D: Doc + 'static>(doc: D, pattern: &str, lang: GrammarDialect) -> Vec<MatchResult> {
+    let matcher = crate::code_rule_dsl::test_support::pattern_for::<D>(pattern, lang);
     let root = AstGrep::doc(doc);
     root.root()
         .find_all(&matcher)
@@ -119,10 +254,13 @@ fn persisted_image_round_trips_without_parsing() {
     // `out`, Patch 13's `_arrow_body_end`, Patch 14's `yield` name, Patch 21's
     // `_jsx_closing_tag_lt`, Patch 24's `_no_line_terminator_here`, Patch 28's
     // `_member_name_here`, `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them; a tape
-    // format (7: one document per tape) changes the header.
+    // format (7: one document per tape; 9: v9np's columns, decision 0025; 10: memberships in the codes;
+    // 11: columns at 16 bytes, decision 0032; 12: named-only, no source digest, RER-131; 13: the
+    // version alone; 14: the tokens the grammar implies never written, RER-131; 15: delimiters left out where
+    // implied, other tokens only where always implied, RER-131) changes the bytes.
     assert_eq!(
         digest,
-        "b1bbb5d1bb30357069a30b96250d84a91223a8bc56cf3a124387affc59cb9203"
+        "df11d157b5916832e7ccd615205d8c0ff9ed1418c11a1716f3dab476a51d257e"
     );
 }
 
@@ -158,13 +296,13 @@ fn file_documents_persist_apart_and_are_checked() {
     assert_eq!(
         primary.len(),
         HEADER_BYTES
-            + tables.rec.len()
-            + tables.spans.len()
-            + tables.checkpoints.len()
-            + 8 * (tables.par_overflow.len() + tables.size_overflow.len())
-            + 4 * (tables.extra.len() + tables.error.len() + tables.missing.len())
+            + padded(tables.code.len())
+            + padded(tables.size.len())
+            + padded(tables.base.len())
+            + padded(tables.off.len())
+            + padded(tables.tail.len())
+            + tables.code_table_bytes()
             + aliases
-            + 6 * tables.kind_overrides.len()
     );
     assert_eq!(&primary[..8], TAPE_MAGIC);
     let read = image.round_trip(&grammar).unwrap();
@@ -291,19 +429,20 @@ fn persisted_image_rejects_wrong_grammar_and_noncanonical_bytes() {
     trailing.push(0);
     assert!(TapeImage::from_bytes(&trailing, &grammar).is_err());
 
-    let mut header = bytes.clone();
-    header[9] = 1;
-    assert!(TapeImage::from_bytes(&header, &grammar).is_err());
+    let mut widths = bytes.clone();
+    widths[header::WIDTHS] = 1;
+    assert!(TapeImage::from_bytes(&widths, &grammar).is_err());
 
     let mut noncanonical = image.clone();
-    noncanonical.extra.push(0);
-    noncanonical.extra.push(0);
+    noncanonical.codes[0].flags = 0x40;
     assert!(TapeImage::from_bytes(&noncanonical.to_bytes().unwrap(), &grammar).is_err());
 
+    // v12 stores no source digest (the store pairs a tape with its source), so a source of
+    // another length is what restore can tell apart.
     let decoded = TapeImage::from_bytes(&bytes, &grammar).unwrap();
     assert!(
         TapeDoc::restore(
-            Arc::new("x = 2 # extra\n".to_owned()),
+            Arc::new("x = 22 # extra\n".to_owned()),
             grammar,
             &decoded,
             &|| false,
@@ -318,13 +457,14 @@ fn persisted_image_rejects_wrong_grammar_and_noncanonical_bytes() {
 fn persisted_image_rejects_oversized_alias_counts_without_allocating() {
     let (_native, _tape, image, grammar) = fixture("x = 1\n", GrammarDialect::Python);
     let bytes = image.to_bytes().unwrap();
-    // Header count slots: aliases at 120, alias bytes at 128, overrides at 136.
     for (offset, count) in [
-        (120, u64::MAX >> 1),
-        (120, 1 << 20),
-        (120, 1 << 16 | 1),
-        (136, u64::MAX >> 1),
-        (136, 1 << 20),
+        (header::ALIASES, u64::MAX >> 1),
+        (header::ALIASES, 1 << 20),
+        (header::ALIASES, 1 << 16 | 1),
+        (header::CODES, u64::MAX >> 1),
+        (header::CODES, 1 << 20),
+        (header::CODE_BYTES, u64::MAX >> 1),
+        (header::ALIAS_BYTES, u64::MAX >> 1),
     ] {
         let mut corrupt = bytes.clone();
         corrupt[offset..offset + 8].copy_from_slice(&count.to_le_bytes());
@@ -378,7 +518,7 @@ fn valid_native_root_ranges_survive_taping() {
             let (native, tape, _, _) = fixture(source, lang);
             let left = AstGrep::doc(native);
             let right = AstGrep::doc(tape);
-            let native_nodes = left.root().dfs().collect::<Vec<_>>();
+            let native_nodes = stored(&left);
             let tape_nodes = right.root().dfs().collect::<Vec<_>>();
             assert_eq!(native_nodes.len(), tape_nodes.len(), "{lang:?} {source:?}");
             for (a, b) in native_nodes.iter().zip(tape_nodes.iter()) {
@@ -456,7 +596,7 @@ fn positions_count_only_line_feeds_in_every_dialect() {
         // compares those against the Forte tree and the view.
         if lang != GrammarDialect::Blade {
             let native = AstGrep::doc(StrDoc::new(source, lang));
-            let native_nodes = native.root().dfs().collect::<Vec<_>>();
+            let native_nodes = stored(&native);
             let tape_nodes = restored.root().dfs().collect::<Vec<_>>();
             assert_eq!(native_nodes.len(), tape_nodes.len(), "{lang:?}");
             for (a, b) in native_nodes.iter().zip(&tape_nodes) {
@@ -487,35 +627,42 @@ fn direct_field_ids_and_navigation_match_native() {
         let (native, tape, _, grammar) = fixture(source, lang);
         let left = AstGrep::doc(native);
         let right = AstGrep::doc(tape);
-        let native_nodes = left.root().dfs().collect::<Vec<_>>();
+        // Tree-sitter's navigation over the nodes the tape holds.
+        let ids = kept(&left);
+        let held = |node: &ast_grep_core::Node<'_, StrDoc<GrammarDialect>>| ids.contains(&node.get_inner_node().id());
+        let native_nodes = stored(&left);
         let tape_nodes = right.root().dfs().collect::<Vec<_>>();
         assert_eq!(native_nodes.len(), tape_nodes.len());
         for (a, b) in native_nodes.iter().zip(tape_nodes.iter()) {
             assert_eq!(
-                a.next_all().map(|node| node.range()).collect::<Vec<_>>(),
+                a.next_all().filter(held).map(|node| node.range()).collect::<Vec<_>>(),
                 b.next_all().map(|node| node.range()).collect::<Vec<_>>(),
                 "{lang:?} next_all {:?}",
                 a.range()
             );
             assert_eq!(
-                a.prev_all().map(|node| node.range()).collect::<Vec<_>>(),
+                a.prev_all().filter(held).map(|node| node.range()).collect::<Vec<_>>(),
                 b.prev_all().map(|node| node.range()).collect::<Vec<_>>(),
                 "{lang:?} prev_all {:?}",
                 a.range()
             );
             assert_eq!(
-                a.next().map(|node| node.range()),
-                b.next().map(|node| node.range())
+                std::iter::successors(a.next(), |node| node.next()).find(held).map(|node| node.range()),
+                b.next().map(|node| node.range()),
+                "{lang:?} next {:?}",
+                a.range()
             );
             assert_eq!(
-                a.prev().map(|node| node.range()),
-                b.prev().map(|node| node.range())
+                std::iter::successors(a.prev(), |node| node.prev()).find(held).map(|node| node.range()),
+                b.prev().map(|node| node.range()),
+                "{lang:?} prev {:?}",
+                a.range()
             );
         }
-        for (a, b) in left
-            .root()
-            .get_inner_node()
-            .dfs()
+        let held = |node: &tree_sitter::Node<'_>| ids.contains(&node.id());
+        for (a, b) in native_nodes
+            .iter()
+            .map(|node| node.get_inner_node().clone())
             .zip(right.root().get_inner_node().dfs())
         {
             for id in [
@@ -527,6 +674,7 @@ fn direct_field_ids_and_navigation_match_native() {
             ] {
                 assert_eq!(
                     a.field_children(id)
+                        .filter(held)
                         .map(|node| node.byte_range())
                         .collect::<Vec<_>>(),
                     b.field_children(id)
@@ -537,7 +685,7 @@ fn direct_field_ids_and_navigation_match_native() {
                 );
                 if let Some(id) = id {
                     assert_eq!(
-                        a.child_by_field_id(id).map(|node| node.byte_range()),
+                        a.field_children(Some(id)).find(held).map(|node| node.byte_range()),
                         b.child_by_field_id(id).map(|node| node.range()),
                         "{lang:?} field {id:?} {:?}",
                         a.byte_range()
@@ -582,7 +730,7 @@ fn representative_alias_fields_and_flags_match_native() {
         let (native, tape, _, grammar) = fixture(source, lang);
         let left = AstGrep::doc(native);
         let right = AstGrep::doc(tape);
-        let native_nodes = left.root().dfs().collect::<Vec<_>>();
+        let native_nodes = stored(&left);
         let tape_nodes = right.root().dfs().collect::<Vec<_>>();
         assert_eq!(native_nodes.len(), tape_nodes.len(), "{lang:?}");
         for (a, b) in native_nodes.iter().zip(tape_nodes.iter()) {
@@ -660,7 +808,9 @@ fn punctuation_fields_ancestors_and_unicode_positions_match_native() {
         let (native, tape, _, _) = fixture(source, lang);
         let native_root = AstGrep::doc(native);
         let tape_root = AstGrep::doc(tape.clone());
-        let native_nodes = native_root.root().dfs().collect::<Vec<_>>();
+        let ids = kept(&native_root);
+        let held = |node: &ast_grep_core::Node<'_, StrDoc<GrammarDialect>>| ids.contains(&node.get_inner_node().id());
+        let native_nodes = stored(&native_root);
         let tape_nodes = tape_root.root().dfs().collect::<Vec<_>>();
         assert_eq!(native_nodes.len(), tape_nodes.len());
         for (left, right) in native_nodes.iter().zip(tape_nodes.iter()) {
@@ -690,6 +840,7 @@ fn punctuation_fields_ancestors_and_unicode_positions_match_native() {
             );
             assert_eq!(
                 left.children()
+                    .filter(held)
                     .map(|child| child.kind().into_owned())
                     .collect::<Vec<_>>(),
                 right
@@ -708,11 +859,12 @@ fn punctuation_fields_ancestors_and_unicode_positions_match_native() {
             );
             for field in ["function", "arguments", "name", "body", "left", "right"] {
                 assert_eq!(
-                    left.field(field).map(|child| child.range()),
+                    left.field_children(field).find(held).map(|child| child.range()),
                     right.field(field).map(|child| child.range())
                 );
                 assert_eq!(
                     left.field_children(field)
+                        .filter(held)
                         .map(|child| child.range())
                         .collect::<Vec<_>>(),
                     right
@@ -737,38 +889,38 @@ fn malformed_and_mismatched_images_are_not_negative_matches() {
         assert!(TapeDoc::restore(Arc::clone(&source), grammar, candidate, &|| false).is_err());
     };
     let mut broken = image.clone();
-    broken.rec.pop();
+    broken.code.pop();
     reject(&broken, Arc::clone(&grammar));
     let mut broken = image.clone();
-    broken.spans.pop();
+    broken.tail.pop();
     reject(&broken, Arc::clone(&grammar));
     let mut broken = image.clone();
-    broken.rec[2..4].copy_from_slice(&0u16.to_le_bytes());
+    broken.size[0..2].copy_from_slice(&0u16.to_le_bytes());
     reject(&broken, Arc::clone(&grammar));
     let mut broken = image.clone();
-    broken.rec[0..2].copy_from_slice(&u16::MAX.to_le_bytes());
+    broken.code[0..2].copy_from_slice(&u16::MAX.to_le_bytes());
     reject(&broken, Arc::clone(&grammar));
     let mut broken = image.clone();
-    broken.spans[0] = 0xff;
+    broken.off[0] = 0xff;
     reject(&broken, Arc::clone(&grammar));
     let mut broken = image.clone();
-    broken.size_overflow.push((0, u32::MAX));
+    broken.widths[0] = 3;
     reject(&broken, Arc::clone(&grammar));
     reject(&image, Grammar::new(GrammarDialect::TypeScript).unwrap());
     let mut broken = image.clone();
     broken.source_len += 1;
     reject(&broken, Arc::clone(&grammar));
     let mut broken = image.clone();
-    broken.checkpoints[0] ^= 1;
+    broken.base[0] ^= 0x80;
     reject(&broken, Arc::clone(&grammar));
     let mut broken = image.clone();
-    broken.spans.extend_from_slice(&[0, 0]);
+    broken.tail.extend_from_slice(&[0, 0]);
     reject(&broken, Arc::clone(&grammar));
     let mut broken = image.clone();
-    broken.rec[4..6].copy_from_slice(&SENTINEL.to_le_bytes());
+    broken.size[0..2].copy_from_slice(&SENTINEL.to_le_bytes());
     reject(&broken, Arc::clone(&grammar));
     let mut broken = image.clone();
-    broken.extra.extend_from_slice(&[0, 0]);
+    broken.codes[0].alias = 7;
     reject(&broken, Arc::clone(&grammar));
     let altered = Arc::new("a = foo(2)\n".to_owned());
     assert!(TapeDoc::restore(altered, Arc::clone(&grammar), &image, &|| false).is_err());
@@ -781,7 +933,7 @@ fn restore_rejects_child_subtree_escaping_parent() {
     let mut broken = image.clone();
     // The expression_statement has five preorder records. Shortening its subtree
     // to two leaves descendants outside its declared exclusive boundary.
-    broken.rec[10..12].copy_from_slice(&2u16.to_le_bytes());
+    broken.size[2..4].copy_from_slice(&2u16.to_le_bytes());
     assert!(TapeDoc::restore(Arc::new(source.to_owned()), grammar, &broken, &|| false).is_err());
 }
 
@@ -815,11 +967,13 @@ fn damaged_trees_keep_error_and_missing_nodes_like_native() {
     ] {
         let (native, tape, image, grammar) = fixture(source, lang);
         assert!(native.tree.root_node().has_error());
-        assert_eq!(!image.error.is_empty(), errors, "{source}");
-        assert_eq!(!image.missing.is_empty(), missing, "{source}");
+        assert_eq!(!image.error_nodes().is_empty(), errors, "{source}");
+        assert_eq!(!image.missing_nodes().is_empty(), missing, "{source}");
         let native_root = AstGrep::doc(native);
         let tape_root = AstGrep::doc(tape.clone());
-        let native_nodes = native_root.root().dfs().collect::<Vec<_>>();
+        let ids = kept(&native_root);
+        let held = |node: &ast_grep_core::Node<'_, StrDoc<GrammarDialect>>| ids.contains(&node.get_inner_node().id());
+        let native_nodes = stored(&native_root);
         let tape_nodes = tape_root.root().dfs().collect::<Vec<_>>();
         assert_eq!(native_nodes.len(), tape_nodes.len());
         for (left, right) in native_nodes.iter().zip(tape_nodes.iter()) {
@@ -832,7 +986,7 @@ fn damaged_trees_keep_error_and_missing_nodes_like_native() {
                     left.is_error(),
                     left.is_missing(),
                     left.range(),
-                    left.children().len(),
+                    left.children().filter(held).count(),
                 ),
                 (
                     right.kind(),
@@ -842,7 +996,7 @@ fn damaged_trees_keep_error_and_missing_nodes_like_native() {
                     right.is_error(),
                     right.is_missing(),
                     right.range(),
-                    right.children().len(),
+                    right.children().count(),
                 )
             );
         }
@@ -865,10 +1019,12 @@ fn damaged_trees_keep_error_and_missing_nodes_like_native() {
                 );
             }
         }
+        // The statement: `debugger` alone is natively its keyword, a token the grammar implies, which
+        // no tape stores (RER-131).
         let pattern = if lang == GrammarDialect::Python {
             "x = $A"
         } else {
-            "debugger"
+            "debugger;"
         };
         assert_eq!(
             matches(StrDoc::new(source, lang), pattern, lang),
@@ -886,22 +1042,22 @@ fn damaged_trees_keep_error_and_missing_nodes_like_native() {
                 .is_err()
             );
         };
-        if let Some(&index) = image.error.first() {
+        // A node's flags are its code's (`TapeImage::codes`).
+        let code = |image: &TapeImage, node: u32| usize::from(image.code_at(node as usize));
+        if let Some(&index) = image.error_nodes().first() {
             let mut broken = image.clone();
-            broken.error.clear();
+            broken.codes[code(&image, index)].flags &= !CODE_ERROR;
             reject(&broken);
             let mut broken = image.clone();
-            broken.error.push(index);
+            broken.codes[code(&image, index)].flags |= CODE_MISSING;
             reject(&broken);
         }
-        if let Some(&index) = image.missing.first() {
+        if let Some(&index) = image.missing_nodes().first() {
             let mut broken = image.clone();
-            broken.missing.clear();
-            broken.missing.push(0);
+            broken.codes[code(&image, 0)].flags |= CODE_MISSING;
             reject(&broken);
             let mut broken = image.clone();
-            broken.error.push(index);
-            broken.error.sort_unstable();
+            broken.codes[code(&image, index)].flags |= CODE_ERROR;
             reject(&broken);
         }
     }
@@ -924,13 +1080,12 @@ fn cancellation_interrupts_mid_encode_without_partial_image() {
         "encode must poll before the final source digest"
     );
     let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap();
-    assert_eq!(
-        TapeDoc::restore(Arc::new(source), grammar, &image, &|| false)
-            .unwrap()
-            .data
-            .len(),
-        image.primary.node_count()
-    );
+    // A record per stored node: the tokens the grammar implies are in no tape (RER-131).
+    let nodes = native.tree.root_node().descendant_count();
+    let doc = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
+    assert_eq!(doc.data.len(), doc.image.node_count());
+    assert_eq!(image.primary.node_count(), doc.data.len());
+    assert!(doc.data.len() < nodes);
 }
 
 #[test]
@@ -953,13 +1108,8 @@ fn cancellation_interrupts_mid_restore_after_hashing() {
         .is_err()
     );
     assert_eq!(calls.get(), 5, "restore must poll after the source digest");
-    assert_eq!(
-        TapeDoc::restore(Arc::new(source), grammar, &image, &|| false)
-            .unwrap()
-            .data
-            .len(),
-        image.node_count()
-    );
+    let doc = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
+    assert_eq!(doc.data.len(), doc.image.node_count());
 }
 
 #[test]
@@ -976,10 +1126,12 @@ fn checkpoint_stride_boundaries_preserve_native_nodes_and_matches() {
         (16, format!("{}#é\n", "x\n".repeat(7))),
         (17, "x\n".repeat(8)),
     ] {
-        let (native, tape, image, _) = fixture(&source, GrammarDialect::Python);
+        let (native, tape, _, _) = fixture(&source, GrammarDialect::Python);
+        // The document's tree image: the stored one is named-only (RER-131).
+        let image = Arc::clone(&tape.image);
         let left = AstGrep::doc(native);
         let right = AstGrep::doc(tape.clone());
-        let native_nodes = left.root().dfs().collect::<Vec<_>>();
+        let native_nodes = stored(&left);
         let tape_nodes = right.root().dfs().collect::<Vec<_>>();
         assert_eq!(
             native_nodes.len(),
@@ -987,7 +1139,7 @@ fn checkpoint_stride_boundaries_preserve_native_nodes_and_matches() {
             "{expected_count} native fixture"
         );
         assert_eq!(image.node_count(), expected_count);
-        assert_eq!(image.checkpoints.len(), expected_count.div_ceil(16) * 6);
+        assert_eq!(image.base.len(), expected_count.div_ceil(16) * 4);
         for (index, (a, b)) in native_nodes.iter().zip(tape_nodes.iter()).enumerate() {
             assert_eq!(
                 (a.kind_id(), a.range(), a.text(), a.start_pos(), a.end_pos()),
@@ -1019,10 +1171,12 @@ fn checkpoint_stride_boundaries_preserve_native_nodes_and_matches() {
 fn span_varint_width_boundaries_preserve_utf8_ranges_and_captures() {
     for (length, expected_width) in [(127, 1), (128, 2), (16_383, 2), (16_384, 3)] {
         let source = format!("#é{}\nfoo(1)\n", "a".repeat(length - 3));
-        let (native, tape, image, _) = fixture(&source, GrammarDialect::Python);
+        let (native, tape, _, _) = fixture(&source, GrammarDialect::Python);
+        // The document's tree image: the stored one is named-only (RER-131).
+        let image = Arc::clone(&tape.image);
         let left = AstGrep::doc(native);
         let right = AstGrep::doc(tape.clone());
-        let native_nodes = left.root().dfs().collect::<Vec<_>>();
+        let native_nodes = stored(&left);
         let tape_nodes = right.root().dfs().collect::<Vec<_>>();
         assert_eq!(
             native_nodes.len(),
@@ -1032,32 +1186,19 @@ fn span_varint_width_boundaries_preserve_utf8_ranges_and_captures() {
         let comment = native_nodes.iter().find(|node| node.is_extra()).unwrap();
         assert_eq!(comment.range(), 0..length, "comment length {length}");
         assert_eq!(source.find("foo"), Some(length + 1));
-        let mut at = 0;
+        // v9np's span columns are fixed-width per document: every length here fits 2 bytes.
+        let _ = expected_width;
+        assert_eq!((image.off_width(), image.tail_width()), (2, 2), "comment length {length}");
         let mut saw_comment = false;
-        let mut previous = 0i64;
         for (index, (a, b)) in native_nodes.iter().zip(tape_nodes.iter()).enumerate() {
             assert_eq!(
                 (a.kind_id(), a.range(), a.text(), a.start_pos(), a.end_pos()),
                 (b.kind_id(), b.range(), b.text(), b.start_pos(), b.end_pos()),
                 "comment length {length} node {index}"
             );
-            let encoded_delta = read_varint(&image.spans, &mut at).unwrap();
-            let delta = ((encoded_delta >> 1) as i32) ^ -((encoded_delta & 1) as i32);
-            previous += i64::from(delta);
-            let width_start = at;
-            let decoded_length = read_varint(&image.spans, &mut at).unwrap();
-            assert_eq!(
-                previous as usize,
-                a.range().start,
-                "comment length {length} node {index}"
-            );
-            assert_eq!(
-                decoded_length as usize,
-                a.range().len(),
-                "comment length {length} node {index}"
-            );
+            assert_eq!(image.start_at(index) as usize, a.range().start, "comment length {length} node {index}");
             if a.is_extra() {
-                assert_eq!(at - width_start, expected_width, "comment length {length}");
+                assert_eq!(image.tail_at(index) as usize, a.range().len(), "comment length {length}");
                 saw_comment = true;
             }
         }
@@ -1081,14 +1222,13 @@ fn large_file_roundtrips_parent_and_subtree_overflow() {
     let source = "x = foo(1)\n".repeat(12_000);
     let (native, tape, image, grammar) = fixture(&source, GrammarDialect::Python);
     assert!(image.node_count() > u16::MAX as usize);
-    assert!(!image.par_overflow.is_empty());
-    assert!(!image.size_overflow.is_empty());
+    assert_eq!(image.size_width(), 4);
     assert_eq!(
         matches(tape, "foo($A)", GrammarDialect::Python),
         matches(native, "foo($A)", GrammarDialect::Python)
     );
     let mut broken = image.clone();
-    broken.par_overflow[0].1 = u32::MAX;
+    broken.size[0..4].copy_from_slice(&u32::MAX.to_le_bytes());
     assert!(TapeDoc::restore(Arc::new(source), grammar, &broken, &|| false).is_err());
 }
 
@@ -1104,45 +1244,9 @@ fn sentinel_edges_preserve_native_root_children_and_last_parent() {
             expected_count,
             "node count at {expected_count}"
         );
-        assert_eq!(
-            u16::from_le_bytes([image.rec[4], image.rec[5]]),
-            if expected_count >= 65_535 {
-                SENTINEL
-            } else {
-                expected_count as u16
-            },
-            "root size at {expected_count}"
-        );
-        let expected_size_overflow = [(0, expected_count as u32)];
-        assert_eq!(
-            image.size_overflow.as_slice(),
-            if expected_count >= 65_535 {
-                &expected_size_overflow[..]
-            } else {
-                &[][..]
-            },
-            "root overflow at {expected_count}"
-        );
-        let last = expected_count - 1;
-        assert_eq!(
-            u16::from_le_bytes([image.rec[last * WIDTH + 2], image.rec[last * WIDTH + 3]]),
-            if last >= 65_535 {
-                SENTINEL
-            } else {
-                last as u16
-            },
-            "last parent distance at {expected_count}"
-        );
-        let expected_parent_overflow = [(last as u32, last as u32)];
-        assert_eq!(
-            image.par_overflow.as_slice(),
-            if last >= 65_535 {
-                &expected_parent_overflow[..]
-            } else {
-                &[][..]
-            },
-            "parent overflow at {expected_count}"
-        );
+        // The root's size is the node count, 4 bytes wide past 65,535 nodes; no parent column.
+        assert_eq!(image.size_at(0) as usize, expected_count, "root size at {expected_count}");
+        assert_eq!(image.size_width(), if expected_count > 65_535 { 4 } else { 2 }, "size width at {expected_count}");
         let native_doc = AstGrep::doc(native);
         let tape_doc = AstGrep::doc(tape.clone());
         let a = native_doc.root().children().last().unwrap();
@@ -1165,7 +1269,7 @@ fn sentinel_edges_preserve_native_root_children_and_last_parent() {
         );
         if expected_count == 65_536 {
             let mut missing_parent = image.clone();
-            missing_parent.par_overflow.clear();
+            missing_parent.widths[0] = 2;
             assert!(
                 TapeDoc::restore(
                     Arc::new(source.clone()),
@@ -1174,13 +1278,13 @@ fn sentinel_edges_preserve_native_root_children_and_last_parent() {
                     &|| false
                 )
                 .is_err(),
-                "sentinel parent without entry"
+                "size column narrower than its width"
             );
             let mut missing_size = image.clone();
-            missing_size.size_overflow.clear();
+            missing_size.size[0..4].copy_from_slice(&65_535_u32.to_le_bytes());
             assert!(
                 TapeDoc::restore(Arc::new(source), grammar, &missing_size, &|| false).is_err(),
-                "sentinel subtree without entry"
+                "root size short of the node count"
             );
         }
     }
@@ -1191,7 +1295,7 @@ fn restore_rejects_noncanonical_side_tables_and_checkpoint_boundaries() {
     let source = format!("{}#é\n", "x\n".repeat(8));
     let (_, _, image, grammar) = fixture(&source, GrammarDialect::Python);
     assert_eq!(image.node_count(), 18);
-    assert_eq!(image.extra.len(), 1);
+    assert_eq!(image.extra_nodes().len(), 1);
     let reject = |label: &str, candidate: &TapeImage| {
         assert!(
             TapeDoc::restore(
@@ -1205,40 +1309,28 @@ fn restore_rejects_noncanonical_side_tables_and_checkpoint_boundaries() {
         );
     };
     let mut broken = image.clone();
-    broken.checkpoints.pop();
-    reject("truncated checkpoint", &broken);
+    broken.base.pop();
+    reject("truncated block base", &broken);
     let mut broken = image.clone();
-    broken.checkpoints[6] ^= 1;
-    reject("second checkpoint byte offset", &broken);
+    broken.base[4] ^= 0x40;
+    reject("second block base", &broken);
     let mut broken = image.clone();
-    broken.checkpoints[9] ^= 1;
-    reject("second checkpoint source start", &broken);
+    broken.off[2 * 17] ^= 0x40;
+    reject("second block offset", &broken);
     let mut broken = image.clone();
-    broken.par_overflow = vec![(0, 65_535), (0, 65_536)];
-    reject("duplicate parent overflow", &broken);
+    broken.codes.push(broken.codes[0]);
+    broken.code[0..2].copy_from_slice(&(broken.codes.len() as u16).to_le_bytes());
+    reject("out-of-range code", &broken);
     let mut broken = image.clone();
-    broken.size_overflow = vec![(1, 65_535), (0, 65_536)];
-    reject("out-of-order subtree overflow", &broken);
+    broken.widths[1] = 4;
+    reject("offset column narrower than its width", &broken);
     let mut broken = image.clone();
-    broken
-        .par_overflow
-        .push((image.node_count() as u32, 65_535));
-    reject("out-of-range parent overflow", &broken);
+    broken.widths[2] |= TAIL_FROM_START;
+    reject("tail measured from the wrong node", &broken);
+    let extra = image.extra_nodes()[0] as usize;
     let mut broken = image.clone();
-    broken.size_overflow.push((0, 65_535));
-    reject("unused subtree overflow", &broken);
-    let mut broken = image.clone();
-    broken.par_overflow.push((0, 65_535));
-    reject("unused parent overflow", &broken);
-    let mut broken = image.clone();
-    broken.extra.push(image.extra[0]);
-    reject("duplicate extra node", &broken);
-    let mut broken = image.clone();
-    broken.extra = vec![image.extra[0], 0];
-    reject("out-of-order extra nodes", &broken);
-    let mut broken = image.clone();
-    broken.extra = vec![image.node_count() as u32];
-    reject("out-of-range extra node", &broken);
+    broken.codes[usize::from(image.code_at(extra))].flags |= CODE_ERROR;
+    reject("extra node flagged an error of a visible kind", &broken);
 }
 
 #[test]
@@ -1258,32 +1350,19 @@ fn restore_rejects_overwide_spans_and_non_utf8_or_parent_ranges() {
         );
     };
     let mut broken = image.clone();
-    broken.spans.splice(0..1, [0x80, 0x80, 0x80, 0x80, 0x10]);
-    reject("fifth varint byte exceeds u32", &broken);
+    broken.off[0..2].copy_from_slice(&u16::MAX.to_le_bytes());
+    reject("start beyond the source", &broken);
     let mut broken = image.clone();
-    broken.spans.splice(0..1, [0x80, 0x80, 0x80, 0x80, 0x80]);
-    reject("unterminated fifth varint byte", &broken);
-    let mut at = 0;
-    let mut previous = 0i64;
-    let leaf_length_offset = (0..image.node_count())
-        .find_map(|index| {
-            let delta = read_varint(&image.spans, &mut at).unwrap();
-            let delta = ((delta >> 1) as i32) ^ -((delta & 1) as i32);
-            let start = previous + i64::from(delta);
-            previous = start;
-            let offset = at;
-            let length = read_varint(&image.spans, &mut at).unwrap();
-            (index != 0
-                && index % CHECKPOINT_STRIDE != 0
-                && start == 0
-                && length == 2
-                && image.rec[index * WIDTH + 4..index * WIDTH + 6] == [1, 0])
-            .then_some(offset)
-        })
-        .expect("non-checkpoint UTF-8 leaf inside the unchanged root and parent");
+    broken.tail[0..2].copy_from_slice(&u16::MAX.to_le_bytes());
+    reject("root ends beyond the source", &broken);
+    // A two-byte leaf at 0 (`é`) whose end moves inside the codepoint while the root and its
+    // parent stay valid.
+    let leaf = (1..image.node_count())
+        .find(|&index| image.start_at(index) == 0 && image.size_at(index) == 1 && image.tail_at(index) == 2)
+        .expect("a UTF-8 leaf at the start");
     let mut broken = image.clone();
-    assert_eq!(broken.spans[leaf_length_offset], 2, "one-byte leaf length");
-    broken.spans[leaf_length_offset] = 1;
+    let at = leaf * image.tail_width();
+    broken.tail[at..at + 2].copy_from_slice(&1u16.to_le_bytes());
     assert!(
         TapeDoc::restore(
             Arc::new(source.to_owned()),
@@ -1301,9 +1380,10 @@ fn restore_rejects_overwide_spans_and_non_utf8_or_parent_ranges() {
     let source = "x+y\n";
     let (_, _, image, grammar) = fixture(source, GrammarDialect::Python);
     let mut broken = image.clone();
-    assert_eq!(broken.spans[0], 0);
-    assert_eq!(broken.spans[1], source.len() as u8);
-    broken.spans[1] = 2;
+    // The root ends at its last descendant's start plus its tail: shorten it to 2.
+    let last = image.size_at(0) as usize - 1;
+    let tail = 2 - image.start_at(last).min(2);
+    broken.tail[0..2].copy_from_slice(&(tail as u16).to_le_bytes());
     assert!(
         TapeDoc::restore(Arc::new(source.to_owned()), grammar, &broken, &|| false).is_err(),
         "child span escapes shortened parent but remains within source"
@@ -1433,9 +1513,8 @@ fn a_php_template_tapes_its_php_view() {
             &super::super::php_view::view(source),
             GrammarDialect::Php,
         ));
-        let native = view
-            .root()
-            .dfs()
+        let native = stored(&view)
+            .into_iter()
             .map(|node| (node.kind_id(), node.range()))
             .collect::<Vec<_>>();
         let taped = root
@@ -1533,4 +1612,313 @@ fn a_blade_tapes_errors_are_blades_reading() {
             "{source:?}"
         );
     }
+}
+
+/// The production image's stored bytes against v8's as stored (the harness's v7 encoding, which
+/// is v8 without supertypes, plus v8's 6 bytes per supertype membership) on a corpus: `RERAIL_TAPE_SIZE='<lang> <dir>'`.
+#[test]
+#[ignore = "measurement; RERAIL_TAPE_SIZE='<lang> <dir>', --ignored --nocapture"]
+fn stored_tape_bytes_against_v8() {
+    let spec = std::env::var("RERAIL_TAPE_SIZE").expect("RERAIL_TAPE_SIZE='<lang> <dir>'");
+    let (lang, dir) = spec.split_once(' ').expect("<lang> <dir>");
+    let (docs, _, _) = super::v9np::load(lang, &[dir.to_owned()], usize::MAX);
+    let (mut nodes, mut v8, mut v9, mut table, mut small_v8, mut small_v9, mut memberships) = (0, 0, 0, 0, 0, 0, 0);
+    for doc in &docs {
+        let dialect = crate::code_rule_dsl::language::dialect_by_label(crate::code_rule_dsl::language::label_of_path(doc.path.to_str().unwrap()).unwrap()).unwrap();
+        let grammar = Grammar::new(dialect).unwrap();
+        let native = StrDoc::new(&doc.source, dialect);
+        let image = TapeImage::encode(native.tree.root_node(), &grammar, &doc.source, &|| false).unwrap().primary;
+        let old = super::v9np::V7::encode(&doc.nodes).unwrap().to_bytes().len() + 6 * image.membership_count();
+        // v8's bytes without its supertype table; v9np's with its memberships (in the codes).
+        let new = image.to_bytes().unwrap().len();
+        nodes += image.node_count();
+        v8 += old;
+        v9 += new;
+        table += image.code_table_bytes();
+        memberships += image.membership_count();
+        if image.node_count() < 2_000 {
+            small_v8 += old;
+            small_v9 += new;
+        }
+    }
+    println!(
+        "{} files, {nodes} nodes: v8 {:.3} B/node, v9np {:.3} B/node ({:.3}x), of which the code table {:.3} B/node; files under 2,000 nodes: {:.3}x; supertype memberships {memberships} ({:.3} per node; v8 stored them at {:.3} B/node)",
+        docs.len(),
+        v8 as f64 / nodes as f64,
+        v9 as f64 / nodes as f64,
+        v9 as f64 / v8 as f64,
+        table as f64 / nodes as f64,
+        small_v9 as f64 / small_v8.max(1) as f64,
+        memberships as f64 / nodes as f64,
+        6.0 * memberships as f64 / nodes as f64,
+    );
+}
+
+/// Whether a node's stored supertype memberships are a lookup: by its kind alone (the grammar's
+/// supertype map, transitively), or by (parent kind, field, kind) learned from the corpus.
+/// `RERAIL_TAPE_SIZE='<lang> <dir>'`.
+#[test]
+#[ignore = "measurement; RERAIL_TAPE_SIZE='<lang> <dir>', --ignored --nocapture"]
+fn supertype_memberships_against_lookups() {
+    use std::collections::{BTreeSet, HashMap};
+    let spec = std::env::var("RERAIL_TAPE_SIZE").expect("RERAIL_TAPE_SIZE='<lang> <dir>'");
+    let (lang, dir) = spec.split_once(' ').expect("<lang> <dir>");
+    let (docs, _, _) = super::v9np::load(lang, &[dir.to_owned()], usize::MAX);
+    let (mut nodes, mut by_kind_equal, mut by_kind_superset) = (0_usize, 0_usize, 0_usize);
+    let mut by_context: HashMap<(u16, u16, u16), HashMap<Vec<u16>, usize>> = HashMap::new();
+    let mut by_kind_alone: HashMap<u16, HashMap<Vec<u16>, usize>> = HashMap::new();
+    for doc in &docs {
+        let dialect = crate::code_rule_dsl::language::dialect_by_label(crate::code_rule_dsl::language::label_of_path(doc.path.to_str().unwrap()).unwrap()).unwrap();
+        let grammar = Grammar::new(dialect).unwrap();
+        let language = grammar.language();
+        // Each kind's supertypes in the grammar's map, closed over supertypes that are subtypes.
+        let mut map: HashMap<u16, BTreeSet<u16>> = HashMap::new();
+        for &supertype in language.supertypes() {
+            let mut stack = vec![supertype];
+            let mut seen = BTreeSet::new();
+            while let Some(at) = stack.pop() {
+                for &sub in language.subtypes_for_supertype(at) {
+                    if seen.insert(sub) {
+                        map.entry(sub).or_default().insert(supertype);
+                        stack.push(sub);
+                    }
+                }
+            }
+        }
+        let native = StrDoc::new(&doc.source, dialect);
+        let image = TapeImage::encode(native.tree.root_node(), &grammar, &doc.source, &|| false).unwrap().primary;
+        let tape = TapeDoc::restore(Arc::new(doc.source.clone()), Arc::clone(&grammar), &image, &|| false).unwrap();
+        let mut stored: HashMap<u32, Vec<u16>> = HashMap::new();
+        for (node, kind) in tape.transducer_supertypes() {
+            stored.entry(node).or_default().push(kind);
+        }
+        for node in 0..tape.transducer_len() as u32 {
+            let kind = tape.transducer_kind(node);
+            let mut set = stored.remove(&node).unwrap_or_default();
+            set.sort_unstable();
+            let lookup = map.get(&kind).map(|set| set.iter().copied().collect::<Vec<_>>()).unwrap_or_default();
+            nodes += 1;
+            by_kind_equal += usize::from(lookup == set);
+            by_kind_superset += usize::from(set.iter().all(|s| lookup.contains(s)));
+            let parent = tape.transducer_parent(node).map_or(u16::MAX, |p| tape.transducer_kind(p));
+            *by_context.entry((parent, tape.transducer_field(node), kind)).or_default().entry(set.clone()).or_default() += 1;
+            *by_kind_alone.entry(kind).or_default().entry(set).or_default() += 1;
+        }
+    }
+    // A key decides its set where one set holds all its nodes; otherwise its minority nodes miss.
+    fn misses<K>(table: &HashMap<K, HashMap<Vec<u16>, usize>>) -> usize {
+        table.values().map(|sets| sets.values().sum::<usize>() - sets.values().max().unwrap()).sum()
+    }
+    println!(
+        "{} files, {nodes} nodes: grammar map by kind equals the stored set for {:.4}%, contains it for {:.4}%; \
+         learned by kind misses {} nodes ({} kinds), by (parent kind, field, kind) misses {} nodes ({} keys)",
+        docs.len(),
+        100.0 * by_kind_equal as f64 / nodes as f64,
+        100.0 * by_kind_superset as f64 / nodes as f64,
+        misses(&by_kind_alone),
+        by_kind_alone.len(),
+        misses(&by_context),
+        by_context.len(),
+    );
+}
+
+/// Every node's restored supertype memberships, after a round trip through the stored bytes, are
+/// exactly what the parser's cursor reports for it, on a corpus; and every node's kind, namedness,
+/// flags, range, field and parent agree with the native tree. `RERAIL_TAPE_SIZE='<lang> <dir>'`.
+#[test]
+#[ignore = "corpus validation; RERAIL_TAPE_SIZE='<lang> <dir>', --ignored --nocapture"]
+fn stored_memberships_are_the_cursors_on_a_corpus() {
+    let spec = std::env::var("RERAIL_TAPE_SIZE").expect("RERAIL_TAPE_SIZE='<lang> <dir>'");
+    let (lang, dir) = spec.split_once(' ').expect("<lang> <dir>");
+    let mut files = Vec::new();
+    let mut stack = vec![std::path::PathBuf::from(dir)];
+    while let Some(at) = stack.pop() {
+        for entry in std::fs::read_dir(&at).unwrap().flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            if path.is_dir() {
+                if !matches!(name.to_str(), Some("node_modules" | ".git" | "target" | ".venv" | "venv" | "__pycache__" | "dist" | "site-packages")) {
+                    stack.push(path);
+                }
+            } else if super::v9np::language(lang, &path).is_some() {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    let (mut nodes, mut memberships, mut documents) = (0_usize, 0_usize, 0_usize);
+    let mut checked_detects = false;
+    for path in &files {
+        let Ok(source) = std::fs::read_to_string(path) else { continue };
+        let dialect = crate::code_rule_dsl::language::dialect_by_label(crate::code_rule_dsl::language::label_of_path(path.to_str().unwrap()).unwrap()).unwrap();
+        let grammar = Grammar::new(dialect).unwrap();
+        let native = StrDoc::new(&source, dialect);
+        let Some(encoded) = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).ok() else { continue };
+        let image = TapeImage::from_bytes(&encoded.primary.to_bytes().unwrap(), &grammar).unwrap();
+        let tape = TapeDoc::restore(Arc::new(source.clone()), Arc::clone(&grammar), &image, &|| false).unwrap();
+        // The cursor's memberships and the native nodes, in preorder.
+        let mut expected = Vec::new();
+        let mut native_nodes = Vec::new();
+        let mut cursor = native.tree.root_node().walk();
+        let mut parents: Vec<usize> = Vec::new();
+        let mut parent_of = Vec::new();
+        loop {
+            let index = native_nodes.len();
+            let (classes, count) = cursor_supertypes(&cursor);
+            let mut own = classes[..count].to_vec();
+            own.sort_unstable();
+            own.dedup();
+            expected.extend(own.into_iter().map(|class| (index as u32, class)));
+            native_nodes.push((cursor.node(), cursor.field_id().map_or(0, |id| id.get())));
+            parent_of.push(parents.last().copied());
+            if cursor.goto_first_child() {
+                parents.push(index);
+                continue;
+            }
+            let mut done = false;
+            while !cursor.goto_next_sibling() {
+                if !cursor.goto_parent() {
+                    done = true;
+                    break;
+                }
+                parents.pop();
+            }
+            if done {
+                break;
+            }
+        }
+        let path = path.display();
+        assert_eq!(tape.transducer_len(), native_nodes.len(), "{path}: node count");
+        assert_eq!(tape.transducer_supertypes().collect::<Vec<_>>(), expected, "{path}: memberships");
+        for (index, ((node, field), parent)) in native_nodes.iter().zip(&parent_of).enumerate() {
+            let at = index as u32;
+            let kind = if node.is_error() { ERROR_SYMBOL } else { node.kind_id() };
+            assert_eq!(
+                (tape.transducer_kind(at), tape.transducer_field(at), tape.transducer_span(at), tape.transducer_parent(at)),
+                (kind, *field, node.byte_range(), parent.map(|p| p as u32)),
+                "{path}: node {index}"
+            );
+            let flags = tape.node(at);
+            assert_eq!(
+                (flags.is_named(), flags.is_extra(), flags.is_error(), flags.is_missing()),
+                (node.is_named(), node.is_extra(), node.is_error(), node.is_missing()),
+                "{path}: node {index} flags"
+            );
+        }
+        // The comparison is not vacuous: one code's memberships dropped makes it fail.
+        if !checked_detects {
+            if let Some(member) = image.codes.iter().position(|code| code.class_count > 0) {
+                let mut altered = image.clone();
+                let code = &mut altered.codes[member];
+                code.class_count -= 1;
+                code.classes[usize::from(code.class_count)] = 0;
+                let restored = TapeDoc::restore(Arc::new(source.clone()), Arc::clone(&grammar), &altered, &|| false).unwrap();
+                assert_ne!(restored.transducer_supertypes().collect::<Vec<_>>(), expected, "{path}: altered memberships go unnoticed");
+                checked_detects = true;
+            }
+        }
+        nodes += native_nodes.len();
+        memberships += expected.len();
+        documents += 1;
+    }
+    assert!(documents > 0 && checked_detects);
+    println!("{documents} documents, {nodes} nodes, {memberships} memberships: all equal the cursor's");
+}
+
+/// A JSON file's tape from the Bitlex parser, and from tree-sitter-json: `None` where the Bitlex
+/// parser refuses the file (`Some` of each tape's bytes otherwise).
+fn json_tapes(source: &str) -> Option<(Vec<u8>, Vec<u8>)> {
+    let grammar = Grammar::new(GrammarDialect::Json).unwrap();
+    let columns = crate::code_rule_dsl::transducer::packed::json_parser::columns(source)?;
+    let ours = TapeImage::encode_columns(&grammar, source, &columns, &|| false).unwrap().to_bytes().unwrap();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
+    let tree = parser.parse(source, None).unwrap();
+    let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary.to_bytes().unwrap();
+    Some((ours, theirs))
+}
+
+/// The Bitlex parser's JSON tapes are tree-sitter-json's, byte for byte: kinds, fields, spans,
+/// extras (comments) and the `_value` supertype; and an invalid file is refused, so it goes to
+/// tree-sitter-json.
+#[test]
+fn json_tapes_from_the_bitlex_parser_are_tree_sitters() {
+    assert_eq!(crate::code_rule_dsl::transducer::packed::json_parser::compile_error(), None);
+    for source in [
+        "{}",
+        "[]",
+        "null\n",
+        "{\"a\": 1, \"b\": [true, false, null], \"c\": {\"d\": \"e\\n\\u00e9\"}}\n",
+        "[1, -2.5e10, 0, 3.0E-2]",
+        "// a comment\n{\n  \"a\": 1, /* inline */ \"b\": 2\n}\n// trailing\n",
+        "\u{feff}{\"bom\": true}",
+        "{\"nested\": [[[{\"x\": [1, {\"y\": []}]}]]]}",
+        "  \n\t{ \"spaced\" :\t[ 1 ,2 ] }  \n",
+    ] {
+        let (ours, theirs) = json_tapes(source).unwrap_or_else(|| panic!("refused {source:?}"));
+        assert!(ours == theirs, "the tapes of {source:?} differ");
+    }
+    // JSON allows an exponent's sign; tree-sitter-json refuses `+`, so these tapes are the Bitlex parser's alone.
+    for source in ["1e+2", "[1.5E+3]"] {
+        assert!(crate::code_rule_dsl::transducer::packed::json_parser::columns(source).is_some(), "refused {source:?}");
+    }
+    for invalid in ["{", "[1,]", "{\"a\" 1}", "tru", ""] {
+        assert!(crate::code_rule_dsl::transducer::packed::json_parser::columns(invalid).is_none(), "accepted {invalid:?}");
+    }
+}
+
+/// [`json_tapes_from_the_bitlex_parser_are_tree_sitters`] over files: `RERAIL_JSON_FILES`, a file
+/// listing one path a line. Each file the Bitlex parser accepts has tree-sitter-json's tape; the
+/// refused files are counted.
+#[test]
+#[ignore = "needs files: run by name with RERAIL_JSON_FILES"]
+fn json_tapes_over_files() {
+    let list = std::fs::read_to_string(std::env::var("RERAIL_JSON_FILES").expect("set RERAIL_JSON_FILES")).unwrap();
+    let (mut equal, mut refused, mut corrected, mut differ) = (0, Vec::new(), Vec::new(), Vec::new());
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
+    for path in list.lines().filter(|l| !l.is_empty()) {
+        let Ok(source) = std::fs::read_to_string(path) else { continue };
+        match json_tapes(&source) {
+            None => refused.push(path.to_owned()),
+            Some((ours, theirs)) if ours == theirs => equal += 1,
+            // tree-sitter-json finds an error in a file the Bitlex parser accepts (it refuses an exponent's `+`,
+            // which JSON allows: `1e+2`): the Bitlex tree is the right one.
+            Some(_) if parser.parse(&source, None).is_some_and(|t| t.root_node().has_error()) => corrected.push(path.to_owned()),
+            Some(_) => differ.push(path.to_owned()),
+        }
+    }
+    eprintln!("{equal} equal, {} refused, {} where tree-sitter finds an error, {} differ", refused.len(), corrected.len(), differ.len());
+    for p in refused.iter().take(20) {
+        eprintln!("refused: {p}");
+    }
+    for p in corrected.iter().take(20) {
+        eprintln!("tree-sitter's error: {p}");
+    }
+    assert!(differ.is_empty(), "tapes differ:\n{}", differ.join("\n"));
+}
+
+#[test]
+fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
+    use crate::code_rule_dsl::facts::core;
+    let source = Arc::new("é = foo(1)\n".to_owned());
+    let (_, _, image, grammar) = fixture(&source, GrammarDialect::Python);
+    let lines = Arc::new(LineTable::new(&source, Terminators::of(GrammarDialect::Python)));
+    let reject = |image: &TapeImage| {
+        assert!(TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), image, &|| false).is_err());
+        assert!(core::from_image(Arc::clone(&source), &grammar, image, Arc::clone(&lines)).is_err());
+    };
+    let mut corrupt = image.clone(); corrupt.source_digest.as_mut().expect("the image holds its source's digest")[0] ^= 1; reject(&corrupt);
+    let mut corrupt = image.clone(); corrupt.code.pop(); reject(&corrupt);
+    let mut corrupt = image.clone(); corrupt.size[0..2].copy_from_slice(&0u16.to_le_bytes()); reject(&corrupt);
+    let mut corrupt = image.clone(); corrupt.codes[0].alias = SENTINEL - 1; reject(&corrupt);
+    let mut corrupt = image.clone(); corrupt.codes[0].class_count = MAX_NODE_SUPERTYPES as u8 + 1; reject(&corrupt);
+    let mut corrupt = image.clone(); corrupt.tail[0..2].copy_from_slice(&u16::MAX.to_le_bytes()); reject(&corrupt);
+    let leaf = (1..image.node_count()).find(|&i| image.start_at(i) == 0 && image.size_at(i) == 1 && image.tail_at(i) == 2).unwrap();
+    let mut corrupt = image.clone(); corrupt.tail[leaf*2..leaf*2+2].copy_from_slice(&1u16.to_le_bytes()); reject(&corrupt);
+    // A malformed nested size whose byte span still fits cannot escape its parent's subtree.
+    let (_, _, nested, ng) = fixture("f(g(x))\n", GrammarDialect::Python);
+    let mut corrupt = nested.clone();
+    corrupt.size[2..4].copy_from_slice(&2u16.to_le_bytes());
+    assert!(core::from_image(Arc::new("f(g(x))\n".into()), &ng, &corrupt, Arc::new(LineTable::new("f(g(x))\n", Terminators::Newlines))).is_err());
 }

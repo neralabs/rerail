@@ -1,3 +1,4 @@
+use crate::code_rule_dsl::tree::Tree;
 use super::*;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::scope::{Reading, ScopeTable};
@@ -474,7 +475,7 @@ fn psalm_form(
             let parent = name.parent()?;
             let value = match parent.kind().as_ref() {
                 "foreach_statement" | "by_ref" => true,
-                "pair" => named(&parent)
+                "pair" => parent.named_code()
                     .last()
                     .is_some_and(|last| last.range() == name.range()),
                 _ => false,

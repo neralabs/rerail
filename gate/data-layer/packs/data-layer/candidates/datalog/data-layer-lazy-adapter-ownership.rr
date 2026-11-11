@@ -1,0 +1,153 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl lao_decorator(kind: symbol)
+lao_decorator("decorator").
+.decl child(p: node, c: node, i: number)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
+.decl in_scope(d: number)
+.decl lao_abstract_bad(f: node)
+.decl lao_abstract_ok(n: node)
+.decl lao_adapter(f: node)
+.decl lao_adapter_bad(f: node)
+.decl lao_adapter_ok(n: node)
+.decl lao_awaits(f: node)
+.decl lao_base(f: node, b: symbol)
+.decl lao_call(f: node, callee: symbol, receiver: node)
+.decl lao_cls(d: number, name: symbol, body: node, parent: node)
+.decl lao_dec(d: number, f: node, dec: node, start: number, name: symbol)
+.decl lao_dec_expr(d: number, f: node, dec: node, start: number, x: node)
+.decl lao_delegate(s: symbol)
+.decl lao_doc(d: number)
+.decl lao_eager(f: node)
+.decl lao_external(f: node)
+.decl lao_external_name(s: symbol)
+.decl lao_fn(d: number, f: node, name: symbol, parent: node, region: number)
+.decl lao_has_kw(dec: node)
+.decl lao_has_tx(f: node)
+.decl lao_is_legacy(f: node)
+.decl lao_issue(d: number, f: node, code: symbol)
+.decl lao_kw(dec: node, start: number, v: symbol)
+.decl lao_kw_string(s: node)
+.decl lao_last(d: number, cls: symbol, name: symbol, f: node)
+.decl lao_legacy(d: number, f: node, dec: node, name: symbol)
+.decl lao_legacy_at(d: number, f: node, dec: node, start: number, name: symbol)
+.decl lao_legacy_name(s: symbol)
+.decl lao_owned(d: number, f: node, name: symbol, cls: symbol, region: number, end: number)
+.decl lao_pure(f: node)
+.decl lao_pure_name(s: symbol)
+.decl lao_quiet(n: node)
+.decl lao_stmt(f: node, n: node, kind: symbol)
+.decl lao_strip_both(s: symbol)
+.decl lao_target(f: node, t: symbol)
+.decl lao_terminal(s: symbol)
+.decl lao_tx(f: node, name: symbol)
+.decl lao_typed(kind: symbol)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl op(n: node, s: symbol)
+.decl out_scope(d: number)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, line, syntax_error, field, child, text, op, value, node_text
+.output violation
+lao_delegate("_legacy_delegate_stub").
+lao_delegate("_legacy_delegate_stub_async").
+lao_external_name("direct_legacy_module_async").
+lao_external_name("direct_legacy_module_sync").
+lao_external_name("external_io_boundary").
+lao_external_name("external_io_boundary_async").
+lao_external_name("external_io_boundary_sync").
+lao_legacy_name("legacy_async").
+lao_legacy_name("legacy_module_async").
+lao_legacy_name("legacy_module_sync").
+lao_legacy_name("legacy_sync").
+lao_pure_name("pure_lazy").
+lao_pure_name("lazy").
+lao_strip_both("legacy_async").
+lao_strip_both("legacy_sync").
+lao_terminal("execute").
+lao_terminal("execute_async").
+lao_terminal("fetch").
+lao_terminal("fetch_async").
+lao_terminal("resolve").
+lao_terminal("resolve_async").
+lao_typed("typed_parameter").
+lao_typed("typed_default_parameter").
+in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9750_graphql/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9900_auto_api/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l3200_metadata/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2000_connection/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/conform/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
+tape_syntax_error(d) :- syntax_error(d).
+violation("data-layer-lazy-adapter-ownership", "invalid-source", "LAO000", p, l) :- node(_, n, "module", _, _), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+lao_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
+lao_fn(d, f, nm, gp, rs) :- lao_doc(d), node(d, f, "function_definition", _, _), field(f, "name", ni), text(ni, nm), child(w, f, _), node(d, w, "decorated_definition", rs, _), child(gp, w, _).
+lao_fn(d, f, nm, p, rs) :- lao_doc(d), node(d, f, "function_definition", rs, _), field(f, "name", ni), text(ni, nm), child(p, f, _), !node(d, p, "decorated_definition", _, _).
+lao_cls(d, nm, b, gp) :- lao_doc(d), node(d, c, "class_definition", _, _), field(c, "name", ni), text(ni, nm), field(c, "body", b), child(w, c, _), node(d, w, "decorated_definition", _, _), child(gp, w, _).
+lao_cls(d, nm, b, p) :- lao_doc(d), node(d, c, "class_definition", _, _), field(c, "name", ni), text(ni, nm), field(c, "body", b), child(p, c, _), !node(d, p, "decorated_definition", _, _).
+lao_owned(d, f, nm, "", rs, fe) :- lao_fn(d, f, nm, p, rs), node(d, p, "module", _, _), node(d, f, _, _, fe).
+lao_owned(d, f, nm, cn, rs, fe) :- lao_fn(d, f, nm, p, rs), lao_cls(d, cn, p, cp), node(d, cp, "module", _, _), node(d, f, _, _, fe).
+lao_dec_expr(d, f, dec, s, x) :- lao_owned(d, f, _, _, _, _), child(w, f, _), node(d, w, "decorated_definition", _, _), child(w, dec, _), node(d, dec, "decorator", s, _), child(dec, x, _).
+lao_dec(d, f, dec, s, nm) :- lao_dec_expr(d, f, dec, s, x), node(d, x, "identifier", _, _), text(x, nm).
+lao_dec(d, f, dec, s, nm) :- lao_dec_expr(d, f, dec, s, x), node(d, x, "call", _, _), field(x, "function", g), node(d, g, "identifier", _, _), text(g, nm).
+lao_dec(d, f, dec, s, nm) :- lao_dec_expr(d, f, dec, s, x), node(d, x, "call", _, _), field(x, "function", g), node(d, g, "attribute", _, _), field(g, "attribute", a), text(a, nm).
+lao_dec(d, f, dec, s, nm) :- lao_dec_expr(d, f, dec, s, x), node(d, x, "attribute", _, _), field(x, "attribute", a), text(a, nm).
+lao_legacy_at(d, f, dec, s, nm) :- lao_dec(d, f, dec, s, nm), lao_legacy_name(nm).
+lao_legacy(d, f, dec, nm) :- lao_legacy_at(d, f, dec, s, nm), s = min k : { lao_legacy_at(d, f, _, k, _) }.
+lao_is_legacy(f) :- lao_legacy(_, f, _, _).
+lao_external(f) :- lao_dec(_, f, _, _, nm), lao_external_name(nm).
+lao_pure(f) :- lao_dec(_, f, _, _, nm), lao_pure_name(nm).
+lao_base(f, b) :- lao_legacy(d, f, _, l), lao_strip_both(l), lao_owned(d, f, n, _, _, _), suffix("_async", n), b = @substr(n, 0, @sub(@strlen(n), 6)).
+lao_base(f, b) :- lao_legacy(d, f, _, l), lao_strip_both(l), lao_owned(d, f, n, _, _, _), !suffix("_async", n), suffix("_sync", n), b = @substr(n, 0, @sub(@strlen(n), 5)).
+lao_base(f, n) :- lao_legacy(d, f, _, l), lao_strip_both(l), lao_owned(d, f, n, _, _, _), !suffix("_async", n), !suffix("_sync", n).
+lao_base(f, b) :- lao_legacy(d, f, _, "legacy_module_async"), lao_owned(d, f, n, _, _, _), suffix("_async", n), b = @substr(n, 0, @sub(@strlen(n), 6)).
+lao_base(f, n) :- lao_legacy(d, f, _, "legacy_module_async"), lao_owned(d, f, n, _, _, _), !suffix("_async", n).
+lao_base(f, n) :- lao_legacy(d, f, _, "legacy_module_sync"), lao_owned(d, f, n, _, _, _).
+lao_kw(dec, k, v) :- lao_legacy(d, _, dec, _), inside(kw, dec, lao_decorator), node(d, kw, "keyword_argument", k, _), field(kw, "name", ni), node(d, ni, "identifier", _, _), text(ni, "lazy_name"), field(kw, "value", s), lao_kw_string(s), value(s, v).
+lao_kw_string(s) :- node(_, s, "string", _, _), node_text(s, t), match("(?is)[ru]*[\"'].*", t).
+lao_kw_string(s) :- node(_, s, "concatenated_string", _, _), node_text(s, t), match("(?is)[ru]*[\"'].*", t).
+lao_has_kw(dec) :- lao_kw(dec, _, _).
+lao_target(f, v) :- lao_legacy(_, f, dec, _), lao_kw(dec, k, v), k = min j : { lao_kw(dec, j, _) }.
+lao_target(f, t) :- lao_legacy(_, f, dec, _), !lao_has_kw(dec), lao_base(f, b), t = @concat(b, "_lazy").
+lao_last(d, c, nm, f) :- lao_owned(d, f, nm, c, _, e), e = max x : { lao_owned(d, _, nm, c, _, x) }.
+lao_stmt(f, n, k) :- lao_owned(d, f, _, _, _, _), field(f, "body", b), child(b, n, _), node(d, n, k, _, _), k != "comment", k != "line_continuation".
+lao_quiet(n) :- lao_stmt(_, n, "expression_statement"), child(n, v, 0), lao_kw_string(v).
+lao_quiet(n) :- lao_stmt(_, n, "expression_statement"), child(n, v, 0), node(_, v, "ellipsis", _, _).
+lao_adapter_ok(n) :- lao_stmt(_, n, "pass_statement").
+lao_adapter_ok(n) :- lao_stmt(_, n, "raise_statement").
+lao_adapter_ok(n) :- lao_stmt(_, n, "delete_statement").
+lao_adapter_ok(n) :- lao_quiet(n).
+lao_adapter_ok(n) :- lao_stmt(_, n, "expression_statement"), child(n, v, 0), node(_, v, "call", _, _), field(v, "function", g), node(_, g, "identifier", _, _), text(g, s), lao_delegate(s).
+lao_adapter_bad(f) :- lao_stmt(f, n, _), !lao_adapter_ok(n).
+lao_adapter(f) :- lao_stmt(f, _, _), !lao_adapter_bad(f).
+lao_abstract_ok(n) :- lao_stmt(_, n, "pass_statement").
+lao_abstract_ok(n) :- lao_stmt(_, n, "raise_statement").
+lao_abstract_ok(n) :- lao_quiet(n).
+lao_abstract_bad(f) :- lao_stmt(f, n, _), !lao_abstract_ok(n).
+lao_tx(f, nm) :- lao_owned(d, f, _, _, _, _), field(f, "parameters", ps), child(ps, p, _), node(d, p, k, _, _), lao_typed(k), child(p, n, 0), node(d, n, "identifier", _, _), text(n, nm), field(p, "type", t), node_text(t, s), match("(?s)(?:.*[\\[\\].])?[^\\[\\].]*(?:PlanScope|(?:Read|Write|Schema)[^\\[\\].]*Transaction) *(?:[\\[\\]].*)?", s).
+lao_has_tx(f) :- lao_tx(f, _).
+lao_call(f, callee, r) :- lao_owned(d, f, _, _, rs, fe), node(d, c, "call", cs, ce), cs >= rs, ce <= fe, field(c, "function", g), node(d, g, "attribute", _, _), field(g, "attribute", a), text(a, callee), field(g, "object", r).
+lao_eager(f) :- lao_call(f, callee, r), !suffix("_lazy", callee), node(_, r, "identifier", _, _), text(r, nm), lao_tx(f, nm).
+lao_awaits(f) :- lao_owned(d, f, _, _, rs, fe), node(d, _, "await", s, e), s >= rs, e <= fe.
+lao_issue(d, f, "LAO001") :- lao_legacy(d, f, _, _), !lao_adapter(f).
+lao_issue(d, f, "LAO002") :- lao_legacy(d, f, _, _), lao_owned(d, f, _, "", _, _), lao_target(f, t), !lao_last(d, "", t, _).
+lao_issue(d, f, "LAO003") :- lao_legacy(d, f, _, _), lao_owned(d, f, _, c, _, _), lao_target(f, t), lao_last(d, c, t, g), !lao_pure(g).
+lao_issue(d, f, "LAO004") :- lao_pure(f), lao_owned(d, f, _, _, _, _), lao_call(f, callee, _), lao_terminal(callee).
+lao_issue(d, f, "LAO005") :- lao_owned(d, f, _, _, _, _), !lao_is_legacy(f), !lao_external(f), !lao_pure(f), lao_eager(f).
+lao_issue(d, f, "LAO006") :- lao_owned(d, f, _, _, _, _), op(f, "async"), !lao_is_legacy(f), !lao_external(f), lao_abstract_bad(f), lao_has_tx(f), !lao_awaits(f).
+violation("data-layer-lazy-adapter-ownership", "adapter-ownership", code, p, l) :- lao_issue(d, f, code), doc(d, p, _), line(f, l).

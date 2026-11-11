@@ -80,7 +80,7 @@ repository's `.rerail/sessions/`.
 | Where | What |
 | --- | --- |
 | `~/.rerail/` (or `$RERAIL_HOME`) | `rerail.sqlite`: rules, repositories, sessions, audits, findings, steer feedback, and all agent events (prompts, replies, tool inputs and outputs). Also daemon state and log, consent answer, rule packs, managed installs |
-| `~/.cache/rerail/` | `content-v1.sqlite`: compressed source files Rerail read, with syntax trees and check results |
+| `~/.cache/rerail/` | `content-v3.sqlite`: compressed source files Rerail read, with syntax trees and check results |
 | `<your repository>/.rerail/sessions/` | One ledger per session: events and pre-edit file text. Its `.gitignore` of `*` keeps it out of Git |
 
 Steer feedback is the agent's one-line reason for ignoring a steer (`rerail feedback`). It is sent nowhere;
@@ -137,7 +137,7 @@ SQLite side files inherit the database's mode.
 
 On macOS and Linux, Rerail removes group and other access from these when it opens one your user owns, fixing old
 releases or loose umasks. Covered: home and cache folders, `rerail.sqlite*` (pre-update copies too),
-`content-v1.sqlite*`, `harness.sqlite*`, `daemon.json`, `access-token`, `daemon.log`. It never follows symlinks or
+`content-v3.sqlite*`, `harness.sqlite*`, `daemon.json`, `access-token`, `daemon.log`. It never follows symlinks or
 touches other users' files.
 
 </details>

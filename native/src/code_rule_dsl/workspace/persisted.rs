@@ -10,7 +10,6 @@ use super::evaluate::candidate_grammar;
 use super::ingest::candidate_dispatch;
 use super::storage::{StorageContext, unix_seconds};
 use super::{CLAUSE_WORK_BUDGET_EXCEEDED, ClauseId, FileState, LocalFailure};
-use crate::WORK_POOL;
 use crate::code_rule_dsl::eval::file_language;
 use crate::code_rule_dsl::json::{hex_digest, invalid, json_error};
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -203,6 +202,7 @@ pub(super) fn decode_local_result(
         .iter()
         .map(|witness| {
             Some(Witness {
+                sql_violation: None,
                 path: path.to_owned(),
                 span: match witness.get("span") {
                     None => None,
@@ -365,8 +365,8 @@ pub(super) fn restore_persisted_file(
                 index_version: crate::code_rule_dsl::transducer::POSITIONAL_INDEX_VERSION,
                 kind_tokens: kinds
                     .iter()
-                    .map(|&kind| crate::code_rule_dsl::transducer::kind_index_token(kind))
-                    .collect(),
+                    .map(|&kind| crate::code_rule_dsl::transducer::kind_index_token(matcher.language, kind))
+                    .collect::<Option<_>>()?,
             })
         })
         .collect::<Option<Vec<_>>>();
@@ -518,7 +518,7 @@ fn engine_build_id() -> &'static str {
 const GRAMMAR_BUILD_ID: &str = env!("RERAIL_GRAMMAR_BUILD_ID");
 
 /// The stored tapes' grammar version column: the grammar build identity as a positive integer.
-pub(super) fn grammar_version() -> i64 {
+pub(in crate::code_rule_dsl) fn grammar_version() -> i64 {
     i64::from_str_radix(&GRAMMAR_BUILD_ID[..15], 16).expect("grammar build identity is hex")
 }
 
@@ -659,7 +659,7 @@ pub(super) fn persist_files(
     };
     // Each file's payloads (tape bytes, encoded and compressed local results, blob alias) are
     // independent of every other file's, so they are built on the worker pool.
-    let prepared = WORK_POOL.install(|| {
+    let prepared = (|| {
         paths
             .par_iter()
             .map(|path| {
@@ -750,7 +750,7 @@ pub(super) fn persist_files(
                 ))
             })
             .collect::<Result<Vec<_>>>()
-    })?;
+    })()?;
     // Each file's derived documents, borrowing the bytes built above and the texts its image holds.
     let documents = prepared
         .iter()

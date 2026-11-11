@@ -1,0 +1,37 @@
+.policy "eslint-no-obj-calls" revision 4
+.description "Don't call or construct Math, JSON, Reflect, Atomics, Intl or Temporal in JavaScript, directly or through an alias; these globals are namespaces, not functions."
+.language typescript
+.mode steer
+.scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+#include "tsx/eslint-b-scope.rr"
+//   global_value, traced_global, called, constructed
+
+// ESLint's no-obj-calls: the global namespace objects are not functions, so calling one throws. ESLint follows
+// the value as eslint-utils' ReferenceTracker does: through the global object, aliases and pass-through
+// expressions (lib/tsx/eslint-b-scope's global_value).
+//   Math()   new JSON()   globalThis.Reflect()      → "'Math' is not a function": name and namespace agree
+//   const m = Math; m()                             → "'m' is reference to 'Math'"
+//   (a ? b : JSON)()                                → the callee has no name: the JSON's pass-call message
+//   Math.max(1)   function f(Math) { Math() }   /* global Math:off */ Math()   → not
+// No options.
+.violation no_obj_calls(at: node, msg: symbol) code "no-obj-calls" "{msg}"
+    suppress eslint "no-obj-calls"
+    suppress oxlint "no-obj-calls"
+    suppress biome "lint/correctness/noGlobalObjectCalls"
+traced_global("Atomics"). traced_global("JSON"). traced_global("Math"). traced_global("Reflect").
+traced_global("Intl"). traced_global("Temporal").
+
+no_obj_calls(c, cat("Call a method on '", x, "' instead; it is a namespace object, not a function or constructor.")) :-
+    obj_call(c, f, x), report_name(f, x).
+no_obj_calls(c, cat("Call a method on '", n, "' instead; it refers to '", x, "', a namespace object, not a function or constructor.")) :-
+    obj_call(c, f, x), report_name(f, n), n != x.
+no_obj_calls(c, cat("Call a method on '", x, "' instead of calling this expression; '", x, "' is a namespace object, not a function.")) :-
+    obj_call(c, f, x), !report_name(f, _).
+
+.decl obj_call(c: node, f: node, x: symbol)  // c calls or constructs f, whose value is namespace x
+obj_call(c, f, x) :- (called(c, f) ; constructed(c, f)), global_value(f, x).
+// report_name(f, n): ESLint's getReportNodeName: an identifier's name, a member's static property name.
+.decl report_name(f: node, n: symbol)
+report_name(f, n) :- kind(f, "identifier"), text(f, n).
+report_name(f, n) :- static_prop(f, _, n).

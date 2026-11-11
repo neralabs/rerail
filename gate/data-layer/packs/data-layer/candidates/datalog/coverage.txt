@@ -1,0 +1,202 @@
+909/909 clauses converted or authored (264 converted, 88 of them for the default options only; 645 authored)
+
+gaps (clauses):
+
+approximations (rules):
+      1  a metavariable twice: equal names
+     20  a regex on a node of any kind as a name
+      1  a run of one character read as at most three
+     31  neighbours among named children
+      2  nthChild among named children
+      2  patterns by named children
+      2  siblings among named children
+
+per rule:
+  data-layer-admin-async-purity: 3/3 (authored 3)
+  data-layer-async-executor: 1/1 (authored 1)
+  data-layer-async-patterns: 32/32 (authored 32)
+  data-layer-async-sync-boundary: 63/63 (authored 0)
+      sync-wraps-analyzer: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
+      sync-wraps: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-0: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-1: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-3: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-4: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-5: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-6: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-7: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-8: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-10: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-11: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-12: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-13: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-14: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-25: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-26: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-29: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-30: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-31: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-32: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-analyzer: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
+      async-wraps: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-0: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-1: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-3: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-4: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-5: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-6: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-7: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-8: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-10: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-11: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-12: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-13: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-14: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-25: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-26: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-29: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-30: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-31: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-32: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-analyzer: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
+      executor: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-0: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-1: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-3: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-4: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-5: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-6: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-7: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-8: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-10: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-11: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-12: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-13: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-14: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-25: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-26: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-29: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-30: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-31: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-32: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+  data-layer-async-sync-delegation: 13/13 (authored 13)
+  data-layer-authentication-plan-purity: 1/1 (authored 1)
+  data-layer-backend-coupling: 2/2 (authored 2)
+  data-layer-backend-type-strings: 13/13 (authored 13)
+  data-layer-bootstrap-cache-health: 2/2 (authored 2)
+  data-layer-bootstrap-eager-resolve: 2/2 (authored 1)
+  data-layer-bootstrap-engine-invariants: 3/3 (authored 3)
+  data-layer-bootstrap-lazy-sql: 2/2 (authored 1)
+  data-layer-bounded-composed-graph-paths: 93/93 (authored 93)
+  data-layer-cached-pure-lazy-allowlist: 3/3 (authored 3)
+  data-layer-classvar-check: 1/1 (authored 1)
+  data-layer-conditional-architecture: 5/5 (authored 5)
+  data-layer-conn-or-txn-union: 2/2 (authored 2)
+  data-layer-connection-caches: 4/4 (authored 4)
+  data-layer-connection-mode-split: 1/1 (authored 1)
+  data-layer-connection-service-architecture: 3/3 (authored 2)
+  data-layer-connection-structural-boundaries: 1/1 (authored 1)
+  data-layer-data-layer-compat-aliases: 2/2 (authored 2)
+  data-layer-data-layer-facade-purity: 6/6 (authored 6)
+  data-layer-declared-fact-interrogation: 2/2 (authored 2)
+  data-layer-dynamic-module-loading: 5/5 (authored 5)
+  data-layer-eager-resolve: 1/1 (authored 1)
+  data-layer-embedding-vector-orchestration: 1/1 (authored 1)
+  data-layer-error-handling: 2/2 (authored 1)
+  data-layer-execution-authority-bypass: 1/1 (authored 1)
+  data-layer-executor-publication-repairs: 4/4 (authored 4)
+  data-layer-forwardref: 3/3 (authored 3)
+  data-layer-generated-index-sources: 1/1 (authored 1)
+  data-layer-grammar-allowlist-burndown: 5/5 (authored 5)
+  data-layer-grammar-callable-constructors: 8/8 (authored 3)
+  data-layer-grammar-fragment-usage: 5/5 (authored 3)
+  data-layer-grammar-mutation-invalidation: 1/1 (authored 1)
+  data-layer-grammar-render-methods: 6/6 (authored 6)
+  data-layer-grammar-str-params: 3/3 (authored 3)
+  data-layer-graph-lazy-sql-plan: 9/9 (authored 9)
+  data-layer-graphql-plan-ownership: 2/2 (authored 2)
+  data-layer-hasattr-async: 2/2 (authored 2)
+  data-layer-history-serverplan-projection: 5/5 (authored 2)
+  data-layer-hnsw-architecture: 2/2 (authored 2)
+  data-layer-imperative-private-functions: 3/3 (authored 3)
+  data-layer-impl-direct-execution: 1/1 (authored 1)
+  data-layer-internal-dead-code: 1/1 (authored 1)
+  data-layer-layer-violations: 6/6 (authored 6)
+  data-layer-lazy-adapter-ownership: 2/2 (authored 1)
+  data-layer-lazy-architecture: 56/56 (authored 56)
+  data-layer-lazy-result-usage: 6/6 (authored 6)
+  data-layer-lazy-sql-surface: 1/1 (authored 1)
+  data-layer-legacy-callback-quarantine: 4/4 (authored 1)
+  data-layer-legacy-execution-surfaces: 25/25 (authored 14)
+  data-layer-matching-architecture: 2/2 (authored 2)
+  data-layer-missing-async-pairs: 3/3 (authored 3)
+  data-layer-module-level-caches: 40/40 (authored 15)
+      raw-dict_cache: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
+      dict_cache: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      dict_cache-file-0: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      dict_cache-file-1: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      dict_cache-file-2: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      dict_cache-file-3: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      dict_cache-file-4: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      dict_cache-file-5: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      dict_cache-file-6: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      dict_cache-file-7: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      dict_cache-file-8: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      dict_cache-file-9: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      raw-set_cache: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
+      set_cache: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      set_cache-file-0: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      set_cache-file-1: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      set_cache-file-2: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      set_cache-file-3: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      raw-constructor: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
+      constructor: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      constructor-file-0: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      constructor-file-1: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      raw-decorator: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
+      decorator-file-0: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      decorator-file-1: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+  data-layer-no-api-root-imports: 2/2 (authored 2)
+  data-layer-no-blanket-grammar-bypass: 3/3 (authored 1)
+  data-layer-no-source-inspection: 5/5 (authored 2)
+  data-layer-permission-error: 1/1 (authored 1)
+  data-layer-plan-composition-architecture: 3/3 (authored 2)
+  data-layer-plan-helpers-allowlist: 1/1 (authored 1)
+  data-layer-plan-optimizer-v2: 2/2 (authored 2)
+  data-layer-plan-scope-ownership: 26/26 (authored 26)
+  data-layer-plan-scope-side-effects: 6/6 (authored 1)
+  data-layer-post-op-no-internal-dispatch: 9/9 (authored 9)
+  data-layer-post-op-side-effects: 1/1 (authored 1)
+  data-layer-public-api-triples: 1/1 (authored 1)
+  data-layer-publication-registry-writes: 1/1 (authored 0)
+  data-layer-pure-lazy-runtime-purity: 1/1 (authored 1)
+  data-layer-raw-execute-regression: 7/7 (authored 7)
+  data-layer-readthrough-authority-architecture: 10/10 (authored 2)
+  data-layer-regex-sql-parsing: 9/9 (authored 9)
+  data-layer-removed-compat-surfaces: 3/3 (authored 0)
+  data-layer-render-fstrings: 1/1 (authored 1)
+  data-layer-render-raw-strings: 4/4 (authored 4)
+  data-layer-revision-ancestry-invariants: 10/10 (authored 10)
+  data-layer-rust-sql-grammar-boundary: 8/8 (authored 8)
+  data-layer-schema-architecture: 4/4 (authored 4)
+  data-layer-schema-bootstrap-contracts: 2/2 (authored 1)
+  data-layer-schema-introspection-data-paths: 2/2 (authored 2)
+  data-layer-serverplan-bypass: 3/3 (authored 3)
+  data-layer-serverplan-dispatch-architecture: 9/9 (authored 7)
+  data-layer-serverplan-grammar-surface: 7/7 (authored 0)
+  data-layer-serverplan-name-inference: 4/4 (authored 4)
+  data-layer-serverplan-quality: 123/123 (authored 36)
+  data-layer-serverplan-state-tripwires: 31/31 (authored 31)
+  data-layer-serverplan-steps: 21/21 (authored 9)
+  data-layer-serverplan-target-architecture: 16/16 (authored 4)
+  data-layer-sql-grammar-escape-hatches: 11/11 (authored 11)
+  data-layer-swallowed-exceptions: 4/4 (authored 4)
+  data-layer-sync-async-signatures: 1/1 (authored 1)
+  data-layer-transaction-callback-wrappers: 2/2 (authored 2)
+  data-layer-transaction-closures: 6/6 (authored 6)
+  data-layer-transaction-patterns: 58/58 (authored 58)
+  data-layer-type-safety-patterns: 9/9 (authored 8)
+  data-layer-unknown-contract-defaults: 3/3 (authored 2)
+  data-layer-unresolved-forward-refs: 1/1 (authored 1)
+  data-layer-versioned-lifecycle-legacy-surfaces: 1/1 (authored 0)
+  data-layer-versioned-merged-identity: 1/1 (authored 1)

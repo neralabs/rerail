@@ -193,15 +193,8 @@
               ]
             },
             "slice-comma": {
-              "has": {
-                "stopBy": {
-                  "not": {
-                    "kind": "type_parameter"
-                  }
-                },
-                "regex": "^,$",
-                "inside": {
-                  "stopBy": "neighbor",
+              "any": [
+                {
                   "any": [
                     {
                       "kind": "subscript"
@@ -209,9 +202,27 @@
                     {
                       "kind": "type_parameter"
                     }
-                  ]
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "type_parameter"
+                      }
+                    },
+                    "kind": "type_parameter",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  }
                 }
-              }
+              ]
             },
             "bool-tuple": {
               "any": [

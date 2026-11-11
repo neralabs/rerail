@@ -1,0 +1,248 @@
+// tsx/ts-a: TypeScript syntax as typescript-eslint's rules see it (its TSESTree), read off tree-sitter's
+// TypeScript grammar. No type checker: every relation here is syntax. Expressions are compared without the
+// parentheses ESTree drops, as eslint-a-common does.
+//
+// What a rule gets from this library:
+//   expressions
+//     non_null(n, x)          n is `x!` (TSNonNullExpression), x without its parentheses
+//     optional_on(p, x)       p continues x by an optional link: x?.a, x?.[a], x?.(); x without parentheses
+//     estree_child(p, x)      x is a direct ESTree child of p: a tree-sitter child, parentheses looked through
+//     in_chain(x)             member, subscript or call x is inside ESTree's ChainExpression: an optional link on
+//                             its object/callee spine, parentheses not crossed (`a?.b.c`, not `(a?.b).c`)
+//     assertion(n, e, w)      n is a type assertion of expression e (parentheses off), written w: "as" for
+//                             `e as T`, "angle-bracket" for `<T>e`
+//     cast_text(n, s)         s is the asserted type's text: "T", or "const" for `as const` / `<const>`
+//     cast_type(n, t)         t is the asserted type's node; `as const` has none (const_cast(n))
+//   comments
+//     ts_directive(c, d, s)   comment c is a TypeScript directive `@ts-d` (d: "ignore", "expect-error", "check",
+//                             "nocheck") with the text s after it, as TypeScript's scanner reads comments
+//   classes and type members
+//     ts_member(b, m, i)      m is the i-th member of class body, interface body or object type b, as TSESTree's
+//                             body list numbers them: comments and decorators are not members
+//     ts_member_name(m, x, t) the plugin's getNameFromMember: member m's key reads x, of type t: "Normal" (`a`,
+//                             'a', ['a']), "Private" (`#a`), "Quoted" ('a-b' gives "a-b" with its quotes)
+//                             or "Expression" (`[k]` gives k's text)
+//     ts_ctor(m)              m is a constructor or a constructor overload: `constructor(a);` too
+//     param_property(p)       p is a constructor parameter property: `private a`, `readonly a`, `override a`
+//     class_of(b, c)          c is the class (declaration, abstract declaration or expression) whose body is b
+//     extends_of(c)           class c has an `extends` clause
+//     class_method(m)         m is a method of a class; object_method(m) one of an object literal
+//     property_def(p)         p is TSESTree's PropertyDefinition: a class field, not an `accessor` field
+//     last_decorator(m, d)    d is the last decorator field or parameter m holds
+//     member_head(m, h)       h is getMemberHeadLoc's start for member or parameter m: its first token after its
+//                             decorators (`@d private x` gives `private`)
+//     heritage(r)             r is an `extends` entry of an interface or an `implements` entry of a class
+//     has_overloads(f)        function or method f has overload signatures beside it (hasOverloadSignatures)
+//   types
+//     type_parent(x, p)       p is type node x's TSESTree parent: parenthesized types are not nodes there
+//     type_child(x, c)        c is type x without its parentheses: `((T))` gives T (deparen for types)
+//     ts_keyword(y, t)        type y is TSESTree's keyword type t: "any", "number", "void", "null", "undefined",
+//                             "bigint", …  (tree-sitter spreads them over predefined_type, literal_type and
+//                             type_identifier)
+//     type_literal(b)         b is TSESTree's TSTypeLiteral `{ a: T }`: an object_type that is not a mapped type
+//     mapped_type(b, c)       b is TSESTree's TSMappedType `{ [K in X]: T }`; c is its `K in X` clause
+//     in_type(n)              n is inside a type: an annotation, type arguments or parameters, an alias or
+//                             interface, a heritage clause, `typeof x`, a qualified type `N.T`, or the type of
+//                             `x as T` / `x satisfies T`. A value reference there is a type-only use
+//     rest_annotation(t)      t is the `: T` of a rest parameter, `...a: T`, in any parameter list
+//
+// Examples, one per rule:
+//   no-extra-non-null-assertion   a!!   (a!)?.b   a!?.()          non_null + optional_on
+//   no-explicit-any               ...a: any[]  (type_parent twice reaches the rest annotation)
+//   consistent-type-assertions    <T>x   x as T   ({} as T)                 assertion + cast_text
+//   ban-ts-comment                // @ts-expect-error: why              ts_directive
+//   no-extraneous-class           class A { static x = 1 }                     ts_member + ts_ctor
+//   no-dynamic-delete             delete a[k]  (not delete a?.[k])  in_chain
+//
+// Builds on tsx/eslint-a-common (deparen) and core.
+#include "tsx/eslint-a-common.rr"
+
+// ---- expressions -------------------------------------------------------------------------------------------------
+// non_null(n, x): `a!` is a non_null_expression whose one child is the operand; `(a)!` gives a.
+.decl non_null(n: node, x: node)
+non_null(n, x) :- kind(n, "non_null_expression"), child(n, e, 0), deparen(e, x).
+
+// optional_on(p, x): ESTree marks the link itself `optional`: MemberExpression[optional] for x?.a and x?.[a],
+// CallExpression[optional] for x?.(). tree-sitter gives a member or subscript an optional_chain field and a call
+// a `?.` token. `(x?.a).b` is no optional link of .b: only the link right after x counts.
+//   a!?.b   a!?.[0]   a!?.()   (a!)?.b      x is the `a!` in each
+.decl optional_on(p: node, x: node)
+optional_on(p, x) :- (kind(p, "member_expression") ; kind(p, "subscript_expression")), field(p, "optional_chain", _),
+    field(p, "object", o), deparen(o, x).
+optional_on(p, x) :- kind(p, "call_expression"), op(p, "?."), field(p, "function", f), deparen(f, x).
+
+// estree_child(p, x): `a!!` and `(a!)!` both have the inner `a!` as the outer one's ESTree child.
+.decl estree_child(p: node, x: node)
+estree_child(p, x) :- child(p, c, _), !kind(p, "parenthesized_expression"), deparen(c, x).
+
+// in_chain(x): ESTree wraps a whole optional chain in a ChainExpression, so `delete a?.[k]`'s argument is no
+// MemberExpression. A parenthesis ends the chain: in `(a?.b)[k]` the subscript is outside it.
+.decl in_chain(x: node)
+in_chain(x) :- optional_on(x, _).
+in_chain(x) :- (field(x, "object", o) ; field(x, "function", o)), kind(o, k), chain_kind(k), in_chain(o).
+in_chain(x) :- kind(x, "non_null_expression"), child(x, o, 0), kind(o, k), chain_kind(k), in_chain(o).
+.decl chain_kind(k: symbol)
+chain_kind("member_expression"). chain_kind("subscript_expression"). chain_kind("call_expression").
+chain_kind("non_null_expression").
+
+// ---- types -------------------------------------------------------------------------------------------------------
+// type_parent(x, p): TSESTree has no node for `(T)`, so `(any)[]` is an array of any, as `any[]` is.
+//   any[]            the any's parent is the array_type     Array<any>   the type_arguments, then the generic_type
+.decl type_parent(x: node, p: node)
+type_parent(x, p) :- child(c, x, _), kind(c, "parenthesized_type"), type_parent(c, p).
+type_parent(x, p) :- child(p, x, _), !kind(p, "parenthesized_type").
+// type_child(x, c): the other direction, as deparen is for expressions.
+.decl type_child(x: node, c: node)
+type_child(x, x) :- node(_, x, k, _, _), k != "parenthesized_type".
+type_child(x, c) :- kind(x, "parenthesized_type"), child(x, y, _), !kind(y, "comment"), type_child(y, c).
+// ts_keyword(y, t): `number` is a predefined_type, `null` and `undefined` literal types, and `bigint` a plain
+// type_identifier (it is no reserved word, but TypeScript reads it as the keyword).
+.decl ts_keyword(y: node, t: symbol)
+ts_keyword(y, t) :- kind(y, "predefined_type"), text(y, t).
+ts_keyword(y, t) :- kind(y, "literal_type"), child(y, z, 0), kind(z, t), (t = "null" ; t = "undefined").
+ts_keyword(y, "bigint") :- kind(y, "type_identifier"), text(y, "bigint").
+
+// type_literal(b), mapped_type(b, c): tree-sitter parses a mapped type as an object_type holding one
+// index_signature with a mapped_type_clause; TSESTree has a node of its own for it.
+//   { a: T }  { [k: string]: T }   type literals        { [K in keyof T]?: T[K] }   a mapped type
+.decl type_literal(b: node)
+type_literal(b) :- kind(b, "object_type"), !mapped_type(b, _).
+.decl mapped_type(b: node, c: node)
+mapped_type(b, c) :- kind(b, "object_type"), child(b, i, _), kind(i, "index_signature"), child(i, c, _),
+    kind(c, "mapped_type_clause").
+// in_type(n): typescript-eslint's scope manager marks references in these places as type references (or, under
+// `typeof`, as value references TypeScript erases):
+//   let a: T;   f<T>();   type A = T;   interface I extends T {}   class C implements T {}   typeof x   N.T
+.decl in_type(n: node)
+in_type(n) :- inside(n, _, type_wrapper).
+in_type(n) :- (field(a, "type", t) ; child(a, t, 1)), (kind(a, "as_expression") ; kind(a, "satisfies_expression")),
+    (n = t ; within(n, t)).
+.decl type_wrapper(k: symbol)
+type_wrapper("type_annotation"). type_wrapper("opting_type_annotation"). type_wrapper("omitting_type_annotation").
+type_wrapper("type_arguments"). type_wrapper("type_parameters"). type_wrapper("type_alias_declaration").
+type_wrapper("interface_declaration"). type_wrapper("extends_type_clause"). type_wrapper("implements_clause").
+type_wrapper("type_query"). type_wrapper("nested_type_identifier"). type_wrapper("asserts_annotation").
+type_wrapper("type_predicate_annotation"). type_wrapper("constraint"). type_wrapper("default_type").
+// rest_annotation(t): TSESTree's RestElement.typeAnnotation. tree-sitter wraps the rest in a required_parameter.
+.decl rest_annotation(t: node)
+rest_annotation(t) :- kind(r, "required_parameter"), field(r, "pattern", x), kind(x, "rest_pattern"), field(r, "type", t).
+
+// assertion(n, e, w): tree-sitter's as_expression holds the expression then the type; its type_assertion holds
+// type_arguments `<T>` then the expression. `as const` has a `const` token where the type would be.
+.decl assertion(n: node, e: node, w: symbol)
+assertion(n, e, "as") :- kind(n, "as_expression"), child(n, x, 0), deparen(x, e).
+assertion(n, e, "angle-bracket") :- kind(n, "type_assertion"), child(n, x, 1), deparen(x, e).
+.decl const_cast(n: node)
+// `x as const`, `<const>x`: the tape keeps no `const` there (the grammar implies it where no type follows).
+const_cast(n) :- kind(n, "as_expression"), !as_type(n, _).
+const_cast(n) :- kind(n, "type_assertion"), child(n, a, 0), kind(a, "type_arguments"), !child(a, _, _).
+.decl as_type(n: node, t: node)  // the type after `as`: its second child, comments aside
+as_type(n, t) :- kind(n, "as_expression"), child(n, t, i), i > 0, !kind(t, "comment").
+.decl cast_type(n: node, t: node)
+cast_type(n, t) :- as_type(n, t).
+cast_type(n, t) :- kind(n, "type_assertion"), child(n, a, 0), child(a, t, 0).
+.decl cast_text(n: node, s: symbol)
+cast_text(n, s) :- cast_type(n, t), text(t, s).
+cast_text(n, "const") :- const_cast(n).
+
+// ---- comments ----------------------------------------------------------------------------------------------------
+// ts_directive(c, d, s): TypeScript's own patterns (scanner.ts), as ban-ts-comment applies them to a comment's
+// value v, the text between its markers:
+//   a line comment: `//${v}` against ///?\s*@ts-(check|nocheck)(.*)$, else v against /*\s*@ts-(expect-error|ignore)(.*)
+//   a block comment: its last line against \s*[/*]*\s*@ts-(expect-error|ignore)(.*)
+//   // @ts-ignore      /// @ts-check      /* a\n * @ts-expect-error why */
+// The value is cut from the comment's text, not core's comment(), which may trim it.
+.decl ts_directive(c: node, d: symbol, s: symbol)
+ts_directive(c, d, s) :- line_value(c, v), match("/?\\s*@ts-(?<d>check|nocheck)(?<s>.*)", v).
+ts_directive(c, d, s) :- line_value(c, v), !match("/?\\s*@ts-(?:check|nocheck).*", v),
+    match("/*\\s*@ts-(?<d>expect-error|ignore)(?<s>.*)", v).
+ts_directive(c, d, s) :- kind(c, "comment"), prefix("/*", c), text(c, t), v = substr(t, 2, strlen(t) - 4),
+    match("(?:[\\s\\S]*\\n)?(?<l>[^\\n]*)", v), match("\\s*[/*]*\\s*@ts-(?<d>expect-error|ignore)(?<s>.*)", l).
+.decl line_value(c: node, v: symbol)
+line_value(c, substr(t, 2, strlen(t) - 2)) :- kind(c, "comment"), prefix("//", c), text(c, t).
+
+// ---- classes and type members ------------------------------------------------------------------------------------
+// ts_member(b, m, i): tree-sitter keeps a member's decorators and the comments between members as children of the
+// body; TSESTree does not. The `;` after a field or signature is a token, not a node.
+//   class A { @d m() {} /* c */ n = 1; }        m is member 0, n is member 1
+.decl ts_member(b: node, m: node, i: number)
+ts_member(b, m, i) :- member_list(b), child(b, m, _), !kind(m, "comment"), !kind(m, "decorator"),
+    i = count : { child(b, o, _), o < m, !kind(o, "comment"), !kind(o, "decorator") }.
+.decl member_list(b: node)
+member_list(b) :- kind(b, "class_body") ; kind(b, "interface_body") ; kind(b, "object_type").
+// ts_member_name(m, x, t): for any member with a key: a method, field, accessor, signature or property signature.
+// The plugin looks at the key node only, so a computed literal `['a']` is the name a, as 'a' is.
+.decl ts_member_name(m: node, x: symbol, t: symbol)
+ts_member_name(m, x, t) :- field(m, "name", k), member_key_name(k, x, t).
+ts_member_name(m, x, t) :- field(m, "name", c), kind(c, "computed_property_name"), child(c, e, _), !kind(e, "comment"),
+    deparen(e, k), member_key_name(k, x, t).
+ts_member_name(m, x, "Expression") :- field(m, "name", c), kind(c, "computed_property_name"), child(c, e, _),
+    !kind(e, "comment"), deparen(e, k), !member_key_name(k, _, _), text(k, x).
+.decl member_key_name(k: node, x: symbol, t: symbol)
+member_key_name(k, x, "Normal") :- (kind(k, "property_identifier") ; kind(k, "identifier")), text(k, x).
+member_key_name(k, x, "Private") :- kind(k, "private_property_identifier"), text(k, x).
+member_key_name(k, v, "Normal") :- (kind(k, "string") ; kind(k, "number")), value(k, v), match("[A-Za-z_$][A-Za-z0-9_$]*", v).
+member_key_name(k, cat("\"", cat(v, "\"")), "Quoted") :- (kind(k, "string") ; kind(k, "number")), value(k, v),
+    !match("[A-Za-z_$][A-Za-z0-9_$]*", v).
+
+// ts_ctor(m): ESTree's MethodDefinition of kind "constructor": a key `constructor` or "constructor", not static,
+// not computed. An overload `constructor(a);` is a method_signature in tree-sitter.
+.decl ts_ctor(m: node)
+ts_ctor(m) :- (kind(m, "method_definition") ; kind(m, "method_signature")), child(b, m, _), kind(b, "class_body"),
+    !op(m, "static"), !op(m, "get"), !op(m, "set"), field(m, "name", k), kind(k, t),
+    (t = "property_identifier", text(k, "constructor") ; t = "string", value(k, "constructor")).
+// param_property(p): TSESTree's TSParameterProperty, a parameter with an accessibility, readonly or override.
+.decl param_property(p: node)
+param_property(p) :- (kind(p, "required_parameter") ; kind(p, "optional_parameter")),
+    (child(p, m, _), (kind(m, "accessibility_modifier") ; kind(m, "override_modifier")) ; op(p, "readonly")).
+.decl class_of(b: node, c: node)
+class_of(b, c) :- field(c, "body", b), kind(b, "class_body").
+.decl extends_of(c: node)
+extends_of(c) :- child(c, h, _), kind(h, "class_heritage"), child(h, e, _), kind(e, "extends_clause").
+// class_method(m) / object_method(m): a method_definition in a class body, or in an object literal.
+.decl class_method(m: node)
+class_method(m) :- kind(m, "method_definition"), child(b, m, _), kind(b, "class_body").
+.decl object_method(m: node)
+object_method(m) :- kind(m, "method_definition"), child(o, m, _), kind(o, "object").
+// property_def(p): TSESTree's PropertyDefinition, `a = 1` in a class. `accessor a = 1` is an AccessorProperty
+// there, a different node, though tree-sitter parses both as public_field_definition.
+.decl property_def(p: node)
+property_def(p) :- kind(p, "public_field_definition"), !op(p, "accessor").
+// last_decorator(m, d): d is the last decorator a field, parameter or accessor holds (tree-sitter gives a
+// method's decorators to the class body instead). getMemberHeadLoc starts after it.
+.decl last_decorator(m: node, d: node)
+last_decorator(m, d) :- field(m, "decorator", _), d = max e : { field(m, "decorator", e) }.
+// member_head(m, h): a class member, type member or parameter; the decorators tree-sitter leaves to the class
+// body are already outside m, so only a field's or a parameter's own decorators are skipped.
+//   class A { @d x = 1; m(@e private y) {} }     x's head is `x`, y's is `private`
+.decl member_head(m: node, h: span)
+// With no decorator the head is m itself, which starts at its first token (a computed key's `[` is no token the
+// tape keeps); an edit `replace(h, `public $h`)` puts the word before all of it.
+.stored member_head "after a member's decorators every modifier is optional, so the tape keeps the next token"
+member_head(m, m) :- head_holder(m), !field(m, "decorator", _).
+member_head(m, h) :- head_holder(m), last_decorator(m, d), token_after(d, h).
+.decl head_holder(m: node)
+head_holder(m) :- ts_member(_, m, _).
+head_holder(p) :- kind(p, "required_parameter") ; kind(p, "optional_parameter").
+// heritage(r): r is an entry of an interface's `extends` or a class's `implements` list, which TSESTree holds as
+// TSInterfaceHeritage / TSClassImplements, not as a type reference:  interface I extends Array<string> {}
+.decl heritage(r: node)
+heritage(r) :- child(h, r, _), (kind(h, "implements_clause") ; kind(h, "extends_type_clause")).
+// has_overloads(f): the plugin's hasOverloadSignatures. A function declaration with a signature of its name
+// beside it (both exported, or neither), `export default function` with an `export default` signature, or a
+// class method with a body-less signature of its name.
+//   function f(a: A): R;  function f(a) {}       class C { m(a: A): R; m(a) {} }
+.decl has_overloads(f: node)
+has_overloads(f) :- overload_impl(f, x), child(b, f, _), !kind(b, "export_statement"), child(b, s, _),
+    kind(s, "function_signature"), field(s, "name", n), text(n, x).
+has_overloads(f) :- overload_impl(f, x), child(e, f, _), kind(e, "export_statement"), !op(e, "default"),
+    child(b, e, _), child(b, o, _), kind(o, "export_statement"), field(o, "declaration", s),
+    kind(s, "function_signature"), field(s, "name", n), text(n, x).
+has_overloads(f) :- (kind(f, "function_declaration") ; kind(f, "function_expression")), child(e, f, _),
+    kind(e, "export_statement"), op(e, "default"), child(b, e, _), child(b, o, _), kind(o, "export_statement"),
+    op(o, "default"), child(o, s, _), kind(s, "function_signature").
+has_overloads(f) :- class_method(f), ts_member_name(f, x, _), child(b, f, _), child(b, s, _),
+    kind(s, "method_signature"), ts_member_name(s, x, _).
+.decl overload_impl(f: node, x: symbol)
+overload_impl(f, x) :- (kind(f, "function_declaration") ; kind(f, "generator_function_declaration")),
+    field(f, "name", n), text(n, x).

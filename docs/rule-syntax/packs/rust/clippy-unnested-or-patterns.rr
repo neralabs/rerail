@@ -1,0 +1,83 @@
+.policy "clippy-unnested-or-patterns" revision 3
+.description "Nest Rust or-patterns so the shared part is written once and only the differing part alternates."
+.language rust
+.mode steer
+.scope include "**/*"
+
+#include "rust/syntax-patterns.rr"
+//   top_pattern(p)   a let, if-let, arm or parameter pattern;   unparen(p, q)   p without its parentheses
+//   msrv_older(n, v)   under a #[clippy::msrv] older than v;   bare_pat(p, q)   p without ref/mut
+//   elem_key(p, i, k, rest), elem_count(p, n)   the elements of a tuple-like pattern
+
+// Clippy's unnested_or_patterns (pedantic): an or-pattern whose alternatives share a constructor, so the
+// alternation can move inside it. Reported at the whole pattern, from Rust 1.53 (nested or-patterns).
+//   Some(1) | Some(2)          (0, 1) | (0, 2)        [x, 0] | [x, 1]      TS(1, 0) | TS(2, 0)
+//   &mut 0 | &mut 2            x @ 0 | x @ 2          S { x: 0, y } | S { y, x: 1 }
+//   0 | (1 | 2)                                                                     reported
+//   &0 | &2 (shared references are left alone)   (1, 2) | (3, 4)   [x, ..] | [x, 1]   S { x } | S { x }
+//                                                                                    not reported
+// Clippy drops parentheses, then nests bottom up: an alternative that is itself an or-pattern, or two
+// alternatives that differ in one place only. Its struct case never nests patterns with `..` (Clippy 0.1.99),
+// nor two shorthand fields `x | x`. Subpatterns compare by text, whitespace and parentheses aside.
+.violation unnested_or_patterns(at: node) code "unnested_or_patterns"
+    "Nest this or-pattern so the shared part is written once, e.g. Some(1 | 2) instead of Some(1) | Some(2)."
+    suppress clippy "clippy::unnested_or_patterns", "clippy::pedantic", "warnings"
+unnested_or_patterns(p) :- top_pattern(p), nestable(o), (o = p ; within(o, p)), !msrv_older(p, "1.53").
+
+// alt(o, a): a is an alternative of or-pattern o (the outermost of a chain `a | b | c`), parentheses removed.
+.decl alt(o: node, a: node)
+alt(o, a) :- or_link(o, c), !kind(c, "or_pattern"), unparen(c, a).
+.decl or_link(o: node, c: node)
+or_link(o, c) :- kind(o, "or_pattern"), child(q, o, _), !kind(q, "or_pattern"), child(o, c, _).
+or_link(o, c) :- or_link(o, b), kind(b, "or_pattern"), child(b, c, _).
+
+.decl nestable(o: node)
+nestable(o) :- alt(o, a), kind(a, "or_pattern").                          // 0 | (1 | 2)
+nestable(o) :- alt(o, a), alt(o, b), a < b, same_head(a, b), one_apart(a, b).
+nestable(o) :- alt(o, a), alt(o, b), a < b, mut_ref(a), mut_ref(b).        // &mut 0 | &mut 2
+nestable(o) :- alt(o, a), alt(o, b), a < b, binder(a, x), binder(b, x).    // x @ 0 | x @ 2
+nestable(o) :- alt(o, a), alt(o, b), a < b, struct_apart(a, b).
+
+.decl mut_ref(a: node)
+mut_ref(a) :- kind(a, "reference_pattern"), child(a, m, 0), kind(m, "mutable_specifier").
+.decl binder(a: node, x: symbol)   // `ref mut x @ p` gives "refmutx": binding mode and name must agree
+binder(a, x) :- bare_pat(a, q), kind(q, "captured_pattern"), text(a, s), match("(?<K>[^@]*)@[\\s\\S]*", s),
+    x = @replace_all(K, "\\s+", "").
+
+// Tuples, slices and tuple structs: the same constructor and length, equal but for one element, which
+// is not `..` on either side.
+.decl same_head(a: node, b: node)
+same_head(a, b) :- kind(a, k), kind(b, k), (k = "tuple_pattern" ; k = "slice_pattern"), elem_count(a, n),
+    elem_count(b, n), n > 0.
+same_head(a, b) :- kind(a, "tuple_struct_pattern"), kind(b, "tuple_struct_pattern"), field(a, "type", s),
+    field(b, "type", t), text(s, x), text(t, x), elem_count(a, n), elem_count(b, n), n > 0.
+.decl one_apart(a: node, b: node)
+one_apart(a, b) :- same_head(a, b), count : { elem_key(a, i, x, _), elem_key(b, i, y, _), x != y } <= 1,
+    !rest_apart(a, b).
+.decl rest_apart(a: node, b: node)
+rest_apart(a, b) :- same_head(a, b), elem_key(a, i, x, r), elem_key(b, i, y, s), x != y, r + s > 0.
+
+// Structs: the same path and fields, every field equal to one in the other but field f, whose name the
+// other has. No `..`; not both shorthand.
+.decl struct_apart(a: node, b: node)
+struct_apart(a, b) :- same_struct(a, b), fpat(a, f, x, _), fpat(b, g, x, _), !both_shorthand(f, g),
+    count : { fpat(a, h, _, k), h != f, !fkey_in(b, k) } = 0.
+.decl same_struct(a: node, b: node)
+same_struct(a, b) :- kind(a, "struct_pattern"), kind(b, "struct_pattern"), a != b, field(a, "type", s),
+    field(b, "type", t), text(s, x), text(t, x), !struct_rest(a), !struct_rest(b),
+    count : { fpat(a, _, _, _) } = count : { fpat(b, _, _, _) }.
+// fpat(s, f, name, key): field f of struct pattern s; key is name=pattern, shorthand `y` as y=y.
+.decl fpat(s: node, f: node, name: symbol, key: symbol)
+fpat(s, f, x, k) :- child(s, f, _), kind(f, "field_pattern"), field(f, "name", n), text(n, x),
+    field(f, "pattern", p), unparen(p, q), text(q, t), k = cat(x, "=", @replace_all(t, "\\s+", "")).
+fpat(s, f, x, k) :- child(s, f, _), kind(f, "field_pattern"), field(f, "name", n), text(n, x),
+    !field(f, "pattern", _), (wild_field(f), t = "_" ; !wild_field(f), text(f, t)),
+    k = cat(x, "=", @replace_all(t, "\\s+", "")).
+.decl struct_rest(s: node)   // S { x, .. }
+struct_rest(s) :- kind(s, "struct_pattern"), child(s, r, _), kind(r, "remaining_field_pattern").
+.decl shorthand(f: node)
+shorthand(f) :- field(f, "name", n), kind(n, "shorthand_field_identifier").
+.decl both_shorthand(f: node, g: node)
+both_shorthand(f, g) :- fpat(_, f, x, _), fpat(_, g, x, _), shorthand(f), shorthand(g).
+.decl fkey_in(s: node, k: symbol)
+fkey_in(s, k) :- fpat(s, _, _, k).

@@ -26,13 +26,13 @@ fn temporary_database(label: &str) -> std::path::PathBuf {
     ))
 }
 
-fn store(label: &str) -> (std::path::PathBuf, ContentStore) {
+pub(super) fn store(label: &str) -> (std::path::PathBuf, ContentStore) {
     let path = temporary_database(label);
     let store = ContentStore::open(&path).unwrap();
     (path, store)
 }
 
-fn candidate_catalog(label: &str) -> CandidateCatalogIdentity {
+pub(super) fn candidate_catalog(label: &str) -> CandidateCatalogIdentity {
     CandidateCatalogIdentity::new(
         HashKey::sha256(label.as_bytes()),
         HashKey::sha256(b"grammar-set"),
@@ -43,7 +43,7 @@ fn candidate_catalog(label: &str) -> CandidateCatalogIdentity {
 }
 
 /// Publishes `id` as a complete empty Git tree, so a snapshot may use it as its root.
-fn published_tree(store: &ContentStore, id: HashKey) -> HashKey {
+pub(super) fn published_tree(store: &ContentStore, id: HashKey) -> HashKey {
     store
         .put_git_trees_bulk(&[GitTree {
             id,
@@ -214,6 +214,75 @@ fn hash_lookup_index_contains_only_algorithm_and_first_lane() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     assert_eq!(columns, vec!["algorithm_id", "lane0"]);
+}
+
+#[test]
+fn bulk_sources_preserve_hashes_bounds_duplicates_and_typed_query_batches() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (_, store) = store("bulk-sources");
+    let requests = (0..257)
+        .map(|i| {
+            let source = format!("source {i} π").into_bytes();
+            let id = store.put_source(&source, &[]).unwrap();
+            (id, HashKey::sha256(&source))
+        })
+        .collect::<Vec<_>>();
+    let executed = AtomicUsize::new(0);
+    unsafe extern "C" fn trace(
+        _: u32,
+        state: *mut std::ffi::c_void,
+        _: *mut std::ffi::c_void,
+        _: *mut std::ffi::c_void,
+    ) -> i32 {
+        // SAFETY: the counter remains alive until the callback is removed.
+        unsafe { &*state.cast::<AtomicUsize>() }.fetch_add(1, Ordering::Relaxed);
+        0
+    }
+    let connection = store.connection.lock().unwrap();
+    // SAFETY: the connection and counter live through the synchronous batch reads below.
+    unsafe {
+        rusqlite::ffi::sqlite3_trace_v2(
+            connection.handle(),
+            rusqlite::ffi::SQLITE_TRACE_STMT,
+            Some(trace),
+            (&executed as *const AtomicUsize).cast_mut().cast(),
+        );
+    }
+    drop(connection);
+    let mut duplicated = requests.clone();
+    duplicated.push(requests[0]);
+    let sources = store
+        .get_sources_by_hash_bulk(&duplicated, 100_000)
+        .unwrap();
+    assert_eq!(sources.len(), 257);
+    assert_eq!(executed.load(Ordering::Relaxed), 3);
+    for (id, hash) in &requests {
+        assert_eq!(HashKey::sha256(&sources[id]), *hash);
+    }
+    let warm = store
+        .get_sources_by_hash_bulk(&duplicated, 100_000)
+        .unwrap();
+    assert_eq!(warm, sources);
+    assert_eq!(
+        executed.load(Ordering::Relaxed),
+        3,
+        "warm immutable source frames need no SQL"
+    );
+    assert!(store.get_sources_by_hash_bulk(&requests, 1).is_err());
+    assert!(
+        store
+            .get_sources_by_hash_bulk(
+                &[requests[0], (requests[0].0, HashKey::sha256(b"wrong"))],
+                100_000
+            )
+            .is_err()
+    );
+    assert!(store.get_sources_by_hash_bulk(&[], 0).unwrap().is_empty());
+    let connection = store.connection.lock().unwrap();
+    // SAFETY: remove the callback before the counter goes out of scope.
+    unsafe {
+        rusqlite::ffi::sqlite3_trace_v2(connection.handle(), 0, None, std::ptr::null_mut());
+    }
 }
 
 #[test]
@@ -418,8 +487,13 @@ fn source_and_tape_objects_deduplicate_and_round_trip() {
     {
         let cache = store.decompressed_cache.lock().unwrap();
         assert!(cache.contains(CacheKey::Source(HashKey::sha256(b"print('hello')\n"))));
-        assert!(cache.contains(CacheKey::Tape(HashKey::sha256(b"compact tape"))));
+        assert!(cache.contains(CacheKey::Tape(HashKey::tape_identity(HashKey::sha256(b"print('hello')\n"), b"compact tape"))));
     }
+    // Another source with the same tape bytes (a named-only tape holds no text) has its own tape.
+    let other = store.put_source(b"print('world')\n", &[]).unwrap();
+    let other_tape = store.put_tape(other, 1, 45, 1, b"compact tape").unwrap();
+    assert_ne!(other_tape, tape);
+    assert_eq!(store.tape_by_source(other, 1, 45, 1).unwrap(), Some(other_tape));
     {
         let connection = store.connection.lock().unwrap();
         let source_frame: (i64, Vec<u8>) = connection

@@ -93,6 +93,7 @@ export { steerOrigin } from "./code-rule/steer-origin.js";
 export { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
 export {
   encodeCodeRuleWorkspaceRequest,
+  RESULT_PAGE_BYTES,
   loadNativeBinding,
   type NativeBinding,
   type NativeCodeRuleDslWorkspace,
@@ -151,3 +152,4 @@ export {
 export { bundledModelPath, ENTRY_POINTS, PACKAGE_ROOT, REQUIRED_NODE_MAJOR } from "./package-root.js";
 export { RERAIL_HOSTS, type CodingAgentState } from "./adapter-contract.js";
 export { type ApiCaller } from "./catalog/repository-model.js";
+

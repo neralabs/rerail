@@ -1,0 +1,111 @@
+.policy "typescript-eslint-no-invalid-void-type" revision 6
+.description "Use void in TypeScript only as a return type or generic type argument, not in parameter, variable or mixed union types; elsewhere it means undefined and confuses readers."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/ts-a.rr"
+//   type_parent, type_child, heritage, has_overloads
+
+// typescript-eslint's no-invalid-void-type: `void` is for return types (and generic arguments), not values.
+//   function f(): void {}   type F = () => void;   Promise<void>   <T = void>     fine
+//   let x: void;   function g(a: void) {}   type U = void | string;   { p: void }   reported
+// A union of void and never stays, as does one with a `T<void>` member, and a union in an overloaded function's
+// implementation. allowInGenericTypeArguments (true, false, or a list of names allowed `void`) and
+// allowAsThisParameter (`this: void`) set the rest. As upstream, a destructured or rest parameter may be void.
+.violation no_invalid_void_type(at: node, msg: symbol) code "@typescript-eslint/no-invalid-void-type"
+    "{msg}"
+    suppress eslint "@typescript-eslint/no-invalid-void-type"
+no_invalid_void_type(v, m) :- generic_arg(v, g), gen_list(), !option_item("allowInGenericTypeArguments", _, g),
+    m = cat(g, " may not have void as a type argument.").
+no_invalid_void_type(v, m) :- generic_arg(v, _), option("allowInGenericTypeArguments", "false"), plain_message(m).
+no_invalid_void_type(v, "void is only valid as a return type or generic type argument.") :-
+    in_default_param(v, p), !option("allowInGenericTypeArguments", "false"), field(p, "constraint", c), within(v, c).
+no_invalid_void_type(v, m) :- void(v), !generic_arg(v, _), !default_void(v), !union_ok(v), !overload_union(v),
+    !this_ok(v), !valid_place(v), default_message(v, m).
+
+.decl void(v: node)
+void(v) :- kind(v, "predefined_type"), text(v, "void").
+
+// generic_arg(v, g): `G<…, void, …>` for a type reference G (spaces dropped from its name). An `implements`
+// or interface `extends` entry is no type reference in TSESTree.
+.decl generic_arg(v: node, g: symbol)
+generic_arg(v, @replace_all(x, " ", "")) :- void(v), type_parent(v, a), kind(a, "type_arguments"), child(r, a, _),
+    kind(r, "generic_type"), !heritage(r), field(r, "name", n), text(n, x).
+.decl gen_list()
+gen_list() :- option_item("allowInGenericTypeArguments", _, _).
+.decl gen_true()
+gen_true() :- !option("allowInGenericTypeArguments", "false"), !gen_list().
+
+// default_void(v): `<T = void>`, allowed with generic arguments; then a `void` constraint beside it is reported.
+.decl in_default_param(v: node, p: node)
+in_default_param(v, p) :- void(v), type_parent(v, c), (kind(c, "default_type") ; kind(c, "constraint")),
+    child(p, c, _), kind(p, "type_parameter"), field(p, "value", d), child(d, w, _), type_child(w, x), void(x).
+.decl default_void(v: node)
+default_void(v) :- in_default_param(v, _), !option("allowInGenericTypeArguments", "false").
+
+// union_ok(v): every member of v's union (unions flattened, as TSESTree's are) is void, never, or `T<void>`.
+.decl flat_union(v: node, u: node)
+flat_union(v, u) :- void(v), type_parent(v, p), kind(p, "union_type"), top_union(p, u).
+.decl top_union(p: node, u: node)
+top_union(p, u) :- kind(p, "union_type"), child(q, p, _), kind(q, "union_type"), top_union(q, u).
+top_union(p, p) :- kind(p, "union_type"), !nested_union(p).
+.decl nested_union(p: node)
+nested_union(p) :- kind(p, "union_type"), child(q, p, _), kind(q, "union_type").
+.decl member_of(u: node, m: node)
+member_of(u, m) :- kind(u, "union_type"), child(u, c, _), !kind(c, "comment"), !kind(c, "union_type"), type_child(c, m).
+member_of(u, m) :- kind(u, "union_type"), child(u, c, _), kind(c, "union_type"), member_of(c, m).
+.decl union_ok(v: node)
+union_ok(v) :- flat_union(v, u), !bad_member(u).
+.decl bad_member(u: node)
+bad_member(u) :- member_of(u, m), !void(m), !never(m), !void_generic(m).
+.decl never(m: node)
+never(m) :- kind(m, "predefined_type"), text(m, "never").
+.decl void_generic(m: node)
+void_generic(m) :- kind(m, "generic_type"), field(m, "type_arguments", a), child(a, x, _), void(x).
+
+// overload_union(v): a union inside an overloaded function: `function f(a: A): void; function f(a) {…}`, the
+// nearest function declaration or method with a body above it.
+.decl overload_union(v: node)
+overload_union(v) :- flat_union(v, _), nearest(v, f, overload_host), has_overloads(f).
+// overload_host(f): getParentFunctionDeclarationNode's stops: a FunctionDeclaration (with `export default
+// function () {}`, a function_expression in tree-sitter) or a method with a body.
+.decl overload_host(f: node)
+overload_host(f) :- kind(f, "function_declaration") ; kind(f, "method_definition").
+overload_host(f) :- kind(f, "function_expression"), child(e, f, _), kind(e, "export_statement"), op(e, "default").
+
+.decl this_ok(v: node)
+this_ok(v) :- option("allowAsThisParameter", "true"), type_parent(v, a), kind(a, "type_annotation"),
+    child(p, a, _), field(p, "pattern", t), kind(t, "this").
+
+// valid_place(v): a return type, an index signature's value (not a mapped type's), a type predicate, a destructured parameter; with
+// generic arguments allowed, any argument list but a call's. (tree-sitter's `<void>x` holds its type in
+// type_arguments; TSESTree has the type alone.)
+.decl valid_place(v: node)
+valid_place(v) :- type_parent(v, a), kind(a, "type_annotation"), child(p, a, _), !bad_holder(p).
+valid_place(v) :- void(v), type_parent(v, f), (kind(f, "function_type") ; kind(f, "constructor_type") ;
+    kind(f, "type_predicate")), field(f, k, w), (k = "return_type" ; k = "type"), type_child(w, v).
+valid_place(v) :- void(v), gen_true(), type_parent(v, a), kind(a, "type_arguments"),
+    !value_arguments(a).
+.decl value_arguments(a: node)
+value_arguments(a) :- kind(a, "type_arguments"), child(c, a, _), (kind(c, "call_expression") ; kind(c, "type_assertion")).
+.decl bad_holder(p: node)
+bad_holder(p) :- kind(p, "property_signature") ; kind(p, "public_field_definition").
+bad_holder(p) :- kind(p, "index_signature"), child(p, c, _), kind(c, "mapped_type_clause").
+bad_holder(p) :- (kind(p, "variable_declarator") ; kind(p, "catch_clause")),
+    (field(p, "name", n) ; field(p, "parameter", n)), kind(n, "identifier").
+bad_holder(p) :- (kind(p, "required_parameter") ; kind(p, "optional_parameter")), field(p, "pattern", n),
+    (kind(n, "identifier") ; kind(n, "this")).
+
+.decl plain_message(m: symbol)
+plain_message("void is only valid as return type or type of `this` parameter.") :- option("allowAsThisParameter", "true").
+plain_message("void is only valid as a return type.") :- !option("allowAsThisParameter", "true").
+.decl default_message(v: node, m: symbol)
+default_message(v, "void is only valid as a return type or generic type argument or the type of a `this` parameter.") :-
+    void(v), !option("allowInGenericTypeArguments", "false"), option("allowAsThisParameter", "true").
+default_message(v, m) :- void(v), !option("allowInGenericTypeArguments", "false"), !option("allowAsThisParameter", "true"),
+    (in_union(v), m = "void is not valid as a constituent in a union type" ;
+    !in_union(v), m = "void is only valid as a return type or generic type argument.").
+.decl in_union(v: node)
+in_union(v) :- void(v), type_parent(v, p), kind(p, "union_type").
+default_message(v, m) :- void(v), option("allowInGenericTypeArguments", "false"), plain_message(m).

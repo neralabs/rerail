@@ -1,0 +1,151 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl callback_call_quarantine_kind(kind: symbol)
+callback_call_quarantine_kind("decorated_definition").
+.decl k0(kind: symbol)
+k0("decorated_definition"). k0("function_definition").
+.decl k1(kind: symbol)
+k1("class_definition").
+.decl callback_call_decorator(n: node)
+.decl callback_call_decorator_name(s: symbol)
+.decl callback_call_file_content(x: number)
+.decl callback_call_method(s: symbol)
+.decl callback_call_path_ok(p: symbol)
+.decl callback_call_quarantine(w: node)
+.decl callback_call_quarantined(c: node)
+.decl callback_call_receiver(n: node)
+.decl callback_call_receiver_name(n: node)
+.decl callback_call_site(c: node)
+.decl child(p: node, c: node, i: number)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
+.decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl m13(n: node)
+.decl m17(n: node)
+.decl m27(n: node)
+.decl m32(n: node)
+.decl m33(n: node)
+.decl m42(n: node)
+.decl m45(n: node)
+.decl m49(n: node)
+.decl m60(n: node)
+.decl m61(n: node)
+.decl m62(n: node)
+.decl m73(n: node)
+.decl m74(n: node)
+.decl m75(n: node)
+.decl m94(n: node)
+.decl m95(n: node)
+.decl m96(n: node)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl option_value(name: symbol, v: symbol)
+.decl out_scope(d: number)
+.decl syntax_error(d: number)
+.decl t3(s: symbol)
+.decl t36(s: symbol)
+.decl t78(s: symbol)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl u22(n: node)
+.decl u8(n: node)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, child, field, text, line, syntax_error
+.output violation
+callback_call_decorator_name("direct_legacy_async").
+callback_call_decorator_name("direct_legacy_module_async").
+callback_call_decorator_name("direct_legacy_module_sync").
+callback_call_decorator_name("direct_legacy_sync").
+callback_call_decorator_name("legacy_async").
+callback_call_decorator_name("legacy_module_async").
+callback_call_decorator_name("legacy_module_sync").
+callback_call_decorator_name("legacy_sync").
+callback_call_method("read").
+callback_call_method("read_async").
+callback_call_method("read_version").
+callback_call_method("read_version_async").
+callback_call_method("write").
+callback_call_method("write_async").
+callback_call_method("write_version").
+callback_call_method("write_version_async").
+option_value("entryPoint", "scan_repo").
+in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l*/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("services/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/conform/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
+tape_syntax_error(d) :- syntax_error(d).
+t3(s) :- doc(_, s, _), (glob("**/.git", s) ; glob("**/.git/**", s) ; glob("**/.mypy_cache", s) ; glob("**/.mypy_cache/**", s) ; glob("**/.pytest_cache", s) ; glob("**/.pytest_cache/**", s) ; glob("**/.ruff_cache", s) ; glob("**/.ruff_cache/**", s) ; glob("**/.venv", s) ; glob("**/.venv/**", s) ; glob("**/__pycache__", s) ; glob("**/__pycache__/**", s) ; glob("**/tmp", s) ; glob("**/tmp/**", s)).
+t3(s) :- doc(_, _, s), (glob("**/.git", s) ; glob("**/.git/**", s) ; glob("**/.mypy_cache", s) ; glob("**/.mypy_cache/**", s) ; glob("**/.pytest_cache", s) ; glob("**/.pytest_cache/**", s) ; glob("**/.ruff_cache", s) ; glob("**/.ruff_cache/**", s) ; glob("**/.venv", s) ; glob("**/.venv/**", s) ; glob("**/__pycache__", s) ; glob("**/__pycache__/**", s) ; glob("**/tmp", s) ; glob("**/tmp/**", s)).
+m13(n) :- field(n, "attribute", v10), node(_, v10, "identifier", _, _), text(v10, v11), (iglob("*conn", v11) ; iglob("*connection", v11) ; iglob("conn", v11) ; iglob("connection", v11) ; iglob("db_connection", v11)).
+m13(n) :- field(n, "object", v12), u8(v12).
+m17(n) :- node(_, n, "identifier", _, _), text(n, v9), (iglob("*conn", v9) ; iglob("*connection", v9) ; iglob("conn", v9) ; iglob("connection", v9) ; iglob("db_connection", v9)).
+m17(n) :- node(_, n, "attribute", _, _), m13(n).
+m17(n) :- node(_, n, "call", _, _), field(n, "function", v14), u8(v14).
+m17(n) :- node(_, n, "subscript", _, _), field(n, "value", v15), u8(v15).
+m17(n) :- node(_, n, "parenthesized_expression", _, _), child(n, v16, _), u8(v16).
+u8(n) :- m17(n).
+m27(n) :- node(_, n, "identifier", _, _), text(n, v23), (v23 = "direct_legacy_async" ; v23 = "direct_legacy_module_async" ; v23 = "direct_legacy_module_sync" ; v23 = "direct_legacy_sync" ; v23 = "legacy_async" ; v23 = "legacy_module_async" ; v23 = "legacy_module_sync" ; v23 = "legacy_sync").
+m27(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v24), node(_, v24, "identifier", _, _), text(v24, v25), (v25 = "direct_legacy_async" ; v25 = "direct_legacy_module_async" ; v25 = "direct_legacy_module_sync" ; v25 = "direct_legacy_sync" ; v25 = "legacy_async" ; v25 = "legacy_module_async" ; v25 = "legacy_module_sync" ; v25 = "legacy_sync").
+m27(n) :- node(_, n, "call", _, _), field(n, "function", v26), u22(v26).
+u22(n) :- m27(n).
+m32(n) :- node(_, n, "function_definition", _, _), child(v19, n, _), node(_, v19, "decorated_definition", _, _), child(v19, v20, _), node(_, v20, "decorator", _, _), child(v20, v21, _), u22(v21).
+m32(n) :- node(_, n, "decorated_definition", _, _), child(n, v28, _), node(_, v28, "function_definition", _, _), child(v29, v28, _), node(_, v29, "decorated_definition", _, _), child(v29, v30, _), node(_, v30, "decorator", _, _), child(v30, v31, _), u22(v31).
+m33(n) :- inside(n, v18, k0), m32(v18).
+violation("data-layer-legacy-callback-quarantine", "connection-call", "LCB-031", p, l) :- node(v1, n, _, _, _), doc(v1, v2, _), !t3(v2), node(_, n, "call", _, _), field(n, "function", v4), node(_, v4, "attribute", _, _), field(v4, "attribute", v5), node(_, v5, "identifier", _, _), text(v5, v6), (v6 = "commit_branch" ; v6 = "commit_branch_async"), field(v4, "object", v7), u8(v7), !m33(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+t36(s) :- doc(_, s, _), (glob("**/.git", s) ; glob("**/.git/**", s) ; glob("**/.mypy_cache", s) ; glob("**/.mypy_cache/**", s) ; glob("**/.pytest_cache", s) ; glob("**/.pytest_cache/**", s) ; glob("**/.ruff_cache", s) ; glob("**/.ruff_cache/**", s) ; glob("**/.venv", s) ; glob("**/.venv/**", s) ; glob("**/__pycache__", s) ; glob("**/__pycache__/**", s) ; glob("**/tmp", s) ; glob("**/tmp/**", s)).
+t36(s) :- doc(_, _, s), (glob("**/.git", s) ; glob("**/.git/**", s) ; glob("**/.mypy_cache", s) ; glob("**/.mypy_cache/**", s) ; glob("**/.pytest_cache", s) ; glob("**/.pytest_cache/**", s) ; glob("**/.ruff_cache", s) ; glob("**/.ruff_cache/**", s) ; glob("**/.venv", s) ; glob("**/.venv/**", s) ; glob("**/__pycache__", s) ; glob("**/__pycache__/**", s) ; glob("**/tmp", s) ; glob("**/tmp/**", s)).
+m42(n) :- node(_, n, "default_parameter", _, _).
+m42(n) :- node(_, n, "typed_parameter", _, _).
+m42(n) :- node(_, n, "typed_default_parameter", _, _).
+m45(n) :- node(_, n, "identifier", _, _), text(n, v41), v41 = "fn".
+m45(n) :- m42(n), child(n, v43, _), node(_, v43, "identifier", _, _), text(v43, v44), v44 = "fn", child(_, v43, 0).
+m49(n) :- node(_, n, "function_definition", _, _), child(v46, n, _), node(_, v46, "decorated_definition", _, _), child(v46, v47, _), node(_, v47, "decorator", _, _), child(v47, v48, _), u22(v48).
+m60(n) :- node(_, n, "identifier", _, _), text(n, v57), v57 = "overload".
+m60(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v58), node(_, v58, "identifier", _, _), text(v58, v59), v59 = "overload".
+m61(n) :- node(_, n, "identifier", _, _), text(n, v53), v53 = "overload".
+m61(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v54), node(_, v54, "identifier", _, _), text(v54, v55), v55 = "overload".
+m61(n) :- node(_, n, "call", _, _), field(n, "function", v56), m60(v56).
+m62(n) :- child(v50, n, _), node(_, v50, "decorated_definition", _, _), child(v50, v51, _), node(_, v51, "decorator", _, _), child(v51, v52, _), m61(v52).
+m73(n) :- node(_, n, "identifier", _, _), text(n, v70), v70 = "Protocol".
+m73(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v71), node(_, v71, "identifier", _, _), text(v71, v72), v72 = "Protocol".
+m74(n) :- node(_, n, "identifier", _, _), text(n, v66), v66 = "Protocol".
+m74(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v67), node(_, v67, "identifier", _, _), text(v67, v68), v68 = "Protocol".
+m74(n) :- node(_, n, "call", _, _), field(n, "function", v69), m73(v69).
+m75(n) :- inside(n, v63, k1), node(_, v63, "class_definition", _, _), field(v63, "superclasses", v64), child(v64, v65, _), m74(v65).
+violation("data-layer-legacy-callback-quarantine", "callback-definition", "LCB-010", p, l) :- node(v34, n, _, _, _), doc(v34, v35, _), !t36(v35), node(_, n, "function_definition", _, _), field(n, "name", v37), node(_, v37, "identifier", _, _), text(v37, v38), (v38 = "read" ; v38 = "read_async" ; v38 = "read_version" ; v38 = "read_version_async" ; v38 = "write" ; v38 = "write_async" ; v38 = "write_version" ; v38 = "write_version_async"), field(n, "parameters", v39), child(v39, v40, _), m45(v40), !m49(n), !m62(n), !m75(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+t78(s) :- doc(_, s, _), (glob("**/.git", s) ; glob("**/.git/**", s) ; glob("**/.mypy_cache", s) ; glob("**/.mypy_cache/**", s) ; glob("**/.pytest_cache", s) ; glob("**/.pytest_cache/**", s) ; glob("**/.ruff_cache", s) ; glob("**/.ruff_cache/**", s) ; glob("**/.venv", s) ; glob("**/.venv/**", s) ; glob("**/__pycache__", s) ; glob("**/__pycache__/**", s) ; glob("**/tmp", s) ; glob("**/tmp/**", s)).
+t78(s) :- doc(_, _, s), (glob("**/.git", s) ; glob("**/.git/**", s) ; glob("**/.mypy_cache", s) ; glob("**/.mypy_cache/**", s) ; glob("**/.pytest_cache", s) ; glob("**/.pytest_cache/**", s) ; glob("**/.ruff_cache", s) ; glob("**/.ruff_cache/**", s) ; glob("**/.venv", s) ; glob("**/.venv/**", s) ; glob("**/__pycache__", s) ; glob("**/__pycache__/**", s) ; glob("**/tmp", s) ; glob("**/tmp/**", s)).
+m94(n) :- node(_, n, "identifier", _, _), text(n, v91), v91 = "Protocol".
+m94(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v92), node(_, v92, "identifier", _, _), text(v92, v93), v93 = "Protocol".
+m95(n) :- node(_, n, "identifier", _, _), text(n, v87), v87 = "Protocol".
+m95(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v88), node(_, v88, "identifier", _, _), text(v88, v89), v89 = "Protocol".
+m95(n) :- node(_, n, "call", _, _), field(n, "function", v90), m94(v90).
+m96(n) :- inside(n, v84, k1), node(_, v84, "class_definition", _, _), field(v84, "superclasses", v85), child(v85, v86, _), m95(v86).
+violation("data-layer-legacy-callback-quarantine", "connection-definition", "LCB-030", p, l) :- node(v76, n, _, _, _), doc(v76, v77, _), !t78(v77), node(_, n, "function_definition", _, _), field(n, "name", v79), node(_, v79, "identifier", _, _), text(v79, v80), (v80 = "commit_branch" ; v80 = "commit_branch_async"), nearest(n, v81, k1), node(_, v81, "class_definition", _, _), field(v81, "name", v82), node(_, v82, "identifier", _, _), text(v82, v83), (suffix("Connection", v83) ; suffix("ConnectionCore", v83) ; suffix("DatabaseConnection", v83)), !m96(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+callback_call_receiver_name(n) :- node(_, n, "identifier", _, _), text(n, s), (iglob("conn", s) ; iglob("session_handle", s) ; iglob("version_handle", s) ; iglob("*session", s) ; iglob("*connection", s) ; iglob("*version", s)).
+callback_call_receiver(n) :- callback_call_receiver_name(n).
+callback_call_receiver(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), callback_call_receiver_name(a).
+callback_call_receiver(n) :- node(_, n, "attribute", _, _), field(n, "object", o), callback_call_receiver(o).
+callback_call_receiver(n) :- node(_, n, "call", _, _), field(n, "function", f), callback_call_receiver(f).
+callback_call_receiver(n) :- node(_, n, "subscript", _, _), field(n, "value", v), callback_call_receiver(v).
+callback_call_receiver(n) :- node(_, n, "parenthesized_expression", _, _), child(n, c, _), callback_call_receiver(c).
+callback_call_decorator(n) :- node(_, n, "identifier", _, _), text(n, s), callback_call_decorator_name(s).
+callback_call_decorator(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, s), callback_call_decorator_name(s).
+callback_call_decorator(n) :- node(_, n, "call", _, _), field(n, "function", f), callback_call_decorator(f).
+callback_call_quarantine(w) :- node(_, w, "decorated_definition", _, _), child(w, f, _), node(_, f, "function_definition", _, _), child(w, k, _), node(_, k, "decorator", _, _), child(k, x, _), callback_call_decorator(x).
+callback_call_site(c) :- node(_, c, "call", _, _), field(c, "function", a), node(_, a, "attribute", _, _), field(a, "attribute", m), node(_, m, "identifier", _, _), text(m, s), callback_call_method(s), field(a, "object", o), callback_call_receiver(o), field(c, "arguments", g), child(g, _, _).
+callback_call_quarantined(c) :- callback_call_site(c), inside(c, w, callback_call_quarantine_kind), callback_call_quarantine(w).
+callback_call_file_content(0) :- option_value("entryPoint", "scan_file_content").
+callback_call_path_ok(p) :- doc(_, p, _), callback_call_file_content(0), match("(impl/|l|data_layer/|services/).*", p), !match("(.*/)?(tests|conform)(/.*)?", p).
+callback_call_path_ok(p) :- doc(_, p, _), !callback_call_file_content(0), !match("(.*/)?(\\.git|\\.mypy_cache|\\.pytest_cache|\\.ruff_cache|\\.venv|__pycache__|tmp)(/.*)?", p).
+violation("data-layer-legacy-callback-quarantine", "callback-call", "LCB-020", p, l) :- callback_call_site(c), !callback_call_quarantined(c), node(d, c, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), callback_call_path_ok(p), line(c, l).

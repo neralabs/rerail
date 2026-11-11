@@ -1,0 +1,300 @@
+{
+  "cases": [
+    {
+      "id": "cached-positive-root",
+      "root": "root",
+      "facts": [
+        "root",
+        "sink"
+      ],
+      "calls": {
+        "root": [
+          [
+            10,
+            "sink"
+          ]
+        ]
+      },
+      "targets": [
+        "sink"
+      ],
+      "memo": {
+        "root": 99
+      },
+      "visiting": []
+    },
+    {
+      "id": "cached-negative-root",
+      "root": "root",
+      "facts": [
+        "root",
+        "sink"
+      ],
+      "calls": {
+        "root": [
+          [
+            10,
+            "sink"
+          ]
+        ]
+      },
+      "targets": [
+        "sink"
+      ],
+      "memo": {
+        "root": null
+      },
+      "visiting": []
+    },
+    {
+      "id": "cached-positive-child",
+      "root": "root",
+      "facts": [
+        "root",
+        "child",
+        "sink"
+      ],
+      "calls": {
+        "root": [
+          [
+            10,
+            "child"
+          ]
+        ],
+        "child": [
+          [
+            20,
+            "sink"
+          ]
+        ]
+      },
+      "targets": [
+        "sink"
+      ],
+      "memo": {
+        "child": 70
+      },
+      "visiting": []
+    },
+    {
+      "id": "cached-negative-child",
+      "root": "root",
+      "facts": [
+        "root",
+        "child",
+        "sink"
+      ],
+      "calls": {
+        "root": [
+          [
+            10,
+            "child"
+          ]
+        ],
+        "child": [
+          [
+            20,
+            "sink"
+          ]
+        ]
+      },
+      "targets": [
+        "sink"
+      ],
+      "memo": {
+        "child": null
+      },
+      "visiting": []
+    },
+    {
+      "id": "visiting-root",
+      "root": "root",
+      "facts": [
+        "root",
+        "sink"
+      ],
+      "calls": {
+        "root": [
+          [
+            10,
+            "sink"
+          ]
+        ]
+      },
+      "targets": [
+        "sink"
+      ],
+      "visiting": [
+        "root"
+      ],
+      "memo": {}
+    },
+    {
+      "id": "target-before-visiting",
+      "root": "root",
+      "facts": [
+        "root"
+      ],
+      "calls": {
+        "root": [
+          [
+            10,
+            "sink"
+          ]
+        ]
+      },
+      "targets": [
+        "sink"
+      ],
+      "visiting": [
+        "sink"
+      ],
+      "memo": {}
+    },
+    {
+      "id": "unknown-target-still-matches",
+      "root": "root",
+      "facts": [
+        "root"
+      ],
+      "calls": {
+        "root": [
+          [
+            10,
+            "sink"
+          ]
+        ]
+      },
+      "targets": [
+        "sink"
+      ],
+      "memo": {},
+      "visiting": []
+    },
+    {
+      "id": "child-memo-updates",
+      "root": "root",
+      "facts": [
+        "root",
+        "child",
+        "sink"
+      ],
+      "calls": {
+        "root": [
+          [
+            10,
+            "child"
+          ]
+        ],
+        "child": [
+          [
+            20,
+            "sink"
+          ]
+        ]
+      },
+      "targets": [
+        "sink"
+      ],
+      "memo": {},
+      "visiting": []
+    },
+    {
+      "id": "negative-memo-updates",
+      "root": "root",
+      "facts": [
+        "root",
+        "child",
+        "sink"
+      ],
+      "calls": {
+        "root": [
+          [
+            10,
+            "child"
+          ]
+        ]
+      },
+      "targets": [
+        "sink"
+      ],
+      "memo": {},
+      "visiting": []
+    },
+    {
+      "id": "cycle-and-branch",
+      "root": "a",
+      "facts": [
+        "a",
+        "b",
+        "sink"
+      ],
+      "calls": {
+        "a": [
+          [
+            2,
+            "b"
+          ],
+          [
+            3,
+            "sink"
+          ]
+        ],
+        "b": [
+          [
+            11,
+            "a"
+          ]
+        ]
+      },
+      "targets": [
+        "sink"
+      ],
+      "memo": {},
+      "visiting": []
+    },
+    {
+      "id": "preserve-memo-order",
+      "root": "root",
+      "facts": [
+        "root",
+        "child",
+        "sink"
+      ],
+      "calls": {
+        "root": [
+          [
+            10,
+            "child"
+          ]
+        ],
+        "child": [
+          [
+            20,
+            "sink"
+          ]
+        ]
+      },
+      "targets": [
+        "sink"
+      ],
+      "memo": {
+        "unrelated": 8
+      },
+      "visiting": []
+    },
+    {
+      "id": "root-target-not-a-direct-match",
+      "root": "root",
+      "facts": [
+        "root"
+      ],
+      "calls": {},
+      "targets": [
+        "root"
+      ],
+      "memo": {},
+      "visiting": []
+    }
+  ]
+}

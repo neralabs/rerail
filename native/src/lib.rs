@@ -1,3 +1,9 @@
+// A build of some languages, or without the addon (`headless`), leaves the others' code and the addon's API unused by
+// design: dead-code warnings there say nothing (the default build still warns).
+#![cfg_attr(any(not(feature = "all-languages"), feature = "headless"), allow(dead_code))]
+// The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
+#[cfg(target_family = "wasm")]
+extern crate cranelift_jit_wasm as cranelift_jit;
 /// `build.rs` compiles this file too; the library builds it only for tests, so `cargo test`
 /// checks the identities the build script computes.
 #[cfg(test)]
@@ -6,14 +12,24 @@ mod build_identity;
 /// so `cargo test` checks how the build validates the language registry.
 #[cfg(test)]
 mod build_languages;
+// Each test's time limit, enforced inside the test binary (`RERAIL_TEST_TIMEOUT`).
+#[cfg(test)]
+mod test_watchdog;
 mod code_rule_dsl;
-pub mod content_store;
+/// The engine's tools without Node (`rerail-engine dump` / `asm`).
+pub use code_rule_dsl::tools;
+pub use rerail_store::content_store;
 pub mod git_ignore;
-pub mod git_workspace;
+pub use rerail_store::git_workspace;
 mod main_instance;
 mod model;
 mod panic_boundary;
 pub mod process;
+/// The most threads the process uses (`RERAIL_THREADS`).
+pub mod threads;
+/// The browser's long-lived engine: `rerail_command` and its buffers (wasm/README.md).
+#[cfg(target_family = "wasm")]
+pub mod reactor;
 mod rules;
 
 use model::{ModelFingerprint, load_model, verify_model};
@@ -21,14 +37,13 @@ use napi::{Error, Result, Status, bindgen_prelude::Float32Array};
 use napi_derive::napi;
 use rules::{CompileSummary, ModelEncoder, NativeMatch, NativeRuleInput, NativeSample, RuleSet};
 use std::path::Path;
-use std::sync::LazyLock;
 
 // jemalloc does not build for MSVC targets; Windows keeps the system allocator.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_family = "wasm")))]
 union JemallocConf {
     byte: &'static u8,
     character: &'static std::ffi::c_char,
@@ -38,7 +53,7 @@ union JemallocConf {
 // decay cost a tenth of a storage-heavy benchmark's CPU in mmap/munmap); every apply purges them
 // when it ends and again once its response is freed (`purge_allocator_pages`), so nothing dirty
 // is kept at rest.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_family = "wasm")))]
 #[allow(non_upper_case_globals)]
 #[unsafe(export_name = "_rjem_malloc_conf")]
 pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
@@ -48,12 +63,39 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
     .character
 });
 
+/// The engine's SQL functions, for every connection the store opens (its crate, `rerail-store`): the text tests'
+/// and the prefilter's tapes. Set as the library loads, before any store is opened.
+fn install_store_functions() {
+    content_store::set_language_tags(code_rule_dsl::stored_tape_tag, code_rule_dsl::path_tape_tag);
+    content_store::set_connection_functions(|db| {
+        code_rule_dsl::text::install(db)?;
+        code_rule_dsl::prefilter::tapes::install(db)
+    });
+    // And where its SQL hazards go: the engine's profile (decision 0104).
+    content_store::hazards::set(content_store::hazards::Hazards {
+        on: code_rule_dsl::sql_hazards::on,
+        sql_in_wave: code_rule_dsl::sql_hazards::sql_in_wave,
+        wait_in_wave: code_rule_dsl::sql_hazards::wait_in_wave,
+        behind_the_run: code_rule_dsl::sql_hazards::behind_the_run,
+        statement: code_rule_dsl::sql_hazards::strict_statement,
+    });
+    code_rule_dsl::sql_hazards::strict_on_every_connection();
+}
+
+/// Windows has no jemalloc hook (below): the store's functions alone, as the library loads.
+#[cfg(windows)]
+#[napi_derive::module_init]
+fn install_store_functions_on_load() {
+    install_store_functions();
+}
+
 /// Tree-sitter allocates through jemalloc, as Rust does: a parse allocates many small subtrees,
 /// which the system allocator served at 10% of the parse. Installed when the addon loads, before
 /// any Tree-sitter call; like Tree-sitter's own allocator, these abort when allocation fails.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_family = "wasm")))]
 #[napi_derive::module_init]
 fn install_tree_sitter_allocator() {
+    install_store_functions();
     use std::ffi::c_void;
     unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         // SAFETY: jemalloc's malloc accepts any size.
@@ -82,6 +124,7 @@ fn install_tree_sitter_allocator() {
     }
     // SAFETY: the four functions are jemalloc's, return no null for a nonzero size, and are
     // installed while the addon loads, before any Tree-sitter object exists.
+    #[cfg(not(feature = "system-allocator"))]
     unsafe {
         tree_sitter::set_allocator(Some(tree_sitter::Allocator {
             malloc,
@@ -92,14 +135,16 @@ fn install_tree_sitter_allocator() {
     }
 }
 
-pub(crate) const WORKER_THREADS: usize = 4;
-pub(crate) static WORK_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(WORKER_THREADS)
-        .thread_name(|index| format!("rerail-worker-{index}"))
-        .build()
-        .expect("build Rerail worker pool")
-});
+/// The one pool, of the most threads the process uses (`RERAIL_THREADS`), the loading thread one of them when it is
+/// the process's main thread: made as Node registers the addon's exports, before any of them runs, and not in the
+/// library's constructor. A constructor runs inside `dlopen`, which holds glibc's loader lock; rayon's
+/// `use_current_thread` waits for every pool thread to start, and each one's first thread-local with a destructor
+/// registers it through `__cxa_thread_atexit_impl`, which takes that lock: the load never returned.
+#[cfg(not(target_family = "wasm"))]
+#[napi(module_exports)]
+pub fn configure_thread_pool(_exports: napi::bindgen_prelude::Object) {
+    threads::configure(threads::is_main_thread());
+}
 
 #[napi(object)]
 pub struct Health {
@@ -189,7 +234,7 @@ pub fn process_session_id(pid: i32) -> Result<Option<i32>> {
 /// neither does the Windows system allocator: its counters read zero.
 #[napi]
 pub fn native_memory_profile() -> String {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_family = "wasm")))]
     let allocator = {
         let _ = tikv_jemalloc_ctl::epoch::advance();
         serde_json::json!({
@@ -200,7 +245,7 @@ pub fn native_memory_profile() -> String {
             "retainedBytes": tikv_jemalloc_ctl::stats::retained::read().unwrap_or(0),
         })
     };
-    #[cfg(windows)]
+    #[cfg(any(windows, target_family = "wasm"))]
     let allocator = serde_json::json!({
         "allocatedBytes": 0,
         "activeBytes": 0,
@@ -211,19 +256,29 @@ pub fn native_memory_profile() -> String {
     serde_json::json!({
         "allocator": allocator,
         "workerPool": {
-            "threads": WORKER_THREADS,
+            "threads": threads::max(),
         },
     })
     .to_string()
 }
 
-/// Tell SQLite and jemalloc to discard free pages after a workspace eviction.
+/// SQLite's allocator set when the library loads, before anything can initialize SQLite
+/// (`content_store::sqlite_on_jemalloc`).
+#[cfg(all(any(target_os = "macos", target_os = "linux"), not(feature = "system-allocator")))]
+#[used]
+#[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
+#[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
+static SQLITE_ALLOCATOR: extern "C" fn() = {
+    extern "C" fn install() {
+        content_store::sqlite_on_jemalloc();
+    }
+    install
+};
+
+/// Return allocator pages after eviction closes idle SQLite connections.
 pub(crate) fn release_allocator_memory() {
-    // SAFETY: SQLite owns its global allocator; the maximum request asks every connection to
-    // release reclaimable page-cache memory.
-    unsafe { rusqlite::ffi::sqlite3_release_memory(i32::MAX) };
     // Background threads, where available, decay pages between applies too.
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_family = "wasm")))]
     let _ = tikv_jemalloc_ctl::background_thread::write(true);
     purge_allocator_pages();
 }
@@ -232,7 +287,7 @@ pub(crate) fn release_allocator_memory() {
 pub(crate) fn purge_allocator_pages() {
     // SAFETY: arena.4096 is jemalloc's all-arenas selector; purge reads and writes no value, so
     // jemalloc requires null value pointers (`raw::write` passes a non-null one and is refused).
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_family = "wasm")))]
     unsafe {
         tikv_jemalloc_sys::mallctl(
             c"arena.4096.purge".as_ptr(),
@@ -454,19 +509,26 @@ mod tests {
             let key = format!("stats.arenas.{arena}.pdirty\0");
             unsafe { raw::read::<usize>(key.as_bytes()) }.unwrap()
         };
+        // Its pages kept dirty until purged: no decay by time (the default purges after 10 s, which a loaded run's
+        // pause can reach).
+        unsafe { raw::write::<isize>(format!("arena.{arena}.dirty_decay_ms\0").as_bytes(), -1) }.unwrap();
         let flags = MALLOCX_ARENA(arena as usize) | MALLOCX_TCACHE_NONE;
         let size = 4 << 20;
-        unsafe {
-            let block = mallocx(size, flags).cast::<u8>();
-            assert!(!block.is_null());
-            std::ptr::write_bytes(block, 1, size);
-            dallocx(block.cast(), flags);
-        }
-        assert!(
-            dirty() > 0,
-            "the freed block's pages are dirty until purged"
-        );
-        super::purge_allocator_pages();
-        assert_eq!(dirty(), 0);
+        // Other tests' runs purge every arena when they end (`purge_allocator_pages`): one of them can purge this
+        // arena between the free and its count. A few tries: one free seen dirty, then purged, is what is asked.
+        let seen = (0..20).any(|_| {
+            unsafe {
+                let block = mallocx(size, flags).cast::<u8>();
+                assert!(!block.is_null());
+                std::ptr::write_bytes(block, 1, size);
+                dallocx(block.cast(), flags);
+            }
+            if dirty() == 0 {
+                return false;
+            }
+            super::purge_allocator_pages();
+            dirty() == 0
+        });
+        assert!(seen, "a freed block's pages are dirty until purged, and none after");
     }
 }

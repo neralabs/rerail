@@ -471,20 +471,20 @@ database before the now-active version, to put back by hand (see [Database compa
 
 Policy evaluation caches parsed files and results in a content store; where the package lives, not a flag, picks which one.
 
-The managed installation uses `~/.cache/rerail/content-v1.sqlite`; a build from a Git checkout uses
-`<checkout>/.rerail/content-v1.sqlite`. `RERAIL_CONTENT_STORE_PATH` overrides either location.
+The managed installation uses `~/.cache/rerail/content-v3.sqlite`; a build from a Git checkout uses
+`<checkout>/.rerail/content-v3.sqlite`. `RERAIL_CONTENT_STORE_PATH` overrides either location.
 
 <details>
 <summary>Which store a build uses</summary>
 
 - **Managed installation** (a package under `~/.rerail/versions/<version>/` or `$RERAIL_HOME/versions/`, normally
-  loaded through `current`): owns the machine-wide `~/.cache/rerail/content-v1.sqlite`.
+  loaded through `current`): owns the machine-wide `~/.cache/rerail/content-v3.sqlite`.
 - **Any build from a Git checkout** (source, `dist/`, tests, benchmarks, every worktree):
-  `<checkout>/.rerail/content-v1.sqlite` (`.rerail/` is gitignored), so a checkout on a newer store schema never
+  `<checkout>/.rerail/content-v3.sqlite` (`.rerail/` is gitignored), so a checkout on a newer store schema never
   changes the store the installed version reads.
 - **Neither** (say, an `npx` copy): no store, reported on its first scan.
 
-The file name follows the store's compatibility floor (`v1` today) and changes when the floor rises.
+The file name follows the store's compatibility floor (`v3` today) and changes when the floor rises.
 
 </details>
 

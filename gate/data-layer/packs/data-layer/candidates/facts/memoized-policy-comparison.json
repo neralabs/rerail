@@ -1,0 +1,118 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-memoized-policy-comparison",
+  "revision": 1,
+  "mode": "log",
+  "clauses": [
+    {
+      "id": "parameters",
+      "define": {
+        "options": {
+          "parameters": {
+            "type": "string",
+            "default": "{}"
+          }
+        }
+      }
+    },
+    {
+      "id": "comparison",
+      "relational": {
+        "inputs": {
+          "empty": {
+            "evidence": {
+              "as": "file",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "rule": {
+                    "kind": "module"
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "locations": [
+          "metadata"
+        ],
+        "stages": [
+          {
+            "name": "parameters",
+            "query": {
+              "$option": "parameters",
+              "escape": "sql",
+              "template": "SELECT {} data"
+            }
+          },
+          {
+            "name": "actual_records",
+            "query": "SELECT CAST(key AS INTEGER) ordinal,CAST(key AS TEXT) record_id,json_extract(value,'$.function') function,json_extract(value,'$.body_hash') body_hash,json_extract(value,'$.signature_hash') signature_hash,json_extract(value,'$.max_entries') max_entries,value data FROM parameters,json_each(data,'$.functions')",
+            "indexes": [
+              [
+                "function"
+              ]
+            ]
+          },
+          {
+            "name": "policy_records",
+            "query": "SELECT CAST(key AS INTEGER) ordinal,json_extract(value,'$.function') function,json_extract(value,'$.body_hash') body_hash,json_extract(value,'$.signature_hash') signature_hash,json_extract(value,'$.rationale') rationale,value data FROM parameters,json_each(data,'$.entries')",
+            "indexes": [
+              [
+                "function"
+              ]
+            ]
+          },
+          {
+            "name": "policy_entries",
+            "query": "SELECT * FROM policy_records p WHERE NOT EXISTS(SELECT 1 FROM policy_records later WHERE later.function=p.function AND later.ordinal>p.ordinal)",
+            "indexes": [
+              [
+                "function"
+              ]
+            ]
+          },
+          {
+            "name": "actual_errors",
+            "query": "SELECT a.record_id,CAST(e.key AS INTEGER) ordinal,e.value error FROM actual_records a,json_each(a.data,'$.errors') e",
+            "indexes": [
+              [
+                "record_id"
+              ]
+            ]
+          },
+          {
+            "name": "effective_actual",
+            "query": "SELECT * FROM actual_records a WHERE NOT EXISTS(SELECT 1 FROM actual_records later WHERE later.function=a.function AND later.ordinal>a.ordinal)",
+            "indexes": [
+              [
+                "function"
+              ]
+            ]
+          },
+          {
+            "name": "ordered_policy_issues",
+            "query": "SELECT * FROM (SELECT 0 phase,0 step,0 ordinal,x.* FROM (SELECT function,'duplicate memoized decorator entry: '||function issue FROM actual_records GROUP BY function HAVING count(*)>1) x) UNION ALL SELECT * FROM (SELECT 0 phase,1 step,0 ordinal,x.* FROM (SELECT function,'duplicate memoized policy entry: '||function issue FROM policy_records GROUP BY function HAVING count(*)>1) x) UNION ALL SELECT * FROM (SELECT 1 phase,0 step,printf('%020d/%020d',a.ordinal,e.ordinal) ordinal,a.function,a.function||': '||e.error issue FROM actual_errors e JOIN actual_records a ON a.record_id=e.record_id ORDER BY a.ordinal,e.ordinal) UNION ALL SELECT * FROM (SELECT 2 phase,0 step,0 ordinal,x.* FROM (SELECT a.function,'unsigned memoized pure-lazy function: '||a.function issue FROM effective_actual a WHERE NOT EXISTS(SELECT 1 FROM policy_entries p WHERE p.function=a.function)) x) UNION ALL SELECT * FROM (SELECT 3 phase,0 step,0 ordinal,x.* FROM (SELECT p.function,'stale memoized pure-lazy policy entry: '||p.function issue FROM policy_entries p WHERE NOT EXISTS(SELECT 1 FROM effective_actual a WHERE a.function=p.function)) x) UNION ALL SELECT * FROM (SELECT 4 phase,0 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('memoization bound changed') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE a.max_entries IS NOT json_extract(p.data,'$.max_entries')) x) UNION ALL SELECT * FROM (SELECT 4 phase,1 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('cache lifetime is not approved') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE json_extract(p.data,'$.cache_lifetime') IS NOT 'process') x) UNION ALL SELECT * FROM (SELECT 4 phase,2 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('key policy is not approved') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE json_extract(p.data,'$.key_policy') IS NOT 'bound_explicit_immutable_v1') x) UNION ALL SELECT * FROM (SELECT 4 phase,3 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('return policy is not approved') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE json_extract(p.data,'$.return_policy') IS NOT 'immutable_no_alias_v1') x) UNION ALL SELECT * FROM (SELECT 4 phase,4 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('exception policy is not approved') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE json_extract(p.data,'$.exception_policy') IS NOT 'successful_results_only_v1') x) UNION ALL SELECT * FROM (SELECT 4 phase,5 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('review rationale is required') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE trim(p.rationale)='') x) UNION ALL SELECT * FROM (SELECT 4 phase,7 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('function body hash changed') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE a.body_hash!=p.body_hash) x) UNION ALL SELECT * FROM (SELECT 4 phase,8 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('function signature hash changed') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE a.signature_hash!=p.signature_hash) x)"
+          },
+          {
+            "name": "diagnostics",
+            "query": "SELECT issue FROM ordered_policy_issues ORDER BY phase,CASE WHEN phase=1 AND 1 THEN '' ELSE function END,step,ordinal"
+          }
+        ],
+        "query": "SELECT 'metadata' path,0 start_byte,0 end_byte,CAST(row_number() OVER() AS TEXT) identity,issue,phase,step,ordinal,function FROM ordered_policy_issues ORDER BY phase,CASE WHEN phase=1 AND 1 THEN '' ELSE function END,step,ordinal",
+        "key": [
+          "identity"
+        ],
+        "code": "issue"
+      },
+      "violation": {
+        "code": "POLICY",
+        "message": "Policy comparison",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

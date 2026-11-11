@@ -1,0 +1,43 @@
+.policy "eslint-no-extra-bind" revision 3
+.description "Remove bind() calls that do nothing because the function is an arrow function or never uses this."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-functions.rr"
+//   deparen, static_prop, call_arg, this_owner
+
+// ESLint's no-extra-bind: `.bind(x)` called directly on a function that cannot use it: an arrow, or a
+// function whose own `this` never appears (an arrow inside it shares its `this`; a nested function, a class
+// field's initialiser and a static block have their own).
+//   const f = function () { foo(); }.bind(bar);          → The function binding is unnecessary.
+//   const f = (() => this.x).bind(bar);                  the same
+//   const f = function () { this.foo(); }.bind(bar);     fine
+// Only bind with exactly one argument: more would also fix arguments. No options. Reported at `bind`.
+// The fix removes `.bind(…)` when the argument has no side effects (a literal, a name, `this`, a function)
+// and no comment would be lost.
+.violation no_extra_bind(at: node) code "no-extra-bind" "The function binding is unnecessary."
+    suppress eslint "no-extra-bind"
+    suppress oxlint "no-extra-bind"
+    fix unbind "Remove the unnecessary .bind()"
+no_extra_bind(p) :- bound(f, c, p), (kind(f, "arrow_function") ; count : { uses_this(f, t) } = 0).
+
+// bound(f, c, p): call c is `f.bind(x)` with one argument that is not a spread; p is the `bind` key.
+.decl bound(f: node, c: node, p: node)
+bound(f, c, p) :- kind(c, "call_expression"), field(c, "function", m), deparen(m, e), static_prop(e, f, "bind"),
+    (kind(f, "function_expression") ; kind(f, "generator_function") ; kind(f, "arrow_function")), count : { call_arg(c, x, i) } = 1, call_arg(c, a, 0), !kind(a, "spread_element"),
+    bind_key(e, p).
+.decl bind_key(e: node, p: node)  // `.bind` gives the name, `["bind"]` the string
+bind_key(e, p) :- kind(e, "member_expression"), field(e, "property", p).
+bind_key(e, p) :- kind(e, "subscript_expression"), field(e, "index", p).
+// uses_this(f, t): `this` t is function f's own: no other function, arrows aside, in between.
+.decl uses_this(f: node, t: node)
+uses_this(f, t) :- kind(t, "this"), this_owner(t, f), !kind(f, "arrow_function").
+
+// The function stays as written, parentheses included: `(() => a).bind(b)()` becomes `(() => a)()`.
+unbind(p) :- bound(_, c, p), call_arg(c, a, 0), pure(a), field(c, "function", m), deparen(m, e),
+    field(e, "object", o), count : { has(c, k, "comment"), !within(k, o) } = 0
+    => replace(c, `$o`).
+.decl pure(a: node)  // ESLint's side-effect-free argument kinds
+pure(a) :- kind(a, k), (k = "string" ; k = "number" ; k = "true" ; k = "false" ; k = "null" ; k = "regex" ;
+    k = "identifier" ; k = "undefined" ; k = "this" ; k = "function_expression" ; k = "generator_function").

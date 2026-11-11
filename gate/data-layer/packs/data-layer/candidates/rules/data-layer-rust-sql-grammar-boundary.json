@@ -1,0 +1,166 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-rust-sql-grammar-boundary",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer rust_sql_grammar_boundary at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "rust/nera_compiler_sql/src/**/*.rs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "options": {
+          "oracleAnalyzer": {
+            "type": "boolean",
+            "default": false
+          },
+          "sourceGate": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      }
+    },
+    {
+      "id": "pattern-0",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\bpyo3\\b",
+          "lines": {
+            "first": true
+          }
+        }
+      },
+      "violation": {
+        "code": "rust_sql_grammar_boundary",
+        "anchor": "witness.span",
+        "message": "rust_sql_grammar_boundary: pattern-0"
+      }
+    },
+    {
+      "id": "pattern-1",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\bpythonize\\b",
+          "lines": {
+            "first": true
+          }
+        }
+      },
+      "violation": {
+        "code": "rust_sql_grammar_boundary",
+        "anchor": "witness.span",
+        "message": "rust_sql_grammar_boundary: pattern-1"
+      }
+    },
+    {
+      "id": "pattern-2",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\bPython\\s*<\\s*'_?\\s*>",
+          "lines": {
+            "first": true
+          }
+        }
+      },
+      "violation": {
+        "code": "rust_sql_grammar_boundary",
+        "anchor": "witness.span",
+        "message": "rust_sql_grammar_boundary: pattern-2"
+      }
+    },
+    {
+      "id": "pattern-3",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\bPyResult\\b",
+          "lines": {
+            "first": true
+          }
+        }
+      },
+      "violation": {
+        "code": "rust_sql_grammar_boundary",
+        "anchor": "witness.span",
+        "message": "rust_sql_grammar_boundary: pattern-3"
+      }
+    },
+    {
+      "id": "pattern-4",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\bPy[A-Z][A-Za-z0-9_]*\\b",
+          "lines": {
+            "first": true
+          }
+        }
+      },
+      "violation": {
+        "code": "rust_sql_grammar_boundary",
+        "anchor": "witness.span",
+        "message": "rust_sql_grammar_boundary: pattern-4"
+      }
+    },
+    {
+      "id": "pattern-5",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "generated_value_is_truthy\\(&runtime::string_value\\(",
+          "lines": {
+            "first": true
+          }
+        }
+      },
+      "violation": {
+        "code": "rust_sql_grammar_boundary",
+        "anchor": "witness.span",
+        "message": "rust_sql_grammar_boundary: pattern-5"
+      }
+    },
+    {
+      "id": "pattern-6",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "runtime::string_value\\(\\\"self\\.",
+          "lines": {
+            "first": true
+          }
+        }
+      },
+      "violation": {
+        "code": "rust_sql_grammar_boundary",
+        "anchor": "witness.span",
+        "message": "rust_sql_grammar_boundary: pattern-6"
+      }
+    },
+    {
+      "id": "pattern-7",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\bast\\.dump\\b",
+          "lines": {
+            "first": true
+          }
+        }
+      },
+      "violation": {
+        "code": "rust_sql_grammar_boundary",
+        "anchor": "witness.span",
+        "message": "rust_sql_grammar_boundary: pattern-7"
+      }
+    }
+  ]
+}

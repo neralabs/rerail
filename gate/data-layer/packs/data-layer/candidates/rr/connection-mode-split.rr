@@ -1,0 +1,92 @@
+.policy "data-layer:connection-mode-split" revision 1
+.description "Mode-specific connection surfaces: no old mixed connection names, private cores stay home, facades keep to their mode."
+.language python
+.mode block
+// SCAN_ROOTS, on one line:
+.scope dirs "_internal", "api", "data_layer", "impl", "l1000_schema", "l1100_exceptions", "l1200_capabilities", "l1300_session", "l1400_types", "l1900_retry", "l2000_connection", "l2050_transaction", "l2055_lazy_result", "l2070_batching", "l7000_versioned_schema", "l7200_versioned_transactions", "l8000_admin"
+.scope tests false
+// Python linter: scripts/lint_connection_mode_split.py. One code, connection_mode_split, for five findings:
+//   - an old mixed connection name (DatabaseConnection, SqlConnection, SessionHandle, …) anywhere: a class name, an
+//     imported name or its `as` alias, a Name, or an attribute;
+//   - a private connection core (_DatabaseConnectionCore, …) named outside the files and roots allowed to hold them;
+//   - a `Sync…Connection` / `Sync…SessionHandle` / `Sync…VersionHandle` class with a public `async def` method;
+//   - an `Async…` class of the same shapes with a public sync method, unless it ends in `_async` or is a handle
+//     factory on the allowlist;
+//   - a private handle core (_SessionHandleCore, _VersionHandleCore) that defines read / write / read_async /
+//     write_async.
+// Methods are the class body's own statements, decorated or not: a def under an `if` in the class body is not one.
+// Names inside string annotations are not checked: the linter's ast does not parse them either.
+//
+//   from x import Thing as SessionHandle      line 1: old name, as an alias
+//   class SyncThingSessionHandle:
+//       async def go(self): ...                line 3: public async method on a sync facade
+
+#include "python/names.rr"
+#include "python/ast.rr"      // ast_name
+
+// The linter's name sets: OLD_PUBLIC_NAMES, PRIVATE_CORE_NAMES, PRIVATE_HANDLE_CORE_NAMES and the forbidden methods.
+.decl cms_old(v: symbol)
+cms_old("DatabaseConnection"). cms_old("DoltDBConnection"). cms_old("MariaDBConnection").
+cms_old("MongoConnection"). cms_old("Neo4jConnection"). cms_old("PostgresConnection").
+cms_old("ReadThroughConnection"). cms_old("SessionHandle"). cms_old("SqlConnection").
+cms_old("SqliteConnection"). cms_old("VersionHandle"). cms_old("VersionedDatabaseConnection").
+.decl cms_core(v: symbol)
+cms_core("_DatabaseConnectionCore"). cms_core("_VersionedDatabaseConnectionCore"). cms_core("_SqlConnectionCore").
+.decl cms_handle_core(v: symbol)
+cms_handle_core("_SessionHandleCore"). cms_handle_core("_VersionHandleCore").
+.decl cms_mixed(v: symbol)
+cms_mixed("read"). cms_mixed("read_async"). cms_mixed("write"). cms_mixed("write_async").
+// Sync methods allowed on async facades (ASYNC_METHODS_ALLOWED_ON_ASYNC_FACADES): context managers and handle
+// factories, which only build the mode-specific handle.
+.decl cms_factory(v: symbol)
+cms_factory("__aenter__"). cms_factory("__aexit__"). cms_factory("authenticated_session_lazy").
+cms_factory("branch_id"). cms_factory("connection"). cms_factory("domain"). cms_factory("invalidate_tip_cache").
+cms_factory("open_read_plan"). cms_factory("open_versioned_read_plan"). cms_factory("open_versioned_write_plan").
+cms_factory("open_write_plan"). cms_factory("session_id"). cms_factory("session"). cms_factory("version").
+// Files that may hold a private core (ALLOWED_PRIVATE_CORE_FILES), besides everything under impl/ and l2070_batching/.
+.decl cms_core_file(p: symbol)
+cms_core_file("impl/common/l2200_sql_dialect/sql_connection.py"). cms_core_file("impl/doltdb/connection.py").
+cms_core_file("impl/mariadb/connection.py"). cms_core_file("impl/mongodb/connection.py").
+cms_core_file("impl/neo4j/connection.py"). cms_core_file("impl/postgres/connection.py").
+cms_core_file("impl/read_through/connection.py"). cms_core_file("impl/sqlite/connection.py").
+cms_core_file("l2000_connection/connection.py"). cms_core_file("l2000_connection/connection_pool.py").
+cms_core_file("l7000_versioned_schema/versioned_connection.py").
+
+// cms_core_ok(d): document d may name a private core.
+.decl cms_core_ok(d: number)
+cms_core_ok(d) :- doc(d, p, _), cms_core_file(p).
+cms_core_ok(d) :- doc(d, p, _), glob("{impl,l2070_batching}/**", p).
+
+// cms_symbol(at, x): a name the linter's _check_symbol tests. at is the node it reports: an import statement for
+// its names, the Name itself otherwise. `import a.b as c` tests b (the last segment) and c; `from m import y as z` tests y and z.
+.decl cms_symbol(at: node, x: symbol)
+cms_symbol(i, x) :- import_alias(i, _, m, "", _), kind(i, "import_statement"), match("(?:.*\\.)?(?<x>[^.]+)", m).
+cms_symbol(i, x) :- import_alias(i, _, _, x, _), x != "".
+cms_symbol(i, l) :- import_alias(i, a, _, _, l), kind(a, "aliased_import").
+cms_symbol(n, x) :- ast_name(n, x).
+// cms_attr(at, x): an attribute `….x`. The linter tests it like a symbol.
+.decl cms_attr(at: node, x: symbol)
+cms_attr(n, x) :- kind(n, "attribute"), field(n, "attribute", a), text(a, x).
+
+// cms_method(c, cx, f, fx): def f, named fx, is a statement of class c's own body (decorated or not).
+.decl cms_method(c: node, cx: symbol, f: node, fx: symbol)
+cms_method(c, cx, f, fx) :- def_name(c, cx), kind(c, "class_definition"), stmt(st, c), defstmt(f, st),
+    kind(f, "function_definition"), def_name(f, fx).
+// cms_facade(c, cx, mode): class c is a mode facade: Sync… or Async…, ending in Connection, SessionHandle or VersionHandle.
+.decl cms_facade(c: node, cx: symbol, mode: symbol)
+cms_facade(c, cx, "sync") :- cms_method(c, cx, _, _), glob("Sync*{Connection,SessionHandle,VersionHandle}", cx).
+cms_facade(c, cx, "async") :- cms_method(c, cx, _, _), glob("Async*{Connection,SessionHandle,VersionHandle}", cx).
+
+.violation connection_mode_split(at: node, what: symbol) "{what}"
+connection_mode_split(c, cat("old mixed connection class ", x)) :- kind(c, "class_definition"), def_name(c, x), cms_old(x).
+connection_mode_split(n, cat("old mixed connection name ", x)) :- cms_symbol(n, x), cms_old(x).
+connection_mode_split(n, cat("old mixed connection attribute ", x)) :- cms_attr(n, x), cms_old(x).
+connection_mode_split(n, cat("private connection core not allowed here: ", x)) :-
+    (cms_symbol(n, x) ; cms_attr(n, x)), cms_core(x), docof(n, d), !cms_core_ok(d).
+connection_mode_split(f, cat("sync facade defines public async method ", fx)) :-
+    cms_facade(c, _, "sync"), cms_method(c, _, f, fx), is_async(f), !prefix("_", fx).
+connection_mode_split(f, cat("async facade defines public sync method ", fx)) :-
+    cms_facade(c, _, "async"), cms_method(c, _, f, fx), !is_async(f), !prefix("_", fx), !suffix("_async", fx),
+    !cms_factory(fx).
+connection_mode_split(f, cat("private handle core defines forbidden mixed entrypoint ", fx)) :-
+    cms_method(_, cx, f, fx), cms_handle_core(cx), cms_mixed(fx).

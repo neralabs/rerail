@@ -9,6 +9,7 @@ target/
 /native/index.d.ts
 coverage/
 .DS_Store
+__pycache__/
 .rerail/
 /tmp/
 
@@ -22,6 +23,10 @@ coverage/
 scripts/pack-data/runtimes/*/package-lock.json
 scripts/pack-data/runtimes/*/uv.lock
 scripts/pack-data/runtimes/*/composer.lock
+
+# The data-layer port's sixth-batch recording is 30 MB of captured source; `data_layer_record.py --batch 6` regenerates it,
+# and the tests that replay it skip without it.
+fixtures/host/data-layer-port/batch-06-recording.json
 
 # Pack test data (PACK_FIXTURE_PATTERNS, scripts/s3/pack-fixtures.mjs), each tool's test cases and its expected
 # findings on them, is never in git. Each tool-pack's data is one archive in S3, which its tracked test-data.lock names

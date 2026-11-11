@@ -1,0 +1,38 @@
+.policy "ruff-pt006-pytest-parametrize-names-wrong-type" revision 2
+.description "Pass pytest.mark.parametrize names as a tuple of strings, or a plain string for a single name, not a comma-separated string or a list."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT006 (flake8-pytest-style): the names argument of a `pytest.mark.parametrize(names, values)` call, wherever
+// the call is, against option `parametrize-names-type`: "tuple" (the default), "list" or "csv".
+//   @pytest.mark.parametrize("a, b", …)          ← PT006 unless "csv": several names in one string
+//   @pytest.mark.parametrize(["a", "b"], …)      ← PT006 unless "list"
+//   @pytest.mark.parametrize(("a", "b"), …)      ← PT006 unless "tuple"
+//   @pytest.mark.parametrize(("a",), …)          ← PT006 always: one name in a sequence; write "a"
+//   @pytest.mark.parametrize("a", …)             not reported
+// Both arguments must be there (by position or as argnames=/argvalues=). A string is reported with its
+// parentheses, as written.
+#include "python/pytest.rr"
+//   exc_call(c, q), exc_argument(c, k, i, a), exc_written(a, w), pytest_several(s)
+
+.violation PT006(at: node, id: symbol) code "PT006" "{id}"
+    suppress ruff "PT006"
+PT006(w, m) :- names(n), pytest_several(n), want(t), t != "csv", exc_written(n, w), says(t, m).
+PT006(n, "Pass a single parametrize name as a plain string and unpack each one-item row of values the same way; leave it if the rows are not literal one-item sequences.") :-
+    names(n), (kind(n, "tuple") ; kind(n, "list")), size(n, 1).
+PT006(n, m) :- names(n), kind(n, k), (k = "tuple", t = "tuple" ; k = "list", t = "list"), !size(n, 1), want(w), w != t,
+    says(w, m).
+
+.decl names(n: node)  // the names argument of a parametrize call that has its values too
+names(n) :- exc_call(c, "pytest.mark.parametrize"), exc_argument(c, "argnames", 0, n),
+    exc_argument(c, "argvalues", 1, _).
+.decl size(s: node, k: number)
+size(s, k) :- names(s), k = count : { child(s, e, _), !kind(e, "comment") }.
+.decl want(t: symbol)  // the option, "tuple" by default
+want(t) :- option("parametrize-names-type", t).
+want("tuple") :- !option("parametrize-names-type", _).
+.decl says(t: symbol, m: symbol)
+says("tuple", "Pass the parametrize names as a tuple of strings, `(\"a\", \"b\")`.").
+says("list", "Pass the parametrize names as a list of strings, `[\"a\", \"b\"]`.").
+says("csv", "Pass the parametrize names as one comma-separated string, `\"a, b\"`.").

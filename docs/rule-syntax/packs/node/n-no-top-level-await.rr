@@ -1,0 +1,30 @@
+.policy "n-no-top-level-await" revision 2
+.description "Avoid top-level await in modules npm publishes; require() cannot load an ES module that uses it, so move the await into an async function the module exports or calls."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/no-top-level-await: a published module must not use `await` outside functions, since a
+// module that awaits at its top level cannot be loaded with require():
+//   await load();   for await (const x of xs) {}   await using r = open();      reported outside any function
+//   async function f() { await load(); }                                         not
+// Files no package.json governs, and files npm does not publish (npm_ignored), are skipped. ignoreBin (default
+// false) also skips files that start with `#!/usr/bin/env` and files package.json's bin names. Not read:
+// convertPath.
+
+#include "tsx/node-package.rr"   // pkg_file, npm_ignored, pkg_bin_file, src_env_shebang
+#include "tsx/statements.rr"     // var_decl
+#include "tsx/eslint-a-common.rr"   // function_node
+
+.decl published(d: number)
+published(d) :- pkg_file(d, _, _), doc(d, f, _), !npm_ignored(f), !skip_bin(d).
+.decl skip_bin(d: number)
+skip_bin(d) :- option("ignoreBin", "true"), (src_env_shebang(d) ; pkg_bin_file(d)).
+
+.decl awaits(n: node)
+awaits(n) :- kind(n, "await_expression").
+awaits(n) :- kind(n, "for_in_statement"), op(n, "await").
+awaits(n) :- var_decl(n, "await using").
+
+.violation top_level_await(at: node) code "n/no-top-level-await" "Top-level `await` is forbidden in published modules."
+    suppress eslint "n/no-top-level-await"
+top_level_await(n) :- awaits(n), !inside(n, _, function_node), docof(n, d), published(d).

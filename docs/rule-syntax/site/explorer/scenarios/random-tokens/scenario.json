@@ -1,0 +1,5 @@
+{
+  "title": "Random numbers for secrets",
+  "rule": "bandit-b311-random",
+  "note": "B311 flags the random module's generators, which are predictable; the secrets module is the one for tokens. Each call through random, an alias, or a name imported from it is a finding."
+}

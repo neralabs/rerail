@@ -1,0 +1,377 @@
+// data-layer-internal-dead-code in Rerail logic: clause `unreachable-internal-symbols`, options at their defaults
+// (oracleAnalyzer false). Source: gate/data-layer/packs/data-layer/candidates/rules/data-layer-internal-dead-code.json.
+//
+// One relation per SQL stage, under the stage's name. A SQL row keyed by (__path, __start) is a node here; a nullable
+// column is a side relation that holds where the column is not NULL. Inputs are matcher atoms with the rule's matchers
+// verbatim; an atom exports only captures every match binds, and an optional capture (`any: [X, {pattern: $_}]`) is
+// read by a second atom whose matcher is X alone, on the same node. The clause is repository-wide (no partitionBy):
+// symbols are joined across documents on computed names (`@cat`, `@concat`).
+//
+// Builtins (t17's catalogue; only `@cat` is built): @rx_replace, @rx_extract, @rx_matches, @replace, @concat, @substr,
+// @instr, @lower, @length, @ltrim, @trim, @sub (a − b − …), @printf, @drop_components (drop k trailing dotted components), @join_nonempty
+// (join the non-empty arguments after the first with the first). A builtin with no value (SQL NULL) binds nothing.
+.policy {"format": "rerail.policy/v1", "id": "data-layer-internal-dead-code", "revision": 2, "mode": "log", "description": "Candidate port of nera-data-layer internal_dead_code at 2b1504adc4291daaf080b2e932962b134da1a69a.", "scope": {"include": ["api/**/*.py", "impl/**/*.py", "data_layer/**/*.py", "_internal/**/*.py", "l1000_cache/**/*.py", "l1000_schema/**/*.py", "l1050_model_registry/**/*.py", "l1050_polymorphism/**/*.py", "l1100_exceptions/**/*.py", "l1200_capabilities/**/*.py", "l1200_content_hash/**/*.py", "l1200_json/**/*.py", "l1200_versioned_ids/**/*.py", "l1250_security/**/*.py", "l1300_session/**/*.py", "l1350_foundational_types/**/*.py", "l1400_config/**/*.py", "l1400_types/**/*.py", "l1450_index_policy_contracts/**/*.py", "l1450_keys/**/*.py", "l1470_matching_contracts/**/*.py", "l1500_llm/**/*.py", "l1900_retry/**/*.py", "l2000_connection/**/*.py", "l2050_transaction/**/*.py", "l2055_lazy_result/**/*.py", "l2060_query_builder/**/*.py", "l2070_batching/**/*.py", "l2080_lazy_orm/**/*.py", "l2090_byte_tracking/**/*.py", "l2090_response/**/*.py", "l2091_rtt_tracking/**/*.py", "l2092_timing_tracking/**/*.py", "l2100_include/**/*.py", "l2110_limits/**/*.py", "l2150_prepared_cache/**/*.py", "l2200_notification/**/*.py", "l2500_binary_diff/**/*.py", "l3000_schema_builder/**/*.py", "l3100_schema_introspector/**/*.py", "l3150_schema_diff/**/*.py", "l3200_metadata/**/*.py", "l3250_migrations/**/*.py", "l3260_startup/**/*.py", "l3500_bulk_ops/**/*.py", "l4000_permissions/**/*.py", "l4050_background_reaper/**/*.py", "l4100_queue/**/*.py", "l4150_scheduler/**/*.py", "l4170_inbound_bridge/**/*.py", "l4200_event_pipeline/**/*.py", "l4250_timers/**/*.py", "l4300_ipc/**/*.py", "l4300_timers/**/*.py", "l4350_timer_driver/**/*.py", "l4400_scheduler/**/*.py", "l4500_trust/**/*.py", "l5000_search_index_policy/**/*.py", "l5000_subscriptions/**/*.py", "l5100_fts/**/*.py", "l5100_llm_router/**/*.py", "l5175_chunking/**/*.py", "l5195_embedding_compute_tables/**/*.py", "l5200_vector_index/**/*.py", "l5250_matching/**/*.py", "l5300_config_compatibility/**/*.py", "l6000_log_table/**/*.py", "l6300_config/**/*.py", "l6500_evidence/**/*.py", "l6510_credentials/**/*.py", "l6520_auth/**/*.py", "l6530_managed_secrets/**/*.py", "l6600_cleanup/**/*.py", "l7000_versioned_schema/**/*.py", "l7100_versioned_operations/**/*.py", "l7200_versioned_transactions/**/*.py", "l7250_versioned_operations/**/*.py", "l7350_versioned_timer_driver/**/*.py", "l7390_versioned_diff_entrypoint/**/*.py", "l7400_versioned_diff/**/*.py", "l7450_versioned_revert/**/*.py", "l7500_commit_triggers/**/*.py", "l7800_versioned_merge/**/*.py", "l7900_versioned_rebase/**/*.py", "l8000_admin/**/*.py", "l8100_ops_analytics/**/*.py", "l9600_graphs/**/*.py", "l9700_graph_query/**/*.py", "l9710_graph_algorithms/**/*.py", "l9720_sparql/**/*.py", "l9750_graphql/**/*.py", "l9800_rippling/**/*.py", "l9850_workflow/**/*.py", "l9875_mcp/**/*.py", "l9900_auto_api/**/*.py"], "exclude": ["**/.git/**", "**/.venv/**", "**/tmp/**", "**/__pycache__/**", "**/tests/**"]}, "clauses": [{"id": "shared", "define": {"options": {"oracleAnalyzer": {"type": "boolean", "default": false}, "sourceGate": {"type": "boolean", "default": true}}, "language": "python", "utils": {"b5-common-1": {"any": [{"all": [{"kind": "identifier"}, {"pattern": "$NAME"}]}, {"all": [{"kind": "typed_parameter"}, {"has": {"all": [{"kind": "identifier"}, {"pattern": "$NAME"}], "stopBy": "neighbor"}}]}, {"all": [{"any": [{"kind": "default_parameter"}, {"kind": "typed_default_parameter"}]}, {"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}]}]}, "b5-common-2": {"inside": {"all": [{"kind": "function_definition"}, {"not": {"inside": {"kind": "function_definition", "stopBy": "end"}}}, {"pattern": "$OWNER"}, {"has": {"pattern": "$FNAME", "stopBy": "neighbor", "field": "name"}}, {"any": [{"inside": {"all": [{"kind": "class_definition"}, {"has": {"pattern": "$CLASS", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$CLASS_NODE"}], "stopBy": {"kind": "class_definition"}}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$RET", "stopBy": "neighbor", "field": "return_type"}}, {"pattern": "$_"}]}, {"has": {"pattern": "$BODY", "stopBy": "neighbor", "field": "body"}}], "stopBy": {"kind": "function_definition"}}}}}}, {"id": "unreachable-internal-symbols", "relational": "rdl", "violation": {"code": "internal_dead_code", "message": "Unreachable internal symbol", "anchor": "witness.span"}}]}
+
+.decl cdef(kind: symbol)
+cdef("class_definition").
+.decl finding(category: symbol, symbol: symbol, n: node)
+.output finding
+
+// ---- inputs (evidence) ----
+.decl raw_function(f: node, name: symbol)
+raw_function(f, name) :- ast(d, f, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "function_definition"}, {"not": {"inside": {"kind": "function_definition", "stopBy": "end"}}}, {"pattern": "$OWNER"}, {"has": {"pattern": "$FNAME", "stopBy": "neighbor", "field": "name"}}, {"any": [{"inside": {"all": [{"kind": "class_definition"}, {"has": {"pattern": "$CLASS", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$CLASS_NODE"}], "stopBy": {"kind": "class_definition"}}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$RET", "stopBy": "neighbor", "field": "return_type"}}, {"pattern": "$_"}]}, {"has": {"pattern": "$BODY", "stopBy": "neighbor", "field": "body"}}]}}, FNAME: n), text(n, name).
+// CLASS/CLASS_NODE: `inside` a class_definition, stopping at the first one, of a function in no function: its nearest.
+.decl raw_function_class(f: node, class: symbol)
+raw_function_class(f, class) :- raw_function(f, _), nearest(f, c, cdef), field(c, "name", n), text(n, class).
+.decl raw_class(c: node, name: symbol)
+raw_class(c, name) :- ast(d, c, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "class_definition"}, {"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"has": {"pattern": "$BODY", "stopBy": "neighbor", "field": "body"}}]}}, NAME: n), text(n, name).
+.decl raw_decorator(owner: node, name: symbol)
+raw_decorator(o, name) :- ast(d, x, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "decorator"}, {"pattern": "$DECO"}, {"inside": {"all": [{"kind": "decorated_definition"}, {"has": {"all": [{"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]}, {"pattern": "$DECL"}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}}, DECL: o), text(x, s), name = @rx_extract(s, "^@\\s*([^\\s(]+)", 1).
+.decl raw_parameter(p: node, owner: node, name: symbol)
+raw_parameter(p, o, name) :- ast(d, p, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"matches": "b5-common-1"}, {"not": {"any": [{"kind": "list_splat_pattern"}, {"kind": "dictionary_splat_pattern"}, {"all": [{"kind": "typed_parameter"}, {"has": {"any": [{"kind": "list_splat_pattern"}, {"kind": "dictionary_splat_pattern"}], "stopBy": "neighbor"}}]}]}}, {"not": {"precedes": {"kind": "positional_separator", "stopBy": "end"}}}, {"inside": {"kind": "parameters", "stopBy": "neighbor"}}, {"matches": "b5-common-2"}, {"pattern": "$PARAM"}]}, {"any": [{"has": {"pattern": "$TYPE", "stopBy": "neighbor", "field": "type"}}, {"pattern": "$_"}]}]}}, OWNER: o, NAME: n), text(n, name).
+.decl raw_parameter_annotation(owner: node, p: node, name: symbol)
+raw_parameter_annotation(o, p, name) :- ast(d, t, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "identifier"}, {"pattern": "$TOKEN"}, {"inside": {"all": [{"matches": "b5-common-1"}, {"not": {"any": [{"kind": "list_splat_pattern"}, {"kind": "dictionary_splat_pattern"}, {"all": [{"kind": "typed_parameter"}, {"has": {"any": [{"kind": "list_splat_pattern"}, {"kind": "dictionary_splat_pattern"}], "stopBy": "neighbor"}}]}]}}, {"not": {"precedes": {"kind": "positional_separator", "stopBy": "end"}}}, {"inside": {"kind": "parameters", "stopBy": "neighbor"}}, {"matches": "b5-common-2"}, {"pattern": "$PARAM"}], "field": "type", "stopBy": "end"}}]}}, OWNER: o, PARAM: p), text(t, name).
+.decl raw_return_annotation(owner: node, name: symbol)
+raw_return_annotation(o, name) :- ast(d, t, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "identifier"}, {"pattern": "$TOKEN"}, {"inside": {"all": [{"kind": "function_definition"}, {"not": {"inside": {"kind": "function_definition", "stopBy": "end"}}}, {"pattern": "$OWNER"}, {"has": {"pattern": "$FNAME", "stopBy": "neighbor", "field": "name"}}, {"any": [{"inside": {"all": [{"kind": "class_definition"}, {"has": {"pattern": "$CLASS", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$CLASS_NODE"}], "stopBy": {"kind": "class_definition"}}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$RET", "stopBy": "neighbor", "field": "return_type"}}, {"pattern": "$_"}]}, {"has": {"pattern": "$BODY", "stopBy": "neighbor", "field": "body"}}], "field": "return_type", "stopBy": "end"}}]}}, OWNER: o), text(t, name).
+.decl raw_import(i: node)
+raw_import(i) :- ast(d, i, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "import_from_statement"}, {"kind": "import_statement"}]}, {"regex": "(?s)^(?:from\\s+(?P<BASE>[^\\s]+)\\s+)?import\\s+(?P<ITEMS>.*)$"}, {"any": [{"all": [{"inside": {"kind": "module", "stopBy": "neighbor"}}, {"pattern": "$TOP"}]}, {"pattern": "$_"}]}]}}).
+.decl raw_import_base(i: node, base: symbol)
+raw_import_base(i, b) :- ast(d, i, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "import_from_statement"}, {"kind": "import_statement"}]}, {"regex": "(?s)^(?:from\\s+(?P<BASE>[^\\s]+)\\s+)?import\\s+(?P<ITEMS>.*)$"}, {"any": [{"all": [{"inside": {"kind": "module", "stopBy": "neighbor"}}, {"pattern": "$TOP"}]}, {"pattern": "$_"}]}]}}, BASE: b).
+// TOP: the statement is a child of the module.
+.decl raw_import_top(i: node)
+raw_import_top(i) :- raw_import(i), child(m, i, _), kind(m, "module").
+.decl raw_base(owner: node, b: node, name: symbol)
+raw_base(c, b, name) :- ast(d, b, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "identifier"}, {"kind": "attribute"}, {"kind": "generic_type"}, {"kind": "subscript"}]}, {"pattern": "$BASE"}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"all": [{"kind": "class_definition"}, {"pattern": "$CLASS"}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}}, CLASS: c), text(b, name).
+.decl raw_all(a: node)
+raw_all(a) :- ast(d, a, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"kind": "assignment"}, {"has": {"pattern": "__all__", "stopBy": "neighbor", "field": "left"}}, {"pattern": "$ALL"}, {"inside": {"kind": "expression_statement", "stopBy": "neighbor"}}, {"inside": {"kind": "module", "stopBy": "end"}}, {"not": {"inside": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}, {"kind": "if_statement"}, {"kind": "try_statement"}], "stopBy": "end"}}}]}, {"any": [{"has": {"all": [{"any": [{"kind": "list"}, {"kind": "tuple"}]}, {"pattern": "$ARRAY"}], "stopBy": "neighbor", "field": "right"}}, {"pattern": "$_"}]}]}, "file": {"path": {"regex": "^data_layer/[^/]+\\.py$"}}}).
+// ARRAY: the assignment's right side, a list or tuple.
+.decl raw_all_array(a: node)
+raw_all_array(a) :- raw_all(a), field(a, "right", r), kind(r, "list").
+raw_all_array(a) :- raw_all(a), field(a, "right", r), kind(r, "tuple").
+.decl raw_all_name(owner: node, name: symbol)
+raw_all_name(a, name) :- ast(d, v, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"pattern": "$VALUE"}, {"inside": {"all": [{"any": [{"kind": "list"}, {"kind": "tuple"}]}, {"inside": {"all": [{"kind": "assignment"}, {"has": {"pattern": "__all__", "stopBy": "neighbor", "field": "left"}}, {"pattern": "$ALL"}, {"inside": {"kind": "expression_statement", "stopBy": "neighbor"}}, {"inside": {"kind": "module", "stopBy": "end"}}, {"not": {"inside": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}, {"kind": "if_statement"}, {"kind": "try_statement"}], "stopBy": "end"}}}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}, "transform": {"TEXT": {"replace": {"source": "$VALUE", "value": true, "replace": "\\b\\B", "by": ""}}}, "file": {"path": {"regex": "^data_layer/[^/]+\\.py$"}}}, ALL: a, TEXT: name).
+.decl raw_module_name(w: node, d: number, name: symbol)
+raw_module_name(w, d, name) :- ast(d, w, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "identifier"}, {"pattern": "$WORD"}, {"not": {"inside": {"any": [{"kind": "import_statement"}, {"kind": "import_from_statement"}], "stopBy": "end"}}}, {"not": {"inside": {"kind": "attribute", "field": "attribute", "stopBy": "neighbor"}}}, {"not": {"inside": {"kind": "keyword_argument", "field": "name", "stopBy": "neighbor"}}}, {"not": {"inside": {"kind": "function_definition", "field": "name", "stopBy": "neighbor"}}}, {"not": {"inside": {"kind": "class_definition", "field": "name", "stopBy": "neighbor"}}}, {"not": {"binds": {"form": ["parameter"]}}}, {"any": [{"not": {"inside": {"all": [{"kind": "block"}, {"inside": {"kind": "function_definition", "stopBy": "neighbor"}}], "stopBy": "end"}}}, {"inside": {"all": [{"kind": "class_definition"}, {"inside": {"kind": "class_definition", "stopBy": "end"}}, {"not": {"inside": {"kind": "function_definition", "stopBy": "end"}}}], "stopBy": "end"}}, {"inside": {"all": [{"not": {"any": [{"kind": "class_definition"}, {"kind": "function_definition"}, {"kind": "decorated_definition"}]}}, {"inside": {"kind": "module", "stopBy": "neighbor"}}], "stopBy": "end"}}]}, {"any": [{"inside": {"all": [{"kind": "decorated_definition"}, {"has": {"all": [{"kind": "function_definition"}, {"pattern": "$DEC_FN"}], "stopBy": "neighbor"}}], "stopBy": "end"}}, {"pattern": "$_"}]}, {"any": [{"inside": {"all": [{"kind": "decorated_definition"}, {"has": {"all": [{"kind": "class_definition"}, {"pattern": "$DEC_CLASS"}], "stopBy": "neighbor"}}], "stopBy": "end"}}, {"pattern": "$_"}]}, {"any": [{"inside": {"all": [{"kind": "function_definition"}, {"pattern": "$FUNCTION"}], "stopBy": {"kind": "function_definition"}}}, {"pattern": "$_"}]}, {"any": [{"inside": {"all": [{"kind": "class_definition"}, {"pattern": "$CLASS"}], "stopBy": "end"}}, {"pattern": "$_"}]}, {"any": [{"inside": {"all": [{"kind": "block"}, {"pattern": "$CLASS_BODY"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "end"}}, {"pattern": "$_"}]}, {"any": [{"inside": {"all": [{"any": [{"kind": "default_parameter"}, {"kind": "typed_default_parameter"}]}, {"pattern": "$DEFAULT"}], "field": "value", "stopBy": "end"}}, {"pattern": "$_"}]}, {"any": [{"inside": {"all": [{"all": [{"kind": "class_definition"}, {"inside": {"kind": "class_definition", "stopBy": "end"}}, {"not": {"inside": {"kind": "function_definition", "stopBy": "end"}}}]}, {"pattern": "$NESTED"}], "stopBy": "end"}}, {"pattern": "$_"}]}, {"any": [{"inside": {"all": [{"pattern": "$CONTROL"}, {"not": {"any": [{"kind": "class_definition"}, {"kind": "function_definition"}, {"kind": "decorated_definition"}]}}, {"inside": {"kind": "module", "stopBy": "neighbor"}}], "stopBy": "end"}}, {"pattern": "$_"}]}]}}), text(w, name).
+.decl mn_dec_fn(w: node, f: node)
+mn_dec_fn(w, f) :- raw_module_name(w, d, _), ast(d, w, {"language": "python", "rule": {"inside": {"all": [{"kind": "decorated_definition"}, {"has": {"all": [{"kind": "function_definition"}, {"pattern": "$DEC_FN"}], "stopBy": "neighbor"}}], "stopBy": "end"}}}, DEC_FN: f).
+.decl mn_dec_class(w: node)
+mn_dec_class(w) :- raw_module_name(w, d, _), ast(d, w, {"language": "python", "rule": {"inside": {"all": [{"kind": "decorated_definition"}, {"has": {"all": [{"kind": "class_definition"}, {"pattern": "$DEC_CLASS"}], "stopBy": "neighbor"}}], "stopBy": "end"}}}).
+.decl mn_function(w: node, f: node)
+mn_function(w, f) :- raw_module_name(w, d, _), ast(d, w, {"language": "python", "rule": {"inside": {"all": [{"kind": "function_definition"}, {"pattern": "$FUNCTION"}], "stopBy": {"kind": "function_definition"}}}}, FUNCTION: f).
+.decl mn_class(w: node)
+mn_class(w) :- raw_module_name(w, d, _), ast(d, w, {"language": "python", "rule": {"inside": {"all": [{"kind": "class_definition"}, {"pattern": "$CLASS"}], "stopBy": "end"}}}).
+.decl mn_class_body(w: node)
+mn_class_body(w) :- raw_module_name(w, d, _), ast(d, w, {"language": "python", "rule": {"inside": {"all": [{"kind": "block"}, {"pattern": "$CLASS_BODY"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "end"}}}).
+.decl mn_default(w: node)
+mn_default(w) :- raw_module_name(w, d, _), ast(d, w, {"language": "python", "rule": {"inside": {"all": [{"any": [{"kind": "default_parameter"}, {"kind": "typed_default_parameter"}]}, {"pattern": "$DEFAULT"}], "field": "value", "stopBy": "end"}}}).
+.decl mn_nested(w: node)
+mn_nested(w) :- raw_module_name(w, d, _), ast(d, w, {"language": "python", "rule": {"inside": {"all": [{"all": [{"kind": "class_definition"}, {"inside": {"kind": "class_definition", "stopBy": "end"}}, {"not": {"inside": {"kind": "function_definition", "stopBy": "end"}}}]}, {"pattern": "$NESTED"}], "stopBy": "end"}}}).
+.decl mn_control(w: node)
+mn_control(w) :- raw_module_name(w, d, _), ast(d, w, {"language": "python", "rule": {"inside": {"all": [{"pattern": "$CONTROL"}, {"not": {"any": [{"kind": "class_definition"}, {"kind": "function_definition"}, {"kind": "decorated_definition"}]}}, {"inside": {"kind": "module", "stopBy": "neighbor"}}], "stopBy": "end"}}}).
+// raw_modules projects `file.module`, which needs the package roots: the missing `module_of` facts.
+.decl raw_module(d: number, module: symbol)
+raw_module(d, m) :- ast(d, x, {"language": "python", "syntax": "valid", "rule": {"kind": "module"}}), module_of(d, m).
+.decl raw_dynamic_import(entry: symbol)
+raw_dynamic_import(e) :- ast(d, x, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "module"}, {"regex": "(?P<ENTRY>(?:\\bimport_module|\\bload_python_module|\\bimportlib\\.import_module)\\(\\s*['\\\"](?P<module>[^'\\\"]+)['\\\"]\\s*\\)\\.(?P<attr>[A-Za-z_][A-Za-z0-9_]*))"}]}}, ENTRY: e).
+
+// ---- inventory, declarations ----
+.decl inventory(id: symbol, x: node, d: number, name: symbol, kind: symbol, module: symbol, fqname: symbol)
+inventory(id, f, d, name, "function", m, fq) :- raw_function(f, name), !raw_function_class(f, _), docof(f, d), path_module(d, m),
+    id = @concat(m, "::", name), fq = @dot(m, name).
+inventory(id, f, d, name, "method", m, fq) :- raw_function(f, name), raw_function_class(f, c), docof(f, d), path_module(d, m),
+    q = @dot(c, name), id = @concat(m, "::", q), fq = @dot(m, q).
+inventory(id, c, d, name, "class", m, fq) :- raw_class(c, name), docof(c, d), path_module(d, m),
+    id = @concat(m, "::", name), fq = @dot(m, name).
+// row_number() OVER (PARTITION BY id ORDER BY __start DESC) = 1: the last definition of each id.
+.decl inventory_start(id: symbol, s: number)
+inventory_start(id, s) :- inventory(id, x, _, _, _, _, _), start(x, s).
+.decl last_start(id: symbol, s: number)
+last_start(id, s) :- inventory_start(id, _), s = max t : { inventory_start(id, t) }.
+.decl declarations(id: symbol, x: node, d: number, name: symbol, kind: symbol, module: symbol, fqname: symbol)
+declarations(id, x, d, n, k, m, fq) :- inventory(id, x, d, n, k, m, fq), start(x, s), last_start(id, s).
+.decl decl_class(id: symbol, class: symbol)
+decl_class(id, c) :- declarations(id, x, _, _, "method", _, _), raw_function_class(x, c).
+.decl declared_fq(fqname: symbol)
+declared_fq(fq) :- declarations(_, _, _, _, _, _, fq).
+
+// ---- parameters, annotation_names ----
+.decl parameters(p: node, symbol: symbol, name: symbol)
+parameters(p, id, n) :- raw_parameter(p, o, n), declarations(id, o, _, _, _, _, _), !decl_class(id, _).
+parameters(p, id, n) :- raw_parameter(p, o, n), declarations(id, o, _, _, _, _, _), n != "self", n != "cls".
+.decl annotation_names(symbol: symbol, name: symbol)
+annotation_names(id, n) :- raw_return_annotation(o, n), declarations(id, o, _, _, _, _, _).
+annotation_names(id, n) :- raw_parameter_annotation(_, p, n), parameters(p, id, _).
+
+// ---- imports ----
+// The SQL splits the statement's text at commas (`tokens`, a recursion through @substr) and strips leading package
+// components one per round (`relative`, a counter-bounded recursion). Over the tape the items are the statement's
+// `name` children, and the stripping is one builtin: no recursion.
+.decl import_item(i: node, x: node, original: symbol)
+import_item(i, x, o) :- raw_import(i), field(i, "name", x), kind(x, "dotted_name"), text(x, o).
+import_item(i, x, o) :- raw_import(i), field(i, "name", x), kind(x, "aliased_import"), field(x, "name", n), text(n, o).
+.decl import_alias(x: node, alias: symbol)
+import_alias(x, a) :- import_item(_, x, _), field(x, "alias", n), text(n, a).
+// The package a relative import starts from: the module for a package's __init__.py, else its parent.
+.decl import_package(i: node, module: symbol, package: symbol)
+import_package(i, m, m) :- raw_import_base(i, _), docof(i, d), doc(d, p), path_module(d, m), @rx_matches(p, "/__init__\\.py$") = 1.
+import_package(i, m, pkg) :- raw_import_base(i, _), docof(i, d), doc(d, p), path_module(d, m), @rx_matches(p, "/__init__\\.py$") = 0,
+    pkg = @rx_replace(m, "\\.?[^.]+$", "").
+.decl import_candidate(i: node, module: symbol, name: symbol, target: symbol, kind: symbol)
+import_candidate(i, m, a, o, "module") :- import_item(i, x, o), !raw_import_base(i, _), docof(i, d), path_module(d, m), import_alias(x, a).
+import_candidate(i, m, n, o, "module") :- import_item(i, x, o), !raw_import_base(i, _), docof(i, d), path_module(d, m), !import_alias(x, _),
+    n = @rx_extract(o, "^[^.]+", 0).
+import_candidate(i, m, n, t, "symbol") :- import_item(i, x, o), raw_import_base(i, b), @substr(b, 1, 1) != ".", docof(i, d), path_module(d, m),
+    t = @dot(b, o), import_alias(x, n).
+import_candidate(i, m, o, t, "symbol") :- import_item(i, x, o), raw_import_base(i, b), @substr(b, 1, 1) != ".", docof(i, d), path_module(d, m),
+    t = @dot(b, o), !import_alias(x, _).
+import_candidate(i, m, n, t, "symbol") :- import_item(i, x, o), raw_import_base(i, b), @substr(b, 1, 1) = ".", import_package(i, m, pkg),
+    up = @sub(@length(b), @length(@ltrim(b, ".")), 1), prefix = @drop_components(pkg, up), t = @join_nonempty(".", prefix, @ltrim(b, "."), o),
+    import_alias(x, n).
+import_candidate(i, m, o, t, "symbol") :- import_item(i, x, o), raw_import_base(i, b), @substr(b, 1, 1) = ".", import_package(i, m, pkg),
+    up = @sub(@length(b), @length(@ltrim(b, ".")), 1), prefix = @drop_components(pkg, up), t = @join_nonempty(".", prefix, @ltrim(b, "."), o),
+    !import_alias(x, _).
+// row_number() OVER (PARTITION BY module, name, base IS NULL ORDER BY ordinal DESC) = 1: the last import of a name.
+.decl import_start(module: symbol, name: symbol, kind: symbol, s: number)
+import_start(m, n, k, s) :- import_candidate(i, m, n, _, k), start(i, s).
+.decl import_last(module: symbol, name: symbol, kind: symbol, s: number)
+import_last(m, n, k, s) :- import_start(m, n, k, _), s = max t : { import_start(m, n, k, t) }.
+.decl imports(i: node, module: symbol, name: symbol, target: symbol, kind: symbol)
+imports(i, m, n, t, k) :- import_candidate(i, m, n, t, k), start(i, s), import_last(m, n, k, s).
+
+// ---- resolved_names: a set recursion over the re-export graph ----
+.decl reexport(target: symbol, fqname: symbol)
+reexport(t, fq) :- imports(_, m, n, t, "symbol"), fq = @dot(m, n), !declared_fq(fq).
+.decl resolved_names(fqname: symbol, symbol: symbol)
+resolved_names(fq, id) :- declarations(id, _, _, _, _, _, fq).
+resolved_names(fq, id) :- resolved_names(t, id), reexport(t, fq).
+
+// ---- base_edges ----
+// coalesce(three lookups): the first that finds a class. The first two end in LIMIT 1 with no ORDER BY, an arbitrary
+// row; here every row they could pick is kept.
+.decl base_name(owner: symbol, module: symbol, name: symbol, ordinal: number)
+base_name(id, m, bn, s) :- raw_base(c, r, name), declarations(id, c, _, _, _, m, _), start(r, s),
+    bn = @trim(@rx_replace(@rx_replace(name, "(?s)\\[.*$", ""), "^.*\\.", "")).
+.decl base_via_import(owner: symbol, base: symbol)
+base_via_import(id, b) :- base_name(id, m, bn, _), imports(_, m, bn, t, "symbol"), declarations(b, _, _, _, "class", _, t).
+.decl base_via_module(owner: symbol, base: symbol)
+base_via_module(id, b) :- base_name(id, m, bn, _), declarations(b, _, _, bn, "class", m, _).
+.decl class_named(name: symbol, id: symbol)
+class_named(n, id) :- declarations(id, _, _, n, "class", _, _).
+// (SELECT min(c.id) … HAVING count(*) = 1): the one class of that name.
+.decl unique_class(name: symbol, id: symbol)
+unique_class(n, id) :- class_named(n, id), k = count : { class_named(n, _) }, k = 1.
+.decl base_target(owner: symbol, base: symbol)
+base_target(id, b) :- base_via_import(id, b).
+base_target(id, b) :- base_via_module(id, b), !has_base_via_import(id).
+base_target(id, b) :- base_name(id, _, bn, _), unique_class(bn, b), !has_base_via_import(id), !has_base_via_module(id).
+.decl has_base_via_import(owner: symbol)
+has_base_via_import(id) :- base_via_import(id, _).
+.decl has_base_via_module(owner: symbol)
+has_base_via_module(id) :- base_via_module(id, _).
+.decl base_edges(owner: symbol, base: symbol, ordinal: number)
+base_edges(id, b, s) :- base_name(id, _, _, s), base_target(id, b).
+
+// ---- hierarchy: every base of a class, at the least (depth, route) ----
+// The SQL enumerates every simple path (`seen` guards cycles) and keeps row_number() = 1 by (depth, route). Each hop
+// appends 13 characters to the route, so (depth, route) orders as (length, text): a best-witness lattice under
+// shortlex. A least route is a shortest path, hence simple, so the guard is not needed (E0 § 2.2).
+.lattice shortlex_min<symbol> { Lub -> @shortlex_min }
+.decl hierarchy(owner: symbol, base: symbol, route: shortlex_min<>) widen 64
+hierarchy(id, id, "") :- declarations(id, _, _, _, "class", _, _).
+hierarchy(o, b, r) :- hierarchy(o, x, r0), base_edges(x, b, ord), r = @concat(r0, @printf("%012d.", ord)).
+
+// ---- public_methods ----
+.decl property_like(x: node)
+property_like(x) :- raw_decorator(x, n), @rx_matches(n, "property$|\\.setter$|\\.deleter$") = 1.
+.decl excluded_method(name: symbol)
+excluded_method("__aenter__"). excluded_method("__aexit__"). excluded_method("__enter__"). excluded_method("__exit__").
+excluded_method("__init__"). excluded_method("__repr__"). excluded_method("__str__"). excluded_method("authorize_internal_access").
+excluded_method("disable_thread_affinity_checks"). excluded_method("get_thread_checks_disabled"). excluded_method("set_disable_thread_checks").
+excluded_method("validate_legacy_delegates"). excluded_method("versioned_read"). excluded_method("versioned_write").
+.decl public_candidate(owner: symbol, name: symbol, symbol: symbol, len: number, route: symbol)
+public_candidate(o, n, id, l, r) :- hierarchy(o, c, r), declarations(c, _, _, cn, _, cm, _), declarations(id, x, _, n, "method", cm, _),
+    decl_class(id, cn), @substr(n, 1, 1) != "_", !excluded_method(n), !property_like(x), l = @length(r).
+// row_number() OVER (PARTITION BY owner, name ORDER BY depth, route) = 1, as two aggregates.
+.decl public_len(owner: symbol, name: symbol, len: number)
+public_len(o, n, l) :- public_candidate(o, n, _, l, _).
+.decl public_best_len(owner: symbol, name: symbol, len: number)
+public_best_len(o, n, l) :- public_len(o, n, _), l = min k : { public_len(o, n, k) }.
+.decl public_route(owner: symbol, name: symbol, route: symbol)
+public_route(o, n, r) :- public_candidate(o, n, _, l, r), public_best_len(o, n, l).
+.decl public_best_route(owner: symbol, name: symbol, route: symbol)
+public_best_route(o, n, r) :- public_route(o, n, _), r = min q : { public_route(o, n, q) }.
+.decl public_methods(owner: symbol, name: symbol, symbol: symbol)
+public_methods(o, n, id) :- public_candidate(o, n, id, _, r), public_best_route(o, n, r).
+
+// ---- exports ----
+// explicit_exports: row_number() OVER (PARTITION BY __path ORDER BY __start) = 1, the first __all__ of a file.
+.decl all_start(d: number, s: number)
+all_start(d, s) :- raw_all(a), docof(a, d), start(a, s).
+.decl first_all_start(d: number, s: number)
+first_all_start(d, s) :- all_start(d, _), s = min t : { all_start(d, t) }.
+.decl first_all(d: number, a: node)
+first_all(d, a) :- raw_all(a), docof(a, d), start(a, s), first_all_start(d, s).
+.decl export_names(d: number, module: symbol, name: symbol, target: symbol)
+export_names(d, m, n, t) :- imports(i, m, n, t, "symbol"), raw_import_top(i), docof(i, d), doc(d, p), @rx_matches(p, "^data_layer/[^/]+\\.py$") = 1.
+export_names(d, m, n, fq) :- declarations(id, _, d, n, k, m, fq), k != "method", doc(d, p), @rx_matches(p, "^data_layer/[^/]+\\.py$") = 1.
+.decl exported_roots(symbol: symbol)
+exported_roots(id) :- export_names(d, _, n, t), resolved_names(t, id), @substr(n, 1, 1) != "_", !has_all(d).
+exported_roots(id) :- export_names(d, _, n, t), resolved_names(t, id), @substr(n, 1, 1) != "_", first_all(d, a), raw_all_array(a), raw_all_name(a, n).
+.decl has_all(d: number)
+has_all(d) :- first_all(d, _).
+
+// ---- dead_traits ----
+.decl dead_traits(id: symbol, x: node, d: number, name: symbol, kind: symbol, module: symbol, base_name: symbol)
+dead_traits(id, x, d, n, k, m, b) :- declarations(id, x, d, n, k, m, _), b = @rx_replace(n, "_(?:async|lazy)$", "").
+.decl class_id(id: symbol, class_id: symbol)
+class_id(id, cid) :- decl_class(id, c), declarations(id, _, _, _, _, m, _), cid = @concat(m, "::", c).
+.decl abstract(id: symbol)
+abstract(id) :- declarations(id, x, _, _, "class", _, _), raw_base(x, _, b), @instr(b, "ABC") > 0.
+abstract(id) :- declarations(id, x, _, _, k, _, _), k != "class", raw_decorator(x, n), @rx_matches(n, "abstractmethod$") = 1.
+.decl property(id: symbol)
+property(id) :- declarations(id, x, _, _, _, _, _), property_like(x).
+.decl implicit(id: symbol)
+implicit(id) :- declarations(id, _, _, n, _, _, _), @rx_matches(n, "^__.*__$") = 1.
+implicit(id) :- declarations(id, _, _, "main", _, _, _).
+implicit(id) :- declarations(id, _, _, "pytest_configure", _, _, _).
+implicit(id) :- declarations(id, _, _, "pytest_collection_modifyitems", _, _, _).
+implicit(id) :- declarations(id, x, _, _, _, _, _), raw_decorator(x, n), @rx_matches(n, "validator$|overload$") = 1.
+.decl structural_protocol(id: symbol)
+structural_protocol(id) :- declarations(id, x, _, _, _, _, _), raw_base(x, _, b), @instr(b, "Protocol") > 0.
+.decl protocol(id: symbol)
+protocol(id) :- structural_protocol(id).
+protocol(id) :- declarations(id, _, _, n, _, _, _), @rx_matches(n, "Protocol$") = 1.
+
+// ---- class_names: the class an annotation names ----
+.decl annotated_name(module: symbol, name: symbol)
+annotated_name(m, n) :- annotation_names(id, n), declarations(id, _, _, _, _, m, _).
+.decl class_via_import(module: symbol, name: symbol, target: symbol)
+class_via_import(m, n, c) :- annotated_name(m, n), imports(_, m, n, t, "symbol"), resolved_names(t, c), declarations(c, _, _, _, "class", _, _).
+.decl has_class_via_import(module: symbol, name: symbol)
+has_class_via_import(m, n) :- class_via_import(m, n, _).
+.decl class_names(module: symbol, name: symbol, target: symbol)
+class_names(m, n, c) :- class_via_import(m, n, c).
+class_names(m, n, c) :- annotated_name(m, n), !has_class_via_import(m, n), declarations(c, _, _, n, "class", m, _).
+
+// ---- module_names: names a module's own code reads ----
+.decl mn_bad(w: node)
+mn_bad(w) :- mn_dec_fn(w, f), !raw_function_class(f, _).
+mn_bad(w) :- mn_dec_class(w), !mn_class_body(w).
+mn_bad(w) :- mn_class(w), !mn_class_body(w).
+mn_bad(w) :- mn_function(w, _), !mn_default(w).
+mn_bad(w) :- mn_function(w, f), !raw_function_class(f, _).
+.decl module_names(module: symbol, name: symbol)
+module_names(m, n) :- raw_module_name(w, d, n), mn_control(w), path_module(d, m).
+module_names(m, n) :- raw_module_name(w, d, n), mn_nested(w), path_module(d, m).
+module_names(m, n) :- raw_module_name(w, d, n), !mn_bad(w), path_module(d, m).
+
+// ---- imported_modules: every dotted prefix of an imported module ----
+// The SQL climbs one package per round (a recursion through rx_replace). `$t = @cat($q, $x)` with t bound splits
+// it at each of its dots (T's `cmp_binds`), which gives every prefix at once.
+.decl imported_module(module: symbol)
+imported_module(t) :- imports(_, _, _, t, "module").
+imported_module(p) :- imports(_, _, _, t, "symbol"), p = @rx_replace(t, "\\.?[^.]+$", ""), p != "".
+.decl imported_modules(module: symbol)
+imported_modules(m) :- imported_module(m).
+imported_modules(q) :- imported_module(m), m = @dot(q, x).
+
+// ---- dead_roots ----
+.decl dead_roots(symbol: symbol)
+dead_roots(s) :- exported_roots(s).
+dead_roots(s) :- public_methods(o, _, s), exported_roots(o).
+dead_roots(s) :- imported_modules(m), s = @concat("@module:", m).
+dead_roots(s) :- raw_dynamic_import(e), resolved_names(fq, s),
+    mod = @rx_extract(e, "(?:\\bimport_module|\\bload_python_module|\\bimportlib\\.import_module)\\(\\s*['\"](?P<module>[^'\"]+)['\"]\\s*\\)\\.(?P<attr>[A-Za-z_][A-Za-z0-9_]*)", 1),
+    attr = @rx_extract(e, "(?:\\bimport_module|\\bload_python_module|\\bimportlib\\.import_module)\\(\\s*['\"](?P<module>[^'\"]+)['\"]\\s*\\)\\.(?P<attr>[A-Za-z_][A-Za-z0-9_]*)", 2),
+    fq = @concat(mod, ".", attr).
+
+// ---- reach_edges ----
+.decl reach_edges(source: symbol, target: symbol)
+reach_edges(s, t) :- reference_edge(sn, tn), declarations(s, sn, _, _, _, _, _), declarations(t, tn, _, _, _, _, _).
+reach_edges(o, s) :- public_methods(o, _, s).
+reach_edges(o, m) :- hierarchy(o, c, _), declarations(c, _, _, cn, _, cm, _), declarations(m, _, _, n, "method", cm, _), decl_class(m, cn), constructor_hook(n).
+reach_edges(o, b) :- base_edges(o, b, _).
+reach_edges(b, o) :- base_edges(o, b, _).
+reach_edges(id, s) :- dead_traits(id, _, _, _, "function", m, b), sibling_name(b, sn), declarations(s, _, _, sn, _, m, _), s != id.
+reach_edges(id, s) :- dead_traits(id, _, _, _, "method", _, b), class_id(id, cid), sibling_name(b, sn), s = @concat(cid, ".", sn), declarations(s, _, _, _, _, _, _), s != id.
+reach_edges(id, c) :- annotation_names(id, n), declarations(id, _, _, _, _, m, _), class_names(m, n, c).
+reach_edges(id, s) :- declarations(id, _, _, _, _, m, _), s = @concat("@module:", m).
+reach_edges(s, id) :- module_names(m, n), declarations(id, _, _, n, _, m, _), s = @concat("@module:", m).
+reach_edges(s, id) :- module_names(m, n), imports(_, m, n, t, "symbol"), declarations(id, _, _, _, _, _, t), !local_name(m, n), s = @concat("@module:", m).
+reach_edges(mid, oid) :- structural_protocol(c), class_id(mid, c), dead_traits(mid, _, _, n, _, _, _), dead_traits(oid, _, _, n, "method", _, _), class_id(oid, oc), oc != c.
+.decl constructor_hook(name: symbol)
+constructor_hook("__new__"). constructor_hook("__init__"). constructor_hook("__init_subclass__"). constructor_hook("__post_init__").
+constructor_hook("__set_name__"). constructor_hook("__class_getitem__").
+// s.name IN (base_name, base_name || '_async', base_name || '_lazy')
+.decl sibling_name(base: symbol, name: symbol)
+sibling_name(b, b) :- dead_traits(_, _, _, _, _, _, b).
+sibling_name(b, n) :- dead_traits(_, _, _, _, _, _, b), n = @concat(b, "_async").
+sibling_name(b, n) :- dead_traits(_, _, _, _, _, _, b), n = @concat(b, "_lazy").
+.decl local_name(module: symbol, name: symbol)
+local_name(m, n) :- declarations(_, _, _, n, _, m, _).
+
+// ---- reachable: a set recursion over (symbol, dispatch) states ----
+// flow(node, NULL) is flow0(node); flow(node, method) is flowd(node, method).
+.decl flow0(node: symbol)
+.decl flowd(node: symbol, dispatch: symbol)
+flow0(s) :- dead_roots(s).
+flow0(t) :- flow0(n), reach_edges(n, t).
+flowd(o, n) :- flow0(n), dead_traits(n, _, _, _, "method", _, _), class_id(n, cid), base_edges(o, cid, _).
+flowd(o, p) :- flowd(n, p), base_edges(o, n, _).
+flowd(b, p) :- flowd(n, p), base_edges(n, b, _), class_id(p, pc), b != pc.
+flow0(m) :- flowd(n, p), declarations(n, _, _, cn, _, cm, _), dead_traits(p, _, _, pn, _, _, _),
+    dead_traits(m, _, _, pn, _, cm, _), decl_class(m, cn).
+.decl reachable(symbol: symbol)
+reachable(s) :- flow0(s).
+
+// ---- annotation_reachable ----
+.decl annotation_reachable(symbol: symbol)
+annotation_reachable(s) :- reachable(s).
+annotation_reachable(c) :- annotation_reachable(s), annotation_names(s, n), unique_class(n, c).
+
+// ---- high_confidence ----
+.decl class_protocol(id: symbol)
+class_protocol(id) :- class_id(id, c), protocol(c).
+// An abstract method of the same name in a proper base of the method's class.
+.decl overrides_abstract(id: symbol)
+overrides_abstract(id) :- dead_traits(id, _, _, n, _, _, _), class_id(id, cid), hierarchy(cid, b, r), r != "",
+    dead_traits(b, _, _, bn, _, bm, _), dead_traits(m, _, _, n, _, bm, _), decl_class(m, bn), abstract(m).
+// A reachable abstract (or ABC-named direct) base of the symbol's class, or of the class itself.
+.decl owner_class(id: symbol, owner: symbol)
+owner_class(id, id) :- dead_traits(id, _, _, _, "class", _, _).
+owner_class(id, c) :- dead_traits(id, _, _, _, k, _, _), k != "class", class_id(id, c).
+.decl reachable_abstract_base(id: symbol)
+reachable_abstract_base(id) :- owner_class(id, o), hierarchy(o, b, r), r != "", dead_traits(b, _, _, _, _, _, _), annotation_reachable(b), abstract(b).
+reachable_abstract_base(id) :- owner_class(id, o), hierarchy(o, b, r), r != "", dead_traits(b, _, _, bn, _, _, _), annotation_reachable(b),
+    @instr(bn, "ABC") > 0, base_edges(o, b, _).
+.decl kept(id: symbol)
+kept(id) :- annotation_reachable(id).
+kept(id) :- dead_traits(id, _, _, _, _, m, _), @rx_matches(m, "^(?:api|data_layer)\\.") = 1.
+kept(id) :- implicit(id).
+kept(id) :- declarations(id, _, _, _, _, _, fq), imports(_, _, _, fq, "symbol").
+kept(id) :- dead_traits(id, _, _, _, "class", _, _), protocol(id).
+kept(id) :- dead_traits(id, _, _, _, k, _, _), k != "class", abstract(id).
+kept(id) :- dead_traits(id, _, _, _, k, _, _), k != "class", property(id).
+kept(id) :- dead_traits(id, _, _, n, k, _, _), k != "class", @instr(n, "_lower_") = 1.
+kept(id) :- dead_traits(id, _, _, n, k, _, _), k != "class", @instr(@lower(n), "register") > 0.
+kept(id) :- dead_traits(id, _, _, n, k, _, _), k != "class", @rx_matches(n, "^_create_.*_(?:connection|validator|factory)$") = 1.
+kept(id) :- dead_traits(id, _, _, _, k, _, _), k != "class", class_protocol(id).
+kept(id) :- dead_traits(id, _, _, _, k, _, _), k != "class", overrides_abstract(id).
+kept(id) :- reachable_abstract_base(id).
+.decl high_confidence(id: symbol, x: node, d: number, name: symbol, kind: symbol)
+high_confidence(id, x, d, n, k) :- dead_traits(id, x, d, n, k, _, _), !kept(id).
+
+// ---- the clause's query: a category per finding, none under impl/browser/ ----
+.decl intent(id: symbol)
+intent(id) :- high_confidence(id, _, _, n, "class"), @rx_matches(n, "Intent$") = 1.
+intent(id) :- high_confidence(id, x, _, _, "class"), raw_base(x, _, b), @instr(b, "ServerPlanStep") > 0.
+.decl grammar_class(id: symbol)
+grammar_class(id) :- high_confidence(id, _, d, _, "class"), !protocol(id), doc(d, p), @instr(p, "/l2100_sql_grammar/") > 0.
+grammar_class(id) :- high_confidence(id, _, _, n, "class"), !protocol(id), @rx_matches(n, "Grammar$|^Sql") = 1.
+grammar_class(id) :- high_confidence(id, x, _, _, "class"), !protocol(id), raw_base(x, _, b), @rx_matches(b, "Sql|Grammar") = 1.
+.decl outside_browser(d: number)
+outside_browser(d) :- doc(d, p), @instr(p, "impl/browser/") != 1.
+finding("high_confidence_functions", id, x) :- high_confidence(id, x, d, _, k), k != "class", outside_browser(d).
+finding("high_confidence_intents", id, x) :- high_confidence(id, x, d, _, "class"), intent(id), outside_browser(d).
+finding("high_confidence_grammar_classes", id, x) :- high_confidence(id, x, d, _, "class"), grammar_class(id), outside_browser(d).
+finding("high_confidence_other_classes", id, x) :- high_confidence(id, x, d, _, "class"), !intent(id), !grammar_class(id), outside_browser(d).

@@ -1,0 +1,31 @@
+.policy "ruff-up012-unnecessary-encode-utf8" revision 2
+.description "Write ASCII string literals as bytes literals instead of calling .encode() on them, and drop UTF-8 arguments that .encode() defaults to anyway."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP012 (pyupgrade): `.encode()` on a string literal, called with no argument or only UTF-8 (`"utf-8"`,
+// `encoding="utf8"`, any case). Two findings:
+//   - an ASCII str literal (adjacent ones joined) with no `\N`, `\u` or `\U` escape is a bytes literal:
+//       "foo".encode("utf-8")         ← UP012: write b"foo"
+//   - any other str literal, or an f-string, called with UTF-8 alone: the argument is the default.
+//       "café".encode("utf-8")        ← UP012: write "café".encode()
+//       f"{x}".encode()               not reported: nothing to drop
+//   A literal with a `\N`/`\u`/`\U` escape, or an octal one above `\377`, is neither ("1".encode("utf-8") is not reported).
+#include "python/upgrade-format.rr"
+//   str_lit, fstr_lit, wide_escape, ascii_str, utf8_only_arg, up_argc
+
+// encode_on(c, s): call c is `s.encode(…)`.
+.decl encode_on(c: node, s: node)
+encode_on(c, s) :- kind(c, "call"), field(c, "function", f), attr_of(f, s, "encode").
+
+.violation bytes_literal(at: node) code "UP012"
+    "Write this ASCII string as a bytes literal (`b\"...\"`) instead of calling `.encode()` on it; the result is the same bytes."
+    suppress ruff "UP012"
+bytes_literal(c) :- encode_on(c, s), str_lit(s, v), ascii_str(v), !wide_escape(s), (up_argc(c, 0) ; utf8_only_arg(c)).
+
+.violation default_encoding_argument(at: node) code "UP012"
+    "Drop the UTF-8 argument and call `.encode()` with no arguments; UTF-8 is already the default encoding."
+    suppress ruff "UP012"
+default_encoding_argument(c) :- encode_on(c, s), utf8_only_arg(c), !wide_escape(s),
+    (str_lit(s, v), !ascii_str(v) ; fstr_lit(s)).

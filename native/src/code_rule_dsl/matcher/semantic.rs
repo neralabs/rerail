@@ -33,12 +33,72 @@ pub(in crate::code_rule_dsl) enum Semantic {
     FormatArgs(Box<FormatArgs>),
     /// `layout`: the node's lines, its first byte, and the lines to a neighbour.
     Layout(Box<Layout>),
+    /// File-path condition within a rule, including a call-graph seed.
+    FilePath(std::sync::Arc<crate::code_rule_dsl::language::TextCondition>),
     /// `calls` (Python): the call's callee reaches a definition the term's inner rule matches,
     /// through the workspace call graph's closure.
     Calls(Box<crate::code_rule_dsl::calls::CallsTest>),
     /// `importTarget`: the import or require target the node's constant value names, and what
     /// eslint-plugin-n reads of it.
     ImportTarget(Box<crate::code_rule_dsl::import_target::term::ImportTargetTest>),
+    /// A relation's bare token regex, where the token is implied (t31): asked of the gaps of the
+    /// parent's stored children, through the grammar's automaton.
+    Gap(Box<super::gap::GapTest>),
+}
+
+/// Emit predicate-local rows without executing a nested user rule. For N's catalog backend
+/// (`demand::driver::catalog::sql_backend`), which only tests run.
+#[cfg(test)]
+pub(crate) fn producer_facts<'tree, D: ast_grep_core::Doc>(
+    source: &crate::code_rule_dsl::demand::driver::catalog::sql_backend::SemanticFactSource,
+    node: ast_grep_core::Node<'tree, D>,
+    env: &ast_grep_core::meta_var::MetaVarEnv<'tree, D>,
+) -> crate::code_rule_dsl::transducer::semantic_facts::Facts<'tree, D> {
+    use crate::code_rule_dsl::transducer::semantic_facts::{Facts, Target, slot};
+    use crate::code_rule_dsl::demand::driver::catalog::sql_backend::SemanticFactSource;
+    let mut facts = Facts::new();
+    match source {
+        SemanticFactSource::Binding { test, request } => {
+            test.facts(node, env, &mut facts, *request)
+        }
+        SemanticFactSource::Binds { test, request } => test.facts(node, env, &mut facts, *request),
+        SemanticFactSource::FormatArgs(test) => test.facts(env, &mut facts),
+        SemanticFactSource::Arguments(arguments) => {
+            let mut trial = std::borrow::Cow::Borrowed(env);
+            super::UNKNOWN.set(false);
+            if arguments.match_node(node, &mut trial).is_some() {
+                facts.gate(1, Target::None);
+                for (position, (name, _)) in arguments.bind.iter().enumerate() {
+                    if let Some(target) = trial.get_match(name) {
+                        facts.push(
+                            slot::ARGUMENT,
+                            position as i64,
+                            1,
+                            Target::Node(target.clone()),
+                        );
+                    }
+                }
+            } else if super::UNKNOWN.replace(false) {
+                facts.gate(-1, Target::None);
+            }
+        }
+        SemanticFactSource::Resolves(resolves) => {
+            if resolves.holds(&node) {
+                facts.gate(1, Target::None);
+            }
+        }
+        SemanticFactSource::Layout(layout) => {
+            let mut trial = std::borrow::Cow::Borrowed(env);
+            super::UNKNOWN.set(false);
+            if layout.match_node(node, &mut trial).is_some() {
+                facts.gate(1, Target::None);
+            } else if super::UNKNOWN.replace(false) {
+                facts.gate(-1, Target::None);
+            }
+        }
+        SemanticFactSource::Calls(_) => {}
+    }
+    facts
 }
 
 impl Semantic {
@@ -47,6 +107,8 @@ impl Semantic {
             Self::Resolves(_)
             | Self::Value(_)
             | Self::Layout(_)
+            | Self::FilePath(_)
+            | Self::Gap(_)
             | Self::Host(_)
             | Self::ImportTarget(_) => true,
             Self::Binding(test) => test.sub_rules().all(super::AstMatcher::binds_nothing),
@@ -72,13 +134,16 @@ impl Semantic {
             | Self::Arguments(_)
             | Self::Parse(_)
             | Self::FormatArgs(_)
-            | Self::Calls(_)
-            | Self::Binds(_) => true,
+            | Self::Calls(_) => true,
+            Self::Binds(test) => {
+                !test.declaration_only()
+                    || test.sub_rules().any(|rule| super::reads_values(rule, seen))
+            }
             Self::Host(test) => super::reads_values(&test.rule, seen),
             Self::Embedded(test) => test.rules().any(|rule| super::reads_values(rule, seen)),
             // PHP's run-time fallback of a function or constant name may be unknown.
             Self::Resolves(resolves) => flow(resolves.language),
-            Self::Capture(_) | Self::Layout(_) | Self::ImportTarget(_) => false,
+            Self::Capture(_) | Self::Layout(_) | Self::Gap(_) | Self::FilePath(_) | Self::ImportTarget(_) => false,
             // PHP's flow may leave a read's binding, `latest` and `outer` unknown.
             Self::Binding(test) => {
                 test.filter.reads_usage()
@@ -116,6 +181,10 @@ impl Semantic {
                 Some(node)
             }
             Self::Layout(layout) => layout.match_node(node, env),
+            Self::Gap(test) => test.holds(&node).then_some(node),
+            Self::FilePath(condition) => super::resolve::file_path()
+                .filter(|path| condition.holds(path))
+                .map(|_| node),
             Self::Value(test) => match test.holds(&node) {
                 Some(true) => Some(node),
                 Some(false) => None,
@@ -130,7 +199,7 @@ impl Semantic {
 
 /// Whether `language`'s family reads the file's flow, which may leave a read unknown
 /// (`ScopeRules::FLOW`).
-fn flow(language: crate::code_rule_dsl::language::GrammarDialect) -> bool {
+pub(super) fn flow(language: crate::code_rule_dsl::language::GrammarDialect) -> bool {
     use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
     with_adapter!(crate::code_rule_dsl::language::Family::of(language), A => <<A as Adapter>::Scope as ScopeRules>::FLOW)
 }

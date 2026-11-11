@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 /// columns. It serializes as the JSON object of those six fields, its fields declared in key
 /// order so a direct serialization writes the bytes the object's would.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Span {
     pub(crate) end_byte: usize,
     pub(crate) end_column: usize,
@@ -97,6 +97,11 @@ impl LineTable {
         }
         ends.push(source.len());
         Self { starts, ends }
+    }
+
+    /// Byte offset of each line's first byte.
+    pub(crate) fn starts(&self) -> &[usize] {
+        &self.starts
     }
 
     /// The 0-based line holding `byte`; a terminator's bytes belong to the line they end.

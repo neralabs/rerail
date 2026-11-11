@@ -1,0 +1,42 @@
+.policy "typescript-eslint-triple-slash-reference" revision 2
+.description "Use import declarations instead of triple-slash path references, and drop triple-slash type references to modules the file already imports."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-text.rr"
+//   js_comment
+#include "tsx/modules.rr"
+//   import_decl
+
+// typescript-eslint's triple-slash-reference: `/// <reference types|path|lib="m" />` directives at the head of the
+// file, before any code, by kind. Each option is "always" (allowed) or "never" (reported); types may also be
+// "prefer-import", its default: reported only when the file also imports m (`import … from "m"` or
+// `import x = require("m")`). Defaults: lib "always", path "never", types "prefer-import".
+//   /// <reference path="./a.d.ts" />                                    → reported
+//   /// <reference types="node" />  import fs from "node";               → reported (prefer-import)
+//   /// <reference types="node" />   /// <reference lib="es2020" />      fine
+// Only line comments before the first token count; a later `///` comment is no directive.
+.violation triple_slash_reference(at: node, msg: symbol) code "@typescript-eslint/triple-slash-reference" "{msg}"
+    suppress eslint "@typescript-eslint/triple-slash-reference"
+triple_slash_reference(c, cat("Replace this triple-slash reference to ", m, " with an import declaration.")) :-
+    reference(c, k, m), setting(k, "never").
+triple_slash_reference(c, cat("Remove this triple-slash types reference to ", m, "; the file already imports it.")) :-
+    reference(c, "types", m), setting("types", "prefer-import"), docof(c, d), imports(d, m).
+
+// reference(c, k, m): leading line comment c is `/// <reference k="m" />`. As the rule's regex, the quotes may be
+// either kind and m runs to the last quote.
+.decl reference(c: node, k: symbol, m: symbol)
+reference(c, k, m) :- js_comment(c, "Line", _), leading(c),
+    match("///\\s*<reference\\s*(?<k>types|path|lib)\\s*=\\s*[\"|'](?<m>.*)[\"|'].*", c).
+.decl leading(c: node)  // no token before c, but perhaps a `#!` line (ESLint's Shebang comment)
+leading(c) :- kind(c, "comment"), child(p, c, i), kind(p, "program"),
+    count : { child(p, x, j), j < i, !kind(x, "comment"), !kind(x, "hash_bang_line") } = 0.
+.decl setting(k: symbol, v: symbol)
+setting(k, v) :- option(k, v), (k = "types" ; k = "path" ; k = "lib").
+setting("lib", "always") :- !option("lib", _).
+setting("path", "never") :- !option("path", _).
+setting("types", "prefer-import") :- !option("types", _).
+.decl imports(d: number, m: symbol)  // document d imports m by an import declaration or `import x = require("m")`
+imports(d, m) :- kind(i, "import_statement"), field(i, "source", s), str(s, m), docof(i, d).
+imports(d, m) :- kind(r, "import_require_clause"), field(r, "source", s), str(s, m), docof(r, d).

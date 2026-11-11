@@ -17,8 +17,8 @@ export const LANGUAGE_REGISTRY_MODULE_PATH = resolve(ROOT, "src", "engine", "cod
 export const TEST_LANGUAGES_DIRECTORY = resolve(ROOT, "native", "test-languages");
 
 export const LANGUAGE_REGISTRY_FORMAT = "rerail.language/v1";
-/** The parser implementations a dialect may name: tree-sitter, or Forte (Rerail's port, native/src/code_rule_dsl/blade/forte/). */
-export const LANGUAGE_PARSERS = ["tree-sitter", "forte"] as const;
+/** The parser implementations a dialect may name: tree-sitter, Forte (Rerail's port, native/src/code_rule_dsl/blade/forte/), or the rule engine's own `.rr` parser (native/src/code_rule_dsl/logic/rr/syntax.rs). */
+export const LANGUAGE_PARSERS = ["tree-sitter", "forte", "rr", "bitlex"] as const;
 
 const name = z.string().regex(/^[a-z][a-z0-9-]*$/u, "Must be lowercase letters, digits and dashes, starting with a letter.");
 const support = z.enum(["supported", "refused", "not-supported-yet"]);
@@ -44,6 +44,8 @@ export const languageEntrySchema = z
     capabilities: z.record(z.string(), support),
     suppressions: z.array(name),
     embeds: z.array(z.object({ language: name, via: name }).strict()).optional(),
+    /** Grammars of a part of a dialect (decision 0082): `name` is `dialect` parsed from `start`. The engine reads them; the host does not. */
+    fragments: z.array(z.object({ name, dialect: name, start: z.enum(["expression"]) }).strict()).optional(),
   })
   .strict()
   .superRefine((entry, context) => {

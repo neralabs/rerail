@@ -1,0 +1,43 @@
+.policy "eslint-no-await-in-loop" revision 3
+.description "Avoid await inside loops; start the independent operations together and await them at once with Promise.all."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-control.rr"
+//   repeated, for_await, var_decl; fn_code (tsx/modules.rr, through the common library)
+
+// ESLint's no-await-in-loop: an `await` that runs on every iteration of a loop, so the iterations wait for one
+// another. The awaiting forms are `await x`, `for await (…)` and `await using x = …`.
+//   for (const u of us) await save(u);            → the await
+//   while (await more()) {}                       → the await (the test runs each time)
+//   for (const u of us) fs.push(async () => await save(u));   fine: a function stops the search
+//   for await (const u of us) await save(u);      fine: inside a for-await the waiting is intended
+//   for (const x of await load()) {}              fine: what is iterated is evaluated once
+// No options.
+.violation no_await_in_loop(at: loc) code "no-await-in-loop" "Unexpected `await` inside a loop."
+    suppress eslint "no-await-in-loop"
+    suppress oxlint "no-await-in-loop"
+    suppress biome "lint/performance/noAwaitInLoops"
+no_await_in_loop(at) :- awaits(n, at), within_stop(n, l, boundary), !boundary(l), repeated(l, r),
+    (n = r ; within(n, r)).
+// A loop's `for (await using x of xs)` head is a declaration made on every iteration.
+no_await_in_loop(t) :- kind(l, "for_in_statement"), op(l, "using"), !boundary(l), field(l, "left", _),
+    match("(?s)for\\s*\\(\\s*(?<t>await)\\s+using\\b.*", l).
+
+// awaits(n, at): node n waits, and ESLint reports it at at.
+.decl awaits(n: node, at: loc)
+awaits(n, n) :- kind(n, "await_expression"), !using_await(n).
+awaits(n, n) :- for_await(n).
+awaits(d, d) :- var_decl(d, "await using").
+// using_await(n): in TypeScript's tree, `await using x = f()` puts its `await` on the declaration's first
+// assignment; it is the declaration that is reported.
+.decl using_await(n: node)
+using_await(n) :- var_decl(d, "await using"), within(n, d), kind(n, "await_expression"), node(_, d, _, s, _),
+    node(_, n, _, s, _).
+// boundary(n): ESLint's climb stops at a function and at a for-await loop. For a method that is its parameters
+// and body (modules.rr's fn_code), not its computed name, which runs in the surrounding code:
+//   for (;;) { class A { [await k]() {} } }      → the await
+.decl boundary(n: node)
+boundary(n) :- fn_code(n).
+boundary(n) :- for_await(n).

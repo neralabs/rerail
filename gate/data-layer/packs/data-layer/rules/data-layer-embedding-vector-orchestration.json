@@ -1,0 +1,244 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-embedding-vector-orchestration",
+  "revision": 1,
+  "mode": "block",
+  "description": "Port of nera-data-layer embedding_vector_orchestration at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "l5200_vector_index/**/*.py",
+      "impl/common/l2070_server_plan/**/*.py",
+      "data_layer/vector_index.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/tests/**",
+      "**/test/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "configuration",
+      "define": {
+        "options": {
+          "entryPoint": {
+            "type": "string",
+            "default": "all"
+          },
+          "parameters": {
+            "type": "string",
+            "default": "{}"
+          }
+        }
+      }
+    },
+    {
+      "id": "embedding-orchestration",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": "\\.query|\\.read|\\.resolve|\\.write|_add_server_step|_lazy|_next_ref|query_lazy|versioned_"
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_preorder",
+                "ast_parent",
+                "ast_field",
+                "ast_end",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,NULL AS value,NULL AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(NULL,'') AS INTEGER) AS position,CAST(NULLIF(ast_end,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,NULL AS annotation,NULL AS annotation_repr,CAST(NULLIF(NULL,'') AS INTEGER) AS cls,CAST(NULLIF(NULL,'') AS INTEGER) AS level FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "calls",
+            "query": "SELECT c.*,f.kind AS callee_kind,f.name AS callee,f.id AS callee_id,r.id AS receiver,r.kind AS receiver_kind,r.name AS receiver_name\n      FROM a c JOIN a f ON f.__path=c.__path AND f.parent=c.id AND f.field='func'\n      LEFT JOIN a r ON r.__path=f.__path AND r.parent=f.id AND r.field='value'\n      WHERE c.kind='Call'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "callee"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "classes",
+            "query": "SELECT * FROM a WHERE kind='ClassDef'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "qual_functions",
+            "query": "SELECT f.*,(SELECT group_concat(name,'.')||'.' FROM (SELECT name FROM classes c WHERE c.__path=f.__path AND f.id BETWEEN c.id AND c.last ORDER BY c.id))||f.name qualified FROM functions f",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "conn_receivers",
+            "query": "WITH RECURSIVE r(__path,id) AS (SELECT __path,id FROM a WHERE kind='Name' AND name IN ('conn','connection') OR kind='Attribute' AND name IN ('conn','connection','_conn') UNION ALL SELECT c.__path,c.id FROM r JOIN calls c ON c.__path=r.__path AND c.receiver=r.id AND c.callee_kind='Attribute' AND c.callee='session') SELECT * FROM r",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "txn_receivers",
+            "query": "SELECT __path,id FROM a WHERE kind IN ('Name','Attribute') AND (substr(name,-3)='txn' OR kind='Attribute' AND name='_txn')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "query_chains",
+            "query": "WITH RECURSIVE r(__path,origin,id) AS (SELECT __path,id,receiver FROM calls WHERE callee_kind='Attribute' UNION ALL SELECT r.__path,r.origin,c.receiver FROM r JOIN calls c ON c.__path=r.__path AND c.id=r.id AND c.callee_kind='Attribute') SELECT r.__path,r.origin,c.id,c.receiver FROM r JOIN calls c ON c.__path=r.__path AND c.id=r.id WHERE c.callee='query' AND c.callee_kind='Attribute'",
+            "indexes": [
+              [
+                "__path",
+                "origin",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "embedding_calls",
+            "query": "SELECT n.*,coalesce(f.qualified,f.name,'<module>') qualname FROM calls n LEFT JOIN qual_functions f ON f.__path=n.__path AND f.id=n.fn",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          }
+        ],
+        "query": {
+          "$option": "entryPoint",
+          "cases": {
+            "scan_source": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO001' AS issue,'new connection-owned orchestration in embedding/vector scope is forbidden' AS message,n.id||':EVO001:'||(n.id+0*0.001) AS identity,0 AS phase,n.id+0*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.callee_kind='Attribute' AND n.callee IN ('read','read_async','write','write_async') AND EXISTS(SELECT 1 FROM conn_receivers receiver WHERE receiver.__path=n.__path AND receiver.id=n.receiver) AND n.__path||'::'||n.qualname NOT IN ('l5200_vector_index/diagnostics.py::get_embedding_worker_stats','l5200_vector_index/embedding_metadata.py::cleanup_old_embeddings','l5200_vector_index/embedding_metadata.py::cleanup_specific_model_embeddings','l5200_vector_index/embedding_metadata.py::get_embedding_staleness','l5200_vector_index/embedding_metadata.py::get_staleness_info','l5200_vector_index/embedding_metadata.py::process_stale_embeddings','l5200_vector_index/embedding_metadata.py::validate_embedding_consistency','l5200_vector_index/embedding_queue.py::apply_embeddings','l5200_vector_index/index_manager.py::get_index','l5200_vector_index/index_manager.py::register_index','l5200_vector_index_task_payloads.py::get_embedding_auto_queue_stats') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO106' AS issue,'connection transaction entrypoints are forbidden in embedding worker modules; use _dispatch_maybe_versioned_* / planned lazy bridges' AS message,n.id||':EVO106:'||(n.id+1*0.001) AS identity,0 AS phase,n.id+1*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.__path IN ('l5200_vector_index/embedding_worker.py') AND n.callee_kind='Attribute' AND n.callee IN ('async_read_transaction','async_write_transaction','read_transaction','write_transaction') AND EXISTS(SELECT 1 FROM conn_receivers receiver WHERE receiver.__path=n.__path AND receiver.id=n.receiver) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO101' AS issue,'worker txn.query(...).terminal() is suspect; prefer lazy/serverplan composition' AS message,n.id||':EVO101:'||(n.id+2*0.001) AS identity,0 AS phase,n.id+2*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.__path='l5200_vector_index/embedding_worker.py' AND n.callee_kind='Attribute' AND n.callee IN ('execute','execute_async','resolve','resolve_async') AND EXISTS(SELECT 1 FROM query_chains chain JOIN txn_receivers receiver ON receiver.__path=chain.__path AND receiver.id=chain.receiver WHERE chain.__path=n.__path AND chain.origin=n.id AND chain.id=(SELECT min(first.id) FROM query_chains first WHERE first.__path=n.__path AND first.origin=n.id)) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO105' AS issue,'embedding_worker must use txn.query_lazy(...), not txn.query(...)' AS message,n.id||':EVO105:'||(n.id+3*0.001) AS identity,0 AS phase,n.id+3*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.__path='l5200_vector_index/embedding_worker.py' AND n.callee_kind='Attribute' AND n.callee='query' AND EXISTS(SELECT 1 FROM txn_receivers receiver WHERE receiver.__path=n.__path AND receiver.id=n.receiver) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO107' AS issue,'embedding_worker must use next_lazy_plan_ref(...) instead of direct plan._next_ref()' AS message,n.id||':EVO107:'||(n.id+4*0.001) AS identity,0 AS phase,n.id+4*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.__path='l5200_vector_index/embedding_worker.py' AND n.callee_kind='Attribute' AND n.callee='_next_ref' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO108' AS issue,'embedding_worker may publish server steps only inside dedicated _publish_* helper functions' AS message,n.id||':EVO108:'||(n.id+5*0.001) AS identity,0 AS phase,n.id+5*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.__path='l5200_vector_index/embedding_worker.py' AND n.callee_kind='Attribute' AND n.callee='_add_server_step' AND NOT EXISTS(SELECT 1 FROM functions f WHERE f.__path=n.__path AND f.id=n.fn AND f.name IN ('_publish_claimed_queue_message_ref','_publish_worker_scalar_int_ref','_publish_worker_scalar_string_ref')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO104' AS issue,'forbidden hybrid lazy/sync worker function name (see embedding_worker_lazy_intents.md)' AS message,n.id||':EVO104:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name,n.name qualname FROM functions n WHERE n.__path='l5200_vector_index/embedding_worker.py' AND (substr(n.name,-10)='_sync_lazy' OR substr(n.name,-11)='_async_lazy' OR substr(n.name,-11)='_lazy_async' OR substr(n.name,-10)='_lazy_sync') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO102' AS issue,'*_lazy worker body must not call .resolve() / .resolve_async(); use sync/async sibling' AS message,n.id||':EVO102:'||(n.id+0.006) AS identity,0 AS phase,n.id+0.006 AS ordering,'' AS symbol,'' AS sort_name,lazy.name qualname FROM embedding_calls n JOIN functions lazy ON lazy.__path=n.__path AND n.id BETWEEN lazy.id AND lazy.last WHERE n.__path='l5200_vector_index/embedding_worker.py' AND n.callee_kind='Attribute' AND n.callee IN ('resolve','resolve_async') AND substr(lazy.name,-5)='_lazy' AND lazy.id=(SELECT max(f.id) FROM functions f WHERE f.__path=n.__path AND n.id BETWEEN f.id AND f.last AND substr(f.name,-5)='_lazy')",
+            "scan_file": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO001' AS issue,'new connection-owned orchestration in embedding/vector scope is forbidden' AS message,n.id||':EVO001:'||(n.id+0*0.001) AS identity,0 AS phase,n.id+0*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.callee_kind='Attribute' AND n.callee IN ('read','read_async','write','write_async') AND EXISTS(SELECT 1 FROM conn_receivers receiver WHERE receiver.__path=n.__path AND receiver.id=n.receiver) AND n.__path||'::'||n.qualname NOT IN ('l5200_vector_index/diagnostics.py::get_embedding_worker_stats','l5200_vector_index/embedding_metadata.py::cleanup_old_embeddings','l5200_vector_index/embedding_metadata.py::cleanup_specific_model_embeddings','l5200_vector_index/embedding_metadata.py::get_embedding_staleness','l5200_vector_index/embedding_metadata.py::get_staleness_info','l5200_vector_index/embedding_metadata.py::process_stale_embeddings','l5200_vector_index/embedding_metadata.py::validate_embedding_consistency','l5200_vector_index/embedding_queue.py::apply_embeddings','l5200_vector_index/index_manager.py::get_index','l5200_vector_index/index_manager.py::register_index','l5200_vector_index_task_payloads.py::get_embedding_auto_queue_stats') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO106' AS issue,'connection transaction entrypoints are forbidden in embedding worker modules; use _dispatch_maybe_versioned_* / planned lazy bridges' AS message,n.id||':EVO106:'||(n.id+1*0.001) AS identity,0 AS phase,n.id+1*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.__path IN ('l5200_vector_index/embedding_worker.py') AND n.callee_kind='Attribute' AND n.callee IN ('async_read_transaction','async_write_transaction','read_transaction','write_transaction') AND EXISTS(SELECT 1 FROM conn_receivers receiver WHERE receiver.__path=n.__path AND receiver.id=n.receiver) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO101' AS issue,'worker txn.query(...).terminal() is suspect; prefer lazy/serverplan composition' AS message,n.id||':EVO101:'||(n.id+2*0.001) AS identity,0 AS phase,n.id+2*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.__path='l5200_vector_index/embedding_worker.py' AND n.callee_kind='Attribute' AND n.callee IN ('execute','execute_async','resolve','resolve_async') AND EXISTS(SELECT 1 FROM query_chains chain JOIN txn_receivers receiver ON receiver.__path=chain.__path AND receiver.id=chain.receiver WHERE chain.__path=n.__path AND chain.origin=n.id AND chain.id=(SELECT min(first.id) FROM query_chains first WHERE first.__path=n.__path AND first.origin=n.id)) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO105' AS issue,'embedding_worker must use txn.query_lazy(...), not txn.query(...)' AS message,n.id||':EVO105:'||(n.id+3*0.001) AS identity,0 AS phase,n.id+3*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.__path='l5200_vector_index/embedding_worker.py' AND n.callee_kind='Attribute' AND n.callee='query' AND EXISTS(SELECT 1 FROM txn_receivers receiver WHERE receiver.__path=n.__path AND receiver.id=n.receiver) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO107' AS issue,'embedding_worker must use next_lazy_plan_ref(...) instead of direct plan._next_ref()' AS message,n.id||':EVO107:'||(n.id+4*0.001) AS identity,0 AS phase,n.id+4*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.__path='l5200_vector_index/embedding_worker.py' AND n.callee_kind='Attribute' AND n.callee='_next_ref' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO108' AS issue,'embedding_worker may publish server steps only inside dedicated _publish_* helper functions' AS message,n.id||':EVO108:'||(n.id+5*0.001) AS identity,0 AS phase,n.id+5*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.__path='l5200_vector_index/embedding_worker.py' AND n.callee_kind='Attribute' AND n.callee='_add_server_step' AND NOT EXISTS(SELECT 1 FROM functions f WHERE f.__path=n.__path AND f.id=n.fn AND f.name IN ('_publish_claimed_queue_message_ref','_publish_worker_scalar_int_ref','_publish_worker_scalar_string_ref')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO104' AS issue,'forbidden hybrid lazy/sync worker function name (see embedding_worker_lazy_intents.md)' AS message,n.id||':EVO104:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name,n.name qualname FROM functions n WHERE n.__path='l5200_vector_index/embedding_worker.py' AND (substr(n.name,-10)='_sync_lazy' OR substr(n.name,-11)='_async_lazy' OR substr(n.name,-11)='_lazy_async' OR substr(n.name,-10)='_lazy_sync') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO102' AS issue,'*_lazy worker body must not call .resolve() / .resolve_async(); use sync/async sibling' AS message,n.id||':EVO102:'||(n.id+0.006) AS identity,0 AS phase,n.id+0.006 AS ordering,'' AS symbol,'' AS sort_name,lazy.name qualname FROM embedding_calls n JOIN functions lazy ON lazy.__path=n.__path AND n.id BETWEEN lazy.id AND lazy.last WHERE n.__path='l5200_vector_index/embedding_worker.py' AND n.callee_kind='Attribute' AND n.callee IN ('resolve','resolve_async') AND substr(lazy.name,-5)='_lazy' AND lazy.id=(SELECT max(f.id) FROM functions f WHERE f.__path=n.__path AND n.id BETWEEN f.id AND f.last AND substr(f.name,-5)='_lazy')",
+            "_violations_for_files": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO001' AS issue,'new connection-owned orchestration in embedding/vector scope is forbidden' AS message,n.id||':EVO001:'||(n.id+0*0.001) AS identity,0 AS phase,n.id+0*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.callee_kind='Attribute' AND n.callee IN ('read','read_async','write','write_async') AND EXISTS(SELECT 1 FROM conn_receivers receiver WHERE receiver.__path=n.__path AND receiver.id=n.receiver) AND n.__path||'::'||n.qualname NOT IN ('l5200_vector_index/diagnostics.py::get_embedding_worker_stats','l5200_vector_index/embedding_metadata.py::cleanup_old_embeddings','l5200_vector_index/embedding_metadata.py::cleanup_specific_model_embeddings','l5200_vector_index/embedding_metadata.py::get_embedding_staleness','l5200_vector_index/embedding_metadata.py::get_staleness_info','l5200_vector_index/embedding_metadata.py::process_stale_embeddings','l5200_vector_index/embedding_metadata.py::validate_embedding_consistency','l5200_vector_index/embedding_queue.py::apply_embeddings','l5200_vector_index/index_manager.py::get_index','l5200_vector_index/index_manager.py::register_index','l5200_vector_index_task_payloads.py::get_embedding_auto_queue_stats') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO106' AS issue,'connection transaction entrypoints are forbidden in embedding worker modules; use _dispatch_maybe_versioned_* / planned lazy bridges' AS message,n.id||':EVO106:'||(n.id+1*0.001) AS identity,0 AS phase,n.id+1*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.__path IN ('l5200_vector_index/embedding_worker.py') AND n.callee_kind='Attribute' AND n.callee IN ('async_read_transaction','async_write_transaction','read_transaction','write_transaction') AND EXISTS(SELECT 1 FROM conn_receivers receiver WHERE receiver.__path=n.__path AND receiver.id=n.receiver) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO101' AS issue,'worker txn.query(...).terminal() is suspect; prefer lazy/serverplan composition' AS message,n.id||':EVO101:'||(n.id+2*0.001) AS identity,0 AS phase,n.id+2*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.__path='l5200_vector_index/embedding_worker.py' AND n.callee_kind='Attribute' AND n.callee IN ('execute','execute_async','resolve','resolve_async') AND EXISTS(SELECT 1 FROM query_chains chain JOIN txn_receivers receiver ON receiver.__path=chain.__path AND receiver.id=chain.receiver WHERE chain.__path=n.__path AND chain.origin=n.id AND chain.id=(SELECT min(first.id) FROM query_chains first WHERE first.__path=n.__path AND first.origin=n.id)) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO105' AS issue,'embedding_worker must use txn.query_lazy(...), not txn.query(...)' AS message,n.id||':EVO105:'||(n.id+3*0.001) AS identity,0 AS phase,n.id+3*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.__path='l5200_vector_index/embedding_worker.py' AND n.callee_kind='Attribute' AND n.callee='query' AND EXISTS(SELECT 1 FROM txn_receivers receiver WHERE receiver.__path=n.__path AND receiver.id=n.receiver) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO107' AS issue,'embedding_worker must use next_lazy_plan_ref(...) instead of direct plan._next_ref()' AS message,n.id||':EVO107:'||(n.id+4*0.001) AS identity,0 AS phase,n.id+4*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.__path='l5200_vector_index/embedding_worker.py' AND n.callee_kind='Attribute' AND n.callee='_next_ref' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO108' AS issue,'embedding_worker may publish server steps only inside dedicated _publish_* helper functions' AS message,n.id||':EVO108:'||(n.id+5*0.001) AS identity,0 AS phase,n.id+5*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.__path='l5200_vector_index/embedding_worker.py' AND n.callee_kind='Attribute' AND n.callee='_add_server_step' AND NOT EXISTS(SELECT 1 FROM functions f WHERE f.__path=n.__path AND f.id=n.fn AND f.name IN ('_publish_claimed_queue_message_ref','_publish_worker_scalar_int_ref','_publish_worker_scalar_string_ref')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO104' AS issue,'forbidden hybrid lazy/sync worker function name (see embedding_worker_lazy_intents.md)' AS message,n.id||':EVO104:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name,n.name qualname FROM functions n WHERE n.__path='l5200_vector_index/embedding_worker.py' AND (substr(n.name,-10)='_sync_lazy' OR substr(n.name,-11)='_async_lazy' OR substr(n.name,-11)='_lazy_async' OR substr(n.name,-10)='_lazy_sync') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO102' AS issue,'*_lazy worker body must not call .resolve() / .resolve_async(); use sync/async sibling' AS message,n.id||':EVO102:'||(n.id+0.006) AS identity,0 AS phase,n.id+0.006 AS ordering,'' AS symbol,'' AS sort_name,lazy.name qualname FROM embedding_calls n JOIN functions lazy ON lazy.__path=n.__path AND n.id BETWEEN lazy.id AND lazy.last WHERE n.__path='l5200_vector_index/embedding_worker.py' AND n.callee_kind='Attribute' AND n.callee IN ('resolve','resolve_async') AND substr(lazy.name,-5)='_lazy' AND lazy.id=(SELECT max(f.id) FROM functions f WHERE f.__path=n.__path AND n.id BETWEEN f.id AND f.last AND substr(f.name,-5)='_lazy')"
+          },
+          "default": "SELECT path,start_byte,end_byte,line,issue,qualname||': '||message message,identity,phase,ordering,symbol,sort_name,qualname FROM (SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO001' AS issue,'new connection-owned orchestration in embedding/vector scope is forbidden' AS message,n.id||':EVO001:'||(n.id+0*0.001) AS identity,0 AS phase,n.id+0*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.callee_kind='Attribute' AND n.callee IN ('read','read_async','write','write_async') AND EXISTS(SELECT 1 FROM conn_receivers receiver WHERE receiver.__path=n.__path AND receiver.id=n.receiver) AND n.__path||'::'||n.qualname NOT IN ('l5200_vector_index/diagnostics.py::get_embedding_worker_stats','l5200_vector_index/embedding_metadata.py::cleanup_old_embeddings','l5200_vector_index/embedding_metadata.py::cleanup_specific_model_embeddings','l5200_vector_index/embedding_metadata.py::get_embedding_staleness','l5200_vector_index/embedding_metadata.py::get_staleness_info','l5200_vector_index/embedding_metadata.py::process_stale_embeddings','l5200_vector_index/embedding_metadata.py::validate_embedding_consistency','l5200_vector_index/embedding_queue.py::apply_embeddings','l5200_vector_index/index_manager.py::get_index','l5200_vector_index/index_manager.py::register_index','l5200_vector_index_task_payloads.py::get_embedding_auto_queue_stats') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO106' AS issue,'connection transaction entrypoints are forbidden in embedding worker modules; use _dispatch_maybe_versioned_* / planned lazy bridges' AS message,n.id||':EVO106:'||(n.id+1*0.001) AS identity,0 AS phase,n.id+1*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.__path IN ('l5200_vector_index/embedding_worker.py') AND n.callee_kind='Attribute' AND n.callee IN ('async_read_transaction','async_write_transaction','read_transaction','write_transaction') AND EXISTS(SELECT 1 FROM conn_receivers receiver WHERE receiver.__path=n.__path AND receiver.id=n.receiver) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO101' AS issue,'worker txn.query(...).terminal() is suspect; prefer lazy/serverplan composition' AS message,n.id||':EVO101:'||(n.id+2*0.001) AS identity,0 AS phase,n.id+2*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.__path='l5200_vector_index/embedding_worker.py' AND n.callee_kind='Attribute' AND n.callee IN ('execute','execute_async','resolve','resolve_async') AND EXISTS(SELECT 1 FROM query_chains chain JOIN txn_receivers receiver ON receiver.__path=chain.__path AND receiver.id=chain.receiver WHERE chain.__path=n.__path AND chain.origin=n.id AND chain.id=(SELECT min(first.id) FROM query_chains first WHERE first.__path=n.__path AND first.origin=n.id)) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO105' AS issue,'embedding_worker must use txn.query_lazy(...), not txn.query(...)' AS message,n.id||':EVO105:'||(n.id+3*0.001) AS identity,0 AS phase,n.id+3*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.__path='l5200_vector_index/embedding_worker.py' AND n.callee_kind='Attribute' AND n.callee='query' AND EXISTS(SELECT 1 FROM txn_receivers receiver WHERE receiver.__path=n.__path AND receiver.id=n.receiver) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO107' AS issue,'embedding_worker must use next_lazy_plan_ref(...) instead of direct plan._next_ref()' AS message,n.id||':EVO107:'||(n.id+4*0.001) AS identity,0 AS phase,n.id+4*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.__path='l5200_vector_index/embedding_worker.py' AND n.callee_kind='Attribute' AND n.callee='_next_ref' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO108' AS issue,'embedding_worker may publish server steps only inside dedicated _publish_* helper functions' AS message,n.id||':EVO108:'||(n.id+5*0.001) AS identity,0 AS phase,n.id+5*0.001 AS ordering,'' AS symbol,'' AS sort_name,n.qualname FROM embedding_calls n WHERE n.__path='l5200_vector_index/embedding_worker.py' AND n.callee_kind='Attribute' AND n.callee='_add_server_step' AND NOT EXISTS(SELECT 1 FROM functions f WHERE f.__path=n.__path AND f.id=n.fn AND f.name IN ('_publish_claimed_queue_message_ref','_publish_worker_scalar_int_ref','_publish_worker_scalar_string_ref')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO104' AS issue,'forbidden hybrid lazy/sync worker function name (see embedding_worker_lazy_intents.md)' AS message,n.id||':EVO104:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name,n.name qualname FROM functions n WHERE n.__path='l5200_vector_index/embedding_worker.py' AND (substr(n.name,-10)='_sync_lazy' OR substr(n.name,-11)='_async_lazy' OR substr(n.name,-11)='_lazy_async' OR substr(n.name,-10)='_lazy_sync') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'EVO102' AS issue,'*_lazy worker body must not call .resolve() / .resolve_async(); use sync/async sibling' AS message,n.id||':EVO102:'||(n.id+0.006) AS identity,0 AS phase,n.id+0.006 AS ordering,'' AS symbol,'' AS sort_name,lazy.name qualname FROM embedding_calls n JOIN functions lazy ON lazy.__path=n.__path AND n.id BETWEEN lazy.id AND lazy.last WHERE n.__path='l5200_vector_index/embedding_worker.py' AND n.callee_kind='Attribute' AND n.callee IN ('resolve','resolve_async') AND substr(lazy.name,-5)='_lazy' AND lazy.id=(SELECT max(f.id) FROM functions f WHERE f.__path=n.__path AND n.id BETWEEN f.id AND f.last AND substr(f.name,-5)='_lazy')) WHERE issue IN ('EVO001','EVO101','EVO102','EVO104','EVO105','EVO106')"
+        },
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

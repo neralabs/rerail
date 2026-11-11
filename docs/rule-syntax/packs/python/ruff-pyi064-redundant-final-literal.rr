@@ -1,0 +1,28 @@
+.policy "ruff-pyi064-redundant-final-literal" revision 2
+.description "Use a bare Final annotation for constants instead of wrapping a single literal type in Final; type checkers already infer the literal type from the value."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI064 (flake8-pyi), every file: `x: Final[Literal[v]]` with one value. A bare `Final` with `= v` infers
+// the same literal type. Reported at the statement; the message depends on the assigned value.
+//   x: Final[Literal[1]] = 1      ← PYI064: write `x: Final = 1`
+//   y: Final[Literal[1]]          ← PYI064 (no value)
+//   z: Final[Literal[1]] = 2      ← PYI064 (a different value, or `...`)
+#include "python/typing.rr"
+
+.violation PYI064(at: node, msg: symbol) code "PYI064" "{msg}"
+    suppress ruff "PYI064"
+PYI064(a, "Drop the `Literal[...]` and annotate with a bare `Final`; the type checker infers the literal type from the assigned value.") :-
+    final_literal(a, e), field(a, "right", v0), unparen(v0, v), same_value(v, e).
+PYI064(a, cat("Annotate with a bare `Final` and assign `", x, "` as the value instead of writing `Final[Literal[", x, "]]`; leave it if `__init__` assigns this attribute instead.")) :-
+    final_literal(a, e), !field(a, "right", _), text(e, x).
+PYI064(a, cat("The value differs from the literal `", x, "`: if it should be `", x, "` (or is a stub's `...` placeholder), assign `", x, "` and annotate with a bare `Final`; otherwise correct the `Literal[...]` type.")) :-
+    final_literal(a, e), field(a, "right", v0), unparen(v0, v), !same_value(v, e), text(e, x).
+// final_literal(a, e): assignment a is annotated `Final[Literal[e]]`.
+.decl final_literal(a: node, e: node)
+final_literal(a, e) :- kind(a, "assignment"), field(a, "type", t0), type_bare(t0, t), typing_subscript(t, "Final"),
+    tsub_n(t, 1), tsub(t, _, 0, l), typing_subscript(l, "Literal"), tsub_n(l, 1), tsub(l, _, 0, e).
+.decl same_value(v: node, e: node)  // the value is the literal: same kind and value, else same text
+same_value(v, e) :- final_literal(_, e), kind(v, k), kind(e, k), value(v, x), value(e, x).
+same_value(v, e) :- final_literal(_, e), kind(v, k), kind(e, k), !value(e, _), text(v, x), text(e, x).

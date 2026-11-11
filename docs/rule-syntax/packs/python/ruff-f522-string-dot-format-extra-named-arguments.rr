@@ -1,0 +1,17 @@
+.policy "ruff-f522-string-dot-format-extra-named-arguments" revision 2
+.description "Remove keyword arguments to str.format() that no named placeholder in the string uses; they are silently ignored."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F522 (pyflakes): `S.format(…)` passes a keyword argument that no `{name}` field of S uses (nested fields
+// in a spec count). Not checked when the call has `**kwargs`.
+//   "{a}".format(a=1, b=2)        ← F522: b is unused
+//   "{a:{w}}".format(a=1, w=5)    not reported
+#include "python/pyflakes-format.rr"
+//   format_call(c, v), brace_keyword(v, x), call_kw(c, x, a), call_kwsplat(c)
+
+.violation F522(at: node) code "F522"
+    "Remove the keyword arguments that no named placeholder in this str.format() string uses."
+    suppress ruff "F522"
+F522(c) :- format_call(c, v), brace_ok(v), !call_kwsplat(c), call_kw(c, x, _), !brace_keyword(v, x).

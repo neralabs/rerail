@@ -1,0 +1,24 @@
+.policy "react-no-children-prop" revision 2
+.description "Pass children by nesting them, not as a children prop."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/no-children-prop: children given as a prop, on any element or in a createElement props object.
+//   <div children="x" />                             reported at the prop: nest it, <div>x</div>
+//   React.createElement("div", { children: "x" })    reported at the call: pass it as the third argument
+// The allowFunctions option is off, so render-prop children are reported too, and its two "function" messages
+// never apply. A key counts when it is a name: `children:`, `{ children }`, `children() {}`, `[children]`;
+// a string key "children" does not, as in the rule.
+#include "tsx/react.rr"
+
+.violation children_prop(at: node, msg: symbol)
+    code "react/no-children-prop"
+    "{msg}"
+    suppress eslint "react/no-children-prop"
+    suppress oxlint "no-children-prop"
+    suppress biome "lint/correctness/noChildrenProp"
+children_prop(a, "Do not pass children as props. Instead, nest children between the opening and closing tags.") :-
+    react_open(_, o), jsx_prop(o, "children", a).
+children_prop(c, "Do not pass children as props. Instead, pass them as additional arguments to React.createElement.") :-
+    create_key(c, "children", _), docof(c, d), react_doc(d).

@@ -1,0 +1,20 @@
+.policy "ruff-pyi026-type-alias-without-annotation" revision 2
+.description "Annotate type alias assignments in stub files with TypeAlias; it marks the line as an alias declaration instead of an ordinary variable."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI026 (flake8-pyi), stubs only: `X = <type>` with one plain-name target and no `TypeAlias`
+// annotation, where the value can only be a type: a subscript, a PEP 604 union, None or `typing.Any`. A bare
+// name or attribute (`X = int`) may be a variable, so it is not reported. Reported at the target; classes too.
+//   Vector = list[float]       ← PYI026: write `Vector: TypeAlias = list[float]`
+#include "python/typing.rr"
+
+.violation PYI026(at: node, x: symbol) code "PYI026" "Annotate `{x}` as `{x}: TypeAlias = ...`, importing `TypeAlias` from `typing` (`typing_extensions` before 3.10). Leave it unannotated only if it is a variable, not a type alias."
+    suppress ruff "PYI026"
+PYI026(t, x) :- stub_stmt(a), simple_assign(a, t, v), plain_target(t, x), alias_type(v).
+.decl alias_type(v: node)
+alias_type(v) :- kind(v, "subscript").
+alias_type(v) :- kind(v, "none"), simple_assign(a, _, v), !in_enum(a).  // an enum member is a value
+alias_type(v) :- pep604(v).
+alias_type(v) :- typing_sym(v, "Any").

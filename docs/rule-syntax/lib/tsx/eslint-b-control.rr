@@ -1,0 +1,108 @@
+// tsx/eslint-b-control: operator precedence and assignment shapes, as ESLint's expression and assignment rules
+// (batch js-2) see them. ESTree has no parentheses, so a rule that rewrites code asks how tightly an expression
+// binds (astUtils.getPrecedence) to decide where the new text needs them.
+//
+// What a rule gets from this library:
+//   below_unary(e)        e binds more loosely than a unary operator: `!` before it needs parentheses
+//   below_or(e)           e binds more loosely than `||`, or is a `??` (which may not mix with ||)
+//   member_runs_on(m)     class member m comes after one that may run on into it (a field without `;`)
+//   slot(a, e, i)         e is ESTree's elements[i] of array (pattern) a, holes counted; slot_count(a, k)
+//   ref_same(a, b, m)     astUtils.isSameReference, keys compared by static name (m "static") or as written
+//                         ("exact"); asked for the pairs of ref_same_ask(a, b, m)
+//   lit_val(n, k, v)      n is a literal of type k ("string", "number", "regex", "true", …) with value v
+//   optional_link(x)      member, subscript or call x has a `?.` in its chain, parentheses not crossed
+//   chain_at(x)           x, standing where it is not continued, is ESTree's ChainExpression
+//
+// Rules that use it: no-unneeded-ternary, no-useless-constructor, require-await, no-self-assign,
+// operator-assignment, no-unsafe-optional-chaining.
+//
+// Builds on tsx/eslint-a-common (deparen, static_prop) and core.
+#include "tsx/eslint-a-common.rr"
+#include "layout.rr"
+#include "tsx/slots.rr"
+
+// ---- precedence --------------------------------------------------------------------------------------------------
+// getPrecedence ranks ESTree types; below a unary operator are the binary and logical operators, the
+// conditional, assignments, arrows, yield and the comma. e is a node as written: a parenthesized_expression is
+// never below anything, since its parentheses already group it.
+//   a + b ? false : true      → !(a + b) ? …      the test is below_unary
+//   x ? x : a = b             → x || (a = b)       the fallback is below_or
+.decl loose_kind(k: symbol)  // below || as well
+loose_kind("ternary_expression"). loose_kind("assignment_expression"). loose_kind("augmented_assignment_expression").
+loose_kind("arrow_function"). loose_kind("yield_expression"). loose_kind("sequence_expression").
+.decl below_unary(e: node)
+below_unary(e) :- kind(e, k), loose_kind(k).
+below_unary(e) :- kind(e, "binary_expression").
+.decl below_or(e: node)
+below_or(e) :- kind(e, k), loose_kind(k).
+below_or(e) :- kind(e, "binary_expression"), op(e, "??").
+
+// ---- class members and automatic semicolon insertion -------------------------------------------------------------
+// member_runs_on(m): class member m follows one that has not ended for sure, a field without `;`. A fix that
+// removes text from m's start (a constructor, an `async`) must leave `;` when what follows is `[` or `(`:
+//   class A { a = 0⏎ constructor() {}⏎ [b]() {} }   removing the constructor gives `a = 0⏎ ;⏎ [b]() {}`
+// The member before ends safely in `;`, or in `}` (a method body); the class body's own `{` starts the list.
+.decl member_runs_on(m: node)
+member_runs_on(m) :- child(b, m, _), kind(b, "class_body"), prev_code(m, t), !match("(?s).*[;{}]\\s*", t).
+layout_at(m) :- child(b, m, _), kind(b, "class_body").
+
+// ---- same reference ----------------------------------------------------------------------------------------------
+// ref_same(a, b, m): astUtils.isSameReference. Two expressions name the same place: the same identifier, `this`,
+// `super`, equal literals, or members of the same object by the same key. `a?.b` and `a.b` are the same;
+// parentheses do not count. Mode m is how keys compare:
+//   "static"  by static name, so `x.y` and `x["y"]` are the same, and `a[0]` and `a["0"]` (the default)
+//   "exact"   as written: `x.y` and `x.y`, or `x[k]` and `x[k]` (disableStaticComputedKey)
+//   a.b.c = a.b.c        this.x = this["x"] ("static" only)        a[i] = a[j] is neither
+// Asked only for the pairs in ref_same_ask(a, b, m), which the including rule fills.
+.decl ref_same_ask(a: node, b: node, m: symbol)
+.decl ref_eq_pair(a: node, b: node, m: symbol)  // a pair to compare, parentheses removed
+ref_eq_pair(x, y, m) :- ref_same_ask(a, b, m), deparen(a, x), deparen(b, y).
+ref_eq_pair(x, y, m) :- ref_eq_pair(a, b, m), field(a, "object", o), field(b, "object", p), deparen(o, x), deparen(p, y).
+ref_eq_pair(x, y, m) :- ref_eq_pair(a, b, m), kind(a, "subscript_expression"), kind(b, "subscript_expression"),
+    field(a, "index", i), field(b, "index", j), deparen(i, x), deparen(j, y).
+.decl ref_same(a: node, b: node, m: symbol)
+ref_same(a, b, m) :- ref_same_ask(a, b, m), deparen(a, x), deparen(b, y), ref_eq(x, y, m).
+.decl ref_eq(a: node, b: node, m: symbol)
+ref_eq(a, b, m) :- ref_eq_pair(a, b, m), kind(a, k), kind(b, k), (k = "this" ; k = "super").
+ref_eq(a, b, m) :- ref_eq_pair(a, b, m), kind(a, "identifier"), kind(b, "identifier"), text(a, x), text(b, x).
+// A Literal only: ESTree's TemplateLiteral is not one, so ``a[`k`] = a[`k`] + 1`` is not the same place when keys
+// compare as written ("exact"); in "static" mode the template key still matches by its static name, above.
+ref_eq(a, b, m) :- ref_eq_pair(a, b, m), lit_val(a, k, v), lit_val(b, k, v), !kind(a, "template_string").
+// By static name ("static" only), else by the key as written: a property name, a private name, or the same
+// computed key.
+ref_eq(a, b, "static") :- ref_eq_pair(a, b, "static"), static_prop(a, _, x), static_prop(b, _, x), ref_eq_object(a, b, "static").
+ref_eq(a, b, m) :- ref_eq_pair(a, b, m), (m = "exact" ; !static_prop(a, _, _)), field(a, "property", q), text(q, x),
+    field(b, "property", r), text(r, x), kind(q, k), kind(r, k), ref_eq_object(a, b, m).
+ref_eq(a, b, m) :- ref_eq_pair(a, b, m), (m = "exact" ; !static_prop(a, _, _)), kind(a, "subscript_expression"),
+    kind(b, "subscript_expression"), field(a, "index", i), field(b, "index", j), deparen(i, x), deparen(j, y),
+    ref_eq(x, y, m), ref_eq_object(a, b, m).
+.decl ref_eq_object(a: node, b: node, m: symbol)
+ref_eq_object(a, b, m) :- ref_eq_pair(a, b, m), field(a, "object", o), field(b, "object", p), deparen(o, c), deparen(p, d),
+    ref_eq(c, d, m).
+// lit_val(n, k, v): a literal and its value, by kind, so 1 and "1" differ. A template without ${…} is a string.
+.decl lit_val(n: node, k: symbol, v: symbol)
+lit_val(n, "string", v) :- kind(n, "string"), value(n, v).
+lit_val(n, "string", v) :- kind(n, "template_string"), value(n, v), count : { child(n, c, _), kind(c, "template_substitution") } = 0.
+lit_val(n, "number", v) :- kind(n, "number"), value(n, v).
+lit_val(n, k, k) :- (kind(n, "true") ; kind(n, "false") ; kind(n, "null")), kind(n, k).
+lit_val(n, "regex", v) :- kind(n, "regex"), text(n, v).
+
+// ---- optional chains ---------------------------------------------------------------------------------------------
+// ESTree wraps a whole chain that has a `?.` in one ChainExpression; parentheses end it. tree-sitter has no such
+// node: `a?.b.c` is a member .c of the member a?.b. optional_link(x): x's own link or one further down its
+// object/function spine is optional, with no parentheses between.
+//   a?.b.c     optional_link of .c and of ?.b        (a?.b).c   only of ?.b: the parentheses end the chain
+.decl chain_link(k: symbol)
+chain_link("member_expression"). chain_link("subscript_expression"). chain_link("call_expression").
+.decl optional_link(x: node)
+optional_link(x) :- kind(x, k), chain_link(k), field(x, "optional_chain", _).
+// tree-sitter-typescript writes `f?.()` with a `?.` token and no optional_chain field.
+optional_link(x) :- kind(x, "call_expression"), op(x, "?.").
+optional_link(x) :- kind(x, k), chain_link(k), (field(x, "object", o) ; field(x, "function", o)), optional_link(o).
+// chain_at(x): x is a whole chain, as ESTree sees it: an optional link that is not itself the object or callee
+// of a further link (ESTree would continue the chain there). The including rule asks this at operand positions.
+//   new (a?.b)()  the callee is a ChainExpression;   a?.b.c   the object a?.b is not (it continues)
+.decl chain_at(x: node)
+chain_at(x) :- optional_link(x), !continued(x).
+.decl continued(x: node)
+continued(x) :- (field(p, "object", x) ; field(p, "function", x)), kind(p, k), chain_link(k).

@@ -4,6 +4,7 @@
 //! `truncate_identifier`) and SQLite's tokenizer are deliberately conservative here:
 //! a value is returned only when their readings agree.
 
+use crate::code_rule_dsl::tree::Tree;
 use super::{Value, int_float_order};
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
@@ -514,7 +515,7 @@ pub(crate) fn decode<D: ast_grep_core::Doc>(node: &ast_grep_core::Node<'_, D>) -
     match node.kind().as_ref() {
         "literal" => literal(&node.text()),
         "parenthesized_expression" | "term" => {
-            let mut c = node.children().filter(|n| n.is_named());
+            let mut c = node.named();
             match (c.next(), c.next()) {
                 (Some(x), None) => decode(&x),
                 _ => Value::Unknown,

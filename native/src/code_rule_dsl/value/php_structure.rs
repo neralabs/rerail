@@ -15,6 +15,7 @@
 //! compares by the key PHP coerces it to (`1 == '1' == 1.5 == true`, `null == ''`); anything else
 //! structurally.
 
+use crate::code_rule_dsl::tree::Tree;
 use super::php::{self, Key};
 use super::structure::{Equality, Tok};
 use super::{Context, Value};
@@ -63,16 +64,12 @@ fn trivia<D: Doc>(node: &Node<'_, D>) -> bool {
     node.kind() == "comment"
 }
 
-fn named_children<'r, D: Doc>(node: &Node<'r, D>) -> impl Iterator<Item = Node<'r, D>> {
-    node.children()
-        .filter(|child| child.is_named() && !trivia(child))
-}
 
 /// The expression inside any number of parentheses.
 fn unparenthesized<'r, D: Doc>(node: &Node<'r, D>) -> Node<'r, D> {
     let mut node = node.clone();
     while node.kind() == "parenthesized_expression" {
-        let children: Vec<_> = named_children(&node).collect();
+        let children: Vec<_> = node.named_code().collect();
         match children.as_slice() {
             [inner] => node = inner.clone(),
             _ => break,
@@ -234,7 +231,7 @@ fn walk_node<D: Doc>(
             return Some(());
         }
         "named_type" => {
-            let children: Vec<_> = named_children(node).collect();
+            let children: Vec<_> = node.named_code().collect();
             if let [name] = children.as_slice()
                 && name.kind() == "name"
             {
@@ -246,11 +243,11 @@ fn walk_node<D: Doc>(
             }
         }
         // An empty argument list is no arguments: `new C` is `new C()`.
-        "arguments" if named_children(node).next().is_none() => return Some(()),
+        "arguments" if node.named_code().next().is_none() => return Some(()),
         // `exit;` is the expression `exit`, as `die()` and `exit(1)` are.
         "exit_statement" => {
             out.push(Tok::Open("expression_statement".into()));
-            let argument: Vec<_> = named_children(node).collect();
+            let argument: Vec<_> = node.named_code().collect();
             construct("exit", &argument, context, out)?;
             out.push(Tok::Close);
             return Some(());
@@ -270,8 +267,8 @@ fn walk_node<D: Doc>(
                 if let Some(construct_name) = construct_name {
                     let mut values = Vec::new();
                     if let Some(arguments) = node.field("arguments") {
-                        for argument in named_children(&arguments) {
-                            let parts: Vec<_> = named_children(&argument).collect();
+                        for argument in arguments.named_code() {
+                            let parts: Vec<_> = argument.named_code().collect();
                             match parts.as_slice() {
                                 [value]
                                     if argument.kind() == "argument"
@@ -419,7 +416,7 @@ fn body<D: Doc>(
     if let Some(body) = body {
         match body.kind().as_ref() {
             "compound_statement" | "colon_block" => {
-                for statement in named_children(&body) {
+                for statement in body.named_code() {
                     walk(&statement, context, out)?;
                 }
                 trailing_comment(&body, out);
@@ -443,8 +440,7 @@ const STATEMENT_LISTS: &[&str] = &[
 /// (`maybeCreateZeroLengthNop`): `{ // c }` is not `{ }`.
 fn trailing_comment<D: Doc>(list: &Node<'_, D>, out: &mut Vec<Tok>) {
     if list
-        .children()
-        .filter(|child| child.is_named())
+        .named()
         .last()
         .is_some_and(|child| trivia(&child))
     {
@@ -523,7 +519,7 @@ fn interpolated<D: Doc>(
     };
     let parts: Vec<_> = body
         .as_ref()
-        .map(|body| named_children(body).collect())
+        .map(|body| body.named_code().collect())
         .unwrap_or_default();
     let literal = parts
         .iter()
@@ -537,25 +533,19 @@ fn interpolated<D: Doc>(
     }
     let source = node.text();
     let base = node.range().start;
-    let children: Vec<_> = node.children().filter(|child| !trivia(child)).collect();
-    // The literal text sits between the opening and the closing delimiter.
-    let delimiters: Vec<_> = children
-        .iter()
-        .filter(|child| !child.is_named() && matches!(child.kind().as_ref(), "\"" | "`"))
-        .collect();
-    let (Some(open), Some(close)) = (delimiters.first(), delimiters.last()) else {
-        return None;
-    };
-    if open.range() == close.range() {
-        return None;
-    }
+    // The literal text sits between the opening and the closing delimiter: the node's first `"` or
+    // `` ` `` (after a `b` prefix) and its last byte. Read off the node's own source: the tape
+    // leaves an implied delimiter out, and nothing here makes one up.
+    let bytes = source.as_bytes();
+    let open = bytes.iter().position(|&b| b == b'"' || b == b'`')?;
+    let close = bytes.len().checked_sub(1).filter(|&close| close > open && bytes[close] == bytes[open])?;
+    let (open_end, close_start) = (base + open + 1, base + close);
     out.push(Tok::Open(if kind == "shell_command_expression" {
         "#shell".into()
     } else {
         "#interpolated".into()
     }));
-    let mut literal_start = open.range().end;
-    let mut index = 0;
+    let mut literal_start = open_end;
     let push_literal = |from: usize, to: usize, out: &mut Vec<Tok>| -> Option<()> {
         if from < to {
             let raw = source.as_bytes().get(from - base..to - base)?;
@@ -566,40 +556,27 @@ fn interpolated<D: Doc>(
         }
         Some(())
     };
-    while index < children.len() {
-        let child = &children[index];
-        if child.range().start < open.range().end || child.range().start >= close.range().start {
-            index += 1;
-            continue;
-        }
-        if child.is_named() && matches!(child.kind().as_ref(), "string_content" | "escape_sequence")
-        {
-            index += 1;
+    let byte_at = |at: usize| at.checked_sub(base).and_then(|at| bytes.get(at)).copied();
+    for child in node.named().filter(|child| !trivia(child)) {
+        let range = child.range();
+        if range.start < open_end || range.start >= close_start || matches!(child.kind().as_ref(), "string_content" | "escape_sequence") {
             continue;
         }
         // `{$expr}`: the braces delimit an expression.
-        if !child.is_named() && child.kind() == "{" {
-            let expression = children.get(index + 1)?;
-            let closing = children.get(index + 2)?;
-            if !expression.is_named() || closing.kind() != "}" {
+        if range.start > open_end && byte_at(range.start - 1) == Some(b'{') {
+            if byte_at(range.end) != Some(b'}') {
                 return None;
             }
-            push_literal(literal_start, child.range().start, out)?;
-            walk(expression, context, out)?;
-            literal_start = closing.range().end;
-            index += 3;
+            push_literal(literal_start, range.start - 1, out)?;
+            walk(&child, context, out)?;
+            literal_start = range.end + 1;
             continue;
         }
-        if !child.is_named() {
-            index += 1;
-            continue;
-        }
-        push_literal(literal_start, child.range().start, out)?;
-        simple_interpolation(child, context, out)?;
-        literal_start = child.range().end;
-        index += 1;
+        push_literal(literal_start, range.start, out)?;
+        simple_interpolation(&child, context, out)?;
+        literal_start = range.end;
     }
-    push_literal(literal_start, close.range().start, out)?;
+    push_literal(literal_start, close_start, out)?;
     out.push(Tok::Close);
     Some(())
 }
@@ -613,7 +590,7 @@ fn simple_interpolation<D: Doc>(
     match node.kind().as_ref() {
         // `${a}` is the variable `$a`.
         "dynamic_variable_name" => {
-            let children: Vec<_> = named_children(node).collect();
+            let children: Vec<_> = node.named_code().collect();
             match children.as_slice() {
                 [name] if name.kind() == "name" => {
                     out.push(Tok::Open("variable_name".into()));
@@ -627,7 +604,7 @@ fn simple_interpolation<D: Doc>(
         // `$a[k]` indexes with the string `k`, `$a[0]` with an integer where it is a canonical
         // decimal one (`$a[01]` with the string `01`).
         "subscript_expression" => {
-            let children: Vec<_> = named_children(node).collect();
+            let children: Vec<_> = node.named_code().collect();
             let [object, index] = children.as_slice() else {
                 return None;
             };

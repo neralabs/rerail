@@ -1,0 +1,83 @@
+// python/logging: calls of the standard `logging` module and of logger objects, as Ruff's flake8-logging-format
+// (G) and flake8-logging (LOG) rules find them.
+//
+// Interface
+//   Calls:     log_call(c, m, at, how)  c calls logging method m ("info", "warn", "exception", "log", …) on a
+//                                       logger (how "attr": `logger.info(…)`), or the module-level function
+//                                       `logging.m` by a bare name (how "name": `info(…)`); at is where Ruff
+//                                       reports: the method name, or the bare callee
+//              log_level(m)             the level methods: debug, info, warn, warning, error, critical, exception
+//              log_msg(c, e)            e is the message argument: positional 0 (1 for `log`), or `msg=`
+//              logger_expr(v)           v is a logger object (Ruff's is_logger_candidate on `v.m`)
+//   Imports:   seen_module(d, "logging") (python/misc-seen) the file imports `logging`
+//   Arguments: log_kw(c, x, k, v)       logging call c passes keyword x as node k (`x=v`) with value v (no parentheses)
+//              exc_info_set(c, k)       c passes `exc_info=True` or `exc_info=sys.exc_info()`; k is the keyword
+//   Places:    log_in_handler(c)        logging call c is inside an `except` clause, at any depth (a def there too)
+//
+// Python and Ruff background
+//   - A logger is recognised by its spelling, not by its type. `v.info(…)` is a logging call when v is
+//     `logging.getLogger(…)` or `logging.Logger(…)` written inline; when v resolves through imports to `logging`,
+//     `flask.current_app.logger` or a name in the policy's `logger-objects` list; or, when v is a name or attribute
+//     chain the file binds itself (no import), when its last name starts with `log`/`LOG` or ends with
+//     `logger`/`logging` (or the capital forms).
+//       import logging; logging.info("x")                log_call, by "attr"
+//       from logging import info; info("x")             log_call, by "name"
+//       _LOGGER = logging.getLogger(); _LOGGER.info("x") log_call: the name ends with LOGGER
+//       from distutils import log; log.warn("x")        not: `log` resolves to distutils.log
+//   - Ruff's semantic flag for "in an exception handler" survives into functions defined in the handler, so
+//     log_in_handler looks through defs.
+#include "python/ruff.rr"
+#include "python/misc-seen.rr"
+
+.decl log_level(m: symbol)
+log_level("debug"). log_level("info"). log_level("warn"). log_level("warning"). log_level("error").
+log_level("critical"). log_level("exception").
+.decl log_method(m: symbol)
+log_method(m) :- log_level(m).
+log_method("log").
+
+// ---- loggers -----------------------------------------------------------------------------------------------------
+.decl logger_expr(v: node)
+logger_expr(v) :- unparen(v, m), kind(m, "call"), call_q(m, q), (q = "logging.getLogger" ; q = "logging.Logger").
+logger_expr(v) :- unparen(v, m), !kind(m, "call"), ruff_qual(m, q), logger_q(q).
+logger_expr(v) :- unparen(v, m), !kind(m, "call"), !ruff_qual(m, _), dotted_expr(m, _), leaf_name(m, x),
+    logger_like(x), !local_def_chain(m).
+// local_def_chain(m): m's first name is bound to a def or class of this file, which Ruff resolves to a qualified
+// name of the module itself: `class mylogger: …` then `mylogger.warn(…)` is not a logger.
+.decl local_def_chain(m: node)
+local_def_chain(m) :- dotted_expr(m, _), (kind(m, "identifier"), r = m ; chain_root(m, r)), look(r, x, s),
+    binding(s, x, _, f), (f = "class" ; f = "def").
+.decl logger_q(q: symbol)
+logger_q("logging"). logger_q("flask.current_app.logger").
+logger_q(q) :- option_item("logger-objects", _, q).
+// logger_like(x): the name heuristic, tested once per distinct last name.
+.decl logger_like(x: symbol)
+logger_like(x) :- leaf_name(_, x), (prefix("log", x) ; prefix("LOG", x) ; suffix("logger", x) ; suffix("logging", x) ;
+    suffix("LOGGER", x) ; suffix("LOGGING", x)).
+
+// ---- calls -------------------------------------------------------------------------------------------------------
+.decl log_call(c: node, m: symbol, at: node, how: symbol)
+log_call(c, m, a, "attr") :- kind(c, "call"), field(c, "function", f), unparen(f, g), kind(g, "attribute"),
+    field(g, "attribute", a), text(a, m), log_method(m), field(g, "object", v), logger_expr(v).
+log_call(c, m, g, "name") :- kind(c, "call"), field(c, "function", f), unparen(f, g), kind(g, "identifier"),
+    call_q(c, q), split_dot(q, "logging", m), log_method(m).
+
+.decl log_msg(c: node, e: node)
+log_msg(c, e) :- log_call(c, m, _, _), m != "log", ruff_arg(c, 0, a), unparen(a, e).
+log_msg(c, e) :- log_call(c, "log", _, _), ruff_arg(c, 1, a), unparen(a, e).
+log_msg(c, e) :- log_call(c, _, _, _), call_kwarg(c, "msg", a), unparen(a, e).
+
+// ---- imports, arguments, places ----------------------------------------------------------------------------------
+seen_ask("logging").
+
+.decl log_kw(c: node, x: symbol, k: node, v: node)
+log_kw(c, x, k, m) :- log_call(c, _, _, _), call_item(c, k, _), kind(k, "keyword_argument"), field(k, "name", n),
+    text(n, x), field(k, "value", v), unparen(v, m).
+.decl exc_info_set(c: node, k: node)
+exc_info_set(c, k) :- log_kw(c, "exc_info", k, m), kind(m, "true").
+exc_info_set(c, k) :- log_kw(c, "exc_info", k, m), call_q(m, "sys.exc_info").
+
+.decl handler_kind(k: symbol)
+handler_kind("except_clause").
+.decl log_in_handler(c: node)
+log_in_handler(c) :- log_call(c, _, _, _), inside(c, _, handler_kind).

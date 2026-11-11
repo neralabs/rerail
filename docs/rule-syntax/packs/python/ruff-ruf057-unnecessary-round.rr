@@ -1,0 +1,26 @@
+.policy "ruff-ruf057-unnecessary-round" revision 1
+.description "Remove the round call on a value that is already an integer; rounding an integer returns it unchanged."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF057: `round(x)`, `round(x, None)` or `round(x, n)` with n a non-negative int literal, where x is
+// an int: an int expression, or a name bound once to one. A negative n rounds to tens or hundreds, so stays.
+//   round(42)          ← RUF057  `42`
+//   round(42, -2)      not reported: 4200 → 0
+//   round(42.)         not reported: a float
+#include "python/ruff.rr"
+
+param_slot("builtins.round", "number", 0).
+param_slot("builtins.round", "ndigits", 1).
+
+.violation RUF057(at: node) code "RUF057"
+    "Use the value directly instead of `round(...)`; it is already an integer. Keep `round` if the value may not truly be an `int`, e.g. a wrong annotation or a subclass overriding `__round__`."
+    suppress ruff "RUF057"
+RUF057(c) :- call_q(c, "builtins.round"), !call_splat(c), call_nargs(c, n), call_nkwargs(c, k), n + k <= 2,
+    call_param(c, "number", x), int_typed(x), whole_digits(c).
+// whole_digits(c): round's ndigits is absent, None or an int literal ≥ 0.
+.decl whole_digits(c: node)
+whole_digits(c) :- call_q(c, "builtins.round"), !call_param(c, "ndigits", _).
+whole_digits(c) :- call_param(c, "ndigits", d), unparen(d, m), kind(m, "none").
+whole_digits(c) :- call_param(c, "ndigits", d), ruff_int(d, _).

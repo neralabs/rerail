@@ -1,0 +1,3219 @@
+{
+  "format": "rerail.full-repository-comparison/v1",
+  "implementation_commit": "3285b48f4d924316e3d92c5ee9214b54824c779a",
+  "source_commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "historical": {
+    "rerail-b6-repository-final": {
+      "sha256": "bf55b9d054c4613aac4e2984ede548e30dfacf652bc42f839ab75f2b02993ca7",
+      "report": {
+        "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "files": 9010,
+        "bytes": 137896473,
+        "oracleMs": 70352.66991599929,
+        "oracleWorkers": 1,
+        "policyDigests": {
+          "data-layer-execution-authority-bypass": "sha256:0bc1b6415b39f4867108efd14051f652c745e5f0531b8417005cf08d98490478",
+          "data-layer-impl-direct-execution": "sha256:eafa97fab10bc3e8bd845ca67204c8aab165f07261274cd2b31137a3505e5105",
+          "data-layer-legacy-execution-surfaces": "sha256:e1ef643fc3ff1ce77fdbcd179af87a3e868b9b15e60837abab968d2ac90ef263",
+          "data-layer-raw-execute-regression": "sha256:e7906ab4289b8ea6c7e0cc97dea0d2e0eb33c04daeb26e857ec908a6bcd4c35f",
+          "data-layer-serverplan-bypass": "sha256:bd11d189d06488a9cea1392b65d0d8571e9a2e30fe6e0ad2f63bbe0d708e0ff7",
+          "data-layer-serverplan-dispatch-architecture": "sha256:ca40f1032b14b686975b8478ceb0edfc0bcc718b1fb2d594efce71c02b7b5b84",
+          "data-layer-serverplan-quality": "sha256:6911ee96ba027533fb301a107519e8c109d7f41cd3a4b1b00123e7cb0ac3576e",
+          "data-layer-serverplan-state-tripwires": "sha256:d43456019c0c45abb691d528b8e749895e6d31db062acfa61753c761b3001da1",
+          "data-layer-serverplan-steps": "sha256:36cedfb29df4c7b324d58bc9c1d413106209488743f440ae3567a9a1d61223ca",
+          "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198"
+        },
+        "policyCompilationMs": {
+          "data-layer-execution-authority-bypass": 2.9608749999999873,
+          "data-layer-impl-direct-execution": 4.463374999999928,
+          "data-layer-legacy-execution-surfaces": 7.7813750000000255,
+          "data-layer-raw-execute-regression": 5.566291999999976,
+          "data-layer-serverplan-bypass": 4.830417000000011,
+          "data-layer-serverplan-dispatch-architecture": 18.201915999999983,
+          "data-layer-serverplan-quality": 273.323083,
+          "data-layer-serverplan-state-tripwires": 113.68595899999991,
+          "data-layer-serverplan-steps": 74.18062499999996,
+          "data-layer-serverplan-target-architecture": 9.593583000000308
+        },
+        "compilationMs": 2174.557625,
+        "coldMs": 1456276.346416,
+        "unchangedFileMs": 1075.7917499998584,
+        "editedFileMs": 17030.46029200009,
+        "editedPath": "impl/common/l2200_sql_dialect/sql_connection.py",
+        "incrementalDifferences": [
+          {
+            "phase": "unchanged",
+            "falsePositives": [
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/browser/read_through_connection.py\",48,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2060_query_spec/test_subqueries.py\",37,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/h14_migration_kill_worker.py\",7,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/h14_recovery_source_fixture.py\",5,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_bootstrap_immutable_binary_row.py\",5,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_bootstrap_immutable_row.py\",5,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_bootstrap_row_content_assertion.py\",5,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_bootstrap_row_set_admission.py\",5,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_dense_bootstrap_scope_reconciliation.py\",5,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_h14_schema_migration.py\",7,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_h14_schema_read_only_admission.py\",5,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_h14_warm_retry_authority.py\",5,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_immutable_schema_replacement.py\",5,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_native_h14_schema_composition.py\",8,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_native_migrated_admission.py\",7,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_native_schema_migration.py\",5,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/tests/test_grammar_read_after_write.py\",29,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l5250_matching/exact_dense.py\",6453,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l5250_matching/usearch_native.py\",131,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l8000_admin/approval_db_runtime.py\",158,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l8000_managed/permission/audit.py\",59,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/doltdb/versioned_operations_read.py\",35,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/sqlite/native_usearch_extension.py\",133,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/sqlite/native_usearch_extension.py\",262,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/sqlite/native_usearch_extension.py\",300,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/sqlite/native_usearch_extension.py\",313,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l1470_matching_contracts/registry.py\",166,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l1470_matching_contracts/registry.py\",176,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l1470_matching_contracts/registry.py\",196,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l1470_matching_contracts/registry.py\",428,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l1470_matching_contracts/registry.py\",464,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l2000_connection/schema_reconciliation_coordinator.py\",14,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l2050_transaction/tests/test_legacy_wrappers_config.py\",3,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l3200_metadata/ddl_lockdown.py\",130,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l3200_metadata/test_semantic_schema_plan_composition.py\",46,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l3250_migrations/versioned_data.py\",90,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l4350_timer_driver/driver.py\",225,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_budget.py\",437,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_budget.py\",770,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_authority.py\",137,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_authority.py\",91,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_configuration.py\",153,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_fill.py\",274,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_lookup.py\",285,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_publish.py\",244,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_publish.py\",272,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_source.py\",203,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_tombstone_lookup.py\",102,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_call_records.py\",159,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_dispatch.py\",225,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_funding_selection.py\",141,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_logical_calls.py\",120,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_logical_calls.py\",133,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_resource_candidates.py\",154,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_resource_candidates.py\",177,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_rule_bundle_authority.py\",74,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/sas_http.py\",48,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l8000_admin/enrollment.py\",45,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l8000_admin/registry.py\",45,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9750_graphql/executor.py\",5065,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9800_rippling/processor.py\",3171,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9800_rippling/processor.py\",3209,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",232,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",239,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",270,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",272,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",294,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",320,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",434,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",436,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",495,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/session.py\",138,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9900_auto_api/mcp_list_source.py\",141,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"tests/security/test_test_authority_guard.py\",16,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"tests/test_ipc_lazy_adapters.py\",7,\"LEG-010\"]",
+              "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",1690,\"SPT-015\"]",
+              "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",1766,\"SPT-015\"]",
+              "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",1881,\"SPT-015\"]",
+              "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",2142,\"SPT-015\"]",
+              "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",2322,\"SPT-015\"]",
+              "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",2334,\"SPT-015\"]",
+              "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",2629,\"SPT-015\"]",
+              "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",2751,\"SPT-015\"]",
+              "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",2989,\"SPT-015\"]"
+            ],
+            "falseNegatives": [],
+            "failures": [
+              {
+                "clauseId": "direct-execution-lines",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2100_sql_grammar/rust_bridge/generated_facades.py",
+                "ruleId": "data-layer-impl-direct-execution"
+              },
+              {
+                "clauseId": "legacy-execution-graphs",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-legacy-execution-surfaces"
+              },
+              {
+                "clauseId": "legacy-execution-graphs",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/sql_table_hnsw.py",
+                "ruleId": "data-layer-legacy-execution-surfaces"
+              },
+              {
+                "clauseId": "legacy-execution-graphs",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2100_sql_grammar/rust_bridge/generated_facades.py",
+                "ruleId": "data-layer-legacy-execution-surfaces"
+              },
+              {
+                "clauseId": "legacy-execution-graphs",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l1000_schema/typed_field.py",
+                "ruleId": "data-layer-legacy-execution-surfaces"
+              },
+              {
+                "clauseId": "legacy-execution-graphs",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2000_connection/schema_transaction.py",
+                "ruleId": "data-layer-legacy-execution-surfaces"
+              },
+              {
+                "clauseId": "legacy-execution-graphs",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2070_batching/execution_runtime.py",
+                "ruleId": "data-layer-legacy-execution-surfaces"
+              },
+              {
+                "clauseId": "executor-provenance",
+                "code": "relational-failed",
+                "message": "relational stage propagation: relational query: interrupted",
+                "ruleId": "data-layer-serverplan-dispatch-architecture"
+              },
+              {
+                "clauseId": "quality-contracts-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-2",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-2",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2000_connection/schema_transaction.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-2",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2070_batching/execution_runtime.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-3",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-4",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-5",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-6",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-6",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2000_connection/schema_transaction.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-6",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2070_batching/execution_runtime.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-7",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-8",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-9",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "state-signatures-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-signatures-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/sql_table_hnsw.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-signatures-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2100_sql_grammar/rust_bridge/generated_facades.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-signatures-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l1000_schema/typed_field.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-signatures-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2000_connection/schema_transaction.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-signatures-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2070_batching/execution_runtime.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "relational-failed",
+                "message": "relational stage taints: relational query: interrupted",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "relational-failed",
+                "message": "relational stage taints: relational query: interrupted",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/sql_table_hnsw.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "relational-failed",
+                "message": "relational stage semantic_values: relational query: interrupted",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "relational-failed",
+                "message": "relational stage taints: relational query: interrupted",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "relational-failed",
+                "message": "relational stage taints: relational query: interrupted",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "relational-failed",
+                "message": "relational stage taints: relational query: interrupted",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l1000_schema/typed_field.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2000_connection/schema_transaction.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2070_batching/execution_runtime.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "relational-failed",
+                "message": "relational stage taints: relational query: interrupted",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "relational-failed",
+                "message": "relational stage taints: relational query: interrupted",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-projection-recovery-2",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-projection-recovery-2",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/sql_table_hnsw.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-projection-recovery-2",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2100_sql_grammar/rust_bridge/generated_facades.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-projection-recovery-2",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l1000_schema/typed_field.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-projection-recovery-2",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2000_connection/schema_transaction.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-projection-recovery-2",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2070_batching/execution_runtime.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              }
+            ]
+          },
+          {
+            "phase": "trailing-newline-edit",
+            "falsePositives": [
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/browser/read_through_connection.py\",48,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2060_query_spec/test_subqueries.py\",37,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/h14_migration_kill_worker.py\",7,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/h14_recovery_source_fixture.py\",5,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_bootstrap_immutable_binary_row.py\",5,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_bootstrap_immutable_row.py\",5,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_bootstrap_row_content_assertion.py\",5,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_bootstrap_row_set_admission.py\",5,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_dense_bootstrap_scope_reconciliation.py\",5,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_h14_schema_migration.py\",7,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_h14_schema_read_only_admission.py\",5,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_h14_warm_retry_authority.py\",5,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_immutable_schema_replacement.py\",5,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_native_h14_schema_composition.py\",8,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_native_migrated_admission.py\",7,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_native_schema_migration.py\",5,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/tests/test_grammar_read_after_write.py\",29,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l5250_matching/exact_dense.py\",6453,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l5250_matching/usearch_native.py\",131,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l8000_admin/approval_db_runtime.py\",158,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l8000_managed/permission/audit.py\",59,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/doltdb/versioned_operations_read.py\",35,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/sqlite/native_usearch_extension.py\",133,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/sqlite/native_usearch_extension.py\",262,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/sqlite/native_usearch_extension.py\",300,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"impl/sqlite/native_usearch_extension.py\",313,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l1470_matching_contracts/registry.py\",166,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l1470_matching_contracts/registry.py\",176,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l1470_matching_contracts/registry.py\",196,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l1470_matching_contracts/registry.py\",428,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l1470_matching_contracts/registry.py\",464,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l2000_connection/schema_reconciliation_coordinator.py\",14,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l2050_transaction/tests/test_legacy_wrappers_config.py\",3,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l3200_metadata/ddl_lockdown.py\",130,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l3200_metadata/test_semantic_schema_plan_composition.py\",46,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l3250_migrations/versioned_data.py\",90,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l4350_timer_driver/driver.py\",225,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_budget.py\",437,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_budget.py\",770,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_authority.py\",137,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_authority.py\",91,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_configuration.py\",153,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_fill.py\",274,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_lookup.py\",285,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_publish.py\",244,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_publish.py\",272,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_source.py\",203,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_tombstone_lookup.py\",102,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_call_records.py\",159,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_dispatch.py\",225,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_funding_selection.py\",141,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_logical_calls.py\",120,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_logical_calls.py\",133,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_resource_candidates.py\",154,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_resource_candidates.py\",177,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_rule_bundle_authority.py\",74,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/sas_http.py\",48,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l8000_admin/enrollment.py\",45,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l8000_admin/registry.py\",45,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9750_graphql/executor.py\",5065,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9800_rippling/processor.py\",3171,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9800_rippling/processor.py\",3209,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",232,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",239,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",270,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",272,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",294,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",320,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",434,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",436,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",495,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/session.py\",138,\"LEG-083\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"l9900_auto_api/mcp_list_source.py\",141,\"LEG-080\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"tests/security/test_test_authority_guard.py\",16,\"LEG-010\"]",
+              "[\"data-layer-legacy-execution-surfaces\",\"tests/test_ipc_lazy_adapters.py\",7,\"LEG-010\"]",
+              "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",1690,\"SPT-015\"]",
+              "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",1766,\"SPT-015\"]",
+              "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",1881,\"SPT-015\"]",
+              "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",2142,\"SPT-015\"]",
+              "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",2322,\"SPT-015\"]",
+              "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",2334,\"SPT-015\"]",
+              "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",2629,\"SPT-015\"]",
+              "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",2751,\"SPT-015\"]",
+              "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",2989,\"SPT-015\"]"
+            ],
+            "falseNegatives": [],
+            "failures": [
+              {
+                "clauseId": "direct-execution-lines",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2100_sql_grammar/rust_bridge/generated_facades.py",
+                "ruleId": "data-layer-impl-direct-execution"
+              },
+              {
+                "clauseId": "legacy-execution-graphs",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-legacy-execution-surfaces"
+              },
+              {
+                "clauseId": "legacy-execution-graphs",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/sql_table_hnsw.py",
+                "ruleId": "data-layer-legacy-execution-surfaces"
+              },
+              {
+                "clauseId": "legacy-execution-graphs",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2100_sql_grammar/rust_bridge/generated_facades.py",
+                "ruleId": "data-layer-legacy-execution-surfaces"
+              },
+              {
+                "clauseId": "legacy-execution-graphs",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l1000_schema/typed_field.py",
+                "ruleId": "data-layer-legacy-execution-surfaces"
+              },
+              {
+                "clauseId": "legacy-execution-graphs",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2000_connection/schema_transaction.py",
+                "ruleId": "data-layer-legacy-execution-surfaces"
+              },
+              {
+                "clauseId": "legacy-execution-graphs",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2070_batching/execution_runtime.py",
+                "ruleId": "data-layer-legacy-execution-surfaces"
+              },
+              {
+                "clauseId": "executor-provenance",
+                "code": "relational-failed",
+                "message": "relational stage propagation: relational query: interrupted",
+                "ruleId": "data-layer-serverplan-dispatch-architecture"
+              },
+              {
+                "clauseId": "quality-contracts-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-2",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-2",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2000_connection/schema_transaction.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-2",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2070_batching/execution_runtime.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-3",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-4",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-5",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-6",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-6",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2000_connection/schema_transaction.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-6",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2070_batching/execution_runtime.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-7",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-8",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "quality-contracts-9",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-quality"
+              },
+              {
+                "clauseId": "state-signatures-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-signatures-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/sql_table_hnsw.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-signatures-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2100_sql_grammar/rust_bridge/generated_facades.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-signatures-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l1000_schema/typed_field.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-signatures-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2000_connection/schema_transaction.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-signatures-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2070_batching/execution_runtime.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "relational-failed",
+                "message": "relational stage taints: relational query: interrupted",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "relational-failed",
+                "message": "relational stage taints: relational query: interrupted",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/sql_table_hnsw.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "relational-failed",
+                "message": "relational stage semantic_values: relational query: interrupted",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "relational-failed",
+                "message": "relational stage taints: relational query: interrupted",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "relational-failed",
+                "message": "relational stage taints: relational query: interrupted",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "relational-failed",
+                "message": "relational stage taints: relational query: interrupted",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l1000_schema/typed_field.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2000_connection/schema_transaction.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2070_batching/execution_runtime.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "relational-failed",
+                "message": "relational stage taints: relational query: interrupted",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-flow-1",
+                "code": "relational-failed",
+                "message": "relational stage taints: relational query: interrupted",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-projection-recovery-2",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-projection-recovery-2",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/sql_table_hnsw.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-projection-recovery-2",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "impl/common/l2100_sql_grammar/rust_bridge/generated_facades.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-projection-recovery-2",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l1000_schema/typed_field.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-projection-recovery-2",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2000_connection/schema_transaction.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              },
+              {
+                "clauseId": "state-projection-recovery-2",
+                "code": "source-incomplete",
+                "message": "A relational input is incomplete",
+                "path": "l2070_batching/execution_runtime.py",
+                "ruleId": "data-layer-serverplan-state-tripwires"
+              }
+            ]
+          }
+        ],
+        "expected": 173,
+        "actual": 257,
+        "falsePositives": [
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/browser/read_through_connection.py\",48,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2060_query_spec/test_subqueries.py\",37,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/h14_migration_kill_worker.py\",7,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/h14_recovery_source_fixture.py\",5,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_bootstrap_immutable_binary_row.py\",5,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_bootstrap_immutable_row.py\",5,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_bootstrap_row_content_assertion.py\",5,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_bootstrap_row_set_admission.py\",5,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_dense_bootstrap_scope_reconciliation.py\",5,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_h14_schema_migration.py\",7,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_h14_schema_read_only_admission.py\",5,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_h14_warm_retry_authority.py\",5,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_immutable_schema_replacement.py\",5,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_native_h14_schema_composition.py\",8,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_native_migrated_admission.py\",7,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/steps/tests/test_native_schema_migration.py\",5,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l2070_server_plan/tests/test_grammar_read_after_write.py\",29,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l5250_matching/exact_dense.py\",6453,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l5250_matching/usearch_native.py\",131,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l8000_admin/approval_db_runtime.py\",158,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/common/l8000_managed/permission/audit.py\",59,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/doltdb/versioned_operations_read.py\",35,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/sqlite/native_usearch_extension.py\",133,\"LEG-083\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/sqlite/native_usearch_extension.py\",262,\"LEG-083\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/sqlite/native_usearch_extension.py\",300,\"LEG-083\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"impl/sqlite/native_usearch_extension.py\",313,\"LEG-083\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l1470_matching_contracts/registry.py\",166,\"LEG-083\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l1470_matching_contracts/registry.py\",176,\"LEG-083\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l1470_matching_contracts/registry.py\",196,\"LEG-083\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l1470_matching_contracts/registry.py\",428,\"LEG-083\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l1470_matching_contracts/registry.py\",464,\"LEG-083\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l2000_connection/schema_reconciliation_coordinator.py\",14,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l2050_transaction/tests/test_legacy_wrappers_config.py\",3,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l3200_metadata/ddl_lockdown.py\",130,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l3200_metadata/test_semantic_schema_plan_composition.py\",46,\"LEG-083\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l3250_migrations/versioned_data.py\",90,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l4350_timer_driver/driver.py\",225,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_budget.py\",437,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_budget.py\",770,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_authority.py\",137,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_authority.py\",91,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_configuration.py\",153,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_fill.py\",274,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_lookup.py\",285,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_publish.py\",244,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_publish.py\",272,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_source.py\",203,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_cache_tombstone_lookup.py\",102,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_call_records.py\",159,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_dispatch.py\",225,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_funding_selection.py\",141,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_logical_calls.py\",120,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_logical_calls.py\",133,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_resource_candidates.py\",154,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_resource_candidates.py\",177,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/delegation_rule_bundle_authority.py\",74,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l6500_evidence/sas_http.py\",48,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l8000_admin/enrollment.py\",45,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l8000_admin/registry.py\",45,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l9750_graphql/executor.py\",5065,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l9800_rippling/processor.py\",3171,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l9800_rippling/processor.py\",3209,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",232,\"LEG-083\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",239,\"LEG-083\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",270,\"LEG-083\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",272,\"LEG-083\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",294,\"LEG-083\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",320,\"LEG-083\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",434,\"LEG-083\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",436,\"LEG-083\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/adapters/http.py\",495,\"LEG-083\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l9875_mcp/session.py\",138,\"LEG-083\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"l9900_auto_api/mcp_list_source.py\",141,\"LEG-080\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"tests/security/test_test_authority_guard.py\",16,\"LEG-010\"]",
+          "[\"data-layer-legacy-execution-surfaces\",\"tests/test_ipc_lazy_adapters.py\",7,\"LEG-010\"]",
+          "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",1690,\"SPT-015\"]",
+          "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",1766,\"SPT-015\"]",
+          "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",1881,\"SPT-015\"]",
+          "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",2142,\"SPT-015\"]",
+          "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",2322,\"SPT-015\"]",
+          "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",2334,\"SPT-015\"]",
+          "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",2629,\"SPT-015\"]",
+          "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",2751,\"SPT-015\"]",
+          "[\"data-layer-serverplan-state-tripwires\",\"l2070_batching/step.py\",2989,\"SPT-015\"]"
+        ],
+        "falseNegatives": [],
+        "failures": [
+          {
+            "clauseId": "direct-execution-lines",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "impl/common/l2100_sql_grammar/rust_bridge/generated_facades.py",
+            "ruleId": "data-layer-impl-direct-execution"
+          },
+          {
+            "clauseId": "legacy-execution-graphs",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+            "ruleId": "data-layer-legacy-execution-surfaces"
+          },
+          {
+            "clauseId": "legacy-execution-graphs",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/sql_table_hnsw.py",
+            "ruleId": "data-layer-legacy-execution-surfaces"
+          },
+          {
+            "clauseId": "legacy-execution-graphs",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "impl/common/l2100_sql_grammar/rust_bridge/generated_facades.py",
+            "ruleId": "data-layer-legacy-execution-surfaces"
+          },
+          {
+            "clauseId": "legacy-execution-graphs",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "l1000_schema/typed_field.py",
+            "ruleId": "data-layer-legacy-execution-surfaces"
+          },
+          {
+            "clauseId": "legacy-execution-graphs",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "l2000_connection/schema_transaction.py",
+            "ruleId": "data-layer-legacy-execution-surfaces"
+          },
+          {
+            "clauseId": "legacy-execution-graphs",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "l2070_batching/execution_runtime.py",
+            "ruleId": "data-layer-legacy-execution-surfaces"
+          },
+          {
+            "clauseId": "executor-provenance",
+            "code": "relational-failed",
+            "message": "relational stage propagation: relational query: interrupted",
+            "ruleId": "data-layer-serverplan-dispatch-architecture"
+          },
+          {
+            "clauseId": "quality-contracts-1",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+            "ruleId": "data-layer-serverplan-quality"
+          },
+          {
+            "clauseId": "quality-contracts-2",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+            "ruleId": "data-layer-serverplan-quality"
+          },
+          {
+            "clauseId": "quality-contracts-2",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "l2000_connection/schema_transaction.py",
+            "ruleId": "data-layer-serverplan-quality"
+          },
+          {
+            "clauseId": "quality-contracts-2",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "l2070_batching/execution_runtime.py",
+            "ruleId": "data-layer-serverplan-quality"
+          },
+          {
+            "clauseId": "quality-contracts-3",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+            "ruleId": "data-layer-serverplan-quality"
+          },
+          {
+            "clauseId": "quality-contracts-4",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+            "ruleId": "data-layer-serverplan-quality"
+          },
+          {
+            "clauseId": "quality-contracts-5",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+            "ruleId": "data-layer-serverplan-quality"
+          },
+          {
+            "clauseId": "quality-contracts-6",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+            "ruleId": "data-layer-serverplan-quality"
+          },
+          {
+            "clauseId": "quality-contracts-6",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "l2000_connection/schema_transaction.py",
+            "ruleId": "data-layer-serverplan-quality"
+          },
+          {
+            "clauseId": "quality-contracts-6",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "l2070_batching/execution_runtime.py",
+            "ruleId": "data-layer-serverplan-quality"
+          },
+          {
+            "clauseId": "quality-contracts-7",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+            "ruleId": "data-layer-serverplan-quality"
+          },
+          {
+            "clauseId": "quality-contracts-8",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+            "ruleId": "data-layer-serverplan-quality"
+          },
+          {
+            "clauseId": "quality-contracts-9",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+            "ruleId": "data-layer-serverplan-quality"
+          },
+          {
+            "clauseId": "state-signatures-1",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-signatures-1",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/sql_table_hnsw.py",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-signatures-1",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "impl/common/l2100_sql_grammar/rust_bridge/generated_facades.py",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-signatures-1",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "l1000_schema/typed_field.py",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-signatures-1",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "l2000_connection/schema_transaction.py",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-signatures-1",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "l2070_batching/execution_runtime.py",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-flow-1",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-flow-1",
+            "code": "relational-failed",
+            "message": "relational stage taints: relational query: interrupted",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-flow-1",
+            "code": "relational-failed",
+            "message": "relational stage taints: relational query: interrupted",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-flow-1",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/sql_table_hnsw.py",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-flow-1",
+            "code": "relational-failed",
+            "message": "relational stage semantic_values: relational query: interrupted",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-flow-1",
+            "code": "relational-failed",
+            "message": "relational stage taints: relational query: interrupted",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-flow-1",
+            "code": "relational-failed",
+            "message": "relational stage taints: relational query: interrupted",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-flow-1",
+            "code": "relational-failed",
+            "message": "relational stage taints: relational query: interrupted",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-flow-1",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "l1000_schema/typed_field.py",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-flow-1",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "l2000_connection/schema_transaction.py",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-flow-1",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "l2070_batching/execution_runtime.py",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-flow-1",
+            "code": "relational-failed",
+            "message": "relational stage taints: relational query: interrupted",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-flow-1",
+            "code": "relational-failed",
+            "message": "relational stage taints: relational query: interrupted",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-projection-recovery-2",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-projection-recovery-2",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/sql_table_hnsw.py",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-projection-recovery-2",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "impl/common/l2100_sql_grammar/rust_bridge/generated_facades.py",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-projection-recovery-2",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "l1000_schema/typed_field.py",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-projection-recovery-2",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "l2000_connection/schema_transaction.py",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          },
+          {
+            "clauseId": "state-projection-recovery-2",
+            "code": "source-incomplete",
+            "message": "A relational input is incomplete",
+            "path": "l2070_batching/execution_runtime.py",
+            "ruleId": "data-layer-serverplan-state-tripwires"
+          }
+        ],
+        "peakRssBytes": 11617501184,
+        "allocator": "jemalloc",
+        "policies": "/tmp/rerail-b6-profile8-policies",
+        "nativeSha256": "0422a40b86520b49dbaad5131713c0d002ab1244ee0244a293dbced9e92fdfa8",
+        "nativeWorkers": 4
+      }
+    },
+    "rerail-b6-repository-final6": {
+      "sha256": "b88df5aaf2b766a146ae95c40b2ea099dedf325eee6e14c6b2765f0a8e9e4e6a",
+      "report": {
+        "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "files": 9010,
+        "bytes": 137896473,
+        "oracleMs": 70352.66991599929,
+        "oracleWorkers": 1,
+        "policyDigests": {
+          "data-layer-execution-authority-bypass": "sha256:0bc1b6415b39f4867108efd14051f652c745e5f0531b8417005cf08d98490478",
+          "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708",
+          "data-layer-legacy-execution-surfaces": "sha256:376593f8255b6a72a45b4c6f06180668ae0d2f8492f479c9514026349cc85714",
+          "data-layer-raw-execute-regression": "sha256:e7906ab4289b8ea6c7e0cc97dea0d2e0eb33c04daeb26e857ec908a6bcd4c35f",
+          "data-layer-serverplan-bypass": "sha256:bd11d189d06488a9cea1392b65d0d8571e9a2e30fe6e0ad2f63bbe0d708e0ff7",
+          "data-layer-serverplan-dispatch-architecture": "sha256:ee74b7ee0c37ce3dcaf5fee04b041f7f1e6c4e365647a2bd376c3dff7454fee8",
+          "data-layer-serverplan-quality": "sha256:7c19e921adaa760d52093e2bca645cd69e22f5c23ef330b4dbf961d205169734",
+          "data-layer-serverplan-state-tripwires": "sha256:b86004eae4f723cfadccbad1a3a6c6288e3b6b648d691edd46c709e4ddad7bb2",
+          "data-layer-serverplan-steps": "sha256:1adf862c5ead8f71320eebbf8facfbd9fcc04a0f160339660b41164af8976b85",
+          "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198"
+        },
+        "policyCompilationMs": {
+          "data-layer-execution-authority-bypass": 2.6235419999999863,
+          "data-layer-impl-direct-execution": 4.293667000000028,
+          "data-layer-legacy-execution-surfaces": 17.27524999999997,
+          "data-layer-raw-execute-regression": 5.385125000000016,
+          "data-layer-serverplan-bypass": 4.356457999999975,
+          "data-layer-serverplan-dispatch-architecture": 18.868916000000013,
+          "data-layer-serverplan-quality": 356.207625,
+          "data-layer-serverplan-state-tripwires": 166.06600000000003,
+          "data-layer-serverplan-steps": 61.229499999999916,
+          "data-layer-serverplan-target-architecture": 8.088666000000103
+        },
+        "compilationMs": 2229.865917,
+        "coldMs": 951003.856,
+        "unchangedFileMs": 929.1667910000542,
+        "editedFileMs": 14730.407958999975,
+        "editedPath": "impl/common/l2200_sql_dialect/sql_connection.py",
+        "incrementalDifferences": [],
+        "expected": 173,
+        "actual": 173,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "peakRssBytes": 11965284352,
+        "allocator": "system-malloc-via-jemalloc-symbol-shim",
+        "policies": "packs/data-layer/candidates/rules",
+        "nativeSha256": "0422a40b86520b49dbaad5131713c0d002ab1244ee0244a293dbced9e92fdfa8",
+        "nativeWorkers": 4
+      }
+    },
+    "rerail-b5-all-measured": {
+      "sha256": "b8bc5b4428b59bab915ae4b447f96bb0383618819160776a04a73d899d13074e",
+      "report": {
+        "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "files": 5914,
+        "bytes": 106201417,
+        "oracleMs": 47002.6200840075,
+        "oracleWorkers": 1,
+        "policyDigests": {
+          "data-layer-async-sync-delegation": "sha256:854ef36424c9717ede05c769aa7e14708fc5a414c02225d990a9d405123915ee",
+          "data-layer-backend-coupling": "sha256:7bd4e209cba4a6012f8553980ef36833214c7ea649963db7ec6b75efd837f63e",
+          "data-layer-data-layer-compat-aliases": "sha256:e3a56226f0e2e3777817dce9f48a503303bd9d6cbeafd7e5d21231bd719c5860",
+          "data-layer-data-layer-facade-purity": "sha256:7aad3045ddf5c9d66eca850e455ec9763062bfe412f9db3af92328d72f553158",
+          "data-layer-imperative-private-functions": "sha256:bf3a6ba7e6b7e2c750ae8317594777a001e24318935c491f77a0d149fde02afe",
+          "data-layer-internal-dead-code": "sha256:e3067d346b2fc950f1747e3acfce2540f4822e16e364fa8a02cfd9f1c7852bfd",
+          "data-layer-layer-violations": "sha256:8c3d2a6473f033969ed5b46bd90b11986f4e4441f13402e9c4cf95d926a03449",
+          "data-layer-missing-async-pairs": "sha256:ebf3bdbcb97a9db2aed181733bb3c2c57f7b54fa418cc2fa4f558a18bc5dcff6",
+          "data-layer-public-api-triples": "sha256:2973bb9b656e8da482d573f642843355278e5c99b9d29fa8fda9dc31af96a841",
+          "data-layer-sync-async-signatures": "sha256:7b6c45edbd81a4c4ecf04fcfe97fbb0e31856c5f41c0fe35257fd7c432d62ddb"
+        },
+        "policyCompilationMs": {
+          "data-layer-async-sync-delegation": 248.2254579999999,
+          "data-layer-backend-coupling": 3.5137090000000626,
+          "data-layer-data-layer-compat-aliases": 1.5293329999999514,
+          "data-layer-data-layer-facade-purity": 3.3777919999999995,
+          "data-layer-imperative-private-functions": 27.244042000000036,
+          "data-layer-internal-dead-code": 190.8031249999999,
+          "data-layer-layer-violations": 7.261291999999912,
+          "data-layer-missing-async-pairs": 48.667666000000054,
+          "data-layer-public-api-triples": 379.744334,
+          "data-layer-sync-async-signatures": 11.832834000000048
+        },
+        "compilationMs": 1027.853125,
+        "coldMs": 168778.315334,
+        "unchangedFileMs": 1577.31158400001,
+        "editedFileMs": 32251.75354199999,
+        "editedPath": "impl/common/l2200_sql_dialect/sql_connection.py",
+        "incrementalDifferences": [],
+        "expected": 23835,
+        "actual": 23835,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "allocator": "system-shim",
+        "policies": "packs/data-layer/candidates/rules",
+        "nativeSha256": "2e9a596ac617390d1bfbd7962ab90f4b16b63c7575d1f0dd1d1320de3b5fde9e",
+        "nativeWorkers": 4
+      }
+    },
+    "rerail-data-layer-batches1-4-final-suite": {
+      "sha256": "534177578499186e64fa8a0d915a1744be44222dd93e0e2d929caed49612ce89",
+      "report": {
+        "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "files": 9021,
+        "bytes": 137924324,
+        "oracleMs": 24082.60079099273,
+        "oracleWorkers": 4,
+        "policyDigests": {
+          "data-layer-admin-async-purity": "sha256:28deddcad1b387ac3b546cca10895436e0c72fd351e7b2b500ca8192e3a4987e",
+          "data-layer-async-executor": "sha256:3bf76b24b1acd4c18e88904fc9c732f4fb30ce800c331499952d0c1dcf769154",
+          "data-layer-async-patterns": "sha256:555668ec0ddc233376e61b1c68258877a8c7f3304ae7cfc794fa3fd390be3d30",
+          "data-layer-async-sync-boundary": "sha256:8387d16fdbb47ca400d878ca97be6d1c42a48defe7e0b9909ff9b15b496ef82e",
+          "data-layer-backend-type-strings": "sha256:9a767dadcfe52ec2b2801588f36919e74f6a793cb0a072cc6af21f24288b5faf",
+          "data-layer-classvar-check": "sha256:f492d76f3f686b430c649080c9be8420d375e1be023d639cf5d6c7613acb03b4",
+          "data-layer-conn-or-txn-union": "sha256:deb16c1381ad2414041c981a4c56ff6990008093f05722c74ba10baf5d01258b",
+          "data-layer-connection-caches": "sha256:33bd67e8e1ca9a9ef6f3ba78442ee2338a4fbf8392ec5dd482310e674a195c8b",
+          "data-layer-dynamic-module-loading": "sha256:a877158fd13f016a1eaecc9cb229d08b82288cdea1bb297f6479feaf9b18c387",
+          "data-layer-error-handling": "sha256:148c2913f29d34155412e24ba97b9dcdfb08cf470d5c237f54059e5014b8fccf",
+          "data-layer-forwardref": "sha256:23e61b16ea5970188473c10aa8d47857b65e49a2e9a81d82c9fe4251467af585",
+          "data-layer-grammar-allowlist-burndown": "sha256:9951b7cc2804ae4f089bce9159c59b57f07327be51e513a0e9ad0a014df25936",
+          "data-layer-grammar-callable-constructors": "sha256:4ba3f507270d8346d28273737bd07942870e0be6e1c8ff01a5323163f27f5f19",
+          "data-layer-grammar-fragment-usage": "sha256:ec7ac9ad9ce3c8f45683955321aab965a12784a41c35d2b01aadd8ea15247b99",
+          "data-layer-grammar-render-methods": "sha256:02daf674754c08edb1cafcceee3d5ebeb4b02f94f6ebb5b318addab65804dc4f",
+          "data-layer-grammar-str-params": "sha256:c8d6ccba2cea149b130f57ff72248c4313622babd4b8dabe5cf20f492fb97903",
+          "data-layer-hasattr-async": "sha256:a74db29278d0d0c76b96a87d2086d120383203dda7491c875df48a8cf461a247",
+          "data-layer-lazy-result-usage": "sha256:861c4ce42ec168a6437789375ae80a05869654dde9d2d424a5da84ea646d4a1f",
+          "data-layer-module-level-caches": "sha256:c823d10e3d198b68284904d503860e04bf190e0e3e3dca19f7f96597288f490d",
+          "data-layer-no-api-root-imports": "sha256:ef339f54cbb5b61d815448ca08c6db8d1715d325663c711c43c22f50621f0cbc",
+          "data-layer-no-blanket-grammar-bypass": "sha256:0d6e692f4a48ed34de5928d35d05fefa5fd6f9d7181607084102b43389af48e5",
+          "data-layer-no-source-inspection": "sha256:cfedb7e006ea6b12e84cb9d960e0658cf7134067724181a5d8a212e25222ccfc",
+          "data-layer-permission-error": "sha256:8c4a2c535f0b0696924936fb543604778be3ad9d2efca2a20a1d08a047d52afd",
+          "data-layer-plan-scope-ownership": "sha256:2a251ae3d8d16f86a4297f3e499bbed943d878f41142fa2248434c31e7a828eb",
+          "data-layer-plan-scope-side-effects": "sha256:3c95c904567737c074afa6479d5aa55276be1afd311e37e1d22d8ab85162b10f",
+          "data-layer-regex-sql-parsing": "sha256:b1b32b0403bfcfb428fa626ab30542f7661d5a51ee25aa1ca0c5244290cb4671",
+          "data-layer-removed-compat-surfaces": "sha256:94835f3059e4020dc15475f567c861994ccf549b3ef9108d4310bc0962f39573",
+          "data-layer-render-fstrings": "sha256:38600be3e0d5679decfe7f1b8297f21ec3374e4e551c288b066ba0a2f20acf54",
+          "data-layer-render-raw-strings": "sha256:0c91618d5d02d330de5b65866cbbc1800095b1df3910fb1008f937dbf2967201",
+          "data-layer-serverplan-grammar-surface": "sha256:78bfa70d244f7cb87fde460d228a19f30ebb601c784cb4eb7cf8cb38cc141d59",
+          "data-layer-serverplan-name-inference": "sha256:5107509774e9e6e057129af25d7b01124caf3f7619c25ea258579347d9a07051",
+          "data-layer-sql-grammar-escape-hatches": "sha256:3e770c9c912acb439400ce7b512c8d76c857957da6aad5a79536e2921d326b29",
+          "data-layer-swallowed-exceptions": "sha256:b3fb96fa63706e2a7725795531374944218108708fd77da95368d9717ac3d53c",
+          "data-layer-transaction-callback-wrappers": "sha256:ec450b584c2d34983aae73770dd03bbb36488ab0de8e8f71fd2bb30c834c7697",
+          "data-layer-transaction-closures": "sha256:888f738714f199e81fbe0e0b34e51dc4109e0b9b4d7016a7444f60b6236b449a",
+          "data-layer-transaction-patterns": "sha256:cb8ed48327845bd31df6d4c2306f055705f28812f39ec9f8b08e95869c9b8968",
+          "data-layer-type-safety-patterns": "sha256:13a97ae41a7e1ebbee159bc9b7c693206b02740698bc5d479f05c8cc45f156ab",
+          "data-layer-unresolved-forward-refs": "sha256:86cdf97aa17812e9cc8b0d4f3edc65e099a7de3fc831426f1d5826ef37b2f94b",
+          "data-layer-versioned-lifecycle-legacy-surfaces": "sha256:579c7656724ba5a24b5ee0733b65f5561881a3df1160d4c48b5d14a63b518a46",
+          "data-layer-rust-sql-grammar-boundary": "sha256:2bb8339680ef9c152f8245bac1499d3938c47dc130609d326b85560fbfa3cbcc"
+        },
+        "policyCompilationMs": {
+          "data-layer-admin-async-purity": 12.062584000000015,
+          "data-layer-async-executor": 1.2437499999998636,
+          "data-layer-async-patterns": 44.56841600000007,
+          "data-layer-async-sync-boundary": 47.74854200000004,
+          "data-layer-backend-type-strings": 13.283750000000055,
+          "data-layer-classvar-check": 6.876499999999851,
+          "data-layer-conn-or-txn-union": 41.422791999999845,
+          "data-layer-connection-caches": 40.51675,
+          "data-layer-dynamic-module-loading": 8.871708000000126,
+          "data-layer-error-handling": 1.6469999999999345,
+          "data-layer-forwardref": 4.359625000000051,
+          "data-layer-grammar-allowlist-burndown": 4.363583999999946,
+          "data-layer-grammar-callable-constructors": 15.674749999999904,
+          "data-layer-grammar-fragment-usage": 29.65104199999996,
+          "data-layer-grammar-render-methods": 20.713500000000067,
+          "data-layer-grammar-str-params": 85.00345800000014,
+          "data-layer-hasattr-async": 8.495458999999983,
+          "data-layer-lazy-result-usage": 39.76670799999988,
+          "data-layer-module-level-caches": 88.12616600000001,
+          "data-layer-no-api-root-imports": 7.407999999999902,
+          "data-layer-no-blanket-grammar-bypass": 7.809750000000122,
+          "data-layer-no-source-inspection": 1.1375829999999496,
+          "data-layer-permission-error": 1.332583999999997,
+          "data-layer-plan-scope-ownership": 38.03795799999989,
+          "data-layer-plan-scope-side-effects": 48.734042000000045,
+          "data-layer-regex-sql-parsing": 98.03683299999989,
+          "data-layer-removed-compat-surfaces": 5.034499999999753,
+          "data-layer-render-fstrings": 0.7600000000002183,
+          "data-layer-render-raw-strings": 4.125417000000198,
+          "data-layer-serverplan-grammar-surface": 2.9606250000001637,
+          "data-layer-serverplan-name-inference": 1.7730000000001382,
+          "data-layer-sql-grammar-escape-hatches": 13.186416999999892,
+          "data-layer-swallowed-exceptions": 8.229584000000159,
+          "data-layer-transaction-callback-wrappers": 8.134167000000161,
+          "data-layer-transaction-closures": 22.674833000000035,
+          "data-layer-transaction-patterns": 319.75237500000003,
+          "data-layer-type-safety-patterns": 9.559000000000196,
+          "data-layer-unresolved-forward-refs": 3.7705000000000837,
+          "data-layer-versioned-lifecycle-legacy-surfaces": 1.2370409999998628,
+          "data-layer-rust-sql-grammar-boundary": 0.7503329999999551
+        },
+        "compilationMs": 1522.0621660000002,
+        "coldMs": 18286.609459,
+        "unchangedFileMs": 9.228499999997439,
+        "editedFileMs": 37.13187499999913,
+        "editedPath": "impl/common/l2200_sql_dialect/sql_connection.py",
+        "expected": 985,
+        "actual": 985,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "allocator": "system-shim",
+        "nativeSha256": "a5f9809f18d87e8dbba7941c9ee5126074f32532b6f3d579cc9a80bbb7a8bed6",
+        "nativeWorkers": 4
+      }
+    }
+  },
+  "history": {
+    "path": "/Users/jeremy/.codex/sessions/2026/10/19/rollout-2026-10-19T10-20-54-01a15489-6953-7f42-9fd5-2eb69bc5b544.jsonl",
+    "passing_summary_line": 20729,
+    "cpu_recorded": false,
+    "finding": "The 1456.276-second run is batch six only, with 84 false positives and 46 engine failures. The subsequent passing baseline is 951.004 seconds for the same ten checks and source files.",
+    "failing_report_line": 20050
+  },
+  "host": {
+    "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+    "node": "v26.8.1",
+    "cpu": "Apple M5 Max",
+    "observations": [
+      {
+        "unix": 1792590224.108341,
+        "load_average": [
+          64.3564453125,
+          55.59716796875,
+          46.58251953125
+        ]
+      },
+      {
+        "unix": 1792590372.901692,
+        "load_average": [
+          60.435546875,
+          55.57177734375,
+          47.84765625
+        ]
+      },
+      {
+        "unix": 1792590492.300402,
+        "load_average": [
+          54.27197265625,
+          54.7275390625,
+          48.5537109375
+        ]
+      },
+      {
+        "unix": 1792590585.579947,
+        "load_average": [
+          35.689453125,
+          49.60986328125,
+          47.314453125
+        ],
+        "process": "60096       04:49   4:09.48  57.8 16751168 node --import tsx conformance/data-layer/suite.ts --recording /tmp/rerail-b6-repository.json --output .rerail/profiles/full-repository-20261021/batch-6-complete/parity.json --allocator system-malloc-shim --progress"
+      },
+      {
+        "unix": 1792590957.629977,
+        "load_average": [
+          42.50048828125,
+          42.4501953125,
+          44.533203125
+        ],
+        "process": "60096       11:01   9:11.15  98.7 20311392 node --import tsx conformance/data-layer/suite.ts --recording /tmp/rerail-b6-repository.json --output .rerail/profiles/full-repository-20261021/batch-6-complete/parity.json --allocator system-malloc-shim --progress"
+      }
+    ],
+    "logicalCpus": 18
+  },
+  "recordings": [
+    {
+      "label": "first-50",
+      "path": ".rerail/profiles/full-repository-20261021/first-50-recording.json",
+      "sha256": "731ee09b9ebcb8686013588774cadbabccb4c1860de446734df15e95f5d5c980",
+      "checks": [
+        "admin_async_purity",
+        "async_executor",
+        "async_patterns",
+        "async_sync_boundary",
+        "backend_type_strings",
+        "classvar_check",
+        "conn_or_txn_union",
+        "connection_caches",
+        "dynamic_module_loading",
+        "error_handling",
+        "forwardref",
+        "grammar_allowlist_burndown",
+        "grammar_callable_constructors",
+        "grammar_fragment_usage",
+        "grammar_render_methods",
+        "grammar_str_params",
+        "hasattr_async",
+        "lazy_result_usage",
+        "module_level_caches",
+        "no_api_root_imports",
+        "no_blanket_grammar_bypass",
+        "no_source_inspection",
+        "permission_error",
+        "plan_scope_ownership",
+        "plan_scope_side_effects",
+        "regex_sql_parsing",
+        "removed_compat_surfaces",
+        "render_fstrings",
+        "render_raw_strings",
+        "serverplan_grammar_surface",
+        "serverplan_name_inference",
+        "sql_grammar_escape_hatches",
+        "swallowed_exceptions",
+        "transaction_callback_wrappers",
+        "transaction_closures",
+        "transaction_patterns",
+        "type_safety_patterns",
+        "unresolved_forward_refs",
+        "versioned_lifecycle_legacy_surfaces",
+        "rust_sql_grammar_boundary",
+        "async_sync_delegation",
+        "backend_coupling",
+        "data_layer_compat_aliases",
+        "data_layer_facade_purity",
+        "imperative_private_functions",
+        "internal_dead_code",
+        "layer_violations",
+        "missing_async_pairs",
+        "public_api_triples",
+        "sync_async_signatures"
+      ],
+      "files": 9021,
+      "bytes": 137924324,
+      "findings": 24820,
+      "provenance": [
+        {
+          "path": "/tmp/rerail-data-layer-batches1-4-suite.json",
+          "sha256": "a28ee22779422f846da414fbdd5c501b36fa79816839d6c0002a95f8823d070a",
+          "oracle_ms": 24082.60079099273,
+          "workers": 4,
+          "batches": [
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        {
+          "path": "/tmp/rerail-b5-all-suite.json",
+          "sha256": "b91ad03200fd0da38e2a08b9b05f3113c8ebe88f140816d1cc94bee9fd91ca40",
+          "oracle_ms": 47002.6200840075,
+          "workers": 1,
+          "batches": [
+            5
+          ]
+        }
+      ]
+    },
+    {
+      "label": "all-60",
+      "path": ".rerail/profiles/full-repository-20261021/all-60-recording.json",
+      "sha256": "5ede2971ed87b1e64bd7fd125281410e3c527f5d7f756934e82f93d0828c9585",
+      "checks": [
+        "admin_async_purity",
+        "async_executor",
+        "async_patterns",
+        "async_sync_boundary",
+        "backend_type_strings",
+        "classvar_check",
+        "conn_or_txn_union",
+        "connection_caches",
+        "dynamic_module_loading",
+        "error_handling",
+        "forwardref",
+        "grammar_allowlist_burndown",
+        "grammar_callable_constructors",
+        "grammar_fragment_usage",
+        "grammar_render_methods",
+        "grammar_str_params",
+        "hasattr_async",
+        "lazy_result_usage",
+        "module_level_caches",
+        "no_api_root_imports",
+        "no_blanket_grammar_bypass",
+        "no_source_inspection",
+        "permission_error",
+        "plan_scope_ownership",
+        "plan_scope_side_effects",
+        "regex_sql_parsing",
+        "removed_compat_surfaces",
+        "render_fstrings",
+        "render_raw_strings",
+        "serverplan_grammar_surface",
+        "serverplan_name_inference",
+        "sql_grammar_escape_hatches",
+        "swallowed_exceptions",
+        "transaction_callback_wrappers",
+        "transaction_closures",
+        "transaction_patterns",
+        "type_safety_patterns",
+        "unresolved_forward_refs",
+        "versioned_lifecycle_legacy_surfaces",
+        "rust_sql_grammar_boundary",
+        "async_sync_delegation",
+        "backend_coupling",
+        "data_layer_compat_aliases",
+        "data_layer_facade_purity",
+        "imperative_private_functions",
+        "internal_dead_code",
+        "layer_violations",
+        "missing_async_pairs",
+        "public_api_triples",
+        "sync_async_signatures",
+        "execution_authority_bypass",
+        "impl_direct_execution",
+        "legacy_execution_surfaces",
+        "raw_execute_regression",
+        "serverplan_bypass",
+        "serverplan_dispatch_architecture",
+        "serverplan_quality",
+        "serverplan_state_tripwires",
+        "serverplan_steps",
+        "serverplan_target_architecture"
+      ],
+      "files": 9021,
+      "bytes": 137924324,
+      "findings": 24993,
+      "provenance": [
+        {
+          "path": "/tmp/rerail-data-layer-batches1-4-suite.json",
+          "sha256": "a28ee22779422f846da414fbdd5c501b36fa79816839d6c0002a95f8823d070a",
+          "oracle_ms": 24082.60079099273,
+          "workers": 4,
+          "batches": [
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        {
+          "path": "/tmp/rerail-b5-all-suite.json",
+          "sha256": "b91ad03200fd0da38e2a08b9b05f3113c8ebe88f140816d1cc94bee9fd91ca40",
+          "oracle_ms": 47002.6200840075,
+          "workers": 1,
+          "batches": [
+            5
+          ]
+        },
+        {
+          "path": "/tmp/rerail-b6-repository.json",
+          "sha256": "331161fe02be5ada48a9591d3b559e3ede763b936f687321b3809bb409997395",
+          "oracle_ms": 70352.66991599929,
+          "workers": 1,
+          "batches": [
+            6
+          ]
+        }
+      ]
+    }
+  ],
+  "current": {
+    "first-50-complete": {
+      "raw_report_sha256": "ae9cfd45ceaeac72d0bebbe9dd4a17b1c41095e8099aea59af2ef1ed5e099f0f",
+      "invocation": {
+        "command": [
+          "node",
+          "--import",
+          "tsx",
+          "conformance/data-layer/suite.ts",
+          "--recording",
+          ".rerail/profiles/full-repository-20261021/first-50-recording.json",
+          "--output",
+          ".rerail/profiles/full-repository-20261021/first-50-complete/parity.json",
+          "--allocator",
+          "system-malloc-shim",
+          "--progress"
+        ],
+        "exitCode": 0,
+        "wallSeconds": 291.7829008749977,
+        "deadlineSeconds": 3600
+      },
+      "report": {
+        "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "files": 9021,
+        "bytes": 137924324,
+        "oracleMs": null,
+        "oracleWorkers": 0,
+        "policyDigests": {
+          "data-layer-admin-async-purity": "sha256:28deddcad1b387ac3b546cca10895436e0c72fd351e7b2b500ca8192e3a4987e",
+          "data-layer-async-executor": "sha256:3bf76b24b1acd4c18e88904fc9c732f4fb30ce800c331499952d0c1dcf769154",
+          "data-layer-async-patterns": "sha256:555668ec0ddc233376e61b1c68258877a8c7f3304ae7cfc794fa3fd390be3d30",
+          "data-layer-async-sync-boundary": "sha256:8387d16fdbb47ca400d878ca97be6d1c42a48defe7e0b9909ff9b15b496ef82e",
+          "data-layer-backend-type-strings": "sha256:9a767dadcfe52ec2b2801588f36919e74f6a793cb0a072cc6af21f24288b5faf",
+          "data-layer-classvar-check": "sha256:f492d76f3f686b430c649080c9be8420d375e1be023d639cf5d6c7613acb03b4",
+          "data-layer-conn-or-txn-union": "sha256:deb16c1381ad2414041c981a4c56ff6990008093f05722c74ba10baf5d01258b",
+          "data-layer-connection-caches": "sha256:33bd67e8e1ca9a9ef6f3ba78442ee2338a4fbf8392ec5dd482310e674a195c8b",
+          "data-layer-dynamic-module-loading": "sha256:a877158fd13f016a1eaecc9cb229d08b82288cdea1bb297f6479feaf9b18c387",
+          "data-layer-error-handling": "sha256:148c2913f29d34155412e24ba97b9dcdfb08cf470d5c237f54059e5014b8fccf",
+          "data-layer-forwardref": "sha256:23e61b16ea5970188473c10aa8d47857b65e49a2e9a81d82c9fe4251467af585",
+          "data-layer-grammar-allowlist-burndown": "sha256:9951b7cc2804ae4f089bce9159c59b57f07327be51e513a0e9ad0a014df25936",
+          "data-layer-grammar-callable-constructors": "sha256:feabc0d40622749ea78043e53720c71ad99d5fb1d1e258b4eb4c9cd9278a0591",
+          "data-layer-grammar-fragment-usage": "sha256:dd0bdb3bc70bb59ebf9e3bcba037008b01d075a00dfc1bc4f24c44de9022cba3",
+          "data-layer-grammar-render-methods": "sha256:02daf674754c08edb1cafcceee3d5ebeb4b02f94f6ebb5b318addab65804dc4f",
+          "data-layer-grammar-str-params": "sha256:c8d6ccba2cea149b130f57ff72248c4313622babd4b8dabe5cf20f492fb97903",
+          "data-layer-hasattr-async": "sha256:a74db29278d0d0c76b96a87d2086d120383203dda7491c875df48a8cf461a247",
+          "data-layer-lazy-result-usage": "sha256:861c4ce42ec168a6437789375ae80a05869654dde9d2d424a5da84ea646d4a1f",
+          "data-layer-module-level-caches": "sha256:c823d10e3d198b68284904d503860e04bf190e0e3e3dca19f7f96597288f490d",
+          "data-layer-no-api-root-imports": "sha256:ef339f54cbb5b61d815448ca08c6db8d1715d325663c711c43c22f50621f0cbc",
+          "data-layer-no-blanket-grammar-bypass": "sha256:0d6e692f4a48ed34de5928d35d05fefa5fd6f9d7181607084102b43389af48e5",
+          "data-layer-no-source-inspection": "sha256:cfedb7e006ea6b12e84cb9d960e0658cf7134067724181a5d8a212e25222ccfc",
+          "data-layer-permission-error": "sha256:8c4a2c535f0b0696924936fb543604778be3ad9d2efca2a20a1d08a047d52afd",
+          "data-layer-plan-scope-ownership": "sha256:2a251ae3d8d16f86a4297f3e499bbed943d878f41142fa2248434c31e7a828eb",
+          "data-layer-plan-scope-side-effects": "sha256:3c95c904567737c074afa6479d5aa55276be1afd311e37e1d22d8ab85162b10f",
+          "data-layer-regex-sql-parsing": "sha256:610b522e4adf244cc3ae294863be09628ebeb3955a4b9e66be6b810ba78ccaa0",
+          "data-layer-removed-compat-surfaces": "sha256:94835f3059e4020dc15475f567c861994ccf549b3ef9108d4310bc0962f39573",
+          "data-layer-render-fstrings": "sha256:38600be3e0d5679decfe7f1b8297f21ec3374e4e551c288b066ba0a2f20acf54",
+          "data-layer-render-raw-strings": "sha256:636e02995bf3eeef4ca8d4a41224a04b65aeed5fbb81ced3d1e75c5d465ab870",
+          "data-layer-serverplan-grammar-surface": "sha256:78bfa70d244f7cb87fde460d228a19f30ebb601c784cb4eb7cf8cb38cc141d59",
+          "data-layer-serverplan-name-inference": "sha256:5107509774e9e6e057129af25d7b01124caf3f7619c25ea258579347d9a07051",
+          "data-layer-sql-grammar-escape-hatches": "sha256:51c459be9f1186f88174ac44a7ac9f4981704bf7aaecb2bf8c668c20383a48c0",
+          "data-layer-swallowed-exceptions": "sha256:b3fb96fa63706e2a7725795531374944218108708fd77da95368d9717ac3d53c",
+          "data-layer-transaction-callback-wrappers": "sha256:ec450b584c2d34983aae73770dd03bbb36488ab0de8e8f71fd2bb30c834c7697",
+          "data-layer-transaction-closures": "sha256:888f738714f199e81fbe0e0b34e51dc4109e0b9b4d7016a7444f60b6236b449a",
+          "data-layer-transaction-patterns": "sha256:cb8ed48327845bd31df6d4c2306f055705f28812f39ec9f8b08e95869c9b8968",
+          "data-layer-type-safety-patterns": "sha256:13a97ae41a7e1ebbee159bc9b7c693206b02740698bc5d479f05c8cc45f156ab",
+          "data-layer-unresolved-forward-refs": "sha256:86cdf97aa17812e9cc8b0d4f3edc65e099a7de3fc831426f1d5826ef37b2f94b",
+          "data-layer-versioned-lifecycle-legacy-surfaces": "sha256:579c7656724ba5a24b5ee0733b65f5561881a3df1160d4c48b5d14a63b518a46",
+          "data-layer-rust-sql-grammar-boundary": "sha256:2bb8339680ef9c152f8245bac1499d3938c47dc130609d326b85560fbfa3cbcc",
+          "data-layer-async-sync-delegation": "sha256:854ef36424c9717ede05c769aa7e14708fc5a414c02225d990a9d405123915ee",
+          "data-layer-backend-coupling": "sha256:7bd4e209cba4a6012f8553980ef36833214c7ea649963db7ec6b75efd837f63e",
+          "data-layer-data-layer-compat-aliases": "sha256:e3a56226f0e2e3777817dce9f48a503303bd9d6cbeafd7e5d21231bd719c5860",
+          "data-layer-data-layer-facade-purity": "sha256:7aad3045ddf5c9d66eca850e455ec9763062bfe412f9db3af92328d72f553158",
+          "data-layer-imperative-private-functions": "sha256:bf3a6ba7e6b7e2c750ae8317594777a001e24318935c491f77a0d149fde02afe",
+          "data-layer-internal-dead-code": "sha256:e3067d346b2fc950f1747e3acfce2540f4822e16e364fa8a02cfd9f1c7852bfd",
+          "data-layer-layer-violations": "sha256:8c3d2a6473f033969ed5b46bd90b11986f4e4441f13402e9c4cf95d926a03449",
+          "data-layer-missing-async-pairs": "sha256:ebf3bdbcb97a9db2aed181733bb3c2c57f7b54fa418cc2fa4f558a18bc5dcff6",
+          "data-layer-public-api-triples": "sha256:2973bb9b656e8da482d573f642843355278e5c99b9d29fa8fda9dc31af96a841",
+          "data-layer-sync-async-signatures": "sha256:7b6c45edbd81a4c4ecf04fcfe97fbb0e31856c5f41c0fe35257fd7c432d62ddb"
+        },
+        "policyCompilationMs": {
+          "data-layer-admin-async-purity": 4.532040999999936,
+          "data-layer-async-executor": 1.4470420000000104,
+          "data-layer-async-patterns": 53.395375000000286,
+          "data-layer-async-sync-boundary": 75.12212499999987,
+          "data-layer-backend-type-strings": 13.38170799999989,
+          "data-layer-classvar-check": 11.75799999999981,
+          "data-layer-conn-or-txn-union": 48.10108300000002,
+          "data-layer-connection-caches": 44.14708300000029,
+          "data-layer-dynamic-module-loading": 18.357250000000022,
+          "data-layer-error-handling": 1.8552920000001905,
+          "data-layer-forwardref": 35.402624999999716,
+          "data-layer-grammar-allowlist-burndown": 4.2630410000001575,
+          "data-layer-grammar-callable-constructors": 32.664458999999624,
+          "data-layer-grammar-fragment-usage": 76.13045800000009,
+          "data-layer-grammar-render-methods": 22.906458999999813,
+          "data-layer-grammar-str-params": 65.12404199999992,
+          "data-layer-hasattr-async": 40.840666000000056,
+          "data-layer-lazy-result-usage": 47.28633300000001,
+          "data-layer-module-level-caches": 54.42287499999975,
+          "data-layer-no-api-root-imports": 7.370499999999993,
+          "data-layer-no-blanket-grammar-bypass": 10.097583000000213,
+          "data-layer-no-source-inspection": 1.9652500000001965,
+          "data-layer-permission-error": 1.2460409999998774,
+          "data-layer-plan-scope-ownership": 31.271624999999858,
+          "data-layer-plan-scope-side-effects": 29.199750000000222,
+          "data-layer-regex-sql-parsing": 365.16137500000013,
+          "data-layer-removed-compat-surfaces": 4.983625000000302,
+          "data-layer-render-fstrings": 1.3276249999998981,
+          "data-layer-render-raw-strings": 5.768708000000061,
+          "data-layer-serverplan-grammar-surface": 2.7511249999997744,
+          "data-layer-serverplan-name-inference": 1.7566249999999854,
+          "data-layer-sql-grammar-escape-hatches": 74.48099999999977,
+          "data-layer-swallowed-exceptions": 6.78104200000007,
+          "data-layer-transaction-callback-wrappers": 7.131167000000005,
+          "data-layer-transaction-closures": 32.05791700000009,
+          "data-layer-transaction-patterns": 335.2235419999997,
+          "data-layer-type-safety-patterns": 63.921084000000064,
+          "data-layer-unresolved-forward-refs": 3.416874999999891,
+          "data-layer-versioned-lifecycle-legacy-surfaces": 1.0520830000000387,
+          "data-layer-rust-sql-grammar-boundary": 0.8960830000000897,
+          "data-layer-async-sync-delegation": 514.4844170000001,
+          "data-layer-backend-coupling": 3.9712079999999332,
+          "data-layer-data-layer-compat-aliases": 1.6540410000006887,
+          "data-layer-data-layer-facade-purity": 3.425125000000662,
+          "data-layer-imperative-private-functions": 42.44554200000039,
+          "data-layer-internal-dead-code": 20.21545800000058,
+          "data-layer-layer-violations": 8.623125000000073,
+          "data-layer-missing-async-pairs": 69.28974999999991,
+          "data-layer-public-api-triples": 66.67695800000001,
+          "data-layer-sync-async-signatures": 13.211500000000342
+        },
+        "compilationMs": 2391.601125,
+        "coldMs": 233738.328291,
+        "unchangedFileMs": 818.5418749999953,
+        "editedFileMs": 50579.65274999998,
+        "editedPath": "impl/common/l2200_sql_dialect/sql_connection.py",
+        "incrementalDifferences": [],
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 1466.141,
+            "systemMs": 84.745
+          },
+          "cold": {
+            "userMs": 207198.675,
+            "systemMs": 5420.372
+          },
+          "unchanged": {
+            "userMs": 785.899,
+            "systemMs": 14.715
+          },
+          "edit": {
+            "userMs": 39601.548,
+            "systemMs": 580.018
+          }
+        },
+        "measuredPhases": [
+          "compile",
+          "cold",
+          "unchanged",
+          "edit"
+        ],
+        "workloadSha256": "d35f1e6ce087ba256827ab81d68aef0783d9977ceb0f82800b6f62df6a0cbb33",
+        "expected": 24820,
+        "actual": 24820,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": [],
+        "peakRssBytes": 7083229184,
+        "allocator": "system-malloc-shim",
+        "policies": "packs/data-layer/candidates/rules",
+        "nativeSha256": "8a1f573e09b7837fabbf07073dbf7064b26ff298a7b104f0394acd2e8cac310f",
+        "nativeWorkers": 4
+      }
+    },
+    "batch-6-complete": {
+      "raw_report_sha256": "86ff3f755ce346fbfac190f30e75fe1e60557045e51c3004d29efbe625b97547",
+      "invocation": {
+        "command": [
+          "node",
+          "--import",
+          "tsx",
+          "conformance/data-layer/suite.ts",
+          "--recording",
+          "/tmp/rerail-b6-repository.json",
+          "--output",
+          ".rerail/profiles/full-repository-20261021/batch-6-complete/parity.json",
+          "--allocator",
+          "system-malloc-shim",
+          "--progress"
+        ],
+        "exitCode": 1,
+        "wallSeconds": 663.4168228339986,
+        "deadlineSeconds": 3600
+      },
+      "report": {
+        "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "files": 9010,
+        "bytes": 137896473,
+        "oracleMs": 70352.66991599929,
+        "oracleWorkers": 1,
+        "policyDigests": {
+          "data-layer-execution-authority-bypass": "sha256:0bc1b6415b39f4867108efd14051f652c745e5f0531b8417005cf08d98490478",
+          "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708",
+          "data-layer-legacy-execution-surfaces": "sha256:376593f8255b6a72a45b4c6f06180668ae0d2f8492f479c9514026349cc85714",
+          "data-layer-raw-execute-regression": "sha256:e7906ab4289b8ea6c7e0cc97dea0d2e0eb33c04daeb26e857ec908a6bcd4c35f",
+          "data-layer-serverplan-bypass": "sha256:bd11d189d06488a9cea1392b65d0d8571e9a2e30fe6e0ad2f63bbe0d708e0ff7",
+          "data-layer-serverplan-dispatch-architecture": "sha256:ee74b7ee0c37ce3dcaf5fee04b041f7f1e6c4e365647a2bd376c3dff7454fee8",
+          "data-layer-serverplan-quality": "sha256:41b2239e511448db516b5069d3abeacc92897e383360e0ce938502e38c5852b5",
+          "data-layer-serverplan-state-tripwires": "sha256:b86004eae4f723cfadccbad1a3a6c6288e3b6b648d691edd46c709e4ddad7bb2",
+          "data-layer-serverplan-steps": "sha256:1adf862c5ead8f71320eebbf8facfbd9fcc04a0f160339660b41164af8976b85",
+          "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198"
+        },
+        "policyCompilationMs": {
+          "data-layer-execution-authority-bypass": 13.063499999999749,
+          "data-layer-impl-direct-execution": 8.085333999999875,
+          "data-layer-legacy-execution-surfaces": 66.2507499999997,
+          "data-layer-raw-execute-regression": 9.033750000000055,
+          "data-layer-serverplan-bypass": 18.976042000000234,
+          "data-layer-serverplan-dispatch-architecture": 70.15987500000028,
+          "data-layer-serverplan-quality": 99.81633399999964,
+          "data-layer-serverplan-state-tripwires": 584.5134579999999,
+          "data-layer-serverplan-steps": 272.26054099999965,
+          "data-layer-serverplan-target-architecture": 40.88975000000028
+        },
+        "compilationMs": 1196.456083,
+        "coldMs": 645958.490834,
+        "unchangedFileMs": 118.27808299998287,
+        "editedFileMs": 13027.873332999996,
+        "editedPath": "impl/common/l2200_sql_dialect/sql_connection.py",
+        "incrementalDifferences": [
+          {
+            "phase": "unchanged",
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": {
+              "encoding": "ordered-repetition",
+              "count": 890,
+              "runs": [
+                {
+                  "count": 889,
+                  "failure": {
+                    "clauseId": "quality-contracts-1",
+                    "code": "relational-failed",
+                    "message": "producer capacity exceeded",
+                    "ruleId": "data-layer-serverplan-quality"
+                  }
+                },
+                {
+                  "count": 1,
+                  "failure": {
+                    "clauseId": "quality-conditional-1",
+                    "code": "source-incomplete",
+                    "message": "repository input budget exceeded",
+                    "ruleId": "data-layer-serverplan-quality"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "phase": "trailing-newline-edit",
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": {
+              "encoding": "ordered-repetition",
+              "count": 890,
+              "runs": [
+                {
+                  "count": 889,
+                  "failure": {
+                    "clauseId": "quality-contracts-1",
+                    "code": "relational-failed",
+                    "message": "producer capacity exceeded",
+                    "ruleId": "data-layer-serverplan-quality"
+                  }
+                },
+                {
+                  "count": 1,
+                  "failure": {
+                    "clauseId": "quality-conditional-1",
+                    "code": "source-incomplete",
+                    "message": "repository input budget exceeded",
+                    "ruleId": "data-layer-serverplan-quality"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "phaseCpuMs": {
+          "compile": {
+            "userMs": 588.142,
+            "systemMs": 39.009
+          },
+          "cold": {
+            "userMs": 517639.404,
+            "systemMs": 20812.924
+          },
+          "unchanged": {
+            "userMs": 84.68,
+            "systemMs": 2.056
+          },
+          "edit": {
+            "userMs": 11056.922,
+            "systemMs": 287.232
+          }
+        },
+        "measuredPhases": [
+          "compile",
+          "cold",
+          "unchanged",
+          "edit"
+        ],
+        "workloadSha256": "f2b50d7a6431f6d0fcfa36183e9ebbf0587db9afa5d0cd28a59213d50e29ce69",
+        "expected": 173,
+        "actual": 173,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "failures": {
+          "encoding": "ordered-repetition",
+          "count": 890,
+          "runs": [
+            {
+              "count": 889,
+              "failure": {
+                "clauseId": "quality-contracts-1",
+                "code": "relational-failed",
+                "message": "producer capacity exceeded",
+                "ruleId": "data-layer-serverplan-quality"
+              }
+            },
+            {
+              "count": 1,
+              "failure": {
+                "clauseId": "quality-conditional-1",
+                "code": "source-incomplete",
+                "message": "repository input budget exceeded",
+                "ruleId": "data-layer-serverplan-quality"
+              }
+            }
+          ]
+        },
+        "peakRssBytes": 22901063680,
+        "allocator": "system-malloc-shim",
+        "policies": "packs/data-layer/candidates/rules",
+        "nativeSha256": "8a1f573e09b7837fabbf07073dbf7064b26ff298a7b104f0394acd2e8cac310f",
+        "nativeWorkers": 4
+      }
+    }
+  },
+  "comparison_limits": [
+    "Historical reports do not contain process CPU time. No CPU speedup ratio can be computed.",
+    "The 1456-second historical result failed. The passing 951-second result covered ten batch-six checks, not fifty.",
+    "Current benchmark uses the opt-level-1, thin-LTO profiling reference build from the small-workload baseline; historical commands used release with thin LTO and 256 codegen units. This is not a controlled same-build optimization attribution.",
+    "Timing processes ran sequentially. Host load was high. One one-second external sample was taken during the failed batch-six run.",
+    "Current first-50 oracle is a union of independently recorded outputs at the same Git pin. It has no combined oracle duration.",
+    "All sixty rules were not evaluated together; first fifty ran together and batch six ran separately for the historical comparison."
+  ],
+  "diagnostic_sample": {
+    "sampleModules": [
+      "rerail-sql-decisions-20261021"
+    ],
+    "activeNativeSamples": 796,
+    "parkedThreadSamples": 11144,
+    "otherActiveSamples": 0,
+    "waitSymbols": {
+      "kevent (libsystem_kernel.dylib)": 1592,
+      "__psynch_cvwait (libsystem_kernel.dylib)": 8756,
+      "semaphore_wait_trap (libsystem_kernel.dylib)": 796
+    },
+    "self": [
+      {
+        "symbol": "sqlite3VdbeExec (rerail-sql-decisions-20261021.node)",
+        "samples": 118,
+        "percent": 14.82
+      },
+      {
+        "symbol": "_platform_memmove (libsystem_platform.dylib)",
+        "samples": 82,
+        "percent": 10.3
+      },
+      {
+        "symbol": "sqlite3VdbeRecordCompareWithSkip (rerail-sql-decisions-20261021.node)",
+        "samples": 72,
+        "percent": 9.05
+      },
+      {
+        "symbol": "_platform_memcmp (libsystem_platform.dylib)",
+        "samples": 50,
+        "percent": 6.28
+      },
+      {
+        "symbol": "sqlite3BtreeIndexMoveto (rerail-sql-decisions-20261021.node)",
+        "samples": 42,
+        "percent": 5.28
+      },
+      {
+        "symbol": "sqlite3BtreeTableMoveto (rerail-sql-decisions-20261021.node)",
+        "samples": 30,
+        "percent": 3.77
+      },
+      {
+        "symbol": "balance (rerail-sql-decisions-20261021.node)",
+        "samples": 24,
+        "percent": 3.02
+      },
+      {
+        "symbol": "vdbeSorterSort (rerail-sql-decisions-20261021.node)",
+        "samples": 17,
+        "percent": 2.14
+      },
+      {
+        "symbol": "sqlite3VdbeSerialGet (rerail-sql-decisions-20261021.node)",
+        "samples": 14,
+        "percent": 1.76
+      },
+      {
+        "symbol": "sqlite3VdbeRecordUnpack (rerail-sql-decisions-20261021.node)",
+        "samples": 14,
+        "percent": 1.76
+      }
+    ],
+    "inclusive": [
+      {
+        "symbol": "thread_start (libsystem_pthread.dylib)",
+        "samples": 796,
+        "percent": 100.0
+      },
+      {
+        "symbol": "worker (libuv.1.0.0.dylib)",
+        "samples": 796,
+        "percent": 100.0
+      },
+      {
+        "symbol": "_RINvNtCs3J4fybVRCMr_4napi10async_work7executeNtNtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl9workspace3api18WorkspaceApplyTaskEBP_ (rerail-sql-decisions-20261021.node)",
+        "samples": 796,
+        "percent": 100.0
+      },
+      {
+        "symbol": "_RNvMs4_NtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl9workspace3apiNtB5_18WorkspaceApplyTask15apply_with_slot (rerail-sql-decisions-20261021.node)",
+        "samples": 796,
+        "percent": 100.0
+      },
+      {
+        "symbol": "_RNvNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relational14evaluate_batch (rerail-sql-decisions-20261021.node)",
+        "samples": 796,
+        "percent": 100.0
+      },
+      {
+        "symbol": "_pthread_start (libsystem_pthread.dylib)",
+        "samples": 796,
+        "percent": 100.0
+      },
+      {
+        "symbol": "node::ThreadPoolWork::ScheduleWork()::'lambda'(uv_work_s*)::__invoke(uv_work_s*) (libnode.147.dylib)",
+        "samples": 796,
+        "percent": 100.0
+      },
+      {
+        "symbol": "_RNvNtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl9workspace6global26evaluate_batched_relations (rerail-sql-decisions-20261021.node)",
+        "samples": 796,
+        "percent": 100.0
+      },
+      {
+        "symbol": "_RNvXNtCs3J4fybVRCMr_4napi4taskNtNtNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl9workspace3api18WorkspaceApplyTaskNtB2_10ScopedTask7computeBA_ (rerail-sql-decisions-20261021.node)",
+        "samples": 796,
+        "percent": 100.0
+      },
+      {
+        "symbol": "_RINvMs_NtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl6budgetNtB5_7Context3runINtNtCsaTNopw4qKPP_4core6result6ResultINtNtB1k_6option6OptionNtNtNtB7_10relational8producer6DemandENtNtCs3J4fybVRCMr_4napi5error5ErrorENCNvB2i_14evaluate_batchs1_0EB9_ (rerail-sql-decisions-20261021.node)",
+        "samples": 779,
+        "percent": 97.86
+      }
+    ],
+    "bottomUpStacks": [
+      {
+        "frames": [
+          "sqlite3VdbeExec (rerail-sql-decisions-20261021.node)",
+          "sqlite3_step (rerail-sql-decisions-20261021.node)",
+          "_RNvMNtCsgFeuaXVGDsr_8rusqlite9statementNtB2_9Statement29execute_with_bound_parameters (rerail-sql-decisions-20261021.node)",
+          "_RNvNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relational12create_stage (rerail-sql-decisions-20261021.node)",
+          "_RNvMNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relationalNtB2_7Session7advance (rerail-sql-decisions-20261021.node)",
+          "_RINvMs_NtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl6budgetNtB5_7Context3runINtNtCsaTNopw4qKPP_4core6result6ResultINtNtB1k_6option6OptionNtNtNtB7_10relational8producer6DemandENtNtCs3J4fybVRCMr_4napi5error5ErrorENCNvB2i_14evaluate_batchs1_0EB9_ (rerail-sql-decisions-20261021.node)",
+          "_RNvNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relational14evaluate_batch (rerail-sql-decisions-20261021.node)"
+        ],
+        "samples": 112
+      },
+      {
+        "frames": [
+          "_platform_memmove (libsystem_platform.dylib)",
+          "sqlite3VdbeExec (rerail-sql-decisions-20261021.node)",
+          "sqlite3_step (rerail-sql-decisions-20261021.node)",
+          "_RNvMNtCsgFeuaXVGDsr_8rusqlite9statementNtB2_9Statement29execute_with_bound_parameters (rerail-sql-decisions-20261021.node)",
+          "_RNvNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relational12create_stage (rerail-sql-decisions-20261021.node)",
+          "_RNvMNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relationalNtB2_7Session7advance (rerail-sql-decisions-20261021.node)",
+          "_RINvMs_NtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl6budgetNtB5_7Context3runINtNtCsaTNopw4qKPP_4core6result6ResultINtNtB1k_6option6OptionNtNtNtB7_10relational8producer6DemandENtNtCs3J4fybVRCMr_4napi5error5ErrorENCNvB2i_14evaluate_batchs1_0EB9_ (rerail-sql-decisions-20261021.node)"
+        ],
+        "samples": 44
+      },
+      {
+        "frames": [
+          "sqlite3BtreeIndexMoveto (rerail-sql-decisions-20261021.node)",
+          "sqlite3VdbeExec (rerail-sql-decisions-20261021.node)",
+          "sqlite3_step (rerail-sql-decisions-20261021.node)",
+          "_RNvMNtCsgFeuaXVGDsr_8rusqlite9statementNtB2_9Statement29execute_with_bound_parameters (rerail-sql-decisions-20261021.node)",
+          "_RNvNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relational12create_stage (rerail-sql-decisions-20261021.node)",
+          "_RNvMNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relationalNtB2_7Session7advance (rerail-sql-decisions-20261021.node)",
+          "_RINvMs_NtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl6budgetNtB5_7Context3runINtNtCsaTNopw4qKPP_4core6result6ResultINtNtB1k_6option6OptionNtNtNtB7_10relational8producer6DemandENtNtCs3J4fybVRCMr_4napi5error5ErrorENCNvB2i_14evaluate_batchs1_0EB9_ (rerail-sql-decisions-20261021.node)"
+        ],
+        "samples": 37
+      },
+      {
+        "frames": [
+          "sqlite3VdbeRecordCompareWithSkip (rerail-sql-decisions-20261021.node)",
+          "sqlite3BtreeIndexMoveto (rerail-sql-decisions-20261021.node)",
+          "sqlite3VdbeExec (rerail-sql-decisions-20261021.node)",
+          "sqlite3_step (rerail-sql-decisions-20261021.node)",
+          "_RNvMNtCsgFeuaXVGDsr_8rusqlite9statementNtB2_9Statement29execute_with_bound_parameters (rerail-sql-decisions-20261021.node)",
+          "_RNvNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relational12create_stage (rerail-sql-decisions-20261021.node)",
+          "_RNvMNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relationalNtB2_7Session7advance (rerail-sql-decisions-20261021.node)"
+        ],
+        "samples": 34
+      },
+      {
+        "frames": [
+          "sqlite3BtreeTableMoveto (rerail-sql-decisions-20261021.node)",
+          "sqlite3VdbeFinishMoveto (rerail-sql-decisions-20261021.node)",
+          "sqlite3VdbeExec (rerail-sql-decisions-20261021.node)",
+          "sqlite3_step (rerail-sql-decisions-20261021.node)",
+          "_RNvMNtCsgFeuaXVGDsr_8rusqlite9statementNtB2_9Statement29execute_with_bound_parameters (rerail-sql-decisions-20261021.node)",
+          "_RNvNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relational12create_stage (rerail-sql-decisions-20261021.node)",
+          "_RNvMNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relationalNtB2_7Session7advance (rerail-sql-decisions-20261021.node)"
+        ],
+        "samples": 25
+      },
+      {
+        "frames": [
+          "balance (rerail-sql-decisions-20261021.node)",
+          "sqlite3BtreeInsert (rerail-sql-decisions-20261021.node)",
+          "sqlite3VdbeExec (rerail-sql-decisions-20261021.node)",
+          "sqlite3_step (rerail-sql-decisions-20261021.node)",
+          "_RNvMNtCsgFeuaXVGDsr_8rusqlite9statementNtB2_9Statement29execute_with_bound_parameters (rerail-sql-decisions-20261021.node)",
+          "_RNvNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relational12create_stage (rerail-sql-decisions-20261021.node)",
+          "_RNvMNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relationalNtB2_7Session7advance (rerail-sql-decisions-20261021.node)"
+        ],
+        "samples": 22
+      },
+      {
+        "frames": [
+          "sqlite3VdbeRecordCompareWithSkip (rerail-sql-decisions-20261021.node)",
+          "vdbeSorterSort (rerail-sql-decisions-20261021.node)",
+          "sqlite3VdbeExec (rerail-sql-decisions-20261021.node)",
+          "sqlite3_step (rerail-sql-decisions-20261021.node)",
+          "_RNvMNtCsgFeuaXVGDsr_8rusqlite9statementNtB2_9Statement29execute_with_bound_parameters (rerail-sql-decisions-20261021.node)",
+          "_RNvNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relational12create_stage (rerail-sql-decisions-20261021.node)",
+          "_RNvMNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relationalNtB2_7Session7advance (rerail-sql-decisions-20261021.node)"
+        ],
+        "samples": 17
+      },
+      {
+        "frames": [
+          "vdbeSorterSort (rerail-sql-decisions-20261021.node)",
+          "sqlite3VdbeExec (rerail-sql-decisions-20261021.node)",
+          "sqlite3_step (rerail-sql-decisions-20261021.node)",
+          "_RNvMNtCsgFeuaXVGDsr_8rusqlite9statementNtB2_9Statement29execute_with_bound_parameters (rerail-sql-decisions-20261021.node)",
+          "_RNvNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relational12create_stage (rerail-sql-decisions-20261021.node)",
+          "_RNvMNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relationalNtB2_7Session7advance (rerail-sql-decisions-20261021.node)",
+          "_RINvMs_NtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl6budgetNtB5_7Context3runINtNtCsaTNopw4qKPP_4core6result6ResultINtNtB1k_6option6OptionNtNtNtB7_10relational8producer6DemandENtNtCs3J4fybVRCMr_4napi5error5ErrorENCNvB2i_14evaluate_batchs1_0EB9_ (rerail-sql-decisions-20261021.node)"
+        ],
+        "samples": 17
+      },
+      {
+        "frames": [
+          "_platform_memcmp (libsystem_platform.dylib)",
+          "sqlite3VdbeRecordCompareWithSkip (rerail-sql-decisions-20261021.node)",
+          "vdbeSorterSort (rerail-sql-decisions-20261021.node)",
+          "sqlite3VdbeExec (rerail-sql-decisions-20261021.node)",
+          "sqlite3_step (rerail-sql-decisions-20261021.node)",
+          "_RNvMNtCsgFeuaXVGDsr_8rusqlite9statementNtB2_9Statement29execute_with_bound_parameters (rerail-sql-decisions-20261021.node)",
+          "_RNvNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relational12create_stage (rerail-sql-decisions-20261021.node)"
+        ],
+        "samples": 14
+      },
+      {
+        "frames": [
+          "sqlite3VdbeRecordCompareWithSkip (rerail-sql-decisions-20261021.node)",
+          "sqlite3BtreeIndexMoveto (rerail-sql-decisions-20261021.node)",
+          "sqlite3BtreeInsert (rerail-sql-decisions-20261021.node)",
+          "sqlite3VdbeExec (rerail-sql-decisions-20261021.node)",
+          "sqlite3_step (rerail-sql-decisions-20261021.node)",
+          "_RNvMNtCsgFeuaXVGDsr_8rusqlite9statementNtB2_9Statement29execute_with_bound_parameters (rerail-sql-decisions-20261021.node)",
+          "_RNvNtNtCsgb6Nrezespg_13rerail_engine13code_rule_dsl10relational12create_stage (rerail-sql-decisions-20261021.node)"
+        ],
+        "samples": 13
+      }
+    ],
+    "nativeThreadSamples": {
+      "Thread_44214446: libuv-worker": 796
+    },
+    "subsystems": [
+      {
+        "symbol": "sqlite",
+        "samples": 789,
+        "percent": 99.12
+      },
+      {
+        "symbol": "relational-host",
+        "samples": 7,
+        "percent": 0.88
+      }
+    ]
+  },
+  "root_cause": {
+    "capacity": "889 identical quality-contracts-1 errors. The shared producer packs ready demands into a 64 MiB resident arena, without automatic memory partitions. Preparation failure rejects every pending relation.",
+    "conditional": "One quality-conditional-1 source-incomplete error: Session::new checks the total bytes of the all-scope snapshot against maxSourceBytes=32000000 before deriving the syntax-gated file set.",
+    "memory": "The driver prepares all dirty file jobs and SQL sessions before the producer wave. SQL session memory is outside the bounded producer arena.",
+    "references": [
+      "native/src/code_rule_dsl/relational/producer.rs:92",
+      "native/src/code_rule_dsl/relational/producer.rs:205",
+      "native/src/code_rule_dsl/relational.rs:511",
+      "native/src/code_rule_dsl/relational.rs:924",
+      "native/src/code_rule_dsl/workspace/global.rs:603",
+      "docs/gpu-producer-execution-contract.md:68"
+    ],
+    "limit_changes": false,
+    "execution_changes": false
+  },
+  "status": "First 50 repository rules pass. Batch six repository evaluation fails. All 60 recorded source corpora pass.",
+  "source_corpus": {
+    "method": "Union of passed source-all-60 replay and passed full batch-five Vitest replay, replacing the 181 overlapping batch-five observations with its full 312 observations. Overlap identities and outcomes verified as a multiset; same native binary and policies.",
+    "nativeSha256": "8fed4b7de7d1ee8a024b2315a7faeace61555f595e4bbd4a9805a3dff53e1c12",
+    "nativeCalls": 3210,
+    "hostGuardCalls": 3,
+    "positiveCalls": 1634,
+    "cleanCalls": 1579,
+    "coverage": [
+      {
+        "check": "admin_async_purity",
+        "positive": 32,
+        "clean": 16
+      },
+      {
+        "check": "async_executor",
+        "positive": 33,
+        "clean": 14
+      },
+      {
+        "check": "async_patterns",
+        "positive": 27,
+        "clean": 11
+      },
+      {
+        "check": "async_sync_boundary",
+        "positive": 9,
+        "clean": 8
+      },
+      {
+        "check": "async_sync_delegation",
+        "positive": 13,
+        "clean": 24
+      },
+      {
+        "check": "backend_coupling",
+        "positive": 33,
+        "clean": 29
+      },
+      {
+        "check": "backend_type_strings",
+        "positive": 43,
+        "clean": 17
+      },
+      {
+        "check": "classvar_check",
+        "positive": 9,
+        "clean": 7
+      },
+      {
+        "check": "conn_or_txn_union",
+        "positive": 8,
+        "clean": 7
+      },
+      {
+        "check": "connection_caches",
+        "positive": 32,
+        "clean": 18
+      },
+      {
+        "check": "data_layer_compat_aliases",
+        "positive": 5,
+        "clean": 6
+      },
+      {
+        "check": "data_layer_facade_purity",
+        "positive": 8,
+        "clean": 4
+      },
+      {
+        "check": "dynamic_module_loading",
+        "positive": 38,
+        "clean": 28
+      },
+      {
+        "check": "error_handling",
+        "positive": 8,
+        "clean": 5
+      },
+      {
+        "check": "execution_authority_bypass",
+        "positive": 4,
+        "clean": 1
+      },
+      {
+        "check": "forwardref",
+        "positive": 10,
+        "clean": 5
+      },
+      {
+        "check": "grammar_allowlist_burndown",
+        "positive": 5,
+        "clean": 3
+      },
+      {
+        "check": "grammar_callable_constructors",
+        "positive": 20,
+        "clean": 7
+      },
+      {
+        "check": "grammar_fragment_usage",
+        "positive": 61,
+        "clean": 19
+      },
+      {
+        "check": "grammar_render_methods",
+        "positive": 49,
+        "clean": 26
+      },
+      {
+        "check": "grammar_str_params",
+        "positive": 8,
+        "clean": 11
+      },
+      {
+        "check": "hasattr_async",
+        "positive": 19,
+        "clean": 14
+      },
+      {
+        "check": "imperative_private_functions",
+        "positive": 68,
+        "clean": 5
+      },
+      {
+        "check": "impl_direct_execution",
+        "positive": 39,
+        "clean": 29
+      },
+      {
+        "check": "internal_dead_code",
+        "positive": 31,
+        "clean": 12
+      },
+      {
+        "check": "layer_violations",
+        "positive": 7,
+        "clean": 4
+      },
+      {
+        "check": "lazy_result_usage",
+        "positive": 4,
+        "clean": 13
+      },
+      {
+        "check": "legacy_execution_surfaces",
+        "positive": 52,
+        "clean": 28
+      },
+      {
+        "check": "missing_async_pairs",
+        "positive": 6,
+        "clean": 9
+      },
+      {
+        "check": "module_level_caches",
+        "positive": 13,
+        "clean": 10
+      },
+      {
+        "check": "no_api_root_imports",
+        "positive": 2,
+        "clean": 2
+      },
+      {
+        "check": "no_blanket_grammar_bypass",
+        "positive": 97,
+        "clean": 24
+      },
+      {
+        "check": "no_source_inspection",
+        "positive": 54,
+        "clean": 18
+      },
+      {
+        "check": "permission_error",
+        "positive": 2,
+        "clean": 3
+      },
+      {
+        "check": "plan_scope_ownership",
+        "positive": 21,
+        "clean": 9
+      },
+      {
+        "check": "plan_scope_side_effects",
+        "positive": 18,
+        "clean": 11
+      },
+      {
+        "check": "public_api_triples",
+        "positive": 23,
+        "clean": 15
+      },
+      {
+        "check": "raw_execute_regression",
+        "positive": 2,
+        "clean": 2
+      },
+      {
+        "check": "regex_sql_parsing",
+        "positive": 62,
+        "clean": 35
+      },
+      {
+        "check": "removed_compat_surfaces",
+        "positive": 3,
+        "clean": 1
+      },
+      {
+        "check": "render_fstrings",
+        "positive": 12,
+        "clean": 25
+      },
+      {
+        "check": "render_raw_strings",
+        "positive": 32,
+        "clean": 21
+      },
+      {
+        "check": "rust_sql_grammar_boundary",
+        "positive": 10,
+        "clean": 4
+      },
+      {
+        "check": "serverplan_bypass",
+        "positive": 4,
+        "clean": 2
+      },
+      {
+        "check": "serverplan_dispatch_architecture",
+        "positive": 42,
+        "clean": 17
+      },
+      {
+        "check": "serverplan_grammar_surface",
+        "positive": 6,
+        "clean": 1
+      },
+      {
+        "check": "serverplan_name_inference",
+        "positive": 7,
+        "clean": 1
+      },
+      {
+        "check": "serverplan_quality",
+        "positive": 135,
+        "clean": 65
+      },
+      {
+        "check": "serverplan_state_tripwires",
+        "positive": 65,
+        "clean": 14
+      },
+      {
+        "check": "serverplan_steps",
+        "positive": 64,
+        "clean": 682
+      },
+      {
+        "check": "serverplan_target_architecture",
+        "positive": 10,
+        "clean": 2
+      },
+      {
+        "check": "sql_grammar_escape_hatches",
+        "positive": 89,
+        "clean": 74
+      },
+      {
+        "check": "swallowed_exceptions",
+        "positive": 17,
+        "clean": 8
+      },
+      {
+        "check": "sync_async_signatures",
+        "positive": 4,
+        "clean": 6
+      },
+      {
+        "check": "transaction_callback_wrappers",
+        "positive": 7,
+        "clean": 13
+      },
+      {
+        "check": "transaction_closures",
+        "positive": 43,
+        "clean": 61
+      },
+      {
+        "check": "transaction_patterns",
+        "positive": 29,
+        "clean": 21
+      },
+      {
+        "check": "type_safety_patterns",
+        "positive": 37,
+        "clean": 19
+      },
+      {
+        "check": "unresolved_forward_refs",
+        "positive": 42,
+        "clean": 31
+      },
+      {
+        "check": "versioned_lifecycle_legacy_surfaces",
+        "positive": 1,
+        "clean": 2
+      }
+    ],
+    "missingCoverage": [],
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "engineFailures": 0,
+    "executionPathDifferences": 0,
+    "nativePositiveCalls": 1631,
+    "nativeCleanCalls": 1579,
+    "invocation": {
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "conformance/data-layer/replay.ts",
+        "--recording",
+        "fixtures/host/data-layer-port/batch-01-recording.json",
+        "--recording",
+        "fixtures/host/data-layer-port/batch-02-recording.json",
+        "--recording",
+        "fixtures/host/data-layer-port/batch-02-probes.json",
+        "--recording",
+        "fixtures/host/data-layer-port/batch-03-recording.json",
+        "--recording",
+        "fixtures/host/data-layer-port/batch-03-probes.json",
+        "--recording",
+        "fixtures/host/data-layer-port/batch-04-recording.json",
+        "--recording",
+        "fixtures/host/data-layer-port/batch-04-probes.json",
+        "--recording",
+        "fixtures/host/data-layer-port/batch-05-recording.json",
+        "--recording",
+        "fixtures/host/data-layer-port/batch-05-probes.json",
+        "--recording",
+        "fixtures/host/data-layer-port/batch-06-recording.json",
+        "--recording",
+        "fixtures/host/data-layer-port/batch-06-probes.json",
+        "--output",
+        ".rerail/profiles/full-repository-20261021/source-all-60/replay.json"
+      ],
+      "exitCode": 0,
+      "wallSeconds": 270.9460824999842,
+      "deadlineSeconds": 1800
+    },
+    "raw_report_sha256": "65797218a38fcd95759c56e85eb5f50545d969a274d5ef860a28854fe538d2a4",
+    "full_batch_five_report_sha256": "b1352306e78959b851d58557c7a61a9106387a93483d2ab5b7d26bb50ba96a74",
+    "source_recordings": [
+      {
+        "path": "fixtures/host/data-layer-port/batch-01-recording.json",
+        "sha256": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8"
+      },
+      {
+        "path": "fixtures/host/data-layer-port/batch-02-probes.json",
+        "sha256": "fb73d7ddb5815d4d47a34013a2742dd792e0bcc26aa4afd9ce4755abbe66765a"
+      },
+      {
+        "path": "fixtures/host/data-layer-port/batch-02-recording.json",
+        "sha256": "e1d741901e7938f85d82594da6a527b9cd398afaf77a414000e92b88a3d6d10c"
+      },
+      {
+        "path": "fixtures/host/data-layer-port/batch-03-probes.json",
+        "sha256": "8c7810ef43ff9b57d5bd569e18d1ca5decc085f3a76577b6f585c6c8fc8e22b8"
+      },
+      {
+        "path": "fixtures/host/data-layer-port/batch-03-recording.json",
+        "sha256": "6c9a169ca763b79501bda4bce33a056c634aae5af4b6901db8d69fbe62b94328"
+      },
+      {
+        "path": "fixtures/host/data-layer-port/batch-04-probes.json",
+        "sha256": "e2e69a5569f257f3579e24fe86b6881561cbde033952155f766f404b01b5ca42"
+      },
+      {
+        "path": "fixtures/host/data-layer-port/batch-04-recording.json",
+        "sha256": "ba3510d463199852460b048afbaccd91555f8c319f37dac2f88ba989e145cdab"
+      },
+      {
+        "path": "fixtures/host/data-layer-port/batch-05-graph-probes.json",
+        "sha256": "7ab886576c3199c32d136560cf20b05de990f8945cd28ebeed4a3797e2c508ec"
+      },
+      {
+        "path": "fixtures/host/data-layer-port/batch-05-probes.json",
+        "sha256": "cfa84c65293cabcc60011d16b994de1d76a5c6ee281f225874d7632a110b4b12"
+      },
+      {
+        "path": "fixtures/host/data-layer-port/batch-05-recording.json",
+        "sha256": "4b8a3a2eb62e22d665bd41430958f41d4aa78c00b3f49f2faec080aaf9436f0a"
+      },
+      {
+        "path": "fixtures/host/data-layer-port/batch-05-relational-probes.json",
+        "sha256": "002c7960b067af0c7d9bbb849d2068979e24d6e57fee87643b049b79513858c4"
+      },
+      {
+        "path": "fixtures/host/data-layer-port/batch-05-remaining-graph-probes.json",
+        "sha256": "61a4090d2593fcc12cc2e8aef800e5fa4005f43021fc90e9aef2a8e79173f82c"
+      },
+      {
+        "path": "fixtures/host/data-layer-port/batch-06-probes.json",
+        "sha256": "3929777c02349b0dc43ac737dda73e41fb63b425f1704f004767b4f22885dbad"
+      },
+      {
+        "path": "fixtures/host/data-layer-port/batch-06-recording.json",
+        "sha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b"
+      }
+    ],
+    "retained_metadata_note": "Signed aggregate reporters, synthetic graph observations, original I/O observations and uncaptured-test metadata are not counted as native comparisons. The raw replay metadata is retained locally."
+  },
+  "verification": {
+    "first_50_vitest": true,
+    "first_50_vitest_tests": 25,
+    "signature_vitest": true,
+    "signature_vitest_tests": 2,
+    "incremental": {
+      "format": "rerail.data-layer-incremental-parity/v1",
+      "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "nativeSha256": "8fed4b7de7d1ee8a024b2315a7faeace61555f595e4bbd4a9805a3dff53e1c12",
+      "checks": 10,
+      "transitions": 40,
+      "differences": 0,
+      "elapsedMs": 1063.9134999999999,
+      "rows": [
+        {
+          "check": "serverplan_bypass",
+          "cleanTest": "scripts/tests/test_lint_serverplan_bypass.py::test_allows_typed_grammar_execution",
+          "positiveTest": "scripts/tests/test_lint_serverplan_bypass.py::test_flags_each_direct_bypass_method[_execute_raw_sql]",
+          "transitions": [
+            {
+              "phase": "clean",
+              "expected": 0,
+              "actual": 0,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "positive",
+              "expected": 1,
+              "actual": 1,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "clean",
+              "expected": 0,
+              "actual": 0,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "positive",
+              "expected": 1,
+              "actual": 1,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            }
+          ]
+        },
+        {
+          "check": "serverplan_steps",
+          "cleanTest": "scripts/tests/test_lint_serverplan_steps.py::test_step016_no_false_positive_on_ctx_branching",
+          "positiveTest": "scripts/tests/test_lint_serverplan_steps.py::test_step016_compile_branching_on_resolved_data",
+          "transitions": [
+            {
+              "phase": "clean",
+              "expected": 0,
+              "actual": 0,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "positive",
+              "expected": 1,
+              "actual": 1,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "clean",
+              "expected": 0,
+              "actual": 0,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "positive",
+              "expected": 1,
+              "actual": 1,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            }
+          ]
+        },
+        {
+          "check": "serverplan_state_tripwires",
+          "cleanTest": "scripts/tests/test_lint_serverplan_state_tripwires.py::test_runtime_authority_analysis_skips_unreachable_functions",
+          "positiveTest": "scripts/tests/test_lint_serverplan_state_tripwires.py::test_flags_queue_auth_helper_definition",
+          "transitions": [
+            {
+              "phase": "clean",
+              "expected": 0,
+              "actual": 0,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "positive",
+              "expected": 1,
+              "actual": 1,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "clean",
+              "expected": 0,
+              "actual": 0,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "positive",
+              "expected": 1,
+              "actual": 1,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            }
+          ]
+        },
+        {
+          "check": "serverplan_dispatch_architecture",
+          "cleanTest": "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_backend_presence_and_typed_capability_checks_are_not_identity_dispatch",
+          "positiveTest": "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_backend_identity_conditionals_are_blocking_findings",
+          "transitions": [
+            {
+              "phase": "clean",
+              "expected": 0,
+              "actual": 0,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "positive",
+              "expected": 3,
+              "actual": 3,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "clean",
+              "expected": 0,
+              "actual": 0,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "positive",
+              "expected": 3,
+              "actual": 3,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            }
+          ]
+        },
+        {
+          "check": "serverplan_quality",
+          "cleanTest": "scripts/tests/test_lint_serverplan_quality.py::test_serverplan_runtime_state_ingress_accepts_branded_connection_identifiers",
+          "positiveTest": "scripts/tests/test_lint_serverplan_quality.py::test_serverplan_runtime_state_ingress_flags_context_runtime_handles",
+          "transitions": [
+            {
+              "phase": "clean",
+              "expected": 0,
+              "actual": 0,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "positive",
+              "expected": 3,
+              "actual": 3,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "clean",
+              "expected": 0,
+              "actual": 0,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "positive",
+              "expected": 3,
+              "actual": 3,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            }
+          ]
+        },
+        {
+          "check": "serverplan_target_architecture",
+          "cleanTest": "scripts/tests/test_lint_serverplan_target_architecture.py::test_target_contract_skeleton_satisfies_positive_shape",
+          "positiveTest": "scripts/tests/test_lint_serverplan_target_architecture.py::test_missing_positive_target_contracts_are_blocking",
+          "transitions": [
+            {
+              "phase": "clean",
+              "expected": 0,
+              "actual": 0,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "positive",
+              "expected": 30,
+              "actual": 30,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "clean",
+              "expected": 0,
+              "actual": 0,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "positive",
+              "expected": 30,
+              "actual": 30,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            }
+          ]
+        },
+        {
+          "check": "execution_authority_bypass",
+          "cleanTest": "scripts/tests/test_lint_execution_authority_bypass.py::test_allows_signed_explicit_plan_execution_scope_callsite",
+          "positiveTest": "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_direct_explicit_authority_contextvar_mutation",
+          "transitions": [
+            {
+              "phase": "clean",
+              "expected": 0,
+              "actual": 0,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "positive",
+              "expected": 2,
+              "actual": 2,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "clean",
+              "expected": 0,
+              "actual": 0,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "positive",
+              "expected": 2,
+              "actual": 2,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            }
+          ]
+        },
+        {
+          "check": "impl_direct_execution",
+          "cleanTest": "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[conn.execute_grammar(g)-False]",
+          "positiveTest": "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[row = self._fetchone()-True]",
+          "transitions": [
+            {
+              "phase": "clean",
+              "expected": 0,
+              "actual": 0,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "positive",
+              "expected": 1,
+              "actual": 1,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "clean",
+              "expected": 0,
+              "actual": 0,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "positive",
+              "expected": 1,
+              "actual": 1,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            }
+          ]
+        },
+        {
+          "check": "raw_execute_regression",
+          "cleanTest": "scripts/tests/test_lint_raw_execute_regression.py::test_allows_query_raw_materializer",
+          "positiveTest": "scripts/tests/test_lint_raw_execute_regression.py::test_flags_removed_raw_call",
+          "transitions": [
+            {
+              "phase": "clean",
+              "expected": 0,
+              "actual": 0,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "positive",
+              "expected": 1,
+              "actual": 1,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "clean",
+              "expected": 0,
+              "actual": 0,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "positive",
+              "expected": 1,
+              "actual": 1,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            }
+          ]
+        },
+        {
+          "check": "legacy_execution_surfaces",
+          "cleanTest": "scripts/tests/test_lint_legacy_execution_surfaces.py::test_allows_public_legacy_wrapper_when_backed_by_lazy_surface",
+          "positiveTest": "scripts/tests/test_lint_legacy_execution_surfaces.py::test_flags_legacy_wrapper_import_outside_inventory",
+          "transitions": [
+            {
+              "phase": "clean",
+              "expected": 0,
+              "actual": 0,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "positive",
+              "expected": 1,
+              "actual": 1,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "clean",
+              "expected": 0,
+              "actual": 0,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            },
+            {
+              "phase": "positive",
+              "expected": 1,
+              "actual": 1,
+              "falsePositives": [],
+              "falseNegatives": [],
+              "failures": []
+            }
+          ]
+        }
+      ]
+    },
+    "first_50_vitest_invocation": {
+      "command": [
+        "node_modules/.bin/vitest",
+        "run",
+        "test/conformance/data-layer/ports.test.ts",
+        "test/conformance/data-layer/batch-five.test.ts"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 23.7670591250062,
+      "timedOut": false
+    },
+    "signature_vitest_invocation": {
+      "command": [
+        "node_modules/.bin/vitest",
+        "run",
+        "test/conformance/data-layer/signed-allowlist.test.ts"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 1.344457708997652,
+      "timedOut": false
+    }
+  },
+  "binaries": {
+    "reference": {
+      "path": "/tmp/rerail-sql-decisions-20261021.node",
+      "sha256": "8a1f573e09b7837fabbf07073dbf7064b26ff298a7b104f0394acd2e8cac310f"
+    },
+    "ordinary_correctness": {
+      "path": "/tmp/rerail-sql-decisions-production-20261021.node",
+      "sha256": "8fed4b7de7d1ee8a024b2315a7faeace61555f595e4bbd4a9805a3dff53e1c12"
+    },
+    "allocator": {
+      "path": "/tmp/librerail_jemalloc_check_shim.dylib",
+      "sha256": "73c2e8b400bb7540b03f9e68712cdd45f2756ef31893d890ce2ea6696dc931a9"
+    }
+  },
+  "preflight_timeouts": [
+    {
+      "path": ".rerail/profiles/full-repository-20261021/first-50-attempt/profile.json",
+      "elapsedSeconds": 112.12889529101085,
+      "exitCode": 124
+    },
+    {
+      "path": ".rerail/profiles/full-repository-20261021/source-tests-6/profile.json",
+      "elapsedSeconds": 112.01500691700494,
+      "exitCode": 124
+    },
+    {
+      "path": ".rerail/profiles/full-repository-20261021/source-6-fast/profile.json",
+      "elapsedSeconds": 112.19141995799146,
+      "exitCode": 124
+    }
+  ],
+  "preflight_note": "The bounded trials were killed at about 112 seconds, before the user authorized long full runs. They are excluded from completed timings and pass counts. Partial source subgroup reports are not used in the corpus union.",
+  "failure_encoding": "Failure arrays with more than 100 entries use ordered-repetition objects. Repeat each run.failure run.count times to recover the exact array, including order and multiplicity. Raw report hashes refer to the original driver files."
+}

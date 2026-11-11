@@ -1,0 +1,22 @@
+.policy "n-no-extraneous-require" revision 2
+.description "Require only packages package.json lists in its dependency fields (or the workspace root's package.json does); an unlisted package loads only while something else happens to install it."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/no-extraneous-require: a package a file require()s must be listed in its package.json (or
+// in the workspace root's, when the package is one of its workspaces), or it loads only while something else
+// happens to install it:
+//   require("lodash")      reported when lodash resolves but no dependency field lists it
+//   require("./util")  require("fs")  require("nope")    not: relative, built-in, or not resolved at all
+// The listed names are the package's own name and the keys of dependencies, devDependencies, peerDependencies and
+// optionalDependencies. Option allowModules lists packages never reported; a TypeScript file's tsconfig `paths`
+// alias is no package. Resolution is node-resolve.rr's proposed native input. Not read: convertPath,
+// pnpm-workspace.yaml.
+
+#include "tsx/node-resolve.rr"   // node_target, builtin_spec, spec_package, node_target_file, pkg_lists, allow_module, spec_ts_alias
+
+.violation extraneous_require(at: node) code "n/no-extraneous-require"
+    "package.json does not list this package in its dependencies."
+    suppress eslint "n/no-extraneous-require"
+extraneous_require(n) :- node_target(n, x, "require"), !builtin_spec(x), spec_package(x, m), node_target_file(n, _), docof(n, d),
+    pkg_file(d, _, _), !pkg_lists(d, m), !allow_module(m), !spec_ts_alias(n).

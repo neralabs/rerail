@@ -1,0 +1,231 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-declared-fact-interrogation",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer declared_fact_interrogation at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "impl/**/*.py",
+      "data_layer/**/*.py",
+      "_internal/**/*.py",
+      "l[0-9][0-9][0-9][0-9]_*/**/*.py"
+    ],
+    "exclude": [
+      "**/tests/**",
+      "**/test/**",
+      "**/conform/**",
+      "**/.git/**",
+      "**/.venv/**",
+      "**/__pycache__/**",
+      "**/.pytest_cache/**",
+      "**/node_modules/**",
+      "**/tmp/**",
+      "**/browser_build/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "contract-attribute",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "kind": "call"
+              },
+              {
+                "has": {
+                  "field": "function",
+                  "kind": "identifier",
+                  "regex": "^(?:getattr|hasattr)$"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "has": {
+                    "all": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "value": {
+                          "regex": "^(?:auxiliary_query|column_type_hints|creates_indexes|ddl_effect_scope|declared_column_type_hints|declared_columns|defines|effects_known|ephemeral|guarded_creates|guarded_indexes|modifies_rows|reads_outside_itself|relation_role|relation_scope|source_tables)$"
+                        }
+                      }
+                    ],
+                    "nthChild": 2
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "CONTRACT_ATTR_PROBE",
+        "anchor": "witness.span",
+        "message": "CONTRACT_ATTR_PROBE"
+      }
+    },
+    {
+      "id": "override-identity",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "kind": "comparison_operator"
+              },
+              {
+                "not": {
+                  "has": {
+                    "regex": "^(?:==|!=|<|>|<=|>=|<>|in|not in)$"
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "attribute"
+                                },
+                                {
+                                  "pattern": "type($$$SUBJECT).$A"
+                                },
+                                {
+                                  "not": {
+                                    "has": {
+                                      "field": "object",
+                                      "has": {
+                                        "field": "arguments",
+                                        "regex": "^\\(\\s*self(?:\\s*,)?\\s*\\)$"
+                                      }
+                                    }
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "nthChild": 1
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "attribute"
+                                },
+                                {
+                                  "pattern": "$OBJECT.$B"
+                                }
+                              ]
+                            },
+                            {
+                              "not": {
+                                "nthChild": 1
+                              }
+                            },
+                            {
+                              "compare": {
+                                "left": "A",
+                                "op": "eq",
+                                "right": "B"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "attribute"
+                                },
+                                {
+                                  "pattern": "$OBJECT.$B"
+                                }
+                              ]
+                            },
+                            {
+                              "nthChild": 1
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "attribute"
+                                },
+                                {
+                                  "pattern": "type($$$SUBJECT).$A"
+                                },
+                                {
+                                  "not": {
+                                    "has": {
+                                      "field": "object",
+                                      "has": {
+                                        "field": "arguments",
+                                        "regex": "^\\(\\s*self(?:\\s*,)?\\s*\\)$"
+                                      }
+                                    }
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "not": {
+                                "nthChild": 1
+                              }
+                            },
+                            {
+                              "compare": {
+                                "left": "A",
+                                "op": "eq",
+                                "right": "B"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "OVERRIDE_IDENTITY_PROBE",
+        "anchor": "witness.span",
+        "message": "OVERRIDE_IDENTITY_PROBE"
+      }
+    }
+  ]
+}

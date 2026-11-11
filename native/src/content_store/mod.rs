@@ -3,9 +3,43 @@
 //! JavaScript does not receive connections, SQL, row identifiers, or hash lanes.
 //! The code-rule runtime will call this module through coarse Rust operations.
 
+pub mod atoms;
+#[cfg(target_os = "macos")]
+mod accel_models;
+// Publication of the prefilter is wired into the scan in a later slice; until then only tests call it.
+#[allow(dead_code)]
+mod bounded_insert;
 mod compression;
+pub use compression::{decompress, decompress_chunks, decompress_head, decompress_into};
+mod collection_guard;
+pub use collection_guard::CollectionLease;
 mod connection;
+pub use compression::set_language_tags;
+pub use connection::set_connection_functions;
+mod corpus_runs;
+pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS, StatIndex};
+#[cfg(not(any(windows, target_family = "wasm")))]
+pub use connection::sqlite_on_jemalloc;
+mod cross_rows;
+mod derivation;
+mod frames;
+mod facts_memo;
 mod objects;
+pub mod journal;
+pub mod observe;
+pub use objects::{ResidentFrames, TapeFrame};
+mod postings;
+/// G's positional search index (value and text streams), for G's literal anchors (O21).
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod positional_search;
+pub mod vocabulary;
+#[allow(unused_imports)]
+pub use postings::append_delta;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use postings::segment_positions;
+#[allow(dead_code)]
+pub mod prefilter;
+pub use prefilter::TapePrefilter;
 mod private_files;
 mod publication;
 mod read_cache;
@@ -16,22 +50,38 @@ mod rows;
 mod schema;
 mod search_index;
 mod snapshots;
+mod tree_diff;
+mod tree_pages;
+/// G's tree result segments as copied, beside `tree_pages` (O19).
+#[cfg(any(test, feature = "test-hooks"))]
+#[allow(dead_code)]
+mod tree_result_segments;
 #[cfg(test)]
 mod tests;
 mod workspaces;
+pub mod working_set;
+pub mod write_back;
+pub mod hazards;
 
-pub(crate) use compression::compress;
-pub(crate) use connection::BusyRetries;
-pub(crate) use connection::OperationDeadline;
+pub use compression::compress;
+pub use frames::forget_snapshot as forget_frames_snapshot;
+pub use frames::{Admitted as AdmittedFrame, Put as FramePut, Rel as FrameRel, Rows as FrameRows, Stored as FrameStored, local_space};
+pub use connection::BusyRetries;
+pub use connection::OperationDeadline;
+pub use atoms::Sym;
+pub use derivation::{ABSENT, Binding, Derivation, DerivationInput, DerivationRecord, StoredDerivation};
+pub use facts_memo::{FactsCompletion, FactsFrame, FactsMemo, FactsMemoKey, FactsPlanSet, FactsResult};
 pub use schema::STORE_FILE_NAME;
+pub use tree_diff::{TreeChange, TreeDiff};
+pub use tree_pages::{TREE_PAGE_FILES, TreePage, TreePageKey, tree_pages_digest};
 
-#[cfg(test)]
-pub(crate) use connection::{
+#[cfg(any(test, feature = "test-hooks"))]
+pub use connection::{
     BUSY_ATTEMPT_HOOK, BUSY_DEADLINE_OVERRIDE, BUSY_TIMEOUT_OVERRIDE, BUSY_WAIT_HOOK,
     operation_waited,
 };
-#[cfg(test)]
-pub(crate) use snapshots::AFTER_GIT_TREE_TRANSACTION;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use snapshots::AFTER_GIT_TREE_TRANSACTION;
 
 use connection::{ThreadConnection, retry_busy};
 use read_cache::{CachedBacking, DecompressedReadCache};
@@ -42,19 +92,22 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 const HASH_SHA256: i64 = 1;
 const HASH_GIT_SHA1: i64 = 2;
 const HASH_GIT_SHA256: i64 = 3;
+/// The facts engine's content key (blake3), stored only as a source alias.
+const HASH_BLAKE3: i64 = 4;
 const CODEC_ZSTD: i64 = 1;
 const STRING_PATH: i64 = 1;
 const STRING_REPOSITORY: i64 = 2;
 const STRING_OWNER: i64 = 3;
 const STRING_PATH_COMPONENT: i64 = 4;
 const STRING_CLAUSE_KEY: i64 = 5;
+/// Fact names (`derivation.rs`): bound names and derivation outputs.
 
 const DEFAULT_COMPRESSION_LEVEL: i32 = 3;
 const MAX_PUBLICATION_BATCH: usize = 64;
@@ -63,40 +116,40 @@ pub const MAX_COLLECTION_BATCH: usize = 256;
 const DEFAULT_READ_CACHE_BYTES: usize = 32 * 1024 * 1024;
 const DEFAULT_DECOMPRESSED_CACHE_TTL: Duration = Duration::from_secs(30);
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Seconds this thread's store clock runs ahead of the system clock, so tests can let time
     /// pass inside an operation.
-    pub(crate) static CLOCK_OFFSET: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
+    pub static CLOCK_OFFSET: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
 }
 
 /// The store's clock: whole seconds since the Unix epoch. Leases are measured against it.
-pub(crate) fn unix_seconds() -> StoreResult<i64> {
+pub fn unix_seconds() -> StoreResult<i64> {
     let seconds = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| StoreError::Invalid("system clock is before the Unix epoch".to_owned()))?
         .as_secs();
     let seconds = i64::try_from(seconds)
         .map_err(|_| StoreError::Invalid("system clock exceeds content-store range".to_owned()))?;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let seconds = seconds + CLOCK_OFFSET.get();
     Ok(seconds)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 static SEARCH_INDEX_FAMILY_WRITES: AtomicUsize = AtomicUsize::new(0);
 
-#[cfg(test)]
-pub(crate) fn reset_search_index_family_writes() {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn reset_search_index_family_writes() {
     SEARCH_INDEX_FAMILY_WRITES.store(0, Ordering::Relaxed);
 }
 
-#[cfg(test)]
-pub(crate) fn search_index_family_writes() -> usize {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn search_index_family_writes() -> usize {
     SEARCH_INDEX_FAMILY_WRITES.load(Ordering::Relaxed)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     static WRITE_LOCK_HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static WRITE_LOCK_SECTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -104,10 +157,10 @@ thread_local! {
 }
 
 /// Marks this thread as holding a publication write transaction until dropped.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) struct WriteLockSection;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl WriteLockSection {
     pub(super) fn enter() -> Self {
         WRITE_LOCK_HELD.with(|held| held.set(true));
@@ -116,7 +169,7 @@ impl WriteLockSection {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl Drop for WriteLockSection {
     fn drop(&mut self) {
         WRITE_LOCK_HELD.with(|held| held.set(false));
@@ -125,7 +178,7 @@ impl Drop for WriteLockSection {
 
 /// Returns `(write sections entered, SHA-256 digests computed inside them)` on this thread
 /// since the last call, and resets both.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn take_write_lock_hash_counts() -> (usize, usize) {
     (
         WRITE_LOCK_SECTIONS.with(|sections| sections.replace(0)),
@@ -140,11 +193,11 @@ pub struct HashKey {
 }
 
 impl HashKey {
-    pub(crate) fn is_git_sha256(self) -> bool {
+    pub fn is_git_sha256(self) -> bool {
         self.algorithm == HASH_GIT_SHA256
     }
 
-    pub(crate) fn sha256_bytes(self) -> Option<[u8; 32]> {
+    pub fn sha256_bytes(self) -> Option<[u8; 32]> {
         (self.algorithm == HASH_SHA256).then(|| {
             let mut digest = [0_u8; 32];
             for (chunk, lane) in digest.chunks_exact_mut(8).zip(self.lanes) {
@@ -155,7 +208,7 @@ impl HashKey {
     }
 
     pub fn sha256(bytes: &[u8]) -> Self {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         if WRITE_LOCK_HELD.with(std::cell::Cell::get) {
             HASHES_UNDER_WRITE_LOCK.with(|hashes| hashes.set(hashes.get() + 1));
         }
@@ -163,7 +216,25 @@ impl HashKey {
         Self::from_sha256_digest(digest)
     }
 
-    pub(crate) fn from_sha256_digest(digest: [u8; 32]) -> Self {
+    /// The identity of a tape of the source `source`: its bytes and its source's hash. A
+    /// named-only tape holds no source text, so two sources of one shape and one set of token
+    /// lengths store the same bytes; each is its own tape, as it carries its own source.
+    pub fn tape_identity(source: Self, tape: &[u8]) -> Self {
+        #[cfg(any(test, feature = "test-hooks"))]
+        if WRITE_LOCK_HELD.with(std::cell::Cell::get) {
+            HASHES_UNDER_WRITE_LOCK.with(|hashes| hashes.set(hashes.get() + 1));
+        }
+        let mut hash = Sha256::new();
+        hash.update(b"rerail.tape-of/v1\0");
+        hash.update(source.algorithm.to_le_bytes());
+        for lane in source.lanes {
+            hash.update(lane.to_le_bytes());
+        }
+        hash.update(tape);
+        Self::from_sha256_digest(hash.finalize().into())
+    }
+
+    pub fn from_sha256_digest(digest: [u8; 32]) -> Self {
         Self::from_padded(HASH_SHA256, digest)
     }
 
@@ -171,6 +242,27 @@ impl HashKey {
         let mut padded = [0_u8; 32];
         padded[..20].copy_from_slice(&bytes);
         Self::from_padded(HASH_GIT_SHA1, padded)
+    }
+
+    /// A Git SHA-1 id's twenty bytes.
+    pub fn git_sha1_bytes(self) -> Option<[u8; 20]> {
+        (self.algorithm == HASH_GIT_SHA1).then(|| {
+            let mut bytes = [0_u8; 32];
+            for (chunk, lane) in bytes.chunks_exact_mut(8).zip(self.lanes) {
+                chunk.copy_from_slice(&lane.to_be_bytes());
+            }
+            bytes[..20].try_into().expect("twenty bytes")
+        })
+    }
+
+    /// The key as bytes: its algorithm, then its lanes (an alias table's key).
+    pub fn key_bytes(self) -> [u8; 40] {
+        let mut out = [0_u8; 40];
+        out[..8].copy_from_slice(&self.algorithm.to_be_bytes());
+        for (chunk, lane) in out[8..].chunks_exact_mut(8).zip(self.lanes) {
+            chunk.copy_from_slice(&lane.to_be_bytes());
+        }
+        out
     }
 
     pub fn git_sha256(bytes: [u8; 32]) -> Self {
@@ -257,11 +349,26 @@ pub type StoreResult<T> = std::result::Result<T, StoreError>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct SourceId(i64);
+
+impl SourceId {
+    /// An id a record of this store kept (`raw`; a kept statistics blob, decision 0096 §2). A source collected since reads as absent: a lookup finds nothing.
+    pub fn from_raw(id: i64) -> Self {
+        SourceId(id)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct TapeId(i64);
 
+impl TapeId {
+    /// The row id, for SQL over the store's tables (the prefilter's lowering).
+    pub fn row(self) -> i64 {
+        self.0
+    }
+}
+
 /// A stored tape whose search index is not built yet, with what building it reads.
-pub(crate) struct UnindexedTape {
+pub struct UnindexedTape {
     pub tape: TapeId,
     /// The workspace's grammar id (`workspace::grammar_id`, or a derived document's
     /// `workspace::document_grammar_id`).
@@ -272,7 +379,7 @@ pub(crate) struct UnindexedTape {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct TapeSearchIndex {
+pub struct TapeSearchIndex {
     pub tape_id: TapeId,
     pub index_version: i64,
     pub node_count: u32,
@@ -281,14 +388,14 @@ pub(crate) struct TapeSearchIndex {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct SearchKindLookup {
+pub struct SearchKindLookup {
     pub tape_id: TapeId,
     pub index_version: i64,
     pub kind_tokens: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum StoredKindPresence {
+pub enum StoredKindPresence {
     Unknown,
     Present,
     Absent,
@@ -531,15 +638,82 @@ pub struct ContentStore {
     compression_level: i32,
     decompressed_cache: Mutex<DecompressedReadCache>,
     local_result_cache: Mutex<LocalResultCache>,
-    #[cfg(test)]
+    /// Facts plan sets by digest (immutable once written: `facts_memo`).
+    facts_plan_sets: parking_lot::Mutex<HashMap<[u8; 32], std::sync::Arc<[[u8; 32]]>>>,
+    /// This process's atoms of the store (atoms.rs, decision 0049), shared with the planner's symbols.
+    atoms: std::sync::Arc<atoms::Atoms>,
+    /// What pushes wrote, held for the waves that read it (`working_set`, decision 0024 §5).
+    working_set: working_set::WorkingSet,
+    /// The owner and lease under which this handle pins each source it stores or finds (`hold_sources`, O95).
+    holder: parking_lot::Mutex<Option<(String, i64)>>,
+    /// The store's writer, shared by its handles in this process (`write_back`, decision 0102); `None` for the
+    /// writer's own handle, which writes at once.
+    write_back: Option<std::sync::Arc<write_back::Writer>>,
+    /// This handle's shared collection lease (`hold_collection`).
+    lease: std::sync::Arc<collection_guard::SharedLease>,
+    #[cfg(any(test, feature = "test-hooks"))]
     git_tree_lookup_count: AtomicUsize,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     git_tree_write_count: AtomicUsize,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     git_tree_transactions: AtomicUsize,
 }
 
+impl Drop for ContentStore {
+    /// Appends the atoms still pending (decision 0049 §4.3); another handle or the next open
+    /// writes them if this fails, and nothing durable names them meanwhile. The store's last
+    /// handle then closes the process's connections to its file: the arena outlives it (the
+    /// planner's symbols keep it), its file stays closed until next read.
+    fn drop(&mut self) {
+        // With a writer, the atoms are its to write: every handle shares them, and its batch's commit appends them (a
+        // handle dropped inside a wave writes nothing). The queued writes first: they may name atoms this handle holds.
+        if self.atoms.pending() && self.write_back.is_some() {
+            self.write_back("the atoms at a handle's close", 0, Vec::new(), Box::new(|store| store.flush_atoms()));
+            self.end_writer();
+            return;
+        }
+        self.end_writer();
+        if self.atoms.pending()
+            && let Err(error) = self.immediate_transaction(|_| Ok(()))
+        {
+            eprintln!("rerail: atoms: writing the pending atoms at close failed: {error}");
+        }
+        if self.connection.close() {
+            self.atoms.release_reader();
+        }
+    }
+}
+
 impl ContentStore {
+    /// A handle of the same store for the writer's thread (`write_back`): the same atoms, caches of its own, no writer
+    /// (it writes at once) and each job's holder.
+    fn sibling(&self) -> ContentStore {
+        ContentStore {
+            database_path: self.database_path.clone(),
+            connection: ThreadConnection::new(self.database_path.clone(), self.connection.identity()),
+            compression_level: self.compression_level,
+            decompressed_cache: Mutex::new(DecompressedReadCache::new(DEFAULT_READ_CACHE_BYTES, DEFAULT_DECOMPRESSED_CACHE_TTL)),
+            local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
+            facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
+            atoms: std::sync::Arc::clone(&self.atoms),
+            working_set: working_set::WorkingSet::default(),
+            holder: parking_lot::Mutex::new(None),
+            write_back: None,
+            lease: Default::default(),
+            #[cfg(any(test, feature = "test-hooks"))]
+            git_tree_lookup_count: AtomicUsize::new(0),
+            #[cfg(any(test, feature = "test-hooks"))]
+            git_tree_write_count: AtomicUsize::new(0),
+            #[cfg(any(test, feature = "test-hooks"))]
+            git_tree_transactions: AtomicUsize::new(0),
+        }
+    }
+
+    /// The store's RAM working set (`working_set`, decision 0024 §5).
+    pub fn working_set(&self) -> &working_set::WorkingSet {
+        &self.working_set
+    }
+
     pub fn open(path: &Path) -> StoreResult<Self> {
         // Created `0600` before SQLite opens it, in a `0700` folder, so the WAL SQLite creates beside it is private too.
         private_files::prepare(path)?;
@@ -548,25 +722,34 @@ impl ContentStore {
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
         let mut connection = Connection::open_with_flags(path, flags)?;
         // Only creating or migrating the schema takes the write lock (`initialize`).
-        retry_busy(&mut BusyRetries::default(), || {
+        let identity = retry_busy(&mut BusyRetries::default(), || {
             Self::initialize(&mut connection)
         })?;
+        drop(connection);
+        // Compiled Neural Engine models are facts of this store (decision 0098 §3).
+        #[cfg(target_os = "macos")]
+        rerail_accel::ane::set_store(std::sync::Arc::new(accel_models::StoreModels::new(path)));
         Ok(Self {
             database_path: path.to_path_buf(),
-            connection: ThreadConnection {
-                database_path: path.to_path_buf(),
-            },
+            connection: ThreadConnection::new(path.to_path_buf(), identity),
             compression_level: DEFAULT_COMPRESSION_LEVEL,
             decompressed_cache: Mutex::new(DecompressedReadCache::new(
                 DEFAULT_READ_CACHE_BYTES,
                 DEFAULT_DECOMPRESSED_CACHE_TTL,
             )),
             local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
-            #[cfg(test)]
+            facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
+            // A store created again at its path, by this process or another, has atoms of its own.
+            atoms: atoms::Atoms::for_database(path, Some(identity)),
+            working_set: working_set::WorkingSet::default(),
+            holder: parking_lot::Mutex::new(None),
+            write_back: Some(write_back::register(path)),
+            lease: Default::default(),
+            #[cfg(any(test, feature = "test-hooks"))]
             git_tree_lookup_count: AtomicUsize::new(0),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             git_tree_write_count: AtomicUsize::new(0),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             git_tree_transactions: AtomicUsize::new(0),
         })
     }

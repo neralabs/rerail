@@ -1,0 +1,759 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl body_sha256(f: node, h: symbol)
+.decl cached_aarg(n: node, j: symbol, x: symbol)
+.decl cached_alias(d: number, x: symbol)
+.decl cached_aliased(a: node)
+.decl cached_ann(f: node, x: symbol, a: symbol)
+.decl cached_annotated(f: node, x: symbol)
+.decl cached_arepr(n: node, r: symbol)
+.decl cached_arg(f: node, i: number, x: symbol)
+.decl cached_badcontainer(v: node)
+.decl cached_badmode(fq: symbol, m: symbol, q: symbol)
+.decl cached_cand(f: node, a: node, m: symbol, pk: symbol, par: node)
+.decl cached_closure_k(k: symbol)
+.decl cached_container_k(k: symbol)
+.decl cached_default(i: symbol, r: symbol, v: symbol)
+.decl cached_default_k(k: symbol)
+.decl cached_dunder(m: symbol)
+.decl cached_eff(n: node, fq: symbol, bh: symbol, sh: symbol)
+.decl cached_effn(fq: symbol)
+.decl cached_el(v: node, el: node, s: number)
+.decl cached_elpos(v: node, s: number, i: number)
+.decl cached_err(n: node, e: symbol)
+.decl cached_escape_cand(d: number, n: node)
+.decl cached_escape_slot(n: node)
+.decl cached_gate(d: number)
+.decl cached_gate_re(re: symbol)
+.decl cached_globalstmt_k(k: symbol)
+.decl cached_gwalk(a: node, n: node)
+.decl cached_hasann(f: node, x: symbol)
+.decl cached_hasmem(n: node)
+.decl cached_imm_k(k: symbol)
+.decl cached_immutable(n: node)
+.decl cached_import_alias(a: node, x: symbol)
+.decl cached_import_name(a: node, x: symbol)
+.decl cached_import_parent_k(k: symbol)
+.decl cached_issue(s: symbol)
+.decl cached_kwcount(c: node, k: number)
+.decl cached_leaf(i: symbol, r: symbol, v: symbol)
+.decl cached_mem(f: node, m: symbol, mo: symbol)
+.decl cached_mempair(n: node, m: symbol, mo: symbol, q: symbol)
+.decl cached_mglobal(d: number, x: symbol)
+.decl cached_mode(a: node, mo: symbol)
+.decl cached_mutated(a: node)
+.decl cached_name(f: node, n: node)
+.decl cached_named_parent_k(k: symbol)
+.decl cached_newer(n: node)
+.decl cached_okmode(m: symbol)
+.decl cached_on(x: number)
+.decl cached_pa(fq: symbol, j: symbol, x: symbol)
+.decl cached_paname(fq: symbol, x: symbol)
+.decl cached_param(f: node, p: node, k: symbol, x: symbol, s: number)
+.decl cached_param_k(k: symbol)
+.decl cached_pcall_a(d: number, c: node)
+.decl cached_pcall_k(d: number, c: node)
+.decl cached_pdec(c: node)
+.decl cached_pe(fq: symbol, i: symbol)
+.decl cached_pfn(i: symbol, fq: symbol)
+.decl cached_phasmem(fq: symbol)
+.decl cached_pmem(fq: symbol, j: symbol, m: symbol, mo: symbol)
+.decl cached_pmempair(fq: symbol, l: number, i: symbol, q: symbol)
+.decl cached_pmm(fq: symbol, j: symbol, m: symbol)
+.decl cached_pmo(fq: symbol, j: symbol, mo: symbol)
+.decl cached_pnewer(fq: symbol, i: symbol)
+.decl cached_prepr(fq: symbol, r: symbol)
+.decl cached_pseudo(d: number, n: node, fq: symbol, err: symbol)
+.decl cached_ptn(fq: symbol, j: symbol, x: symbol)
+.decl cached_ptname(fq: symbol, x: symbol)
+.decl cached_ptt(fq: symbol, j: symbol, t: symbol)
+.decl cached_pv(fq: symbol, r: symbol, v: symbol)
+.decl cached_rec(d: number, n: node, fq: symbol, bh: symbol, sh: symbol, s: number)
+.decl cached_reflective(x: symbol)
+.decl cached_sel(d: number, f: node, c: node)
+.decl cached_signed(n: node, fq: symbol)
+.decl cached_star(f: node, s: number)
+.decl cached_star_before(f: node, p: node)
+.decl cached_star_k(k: symbol)
+.decl cached_str(d: number, s: number, v: symbol)
+.decl cached_str_k(k: symbol)
+.decl cached_strnode(d: number, n: node, s: number)
+.decl cached_submut(sub: node)
+.decl cached_walk_k(k: symbol)
+.decl child(p: node, c: node, i: number)
+.decl col(n: node, c: number)
+.decl cpl_apath(a: node, x: symbol, m: symbol)
+.decl cpl_assign(d: number, a: node, l: node, lk: symbol)
+.decl cpl_assign_target(n: node)
+.decl cpl_assign_value(n: node)
+.decl cpl_attr(a: node, x: symbol)
+.decl cpl_attr_field(n: node)
+.decl cpl_attr_object(n: node)
+.decl cpl_body(f: node, bs: number, be: number)
+.decl cpl_call(d: number, c: node, f: node, fk: symbol)
+.decl cpl_callee(c: node, x: symbol)
+.decl cpl_callfn(f: node)
+.decl cpl_canon_k(k: symbol)
+.decl cpl_dec_name(f: node, dec: node, x: node, nm: symbol)
+.decl cpl_dec_walk(f: node, dec: node, x: node)
+.decl cpl_decl(d: number, n: node, k: symbol, x: symbol, rs: number, e: number)
+.decl cpl_decl_k(k: symbol)
+.decl cpl_decorated(n: node)
+.decl cpl_doc(d: number, t: symbol)
+.decl cpl_dpart(d: number, a: node, rs: number, e: number, part: symbol)
+.decl cpl_eligible(f: node)
+.decl cpl_encl(f: node, ars: number, p: symbol)
+.decl cpl_entry_ctor(c: node)
+.decl cpl_excl(k: symbol)
+.decl cpl_fname(f: node, fq: symbol)
+.decl cpl_gdoc(d: number)
+.decl cpl_hasalias(a: node)
+.decl cpl_haskw(c: node)
+.decl cpl_isposarg(a: node)
+.decl cpl_isposarg_of(c: node)
+.decl cpl_kid(p: node, c: node)
+.decl cpl_kw(c: node, x: symbol, v: node)
+.decl cpl_kwnode(c: node, k: node)
+.decl cpl_misplaced(f: node)
+.decl cpl_module(d: number, m: symbol)
+.decl cpl_named(f: node)
+.decl cpl_nonpos_k(k: symbol)
+.decl cpl_params(f: node, ps: node, s: number, e: number)
+.decl cpl_posarg(c: node, a: node)
+.decl cpl_qual(f: node, j: symbol)
+.decl cpl_raw(n: node, r: symbol)
+.decl cpl_region(n: node, rs: number)
+.decl cpl_splat_k(k: symbol)
+.decl cpl_stmt_parent_k(k: symbol)
+.decl cpl_top_assign(d: number, a: node)
+.decl cpl_txt(n: node, t: symbol)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl dump_sha256(n: node, h: symbol)
+.decl field(p: node, f: symbol, c: node)
+.decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl literal_json(n: node, v: symbol)
+.decl memo_alias(d: number, n: node, fq: symbol, err: symbol)
+.decl memo_bound(f: node, kv: node, m: symbol)
+.decl memo_default(i: symbol, r: symbol, v: symbol)
+.decl memo_eff(n: node, kv: node, fq: symbol, bh: symbol, sh: symbol, m: symbol)
+.decl memo_effn(fq: symbol)
+.decl memo_err(n: node, e: symbol)
+.decl memo_gate(d: number)
+.decl memo_gate_re(re: symbol)
+.decl memo_haskw(c: node)
+.decl memo_import_parent_k(k: symbol)
+.decl memo_issue(s: symbol)
+.decl memo_kwcount(c: node, k: number)
+.decl memo_leaf(i: symbol, r: symbol, v: symbol)
+.decl memo_marked(f: node)
+.decl memo_newer(n: node, kv: node)
+.decl memo_on(x: number)
+.decl memo_outside(d: number)
+.decl memo_pe(fq: symbol, i: symbol)
+.decl memo_pfn(i: symbol, fq: symbol)
+.decl memo_pnewer(fq: symbol, i: symbol)
+.decl memo_private(x: symbol)
+.decl memo_pv(fq: symbol, r: symbol, v: symbol)
+.decl memo_row(d: number, n: node, kv: node, fq: symbol, bh: symbol, sh: symbol, m: symbol)
+.decl memo_sel(d: number, f: node, c: node)
+.decl memo_selcallee(n: node)
+.decl memo_signed(n: node, kv: node, fq: symbol, m: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl option_json(name: symbol, pointer: symbol, v: symbol)
+.decl option_value(name: symbol, v: symbol)
+.decl out_scope(d: number)
+.decl rr_agg1(os: number, s: number, v: node)
+.decl rr_agg3(p: node, s2: number)
+.decl rr_ctx2(s: number, v: node)
+.decl rr_demand_agg_rr_agg1(s: number, v: node)
+.decl rr_demand_agg_rr_agg3(p: node)
+.decl runtime_ctor(x: symbol)
+.decl runtime_def_k(k: symbol)
+.decl runtime_dump(x: symbol, n: node, v: symbol)
+.decl runtime_entries_name(x: symbol)
+.decl runtime_entries_span(d: number, s: number, e: number)
+.decl runtime_entry_call(c: node, s: number)
+.decl runtime_entry_kw(c: node, x: symbol, lj: symbol)
+.decl runtime_entry_pair(c: node, x: symbol, lj: symbol, p: symbol)
+.decl runtime_gate(d: number, p: symbol)
+.decl runtime_has_kw(c: node)
+.decl runtime_has_meta(x: symbol)
+.decl runtime_hash(h: symbol)
+.decl runtime_issue(s: symbol)
+.decl runtime_message(m: symbol)
+.decl runtime_meta(x: symbol, lj: symbol)
+.decl runtime_meta_name(x: symbol)
+.decl runtime_node(label: symbol, x: symbol, n: node)
+.decl runtime_on(x: number)
+.decl runtime_policy_doc(d: number)
+.decl runtime_protected(label: symbol, path: symbol, name: symbol)
+.decl runtime_render(x: symbol, out: symbol)
+.decl runtime_symbol_missing(lj: symbol)
+.decl runtime_symbols_ok(x: number)
+.decl runtime_symjson(s: symbol)
+.decl runtime_text(lj: symbol, s: symbol)
+.decl runtime_top(n: node)
+.decl runtime_valid(x: number)
+.decl runtime_value(v: symbol, k: number)
+.decl runtime_value_q(v: symbol, k: number, q: symbol)
+.decl signature_sha256(f: node, h: symbol)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl value(n: node, v: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, line, value, col, node_text, literal_json, dump_sha256, body_sha256, signature_sha256
+.output violation
+cached_closure_k("function_definition").
+cached_closure_k("lambda").
+cached_closure_k("generator_expression").
+cached_container_k("tuple").
+cached_container_k("list").
+cached_default("0", "function", "l2070_batching.optimizer_run_cache.OptimizerRunCache.dependencies_for").
+cached_default("0", "cache_args/0", "self").
+cached_default("0", "cache_types/0/0", "self").
+cached_default("0", "cache_types/0/1", "l2070_batching.optimizer_run_cache.OptimizerRunCache").
+cached_default("0", "allowed_cache_members/0/0", "dependencies_for").
+cached_default("0", "allowed_cache_members/0/1", "resolver").
+cached_default("0", "allowed_cache_members/1/0", "dependency_facts.get").
+cached_default("0", "allowed_cache_members/1/1", "call").
+cached_default("0", "allowed_cache_members/2/0", "dependency_facts.set").
+cached_default("0", "allowed_cache_members/2/1", "call").
+cached_default("0", "allowed_cache_members/3/0", "inc_counter").
+cached_default("0", "allowed_cache_members/3/1", "call").
+cached_default("0", "body_hash", "92f766ac8e4a579700c9d24d03d7701d5271a441714bf5da664f73ccb6850f8d").
+cached_default("0", "signature_hash", "154d2af28e4f40cbd0619d7c6609144f7c41456ec3ac2dee3777af60d53aed0b").
+cached_default("0", "owner_scope", "optimizer_run").
+cached_default("0", "rationale", "Memoize exact step dependencies for one optimizer run.").
+cached_default("1", "function", "l2070_batching.optimizer_run_cache.OptimizerRunCache.ordered_sql_dependencies_for").
+cached_default("1", "cache_args/0", "self").
+cached_default("1", "cache_types/0/0", "self").
+cached_default("1", "cache_types/0/1", "l2070_batching.optimizer_run_cache.OptimizerRunCache").
+cached_default("1", "allowed_cache_members/0/0", "dependencies_for").
+cached_default("1", "allowed_cache_members/0/1", "call").
+cached_default("1", "allowed_cache_members/1/0", "inc_counter").
+cached_default("1", "allowed_cache_members/1/1", "call").
+cached_default("1", "allowed_cache_members/2/0", "ordered_sql_dependency_facts.get").
+cached_default("1", "allowed_cache_members/2/1", "call").
+cached_default("1", "allowed_cache_members/3/0", "ordered_sql_dependency_facts.set").
+cached_default("1", "allowed_cache_members/3/1", "call").
+cached_default("1", "body_hash", "4ed2b4bbbdc63609cfd6a48d9c00b45229c58ec816315696aa03d9de9117595e").
+cached_default("1", "signature_hash", "154d2af28e4f40cbd0619d7c6609144f7c41456ec3ac2dee3777af60d53aed0b").
+cached_default("1", "owner_scope", "optimizer_run").
+cached_default("1", "rationale", "Memoize ordered SQL dependency facts for one optimizer run.").
+cached_default("2", "function", "l2070_batching.optimizer_run_cache.OptimizerRunCache.scheduling_fingerprint_for").
+cached_default("2", "cache_args/0", "self").
+cached_default("2", "cache_types/0/0", "self").
+cached_default("2", "cache_types/0/1", "l2070_batching.optimizer_run_cache.OptimizerRunCache").
+cached_default("2", "allowed_cache_members/0/0", "dependencies_for").
+cached_default("2", "allowed_cache_members/0/1", "resolver").
+cached_default("2", "allowed_cache_members/1/0", "inc_counter").
+cached_default("2", "allowed_cache_members/1/1", "call").
+cached_default("2", "allowed_cache_members/2/0", "scheduling_fingerprint_facts.get").
+cached_default("2", "allowed_cache_members/2/1", "call").
+cached_default("2", "allowed_cache_members/3/0", "scheduling_fingerprint_facts.set").
+cached_default("2", "allowed_cache_members/3/1", "call").
+cached_default("2", "allowed_cache_members/4/0", "scheduling_fingerprint_for").
+cached_default("2", "allowed_cache_members/4/1", "resolver").
+cached_default("2", "body_hash", "73f19fee57b140ebcc01b44c094375b70ab89aed57e055f6be66439bbc48d0f2").
+cached_default("2", "signature_hash", "9f4503ea32540c15e920415065f23513d9e14532f7f70f5ef35e331d5130d5ad").
+cached_default("2", "owner_scope", "optimizer_run").
+cached_default("2", "rationale", "Memoize exact scheduling fingerprints for one optimizer run.").
+cached_default_k("default_parameter").
+cached_default_k("typed_default_parameter").
+cached_dunder("__class__").
+cached_dunder("__delattr__").
+cached_dunder("__dict__").
+cached_dunder("__getattribute__").
+cached_dunder("__setattr__").
+cached_gate_re("(?:[c\\x{1D9C}\\x{217D}\\x{24D2}\\x{FF43}\\x{1D41C}\\x{1D450}\\x{1D484}\\x{1D4B8}\\x{1D4EC}\\x{1D520}\\x{1D554}\\x{1D588}\\x{1D5BC}\\x{1D5F0}\\x{1D624}\\x{1D658}\\x{1D68C}][a\\x{AA}\\x{1D43}\\x{2090}\\x{24D0}\\x{FF41}\\x{1D41A}\\x{1D44E}\\x{1D482}\\x{1D4B6}\\x{1D4EA}\\x{1D51E}\\x{1D552}\\x{1D586}\\x{1D5BA}\\x{1D5EE}\\x{1D622}\\x{1D656}\\x{1D68A}][c\\x{1D9C}\\x{217D}\\x{24D2}\\x{FF43}\\x{1D41C}\\x{1D450}\\x{1D484}\\x{1D4B8}\\x{1D4EC}\\x{1D520}\\x{1D554}\\x{1D588}\\x{1D5BC}\\x{1D5F0}\\x{1D624}\\x{1D658}\\x{1D68C}][h\\x{2B0}\\x{2095}\\x{210E}\\x{24D7}\\x{FF48}\\x{1D421}\\x{1D489}\\x{1D4BD}\\x{1D4F1}\\x{1D525}\\x{1D559}\\x{1D58D}\\x{1D5C1}\\x{1D5F5}\\x{1D629}\\x{1D65D}\\x{1D691}][e\\x{1D49}\\x{2091}\\x{212F}\\x{2147}\\x{24D4}\\x{FF45}\\x{1D41E}\\x{1D452}\\x{1D486}\\x{1D4EE}\\x{1D522}\\x{1D556}\\x{1D58A}\\x{1D5BE}\\x{1D5F2}\\x{1D626}\\x{1D65A}\\x{1D68E}][d\\x{1D48}\\x{2146}\\x{217E}\\x{24D3}\\x{FF44}\\x{1D41D}\\x{1D451}\\x{1D485}\\x{1D4B9}\\x{1D4ED}\\x{1D521}\\x{1D555}\\x{1D589}\\x{1D5BD}\\x{1D5F1}\\x{1D625}\\x{1D659}\\x{1D68D}][_\\x{FE33}\\x{FE34}\\x{FE4D}\\x{FE4E}\\x{FE4F}\\x{FF3F}][p\\x{1D56}\\x{209A}\\x{24DF}\\x{FF50}\\x{1D429}\\x{1D45D}\\x{1D491}\\x{1D4C5}\\x{1D4F9}\\x{1D52D}\\x{1D561}\\x{1D595}\\x{1D5C9}\\x{1D5FD}\\x{1D631}\\x{1D665}\\x{1D699}][u\\x{1D58}\\x{1D64}\\x{24E4}\\x{FF55}\\x{1D42E}\\x{1D462}\\x{1D496}\\x{1D4CA}\\x{1D4FE}\\x{1D532}\\x{1D566}\\x{1D59A}\\x{1D5CE}\\x{1D602}\\x{1D636}\\x{1D66A}\\x{1D69E}][r\\x{2B3}\\x{1D63}\\x{24E1}\\x{FF52}\\x{1D42B}\\x{1D45F}\\x{1D493}\\x{1D4C7}\\x{1D4FB}\\x{1D52F}\\x{1D563}\\x{1D597}\\x{1D5CB}\\x{1D5FF}\\x{1D633}\\x{1D667}\\x{1D69B}][e\\x{1D49}\\x{2091}\\x{212F}\\x{2147}\\x{24D4}\\x{FF45}\\x{1D41E}\\x{1D452}\\x{1D486}\\x{1D4EE}\\x{1D522}\\x{1D556}\\x{1D58A}\\x{1D5BE}\\x{1D5F2}\\x{1D626}\\x{1D65A}\\x{1D68E}][_\\x{FE33}\\x{FE34}\\x{FE4D}\\x{FE4E}\\x{FE4F}\\x{FF3F}][l\\x{2E1}\\x{2097}\\x{2113}\\x{217C}\\x{24DB}\\x{FF4C}\\x{1D425}\\x{1D459}\\x{1D48D}\\x{1D4C1}\\x{1D4F5}\\x{1D529}\\x{1D55D}\\x{1D591}\\x{1D5C5}\\x{1D5F9}\\x{1D62D}\\x{1D661}\\x{1D695}][a\\x{AA}\\x{1D43}\\x{2090}\\x{24D0}\\x{FF41}\\x{1D41A}\\x{1D44E}\\x{1D482}\\x{1D4B6}\\x{1D4EA}\\x{1D51E}\\x{1D552}\\x{1D586}\\x{1D5BA}\\x{1D5EE}\\x{1D622}\\x{1D656}\\x{1D68A}][z\\x{1DBB}\\x{24E9}\\x{FF5A}\\x{1D433}\\x{1D467}\\x{1D49B}\\x{1D4CF}\\x{1D503}\\x{1D537}\\x{1D56B}\\x{1D59F}\\x{1D5D3}\\x{1D607}\\x{1D63B}\\x{1D66F}\\x{1D6A3}][y\\x{2B8}\\x{24E8}\\x{FF59}\\x{1D432}\\x{1D466}\\x{1D49A}\\x{1D4CE}\\x{1D502}\\x{1D536}\\x{1D56A}\\x{1D59E}\\x{1D5D2}\\x{1D606}\\x{1D63A}\\x{1D66E}\\x{1D6A2}]|[c\\x{1D9C}\\x{217D}\\x{24D2}\\x{FF43}\\x{1D41C}\\x{1D450}\\x{1D484}\\x{1D4B8}\\x{1D4EC}\\x{1D520}\\x{1D554}\\x{1D588}\\x{1D5BC}\\x{1D5F0}\\x{1D624}\\x{1D658}\\x{1D68C}][a\\x{AA}\\x{1D43}\\x{2090}\\x{24D0}\\x{FF41}\\x{1D41A}\\x{1D44E}\\x{1D482}\\x{1D4B6}\\x{1D4EA}\\x{1D51E}\\x{1D552}\\x{1D586}\\x{1D5BA}\\x{1D5EE}\\x{1D622}\\x{1D656}\\x{1D68A}][c\\x{1D9C}\\x{217D}\\x{24D2}\\x{FF43}\\x{1D41C}\\x{1D450}\\x{1D484}\\x{1D4B8}\\x{1D4EC}\\x{1D520}\\x{1D554}\\x{1D588}\\x{1D5BC}\\x{1D5F0}\\x{1D624}\\x{1D658}\\x{1D68C}][h\\x{2B0}\\x{2095}\\x{210E}\\x{24D7}\\x{FF48}\\x{1D421}\\x{1D489}\\x{1D4BD}\\x{1D4F1}\\x{1D525}\\x{1D559}\\x{1D58D}\\x{1D5C1}\\x{1D5F5}\\x{1D629}\\x{1D65D}\\x{1D691}][e\\x{1D49}\\x{2091}\\x{212F}\\x{2147}\\x{24D4}\\x{FF45}\\x{1D41E}\\x{1D452}\\x{1D486}\\x{1D4EE}\\x{1D522}\\x{1D556}\\x{1D58A}\\x{1D5BE}\\x{1D5F2}\\x{1D626}\\x{1D65A}\\x{1D68E}][_\\x{FE33}\\x{FE34}\\x{FE4D}\\x{FE4E}\\x{FE4F}\\x{FF3F}][a\\x{AA}\\x{1D43}\\x{2090}\\x{24D0}\\x{FF41}\\x{1D41A}\\x{1D44E}\\x{1D482}\\x{1D4B6}\\x{1D4EA}\\x{1D51E}\\x{1D552}\\x{1D586}\\x{1D5BA}\\x{1D5EE}\\x{1D622}\\x{1D656}\\x{1D68A}][r\\x{2B3}\\x{1D63}\\x{24E1}\\x{FF52}\\x{1D42B}\\x{1D45F}\\x{1D493}\\x{1D4C7}\\x{1D4FB}\\x{1D52F}\\x{1D563}\\x{1D597}\\x{1D5CB}\\x{1D5FF}\\x{1D633}\\x{1D667}\\x{1D69B}][g\\x{1D4D}\\x{210A}\\x{24D6}\\x{FF47}\\x{1D420}\\x{1D454}\\x{1D488}\\x{1D4F0}\\x{1D524}\\x{1D558}\\x{1D58C}\\x{1D5C0}\\x{1D5F4}\\x{1D628}\\x{1D65C}\\x{1D690}][s\\x{17F}\\x{2E2}\\x{209B}\\x{24E2}\\x{FF53}\\x{1D42C}\\x{1D460}\\x{1D494}\\x{1D4C8}\\x{1D4FC}\\x{1D530}\\x{1D564}\\x{1D598}\\x{1D5CC}\\x{1D600}\\x{1D634}\\x{1D668}\\x{1D69C}])").
+cached_globalstmt_k("global_statement").
+cached_globalstmt_k("nonlocal_statement").
+cached_imm_k("integer").
+cached_imm_k("float").
+cached_imm_k("true").
+cached_imm_k("false").
+cached_imm_k("none").
+cached_imm_k("ellipsis").
+cached_imm_k("tuple").
+cached_imm_k("parenthesized_expression").
+cached_import_parent_k("dotted_name").
+cached_import_parent_k("aliased_import").
+cached_import_parent_k("import_from_statement").
+cached_import_parent_k("import_statement").
+cached_named_parent_k("function_definition").
+cached_named_parent_k("class_definition").
+cached_named_parent_k("attribute").
+cached_named_parent_k("keyword_argument").
+cached_named_parent_k("typed_parameter").
+cached_named_parent_k("typed_default_parameter").
+cached_named_parent_k("default_parameter").
+cached_named_parent_k("parameters").
+cached_okmode("call").
+cached_okmode("read").
+cached_okmode("resolver").
+cached_param_k("typed_parameter").
+cached_param_k("default_parameter").
+cached_param_k("typed_default_parameter").
+cached_reflective("delattr").
+cached_reflective("getattr").
+cached_reflective("hasattr").
+cached_reflective("setattr").
+cached_reflective("vars").
+cached_star_k("keyword_separator").
+cached_star_k("list_splat_pattern").
+cached_str_k("string").
+cached_str_k("concatenated_string").
+cached_walk_k("tuple").
+cached_walk_k("parenthesized_expression").
+cpl_canon_k("identifier").
+cpl_canon_k("dotted_name").
+cpl_canon_k("relative_import").
+cpl_decl_k("function_definition").
+cpl_decl_k("class_definition").
+cpl_excl("comment").
+cpl_excl("string_start").
+cpl_excl("string_content").
+cpl_excl("string_end").
+cpl_excl("escape_sequence").
+cpl_excl("line_continuation").
+cpl_nonpos_k("comment").
+cpl_nonpos_k("keyword_argument").
+cpl_nonpos_k("list_splat").
+cpl_nonpos_k("dictionary_splat").
+cpl_splat_k("list_splat_pattern").
+cpl_splat_k("dictionary_splat_pattern").
+cpl_stmt_parent_k("module").
+cpl_stmt_parent_k("block").
+cpl_stmt_parent_k("decorated_definition").
+memo_default("0", "function", "impl.common.l5150_fts_polyfill.stats_cache.create_fts_stats_class").
+memo_default("0", "max_entries", "1024").
+memo_default("0", "body_hash", "4f7547a5f3847fdd88ce1cf623e67bb1b4bf2aee8a4c8eb388f26b246e86bcd9").
+memo_default("0", "signature_hash", "7ac35c5b122dc2f978b6f3d7a5836de3f21defd6bd48c687b6c54effc0a0ae1f").
+memo_default("0", "cache_lifetime", "process").
+memo_default("0", "key_policy", "bound_explicit_immutable_v1").
+memo_default("0", "return_policy", "immutable_no_alias_v1").
+memo_default("0", "exception_policy", "successful_results_only_v1").
+memo_default("0", "rationale", "Reuse the canonical generated FTS statistics model without exposing cache state.").
+memo_default("1", "function", "l5200_vector_index.content_addressable_models.create_embedding_ref_class").
+memo_default("1", "max_entries", "1024").
+memo_default("1", "body_hash", "f6dbdf7b90bb729cde2633229487463d9a72af77a6be2fa2945ed22ef8a1d4a2").
+memo_default("1", "signature_hash", "b2436bc42680e3cd598bf31db6366d40d11cd8828663f3d5c000971ed6769b4c").
+memo_default("1", "cache_lifetime", "process").
+memo_default("1", "key_policy", "bound_explicit_immutable_v1").
+memo_default("1", "return_policy", "immutable_no_alias_v1").
+memo_default("1", "exception_policy", "successful_results_only_v1").
+memo_default("1", "rationale", "Reuse the canonical generated embedding-reference model without exposing cache state.").
+memo_default("2", "function", "l5200_vector_index.content_addressable_models.create_embedding_vector_class").
+memo_default("2", "max_entries", "1024").
+memo_default("2", "body_hash", "3c6ec77b8835e2977cd18ab636c88a2284c41c716c9eb5d4d7ce273edf87f710").
+memo_default("2", "signature_hash", "04012af22bde1b71eaf8f4f75aae352e17294e5d08a575197bc81d0506b5f470").
+memo_default("2", "cache_lifetime", "process").
+memo_default("2", "key_policy", "bound_explicit_immutable_v1").
+memo_default("2", "return_policy", "immutable_no_alias_v1").
+memo_default("2", "exception_policy", "successful_results_only_v1").
+memo_default("2", "rationale", "Reuse the canonical generated embedding-vector model without exposing cache state.").
+memo_gate_re("(?:[m\\x{1D50}\\x{2098}\\x{217F}\\x{24DC}\\x{FF4D}\\x{1D426}\\x{1D45A}\\x{1D48E}\\x{1D4C2}\\x{1D4F6}\\x{1D52A}\\x{1D55E}\\x{1D592}\\x{1D5C6}\\x{1D5FA}\\x{1D62E}\\x{1D662}\\x{1D696}][e\\x{1D49}\\x{2091}\\x{212F}\\x{2147}\\x{24D4}\\x{FF45}\\x{1D41E}\\x{1D452}\\x{1D486}\\x{1D4EE}\\x{1D522}\\x{1D556}\\x{1D58A}\\x{1D5BE}\\x{1D5F2}\\x{1D626}\\x{1D65A}\\x{1D68E}][m\\x{1D50}\\x{2098}\\x{217F}\\x{24DC}\\x{FF4D}\\x{1D426}\\x{1D45A}\\x{1D48E}\\x{1D4C2}\\x{1D4F6}\\x{1D52A}\\x{1D55E}\\x{1D592}\\x{1D5C6}\\x{1D5FA}\\x{1D62E}\\x{1D662}\\x{1D696}][o\\x{BA}\\x{1D52}\\x{2092}\\x{2134}\\x{24DE}\\x{FF4F}\\x{1D428}\\x{1D45C}\\x{1D490}\\x{1D4F8}\\x{1D52C}\\x{1D560}\\x{1D594}\\x{1D5C8}\\x{1D5FC}\\x{1D630}\\x{1D664}\\x{1D698}][i\\x{1D62}\\x{2071}\\x{2139}\\x{2148}\\x{2170}\\x{24D8}\\x{FF49}\\x{1D422}\\x{1D456}\\x{1D48A}\\x{1D4BE}\\x{1D4F2}\\x{1D526}\\x{1D55A}\\x{1D58E}\\x{1D5C2}\\x{1D5F6}\\x{1D62A}\\x{1D65E}\\x{1D692}][z\\x{1DBB}\\x{24E9}\\x{FF5A}\\x{1D433}\\x{1D467}\\x{1D49B}\\x{1D4CF}\\x{1D503}\\x{1D537}\\x{1D56B}\\x{1D59F}\\x{1D5D3}\\x{1D607}\\x{1D63B}\\x{1D66F}\\x{1D6A3}][e\\x{1D49}\\x{2091}\\x{212F}\\x{2147}\\x{24D4}\\x{FF45}\\x{1D41E}\\x{1D452}\\x{1D486}\\x{1D4EE}\\x{1D522}\\x{1D556}\\x{1D58A}\\x{1D5BE}\\x{1D5F2}\\x{1D626}\\x{1D65A}\\x{1D68E}][d\\x{1D48}\\x{2146}\\x{217E}\\x{24D3}\\x{FF44}\\x{1D41D}\\x{1D451}\\x{1D485}\\x{1D4B9}\\x{1D4ED}\\x{1D521}\\x{1D555}\\x{1D589}\\x{1D5BD}\\x{1D5F1}\\x{1D625}\\x{1D659}\\x{1D68D}][_\\x{FE33}\\x{FE34}\\x{FE4D}\\x{FE4E}\\x{FE4F}\\x{FF3F}][p\\x{1D56}\\x{209A}\\x{24DF}\\x{FF50}\\x{1D429}\\x{1D45D}\\x{1D491}\\x{1D4C5}\\x{1D4F9}\\x{1D52D}\\x{1D561}\\x{1D595}\\x{1D5C9}\\x{1D5FD}\\x{1D631}\\x{1D665}\\x{1D699}][u\\x{1D58}\\x{1D64}\\x{24E4}\\x{FF55}\\x{1D42E}\\x{1D462}\\x{1D496}\\x{1D4CA}\\x{1D4FE}\\x{1D532}\\x{1D566}\\x{1D59A}\\x{1D5CE}\\x{1D602}\\x{1D636}\\x{1D66A}\\x{1D69E}][r\\x{2B3}\\x{1D63}\\x{24E1}\\x{FF52}\\x{1D42B}\\x{1D45F}\\x{1D493}\\x{1D4C7}\\x{1D4FB}\\x{1D52F}\\x{1D563}\\x{1D597}\\x{1D5CB}\\x{1D5FF}\\x{1D633}\\x{1D667}\\x{1D69B}][e\\x{1D49}\\x{2091}\\x{212F}\\x{2147}\\x{24D4}\\x{FF45}\\x{1D41E}\\x{1D452}\\x{1D486}\\x{1D4EE}\\x{1D522}\\x{1D556}\\x{1D58A}\\x{1D5BE}\\x{1D5F2}\\x{1D626}\\x{1D65A}\\x{1D68E}][_\\x{FE33}\\x{FE34}\\x{FE4D}\\x{FE4E}\\x{FE4F}\\x{FF3F}][l\\x{2E1}\\x{2097}\\x{2113}\\x{217C}\\x{24DB}\\x{FF4C}\\x{1D425}\\x{1D459}\\x{1D48D}\\x{1D4C1}\\x{1D4F5}\\x{1D529}\\x{1D55D}\\x{1D591}\\x{1D5C5}\\x{1D5F9}\\x{1D62D}\\x{1D661}\\x{1D695}][a\\x{AA}\\x{1D43}\\x{2090}\\x{24D0}\\x{FF41}\\x{1D41A}\\x{1D44E}\\x{1D482}\\x{1D4B6}\\x{1D4EA}\\x{1D51E}\\x{1D552}\\x{1D586}\\x{1D5BA}\\x{1D5EE}\\x{1D622}\\x{1D656}\\x{1D68A}][z\\x{1DBB}\\x{24E9}\\x{FF5A}\\x{1D433}\\x{1D467}\\x{1D49B}\\x{1D4CF}\\x{1D503}\\x{1D537}\\x{1D56B}\\x{1D59F}\\x{1D5D3}\\x{1D607}\\x{1D63B}\\x{1D66F}\\x{1D6A3}][y\\x{2B8}\\x{24E8}\\x{FF59}\\x{1D432}\\x{1D466}\\x{1D49A}\\x{1D4CE}\\x{1D502}\\x{1D536}\\x{1D56A}\\x{1D59E}\\x{1D5D2}\\x{1D606}\\x{1D63A}\\x{1D66E}\\x{1D6A2}])").
+memo_import_parent_k("dotted_name").
+memo_import_parent_k("aliased_import").
+memo_import_parent_k("import_from_statement").
+memo_private("_MEMOIZED_PURE_LAZY_STATE_CREATION_LOCK").
+memo_private("_MemoizedPureLazyState").
+memo_private("_memoized_purity_decorator").
+option_json("policyEntries", "/0/allowed_cache_members/0/0", "dependencies_for").
+option_json("policyEntries", "/0/allowed_cache_members/0/1", "resolver").
+option_json("policyEntries", "/0/allowed_cache_members/1/0", "dependency_facts.get").
+option_json("policyEntries", "/0/allowed_cache_members/1/1", "call").
+option_json("policyEntries", "/0/allowed_cache_members/2/0", "dependency_facts.set").
+option_json("policyEntries", "/0/allowed_cache_members/2/1", "call").
+option_json("policyEntries", "/0/allowed_cache_members/3/0", "inc_counter").
+option_json("policyEntries", "/0/allowed_cache_members/3/1", "call").
+option_json("policyEntries", "/0/body_hash", "92f766ac8e4a579700c9d24d03d7701d5271a441714bf5da664f73ccb6850f8d").
+option_json("policyEntries", "/0/cache_args/0", "self").
+option_json("policyEntries", "/0/cache_types/0/0", "self").
+option_json("policyEntries", "/0/cache_types/0/1", "l2070_batching.optimizer_run_cache.OptimizerRunCache").
+option_json("policyEntries", "/0/function", "l2070_batching.optimizer_run_cache.OptimizerRunCache.dependencies_for").
+option_json("policyEntries", "/0/owner_scope", "optimizer_run").
+option_json("policyEntries", "/0/rationale", "Memoize exact step dependencies for one optimizer run.").
+option_json("policyEntries", "/0/signature_hash", "154d2af28e4f40cbd0619d7c6609144f7c41456ec3ac2dee3777af60d53aed0b").
+option_json("policyEntries", "/1/allowed_cache_members/0/0", "dependencies_for").
+option_json("policyEntries", "/1/allowed_cache_members/0/1", "call").
+option_json("policyEntries", "/1/allowed_cache_members/1/0", "inc_counter").
+option_json("policyEntries", "/1/allowed_cache_members/1/1", "call").
+option_json("policyEntries", "/1/allowed_cache_members/2/0", "ordered_sql_dependency_facts.get").
+option_json("policyEntries", "/1/allowed_cache_members/2/1", "call").
+option_json("policyEntries", "/1/allowed_cache_members/3/0", "ordered_sql_dependency_facts.set").
+option_json("policyEntries", "/1/allowed_cache_members/3/1", "call").
+option_json("policyEntries", "/1/body_hash", "4ed2b4bbbdc63609cfd6a48d9c00b45229c58ec816315696aa03d9de9117595e").
+option_json("policyEntries", "/1/cache_args/0", "self").
+option_json("policyEntries", "/1/cache_types/0/0", "self").
+option_json("policyEntries", "/1/cache_types/0/1", "l2070_batching.optimizer_run_cache.OptimizerRunCache").
+option_json("policyEntries", "/1/function", "l2070_batching.optimizer_run_cache.OptimizerRunCache.ordered_sql_dependencies_for").
+option_json("policyEntries", "/1/owner_scope", "optimizer_run").
+option_json("policyEntries", "/1/rationale", "Memoize ordered SQL dependency facts for one optimizer run.").
+option_json("policyEntries", "/1/signature_hash", "154d2af28e4f40cbd0619d7c6609144f7c41456ec3ac2dee3777af60d53aed0b").
+option_json("policyEntries", "/2/allowed_cache_members/0/0", "dependencies_for").
+option_json("policyEntries", "/2/allowed_cache_members/0/1", "resolver").
+option_json("policyEntries", "/2/allowed_cache_members/1/0", "inc_counter").
+option_json("policyEntries", "/2/allowed_cache_members/1/1", "call").
+option_json("policyEntries", "/2/allowed_cache_members/2/0", "scheduling_fingerprint_facts.get").
+option_json("policyEntries", "/2/allowed_cache_members/2/1", "call").
+option_json("policyEntries", "/2/allowed_cache_members/3/0", "scheduling_fingerprint_facts.set").
+option_json("policyEntries", "/2/allowed_cache_members/3/1", "call").
+option_json("policyEntries", "/2/allowed_cache_members/4/0", "scheduling_fingerprint_for").
+option_json("policyEntries", "/2/allowed_cache_members/4/1", "resolver").
+option_json("policyEntries", "/2/body_hash", "73f19fee57b140ebcc01b44c094375b70ab89aed57e055f6be66439bbc48d0f2").
+option_json("policyEntries", "/2/cache_args/0", "self").
+option_json("policyEntries", "/2/cache_types/0/0", "self").
+option_json("policyEntries", "/2/cache_types/0/1", "l2070_batching.optimizer_run_cache.OptimizerRunCache").
+option_json("policyEntries", "/2/function", "l2070_batching.optimizer_run_cache.OptimizerRunCache.scheduling_fingerprint_for").
+option_json("policyEntries", "/2/owner_scope", "optimizer_run").
+option_json("policyEntries", "/2/rationale", "Memoize exact scheduling fingerprints for one optimizer run.").
+option_json("policyEntries", "/2/signature_hash", "9f4503ea32540c15e920415065f23513d9e14532f7f70f5ef35e331d5130d5ad").
+option_value("entryPoint", "all").
+option_value("policyEntries", "[{\"function\":\"l2070_batching.optimizer_run_cache.OptimizerRunCache.dependencies_for\",\"cache_args\":[\"self\"],\"cache_types\":[[\"self\",\"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]],\"allowed_cache_members\":[[\"dependencies_for\",\"resolver\"],[\"dependency_facts.get\",\"call\"],[\"dependency_facts.set\",\"call\"],[\"inc_counter\",\"call\"]],\"body_hash\":\"92f766ac8e4a579700c9d24d03d7701d5271a441714bf5da664f73ccb6850f8d\",\"signature_hash\":\"154d2af28e4f40cbd0619d7c6609144f7c41456ec3ac2dee3777af60d53aed0b\",\"owner_scope\":\"optimizer_run\",\"rationale\":\"Memoize exact step dependencies for one optimizer run.\"},{\"function\":\"l2070_batching.optimizer_run_cache.OptimizerRunCache.ordered_sql_dependencies_for\",\"cache_args\":[\"self\"],\"cache_types\":[[\"self\",\"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]],\"allowed_cache_members\":[[\"dependencies_for\",\"call\"],[\"inc_counter\",\"call\"],[\"ordered_sql_dependency_facts.get\",\"call\"],[\"ordered_sql_dependency_facts.set\",\"call\"]],\"body_hash\":\"4ed2b4bbbdc63609cfd6a48d9c00b45229c58ec816315696aa03d9de9117595e\",\"signature_hash\":\"154d2af28e4f40cbd0619d7c6609144f7c41456ec3ac2dee3777af60d53aed0b\",\"owner_scope\":\"optimizer_run\",\"rationale\":\"Memoize ordered SQL dependency facts for one optimizer run.\"},{\"function\":\"l2070_batching.optimizer_run_cache.OptimizerRunCache.scheduling_fingerprint_for\",\"cache_args\":[\"self\"],\"cache_types\":[[\"self\",\"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]],\"allowed_cache_members\":[[\"dependencies_for\",\"resolver\"],[\"inc_counter\",\"call\"],[\"scheduling_fingerprint_facts.get\",\"call\"],[\"scheduling_fingerprint_facts.set\",\"call\"],[\"scheduling_fingerprint_for\",\"resolver\"]],\"body_hash\":\"73f19fee57b140ebcc01b44c094375b70ab89aed57e055f6be66439bbc48d0f2\",\"signature_hash\":\"9f4503ea32540c15e920415065f23513d9e14532f7f70f5ef35e331d5130d5ad\",\"owner_scope\":\"optimizer_run\",\"rationale\":\"Memoize exact scheduling fingerprints for one optimizer run.\"}]").
+runtime_ctor("CachedPureLazyPolicyEntry").
+runtime_ctor("MemoizedPureLazyPolicyEntry").
+runtime_def_k("function_definition").
+runtime_def_k("class_definition").
+runtime_entries_name("_POLICY_ENTRIES").
+runtime_entries_name("_MEMOIZED_POLICY_ENTRIES").
+runtime_meta_name("ALLOWLIST_SIGNATURE").
+runtime_meta_name("ALLOWLIST_NAME").
+runtime_meta_name("ALLOWLIST_VERSION").
+runtime_meta_name("CACHED_PURE_LAZY_RUNTIME_SOURCE_HASH").
+runtime_meta_name("CACHED_PURE_LAZY_RUNTIME_SYMBOL_NAMES").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "_ACTIVE_CACHED_PURE_LAZY_CACHE").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "_CHECK_CACHED_PURE_LAZY_RETURN").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "_LAZY_GUARD_DEPTH").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "_MEMOIZED_PURE_LAZY_STATE_CREATION_LOCK").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "_MemoizedPureLazyState").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "_REUSE_CACHED_PURE_LAZY_ARGUMENT_VALIDATION").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "_VALIDATED_CACHED_PURE_LAZY_ARGUMENTS").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "_assert_memoized_pure_lazy_return").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "_assert_pure_lazy_return_value").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "_cached_pure_lazy_policy_is_verified").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "_cached_pure_lazy_policy_verified").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "_cached_purity_decorator").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "_find_active_cached_pure_lazy_cache").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "_find_captured_runtime_state").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "_guard_lazy_runtime_inputs").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "_is_explicit_return_opaque").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "_is_scalar_like").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "_iter_object_attrs").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "_memoized_key_component").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "_memoized_purity_decorator").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "_qualified_type_name").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "cached_pure_lazy").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "clear_memoized_pure_lazy_cache").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "executor_owned_pure_lazy_runtime_scope").
+runtime_protected("purity", "l2055_lazy_result/purity.py", "memoized_pure_lazy").
+runtime_protected("policy", "l2055_lazy_result/cached_pure_lazy_policy.py", "CachedPureLazyPolicyEntry").
+runtime_protected("policy", "l2055_lazy_result/cached_pure_lazy_policy.py", "MemoizedPureLazyPolicyEntry").
+runtime_protected("policy", "l2055_lazy_result/cached_pure_lazy_policy.py", "_MEMOIZED_POLICY_ENTRIES").
+runtime_protected("policy", "l2055_lazy_result/cached_pure_lazy_policy.py", "_POLICY_ENTRIES").
+runtime_protected("policy", "l2055_lazy_result/cached_pure_lazy_policy.py", "cached_pure_lazy_policy_entries").
+runtime_protected("policy", "l2055_lazy_result/cached_pure_lazy_policy.py", "cached_pure_lazy_policy_entry").
+runtime_protected("policy", "l2055_lazy_result/cached_pure_lazy_policy.py", "cached_pure_lazy_policy_signed_text").
+runtime_protected("policy", "l2055_lazy_result/cached_pure_lazy_policy.py", "memoized_pure_lazy_policy_entries").
+runtime_protected("policy", "l2055_lazy_result/cached_pure_lazy_policy.py", "memoized_pure_lazy_policy_entry").
+runtime_protected("optimizer_cache", "l2070_batching/optimizer_run_cache.py", "OptimizerIdentityRunCache").
+runtime_protected("optimizer_cache", "l2070_batching/optimizer_run_cache.py", "OptimizerRunCache").
+runtime_protected("optimizer_cache", "l2070_batching/optimizer_run_cache.py", "SchedulingFingerprintAbsent").
+runtime_protected("optimizer_cache", "l2070_batching/optimizer_run_cache.py", "SchedulingFingerprintPresent").
+in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l[0-9][0-9][0-9][0-9]_*/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/conform/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
+tape_syntax_error(d) :- syntax_error(d).
+cpl_doc(d, t) :- doc(d, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), node(d, m, "module", _, _), node_text(m, t).
+cached_gate(d) :- cpl_doc(d, t), cached_gate_re(r), x = @concat(@concat("(?s:.*)(?:", r), ")(?s:.*)"), match(x, t).
+memo_gate(d) :- cpl_doc(d, t), memo_gate_re(r), x = @concat(@concat("(?s:.*)(?:", r), ")(?s:.*)"), match(x, t).
+cpl_gdoc(d) :- cached_gate(d).
+cpl_gdoc(d) :- memo_gate(d).
+cpl_kid(p, c) :- child(p, c, _), node(d, c, k, _, _), cpl_gdoc(d), !cpl_excl(k).
+cpl_raw(n, r) :- cpl_canon_k(k), node(d, n, k, _, _), cpl_gdoc(d), node_text(n, r).
+cpl_txt(n, r) :- cpl_raw(n, r), match("[\\x00-\\x7f]*", r).
+cpl_txt(n, t) :- cpl_raw(n, r), !match("[\\x00-\\x7f]*", r), t = @nfkc(@rx_replace(r, "\\\\\\r?\\n|\\s+", "")).
+cpl_attr(a, x) :- node(d, a, "attribute", _, _), cpl_gdoc(d), field(a, "attribute", i), cpl_txt(i, x).
+cpl_attr_field(n) :- node(d, a, "attribute", _, _), cpl_gdoc(d), field(a, "attribute", n).
+cpl_attr_object(n) :- node(d, a, "attribute", _, _), cpl_gdoc(d), field(a, "object", n).
+cpl_call(d, c, f, fk) :- node(d, c, "call", _, _), cpl_gdoc(d), field(c, "function", f), node(_, f, fk, _, _).
+cpl_callee(c, x) :- cpl_call(_, c, f, "identifier"), cpl_txt(f, x).
+cpl_callee(c, x) :- cpl_call(_, c, f, "attribute"), cpl_attr(f, x).
+cpl_callfn(f) :- cpl_call(_, _, f, _).
+cpl_posarg(c, a) :- cpl_call(_, c, _, _), field(c, "arguments", al), node(_, al, ak, _, _), ak != "generator_expression", cpl_kid(al, a), node(_, a, k, _, _), !cpl_nonpos_k(k).
+cpl_posarg(c, al) :- cpl_call(_, c, _, _), field(c, "arguments", al), node(_, al, "generator_expression", _, _).
+cpl_isposarg(a) :- cpl_posarg(_, a).
+cpl_kwnode(c, k) :- cpl_call(_, c, _, _), field(c, "arguments", al), cpl_kid(al, k), node(_, k, "keyword_argument", _, _).
+cpl_kw(c, x, v) :- cpl_kwnode(c, k), field(k, "name", kn), cpl_txt(kn, x), field(k, "value", v).
+cpl_assign(d, a, l, lk) :- node(d, a, "assignment", _, _), cpl_gdoc(d), field(a, "left", l), node(_, l, lk, _, _).
+cpl_assign_target(l) :- cpl_assign(_, _, l, _).
+cpl_assign_value(r) :- cpl_assign(_, a, _, _), field(a, "right", r).
+cpl_module(d, m) :- cpl_gdoc(d), doc(d, p, _), match("(?:.*?/)??(?:l[0-9]{4}_[^/]+|impl|_internal|data_layer)/.*\\.py", p), m = @rx_replace(@rx_replace(p, "^(?:.*?/)??((?:l[0-9]{4}_[^/]+|impl|_internal|data_layer)/.*)\\.py$", "${1}"), "/", ".").
+cpl_module(d, m) :- cpl_gdoc(d), doc(d, p, _), !match("(?:.*?/)??(?:l[0-9]{4}_[^/]+|impl|_internal|data_layer)/.*\\.py", p), m = @rx_replace(@substr(p, 0, @sub(@strlen(p), 3)), "/", ".").
+cpl_decorated(n) :- cpl_decl_k(k), node(d, n, k, _, _), cpl_gdoc(d), child(w, n, _), node(_, w, "decorated_definition", _, _).
+cpl_region(n, rs) :- cpl_decl_k(k), node(d, n, k, _, _), cpl_gdoc(d), child(w, n, _), node(_, w, "decorated_definition", rs, _).
+cpl_region(n, s) :- cpl_decl_k(k), node(d, n, k, s, _), cpl_gdoc(d), !cpl_decorated(n).
+cpl_decl(d, n, k, x, rs, e) :- cpl_decl_k(k), node(d, n, k, _, e), cpl_gdoc(d), field(n, "name", nm), cpl_txt(nm, x), cpl_region(n, rs).
+cpl_misplaced(f) :- cpl_decl(_, f, "function_definition", _, _, _), child(p, f, _), node(_, p, pk, _, _), !cpl_stmt_parent_k(pk).
+cpl_misplaced(f) :- cpl_decl(_, f, "function_definition", _, _, _), child(w, f, _), node(_, w, "decorated_definition", _, _), child(p, w, _), node(_, p, pk, _, _), !cpl_stmt_parent_k(pk).
+cpl_eligible(f) :- cpl_decl(_, f, "function_definition", _, _, _), !cpl_misplaced(f).
+cpl_dpart(d, a, rs, e, p) :- cpl_decl(d, a, "function_definition", x, rs, e), p = @concat(x, ".<locals>").
+cpl_dpart(d, a, rs, e, x) :- cpl_decl(d, a, "class_definition", x, rs, e).
+cpl_named(f) :- cached_sel(_, f, _).
+cpl_named(f) :- memo_sel(_, f, _).
+cpl_encl(f, ars, p) :- cpl_named(f), cpl_decl(d, f, _, _, rs, e), cpl_dpart(d, _, ars, ae, p), ars < rs, ae >= e.
+cpl_qual(f, j) :- cpl_named(f), j = join p by (ars) sep "." : { cpl_encl(f, ars, p) }.
+cpl_fname(f, fq) :- cpl_qual(f, ""), cpl_decl(d, f, _, x, _, _), cpl_module(d, m), fq = @concat(@concat(m, "."), x).
+cpl_fname(f, fq) :- cpl_qual(f, j), j != "", cpl_decl(d, f, _, x, _, _), cpl_module(d, m), fq = @concat(@concat(@concat(@concat(m, "."), j), "."), x).
+cpl_dec_walk(f, dec, x) :- cpl_decl(_, f, _, _, _, _), child(w, f, _), node(_, w, "decorated_definition", _, _), cpl_kid(w, dec), node(_, dec, "decorator", _, _), cpl_kid(dec, x).
+cpl_dec_walk(f, dec, y) :- cpl_dec_walk(f, dec, x), cpl_call(_, x, y, _).
+cpl_dec_name(f, dec, x, nm) :- cpl_dec_walk(f, dec, x), node(_, x, "identifier", _, _), cpl_txt(x, nm).
+cpl_dec_name(f, dec, x, nm) :- cpl_dec_walk(f, dec, x), cpl_attr(x, nm).
+cpl_body(f, bs, be) :- cpl_decl(_, f, "function_definition", _, _, _), field(f, "body", b), node(_, b, _, bs, be).
+cpl_params(f, ps, s, e) :- cpl_decl(_, f, "function_definition", _, _, _), field(f, "parameters", ps), node(_, ps, _, s, e).
+cached_on(0) :- option_value("entryPoint", "policy_violations").
+cached_on(0) :- option_value("entryPoint", "all").
+cached_import_name(a, x) :- node(d, a, "aliased_import", _, _), cpl_gdoc(d), field(a, "name", c), cpl_txt(c, x).
+cached_import_name(a, x) :- cpl_raw(a, _), cpl_txt(a, x).
+cached_import_alias(a, x) :- node(d, a, "aliased_import", _, _), cpl_gdoc(d), field(a, "alias", c), cpl_txt(c, x).
+cached_import_alias(a, x) :- cached_import_name(a, x), !cpl_hasalias(a).
+cpl_hasalias(a) :- node(d, a, "aliased_import", _, _), cpl_gdoc(d), field(a, "alias", _).
+cached_alias(d, "cached_pure_lazy") :- cached_gate(d).
+cached_alias(d, x) :- cached_gate(d), node(d, i, "import_from_statement", _, _), field(i, "module_name", mn), cpl_txt(mn, "l2055_lazy_result.purity"), cpl_kid(i, a), cached_import_name(a, "cached_pure_lazy"), cached_import_alias(a, x).
+cached_alias(d, x) :- cached_gate(d), cpl_assign(d, a, l, "identifier"), cpl_txt(l, x), field(a, "right", r), cpl_attr(r, "cached_pure_lazy").
+cached_alias(d, x) :- cpl_assign(d, a, l, "identifier"), cpl_txt(l, x), field(a, "right", r), node(_, r, "identifier", _, _), cpl_txt(r, y), cached_alias(d, y).
+cached_sel(d, f, c) :- cached_gate(d), cpl_decl(d, f, "function_definition", _, _, _), cpl_eligible(f), cpl_dec_name(f, dec, x, "cached_pure_lazy"), cpl_call(_, c, x, _), cpl_kid(dec, c).
+cached_sel(d, f, c) :- cached_gate(d), cpl_decl(d, f, "function_definition", _, _, _), cpl_eligible(f), cpl_dec_name(f, dec, x, nm), cpl_call(_, c, x, "identifier"), cpl_kid(dec, c), cached_alias(d, nm).
+cached_strnode(d, n, s) :- cached_gate(d), cached_str_k(k), node(d, n, k, s, _), node_text(n, t), match("(?i:[ru]*[\"'])(?s:.*)", t).
+cached_str(d, s, v) :- cached_strnode(d, n, s), value(n, v).
+cached_str(d, s, "") :- cached_strnode(d, n, s), !value(n, _).
+cached_kwcount(c, k) :- cached_sel(_, _, c), k = count : { cpl_kwnode(c, _) }.
+cached_badcontainer(v) :- cached_sel(_, _, c), cpl_kw(c, "cache_args", v), cpl_kid(v, el), node(_, el, k, _, _), !cached_str_k(k).
+cached_el(v, el, s) :- cached_sel(_, _, c), cpl_kw(c, "cache_args", v), node(_, v, vk, _, _), cached_container_k(vk), cpl_kid(v, el), node(_, el, _, s, _).
+rr_ctx2(s, v) :- cached_el(v, _, s).
+rr_agg1(os, s, v) :- rr_demand_agg_rr_agg1(s, v), rr_ctx2(s, v), cached_el(v, _, os), os < s.
+cached_elpos(v, s, i) :- cached_el(v, _, s), i = count : { rr_agg1(_, s, v) }.
+cached_arg(f, i, x) :- cached_sel(d, f, c), cpl_kw(c, "cache_args", v), cached_el(v, _, s), !cpl_isposarg_of(c), cached_kwcount(c, 1), !cached_badcontainer(v), cached_str(d, s, x), cached_elpos(v, s, i).
+cpl_isposarg_of(c) :- cpl_posarg(c, _).
+cached_param(f, p, "identifier", x, s) :- cached_sel(_, f, _), cpl_params(f, ps, _, _), cpl_kid(ps, p), node(_, p, "identifier", s, _), cpl_txt(p, x).
+rr_agg3(p, s2) :- rr_demand_agg_rr_agg3(p), cpl_kid(p, o), node(_, o, _, s2, _).
+cached_param(f, p, k, x, s) :- cached_sel(_, f, _), cpl_params(f, ps, _, _), cpl_kid(ps, p), node(_, p, k, s, _), cached_param_k(k), cpl_kid(p, c), node(_, c, "identifier", cs, _), first = min s2 : { rr_agg3(p, s2) }, cs = first, cpl_txt(c, x).
+cached_name(f, n) :- cached_sel(d, f, _), cpl_body(f, bs, be), node(d, n, "identifier", s, e), s >= bs, e <= be, cpl_txt(n, x), cached_arg(f, _, x), !cpl_attr_field(n).
+cpl_apath(a, x, m) :- cpl_attr(a, m), field(a, "object", o), node(_, o, "identifier", _, _), cpl_txt(o, x).
+cpl_apath(a, x, m) :- field(a, "object", o), cpl_apath(o, x, m0), cpl_attr(a, y), m = @concat(@concat(m0, "."), y).
+cached_cand(f, a, m, pk, par) :- cached_sel(d, f, _), cpl_body(f, bs, be), node(d, a, "attribute", s, e), s >= bs, e <= be, cpl_apath(a, x, m), cached_arg(f, _, x), child(par, a, _), node(_, par, pk, _, _), !cpl_attr_object(a).
+cached_mode(a, "call") :- cached_cand(_, a, _, _, _), cpl_callfn(a).
+cached_mode(a, "resolver") :- cached_cand(_, a, _, _, _), !cpl_callfn(a), cpl_isposarg(a).
+cached_mode(a, "read") :- cached_cand(_, a, _, _, _), !cpl_callfn(a), !cpl_isposarg(a).
+cached_mutated(a) :- cached_cand(_, a, _, _, _), cpl_assign_target(a).
+cached_mutated(a) :- cached_cand(_, a, _, "delete_statement", _).
+cached_aliased(a) :- cached_cand(_, a, _, _, _), cpl_assign_value(a).
+cached_mem(f, mm, mo) :- cached_cand(f, a, m, _, _), !cached_mutated(a), !cached_aliased(a), !cached_dunder(m), cached_mode(a, mo), mm = @rx_replace(m, "\\s+", "").
+cpl_top_assign(d, a) :- cpl_assign(d, a, _, _), child(st, a, _), child(m, st, _), node(_, m, "module", _, _).
+cached_gwalk(a, r) :- cpl_top_assign(d, a), cached_gate(d), field(a, "right", r).
+cached_gwalk(a, c) :- cached_gwalk(a, n), node(_, n, k, _, _), cached_walk_k(k), cpl_kid(n, c).
+cached_gwalk(a, c) :- cached_gwalk(a, n), node(_, n, "call", _, _), field(n, "arguments", al), cpl_kid(al, c).
+cpl_haskw(c) :- cpl_kwnode(c, _).
+cached_immutable(n) :- cached_gwalk(_, n), node(_, n, k, _, _), cached_imm_k(k).
+cached_immutable(n) :- cached_gwalk(_, n), node(_, n, k, _, _), cached_str_k(k), node_text(n, t), !match("(?i:f|rf|fr)(?s:.*)", t).
+cached_immutable(n) :- cached_gwalk(_, n), cpl_call(_, n, fn, "identifier"), cpl_txt(fn, "frozenset"), !cpl_haskw(n).
+cached_mglobal(d, x) :- cpl_top_assign(d, a), cpl_assign(d, a, l, "identifier"), cpl_txt(l, x), cached_gwalk(a, n), !cached_immutable(n).
+cached_pcall_a(d, c) :- cpl_callee(c, "cached_pure_lazy"), cpl_call(d, c, _, _), cached_gate(d).
+cached_pcall_a(d, c) :- cpl_call(d, c, f, "identifier"), cached_gate(d), cpl_txt(f, x), cached_alias(d, x).
+cached_pcall_k(d, c) :- cpl_kw(c, "cache_args", _), cpl_call(d, c, _, _), cached_gate(d).
+cached_pdec(c) :- cpl_dec_name(_, dec, x, "cached_pure_lazy"), cpl_call(_, c, x, _), cpl_kid(dec, c).
+cached_pdec(c) :- cpl_dec_name(_, dec, x, nm), cpl_call(d, c, x, "identifier"), cpl_kid(dec, c), cached_alias(d, nm).
+cpl_entry_ctor(c) :- cpl_callee(c, "CachedPureLazyPolicyEntry").
+cached_pseudo(d, c, fq, "cached_pure_lazy must use decorator syntax") :- cached_pcall_a(d, c), !cpl_entry_ctor(c), !cached_pdec(c), cpl_module(d, m), line(c, l), col(c, k), fq = @concat(@concat(@concat(@concat(@concat(m, ".<unsupported_cached_pure_lazy_call_"), @to_string(l)), "_"), @to_string(k)), ">").
+cached_pseudo(d, c, fq, "unresolved cache decorator alias is forbidden") :- cached_pcall_k(d, c), !cached_pcall_a(d, c), !cpl_entry_ctor(c), !cached_pdec(c), cpl_module(d, m), line(c, l), col(c, k), fq = @concat(@concat(@concat(@concat(@concat(m, ".<unsupported_cached_pure_lazy_call_"), @to_string(l)), "_"), @to_string(k)), ">").
+cached_escape_cand(d, n) :- cached_gate(d), node(d, n, "identifier", _, _), cpl_txt(n, x), cached_alias(d, x).
+cached_escape_cand(d, n) :- cached_gate(d), node(d, n, "attribute", _, _), cpl_attr(n, "cached_pure_lazy").
+cached_escape_slot(n) :- cached_escape_cand(_, n), node(_, n, "identifier", _, _), child(p, n, _), node(_, p, "parameters", _, _).
+cached_escape_slot(n) :- cached_escape_cand(_, n), node(_, n, "identifier", _, _), field(p, "name", n), node(_, p, pk, _, _), cached_named_parent_k(pk).
+cached_escape_slot(n) :- cached_escape_cand(_, n), node(_, n, "identifier", _, _), cpl_attr_field(n).
+cached_pseudo(d, n, fq, "cached_pure_lazy cannot escape as a first-class value") :- cached_escape_cand(d, n), child(par, n, _), node(_, par, pk, _, _), !cached_import_parent_k(pk), pk != "delete_statement", !cached_escape_slot(n), !cpl_callfn(n), !cpl_assign_target(n), !cpl_assign_value(n), cpl_module(d, m), line(n, l), col(n, k), fq = @concat(@concat(@concat(@concat(@concat(m, ".<escaped_cached_pure_lazy_reference_"), @to_string(l)), "_"), @to_string(k)), ">").
+cached_err(f, "cached pure-lazy functions must be synchronous") :- cached_sel(_, f, _), node_text(f, t), match("async\\s(?s:.*)", t).
+cached_err(f, "cached pure-lazy functions cannot use variadic arguments") :- cached_sel(d, f, _), cpl_params(f, _, ps, pe), node(d, _, k, s, e), cpl_splat_k(k), s >= ps, e <= pe.
+cached_err(f, "cached pure-lazy functions cannot be generators") :- cached_sel(d, f, _), cpl_body(f, bs, be), node(d, _, "yield", s, e), s >= bs, e <= be.
+cached_err(f, "a cache argument can only be used through signed member access") :- cached_name(f, n), !cpl_attr_object(n).
+cached_err(f, "a cache argument cannot escape through return") :- cached_sel(d, f, _), cpl_body(f, bs, be), node(d, r, "return_statement", rs, re), rs >= bs, re <= be, cpl_kid(r, _), cached_name(f, n), node(_, n, _, ns, ne), ns >= rs, ne <= re.
+cached_err(f, "cached pure-lazy functions cannot write mutable global state") :- cached_sel(d, f, _), cpl_body(f, bs, be), node(d, _, k, s, e), cached_globalstmt_k(k), s >= bs, e <= be.
+cached_err(f, s) :- cached_cand(f, a, m, _, _), cached_mutated(a), s = @concat(@concat("direct cache attribute mutation '", @rx_replace(m, "'", "''")), "' is forbidden").
+cached_err(f, s) :- cached_cand(f, a, m, _, _), cached_aliased(a), s = @concat(@concat("cache member alias '", @rx_replace(m, "'", "''")), "' is forbidden").
+cached_err(f, s) :- cached_cand(f, _, m, "subscript", sub), cached_submut(sub), s = @concat(@concat("cache subscript mutation through '", @rx_replace(m, "'", "''")), "' is forbidden").
+cached_err(f, s) :- cached_cand(f, _, m, "subscript", sub), !cached_submut(sub), s = @concat(@concat("cache subscript access through '", @rx_replace(m, "'", "''")), "' is forbidden").
+cached_err(f, s) :- cached_cand(f, _, m, _, _), cached_dunder(m), s = @concat(@concat("dynamic cache access '", m), "' is forbidden").
+cached_err(f, s) :- cached_arg(f, _, x), !cached_annotated(f, x), s = @concat(@concat("cache argument '", @rx_replace(x, "'", "''")), "' requires an exact annotation").
+cached_err(f, s) :- cached_arg(f, _, x), cached_param(f, _, k, x, _), cached_default_k(k), s = @concat(@concat("cache argument '", @rx_replace(x, "'", "''")), "' cannot have a default").
+cached_err(f, s) :- cached_arg(f, _, x), x != "self", cached_param(f, p, _, x, _), !cached_star_before(f, p), s = @concat(@concat("cache argument '", @rx_replace(x, "'", "''")), "' must be keyword-only").
+cached_err(f, "a cache argument cannot be captured by a closure") :- cached_sel(d, f, _), cpl_body(f, bs, be), node(d, _, k, cs, ce), cached_closure_k(k), cs >= bs, ce <= be, cached_name(f, n), node(_, n, _, ns, ne), ns >= cs, ne <= ce.
+cached_err(f, s) :- cached_sel(d, f, _), cpl_body(f, bs, be), cpl_call(d, c, fn, "identifier"), node(_, c, _, s0, e0), s0 >= bs, e0 <= be, cpl_txt(fn, x), cached_reflective(x), cpl_posarg(c, a), node(_, a, _, a0, a1), cached_name(f, n), node(_, n, _, ns, ne), ns >= a0, ne <= a1, s = @concat(x, "() on a cache argument is forbidden").
+cached_err(f, s) :- cached_sel(d, f, _), cached_mglobal(d, x), cpl_decl(d, f, _, _, rs, _), cpl_body(f, _, be), node(d, n, "identifier", ns, ne), ns >= rs, ne <= be, cpl_txt(n, x), child(par, n, _), node(_, par, pk, _, _), !cached_globalstmt_k(pk), !cpl_attr_field(n), !cpl_assign_target(n), s = @concat(@concat("cached pure-lazy functions cannot read mutable global state '", @rx_replace(x, "'", "''")), "'").
+cached_err(n, e) :- cached_pseudo(_, n, _, e).
+cached_submut(sub) :- cached_cand(_, _, _, "subscript", sub), cpl_assign_target(sub).
+cached_submut(sub) :- cached_cand(_, _, _, "subscript", sub), child(p, sub, _), node(_, p, "delete_statement", _, _).
+cached_annotated(f, x) :- cached_param(f, p, _, x, _), field(p, "type", _).
+cached_star(f, s) :- cached_sel(_, f, _), cpl_params(f, ps, _, _), cpl_kid(ps, st), node(_, st, k, s, _), cached_star_k(k).
+cached_star_before(f, p) :- cached_param(f, p, _, _, ps), cached_star(f, s), s < ps.
+cached_rec(d, f, fq, bh, sh, s) :- cached_sel(d, f, _), cpl_fname(f, fq), body_sha256(f, bh), signature_sha256(f, sh), node(d, f, _, s, _).
+cached_rec(d, n, fq, h, h, s) :- cached_pseudo(d, n, fq, _), dump_sha256(n, h), node(d, n, _, s, _).
+cached_newer(n) :- cached_rec(d, n, fq, _, _, _), cached_rec(d2, _, fq, _, _, _), doc(d, p, _), doc(d2, p2, _), p2 > p.
+cached_newer(n) :- cached_rec(d, n, fq, _, _, s), cached_rec(d, _, fq, _, _, s2), s2 > s.
+cached_eff(n, fq, bh, sh) :- cached_rec(_, n, fq, bh, sh, _), !cached_newer(n).
+cached_effn(fq) :- cached_eff(_, fq, _, _).
+cached_leaf(i, r, v) :- option_value("entryPoint", "policy_violations"), option_json("policyEntries", p, v), match("/[0-9]+/(?s:.*)", p), i = @rx_replace(p, "^/([0-9]+)/(?s:.*)$", "${1}"), r = @rx_replace(p, "^/[0-9]+/", "").
+cached_leaf(i, r, v) :- option_value("entryPoint", "all"), cached_default(i, r, v).
+cached_pfn(i, fq) :- cached_leaf(i, "function", fq).
+cached_pnewer(fq, i) :- cached_pfn(i, fq), cached_pfn(j, fq), @strlen(j) > @strlen(i).
+cached_pnewer(fq, i) :- cached_pfn(i, fq), cached_pfn(j, fq), @strlen(j) = @strlen(i), j > i.
+cached_pe(fq, i) :- cached_pfn(i, fq), !cached_pnewer(fq, i).
+cached_pv(fq, r, v) :- cached_pe(fq, i), cached_leaf(i, r, v).
+cached_pa(fq, j, x) :- cached_pv(fq, r, x), match("cache_args/[0-9]+", r), j = @rx_replace(r, "^cache_args/", "").
+cached_paname(fq, x) :- cached_pa(fq, _, x).
+cached_ptn(fq, j, x) :- cached_pv(fq, r, x), match("cache_types/[0-9]+/0", r), j = @rx_replace(@rx_replace(r, "^cache_types/", ""), "/0$", "").
+cached_ptname(fq, x) :- cached_ptn(fq, _, x).
+cached_ptt(fq, j, t) :- cached_pv(fq, r, t), match("cache_types/[0-9]+/1", r), j = @rx_replace(@rx_replace(r, "^cache_types/", ""), "/1$", "").
+cached_pmm(fq, j, m) :- cached_pv(fq, r, m), match("allowed_cache_members/[0-9]+/0", r), j = @rx_replace(@rx_replace(r, "^allowed_cache_members/", ""), "/0$", "").
+cached_pmo(fq, j, mo) :- cached_pv(fq, r, mo), match("allowed_cache_members/[0-9]+/1", r), j = @rx_replace(@rx_replace(r, "^allowed_cache_members/", ""), "/1$", "").
+cached_pmem(fq, j, m, mo) :- cached_pmm(fq, j, m), cached_pmo(fq, j, mo).
+cached_signed(n, fq) :- cached_eff(n, fq, _, _), cached_pe(fq, _).
+cached_aarg(n, j, x) :- cached_arg(n, i, x), j = @to_string(i).
+cached_ann(f, x, a) :- cached_arg(f, _, x), cached_param(f, p, _, x, _), field(p, "type", ty), a = @py_unparse(ty).
+cached_hasann(f, x) :- cached_ann(f, x, _).
+cached_mempair(n, m, mo, q) :- cached_mem(n, m, mo), q = @concat(@concat(@concat(@concat("('", @rx_replace(m, "'", "''")), "', '"), @rx_replace(mo, "'", "''")), "')").
+cached_hasmem(n) :- cached_mem(n, _, _).
+cached_arepr(n, "()") :- cached_signed(n, _), !cached_hasmem(n).
+cached_arepr(n, r) :- cached_signed(n, _), cached_hasmem(n), k = count : { cached_mem(n, _, _) }, j = join q by (m, mo) sep ", " : { cached_mempair(n, m, mo, q) }, k = 1, r = @concat(@concat("(", j), ",)").
+cached_arepr(n, r) :- cached_signed(n, _), cached_hasmem(n), k = count : { cached_mem(n, _, _) }, j = join q by (m, mo) sep ", " : { cached_mempair(n, m, mo, q) }, k > 1, r = @concat(@concat("(", j), ")").
+cached_pmempair(fq, l, i, q) :- cached_pmem(fq, i, m, mo), l = @strlen(i), q = @concat(@concat(@concat(@concat("('", @rx_replace(m, "'", "''")), "', '"), @rx_replace(mo, "'", "''")), "')").
+cached_phasmem(fq) :- cached_pmem(fq, _, _, _).
+cached_prepr(fq, "()") :- cached_signed(_, fq), !cached_phasmem(fq).
+cached_prepr(fq, r) :- cached_signed(_, fq), cached_phasmem(fq), k = count : { cached_pmem(fq, _, _, _) }, j = join q by (l, i) sep ", " : { cached_pmempair(fq, l, i, q) }, k = 1, r = @concat(@concat("(", j), ",)").
+cached_prepr(fq, r) :- cached_signed(_, fq), cached_phasmem(fq), k = count : { cached_pmem(fq, _, _, _) }, j = join q by (l, i) sep ", " : { cached_pmempair(fq, l, i, q) }, k > 1, r = @concat(@concat("(", j), ")").
+cached_badmode(fq, m, q) :- cached_pmo(fq, _, m), !cached_okmode(m), m != "null", q = @concat(@concat("'", @rx_replace(m, "'", "''")), "'").
+cached_issue(s) :- cached_rec(_, n1, fq, _, _, _), cached_rec(_, n2, fq, _, _, _), n1 != n2, s = @concat("duplicate decorator entry: ", fq).
+cached_issue(s) :- cached_pfn(i, fq), cached_pfn(j, fq), i != j, s = @concat("duplicate policy entry: ", fq).
+cached_issue(s) :- cached_eff(_, fq, _, _), !cached_pe(fq, _), s = @concat("unsigned cached pure-lazy function: ", fq).
+cached_issue(s) :- cached_pe(fq, _), !cached_effn(fq), s = @concat("stale cached pure-lazy policy entry: ", fq).
+cached_issue(s) :- cached_signed(n, fq), cached_err(n, e), s = @concat(@concat(fq, ": "), e).
+cached_issue(s) :- cached_signed(n, fq), cached_aarg(n, j, x), !cached_pa(fq, j, x), s = @concat(fq, ": decorator cache arguments changed").
+cached_issue(s) :- cached_signed(n, fq), cached_pa(fq, j, x), !cached_aarg(n, j, x), s = @concat(fq, ": decorator cache arguments changed").
+cached_issue(s) :- cached_signed(_, fq), cached_ptn(fq, j1, x), cached_ptn(fq, j2, x), j1 != j2, s = @concat(fq, ": cache type metadata must name each cache argument exactly once").
+cached_issue(s) :- cached_signed(_, fq), cached_paname(fq, x), !cached_ptname(fq, x), s = @concat(fq, ": cache type metadata must name each cache argument exactly once").
+cached_issue(s) :- cached_signed(_, fq), cached_ptname(fq, x), !cached_paname(fq, x), s = @concat(fq, ": cache type metadata must name each cache argument exactly once").
+cached_issue(s) :- cached_signed(_, fq), cached_ptt(fq, _, t), t != "l2070_batching.optimizer_run_cache.OptimizerRunCache", s = @concat(@concat(@concat(fq, ": cache type '"), @rx_replace(t, "'", "''")), "' is not approved").
+cached_issue(s) :- cached_signed(n, fq), cached_ptn(fq, j, x), cached_ptt(fq, j, t), !cached_hasann(n, x), s = @concat(@concat(@concat(@concat(@concat(fq, ": cache argument '"), @rx_replace(x, "'", "''")), "' annotation None does not match cache type '"), @rx_replace(t, "'", "''")), "'").
+cached_issue(s) :- cached_signed(n, fq), cached_ptn(fq, j, x), cached_ptt(fq, j, t), cached_ann(n, x, a), a != @rx_replace(t, "^.*\\.", ""), s = @concat(@concat(@concat(@concat(@concat(@concat(@concat(fq, ": cache argument '"), @rx_replace(x, "'", "''")), "' annotation "), @py_repr(a)), " does not match cache type '"), @rx_replace(t, "'", "''")), "'").
+cached_issue(s) :- cached_signed(_, fq), cached_pv(fq, "owner_scope", o), o != "optimizer_run", o != "null", s = @concat(@concat(@concat(fq, ": owner scope '"), @rx_replace(o, "'", "''")), "' is not approved").
+cached_issue(s) :- cached_signed(_, fq), cached_pv(fq, "rationale", r), match(" *", r), s = @concat(fq, ": review rationale is required").
+cached_issue(s) :- cached_signed(_, fq), cached_badmode(fq, _, _), l = join q by (m) sep ", " : { cached_badmode(fq, m, q) }, s = @concat(@concat(@concat(fq, ": cache member access modes are invalid: ["), l), "]").
+cached_issue(s) :- cached_signed(n, fq), cached_eff(n, fq, bh, _), cached_pv(fq, "body_hash", p), p != "null", bh != p, s = @concat(fq, ": function body hash changed").
+cached_issue(s) :- cached_signed(n, fq), cached_eff(n, fq, _, sh), cached_pv(fq, "signature_hash", p), p != "null", sh != p, s = @concat(fq, ": function signature hash changed").
+cached_issue(s) :- cached_signed(n, fq), cached_arepr(n, a), cached_prepr(fq, p), a != p, s = @concat(@concat(@concat(@concat(fq, ": cache member access changed: actual="), a), " policy="), p).
+violation("data-layer-cached-pure-lazy-allowlist", "cached-policy", s, "l2055_lazy_result/cached_pure_lazy_policy.py", 1) :- cached_on(_), cached_issue(s).
+memo_on(0) :- option_value("entryPoint", "memoized_policy_violations").
+memo_on(0) :- option_value("entryPoint", "all").
+memo_sel(d, f, c) :- memo_gate(d), cpl_decl(d, f, "function_definition", _, _, _), cpl_eligible(f), cpl_dec_name(f, dec, x, "memoized_pure_lazy"), cpl_call(_, c, x, "identifier"), cpl_kid(dec, c).
+memo_kwcount(c, k) :- memo_sel(_, _, c), k = count : { cpl_kwnode(c, _) }.
+memo_haskw(c) :- memo_sel(_, _, c), cpl_kw(c, "max_entries", _).
+memo_bound(f, v, m) :- memo_sel(_, f, c), cpl_kw(c, "max_entries", v), node(_, v, "integer", _, _), node_text(v, t), z = @rx_replace(@rx_replace(@rx_replace(t, "_", ""), "^([0-9]*)(?s:.*)$", "${1}"), "^0+", ""), z != "", m = z.
+memo_bound(f, v, "0") :- memo_sel(_, f, c), cpl_kw(c, "max_entries", v), node(_, v, "integer", _, _), node_text(v, t), @rx_replace(@rx_replace(@rx_replace(t, "_", ""), "^([0-9]*)(?s:.*)$", "${1}"), "^0+", "") = "".
+memo_bound(f, v, "NULL") :- memo_sel(_, f, c), cpl_kw(c, "max_entries", v), node(_, v, k, _, _), k != "integer".
+memo_bound(f, f, "NULL") :- memo_sel(_, f, c), !memo_haskw(c).
+memo_marked(f) :- memo_sel(_, f, _), cpl_dec_name(f, dec, x, "pure_lazy"), node(_, x, "identifier", _, _), child(dec, x, _).
+memo_err(f, "memoized_pure_lazy requires the canonical pure_lazy marker") :- memo_sel(_, f, _), !memo_marked(f).
+memo_err(f, "memoized_pure_lazy requires one literal max_entries keyword") :- memo_sel(_, f, c), memo_kwcount(c, k), k != 1.
+memo_err(f, "memoized_pure_lazy requires one literal max_entries keyword") :- memo_sel(_, f, c), !memo_haskw(c).
+memo_err(f, "memoized_pure_lazy requires one literal max_entries keyword") :- memo_sel(_, f, c), cpl_isposarg_of(c).
+memo_err(f, "memoized_pure_lazy max_entries must be a literal integer") :- memo_sel(_, f, c), cpl_kw(c, "max_entries", v), node(_, v, k, _, _), k != "integer".
+memo_err(f, "memoized_pure_lazy max_entries must be positive") :- memo_bound(f, _, "0").
+memo_err(f, "memoized pure-lazy functions must be synchronous") :- memo_sel(_, f, _), node_text(f, t), match("async\\s(?s:.*)", t).
+memo_err(f, "memoized pure-lazy functions cannot use variadic arguments") :- memo_sel(d, f, _), cpl_params(f, _, ps, pe), node(d, _, k, s, e), cpl_splat_k(k), s >= ps, e <= pe.
+memo_err(f, "memoized pure-lazy functions cannot be generators") :- memo_sel(d, f, _), cpl_body(f, bs, be), node(d, _, "yield", s, e), s >= bs, e <= be.
+memo_err(n, e) :- memo_alias(_, n, _, e).
+memo_outside(d) :- memo_gate(d), doc(d, p, _), !match("(?s:.*)[lL]2055.[lL][aA][zZ][yY].[rR][eE][sS][uU][lL][tT]/[pP][uU][rR][iI][tT][yY]\\.[pP][yY]", p).
+memo_selcallee(n) :- memo_sel(_, _, c), field(c, "function", n).
+memo_alias(d, i, fq, "memoized_pure_lazy decorator aliases are forbidden") :- memo_gate(d), node(d, i, "import_from_statement", _, _), child(m, i, _), node(_, m, "module", _, _), field(i, "module_name", mn), cpl_txt(mn, "l2055_lazy_result.purity"), cpl_kid(i, a), node(_, a, "aliased_import", _, _), field(a, "name", an), cpl_txt(an, "memoized_pure_lazy"), cpl_module(d, md), line(i, l), fq = @concat(@concat(@concat(md, ".<memoized_decorator_alias_"), @to_string(l)), ">").
+memo_alias(d, n, fq, "direct access to private memoization storage is forbidden") :- memo_outside(d), node(d, n, "identifier", _, _), cpl_txt(n, x), memo_private(x), child(par, n, _), node(_, par, pk, _, _), !memo_import_parent_k(pk), cpl_module(d, md), line(n, l), col(n, k), fq = @concat(@concat(@concat(@concat(@concat(md, ".<private_memoized_storage_access_"), @to_string(l)), "_"), @to_string(k)), ">").
+memo_alias(d, n, fq, "memoized_pure_lazy cannot escape as a first-class value") :- memo_outside(d), node(d, n, "identifier", _, _), cpl_txt(n, "memoized_pure_lazy"), child(par, n, _), node(_, par, pk, _, _), !memo_import_parent_k(pk), !memo_selcallee(n), cpl_module(d, md), line(n, l), col(n, k), fq = @concat(@concat(@concat(@concat(@concat(md, ".<escaped_memoized_decorator_"), @to_string(l)), "_"), @to_string(k)), ">").
+memo_row(d, f, kv, fq, bh, sh, m) :- memo_sel(d, f, _), cpl_fname(f, fq), body_sha256(f, bh), signature_sha256(f, sh), memo_bound(f, kv, m).
+memo_row(d, n, n, fq, h, h, "NULL") :- memo_alias(d, n, fq, _), dump_sha256(n, h).
+memo_newer(n, kv) :- memo_row(d, n, kv, fq, _, _, _), memo_row(d2, _, _, fq, _, _, _), doc(d, p, _), doc(d2, p2, _), p2 > p.
+memo_newer(n, kv) :- memo_row(d, n, kv, fq, _, _, _), memo_row(d, n2, _, fq, _, _, _), node(_, n, _, s, _), node(_, n2, _, s2, _), s2 > s.
+memo_newer(n, kv) :- memo_row(_, n, kv, fq, _, _, _), memo_row(_, n, kv2, fq, _, _, _), node(_, kv, _, s, _), node(_, kv2, _, s2, _), s2 > s.
+memo_eff(n, kv, fq, bh, sh, m) :- memo_row(_, n, kv, fq, bh, sh, m), !memo_newer(n, kv).
+memo_effn(fq) :- memo_eff(_, _, fq, _, _, _).
+memo_leaf(i, r, v) :- option_value("entryPoint", "memoized_policy_violations"), option_json("policyEntries", p, v), match("/[0-9]+/(?s:.*)", p), i = @rx_replace(p, "^/([0-9]+)/(?s:.*)$", "${1}"), r = @rx_replace(p, "^/[0-9]+/", "").
+memo_leaf(i, r, v) :- option_value("entryPoint", "all"), memo_default(i, r, v).
+memo_pfn(i, fq) :- memo_leaf(i, "function", fq).
+memo_pnewer(fq, i) :- memo_pfn(i, fq), memo_pfn(j, fq), @strlen(j) > @strlen(i).
+memo_pnewer(fq, i) :- memo_pfn(i, fq), memo_pfn(j, fq), @strlen(j) = @strlen(i), j > i.
+memo_pe(fq, i) :- memo_pfn(i, fq), !memo_pnewer(fq, i).
+memo_pv(fq, r, v) :- memo_pe(fq, i), memo_leaf(i, r, v).
+memo_signed(n, kv, fq, m) :- memo_eff(n, kv, fq, _, _, m), memo_pe(fq, _).
+memo_issue(s) :- memo_row(_, n1, k1, fq, _, _, _), memo_row(_, n2, k2, fq, _, _, _), n1 != n2, s = @concat("duplicate memoized decorator entry: ", fq).
+memo_issue(s) :- memo_row(_, n, k1, fq, _, _, _), memo_row(_, n, k2, fq, _, _, _), k1 != k2, s = @concat("duplicate memoized decorator entry: ", fq).
+memo_issue(s) :- memo_pfn(i, fq), memo_pfn(j, fq), i != j, s = @concat("duplicate memoized policy entry: ", fq).
+memo_issue(s) :- memo_row(_, n, _, fq, _, _, _), memo_err(n, e), s = @concat(@concat(fq, ": "), e).
+memo_issue(s) :- memo_eff(_, _, fq, _, _, _), !memo_pe(fq, _), s = @concat("unsigned memoized pure-lazy function: ", fq).
+memo_issue(s) :- memo_pe(fq, _), !memo_effn(fq), s = @concat("stale memoized pure-lazy policy entry: ", fq).
+memo_issue(s) :- memo_signed(_, _, fq, "NULL"), memo_pv(fq, "max_entries", v), v != "null", s = @concat(fq, ": memoization bound changed").
+memo_issue(s) :- memo_signed(_, _, fq, m), m != "NULL", !memo_pv(fq, "max_entries", m), s = @concat(fq, ": memoization bound changed").
+memo_issue(s) :- memo_signed(_, _, fq, _), !memo_pv(fq, "cache_lifetime", "process"), s = @concat(fq, ": cache lifetime is not approved").
+memo_issue(s) :- memo_signed(_, _, fq, _), !memo_pv(fq, "key_policy", "bound_explicit_immutable_v1"), s = @concat(fq, ": key policy is not approved").
+memo_issue(s) :- memo_signed(_, _, fq, _), !memo_pv(fq, "return_policy", "immutable_no_alias_v1"), s = @concat(fq, ": return policy is not approved").
+memo_issue(s) :- memo_signed(_, _, fq, _), !memo_pv(fq, "exception_policy", "successful_results_only_v1"), s = @concat(fq, ": exception policy is not approved").
+memo_issue(s) :- memo_signed(_, _, fq, _), memo_pv(fq, "rationale", r), match(" *", r), s = @concat(fq, ": review rationale is required").
+memo_issue(s) :- memo_signed(n, kv, fq, _), memo_eff(n, kv, fq, bh, _, _), memo_pv(fq, "body_hash", p), p != "null", bh != p, s = @concat(fq, ": function body hash changed").
+memo_issue(s) :- memo_signed(n, kv, fq, _), memo_eff(n, kv, fq, _, sh, _), memo_pv(fq, "signature_hash", p), p != "null", sh != p, s = @concat(fq, ": function signature hash changed").
+violation("data-layer-cached-pure-lazy-allowlist", "memoized-policy", s, "l2055_lazy_result/cached_pure_lazy_policy.py", 1) :- memo_on(_), memo_issue(s).
+runtime_on(0) :- option_value("entryPoint", "all").
+runtime_gate(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), node(d, _, "module", _, _), match("(?:(?s:.*)/)?(?:l2055_lazy_result/(?:purity|cached_pure_lazy_policy)|l2070_batching/optimizer_run_cache)\\.py", p).
+runtime_top(n) :- runtime_gate(d, _), node(d, m, "module", _, _), child(m, n, _).
+runtime_top(n) :- runtime_gate(d, _), node(d, m, "module", _, _), child(m, w, _), node(_, w, "decorated_definition", _, _), child(w, n, _).
+runtime_node(lb, x, n) :- runtime_protected(lb, p, x), runtime_gate(d, p), runtime_def_k(k), node(d, n, k, _, _), runtime_top(n), field(n, "name", nm), node_text(nm, x).
+runtime_node(lb, x, n) :- runtime_protected(lb, p, x), runtime_gate(d, p), node(d, n, "assignment", _, _), field(n, "left", l), node_text(l, x), child(es, n, _), node(_, es, "expression_statement", _, _), runtime_top(es).
+runtime_dump(x, n, v) :- runtime_node(lb, x, n), s = @ast_dump(n), v = @concat(@concat(@concat(@concat(lb, ":"), x), ":"), s).
+runtime_hash(h) :- runtime_dump(_, _, _), j = join v by (x, n) sep "|" : { runtime_dump(x, n, v) }, h = @sha256(j).
+runtime_policy_doc(d) :- runtime_gate(d, "l2055_lazy_result/cached_pure_lazy_policy.py").
+runtime_meta(x, lj) :- runtime_policy_doc(d), node(d, a, "assignment", _, _), field(a, "left", l), node_text(l, x), runtime_meta_name(x), field(a, "right", r), literal_json(r, lj).
+runtime_text(lj, s) :- runtime_meta(_, lj), match("\"[^\"\\\\]*\"", lj), s = @substr(lj, 1, @sub(@strlen(lj), 2)).
+runtime_render(x, lj) :- runtime_meta(x, lj), runtime_text(lj, _).
+runtime_render(x, lj) :- runtime_meta(x, lj), match("-?[0-9]+", lj).
+runtime_render(x, "null") :- runtime_meta_name(x), !runtime_has_meta(x).
+runtime_has_meta(x) :- runtime_meta(x, _).
+runtime_entries_span(d, s, e) :- runtime_policy_doc(d), node(d, a, "assignment", _, _), field(a, "left", l), node_text(l, x), runtime_entries_name(x), field(a, "right", r), node(_, r, _, s, e).
+runtime_entry_call(c, cs) :- runtime_entries_span(d, s, e), node(d, c, "call", cs, ce), cs >= s, ce <= e, field(c, "function", f), node(_, f, "identifier", _, _), node_text(f, x), runtime_ctor(x).
+runtime_entry_call(c, cs) :- runtime_entries_span(d, s, e), node(d, c, "call", cs, ce), cs >= s, ce <= e, field(c, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", i), node_text(i, x), runtime_ctor(x).
+runtime_entry_kw(c, x, lj) :- runtime_entry_call(c, _), field(c, "arguments", al), child(al, k, _), node(_, k, "keyword_argument", _, _), field(k, "name", kn), node_text(kn, x), field(k, "value", v), literal_json(v, lj).
+runtime_has_kw(c) :- runtime_entry_kw(c, _, _).
+runtime_entry_pair(c, x, lj, p) :- runtime_entry_kw(c, x, lj), p = @concat(@concat(@json_str(x), ":"), lj).
+runtime_value(o, s) :- runtime_entry_call(c, s), runtime_has_kw(c), j = join p by (x, lj) sep "," : { runtime_entry_pair(c, x, lj, p) }, o = @concat(@concat("{", j), "}").
+runtime_symjson(lj) :- runtime_meta("CACHED_PURE_LAZY_RUNTIME_SYMBOL_NAMES", lj).
+runtime_symjson("null") :- runtime_meta_name("CACHED_PURE_LAZY_RUNTIME_SYMBOL_NAMES"), !runtime_has_meta("CACHED_PURE_LAZY_RUNTIME_SYMBOL_NAMES").
+runtime_value(v, -1) :- runtime_render("CACHED_PURE_LAZY_RUNTIME_SOURCE_HASH", h), runtime_symjson(sj), v = @concat(@concat(@concat(@concat("{\"runtime_source_hash\":", h), ",\"runtime_symbols\":"), sj), "}").
+runtime_value_q(v, k, q) :- runtime_value(v, k), q = @json_str(v).
+runtime_message(m) :- runtime_render("ALLOWLIST_NAME", ln), runtime_render("ALLOWLIST_VERSION", vn), a = join q by (v, k) sep "," : { runtime_value_q(v, k, q) }, m = @concat(@concat(@concat(@concat(@concat(@concat("{\"allowlist\":[", a), "],\"linter\":"), ln), ",\"version\":"), vn), "}").
+runtime_valid(0) :- runtime_message(m), runtime_meta("ALLOWLIST_SIGNATURE", lj), runtime_text(lj, sig), @ed25519_ok("7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6", m, sig) = 1.
+runtime_symbols_ok(0) :- runtime_meta("CACHED_PURE_LAZY_RUNTIME_SYMBOL_NAMES", lj), match("\\[(?:\"[^\"\\\\]*\"(?:,\"[^\"\\\\]*\")*)?\\]", lj), k = count : { runtime_protected(_, _, _) }, @count_matches("\"[^\"]*\"", lj) = k, !runtime_symbol_missing(lj).
+runtime_symbol_missing(lj) :- runtime_meta("CACHED_PURE_LAZY_RUNTIME_SYMBOL_NAMES", lj), runtime_protected(_, _, x), !contains(@concat(@concat("\"", x), "\""), lj).
+runtime_issue("cached pure-lazy runtime symbol metadata changed") :- runtime_on(_), !runtime_symbols_ok(_).
+runtime_issue(s) :- runtime_hash(h), runtime_meta("CACHED_PURE_LAZY_RUNTIME_SOURCE_HASH", lj), runtime_text(lj, v), h != v, s = @concat(@concat(@concat("cached pure-lazy runtime source hash changed: actual=", h), " policy="), v).
+runtime_issue(s) :- runtime_hash(h), runtime_meta("CACHED_PURE_LAZY_RUNTIME_SOURCE_HASH", lj), match("-?[0-9]+", lj), s = @concat(@concat(@concat("cached pure-lazy runtime source hash changed: actual=", h), " policy="), lj).
+runtime_issue("cached pure-lazy policy signature is invalid") :- runtime_on(_), !runtime_valid(_).
+violation("data-layer-cached-pure-lazy-allowlist", "cached-runtime-contract", s, "l2055_lazy_result/cached_pure_lazy_policy.py", 1) :- runtime_on(_), runtime_issue(s).
+rr_demand_agg_rr_agg1(s, v) :- cached_el(v, _, s).
+rr_demand_agg_rr_agg3(p) :- cached_sel(_, f, _), cpl_params(f, ps, _, _), cpl_kid(ps, p), node(_, p, k, s, _), cached_param_k(k), cpl_kid(p, c), node(_, c, "identifier", cs, _), cpl_txt(c, x).

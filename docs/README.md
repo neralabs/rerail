@@ -60,3 +60,13 @@ Internal designs for contributors.
 
 - [content-addressed-workspace-store.md](content-addressed-workspace-store.md): the machine-wide content store
 - [transducer-design.md](transducer-design.md): the tape transducer language used by tests and benchmarks
+- [sql-executor.md](sql-executor.md): SQL sessions over facts, rule lowering, wave execution, and extension queries
+- [data-layer-rule-port.md](data-layer-rule-port.md): current data-layer linter inventory, engine capability gaps,
+  historical performance evidence, and migration order
+- [data-layer-port-execution-plan.md](data-layer-port-execution-plan.md): upstream test recording, strict parity gates,
+  native replay requirements, and the complete batch plan
+- [data-layer-batch-two.md](data-layer-batch-two.md): the next ten candidate ports, upstream and supplemental parity, and cumulative measurements
+- [data-layer-batch-three.md](data-layer-batch-three.md): the third ten ports, direct AST visitor recording, configuration parity, and cumulative measurements
+- [data-layer-batch-four.md](data-layer-batch-four.md): Completed SQL grammar candidates, Rust coverage, upstream ambiguities, and performance measurements
+- [data-layer-batch-four-root-causes.md](data-layer-batch-four-root-causes.md): Failure analysis, source requirements, and TDD ladders
+- [data-layer-engine-gaps.md](data-layer-engine-gaps.md): demonstrated engine features, withdrawn issues, and required approval before new Linear issues

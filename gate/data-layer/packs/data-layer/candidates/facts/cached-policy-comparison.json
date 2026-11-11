@@ -1,0 +1,191 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-cached-policy-comparison",
+  "revision": 1,
+  "mode": "log",
+  "clauses": [
+    {
+      "id": "parameters",
+      "define": {
+        "options": {
+          "parameters": {
+            "type": "string",
+            "default": "{}"
+          }
+        }
+      }
+    },
+    {
+      "id": "comparison",
+      "relational": {
+        "inputs": {
+          "empty": {
+            "evidence": {
+              "as": "file",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "rule": {
+                    "kind": "module"
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "locations": [
+          "metadata"
+        ],
+        "stages": [
+          {
+            "name": "parameters",
+            "query": {
+              "$option": "parameters",
+              "escape": "sql",
+              "template": "SELECT {} data"
+            }
+          },
+          {
+            "name": "actual_records",
+            "query": "SELECT CAST(key AS INTEGER) ordinal,CAST(key AS TEXT) record_id,json_extract(value,'$.function') function,json_extract(value,'$.body_hash') body_hash,json_extract(value,'$.signature_hash') signature_hash,json_extract(value,'$.max_entries') max_entries,value data FROM parameters,json_each(data,'$.functions')",
+            "indexes": [
+              [
+                "function"
+              ]
+            ]
+          },
+          {
+            "name": "policy_records",
+            "query": "SELECT CAST(key AS INTEGER) ordinal,json_extract(value,'$.function') function,json_extract(value,'$.body_hash') body_hash,json_extract(value,'$.signature_hash') signature_hash,json_extract(value,'$.rationale') rationale,value data FROM parameters,json_each(data,'$.entries')",
+            "indexes": [
+              [
+                "function"
+              ]
+            ]
+          },
+          {
+            "name": "policy_entries",
+            "query": "SELECT * FROM policy_records p WHERE NOT EXISTS(SELECT 1 FROM policy_records later WHERE later.function=p.function AND later.ordinal>p.ordinal)",
+            "indexes": [
+              [
+                "function"
+              ]
+            ]
+          },
+          {
+            "name": "actual_errors",
+            "query": "SELECT a.record_id,CAST(e.key AS INTEGER) ordinal,e.value error FROM actual_records a,json_each(a.data,'$.errors') e",
+            "indexes": [
+              [
+                "record_id"
+              ]
+            ]
+          },
+          {
+            "name": "actual_args",
+            "query": "SELECT a.record_id,CAST(v.key AS INTEGER) ordinal,v.value name FROM actual_records a,json_each(a.data,'$.cache_args') v",
+            "indexes": [
+              [
+                "record_id"
+              ]
+            ]
+          },
+          {
+            "name": "actual_annotations",
+            "query": "SELECT a.record_id,CAST(v.key AS INTEGER) ordinal,json_extract(v.value,'$[0]') name,json_extract(v.value,'$[1]') annotation FROM actual_records a,json_each(a.data,'$.cache_annotations') v",
+            "indexes": [
+              [
+                "record_id"
+              ]
+            ]
+          },
+          {
+            "name": "actual_members",
+            "query": "SELECT a.record_id,CAST(v.key AS INTEGER) ordinal,json_extract(v.value,'$[0]') member,json_extract(v.value,'$[1]') mode FROM actual_records a,json_each(a.data,'$.cache_members') v",
+            "indexes": [
+              [
+                "record_id"
+              ]
+            ]
+          },
+          {
+            "name": "effective_actual",
+            "query": "SELECT * FROM actual_records a WHERE NOT EXISTS(SELECT 1 FROM actual_records later WHERE later.function=a.function AND later.ordinal>a.ordinal)",
+            "indexes": [
+              [
+                "function"
+              ]
+            ]
+          },
+          {
+            "name": "policy_args",
+            "query": "SELECT p.function,CAST(x.key AS INTEGER) ordinal,x.value name FROM policy_entries p,json_each(p.data,'$.cache_args') x",
+            "indexes": [
+              [
+                "function"
+              ]
+            ]
+          },
+          {
+            "name": "policy_types",
+            "query": "SELECT p.function,CAST(x.key AS INTEGER) ordinal,json_extract(x.value,'$[0]') name,json_extract(x.value,'$[1]') type FROM policy_entries p,json_each(p.data,'$.cache_types') x",
+            "indexes": [
+              [
+                "function"
+              ]
+            ]
+          },
+          {
+            "name": "policy_members",
+            "query": "SELECT p.function,CAST(x.key AS INTEGER) ordinal,json_extract(x.value,'$[0]') member,json_extract(x.value,'$[1]') mode FROM policy_entries p,json_each(p.data,'$.allowed_cache_members') x",
+            "indexes": [
+              [
+                "function"
+              ]
+            ]
+          },
+          {
+            "name": "member_reprs",
+            "query": "SELECT f.function,coalesce((SELECT '('||group_concat(pair,', ')||CASE WHEN count(*)=1 THEN ',' ELSE '' END||')' FROM (SELECT '('||quote(member)||', '||quote(mode)||')' pair FROM actual_members m WHERE m.record_id=f.record_id ORDER BY ordinal)),'()') actual,coalesce((SELECT '('||group_concat(pair,', ')||CASE WHEN count(*)=1 THEN ',' ELSE '' END||')' FROM (SELECT '('||quote(member)||', '||quote(mode)||')' pair FROM policy_members m WHERE m.function=f.function ORDER BY ordinal)),'()') policy FROM effective_actual f",
+            "indexes": [
+              [
+                "function"
+              ]
+            ]
+          },
+          {
+            "name": "annotation_reprs",
+            "query": "WITH RECURSIVE chars(record_id,ordinal,value,delimiter,position,piece) AS (\n      SELECT record_id,ordinal,annotation,CASE WHEN instr(annotation,'''')>0 AND instr(annotation,'\"')=0 THEN '\"' ELSE '''' END,0,'' FROM actual_annotations\n      UNION ALL SELECT record_id,ordinal,value,delimiter,position+1,\n        CASE WHEN substr(value,position+1,1)='\\' THEN '\\\\'\n          WHEN substr(value,position+1,1)=delimiter THEN '\\'||delimiter\n          WHEN unicode(substr(value,position+1,1))=9 THEN '\\t'\n          WHEN unicode(substr(value,position+1,1))=10 THEN '\\n'\n          WHEN unicode(substr(value,position+1,1))=13 THEN '\\r'\n          WHEN substr(value,position+1,1)!=' ' AND rx_matches(substr(value,position+1,1),'^[\\p{C}\\p{Z}]$') THEN\n            CASE WHEN unicode(substr(value,position+1,1))<256 THEN printf('\\x%02x',unicode(substr(value,position+1,1)))\n                 WHEN unicode(substr(value,position+1,1))<65536 THEN printf('\\u%04x',unicode(substr(value,position+1,1)))\n                 ELSE printf('\\U%08x',unicode(substr(value,position+1,1))) END\n          ELSE substr(value,position+1,1) END\n      FROM chars WHERE position<length(value))\n      SELECT record_id,ordinal,delimiter||group_concat(piece,'')||delimiter repr FROM\n        (SELECT * FROM chars ORDER BY record_id,ordinal,position) GROUP BY record_id,ordinal,delimiter",
+            "indexes": [
+              [
+                "record_id",
+                "ordinal"
+              ]
+            ]
+          },
+          {
+            "name": "ordered_policy_issues",
+            "query": "SELECT * FROM (SELECT 0 phase,0 step,0 ordinal,x.* FROM (SELECT function,'duplicate decorator entry: '||function issue FROM actual_records GROUP BY function HAVING count(*)>1) x) UNION ALL SELECT * FROM (SELECT 0 phase,1 step,0 ordinal,x.* FROM (SELECT function,'duplicate policy entry: '||function issue FROM policy_records GROUP BY function HAVING count(*)>1) x) UNION ALL SELECT * FROM (SELECT 1 phase,0 step,0 ordinal,x.* FROM (SELECT a.function,'unsigned cached pure-lazy function: '||a.function issue FROM effective_actual a WHERE NOT EXISTS(SELECT 1 FROM policy_entries p WHERE p.function=a.function)) x) UNION ALL SELECT * FROM (SELECT 2 phase,0 step,0 ordinal,x.* FROM (SELECT p.function,'stale cached pure-lazy policy entry: '||p.function issue FROM policy_entries p WHERE NOT EXISTS(SELECT 1 FROM effective_actual a WHERE a.function=p.function)) x) UNION ALL SELECT * FROM (SELECT 3 phase,0 step,x.error_ordinal ordinal,x.function,x.issue FROM (SELECT a.function,a.function||': '||e.error issue,e.ordinal error_ordinal FROM effective_actual a JOIN policy_entries p ON p.function=a.function JOIN actual_errors e ON e.record_id=a.record_id) x) UNION ALL SELECT * FROM (SELECT 3 phase,1 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('decorator cache arguments changed') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE EXISTS(SELECT ordinal,name FROM actual_args WHERE record_id=a.record_id EXCEPT SELECT ordinal,name FROM policy_args WHERE function=a.function) OR EXISTS(SELECT ordinal,name FROM policy_args WHERE function=a.function EXCEPT SELECT ordinal,name FROM actual_args WHERE record_id=a.record_id)) x) UNION ALL SELECT * FROM (SELECT 3 phase,2 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('cache type metadata must name each cache argument exactly once') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE EXISTS(SELECT name FROM policy_types WHERE function=a.function GROUP BY name HAVING count(*)>1) OR EXISTS(SELECT name FROM policy_args WHERE function=a.function EXCEPT SELECT name FROM policy_types WHERE function=a.function) OR EXISTS(SELECT name FROM policy_types WHERE function=a.function EXCEPT SELECT name FROM policy_args WHERE function=a.function)) x) UNION ALL SELECT * FROM (SELECT 3 phase,3 step,x.order_ordinal ordinal,x.function,x.issue FROM (SELECT a.function,a.function||': '||('cache type '||quote(t.type)||' is not approved') issue ,t.ordinal*2 order_ordinal FROM effective_actual a JOIN policy_entries p ON p.function=a.function JOIN policy_types t ON t.function=a.function WHERE t.type!='l2070_batching.optimizer_run_cache.OptimizerRunCache') x) UNION ALL SELECT * FROM (SELECT 3 phase,3 step,x.order_ordinal ordinal,x.function,x.issue FROM (SELECT a.function,a.function||': '||('cache argument '||quote(t.name)||' annotation '||CASE WHEN (SELECT annotation FROM actual_annotations annotation WHERE annotation.record_id=a.record_id AND annotation.name=t.name ORDER BY annotation.ordinal DESC LIMIT 1) IS NULL THEN 'None' ELSE (SELECT repr FROM annotation_reprs repr WHERE repr.record_id=a.record_id AND repr.ordinal=(SELECT annotation.ordinal FROM actual_annotations annotation WHERE annotation.record_id=a.record_id AND annotation.name=t.name ORDER BY annotation.ordinal DESC LIMIT 1)) END||' does not match cache type '||quote(t.type)) issue ,t.ordinal*2+1 order_ordinal FROM effective_actual a JOIN policy_entries p ON p.function=a.function JOIN policy_types t ON t.function=a.function WHERE (SELECT annotation FROM actual_annotations annotation WHERE annotation.record_id=a.record_id AND annotation.name=t.name ORDER BY annotation.ordinal DESC LIMIT 1) IS NOT rx_replace(t.type,'^.*\\.','')) x) UNION ALL SELECT * FROM (SELECT 3 phase,4 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('owner scope '||quote(json_extract(p.data,'$.owner_scope'))||' is not approved') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE json_extract(p.data,'$.owner_scope')!='optimizer_run') x) UNION ALL SELECT * FROM (SELECT 3 phase,5 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('review rationale is required') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE trim(p.rationale)='') x) UNION ALL SELECT * FROM (SELECT 3 phase,6 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('cache member access modes are invalid: ['||(SELECT group_concat(quote(mode),', ') FROM (SELECT DISTINCT mode FROM policy_members m WHERE m.function=a.function AND mode NOT IN ('call','read','resolver') ORDER BY mode))||']') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE EXISTS(SELECT 1 FROM policy_members m WHERE m.function=a.function AND mode NOT IN ('call','read','resolver'))) x) UNION ALL SELECT * FROM (SELECT 3 phase,7 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('function body hash changed') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE a.body_hash!=p.body_hash) x) UNION ALL SELECT * FROM (SELECT 3 phase,8 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('function signature hash changed') issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function  WHERE a.signature_hash!=p.signature_hash) x) UNION ALL SELECT * FROM (SELECT 3 phase,9 step,0 ordinal,x.* FROM (SELECT a.function,a.function||': '||('cache member access changed: actual='||r.actual||' policy='||r.policy) issue FROM effective_actual a JOIN policy_entries p ON p.function=a.function JOIN member_reprs r ON r.function=a.function WHERE r.actual!=r.policy) x)"
+          },
+          {
+            "name": "diagnostics",
+            "query": "SELECT issue FROM ordered_policy_issues ORDER BY phase,CASE WHEN phase=1 AND 0 THEN '' ELSE function END,step,ordinal"
+          }
+        ],
+        "query": "SELECT 'metadata' path,0 start_byte,0 end_byte,CAST(row_number() OVER() AS TEXT) identity,issue,phase,step,ordinal,function FROM ordered_policy_issues ORDER BY phase,CASE WHEN phase=1 AND 0 THEN '' ELSE function END,step,ordinal",
+        "key": [
+          "identity"
+        ],
+        "code": "issue"
+      },
+      "violation": {
+        "code": "POLICY",
+        "message": "Policy comparison",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

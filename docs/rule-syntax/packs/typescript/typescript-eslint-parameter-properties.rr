@@ -1,0 +1,74 @@
+.policy "typescript-eslint-parameter-properties" revision 3
+.description "Declare class properties explicitly instead of using TypeScript constructor parameter properties; it keeps a class's fields visible in one place."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/eslint-a-functions.rr"
+//   ctor, fn_param, fn_block, deparen
+
+// typescript-eslint's parameter-properties: one way to declare a class's fields. Option prefer:
+//   "class-property" (default): a constructor parameter with a modifier (`private x`, `readonly y`, `override z`)
+//      declares a field; declare it in the class body instead. Reported at the parameter.
+//        constructor(private x: string) {}                                  → "Property x should be declared as a class property."
+//   "parameter-property": a field with no value, set at the head of the constructor from a parameter of the same
+//      name and type, could be that parameter. Reported at the field.
+//        x: string; constructor(x: string) { this.x = x; }                → "Property x should be declared as a parameter property."
+// Option allow: modifier sets that are fine, as typescript-eslint spells them: "readonly", "private", "protected",
+// "public", "private readonly", "protected readonly", "public readonly".
+.violation parameter_properties(at: node, msg: symbol) code "@typescript-eslint/parameter-properties" "{msg}"
+    suppress eslint "@typescript-eslint/parameter-properties"
+    suppress oxlint "parameter-properties"
+parameter_properties(p, cat("Property ", cat(x, " should be declared as a class property."))) :- !prefer_params(),
+    param_property(p, x, m), !option_item("allow", _, m).
+parameter_properties(f, cat("Property ", cat(x, " should be declared as a parameter property."))) :- prefer_params(),
+    bare_field(b, f, x), field(c, "body", b), has(b, k, "method_definition"), ctor(k), child(b, k, _),
+    name_param(k, q, x), head_assign(k, x), same_type(f, q).
+
+.decl prefer_params()
+prefer_params() :- option("prefer", "parameter-property").
+// modifiers(n, m): ESTree's accessibility and readonly of parameter or field n, joined as the option spells them:
+// "private readonly", "readonly", "" (none: `override x` alone).
+.decl modifiers(n: node, m: symbol)
+modifiers(n, m) :- (kind(n, "required_parameter") ; kind(n, "optional_parameter") ; kind(n, "public_field_definition")),
+    access(n, a), (op(n, "readonly"), r = "readonly" ; !op(n, "readonly"), r = ""),
+    (a = "", m = r ; a != "", r = "", m = a ; a != "", r != "", m = cat(a, cat(" ", r))).
+.decl access(n: node, a: symbol)
+access(n, a) :- child(n, c, _), kind(c, "accessibility_modifier"), text(c, a).
+access(n, "") :- (kind(n, "required_parameter") ; kind(n, "optional_parameter") ; kind(n, "public_field_definition")),
+    !has_access(n).
+.decl has_access(n: node)
+has_access(n) :- child(n, c, _), kind(c, "accessibility_modifier").
+// param_property(p, x, m): constructor parameter p declares field x (TSParameterProperty), with modifiers m.
+.decl param_property(p: node, x: symbol, m: symbol)
+param_property(p, x, m) :- (kind(p, "required_parameter") ; kind(p, "optional_parameter")), field(p, "pattern", n),
+    kind(n, "identifier"), text(n, x), modifiers(p, m),
+    (has_access(p) ; op(p, "readonly") ; child(p, o, _), kind(o, "override_modifier")).
+
+// ---- prefer "parameter-property" ----
+// bare_field(b, f, x): field f of class body b has the plain name x, no value and no allowed modifier set.
+.decl bare_field(b: node, f: node, x: symbol)
+bare_field(b, f, x) :- prefer_params(), child(b, f, _), kind(b, "class_body"), kind(f, "public_field_definition"),
+    field(f, "name", n), kind(n, "property_identifier"), text(n, x), !field(f, "value", _), modifiers(f, m),
+    !option_item("allow", _, m).
+// name_param(k, q, x): constructor k's parameter q is the plain name x (not a parameter property, no default).
+.decl name_param(k: node, q: node, x: symbol)
+name_param(k, q, x) :- prefer_params(), ctor(k), fn_param(k, q, _), field(q, "pattern", n), kind(n, "identifier"),
+    text(n, x), !field(q, "value", _), !param_property(q, _, _).
+// head_assign(k, x): the constructor's body starts with a run of `this.y = z;` statements, one with z = x.
+.decl head_assign(k: node, x: symbol)
+head_assign(k, x) :- prefer_params(), ctor(k), fn_block(k, b), this_assign(s, x), child(b, s, _),
+    !broken_before(b, s).
+.decl this_assign(s: node, x: symbol)  // statement s is `this.y = x;`
+this_assign(s, x) :- kind(s, "expression_statement"), child(s, e, 0), deparen(e, a), kind(a, "assignment_expression"),
+    field(a, "left", l), kind(l, "member_expression"), field(l, "object", o), kind(o, "this"),
+    field(l, "property", p), kind(p, "property_identifier"), field(a, "right", r0), deparen(r0, r),
+    kind(r, "identifier"), text(r, x).
+.decl broken_before(b: node, s: node)  // a statement before s in block b is no such assignment
+broken_before(b, s) :- child(b, s, _), this_assign(s, _), child(b, o, _), precedes(o, s), !kind(o, "comment"),
+    !this_assign(o, _).
+// same_type(f, q): neither has a type, or both have the same type text.
+.decl same_type(f: node, q: node)
+same_type(f, q) :- bare_field(_, f, _), name_param(_, q, _), !field(f, "type", _), !field(q, "type", _).
+same_type(f, q) :- bare_field(_, f, _), name_param(_, q, _), field(f, "type", a), field(q, "type", b), text(a, t),
+    text(b, t).

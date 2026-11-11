@@ -1,0 +1,306 @@
+//! One SQL statement evaluates dependent relational outputs against frozen inputs.
+//! Native code only validates and publishes the resulting storage patches.
+use super::scratch::Work;
+use super::*;
+
+mod reads;
+
+struct Definition {
+    sql: String,
+    materialized: bool,
+}
+
+enum Keys {
+    Native(versions::Version),
+    Query(String),
+    Incoming,
+    Replace,
+}
+
+struct Output {
+    table: String,
+    source: String,
+    old: versions::Version,
+    width: usize,
+    keys: Keys,
+    key_width: usize,
+}
+pub(super) struct Counts {
+    pub keys: usize,
+    pub rows: usize,
+}
+#[derive(Default)]
+pub(super) struct Phase {
+    pub analyses: Vec<Value>,
+    definitions: Vec<Definition>,
+    outputs: Vec<Output>,
+}
+impl Phase {
+    pub fn relation(&mut self, width: usize, query: &str) -> String {
+        self.define(width, query, "MATERIALIZED")
+    }
+    /// Projections, set operations, and pure aggregates over frozen inputs.
+    /// Checked rule expressions and native functions stay behind `relation` fences.
+    pub fn view(&mut self, width: usize, query: &str) -> String {
+        self.define(width, query, "NOT MATERIALIZED")
+    }
+    fn define(&mut self, width: usize, query: &str, hint: &str) -> String {
+        let name = format!("__rr_phase_{}", self.definitions.len());
+        let columns = (0..width)
+            .map(|i| format!("c{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        self.definitions.push(Definition {
+            sql: format!("{name}({columns}) AS {hint} ({query})"),
+            materialized: hint == "MATERIALIZED",
+        });
+        name
+    }
+    pub fn patch(
+        &mut self,
+        store: &versions::Store,
+        table: &str,
+        keys: &str,
+        source: &str,
+    ) -> Result<()> {
+        let keys = store
+            .available(keys)
+            .ok_or_else(|| error("missing SQL phase keys"))?;
+        self.output(store, table, source, Keys::Native(keys))
+    }
+    pub fn patch_computed(
+        &mut self,
+        store: &versions::Store,
+        table: &str,
+        keys: &str,
+        source: &str,
+    ) -> Result<()> {
+        self.output(store, table, source, Keys::Query(keys.into()))
+    }
+    pub fn load_empty(&mut self, store: &versions::Store, table: &str, source: &str) -> Result<()> {
+        if store.available(table).is_none_or(|v| v.len() != 0) {
+            return Err(error("SQL phase load requires an empty native table"));
+        }
+        self.output(store, table, source, Keys::Incoming)
+    }
+    pub fn replace_all(
+        &mut self,
+        store: &versions::Store,
+        table: &str,
+        source: &str,
+    ) -> Result<()> {
+        self.output(store, table, source, Keys::Replace)
+    }
+    fn output(
+        &mut self,
+        store: &versions::Store,
+        table: &str,
+        source: &str,
+        keys: Keys,
+    ) -> Result<()> {
+        if self.outputs.iter().any(|o| o.table == table) {
+            return Err(error("duplicate SQL phase output"));
+        }
+        let old = store
+            .available(table)
+            .ok_or_else(|| error("missing SQL phase output"))?;
+        self.outputs.push(Output {
+            table: table.into(),
+            source: source.into(),
+            width: old.columns().len(),
+            key_width: old.primary_key_len().unwrap(),
+            old,
+            keys,
+        });
+        Ok(())
+    }
+    pub fn execute(self, w: &Work<'_>) -> Result<BTreeMap<String, Counts>> {
+        if self.outputs.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let store = w
+            .versions
+            .ok_or_else(|| error("SQL phase requires native storage"))?;
+        let width = self.outputs.iter().map(|o| o.width).max().unwrap();
+        let reads = reads::Plan::new(&self, width);
+        let sql = format!(
+            "WITH {} {}",
+            self.definitions
+                .iter()
+                .map(|d| d.sql.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
+            reads.arms.join(" UNION ALL ")
+        );
+        let _context = w.profile_scope(||json!({"stage":"fused relational phase","phaseOutputs":self.outputs.iter().map(|o|&o.table).collect::<Vec<_>>(),"publication":self.outputs.iter().map(|o|json!({"table":o.table,"previous_rows":o.old.len(),"strategy":if o.old.len()==0{"bulk empty root"}else if matches!(o.keys,Keys::Replace){"bulk replacement"}else{"validated persistent patch; dense preparation can bulk rebuild"}})).collect::<Vec<_>>(),"logicalAnalyses":self.analyses,"outputProtocol":{"sqlArms":reads.arms.len(),"logicalReads":reads.logical_reads}}));
+        // Delta-first CROSS JOINs and primary-key probes fix the sparse access
+        // paths. Reuse preparation across wave scopes while xFilter reads their
+        // current immutable roots; rows and expressions are never cached here.
+        let mut statement = {
+            let _cpu = super::super::logic::profile::span(|| "SQL phase preparation".into());
+            let operation = w.profiler.map(|p| {
+                p.operation(
+                    "SQL phase preparation",
+                    ("sql-extension", 0),
+                    0,
+                    vec![
+                        ("sql_bytes".into(), sql.len() as i64),
+                        ("definitions".into(), self.definitions.len() as i64),
+                        ("output_arms".into(), reads.arms.len() as i64),
+                        ("logical_reads".into(), reads.logical_reads as i64),
+                    ],
+                )
+            });
+            let prepared = w.db.prepare_cached(&sql).map_err(error);
+            if let Some(operation) = operation {
+                operation.finish_unobserved();
+            }
+            prepared?
+        };
+        let mut cursor = statement.query([]).map_err(error)?;
+        let mut rows = vec![Vec::new(); self.outputs.len()];
+        let mut key_rows = vec![Vec::new(); self.outputs.len()];
+        while let Some(row) = cursor.next().map_err(error)? {
+            reads.collect(row, &mut rows, &mut key_rows)?;
+        }
+        drop(cursor);
+        drop(statement);
+        let counts = self
+            .outputs
+            .iter()
+            .zip(&rows)
+            .zip(&key_rows)
+            .map(|((o, rows), keys)| {
+                let keys = match &o.keys {
+                    Keys::Native(k) => k.len(),
+                    Keys::Query(_) => keys.len(),
+                    Keys::Incoming | Keys::Replace => rows.len(),
+                };
+                (
+                    o.table.clone(),
+                    Counts {
+                        keys,
+                        rows: rows.len(),
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let operation = w
+            .profiler
+            .map(|p| p.operation("SQL phase publication", ("sql-extension", 0), 0, vec![]));
+        let _cpu = super::super::logic::profile::span(|| "SQL phase publication".into());
+        // Prepare every replacement before changing any root. A failing later output
+        // cannot leave an earlier output partially published, even without a savepoint.
+        let mut reusable = BTreeMap::<(usize, usize), Vec<versions::Version>>::new();
+        let mut shared_roots = 0;
+        let mut retained_roots = 0;
+        let prepared = self
+            .outputs
+            .into_iter()
+            .zip(rows)
+            .zip(key_rows)
+            .map(|((o, rows), keys)| {
+                let candidates = if o.old.len() == 0 && rows.len() >= 512 {
+                    reusable
+                        .get(&(o.width, rows.len()))
+                        .map_or(&[][..], Vec::as_slice)
+                } else {
+                    &[][..]
+                };
+                let reused = if matches!(o.keys, Keys::Incoming | Keys::Replace)
+                    && o.old.len() == 0
+                    && rows.len() >= 512
+                {
+                    candidates
+                        .iter()
+                        .find_map(|v| o.old.reuse_empty_rows(&rows, v))
+                } else {
+                    None
+                };
+                let next = if let Some(next) = reused {
+                    shared_roots += 1;
+                    next
+                } else {
+                    match o.keys {
+                        Keys::Native(keys) => {
+                            if keys.columns().len() != o.key_width {
+                                return Err(error(
+                                    "SQL phase patch requires the complete primary key",
+                                ));
+                            }
+                            let (next, shared) = o.old.patched_rows_reusing(
+                                keys.rows(),
+                                rows,
+                                w.preparing,
+                                candidates,
+                            )?;
+                            shared_roots += usize::from(shared);
+                            next
+                        }
+                        Keys::Query(_) => {
+                            let (next, shared) =
+                                o.old
+                                    .patched_rows_reusing(keys, rows, w.preparing, candidates)?;
+                            shared_roots += usize::from(shared);
+                            next
+                        }
+                        Keys::Incoming => {
+                            if o.old.len() != 0 {
+                                return Err(error("SQL phase load requires an empty native table"));
+                            }
+                            o.old.loaded(rows, false, false)?
+                        }
+                        Keys::Replace => o.old.loaded(rows, false, true)?,
+                    }
+                };
+                if o.old.len() > 0 && o.old.shares_rows(&next) {
+                    retained_roots += 1;
+                }
+                if o.old.len() == 0 && next.len() >= 512 {
+                    reusable
+                        .entry((o.width, next.len()))
+                        .or_default()
+                        .push(next.clone());
+                }
+                Ok((o.table, next))
+            })
+            .collect::<Result<Vec<_>>>();
+        let prepared = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                if let Some(operation) = operation {
+                    operation.finish_unobserved();
+                }
+                return Err(error);
+            }
+        };
+        super::super::logic::profile::decision("SQL phase root reuse", || {
+            format!(
+                "{shared_roots} equal ordered initial outputs shared validated roots; {retained_roots} nonempty outputs retained their row roots within this phase"
+            )
+        });
+        if let Some(profiler) = w.profiler {
+            profiler
+                .operation(
+                    "SQL phase shared initial roots",
+                    ("sql-extension", 0),
+                    0,
+                    vec![
+                        ("shared_roots".into(), shared_roots as i64),
+                        ("retained_nonempty_roots".into(), retained_roots as i64),
+                    ],
+                )
+                .finish(shared_roots);
+        }
+        for (table, version) in prepared {
+            store.replace_available(&table, version)?;
+        }
+        if let Some(operation) = operation {
+            operation.finish_unobserved();
+        }
+        Ok(counts)
+    }
+}
+
+#[cfg(test)]
+mod tests;

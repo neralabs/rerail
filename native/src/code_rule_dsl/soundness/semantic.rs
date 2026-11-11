@@ -19,6 +19,8 @@ pub(super) fn optional_outward_captures(
         | Semantic::Parse(_)
         | Semantic::Capture(_)
         | Semantic::Layout(_)
+        | Semantic::FilePath(_)
+        | Semantic::Gap(_)
         | Semantic::Host(_)
         | Semantic::Embedded(_)
         | Semantic::ImportTarget(_) => {}
@@ -49,7 +51,7 @@ pub(super) fn sound(
     memo: &mut SoundMemo<bool>,
 ) -> bool {
     match semantic {
-        Semantic::Arguments(_) | Semantic::Capture(_) => true,
+        Semantic::Arguments(_) | Semantic::Capture(_) | Semantic::FilePath(_) | Semantic::Gap(_) => true,
         // A target is the node's own value and the files around it; its style reads the
         // statement around it, which a recovered tree may tell wrongly, so a negated target is no
         // fact.
@@ -103,6 +105,10 @@ pub(super) fn leaves_witness(semantic: &Semantic, memo: &mut UtilitySummary<usiz
         | Semantic::Parse(_)
         | Semantic::Capture(_)
         | Semantic::Layout(_)
+
+        | Semantic::FilePath(_)
+
+        | Semantic::Gap(_)
         | Semantic::ImportTarget(_) => false,
         Semantic::Host(_) | Semantic::Embedded(_) => true,
         Semantic::FormatArgs(test) => test

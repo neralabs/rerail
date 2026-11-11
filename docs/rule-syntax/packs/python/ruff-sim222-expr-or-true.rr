@@ -1,0 +1,39 @@
+.policy "ruff-sim222-expr-or-true" revision 2
+.description "Simplify an or expression holding an always-truthy value such as True or a non-empty literal; the operands after it never run."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff SIM222 (flake8-simplify): an `or` with an operand that is always true (`True`, a non-empty literal or
+// display, a lambda, `list([1])`, …; python/simplify's sim_truth), so the operands after it never run and the
+// result is that value. Ruff walks the operands in pairs: an operand of unknown truth stops nothing, but
+// outside a boolean test, or when it has a side effect, the finding starts after it. So `x or True` is
+// reported in an `if` test only (elsewhere its value may be x), and `f() or True` not at all. Ruff's fix is
+// unsafe; none here.
+//   if x or True: …          ← SIM222 (the test is True)
+//   y = True or x            ← SIM222 (y is True)
+//   y = x or True            not reported
+#include "python/simplify.rr"
+//   sim_operand(t, o, i, v), sim_nops(t, n), sim_truth(e, b), side_effect(e), sim_bool_test(e), in_string_ann(e)
+
+.violation SIM222(at: node, v: node) code "SIM222"
+    "Drop the operands after `{v}` in this `or`; it is always true, so they never run and the result is `{v}`."
+    suppress ruff "SIM222"
+SIM222(at, v) :- short_circuit(t, i, v), !in_string_ann(t), from(t, i, at).   // Ruff skips string annotations
+
+// pass_over(t, i): operand i is of unknown truth and may not be dropped: the finding starts after it.
+.decl pass_over(t: node, i: number)
+pass_over(t, i) :- sim_operand(t, "or", i, v), !sim_truth(v, _), (!sim_bool_test(t) ; side_effect(v)).
+// stop(t, i, v): Ruff's loop ends at pair (i, i + 1), on v, an always-true operand of the two.
+.decl stop(t: node, i: number, v: node)
+stop(t, i, v) :- sim_operand(t, "or", i, v), sim_nops(t, n), i < n - 1, !pass_over(t, i), sim_truth(v, "true").
+stop(t, i, w) :- sim_operand(t, "or", i, v), sim_nops(t, n), i < n - 1, !pass_over(t, i), !sim_truth(v, "true"),
+    sim_operand(t, "or", i + 1, w), sim_truth(w, "true").
+.decl short_circuit(t: node, i: number, v: node)
+short_circuit(t, i, v) :- stop(t, i, v), i = min j : { stop(t, j, _) }.
+// from(t, i, at): the finding starts at the operand after the last one passed over before i, else at t.
+.decl from(t: node, i: number, at: node)
+from(t, i, t) :- short_circuit(t, i, _), count : { pass_over(t, k), k < i } = 0.
+.decl last_pass(t: node, i: number, k: number)
+last_pass(t, i, k) :- short_circuit(t, i, _), pass_over(t, k), k < i, count : { pass_over(t, j), j > k, j < i } = 0.
+from(t, i, at) :- last_pass(t, i, k), sim_operand(t, "or", m, at), m = k + 1.

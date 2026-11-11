@@ -1,0 +1,216 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-connection-mode-split",
+  "revision": 1,
+  "mode": "block",
+  "description": "Exact port of nera-data-layer connection_mode_split at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "_internal/**/*.py",
+      "api/**/*.py",
+      "data_layer/**/*.py",
+      "impl/**/*.py",
+      "l1000_schema/**/*.py",
+      "l1100_exceptions/**/*.py",
+      "l1200_capabilities/**/*.py",
+      "l1300_session/**/*.py",
+      "l1400_types/**/*.py",
+      "l1900_retry/**/*.py",
+      "l2000_connection/**/*.py",
+      "l2050_transaction/**/*.py",
+      "l2055_lazy_result/**/*.py",
+      "l2070_batching/**/*.py",
+      "l7000_versioned_schema/**/*.py",
+      "l7200_versioned_transactions/**/*.py",
+      "l8000_admin/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/tests/**",
+      "**/test/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "configuration",
+      "define": {
+        "options": {
+          "entryPoint": {
+            "type": "string",
+            "default": "all"
+          },
+          "parameters": {
+            "type": "string",
+            "default": "{}"
+          }
+        }
+      }
+    },
+    {
+      "id": "mode-split",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": "Async|Connection|DatabaseConnection|DoltDBConnection|MariaDBConnection|MongoConnection|Neo4jConnection|PostgresConnection|ReadThroughConnection|SessionHandle|SqlConnection|SqliteConnection|Sync|VersionHandle|VersionedDatabaseConnection|_DatabaseConnectionCore|_SessionHandleCore|_SqlConnectionCore|_VersionHandleCore|_VersionedDatabaseConnectionCore"
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_alias",
+                "ast_module",
+                "ast_value",
+                "ast_value_kind",
+                "ast_preorder",
+                "ast_breadth_order",
+                "ast_parent",
+                "ast_field",
+                "ast_index",
+                "ast_end",
+                "ast_function",
+                "ast_op",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_context",
+                "ast_name_repr",
+                "ast_value_repr",
+                "ast_annotation",
+                "ast_annotation_repr"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,ast_alias AS alias,ast_module AS module,ast_value AS value,ast_value_kind AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(ast_breadth_order,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(ast_index,'') AS INTEGER) AS position,CAST(NULLIF(ast_end,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,ast_op AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,ast_context AS context,ast_name_repr AS name_repr,ast_value_repr AS value_repr,ast_annotation AS annotation,ast_annotation_repr AS annotation_repr FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "methods",
+            "query": "SELECT f.*,c.name AS class_name FROM functions f JOIN a c ON c.__path=f.__path AND c.id=f.parent AND c.kind='ClassDef' WHERE f.field='body'",
+            "indexes": [
+              [
+                "__path",
+                "parent",
+                "name"
+              ],
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "symbols",
+            "query": "SELECT n.*,CASE WHEN n.kind='Attribute' THEN 'attribute' ELSE 'name' END AS label,n.name AS symbol,n.name_repr AS quoted,n.id AS ordering FROM a n WHERE n.kind IN ('Name','Attribute')\n UNION ALL SELECT i.*, 'name',CASE WHEN i.kind='Import' THEN substr(s.name,length(rtrim(s.name,replace(s.name,'.','')))+1) ELSE s.name END,s.name_repr,i.id+s.position*0.001 FROM a i JOIN a s ON s.__path=i.__path AND s.parent=i.id AND s.kind='alias'\n UNION ALL SELECT i.*, 'name',s.alias,''''||s.alias||'''',i.id+s.position*0.001+0.0001 FROM a i JOIN a s ON s.__path=i.__path AND s.parent=i.id AND s.kind='alias' WHERE s.alias!=''",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "mode_configuration",
+            "query": {
+              "$option": "parameters",
+              "escape": "sql",
+              "template": "SELECT {} data"
+            }
+          }
+        ],
+        "query": "SELECT * FROM (SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'connection_mode_split' AS issue,'old mixed connection class '||n.name_repr||' is forbidden' AS message,n.id||':connection_mode_split:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='ClassDef' AND n.name IN ('DatabaseConnection','DoltDBConnection','MariaDBConnection','MongoConnection','Neo4jConnection','PostgresConnection','ReadThroughConnection','SessionHandle','SqlConnection','SqliteConnection','VersionHandle','VersionedDatabaseConnection') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'connection_mode_split' AS issue,'old mixed connection '||n.label||' '||CASE WHEN n.kind IN ('Import','ImportFrom') THEN ''''||n.symbol||'''' ELSE n.quoted END||' is forbidden' AS message,n.id||':connection_mode_split:'||(n.ordering) AS identity,0 AS phase,n.ordering AS ordering,'' AS symbol,'' AS sort_name FROM symbols n WHERE n.symbol IN ('DatabaseConnection','DoltDBConnection','MariaDBConnection','MongoConnection','Neo4jConnection','PostgresConnection','ReadThroughConnection','SessionHandle','SqlConnection','SqliteConnection','VersionHandle','VersionedDatabaseConnection') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'connection_mode_split' AS issue,'private connection core '||CASE WHEN n.kind IN ('Import','ImportFrom') THEN ''''||n.symbol||'''' ELSE n.quoted END||' is not allowed here' AS message,n.id||':connection_mode_split:'||(n.ordering) AS identity,0 AS phase,n.ordering AS ordering,'' AS symbol,'' AS sort_name FROM symbols n WHERE n.symbol IN ('_DatabaseConnectionCore','_SqlConnectionCore','_VersionedDatabaseConnectionCore') AND NOT (n.__path IN ('impl/common/l2200_sql_dialect/sql_connection.py','impl/doltdb/connection.py','impl/mariadb/connection.py','impl/mongodb/connection.py','impl/neo4j/connection.py','impl/postgres/connection.py','impl/read_through/connection.py','impl/sqlite/connection.py','l2000_connection/connection.py','l2000_connection/connection_pool.py','l7000_versioned_schema/versioned_connection.py') OR substr(n.__path,1,5)='impl/' OR substr(n.__path,1,15)='l2070_batching/') UNION ALL SELECT m.__path AS path,m.__start AS start_byte,m.__end AS end_byte,m.line,'connection_mode_split' AS issue,'private handle core '||c.name||' defines forbidden mixed entrypoint '||m.name_repr AS message,m.id||':connection_mode_split:'||(c.id+m.position*0.001+0.0001) AS identity,0 AS phase,c.id+m.position*0.001+0.0001 AS ordering,'' AS symbol,'' AS sort_name FROM a c JOIN methods m ON m.__path=c.__path AND m.parent=c.id WHERE c.name IN ('_SessionHandleCore','_VersionHandleCore') AND m.name IN ('read','read_async','write','write_async') UNION ALL SELECT m.__path AS path,m.__start AS start_byte,m.__end AS end_byte,m.line,'connection_mode_split' AS issue,'sync facade '||c.name||' defines public async method '||m.name_repr AS message,m.id||':connection_mode_split:'||(c.id+m.position*0.001+0.0001) AS identity,0 AS phase,c.id+m.position*0.001+0.0001 AS ordering,'' AS symbol,'' AS sort_name FROM a c JOIN methods m ON m.__path=c.__path AND m.parent=c.id WHERE substr(c.name,1,4)='Sync' AND m.kind='AsyncFunctionDef' AND substr(m.name,1,1)!='_' AND (substr(c.name,-10)='Connection' OR substr(c.name,-13)='SessionHandle' OR substr(c.name,-13)='VersionHandle') UNION ALL SELECT m.__path AS path,m.__start AS start_byte,m.__end AS end_byte,m.line,'connection_mode_split' AS issue,'async facade '||c.name||' defines public sync method '||m.name_repr AS message,m.id||':connection_mode_split:'||(c.id+m.position*0.001+0.0001) AS identity,0 AS phase,c.id+m.position*0.001+0.0001 AS ordering,'' AS symbol,'' AS sort_name FROM a c JOIN methods m ON m.__path=c.__path AND m.parent=c.id WHERE substr(c.name,1,5)='Async' AND m.kind='FunctionDef' AND substr(m.name,1,1)!='_' AND substr(m.name,-6)!='_async' AND m.name NOT IN ('__aenter__','__aexit__','authenticated_session_lazy','branch_id','connection','domain','invalidate_tip_cache','open_read_plan','open_versioned_read_plan','open_versioned_write_plan','open_write_plan','session','session_id','version') AND (substr(c.name,-10)='Connection' OR substr(c.name,-13)='SessionHandle' OR substr(c.name,-13)='VersionHandle')) WHERE EXISTS(SELECT 1 FROM mode_configuration p WHERE json_extract(p.data,'$.probeSource') IS NULL OR rx_matches(json_extract(p.data,'$.probeSource'),'Async|Connection|DatabaseConnection|DoltDBConnection|MariaDBConnection|MongoConnection|Neo4jConnection|PostgresConnection|ReadThroughConnection|SessionHandle|SqlConnection|SqliteConnection|Sync|VersionHandle|VersionedDatabaseConnection|_DatabaseConnectionCore|_SessionHandleCore|_SqlConnectionCore|_VersionHandleCore|_VersionedDatabaseConnectionCore'))",
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

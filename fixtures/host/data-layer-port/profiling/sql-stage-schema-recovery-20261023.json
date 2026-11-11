@@ -1,0 +1,364 @@
+{
+  "format": "rerail.sql-stage-schema-recovery/v1",
+  "date": "2026-10-23",
+  "status": "partial recovery; CPU regression unresolved; complete-job budget fails",
+  "baselineCommit": "ac3aea34",
+  "tddRedCommits": [
+    "a29a3ab7",
+    "a2631fb0"
+  ],
+  "firstGreenCommit": "280d3c8b",
+  "implementation": {
+    "owner": "process-wide immutable compiler schema metadata; no connections, statements, runtime rows or generations retained",
+    "identity": [
+      "exact stage query",
+      "ordered names and SQLite declared types of every read relation",
+      "deferred column names"
+    ],
+    "inference": "SQLite CTAS LIMIT 0 on a miss; opaque prepare-only schema module on a hit",
+    "validation": "authored SQL, authorizer and deferred expression checks still run for every clause",
+    "bounds": {
+      "entries": 128,
+      "chargedPayloadBytes": 4194304,
+      "allocatorOverhead": "additional; payload charge is conservative for shared Arc descriptors"
+    },
+    "concurrency": "one cache lock covers lookup and prototype inference; bounded FIFO eviction permits later re-inference",
+    "runtime": "runtime table/materialization/index behavior unchanged"
+  },
+  "guard": {
+    "limit": 100,
+    "engineSubmitted": 9095,
+    "sqliteInternal": 994,
+    "totalObserved": 10089,
+    "connections": 136,
+    "coverageProblems": [],
+    "unknownOrigins": 0,
+    "enginePhases": {
+      "connectionSetup": 372,
+      "filePublication": 36,
+      "catalogPublication": 12,
+      "candidatePreparation": 4578,
+      "cleanup": 2316,
+      "relationalEvaluation": 1781
+    },
+    "firstOverBudget": {
+      "startNs": 739123333,
+      "session": "profile-31915-32.json",
+      "query": 40,
+      "sql": "\nCREATE TRIGGER file_delete BEFORE DELETE ON file BEGIN\n    DELETE FROM ftsk WHERE rowid=OLD.fid;\nEND;",
+      "context": {
+        "component": "ast-index",
+        "stage": "schema"
+      },
+      "thread": "ThreadId(1)"
+    },
+    "compilerStageCreates": 68,
+    "deferredValidationCreateDrop": 0,
+    "parity": {
+      "nativeCalls": 2,
+      "positiveCalls": 1,
+      "cleanCalls": 1,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "engineFailures": 0,
+      "executionPathDifferences": 0,
+      "nativeSha256": "7d67ddb3bd0247edc610e897f4abaa9d805cb87e9c49df402de73de1f351e2c8"
+    }
+  },
+  "checkpoints": [
+    {
+      "shape": "prior input/syntax compiler recovery",
+      "engineSubmitted": 9695,
+      "compilerStageCreates": 194,
+      "connectionSetup": 498
+    },
+    {
+      "shape": "document-local schema reuse",
+      "engineSubmitted": 9293,
+      "compilerStageCreates": 134,
+      "connectionSetup": 438
+    },
+    {
+      "shape": "process metadata reuse with owned vectors",
+      "engineSubmitted": 9113,
+      "compilerStageCreates": 68,
+      "connectionSetup": 372
+    },
+    {
+      "shape": "process metadata reuse with immutable shared columns",
+      "engineSubmitted": 9095,
+      "compilerStageCreates": 68,
+      "connectionSetup": 372
+    }
+  ],
+  "countQualification": "Physical candidate ordering still depends on allocation addresses. Do not attribute the entire total-count difference to compiler reuse.",
+  "matchedControls": {
+    "priorCheckpoint": {
+      "nativeSha256": "1d580b5a82da9060f6e8741e010a2690444da962440ffbec5cc2f8cf4b147048",
+      "trials": [
+        {
+          "passed": true,
+          "userMs": 2452.164,
+          "systemMs": 123.922,
+          "cpuMs": 2576.086,
+          "wallMs": 4202.1100830000005,
+          "maxRSSRaw": 393040,
+          "memory": {
+            "rss": 348579376,
+            "heapTotal": 105283584,
+            "heapUsed": 34183424,
+            "external": 47790697,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2251.619,
+          "systemMs": 123.226,
+          "cpuMs": 2374.845,
+          "wallMs": 3796.638666,
+          "maxRSSRaw": 410112,
+          "memory": {
+            "rss": 366290360,
+            "heapTotal": 109330432,
+            "heapUsed": 40519248,
+            "external": 52726215,
+            "arrayBuffers": 45100195
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2353.09,
+          "systemMs": 126.312,
+          "cpuMs": 2479.402,
+          "wallMs": 3512.5976670000005,
+          "maxRSSRaw": 390992,
+          "memory": {
+            "rss": 346039736,
+            "heapTotal": 106332160,
+            "heapUsed": 34154728,
+            "external": 47790697,
+            "arrayBuffers": 2241491
+          }
+        }
+      ],
+      "medianCpuMs": 2479.402,
+      "minCpuMs": 2374.845,
+      "maxCpuMs": 2576.086,
+      "medianReportedMaxRSSKiB": 393040
+    },
+    "sharedMetadata": {
+      "nativeSha256": "7d67ddb3bd0247edc610e897f4abaa9d805cb87e9c49df402de73de1f351e2c8",
+      "trials": [
+        {
+          "passed": true,
+          "userMs": 2483.382,
+          "systemMs": 143.942,
+          "cpuMs": 2627.324,
+          "wallMs": 4449.57225,
+          "maxRSSRaw": 357152,
+          "memory": {
+            "rss": 239445264,
+            "heapTotal": 105807872,
+            "heapUsed": 34175032,
+            "external": 4931993,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2452.361,
+          "systemMs": 142.99,
+          "cpuMs": 2595.351,
+          "wallMs": 4313.966959,
+          "maxRSSRaw": 358704,
+          "memory": {
+            "rss": 314009976,
+            "heapTotal": 106856448,
+            "heapUsed": 34287376,
+            "external": 4931993,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2433.74,
+          "systemMs": 131.544,
+          "cpuMs": 2565.284,
+          "wallMs": 4341.842334,
+          "maxRSSRaw": 352272,
+          "memory": {
+            "rss": 305980448,
+            "heapTotal": 106332160,
+            "heapUsed": 34226088,
+            "external": 4931993,
+            "arrayBuffers": 2241491
+          }
+        }
+      ],
+      "medianCpuMs": 2595.351,
+      "minCpuMs": 2565.284,
+      "maxCpuMs": 2627.324,
+      "medianReportedMaxRSSKiB": 357152
+    }
+  },
+  "medianCpuChangePercent": 4.676490540864298,
+  "medianReportedMaxRSSChangePercent": -9.130877264400572,
+  "intermediateControls": {
+    "priorCheckpoint": {
+      "nativeSha256": "1d580b5a82da9060f6e8741e010a2690444da962440ffbec5cc2f8cf4b147048",
+      "trials": [
+        {
+          "passed": true,
+          "userMs": 2265.137,
+          "systemMs": 118.868,
+          "cpuMs": 2384.005,
+          "wallMs": 7859.395875,
+          "maxRSSRaw": 355424,
+          "memory": {
+            "rss": 310126320,
+            "heapTotal": 106184704,
+            "heapUsed": 40166520,
+            "external": 9867511,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2196.536,
+          "systemMs": 93.811,
+          "cpuMs": 2290.347,
+          "wallMs": 6052.510208000001,
+          "maxRSSRaw": 398144,
+          "memory": {
+            "rss": 353625432,
+            "heapTotal": 106971136,
+            "heapUsed": 40777752,
+            "external": 52726215,
+            "arrayBuffers": 45100195
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2212.468,
+          "systemMs": 104.21,
+          "cpuMs": 2316.678,
+          "wallMs": 8486.651208000001,
+          "maxRSSRaw": 404416,
+          "memory": {
+            "rss": 359769288,
+            "heapTotal": 110379008,
+            "heapUsed": 40269432,
+            "external": 52726215,
+            "arrayBuffers": 45100195
+          }
+        }
+      ],
+      "medianCpuMs": 2316.678,
+      "minCpuMs": 2290.347,
+      "maxCpuMs": 2384.005,
+      "medianReportedMaxRSSKiB": 398144
+    },
+    "ownedMetadataVectors": {
+      "nativeSha256": "be67a64b4aa672d2276e25185f7e068c53ea18a45e7bc34042bb9f8d5d31d27f",
+      "trials": [
+        {
+          "passed": true,
+          "userMs": 2265.977,
+          "systemMs": 103.226,
+          "cpuMs": 2369.203,
+          "wallMs": 6214.633916000001,
+          "maxRSSRaw": 356736,
+          "memory": {
+            "rss": 311157936,
+            "heapTotal": 108969984,
+            "heapUsed": 42194600,
+            "external": 9867511,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2488.276,
+          "systemMs": 121.415,
+          "cpuMs": 2609.691,
+          "wallMs": 7121.9048330000005,
+          "maxRSSRaw": 414032,
+          "memory": {
+            "rss": 370075256,
+            "heapTotal": 109068288,
+            "heapUsed": 41108664,
+            "external": 52802039,
+            "arrayBuffers": 45176019
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2211.938,
+          "systemMs": 103.516,
+          "cpuMs": 2315.454,
+          "wallMs": 8916.255083,
+          "maxRSSRaw": 404048,
+          "memory": {
+            "rss": 359491168,
+            "heapTotal": 106708992,
+            "heapUsed": 40642432,
+            "external": 52802039,
+            "arrayBuffers": 45176019
+          }
+        }
+      ],
+      "medianCpuMs": 2369.203,
+      "minCpuMs": 2315.454,
+      "maxCpuMs": 2609.691,
+      "medianReportedMaxRSSKiB": 404048
+    },
+    "decision": "replace deep descriptor copies with immutable shared columns; this earlier pair also showed no CPU improvement",
+    "medianCpuChangePercent": 2.2672550954426995
+  },
+  "broaderReplay": {
+    "nativeCalls": 120,
+    "positiveCalls": 60,
+    "cleanCalls": 60,
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "engineFailures": 0,
+    "executionPathDifferences": 0,
+    "nativeSha256": "7d67ddb3bd0247edc610e897f4abaa9d805cb87e9c49df402de73de1f351e2c8"
+  },
+  "functionalTests": {
+    "nativeFacing": 306,
+    "standaloneSql": 28,
+    "nodeProfiling": 26,
+    "pythonProfiling": 75
+  },
+  "validation": [
+    "native profiling library Clippy",
+    "standalone SQL host all-target Clippy",
+    "npm run check",
+    "native and standalone Rust formatting",
+    "git diff --check"
+  ],
+  "method": {
+    "workers": 4,
+    "build": "opt1 engine; deps3; LTO disabled; 256 codegen units; code-rule-profile enabled in both binaries",
+    "allocator": "same system allocator shim in both controls",
+    "order": "three alternating fresh-process pairs per comparison; no own tests or builds overlap",
+    "cpuScope": "process.cpuUsage around complete replay including policy validation, compilation, snapshot/workspace evaluation, parity and cleanup; identical Node bootstrap exclusion",
+    "detailedTracing": false,
+    "recordingSha256": "c70481240faa5181e98bc58b931a8ace78a1f546ca984c6aacf350e1469ce4f4",
+    "machine": "shared host; ranges overlap; no statistical or aggregate performance claim",
+    "memory": "process.resourceUsage maxRSS in KiB; sampled RSS is not retained ownership or leak evidence",
+    "commands": ".rerail/profiles/sql-stage-recovery-20261023/cpu_shared.py"
+  },
+  "remaining": [
+    "100 engine-submission gate fails at 9095; no limit relaxation",
+    "CPU regression requires further attribution; no speedup claim",
+    "136 connection lifetimes and whole-job publication",
+    "named physical runtime producers, source-span demand and broad consumers",
+    "allocation-dependent candidate lowering/broadening",
+    "full 3210 observations, repository CPU, memory and parity acceptance"
+  ],
+  "evidenceDirectory": ".rerail/profiles/sql-stage-recovery-20261023",
+  "sourceSelectionProvenance": ".rerail/profiles/sql-stage-recovery-20261023/shared-acceptance/provenance.json"
+}

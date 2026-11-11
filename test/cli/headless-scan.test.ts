@@ -40,7 +40,7 @@ function checkout(): string {
   git(root, "init", "--quiet", "--initial-branch=main");
   writeRule(root, "needle.json", needle("needle", "NEEDLE"));
   writeFileSync(join(root, "a.py"), "a = 1\n  x = NEEDLE\n");
-  git(root, "add", ".");
+  git(root, "add", "a.py", ".rerail/rules/needle.json");
   git(root, "commit", "--quiet", "-m", "seed");
   return root;
 }
@@ -87,7 +87,7 @@ describe("headless rerail scan", () => {
     // The change under review weakens the rule and adds one of its own; neither may judge it.
     writeRule(root, "needle.json", needle("needle", "NOTHING_MATCHES"));
     writeRule(root, "extra.json", needle("extra", "x"));
-    git(root, "add", ".");
+    git(root, "add", "a.py", ".rerail/rules/needle.json");
     git(root, "commit", "--quiet", "-m", "weaken");
     const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
     roots.push(home);
@@ -154,7 +154,7 @@ describe("headless rerail scan", () => {
     const root = checkout();
     writeRule(root, "a-broken.json", "{ not json");
     writeRule(root, "z-again.json", needle("needle", "OTHER"));
-    git(root, "add", ".");
+    git(root, "add", ".rerail/rules/a-broken.json", ".rerail/rules/z-again.json");
     git(root, "commit", "--quiet", "-m", "more rules");
     const report = await scan(root, { rulesRef: "HEAD" });
     expect(report.rules.map(rule => rule.ruleId)).toEqual(["needle"]);
@@ -180,7 +180,7 @@ describe("headless rerail scan", () => {
     const root = checkout();
     git(root, "checkout", "--quiet", "-b", "feature");
     writeFileSync(join(root, "b.py"), "NEEDLE\n");
-    git(root, "add", ".");
+    git(root, "add", "b.py");
     git(root, "commit", "--quiet", "-m", "b");
     writeFileSync(join(root, "c.py"), "NEEDLE\n");
     const diff = await scan(root, { scope: "git-diff", base: "main" });

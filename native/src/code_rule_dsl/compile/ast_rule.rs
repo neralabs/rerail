@@ -46,10 +46,12 @@ const AST_RULE_KEYS: &[&str] = &[
     "capture",
     "formatArgs",
     "layout",
+    "filePath",
     "calls",
     "embedded",
     "host",
     "importTarget",
+    "stored",
 ];
 /// Tests add `testUnknown`, a leaf whose verdict is unknown where its regex matches the node's text.
 #[cfg(test)]
@@ -76,10 +78,12 @@ const AST_RULE_KEYS: &[&str] = &[
     "capture",
     "formatArgs",
     "layout",
+    "filePath",
     "calls",
     "embedded",
     "host",
     "importTarget",
+    "stored",
     "testUnknown",
 ];
 
@@ -152,6 +156,13 @@ pub(super) fn validate_ast_rule(
         )?;
         Regex::new(source)
             .map_err(|_| invalid(format!("{path}/regex: Parsing text matcher fails.")))?;
+    }
+    // Why the token a `regex` tests is stored where the rule looks (`compile::token_tests`).
+    if let Some(stored) = rule.get("stored") {
+        non_empty_str(Some(stored), &format!("{path}/stored"))?;
+        if !rule.contains_key("regex") {
+            return Err(invalid(format!("{path}/stored says why a token a regex tests is stored: it needs a regex")));
+        }
     }
     if let Some(nth) = rule.get("nthChild") {
         validate_nth_child(nth, &format!("{path}/nthChild"), limits, utils)?;
@@ -440,14 +451,9 @@ pub(crate) fn compile_ast_rule(
     }
     if let Some(kind) = rule.get("kind").and_then(Value::as_str) {
         terms.push(match KindMatcher::try_new(kind, language) {
-            // A supertype names a symbol no node carries: ast-grep accepts it and never matches.
-            Ok(_) if is_supertype(kind, language) => grammar_gap(
-                gaps,
-                format!(
-                    "{path}/kind: `{kind}` is an abstract kind (a grammar supertype) that no node \
-                     carries; list its concrete kinds under `any`"
-                ),
-            ),
+            // A supertype names a symbol no node carries, so ast-grep's kind test never matches
+            // it: it matches the nodes the parser reported as its members (the tape's).
+            Ok(_) if is_supertype(kind, language) => AstMatcher::Supertype(crate::code_rule_dsl::matcher::Supertype::new(language.kind_to_id(kind), language)),
             Ok(matcher) => match language.kinds().kind_ids(kind).as_slice() {
                 [_] => AstMatcher::Kind(matcher),
                 ids => AstMatcher::Any(
@@ -521,6 +527,20 @@ pub(crate) fn compile_ast_rule(
                 utils,
             )
             .expect("arguments is semantic")?,
+        );
+    }
+    if let Some(condition) = rule.get("filePath") {
+        terms.push(
+            semantic::compile_key(
+                "filePath",
+                condition,
+                semantic::Stage::Atomic,
+                language,
+                &format!("{path}/filePath"),
+                gaps,
+                utils,
+            )
+            .expect("filePath is semantic")?,
         );
     }
     // Composites, negations, utilities, relations and binding terms may read captures, and all but
@@ -609,8 +629,18 @@ pub(crate) fn compile_ast_rule(
     for (key, constructor) in AST_RELATIONS {
         if let Some(relation) = rule.get(key) {
             let relation_path = format!("{path}/{key}");
-            terms.push(
-                match compile_relation(relation, language, &relation_path, gaps, utils)? {
+            let compiled = compile_relation(relation, language, &relation_path, gaps, utils)?;
+            // A bare token regex whose token the tape may leave out is also asked of the gaps (t31).
+            let past = match &compiled.1 {
+                StopBy::Rule(rule) => match rule.as_ref() {
+                    AstMatcher::Not(inner) => Some(inner.clone()),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let gap = gap_test(key, relation, language, past);
+            terms.push(with_gap(
+                match compiled {
                     (AstMatcher::Never, _, _) => AstMatcher::Never,
                     (inner, stop, None) => constructor(Related::new(inner), stop),
                     // ast-grep-config's `field_name_to_id`: a name the grammar lacks is refused.
@@ -630,7 +660,8 @@ pub(crate) fn compile_ast_rule(
                         ),
                     },
                 },
-            );
+                gap,
+            ));
             group_paths.push(relation_path);
         }
     }
@@ -1105,11 +1136,12 @@ mod tests {
     }
 
     #[test]
-    fn kindless_rules_are_accepted_and_test_anonymous_tokens() {
+    fn kindless_rules_are_accepted_and_test_stored_tokens() {
         // ast-grep 0.45.3 rejects a rule with no inferable kinds ("Rule must specify a set of AST
         // kinds to match"). Rerail keeps accepting it: it is the only way to report an anonymous
         // token (`kind` names named kinds only), such as `==`, `,` or `default`. Such a rule tests
-        // every node, so it can report punctuation.
+        // every node the tape holds: a stored token, never one the grammar implies (RER-131), so
+        // the parentheses of `(1)` are not there to report.
         let compiled = compile_typescript_rule(json!({
             "inside": { "kind": "parenthesized_expression" },
             "not": { "kind": "number" },
@@ -1117,7 +1149,7 @@ mod tests {
         .unwrap_or_else(|error| panic!("{}", error.reason));
         let source = "(1);\n";
         let result = evaluate_file(&compiled, "typescript", "a.ts", source);
-        assert_eq!(matched_texts(&result, source), ["(", ")"]);
+        assert!(matched_texts(&result, source).is_empty());
         let operator = compile_typescript_rule(json!({
             "regex": "^==$",
             "inside": { "kind": "binary_expression" },
@@ -1129,39 +1161,29 @@ mod tests {
     }
 
     #[test]
-    fn abstract_kinds_are_rejected() {
+    fn abstract_kinds_match_the_nodes_the_parser_reported_as_members() {
         // A supertype (`expression`, `statement`, ...) resolves to a symbol no node carries, so
-        // ast-grep 0.45.3 accepts it and it never matches.
-        for kind in [
-            "expression",
-            "statement",
-            "declaration",
-            "primary_expression",
-            "pattern",
-        ] {
-            let reason = rejection(compile_typescript_rule(json!({ "kind": kind })));
-            assert_eq!(
-                reason,
-                format!(
-                    "/clauses/0/forbid/ast/rule/kind: `{kind}` is an abstract kind (a grammar supertype) that no node carries; list its concrete kinds under `any` (typescript, tsx, javascript grammars)"
-                ),
-            );
+        // ast-grep's kind test never matches it. Rerail matches the nodes the parser reported as
+        // its members, which the tape stores per node (decision 0025): membership is contextual,
+        // so the assigned `a` is a `pattern`, not an `expression`, while `b` is one.
+        for kind in ["expression", "statement", "declaration", "primary_expression", "pattern"] {
+            compile_typescript_rule(json!({ "kind": kind })).unwrap_or_else(|error| panic!("{kind}: {}", error.reason));
         }
+        let source = "a = b;\n";
+        let expression = compile_typescript_rule(json!({ "kind": "expression" })).unwrap_or_else(|error| panic!("{}", error.reason));
+        let result = evaluate_file(&expression, "typescript", "a.ts", source);
+        assert_eq!(matched_texts(&result, source), ["a = b", "b"]);
+        let statement = compile_typescript_rule(json!({ "kind": "statement" })).unwrap_or_else(|error| panic!("{}", error.reason));
+        let result = evaluate_file(&statement, "typescript", "a.ts", source);
+        assert_eq!(matched_texts(&result, source), ["a = b;"]);
+        // Under a relation too.
         let python = clause_document(json!({
             "id": "c",
-            "forbid": { "ast": { "language": "python", "rule": { "kind": "identifier", "has": { "kind": "expression" } } } },
+            "forbid": { "ast": { "language": "python", "rule": { "kind": "assignment", "has": { "kind": "expression" } } } },
             "violation": violation(),
         }));
-        let reason = rejection(compile_document_with(
-            python,
-            &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
-        ));
-        assert!(
-            reason.starts_with(
-                "/clauses/0/forbid/ast/rule/has/kind: `expression` is an abstract kind"
-            ),
-            "{reason}"
-        );
+        compile_document_with(python, &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"))
+            .unwrap_or_else(|error| panic!("{}", error.reason));
         // Concrete kinds, including ones named like a keyword, still compile.
         for kind in ["expression_statement", "await_expression", "identifier"] {
             compile_typescript_rule(json!({ "kind": kind }))
@@ -1237,5 +1259,114 @@ mod tests {
             reason.ends_with("(typescript, tsx, javascript grammars)"),
             "{reason}"
         );
+    }
+}
+
+/// The gap test a relation to a bare token regex also needs (t31): `None` unless the target is
+/// a bare regex (or `any` alternatives of one) that matches a token the dialect's grammar implies
+/// somewhere, and the relation is `has` (a neighbour, or a field), or `follows`/`precedes`.
+/// `has` to the end and `inside` are left as written; the guard refuses what they cannot reach.
+pub(in crate::code_rule_dsl) fn gap_test(key: &str, relation: &Value, language: GrammarDialect, past: Option<Box<AstMatcher>>) -> Option<crate::code_rule_dsl::matcher::gap::GapTest> {
+    use crate::code_rule_dsl::matcher::gap::{GapTest, Place};
+    let object = relation.as_object()?;
+    // `stopBy: {not: X}` walks past X; the test holds only where X names kinds and tokens.
+    let past_extras = object.get("stopBy").and_then(Value::as_object).is_some_and(|stop| stop.len() == 1 && stop.contains_key("not"));
+    let end = match object.get("stopBy").and_then(Value::as_str) {
+        None if object.contains_key("stopBy") && !past_extras => return None,
+        None | Some("neighbor") => false,
+        Some("end") => true,
+        Some(_) => return None,
+    };
+    let field = object.get("field").and_then(Value::as_str);
+    let place = match (key, end, field) {
+        ("has", false, Some(field)) => Place::Field(field.to_owned()),
+        (_, _, Some(_)) => return None,
+        ("has", false, None) => Place::Own,
+        ("follows", false, None) => Place::Before,
+        ("follows", true, None) => Place::Earlier,
+        ("precedes", false, None) => Place::After,
+        ("precedes", true, None) => Place::Later,
+        _ => return None,
+    };
+    let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(language)?;
+    // A token regex, alone or beside a `not` that holds on every implied token: a `not` of kinds
+    // none of which is the token's own (an implied `accessor` is no `property_identifier`), or of
+    // an extra (no implied token is a comment).
+    let bare = |rule: &Value| -> Option<String> {
+        let rule = rule.as_object()?;
+        let regex = rule.get("regex")?.as_str()?;
+        let compiled = Regex::new(regex).ok()?;
+        fn other_kinds(rule: &Value, token: &Regex) -> bool {
+            let Some(rule) = rule.as_object().filter(|rule| rule.len() == 1) else { return false };
+            match (rule.get("kind"), rule.get("any")) {
+                (Some(kind), _) => kind.as_str().is_some_and(|kind| !token.is_match(kind)),
+                (_, Some(any)) => any.as_array().is_some_and(|any| any.iter().all(|rule| other_kinds(rule, token))),
+                _ => false,
+            }
+        }
+        let extra = |rule: &Value| rule.as_object().filter(|rule| rule.len() == 1).and_then(|rule| rule.get("kind")?.as_str()).is_some_and(|kind| grammar.is_extra(kind));
+        if !rule.iter().all(|(key, value)| key == "regex" || (key == "not" && (other_kinds(value, &compiled) || extra(value)))) {
+            return None;
+        }
+        Some(format!("(?:{regex})"))
+    };
+    let target: serde_json::Map<String, Value> = object.iter().filter(|(key, _)| !matches!(key.as_str(), "stopBy" | "field")).map(|(k, v)| (k.clone(), v.clone())).collect();
+    // `{not: {kind: comment}}` beside the regex holds on every implied token: none is an extra.
+    let not_extra = |rule: &Value| {
+        rule.as_object().filter(|rule| rule.len() == 1).and_then(|rule| rule.get("not")?.as_object()).filter(|not| not.len() == 1).and_then(|not| not.get("kind")?.as_str()).is_some_and(|kind| grammar.is_extra(kind))
+    };
+    let regexes: Vec<String> = match bare(&Value::Object(target.clone())) {
+        Some(regex) => vec![regex],
+        None if target.len() == 1 && target.contains_key("any") => target.get("any")?.as_array()?.iter().filter_map(bare).collect(),
+        None if target.len() == 1 && target.contains_key("all") => {
+            let items = target.get("all")?.as_array()?;
+            let regexes: Vec<String> = items.iter().filter_map(bare).collect();
+            if regexes.len() != 1 || !items.iter().all(|item| bare(item).is_some() || not_extra(item)) {
+                return None;
+            }
+            regexes
+        }
+        None => return None,
+    };
+    if regexes.is_empty() {
+        return None;
+    }
+    let regex = Regex::new(&regexes.join("|")).ok()?;
+    let tests = match &place {
+        Place::Field(field) => grammar.tests_implied_in(&regex, field),
+        _ => grammar.tests_implied(&regex),
+    };
+    if !tests {
+        return None;
+    }
+    let past = if past_extras { Some(past?) } else { None };
+    if past.is_some() && !matches!(place, Place::Before | Place::After) {
+        return None;
+    }
+    // The walk may pass kinds (stored children) and tokens (by a bare regex), as the gaps can; one
+    // whose stop rule says more is not a gap's question. A utility's own rule is checked as the
+    // test runs (`GapTest::holds`).
+    fn passable(rule: &Value) -> bool {
+        let Some(rule) = rule.as_object().filter(|rule| rule.len() == 1) else { return false };
+        match rule.iter().next() {
+            Some((key, value)) if key == "kind" || key == "matches" => value.is_string(),
+            Some((key, value)) if key == "regex" => value.as_str().is_some_and(|regex| Regex::new(regex).is_ok()),
+            Some((key, value)) if key == "any" => value.as_array().is_some_and(|any| any.iter().all(passable)),
+            _ => false,
+        }
+    }
+    if past.is_some() && !object.get("stopBy").and_then(|stop| stop.get("not")).is_some_and(passable) {
+        return None;
+    }
+    Some(GapTest { place, regex, grammar, dialect: language, past })
+}
+
+/// A relation's term, or it or the gap test.
+fn with_gap(term: AstMatcher, gap: Option<crate::code_rule_dsl::matcher::gap::GapTest>) -> AstMatcher {
+    use crate::code_rule_dsl::matcher::Semantic;
+    match (term, gap) {
+        (term, None) => term,
+        (AstMatcher::Never, Some(gap)) => AstMatcher::Semantic(Semantic::Gap(Box::new(gap))),
+        (term, Some(gap)) => AstMatcher::Any(vec![term, AstMatcher::Semantic(Semantic::Gap(Box::new(gap)))]),
     }
 }

@@ -1,0 +1,28 @@
+.policy "n-handle-callback-err" revision 5
+.description "Handle the err parameter of error-first callbacks instead of leaving it unused; ignoring it silently swallows failures."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/handle-callback-err: in a function whose first parameter is the error of an error-first
+// callback, that parameter must be used. The name is the option (default "err"); an option starting with "^" is
+// a regular expression tested on the name:
+//   function load(err, data) { use(data) }     reported at the function
+//   function load(err, data) { if (err) throw err }   not
+//   "^(err|error)$":  (error) => {}            reported
+// The first parameter is the first name the parameter list binds: in `function f({ err }, b)` it is err. Any
+// reference counts as handling it, from a nested function too.
+
+#include "tsx/eslint-a-functions.rr"   // function_node, fn_start; names.rr's decl_site, ref_site
+
+.decl err_name(x: symbol)  // the parameter names the option asks about
+err_name(x) :- first(_, x, _), option("option", e), !prefix("^", e), x = e.
+err_name(x) :- first(_, x, _), option("option", e), prefix("^", e), match(cat(e, ".*"), x).
+err_name("err") :- first(_, "err", _), !option("option", _).
+// first(f, x, p): p, binding x, is the first parameter name of function f.
+.decl first(f: node, x: symbol, p: node)
+first(f, x, p) :- function_node(f), decl_site(f, x, p, "param", "value"),
+    p = min q : { decl_site(f, _, q, "param", "value") }.
+
+.violation callback_err(at: node) code "n/handle-callback-err" "Expected error to be handled."
+    suppress eslint "n/handle-callback-err"
+callback_err(at) :- first(f, x, p), err_name(x), !ref_site(_, p), fn_start(f, at).

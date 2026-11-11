@@ -31,7 +31,7 @@ flowchart TD
     Tok[access-token / daemon.json]
     Ver[versions/, packs/]
   end
-  Cache[(~/.cache/rerail<br/>content-v1.sqlite)]
+  Cache[(~/.cache/rerail<br/>content-v3.sqlite)]
   Ledger[(repo/.rerail/sessions)]
   D[Daemon :4737<br/>HTTP API · MCP · dashboard]
   E[Native engine<br/>parsers · rules · model]
@@ -61,7 +61,7 @@ What Rerail holds that is worth attacking, and where it lives.
 | --- | --- | --- |
 | Session history: prompts, replies, tool inputs, **raw tool outputs** | `rerail.sqlite` (`RerailRuntime.persistEvent`) | Whatever the agent saw, secrets included, unredacted. |
 | Pre-edit source text and session ledgers | `<repo>/.rerail/sessions/<sha256(session)>/events.jsonl` | Source and prompt text in the working tree; `rewind` restores from it. |
-| Source copies, syntax trees, check results | `~/.cache/rerail/content-v1.sqlite` | A second copy of every file the engine read. |
+| Source copies, syntax trees, check results | `~/.cache/rerail/content-v3.sqlite` | A second copy of every file the engine read. |
 | Rule catalog: rules, packs, settings, start state | `rerail.sqlite` | Decides what reaches every future session, and whether Rerail is armed. |
 | Daemon access capability | `~/.rerail/access-token`, `daemon.json` (0600) | Full `person` API: all repositories, unredacted transcripts, every write. |
 | Executable code Rerail launches | `~/.rerail/versions/<v>/`, `current`, `bin/rerail`, `update-state.json`, `RERAIL_ENGINE_PATH` | Runs on every hook, daemon start and CLI call. |

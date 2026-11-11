@@ -1,0 +1,32 @@
+.policy "eslint-max-nested-callbacks" revision 3
+.description "Avoid nesting callbacks more than 10 deep; flatten them with named functions, promises or async/await."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-functions.rr"
+//   callback (a function passed to a call, or called at once), limit
+
+// ESLint's max-nested-callbacks: a function expression or arrow (a method too) that sits more than `max`
+// callbacks deep (default 10; `max`, or the number form). A callback is a function passed to a call:
+//   foo(function () { bar(function () { baz(() => {}); }); });    depth 3: with max 2, `() => {}` is reported
+// Functions that are not callbacks (declarations, `const f = () => {}`) add no depth, and declarations are
+// never reported. `checkConstructorCallCallbacks`: `new Foo(() => {})` counts as a callback too.
+// ESLint pops its stack when any function expression ends, a callback or not, so after `const g = () => 1`
+// inside a callback it undercounts; this rule counts the real depth (NOTES-js-1.md).
+.violation max_nested_callbacks(at: node, k: number, m: number) code "max-nested-callbacks"
+    "Too many nested callbacks ({k}). Flatten this callback with a named function, promises or async/await; callbacks may nest {m} deep."
+    suppress eslint "max-nested-callbacks"
+    suppress oxlint "max-nested-callbacks"
+    suppress biome "lint/nursery/noExcessiveNestedCallbacks"
+limit_rule("max", 10).
+max_nested_callbacks(at, k, m) :- checked(f), fn_start(f, at), limit("max", 10, m),
+    k = count : { stacked(f, c) }, k > m.
+// stacked(f, c): callback c is f or around f: ESLint's stack of callbacks when it visits f.
+.decl stacked(f: node, c: node)
+stacked(f, f) :- checked(f), callback(f).
+stacked(f, c) :- checked(f), inside(f, c, callback).
+// The functions ESLint visits: FunctionExpression (a method's value is one) and ArrowFunctionExpression.
+.decl checked(f: node)
+checked(f) :- (kind(f, "function_expression") ; kind(f, "generator_function") ; kind(f, "arrow_function") ;
+    kind(f, "method_definition")).

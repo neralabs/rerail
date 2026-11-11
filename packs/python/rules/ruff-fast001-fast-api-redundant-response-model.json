@@ -447,6 +447,7 @@
                   "has": {
                     "stopBy": "neighbor",
                     "regex": "^,$",
+                    "stored": "a lone trailing comma in a subscript or longer tuple: stored; a one-element tuple is the next alternative",
                     "precedes": {
                       "stopBy": "neighbor",
                       "regex": "^[\\])]$"
@@ -457,6 +458,26 @@
                         "regex": "^,$"
                       }
                     }
+                  }
+                },
+                {
+                  "kind": "tuple",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
+                      }
+                    },
+                    "min": 1,
+                    "max": 1
                   }
                 },
                 {

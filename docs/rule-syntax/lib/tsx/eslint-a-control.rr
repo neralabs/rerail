@@ -1,0 +1,98 @@
+// tsx/eslint-a-control: control flow as ESLint's core rules see it: statement lists and their first statement,
+// a body that is one statement with or without braces, switch clauses, loops, labels and jumps, the function
+// boundaries ESLint's climbs stop at, and expressions without the parentheses ESTree does not keep.
+//
+// What a rule gets from this library:
+//   statements
+//     first_stmt(b, x)        x is the first statement of block b (comments skipped)
+//     lone(b, x)              body b is the one statement x: x itself, or `{ x }`
+//     empty_body(b)           b is `;` or `{}` (no statements; comments do not count)
+//     case_stmt(c, x, i)      x is the i-th statement of switch clause c (`case …:` or `default:`)
+//     case_last(c, x)         x is the last statement of clause c
+//   loops, labels, jumps
+//     loop(s)                 s is a for, for-in, for-of, while or do-while statement
+//     breakable(s)            s is a loop or a switch: what an unlabelled `break` leaves (breakable_kind: kinds)
+//     for_await(s)            s is `for await (… of …)`
+//     repeated(l, r)          r is a part of loop l that runs on every iteration: its body, a while test, a for
+//                             test or update (not a for initialiser, nor what for-in/of iterates)
+//     label_of(l, x)          labeled statement l is `x: …`
+//     jump(j, w)              j is a `break` (w "break") or `continue` (w "continue")
+//     jump_label(j, x, l)     jump j names label x, which belongs to the enclosing labeled statement l
+//   functions and frames
+//     frame_kind(k)           a kind that starts a new nesting count: functions, static blocks, the program
+//   expressions as ESTree has them
+//     negated(e)              e is `!x`, `a != b` or `a !== b` (through parentheses)
+//     assignment(a)           a is an assignment expression: `=`, `+=`, `||=`, …
+//
+// Builds on tsx/eslint-a-common (deparen, deparen_count, function_node, token_text; also used by the rules),
+// tsx/statements (body, block_stmt, single_statement, prev_stmt, is_comment, var_decl) and core (tokens, nearest,
+// within, earlier).
+#include "tsx/eslint-a-common.rr"
+#include "tsx/statements.rr"
+
+// ---- statement lists ---------------------------------------------------------------------------------------------
+// first_stmt(b, x): in `{ /* note */ if (a) f(); g(); }` x is the if. guard-for-in tests the first statement.
+.decl first_stmt(b: node, x: node)
+first_stmt(b, x) :- block_stmt(b, x), !prev_stmt(x, _).
+// lone(b, x): the body runs exactly one statement. `if (a) x();` and `if (a) { x(); }` both give x.
+// ESLint's rules that ask "is the body just an if" (guard-for-in, no-lonely-if) look through one block.
+.decl lone(b: node, x: node)
+lone(b, b) :- body(_, b, _), !braced(b).
+lone(b, x) :- single_statement(b, x).
+// empty_body(b): `for (k in o);` or `for (k in o) {}`, or `{ /* nothing */ }`.
+.decl empty_body(b: node)
+empty_body(b) :- kind(b, "empty_statement").
+empty_body(b) :- braced(b), count : { block_stmt(b, _) } = 0.
+
+// case_stmt(c, x, i): `case 1: f(); break;` gives f() at 0 and the break at 1. Comments are skipped.
+.decl case_stmt(c: node, x: node, i: number)
+case_stmt(c, x, i) :- (kind(c, "switch_case") ; kind(c, "switch_default")), field(c, "body", x), !is_comment(x),
+    i = count : { field(c, "body", y), !is_comment(y), earlier(y, x) }.
+.decl case_last(c: node, x: node)
+case_last(c, x) :- case_stmt(c, x, i), !case_stmt(c, _, i + 1).
+
+// ---- loops, labels, jumps ----------------------------------------------------------------------------------------
+.decl loop_kind(k: symbol)
+loop_kind("for_statement"). loop_kind("for_in_statement"). loop_kind("while_statement"). loop_kind("do_statement").
+.decl loop(s: node)
+loop(s) :- kind(s, k), loop_kind(k).
+.decl breakable_kind(k: symbol)
+breakable_kind(k) :- loop_kind(k).
+breakable_kind("switch_statement").
+.decl breakable(s: node)
+breakable(s) :- kind(s, k), breakable_kind(k).
+// for_await(s): the `await` follows `for` directly. `for (await using x of xs)` has an `await` token too, inside
+// the parentheses.
+.decl for_await(s: node)
+for_await(s) :- kind(s, "for_in_statement"), match("(?s)for\\s*await\\b.*", s).
+// repeated(l, r): ESLint's isLooped, by field.  for (init; test; update) body   while (test) body
+.decl repeated(l: node, r: node)
+repeated(l, r) :- kind(l, "for_statement"), (field(l, "condition", r) ; field(l, "increment", r) ; field(l, "body", r)).
+repeated(l, r) :- kind(l, "for_in_statement"), field(l, "body", r).
+repeated(l, r) :- (kind(l, "while_statement") ; kind(l, "do_statement")),
+    (field(l, "condition", r) ; field(l, "body", r)).
+// label_of(l, "outer") for `outer: for (;;) { … }`.
+.decl label_of(l: node, x: symbol)
+label_of(l, x) :- kind(l, "labeled_statement"), field(l, "label", n), text(n, x).
+.decl jump(j: node, w: symbol)
+jump(j, "break") :- kind(j, "break_statement").
+jump(j, "continue") :- kind(j, "continue_statement").
+// jump_label(j, "outer", l): `break outer;` inside `outer: …`. A label is visible only in its own statement,
+// and JavaScript forbids reusing a label inside itself, so the enclosing labeled statement of that name is the one.
+.decl jump_label(j: node, x: symbol, l: node)
+jump_label(j, x, l) :- jump(j, _), field(j, "label", n), text(n, x), inside(j, l, "labeled_statement"),
+    label_of(l, x).
+
+// ---- expressions as ESTree has them --------------------------------------------------------------------------------
+// frame_kind(k): where ESLint's max-depth and max-nested-callbacks style counters start again from 0.
+.decl frame_kind(k: symbol)
+frame_kind(k) :- function_kind(k).
+frame_kind("class_static_block"). frame_kind("program").
+// negated(e): no-negated-condition's test.   if (!a) … else …   if (a !== b) … else …
+.decl negated(e: node)
+negated(e) :- deparen(e, x), kind(x, "unary_expression"), op(x, "!").
+negated(e) :- deparen(e, x), kind(x, "binary_expression"), (op(x, "!=") ; op(x, "!==")).
+// assignment(a): ESTree's AssignmentExpression, any operator. `a = b`, `a += b`, `a ??= b`.
+.decl assignment(a: node)
+assignment(a) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")).
+

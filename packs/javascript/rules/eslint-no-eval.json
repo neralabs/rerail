@@ -516,14 +516,7 @@
             },
             "arg": {
               "not": {
-                "any": [
-                  {
-                    "regex": "^[(),]$"
-                  },
-                  {
-                    "kind": "comment"
-                  }
-                ]
+                "kind": "comment"
               }
             },
             "a0": {
@@ -547,10 +540,12 @@
                   "matches": "arg"
                 },
                 {
-                  "follows": {
-                    "regex": "^,$",
-                    "follows": {
-                      "matches": "a0"
+                  "nthChild": {
+                    "position": 2,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
                     }
                   }
                 }
@@ -562,10 +557,12 @@
                   "matches": "arg"
                 },
                 {
-                  "follows": {
-                    "regex": "^,$",
-                    "follows": {
-                      "matches": "a1"
+                  "nthChild": {
+                    "position": 3,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
                     }
                   }
                 }

@@ -1,6 +1,7 @@
 //! TypeScript values (tree-sitter-typescript 0.23): literals as ECMAScript reads them, strings as
 //! UTF-16 code units, and operators folded, in the sense of eslint-utils' `getStaticValue`.
 
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::language::Family;
 
 #[rustfmt::skip]
@@ -68,7 +69,7 @@ fn decode_node<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
             }
         }
         "unary_expression" => {
-            let (Some(operator), Some(argument)) = (node.field("operator"), node.field("argument"))
+            let (Some(operator), Some(argument)) = (node.operator_token(), node.field("argument"))
             else {
                 return Value::Unknown;
             };
@@ -96,8 +97,7 @@ fn decode_node<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
         }
         // The last expression's value.
         "sequence_expression" => match node
-            .children()
-            .filter(|child| child.is_named() && child.kind() != "comment")
+            .named_code()
             .last()
         {
             Some(last) => decode(&last, context),
@@ -221,7 +221,7 @@ fn follow<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
 fn binary<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
     let (Some(left), Some(operator), Some(right)) = (
         node.field("left"),
-        node.field("operator"),
+        node.operator_token(),
         node.field("right"),
     ) else {
         return Value::Unknown;
@@ -252,13 +252,11 @@ pub(super) fn operand<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
     if kind == "type_assertion" {
         // `<T>x`: type arguments first, then the expression.
         return node
-            .children()
-            .filter(|child| child.is_named() && child.kind() != "comment")
+            .named_code()
             .last();
     }
     let mut named = node
-        .children()
-        .filter(|child| child.is_named() && child.kind() != "comment");
+        .named_code();
     let first = named.next()?;
     if kind == "parenthesized_expression" && named.next().is_some() {
         return None;
@@ -493,8 +491,7 @@ fn template<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
         };
         units.extend(chunk);
         let Some(expression) = substitution
-            .children()
-            .find(|child| child.is_named() && child.kind() != "comment")
+            .first_code()
         else {
             return Value::Unknown;
         };
@@ -515,6 +512,11 @@ fn template<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
         return Value::Unknown;
     }
     Value::Utf16(units)
+}
+
+/// A template chunk's cooked text (`cooked`), lone surrogates replaced.
+pub(crate) fn cooked_text(chunk: &str) -> Option<String> {
+    cooked(chunk).map(|units| String::from_utf16_lossy(&units))
 }
 
 /// A template chunk's cooked code units: line terminators normalized to LF, escapes decoded.
@@ -645,8 +647,7 @@ fn array<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
             "spread_element" => {
                 after_element = true;
                 let spread = child
-                    .children()
-                    .find(|inner| inner.is_named() && inner.kind() != "comment")
+                    .first_code()
                     .map(|inner| decode(&inner, context));
                 let items = match spread {
                     Some(Value::Array(items)) => items,
@@ -732,8 +733,7 @@ fn regexp<D: Doc>(node: &Node<'_, D>) -> Value {
 /// An object literal: only that it is an object, which is truthy even when empty.
 fn object<D: Doc>(node: &Node<'_, D>) -> Value {
     let members = node
-        .children()
-        .filter(|child| child.is_named() && child.kind() != "comment")
+        .named_code()
         .collect::<Vec<_>>();
     let spreads = members
         .iter()

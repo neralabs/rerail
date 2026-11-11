@@ -1,0 +1,833 @@
+use crate::language::Language;
+use crate::match_tree::{MatchStrictness, match_end_non_recursive, match_node_non_recursive};
+use crate::matcher::{KindMatcher, KindMatcherError, Matcher, kind_utils};
+use crate::meta_var::{MetaVarEnv, MetaVariable};
+use crate::source::SgNode;
+use crate::{Doc, Node, Root};
+
+use bit_set::BitSet;
+use thiserror::Error;
+
+use std::borrow::Cow;
+use std::collections::HashSet;
+
+#[derive(Clone)]
+pub struct Pattern {
+  pub node: PatternNode,
+  root_kind: Option<u16>,
+  pub strictness: MatchStrictness,
+}
+
+/// Rerail (RER-131): what the tree a pattern's document was written from says about each node (by
+/// `node_id`), where the document leaves its implied tokens out. `Default`: the document's own
+/// shape, as upstream.
+#[derive(Default)]
+pub struct PatternShape<'a> {
+  /// Whether the node's children end with the end-of-children goal (`PatternNode::children_end`).
+  pub ends: Option<&'a dyn Fn(usize) -> bool>,
+  /// Whether the node is a single node (`is_single_node`) in the tree it was written from.
+  pub single: Option<&'a dyn Fn(usize) -> bool>,
+}
+
+impl PatternShape<'_> {
+  fn ends(&self, node: usize) -> bool {
+    self.ends.is_some_and(|ends| ends(node))
+  }
+  fn is_single<D: Doc>(&self, node: &Node<'_, D>) -> bool {
+    match self.single {
+      Some(single) => single(node.node_id()),
+      None => is_single_node(&node.inner),
+    }
+  }
+}
+
+pub struct PatternBuilder<'a> {
+  selector: Option<&'a str>,
+  src: Cow<'a, str>,
+}
+
+impl PatternBuilder<'_> {
+  pub fn build<D, F>(&self, parse: F) -> Result<Pattern, PatternError>
+  where
+    F: FnOnce(&str) -> Result<D, String>,
+    D: Doc,
+  {
+    let doc = parse(&self.src).map_err(PatternError::Parse)?;
+    self.build_doc(doc, &PatternShape::default())
+  }
+
+  /// Rerail (RER-131): the pattern's source, as `pre_process_pattern` left it.
+  pub fn source(&self) -> &str {
+    &self.src
+  }
+
+  /// Rerail (RER-131): the pattern of `doc`, a parse of `source()`, with `shape`'s answers about
+  /// the tree it was written from (`PatternShape`).
+  pub fn build_doc<D: Doc>(&self, doc: D, shape: &PatternShape<'_>) -> Result<Pattern, PatternError> {
+    let root = Root::doc(doc);
+    let pattern = if let Some(selector) = self.selector {
+      self.contextual(&root, selector, shape)?
+    } else {
+      self.single(&root, shape)?
+    };
+    // A multi meta variable matches a list of nodes, but a pattern matches a
+    // single node, so `$$$MULTI` as the root of a pattern is invalid input.
+    if let PatternNode::MetaVar {
+      meta_var: MetaVariable::MultiCapture(_) | MetaVariable::Multiple,
+    } = &pattern.node
+    {
+      return Err(PatternError::RootMultiMetaVar(self.src.to_string()));
+    }
+    Ok(pattern)
+  }
+  fn single<D: Doc>(&self, root: &Root<D>, shape: &PatternShape<'_>) -> Result<Pattern, PatternError> {
+    let goal = root.root();
+    if goal.children().len() == 0 {
+      return Err(PatternError::NoContent(self.src.to_string()));
+    }
+    if !shape.is_single(&goal) {
+      return Err(PatternError::MultipleNode(self.src.to_string()));
+    }
+    let node = Pattern::single_matcher(root, shape);
+    Ok(Pattern {
+      node: convert_node_to_pattern(node, &|node| shape.ends(node)),
+      root_kind: None,
+      strictness: MatchStrictness::Smart,
+    })
+  }
+
+  fn contextual<D: Doc>(
+    &self,
+    root: &Root<D>,
+    selector: &str,
+    shape: &PatternShape<'_>,
+  ) -> Result<Pattern, PatternError> {
+    let goal = root.root();
+    let kind_matcher = KindMatcher::try_new(selector, root.lang().clone())?;
+    let Some(node) = goal.find(&kind_matcher) else {
+      return Err(PatternError::NoSelectorInContext {
+        context: self.src.to_string(),
+        selector: selector.into(),
+      });
+    };
+    Ok(Pattern {
+      root_kind: Some(node.kind_id()),
+      node: convert_node_to_pattern(node.get_node().clone(), &|node| shape.ends(node)),
+      strictness: MatchStrictness::Smart,
+    })
+  }
+}
+
+pub struct DumpPattern<'p> {
+  pub is_meta_var: bool,
+  pub kind: Option<Cow<'static, str>>,
+  pub text: Cow<'p, str>,
+  pub children: Vec<DumpPattern<'p>>,
+}
+
+fn dump_pattern_impl<'p>(
+  pattern: &'p PatternNode,
+  strictness: &MatchStrictness,
+  to_kind_str: &impl Fn(u16) -> Option<Cow<'static, str>>,
+) -> Option<DumpPattern<'p>> {
+  match pattern {
+    PatternNode::MetaVar { meta_var } => {
+      let meta_var = match meta_var {
+        MetaVariable::Capture(name, _) => format!("${name}"),
+        MetaVariable::MultiCapture(name) => format!("$$${name}"),
+        MetaVariable::Multiple => "$$$".to_string(),
+        MetaVariable::Dropped(_) => "$_".to_string(),
+      };
+      Some(DumpPattern {
+        is_meta_var: true,
+        kind: Some("MetaVar".into()),
+        text: meta_var.into(),
+        children: vec![],
+      })
+    }
+    PatternNode::Terminal {
+      text,
+      kind_id,
+      is_named,
+    } => {
+      if !*is_named {
+        if matches!(
+          strictness,
+          MatchStrictness::Cst | MatchStrictness::Smart | MatchStrictness::Template
+        ) {
+          return Some(DumpPattern {
+            is_meta_var: false,
+            kind: None,
+            text: text.into(),
+            children: vec![],
+          });
+        }
+        return None;
+      }
+      let kind = if matches!(strictness, MatchStrictness::Template) {
+        None
+      } else {
+        Some(to_kind_str(*kind_id).unwrap_or("UNKNOWN".into()))
+      };
+      let text = if matches!(strictness, MatchStrictness::Signature) {
+        ""
+      } else {
+        text
+      };
+      Some(DumpPattern {
+        is_meta_var: false,
+        kind,
+        text: text.into(),
+        children: vec![],
+      })
+    }
+    PatternNode::Internal { kind_id, children } => {
+      let kind = if matches!(strictness, MatchStrictness::Template) {
+        Cow::Borrowed("(node)")
+      } else {
+        to_kind_str(*kind_id).unwrap_or_else(|| "UNKNOWN".into())
+      };
+      let children = children
+        .iter()
+        .filter_map(|n| dump_pattern_impl(n, strictness, to_kind_str))
+        .collect();
+      Some(DumpPattern {
+        is_meta_var: false,
+        kind: Some(kind),
+        text: Cow::Borrowed(""),
+        children,
+      })
+    }
+  }
+}
+
+#[derive(Clone)]
+pub enum PatternNode {
+  MetaVar {
+    meta_var: MetaVariable,
+  },
+  /// Node without children.
+  Terminal {
+    text: String,
+    is_named: bool,
+    kind_id: u16,
+  },
+  /// Non-Terminal Syntax Nodes are called Internal
+  Internal {
+    kind_id: u16,
+    children: Vec<PatternNode>,
+  },
+}
+
+impl PatternNode {
+  /// Rerail (RER-131): the end-of-children goal (`kind_utils::CHILDREN_END`).
+  pub fn children_end() -> Self {
+    PatternNode::Terminal {
+      text: String::new(),
+      is_named: false,
+      kind_id: super::kind_utils::CHILDREN_END,
+    }
+  }
+
+  /// Rerail (RER-131): whether this is the end-of-children goal.
+  pub fn is_children_end(&self) -> bool {
+    matches!(self, PatternNode::Terminal { kind_id, .. } if *kind_id == super::kind_utils::CHILDREN_END)
+  }
+
+  // for skipping trivial nodes in goal after ellipsis
+  pub fn is_trivial(&self) -> bool {
+    match self {
+      PatternNode::Terminal { is_named, .. } => !*is_named,
+      _ => false,
+    }
+  }
+
+  pub fn fixed_string(&self) -> Cow<'_, str> {
+    match &self {
+      PatternNode::Terminal { text, .. } => Cow::Borrowed(text),
+      PatternNode::MetaVar { .. } => Cow::Borrowed(""),
+      PatternNode::Internal { children, .. } => {
+        children
+          .iter()
+          .map(|n| n.fixed_string())
+          .fold(Cow::Borrowed(""), |longest, curr| {
+            if longest.len() >= curr.len() {
+              longest
+            } else {
+              curr
+            }
+          })
+      }
+    }
+  }
+}
+impl<'r, D: Doc> From<Node<'r, D>> for PatternNode {
+  fn from(node: Node<'r, D>) -> Self {
+    convert_node_to_pattern(node, &|_| false)
+  }
+}
+
+impl<'r, D: Doc> From<Node<'r, D>> for Pattern {
+  fn from(node: Node<'r, D>) -> Self {
+    Self {
+      node: convert_node_to_pattern(node, &|_| false),
+      root_kind: None,
+      strictness: MatchStrictness::Smart,
+    }
+  }
+}
+
+fn convert_node_to_pattern<D: Doc>(node: Node<'_, D>, ends: &dyn Fn(usize) -> bool) -> PatternNode {
+  let end = ends(node.node_id());
+  if let Some(meta_var) = extract_var_from_node(&node) {
+    PatternNode::MetaVar { meta_var }
+  } else if node.is_leaf() && !end {
+    PatternNode::Terminal {
+      text: node.text().to_string(),
+      is_named: node.is_named(),
+      kind_id: node.kind_id(),
+    }
+  } else {
+    let mut children: Vec<_> = node
+      .children()
+      .filter_map(|n| {
+        if n.is_missing() {
+          None
+        } else {
+          Some(convert_node_to_pattern(n, ends))
+        }
+      })
+      .collect();
+    if end {
+      children.push(PatternNode::children_end());
+    }
+    PatternNode::Internal {
+      kind_id: node.kind_id(),
+      children,
+    }
+  }
+}
+
+fn extract_var_from_node<D: Doc>(goal: &Node<'_, D>) -> Option<MetaVariable> {
+  let key = goal.text();
+  goal.lang().extract_meta_var(&key)
+}
+
+#[derive(Debug, Error)]
+pub enum PatternError {
+  #[error("Fails to parse the pattern query: `{0}`")]
+  Parse(String),
+  #[error("No AST root is detected. Please check the pattern source `{0}`.")]
+  NoContent(String),
+  #[error("Multiple AST nodes are detected. Please check the pattern source `{0}`.")]
+  MultipleNode(String),
+  #[error(
+    "Standalone multi meta variable `{0}` is invalid. Use `$VAR` or wrap `$$$VAR` in a larger pattern."
+  )]
+  RootMultiMetaVar(String),
+  #[error(transparent)]
+  InvalidKind(#[from] KindMatcherError),
+  #[error(
+    "Fails to create Contextual pattern: selector `{selector}` matches no node in the context `{context}`."
+  )]
+  NoSelectorInContext { context: String, selector: String },
+}
+
+#[inline]
+fn is_single_node<'r, N: SgNode<'r>>(n: &N) -> bool {
+  match n.children().len() {
+    1 => true,
+    2 => {
+      let c = n.child(1).expect("second child must exist");
+      // some language will have weird empty syntax node at the end
+      // see golang's `$A = 0` pattern test case
+      c.is_missing() || c.kind().is_empty()
+    }
+    _ => false,
+  }
+}
+impl Pattern {
+  pub fn dump(
+    &self,
+    kind_id_to_name: &impl Fn(u16) -> Option<Cow<'static, str>>,
+  ) -> Option<DumpPattern<'_>> {
+    dump_pattern_impl(&self.node, &self.strictness, kind_id_to_name)
+  }
+  pub fn has_error(&self) -> bool {
+    let kind = match &self.node {
+      PatternNode::Terminal { kind_id, .. } => *kind_id,
+      PatternNode::Internal { kind_id, .. } => *kind_id,
+      PatternNode::MetaVar { .. } => match self.root_kind {
+        Some(k) => k,
+        None => return false,
+      },
+    };
+    kind_utils::is_error_kind(kind)
+  }
+
+  pub fn fixed_string(&self) -> Cow<'_, str> {
+    self.node.fixed_string()
+  }
+
+  /// Get all defined variables in the pattern.
+  /// Used for validating rules and report undefined variables.
+  pub fn defined_vars(&self) -> HashSet<&str> {
+    let mut vars = HashSet::new();
+    collect_vars(&self.node, &mut vars);
+    vars
+  }
+}
+
+fn meta_var_name(meta_var: &MetaVariable) -> Option<&str> {
+  use MetaVariable as MV;
+  match meta_var {
+    MV::Capture(name, _) => Some(name),
+    MV::MultiCapture(name) => Some(name),
+    MV::Dropped(_) => None,
+    MV::Multiple => None,
+  }
+}
+
+fn collect_vars<'p>(p: &'p PatternNode, vars: &mut HashSet<&'p str>) {
+  match p {
+    PatternNode::MetaVar { meta_var, .. } => {
+      if let Some(name) = meta_var_name(meta_var) {
+        vars.insert(name);
+      }
+    }
+    PatternNode::Terminal { .. } => {
+      // collect nothing for terminal nodes!
+    }
+    PatternNode::Internal { children, .. } => {
+      for c in children {
+        collect_vars(c, vars);
+      }
+    }
+  }
+}
+
+impl Pattern {
+  pub fn try_new<L: Language>(src: &str, lang: L) -> Result<Self, PatternError> {
+    let processed = lang.pre_process_pattern(src);
+    let builder = PatternBuilder {
+      selector: None,
+      src: processed,
+    };
+    lang.build_pattern(&builder)
+  }
+
+  pub fn new<L: Language>(src: &str, lang: L) -> Self {
+    Self::try_new(src, lang).unwrap()
+  }
+
+  pub fn with_strictness(mut self, strictness: MatchStrictness) -> Self {
+    self.strictness = strictness;
+    self
+  }
+
+  pub fn contextual<L: Language>(
+    context: &str,
+    selector: &str,
+    lang: L,
+  ) -> Result<Self, PatternError> {
+    let processed = lang.pre_process_pattern(context);
+    let builder = PatternBuilder {
+      selector: Some(selector),
+      src: processed,
+    };
+    lang.build_pattern(&builder)
+  }
+  fn single_matcher<'r, D: Doc>(root: &'r Root<D>, shape: &PatternShape<'_>) -> Node<'r, D> {
+    // debug_assert!(matches!(self.style, PatternStyle::Single));
+    let mut node = root.root();
+    while shape.is_single(&node) {
+      node = node.child(0).unwrap();
+    }
+    node
+  }
+}
+
+impl Matcher for Pattern {
+  fn match_node_with_env<'tree, D: Doc>(
+    &self,
+    node: Node<'tree, D>,
+    env: &mut Cow<MetaVarEnv<'tree, D>>,
+  ) -> Option<Node<'tree, D>> {
+    if let Some(k) = self.root_kind
+      && node.kind_id() != k
+    {
+      return None;
+    }
+    // do not pollute the env if pattern does not match
+    let mut may_write = Cow::Borrowed(env.as_ref());
+    let node = match_node_non_recursive(self, node, &mut may_write)?;
+    if let Cow::Owned(map) = may_write {
+      // only change env when pattern matches
+      *env = Cow::Owned(map);
+    }
+    Some(node)
+  }
+
+  fn potential_kinds(&self) -> Option<bit_set::BitSet> {
+    // if strictness is Template, we can match any kind
+    if matches!(self.strictness, MatchStrictness::Template) {
+      return None;
+    }
+    let kind = match self.node {
+      PatternNode::Terminal { kind_id, .. } => kind_id,
+      PatternNode::MetaVar { .. } => self.root_kind?,
+      PatternNode::Internal { kind_id, .. } => {
+        if kind_utils::is_error_kind(kind_id) {
+          // error can match any kind
+          return None;
+        }
+        kind_id
+      }
+    };
+
+    let mut kinds = BitSet::new();
+    kinds.insert(kind.into());
+    Some(kinds)
+  }
+
+  fn get_match_len<D: Doc>(&self, node: Node<'_, D>) -> Option<usize> {
+    let start = node.range().start;
+    let end = match_end_non_recursive(self, node)?;
+    Some(end - start)
+  }
+}
+impl std::fmt::Debug for PatternNode {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      Self::MetaVar { meta_var, .. } => write!(f, "{meta_var:?}"),
+      Self::Terminal { text, .. } => write!(f, "{text}"),
+      Self::Internal { children, .. } => write!(f, "{children:?}"),
+    }
+  }
+}
+
+impl std::fmt::Debug for Pattern {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{:?}", self.node)
+  }
+}
+
+#[cfg(test)]
+mod test {
+  use super::*;
+  use crate::language::Tsx;
+  use crate::matcher::MatcherExt;
+  use crate::meta_var::MetaVarEnv;
+  use crate::tree_sitter::StrDoc;
+  use std::collections::HashMap;
+
+  fn pattern_node(s: &str) -> Root<StrDoc<Tsx>> {
+    Root::str(s, Tsx)
+  }
+
+  fn test_match(s1: &str, s2: &str) {
+    let pattern = Pattern::new(s1, Tsx);
+    let cand = pattern_node(s2);
+    let cand = cand.root();
+    assert!(
+      pattern.find_node(cand.clone()).is_some(),
+      "goal: {:?}, candidate: {}",
+      pattern,
+      cand.get_inner_node().to_sexp(),
+    );
+  }
+  fn test_non_match(s1: &str, s2: &str) {
+    let pattern = Pattern::new(s1, Tsx);
+    let cand = pattern_node(s2);
+    let cand = cand.root();
+    assert!(
+      pattern.find_node(cand.clone()).is_none(),
+      "goal: {:?}, candidate: {}",
+      pattern,
+      cand.get_inner_node().to_sexp(),
+    );
+  }
+
+  #[test]
+  fn test_meta_variable() {
+    test_match("const a = $VALUE", "const a = 123");
+    test_match("const $VARIABLE = $VALUE", "const a = 123");
+    test_match("const $VARIABLE = $VALUE", "const a = 123");
+  }
+
+  #[test]
+  fn test_whitespace() {
+    test_match("function t() { }", "function t() {}");
+    test_match("function t() {}", "function t() {  }");
+  }
+
+  fn match_env(goal_str: &str, cand: &str) -> HashMap<String, String> {
+    let pattern = Pattern::new(goal_str, Tsx);
+    let cand = pattern_node(cand);
+    let cand = cand.root();
+    let nm = pattern.find_node(cand).unwrap();
+    HashMap::from(nm.get_env().clone())
+  }
+
+  #[test]
+  fn test_meta_variable_env() {
+    let env = match_env("const a = $VALUE", "const a = 123");
+    assert_eq!(env["VALUE"], "123");
+  }
+
+  #[test]
+  fn test_pattern_should_not_pollute_env() {
+    // gh issue #1164
+    let pattern = Pattern::new("const $A = 114", Tsx);
+    let cand = pattern_node("const a = 514");
+    let cand = cand.root().child(0).unwrap();
+    let map = MetaVarEnv::new();
+    let mut env = Cow::Borrowed(&map);
+    let nm = pattern.match_node_with_env(cand, &mut env);
+    assert!(nm.is_none());
+    assert!(env.get_match("A").is_none());
+    assert!(map.get_match("A").is_none());
+  }
+
+  #[test]
+  fn test_match_non_atomic() {
+    let env = match_env("const a = $VALUE", "const a = 5 + 3");
+    assert_eq!(env["VALUE"], "5 + 3");
+  }
+
+  #[test]
+  fn test_class_assignment() {
+    test_match("class $C { $MEMBER = $VAL}", "class A {a = 123}");
+    test_non_match("class $C { $MEMBER = $VAL; b = 123; }", "class A {a = 123}");
+    // test_match("a = 123", "class A {a = 123}");
+    test_non_match("a = 123", "class B {b = 123}");
+  }
+
+  #[test]
+  fn test_return() {
+    test_match("$A($B)", "return test(123)");
+  }
+
+  #[test]
+  fn test_contextual_pattern() {
+    let pattern =
+      Pattern::contextual("class A { $F = $I }", "public_field_definition", Tsx).expect("test");
+    let cand = pattern_node("class B { b = 123 }");
+    assert!(pattern.find_node(cand.root()).is_some());
+    let cand = pattern_node("let b = 123");
+    assert!(pattern.find_node(cand.root()).is_none());
+  }
+
+  #[test]
+  fn test_contextual_match_with_env() {
+    let pattern =
+      Pattern::contextual("class A { $F = $I }", "public_field_definition", Tsx).expect("test");
+    let cand = pattern_node("class B { b = 123 }");
+    let nm = pattern.find_node(cand.root()).expect("test");
+    let env = nm.get_env();
+    let env = HashMap::from(env.clone());
+    assert_eq!(env["F"], "b");
+    assert_eq!(env["I"], "123");
+  }
+
+  #[test]
+  fn test_contextual_unmatch_with_env() {
+    let pattern =
+      Pattern::contextual("class A { $F = $I }", "public_field_definition", Tsx).expect("test");
+    let cand = pattern_node("let b = 123");
+    let nm = pattern.find_node(cand.root());
+    assert!(nm.is_none());
+  }
+
+  fn get_kind(kind_str: &str) -> usize {
+    Tsx.kind_to_id(kind_str).into()
+  }
+
+  #[test]
+  fn test_pattern_potential_kinds() {
+    let pattern = Pattern::new("const a = 1", Tsx);
+    let kind = get_kind("lexical_declaration");
+    let kinds = pattern.potential_kinds().expect("should have kinds");
+    assert_eq!(kinds.count(), 1);
+    assert!(kinds.contains(kind));
+  }
+
+  #[test]
+  fn test_pattern_with_non_root_meta_var() {
+    let pattern = Pattern::new("const $A = $B", Tsx);
+    let kind = get_kind("lexical_declaration");
+    let kinds = pattern.potential_kinds().expect("should have kinds");
+    assert_eq!(kinds.count(), 1);
+    assert!(kinds.contains(kind));
+  }
+
+  #[test]
+  fn test_bare_wildcard() {
+    let pattern = Pattern::new("$A", Tsx);
+    // wildcard should match anything, so kinds should be None
+    assert!(pattern.potential_kinds().is_none());
+  }
+
+  #[test]
+  fn test_contextual_potential_kinds() {
+    let pattern =
+      Pattern::contextual("class A { $F = $I }", "public_field_definition", Tsx).expect("test");
+    let kind = get_kind("public_field_definition");
+    let kinds = pattern.potential_kinds().expect("should have kinds");
+    assert_eq!(kinds.count(), 1);
+    assert!(kinds.contains(kind));
+  }
+
+  #[test]
+  fn test_contextual_wildcard() {
+    let pattern = Pattern::contextual("class A { $F }", "property_identifier", Tsx).expect("test");
+    let kind = get_kind("property_identifier");
+    let kinds = pattern.potential_kinds().expect("should have kinds");
+    assert_eq!(kinds.count(), 1);
+    assert!(kinds.contains(kind));
+  }
+
+  #[test]
+  #[ignore]
+  fn test_multi_node_pattern() {
+    let pattern = Pattern::new("a;b;c;", Tsx);
+    let kinds = pattern.potential_kinds().expect("should have kinds");
+    assert_eq!(kinds.count(), 1);
+    test_match("a;b;c", "a;b;c;");
+  }
+
+  #[test]
+  #[ignore]
+  fn test_multi_node_meta_var() {
+    let env = match_env("a;$B;c", "a;b;c");
+    assert_eq!(env["B"], "b");
+    let env = match_env("a;$B;c", "a;1+2+3;c");
+    assert_eq!(env["B"], "1+2+3");
+  }
+
+  #[test]
+  #[ignore]
+  fn test_pattern_size() {
+    assert_eq!(std::mem::size_of::<Pattern>(), 40);
+  }
+
+  #[test]
+  fn test_error_kind() {
+    let ret = Pattern::contextual("a", "property_identifier", Tsx);
+    assert!(ret.is_err());
+    let ret = Pattern::new("123+", Tsx);
+    assert!(ret.has_error());
+  }
+
+  #[test]
+  fn test_bare_wildcard_in_context() {
+    let pattern = Pattern::contextual("class A { $F }", "property_identifier", Tsx).expect("test");
+    let cand = pattern_node("let b = 123");
+    // it should not match
+    assert!(pattern.find_node(cand.root()).is_none());
+  }
+
+  #[test]
+  fn test_pattern_fixed_string() {
+    let pattern = Pattern::new("class A { $F }", Tsx);
+    assert_eq!(pattern.fixed_string(), "class");
+    let pattern = Pattern::contextual("class A { $F }", "property_identifier", Tsx).expect("test");
+    assert!(pattern.fixed_string().is_empty());
+  }
+
+  #[test]
+  fn test_pattern_error() {
+    let pattern = Pattern::try_new("", Tsx);
+    assert!(matches!(pattern, Err(PatternError::NoContent(_))));
+    let pattern = Pattern::try_new("12  3344", Tsx);
+    assert!(matches!(pattern, Err(PatternError::MultipleNode(_))));
+  }
+
+  #[test]
+  fn test_root_multi_meta_var_is_rejected() {
+    // gh #2697: a standalone multi meta variable is invalid input. A pattern
+    // matches a single node, so it must be rejected when the pattern is
+    // created, not silently stored as a single meta var.
+    for src in ["$$$A", "$$$PARAMS"] {
+      let pattern = Pattern::try_new(src, Tsx);
+      assert!(
+        matches!(pattern, Err(PatternError::RootMultiMetaVar(_))),
+        "expected RootMultiMetaVar for `{src}`, got {pattern:?}"
+      );
+    }
+  }
+
+  #[test]
+  fn test_single_root_meta_var_is_accepted() {
+    // a single $META as the whole pattern is still valid
+    assert!(Pattern::try_new("$A", Tsx).is_ok());
+    assert!(Pattern::try_new("$_", Tsx).is_ok());
+  }
+
+  #[test]
+  fn test_in_list_multi_meta_var_is_unchanged() {
+    // in-list $$$ stays valid: the root node is the call expression, not the
+    // multi meta var, so existing matching behavior is preserved.
+    assert!(Pattern::try_new("foo($$$A, c)", Tsx).is_ok());
+    test_match("foo($$$A, c)", "foo(a, b, c)");
+  }
+
+  #[test]
+  fn test_debug_pattern() {
+    let pattern = Pattern::new("var $A = 1", Tsx);
+    assert_eq!(
+      format!("{pattern:?}"),
+      "[var, [Capture(\"A\", true), =, 1]]"
+    );
+  }
+
+  fn defined_vars(s: &str) -> Vec<String> {
+    let pattern = Pattern::new(s, Tsx);
+    let mut vars: Vec<_> = pattern
+      .defined_vars()
+      .into_iter()
+      .map(String::from)
+      .collect();
+    vars.sort();
+    vars
+  }
+
+  #[test]
+  fn test_extract_meta_var_from_pattern() {
+    let vars = defined_vars("var $A = 1");
+    assert_eq!(vars, ["A"]);
+  }
+
+  #[test]
+  fn test_extract_complex_meta_var() {
+    let vars = defined_vars("function $FUNC($$$ARGS): $RET { $$$BODY }");
+    assert_eq!(vars, ["ARGS", "BODY", "FUNC", "RET"]);
+  }
+
+  #[test]
+  fn test_extract_duplicate_meta_var() {
+    let vars = defined_vars("var $A = $A");
+    assert_eq!(vars, ["A"]);
+  }
+
+  #[test]
+  fn test_contextual_pattern_vars() {
+    let pattern = Pattern::contextual("<div ref={$A}/>", "jsx_attribute", Tsx).expect("correct");
+    assert_eq!(pattern.defined_vars(), ["A"].into_iter().collect());
+  }
+
+  #[test]
+  fn test_gh_1087() {
+    test_match("($P) => $F($P)", "(x) => bar(x)");
+  }
+
+  #[test]
+  fn test_template_pattern_have_no_kinds() {
+    let pattern = Pattern::new("$A = $B", Tsx).with_strictness(MatchStrictness::Template);
+    assert!(pattern.potential_kinds().is_none());
+    let pattern = Pattern::contextual("{a: b}", "pair", Tsx)
+      .expect("should create template pattern")
+      .with_strictness(MatchStrictness::Template);
+    assert!(pattern.potential_kinds().is_none());
+  }
+}

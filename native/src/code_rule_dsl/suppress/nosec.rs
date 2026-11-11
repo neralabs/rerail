@@ -171,6 +171,11 @@ impl NosecIndex {
         index
     }
 
+    /// Each line holding a `# nosec` comment, with the tests it names (none: every test).
+    pub(crate) fn directives(&self) -> impl Iterator<Item = (usize, &[&'static str])> {
+        self.lines.iter().filter_map(|(&line, tests)| Some((line, tests.as_deref()?)))
+    }
+
     /// Whether a finding of one of `codes`, reported at `at` on a node spanning `node`, is
     /// suppressed (`_get_nosecs_from_contexts`): the tests named on the reported line, together
     /// with those of the first `# nosec` among the node's lines (`get_nosec` over

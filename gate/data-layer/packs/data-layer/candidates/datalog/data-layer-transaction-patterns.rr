@@ -1,0 +1,306 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl txn_blocks(kind: symbol)
+txn_blocks("block").
+.decl txn_classes(kind: symbol)
+txn_classes("class_definition").
+.decl txn_functions(kind: symbol)
+txn_functions("function_definition").
+.decl child(p: node, c: node, i: number)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
+.decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
+.decl option_on(name: symbol)
+.decl out_scope(d: number)
+.decl rr_agg1(cs: number, n: node, s: symbol, st: number)
+.decl rr_ctx2(cs: number, n: node)
+.decl rr_demand_agg_rr_agg1(cs: number, n: node)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
+.decl txn_ac(n: node)
+.decl txn_ac_left(n: node)
+.decl txn_ac_right(n: node)
+.decl txn_after_star(ps: node, i: number)
+.decl txn_ahc(n: node)
+.decl txn_ahc_left(n: node)
+.decl txn_ahc_right(n: node)
+.decl txn_before_slash(ps: node, i: number)
+.decl txn_binop(n: node)
+.decl txn_call(c: node, conn: symbol)
+.decl txn_cf(f: node, conn: symbol)
+.decl txn_classified(f: node)
+.decl txn_gate(d: number)
+.decl txn_init_in_conn_class(f: node)
+.decl txn_it(f: node, conn: symbol)
+.decl txn_it_blocked(c: node, b: node)
+.decl txn_name_1(f: node)
+.decl txn_name_10(f: node)
+.decl txn_name_11(f: node)
+.decl txn_name_12(f: node)
+.decl txn_name_13(f: node)
+.decl txn_name_14(f: node)
+.decl txn_name_2(f: node)
+.decl txn_name_3(f: node)
+.decl txn_name_4(f: node)
+.decl txn_name_5(f: node)
+.decl txn_name_6(f: node)
+.decl txn_name_7(f: node)
+.decl txn_name_8(f: node)
+.decl txn_name_9(f: node)
+.decl txn_named(f: node, cat: symbol)
+.decl txn_param(ps: node, q: node, i: number)
+.decl txn_param_later(ps: node, i: number)
+.decl txn_param_name(q: node, c: node)
+.decl txn_splat(s: node)
+.decl txn_star(s: node)
+.decl txn_str_value(n: node, v: symbol)
+.decl txn_typed(ps: node, q: node, i: number)
+.decl txn_unclassified(f: node)
+.decl txn_union_nth(n: node, c: node, k: number)
+.decl txn_wrapper(n: node)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, text, line, value, value_type_of, node_text, token
+.output violation
+option_item("category-BACKGROUND", 0, "_get_ripple_chain").
+option_item("category-BACKGROUND", 1, "_run_handler").
+option_item("category-BACKGROUND", 10, "recover_stale_message").
+option_item("category-BACKGROUND", 11, "recover_stale_messages").
+option_item("category-BACKGROUND", 12, "wait_for_embeddings").
+option_item("category-BACKGROUND", 2, "collect_all_metrics").
+option_item("category-BACKGROUND", 3, "create_derived_ripple_session").
+option_item("category-BACKGROUND", 4, "detect_stale_messages").
+option_item("category-BACKGROUND", 5, "enqueue_ripples_for_revision").
+option_item("category-BACKGROUND", 6, "enqueue_ripples_for_revision_bridge").
+option_item("category-BACKGROUND", 7, "get_embedding_staleness").
+option_item("category-BACKGROUND", 8, "process_ripple_event").
+option_item("category-BACKGROUND", 9, "process_ripple_event_bridge").
+option_item("category-BOOTSTRAP", 0, "_ensure_bootstrap_session").
+option_item("category-BOOTSTRAP", 1, "_ensure_schema").
+option_item("category-BOOTSTRAP", 10, "ensure_database_initialized").
+option_item("category-BOOTSTRAP", 11, "ensure_migration_table_exists").
+option_item("category-BOOTSTRAP", 12, "ensure_type_metadata_table_exists").
+option_item("category-BOOTSTRAP", 13, "ensure_vector_support").
+option_item("category-BOOTSTRAP", 14, "ensure_versioning_metadata_tables").
+option_item("category-BOOTSTRAP", 15, "execute_rebase").
+option_item("category-BOOTSTRAP", 16, "initialize_config_schema_bridge").
+option_item("category-BOOTSTRAP", 17, "initialize_config_system").
+option_item("category-BOOTSTRAP", 18, "initialize_domain").
+option_item("category-BOOTSTRAP", 19, "initialize_rbac").
+option_item("category-BOOTSTRAP", 2, "_ensure_target_tip_stable").
+option_item("category-BOOTSTRAP", 20, "initialize_rbac_system").
+option_item("category-BOOTSTRAP", 21, "register_embedding_trigger").
+option_item("category-BOOTSTRAP", 22, "versioned_write_transaction").
+option_item("category-BOOTSTRAP", 3, "backfill_revision_parents").
+option_item("category-BOOTSTRAP", 4, "create_branch").
+option_item("category-BOOTSTRAP", 5, "create_config_logged_table").
+option_item("category-BOOTSTRAP", 6, "create_log_table").
+option_item("category-BOOTSTRAP", 7, "create_staged_commit").
+option_item("category-BOOTSTRAP", 8, "ensure_adapter_session").
+option_item("category-BOOTSTRAP", 9, "ensure_branch").
+option_item("category-LEGITIMATE", 0, "__enter__").
+option_item("category-LEGITIMATE", 1, "__exit__").
+option_item("category-LEGITIMATE", 10, "_get_introspector_for_connection").
+option_item("category-LEGITIMATE", 11, "_get_migration_executor").
+option_item("category-LEGITIMATE", 12, "_get_migration_history_manager").
+option_item("category-LEGITIMATE", 13, "_get_migration_plan_generator").
+option_item("category-LEGITIMATE", 14, "_import_database_handler").
+option_item("category-LEGITIMATE", 15, "_import_table_data_handler").
+option_item("category-LEGITIMATE", 16, "_import_tables_handler").
+option_item("category-LEGITIMATE", 17, "_validate").
+option_item("category-LEGITIMATE", 18, "begin_schema_transaction").
+option_item("category-LEGITIMATE", 19, "benchmark_1hop_traversal").
+option_item("category-LEGITIMATE", 2, "_create_introspector").
+option_item("category-LEGITIMATE", 20, "benchmark_2hop_traversal").
+option_item("category-LEGITIMATE", 21, "benchmark_filtered_traversal").
+option_item("category-LEGITIMATE", 22, "clear_query_statistics").
+option_item("category-LEGITIMATE", 23, "close").
+option_item("category-LEGITIMATE", 24, "connect").
+option_item("category-LEGITIMATE", 25, "disable_prepared_cache").
+option_item("category-LEGITIMATE", 26, "disable_query_instrumentation").
+option_item("category-LEGITIMATE", 27, "enable_prepared_cache").
+option_item("category-LEGITIMATE", 28, "enable_query_instrumentation").
+option_item("category-LEGITIMATE", 29, "get_backend_type").
+option_item("category-LEGITIMATE", 3, "_create_sparse_versioned_backend").
+option_item("category-LEGITIMATE", 30, "get_bulk_loader").
+option_item("category-LEGITIMATE", 31, "get_data_importer").
+option_item("category-LEGITIMATE", 32, "get_database_exporter").
+option_item("category-LEGITIMATE", 33, "get_database_importer").
+option_item("category-LEGITIMATE", 34, "get_migration_executor").
+option_item("category-LEGITIMATE", 35, "get_migration_plan_generator").
+option_item("category-LEGITIMATE", 36, "get_prepared_cache").
+option_item("category-LEGITIMATE", 37, "get_prepared_cache_debug_report").
+option_item("category-LEGITIMATE", 38, "get_prepared_cache_statistics").
+option_item("category-LEGITIMATE", 39, "get_query_instrumentation").
+option_item("category-LEGITIMATE", 4, "_execute_graphql_subscription").
+option_item("category-LEGITIMATE", 40, "get_query_statistics").
+option_item("category-LEGITIMATE", 41, "is_connected").
+option_item("category-LEGITIMATE", 42, "populate_benchmark_data").
+option_item("category-LEGITIMATE", 43, "populate_benchmark_dataset").
+option_item("category-LEGITIMATE", 44, "read").
+option_item("category-LEGITIMATE", 45, "read_transaction").
+option_item("category-LEGITIMATE", 46, "record_query").
+option_item("category-LEGITIMATE", 47, "register").
+option_item("category-LEGITIMATE", 48, "register_backup_tools").
+option_item("category-LEGITIMATE", 49, "register_import_tools").
+option_item("category-LEGITIMATE", 5, "_get_conn").
+option_item("category-LEGITIMATE", 50, "run_all_benchmarks").
+option_item("category-LEGITIMATE", 51, "schema_transaction").
+option_item("category-LEGITIMATE", 52, "set_connection").
+option_item("category-LEGITIMATE", 53, "warn_if_index_missing").
+option_item("category-LEGITIMATE", 54, "with_pinned_branch").
+option_item("category-LEGITIMATE", 55, "write").
+option_item("category-LEGITIMATE", 56, "write_transaction").
+option_item("category-LEGITIMATE", 6, "_get_data_importer").
+option_item("category-LEGITIMATE", 7, "_get_database_exporter").
+option_item("category-LEGITIMATE", 8, "_get_database_importer").
+option_item("category-LEGITIMATE", 9, "_get_import_validator").
+option_on("sourceGate").
+in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l[0-9][0-9][0-9][0-9]_*/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
+tape_syntax_error(d) :- syntax_error(d).
+txn_str_value(n, v) :- node(_, n, "string", _, _), value(n, v), value_type_of(n, "str").
+txn_str_value(n, v) :- node(_, n, "concatenated_string", _, _), value(n, v), value_type_of(n, "str").
+txn_ahc(n) :- node(_, n, "identifier", _, _), text(n, s), contains("Connection", s).
+txn_ahc(n) :- txn_str_value(n, v), contains("Connection", v).
+txn_ahc(n) :- node(_, n, "attribute", _, _), field(n, "attribute", c), txn_ahc(c).
+txn_ahc(n) :- node(_, n, "subscript", _, _), field(n, "value", c), txn_ahc(c).
+txn_ahc(n) :- node(_, n, "generic_type", _, _), child(n, c, _), node(_, c, "identifier", _, _), txn_ahc(c).
+txn_ahc(n) :- txn_wrapper(n), child(n, c, _), txn_ahc(c).
+txn_ahc(n) :- txn_ahc_left(n).
+txn_ahc(n) :- txn_ahc_right(n).
+txn_ahc_left(n) :- txn_binop(n), field(n, "left", c), txn_ahc(c).
+txn_ahc_left(n) :- txn_union_nth(n, c, 1), txn_ahc(c).
+txn_ahc_right(n) :- txn_binop(n), field(n, "right", c), txn_ahc(c).
+txn_ahc_right(n) :- txn_union_nth(n, c, 2), txn_ahc(c).
+rr_ctx2(cs, n) :- node(_, n, "union_type", _, _), child(n, c, i), node(_, c, "type", cs, _).
+rr_agg1(cs, n, s, st) :- rr_demand_agg_rr_agg1(cs, n), rr_ctx2(cs, n), token(n, _, s, st, _), prefix("#", s), st < cs.
+txn_union_nth(n, c, k) :- node(_, n, "union_type", _, _), child(n, c, i), node(_, c, "type", cs, _), j = count : { rr_agg1(cs, n, _, _) }, k = @add(@add(i, j), 1).
+txn_wrapper(n) :- node(_, n, "type", _, _).
+txn_wrapper(n) :- node(_, n, "parenthesized_expression", _, _).
+txn_binop(n) :- node(_, n, "binary_operator", _, _).
+txn_binop(n) :- node(_, n, "union_type", _, _).
+txn_ac(n) :- node(_, n, "identifier", _, _), text(n, s), match("(?s:.*)(?:Connection|^conn$)(?s:.*)", s), s != "ConnectionId".
+txn_ac(n) :- txn_str_value(n, v), match("(?s:.*)(?:Connection|^conn$)(?s:.*)", v), v != "ConnectionId".
+txn_ac(n) :- node(_, n, "attribute", _, _), field(n, "attribute", c), txn_ac(c).
+txn_ac(n) :- node(_, n, "subscript", _, _), field(n, "value", c), txn_ac(c).
+txn_ac(n) :- node(_, n, "generic_type", _, _), child(n, c, _), node(_, c, "identifier", _, _), txn_ac(c).
+txn_ac(n) :- txn_wrapper(n), child(n, c, _), txn_ac(c).
+txn_ac(n) :- txn_ahc_left(n), txn_ac_left(n).
+txn_ac(n) :- txn_binop(n), !txn_ahc_left(n), txn_ahc_right(n), txn_ac_right(n).
+txn_ac_left(n) :- txn_binop(n), field(n, "left", c), txn_ac(c).
+txn_ac_left(n) :- txn_union_nth(n, c, 1), txn_ac(c).
+txn_ac_right(n) :- txn_binop(n), field(n, "right", c), txn_ac(c).
+txn_ac_right(n) :- txn_union_nth(n, c, 2), txn_ac(c).
+txn_param_name(q, c) :- node(_, q, "typed_parameter", _, _), child(q, c, _), node(_, c, "identifier", _, _), text(c, s), s != "self".
+txn_param_name(q, c) :- node(_, q, "typed_default_parameter", _, _), field(q, "name", c), node(_, c, "identifier", _, _), text(c, s), s != "self".
+txn_star(s) :- node(_, s, "keyword_separator", _, _).
+txn_star(s) :- txn_splat(s).
+txn_star(s) :- node(_, s, "typed_parameter", _, _), child(s, c, _), txn_splat(c).
+txn_splat(s) :- node(_, s, "list_splat_pattern", _, _).
+txn_splat(s) :- node(_, s, "dictionary_splat_pattern", _, _).
+txn_typed(ps, q, i) :- node(_, ps, "parameters", _, _), child(ps, q, i), node(_, q, "typed_parameter", _, _).
+txn_typed(ps, q, i) :- node(_, ps, "parameters", _, _), child(ps, q, i), node(_, q, "typed_default_parameter", _, _).
+txn_before_slash(ps, i) :- txn_typed(ps, _, i), child(ps, s, j), node(_, s, "positional_separator", _, _), i < j.
+txn_after_star(ps, i) :- txn_typed(ps, _, i), child(ps, s, j), j < i, txn_star(s).
+txn_param(ps, q, i) :- txn_typed(ps, q, i), !txn_before_slash(ps, i), !txn_after_star(ps, i), field(q, "type", t), txn_ac(t), txn_param_name(q, _).
+txn_param_later(ps, i) :- txn_param(ps, _, i), txn_param(ps, _, j), j < i.
+txn_cf(f, conn) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), txn_param(ps, q, i), !txn_param_later(ps, i), txn_param_name(q, c), text(c, conn).
+txn_call(c, conn) :- node(_, c, "call", _, _), field(c, "function", a), node(_, a, "attribute", _, _), field(a, "object", o), node(_, o, "identifier", _, _), text(o, conn), field(a, "attribute", m), node(_, m, "identifier", _, _), text(m, s), (s = "read" ; s = "schema_transaction" ; s = "write").
+txn_it_blocked(c, b) :- txn_call(c, _), inside(c, s, txn_functions), inside(s, b, txn_blocks).
+txn_it(f, conn) :- txn_call(c, conn), inside(c, b, txn_blocks), field(f, "body", b), node(_, f, "function_definition", _, _), !txn_it_blocked(c, b).
+txn_init_in_conn_class(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), node(_, c, "identifier", _, _), text(c, "__init__"), nearest(f, k, txn_classes), field(k, "name", kn), text(kn, s), match("(?s:.*)(?:Connection|SyncConnectionPool|Transaction|TransactionGenerator)(?s:.*)", s).
+txn_named(f, cat) :- field(f, "name", c), node(_, c, "identifier", _, _), text(c, s), option_item(cat, _, s), prefix("category-", cat).
+txn_classified(f) :- txn_named(f, _).
+txn_unclassified(f) :- node(_, f, "function_definition", _, _), !txn_init_in_conn_class(f), !txn_classified(f).
+txn_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), (contains("Connection", s) ; contains("conn", s)).
+txn_gate(d) :- node(d, _, "module", _, _), !option_on("sourceGate").
+txn_name_1(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:initialize|ensure|bootstrap|create_log_table)(?s:.*)", s).
+txn_name_2(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:ripple|reaper|background|process_)(?s:.*)", s).
+txn_name_3(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:table_exists|get_table|list_tables|introspect)(?s:.*)", s).
+txn_name_4(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:export_|import_|validate_import)(?s:.*)", s).
+txn_name_5(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:rbac|permission)(?s:.*)", s).
+txn_name_6(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:schema_transaction|begin_)(?s:.*)", s).
+txn_name_7(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:_handler)(?s:.*)", s).
+txn_name_8(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:(?i)validat)(?s:.*)", s).
+txn_name_9(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:ensure|initialize|(?i:bootstrap))(?s:.*)", s).
+txn_name_10(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:stale|reaper|recover|ripple|process_|enqueue_ripple)(?s:.*)", s).
+txn_name_11(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:_detect_|get_capabilities|has_native|get_backend_type|run_after_rollback|attach_renewable_capability_runtime)(?s:.*)", s).
+txn_name_12(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:register_queue|register_table|sync_column|register_trigger)(?s:.*)", s).
+txn_name_13(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:subscribe)(?s:.*)", s).
+txn_name_14(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:export_database|import_database)(?s:.*)", s).
+violation("data-layer-transaction-patterns", "category-1", "LEGITIMATE", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_init_in_conn_class(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-2", "LEGITIMATE", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-LEGITIMATE"), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-3", "BOOTSTRAP", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-BOOTSTRAP"), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-4", "BACKGROUND", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-BACKGROUND"), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-5", "BACKEND_SPECIFIC", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-BACKEND_SPECIFIC"), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "internal-5", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-BACKEND_SPECIFIC"), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-6", "CAPABILITY", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-CAPABILITY"), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "internal-6", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-CAPABILITY"), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-7", "ADMIN_TOOLS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-ADMIN_TOOLS"), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-8", "VALIDATION", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-VALIDATION"), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-9", "SUBSCRIPTION", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-SUBSCRIPTION"), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "internal-9", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-SUBSCRIPTION"), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-10", "SCHEMA_OPS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-SCHEMA_OPS"), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "internal-10", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-SCHEMA_OPS"), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-11", "DEPRECATED", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-DEPRECATED"), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "internal-11", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-DEPRECATED"), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-12", "BACKEND_OPS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-BACKEND_OPS"), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-13", "BULK_OPS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-BULK_OPS"), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "internal-13", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-BULK_OPS"), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-14", "NEEDS_REVIEW", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-NEEDS_REVIEW"), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "internal-14", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-NEEDS_REVIEW"), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-15", "TS_BRIDGE", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-TS_BRIDGE"), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "internal-15", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-TS_BRIDGE"), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-16", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-INTERNAL_TXN_VIOLATION"), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "internal-16", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-INTERNAL_TXN_VIOLATION"), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-17", "BOOTSTRAP", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_1(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:(?:l9900_ts_models|l0500_ts_models))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-18", "BACKGROUND", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_2(f), !txn_name_1(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:(?:l9900_ts_models|l0500_ts_models))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-19", "CAPABILITY", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_3(f), !txn_name_1(f), !txn_name_2(f), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:(?:l9900_ts_models|l0500_ts_models))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "internal-19", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), txn_unclassified(f), txn_name_3(f), !txn_name_1(f), !txn_name_2(f), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:(?:l9900_ts_models|l0500_ts_models))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-20", "BULK_OPS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_4(f), !txn_name_1(f), !txn_name_2(f), !txn_name_3(f), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:(?:l9900_ts_models|l0500_ts_models))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "internal-20", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), txn_unclassified(f), txn_name_4(f), !txn_name_1(f), !txn_name_2(f), !txn_name_3(f), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:(?:l9900_ts_models|l0500_ts_models))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-21", "BOOTSTRAP", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_5(f), !txn_name_1(f), !txn_name_2(f), !txn_name_3(f), !txn_name_4(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:(?:l9900_ts_models|l0500_ts_models))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-22", "LEGITIMATE", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_6(f), !txn_name_1(f), !txn_name_2(f), !txn_name_3(f), !txn_name_4(f), !txn_name_5(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:(?:l9900_ts_models|l0500_ts_models))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-23", "BACKEND_OPS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), !txn_name_1(f), !txn_name_2(f), !txn_name_3(f), !txn_name_4(f), !txn_name_5(f), !txn_name_6(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:(?:l9900_ts_models|l0500_ts_models))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-24", "ADMIN_TOOLS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_7(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models)))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-25", "ADMIN_TOOLS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), !txn_name_7(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:(?:^|/)tools/|^l8000_admin/)(?s:.*)", p), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models)))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-26", "VALIDATION", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_8(f), !txn_name_7(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-27", "VALIDATION", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), !txn_name_7(f), !txn_name_8(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:validation)(?s:.*)", p), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-28", "BOOTSTRAP", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_9(f), !txn_name_7(f), !txn_name_8(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-29", "BACKGROUND", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_10(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-30", "CAPABILITY", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_11(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "internal-30", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), txn_unclassified(f), txn_name_11(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-31", "CAPABILITY", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:^l6510_credentials/)(?s:.*)", p), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "internal-31", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), txn_unclassified(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:^l6510_credentials/)(?s:.*)", p), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-32", "SCHEMA_OPS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_12(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "internal-32", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), txn_unclassified(f), txn_name_12(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-33", "BOOTSTRAP", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/)(?s:.*)", p), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-34", "SUBSCRIPTION", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_13(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/)|(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "internal-34", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), txn_unclassified(f), txn_name_13(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/)|(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-35", "BULK_OPS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_14(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), !txn_name_13(f), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/)|(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "internal-35", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), txn_unclassified(f), txn_name_14(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), !txn_name_13(f), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/)|(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-36", "BULK_OPS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), !txn_name_13(f), !txn_name_14(f), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:bulk)(?s:.*)", p), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/)|(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "internal-36", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), txn_unclassified(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), !txn_name_13(f), !txn_name_14(f), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:bulk)(?s:.*)", p), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/)|(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-37", "BACKEND_SPECIFIC", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), !txn_name_13(f), !txn_name_14(f), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:^impl/.*(?:sqlite|postgres|mariadb|mongodb|neo4j|doltdb))(?s:.*)", p), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/)|(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/)|(?:bulk))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "internal-37", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), txn_unclassified(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), !txn_name_13(f), !txn_name_14(f), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:^impl/.*(?:sqlite|postgres|mariadb|mongodb|neo4j|doltdb))(?s:.*)", p), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/)|(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/)|(?:bulk))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-38", "BACKEND_OPS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), !txn_name_13(f), !txn_name_14(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:^(?:api|impl|data_layer|_internal|l\\d{4}_[^/]+)/)(?s:.*)", p), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/)|(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/)|(?:bulk)|(?:^impl/.*(?:sqlite|postgres|mariadb|mongodb|neo4j|doltdb)))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-39", "NEEDS_REVIEW", p, l) :- txn_cf(f, conn), txn_unclassified(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), !txn_name_13(f), !txn_name_14(f), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/)|(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/)|(?:bulk)|(?:^impl/.*(?:sqlite|postgres|mariadb|mongodb|neo4j|doltdb))|(?:^(?:api|impl|data_layer|_internal|l\\d{4}_[^/]+)/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "internal-39", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), txn_unclassified(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), !txn_name_13(f), !txn_name_14(f), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/)|(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/)|(?:bulk)|(?:^impl/.*(?:sqlite|postgres|mariadb|mongodb|neo4j|doltdb))|(?:^(?:api|impl|data_layer|_internal|l\\d{4}_[^/]+)/))(?s:.*)", p).
+rr_demand_agg_rr_agg1(cs, n) :- node(_, n, "union_type", _, _), child(n, c, i), node(_, c, "type", cs, _).

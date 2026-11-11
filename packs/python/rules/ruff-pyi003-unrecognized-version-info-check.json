@@ -317,6 +317,7 @@
                         }
                       },
                       "regex": "^:$",
+                      "stored": "a slice's leading colon (`[:N]`): stored",
                       "not": {
                         "follows": {
                           "stopBy": "end",

@@ -475,7 +475,8 @@ async function expectUpstreamAgreement(testCase: UpstreamCase): Promise<void> {
 /**
  * M6 compile-time decisions, each against what the pinned CLI does with the same rule text: where upstream rejects
  * a rule Rerail rejects it too, and where upstream accepts a rule that can never match Rerail rejects it (a Rerail
- * extension of "no silent ignores"). Kindless rules are the one deliberate acceptance.
+ * extension of "no silent ignores"). Kindless rules are the one deliberate acceptance. An abstract kind (a grammar
+ * supertype), which upstream accepts and never matches, matches in Rerail the nodes the parser reported as its members.
  */
 interface CompileCase {
   id: string;
@@ -484,14 +485,16 @@ interface CompileCase {
   /** The ast query body as raw JSON text, so repeated keys survive. */
   query: string;
   upstream: "rejects" | "matches-nothing" | "matches";
-  rerail: "rejects" | "agrees";
+  rerail: "rejects" | "agrees" | "matches-members";
   rerailError?: RegExp;
+  /** For `matches-members`: the source text of each node Rerail reports, in report order. */
+  rerailMembers?: string[];
 }
 
 const COMPILE_CASES: CompileCase[] = [
   { id: "repeated-key", language: "python", source: "a\nb\nc\n", query: `{"kind": "identifier", "not": {"regex": "^a$"}, "not": {"regex": "^b$"}}`, upstream: "rejects", rerail: "rejects", rerailError: /^duplicate key `not` at \/clauses\/0\/forbid\/ast\/rule/ },
-  { id: "abstract-kind", language: "typescript", source: "f(a + 1);\n", query: `{"kind": "expression"}`, upstream: "matches-nothing", rerail: "rejects", rerailError: /`expression` is an abstract kind/ },
-  { id: "abstract-kind-python", language: "python", source: "f(a + 1)\n", query: `{"kind": "call", "has": {"kind": "primary_expression"}}`, upstream: "matches-nothing", rerail: "rejects", rerailError: /`primary_expression` is an abstract kind/ },
+  { id: "abstract-kind", language: "typescript", source: "f(a + 1);\n", query: `{"kind": "expression"}`, upstream: "matches-nothing", rerail: "matches-members", rerailMembers: ["f(a + 1)", "f", "a", "a + 1", "1"] },
+  { id: "abstract-kind-python", language: "python", source: "f(a + 1)\n", query: `{"kind": "call", "has": {"kind": "primary_expression"}}`, upstream: "matches-nothing", rerail: "matches-members", rerailMembers: ["f(a + 1)"] },
   { id: "python-dollar-name", language: "python", source: "import time\ntime.sleep(1)\ntime.At\n", query: `{"pattern": "time.$At"}`, upstream: "matches-nothing", rerail: "rejects", rerailError: /`\$At` is not a metavariable/ },
   { id: "typescript-dollar-identifier", language: "typescript", source: "time.At;\ntime.$At;\n", query: `{"pattern": "time.$At"}`, upstream: "matches", rerail: "agrees" },
 ];
@@ -523,7 +526,11 @@ describe(`M6 compile-time decisions against ast-grep ${UPSTREAM_VERSION}`, () =>
     const compiled = binding.CodeRuleDslRuntime.compile(source, "json", capabilities);
     const files = [{ path: `compile-${testCase.id}.${testCase.language === "python" ? "py" : "ts"}`, language: testCase.language, source: testCase.source }];
     const snapshot = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, facts: [], files });
-    const found = (JSON.parse(compiled.evaluate(snapshot, "report")) as { violations: unknown[] }).violations;
+    const found = (JSON.parse(compiled.evaluate(snapshot, "report")) as { violations: Array<{ span?: { startByte: number; endByte: number } }> }).violations;
+    if (testCase.rerail === "matches-members") {
+      expect(found.map(item => testCase.source.slice(item.span!.startByte, item.span!.endByte))).toEqual(testCase.rerailMembers);
+      return;
+    }
     expect(found).toHaveLength(upstreamResult.matches);
   });
 

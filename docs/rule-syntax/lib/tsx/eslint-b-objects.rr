@@ -1,0 +1,220 @@
+// tsx/eslint-b-objects: calls, receivers, keys and bindings, as ESLint's object and call rules see them (ESTree).
+// For no-useless-call, prefer-spread, prefer-object-has-own, no-prototype-builtins and the js-2 rules on keys,
+// destructuring and renames.
+//
+// What a rule gets from this library:
+//   id_value(n, x)           x is ESTree's name for identifier n: its text with \u0061 and \u{61} escapes decoded
+//   module_name(n, x)        x is an import or export name: an identifier's name or a string's value
+//   forwarding(c, f, x, t)   call c is `f.x(t, …)`: x is "call" or "apply", read by static name, t the first
+//                            argument; parentheses and optional chains aside, as ESTree has them
+//   natural_this(c)          t is the `this` f gets anyway: f is `o.g` or `o[k]` and t has o's tokens, or f is
+//                            a plain function and t is null, undefined or `void …` (ESLint's isValidThisArg)
+//   global_at(n, x)          at n the name x resolves to the global variable x (ESLint's getVariableByName finds
+//                            it in the global scope): no declaration around n but a script's top-level one, no
+//                            named function or class expression x around n, no `/* global x: off */`;
+//                            for the names of global_at_ask(x)
+//   global_member(e, g, x)   e reads member x of the global g (Math.pow, Math["pow"], globalThis.Math.pow), g a
+//                            builtin_ref the file never writes: ReferenceTracker's iterateGlobalReferences for a
+//                            one-level trace map
+//   precedence(e, p)         ESLint's getPrecedence of e without its parentheses, asked for prec_ask(e)
+//   natural_key(s, k)        k sorts as s does under the natural-compare package (sort-keys' natural option):
+//                            compare k with < where ESLint compares s with naturalCompare; asked for nat_ask(s)
+//   touching(t, n)           token t ends exactly where node n starts (no space between)
+//   cannot_touch(a, b)       texts a and b cannot be written side by side as tokens: `a` `b`, `+` `++`
+//
+// Builds on tsx/eslint-a-expressions (deparen, static_prop), tsx/eslint-a-functions (call_arg, call_arg_count,
+// token_text, token_text_ask), tsx/eslint-b-scope (builtin_ref, expr_name, global_off, and through it
+// eslint-a-globals' null_or_undefined) and tsx/modules (program, source_type), which brings tsx/names (decl_site).
+#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-b-scope.rr"
+#include "layout.rr"
+
+// ---- names ---------------------------------------------------------------------------------------------------------
+// id_value(n, x): an identifier may spell its letters as escapes, and ESTree's `name` is the decoded name, which
+// ESLint's rules compare.   let { \u0061: a } = o;    the key's name is a.   Only the ASCII characters of
+// identifiers are decoded (hex_char); a name with another escape has no row.
+.decl id_value(n: node, x: symbol)
+id_value(n, x) :- id_kind(n), text(n, x), !contains("\\", x).
+id_value(n, x) :- id_kind(n), text(n, s), contains("\\", s), unescape(s, x), !contains("\\", x).
+.decl id_kind(n: node)
+id_kind(n) :- (kind(n, "identifier") ; kind(n, "property_identifier") ; kind(n, "shorthand_property_identifier") ;
+    kind(n, "shorthand_property_identifier_pattern") ; kind(n, "private_property_identifier")).
+// unescape(s, t): t is s with its first escapes decoded, one more per step: a\u{62}\u0063 → ab\u0063 → abc.
+.decl unescape(s: symbol, t: symbol)
+unescape(s, s) :- id_kind(n), text(n, s), contains("\\", s).
+unescape(s, cat(A, cat(c, B))) :- unescape(s, t), match("(?<A>[^\\\\]*)\\\\u(?<H>[0-9a-fA-F]{4})(?<B>.*)", t),
+    hex_char(@lower(H), c).
+unescape(s, cat(A, cat(c, B))) :- unescape(s, t), match("(?<A>[^\\\\]*)\\\\u\\{0*(?<H>[0-9a-fA-F]{1,4})\\}(?<B>.*)", t),
+    h = cat("000", @lower(H)), hex_char(@slice(h, strlen(h) - 4, strlen(h)), c).
+.decl hex_char(h: symbol, c: symbol)  // four lower-case hex digits and the ASCII identifier character they code
+hex_char("0061", "a"). hex_char("0062", "b"). hex_char("0063", "c"). hex_char("0064", "d"). hex_char("0065", "e").
+hex_char("0066", "f"). hex_char("0067", "g"). hex_char("0068", "h"). hex_char("0069", "i"). hex_char("006a", "j").
+hex_char("006b", "k"). hex_char("006c", "l"). hex_char("006d", "m"). hex_char("006e", "n"). hex_char("006f", "o").
+hex_char("0070", "p"). hex_char("0071", "q"). hex_char("0072", "r"). hex_char("0073", "s"). hex_char("0074", "t").
+hex_char("0075", "u"). hex_char("0076", "v"). hex_char("0077", "w"). hex_char("0078", "x"). hex_char("0079", "y").
+hex_char("007a", "z"). hex_char("0041", "A"). hex_char("0042", "B"). hex_char("0043", "C"). hex_char("0044", "D").
+hex_char("0045", "E"). hex_char("0046", "F"). hex_char("0047", "G"). hex_char("0048", "H"). hex_char("0049", "I").
+hex_char("004a", "J"). hex_char("004b", "K"). hex_char("004c", "L"). hex_char("004d", "M"). hex_char("004e", "N").
+hex_char("004f", "O"). hex_char("0050", "P"). hex_char("0051", "Q"). hex_char("0052", "R"). hex_char("0053", "S").
+hex_char("0054", "T"). hex_char("0055", "U"). hex_char("0056", "V"). hex_char("0057", "W"). hex_char("0058", "X").
+hex_char("0059", "Y"). hex_char("005a", "Z"). hex_char("0030", "0"). hex_char("0031", "1"). hex_char("0032", "2").
+hex_char("0033", "3"). hex_char("0034", "4"). hex_char("0035", "5"). hex_char("0036", "6"). hex_char("0037", "7").
+hex_char("0038", "8"). hex_char("0039", "9"). hex_char("005f", "_"). hex_char("0024", "$").
+.decl module_name(n: node, x: symbol)  // import { "a-b" as c }: an export may be named by a string
+module_name(n, x) :- kind(n, "identifier"), id_value(n, x).
+module_name(n, x) :- kind(n, "string"), value(n, x).
+
+// ---- calls ---------------------------------------------------------------------------------------------------------
+// forwarding(c, f, x, t): Function.prototype.call and apply.
+//   foo.call(undefined, 1)    obj.foo.apply(obj, args)    (a?.b).call(a, x)    foo["apply"](null, xs)
+// x is read by static name (getStaticPropertyName); a rule that wants only the dotted form tests dotted_member.
+.decl forwarding(c: node, f: node, x: symbol, t: node)
+forwarding(c, f, x, t) :- kind(c, "call_expression"), field(c, "function", e), deparen(e, m), static_prop(m, o, x),
+    (x = "call" ; x = "apply"), deparen(o, f), call_arg(c, a, 0), deparen(a, t).
+// natural_this(c): the receiver is the one f has. Receivers compare as ESLint's equalTokens: token by token.
+//   obj.foo.call(obj, 1)    a.b.c.apply(a.b, xs)    foo.call(null, 1)     → natural
+//   obj.foo.call(other)     foo.call(this)                                 → not
+.decl natural_this(c: node)
+natural_this(c) :- forwarding(c, f, _, t), receiver(f, o), token_text(o, s), token_text(t, s).
+token_text_ask(o) :- forwarding(_, f, _, _), receiver(f, o).
+token_text_ask(t) :- forwarding(_, f, _, t), receiver(f, _).
+natural_this(c) :- forwarding(c, f, _, t), !receiver(f, _), null_or_undefined(t).
+.decl receiver(f: node, o: node)  // f is `o.g` or `o[k]`
+receiver(f, o) :- forwarding(_, f, _, _), (kind(f, "member_expression") ; kind(f, "subscript_expression")),
+    field(f, "object", w), deparen(w, o).
+
+// ---- scope ---------------------------------------------------------------------------------------------------------
+// global_at(n, x): getVariableByName(scope, x) climbs to the global scope and finds x there. A script's top-level
+// `var Object` is that same global variable, so it does not stop it; any other declaration around n does, and so
+// does a named function or class expression x around n (its name has a scope of its own), and `/* global x: off */`,
+// which removes the variable. Asked at a position, not a reference: `({}).hasOwnProperty.call(a, b)` names no Object.
+//   function f(Object) { ({}).hasOwnProperty.call(a, b); }        not global_at(call, "Object")
+// By scope only: a `let` declared after n in the same block still counts, as eslint-scope's variables do.
+.decl global_at_ask(x: symbol)  // filled by the including rule: the names it asks about
+.decl global_at(n: node, x: symbol)
+global_at(n, x) :- global_at_ask(x), node(d, n, _, _, _), !declared_around(n, x), !named_expr_around(n, x),
+    !global_off(d, x).
+.decl declared_around(n: node, x: symbol)
+declared_around(n, x) :- global_at_ask(x), decl_site(s, x, _, _, "value"), within(n, s), !script_top(s).
+// named_expr_around(n, x): eslint-b-scope's expr_name, read at a position rather than at a reference to x.
+.decl named_expr_around(n: node, x: symbol)
+named_expr_around(n, x) :- global_at_ask(x), inside(n, f, named_expr_kind), field(f, "name", m), text(m, x).
+.decl named_expr_kind(k: symbol)
+named_expr_kind("function_expression"). named_expr_kind("generator_function"). named_expr_kind("class").
+.decl script_top(s: node)
+script_top(p) :- program(d, p), source_type(d, "script").
+
+// ---- globals -------------------------------------------------------------------------------------------------------
+// global_member(e, g, x): a member read off a global, directly or through a global object: ReferenceTracker reads
+// the global variable g only while nothing in the file defines it (builtin_ref), and the global objects globalThis
+// (a built-in), window, self and global when they are global variables (a `/* global */` comment declares them;
+// ESLint's default environment has no browser or Node globals).
+//   Math.pow(a, b)    Math["pow"](a, b)    globalThis.Math.pow(a, b)      all global_member(_, "Math", "pow")
+//   function f(Math) { Math.pow(a, b); }    var q = function Math() { Math.pow(a, b); }     not
+.decl global_member(e: node, g: symbol, x: symbol)
+global_member(e, g, x) :- static_prop(e, o, x), deparen(o, r), global_named(r, g).
+.decl global_named(r: node, g: symbol)  // r is the global g: a built-in reference, or g read off the global object
+// values.rr's env_written is ReferenceTracker's isModifiedGlobal: the file writes the global, so it is not followed.
+//   Math = m;   Math.pow(a, b)        not reported
+global_named(r, g) :- builtin_ref(r, g), docof(r, d), !env_written(d, g).
+global_named(r, g) :- static_prop(r, o, g), deparen(o, w), global_named(w, x),
+    (x = "globalThis" ; x = "window" ; x = "self" ; x = "global").
+
+// ---- precedence ----------------------------------------------------------------------------------------------------
+// precedence(e, p): astUtils.getPrecedence, which fixes use to decide where parentheses go. On tree-sitter kinds:
+//   0 sequence   1 assignment, arrow, yield   3 ?:   4 || ??   5 &&   6 |   7 ^   8 &   9 equality   10 relational,
+//   in, instanceof   11 shifts   12 + -   13 * / %   15 **   16 unary, await   17 ++ --   18 call   19 new
+//   20 anything else ESTree has (names, literals, members, …); -1 the TypeScript expressions (`a as T`, `a!`),
+//   which ESLint does not know and so always parenthesises.
+.decl prec_ask(e: node)  // filled by the including rule: the nodes it asks about
+.decl precedence(e: node, p: number)
+precedence(e, p) :- prec_ask(e), deparen(e, x), kind(x, k), prec_kind(k, p).
+precedence(e, p) :- prec_ask(e), deparen(e, x), kind(x, "binary_expression"), op(x, o), prec_op(o, p).
+precedence(e, 20) :- prec_ask(e), deparen(e, x), kind(x, k), !prec_kind(k, _), !ts_expression(k),
+    k != "binary_expression".
+precedence(e, -1) :- prec_ask(e), deparen(e, x), kind(x, k), ts_expression(k).
+.decl prec_kind(k: symbol, p: number)
+prec_kind("sequence_expression", 0). prec_kind("assignment_expression", 1).
+prec_kind("augmented_assignment_expression", 1). prec_kind("arrow_function", 1). prec_kind("yield_expression", 1).
+prec_kind("ternary_expression", 3). prec_kind("unary_expression", 16). prec_kind("await_expression", 16).
+prec_kind("update_expression", 17). prec_kind("call_expression", 18). prec_kind("new_expression", 19).
+.decl prec_op(o: symbol, p: number)
+prec_op("||", 4). prec_op("??", 4). prec_op("&&", 5). prec_op("|", 6). prec_op("^", 7). prec_op("&", 8).
+prec_op("==", 9). prec_op("!=", 9). prec_op("===", 9). prec_op("!==", 9). prec_op("<", 10). prec_op("<=", 10).
+prec_op(">", 10). prec_op(">=", 10). prec_op("in", 10). prec_op("instanceof", 10). prec_op("<<", 11).
+prec_op(">>", 11). prec_op(">>>", 11). prec_op("+", 12). prec_op("-", 12). prec_op("*", 13). prec_op("/", 13).
+prec_op("%", 13). prec_op("**", 15).
+.decl ts_expression(k: symbol)
+ts_expression("as_expression"). ts_expression("satisfies_expression"). ts_expression("non_null_expression").
+ts_expression("type_assertion").
+
+// ---- adjacent tokens -----------------------------------------------------------------------------------------------
+// A fix that swaps `Math.pow(a, b)` for `a**b` can glue its first token to the one before: `a+Math.pow(++b, c)`
+// must become `a+ ++b**c`, `typeof Math.pow(a, b)` stays apart anyway. touching(t, n): nothing between them.
+// touching(n, x): the code before n touches it; x is that code (layout.rr's touch_before, for the nodes the
+// including rule puts in layout_at).
+.decl touching(n: node, x: symbol)
+touching(n, x) :- touch_before(n, x).
+// cannot_touch(a, b): ESLint's canTokensBeAdjacent, for the cases that arise: two words (names, keywords,
+// numbers), or `+` / `-` before a token that starts with the same sign.
+.decl cannot_touch(a: symbol, b: symbol)
+cannot_touch(a, b) :- touch_pair(a, b), match("[\\s\\S]*[A-Za-z0-9_$]", a), match("[A-Za-z0-9_$][\\s\\S]*", b).
+cannot_touch(a, b) :- touch_pair(a, b), (suffix("+", a), prefix("+", b) ; suffix("-", a), prefix("-", b)).
+.decl touch_pair(a: symbol, b: symbol)  // filled by the including rule: the token texts its fix puts side by side
+
+// ---- natural order -------------------------------------------------------------------------------------------------
+// natural_key(s, k): natural-compare 1.4 orders strings by a remapped alphabet: the control characters and
+// ' ' … ',' first, then '.', '/', ':' … '@', '[' … '`', '{' … '~', DEL, '-', the digits, 'A' … 'Z', 'a' … 'z',
+// and other characters by code; and a run of digits that starts with 1-9 compares as a number when both strings
+// have one at the same place:
+//   a2 < a10 < b      _ < A      a-b < a.b
+// k spells each character as its 3-digit code in that alphabet ("000"-"127", so `<` on k compares codes) and a
+// non-ASCII character as "9" and itself (after all ASCII, then by code point). A number run is "07", its length
+// in two digits, then its digits: it sorts between "066" ('0') and "076" ('A'), as natural-compare's codes for
+// the digits do, and two runs compare by length, then digit by digit, which is by value.
+.decl nat_ask(s: symbol)  // filled by the including rule
+.decl natural_key(s: symbol, k: symbol)
+natural_key(s, k) :- nat_step(s, "", k).
+.decl nat_step(s: symbol, rest: symbol, k: symbol)  // k encodes the part of s before rest
+nat_step(s, s, "") :- nat_ask(s).
+nat_step(s, T, cat(k, cat("07", cat(w, R)))) :- nat_step(s, r, k), match("(?<R>[1-9][0-9]*)(?<T>.*)", r),
+    n = cat("0", to_string(strlen(R))), w = @slice(n, strlen(n) - 2, strlen(n)).
+nat_step(s, @slice(r, 1, strlen(r)), cat(k, x)) :- nat_step(s, r, k), r != "", !match("[1-9].*", r),
+    nat_code(@slice(r, 0, 1), x).
+nat_step(s, @slice(r, 1, strlen(r)), cat(k, x)) :- nat_step(s, r, k), r != "", c = @slice(r, 0, 1),
+    nat_control(re, x), match(re, c).
+nat_step(s, @slice(r, 1, strlen(r)), cat(k, cat("9", c))) :- nat_step(s, r, k), r != "", c = @slice(r, 0, 1),
+    !match("[1-9].*", r), !nat_code(c, _), !match("[\\x00-\\x1f\\x7f]", c).
+// nat_control(re, x): the control characters, as a regex for the one character and its code: 0-31 keep their own
+// code (natural-compare maps every code below 45 to itself), DEL (127) becomes 64. `{"\x01a": 1, " b": 2}` sorts
+// \x01a first.
+.decl nat_control(re: symbol, x: symbol)
+.decl nat_code(c: symbol, x: symbol)  // the ASCII characters other than 1-9, and natural-compare's code for each
+nat_control("\\x00", "000"). nat_control("\\x01", "001"). nat_control("\\x02", "002"). nat_control("\\x03", "003").
+nat_control("\\x04", "004"). nat_control("\\x05", "005"). nat_control("\\x06", "006"). nat_control("\\x07", "007").
+nat_control("\\x08", "008"). nat_control("\\x09", "009"). nat_control("\\x0a", "010"). nat_control("\\x0b", "011").
+nat_control("\\x0c", "012"). nat_control("\\x0d", "013"). nat_control("\\x0e", "014"). nat_control("\\x0f", "015").
+nat_control("\\x10", "016"). nat_control("\\x11", "017"). nat_control("\\x12", "018"). nat_control("\\x13", "019").
+nat_control("\\x14", "020"). nat_control("\\x15", "021"). nat_control("\\x16", "022"). nat_control("\\x17", "023").
+nat_control("\\x18", "024"). nat_control("\\x19", "025"). nat_control("\\x1a", "026"). nat_control("\\x1b", "027").
+nat_control("\\x1c", "028"). nat_control("\\x1d", "029"). nat_control("\\x1e", "030"). nat_control("\\x1f", "031").
+nat_control("\\x7f", "064").
+nat_code(" ", "032"). nat_code("!", "033"). nat_code("\"", "034"). nat_code("#", "035"). nat_code("$", "036").
+nat_code("%", "037"). nat_code("&", "038"). nat_code("'", "039"). nat_code("(", "040"). nat_code(")", "041").
+nat_code("*", "042"). nat_code("+", "043"). nat_code(",", "044"). nat_code("-", "065"). nat_code(".", "045").
+nat_code("/", "046"). nat_code("0", "066"). nat_code(":", "047"). nat_code(";", "048"). nat_code("<", "049").
+nat_code("=", "050"). nat_code(">", "051"). nat_code("?", "052"). nat_code("@", "053"). nat_code("A", "076").
+nat_code("B", "077"). nat_code("C", "078"). nat_code("D", "079"). nat_code("E", "080"). nat_code("F", "081").
+nat_code("G", "082"). nat_code("H", "083"). nat_code("I", "084"). nat_code("J", "085"). nat_code("K", "086").
+nat_code("L", "087"). nat_code("M", "088"). nat_code("N", "089"). nat_code("O", "090"). nat_code("P", "091").
+nat_code("Q", "092"). nat_code("R", "093"). nat_code("S", "094"). nat_code("T", "095"). nat_code("U", "096").
+nat_code("V", "097"). nat_code("W", "098"). nat_code("X", "099"). nat_code("Y", "100"). nat_code("Z", "101").
+nat_code("[", "054"). nat_code("\\", "055"). nat_code("]", "056"). nat_code("^", "057"). nat_code("_", "058").
+nat_code("`", "059"). nat_code("a", "102"). nat_code("b", "103"). nat_code("c", "104"). nat_code("d", "105").
+nat_code("e", "106"). nat_code("f", "107"). nat_code("g", "108"). nat_code("h", "109"). nat_code("i", "110").
+nat_code("j", "111"). nat_code("k", "112"). nat_code("l", "113"). nat_code("m", "114"). nat_code("n", "115").
+nat_code("o", "116"). nat_code("p", "117"). nat_code("q", "118"). nat_code("r", "119"). nat_code("s", "120").
+nat_code("t", "121"). nat_code("u", "122"). nat_code("v", "123"). nat_code("w", "124"). nat_code("x", "125").
+nat_code("y", "126"). nat_code("z", "127"). nat_code("{", "060"). nat_code("|", "061"). nat_code("}", "062").
+nat_code("~", "063").

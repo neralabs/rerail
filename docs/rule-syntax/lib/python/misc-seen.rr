@@ -1,0 +1,19 @@
+// python/misc-seen: whether a file imports a module at all, as Ruff's `seen_module` gate tests it.
+//
+// Interface
+//   seen_module(d, m)    document d imports module m, or a submodule of it, anywhere (`import m`, `import m.x`,
+//                        `from m import y`, `from m.x import y`); m is one of the modules a rule lists in seen_ask
+//   seen_ask(m)          the modules asked about: a rule or library adds `seen_ask("pandas").`
+//
+// Ruff background
+//   Many Ruff rules about one library (pandas, datetime, logging) first check that the file imports it, so a
+//   lookalike method on another object (`torch.nn.ReLU(inplace=True)`) is left alone in files without it.
+//   Ruff sets the flag as it visits each import, so an expression above the import at module level does not see
+//   it; here the whole file does. Function bodies, which Ruff visits after the module, agree either way.
+//     import pandas as pd            seen_module(d, "pandas")
+//     from datetime import date      seen_module(d, "datetime")
+#include "python/imports.rr"
+
+.decl seen_ask(m: symbol)
+.decl seen_module(d: number, m: symbol)
+seen_module(d, m) :- seen_ask(m), import_alias(i, _, q, _, _), (q = m ; prefix(cat(m, "."), q)), docof(i, d).

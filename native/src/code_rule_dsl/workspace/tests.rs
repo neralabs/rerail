@@ -146,8 +146,11 @@ fn a_stored_local_result_decodes_to_typed_witnesses_and_re_encodes_to_its_bytes(
     );
     assert_eq!(printed.captures.get("B"), None);
     assert_eq!(
-        printed.captures.projection(),
-        Some(&json!({ "package": "pkg" }))
+        printed
+            .captures
+            .projection()
+            .map(crate::code_rule_dsl::violations::projection::Row::json),
+        Some(json!({ "package": "pkg" }))
     );
     assert_eq!(printed.message.as_deref(), Some("print 1"));
     assert_eq!(printed.fix.as_ref().unwrap()["text"], "log(1, 2)");
@@ -838,7 +841,11 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
         crate::content_store::SearchKindLookup {
             tape_id,
             index_version: crate::code_rule_dsl::transducer::POSITIONAL_INDEX_VERSION,
-            kind_tokens: vec![crate::code_rule_dsl::transducer::kind_index_token(call)],
+            kind_tokens: vec![crate::code_rule_dsl::transducer::kind_index_token(
+                crate::code_rule_dsl::language::GrammarDialect::Python,
+                call,
+            )
+            .unwrap()],
         }
     });
     assert_eq!(
@@ -3651,6 +3658,64 @@ fn reads_package_manifests_only_with_an_ast_clause_in_a_manifest_family() {
         )
         .unwrap();
     assert!(python.reads_package_manifests());
+}
+
+#[test]
+#[cfg_attr(
+    not(feature = "p-anchor-corpus"),
+    ignore = "P's anchor corpus is filled only on the p-anchor-corpus path (open item O20)"
+)]
+fn positional_index_lives_with_the_workspace_across_applies_and_deletions() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace
+        .add_code_rule(&tape_test_code_rule(), None)
+        .unwrap();
+    let file = |path: &str, source: &str| json!({"path":path,"language":"python","source":source});
+    tape_test_apply(
+        &workspace,
+        1,
+        vec![file("a.py", "print('a')\n"), file("b.py", "print('b')\n")],
+    );
+    let census = || workspace.state.lock().unwrap().anchor_corpus.census();
+    let first = census();
+    assert_eq!(first.1, 2);
+    // Neither an empty apply nor resending an identical source rebuilds postings.
+    tape_test_apply(&workspace, 2, vec![]);
+    assert_eq!(census(), first);
+    tape_test_apply(&workspace, 3, vec![file("a.py", "print('a')\n")]);
+    assert_eq!(census(), first);
+    // A retry of an interrupted rule is still the same indexed source revision.
+    workspace
+        .state
+        .lock()
+        .unwrap()
+        .files
+        .get_mut("a.py")
+        .unwrap()
+        .transient_failure = true;
+    tape_test_apply(&workspace, 4, vec![file("a.py", "print('a')\n")]);
+    assert_eq!(census(), first);
+    tape_test_apply(&workspace, 5, vec![file("a.py", "print('edited')\n")]);
+    assert_eq!(census().1, 2);
+    assert!(census().0 > first.0);
+    let mut remove = WorkspaceApplyTask {
+        state: Arc::clone(&workspace.state),
+        closed: Arc::clone(&workspace.closed),
+        request_json: json!({"revision":6,"files":[],"removed":["a.py"]}).to_string(),
+        request_buffer: None,
+        request_direct: None,
+    };
+    remove.compute().unwrap();
+    assert_eq!(census().1, 1);
+    // A new workspace has no rows from the previous workspace's SQL corpus.
+    let independent = CodeRuleDslWorkspace::new();
+    assert_eq!(
+        independent.state.lock().unwrap().anchor_corpus.census(),
+        (0, 0)
+    );
+    independent.close();
+    workspace.close();
 }
 
 /// A clause reporting each JavaScript string that names an import target resolution fails for.

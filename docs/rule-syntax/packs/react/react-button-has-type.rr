@@ -1,0 +1,64 @@
+.policy "react-button-has-type" revision 2
+.description "Give every button an explicit, static type: \"button\", \"submit\" or \"reset\"."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/button-has-type: a <button> or createElement("button", …) whose type is missing, not one of "button",
+// "submit" and "reset" (the options allow all three), or not static. Static means a string, a plain template, or
+// a ternary of static values. Missing and invalid types are reported at the element or call; a value that is not
+// static is reported at that value.
+//   <button>x</button>                         missing           <button type="buton" />        invalid
+//   <button type={cond ? "submit" : kind} />   complex, at `kind`
+//   React.createElement("button", { type })    complex, at `type`: a shorthand reads a variable
+// The type prop is found as jsx-ast-utils' getProp finds it: the first prop named type in any case (TYPE= counts),
+// or the first such key of a {...{ type: "x" }} spread literal. In createElement the key must be `type` exactly.
+#include "tsx/react.rr"
+
+.violation button_type(at: node, msg: symbol)
+    code "react/button-has-type"
+    "{msg}"
+    suppress eslint "react/button-has-type"
+    suppress oxlint "button-has-type"
+    suppress biome "lint/a11y/useButtonType"
+button_type(e, "Missing an explicit type attribute for button") :- button(e, o), !type_prop(o, _).
+button_type(c, "Missing an explicit type attribute for button") :- button_call(c), !first_type_key(c, _).
+button_type(e, "Set this button type to \"button\", \"submit\" or \"reset\".") :- type_value(e, v), invalid(v).
+// <button type>: a prop without a value is `true`.
+button_type(e, "Set this button type to \"button\", \"submit\" or \"reset\".") :- button(e, o), type_prop(o, a),
+    kind(a, "jsx_attribute"), !child(a, _, 1).
+button_type(v, "The button type attribute must be specified by a static string or a trivial ternary expression") :-
+    type_value(_, v), !invalid(v), !valid(v), !kind(v, "ternary_expression"), !kind(v, "parenthesized_expression").
+
+.decl button(e: node, o: node)
+button(e, o) :- react_open(e, o), plain_tag(o, "button").
+// createElement("button") with no props object counts as missing.
+.decl button_call(c: node)
+button_call(c) :- create_tag(c, "button"), docof(c, d), react_doc(d).
+// type_value(e, v): v is a value the type of element or call e may take: the prop's value, each side of a ternary.
+.decl type_value(e: node, v: node)
+type_value(e, v) :- button(e, o), type_prop(o, a), kind(a, "jsx_attribute"), prop_value(a, v).
+type_value(e, v) :- button(e, o), type_prop(o, p), !kind(p, "jsx_attribute"),
+    (field(p, "value", v) ; !field(p, "value", _), v = p).
+type_value(c, v) :- first_type_key(c, p), (field(p, "value", v) ; !field(p, "value", _), v = p).
+type_value(e, v) :- type_value(e, t), kind(t, "ternary_expression"), (field(t, "consequence", v) ; field(t, "alternative", v)).
+type_value(e, v) :- type_value(e, p), kind(p, "parenthesized_expression"), child(p, v, 0).
+.decl valid(v: node)  // "button", `submit`
+valid(v) :- (kind(v, "string") ; kind(v, "template_string")), !has(v, _, "template_substitution"), value(v, s),
+    (s = "button" ; s = "submit" ; s = "reset").
+// Other literals are invalid values; anything else (a name, a call, a template with ${}) is not static.
+.decl invalid(v: node)
+invalid(v) :- type_value(_, v), (kind(v, "string") ; kind(v, "template_string"), !has(v, _, "template_substitution")),
+    !valid(v).
+invalid(v) :- type_value(_, v), kind(v, k), (k = "number" ; k = "true" ; k = "false" ; k = "null" ; k = "regex").
+
+// type_prop(o, a): the first prop of o named type, ignoring case: an attribute, or a property of a spread literal.
+.decl type_prop(o: node, a: node)
+type_prop(o, a) :- type_candidate(o, a, at), count : { type_candidate(o, _, b), precedes(b, at) } = 0.
+.decl type_candidate(o: node, a: node, at: node)  // a, found at attribute `at` of o
+type_candidate(o, a, a) :- button(_, o), jsx_prop(o, x, a), @lower(x) = "type".
+type_candidate(o, p, s) :- button(_, o), jsx_spread(o, s), child(s, sp, 0), child(sp, l, 0), kind(l, "object"),
+    child(l, p, _), (kind(p, "pair"), field(p, "key", k), kind(k, "property_identifier"), text(k, x) ;
+    kind(p, "shorthand_property_identifier"), text(p, x)), @lower(x) = "type".
+.decl first_type_key(c: node, p: node)
+first_type_key(c, p) :- button_call(c), create_key(c, "type", p), count : { create_key(c, "type", q), precedes(q, p) } = 0.

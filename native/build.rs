@@ -5,12 +5,15 @@ mod identity;
 #[path = "src/build_languages.rs"]
 mod languages;
 
-use identity::{grammar_build_id, hex, locked_version};
+use identity::{grammar_build_id, hex, locked_version, parser_cache_key};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 fn main() {
-    napi_build::setup();
+    // The browser build (wasm32-wasip1) is no Node addon: napi-build would want emnapi.
+    if !std::env::var("TARGET").unwrap_or_default().starts_with("wasm32") {
+        napi_build::setup();
+    }
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
     check_names_table(&manifest);
     let lock_text = std::fs::read_to_string(
@@ -22,12 +25,57 @@ fn main() {
     .expect("Cargo.lock is readable");
     // A Windows checkout with `core.autocrlf` has a CRLF Cargo.lock; locked_version reads LF lines.
     let generator = locked_version(&lock_text.replace("\r\n", "\n"), "tree-sitter-generate");
-    for grammar in GRAMMARS {
+    let omitted = omitted_languages();
+    let skipped = vendored_of(&omitted);
+    for grammar in GRAMMARS.iter().filter(|grammar| !skipped.contains(&grammar.name.to_owned())) {
         build_grammar(grammar, &generator);
     }
-    let registry = generate_languages();
+    let registry = generate_languages(&omitted);
     configure_fixtures();
     build_identities(&registry);
+}
+
+/// The registry's supported languages this build leaves out: each language `<id>` is built only with its feature
+/// `lang-<id>` (all are by default; the browser build picks the ones a page needs, `wasm/README.md`).
+fn omitted_languages() -> Vec<String> {
+    let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
+    let directory = manifest.parent().expect("repository root").join("languages");
+    let mut omitted = Vec::new();
+    for entry in std::fs::read_dir(&directory).expect("languages/ is readable") {
+        let path = entry.expect("languages/ entry").path();
+        if path.extension().is_none_or(|extension| extension != "json") {
+            continue;
+        }
+        let value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("registry file")).expect("registry JSON");
+        let (Some(id), Some("supported")) = (value["id"].as_str(), value["status"].as_str()) else { continue };
+        let feature = format!("CARGO_FEATURE_LANG_{}", id.to_ascii_uppercase().replace('-', "_"));
+        if std::env::var_os(&feature).is_none() {
+            omitted.push(id.to_owned());
+        }
+    }
+    omitted.sort();
+    omitted
+}
+
+/// The vendored grammars (`GRAMMARS` names) the `omitted` languages' dialects are parsed with.
+fn vendored_of(omitted: &[String]) -> Vec<String> {
+    let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
+    let directory = manifest.parent().expect("repository root").join("languages");
+    omitted
+        .iter()
+        .flat_map(|id| {
+            let value: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(directory.join(format!("{id}.json"))).expect("registry file"))
+                    .expect("registry JSON");
+            value["dialects"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|dialect| dialect["grammar"].as_str()?.strip_prefix("vendored:").map(str::to_owned))
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 /// The language registry, `languages/` at the repository root: validated, and generated into
@@ -35,7 +83,8 @@ fn main() {
 /// tests see (`native/test-languages/`, absent from a copy that carries none) are validated
 /// against it and generated as `#[cfg(test)]` items; they are not returned, so they are no part of
 /// the engine's identity.
-fn generate_languages() -> Vec<(String, Vec<u8>)> {
+/// The `omitted` languages keep their tables but no grammar (`language_registry.rs`'s `built`).
+fn generate_languages(omitted: &[String]) -> Vec<(String, Vec<u8>)> {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
     let root = manifest.parent().expect("repository root");
     let directory = root.join("languages");
@@ -51,6 +100,7 @@ fn generate_languages() -> Vec<(String, Vec<u8>)> {
         &directory,
         test_directory.is_dir().then_some(test_directory.as_path()),
         &vendored,
+        omitted,
         &out,
     )
 }
@@ -283,20 +333,72 @@ fn build_grammar(grammar: &VendoredGrammar, generator: &str) {
     let source = grammar.source;
     let json = std::fs::read_to_string(format!("{source}/grammar.json"))
         .unwrap_or_else(|error| panic!("{name} grammar is unreadable: {error}"));
-    let parser = if grammar.committed_parser {
-        committed_parser(grammar, &json, generator)
-    } else {
-        generate_parser(grammar, &json)
-    };
     let parser_path = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"))
         .join(format!("{name}_parser.c"));
-    std::fs::write(&parser_path, parser).expect("generated parser is writable");
-    cc::Build::new()
-        .include(grammar.headers)
-        .file(parser_path)
-        .file(format!("{source}/scanner.c"))
-        .warnings(false)
-        .compile(&format!("tree-sitter-{name}"));
+    if grammar.committed_parser {
+        let parser = committed_parser(grammar, &json, generator);
+        std::fs::write(&parser_path, parser).expect("generated parser is writable");
+    } else {
+        // Rust-only edits rerun this script for the engine identity. Reuse a parser generated from
+        // this grammar.json, version and generator, including after a bounded build was interrupted.
+        let stamp_path = parser_path.with_extension("sha256");
+        let key = parser_cache_key(
+            generator.as_bytes(),
+            json.as_bytes(),
+            &format!("{:?}", grammar.version),
+        );
+        if !parser_path.is_file()
+            || std::fs::read_to_string(&stamp_path).ok().as_deref() != Some(&key)
+        {
+            let parser = generate_parser(grammar, &json);
+            std::fs::write(&parser_path, parser).expect("generated parser is writable");
+            std::fs::write(stamp_path, key).expect("parser fingerprint is writable");
+        }
+    }
+    // Every engine edit reruns this script for the engine identity; recompiling the grammars' C
+    // each time cost ~5 s. The library is rebuilt only when its inputs or the C toolchain settings
+    // change, and otherwise linked as `cc` links it.
+    let library = format!("tree-sitter-{name}");
+    let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"));
+    let archive = out_dir.join(format!("lib{library}.a"));
+    let compiled_stamp = out_dir.join(format!("{library}.compiled.sha256"));
+    let scanner = format!("{source}/scanner.c");
+    let mut inputs = Sha256::new();
+    for variable in ["TARGET", "HOST", "OPT_LEVEL", "DEBUG", "PROFILE", "CC", "CFLAGS"] {
+        println!("cargo:rerun-if-env-changed={variable}");
+        inputs.update(variable.as_bytes());
+        inputs.update(std::env::var(variable).unwrap_or_default().as_bytes());
+    }
+    // Python's scanner frees and reallocates its indent and delimiter stacks each time the parser restores its state
+    // (`deserialize`); through the system allocator that was 6% of a parse (macOS's `free` reads the clock). With
+    // this define its arrays use the allocator the parser has (`install_tree_sitter_allocator`: jemalloc). Python's
+    // scanner allocates nothing else through `array.h` that it frees with `free`.
+    let reuse_allocator = name == "python";
+    if reuse_allocator {
+        inputs.update(b"TREE_SITTER_REUSE_ALLOCATOR");
+    }
+    let mut headers = Vec::new();
+    collect_sources(Path::new(grammar.headers), &mut headers);
+    headers.sort();
+    for path in std::iter::once(parser_path.clone())
+        .chain(std::iter::once(PathBuf::from(&scanner)))
+        .chain(headers)
+    {
+        inputs.update(path.to_string_lossy().as_bytes());
+        inputs.update(std::fs::read(&path).expect("grammar C input is readable"));
+    }
+    let key = hex(&inputs.finalize());
+    if archive.is_file() && std::fs::read_to_string(&compiled_stamp).ok().as_deref() == Some(&key) {
+        println!("cargo:rustc-link-search=native={}", out_dir.display());
+        println!("cargo:rustc-link-lib=static={library}");
+        return;
+    }
+    let mut build = cc::Build::new();
+    if reuse_allocator {
+        build.define("TREE_SITTER_REUSE_ALLOCATOR", None);
+    }
+    build.include(grammar.headers).file(parser_path).file(scanner).warnings(false).compile(&library);
+    std::fs::write(compiled_stamp, key).expect("compiled grammar fingerprint is writable");
 }
 
 /// Where the engine's tests read the conformance fixtures: `RERAIL_ORACLES_DIR` if set (relative
@@ -396,6 +498,14 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
     collect_sources(&manifest.join("src/code_rule_dsl/blade"), &mut view_sources);
     view_sources.push(manifest.join("src/code_rule_dsl/php_view.rs"));
     view_sources.push(manifest.join("src/code_rule_dsl/php_literal.rs"));
+    // A `.rr` tape is the tree the rule engine's parser builds, numbered by its kinds table (decision 0061).
+    view_sources.push(manifest.join("crates/rr_syntax/src/syntax.rs"));
+    view_sources.push(manifest.join("crates/rr_syntax/src/tape.rs"));
+    // A named-only tape (RER-131) leaves out the tokens its grammar's automata recognize: the
+    // automata, and the grammars they are built from, decide what a stored tape means.
+    view_sources.push(manifest.join("src/code_rule_dsl/tape/tokens.rs"));
+    view_sources.push(manifest.join("grammars/token-grammars/rust/grammar.json"));
+    view_sources.push(manifest.join("grammars/token-grammars/php/grammar.json"));
     view_sources.retain(|path| {
         !path
             .file_name()

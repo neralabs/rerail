@@ -1,0 +1,324 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-lazy-analyzed-facts",
+  "revision": 1,
+  "mode": "log",
+  "clauses": [
+    {
+      "id": "parameters",
+      "define": {
+        "options": {
+          "parameters": {
+            "type": "string",
+            "default": "{}"
+          }
+        }
+      }
+    },
+    {
+      "id": "architecture",
+      "relational": {
+        "inputs": {
+          "empty": {
+            "evidence": {
+              "as": "file",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "rule": {
+                    "kind": "module"
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "locations": [
+          "metadata"
+        ],
+        "stages": [
+          {
+            "name": "parameters",
+            "query": {
+              "$option": "parameters",
+              "escape": "sql",
+              "template": "SELECT {} data"
+            }
+          },
+          {
+            "name": "imports",
+            "query": "SELECT '' __path,'' id,0 __start,0 __end,'' module,'' name,'' local WHERE 0"
+          },
+          {
+            "name": "supplied_rows",
+            "query": "SELECT CAST(file.key AS INTEGER) file_ordinal,json_extract(file.value,'$.path') __path,CAST(item.key AS INTEGER) ordinal,item.value data FROM parameters p,json_each(p.data,'$.files') file,json_each(file.value,'$.functions') item"
+          },
+          {
+            "name": "supplied_functions",
+            "query": "SELECT r.*,printf('%010d:%010d',file_ordinal,ordinal) id,json_extract(data,'$.line') __start,json_extract(data,'$.line') __end,json_extract(data,'$.line')-1 line,json_extract(data,'$.name') name,json_extract(data,'$.qualname') qualname,json_extract(data,'$.symbol') symbol,printf('%020d/%020d',file_ordinal,ordinal) fact_order,json_extract(data,'$.is_lazy') is_lazy,json_extract(data,'$.is_public') is_public,json_extract(data,'$.has_pure_lazy_decorator') pure,json_extract(data,'$.has_legacy_boundary_decorator') legacy,CASE WHEN json_extract(data,'$.is_async') THEN 'async ' ELSE '' END text FROM supplied_rows r"
+          },
+          {
+            "name": "function_flags",
+            "query": "SELECT f.*,rx_matches(f.__path,'^(?:l7450_versioned_revert/|l8100_ops_analytics/)') OR f.__path IN ('impl/common/l7300_revision_history/revision_history_query_impl.py','l7200_versioned_transactions/versioned_lazy_mixin.py') OR rx_matches(f.__path,'^(?:l7200_versioned_transactions/_lint_|impl/common/l7300_revision_history/_lint_)') sensitive,\nrx_matches(lower(f.__path||' '||f.qualname),'bootstrap|ddl') bootstrap,\nrx_matches(lower(f.__path||' '||f.qualname),'reconcile|reconciliation|schema_ensure') OR f.__path IN ('l2000_connection/schema_transaction.py','l2000_connection/table_existence_authority.py','impl/common/l2200_sql_dialect/schema_ensure.py','impl/common/l2200_sql_dialect/sql_schema_services.py','impl/common/l2200_sql_dialect/sql_core_support_free_functions.py','impl/common/l2200_sql_dialect/sql_core_support_mixin.py') reconciliation FROM supplied_functions f",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "symbol"
+              ]
+            ]
+          },
+          {
+            "name": "call_targets",
+            "query": "SELECT f.__path,f.id fn,'call:'||event.key id,json_extract(event.value,'$[0]') __start,json_extract(event.value,'$[1]') target,printf('%020d',CAST(event.key AS INTEGER)) visit_key FROM function_flags f,json_each(f.data,'$.local_callee_calls') event",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "delegate_targets",
+            "query": "SELECT f.__path,f.id fn,'delegate:'||event.key id,json_extract(event.value,'$[0]') __start,json_extract(event.value,'$[0]') __end,json_extract(event.value,'$[1]') target,CAST(event.key AS INTEGER) keyword_start FROM function_flags f,json_each(f.data,'$.deferred_lazy_delegate_calls') event",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "architecture_edges",
+            "query": "SELECT c.__path,c.fn,c.__start,c.id,c.visit_key,target.__path target_path,target.id target FROM call_targets c JOIN function_flags owner ON owner.__path=c.__path AND owner.id=c.fn JOIN function_flags target ON target.symbol=c.target WHERE target.symbol!=owner.symbol AND NOT EXISTS(SELECT 1 FROM function_flags later WHERE later.symbol=target.symbol AND later.ordinal>target.ordinal)",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "side_queue_fields",
+            "query": "SELECT '' __path,'' id,0 __start,0 __end,'' scope,'' qualname,'' name,0 line WHERE 0"
+          },
+          {
+            "name": "function_events",
+            "query": "SELECT f.__path,f.id fn,'plan:'||event.key id,json_extract(event.value,'$[0]') __start,json_extract(event.value,'$[0]') __end,'plan' category,json_extract(event.value,'$[1]') detail,0 channel,printf('%020d',CAST(event.key AS INTEGER)) visit_key,json_extract(event.value,'$[2]') uses_conn,NULL event_kind FROM function_flags f,json_each(f.data,'$.plan_io_calls') event UNION ALL SELECT f.__path,f.id fn,'grammar:'||event.key id,json_extract(event.value,'$[0]') __start,json_extract(event.value,'$[0]') __end,'grammar' category,json_extract(event.value,'$[1]') detail,1 channel,printf('%020d',CAST(event.key AS INTEGER)) visit_key,0 uses_conn,NULL event_kind FROM function_flags f,json_each(f.data,'$.grammar_calls') event UNION ALL SELECT f.__path,f.id fn,'intent:'||event.key id,json_extract(event.value,'$[0]') __start,json_extract(event.value,'$[0]') __end,'intent' category,json_extract(event.value,'$[1]') detail,2 channel,printf('%020d',CAST(event.key AS INTEGER)) visit_key,0 uses_conn,NULL event_kind FROM function_flags f,json_each(f.data,'$.intent_calls') event UNION ALL SELECT f.__path,f.id fn,'native:'||event.key id,json_extract(event.value,'$[0]') __start,json_extract(event.value,'$[0]') __end,'native' category,json_extract(event.value,'$[1]') detail,3 channel,printf('%020d',CAST(event.key AS INTEGER)) visit_key,0 uses_conn,NULL event_kind FROM function_flags f,json_each(f.data,'$.imperative_native_calls') event UNION ALL SELECT f.__path,f.id fn,'dolt:'||event.key id,json_extract(event.value,'$[0]') __start,json_extract(event.value,'$[0]') __end,'dolt' category,json_extract(event.value,'$[1]') detail,4 channel,printf('%020d',CAST(event.key AS INTEGER)) visit_key,0 uses_conn,NULL event_kind FROM function_flags f,json_each(f.data,'$.dolt_strings') event UNION ALL SELECT f.__path,f.id fn,'context:'||event.key id,json_extract(event.value,'$[0]') __start,json_extract(event.value,'$[0]') __end,'context' category,json_extract(event.value,'$[1]') detail,5 channel,printf('%020d',CAST(event.key AS INTEGER)) visit_key,0 uses_conn,NULL event_kind FROM function_flags f,json_each(f.data,'$.execution_context_terminals') event UNION ALL SELECT f.__path,f.id fn,'internal:'||event.key id,json_extract(event.value,'$[0]') __start,json_extract(event.value,'$[0]') __end,'internal' category,json_extract(event.value,'$[1]') detail,6 channel,printf('%020d',CAST(event.key AS INTEGER)) visit_key,0 uses_conn,NULL event_kind FROM function_flags f,json_each(f.data,'$.lazy_internal_reads') event UNION ALL SELECT f.__path,f.id fn,'state:'||event.key id,json_extract(event.value,'$[0]') __start,json_extract(event.value,'$[0]') __end,'state' category,json_extract(event.value,'$[1]') detail,7 channel,printf('%020d',CAST(event.key AS INTEGER)) visit_key,0 uses_conn,NULL event_kind FROM function_flags f,json_each(f.data,'$.execution_state_writes') event UNION ALL SELECT f.__path,f.id fn,'private:'||event.key id,json_extract(event.value,'$[0]') __start,json_extract(event.value,'$[0]') __end,'private' category,json_extract(event.value,'$[1]') detail,8 channel,printf('%020d',CAST(event.key AS INTEGER)) visit_key,0 uses_conn,NULL event_kind FROM function_flags f,json_each(f.data,'$.private_runtime_reachthroughs') event UNION ALL SELECT f.__path,f.id fn,'forbidden_pure:'||event.key id,json_extract(event.value,'$[0]') __start,json_extract(event.value,'$[0]') __end,'forbidden_pure' category,json_extract(event.value,'$[1]') detail,9 channel,printf('%020d',CAST(event.key AS INTEGER)) visit_key,0 uses_conn,NULL event_kind FROM function_flags f,json_each(f.data,'$.forbidden_pure_lazy_operations') event UNION ALL SELECT f.__path,f.id fn,'payload:'||event.key id,json_extract(event.value,'$[0]') __start,json_extract(event.value,'$[0]') __end,'payload' category,json_extract(event.value,'$[1]') detail,10 channel,printf('%020d',CAST(event.key AS INTEGER)) visit_key,0 uses_conn,NULL event_kind FROM function_flags f,json_each(f.data,'$.serverplan_service_callable_payloads') event UNION ALL SELECT f.__path,f.id fn,'dynamic:'||event.key id,json_extract(event.value,'$[0]') __start,json_extract(event.value,'$[0]') __end,'dynamic' category,json_extract(event.value,'$[1]') detail,11 channel,printf('%020d',CAST(event.key AS INTEGER)) visit_key,0 uses_conn,NULL event_kind FROM function_flags f,json_each(f.data,'$.serverplan_dynamic_behavior_dispatches') event UNION ALL SELECT f.__path,f.id fn,'of_return:'||event.key id,event.value __start,event.value __end,'of_return' category,'LazyResult.of' detail,12 channel,printf('%020d',CAST(event.key AS INTEGER)) visit_key,0 uses_conn,NULL event_kind FROM function_flags f,json_each(f.data,'$.lazy_result_of_returns') event UNION ALL SELECT f.__path,f.id fn,'bootstrap:'||event.key id,json_extract(event.value,'$[0]') __start,json_extract(event.value,'$[0]') __end,'bootstrap' category,json_extract(event.value,'$[1]') detail,13 channel,printf('%020d',CAST(event.key AS INTEGER)) visit_key,0 uses_conn,NULL event_kind FROM function_flags f,json_each(f.data,'$.bootstrap_lazy_state_mutations') event UNION ALL SELECT f.__path,f.id fn,'reconciliation:'||event.key id,json_extract(event.value,'$[0]') __start,json_extract(event.value,'$[0]') __end,'reconciliation' category,json_extract(event.value,'$[1]') detail,14 channel,printf('%020d',CAST(event.key AS INTEGER)) visit_key,0 uses_conn,json_extract(event.value,'$[2]') event_kind FROM function_flags f,json_each(f.data,'$.reconciliation_eager_surface_calls') event UNION ALL SELECT f.__path,f.id fn,'absence:'||event.key id,json_extract(event.value,'$[0]') __start,json_extract(event.value,'$[0]') __end,'absence' category,json_extract(event.value,'$[1]') detail,15 channel,printf('%020d',CAST(event.key AS INTEGER)) visit_key,0 uses_conn,NULL event_kind FROM function_flags f,json_each(f.data,'$.schema_fact_absence_fallbacks') event",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "category"
+              ]
+            ]
+          },
+          {
+            "name": "reachable",
+            "query": "WITH RECURSIVE reach(__path,root,path,node,first) AS (SELECT __path,id,__path,id,NULL FROM function_flags UNION SELECT r.__path,r.root,e.target_path,e.target,coalesce(r.first,e.__start) FROM reach r JOIN architecture_edges e ON e.__path=r.path AND e.fn=r.node WHERE r.path=r.__path) SELECT * FROM reach",
+            "indexes": [
+              [
+                "__path",
+                "root"
+              ],
+              [
+                "path",
+                "node"
+              ]
+            ]
+          },
+          {
+            "name": "graph_functions",
+            "query": "SELECT f.* FROM function_flags f WHERE NOT EXISTS(SELECT 1 FROM function_flags later WHERE later.symbol=f.symbol AND later.fact_order>f.fact_order)",
+            "indexes": [
+              [
+                "symbol"
+              ],
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "graph_edges",
+            "query": "SELECT owner.__path,owner.symbol src,target.symbol dst,e.visit_key ordinal,e.__start location FROM architecture_edges e JOIN graph_functions owner ON owner.__path=e.__path AND owner.id=e.fn JOIN graph_functions target ON target.__path=e.target_path AND target.id=e.target",
+            "indexes": [
+              [
+                "__path",
+                "src"
+              ]
+            ]
+          },
+          {
+            "name": "graph_categories",
+            "query": "SELECT 'plan' kind UNION ALL SELECT 'intent' UNION ALL SELECT 'native' UNION ALL SELECT 'dolt' UNION ALL SELECT 'orchestration'",
+            "indexes": [
+              [
+                "kind"
+              ]
+            ]
+          },
+          {
+            "name": "local_graph_events",
+            "query": "SELECT c.kind,e.__path,e.fn,e.__start location,e.visit_key,e.channel FROM function_events e JOIN graph_categories c ON c.kind=e.category OR c.kind='orchestration' AND e.category='plan' AND e.detail NOT GLOB 'native_cursor.*'",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "kind"
+              ]
+            ]
+          },
+          {
+            "name": "graph_sinks",
+            "query": "SELECT NULL __path,kind||':'||symbol id,location FROM (SELECT e.*,f.symbol,row_number() OVER(PARTITION BY f.symbol,e.kind ORDER BY e.visit_key,e.channel) chosen FROM local_graph_events e JOIN graph_functions f ON f.__path=e.__path AND f.id=e.fn) WHERE chosen=1"
+          },
+          {
+            "name": "graph_rollups",
+            "reachability": {
+              "selection": "memoized-first",
+              "roots": "SELECT c.kind||':'||f.__path __path,c.kind||':'||f.symbol id,f.fact_order ordinal FROM function_flags f CROSS JOIN graph_categories c",
+              "edges": "SELECT c.kind||':'||e.__path __path,c.kind||':'||e.src src,c.kind||':'||e.dst dst,e.ordinal,e.location FROM graph_edges e CROSS JOIN graph_categories c",
+              "sinks": "SELECT __path,id,location FROM graph_sinks",
+              "match": "node"
+            }
+          },
+          {
+            "name": "graph_legacy",
+            "reachability": {
+              "selection": "memoized-first",
+              "roots": "SELECT f.__path,f.symbol id,f.fact_order ordinal FROM function_flags f WHERE f.pure",
+              "edges": "SELECT __path,src,dst,ordinal,location FROM graph_edges",
+              "sinks": "SELECT NULL __path,target.symbol id,target.__start location FROM graph_functions target WHERE target.legacy",
+              "match": "edge"
+            }
+          },
+          {
+            "name": "graph_permission",
+            "reachability": {
+              "selection": "memoized-first",
+              "roots": "SELECT f.__path,f.symbol id,f.fact_order ordinal FROM function_flags f",
+              "edges": "SELECT __path,src,dst,ordinal,location FROM graph_edges",
+              "sinks": "SELECT NULL __path,target.symbol id,target.__start location FROM graph_functions target WHERE target.symbol IN ('l4000_permissions.lazy_permission_support.check_object_write_permission_lazy','l4000_permissions.lazy_permission_support.check_upsert_conflict_write_permission_lazy','l4000_permissions.lazy_permission_support.check_write_permission_lazy','l4000_permissions.permission_enforcement.check_object_write_permission','l4000_permissions.permission_enforcement.check_write_permission')",
+              "match": "edge"
+            }
+          },
+          {
+            "name": "rollups",
+            "query": "SELECT f.__path,f.id root,c.kind category,r.location FROM graph_rollups r JOIN graph_categories c ON c.kind=substr(r.__path,1,instr(r.__path,':')-1) AND c.kind=substr(r.root,1,instr(r.root,':')-1) JOIN function_flags f ON f.__path=substr(r.__path,instr(r.__path,':')+1) AND f.symbol=substr(r.root,instr(r.root,':')+1)",
+            "indexes": [
+              [
+                "__path",
+                "root",
+                "category"
+              ]
+            ]
+          },
+          {
+            "name": "intrinsic",
+            "query": "SELECT __path,id,location,reason FROM (\n      SELECT f.__path,f.id,e.__start location,\n        CASE e.category WHEN 'context' THEN 'ExecutionContext terminal ' WHEN 'internal' THEN 'reads LazyResult internals ' WHEN 'state' THEN 'writes execution-derived planner state ' WHEN 'private' THEN 'reaches through private runtime state via ' WHEN 'plan' THEN 'direct eager sink ' ELSE 'imperative native call ' END||e.detail reason,\n        row_number() OVER(PARTITION BY f.__path,f.id ORDER BY CASE e.category WHEN 'context' THEN 0 WHEN 'internal' THEN 1 WHEN 'state' THEN 2 WHEN 'private' THEN 3 WHEN 'plan' THEN 4 ELSE 5 END,e.visit_key,e.channel) chosen\n      FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category IN ('plan','native') OR f.sensitive AND e.category IN ('context','state','private') OR f.sensitive AND e.category='internal' AND f.name NOT IN ()\n      ) WHERE chosen=1 UNION ALL SELECT f.__path,f.id,f.__start,CASE WHEN f.legacy THEN 'legacy eager wrapper' WHEN rx_matches(f.text,'^async\\b') AND NOT f.pure THEN 'async function' ELSE 'name ends with _async' END FROM function_flags f\n      WHERE (f.legacy OR rx_matches(f.text,'^async\\b') AND NOT f.pure OR f.name GLOB '*_async') AND NOT EXISTS(SELECT 1 FROM function_events e WHERE e.__path=f.__path AND e.fn=f.id AND (e.category IN ('plan','native') OR f.sensitive AND e.category IN ('context','state','private') OR f.sensitive AND e.category='internal' AND f.name NOT IN ()))",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "graph_eager",
+            "reachability": {
+              "selection": "memoized-first",
+              "roots": "SELECT f.__path,f.symbol id,f.fact_order ordinal FROM function_flags f WHERE f.pure AND NOT EXISTS(SELECT 1 FROM graph_legacy l WHERE l.__path=f.__path AND l.root=f.symbol)",
+              "edges": "SELECT __path,src,dst,ordinal,location FROM graph_edges",
+              "sinks": "SELECT NULL __path,f.symbol id,i.location FROM intrinsic i JOIN graph_functions f ON f.__path=i.__path AND f.id=i.id",
+              "match": "node"
+            }
+          },
+          {
+            "name": "graph_nonlazy",
+            "reachability": {
+              "selection": "memoized-first",
+              "roots": "SELECT f.__path,f.symbol id,f.fact_order ordinal FROM function_flags f WHERE f.is_lazy AND NOT(f.pure AND EXISTS(SELECT 1 FROM graph_legacy l WHERE l.__path=f.__path AND l.root=f.symbol))",
+              "edges": "SELECT e.* FROM graph_edges e WHERE e.dst NOT IN ('_internal.dynamic_import.load_python_module','l2070_batching.lazy_runtime.build_visible_whole_document_embedding_write','l5200_vector_index.index_implementations.pgvector._vector_dimension_mismatch_from_pgvector_error')",
+              "sinks": "SELECT NULL __path,f.symbol id,f.__start location FROM graph_functions f WHERE NOT f.is_lazy",
+              "match": "edge"
+            }
+          },
+          {
+            "name": "transitive_matches",
+            "query": "SELECT f.__path,f.id root,r.location eager,r.node target,i.reason FROM graph_eager r JOIN function_flags f ON f.__path=r.__path AND f.symbol=r.root JOIN graph_functions target ON target.symbol=r.node JOIN intrinsic i ON i.__path=target.__path AND i.id=target.id",
+            "indexes": [
+              [
+                "__path",
+                "root"
+              ]
+            ]
+          },
+          {
+            "name": "non_lazy_matches",
+            "query": "SELECT f.__path,f.id root,r.location,r.node target FROM graph_nonlazy r JOIN function_flags f ON f.__path=r.__path AND f.symbol=r.root",
+            "indexes": [
+              [
+                "__path",
+                "root"
+              ]
+            ]
+          },
+          {
+            "name": "legacy_matches",
+            "query": "SELECT f.__path,f.id root,r.location FROM graph_legacy r JOIN function_flags f ON f.__path=r.__path AND f.symbol=r.root",
+            "indexes": [
+              [
+                "__path",
+                "root"
+              ]
+            ]
+          },
+          {
+            "name": "diagnostics_0",
+            "query": "SELECT f.__path path,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END start_byte,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END end_byte,'LA-001' issue,f.id||':LA-001' identity, f.id fn,'plan' origin,NULL detail,NULL symbol FROM function_flags f JOIN rollups r ON r.__path=f.__path AND r.root=f.id AND r.category='plan' WHERE f.pure UNION ALL SELECT f.__path path,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END start_byte,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END end_byte,'LA-002' issue,f.id||':LA-002' identity, f.id fn,'plan' origin,NULL detail,NULL symbol FROM function_flags f JOIN rollups r ON r.__path=f.__path AND r.root=f.id AND r.category='plan' WHERE EXISTS(SELECT 1 FROM rollups intent WHERE intent.__path=f.__path AND intent.root=f.id AND intent.category='intent') UNION ALL SELECT f.__path path,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END start_byte,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END end_byte,'LA-003' issue,f.id||':LA-003' identity, f.id fn,'plan' origin,NULL detail,NULL symbol FROM function_flags f JOIN rollups r ON r.__path=f.__path AND r.root=f.id AND r.category='plan' WHERE f.is_public AND NOT f.is_lazy AND (rx_matches(f.__path,'^(?:impl/common/l3500_bulk_ops/|impl/common/l7300_revision_history/|impl/common/l9700_sql_graph_query/)') OR f.__path='impl/common/l5200_sql_query/_insert_from_query.py') AND NOT EXISTS(SELECT 1 FROM rollups intent WHERE intent.__path=f.__path AND intent.root=f.id AND intent.category='intent') UNION ALL SELECT f.__path path,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END start_byte,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END end_byte,'LA-004' issue,f.id||':LA-004' identity, f.id fn,'native' origin,NULL detail,NULL symbol FROM function_flags f JOIN rollups r ON r.__path=f.__path AND r.root=f.id AND r.category='native' WHERE NOT rx_matches(f.__path,'migration') AND EXISTS(SELECT 1 FROM rollups plan WHERE plan.__path=f.__path AND plan.root=f.id AND plan.category='orchestration') UNION ALL SELECT f.__path path,coalesce(dolt.location,native.location) start_byte,coalesce(dolt.location,native.location) end_byte,'LA-005' issue,f.id identity, f.id fn,'' origin,NULL detail,NULL symbol FROM function_flags f LEFT JOIN rollups dolt ON dolt.__path=f.__path AND dolt.root=f.id AND dolt.category='dolt' LEFT JOIN rollups native ON native.__path=f.__path AND native.root=f.id AND native.category='native' WHERE rx_matches(f.__path,'^(?:impl/common/l7100_versioned_operations/|impl/common/l7248_sparse_versioned_transactions/|impl/common/l7300_sql_versioned_transactions/|l7250_versioned_operations/)') AND coalesce(dolt.location,native.location) IS NOT NULL UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-006' issue,f.id||':plan:'||e.id identity, f.id fn,'plan' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='plan' AND (e.uses_conn) AND e.id=(SELECT other.id FROM function_events other WHERE other.__path=f.__path AND other.fn=f.id AND other.category=e.category AND (other.uses_conn) ORDER BY other.visit_key,other.channel LIMIT 1)"
+          },
+          {
+            "name": "diagnostics_1",
+            "query": "SELECT f.__path path,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END start_byte,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END end_byte,'LA-007' issue,f.id||':LA-007' identity, f.id fn,'plan' origin,NULL detail,NULL symbol FROM function_flags f JOIN rollups r ON r.__path=f.__path AND r.root=f.id AND r.category='plan' WHERE f.name GLOB 'prepare_*' UNION ALL SELECT f.__path path,f.__start start_byte,f.__end end_byte,'LA-008' issue,f.id identity, f.id fn,'' origin,NULL detail,NULL symbol FROM function_flags f WHERE rx_matches(f.__path,'^(?:impl/common/l7248_sparse_versioned_transactions/|impl/common/l7300_sql_versioned_transactions/|impl/doltdb/versioned_write_transaction\\.py)') AND EXISTS(SELECT 1 FROM reachable r JOIN function_events e ON e.__path=r.path AND e.fn=r.node WHERE r.__path=f.__path AND r.root=f.id AND e.category='grammar') AND EXISTS(SELECT 1 FROM function_flags async_fn JOIN reachable r ON r.__path=async_fn.__path AND r.root=async_fn.id JOIN function_events e ON e.__path=r.path AND e.fn=r.node WHERE async_fn.__path=f.__path AND async_fn.name=f.name||'_async' AND e.category IN ('plan','grammar') AND e.detail GLOB '*_async') UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-009' issue,f.id||':context:'||e.id identity, f.id fn,'context' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='context' AND (f.sensitive) AND e.id=(SELECT other.id FROM function_events other WHERE other.__path=f.__path AND other.fn=f.id AND other.category=e.category AND (f.sensitive) ORDER BY other.visit_key,other.channel LIMIT 1) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-009' issue,f.id||':internal:'||e.id identity, f.id fn,'internal' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='internal' AND (f.sensitive AND f.name NOT IN ()) AND e.id=(SELECT other.id FROM function_events other WHERE other.__path=f.__path AND other.fn=f.id AND other.category=e.category AND (f.sensitive AND f.name NOT IN ()) ORDER BY other.visit_key,other.channel LIMIT 1) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-009' issue,f.id||':state:'||e.id identity, f.id fn,'state' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='state' AND (f.sensitive) AND e.id=(SELECT other.id FROM function_events other WHERE other.__path=f.__path AND other.fn=f.id AND other.category=e.category AND (f.sensitive) ORDER BY other.visit_key,other.channel LIMIT 1) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-009' issue,f.id||':private:'||e.id identity, f.id fn,'private' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='private' AND (f.sensitive) AND e.id=(SELECT other.id FROM function_events other WHERE other.__path=f.__path AND other.fn=f.id AND other.category=e.category AND (f.sensitive) ORDER BY other.visit_key,other.channel LIMIT 1)"
+          },
+          {
+            "name": "diagnostics_2",
+            "query": "SELECT f.__path path,CASE WHEN t.eager<0 THEN t.eager+1000000000 ELSE t.eager END start_byte,CASE WHEN t.eager<0 THEN t.eager+1000000000 ELSE t.eager END end_byte,'LA-009' issue,f.id||':eager' identity, f.id fn,'eager' origin,NULL detail,NULL symbol FROM function_flags f JOIN transitive_matches t ON t.__path=f.__path AND t.root=f.id WHERE f.pure AND NOT EXISTS(SELECT 1 FROM legacy_matches l WHERE l.__path=f.__path AND l.root=f.id) UNION ALL SELECT f.__path path,f.__start start_byte,f.__end end_byte,'LA-010' issue,f.id identity, f.id fn,'' origin,NULL detail,NULL symbol FROM function_flags f WHERE instr(lower(f.name),'lazy')>0 AND rx_matches(lower(f.name),'async|sync') UNION ALL SELECT f.__path path,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END start_byte,CASE WHEN r.location<0 THEN r.location+1000000000 ELSE r.location END end_byte,'LA-011' issue,f.id||':LA-011' identity, f.id fn,'plan' origin,NULL detail,NULL symbol FROM function_flags f JOIN rollups r ON r.__path=f.__path AND r.root=f.id AND r.category='plan' WHERE f.__path GLOB 'impl/common/l2070_server_plan/*' AND f.name IN ('lower','compile','preprocess','pre_op','post_op') UNION ALL SELECT f.__path path,c.__start start_byte,c.__start end_byte,'LA-011' issue,f.id||':hydration' identity, f.id fn,'hydration' origin,NULL detail,NULL symbol FROM function_flags f JOIN call_targets c ON c.__path=f.__path AND c.fn=f.id WHERE f.__path GLOB 'impl/common/l2070_server_plan/*' AND c.target IN ('hydrate_many_post_op','hydrate_one_post_op','runtime_sql_conn_from_hydrator') AND c.id=(SELECT other.id FROM call_targets other WHERE other.__path=f.__path AND other.fn=f.id AND other.target IN ('hydrate_many_post_op','hydrate_one_post_op','runtime_sql_conn_from_hydrator') ORDER BY other.visit_key,other.id LIMIT 1) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-012' issue,f.id||':plan:'||e.id identity, f.id fn,'plan' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='plan' AND (NOT f.legacy AND e.detail IN ('lazy.resolve','lazy.resolve_async')) AND e.id=(SELECT other.id FROM function_events other WHERE other.__path=f.__path AND other.fn=f.id AND other.category=e.category AND (NOT f.legacy AND other.detail IN ('lazy.resolve','lazy.resolve_async')) ORDER BY other.visit_key,other.channel LIMIT 1) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-013' issue,f.id||':forbidden_pure:'||e.id identity, f.id fn,'forbidden_pure' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='forbidden_pure' AND (f.pure)"
+          },
+          {
+            "name": "diagnostics_3",
+            "query": "SELECT f.__path path,l.location start_byte,l.location end_byte,'LA-013' issue,f.id||':legacy' identity, f.id fn,'legacy' origin,NULL detail,NULL symbol FROM function_flags f JOIN legacy_matches l ON l.__path=f.__path AND l.root=f.id WHERE f.pure UNION ALL SELECT f.__path path,n.location start_byte,n.location end_byte,'LA-013' issue,f.id||':nonlazy' identity, f.id fn,'nonlazy' origin,NULL detail,NULL symbol FROM function_flags f JOIN non_lazy_matches n ON n.__path=f.__path AND n.root=f.id WHERE f.is_lazy AND NOT (f.pure AND EXISTS(SELECT 1 FROM legacy_matches l WHERE l.__path=f.__path AND l.root=f.id)) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-014' issue,f.id||':payload:'||e.id identity, f.id fn,'payload' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='payload' AND (rx_matches(f.__path,'^(?:impl/common/l2070_server_plan/)') OR f.__path IN ('impl/common/l2200_sql_dialect/sql_connection.py','l2070_batching/post_op.py')) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-014' issue,f.id||':dynamic:'||e.id identity, f.id fn,'dynamic' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='dynamic' AND (rx_matches(f.__path,'^(?:impl/common/l2070_server_plan/)') OR f.__path IN ('impl/common/l2200_sql_dialect/sql_connection.py','l2070_batching/post_op.py')) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-015' issue,f.id||':of_return:'||e.id identity, f.id fn,'of_return' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='of_return' AND (f.bootstrap) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-016' issue,f.id||':bootstrap:'||e.id identity, f.id fn,'bootstrap' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='bootstrap' AND (f.bootstrap AND f.pure)"
+          },
+          {
+            "name": "calls",
+            "query": "SELECT '' __path,'' id,0 __start,0 __end,'' callee,'' callee_kind WHERE 0"
+          },
+          {
+            "name": "diagnostics_4",
+            "query": "SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-017' issue,f.id||':reconciliation:'||e.id identity, f.id fn,'reconciliation' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='reconciliation' AND (f.reconciliation) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-017' issue,f.id||':absence:'||e.id identity, f.id fn,'absence' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='absence' AND (f.reconciliation) UNION ALL SELECT f.__path path,e.__start start_byte,e.__end end_byte,'LA-017' issue,f.id||':plan:'||e.id identity, f.id fn,'plan' origin,e.detail detail,NULL symbol FROM function_flags f JOIN function_events e ON e.__path=f.__path AND e.fn=f.id WHERE e.category='plan' AND (rx_matches(lower(f.__path||' '||f.qualname),'reconcile|reconciliation|schema_ensure') AND (f.__path GLOB 'impl/common/l2200_sql_dialect/*' OR f.__path='l2000_connection/schema_transaction.py') AND e.detail IN ('lazy.resolve','lazy.resolve_async')) UNION ALL SELECT f.__path path,f.__start start_byte,f.__end end_byte,'LA-017' issue,f.id identity, f.id fn,'' origin,NULL detail,NULL symbol FROM function_flags f WHERE f.reconciliation AND f.__path||'::'||f.qualname IN ('impl/common/l2200_sql_dialect/schema_ensure.py::cached_or_fetched_table_columns','impl/common/l2200_sql_dialect/schema_ensure.py::ensure_model_table_usable','impl/common/l2200_sql_dialect/schema_ensure.py::model_table_is_usable_lazy','impl/common/l2200_sql_dialect/sql_core_support_mixin.py::_SqlCoreSupportMixin._polymorphic_check_constraint_reconciliation_ddl_for_write','impl/common/l2200_sql_dialect/sql_core_support_mixin.py::_SqlCoreSupportMixin.table_exists_many_lazy','impl/common/l2200_sql_dialect/sql_schema_services.py::_SqlSchemaCreationMixin._polymorphic_check_constraint_reconciliation_ddl_for_write','impl/common/l2200_sql_dialect/sql_schema_services.py::_SqlSchemaMixin.table_exists_many_lazy','impl/common/l7245_versioned_backends/versioned_fk_triggers.py::reconcile_versioned_fk_triggers_for_existing_table','impl/mariadb/core_support_service.py::_MariaDBCoreSupportMixin._table_exists_many_uncached_lazy','impl/mariadb/metadata_schema_service.py::_MariaDBMetadataSchemaMixin._table_exists_many_uncached_lazy','impl/postgres/metadata_schema_service.py::_PostgresMetadataSchemaMixin._table_exists_many_uncached_lazy','impl/sqlite/connection.py::SqliteSchemaService.table_exists_many_lazy','l2000_connection/connection_caches.py::_ConnectionTableCacheMixin.table_exists_many_lazy','l2000_connection/schema_transaction.py::AsyncSchemaTransaction.create_table_from_schema_async','l2000_connection/schema_transaction.py::AsyncSchemaTransaction.create_tables_from_schema_async','l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_indexes_for_schema_batch','l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_indexes_for_schema_batch_async','l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_indexes_many_for_schema_batch','l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_indexes_many_for_schema_batch_async','l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_info_for_schema_batch','l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_info_for_schema_batch_async','l2000_connection/schema_transaction.py::LazySchemaTransaction._introspect_physical_table_for_schema_batch','l2000_connection/schema_transaction.py::LazySchemaTransaction._introspect_physical_table_for_schema_batch_async','l2000_connection/schema_transaction.py::LazySchemaTransaction._list_physical_tables_for_schema_batch','l2000_connection/schema_transaction.py::LazySchemaTransaction._list_physical_tables_for_schema_batch_async','l2000_connection/schema_transaction.py::LazySchemaTransaction._prime_bulk_column_snapshots_for_existing_tables','l2000_connection/schema_transaction.py::LazySchemaTransaction._prime_bulk_column_snapshots_for_existing_tables_async','l2000_connection/schema_transaction.py::LazySchemaTransaction._seed_bulk_column_snapshots_for_schema_batch','l2000_connection/schema_transaction.py::LazySchemaTransaction._seed_bulk_column_snapshots_for_schema_batch_async','l2000_connection/schema_transaction.py::LazySchemaTransaction.create_tables_from_schema_lazy','l2000_connection/schema_transaction.py::LazySchemaTransaction.physical_columns_for_reconcile','l2000_connection/schema_transaction.py::LazySchemaTransaction.physical_table_exists_for_reconcile','l2000_connection/schema_transaction.py::SyncSchemaTransaction.create_tables_from_schema','l2000_connection/table_existence_authority.py::_table_exists_many_from_schema_service_lazy','l2000_connection/table_existence_authority.py::connection_table_exists_lazy','l2000_connection/table_existence_authority.py::connection_table_exists_many_lazy','l2000_connection/table_existence_authority.py::sql_schema_table_exists_lazy','l2000_connection/table_existence_authority.py::sql_schema_table_exists_many_lazy','logged_table.py::LoggedTable._ensure_log_columns_exist','logged_table.py::LoggedTable._log_column_repair_needed_from_schema_facts') UNION ALL SELECT a.__path path,a.__start start_byte,a.__end end_byte,'LA-016' issue,a.id||':sidequeue' identity, NULL fn,'sidequeue' origin,a.name detail,replace(substr(a.__path,1,length(a.__path)-3),'/','.')||'.'||a.qualname symbol FROM side_queue_fields a WHERE rx_matches(lower(a.__path||' '||a.qualname),'bootstrap|ddl') UNION ALL SELECT c.__path path,c.__start start_byte,c.__end end_byte,'LA-013' issue,c.id||':defer' identity, NULL fn,'defer' origin,NULL detail,'defer_lazy_result' symbol FROM calls c WHERE c.callee='defer_lazy_result' AND c.callee_kind IN ('identifier','attribute')"
+          },
+          {
+            "name": "diagnostics_5",
+            "query": "SELECT i.__path path,i.__start start_byte,i.__end end_byte,'LA-013' issue,i.id||':'||i.local identity, NULL fn,'defer' origin,NULL detail,i.local symbol FROM imports i WHERE i.module='l2055_lazy_result.transform' AND i.name='defer_lazy_result' UNION ALL SELECT c.__path path,c.__start start_byte,c.__end end_byte,'LA-009' issue,c.id||':compat' identity, NULL fn,'compat' origin,NULL detail,c.callee symbol FROM calls c WHERE c.callee IN ('RuntimeMapStep','RuntimeProjectionStep','_RuntimeMapConfig','_RuntimeProjectionConfig','_lazy_result_step_ref_id','_literal_lazy_result_value','_literalize_resolved_lazy_result','_object_ref_from_input','_object_sequence_ref_from_input','_scalar_ref_from_input','_scalar_sequence_ref_from_input','defer_lazy_result','flat_map_lazy_result','map_lazy_result','materialize_return_value_runtime_projection_builder') AND (rx_matches(c.__path,'^(?:l7450_versioned_revert/|l8100_ops_analytics/)') OR c.__path IN ('impl/common/l7300_revision_history/revision_history_query_impl.py','l7200_versioned_transactions/versioned_lazy_mixin.py') OR rx_matches(c.__path,'^(?:l7200_versioned_transactions/_lint_|impl/common/l7300_revision_history/_lint_)')) UNION ALL SELECT i.__path path,i.__start start_byte,i.__end end_byte,'LA-009' issue,i.id||':'||i.local||':compat_import' identity, NULL fn,'compat_import' origin,i.name detail,i.local symbol FROM imports i WHERE i.module='l2055_lazy_result.transform' AND i.name IN ('RuntimeMapStep','RuntimeProjectionStep','_RuntimeMapConfig','_RuntimeProjectionConfig','defer_lazy_result','flat_map_lazy_result','map_lazy_result','materialize_return_value_runtime_projection_builder') AND (rx_matches(i.__path,'^(?:l7450_versioned_revert/|l8100_ops_analytics/)') OR i.__path IN ('impl/common/l7300_revision_history/revision_history_query_impl.py','l7200_versioned_transactions/versioned_lazy_mixin.py') OR rx_matches(i.__path,'^(?:l7200_versioned_transactions/_lint_|impl/common/l7300_revision_history/_lint_)')) UNION ALL SELECT f.__path path,r.location start_byte,r.location end_byte,'LA-011' issue,f.id||':permission' identity, f.id fn,'permission' origin,NULL detail,NULL symbol FROM function_flags f JOIN graph_permission r ON r.__path=f.__path AND r.root=f.symbol WHERE f.__path GLOB 'impl/common/l2070_server_plan/*' AND f.name IN ('lower','compile','preprocess','pre_op','post_op') AND NOT EXISTS(SELECT 1 FROM rollups plan WHERE plan.__path=f.__path AND plan.root=f.id AND plan.category='plan') UNION ALL SELECT f.__path path,min(d.__start) start_byte,min(d.__start) end_byte,'LA-009' issue,f.id||':delegate' identity, f.id fn,'delegate' origin,NULL detail,NULL symbol FROM function_flags f JOIN delegate_targets d ON d.__path=f.__path AND d.fn=f.id JOIN function_flags target ON target.symbol=d.target WHERE f.name GLOB '*_lazy' AND NOT f.pure AND (EXISTS(SELECT 1 FROM function_events e WHERE e.__path=target.__path AND e.fn=target.id AND e.category='plan') OR EXISTS(SELECT 1 FROM call_targets c WHERE c.__path=target.__path AND c.fn=target.id AND rx_extract(c.target,'[^.]+$',0) IN ('ddl_effect_lazy','execute_grammar_leaf','execute_grammar_leaf_async','fetchall_grammar_leaf','fetchall_grammar_leaf_async','fetchone_grammar_leaf','fetchone_grammar_leaf_async','grammar_effect_lazy','grammar_execute','grammar_execute_async','grammar_fetchall','grammar_fetchall_async','grammar_fetchone','grammar_fetchone_async','grammar_row_lazy','grammar_rows_lazy','grammar_value_lazy','scalar_grammar_leaf'))) GROUP BY f.__path,f.id"
+          }
+        ],
+        "query": "SELECT 'metadata' path,0 start_byte,0 end_byte,d.path||':'||d.identity identity,d.producer_phase,d.fact_order,d.diagnostic_order,json_object('file',d.path,'line',d.start_byte,'rule',d.issue,'symbol',d.symbol,'message',d.message) payload FROM (SELECT d.path,d.start_byte,d.end_byte,d.issue,d.identity,coalesce(d.symbol,f.symbol) symbol,CASE WHEN d.issue='LA-008' THEN 3 WHEN d.fn IS NULL AND d.origin!='sidequeue' THEN 0 ELSE 2 END producer_phase,coalesce(f.fact_order,printf('%020d',d.start_byte)) fact_order,CASE WHEN d.issue='LA-001' THEN 0 WHEN d.issue='LA-010' THEN 1\n      WHEN d.issue='LA-009' AND d.origin='context' THEN 2 WHEN d.issue='LA-009' AND d.origin='internal' THEN 3\n      WHEN d.issue='LA-009' AND d.origin='state' THEN 4 WHEN d.issue='LA-009' AND d.origin='private' THEN 5\n      WHEN d.issue='LA-011' AND d.origin!='hydration' THEN 6 WHEN d.issue='LA-011' THEN 7\n      WHEN d.issue='LA-012' THEN 8 WHEN d.origin='delegate' THEN 9\n      WHEN d.issue='LA-002' THEN 10 WHEN d.issue='LA-003' THEN 11 WHEN d.issue='LA-004' THEN 12 WHEN d.issue='LA-005' THEN 13\n      WHEN d.issue='LA-006' THEN 14 WHEN d.issue='LA-007' THEN 15\n      WHEN d.issue='LA-013' AND d.origin='forbidden_pure' THEN 16 WHEN d.issue='LA-013' AND d.origin='legacy' THEN 17\n      WHEN d.issue='LA-009' THEN 18 WHEN d.issue='LA-013' THEN 19 WHEN d.issue='LA-015' THEN 20 WHEN d.issue='LA-016' THEN 21\n      WHEN d.issue='LA-017' AND d.origin='' THEN 22 WHEN d.issue='LA-017' AND d.origin='reconciliation' THEN 23\n      WHEN d.issue='LA-017' AND d.origin='absence' THEN 24 WHEN d.issue='LA-017' THEN 25\n      WHEN d.origin='payload' THEN 26 WHEN d.origin='dynamic' THEN 27 ELSE 28 END diagnostic_order,CASE WHEN d.issue='LA-011' AND d.origin='hydration' THEN f.qualname||' uses forbidden terminal hydration/runtime-SQL helper' WHEN d.issue='LA-001' THEN f.qualname||' is lazy but performs eager plan/grammar I/O' WHEN d.issue='LA-002' THEN f.qualname||' mixes intent/lazy construction with direct execution fallback' WHEN d.issue='LA-003' THEN f.qualname||' is a public feature method performing direct plan/grammar I/O' WHEN d.issue='LA-004' THEN f.qualname||' mixes plan I/O with imperative native connection side effects' WHEN d.issue='LA-005' THEN f.qualname||' contains backend-native Dolt logic outside backend-local implementation' WHEN d.issue='LA-007' THEN f.qualname||' performs prepare-time imperative I/O' WHEN d.issue='LA-010' THEN f.qualname||' mixes ''lazy'' with ''sync'' or ''async'' in its name' WHEN d.issue='LA-011' THEN f.qualname||' performs server-plan pure-phase imperative I/O' WHEN d.issue='LA-012' THEN f.qualname||' terminates a LazyResult outside a legacy boundary' WHEN d.issue='LA-015' THEN f.qualname||' returns LazyResult.of(...) in bootstrap/DDL code; declare a ServerPlan ref, lazy primitive, or explicit terminal dependency instead'\n      WHEN d.issue='LA-008' THEN f.qualname||'/'||f.qualname||'_async use different sync vs async execution machinery'\n      WHEN d.issue='LA-006' THEN f.qualname||' passes _conn to '||d.detail||'() instead of the plan owner'\n      WHEN d.origin='defer' THEN 'defer_lazy_result is forbidden; publish a real ServerPlan step/ref instead'\n      WHEN d.origin='compat_import' THEN d.detail||' is forbidden in ServerPlan-sensitive files; use explicit steps/refs instead'\n      WHEN d.origin='compat' THEN d.symbol||' is a forbidden lazy compatibility surface in ServerPlan-sensitive files'\n      WHEN d.issue='LA-009' THEN f.qualname||CASE d.origin\n        WHEN 'delegate' THEN ' delegates lazy execution to eager method '||(SELECT target.qualname FROM delegate_targets delegate JOIN function_flags target ON target.symbol=delegate.target WHERE delegate.__path=d.path AND delegate.fn=d.fn AND delegate.__start=d.start_byte AND (EXISTS(SELECT 1 FROM function_events event WHERE event.__path=target.__path AND event.fn=target.id AND event.category='plan') OR EXISTS(SELECT 1 FROM call_targets call WHERE call.__path=target.__path AND call.fn=target.id AND rx_extract(call.target,'[^.]+$',0) IN ('ddl_effect_lazy','execute_grammar_leaf','execute_grammar_leaf_async','fetchall_grammar_leaf','fetchall_grammar_leaf_async','fetchone_grammar_leaf','fetchone_grammar_leaf_async','grammar_effect_lazy','grammar_execute','grammar_execute_async','grammar_fetchall','grammar_fetchall_async','grammar_fetchone','grammar_fetchone_async','grammar_row_lazy','grammar_rows_lazy','grammar_value_lazy','scalar_grammar_leaf'))) ORDER BY delegate.keyword_start LIMIT 1)||' (direct eager sink)'\n        WHEN 'context' THEN ' hides eager execution behind an ExecutionContext terminal'\n        WHEN 'internal' THEN ' peeks into LazyResult internals outside sanctioned runtime helpers'\n        WHEN 'state' THEN ' writes execution-derived planner state instead of surfaced refs'\n        WHEN 'private' THEN ' reaches through private runtime state instead of surfaced dependencies'\n        ELSE ' reaches eager downstream function '||taint.target||' ('||taint.reason||')' END\n      WHEN d.issue='LA-013' THEN f.qualname||CASE d.origin WHEN 'legacy' THEN ' reaches a legacy eager wrapper downstream' WHEN 'nonlazy' THEN ' reaches non-lazy helper '||nonlazy.target||'; every function in a lazy callchain must itself be *_lazy or @pure_lazy' ELSE ' marks runtime behavior as @pure_lazy: '||d.detail||'; @pure_lazy helpers must be pure planning code' END\n      WHEN d.issue='LA-014' THEN f.qualname||CASE WHEN d.origin='payload' THEN ' passes ' ELSE ' performs ' END||d.detail\n      WHEN d.issue='LA-016' THEN coalesce(f.qualname,substr(d.symbol,length(replace(substr(d.path,1,length(d.path)-3),'/','.'))+2))||' mutates state inside bootstrap/DDL @pure_lazy code ('||CASE WHEN d.origin='sidequeue' THEN 'forbidden side-queue declaration '||d.detail ELSE d.detail END||'); publish a ServerPlan step/ref and make mutation occur during plan execution'\n      WHEN d.issue='LA-017' THEN f.qualname||CASE d.origin\n        WHEN 'reconciliation' THEN ' uses reconciliation '||(SELECT event_kind FROM function_events e WHERE e.__path=d.path AND e.fn=d.fn AND e.__start=d.start_byte AND e.category=d.origin LIMIT 1)||' surface '||d.detail||'(); gather schema facts through a closed observation ServerPlan step and build reconciliation DDL from SchemaStateSnapshot'\n        WHEN 'absence' THEN ' uses '||d.detail||'; table or schema absence must come from observed initial facts or computed eventual state'\n        WHEN 'plan' THEN ' terminates a LazyResult inside reconciliation/schema code; only the wrapper may resolve observation or execution handles'\n        ELSE ' restores deleted schema reconciliation cutover surface; remove the definition entirely, including fail-fast tombstones, and route callers through observation/planning facts' END\n      END message FROM (SELECT * FROM (SELECT * FROM diagnostics_0 UNION ALL SELECT * FROM diagnostics_1 UNION ALL SELECT * FROM diagnostics_2 UNION ALL SELECT * FROM diagnostics_3 UNION ALL SELECT * FROM diagnostics_4 UNION ALL SELECT * FROM diagnostics_5) WHERE fn IS NOT NULL) d LEFT JOIN function_flags f ON f.__path=d.path AND f.id=d.fn LEFT JOIN transitive_matches taint ON taint.__path=d.path AND taint.root=d.fn LEFT JOIN non_lazy_matches nonlazy ON nonlazy.__path=d.path AND nonlazy.root=d.fn WHERE NOT(f.pure AND d.issue!='LA-008' AND (CASE WHEN d.issue='LA-001' THEN 0 WHEN d.issue='LA-010' THEN 1\n      WHEN d.issue='LA-009' AND d.origin='context' THEN 2 WHEN d.issue='LA-009' AND d.origin='internal' THEN 3\n      WHEN d.issue='LA-009' AND d.origin='state' THEN 4 WHEN d.issue='LA-009' AND d.origin='private' THEN 5\n      WHEN d.issue='LA-011' AND d.origin!='hydration' THEN 6 WHEN d.issue='LA-011' THEN 7\n      WHEN d.issue='LA-012' THEN 8 WHEN d.origin='delegate' THEN 9\n      WHEN d.issue='LA-002' THEN 10 WHEN d.issue='LA-003' THEN 11 WHEN d.issue='LA-004' THEN 12 WHEN d.issue='LA-005' THEN 13\n      WHEN d.issue='LA-006' THEN 14 WHEN d.issue='LA-007' THEN 15\n      WHEN d.issue='LA-013' AND d.origin='forbidden_pure' THEN 16 WHEN d.issue='LA-013' AND d.origin='legacy' THEN 17\n      WHEN d.issue='LA-009' THEN 18 WHEN d.issue='LA-013' THEN 19 WHEN d.issue='LA-015' THEN 20 WHEN d.issue='LA-016' THEN 21\n      WHEN d.issue='LA-017' AND d.origin='' THEN 22 WHEN d.issue='LA-017' AND d.origin='reconciliation' THEN 23\n      WHEN d.issue='LA-017' AND d.origin='absence' THEN 24 WHEN d.issue='LA-017' THEN 25\n      WHEN d.origin='payload' THEN 26 WHEN d.origin='dynamic' THEN 27 ELSE 28 END)>17 AND EXISTS(SELECT 1 FROM graph_legacy legacy WHERE legacy.__path=f.__path AND legacy.root=f.symbol))) d",
+        "key": [
+          "identity"
+        ]
+      },
+      "violation": {
+        "code": "ROW",
+        "message": "Function-fact diagnostic",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

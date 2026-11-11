@@ -1,0 +1,85 @@
+.policy "ruff-ruf028-invalid-formatter-suppression-comment" revision 1
+.description "Place formatter suppression comments between statements, not inside expressions or after decorators, keeping skip comments at a line's end and on comments on their own line."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF028: a formatter comment the formatter will ignore where it stands. The comments: `# fmt: off`,
+// `# fmt: on`, `# fmt: skip`, `# yapf: disable` (off) and `# yapf: enable` (on), also after other text
+// (`# noqa: X # fmt: skip`). One finding per comment, first reason first:
+//   x = [  # fmt: off  …  ]            ← in brackets or an expression (any kind)
+//   # fmt: skip     (own line)         ← skip must end a line; on must not
+//   @dec  / # fmt: off /  def f(): …   ← off or on after a decorator
+//   # fmt: off      (just above `else:`, at its indent)   ← directly above else, elif, except or finally
+//   off as the first line of the else or finally block of a try with except clauses
+// Not modelled: Ruff's "attached to the statement above" case (another formatter comment inside the
+// statement above's brackets).
+#include "python/ruff.rr"
+
+.violation RUF028(at: node, msg: symbol) code "RUF028" "{msg}"
+    suppress ruff "RUF028"
+RUF028(c, "Move this formatter comment out of the brackets or expression to a line between statements; the formatter ignores it where it stands.") :-
+    fmt_comment(c, _), in_expr(c).
+RUF028(c, "Put a skip comment at the end of the line it applies to and an on comment on a line of its own; the other way round the formatter ignores them.") :-
+    fmt_comment(c, k), !in_expr(c), (k = "skip", own_line(c) ; k = "on", !own_line(c)).
+RUF028(c, "Move this comment above the first decorator; after a decorator the formatter ignores it.") :-
+    fmt_comment(c, k), k != "skip", own_line(c), child(p, c, _), kind(p, "decorated_definition").
+RUF028(c, "Indent this off comment to match the block above, or move it before the whole statement; directly above else, elif, except or finally the formatter ignores it.") :-
+    fmt_comment(c, "off"), own_line(c), !in_expr(c), next_sibling(c, t), kind(t, k),
+    (k = "else_clause" ; k = "elif_clause" ; k = "except_clause" ; k = "finally_clause"), col(c, n), col(t, n).
+RUF028(c, "Move this off comment below the first statement of the else or finally block, or above the try statement; at the start of a block after except the formatter ignores it.") :-
+    fmt_comment(c, "off"), own_line(c), kind(y, "try_statement"), child(y, x, _), kind(x, "except_clause"),
+    child(y, e, _), (kind(e, "else_clause") ; kind(e, "finally_clause")), field(e, "body", b), child(b, s, 0),
+    next_sibling(c, x), node(_, x, _, st, _), node(_, s, _, st, _).
+
+// fmt_comment(c, k): comment c is a formatter comment of kind "off", "on" or "skip".
+.decl fmt_comment(c: node, k: symbol)
+fmt_comment(c, k) :- kind(c, "comment"), text(c, t),
+    match("#(?:[^#]*#)*\\s*(?<w>fmt|yapf):\\s*(?<v>off|on|skip|disable|enable)\\s*", t), fmt_word(w, v, k).
+.decl fmt_word(w: symbol, v: symbol, k: symbol)
+fmt_word("fmt", "off", "off"). fmt_word("fmt", "on", "on"). fmt_word("fmt", "skip", "skip").
+fmt_word("yapf", "disable", "off"). fmt_word("yapf", "enable", "on").
+// own_line(c): nothing comes before c on its line.
+.decl own_line(c: node)
+own_line(c) :- kind(c, "comment"), !token_before(c, _).
+own_line(c) :- kind(c, "comment"), token_before(c, t), end_line(t, l), line(c, m), l < m.
+// in_expr(c): c sits in an expression, brackets or a statement's header, not between statements.
+.decl in_expr(c: node)
+in_expr(c) :- kind(c, "comment"), child(p, c, _), !stmt_level(p).
+.decl stmt_level(p: node)
+stmt_level(p) :- kind(p, "module").
+stmt_level(p) :- kind(p, "block").
+stmt_level(p) :- kind(p, "decorator").
+stmt_level(p) :- kind(p, "decorated_definition").
+stmt_level(p) :- kind(p, "_compound_statement").
+stmt_level(p) :- kind(p, "_simple_statement").
+stmt_level(p) :- kind(p, "assert_statement").
+stmt_level(p) :- kind(p, "break_statement").
+stmt_level(p) :- kind(p, "case_clause").
+stmt_level(p) :- kind(p, "class_definition").
+stmt_level(p) :- kind(p, "continue_statement").
+stmt_level(p) :- kind(p, "delete_statement").
+stmt_level(p) :- kind(p, "elif_clause").
+stmt_level(p) :- kind(p, "else_clause").
+stmt_level(p) :- kind(p, "except_clause").
+stmt_level(p) :- kind(p, "exec_statement").
+stmt_level(p) :- kind(p, "expression_statement").
+stmt_level(p) :- kind(p, "finally_clause").
+stmt_level(p) :- kind(p, "for_statement").
+stmt_level(p) :- kind(p, "function_definition").
+stmt_level(p) :- kind(p, "future_import_statement").
+stmt_level(p) :- kind(p, "global_statement").
+stmt_level(p) :- kind(p, "if_statement").
+stmt_level(p) :- kind(p, "import_from_statement").
+stmt_level(p) :- kind(p, "import_statement").
+stmt_level(p) :- kind(p, "match_statement").
+stmt_level(p) :- kind(p, "nonlocal_statement").
+stmt_level(p) :- kind(p, "pass_statement").
+stmt_level(p) :- kind(p, "print_statement").
+stmt_level(p) :- kind(p, "raise_statement").
+stmt_level(p) :- kind(p, "return_statement").
+stmt_level(p) :- kind(p, "try_statement").
+stmt_level(p) :- kind(p, "type_alias_statement").
+stmt_level(p) :- kind(p, "while_statement").
+stmt_level(p) :- kind(p, "with_statement").
+

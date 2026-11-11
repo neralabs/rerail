@@ -1,0 +1,5 @@
+
+running 1 test
+test code_rule_dsl::logic::plan::corpus::reuse::tests::an_unchanged_run_writes_its_kept_outputs ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3126 filtered out; finished in 0.31s

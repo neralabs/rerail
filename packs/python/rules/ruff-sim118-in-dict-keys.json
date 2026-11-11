@@ -108,34 +108,26 @@
                 },
                 "has": {
                   "stopBy": "neighbor",
-                  "regex": "^(in|not\\s+in)$",
-                  "precedes": {
+                  "matches": "keys-call",
+                  "follows": {
                     "stopBy": "neighbor",
-                    "matches": "keys-call"
+                    "regex": "^(in|not\\s+in)$"
                   }
                 }
               },
               {
-                "follows": {
-                  "stopBy": "neighbor",
-                  "regex": "^for$"
-                },
-                "precedes": {
-                  "stopBy": "neighbor",
-                  "regex": "^in$",
-                  "precedes": {
-                    "stopBy": "neighbor",
-                    "matches": "keys-call"
-                  }
-                },
                 "any": [
                   {
                     "inside": {
                       "stopBy": "neighbor",
                       "kind": "for_statement",
+                      "field": "left",
+                      "has": {
+                        "field": "right",
+                        "matches": "keys-call"
+                      },
                       "not": {
                         "has": {
-                          "stopBy": "neighbor",
                           "regex": "^async$"
                         }
                       }
@@ -144,7 +136,12 @@
                   {
                     "inside": {
                       "stopBy": "neighbor",
-                      "kind": "for_in_clause"
+                      "kind": "for_in_clause",
+                      "field": "left",
+                      "has": {
+                        "field": "right",
+                        "matches": "keys-call"
+                      }
                     }
                   }
                 ]

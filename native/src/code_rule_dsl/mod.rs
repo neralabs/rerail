@@ -2,14 +2,32 @@ mod blade;
 mod budget;
 mod calls;
 mod compile;
+mod crypto;
+mod cpython;
+mod demand;
 mod embed;
 mod eval;
+mod facts;
+// Wired to the findings layer in a later slice; until then only tests call it.
+#[allow(dead_code)]
+mod findings;
+// The relational pools' hook slots, compiled wherever the pools are (the hub's relational stage is in the library).
+mod hooks;
 mod identifier;
 mod import_target;
 mod json;
 mod language;
 mod lines;
 mod literal;
+mod logic;
+/// A pool job's span under the span that started it (`crate::threads`), so a job's work is charged to its caller.
+pub(crate) use logic::profile::{here as profile_here, span_at as profile_span_at};
+/// The profile's SQL hazards, which the content store's connections and writer report (`content_store::hazards`, set as
+/// the library loads; decision 0104).
+pub(crate) mod sql_hazards {
+    pub(crate) use super::logic::profile::{behind_the_run, sql_in_wave, strict_statement, strict_on_every_connection, tracing as on, wait_in_wave};
+}
+mod sql_executor;
 mod matcher;
 mod model;
 mod module_graph;
@@ -17,23 +35,69 @@ mod module_path;
 mod npm_ignore;
 mod origin;
 mod package_manifest;
+// P's phase clocks; read by profiling once stages are named (05 Phase 11 row 2).
+#[allow(dead_code)]
+mod phase_clock;
 mod php_literal;
 mod php_view;
 mod placement;
+#[allow(dead_code)]
+mod producers;
+// Published from the scan in a later slice; until then only tests call it.
+#[allow(dead_code)]
+pub(crate) mod prefilter;
+pub(in crate::code_rule_dsl) mod space;
+// Read by the prefilter's lowering; the compiled-plan cache is wired with the plans row.
+#[allow(dead_code)]
+mod stats;
+// Wall time by stage, with RERAIL_PROF set (O28).
+mod prof;
+// P's hooks are called from its matcher and relational code; W wires them with 03's stage names.
 #[cfg(feature = "code-rule-profile")]
+#[allow(dead_code)]
 mod profile;
+// The same SQL diagnostics serve standalone execution and the workspace profiler.
+#[path = "profile/sql.rs"]
+pub(in crate::code_rule_dsl) mod sql_profile;
 mod query;
+// Admission reads these once the batch budget is wired; until then only tests call it.
+#[allow(dead_code)]
+mod residency;
+// P's paths for P's relational stage, under test (open item O18): P's workspace code reads it here.
+use residency::admission::relational;
 mod scope;
 mod semver;
+// The first slice's entry points (06 S6), called by hosts through `slice::napi::CodeRuleSlice`.
+mod slice;
 mod soundness;
 mod suppress;
 mod tape;
+pub(crate) mod tree;
+
+/// The language tag a stored tape image names (`tape::stored_tape_tag`): the store picks a
+/// frame's dictionary by it.
+pub(crate) fn stored_tape_tag(bytes: &[u8]) -> Option<u8> {
+    tape::stored_tape_tag(bytes)
+}
+
+/// The language tag of the dialect a file at `path` is parsed as.
+pub(crate) fn path_tape_tag(path: &str) -> Option<u8> {
+    language::tape_tag(language::dialect_by_label(language::label_of_path(path)?)?)
+}
+pub(crate) mod text;
 #[cfg(test)]
 mod test_support;
+pub mod tools;
 mod transducer;
+// Typing's rounds run over T's facts in tests only until Phase 10 wires them.
+#[allow(dead_code)]
+mod typing;
 mod value;
 mod violations;
 mod vue;
+// Wired to the logic planner and the push path in a later slice; until then only tests call it.
+#[allow(dead_code)]
+mod waves;
 mod workspace;
 
 /// The conformance fixtures directory `native/build.rs` found: `RERAIL_ORACLES_DIR`, or the
@@ -76,6 +140,17 @@ pub struct CodeRuleDslRuntime;
 
 #[napi]
 impl CodeRuleDslRuntime {
+    /// Canonical front-end facts for one complete demand batch, including invalid syntax.
+    /// This only parses source; it never imports or executes a source module.
+    #[napi(catch_unwind)]
+    pub fn python_ast_batch(documents_json: String) -> Result<String> {
+        let documents: Vec<value::python_ast::Document> =
+            serde_json::from_str(&documents_json).map_err(json_error)?;
+        let response =
+            value::python_ast::batch_with_metrics(&documents).map_err(|error| invalid(error.0))?;
+        serde_json::to_string(&response).map_err(json_error)
+    }
+
     #[napi(catch_unwind)]
     pub fn compile(
         source: String,
@@ -87,11 +162,12 @@ impl CodeRuleDslRuntime {
         let canonical_value = canonicalize_value(document);
         let canonical = serde_json::to_string(&canonical_value).map_err(json_error)?;
         let digest = format!("sha256:{}", hex_digest(canonical.as_bytes()));
-        let (id, rule_mode, scope, clauses, required) =
+        let (id, rule_mode, scope, clauses, required, report_count_gt) =
             compile_document(&canonical_value, &capabilities)?;
         Ok(CompiledCodeRuleDsl {
             inner: Arc::new(CompiledCodeRule {
                 id,
+                report_count_gt,
                 rule_mode,
                 canonical,
                 digest,
@@ -324,6 +400,12 @@ pub struct CompiledCodeRuleDsl {
 
 #[napi]
 impl CompiledCodeRuleDsl {
+    /// Audit the normal candidate compiler over fixed permutations. This executes no candidate SQL.
+    #[napi]
+    pub fn candidate_frontier_audit(&self) -> String {
+        prefilter::candidate_frontier_audit(&self.inner).to_string()
+    }
+
     #[napi]
     pub fn canonical_json(&self) -> String {
         self.inner.canonical.clone()

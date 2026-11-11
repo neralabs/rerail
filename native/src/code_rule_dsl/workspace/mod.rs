@@ -10,7 +10,7 @@
 //!   it never holds.
 //! - `results` and `memory`: reporting and memory accounting.
 
-mod api;
+pub(in crate::code_rule_dsl) mod api;
 mod calls_state;
 mod crossfile;
 mod documents;
@@ -20,6 +20,7 @@ mod index;
 mod ingest;
 mod memory;
 mod persisted;
+pub(in crate::code_rule_dsl) use persisted::grammar_version;
 mod results;
 mod secret_names;
 mod storage;
@@ -276,6 +277,7 @@ struct Candidates {
 }
 
 struct FileState {
+    prepared: Option<Box<evaluate::PreparedAst>>,
     input: FileInput,
     source_digest: [u8; 32],
     source_revision: u32,
@@ -406,6 +408,10 @@ impl std::ops::DerefMut for Witnesses {
 
 #[derive(Default)]
 struct WorkspaceState {
+    /// P's anchor corpus (`matcher::p_anchors`), for P's relational clauses and the
+    /// `p-anchor-corpus` path (test-only, open items O18 and O20).
+    #[cfg(test)]
+    anchor_corpus: Arc<crate::code_rule_dsl::matcher::Corpus>,
     code_rules: Vec<Arc<CompiledCodeRule>>,
     candidate_sets: CandidateSets,
     globals: BTreeMap<usize, Vec<CompiledClause>>,
@@ -415,6 +421,9 @@ struct WorkspaceState {
     /// A cross-file `require_each` or `budget` clause's evidence producers: subject then evidence,
     /// or the budget's query.
     relation_plans: BTreeMap<(usize, String), Vec<ClauseId>>,
+    /// File-partitioned relations cache final findings, rather than repository-sized syntax rows.
+    /// Cached compatibility relational results, keyed by source version.
+    file_relation_results: BTreeMap<(usize, String, String), (documents::FileVersion, Evaluation)>,
     /// Per synthetic clause, the files it has evidence in: witnesses, or unknown. It outlives the
     /// files' residency, so eviction keeps cross-file clauses answerable.
     evidence: BTreeMap<ClauseId, BTreeMap<String, Partition>>,

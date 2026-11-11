@@ -1,0 +1,186 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-publication-registry-writes",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer publication_registry_writes at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "impl/**/*.py",
+      "data_layer/**/*.py",
+      "_internal/**/*.py",
+      "l[0-9][0-9][0-9][0-9]_*/**/*.py"
+    ],
+    "exclude": [
+      "**/tests/**",
+      "**/test/**",
+      "**/conform/**",
+      "**/.git/**",
+      "**/.venv/**",
+      "**/__pycache__/**",
+      "**/.pytest_cache/**",
+      "**/node_modules/**",
+      "**/tmp/**",
+      "**/browser_build/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "direct-write",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "kind": "assignment"
+                          },
+                          {
+                            "kind": "augmented_assignment"
+                          }
+                        ]
+                      },
+                      {
+                        "has": {
+                          "field": "left",
+                          "all": [
+                            {
+                              "kind": "subscript"
+                            },
+                            {
+                              "has": {
+                                "field": "value",
+                                "kind": "attribute",
+                                "has": {
+                                  "field": "attribute",
+                                  "kind": "identifier",
+                                  "regex": "^cte_refs$"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "delete_statement"
+                      },
+                      {
+                        "any": [
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "subscript"
+                                },
+                                {
+                                  "has": {
+                                    "field": "value",
+                                    "kind": "attribute",
+                                    "has": {
+                                      "field": "attribute",
+                                      "kind": "identifier",
+                                      "regex": "^cte_refs$"
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "expression_list"
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "kind": "subscript"
+                                      },
+                                      {
+                                        "has": {
+                                          "field": "value",
+                                          "kind": "attribute",
+                                          "has": {
+                                            "field": "attribute",
+                                            "kind": "identifier",
+                                            "regex": "^cte_refs$"
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "call"
+                      },
+                      {
+                        "has": {
+                          "field": "function",
+                          "all": [
+                            {
+                              "kind": "attribute",
+                              "has": {
+                                "field": "attribute",
+                                "kind": "identifier",
+                                "regex": "^(?:clear|pop|popitem|setdefault|update)$"
+                              }
+                            },
+                            {
+                              "has": {
+                                "field": "object",
+                                "kind": "attribute",
+                                "has": {
+                                  "field": "attribute",
+                                  "kind": "identifier",
+                                  "regex": "^cte_refs$"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "filePath": {
+                    "regex": "(?:^|/)l2070_batching/compilation\\.py$"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "REGISTRY_DIRECT_WRITE",
+        "anchor": "witness.span",
+        "message": "REGISTRY_DIRECT_WRITE"
+      }
+    }
+  ]
+}

@@ -1,0 +1,132 @@
+# Step 14: JSON as simdjson accepts it: RFC 8259, every byte valid UTF-8.
+#
+# After the made-up languages, the same constructs for a real one. It accepts what simdjson's
+# parser accepts and refuses what it refuses (a refused file goes to tree-sitter), and writes
+# tree-sitter-json's nodes:
+#   '{' '}' '[' ']' ',' ':' '"'  string_content  escape_sequence  number  true  false  null
+#
+# Where simdjson and tree-sitter-json disagree, this file is simdjson's:
+#   - white space is RFC 8259's four bytes, not tree-sitter's `\s` (no \v, \f);
+#   - a number is RFC 8259's: a fraction has a digit (`1.` is refused), an exponent may be
+#     signed `+` (`1e+5` is a number, though tree-sitter-json's grammar refuses it);
+#   - a string holds no byte below 0x20, and `\u` takes four hex digits;
+#   - the file is valid UTF-8, inside strings and out (simdjson's stage 1 checks it);
+#   - one value, not tree-sitter-json's list of values;
+#   - a byte order mark at the start is skipped, and a lone surrogate escape refused.
+# Where this file and simdjson differ: a number too large for a double (`1e400`, an integer past
+# 64 bits) is valid JSON, and accepted here; simdjson refuses it, as it converts each number.
+# The tree is tree-sitter-json's: `\u` is a two-byte escape_sequence, its hex digits content.
+
+lexer json
+
+# Two tiers, as simdjson's two stages: tier 1 over every byte (classes, the string state, each
+# token's first and last byte, UTF-8, the errors a byte shows by itself); tier 2 over every
+# token (kinds, keywords, the number check, nesting, keys).
+
+# --- Byte classes --------------------------------------------------------------------------------
+
+class quote     = '"'
+class backslash = '\\'
+class ws        = ' ' '\t' '\n' '\r'
+class control   = 0x00..0x1f
+# The structural bytes: one class, as simdjson's. Which one a token is, tier 2 reads.
+class op        = '{' '}' '[' ']' ',' ':'
+class digit     = '0'..'9'
+class nonzero   = '1'..'9'
+class expo      = 'e' 'E'
+class hex       = '0'..'9' 'a'..'f' 'A'..'F'
+class u         = 'u'
+class dee       = 'd' 'D'
+class high_2    = '8' '9' 'a' 'b' 'A' 'B'
+class low_2     = 'c'..'f' 'C'..'F'
+class ef        = 0xef
+class bb        = 0xbb
+class bf        = 0xbf
+
+# --- UTF-8, as simdjson's stage 1 checks it --------------------------------------------------------
+
+class cont      = 0x80..0xbf
+class lead2     = 0xc2..0xdf
+class lead3     = 0xe0..0xef
+class lead4     = 0xf0..0xf4
+class never     = 0xc0 0xc1 0xf5..0xff
+class e0        = 0xe0
+class ed        = 0xed
+class f0        = 0xf0
+class f4        = 0xf4
+class below_a0  = 0x80..0x9f
+class from_a0   = 0xa0..0xbf
+class below_90  = 0x80..0x8f
+class from_90   = 0x90..0xbf
+
+mask last_byte  = ~next(~empty)
+# A UTF-8 byte order mark at the start of the file, which simdjson skips.
+mask bom        = ~prev(~empty) & ef & next(bb) & next(bf, 2)
+mask bom_bytes  = bom | prev(bom, 1) | prev(bom, 2)
+# A byte a lead byte before it needs to be a continuation; a continuation is one exactly there.
+mask needed     = prev(lead2 | lead3 | lead4, 1) | prev(lead3 | lead4, 2) | prev(lead4, 3)
+error "invalid UTF-8" when never | (needed ^ cont)
+                         | (prev(e0, 1) & below_a0) | (prev(ed, 1) & from_a0)
+                         | (prev(f0, 1) & below_90) | (prev(f4, 1) & from_90)
+error "UTF-8 cut short at the end" when ((lead2 | lead3 | lead4) & last_byte)
+                                      | ((lead3 | lead4) & next(last_byte)) | (lead4 & next(last_byte, 2))
+
+# --- Strings: simdjson's stage 1 -----------------------------------------------------------------
+
+# In a run of backslashes, each one at an even offset escapes the byte after it.
+mask escaped    = escaped(backslash)
+mask q          = quote & ~escaped
+mask inside     = toggle(q)                      # the opening quote, not the closing one
+mask opening    = q & inside
+mask closing    = q & ~inside
+mask body       = inside & ~opening              # between the quotes
+mask esc        = backslash & body & ~escaped    # an escape's backslash
+mask esc_last   = escaped & body                 # the byte it escapes
+mask content    = body & ~esc & ~esc_last
+mask unicode    = esc_last & u
+
+error "a control byte in a string" when body & control
+error "\\u without four hex digits" when (prev(unicode, 1) | prev(unicode, 2) | prev(unicode, 3) | prev(unicode, 4)) & ~hex
+# A surrogate escape, at its `u`: `\uD800` to `\uDBFF` must be followed by one of `\uDC00` to
+# `\uDFFF`, six bytes on, and that one must follow one (simdjson refuses either alone).
+mask high       = unicode & next(dee, 1) & next(high_2, 2)
+mask low        = unicode & next(dee, 1) & next(low_2, 2)
+error "a lone surrogate" when (high & ~next(low, 6)) | (low & ~prev(high, 6))
+
+# --- Outside strings -----------------------------------------------------------------------------
+
+mask code       = ~inside & ~closing
+# Any other byte outside a string is in a word: a number or a literal, checked per token.
+mask word       = code & ~ws & ~op & ~bom_bytes
+
+# --- Tokens --------------------------------------------------------------------------------------
+
+token '"'             = start q
+token string_content  = start starts(content) last lasts(content)
+token escape_sequence = start esc last esc_last
+keywords escape_sequence {
+  "\\\"" -> escape_sequence  "\\\\" -> escape_sequence  "\\/" -> escape_sequence
+  "\\b" -> escape_sequence   "\\f" -> escape_sequence   "\\n" -> escape_sequence
+  "\\r" -> escape_sequence   "\\t" -> escape_sequence   "\\u" -> escape_sequence
+} required
+token punctuation     = start code & op
+keywords punctuation { "{"  "}"  "["  "]"  ","  ":" } required
+# A run of word bytes is one token, as simdjson's stage 1 leaves it: a keyword, or a number,
+# which tier 2 checks as simdjson's stage 2 parses one.
+token number          = start starts(word) last lasts(word)
+keywords number { "true" -> true  "false" -> false  "null" -> null }
+
+skip code & (ws | bom_bytes)
+
+check number = ['-'] ('0' | nonzero digit*) ['.' digit+] [expo ['+' | '-'] digit+]
+
+# --- The tree: tier 2, simdjson's stage 2, with tree-sitter-json's nodes -------------------------
+
+tree json {
+  node document               = value
+  node object nested          = '{' [pair (',' pair)*] '}'
+  node pair                   = key: string ':' value: value
+  node array nested           = '[' [value (',' value)*] ']'
+  node string                 = '"' (string_content | escape_sequence)* '"'
+  choice value supertype _value = object | array | string | number | true | false | null
+}

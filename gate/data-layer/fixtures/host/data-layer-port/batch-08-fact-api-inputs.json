@@ -1,0 +1,883 @@
+{
+  "cases": [
+    {
+      "id": "supplied-positive-no-source",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "l7450_versioned_revert/facts_only.py",
+            "module": "l7450_versioned_revert.facts_only",
+            "functions": [
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+                "qualname": "build_lazy",
+                "scope": [],
+                "name": "build_lazy",
+                "line": 7,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [
+                  [
+                    12,
+                    "plan.execute",
+                    false
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "supplied-clean-no-source",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "l7450_versioned_revert/facts_only.py",
+            "module": "l7450_versioned_revert.facts_only",
+            "functions": [
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+                "qualname": "build_lazy",
+                "scope": [],
+                "name": "build_lazy",
+                "line": 7,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "supplied-owner-calls",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "l7450_versioned_revert/facts_only.py",
+            "module": "l7450_versioned_revert.facts_only",
+            "functions": [
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+                "qualname": "build_lazy",
+                "scope": [],
+                "name": "build_lazy",
+                "line": 7,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [
+                  [
+                    12,
+                    "plan.execute",
+                    false
+                  ],
+                  [
+                    13,
+                    "grammar_fetchall",
+                    true
+                  ],
+                  [
+                    14,
+                    "grammar_fetchall",
+                    true
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "supplied-private-tie",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "l7450_versioned_revert/facts_only.py",
+            "module": "l7450_versioned_revert.facts_only",
+            "functions": [
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.helper",
+                "qualname": "helper",
+                "scope": [],
+                "name": "helper",
+                "line": 7,
+                "is_async": false,
+                "is_lazy": false,
+                "has_pure_lazy_decorator": false,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "private_runtime_reachthroughs": [
+                  [
+                    12,
+                    "vars(...).get('_conn')"
+                  ],
+                  [
+                    12,
+                    "vars(...)"
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "supplied-call-order",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "l7450_versioned_revert/facts_only.py",
+            "module": "l7450_versioned_revert.facts_only",
+            "functions": [
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+                "qualname": "build_lazy",
+                "scope": [],
+                "name": "build_lazy",
+                "line": 7,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "local_callee_calls": [
+                  [
+                    12,
+                    "l7450_versioned_revert.facts_only.z_async"
+                  ],
+                  [
+                    12,
+                    "l7450_versioned_revert.facts_only.a_async"
+                  ]
+                ]
+              },
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.z_async",
+                "qualname": "z_async",
+                "scope": [],
+                "name": "z_async",
+                "line": 7,
+                "is_async": true,
+                "is_lazy": false,
+                "has_pure_lazy_decorator": false,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true
+              },
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.a_async",
+                "qualname": "a_async",
+                "scope": [],
+                "name": "a_async",
+                "line": 7,
+                "is_async": true,
+                "is_lazy": false,
+                "has_pure_lazy_decorator": false,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "supplied-lazy-flag",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "l7450_versioned_revert/facts_only.py",
+            "module": "l7450_versioned_revert.facts_only",
+            "functions": [
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+                "qualname": "build_lazy",
+                "scope": [],
+                "name": "build_lazy",
+                "line": 7,
+                "is_async": false,
+                "is_lazy": false,
+                "has_pure_lazy_decorator": false,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "local_callee_calls": [
+                  [
+                    12,
+                    "l7450_versioned_revert.facts_only.helper"
+                  ]
+                ]
+              },
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.helper",
+                "qualname": "helper",
+                "scope": [],
+                "name": "helper",
+                "line": 7,
+                "is_async": false,
+                "is_lazy": false,
+                "has_pure_lazy_decorator": false,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "supplied-cache-clean-no-source",
+      "contract": "cached-policy-comparison",
+      "parameters": {
+        "functions": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "path": "l1234_test/facts_only.py",
+            "line": 7,
+            "cache_args": [
+              "cache"
+            ],
+            "cache_annotations": [
+              [
+                "cache",
+                "OptimizerRunCache"
+              ]
+            ],
+            "body_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "cache_members": [
+              [
+                "get",
+                "call"
+              ]
+            ],
+            "errors": []
+          }
+        ],
+        "entries": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "cache_args": [
+              "cache"
+            ],
+            "cache_types": [
+              [
+                "cache",
+                "l2070_batching.optimizer_run_cache.OptimizerRunCache"
+              ]
+            ],
+            "allowed_cache_members": [
+              [
+                "get",
+                "call"
+              ]
+            ],
+            "body_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "owner_scope": "optimizer_run",
+            "rationale": "Reviewed API test contract"
+          }
+        ]
+      }
+    },
+    {
+      "id": "supplied-cache-changed-no-source",
+      "contract": "cached-policy-comparison",
+      "parameters": {
+        "functions": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "path": "l1234_test/facts_only.py",
+            "line": 7,
+            "cache_args": [
+              "cache"
+            ],
+            "cache_annotations": [
+              [
+                "cache",
+                "OptimizerRunCache"
+              ]
+            ],
+            "body_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "cache_members": [
+              [
+                "get",
+                "call"
+              ]
+            ],
+            "errors": [
+              "supplied first error",
+              "supplied second error"
+            ]
+          }
+        ],
+        "entries": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "cache_args": [
+              "cache"
+            ],
+            "cache_types": [
+              [
+                "cache",
+                "l2070_batching.optimizer_run_cache.OptimizerRunCache"
+              ]
+            ],
+            "allowed_cache_members": [
+              [
+                "get",
+                "call"
+              ]
+            ],
+            "body_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "owner_scope": "optimizer_run",
+            "rationale": "Reviewed API test contract"
+          }
+        ]
+      }
+    },
+    {
+      "id": "supplied-cache-duplicates",
+      "contract": "cached-policy-comparison",
+      "parameters": {
+        "functions": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "path": "l1234_test/facts_only.py",
+            "line": 7,
+            "cache_args": [
+              "cache"
+            ],
+            "cache_annotations": [
+              [
+                "cache",
+                "OptimizerRunCache"
+              ]
+            ],
+            "body_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "cache_members": [
+              [
+                "get",
+                "call"
+              ]
+            ],
+            "errors": []
+          },
+          {
+            "function": "l1234_test.facts_only.derive",
+            "path": "l1234_test/facts_only.py",
+            "line": 7,
+            "cache_args": [
+              "cache"
+            ],
+            "cache_annotations": [
+              [
+                "cache",
+                "OptimizerRunCache"
+              ]
+            ],
+            "body_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "cache_members": [
+              [
+                "get",
+                "call"
+              ]
+            ],
+            "errors": [
+              "supplied first error",
+              "supplied second error"
+            ]
+          }
+        ],
+        "entries": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "cache_args": [
+              "cache"
+            ],
+            "cache_types": [
+              [
+                "cache",
+                "l2070_batching.optimizer_run_cache.OptimizerRunCache"
+              ]
+            ],
+            "allowed_cache_members": [
+              [
+                "get",
+                "call"
+              ]
+            ],
+            "body_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "owner_scope": "optimizer_run",
+            "rationale": "Reviewed API test contract"
+          }
+        ]
+      }
+    },
+    {
+      "id": "supplied-memo-all-differences",
+      "contract": "memoized-policy-comparison",
+      "parameters": {
+        "functions": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "path": "l1234_test/facts_only.py",
+            "line": 7,
+            "max_entries": 4,
+            "body_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "errors": [
+              "supplied memoization error"
+            ]
+          }
+        ],
+        "entries": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "max_entries": 8,
+            "body_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "signature_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "cache_lifetime": "bad",
+            "key_policy": "bad",
+            "return_policy": "bad",
+            "exception_policy": "bad",
+            "rationale": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "supplied-event-order-not-line-order",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "l7450_versioned_revert/facts_only.py",
+            "module": "l7450_versioned_revert.facts_only",
+            "functions": [
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+                "qualname": "build_lazy",
+                "scope": [],
+                "name": "build_lazy",
+                "line": 7,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [
+                  [
+                    90,
+                    "plan.execute",
+                    false
+                  ],
+                  [
+                    12,
+                    "plan.execute_async",
+                    false
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "supplied-call-order-not-line-order",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "l7450_versioned_revert/facts_only.py",
+            "module": "l7450_versioned_revert.facts_only",
+            "functions": [
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+                "qualname": "build_lazy",
+                "scope": [],
+                "name": "build_lazy",
+                "line": 1,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [],
+                "local_callee_calls": [
+                  [
+                    90,
+                    "l7450_versioned_revert.facts_only.last"
+                  ],
+                  [
+                    12,
+                    "l7450_versioned_revert.facts_only.first"
+                  ]
+                ]
+              },
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.last",
+                "qualname": "last",
+                "scope": [],
+                "name": "last",
+                "line": 100,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [
+                  [
+                    101,
+                    "plan.execute",
+                    false
+                  ]
+                ]
+              },
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.first",
+                "qualname": "first",
+                "scope": [],
+                "name": "first",
+                "line": 110,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [
+                  [
+                    111,
+                    "plan.execute_async",
+                    false
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "supplied-cycle-shared-memo",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "l7450_versioned_revert/facts_only.py",
+            "module": "l7450_versioned_revert.facts_only",
+            "functions": [
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.a_lazy",
+                "qualname": "a_lazy",
+                "scope": [],
+                "name": "a_lazy",
+                "line": 1,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [],
+                "local_callee_calls": [
+                  [
+                    2,
+                    "l7450_versioned_revert.facts_only.b_lazy"
+                  ],
+                  [
+                    3,
+                    "l7450_versioned_revert.facts_only.sink"
+                  ]
+                ]
+              },
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.b_lazy",
+                "qualname": "b_lazy",
+                "scope": [],
+                "name": "b_lazy",
+                "line": 10,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [],
+                "local_callee_calls": [
+                  [
+                    11,
+                    "l7450_versioned_revert.facts_only.a_lazy"
+                  ]
+                ]
+              },
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.sink",
+                "qualname": "sink",
+                "scope": [],
+                "name": "sink",
+                "line": 20,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [
+                  [
+                    21,
+                    "plan.execute",
+                    false
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "supplied-legacy-continues-before-late-diagnostics",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "l7450_versioned_revert/facts_only.py",
+            "module": "l7450_versioned_revert.facts_only",
+            "functions": [
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.bootstrap_lazy",
+                "qualname": "bootstrap_lazy",
+                "scope": [],
+                "name": "bootstrap_lazy",
+                "line": 7,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [],
+                "local_callee_calls": [
+                  [
+                    8,
+                    "l7450_versioned_revert.facts_only.legacy"
+                  ]
+                ],
+                "lazy_result_of_returns": [
+                  9
+                ],
+                "bootstrap_lazy_state_mutations": [
+                  [
+                    10,
+                    "attribute assignment to self.state"
+                  ]
+                ]
+              },
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.legacy",
+                "qualname": "legacy",
+                "scope": [],
+                "name": "legacy",
+                "line": 20,
+                "is_async": false,
+                "is_lazy": false,
+                "has_pure_lazy_decorator": false,
+                "has_legacy_boundary_decorator": true,
+                "is_public": true,
+                "plan_io_calls": []
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "supplied-quoted-annotation",
+      "contract": "cached-policy-comparison",
+      "parameters": {
+        "functions": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "path": "l1234_test/facts_only.py",
+            "line": 7,
+            "cache_args": [
+              "cache"
+            ],
+            "cache_annotations": [
+              [
+                "cache",
+                "'OptimizerRunCache'"
+              ]
+            ],
+            "body_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "cache_members": [
+              [
+                "get",
+                "call"
+              ]
+            ],
+            "errors": []
+          }
+        ],
+        "entries": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "cache_args": [
+              "cache"
+            ],
+            "cache_types": [
+              [
+                "cache",
+                "l2070_batching.optimizer_run_cache.OptimizerRunCache"
+              ]
+            ],
+            "allowed_cache_members": [
+              [
+                "get",
+                "call"
+              ]
+            ],
+            "body_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "owner_scope": "optimizer_run",
+            "rationale": "Reviewed API test contract"
+          }
+        ]
+      }
+    },
+    {
+      "id": "supplied-annotation-escapes",
+      "contract": "cached-policy-comparison",
+      "parameters": {
+        "functions": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "path": "l1234_test/facts_only.py",
+            "line": 7,
+            "cache_args": [
+              "cache"
+            ],
+            "cache_annotations": [
+              [
+                "cache",
+                "tuple[Literal[\"a'b\\nc\"], '\u2028']"
+              ]
+            ],
+            "body_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "cache_members": [
+              [
+                "get",
+                "call"
+              ]
+            ],
+            "errors": []
+          }
+        ],
+        "entries": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "cache_args": [
+              "cache"
+            ],
+            "cache_types": [
+              [
+                "cache",
+                "l2070_batching.optimizer_run_cache.OptimizerRunCache"
+              ]
+            ],
+            "allowed_cache_members": [
+              [
+                "get",
+                "call"
+              ]
+            ],
+            "body_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "owner_scope": "optimizer_run",
+            "rationale": "Reviewed API test contract"
+          }
+        ]
+      }
+    },
+    {
+      "id": "supplied-hydration-visitation-order",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "impl/common/l2070_server_plan/steps/hydration_order.py",
+            "module": "impl.common.l2070_server_plan.steps.hydration_order",
+            "functions": [
+              {
+                "file": "impl/common/l2070_server_plan/steps/hydration_order.py",
+                "symbol": "impl.common.l2070_server_plan.steps.hydration_order.Step.preprocess",
+                "qualname": "Step.preprocess",
+                "scope": [
+                  "Step"
+                ],
+                "name": "preprocess",
+                "line": 7,
+                "is_async": false,
+                "is_lazy": false,
+                "has_pure_lazy_decorator": false,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [],
+                "local_callee_calls": [
+                  [
+                    3,
+                    "hydrate_many_post_op"
+                  ],
+                  [
+                    2,
+                    "runtime_sql_conn_from_hydrator"
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

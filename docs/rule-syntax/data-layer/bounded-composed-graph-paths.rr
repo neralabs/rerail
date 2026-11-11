@@ -1,0 +1,213 @@
+.policy "data-layer:bounded-composed-graph-paths" revision 1
+.description "Completion gate for bounded composed graph paths: required files, contracts and decorators present; removed endpoints stay removed."
+.language python
+.mode block
+.scope include "l9700_graph_query/*.py", "l7200_versioned_transactions/*.py", "impl/common/l2070_server_plan/**/*.py", "impl/common/l9700_sql_graph_query/**/*.py", "l9720_sparql/*.py", "scripts/lint_all.py", "docs/*.rst", "docs/design/**"
+.scope text "**/*.rst", "**/*.md"
+// Python linter: scripts/lint_bounded_composed_graph_paths.py. A completion gate over fixed files, written as
+// regexes over their text, not over a tree. So is this rule: it reads physical lines (src_line), as the
+// linter's (?m)^ patterns do.
+//   BCGP001  a required file is missing                       BCGP011  a design document is missing, or a
+//   BCGP002  a removed transaction endpoint is defined again            canonical doc still shows graph_query_builder(
+//   BCGP003  graph_lazy / graph / graph_async lack their decorator      BCGP012  lint_all does not register the check
+//   BCGP004  a path semantic type is not defined at top level           BCGP013  the conformance test is missing
+//   BCGP005  PathPattern lacks `expression`, or has `edge`              BCGP014  a legacy recursive-SQL shortcut is named
+//   BCGP006, BCGP007  a path terminal lacks its decorator
+//   BCGP008  a ServerPlan path contract class or method is missing
+//   BCGP009  a graph contract class lacks a required, non-optional graph_type
+//   BCGP010  SPARQL bypasses graph_lazy(…), or lacks its path types
+// The linter's text shapes, kept exactly:
+//   a class block runs from the first line `class X…:` to the next line starting `class `, `def ` or `async def `
+//     (a column-0 decorator does not end it);
+//   a method is a line `    def m(` or `    async def m(` (four spaces); its decorator a line `    @d` or
+//     `    @d(…)`, possibly followed by other `    @…` lines: `@mod.d` is not `@d`;
+//   a field is a line `    name: annotation [= default]`; graph_type is optional when its annotation contains
+//     "None" (Optional[X] passes, X | None does not) or its default is None;
+//   a name "appears" as a whole word anywhere, comments and strings included.
+// Findings sit at line 1 of their file, except BCGP002 and BCGP014 (the first occurrence) and BCGP005, BCGP008's
+// method checks and BCGP009's field checks (the class line).
+
+// ---- the files ---------------------------------------------------------------------------------------------------
+// bcgp_required(p): a file whose absence is BCGP001 (the linter's _required_source).
+.decl bcgp_required(p: symbol)
+bcgp_required("l9700_graph_query/graph_pattern.py"). bcgp_required("l9700_graph_query/query_builder.py").
+bcgp_required("l7200_versioned_transactions/graph_lazy_sql.py").
+bcgp_required("l7200_versioned_transactions/versioned_lazy_mixin.py").
+bcgp_required("l7200_versioned_transactions/versioned_transactions.py").
+bcgp_required("impl/common/l2070_server_plan/steps/intent_graph.py").
+bcgp_required("impl/common/l2070_server_plan/graph_path_relation_plan.py").
+bcgp_required("impl/common/l9700_sql_graph_query/steps/graph_traverse.py").
+bcgp_required("impl/common/l9700_sql_graph_query/sql_graph_query_builder.py").
+bcgp_required("l9720_sparql/executor.py"). bcgp_required("l9720_sparql/ast.py"). bcgp_required("l9720_sparql/compiler.py").
+bcgp_required("docs/l9700_graph_query.rst"). bcgp_required("docs/l7200_versioned_transactions.rst").
+bcgp_required("docs/l9720_sparql.rst"). bcgp_required("scripts/lint_all.py").
+
+// bcgp_line(p, l, sp): line l of file p.
+.decl bcgp_line(p: symbol, l: number, sp: span)
+bcgp_line(p, l, sp) :- doc(d, p, _), src_line(d, l, sp).
+// bcgp_top(p, l): line l starts a top-level `class `, `def ` or `async def ` (what ends a class block).
+.decl bcgp_top(p: symbol, l: number)
+bcgp_top(p, l) :- bcgp_line(p, l, sp), match("(?:class |def |async def ).*", sp).
+// bcgp_symbol(p, x): a top-level class or def named x (_module_symbols).
+.decl bcgp_symbol(p: symbol, x: symbol)
+bcgp_symbol(p, x) :- bcgp_line(p, _, sp), match("(?:class|def|async def)\\s+(?<xs>[A-Za-z_][A-Za-z0-9_]*).*", sp), text(xs, x).
+// bcgp_in(p, x, h, l): line l is in class x's block, whose header is line h (the first `class x…:` line).
+.decl bcgp_header(p: symbol, x: symbol, l: number)
+bcgp_header(p, x, l) :- bcgp_line(p, l, sp),
+    match("class (?<xs>[A-Za-z_][A-Za-z0-9_]*)(?:\\[[^\\n]*\\])?(?:\\([^\\n]*\\))?:.*", sp), text(xs, x).
+.decl bcgp_first_header(p: symbol, x: symbol, h: number)
+bcgp_first_header(p, x, h) :- bcgp_header(p, x, _), h = min l : { bcgp_header(p, x, l) }.
+.decl bcgp_block(p: symbol, x: symbol, h: number, e: number)
+bcgp_block(p, x, h, e) :- bcgp_first_header(p, x, h), bcgp_top(p, l0), l0 > h, e = min l : { bcgp_top(p, l), l > h }.
+bcgp_block(p, x, h, k + 1) :- bcgp_first_header(p, x, h), count : { bcgp_top(p, l), l > h } = 0, doc(d, p, _),
+    line_count(d, k).
+.decl bcgp_in(p: symbol, x: symbol, h: number, l: number)
+bcgp_in(p, x, h, l) :- bcgp_block(p, x, h, e), bcgp_line(p, l, _), l >= h, l < e.
+
+// bcgp_def(p, l, m): line l is `    def m(` / `    async def m(` (four spaces), m by name.
+.decl bcgp_def(p: symbol, l: number, m: symbol)
+bcgp_def(p, l, m) :- bcgp_line(p, l, sp),
+    match("    (?:async )?def (?<ms>[A-Za-z_][A-Za-z0-9_]*)(?:\\[[^\\n]*\\])?\\s*\\(.*", sp), text(ms, m).
+// bcgp_decorated(p, a, k, m): line a is `    @k` or `    @k(…)`, then only `    @…` lines, then the def of m.
+.decl bcgp_deco(p: symbol, a: number, k: symbol)
+bcgp_deco(p, a, k) :- bcgp_line(p, a, sp), match("    @(?<ks>[A-Za-z_][A-Za-z0-9_]*)(?:\\([^\\n]*\\))?", sp), text(ks, k).
+.decl bcgp_at_line(p: symbol, l: number)
+bcgp_at_line(p, l) :- bcgp_line(p, l, sp), match("    @.+", sp).
+.decl bcgp_decorated(p: symbol, a: number, k: symbol, m: symbol)
+bcgp_decorated(p, a, k, m) :- bcgp_deco(p, a, k), bcgp_def(p, b, m), b > a,
+    count : { bcgp_line(p, l, _), l > a, l < b, !bcgp_at_line(p, l) } = 0.
+// bcgp_has_decorated(p, x, m, k): class x's block holds method m decorated @k.
+.decl bcgp_has_decorated(p: symbol, x: symbol, m: symbol, k: symbol)
+bcgp_has_decorated(p, x, m, k) :- bcgp_in(p, x, _, a), bcgp_decorated(p, a, k, m).
+// bcgp_field(p, x, f, l): the first line of class x's block declaring field f: `    f: annotation…`.
+.decl bcgp_field_at(p: symbol, x: symbol, f: symbol, l: number)
+bcgp_field_at(p, x, f, l) :- bcgp_in(p, x, _, l), bcgp_line(p, l, sp),
+    match("    (?<fs>[A-Za-z_][A-Za-z0-9_]*)\\s*:\\s*[^\\n=]+.*", sp), text(fs, f).
+.decl bcgp_field(p: symbol, x: symbol, f: symbol, l: number)
+bcgp_field(p, x, f, l) :- bcgp_field_at(p, x, f, _), l = min l2 : { bcgp_field_at(p, x, f, l2) }.
+
+// ---- BCGP001, BCGP011, BCGP013: files ------------------------------------------------------------------------
+.violation BCGP(at: loc, c: symbol, what: symbol) code {c} "{what}"
+BCGP(@place(p, 1), "BCGP001", "required architecture file is missing") :- bcgp_required(p), !file(p).
+BCGP(@place(p, 1), "BCGP011", "required architecture document is missing") :- !file(p),
+    (p = "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst" ;
+     p = "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_IMPLEMENTATION_PLAN.rst" ;
+     p = "docs/design/architecture_linter_rules/serverplan/bounded_composed_graph_paths.md").
+BCGP(@place(p, 1), "BCGP013", "maintained-backend composed recursion contract is missing") :-
+    p = "conform/l9700_graph_query/test_bounded_composed_paths.py", !file(p).
+
+// ---- BCGP002, BCGP014: names that must stay gone -------------------------------------------------------------
+// BCGP002: `def name(` at any indentation in the two transaction files. The linter's `^\s*` also runs over blank
+// lines above the def, so its line is the first of the whitespace-only lines just above (bcgp_lead).
+.decl bcgp_banned(x: symbol)
+bcgp_banned("graph_query_builder"). bcgp_banned("graph_query_builder_async"). bcgp_banned("graph_query_builder_lazy").
+bcgp_banned("graph_traverse"). bcgp_banned("graph_traverse_async"). bcgp_banned("graph_traverse_lazy").
+.decl bcgp_endpoint(p: symbol, x: symbol, l: number)
+bcgp_endpoint(p, x, l) :- glob("l7200_versioned_transactions/versioned_{lazy_mixin,transactions}.py", p),
+    bcgp_line(p, l, sp), match("\\s*(?:async )?def (?<xs>[A-Za-z_][A-Za-z0-9_]*)\\s*\\(.*", sp), text(xs, x), bcgp_banned(x).
+.decl bcgp_blank(p: symbol, l: number)
+bcgp_blank(p, l) :- bcgp_line(p, l, sp), match("\\s*", sp).
+.decl bcgp_lead(p: symbol, x: symbol, l: number)  // l..k-1 are whitespace-only, k the def line
+bcgp_lead(p, x, l) :- bcgp_endpoint(p, x, k), bcgp_line(p, l, _), l <= k,
+    count : { bcgp_line(p, j, _), j >= l, j < k, !bcgp_blank(p, j) } = 0.
+BCGP(@place(p, l), "BCGP002", cat(x, "() is a removed transaction endpoint and must remain deleted")) :-
+    bcgp_lead(p, x, _), l = min k : { bcgp_lead(p, x, k) }.
+
+.decl bcgp_shortcut(x: symbol)
+bcgp_shortcut("_try_build_sparse_union_recursive_bindings_grammar").
+bcgp_shortcut("_try_build_sparse_recursive_bindings_grammar").
+bcgp_shortcut("_SqlSparseUnionRecursiveBindingGrammar"). bcgp_shortcut("_SqlSparseUnionRecursiveBindingFinalSelect").
+.decl bcgp_named(x: symbol, l: number)  // a whole word x on line l of the SQL graph builder
+bcgp_named(x, l) :- bcgp_line("impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l, sp),
+    match(".*\\b(?<xs>_try_build_sparse_union_recursive_bindings_grammar|_try_build_sparse_recursive_bindings_grammar|_SqlSparseUnionRecursiveBindingGrammar|_SqlSparseUnionRecursiveBindingFinalSelect)\\b.*", sp), text(xs, x),
+    bcgp_shortcut(x).
+BCGP(@place("impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l), "BCGP014",
+    cat(x, " must not bypass the relation-algebra path")) :- bcgp_named(x, _), l = min k : { bcgp_named(x, k) }.
+
+// ---- BCGP003, BCGP006, BCGP007: decorated entrypoints ---------------------------------------------------------
+// bcgp_entry(code, p, x, m, k): class x in file p must hold method m decorated @k.
+.decl bcgp_entry(c: symbol, p: symbol, x: symbol, m: symbol, k: symbol)
+bcgp_entry("BCGP003", "l7200_versioned_transactions/versioned_lazy_mixin.py", "VersionedReadTransactionLazyMixin",
+    "graph_lazy", "pure_lazy").
+bcgp_entry("BCGP003", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction",
+    "graph", "legacy_sync").
+bcgp_entry("BCGP003", "l7200_versioned_transactions/versioned_transactions.py", "LazyVersionedReadTransaction",
+    "graph_async", "legacy_async").
+bcgp_entry("BCGP006", "l9700_graph_query/query_builder.py", "GraphQueryBuilder", "execute_paths_lazy", "pure_lazy").
+bcgp_entry("BCGP006", "l9700_graph_query/query_builder.py", "GraphQueryBuilder", "execute_paths", "legacy_sync").
+bcgp_entry("BCGP006", "l9700_graph_query/query_builder.py", "GraphQueryBuilder", "execute_paths_async", "legacy_async").
+bcgp_entry("BCGP007", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlPlanGraphQueryBuilder",
+    "execute_paths_lazy", "pure_lazy").
+BCGP(@place(p, 1), c, cat(m, cat("() must exist with @", k))) :- bcgp_entry(c, p, x, m, k), !bcgp_has_decorated(p, x, m, k).
+
+// ---- BCGP004, BCGP005, BCGP010: the path types --------------------------------------------------------------
+.decl bcgp_symbol_req(c: symbol, p: symbol, x: symbol)
+bcgp_symbol_req("BCGP004", "l9700_graph_query/graph_pattern.py", x) :-
+    (x = "PathExpression" ; x = "PathStep" ; x = "PathSequence" ; x = "PathChoice" ; x = "QuantifiedPath" ;
+     x = "PathMode" ; x = "PathSearch" ; x = "PathPattern" ; x = "GraphPathEvidenceRow").
+bcgp_symbol_req("BCGP010", "l9720_sparql/ast.py", x) :-
+    (x = "SparqlPathExpression" ; x = "SparqlPathAlternative" ; x = "SparqlPathSequence" ; x = "SparqlPathInverse" ;
+     x = "SparqlPathQuantifier").
+BCGP(@place(p, 1), c, cat("required path type is missing: ", x)) :- bcgp_symbol_req(c, p, x), doc(_, p, _),
+    !bcgp_symbol(p, x).
+BCGP(@place(p, h), "BCGP005", "PathPattern must own a complete PathExpression") :-
+    p = "l9700_graph_query/graph_pattern.py", bcgp_block(p, "PathPattern", h, _), !bcgp_field(p, "PathPattern", "expression", _).
+BCGP(@place(p, h), "BCGP005", "edge-shaped PathPattern field must be removed") :-
+    p = "l9700_graph_query/graph_pattern.py", bcgp_block(p, "PathPattern", h, _), bcgp_field(p, "PathPattern", "edge", _).
+BCGP(@place(p, 1), "BCGP010", "SPARQL must acquire builders through graph_lazy(...).query_builder(...)") :-
+    p = "l9720_sparql/executor.py", doc(d, p, _), source(d, sp), contains("graph_query_builder", sp).
+BCGP(@place(p, 1), "BCGP010", "SPARQL compiler must target the shared path expression contract") :-
+    p = "l9720_sparql/compiler.py", doc(d, p, _), source(d, sp), !contains("PathExpression", sp).
+
+// ---- BCGP008: the ServerPlan path contract -----------------------------------------------------------------------
+.decl bcgp_class_req(c: symbol, p: symbol, x: symbol)
+bcgp_class_req("BCGP008", "impl/common/l2070_server_plan/steps/intent_graph.py", "ExecuteGraphPathsStep").
+bcgp_class_req("BCGP008", "impl/common/l2070_server_plan/steps/intent_graph.py", "GraphPathEvidenceRelationRow").
+bcgp_class_req("BCGP008", "impl/common/l2070_server_plan/graph_path_relation_plan.py", "BoundedComposedPathRelationPlan").
+bcgp_class_req("BCGP008", "impl/common/l2070_server_plan/graph_path_relation_plan.py", "GraphPathRelationSchemas").
+bcgp_class_req("BCGP009", "l7200_versioned_transactions/graph_lazy_sql.py", "SqlGraphExecutionCtx").
+bcgp_class_req("BCGP009", "impl/common/l2070_server_plan/steps/intent_graph.py", "_ResolveGraphExecutionCtxConfig").
+bcgp_class_req("BCGP009", "impl/common/l2070_server_plan/steps/intent_graph.py", "_GraphExecuteConfig").
+bcgp_class_req("BCGP009", "impl/common/l9700_sql_graph_query/steps/graph_traverse.py", "_GraphTraversalApiConfig").
+bcgp_class_req("BCGP009", "impl/common/l9700_sql_graph_query/steps/graph_traverse.py", "_GraphTraversalTerminalConfig").
+BCGP(@place(p, 1), c, cat("required contract class is missing: ", x)) :- bcgp_class_req(c, p, x), doc(_, p, _),
+    !bcgp_block(p, x, _, _).
+BCGP(@place(p, h), "BCGP008", cat("path step must define ", m)) :- p = "impl/common/l2070_server_plan/steps/intent_graph.py",
+    bcgp_block(p, "ExecuteGraphPathsStep", h, _), (m = "cte_publication_contract" ; m = "compile"),
+    count : { bcgp_in(p, "ExecuteGraphPathsStep", _, l), bcgp_def(p, l, m) } = 0.
+// The SQL builder: _build_execute_paths_relation_plan exists (a four-space def anywhere), and the method
+// block of _build_execute_paths_grammar (its def line to the next four-space `@` or def) calls it.
+.decl bcgp_first_def(p: symbol, m: symbol, a: number)
+bcgp_first_def(p, m, a) :- bcgp_def(p, _, m), a = min l : { bcgp_def(p, l, m) }.
+.decl bcgp_member(p: symbol, l: number)  // a four-space `@` or def line: what ends a method block
+bcgp_member(p, l) :- bcgp_line(p, l, sp), match("    (?:@|(?:async )?def ).*", sp).
+.decl bcgp_method(p: symbol, m: symbol, a: number, e: number)
+bcgp_method(p, m, a, e) :- bcgp_first_def(p, m, a), bcgp_member(p, l0), l0 > a, e = min l : { bcgp_member(p, l), l > a }.
+bcgp_method(p, m, a, k + 1) :- bcgp_first_def(p, m, a), count : { bcgp_member(p, l), l > a } = 0, doc(d, p, _),
+    line_count(d, k).
+BCGP(@place(p, 1), "BCGP008", "bounded paths must build a semantic relation plan before SQL lowering") :-
+    p = "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py",
+    !bcgp_method(p, "_build_execute_paths_relation_plan", _, _).
+BCGP(@place(p, 1), "BCGP008", "bounded path SQL lowering must consume the semantic relation plan") :-
+    p = "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py",
+    count : { bcgp_method(p, "_build_execute_paths_grammar", a, e), bcgp_line(p, l, sp), l >= a, l < e,
+              contains("_build_execute_paths_relation_plan()", sp) } = 0.
+
+// ---- BCGP009: graph_type is required and non-optional ------------------------------------------------------------
+BCGP(@place(p, h), "BCGP009", cat(x, " must carry graph_type")) :- bcgp_class_req("BCGP009", p, x),
+    bcgp_block(p, x, h, _), !bcgp_field(p, x, "graph_type", _).
+BCGP(@place(p, h), "BCGP009", cat(x, ".graph_type must be required and non-optional")) :-
+    bcgp_class_req("BCGP009", p, x), bcgp_block(p, x, h, _), bcgp_field(p, x, "graph_type", l), bcgp_line(p, l, sp),
+    (match("    graph_type\\s*:\\s*[^\\n=]*None.*", sp) ; match("    graph_type\\s*:\\s*[^\\n=]+=\\s*None\\s*", sp)).
+
+// ---- BCGP011, BCGP012: documents and suite activation --------------------------------------------------------
+BCGP(@place(p, 1), "BCGP011", "canonical documentation still advertises the removed direct builder endpoint") :-
+    glob("docs/{l9700_graph_query,l7200_versioned_transactions,l9720_sparql}.rst", p), doc(d, p, _), source(d, sp),
+    contains("graph_query_builder(", sp).
+BCGP(@place(p, 1), "BCGP012", "completion linter is not a hard-fail CI member of lint_all") :-
+    p = "scripts/lint_all.py", !bcgp_activated(p).
+.decl bcgp_activated(p: symbol)
+bcgp_activated(p) :- doc(d, p, _), source(d, sp),
+    match("(?s).*name\\s*=\\s*['\"]bounded_composed_graph_paths['\"].*", sp),
+    match("(?s).*script\\s*=\\s*['\"]lint_bounded_composed_graph_paths\\.py['\"].*", sp),
+    match("(?s).*enforcement\\s*=\\s*['\"]hard-fail['\"].*", sp), match("(?s).*in_ci\\s*=\\s*True.*", sp).

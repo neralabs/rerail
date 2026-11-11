@@ -1,0 +1,29 @@
+.policy "n-no-exports-assign" revision 6
+.description "Don't assign to exports in CommonJS files; it breaks the link to module.exports, so assign to module.exports instead."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/no-exports-assign: an assignment to the global variable `exports`, which only rebinds the
+// module's local alias and exports nothing. The name must resolve to the global variable:
+//   exports = {}                          reported in a CommonJS file (where exports is a global variable)
+//   function f(exports) { exports = 1 }   not: the parameter
+//   module.exports = exports = {}         not: both point at the new object
+//   exports = module.exports = {}         not
+//   exports.a = 1                         not: a member, not the variable
+// In an ES module there is no global `exports`, so nothing is reported (cjs_ref).
+
+#include "tsx/node.rr"   // cjs_ref, node_assign, node_left_of, deparen
+
+.violation exports_assign(at: node) code "n/no-exports-assign"
+    "Assign to module.exports instead of exports, which only rebinds a local variable."
+    suppress eslint "n/no-exports-assign"
+exports_assign(a) :- node_left_of(l, a), kind(l, "identifier"), cjs_ref(l, "exports"), !both(a).
+
+// both(a): `module.exports = exports = …` or `exports = module.exports = …`.
+.decl both(a: node)
+both(a) :- node_assign_in(a, b), field(b, "right", w), deparen(w, a), node_left_of(m, b), module_exports(m).
+both(a) :- field(a, "right", w), deparen(w, b), node_assign(b), node_left_of(m, b), module_exports(m).
+// module_exports(m): `module.exports`, not computed, module the global variable.
+.decl module_exports(m: node)
+module_exports(m) :- kind(m, "member_expression"), field(m, "object", o), cjs_ref(o, "module"),
+    field(m, "property", p), text(p, "exports").

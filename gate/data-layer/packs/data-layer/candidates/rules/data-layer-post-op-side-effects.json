@@ -1,0 +1,950 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-post-op-side-effects",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer post_op_side_effects at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "l2070_batching/post_op.py",
+      "l2070_batching/post_op_specs.py",
+      "l2070_batching/post_op_domain_decoders.py",
+      "l2070_batching/post_op_allowlist.py"
+    ],
+    "exclude": [
+      "**/tests/**",
+      "**/test/**",
+      "**/conform/**",
+      "**/.git/**",
+      "**/.venv/**",
+      "**/__pycache__/**",
+      "**/.pytest_cache/**",
+      "**/node_modules/**",
+      "**/tmp/**",
+      "**/browser_build/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "contract",
+      "define": {
+        "options": {
+          "entryPoint": {
+            "type": "string",
+            "default": "plugin.reporter"
+          },
+          "fatesSignature": {
+            "type": "string",
+            "default": "O5p2GYtRWESKK6seL21Gfmhwt2BbRXEnKngA04J0vENAIfu6AjtJFZ19ohuzcRF5cudla5PLEZiRVdCvwyGKAw=="
+          },
+          "surfaceSignature": {
+            "type": "string",
+            "default": "emKOwGOeajpPhSrYX3SEMcDDgJEjK05SpABfUYhg2WFXVJH4GzV55DwdK9Ddy6zisH4M5r1bh1T8OOkaWQYqBg=="
+          },
+          "fateOverrides": {
+            "type": "array",
+            "items": "string",
+            "default": [
+              "PostOpBehavior.EXCEPTION_ONLY=exception_only",
+              "PostOpBehavior.TERMINAL_ARRAY=keep_terminal",
+              "PostOpBehavior.TERMINAL_OBJECT=keep_terminal",
+              "PostOpBehavior.TERMINAL_SCALAR=keep_terminal",
+              "PostOpKind.ASSERT_RESULT=exception_only",
+              "PostOpKind.MATERIALIZE_RESULT=keep_terminal"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "signed-surface",
+      "relational": {
+        "inputs": {
+          "modules": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "kind": "module"
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              },
+              "anchor": "file.start"
+            }
+          },
+          "functions": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "pattern": "$FN"
+                      },
+                      {
+                        "has": {
+                          "pattern": "$NAME",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "inside": {
+                              "kind": "module",
+                              "stopBy": "neighbor"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "decorated_definition"
+                                },
+                                {
+                                  "inside": {
+                                    "kind": "module",
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "name": "capture.NAME",
+                "sync": {
+                  "source": "capture.FN",
+                  "regex": "^(def)\\b",
+                  "group": 1
+                }
+              }
+            }
+          },
+          "members": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "assignment"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "pattern": "$NAME"
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "left"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "class_definition"
+                            },
+                            {
+                              "pattern": "$CLASS"
+                            },
+                            {
+                              "has": {
+                                "pattern": "$CLASS_NAME",
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            },
+                            {
+                              "any": [
+                                {
+                                  "inside": {
+                                    "kind": "module",
+                                    "stopBy": "neighbor"
+                                  }
+                                },
+                                {
+                                  "inside": {
+                                    "all": [
+                                      {
+                                        "kind": "decorated_definition"
+                                      },
+                                      {
+                                        "inside": {
+                                          "kind": "module",
+                                          "stopBy": "neighbor"
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ]
+                            }
+                          ],
+                          "stopBy": "end"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "class_name": "capture.CLASS_NAME",
+                "name": "capture.NAME"
+              }
+            }
+          },
+          "specs": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "all": [
+                          {
+                            "kind": "class_definition"
+                          },
+                          {
+                            "pattern": "$CLASS"
+                          },
+                          {
+                            "has": {
+                              "pattern": "$CLASS_NAME",
+                              "stopBy": "neighbor",
+                              "field": "name"
+                            }
+                          },
+                          {
+                            "any": [
+                              {
+                                "inside": {
+                                  "kind": "module",
+                                  "stopBy": "neighbor"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "decorated_definition"
+                                    },
+                                    {
+                                      "inside": {
+                                        "kind": "module",
+                                        "stopBy": "neighbor"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "has": {
+                          "regex": "Spec$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "decorated_definition"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "decorator"
+                                  },
+                                  {
+                                    "any": [
+                                      {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "kind": "identifier"
+                                            },
+                                            {
+                                              "regex": "^(?:dataclass)$"
+                                            }
+                                          ],
+                                          "stopBy": "neighbor"
+                                        }
+                                      },
+                                      {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "kind": "call"
+                                            },
+                                            {
+                                              "has": {
+                                                "all": [
+                                                  {
+                                                    "kind": "identifier"
+                                                  },
+                                                  {
+                                                    "regex": "^(?:dataclass)$"
+                                                  }
+                                                ],
+                                                "stopBy": "neighbor",
+                                                "field": "function"
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "name": "capture.CLASS_NAME"
+              }
+            }
+          },
+          "strings": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "kind": "string"
+                          },
+                          {
+                            "kind": "concatenated_string"
+                          }
+                        ]
+                      },
+                      {
+                        "pattern": "$STRING"
+                      },
+                      {
+                        "regex": "(?i)^[ru]*[\"']"
+                      }
+                    ]
+                  },
+                  "transform": {
+                    "DECODED": {
+                      "substring": {
+                        "source": "$STRING",
+                        "value": true,
+                        "startChar": 0
+                      }
+                    }
+                  }
+                }
+              },
+              "project": {
+                "value": "capture.DECODED.text"
+              }
+            }
+          },
+          "registry": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "string"
+                              },
+                              {
+                                "kind": "concatenated_string"
+                              }
+                            ]
+                          },
+                          {
+                            "pattern": "$STRING"
+                          },
+                          {
+                            "regex": "(?i)^[ru]*[\"']"
+                          }
+                        ]
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "assignment"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "regex": "^(?:SIGNED_POST_OP_SYMBOLS)$"
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "left"
+                              }
+                            },
+                            {
+                              "inside": {
+                                "all": [
+                                  {
+                                    "kind": "expression_statement"
+                                  },
+                                  {
+                                    "inside": {
+                                      "kind": "module",
+                                      "stopBy": "neighbor"
+                                    }
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ],
+                          "stopBy": "end"
+                        }
+                      }
+                    ]
+                  },
+                  "transform": {
+                    "DECODED": {
+                      "substring": {
+                        "source": "$STRING",
+                        "value": true,
+                        "startChar": 0
+                      }
+                    }
+                  }
+                }
+              },
+              "project": {
+                "value": "capture.DECODED.text"
+              }
+            }
+          },
+          "signature": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "string"
+                              },
+                              {
+                                "kind": "concatenated_string"
+                              }
+                            ]
+                          },
+                          {
+                            "pattern": "$STRING"
+                          },
+                          {
+                            "regex": "(?i)^[ru]*[\"']"
+                          }
+                        ]
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "assignment"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "regex": "^(?:ALLOWLIST_SIGNATURE)$"
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "left"
+                              }
+                            },
+                            {
+                              "has": {
+                                "pattern": "$TYPE",
+                                "stopBy": "neighbor",
+                                "field": "type"
+                              }
+                            },
+                            {
+                              "inside": {
+                                "all": [
+                                  {
+                                    "kind": "expression_statement"
+                                  },
+                                  {
+                                    "inside": {
+                                      "kind": "module",
+                                      "stopBy": "neighbor"
+                                    }
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ],
+                          "stopBy": "end"
+                        }
+                      }
+                    ]
+                  },
+                  "transform": {
+                    "DECODED": {
+                      "substring": {
+                        "source": "$STRING",
+                        "value": true,
+                        "startChar": 0
+                      }
+                    }
+                  }
+                }
+              },
+              "project": {
+                "value": "capture.DECODED.text"
+              }
+            }
+          },
+          "runtime_refs": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:RebaseResultCollectorSpec|ResolvedRefs|RuntimeReferenceField|RuntimeStructuredResultSpec|lookup_ref|require_runtime_ref|runtime_ref|runtime_ref_ids|runtime_refs|source_ref|source_ref_id|sys_id_ref|validated_expires_at_holder|validation_state_holder|visible_rows_ref)$"
+                              }
+                            ]
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "any": [
+                                  {
+                                    "kind": "import_statement"
+                                  },
+                                  {
+                                    "kind": "import_from_statement"
+                                  }
+                                ],
+                                "stopBy": "end"
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "kind": "function_definition",
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "kind": "class_definition",
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "kind": "keyword_argument",
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "kind": "attribute",
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "attribute"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:RebaseResultCollectorSpec|ResolvedRefs|RuntimeReferenceField|RuntimeStructuredResultSpec|lookup_ref|require_runtime_ref|runtime_ref|runtime_ref_ids|runtime_refs|source_ref|source_ref_id|sys_id_ref|validated_expires_at_holder|validation_state_holder|visible_rows_ref)$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "attribute"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "all": [
+                              {
+                                "any": [
+                                  {
+                                    "kind": "string"
+                                  },
+                                  {
+                                    "kind": "concatenated_string"
+                                  }
+                                ]
+                              },
+                              {
+                                "pattern": "$STRING"
+                              },
+                              {
+                                "regex": "(?i)^[ru]*[\"']"
+                              }
+                            ]
+                          },
+                          {
+                            "value": {
+                              "regex": "^(?:RebaseResultCollectorSpec|ResolvedRefs|RuntimeReferenceField|RuntimeStructuredResultSpec|lookup_ref|require_runtime_ref|runtime_ref|runtime_ref_ids|runtime_refs|source_ref|source_ref_id|sys_id_ref|validated_expires_at_holder|validation_state_holder|visible_rows_ref)$"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          },
+          "flags": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "assignment"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:ENFORCE_POST_OP_RUNTIME_ALLOWLIST)$"
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "left"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "expression_statement"
+                            },
+                            {
+                              "inside": {
+                                "kind": "module",
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          },
+          "verification": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "all": [
+                          {
+                            "kind": "call"
+                          },
+                          {
+                            "has": {
+                              "any": [
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "regex": "^(?:_post_op_allowlist_signature_valid|verify_allowlist)$"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "attribute"
+                                    },
+                                    {
+                                      "has": {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "regex": "^(?:_post_op_allowlist_signature_valid|verify_allowlist)$"
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "attribute"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "function"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "pattern": "$NODE"
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "line": "capture.NODE.startLine"
+              }
+            }
+          },
+          "returns": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "return_statement"
+                      },
+                      {
+                        "pattern": "$NODE"
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "line": "capture.NODE.startLine"
+              }
+            }
+          }
+        },
+        "stages": [
+          {
+            "name": "overrides",
+            "query": {
+              "$option": "fateOverrides",
+              "escape": "sql",
+              "map": " UNION ALL SELECT {} AS entry",
+              "join": "",
+              "template": "SELECT '' AS entry WHERE 0{}"
+            }
+          },
+          {
+            "name": "memberships",
+            "query": "SELECT DISTINCT class_name||'.'||name AS symbol FROM members WHERE (__path='l2070_batching/post_op.py' OR __path='l2070_batching/post_op_specs.py') AND class_name IN ('PostOpKind','PostOpBehavior')"
+          },
+          {
+            "name": "fates",
+            "query": "SELECT m.symbol,coalesce((SELECT substr(o.entry,instr(o.entry,'=')+1) FROM overrides o WHERE substr(o.entry,1,instr(o.entry,'=')-1)=m.symbol),'audit_required') AS fate FROM memberships m"
+          },
+          {
+            "name": "surface",
+            "query": "SELECT DISTINCT class_name||'.'||name AS symbol FROM members WHERE (__path='l2070_batching/post_op.py' AND class_name IN ('PostOpKind','PostOpBehavior')) OR (__path='l2070_batching/post_op_specs.py' AND class_name='DomainPostOpDecoderKind')\n          UNION SELECT 'post_op_factory.'||name FROM functions WHERE __path='l2070_batching/post_op.py' AND name GLOB '*_post_op' AND sync='def'\n          UNION SELECT 'post_op_spec.'||name FROM specs WHERE __path='l2070_batching/post_op_specs.py'"
+          },
+          {
+            "name": "reachable",
+            "query": "SELECT DISTINCT s.value AS symbol FROM strings s WHERE s.__path='l2070_batching/post_op.py' AND (s.value GLOB 'assertion.*' OR s.value GLOB 'materializer.*')\n            AND EXISTS(SELECT 1 FROM functions f WHERE f.__path=s.__path AND f.name='post_op_runtime_symbol' AND f.__start<s.__start AND f.__end>=s.__end\n                AND f.__start=(SELECT min(x.__start) FROM functions x WHERE x.__path=f.__path AND x.name=f.name))\n          UNION SELECT 'decoder.'||class_name||'.'||name FROM members WHERE __path='l2070_batching/post_op_specs.py' AND class_name='DomainPostOpDecoderKind' "
+          },
+          {
+            "name": "fate_valid",
+            "query": {
+              "$option": "fatesSignature",
+              "escape": "sql",
+              "template": "SELECT verify_ed25519('7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6','{\"allowlist\":'||coalesce((SELECT json_group_array(value) FROM (SELECT symbol||'='||fate AS value FROM fates ORDER BY value)),'[]')||',\"linter\":\"post_op_side_effects\",\"version\":1}',rx_replace({},'[^A-Za-z0-9+/=]','')) AS valid"
+            }
+          },
+          {
+            "name": "surface_valid",
+            "query": {
+              "$option": "surfaceSignature",
+              "escape": "sql",
+              "template": "SELECT verify_ed25519('7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6','{\"allowlist\":'||coalesce((SELECT json_group_array(value) FROM (SELECT symbol AS value FROM surface ORDER BY value)),'[]')||',\"linter\":\"post_op_surface\",\"version\":1}',rx_replace({},'[^A-Za-z0-9+/=]','')) AS valid"
+            }
+          },
+          {
+            "name": "runtime_valid",
+            "query": "SELECT verify_ed25519('7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6','{\"allowlist\":'||coalesce((SELECT json_group_array(value) FROM (SELECT value FROM registry WHERE __path='l2070_batching/post_op_allowlist.py' ORDER BY value)),'[]')||',\"linter\":\"post_op_runtime_allowlist\",\"version\":1}',rx_replace(coalesce((SELECT value FROM signature WHERE __path='l2070_batching/post_op_allowlist.py' ORDER BY __start LIMIT 1),''),'[^A-Za-z0-9+/=]','')) AS valid"
+          },
+          {
+            "name": "verifiers",
+            "query": "SELECT f.*,(SELECT min(v.line) FROM verification v WHERE v.__path=f.__path AND v.__start>=f.__start AND v.__end<=f.__end) AS first_verify FROM functions f WHERE f.name='assert_post_op_symbol_signed' AND f.__start=(SELECT min(x.__start) FROM functions x WHERE x.__path=f.__path AND x.name=f.name)"
+          },
+          {
+            "name": "bypass",
+            "query": "SELECT m.__path FROM modules m WHERE EXISTS(SELECT 1 FROM flags f WHERE f.__path=m.__path) OR NOT EXISTS(SELECT 1 FROM verifiers f WHERE f.__path=m.__path) OR EXISTS(SELECT 1 FROM verifiers f WHERE f.__path=m.__path AND (f.first_verify IS NULL OR EXISTS(SELECT 1 FROM returns r WHERE r.__path=f.__path AND r.__start>=f.__start AND r.__end<=f.__end AND r.line<f.first_verify)))"
+          },
+          {
+            "name": "trusted_overrides",
+            "query": {
+              "$option": "entryPoint",
+              "cases": {
+                "_collect_violations": "SELECT entry FROM overrides"
+              },
+              "default": "SELECT entry FROM overrides WHERE (SELECT valid FROM fate_valid)"
+            }
+          },
+          {
+            "name": "findings",
+            "query": "SELECT 'l2070_batching/post_op.py' AS path,0 AS start_byte,0 AS end_byte,'POSTOP200' AS issue,__path||':'||__start AS identity FROM runtime_refs WHERE __path IN ('l2070_batching/post_op.py','l2070_batching/post_op_specs.py','l2070_batching/post_op_domain_decoders.py') UNION ALL SELECT 'l2070_batching/post_op.py' AS path,0 AS start_byte,0 AS end_byte,'POSTOP203' AS issue,'bypass' AS identity FROM bypass WHERE __path='l2070_batching/post_op_allowlist.py' UNION ALL SELECT 'l2070_batching/post_op.py' AS path,0 AS start_byte,0 AS end_byte,'POSTOP204' AS issue,__start AS identity FROM registry WHERE __path='l2070_batching/post_op_allowlist.py' AND (value NOT GLOB 'assertion.*' AND value NOT GLOB 'decoder.DomainPostOpDecoderKind.*' AND value NOT GLOB 'materializer.*' OR value IN ('materializer.generic','materializer.materialize_result','materializer.terminal_array','materializer.terminal_object','materializer.terminal_scalar')) UNION ALL SELECT 'l2070_batching/post_op.py' AS path,0 AS start_byte,0 AS end_byte,'POSTOP205' AS issue,symbol AS identity FROM reachable WHERE NOT EXISTS(SELECT 1 FROM registry r WHERE r.__path='l2070_batching/post_op_allowlist.py' AND r.value=reachable.symbol) UNION ALL SELECT 'l2070_batching/post_op.py' AS path,0 AS start_byte,0 AS end_byte,'POSTOP206' AS issue,value AS identity FROM registry WHERE __path='l2070_batching/post_op_allowlist.py' AND NOT EXISTS(SELECT 1 FROM reachable e WHERE e.symbol=registry.value) UNION ALL SELECT 'l2070_batching/post_op.py' AS path,0 AS start_byte,0 AS end_byte,'POSTOP202' AS issue,'runtime-signature' AS identity FROM runtime_valid WHERE NOT valid UNION ALL SELECT 'l2070_batching/post_op.py' AS path,0 AS start_byte,0 AS end_byte,'POSTOP201' AS issue,'surface-signature' AS identity FROM surface_valid WHERE NOT valid UNION ALL SELECT 'l2070_batching/post_op.py' AS path,0 AS start_byte,0 AS end_byte,'POSTOP001' AS issue,entry AS identity FROM trusted_overrides WHERE NOT EXISTS(SELECT 1 FROM memberships m WHERE m.symbol=substr(entry,1,instr(entry,'=')-1)) UNION ALL SELECT 'l2070_batching/post_op.py' AS path,0 AS start_byte,0 AS end_byte,'POSTOP002' AS issue,symbol AS identity FROM memberships WHERE coalesce((SELECT substr(entry,instr(entry,'=')+1) FROM trusted_overrides o WHERE substr(entry,1,instr(entry,'=')-1)=memberships.symbol),'audit_required') IN ('audit_required','delete_after_inline','move_to_domain_step','move_to_plan_effect','move_to_sql')"
+          }
+        ],
+        "locations": [
+          "l2070_batching/post_op.py"
+        ],
+        "query": {
+          "$option": "entryPoint",
+          "cases": {
+            "_collect_runtime_allowlist_bypass_violations_from_tree": "SELECT m.__path AS path,0 AS start_byte,0 AS end_byte,'POSTOP203' AS issue,'bypass' AS identity FROM modules m JOIN bypass b ON b.__path=m.__path",
+            "_collect_violations": "SELECT * FROM findings",
+            "_collect_broad_runtime_authority_violations": "SELECT * FROM findings WHERE issue='POSTOP204'",
+            "_collect_exact_runtime_symbol_coverage_violations": "SELECT * FROM findings WHERE issue IN ('POSTOP205','POSTOP206')"
+          },
+          "default": "SELECT * FROM findings UNION ALL SELECT 'l2070_batching/post_op.py',0,0,'POSTOP000','fates-signature' WHERE NOT (SELECT valid FROM fate_valid) AND NOT EXISTS(SELECT 1 FROM findings)"
+        },
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue"
+      },
+      "violation": {
+        "code": "POSTOP203",
+        "anchor": "witness.span",
+        "message": "Signed post-op boundary"
+      }
+    }
+  ]
+}

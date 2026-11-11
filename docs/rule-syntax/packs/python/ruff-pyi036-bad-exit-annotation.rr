@@ -1,0 +1,93 @@
+.policy "ruff-pyi036-bad-exit-annotation" revision 2
+.description "Declare exit and aexit methods with the three standard arguments or star-args, annotated as object or as the exception type, exception and traceback each unioned with None."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI036 (flake8-pyi), every file: a malformed `__exit__` (or `async def __aexit__`) signature in a class.
+// The interpreter calls it with three positional arguments, None or the exception's type, value and traceback:
+//   def __exit__(self, a, b): ...                    ← missing: three after self, or `*args`
+//   def __exit__(self, *args: int): ...              ← star-args not annotated `object`
+//   def __exit__(self, a, b, c, d): ...              ← d needs a default; so does every keyword-only parameter
+//   def __exit__(self, a: type[Exception] | None, …) ← each of the three is annotated `object` (or
+//       `_typeshed.Unused`), or `X | None` / `Optional[X]` with X `type[BaseException]`, `BaseException`,
+//       `types.TracebackType`
+// Overloads are checked as a pair instead: with exactly two overloads of three plain positional parameters, each
+// must loosely be `None, None, None` or `type[BaseException], BaseException, TracebackType`.
+#include "python/typing.rr"
+
+.violation PYI036(at: node, m: symbol, msg: symbol) code "PYI036" "{msg}"
+    suppress ruff "PYI036"
+PYI036(ps, m, cat("Give `", m, "` three positional parameters after `self` (exception type, exception, traceback) or `*args: object`; the interpreter always passes those three.")) :-
+    exit_method(f, m), !decorated(f, "overload"), count : { arg(f, p, i, a) } < 3, !sig_param(f, _, _, _, "vararg", _, _),
+    field(f, "parameters", ps).
+PYI036(a, m, cat("Annotate the star-args of `", m, "` as `object`; they only receive the exception type, exception and traceback, which the method need not read through their types.")) :-
+    exit_method(f, m), !decorated(f, "overload"), count : { arg(f, p, i, b) } < 3, sig_param(f, _, _, _, "vararg", a, _),
+    !unset(a), type_bare(a, t), !object_or_unused(t).
+PYI036(p, m, cat("Give every positional parameter of `", m, "` beyond the exception type, exception and traceback a default value; the interpreter passes only those three.")) :-
+    exit_method(f, m), !decorated(f, "overload"), arg(f, p, i, _), i > 3, sig_param(f, p, _, _, _, _, d), unset(d).
+PYI036(p, m, cat("Give every keyword-only parameter of `", m, "` a default value; the interpreter passes only the three positional arguments.")) :-
+    exit_method(f, m), !decorated(f, "overload"), sig_param(f, p, _, _, "kwonly", _, d), unset(d).
+PYI036(a, m, cat("Annotate the ", nth, " argument of `", m, "` as `", want, "`, or as `object`; the interpreter passes `None` when no exception occurred.")) :-
+    exit_method(f, m), !decorated(f, "overload"), arg(f, _, i, a), i <= 3, !unset(a), type_bare(a, t), !object_or_unused(t),
+    !optional_ok(t, i), slot(i, nth, want).
+PYI036(ps, m, cat("Annotate the three arguments after `self` of these `", m, "` overloads as either `None, None, None` or `type[BaseException], BaseException, types.TracebackType`.")) :-
+    overload_pair(c, m), class_member(c, f, m), decorated(f, "overload"), !loose(f, "none"), !loose(f, "exc"),
+    field(f, "parameters", ps).
+
+// exit_method(f, m): `def __exit__` or `async def __aexit__`, directly in a class body.
+.decl exit_method(f: node, m: symbol)
+exit_method(f, "__exit__") :- class_member(_, f, "__exit__"), !is_async(f).
+exit_method(f, "__aexit__") :- class_member(_, f, "__aexit__"), is_async(f).
+// arg(f, p, i, a): p is the i-th positional parameter after self (from 1), annotated a.
+.decl arg(f: node, p: node, i: number, a: loc)
+arg(f, p, i, a) :- exit_method(f, _), first_param(f, _, _), sig_param(f, p, _, j, k, a, _), pos_kind(k),
+    i = count : { sig_param(f, q, n, j2, k2, b, d), pos_kind(k2), j2 <= j } - 1, i > 0.
+// slot(i, nth, want): what the i-th argument receives.
+.decl slot(i: number, nth: symbol, want: symbol)
+slot(1, "first", "type[BaseException] | None"). slot(2, "second", "BaseException | None").
+slot(3, "third", "types.TracebackType | None").
+.decl object_or_unused(t: node)
+object_or_unused(t) :- (sym_of(t, "builtins.object") ; sym_of(t, "_typeshed.Unused")).
+// optional_ok(t, i): Ruff's non_none_annotation_element of t is right for slot i: `Optional[X]`, `Union[X, None]`
+// or `Union[None, X]`, or a `|` (below).
+.decl optional_ok(t: node, i: number)
+optional_ok(t, i) :- non_none(t, x), slot_type(x, i).
+.decl non_none(t: node, x: node)
+non_none(t, x) :- typing_subscript(t, "Optional"), tsub(t, _, 0, x), !kind(x, "none").
+non_none(t, x) :- typing_subscript(t, "Union"), tsub_n(t, 2), union_part(t, x), !kind(x, "none"), union_part(t, z),
+    kind(z, "none").
+// `L | R` gives L when L is not None, else R when R is not None: `type[BaseException] | int` passes for slot 1.
+non_none(t, x) :- pipe_sides(t, l0, _), type_bare(l0, x), !kind(x, "none").
+non_none(t, x) :- pipe_sides(t, l0, r0), type_bare(l0, l), kind(l, "none"), type_bare(r0, x), !kind(x, "none").
+// pipe_sides(t, l, r): t is `l | r` as Python groups it. tree-sitter reads an annotation's `A[x] | B | C` as
+// A[x] | (B | C); Python's left side is then `A[x] | B`, a union that fits no slot, so there is no row.
+.decl pipe_sides(t: node, l: node, r: node)
+pipe_sides(t, l, r) :- kind(t, "binary_operator"), op(t, "|"), field(t, "left", l), field(t, "right", r).
+pipe_sides(t, l, r) :- kind(t, "union_type"), child(t, l, 0), child(t, r, 1), !regrouped(r).
+.decl regrouped(r: node)  // r, the right child of a union_type, is itself an unparenthesised `|`
+regrouped(r) :- kind(r, "type"), child(r, m, 0), (kind(m, "union_type") ; kind(m, "binary_operator"), op(m, "|")).
+regrouped(r) :- kind(r, "union_type").
+.decl slot_type(x: node, i: number)
+slot_type(x, 1) :- (builtin_sub(x, "type") ; typing_subscript(x, "Type")), tsub(x, _, 0, b), sym_of(b, "builtins.BaseException").
+slot_type(x, 2) :- sym_of(x, "builtins.BaseException").
+slot_type(x, 3) :- sym_of(x, "types.TracebackType").
+
+// overload_pair(c, m): class c has exactly two overloads of m, of m's colour (async for __aexit__), each with
+// three positional parameters after self and nothing else. Only then are the overloads checked.
+.decl overload_pair(c: node, m: symbol)
+overload_pair(c, m) :- class_member(c, _, m), (m = "__exit__" ; m = "__aexit__"),
+    count : { class_member(c, g, m), decorated(g, "overload") } = 2,
+    count : { class_member(c, g, m), decorated(g, "overload"), !plain_three(g, m) } = 0.
+.decl plain_three(g: node, m: symbol)
+plain_three(g, m) :- exit_method(g, m), count : { sig_param(g, p, n, i, k, a, d) } = 4,
+    count : { sig_param(g, p, n, i, k, a, d), pos_kind(k) } = 4.
+// loose(f, form): each of f's three arguments is unannotated, `object`/`Unused`, or the form's type.
+.decl loose(f: node, form: symbol)
+loose(f, "none") :- exit_method(f, _), count : { arg(f, p, i, a), !loose_arg(a, i, "none") } = 0.
+loose(f, "exc") :- exit_method(f, _), count : { arg(f, p, i, a), !loose_arg(a, i, "exc") } = 0.
+.decl loose_arg(a: loc, i: number, form: symbol)
+loose_arg(a, i, f) :- arg(_, _, i, a), (f = "none" ; f = "exc"), unset(a).
+loose_arg(a, i, f) :- arg(_, _, i, a), (f = "none" ; f = "exc"), type_bare(a, t), object_or_unused(t).
+loose_arg(a, i, "none") :- arg(_, _, i, a), type_bare(a, t), kind(t, "none").
+loose_arg(a, i, "exc") :- arg(_, _, i, a), type_bare(a, t), slot_type(t, i).

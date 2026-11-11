@@ -1,0 +1,1736 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-readthrough-authority-architecture",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer readthrough_authority_architecture at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "impl/read_through/connection.py",
+      "impl/read_through/coverage.py",
+      "impl/read_through/lowering_handlers.py",
+      "impl/read_through/lowering_steps.py",
+      "impl/read_through/transaction.py"
+    ],
+    "exclude": [
+      "**/tests/**",
+      "**/test/**",
+      "**/conform/**",
+      "**/.git/**",
+      "**/.venv/**",
+      "**/__pycache__/**",
+      "**/.pytest_cache/**",
+      "**/node_modules/**",
+      "**/tmp/**",
+      "**/browser_build/**",
+      "**/test_*.py"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "entry",
+      "define": {
+        "options": {
+          "entryPoint": {
+            "type": "string",
+            "default": "scan_sources"
+          }
+        }
+      }
+    },
+    {
+      "id": "restore",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "regex": "(?s).*"
+              },
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:_restore_persisted_local_overlays|_restore_persisted_local_overlays_async)$"
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "kind": "attribute"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "regex": "^(?:_restore_persisted_local_overlays|_restore_persisted_local_overlays_async)$"
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            }
+                          ]
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "RTA001",
+        "message": "Read durable overlays inside the admitted application plan",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "runtime-seed",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "regex": "(?s).*"
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "kind": "concatenated_string"
+                      }
+                    ]
+                  },
+                  {
+                    "value": {
+                      "eq": "__readthrough_local_overlays"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "RTA002",
+        "message": "Do not pass authority-scoped overlays through runtime seeds",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "bind-load",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "regex": "(?s).*"
+              },
+              {
+                "all": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "^(?:_bind_cache_to_current_authority|_bind_cache_to_current_authority_native)$"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "call"
+                        },
+                        {
+                          "has": {
+                            "any": [
+                              {
+                                "all": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "regex": "^(?:_load_local_row_overlays|_load_local_row_overlays_async)$"
+                                  }
+                                ]
+                              },
+                              {
+                                "all": [
+                                  {
+                                    "kind": "attribute"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "regex": "^(?:_load_local_row_overlays|_load_local_row_overlays_async)$"
+                                        }
+                                      ],
+                                      "stopBy": "neighbor",
+                                      "field": "attribute"
+                                    }
+                                  }
+                                ]
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "function"
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "RTA001",
+        "message": "Connection authority binding must not load durable overlay evidence",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "cache-heuristics",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "regex": "(?s).*"
+              },
+              {
+                "all": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "^(?:_authority_transition_models)$"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:_cached_tables|_tables_with_local_writes)$"
+                            }
+                          ]
+                        },
+                        {
+                          "not": {
+                            "inside": {
+                              "any": [
+                                {
+                                  "kind": "import_statement"
+                                },
+                                {
+                                  "kind": "import_from_statement"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          }
+                        },
+                        {
+                          "not": {
+                            "inside": {
+                              "kind": "function_definition",
+                              "stopBy": "neighbor",
+                              "field": "name"
+                            }
+                          }
+                        },
+                        {
+                          "not": {
+                            "inside": {
+                              "kind": "class_definition",
+                              "stopBy": "neighbor",
+                              "field": "name"
+                            }
+                          }
+                        },
+                        {
+                          "not": {
+                            "inside": {
+                              "kind": "keyword_argument",
+                              "stopBy": "neighbor",
+                              "field": "name"
+                            }
+                          }
+                        },
+                        {
+                          "not": {
+                            "inside": {
+                              "kind": "parameters",
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "RTA003",
+        "message": "Gate authority cleanup with ReadThroughAuthorityOwnedTableRecord, not cache-state heuristics",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "principal-field",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "regex": "(?s).*"
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "class_definition"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:ReadThroughLocalOverlayRecord)$"
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "expression_statement"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "assignment"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "regex": "^(?:principal_user_id)$"
+                                        }
+                                      ],
+                                      "stopBy": "neighbor",
+                                      "field": "left"
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "regex": "(?s).*",
+                                      "stopBy": "neighbor",
+                                      "field": "type"
+                                    }
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        },
+                        "stopBy": "neighbor",
+                        "field": "body"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "RTA004",
+        "message": "Durable overlay evidence must include principal_user_id",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "closed-dependency",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "regex": "(?s).*"
+              },
+              {
+                "all": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "^(?:_local_overlay_record_steps)$"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "all": [
+                          {
+                            "kind": "keyword_argument"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:after_refs)$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "name"
+                            }
+                          },
+                          {
+                            "has": {
+                              "any": [
+                                {
+                                  "all": [
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "regex": "^(?:proposed_lease_ref)$"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "not": {
+                                        "inside": {
+                                          "any": [
+                                            {
+                                              "kind": "import_statement"
+                                            },
+                                            {
+                                              "kind": "import_from_statement"
+                                            }
+                                          ],
+                                          "stopBy": "end"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "not": {
+                                        "inside": {
+                                          "kind": "function_definition",
+                                          "stopBy": "neighbor",
+                                          "field": "name"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "not": {
+                                        "inside": {
+                                          "kind": "class_definition",
+                                          "stopBy": "neighbor",
+                                          "field": "name"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "not": {
+                                        "inside": {
+                                          "kind": "keyword_argument",
+                                          "stopBy": "neighbor",
+                                          "field": "name"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "not": {
+                                        "inside": {
+                                          "kind": "parameters",
+                                          "stopBy": "neighbor"
+                                        }
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "regex": "^(?:proposed_lease_ref)$"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "not": {
+                                          "inside": {
+                                            "any": [
+                                              {
+                                                "kind": "import_statement"
+                                              },
+                                              {
+                                                "kind": "import_from_statement"
+                                              }
+                                            ],
+                                            "stopBy": "end"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "not": {
+                                          "inside": {
+                                            "kind": "function_definition",
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "not": {
+                                          "inside": {
+                                            "kind": "class_definition",
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "not": {
+                                          "inside": {
+                                            "kind": "keyword_argument",
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "not": {
+                                          "inside": {
+                                            "kind": "parameters",
+                                            "stopBy": "neighbor"
+                                          }
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": "end"
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "value"
+                            }
+                          }
+                        ],
+                        "stopBy": "end"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "RTA005",
+        "message": "Read overlay evidence after the same-plan proposed lease",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "durable-ownership",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "regex": "(?s).*"
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "class_definition"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:ReadThroughDeleteChangedPrincipalRowsStep)$"
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "has": {
+                          "all": [
+                            {
+                              "any": [
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "function_definition"
+                                    },
+                                    {
+                                      "has": {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "regex": "^(?:compile)$"
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "all": [
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": "^(?:ReadThroughAuthorityOwnedTableRecord)$"
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "not": {
+                                              "inside": {
+                                                "any": [
+                                                  {
+                                                    "kind": "import_statement"
+                                                  },
+                                                  {
+                                                    "kind": "import_from_statement"
+                                                  }
+                                                ],
+                                                "stopBy": "end"
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "not": {
+                                              "inside": {
+                                                "kind": "function_definition",
+                                                "stopBy": "neighbor",
+                                                "field": "name"
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "not": {
+                                              "inside": {
+                                                "kind": "class_definition",
+                                                "stopBy": "neighbor",
+                                                "field": "name"
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "not": {
+                                              "inside": {
+                                                "kind": "keyword_argument",
+                                                "stopBy": "neighbor",
+                                                "field": "name"
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "not": {
+                                              "inside": {
+                                                "kind": "parameters",
+                                                "stopBy": "neighbor"
+                                              }
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "end"
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "decorated_definition"
+                                    },
+                                    {
+                                      "has": {
+                                        "all": [
+                                          {
+                                            "kind": "function_definition"
+                                          },
+                                          {
+                                            "has": {
+                                              "all": [
+                                                {
+                                                  "kind": "identifier"
+                                                },
+                                                {
+                                                  "regex": "^(?:compile)$"
+                                                }
+                                              ],
+                                              "stopBy": "neighbor",
+                                              "field": "name"
+                                            }
+                                          },
+                                          {
+                                            "has": {
+                                              "all": [
+                                                {
+                                                  "all": [
+                                                    {
+                                                      "kind": "identifier"
+                                                    },
+                                                    {
+                                                      "regex": "^(?:ReadThroughAuthorityOwnedTableRecord)$"
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "not": {
+                                                    "inside": {
+                                                      "any": [
+                                                        {
+                                                          "kind": "import_statement"
+                                                        },
+                                                        {
+                                                          "kind": "import_from_statement"
+                                                        }
+                                                      ],
+                                                      "stopBy": "end"
+                                                    }
+                                                  }
+                                                },
+                                                {
+                                                  "not": {
+                                                    "inside": {
+                                                      "kind": "function_definition",
+                                                      "stopBy": "neighbor",
+                                                      "field": "name"
+                                                    }
+                                                  }
+                                                },
+                                                {
+                                                  "not": {
+                                                    "inside": {
+                                                      "kind": "class_definition",
+                                                      "stopBy": "neighbor",
+                                                      "field": "name"
+                                                    }
+                                                  }
+                                                },
+                                                {
+                                                  "not": {
+                                                    "inside": {
+                                                      "kind": "keyword_argument",
+                                                      "stopBy": "neighbor",
+                                                      "field": "name"
+                                                    }
+                                                  }
+                                                },
+                                                {
+                                                  "not": {
+                                                    "inside": {
+                                                      "kind": "parameters",
+                                                      "stopBy": "neighbor"
+                                                    }
+                                                  }
+                                                }
+                                              ],
+                                              "stopBy": "end"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "neighbor"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "not": {
+                                "follows": {
+                                  "any": [
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "function_definition"
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": "^(?:compile)$"
+                                              }
+                                            ],
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        },
+                                        {
+                                          "regex": "(?s).*"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "decorated_definition"
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "function_definition"
+                                              },
+                                              {
+                                                "has": {
+                                                  "all": [
+                                                    {
+                                                      "kind": "identifier"
+                                                    },
+                                                    {
+                                                      "regex": "^(?:compile)$"
+                                                    }
+                                                  ],
+                                                  "stopBy": "neighbor",
+                                                  "field": "name"
+                                                }
+                                              },
+                                              {
+                                                "regex": "(?s).*"
+                                              }
+                                            ],
+                                            "stopBy": "neighbor"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  "stopBy": "end"
+                                }
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        },
+                        "stopBy": "neighbor",
+                        "field": "body"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "RTA006",
+        "message": "Principal-change row deletion must require persistent ownership evidence",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "complete-identity",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "regex": "(?s).*"
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "class_definition"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:ReadThroughDeleteChangedPrincipalRowsStep)$"
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "has": {
+                          "all": [
+                            {
+                              "any": [
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "function_definition"
+                                    },
+                                    {
+                                      "has": {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "regex": "^(?:compile)$"
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    },
+                                    {
+                                      "all": [
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "any": [
+                                                  {
+                                                    "kind": "string"
+                                                  },
+                                                  {
+                                                    "kind": "concatenated_string"
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "value": {
+                                                  "eq": "upstream_namespace"
+                                                }
+                                              }
+                                            ],
+                                            "stopBy": "end"
+                                          }
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "any": [
+                                                  {
+                                                    "kind": "string"
+                                                  },
+                                                  {
+                                                    "kind": "concatenated_string"
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "value": {
+                                                  "eq": "authority_namespace"
+                                                }
+                                              }
+                                            ],
+                                            "stopBy": "end"
+                                          }
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "any": [
+                                                  {
+                                                    "kind": "string"
+                                                  },
+                                                  {
+                                                    "kind": "concatenated_string"
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "value": {
+                                                  "eq": "authorization_epoch"
+                                                }
+                                              }
+                                            ],
+                                            "stopBy": "end"
+                                          }
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "any": [
+                                                  {
+                                                    "kind": "string"
+                                                  },
+                                                  {
+                                                    "kind": "concatenated_string"
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "value": {
+                                                  "eq": "catalog_fingerprint"
+                                                }
+                                              }
+                                            ],
+                                            "stopBy": "end"
+                                          }
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "any": [
+                                                  {
+                                                    "kind": "string"
+                                                  },
+                                                  {
+                                                    "kind": "concatenated_string"
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "value": {
+                                                  "eq": "admitted_session_id"
+                                                }
+                                              }
+                                            ],
+                                            "stopBy": "end"
+                                          }
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "any": [
+                                                  {
+                                                    "kind": "string"
+                                                  },
+                                                  {
+                                                    "kind": "concatenated_string"
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "value": {
+                                                  "eq": "principal_user_id"
+                                                }
+                                              }
+                                            ],
+                                            "stopBy": "end"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "decorated_definition"
+                                    },
+                                    {
+                                      "has": {
+                                        "all": [
+                                          {
+                                            "kind": "function_definition"
+                                          },
+                                          {
+                                            "has": {
+                                              "all": [
+                                                {
+                                                  "kind": "identifier"
+                                                },
+                                                {
+                                                  "regex": "^(?:compile)$"
+                                                }
+                                              ],
+                                              "stopBy": "neighbor",
+                                              "field": "name"
+                                            }
+                                          },
+                                          {
+                                            "all": [
+                                              {
+                                                "has": {
+                                                  "all": [
+                                                    {
+                                                      "any": [
+                                                        {
+                                                          "kind": "string"
+                                                        },
+                                                        {
+                                                          "kind": "concatenated_string"
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "value": {
+                                                        "eq": "upstream_namespace"
+                                                      }
+                                                    }
+                                                  ],
+                                                  "stopBy": "end"
+                                                }
+                                              },
+                                              {
+                                                "has": {
+                                                  "all": [
+                                                    {
+                                                      "any": [
+                                                        {
+                                                          "kind": "string"
+                                                        },
+                                                        {
+                                                          "kind": "concatenated_string"
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "value": {
+                                                        "eq": "authority_namespace"
+                                                      }
+                                                    }
+                                                  ],
+                                                  "stopBy": "end"
+                                                }
+                                              },
+                                              {
+                                                "has": {
+                                                  "all": [
+                                                    {
+                                                      "any": [
+                                                        {
+                                                          "kind": "string"
+                                                        },
+                                                        {
+                                                          "kind": "concatenated_string"
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "value": {
+                                                        "eq": "authorization_epoch"
+                                                      }
+                                                    }
+                                                  ],
+                                                  "stopBy": "end"
+                                                }
+                                              },
+                                              {
+                                                "has": {
+                                                  "all": [
+                                                    {
+                                                      "any": [
+                                                        {
+                                                          "kind": "string"
+                                                        },
+                                                        {
+                                                          "kind": "concatenated_string"
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "value": {
+                                                        "eq": "catalog_fingerprint"
+                                                      }
+                                                    }
+                                                  ],
+                                                  "stopBy": "end"
+                                                }
+                                              },
+                                              {
+                                                "has": {
+                                                  "all": [
+                                                    {
+                                                      "any": [
+                                                        {
+                                                          "kind": "string"
+                                                        },
+                                                        {
+                                                          "kind": "concatenated_string"
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "value": {
+                                                        "eq": "admitted_session_id"
+                                                      }
+                                                    }
+                                                  ],
+                                                  "stopBy": "end"
+                                                }
+                                              },
+                                              {
+                                                "has": {
+                                                  "all": [
+                                                    {
+                                                      "any": [
+                                                        {
+                                                          "kind": "string"
+                                                        },
+                                                        {
+                                                          "kind": "concatenated_string"
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "value": {
+                                                        "eq": "principal_user_id"
+                                                      }
+                                                    }
+                                                  ],
+                                                  "stopBy": "end"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        ],
+                                        "stopBy": "neighbor"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "not": {
+                                "follows": {
+                                  "any": [
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "function_definition"
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": "^(?:compile)$"
+                                              }
+                                            ],
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        },
+                                        {
+                                          "regex": "(?s).*"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "decorated_definition"
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "function_definition"
+                                              },
+                                              {
+                                                "has": {
+                                                  "all": [
+                                                    {
+                                                      "kind": "identifier"
+                                                    },
+                                                    {
+                                                      "regex": "^(?:compile)$"
+                                                    }
+                                                  ],
+                                                  "stopBy": "neighbor",
+                                                  "field": "name"
+                                                }
+                                              },
+                                              {
+                                                "regex": "(?s).*"
+                                              }
+                                            ],
+                                            "stopBy": "neighbor"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  "stopBy": "end"
+                                }
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        },
+                        "stopBy": "neighbor",
+                        "field": "body"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "RTA008",
+        "message": "Lease transition cleanup must compare the complete authority identity",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "preserve-establishment",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "regex": "(?s).*"
+              },
+              {
+                "all": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "^(?:_remote_authority_lease_steps)$"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "all": [
+                          {
+                            "kind": "assignment"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:lease_conflict_update)$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "left"
+                            }
+                          },
+                          {
+                            "not": {
+                              "has": {
+                                "regex": "(?s).*",
+                                "stopBy": "neighbor",
+                                "field": "type"
+                              }
+                            }
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "dictionary"
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "regex": "^(?:last_authenticated)$"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "not": {
+                                          "inside": {
+                                            "any": [
+                                              {
+                                                "kind": "import_statement"
+                                              },
+                                              {
+                                                "kind": "import_from_statement"
+                                              }
+                                            ],
+                                            "stopBy": "end"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "not": {
+                                          "inside": {
+                                            "kind": "function_definition",
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "not": {
+                                          "inside": {
+                                            "kind": "class_definition",
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "not": {
+                                          "inside": {
+                                            "kind": "keyword_argument",
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "not": {
+                                          "inside": {
+                                            "kind": "parameters",
+                                            "stopBy": "neighbor"
+                                          }
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": "end"
+                                  }
+                                },
+                                {
+                                  "not": {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "all": [
+                                            {
+                                              "kind": "identifier"
+                                            },
+                                            {
+                                              "regex": "^(?:established_at)$"
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "not": {
+                                            "inside": {
+                                              "any": [
+                                                {
+                                                  "kind": "import_statement"
+                                                },
+                                                {
+                                                  "kind": "import_from_statement"
+                                                }
+                                              ],
+                                              "stopBy": "end"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "not": {
+                                            "inside": {
+                                              "kind": "function_definition",
+                                              "stopBy": "neighbor",
+                                              "field": "name"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "not": {
+                                            "inside": {
+                                              "kind": "class_definition",
+                                              "stopBy": "neighbor",
+                                              "field": "name"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "not": {
+                                            "inside": {
+                                              "kind": "keyword_argument",
+                                              "stopBy": "neighbor",
+                                              "field": "name"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "not": {
+                                            "inside": {
+                                              "kind": "parameters",
+                                              "stopBy": "neighbor"
+                                            }
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": "end"
+                                    }
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "right"
+                            }
+                          }
+                        ],
+                        "stopBy": "end"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "RTA009",
+        "message": "Exact lease renewal must update only last_authenticated_at",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "publication-precondition",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "regex": "(?s).*"
+              },
+              {
+                "all": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "^(?:_lower_generic_cache_first_object|_lower_generic_rowset_merge)$"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "all": [
+                          {
+                            "kind": "call"
+                          },
+                          {
+                            "has": {
+                              "any": [
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "regex": "^(?:require_publication_precondition)$"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "attribute"
+                                    },
+                                    {
+                                      "has": {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "regex": "^(?:require_publication_precondition)$"
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "attribute"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "function"
+                            }
+                          }
+                        ],
+                        "stopBy": "end"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "RTA007",
+        "message": "Validate admitted overlays before authority and cache publication",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

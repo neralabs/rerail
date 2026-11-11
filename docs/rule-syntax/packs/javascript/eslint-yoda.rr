@@ -1,0 +1,118 @@
+.policy "eslint-yoda" revision 5
+.description "Put the literal on the right side of comparisons (value === 'red', not 'red' === value), as configured."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-b-literals.rr"
+#include "tsx/eslint-b-control.rr"
+#include "tsx/eslint-b-objects.rr"
+#include "tsx/eslint-a-text.rr"
+//   literal_like, literal_number, compare_op; binop, estree_parent, equality (tsx/eslint-a-expressions);
+//   ref_same (isSameReference, tsx/eslint-b-control); touching, cannot_touch (b-objects); end_col (a-text)
+
+// ESLint's yoda: in a comparison, the literal belongs on one side. option("option") is "never" (the default:
+// `value === "red"`) or "always" (`"red" === value`). A comparison of two literals is left alone.
+//   "red" === value   5 < x   -1 < str.indexOf(s)     → reported under "never"
+//   value === "red"   a < b   "a" === "b"             fine
+// onlyEquality "true": only == and === (ESLint's isEqualityOperator: != and !== are left alone).
+// exceptRange "true": a range test inside parentheses is fine,
+//   if (0 <= x && x < 10)   if (x < 0 || 10 <= x)    (the same reference in the middle, or at both ends)
+// The fix swaps the operands as written, parentheses kept, and flips the operator (`5 < x` → `x > 5`,
+// `'red' === (a ? b : c)` → `(a ? b : c) === 'red'`); it is offered only without comments, and as a suggestion.
+.violation yoda(at: node, o: symbol, side: symbol) code "yoda" "Expected literal to be on the {side} side of {o}."
+    suppress eslint "yoda"
+    suppress oxlint "yoda"
+    suppress biome "lint/style/noYodaExpression"
+    fix flip "Swap the operands."
+yoda(n, o, side) :- yoda_side(side), binop(n, o, l, r), compare_op(o),
+    (side = "right", literal_like(l), !literal_like(r) ; side = "left", literal_like(r), !literal_like(l)),
+    !(option("onlyEquality", "true"), o != "==", o != "==="), !(option("exceptRange", "true"), yoda_range_test(n)).
+.decl yoda_side(side: symbol)  // where the literal must be
+yoda_side("right") :- !option("option", "always").
+yoda_side("left") :- option("option", "always").
+
+// yoda_range_test(n): n is one half of `lo <op> a && b <op> hi` (between) or `a <op> lo || hi <op> b` (outside), both
+// operators < or <=, a and b the same reference, the logical expression in parentheses (an if's own count), and
+// lo <= hi when both are literals.   (0 <= x && x < 10)   fine;   (10 <= x && x < 0)   reported
+.decl yoda_range_test(n: node)
+yoda_range_test(n) :- yoda_range(g), estree_parent(n, g).
+.decl yoda_range(g: node)
+yoda_range(g) :- yoda_range_ask(g, a, b, lo, hi), ref_same(a, b, "static"), yoda_in_order(lo, hi).
+.decl yoda_range_ask(g: node, a: node, b: node, lo: node, hi: node)
+yoda_range_ask(g, a, b, lo, hi) :- option("exceptRange", "true"), binop(g, "&&", l, r), yoda_up(l, lo, a), yoda_up(r, b, hi),
+    yoda_wrapped(g).
+yoda_range_ask(g, a, b, lo, hi) :- option("exceptRange", "true"), binop(g, "||", l, r), yoda_up(l, a, lo), yoda_up(r, hi, b),
+    yoda_wrapped(g).
+ref_same_ask(a, b, "static") :- yoda_range_ask(_, a, b, _, _).
+.decl yoda_up(e: node, l: node, r: node)  // e is `l < r` or `l <= r`
+yoda_up(e, l, r) :- binop(e, "<", l, r) ; binop(e, "<=", l, r).
+.decl yoda_wrapped(g: node)  // astUtils.isParenthesised: `(` just before g and `)` just after it
+yoda_wrapped(g) :- in_parens(g).
+layout_at(g) :- option("exceptRange", "true"), (binop(g, "&&", _, _) ; binop(g, "||", _, _)).
+// yoda_in_order(lo, hi): one bound is a literal and the other is not, or both are and `lo <= hi` holds in
+// JavaScript: two strings by code point (join sorts them; JavaScript compares UTF-16 units, the same below
+// U+10000), anything else as numbers, null 0, booleans 0 and 1, a numeric string its number. A bound with no number
+// ('a', a regex) makes `<=` false:   (0 <= x && x < '10')  (null <= x && x < 5)  fine;  ('a' <= x && x < 5)  reported
+.decl yoda_in_order(lo: node, hi: node)
+yoda_in_order(lo, hi) :- yoda_range_ask(_, _, _, lo, hi), literal_like(lo), !literal_like(hi).
+yoda_in_order(lo, hi) :- yoda_range_ask(_, _, _, lo, hi), !literal_like(lo), literal_like(hi).
+yoda_in_order(lo, hi) :- yoda_range_ask(_, _, _, lo, hi), yoda_num(lo, x), yoda_num(hi, y), x <= y,
+    !(yoda_str(lo, _), yoda_str(hi, _)).
+.decl yoda_num(e: node, f: float)  // ToNumber of a literal bound
+yoda_num(e, f) :- yoda_range_ask(_, _, _, e, _), literal_number(e, f).
+yoda_num(e, f) :- yoda_range_ask(_, _, _, _, e), literal_number(e, f).
+yoda_num(e, 0.0) :- literal_like(e), (kind(e, "null") ; kind(e, "false")).
+yoda_num(e, 1.0) :- literal_like(e), kind(e, "true").
+yoda_num(e, 0.0) :- yoda_str(e, "").
+yoda_num(e, to_float(v)) :- yoda_str(e, v), match("[+-]?([0-9]+\\.?[0-9]*|\\.[0-9]+)(e[+-]?[0-9]+)?", v).
+yoda_in_order(lo, hi) :- yoda_str_pair(lo, hi, x, x).
+yoda_in_order(lo, hi) :- yoda_str_pair(lo, hi, x, y), j = join v by v sep "\n" : { yoda_bound(lo, hi, v) },
+    j = cat(x, cat("\n", y)).
+.decl yoda_str_pair(lo: node, hi: node, x: symbol, y: symbol)
+yoda_str_pair(lo, hi, x, y) :- yoda_range_ask(_, _, _, lo, hi), yoda_str(lo, x), yoda_str(hi, y).
+.decl yoda_bound(lo: node, hi: node, v: symbol)
+yoda_bound(lo, hi, x) :- yoda_str_pair(lo, hi, x, _).
+yoda_bound(lo, hi, y) :- yoda_str_pair(lo, hi, _, y).
+.decl yoda_str(e: node, v: symbol)
+yoda_str(e, v) :- literal_like(e), (kind(e, "string") ; kind(e, "template_string")), value(e, v).
+
+// The fix: `5 < x` becomes `x > 5`. The operands keep their text, parentheses included (binop's are stripped),
+// and the spacing around the operator stays as written when it is on one line. A word next to the comparison
+// gets a space, as ESLint's canTokensBeAdjacent asks:  return"red"===color  →  return color==="red"
+flip(n, o, _) :- yoda(n, o, _), yoda_flip(o, f), !yoda_comment(n), field(n, "left", a), field(n, "right", b),
+    text(a, A), text(b, B), yoda_gap(n, a, g1, g2), yoda_lead(n, p), yoda_trail(n, s)
+    => replace(n, `$p$B$g1$f$g2$A$s`).
+// yoda_gap(n, a, g1, g2): the text between the left operand and the operator, and between it and the right one.
+.decl yoda_gap(n: node, a: node, g1: symbol, g2: symbol)
+yoda_gap(n, a, g1, g2) :- yoda(n, _, _), field(n, "left", a), op_token(n, t), yoda_ws(a, t, g1), field(n, "right", b),
+    yoda_ws_to(t, b, g2).
+.decl yoda_ws(a: node, t: span, g: symbol)  // the gap from a's end to token t
+yoda_ws(a, t, substr(s, x, y - x)) :- yoda(n, _, _), field(n, "left", a), op_token(n, t), end_line(a, l), line(t, l),
+    docof(t, d), src_line(d, l, sp), text(sp, s), end_col(a, x), col(t, y).
+yoda_ws(a, t, " ") :- yoda(n, _, _), field(n, "left", a), op_token(n, t), end_line(a, l), !line(t, l).
+.decl yoda_ws_to(t: span, b: node, g: symbol)  // the gap from token t's end to b
+yoda_ws_to(t, b, substr(s, x, y - x)) :- yoda(n, _, _), op_token(n, t), field(n, "right", b), end_line(t, l), line(b, l),
+    docof(b, d), src_line(d, l, sp), text(sp, s), end_col(t, x), col(b, y).
+yoda_ws_to(t, b, " ") :- yoda(n, _, _), op_token(n, t), field(n, "right", b), end_line(t, l), !line(b, l).
+// yoda_lead(n, p), yoda_trail(n, s): " " where a touching token outside n would join the new first (last) token.
+.decl yoda_lead(n: node, p: symbol)
+yoda_lead(n, " ") :- yoda_lead_sp(n).
+yoda_lead(n, "") :- yoda(n, _, _), !yoda_lead_sp(n).
+.decl yoda_lead_sp(n: node)
+yoda_lead_sp(n) :- yoda_before(n, x, y), cannot_touch(x, y).
+.decl yoda_before(n: node, x: symbol, y: symbol)  // the token touching n's start, and the right operand's first
+yoda_before(n, x, y) :- yoda(n, _, _), touching(n, x), field(n, "right", b), text(b, y).
+layout_at(n) :- binop(n, o, _, _), compare_op(o).   // every comparison, not yoda's: no cycle through `!`
+.decl yoda_trail(n: node, s: symbol)
+yoda_trail(n, " ") :- yoda_trail_sp(n).
+yoda_trail(n, "") :- yoda(n, _, _), !yoda_trail_sp(n).
+.decl yoda_trail_sp(n: node)
+yoda_trail_sp(n) :- yoda_after(n, x, y), cannot_touch(x, y).
+.decl yoda_after(n: node, x: symbol, y: symbol)  // the left operand's last token, and the token touching n's end
+yoda_after(n, x, y) :- yoda(n, _, _), touch_after(n, y), field(n, "left", a), text(a, x).
+touch_pair(x, y) :- yoda_before(_, x, y) ; yoda_after(_, x, y).
+.decl yoda_flip(o: symbol, f: symbol)
+yoda_flip("==", "=="). yoda_flip("===", "==="). yoda_flip("!=", "!="). yoda_flip("!==", "!=="). yoda_flip("<", ">").
+yoda_flip(">", "<"). yoda_flip("<=", ">="). yoda_flip(">=", "<=").
+.decl yoda_comment(n: node)
+yoda_comment(n) :- kind(c, "comment"), within(c, n).

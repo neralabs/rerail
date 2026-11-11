@@ -1,0 +1,17 @@
+.policy "eslint-plugin-vue-no-deprecated-v-on-native-modifier" revision 2
+.description "Remove the .native modifier from v-on listeners; Vue 3 dropped it and passes listeners to the component root on its own."
+.language vue
+.mode steer
+.scope include "**/*.vue"
+#include "vue/template.rr"
+//   vdir(e, a, d, arg), vmod(a, m)
+
+// eslint-plugin-vue's no-deprecated-v-on-native-modifier: the `native` modifier of a v-on directive, reported at the
+// modifier. No options.
+//   <my-comp @click.native="go" />          reported at `native`
+//   <my-comp v-on:click.stop="go" />        not reported
+.violation native_modifier(at: node) code "vue/no-deprecated-v-on-native-modifier"
+    "Remove the .native modifier from this v-on listener; Vue 3 passes listeners to the component root itself."
+    suppress eslint "vue/no-deprecated-v-on-native-modifier"
+native_modifier(m) :- vdir(_, a, "on", _), child(a, ms, _), kind(ms, "directive_modifiers"), child(ms, m, _),
+    text(m, "native").

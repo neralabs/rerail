@@ -138,6 +138,8 @@ enum Predicate<'v> {
     Not(Box<Self>),
     /// `eq` (`true`) or `ne` (`false`) of two operands' JSON text.
     Equal(Operand<'v>, Operand<'v>, bool),
+    /// UTF-16 ordinal order of two string operands; other JSON types do not compare.
+    Ordered(Operand<'v>, Operand<'v>, &'static str),
 }
 
 impl<'v> Predicate<'v> {
@@ -180,6 +182,17 @@ impl<'v> Predicate<'v> {
                 );
             }
         }
+        for key in ["lt", "le", "gt", "ge"] {
+            if let Some([left, right]) =
+                object.get(key).and_then(Value::as_array).map(Vec::as_slice)
+            {
+                return Self::Ordered(
+                    Operand::compile(left, aliases),
+                    Operand::compile(right, aliases),
+                    key,
+                );
+            }
+        }
         Self::Constant(false)
     }
 
@@ -195,6 +208,22 @@ impl<'v> Predicate<'v> {
                     (left, right) => left.is_none() && right.is_none(),
                 };
                 same == *equal
+            }
+            Self::Ordered(left, right, operation) => {
+                let (Some(left), Some(right)) = (
+                    left.read(rows).and_then(Value::as_str),
+                    right.read(rows).and_then(Value::as_str),
+                ) else {
+                    return false;
+                };
+                let order = left.encode_utf16().cmp(right.encode_utf16());
+                match *operation {
+                    "lt" => order.is_lt(),
+                    "le" => order.is_le(),
+                    "gt" => order.is_gt(),
+                    "ge" => order.is_ge(),
+                    _ => false,
+                }
             }
         }
     }

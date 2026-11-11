@@ -1,0 +1,223 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl hnsw_architecture_imports(kind: symbol)
+hnsw_architecture_imports("import_statement"). hnsw_architecture_imports("import_from_statement").
+.decl hnsw_architecture_patterns(kind: symbol)
+hnsw_architecture_patterns("case_pattern").
+.decl child(p: node, c: node, i: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl end_line(n: node, l: number)
+.decl field(p: node, f: symbol, c: node)
+.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
+.decl hnsw_architecture_algorithm(d: number)
+.decl hnsw_architecture_alias(i: node, s: symbol)
+.decl hnsw_architecture_body(b: node)
+.decl hnsw_architecture_const(c: node, v: symbol)
+.decl hnsw_architecture_docstring(c: node)
+.decl hnsw_architecture_forbidden(s: symbol)
+.decl hnsw_architecture_found(d: number, l: number, issue: symbol)
+.decl hnsw_architecture_fpart(h: node, p: node)
+.decl hnsw_architecture_frag(h: node, f: node, s: number)
+.decl hnsw_architecture_fstring(n: node)
+.decl hnsw_architecture_gate(d: number)
+.decl hnsw_architecture_generated(d: number)
+.decl hnsw_architecture_hi(h: node, i: number, b: number)
+.decl hnsw_architecture_host(h: node)
+.decl hnsw_architecture_host_spec(h: node)
+.decl hnsw_architecture_host_str(h: node)
+.decl hnsw_architecture_import_token(d: number, i: node, s: symbol)
+.decl hnsw_architecture_imported(d: number, i: node, s: symbol)
+.decl hnsw_architecture_interp(h: node, x: node, s: number)
+.decl hnsw_architecture_interp_k(h: node, x: node, k: number)
+.decl hnsw_architecture_json_pattern(r: symbol)
+.decl hnsw_architecture_json_re(x: symbol)
+.decl hnsw_architecture_lit(h: node, i: number, v: symbol)
+.decl hnsw_architecture_lo(h: node, i: number, a: number)
+.decl hnsw_architecture_mixed(q: node)
+.decl hnsw_architecture_module(d: number)
+.decl hnsw_architecture_not_name(n: node)
+.decl hnsw_architecture_params(p: node)
+.decl hnsw_architecture_part_of(h: node)
+.decl hnsw_architecture_piece_const(d: number, l: number, v: symbol)
+.decl hnsw_architecture_piece_node(h: node, i: number, x: node)
+.decl hnsw_architecture_plain(n: node)
+.decl hnsw_architecture_ref(d: number, n: node, s: symbol)
+.decl hnsw_architecture_row(d: number, n: node, issue: symbol)
+.decl hnsw_architecture_run(h: node, i: number, f: node, s: number)
+.decl hnsw_architecture_run_line(h: node, i: number, l: number)
+.decl hnsw_architecture_splat(s: node)
+.decl hnsw_architecture_tinner(i: node)
+.decl hnsw_architecture_tparam(p: node)
+.decl hnsw_architecture_unparen(o: node, x: node)
+.decl hnsw_entry(e: symbol)
+.decl hnsw_external_path(p: symbol)
+.decl hnsw_forbidden_path(p: symbol)
+.decl hnsw_withheld_path(p: symbol)
+.decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl name(n: node, s: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl op(n: node, s: symbol)
+.decl option_json(name: symbol, pointer: symbol, v: symbol)
+.decl option_value(name: symbol, v: symbol)
+.decl out_scope(d: number)
+.decl rr_agg1(h: node, s: number, t: number)
+.decl rr_agg3(h: node, i: number, j: number)
+.decl rr_ctx2(h: node, s: number)
+.decl rr_ctx4(h: node, i: number)
+.decl rr_demand_agg_rr_agg1(h: node, s: number)
+.decl rr_demand_agg_rr_agg3(h: node, i: number)
+.decl strprefix(n: node, p: symbol)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, text, op, line, value, strprefix, name, fstring_piece, end_line, node_text, cpython_syntax_error
+.output violation
+hnsw_architecture_forbidden("SqlHnswBeamLayerSearch").
+hnsw_architecture_forbidden("SqlHnswBeamLayerTrace").
+hnsw_architecture_forbidden("SqlHnswEpochRecoveryStep").
+hnsw_architecture_forbidden("SqlHnswFrontierAdvance").
+hnsw_architecture_forbidden("SqlHnswFrontierTickInsert").
+hnsw_architecture_forbidden("SqlHnswIncrementalMutationProgram").
+hnsw_architecture_forbidden("SqlTableHnswIncrementalUpperEdges").
+hnsw_architecture_forbidden("SqlTableHnswRepairContentOrphanNeighbors").
+hnsw_architecture_forbidden("SqlTableHnswRepairSourceNeighbors").
+hnsw_architecture_forbidden("SqlTableHnswScopedRebuild").
+hnsw_architecture_forbidden("_SqlHnswEpochLayerEdges").
+hnsw_architecture_forbidden("hnsw_flat_walk_neighbor_limit").
+hnsw_architecture_forbidden("hnsw_flat_walk_recursion_limit").
+hnsw_architecture_forbidden("hnsw_flat_walk_visited_budget").
+hnsw_architecture_forbidden("hnsw_insertion_recursive_iteration_limit").
+hnsw_architecture_forbidden("hnsw_recovery_diversity_candidate_limit").
+hnsw_architecture_forbidden("hnsw_recovery_exhaustive_candidate_limit").
+hnsw_architecture_forbidden("hnsw_recovery_initial_neighbor_limit").
+hnsw_architecture_forbidden("hnsw_recovery_pruning_candidate_limit").
+hnsw_architecture_forbidden("hnsw_recovery_route_partition_count").
+hnsw_architecture_forbidden("hnsw_search_frontier_iteration_limit").
+hnsw_architecture_forbidden("scored_pairs_query").
+hnsw_architecture_json_pattern("(?:(?i:sqljson)|(?:\\A|[^0-9A-Z_a-zª²-³µ¹-º¼-¾À-ÖØ-öø-ˁˆ-ˑˠ-ˤˬˮͰ-ʹͶ-ͷͺ-ͽͿΆΈ-ΊΌΎ-ΡΣ-ϵϷ-ҁҊ-ԯԱ-Ֆՙՠ-ֈא-תׯ-ײؠ-ي٠-٩ٮ-ٯٱ-ۓەۥ-ۦۮ-ۼۿܐܒ-ܯݍ-ޥޱ߀-ߪߴ-ߵߺࠀ-ࠕࠚࠤࠨࡀ-ࡘࡠ-ࡪࡰ-ࢇࢉ-ࢎࢠ-ࣉऄ-हऽॐक़-ॡ०-९ॱ-ঀঅ-ঌএ-ঐও-নপ-রলশ-হঽৎড়-ঢ়য়-ৡ০-ৱ৴-৹ৼਅ-ਊਏ-ਐਓ-ਨਪ-ਰਲ-ਲ਼ਵ-ਸ਼ਸ-ਹਖ਼-ੜਫ਼੦-੯ੲ-ੴઅ-ઍએ-ઑઓ-નપ-રલ-ળવ-હઽૐૠ-ૡ૦-૯ૹଅ-ଌଏ-ଐଓ-ନପ-ରଲ-ଳଵ-ହଽଡ଼-ଢ଼ୟ-ୡ୦-୯ୱ-୷ஃஅ-ஊஎ-ஐஒ-கங-சஜஞ-டண-தந-பம-ஹௐ௦-௲అ-ఌఎ-ఐఒ-నప-హఽౘ-ౚౝౠ-ౡ౦-౯౸-౾ಀಅ-ಌಎ-ಐಒ-ನಪ-ಳವ-ಹಽೝ-ೞೠ-ೡ೦-೯ೱ-ೲഄ-ഌഎ-ഐഒ-ഺഽൎൔ-ൖ൘-ൡ൦-൸ൺ-ൿඅ-ඖක-නඳ-රලව-ෆ෦-෯ก-ะา-ำเ-ๆ๐-๙ກ-ຂຄຆ-ຊຌ-ຣລວ-ະາ-ຳຽເ-ໄໆ໐-໙ໜ-ໟༀ༠-༳ཀ-ཇཉ-ཬྈ-ྌက-ဪဿ-၉ၐ-ၕၚ-ၝၡၥ-ၦၮ-ၰၵ-ႁႎ႐-႙Ⴀ-ჅჇჍა-ჺჼ-ቈቊ-ቍቐ-ቖቘቚ-ቝበ-ኈኊ-ኍነ-ኰኲ-ኵኸ-ኾዀዂ-ዅወ-ዖዘ-ጐጒ-ጕጘ-ፚ፩-፼ᎀ-ᎏᎠ-Ᏽᏸ-ᏽᐁ-ᙬᙯ-ᙿᚁ-ᚚᚠ-ᛪᛮ-ᛸᜀ-ᜑᜟ-ᜱᝀ-ᝑᝠ-ᝬᝮ-ᝰក-ឳៗៜ០-៩៰-៹᠐-᠙ᠠ-ᡸᢀ-ᢄᢇ-ᢨᢪᢰ-ᣵᤀ-ᤞ᥆-ᥭᥰ-ᥴᦀ-ᦫᦰ-ᧉ᧐-᧚ᨀ-ᨖᨠ-ᩔ᪀-᪉᪐-᪙ᪧᬅ-ᬳᭅ-ᭌ᭐-᭙ᮃ-ᮠᮮ-ᯥᰀ-ᰣ᱀-᱉ᱍ-ᱽᲀ-ᲈᲐ-ᲺᲽ-Ჿᳩ-ᳬᳮ-ᳳᳵ-ᳶᳺᴀ-ᶿḀ-ἕἘ-Ἕἠ-ὅὈ-Ὅὐ-ὗὙὛὝὟ-ώᾀ-ᾴᾶ-ᾼιῂ-ῄῆ-ῌῐ-ΐῖ-Ίῠ-Ῥῲ-ῴῶ-ῼ⁰-ⁱ⁴-⁹ⁿ-₉ₐ-ₜℂℇℊ-ℓℕℙ-ℝℤΩℨK-ℭℯ-ℹℼ-ℿⅅ-ⅉⅎ⅐-↉①-⒛⓪-⓿❶-➓Ⰰ-ⳤⳫ-ⳮⳲ-ⳳ⳽ⴀ-ⴥⴧⴭⴰ-ⵧⵯⶀ-ⶖⶠ-ⶦⶨ-ⶮⶰ-ⶶⶸ-ⶾⷀ-ⷆⷈ-ⷎⷐ-ⷖⷘ-ⷞⸯ々-〇〡-〩〱-〵〸-〼ぁ-ゖゝ-ゟァ-ヺー-ヿㄅ-ㄯㄱ-ㆎ㆒-㆕ㆠ-ㆿㇰ-ㇿ㈠-㈩㉈-㉏㉑-㉟㊀-㊉㊱-㊿㐀-䶿一-ꒌꓐ-ꓽꔀ-ꘌꘐ-ꘫꙀ-ꙮꙿ-ꚝꚠ-ꛯꜗ-ꜟꜢ-ꞈꞋ-ꟊꟐ-ꟑꟓꟕ-ꟙꟲ-ꠁꠃ-ꠅꠇ-ꠊꠌ-ꠢ꠰-꠵ꡀ-ꡳꢂ-ꢳ꣐-꣙ꣲ-ꣷꣻꣽ-ꣾ꤀-ꤥꤰ-ꥆꥠ-ꥼꦄ-ꦲꧏ-꧙ꧠ-ꧤꧦ-ꧾꨀ-ꨨꩀ-ꩂꩄ-ꩋ꩐-꩙ꩠ-ꩶꩺꩾ-ꪯꪱꪵ-ꪶꪹ-ꪽꫀꫂꫛ-ꫝꫠ-ꫪꫲ-ꫴꬁ-ꬆꬉ-ꬎꬑ-ꬖꬠ-ꬦꬨ-ꬮꬰ-ꭚꭜ-ꭩꭰ-ꯢ꯰-꯹가-힣ힰ-ퟆퟋ-ퟻ豈-舘並-龎ﬀ-ﬆﬓ-ﬗיִײַ-ﬨשׁ-זּטּ-לּמּנּ-סּףּ-פּצּ-ﮱﯓ-ﴽﵐ-ﶏﶒ-ﷇﷰ-ﷻﹰ-ﹴﹶ-ﻼ０-９Ａ-Ｚａ-ｚｦ-ﾾￂ-ￇￊ-ￏￒ-ￗￚ-ￜ𐀀-𐀋𐀍-𐀦𐀨-𐀺𐀼-𐀽𐀿-𐁍𐁐-𐁝𐂀-𐃺𐄇-𐄳𐅀-𐅸𐆊-𐆋𐊀-𐊜𐊠-𐋐𐋡-𐋻𐌀-𐌣𐌭-𐍊𐍐-𐍵𐎀-𐎝𐎠-𐏃𐏈-𐏏𐏑-𐏕𐐀-𐒝𐒠-𐒩𐒰-𐓓𐓘-𐓻𐔀-𐔧𐔰-𐕣𐕰-𐕺𐕼-𐖊𐖌-𐖒𐖔-𐖕𐖗-𐖡𐖣-𐖱𐖳-𐖹𐖻-𐖼𐘀-𐜶𐝀-𐝕𐝠-𐝧𐞀-𐞅𐞇-𐞰𐞲-𐞺𐠀-𐠅𐠈𐠊-𐠵𐠷-𐠸𐠼𐠿-𐡕𐡘-𐡶𐡹-𐢞𐢧-𐢯𐣠-𐣲𐣴-𐣵𐣻-𐤛𐤠-𐤹𐦀-𐦷𐦼-𐧏𐧒-𐨀𐨐-𐨓𐨕-𐨗𐨙-𐨵𐩀-𐩈𐩠-𐩾𐪀-𐪟𐫀-𐫇𐫉-𐫤𐫫-𐫯𐬀-𐬵𐭀-𐭕𐭘-𐭲𐭸-𐮑𐮩-𐮯𐰀-𐱈𐲀-𐲲𐳀-𐳲𐳺-𐴣𐴰-𐴹𐹠-𐹾𐺀-𐺩𐺰-𐺱𐼀-𐼧𐼰-𐽅𐽑-𐽔𐽰-𐾁𐾰-𐿋𐿠-𐿶𑀃-𑀷𑁒-𑁯𑁱-𑁲𑁵𑂃-𑂯𑃐-𑃨𑃰-𑃹𑄃-𑄦𑄶-𑄿𑅄𑅇𑅐-𑅲𑅶𑆃-𑆲𑇁-𑇄𑇐-𑇚𑇜𑇡-𑇴𑈀-𑈑𑈓-𑈫𑈿-𑉀𑊀-𑊆𑊈𑊊-𑊍𑊏-𑊝𑊟-𑊨𑊰-𑋞𑋰-𑋹𑌅-𑌌𑌏-𑌐𑌓-𑌨𑌪-𑌰𑌲-𑌳𑌵-𑌹𑌽𑍐𑍝-𑍡𑐀-𑐴𑑇-𑑊𑑐-𑑙𑑟-𑑡𑒀-𑒯𑓄-𑓅𑓇𑓐-𑓙𑖀-𑖮𑗘-𑗛𑘀-𑘯𑙄𑙐-𑙙𑚀-𑚪𑚸𑛀-𑛉𑜀-𑜚𑜰-𑜻𑝀-𑝆𑠀-𑠫𑢠-𑣲𑣿-𑤆𑤉𑤌-𑤓𑤕-𑤖𑤘-𑤯𑤿𑥁𑥐-𑥙𑦠-𑦧𑦪-𑧐𑧡𑧣𑨀𑨋-𑨲𑨺𑩐𑩜-𑪉𑪝𑪰-𑫸𑰀-𑰈𑰊-𑰮𑱀𑱐-𑱬𑱲-𑲏𑴀-𑴆𑴈-𑴉𑴋-𑴰𑵆𑵐-𑵙𑵠-𑵥𑵧-𑵨𑵪-𑶉𑶘𑶠-𑶩𑻠-𑻲𑼂𑼄-𑼐𑼒-𑼳𑽐-𑽙𑾰𑿀-𑿔𒀀-𒎙𒐀-𒑮𒒀-𒕃𒾐-𒿰𓀀-𓐯𓑁-𓑆𔐀-𔙆𖠀-𖨸𖩀-𖩞𖩠-𖩩𖩰-𖪾𖫀-𖫉𖫐-𖫭𖬀-𖬯𖭀-𖭃𖭐-𖭙𖭛-𖭡𖭣-𖭷𖭽-𖮏𖹀-𖺖𖼀-𖽊𖽐𖾓-𖾟𖿠-𖿡𖿣𗀀-𘟷𘠀-𘳕𘴀-𘴈𚿰-𚿳𚿵-𚿻𚿽-𚿾𛀀-𛄢𛄲𛅐-𛅒𛅕𛅤-𛅧𛅰-𛋻𛰀-𛱪𛱰-𛱼𛲀-𛲈𛲐-𛲙𝋀-𝋓𝋠-𝋳𝍠-𝍸𝐀-𝑔𝑖-𝒜𝒞-𝒟𝒢𝒥-𝒦𝒩-𝒬𝒮-𝒹𝒻𝒽-𝓃𝓅-𝔅𝔇-𝔊𝔍-𝔔𝔖-𝔜𝔞-𝔹𝔻-𝔾𝕀-𝕄𝕆𝕊-𝕐𝕒-𝚥𝚨-𝛀𝛂-𝛚𝛜-𝛺𝛼-𝜔𝜖-𝜴𝜶-𝝎𝝐-𝝮𝝰-𝞈𝞊-𝞨𝞪-𝟂𝟄-𝟋𝟎-𝟿𝼀-𝼞𝼥-𝼪𞀰-𞁭𞄀-𞄬𞄷-𞄽𞅀-𞅉𞅎𞊐-𞊭𞋀-𞋫𞋰-𞋹𞓐-𞓫𞓰-𞓹𞟠-𞟦𞟨-𞟫𞟭-𞟮𞟰-𞟾𞠀-𞣄𞣇-𞣏𞤀-𞥃𞥋𞥐-𞥙𞱱-𞲫𞲭-𞲯𞲱-𞲴𞴁-𞴭𞴯-𞴽𞸀-𞸃𞸅-𞸟𞸡-𞸢𞸤𞸧𞸩-𞸲𞸴-𞸷𞸹𞸻𞹂𞹇𞹉𞹋𞹍-𞹏𞹑-𞹒𞹔𞹗𞹙𞹛𞹝𞹟𞹡-𞹢𞹤𞹧-𞹪𞹬-𞹲𞹴-𞹷𞹹-𞹼𞹾𞺀-𞺉𞺋-𞺛𞺡-𞺣𞺥-𞺩𞺫-𞺻🄀-🄌🯰-🯹𠀀-𪛟𪜀-𫜹𫝀-𫠝𫠠-𬺡𬺰-𮯠𮯰-𮹝丽-𪘀𰀀-𱍊𱍐-𲎯])(?:(?i:jsonb?)(?:_[0-9A-Z_a-zª²-³µ¹-º¼-¾À-ÖØ-öø-ˁˆ-ˑˠ-ˤˬˮͰ-ʹͶ-ͷͺ-ͽͿΆΈ-ΊΌΎ-ΡΣ-ϵϷ-ҁҊ-ԯԱ-Ֆՙՠ-ֈא-תׯ-ײؠ-ي٠-٩ٮ-ٯٱ-ۓەۥ-ۦۮ-ۼۿܐܒ-ܯݍ-ޥޱ߀-ߪߴ-ߵߺࠀ-ࠕࠚࠤࠨࡀ-ࡘࡠ-ࡪࡰ-ࢇࢉ-ࢎࢠ-ࣉऄ-हऽॐक़-ॡ०-९ॱ-ঀঅ-ঌএ-ঐও-নপ-রলশ-হঽৎড়-ঢ়য়-ৡ০-ৱ৴-৹ৼਅ-ਊਏ-ਐਓ-ਨਪ-ਰਲ-ਲ਼ਵ-ਸ਼ਸ-ਹਖ਼-ੜਫ਼੦-੯ੲ-ੴઅ-ઍએ-ઑઓ-નપ-રલ-ળવ-હઽૐૠ-ૡ૦-૯ૹଅ-ଌଏ-ଐଓ-ନପ-ରଲ-ଳଵ-ହଽଡ଼-ଢ଼ୟ-ୡ୦-୯ୱ-୷ஃஅ-ஊஎ-ஐஒ-கங-சஜஞ-டண-தந-பம-ஹௐ௦-௲అ-ఌఎ-ఐఒ-నప-హఽౘ-ౚౝౠ-ౡ౦-౯౸-౾ಀಅ-ಌಎ-ಐಒ-ನಪ-ಳವ-ಹಽೝ-ೞೠ-ೡ೦-೯ೱ-ೲഄ-ഌഎ-ഐഒ-ഺഽൎൔ-ൖ൘-ൡ൦-൸ൺ-ൿඅ-ඖක-නඳ-රලව-ෆ෦-෯ก-ะา-ำเ-ๆ๐-๙ກ-ຂຄຆ-ຊຌ-ຣລວ-ະາ-ຳຽເ-ໄໆ໐-໙ໜ-ໟༀ༠-༳ཀ-ཇཉ-ཬྈ-ྌက-ဪဿ-၉ၐ-ၕၚ-ၝၡၥ-ၦၮ-ၰၵ-ႁႎ႐-႙Ⴀ-ჅჇჍა-ჺჼ-ቈቊ-ቍቐ-ቖቘቚ-ቝበ-ኈኊ-ኍነ-ኰኲ-ኵኸ-ኾዀዂ-ዅወ-ዖዘ-ጐጒ-ጕጘ-ፚ፩-፼ᎀ-ᎏᎠ-Ᏽᏸ-ᏽᐁ-ᙬᙯ-ᙿᚁ-ᚚᚠ-ᛪᛮ-ᛸᜀ-ᜑᜟ-ᜱᝀ-ᝑᝠ-ᝬᝮ-ᝰក-ឳៗៜ០-៩៰-៹᠐-᠙ᠠ-ᡸᢀ-ᢄᢇ-ᢨᢪᢰ-ᣵᤀ-ᤞ᥆-ᥭᥰ-ᥴᦀ-ᦫᦰ-ᧉ᧐-᧚ᨀ-ᨖᨠ-ᩔ᪀-᪉᪐-᪙ᪧᬅ-ᬳᭅ-ᭌ᭐-᭙ᮃ-ᮠᮮ-ᯥᰀ-ᰣ᱀-᱉ᱍ-ᱽᲀ-ᲈᲐ-ᲺᲽ-Ჿᳩ-ᳬᳮ-ᳳᳵ-ᳶᳺᴀ-ᶿḀ-ἕἘ-Ἕἠ-ὅὈ-Ὅὐ-ὗὙὛὝὟ-ώᾀ-ᾴᾶ-ᾼιῂ-ῄῆ-ῌῐ-ΐῖ-Ίῠ-Ῥῲ-ῴῶ-ῼ⁰-ⁱ⁴-⁹ⁿ-₉ₐ-ₜℂℇℊ-ℓℕℙ-ℝℤΩℨK-ℭℯ-ℹℼ-ℿⅅ-ⅉⅎ⅐-↉①-⒛⓪-⓿❶-➓Ⰰ-ⳤⳫ-ⳮⳲ-ⳳ⳽ⴀ-ⴥⴧⴭⴰ-ⵧⵯⶀ-ⶖⶠ-ⶦⶨ-ⶮⶰ-ⶶⶸ-ⶾⷀ-ⷆⷈ-ⷎⷐ-ⷖⷘ-ⷞⸯ々-〇〡-〩〱-〵〸-〼ぁ-ゖゝ-ゟァ-ヺー-ヿㄅ-ㄯㄱ-ㆎ㆒-㆕ㆠ-ㆿㇰ-ㇿ㈠-㈩㉈-㉏㉑-㉟㊀-㊉㊱-㊿㐀-䶿一-ꒌꓐ-ꓽꔀ-ꘌꘐ-ꘫꙀ-ꙮꙿ-ꚝꚠ-ꛯꜗ-ꜟꜢ-ꞈꞋ-ꟊꟐ-ꟑꟓꟕ-ꟙꟲ-ꠁꠃ-ꠅꠇ-ꠊꠌ-ꠢ꠰-꠵ꡀ-ꡳꢂ-ꢳ꣐-꣙ꣲ-ꣷꣻꣽ-ꣾ꤀-ꤥꤰ-ꥆꥠ-ꥼꦄ-ꦲꧏ-꧙ꧠ-ꧤꧦ-ꧾꨀ-ꨨꩀ-ꩂꩄ-ꩋ꩐-꩙ꩠ-ꩶꩺꩾ-ꪯꪱꪵ-ꪶꪹ-ꪽꫀꫂꫛ-ꫝꫠ-ꫪꫲ-ꫴꬁ-ꬆꬉ-ꬎꬑ-ꬖꬠ-ꬦꬨ-ꬮꬰ-ꭚꭜ-ꭩꭰ-ꯢ꯰-꯹가-힣ힰ-ퟆퟋ-ퟻ豈-舘並-龎ﬀ-ﬆﬓ-ﬗיִײַ-ﬨשׁ-זּטּ-לּמּנּ-סּףּ-פּצּ-ﮱﯓ-ﴽﵐ-ﶏﶒ-ﷇﷰ-ﷻﹰ-ﹴﹶ-ﻼ０-９Ａ-Ｚａ-ｚｦ-ﾾￂ-ￇￊ-ￏￒ-ￗￚ-ￜ𐀀-𐀋𐀍-𐀦𐀨-𐀺𐀼-𐀽𐀿-𐁍𐁐-𐁝𐂀-𐃺𐄇-𐄳𐅀-𐅸𐆊-𐆋𐊀-𐊜𐊠-𐋐𐋡-𐋻𐌀-𐌣𐌭-𐍊𐍐-𐍵𐎀-𐎝𐎠-𐏃𐏈-𐏏𐏑-𐏕𐐀-𐒝𐒠-𐒩𐒰-𐓓𐓘-𐓻𐔀-𐔧𐔰-𐕣𐕰-𐕺𐕼-𐖊𐖌-𐖒𐖔-𐖕𐖗-𐖡𐖣-𐖱𐖳-𐖹𐖻-𐖼𐘀-𐜶𐝀-𐝕𐝠-𐝧𐞀-𐞅𐞇-𐞰𐞲-𐞺𐠀-𐠅𐠈𐠊-𐠵𐠷-𐠸𐠼𐠿-𐡕𐡘-𐡶𐡹-𐢞𐢧-𐢯𐣠-𐣲𐣴-𐣵𐣻-𐤛𐤠-𐤹𐦀-𐦷𐦼-𐧏𐧒-𐨀𐨐-𐨓𐨕-𐨗𐨙-𐨵𐩀-𐩈𐩠-𐩾𐪀-𐪟𐫀-𐫇𐫉-𐫤𐫫-𐫯𐬀-𐬵𐭀-𐭕𐭘-𐭲𐭸-𐮑𐮩-𐮯𐰀-𐱈𐲀-𐲲𐳀-𐳲𐳺-𐴣𐴰-𐴹𐹠-𐹾𐺀-𐺩𐺰-𐺱𐼀-𐼧𐼰-𐽅𐽑-𐽔𐽰-𐾁𐾰-𐿋𐿠-𐿶𑀃-𑀷𑁒-𑁯𑁱-𑁲𑁵𑂃-𑂯𑃐-𑃨𑃰-𑃹𑄃-𑄦𑄶-𑄿𑅄𑅇𑅐-𑅲𑅶𑆃-𑆲𑇁-𑇄𑇐-𑇚𑇜𑇡-𑇴𑈀-𑈑𑈓-𑈫𑈿-𑉀𑊀-𑊆𑊈𑊊-𑊍𑊏-𑊝𑊟-𑊨𑊰-𑋞𑋰-𑋹𑌅-𑌌𑌏-𑌐𑌓-𑌨𑌪-𑌰𑌲-𑌳𑌵-𑌹𑌽𑍐𑍝-𑍡𑐀-𑐴𑑇-𑑊𑑐-𑑙𑑟-𑑡𑒀-𑒯𑓄-𑓅𑓇𑓐-𑓙𑖀-𑖮𑗘-𑗛𑘀-𑘯𑙄𑙐-𑙙𑚀-𑚪𑚸𑛀-𑛉𑜀-𑜚𑜰-𑜻𑝀-𑝆𑠀-𑠫𑢠-𑣲𑣿-𑤆𑤉𑤌-𑤓𑤕-𑤖𑤘-𑤯𑤿𑥁𑥐-𑥙𑦠-𑦧𑦪-𑧐𑧡𑧣𑨀𑨋-𑨲𑨺𑩐𑩜-𑪉𑪝𑪰-𑫸𑰀-𑰈𑰊-𑰮𑱀𑱐-𑱬𑱲-𑲏𑴀-𑴆𑴈-𑴉𑴋-𑴰𑵆𑵐-𑵙𑵠-𑵥𑵧-𑵨𑵪-𑶉𑶘𑶠-𑶩𑻠-𑻲𑼂𑼄-𑼐𑼒-𑼳𑽐-𑽙𑾰𑿀-𑿔𒀀-𒎙𒐀-𒑮𒒀-𒕃𒾐-𒿰𓀀-𓐯𓑁-𓑆𔐀-𔙆𖠀-𖨸𖩀-𖩞𖩠-𖩩𖩰-𖪾𖫀-𖫉𖫐-𖫭𖬀-𖬯𖭀-𖭃𖭐-𖭙𖭛-𖭡𖭣-𖭷𖭽-𖮏𖹀-𖺖𖼀-𖽊𖽐𖾓-𖾟𖿠-𖿡𖿣𗀀-𘟷𘠀-𘳕𘴀-𘴈𚿰-𚿳𚿵-𚿻𚿽-𚿾𛀀-𛄢𛄲𛅐-𛅒𛅕𛅤-𛅧𛅰-𛋻𛰀-𛱪𛱰-𛱼𛲀-𛲈𛲐-𛲙𝋀-𝋓𝋠-𝋳𝍠-𝍸𝐀-𝑔𝑖-𝒜𝒞-𝒟𝒢𝒥-𝒦𝒩-𝒬𝒮-𝒹𝒻𝒽-𝓃𝓅-𝔅𝔇-𝔊𝔍-𝔔𝔖-𝔜𝔞-𝔹𝔻-𝔾𝕀-𝕄𝕆𝕊-𝕐𝕒-𝚥𝚨-𝛀𝛂-𝛚𝛜-𝛺𝛼-𝜔𝜖-𝜴𝜶-𝝎𝝐-𝝮𝝰-𝞈𝞊-𝞨𝞪-𝟂𝟄-𝟋𝟎-𝟿𝼀-𝼞𝼥-𝼪𞀰-𞁭𞄀-𞄬𞄷-𞄽𞅀-𞅉𞅎𞊐-𞊭𞋀-𞋫𞋰-𞋹𞓐-𞓫𞓰-𞓹𞟠-𞟦𞟨-𞟫𞟭-𞟮𞟰-𞟾𞠀-𞣄𞣇-𞣏𞤀-𞥃𞥋𞥐-𞥙𞱱-𞲫𞲭-𞲯𞲱-𞲴𞴁-𞴭𞴯-𞴽𞸀-𞸃𞸅-𞸟𞸡-𞸢𞸤𞸧𞸩-𞸲𞸴-𞸷𞸹𞸻𞹂𞹇𞹉𞹋𞹍-𞹏𞹑-𞹒𞹔𞹗𞹙𞹛𞹝𞹟𞹡-𞹢𞹤𞹧-𞹪𞹬-𞹲𞹴-𞹷𞹹-𞹼𞹾𞺀-𞺉𞺋-𞺛𞺡-𞺣𞺥-𞺩𞺫-𞺻🄀-🄌🯰-🯹𠀀-𪛟𪜀-𫜹𫝀-𫠝𫠠-𬺡𬺰-𮯠𮯰-𮹝丽-𪘀𰀀-𱍊𱍐-𲎯]+)?)(?:\\z|[^0-9A-Z_a-zª²-³µ¹-º¼-¾À-ÖØ-öø-ˁˆ-ˑˠ-ˤˬˮͰ-ʹͶ-ͷͺ-ͽͿΆΈ-ΊΌΎ-ΡΣ-ϵϷ-ҁҊ-ԯԱ-Ֆՙՠ-ֈא-תׯ-ײؠ-ي٠-٩ٮ-ٯٱ-ۓەۥ-ۦۮ-ۼۿܐܒ-ܯݍ-ޥޱ߀-ߪߴ-ߵߺࠀ-ࠕࠚࠤࠨࡀ-ࡘࡠ-ࡪࡰ-ࢇࢉ-ࢎࢠ-ࣉऄ-हऽॐक़-ॡ०-९ॱ-ঀঅ-ঌএ-ঐও-নপ-রলশ-হঽৎড়-ঢ়য়-ৡ০-ৱ৴-৹ৼਅ-ਊਏ-ਐਓ-ਨਪ-ਰਲ-ਲ਼ਵ-ਸ਼ਸ-ਹਖ਼-ੜਫ਼੦-੯ੲ-ੴઅ-ઍએ-ઑઓ-નપ-રલ-ળવ-હઽૐૠ-ૡ૦-૯ૹଅ-ଌଏ-ଐଓ-ନପ-ରଲ-ଳଵ-ହଽଡ଼-ଢ଼ୟ-ୡ୦-୯ୱ-୷ஃஅ-ஊஎ-ஐஒ-கங-சஜஞ-டண-தந-பம-ஹௐ௦-௲అ-ఌఎ-ఐఒ-నప-హఽౘ-ౚౝౠ-ౡ౦-౯౸-౾ಀಅ-ಌಎ-ಐಒ-ನಪ-ಳವ-ಹಽೝ-ೞೠ-ೡ೦-೯ೱ-ೲഄ-ഌഎ-ഐഒ-ഺഽൎൔ-ൖ൘-ൡ൦-൸ൺ-ൿඅ-ඖක-නඳ-රලව-ෆ෦-෯ก-ะา-ำเ-ๆ๐-๙ກ-ຂຄຆ-ຊຌ-ຣລວ-ະາ-ຳຽເ-ໄໆ໐-໙ໜ-ໟༀ༠-༳ཀ-ཇཉ-ཬྈ-ྌက-ဪဿ-၉ၐ-ၕၚ-ၝၡၥ-ၦၮ-ၰၵ-ႁႎ႐-႙Ⴀ-ჅჇჍა-ჺჼ-ቈቊ-ቍቐ-ቖቘቚ-ቝበ-ኈኊ-ኍነ-ኰኲ-ኵኸ-ኾዀዂ-ዅወ-ዖዘ-ጐጒ-ጕጘ-ፚ፩-፼ᎀ-ᎏᎠ-Ᏽᏸ-ᏽᐁ-ᙬᙯ-ᙿᚁ-ᚚᚠ-ᛪᛮ-ᛸᜀ-ᜑᜟ-ᜱᝀ-ᝑᝠ-ᝬᝮ-ᝰក-ឳៗៜ០-៩៰-៹᠐-᠙ᠠ-ᡸᢀ-ᢄᢇ-ᢨᢪᢰ-ᣵᤀ-ᤞ᥆-ᥭᥰ-ᥴᦀ-ᦫᦰ-ᧉ᧐-᧚ᨀ-ᨖᨠ-ᩔ᪀-᪉᪐-᪙ᪧᬅ-ᬳᭅ-ᭌ᭐-᭙ᮃ-ᮠᮮ-ᯥᰀ-ᰣ᱀-᱉ᱍ-ᱽᲀ-ᲈᲐ-ᲺᲽ-Ჿᳩ-ᳬᳮ-ᳳᳵ-ᳶᳺᴀ-ᶿḀ-ἕἘ-Ἕἠ-ὅὈ-Ὅὐ-ὗὙὛὝὟ-ώᾀ-ᾴᾶ-ᾼιῂ-ῄῆ-ῌῐ-ΐῖ-Ίῠ-Ῥῲ-ῴῶ-ῼ⁰-ⁱ⁴-⁹ⁿ-₉ₐ-ₜℂℇℊ-ℓℕℙ-ℝℤΩℨK-ℭℯ-ℹℼ-ℿⅅ-ⅉⅎ⅐-↉①-⒛⓪-⓿❶-➓Ⰰ-ⳤⳫ-ⳮⳲ-ⳳ⳽ⴀ-ⴥⴧⴭⴰ-ⵧⵯⶀ-ⶖⶠ-ⶦⶨ-ⶮⶰ-ⶶⶸ-ⶾⷀ-ⷆⷈ-ⷎⷐ-ⷖⷘ-ⷞⸯ々-〇〡-〩〱-〵〸-〼ぁ-ゖゝ-ゟァ-ヺー-ヿㄅ-ㄯㄱ-ㆎ㆒-㆕ㆠ-ㆿㇰ-ㇿ㈠-㈩㉈-㉏㉑-㉟㊀-㊉㊱-㊿㐀-䶿一-ꒌꓐ-ꓽꔀ-ꘌꘐ-ꘫꙀ-ꙮꙿ-ꚝꚠ-ꛯꜗ-ꜟꜢ-ꞈꞋ-ꟊꟐ-ꟑꟓꟕ-ꟙꟲ-ꠁꠃ-ꠅꠇ-ꠊꠌ-ꠢ꠰-꠵ꡀ-ꡳꢂ-ꢳ꣐-꣙ꣲ-ꣷꣻꣽ-ꣾ꤀-ꤥꤰ-ꥆꥠ-ꥼꦄ-ꦲꧏ-꧙ꧠ-ꧤꧦ-ꧾꨀ-ꨨꩀ-ꩂꩄ-ꩋ꩐-꩙ꩠ-ꩶꩺꩾ-ꪯꪱꪵ-ꪶꪹ-ꪽꫀꫂꫛ-ꫝꫠ-ꫪꫲ-ꫴꬁ-ꬆꬉ-ꬎꬑ-ꬖꬠ-ꬦꬨ-ꬮꬰ-ꭚꭜ-ꭩꭰ-ꯢ꯰-꯹가-힣ힰ-ퟆퟋ-ퟻ豈-舘並-龎ﬀ-ﬆﬓ-ﬗיִײַ-ﬨשׁ-זּטּ-לּמּנּ-סּףּ-פּצּ-ﮱﯓ-ﴽﵐ-ﶏﶒ-ﷇﷰ-ﷻﹰ-ﹴﹶ-ﻼ０-９Ａ-Ｚａ-ｚｦ-ﾾￂ-ￇￊ-ￏￒ-ￗￚ-ￜ𐀀-𐀋𐀍-𐀦𐀨-𐀺𐀼-𐀽𐀿-𐁍𐁐-𐁝𐂀-𐃺𐄇-𐄳𐅀-𐅸𐆊-𐆋𐊀-𐊜𐊠-𐋐𐋡-𐋻𐌀-𐌣𐌭-𐍊𐍐-𐍵𐎀-𐎝𐎠-𐏃𐏈-𐏏𐏑-𐏕𐐀-𐒝𐒠-𐒩𐒰-𐓓𐓘-𐓻𐔀-𐔧𐔰-𐕣𐕰-𐕺𐕼-𐖊𐖌-𐖒𐖔-𐖕𐖗-𐖡𐖣-𐖱𐖳-𐖹𐖻-𐖼𐘀-𐜶𐝀-𐝕𐝠-𐝧𐞀-𐞅𐞇-𐞰𐞲-𐞺𐠀-𐠅𐠈𐠊-𐠵𐠷-𐠸𐠼𐠿-𐡕𐡘-𐡶𐡹-𐢞𐢧-𐢯𐣠-𐣲𐣴-𐣵𐣻-𐤛𐤠-𐤹𐦀-𐦷𐦼-𐧏𐧒-𐨀𐨐-𐨓𐨕-𐨗𐨙-𐨵𐩀-𐩈𐩠-𐩾𐪀-𐪟𐫀-𐫇𐫉-𐫤𐫫-𐫯𐬀-𐬵𐭀-𐭕𐭘-𐭲𐭸-𐮑𐮩-𐮯𐰀-𐱈𐲀-𐲲𐳀-𐳲𐳺-𐴣𐴰-𐴹𐹠-𐹾𐺀-𐺩𐺰-𐺱𐼀-𐼧𐼰-𐽅𐽑-𐽔𐽰-𐾁𐾰-𐿋𐿠-𐿶𑀃-𑀷𑁒-𑁯𑁱-𑁲𑁵𑂃-𑂯𑃐-𑃨𑃰-𑃹𑄃-𑄦𑄶-𑄿𑅄𑅇𑅐-𑅲𑅶𑆃-𑆲𑇁-𑇄𑇐-𑇚𑇜𑇡-𑇴𑈀-𑈑𑈓-𑈫𑈿-𑉀𑊀-𑊆𑊈𑊊-𑊍𑊏-𑊝𑊟-𑊨𑊰-𑋞𑋰-𑋹𑌅-𑌌𑌏-𑌐𑌓-𑌨𑌪-𑌰𑌲-𑌳𑌵-𑌹𑌽𑍐𑍝-𑍡𑐀-𑐴𑑇-𑑊𑑐-𑑙𑑟-𑑡𑒀-𑒯𑓄-𑓅𑓇𑓐-𑓙𑖀-𑖮𑗘-𑗛𑘀-𑘯𑙄𑙐-𑙙𑚀-𑚪𑚸𑛀-𑛉𑜀-𑜚𑜰-𑜻𑝀-𑝆𑠀-𑠫𑢠-𑣲𑣿-𑤆𑤉𑤌-𑤓𑤕-𑤖𑤘-𑤯𑤿𑥁𑥐-𑥙𑦠-𑦧𑦪-𑧐𑧡𑧣𑨀𑨋-𑨲𑨺𑩐𑩜-𑪉𑪝𑪰-𑫸𑰀-𑰈𑰊-𑰮𑱀𑱐-𑱬𑱲-𑲏𑴀-𑴆𑴈-𑴉𑴋-𑴰𑵆𑵐-𑵙𑵠-𑵥𑵧-𑵨𑵪-𑶉𑶘𑶠-𑶩𑻠-𑻲𑼂𑼄-𑼐𑼒-𑼳𑽐-𑽙𑾰𑿀-𑿔𒀀-𒎙𒐀-𒑮𒒀-𒕃𒾐-𒿰𓀀-𓐯𓑁-𓑆𔐀-𔙆𖠀-𖨸𖩀-𖩞𖩠-𖩩𖩰-𖪾𖫀-𖫉𖫐-𖫭𖬀-𖬯𖭀-𖭃𖭐-𖭙𖭛-𖭡𖭣-𖭷𖭽-𖮏𖹀-𖺖𖼀-𖽊𖽐𖾓-𖾟𖿠-𖿡𖿣𗀀-𘟷𘠀-𘳕𘴀-𘴈𚿰-𚿳𚿵-𚿻𚿽-𚿾𛀀-𛄢𛄲𛅐-𛅒𛅕𛅤-𛅧𛅰-𛋻𛰀-𛱪𛱰-𛱼𛲀-𛲈𛲐-𛲙𝋀-𝋓𝋠-𝋳𝍠-𝍸𝐀-𝑔𝑖-𝒜𝒞-𝒟𝒢𝒥-𝒦𝒩-𝒬𝒮-𝒹𝒻𝒽-𝓃𝓅-𝔅𝔇-𝔊𝔍-𝔔𝔖-𝔜𝔞-𝔹𝔻-𝔾𝕀-𝕄𝕆𝕊-𝕐𝕒-𝚥𝚨-𝛀𝛂-𝛚𝛜-𝛺𝛼-𝜔𝜖-𝜴𝜶-𝝎𝝐-𝝮𝝰-𝞈𝞊-𝞨𝞪-𝟂𝟄-𝟋𝟎-𝟿𝼀-𝼞𝼥-𝼪𞀰-𞁭𞄀-𞄬𞄷-𞄽𞅀-𞅉𞅎𞊐-𞊭𞋀-𞋫𞋰-𞋹𞓐-𞓫𞓰-𞓹𞟠-𞟦𞟨-𞟫𞟭-𞟮𞟰-𞟾𞠀-𞣄𞣇-𞣏𞤀-𞥃𞥋𞥐-𞥙𞱱-𞲫𞲭-𞲯𞲱-𞲴𞴁-𞴭𞴯-𞴽𞸀-𞸃𞸅-𞸟𞸡-𞸢𞸤𞸧𞸩-𞸲𞸴-𞸷𞸹𞸻𞹂𞹇𞹉𞹋𞹍-𞹏𞹑-𞹒𞹔𞹗𞹙𞹛𞹝𞹟𞹡-𞹢𞹤𞹧-𞹪𞹬-𞹲𞹴-𞹷𞹹-𞹼𞹾𞺀-𞺉𞺋-𞺛𞺡-𞺣𞺥-𞺩𞺫-𞺻🄀-🄌🯰-🯹𠀀-𪛟𪜀-𫜹𫝀-𫠝𫠠-𬺡𬺰-𮯠𮯰-𮹝丽-𪘀𰀀-𱍊𱍐-𲎯]))").
+hnsw_forbidden_path("impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py").
+hnsw_forbidden_path("impl/common/l2100_sql_grammar/domain/sql_table_hnsw/normalized_vectors.py").
+hnsw_forbidden_path("impl/common/l2100_sql_grammar/domain/sql_table_hnsw/recovery_schema.py").
+hnsw_forbidden_path("impl/common/l2100_sql_grammar/domain/sql_table_hnsw/search_program.py").
+hnsw_forbidden_path("impl/common/l2100_sql_grammar/domain/sql_table_hnsw/sqlite_construction.py").
+hnsw_forbidden_path("impl/common/l2100_sql_grammar/domain/sql_table_hnsw/sqlite_frontier.py").
+option_value("entryPoint", "all").
+option_value("parameters", "{}").
+in_scope(d) :- doc(d, p, _), glob("impl/common/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l5200_vector_index/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("vector_types.py/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+tape_syntax_error(d) :- syntax_error(d).
+hnsw_entry(e) :- option_value("entryPoint", e).
+hnsw_external_path(p) :- option_json("parameters", k, p), match("/cwdExternalPaths(?:/[^/]*)?", k).
+hnsw_withheld_path(p) :- hnsw_forbidden_path(p), !hnsw_external_path(p).
+hnsw_architecture_gate(d) :- hnsw_entry(e), e != "find_hnsw_architecture_findings", node(d, m, "module", _, _), node_text(m, s), !tape_syntax_error(d), !cpython_syntax_error(d, _, _), (contains("HNSW", s) ; contains("Hnsw", s) ; contains("JSON", s) ; contains("Json", s) ; contains("hnsw", s) ; contains("json", s)).
+hnsw_architecture_gate(d) :- hnsw_entry("find_hnsw_architecture_findings"), node(d, _, "module", _, _), !tape_syntax_error(d), !cpython_syntax_error(d, _, _), doc(d, p, _), !hnsw_withheld_path(p).
+hnsw_architecture_not_name(n) :- node(_, a, "attribute", _, _), field(a, "attribute", n).
+hnsw_architecture_not_name(n) :- node(_, p, "function_definition", _, _), field(p, "name", n).
+hnsw_architecture_not_name(n) :- node(_, p, "class_definition", _, _), field(p, "name", n).
+hnsw_architecture_not_name(n) :- node(_, p, "keyword_argument", _, _), field(p, "name", n).
+hnsw_architecture_not_name(n) :- node(_, p, "default_parameter", _, _), field(p, "name", n).
+hnsw_architecture_not_name(n) :- node(_, p, "typed_default_parameter", _, _), field(p, "name", n).
+hnsw_architecture_not_name(n) :- node(_, p, "except_clause", _, _), field(p, "alias", n).
+hnsw_architecture_not_name(n) :- hnsw_architecture_params(p), child(p, n, _), node(_, n, "identifier", _, _).
+hnsw_architecture_not_name(n) :- hnsw_architecture_params(p), child(p, s, _), hnsw_architecture_splat(s), child(s, n, _), node(_, n, "identifier", _, _).
+hnsw_architecture_not_name(n) :- node(_, p, "typed_parameter", _, _), child(p, n, _), node(_, n, "identifier", _, _).
+hnsw_architecture_not_name(n) :- node(_, p, "typed_parameter", _, _), child(p, s, _), hnsw_architecture_splat(s), child(s, n, _), node(_, n, "identifier", _, _).
+hnsw_architecture_not_name(n) :- node(_, p, "global_statement", _, _), child(p, n, _).
+hnsw_architecture_not_name(n) :- node(_, p, "nonlocal_statement", _, _), child(p, n, _).
+hnsw_architecture_not_name(n) :- node(_, n, "identifier", _, _), inside(n, _, hnsw_architecture_imports).
+hnsw_architecture_not_name(n) :- node(_, n, "identifier", _, _), inside(n, _, hnsw_architecture_patterns).
+hnsw_architecture_not_name(n) :- hnsw_architecture_tinner(n), node(_, n, "identifier", _, _).
+hnsw_architecture_not_name(n) :- hnsw_architecture_tinner(i), node(_, i, "splat_type", _, _), child(i, n, _), node(_, n, "identifier", _, _).
+hnsw_architecture_not_name(n) :- hnsw_architecture_tinner(i), node(_, i, "constrained_type", _, _), child(i, n, 0), node(_, n, "identifier", _, _).
+hnsw_architecture_not_name(n) :- hnsw_architecture_tinner(i), node(_, i, "constrained_type", _, _), child(i, t, 0), node(_, t, "type", _, _), child(t, n, 0), node(_, n, "identifier", _, _).
+hnsw_architecture_tparam(p) :- node(_, l, "type_parameter", _, _), child(l, p, _), !node(_, p, "type_default", _, _).
+hnsw_architecture_tparam(p) :- node(_, l, "type_parameter", _, _), child(l, t, _), node(_, t, "type_default", _, _), field(t, "name", p).
+hnsw_architecture_tinner(i) :- hnsw_architecture_tparam(p), node(_, p, "type", _, _), child(p, i, 0).
+hnsw_architecture_tinner(p) :- hnsw_architecture_tparam(p), !node(_, p, "type", _, _).
+hnsw_architecture_params(p) :- node(_, p, "parameters", _, _).
+hnsw_architecture_params(p) :- node(_, p, "lambda_parameters", _, _).
+hnsw_architecture_splat(s) :- node(_, s, "list_splat_pattern", _, _).
+hnsw_architecture_splat(s) :- node(_, s, "dictionary_splat_pattern", _, _).
+hnsw_architecture_ref(d, n, s) :- node(d, n, "identifier", _, _), text(n, s), !hnsw_architecture_not_name(n).
+hnsw_architecture_ref(d, a, s) :- node(d, a, "attribute", _, _), field(a, "attribute", x), text(x, s).
+hnsw_architecture_plain(n) :- node(_, n, "string", _, _), strprefix(n, p), !contains("f", p), !contains("b", p).
+hnsw_architecture_fstring(n) :- node(_, n, "string", _, _), strprefix(n, p), contains("f", p).
+hnsw_architecture_const(c, v) :- hnsw_architecture_plain(c), child(q, c, _), !node(_, q, "concatenated_string", _, _), value(c, v).
+hnsw_architecture_const(q, v) :- node(_, q, "concatenated_string", _, _), !hnsw_architecture_mixed(q), value(q, v).
+hnsw_architecture_mixed(q) :- node(_, q, "concatenated_string", _, _), child(q, c, _), hnsw_architecture_fstring(c).
+hnsw_architecture_part_of(h) :- child(q, h, _), node(_, q, "concatenated_string", _, _).
+hnsw_architecture_host_str(h) :- hnsw_architecture_fstring(h), !hnsw_architecture_part_of(h).
+hnsw_architecture_host_str(q) :- hnsw_architecture_mixed(q).
+hnsw_architecture_host_spec(h) :- node(_, h, "format_specifier", _, _).
+hnsw_architecture_fpart(h, h) :- hnsw_architecture_host_str(h), hnsw_architecture_fstring(h).
+hnsw_architecture_fpart(q, p) :- hnsw_architecture_mixed(q), child(q, p, _), hnsw_architecture_fstring(p).
+hnsw_architecture_interp(h, x, s) :- hnsw_architecture_fpart(h, p), child(p, x, _), node(_, x, "interpolation", s, _).
+hnsw_architecture_interp(h, x, s) :- hnsw_architecture_host_spec(h), child(h, x, _), node(_, x, "format_expression", s, _).
+rr_ctx2(h, s) :- hnsw_architecture_interp(h, x, s).
+rr_agg1(h, s, t) :- rr_demand_agg_rr_agg1(h, s), rr_ctx2(h, s), hnsw_architecture_interp(h, _, t), t < s.
+hnsw_architecture_interp_k(h, x, k) :- hnsw_architecture_interp(h, x, s), k = count : { rr_agg1(h, s, _) }.
+hnsw_architecture_host(h) :- hnsw_architecture_host_str(h).
+hnsw_architecture_host(h) :- hnsw_architecture_host_spec(h).
+rr_ctx4(h, i) :- fstring_piece(h, i, "interpolation", _).
+rr_agg3(h, i, j) :- rr_demand_agg_rr_agg3(h, i), rr_ctx4(h, i), fstring_piece(h, j, "interpolation", _), j < i.
+hnsw_architecture_piece_node(h, i, x) :- hnsw_architecture_host(h), fstring_piece(h, i, "interpolation", _), k = count : { rr_agg3(h, i, _) }, hnsw_architecture_interp_k(h, x, k).
+hnsw_architecture_lit(h, i, v) :- hnsw_architecture_host(h), fstring_piece(h, i, "literal", v).
+hnsw_architecture_frag(q, p, s) :- hnsw_architecture_mixed(q), child(q, p, _), node(_, p, "string", s, _), !hnsw_architecture_fstring(p).
+hnsw_architecture_frag(h, f, s) :- hnsw_architecture_fpart(h, p), child(p, f, _), node(_, f, k, s, _), k != "interpolation", k != "string_start", k != "string_end".
+hnsw_architecture_lo(h, 0, a) :- hnsw_architecture_lit(h, 0, _), hnsw_architecture_host_str(h), node(_, h, _, a, _).
+hnsw_architecture_lo(h, i, a) :- hnsw_architecture_lit(h, i, _), hnsw_architecture_host_str(h), i > 0, j = @sub(i, 1), hnsw_architecture_piece_node(h, j, x), node(_, x, _, _, a).
+hnsw_architecture_hi(h, i, b) :- hnsw_architecture_lit(h, i, _), hnsw_architecture_host_str(h), j = @add(i, 1), hnsw_architecture_piece_node(h, j, x), node(_, x, _, b, _).
+hnsw_architecture_hi(h, i, b) :- hnsw_architecture_lit(h, i, _), hnsw_architecture_host_str(h), j = @add(i, 1), !fstring_piece(h, j, _, _), node(_, h, _, _, b).
+hnsw_architecture_run(h, i, f, s) :- hnsw_architecture_lo(h, i, a), hnsw_architecture_hi(h, i, b), hnsw_architecture_frag(h, f, s), s >= a, s < b.
+hnsw_architecture_run(h, i, x, s) :- hnsw_architecture_lit(h, i, _), hnsw_architecture_host_str(h), j = @add(i, 1), fstring_piece(h, j, "debug", _), hnsw_architecture_piece_node(h, j, x), node(_, x, _, s, _).
+hnsw_architecture_run_line(h, i, l) :- hnsw_architecture_run(h, i, f, s), s = min t : { hnsw_architecture_run(h, i, _, t) }, line(f, l).
+hnsw_architecture_run_line(h, 0, l) :- hnsw_architecture_lit(h, 0, _), hnsw_architecture_host_spec(h), line(h, l).
+hnsw_architecture_run_line(h, i, l) :- hnsw_architecture_lit(h, i, _), hnsw_architecture_host_spec(h), i > 0, j = @sub(i, 1), hnsw_architecture_piece_node(h, j, x), end_line(x, l).
+hnsw_architecture_piece_const(d, l, v) :- hnsw_architecture_lit(h, i, v), hnsw_architecture_run_line(h, i, l), node(d, h, _, _, _).
+hnsw_architecture_unparen(x, x) :- node(_, x, _, _, _), !node(_, x, "parenthesized_expression", _, _).
+hnsw_architecture_unparen(o, x) :- node(_, o, "parenthesized_expression", _, _), child(o, i, 0), !child(o, _, 1), hnsw_architecture_unparen(i, x).
+hnsw_architecture_docstring(c) :- hnsw_architecture_const(c, _), hnsw_architecture_unparen(w, c), child(e, w, 0), node(_, e, "expression_statement", _, _), !child(e, _, 1), child(b, e, 0), hnsw_architecture_body(b).
+hnsw_architecture_body(b) :- node(_, b, "module", _, _).
+hnsw_architecture_body(b) :- node(_, o, "class_definition", _, _), field(o, "body", b).
+hnsw_architecture_body(b) :- node(_, o, "function_definition", _, _), field(o, "body", b).
+hnsw_architecture_alias(i, s) :- field(i, "name", x), node(_, x, "dotted_name", _, _), name(x, s).
+hnsw_architecture_alias(i, s) :- field(i, "name", x), node(_, x, "aliased_import", _, _), field(x, "name", dn), name(dn, s).
+hnsw_architecture_imported(d, i, s) :- node(d, i, "import_statement", _, _), hnsw_architecture_alias(i, s).
+hnsw_architecture_imported(d, i, s) :- node(d, i, "import_from_statement", _, _), field(i, "module_name", m), node(_, m, "dotted_name", _, _), name(m, s).
+hnsw_architecture_imported(d, i, s) :- node(d, i, "import_from_statement", _, _), field(i, "module_name", r), node(_, r, "relative_import", _, _), child(r, m, _), node(_, m, "dotted_name", _, _), name(m, s).
+hnsw_architecture_import_token(d, i, s) :- hnsw_architecture_imported(d, i, s).
+hnsw_architecture_import_token(d, i, s) :- hnsw_architecture_imported(d, i, _), hnsw_architecture_alias(i, s).
+hnsw_architecture_module(d) :- doc(d, p, _), match("(?i)(?:.*/)?[^/]*hnsw[^/]*", p).
+hnsw_architecture_module(d) :- doc(d, p, _), match("(?:.*/)?sql_table_hnsw(?:/.*)?", p).
+hnsw_architecture_algorithm(d) :- doc(d, p, _), match("(?:.*/)?algorithm\\.py", p).
+hnsw_architecture_json_re(x) :- hnsw_architecture_json_pattern(r), x = @concat(@concat("(?s:.*)", r), "(?s:.*)").
+hnsw_architecture_row(d, n, "HNSW007") :- hnsw_architecture_ref(d, n, s), hnsw_architecture_module(d), hnsw_architecture_json_re(x), match(x, s).
+hnsw_architecture_row(d, c, "HNSW007") :- hnsw_architecture_const(c, s), !hnsw_architecture_docstring(c), node(d, c, _, _, _), hnsw_architecture_module(d), hnsw_architecture_json_re(x), match(x, s).
+hnsw_architecture_row(d, i, "HNSW007") :- hnsw_architecture_import_token(d, i, s), hnsw_architecture_module(d), hnsw_architecture_json_re(x), match(x, s).
+hnsw_architecture_row(d, n, "HNSW001") :- hnsw_architecture_ref(d, n, s), hnsw_architecture_forbidden(s).
+hnsw_architecture_row(d, n, "HNSW001") :- node(d, n, "class_definition", _, _), field(n, "name", x), text(x, s), hnsw_architecture_forbidden(s).
+hnsw_architecture_row(d, n, "HNSW001") :- node(d, n, "function_definition", _, _), field(n, "name", x), text(x, s), hnsw_architecture_forbidden(s).
+hnsw_architecture_row(d, i, "HNSW003") :- hnsw_architecture_imported(d, i, s), hnsw_architecture_algorithm(d), (contains(".sqlite", s) ; contains("sql_dialect", s) ; contains("backend_type", s)).
+hnsw_architecture_row(d, f, "HNSW004") :- node(d, f, "function_definition", _, _), !op(f, "async"), field(f, "name", x), text(x, "render"), hnsw_architecture_algorithm(d).
+hnsw_architecture_row(d, c, "HNSW005") :- node(d, c, "call", _, _), field(c, "function", a), node(_, a, "attribute", _, _), field(a, "object", w), hnsw_architecture_unparen(w, o), node(_, o, "identifier", _, _), text(o, "SqlFragment"), hnsw_architecture_algorithm(d).
+hnsw_architecture_row(d, c, "HNSW002") :- hnsw_architecture_const(c, s), node(d, c, _, _, _), (contains("in_beam", s) ; contains("beam_iteration_limit", s) ; contains("original_cosine", s) ; contains("recovery_epoch", s) ; contains("route_partition", s)).
+hnsw_architecture_found(d, l, issue) :- hnsw_architecture_row(d, n, issue), line(n, l).
+hnsw_architecture_found(d, l, "HNSW007") :- hnsw_architecture_piece_const(d, l, s), hnsw_architecture_module(d), hnsw_architecture_json_re(x), match(x, s).
+hnsw_architecture_found(d, l, "HNSW002") :- hnsw_architecture_piece_const(d, l, s), (contains("in_beam", s) ; contains("beam_iteration_limit", s) ; contains("original_cosine", s) ; contains("recovery_epoch", s) ; contains("route_partition", s)).
+hnsw_architecture_generated(d) :- doc(d, p, _), match("(?:.*/)?rust_bridge/(?:.*/)?generated_[^/]*", p).
+violation("data-layer-hnsw-architecture", "hnsw-architecture", issue, p, l) :- hnsw_architecture_found(d, l, issue), hnsw_architecture_gate(d), !hnsw_architecture_generated(d), in_scope(d), !out_scope(d), doc(d, p, _).
+violation("data-layer-hnsw-architecture", "hnsw-forbidden-files", "HNSW006", p, 1) :- hnsw_entry("find_hnsw_architecture_findings"), doc(d, p, _), hnsw_withheld_path(p), in_scope(d), !out_scope(d).
+rr_demand_agg_rr_agg1(h, s) :- hnsw_architecture_interp(h, x, s).
+rr_demand_agg_rr_agg3(h, i) :- hnsw_architecture_host(h), fstring_piece(h, i, "interpolation", _), hnsw_architecture_interp_k(h, x, k).

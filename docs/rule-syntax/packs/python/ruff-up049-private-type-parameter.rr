@@ -1,0 +1,21 @@
+.policy "ruff-up049-private-type-parameter" revision 2
+.description "Avoid leading underscores in the type parameter names of generic classes and functions; each parameter is already local to its declaration, so the underscore adds nothing."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP049 (pyupgrade): a PEP 695 type parameter of a def or class whose name starts with `_`. A type
+// parameter is local to its definition already, so the underscore that marked a module-level TypeVar private
+// says nothing. Each parameter is reported at its name. Names that end in `_` (`_`, `_T_`, `__T__`) are skipped,
+// and so are `type X[_T] = …` aliases.
+//   class Box[_T]: ...                 ← UP049 at _T
+//   def f[*_Ts, **_P](): ...           ← UP049 at _Ts and at _P
+//   def h[_T_](x: _T_): ...            not reported
+#include "python/ast.rr"
+//   type_param(o, p, nm, i, kind, bound, dflt)
+
+.violation UP049(at: node) code "UP049"
+    "Remove the leading underscores from type parameter `{at}` here and in every use; if the bare name would shadow a variable or builtin, or is not a valid identifier, choose another name."
+    suppress ruff "UP049"
+UP049(nm) :- type_param(o, _, nm, _, _, _, _), (kind(o, "function_definition") ; kind(o, "class_definition")),
+    match("_.*[^_]", nm).

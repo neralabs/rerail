@@ -1,0 +1,144 @@
+// sql/syntax: SQL as tree-sitter-sql parses it, in the terms sqlfluff's rules use: query blocks, the tables a
+// FROM clause brings in and the names they go by, column references, identifiers with their quoting, and
+// comparison operators. One grammar serves every dialect, so dialect differences are noted where a rule meets them.
+//
+// What a rule gets from this library:
+//   block(b, s, f)        query block b has SELECT clause s and FROM clause f (f = s when there is no FROM)
+//   block_of(n, b)        b is the innermost query block around n
+//   select_term(s, t, i)  t is the i-th item of SELECT clause s: `a AS b`, `count(*)`, `*`
+//   from_item(f, r)       r is a table expression of FROM clause f: `t AS x`, or one inside a JOIN
+//   table_function(r)     r is a call that makes rows, UNNEST(…) or generate_series(…), not a table
+//   join_kind(k)          the join node kinds: join, cross_join, lateral_join, lateral_cross_join
+//   table_name(r, n)      n is the last part of r's table name: `s.t AS x` gives t
+//   table_alias(r, a)     a is r's alias identifier: `t AS x` and `t x` give x
+//   ref_name(r, n)        the name r goes by in its query: its alias, else its table name
+//   column_ref(c, q, n)   column reference c, `q.n` or `n`, with its qualifier q (unset() when there is none)
+//   quoted(n, q)          identifier n is quoted with q: "\"", "`", "[" or "'"
+//   ident_name(n, v)      n's name without its quotes, doubled quotes undone: "a""b" gives a"b
+//   ident_fold(n, v)      the same, lower-cased: how most comparisons in sqlfluff match names
+//   ident_pg(n, v)        the name PostgreSQL resolves n to: unquoted names fold to lower case, quoted ones not
+//   comparison(e, o, at)  binary expression e compares with operator o (=, !=, <>, …); at is the operator token
+//   next_code(a, b)       b is the first named sibling after a that is no comment: ELSE /* c */ NULL
+//   null_lit(n)           n is the literal NULL
+//   bool_lit(n, v)        n is TRUE or FALSE; v is "true" or "false"
+//   routine_body(n)       n is inside a function body, a procedural block or an ERROR node, which sqlfluff's
+//                         PostgreSQL rules leave alone
+//
+// Tree shape. A query is a `select` node followed by a `from` sibling, under a statement, a subquery, a CTE's
+// statement or one branch of a set operation:
+//   SELECT a AS b FROM t AS x JOIN u ON x.k = u.k WHERE c ORDER BY 1 LIMIT 2
+//   statement( select( keyword_select, select_expression( term(value: field, alias: identifier) ) ),
+//              from( keyword_from, relation(object_reference(name: t), alias: x), join(…, relation(u), …),
+//                    where(…), order_by(…), limit(…) ) )
+// WHERE, GROUP BY, ORDER BY and LIMIT are children of `from`, not of the statement; a set operation holds its
+// branches' select and from nodes side by side.
+//
+// Builds on core only.
+
+// ---- query blocks -------------------------------------------------------------------------------------------------
+.decl block(b: node, s: node, f: node)
+block(b, s, f) :- kind(s, "select"), child(b, s, _), next_sibling(s, f), kind(f, "from").
+block(b, s, s) :- kind(s, "select"), child(b, s, _), !has_from(s).
+.decl has_from(s: node)
+has_from(s) :- kind(s, "select"), next_sibling(s, f), kind(f, "from").
+.decl block_node(n: node)  // a select or from node: the parts of a query block
+block_node(n) :- kind(n, "select").
+block_node(n) :- kind(n, "from").
+// block_of(n, b): the select or from node above n is s (or f), whose block is b. A subquery is its own block:
+// in `SELECT (SELECT max(x) FROM u) FROM t`, x's block is the inner one.
+.decl block_of(n: node, b: node)
+block_of(n, b) :- nearest(n, p, block_node), block(b, s, f), (p = s ; p = f).
+.decl select_term(s: node, t: node, i: number)
+select_term(s, t, i) :- kind(s, "select"), child(s, e, _), kind(e, "select_expression"), child(e, t, i),
+    kind(t, "term").
+
+// ---- tables ---------------------------------------------------------------------------------------------------------
+.decl join_kind(k: symbol)
+join_kind("join"). join_kind("cross_join"). join_kind("lateral_join"). join_kind("lateral_cross_join").
+// from_item(f, r): FROM a AS x, b JOIN c ON … gives a, b and c. A relation is a table, a subquery, VALUES or a
+// function call (UNNEST(xs), generate_series(1, 3)), with an optional alias.
+.decl from_item(f: node, r: node)
+from_item(f, r) :- kind(f, "from"), child(f, r, _), kind(r, "relation").
+from_item(f, r) :- kind(f, "from"), child(f, j, _), kind(j, k), join_kind(k), child(j, r, _), kind(r, "relation").
+.decl table_name(r: node, n: node)
+table_name(r, n) :- kind(r, "relation"), child(r, o, _), kind(o, "object_reference"), field(o, "name", n).
+.decl table_alias(r: node, a: node)
+table_alias(r, a) :- kind(r, "relation"), field(r, "alias", a).
+.decl ref_name(r: node, n: node)
+ref_name(r, a) :- table_alias(r, a).
+ref_name(r, n) :- table_name(r, n), !table_alias(r, _).
+.decl table_function(r: node)
+table_function(r) :- kind(r, "relation"), within_stop(c, r, "subquery"), kind(c, "invocation"), child(c, o, _),
+    kind(o, "object_reference"), iglob("{unnest,generate_series}", o).
+
+// ---- columns ------------------------------------------------------------------------------------------------------
+// column_ref(c, q, n): `x.a` is field(object_reference(name: x), name: a): q is the identifier x. In `s.t.a` the
+// object reference has a schema part too; q is still t, the part next to the column.
+.decl column_ref(c: node, q: node, n: node)
+column_ref(c, q, n) :- kind(c, "field"), field(c, "name", n), child(c, o, _), kind(o, "object_reference"),
+    field(o, "name", q).
+column_ref(c, u, n) :- kind(c, "field"), field(c, "name", n), !qualified(c), unset(u).
+.decl qualified(c: node)
+qualified(c) :- kind(c, "field"), child(c, o, _), kind(o, "object_reference").
+
+// ---- identifiers ----------------------------------------------------------------------------------------------------
+// Quoting differs by dialect: ANSI and PostgreSQL quote with "…", MySQL with `…`, T-SQL with […]; SQLite and
+// MySQL also take '…' where a name is expected (`FROM t AS 'a'`), which tree-sitter-sql reads as a literal.
+.decl quoted(n: node, q: symbol)
+quoted(n, "\"") :- kind(n, "identifier"), glob("\"*\"", n).
+quoted(n, "`") :- kind(n, "identifier"), glob("`*`", n).
+quoted(n, "[") :- kind(n, "identifier"), glob("\\[*]", n).
+quoted(n, "'") :- kind(n, "identifier"), glob("'*'", n).
+quoted(n, "'") :- kind(n, "literal"), field(_, "alias", n), glob("'*'", n).   // AS 'a', read as a string
+.decl ident_name(n: node, v: symbol)
+ident_name(n, x) :- kind(n, "identifier"), text(n, x), !quoted(n, _).
+ident_name(n, @replace_all(@slice(x, 1, strlen(x) - 1), "\"\"", "\"")) :- quoted(n, "\""), text(n, x).
+ident_name(n, @replace_all(@slice(x, 1, strlen(x) - 1), "``", "`")) :- quoted(n, "`"), text(n, x).
+ident_name(n, @replace_all(@slice(x, 1, strlen(x) - 1), "''", "'")) :- quoted(n, "'"), text(n, x).
+ident_name(n, @slice(x, 1, strlen(x) - 1)) :- quoted(n, "["), text(n, x).
+.decl ident_fold(n: node, v: symbol)
+ident_fold(n, @lower(v)) :- ident_name(n, v).
+// ident_pg: `a`, `A` and `"a"` are one name; `"A"` is another. ANSI folds to upper case instead, so there `A`
+// and `"A"` are one; rules that follow PostgreSQL say so.
+.decl ident_pg(n: node, v: symbol)
+ident_pg(n, @lower(x)) :- kind(n, "identifier"), text(n, x), !quoted(n, _).
+ident_pg(n, v) :- quoted(n, _), ident_name(n, v).
+
+// ---- expressions ----------------------------------------------------------------------------------------------------
+// comparison(e, o, at): `a <> NULL` gives o = "<>" and at the `<>` token, where sqlfluff reports. The operator is
+// an anonymous token between the operands, so it is the token after the left operand.
+.stored comparison "a binary expression's operator is a choice, so the tape keeps the token after the left operand"
+.decl comparison(e: node, o: symbol, at: loc)
+comparison(e, o, t) :- kind(e, "binary_expression"), field(e, "left", l), token_after(l, t), text(t, o),
+    comparison_op(o).
+.decl comparison_op(o: symbol)
+comparison_op("="). comparison_op("!="). comparison_op("<>"). comparison_op("<"). comparison_op(">").
+comparison_op("<="). comparison_op(">=").
+// next_code(a, b): keywords and values are siblings, and a comment between them is a sibling too.
+.decl next_code(a: node, b: node)
+next_code(a, b) :- next_sibling(a, b), !kind(b, "comment").
+next_code(a, b) :- next_sibling(a, c), kind(c, "comment"), next_code(c, b).
+.decl null_lit(n: node)
+null_lit(n) :- kind(n, "literal"), child(n, k, 0), kind(k, "keyword_null").
+.decl bool_lit(n: node, v: symbol)
+bool_lit(n, "true") :- kind(n, "literal"), child(n, k, 0), kind(k, "keyword_true").
+bool_lit(n, "false") :- kind(n, "literal"), child(n, k, 0), kind(k, "keyword_false").
+
+// ---- statements -----------------------------------------------------------------------------------------------------
+// sqlfluff parses the body of CREATE FUNCTION … AS $$ … $$ and of DO blocks as opaque, and skips unparsable
+// sections; tree-sitter-sql parses some of them, so rules that sqlfluff would not see there exclude them.
+.decl routine_body(n: node)
+routine_body(n) :- inside(n, _, routine_kind).
+.decl routine_kind(k: symbol)
+routine_kind("function_body"). routine_kind("block"). routine_kind("ERROR").
+
+// Examples, one per rule that uses this library (packs/sql):
+//   AL04  SELECT 1 FROM t1 AS a JOIN t2 AS a USING (pk)              from_item, ref_name, ident_name
+//   AL05  SELECT * FROM unnest(xs) AS u                              table_function
+//   AL05  SELECT * FROM my_tbl AS foo                                table_alias, column_ref
+//   AL08  SELECT a AS foo, b AS foo FROM t                           select_term, ident_fold
+//   CV05  WHERE a = NULL                                             comparison, null_lit
+//   ST01  CASE WHEN x THEN 1 ELSE /* c */ NULL END                   next_code
+//   PG01  CREATE INDEX i ON t (c)                                    routine_body
+//   RF01  SELECT x.a FROM t                                          column_ref, block_of, from_item
+//   ST02  CASE WHEN x > 0 THEN TRUE ELSE FALSE END                   bool_lit

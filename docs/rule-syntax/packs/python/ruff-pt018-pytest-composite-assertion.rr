@@ -1,0 +1,22 @@
+.policy "ruff-pt018-pytest-composite-assertion" revision 2
+.description "Split an assert that joins conditions with and, or negates conditions joined with or, into one assert per condition; a failure then names the one that failed."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT018 (flake8-pytest-style): an assert that joins conditions with `and`, or negates conditions joined with
+// `or`; split asserts say which condition failed.
+//   assert a and b               ← PT018
+//   assert not (a or b)          ← PT018
+//   assert a or b                not reported
+#include "python/pytest.rr"
+//   unparen(e, m)
+
+.violation PT018(at: node) code "PT018"
+    "Break this assertion into one `assert` per condition so a failure shows which one failed; for `not (a or b)`, write `assert not a` and `assert not b`."
+    suppress ruff "PT018"
+PT018(a) :- kind(a, "assert_statement"), child(a, t0, 0), unparen(t0, t), composite(t).
+.decl composite(t: node)
+composite(t) :- kind(t, "boolean_operator"), op(t, "and").
+composite(t) :- kind(t, "not_operator"), field(t, "argument", o0), unparen(o0, o), kind(o, "boolean_operator"),
+    op(o, "or").

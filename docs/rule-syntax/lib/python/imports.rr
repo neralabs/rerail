@@ -1,0 +1,239 @@
+// python/imports: what each import statement binds and loads, the import-time module graph, and exports.
+// The statement parsing is adapted from an earlier Datalog prototype of call resolution; multi-dot relative imports use @pkg_up (native string builtin).
+//
+// What it provides
+//   - Raw per-scope import bindings for python/names: rifrom, ribind (and rotgt rows for unresolvable relative
+//     imports). names moves them through global/nonlocal into ifrom/ibind.
+//   - Interface: import_stmt, import_alias (one row per imported name), import_site, binds, module_text,
+//     module_of / module_path / workspace_module, loads, runs, reaches (the import-time module graph),
+//     exports / resolve_export (what a module exposes, following re-exports), dunder_all, public_name.
+//
+// Layering: built on lib/core.rr (doc, pkg, kind, field, child, text, nearest, within). It also reads relations
+// defined in python/names (def_name, qualname, type_checking_block, rotgt) and names reads ribind/rifrom/star from
+// here: the two modules are one mutually dependent unit, loaded together via names' `#include "python/imports.rr"`.
+//
+// Python background
+//   `import a.b.c` binds only `a` in the current scope, but loads a, a.b and a.b.c.
+//   `from .m import x` is relative: one dot is the current package, each extra dot goes one package up.
+//   `from m import *` binds every public name of m: those in m's `__all__`, else those not starting with "_".
+#include "python/flow.rr"     // remove_stmt, for the edits at the end of this file
+
+// `scope` (every node that opens a Python scope) comes from python/names, which includes this file.
+// Function-like scopes: an import inside one runs only when the function is called, not at module import time.
+.decl fn_or_lambda(kind: symbol)
+fn_or_lambda("function_definition"). fn_or_lambda("lambda").
+
+// impmod(i, m): `from ... import` statement i names module m, when we can resolve it to a dotted name.
+// Rule 1: absolute, `from a.b import x` gives "a.b". Rule 2: `from . import x` in package p gives p.
+// Rule 3: `from .m import x` in package p gives "p.m". Only single-dot relative forms here; rel_base handles more.
+// pkg(d, p) is the package of the importing document ("" for a top-level script, which has no package).
+.decl impmod(i: node, m: symbol)
+impmod(i, m) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "dotted_name"), text(mn, m).
+impmod(i, p) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"),
+    child(mn, pre, 0), text(pre, "."), !child(mn, _, 1), docof(i, d), pkg(d, p), p != "".
+impmod(i, @dot(p, m)) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"),
+    child(mn, pre, 0), text(pre, "."), child(mn, dn, 1), text(dn, m), docof(i, d), pkg(d, p), p != "".
+// rifrom(s, x, m, y): in syntactic scope s, `from m import y` binds local name x. Without an alias x = y
+// (rule 1); with `from m import y as x`, x is the alias (rule 2).
+.decl rifrom(s: node, x: symbol, m: symbol, y: symbol)
+rifrom(s, y, m, y) :- impmod(i, m), field(i, "name", n), kind(n, "dotted_name"), text(n, y), nearest(i, s, scope).
+rifrom(s, a, m, y) :- impmod(i, m), field(i, "name", x), kind(x, "aliased_import"), field(x, "name", n), text(n, y),
+    field(x, "alias", al), text(al, a), nearest(i, s, scope).
+// ribind(s, x, q): import binds local x in s to qualified name q.
+// Rule 1: `from m import y as x` gives q = "m.y".
+// Rule 2: `import a.b` binds only the first segment, x = q = "a" (attribute access then reaches a.b via names' qn).
+// Rule 3: `import a.b as c` binds c to the full "a.b".
+.decl ribind(s: node, x: symbol, q: symbol)
+ribind(s, x, @dot(m, y)) :- rifrom(s, x, m, y).
+ribind(s, t, t) :- kind(i, "import_statement"), field(i, "name", n), kind(n, "dotted_name"), child(n, c, 0), text(c, t), nearest(i, s, scope).
+ribind(s, a, m) :- kind(i, "import_statement"), field(i, "name", x), kind(x, "aliased_import"), field(x, "name", n), text(n, m),
+    field(x, "alias", al), text(al, a), nearest(i, s, scope).
+// A relative import the facts cannot place (two or more dots, or outside a package): what it binds is unknown.
+// These names are still bound (so lookup stops there and does not fall through to a builtin), but as untracked
+// targets: the rows go into python/names' rotgt, which python/calls treats as an unknown value.
+.decl irel_open(i: node)
+irel_open(i) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"), !impmod(i, _).
+rotgt(s, y) :- irel_open(i), field(i, "name", n), kind(n, "dotted_name"), text(n, y), nearest(i, s, scope).
+rotgt(s, a) :- irel_open(i), field(i, "name", x), kind(x, "aliased_import"), field(x, "alias", al), text(al, a), nearest(i, s, scope).
+// star(s): scope s contains `from m import *`. Declared here; the rule deriving it lives in python/names.
+.decl star(s: node)
+
+// ==== interface ===================================================================================================
+// import_stmt(i): i is an `import ...` or a `from ... import ...` statement.
+.decl import_stmt(i: node)
+import_stmt(i) :- kind(i, k), (k = "import_statement" ; k = "import_from_statement").
+
+// Relative imports at any depth: `from ..a import b` in package p resolves against @pkg_up(p, 1).
+// rel_base(i, p): the package a relative import starts from. The leading dots token has k+1 dots; strip k segments
+// from the importer's package. e.g. in package "app.web", `from ..db import x` has base "app".
+.decl rel_base(i: node, p: symbol)
+rel_base(i, @pkg_up(p, k)) :- kind(i, "import_from_statement"), field(i, "module_name", mn),
+    kind(mn, "relative_import"), child(mn, pre, 0), text(pre, dots), k = strlen(dots) - 1, docof(i, d), pkg(d, p).
+// module_text(i, m): the module statement i imports from (or imports), with relative imports resolved.
+// Rule 1: whatever impmod resolved. Rule 2: `from .. import x`, the base package itself. Rule 3: `from ..m import x`,
+// the base plus m. Rule 4: `import a.b` / `import a.b as c`, the dotted name "a.b".
+.decl module_text(i: node, m: symbol)
+module_text(i, m) :- impmod(i, m).
+module_text(i, m) :- rel_base(i, p), field(i, "module_name", mn), count : { child(mn, x, 1) } = 0, m = p.
+module_text(i, @dot(p, s)) :- rel_base(i, p), field(i, "module_name", mn), child(mn, dn, 1), text(dn, s).
+module_text(i, m) :- kind(i, "import_statement"), field(i, "name", n), dotted(n, m).
+
+// import_alias(i, alias node, module, name, local): one row per alias; name is "" for `import m`.
+// Examples:
+//   import a.b          -> (i, <a.b>, "a.b", "", "a")        local is the head segment
+//   import a.b as c     -> (i, <a.b as c>, "a.b", "", "c")
+//   from a import x     -> (i, <x>, "a", "x", "x")
+//   from .m import x as y (in pkg p) -> (i, <x as y>, "p.m", "x", "y")
+.decl import_alias(i: node, a: node, m: symbol, x: symbol, local: symbol)
+import_alias(i, n, m, "", @head(m)) :- kind(i, "import_statement"), field(i, "name", n), kind(n, "dotted_name"), text(n, m).
+import_alias(i, n, m, "", l) :- kind(i, "import_statement"), field(i, "name", n), kind(n, "aliased_import"),
+    field(n, "name", d), text(d, m), field(n, "alias", al), text(al, l).
+import_alias(i, n, m, x, x) :- kind(i, "import_from_statement"), module_text(i, m), field(i, "name", n),
+    kind(n, "dotted_name"), text(n, x).
+import_alias(i, n, m, x, l) :- kind(i, "import_from_statement"), module_text(i, m), field(i, "name", n),
+    kind(n, "aliased_import"), field(n, "name", d), text(d, x), field(n, "alias", al), text(al, l).
+// dotted(n, s): the dotted module name written in an `import` item, with or without `as`.
+.decl dotted(n: node, s: symbol)
+dotted(n, s) :- kind(n, "dotted_name"), text(n, s).
+dotted(n, s) :- kind(n, "aliased_import"), field(n, "name", d), text(d, s).
+// import_site(a, local): alias node a binds local name `local`; the binding site python/names reports on.
+.decl import_site(a: node, local: symbol)
+import_site(a, l) :- import_alias(_, a, _, _, l).
+// binds(i, site): statement i owns binding site `site` (to go from a reported alias back to its statement).
+.decl binds(i: node, site: node)
+binds(i, a) :- import_alias(i, a, _, _, _).
+
+// Modules of the workspace, and what loading one runs.
+// module_of(n, q): node n is in the module named q.
+.decl module_of(n: node, q: symbol)
+module_of(n, q) :- docof(n, d), doc(d, _, q).
+// module_path(q, path): module q's file path.
+.decl module_path(q: symbol, path: symbol)
+module_path(q, p) :- doc(_, p, q).
+// workspace_module(q): q is a module whose source is in the scanned tree (not a third-party or stdlib module).
+.decl workspace_module(q: symbol)
+workspace_module(q) :- doc(_, _, q).
+// loads(i, q): executing import i loads workspace module q.
+// Rule 1: the module named. Rule 2: `from pkg import sub` may load the submodule pkg.sub, if it is a module.
+// Rule 3: Python first imports every parent package (`import a.b.c` runs a/__init__.py, then a.b's): recursive.
+.decl loads(i: node, q: symbol)  // the module and each package above it
+loads(i, m) :- module_text(i, m), workspace_module(m).
+loads(i, @dot(m, x)) :- import_alias(i, _, m, x, _), x != "", workspace_module(@dot(m, x)).
+loads(i, p) :- loads(i, q), p = @pkg_up(q, 1), p != "", workspace_module(p).
+// pkg_above(a, p): p is a workspace package strictly above module a ("x.y" for "x.y.z", then "x").
+.decl pkg_above(a: symbol, q: symbol)
+pkg_above(a, p) :- workspace_module(a), p = @pkg_up(a, 1), p != "".
+pkg_above(a, p) :- pkg_above(a, q), p = @pkg_up(q, 1), p != "".
+
+// import_time(i): import i runs when its module is first imported: not inside a function or lambda body, and not
+// under `if TYPE_CHECKING:` (which is False at run time). Imports in a class body or a top-level `if`/`try` count.
+.decl import_time(i: node)  // runs when its module is imported
+import_time(i) :- import_stmt(i), !nearest(i, _, fn_or_lambda), count : { within(i, b), type_checking_block(b) } = 0.
+// runs(a, b): importing module a directly imports module b at import time (one edge of the module graph).
+.decl runs(a: symbol, b: symbol)
+runs(a, b) :- import_time(i), module_of(i, a), loads(i, b).
+// reaches(a, b): importing a transitively imports b (for import-cycle and layering rules).
+// The magic-transform pragma (Soufflé's demand transformation) computes it only for the start modules a rule
+// actually asks about, not as the full transitive closure of every module pair.
+.decl reaches(a: symbol, b: symbol)
+.pragma "magic-transform" "reaches"
+reaches(a, b) :- runs(a, b).
+reaches(a, c) :- reaches(a, b), runs(b, c).
+
+// exports(m, x, q): module m exposes x, which denotes q (definitions, imports, re-export chains, star imports).
+// Rule 1: a top-level def/class x in m, q = its qualname.
+// Rule 2: a top-level (import-time) `from m2 import x as l` re-exports l, followed to where x is defined. Plain
+//         `import m2` (x = "") is not a re-export of a name.
+// Rule 3: `from m2 import *` in m exposes every public name of m2.
+// e.g. pkg/__init__.py: `from .core import App` gives exports("pkg", "App", "pkg.core.App").
+// Recursive: exports -> resolve_export -> exports, so a chain of re-exports is followed to the end.
+.decl exports(m: symbol, x: symbol, q: symbol)
+exports(m, x, q) :- module_of(f, m), def_name(f, x), nearest(f, s, scope), kind(s, "module"), qualname(f, q).
+exports(m, l, q) :- import_alias(i, _, m2, x, l), import_time(i), module_of(i, m), x != "",
+    resolve_export(@dot(m2, x), q).
+exports(m, x, q) :- star_from(m, m2), exports(m2, x, q), public_name(m2, x).
+// star_from(m, m2): module m has `from m2 import *`.
+.decl star_from(m: symbol, m2: symbol)
+star_from(m, m2) :- kind(i, "import_from_statement"), child(i, w, _), kind(w, "wildcard_import"),
+    module_text(i, m2), module_of(i, m).
+// exported(m, x): module m exports a name x, whatever it denotes. The same three cases as exports, without
+// following anything: whether m exports x never depends on where x resolves. resolve_export negates this, not
+// exports, so the negation is outside the recursion and the program is stratified, as Soufflé requires.
+.decl exported(m: symbol, x: symbol)
+exported(m, x) :- module_of(f, m), def_name(f, x), nearest(f, s, scope), kind(s, "module").
+exported(m, l) :- import_alias(i, _, _, x, l), import_time(i), module_of(i, m), x != "".
+exported(m, x) :- star_from(m, m2), exported(m2, x), public_name(m2, x).
+// resolve_export(q, r): the qualified name q ("m.x") is really r, after following m's exports. If m exports no x
+// (an external module, or x defined nowhere we can see), r = q unchanged. split_dot(q, m, x) splits q at its
+// last dot.
+.decl resolve_export(q: symbol, r: symbol)  // follow re-exports to the definition; outside the workspace, q itself
+// A name defined in m itself resolves to its own qualname (r = q): `from impl.q import read` where impl/q.py
+// defines read gives resolve_export("impl.q.read", "impl.q.read").
+resolve_export(@dot(m, x), r) :- exports(m, x, r).
+resolve_export(q, q) :- export_query(q), count : { split_dot(q, m, x), exported(m, x) } = 0.
+// export_query(q): the names resolve_export is asked about. Rule 2 above needs them: a q that only appears under
+// `!` would not be bound. Each comes from a qualified name in the code or a from-import.
+.decl export_query(q: symbol)
+export_query(q) :- qn(_, q).
+export_query(@dot(m2, x)) :- import_alias(_, _, m2, x, _), x != "".
+// dunder_all(m, x): module m's top-level `__all__ = [...]` (or a tuple) lists the string x.
+.decl dunder_all(m: symbol, x: symbol)
+dunder_all(m, x) :- kind(a, "assignment"), field(a, "left", l), text(l, "__all__"), field(a, "right", r),
+    child(r, s, _), value(s, x), module_of(a, m), nearest(a, sc, scope), kind(sc, "module").
+// public_name(m, x): x is part of m's public interface: listed in `__all__` when m assigns one; otherwise any exported
+// name not starting with an underscore. This is also what `from m import *` copies.
+.decl public_name(m: symbol, x: symbol)
+public_name(m, x) :- dunder_all(m, x).
+public_name(m, x) :- exported(m, x), !has_all(m), !prefix("_", x).
+// has_all(m): module m assigns `__all__` at top level, even an empty one (`__all__ = []` exports nothing).
+.decl has_all(m: symbol)
+has_all(m) :- kind(a, "assignment"), field(a, "left", l), text(l, "__all__"), module_of(a, m), nearest(a, sc, scope),
+    kind(sc, "module").
+
+// ---- edits --------------------------------------------------------------------------------------------------------
+// Library edits for import fixes. Each expands to core's native edits; see python/flow for what `.edit` means.
+
+// top_import(d, i): i is an import statement at the top level of document d. last_top_import: the last of them.
+.decl top_import(d: number, i: node)
+top_import(d, i) :- import_stmt(i), child(m, i, _), kind(m, "module"), docof(i, d).
+.decl last_top_import(d: number, i: node)
+last_top_import(d, i) :- top_import(d, i), count : { top_import(d, j), precedes(i, j) } = 0.
+// module_doc(d, s): the module's docstring statement, which must stay first.
+.decl module_doc(d: number, s: node)
+module_doc(d, s) :- modnode(d, m), child(m, s, 0), kind(s, "expression_statement"), child(s, str, 0),
+    kind(str, "string").
+
+// add_top(d, text): put a new top-level statement among the module's imports: after the last one, else after the
+// docstring, else first. `from __future__` imports stay first because they are already imports.
+.edit add_top(d: number, text: symbol)
+add_top(d, t) :- last_top_import(d, i) => insert_after(i, t).
+add_top(d, t) :- !last_top_import(d, _), module_doc(d, s) => insert_after(s, t).
+add_top(d, t) :- !last_top_import(d, _), !module_doc(d, _), modnode(d, m), child(m, s, 0)
+    => insert_before(s, t).
+
+// top_has(d, m, x, l): document d already has a top-level import binding local name l to m.x (x "" for `import m`).
+.decl top_has(d: number, m: symbol, x: symbol, l: symbol)
+top_has(d, m, x, l) :- top_import(d, i), import_alias(i, _, m, x, l).
+
+// ensure_import(d, m, x): make `from m import x` (or `import m` when x is "") available at the top of d.
+// Nothing happens if an equivalent top-level import already exists.
+.edit ensure_import(d: number, module: symbol, name: symbol)
+ensure_import(d, m, "") :- !top_has(d, m, "", _) => add_top(d, `import $m`).
+ensure_import(d, m, x) :- x != "", !top_has(d, m, x, x) => add_top(d, `from $m import $x`).
+
+// remove_alias(a): stop importing one name. `from m import a, b` loses `a`; an import of a single name loses the
+// whole statement (via remove_stmt, so a function body never ends up empty).
+.edit remove_alias(a: node)
+remove_alias(a) :- import_alias(i, a, _, _, _), import_alias(i, b, _, _, _), b != a => delete(a).
+remove_alias(a) :- import_alias(i, a, _, _, _), count : { import_alias(i, b, _, _, _), b != a } = 0
+    => remove_stmt(i).
+
+// hoist(i): move a function-level import to the top of the module, keeping its exact text (`$i` in a template is
+// the statement's source; the applier dedents it). If the module already imports every name it binds, the
+// function-level copy is only deleted. Whether hoisting is *safe* is the calling rule's business: see
+// function-level-imports.b2.rr, which offers it only where no import cycle is proven.
+.edit hoist(i: node)
+hoist(i) :- docof(i, d), count : { import_alias(i, _, m, x, l), !top_has(d, m, x, l) } > 0
+    => remove_stmt(i), add_top(d, `$i`).
+hoist(i) :- docof(i, d), count : { import_alias(i, _, m, x, l), !top_has(d, m, x, l) } = 0
+    => remove_stmt(i).

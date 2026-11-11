@@ -1,0 +1,90 @@
+.policy "eslint-arrow-body-style" revision 5
+.description "Drop the braces and return from an arrow function whose body only returns a value; write the value directly after the arrow."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-functions.rr"
+//   deparen, before_close
+#include "tsx/statements.rr"
+//   block_stmt
+
+// ESLint's arrow-body-style. `option` says when an arrow's body has braces:
+//   "as-needed" (the default)  only when needed:   () => { return x; }   → Unexpected block statement …
+//   "always"                   always:             () => x               → Expected block statement …
+//   "never"                    never: every `{ … }` body is reported
+// requireReturnForObjectLiteral (with as-needed): an object literal is returned with braces, so
+// `() => { return {}; }` is fine and `() => ({})` is reported. Reported at the body, inside its parentheses.
+.violation arrow_body_style(at: node, id: symbol, msg: symbol) code "arrow-body-style" "{msg}"
+    suppress eslint "arrow-body-style"
+    suppress oxlint "arrow-body-style"
+    suppress biome "lint/style/useConsistentArrowReturn"
+    fix unbrace_body "Write the returned value directly after the `=>`"
+    fix brace_body "Wrap the body in a block with return"
+arrow_body_style(b, id, m) :- unwanted(b), block_id(b, id), says(id, m).
+arrow_body_style(at, "expectedBlock", m) :- wanted(e), deparen(e, at), says("expectedBlock", m).
+
+// The option; as-needed when unset.
+.decl mode(m: symbol)
+mode(m) :- option("option", m).
+mode("as-needed") :- !option("option", _).
+.decl object_rule()  // requireReturnForObjectLiteral
+object_rule() :- mode("as-needed"), option("requireReturnForObjectLiteral", "true").
+
+// unwanted(b): block body b should go. "never": any block. "as-needed": a lone `return` (not of an object
+// literal under requireReturnForObjectLiteral).
+.decl unwanted(b: node)
+unwanted(b) :- mode("never"), block_body(_, b).
+unwanted(b) :- mode("as-needed"), lone_return(b, r), !object_return(r).
+.decl object_return(r: node)  // requireReturnForObjectLiteral keeps `return {…};` in braces
+object_return(r) :- object_rule(), returns(r, e), deparen(e, o), kind(o, "object").
+.decl block_body(f: node, b: node)
+block_body(f, b) :- kind(f, "arrow_function"), field(f, "body", b), kind(b, "statement_block").
+.decl lone_return(b: node, r: node)  // b's only statement is the return r
+lone_return(b, r) :- block_body(_, b), count : { block_stmt(b, x) } = 1, block_stmt(b, r), kind(r, "return_statement").
+.decl returns(r: node, e: node)  // return r's value e
+returns(r, e) :- kind(r, "return_statement"), child(r, e, _), !kind(e, "comment").
+// wanted(e): expression body e should have braces: always, or an object literal under requireReturnForObjectLiteral.
+.decl wanted(e: node)
+wanted(e) :- kind(f, "arrow_function"), field(f, "body", e), !kind(e, "statement_block"),
+    (mode("always") ; object_rule(), deparen(e, o), kind(o, "object")).
+
+// block_id(b, id): which message, as ESLint picks it. A returned value that starts with `{` (an object literal)
+// must be parenthesised after the `=>`.
+.decl block_id(b: node, id: symbol)
+block_id(b, "unexpectedEmptyBlock") :- unwanted(b), count : { block_stmt(b, x) } = 0.
+block_id(b, "unexpectedOtherBlock") :- unwanted(b), count : { block_stmt(b, x) } > 0, !lone_return(b, _).
+block_id(b, "unexpectedSingleBlock") :- unwanted(b), lone_return(b, r), !returns(r, _).
+block_id(b, "unexpectedSingleBlock") :- unwanted(b), lone_return(b, r), returns(r, e), !brace_first(e).
+block_id(b, "unexpectedObjectBlock") :- unwanted(b), lone_return(b, r), returns(r, e), brace_first(e).
+// brace_first(e): e's first token is `{`, as ESLint tests it: an object literal, or `{a: 1}.a`. After the `=>`
+// it would read as a block, so it needs parentheses there.
+.decl brace_first(e: node)
+brace_first(e) :- returns(_, e), text(e, t), match("(?s)\\{.*", t).
+.decl says(id: symbol, m: symbol)
+says("unexpectedOtherBlock", "Unexpected block statement surrounding arrow body.").
+says("unexpectedEmptyBlock", "Unexpected block statement surrounding arrow body; put a value of `undefined` immediately after the `=>`.").
+says("unexpectedObjectBlock", "Unexpected block statement surrounding arrow body; parenthesize the returned value and move it immediately after the `=>`.").
+says("unexpectedSingleBlock", "Unexpected block statement surrounding arrow body; move the returned value immediately after the `=>`.").
+says("expectedBlock", "Expected block statement surrounding arrow body.").
+
+// Fixes. Unbracing writes the value in the block's place, parenthesised when it starts with `{` or is a
+// sequence. ESLint's fix is skipped when the next token would join the value (`(`, `[`, `/`, `` ` ``, `+`, `-`);
+// this one is also skipped when a comment is inside the block (ESLint keeps such comments by moving tokens),
+// and inside a for loop's head, where an `in` could change meaning.
+unbrace_body(b, _, _) :- lone_return(b, r), returns(r, e), safe_unbrace(b), (brace_first(e) ; kind(e, "sequence_expression"))
+    => replace(b, `($e)`).
+unbrace_body(b, _, _) :- lone_return(b, r), returns(r, e), safe_unbrace(b), !brace_first(e), !kind(e, "sequence_expression")
+    => replace(b, `$e`).
+.decl safe_unbrace(b: node)
+safe_unbrace(b) :- block_body(f, b), count : { before_close(b, c), kind(c, "comment") } = 0,
+    !inside(f, _, "for_statement"), !asi_next(b).
+.decl asi_next(b: node)  // the token after b would continue the value: `() => { return a } (b)` style
+asi_next(b) :- next_code(b, t), match("(?s)\\s*[(\\[/`+-].*", t).
+layout_at(b) :- block_body(_, b).
+// Bracing replaces the whole body, parentheses included: `() => (1)` becomes `() => {return (1)}`. Parentheses
+// that only made an object literal an expression go: `() => ({})` becomes `() => {return {}}`.
+brace_body(at, _, _) :- wanted(e), deparen(e, at), !forced_parens(e, _) => replace(e, `{return $e}`).
+brace_body(at, _, _) :- wanted(e), deparen(e, at), forced_parens(e, o) => replace(e, `{return $o}`).
+.decl forced_parens(e: node, o: node)  // ESLint's test: the body's first two tokens are `(` and an object's `{`
+forced_parens(e, o) :- wanted(e), kind(e, "parenthesized_expression"), child(e, o, 0), kind(o, "object").

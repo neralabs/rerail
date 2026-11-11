@@ -1,0 +1,459 @@
+// data-layer-serverplan-quality in Rerail logic: part file for the relational clause `quality-conditional-1`
+// (repository-wide: no partitionBy), options at their defaults (entryPoint "all", oracleAnalyzer false). The policy is in
+// serverplan_quality.rdl. Source: gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-quality.json.
+//
+// One relation per SQL stage, under the stage's name. The 20 inputs (syntax_0 … syntax_19, matchers verbatim) are
+// shards, by kind and by a text prefix, of one syntax table: the nodes the shared util `quality-conditional-1-selection`
+// selects (its node set S: definitions, imports, and nodes in or around assignments, loops, branches, `compile` calls
+// and the contract functions), less comments and string parts. Each atom exports only NODE (the matched node); a row's
+// id `kind:start:end` is that tape node. Its columns:
+// - PARENT (`inside`, stopBy neighbor) is `child`;
+// - ANCESTOR (`inside` S, stopBy S: the nearest strict ancestor in S) is the deepest selected strict ancestor
+//   (`@within`, `@depth`; an excluded kind has only excluded descendants, so no S ancestor is missing from the table);
+// - each X_* column (`any: [{has: {pattern: $X, field: x, stopBy: neighbor}}, $_]`) is `field`; every stage reads it
+//   only on kinds whose shard projects it. SUBJECT binds the first `subject` child (`nodes_subject`);
+// - `text` is the node's text, "" on shard 19's kinds (`regex: ^()`); `line` is @line.
+// A nullable column is a side relation that holds where it is not NULL. Stage columns no later stage reads are left out.
+//
+// Builtins: @rx_matches, @rx_extract, @replace, @trim (two arguments: strip the second's characters at both ends),
+// @concat, @cat, @sub (a − b), @cast_int (SQLite's CAST(x AS INTEGER): the text's leading decimal integer, 0 if none),
+// @line (the 1-based line of a node's first byte, the syntax table's `line`), @within (tape: strict descendant), @depth
+// (tape: the node's depth). A builtin with no value (SQL NULL) binds nothing.
+// Tree recursion: ownership (E0 § 2.5 row 23) is `nearest` (ancestor-or-self function_definition/class_definition, both
+// kinds always in S); descendant_roots (row 24) has none; descendants (row 25, the reflexive closure of `edges` from each
+// root) is the root itself, and for a selected root every selected node `@within` it.
+// Graph recursion: derived_conditionals (row 26), the class hierarchy by qualified name, is a set recursion.
+// OUTSIDE: block_results (row 27) — sequential fold with a JSON accumulator (block id → raises), one contract block per
+// step in sequence order; a block's value is an AND-OR over its nested blocks' values (an if/else or match raises when
+// every block under it raises), a recursion over the syntax tree (03 §7) with no non-recursive tape form.
+// LIMIT/choice: class_bases and compiler-contract resolve a name by the latest alias before the class/function
+// (ORDER BY alias.__start DESC LIMIT 1): one alias row per import node, so the latest is unique: no choice.
+// ties: node_ordinals and contract_blocks.sequence (row_number by start[, end, kind] / by size, start): siblings, and
+// contract blocks of one size, never share a start in a valid tree, so none. conditional_classes, conditional_methods,
+// conditional_functions (max(__start) per name): one definition per start.
+// The `missing` rows (path, 0, 0, 'missing') have no node: `finding_path(clause, key, path)`.
+// findings layer (§8): key is the issue (SPQ-029); detector and identity (n.id, n.id:occurrence, n.id:atom.id,
+// method.id:line) are the findings layer's: rows collapse to one finding per (issue, node), and backend-control's rows
+// of one (method, line) are not merged.
+
+.decl fdef(kind: symbol)
+fdef("function_definition").
+.decl cdef(kind: symbol)
+cdef("class_definition").
+.decl finding(clause: symbol, key: symbol, n: node)
+.output finding
+.decl finding_path(clause: symbol, key: symbol, path: symbol)
+.output finding_path
+
+// ---- syntax_rows_0 (syntax_0 … syntax_12), syntax_rows_1 (syntax_13 … syntax_19) ----
+.decl syntax_rows_0(d: number, n: node)
+syntax_rows_0(d, n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"kind": "identifier"}, {"regex": "^[a-f]"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"matches": "quality-conditional-1-selection"}]}}).
+syntax_rows_0(d, n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"kind": "identifier"}, {"regex": "^[g-m]"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"matches": "quality-conditional-1-selection"}]}}).
+syntax_rows_0(d, n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"kind": "identifier"}, {"regex": "^[n-r]"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"matches": "quality-conditional-1-selection"}]}}).
+syntax_rows_0(d, n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"kind": "identifier"}, {"regex": "^s"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"matches": "quality-conditional-1-selection"}]}}).
+syntax_rows_0(d, n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"kind": "identifier"}, {"regex": "^[t-z]"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"matches": "quality-conditional-1-selection"}]}}).
+syntax_rows_0(d, n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"kind": "identifier"}, {"regex": "^[A-Z]"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"matches": "quality-conditional-1-selection"}]}}).
+syntax_rows_0(d, n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"kind": "identifier"}, {"regex": "^_"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"matches": "quality-conditional-1-selection"}]}}).
+syntax_rows_0(d, n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"kind": "identifier"}, {"regex": "^[^a-zA-Z_]"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"matches": "quality-conditional-1-selection"}]}}).
+syntax_rows_0(d, n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"regex": "^[rRuUbBfF]*[\\\"']{1,3}_"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"matches": "quality-conditional-1-selection"}]}}).
+syntax_rows_0(d, n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"not": {"regex": "^[rRuUbBfF]*[\\\"']{1,3}_"}}, {"regex": "^[rRuUbBfF]*[\\\"']{1,3}[a-z]"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"matches": "quality-conditional-1-selection"}]}}).
+syntax_rows_0(d, n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"not": {"any": [{"regex": "^[rRuUbBfF]*[\\\"']{1,3}_"}, {"regex": "^[rRuUbBfF]*[\\\"']{1,3}[a-z]"}]}}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"matches": "quality-conditional-1-selection"}]}}).
+syntax_rows_0(d, n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "call"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"matches": "quality-conditional-1-selection"}]}}).
+syntax_rows_0(d, n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "attribute"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"matches": "quality-conditional-1-selection"}]}}).
+.decl syntax_rows_1(d: number, n: node)
+syntax_rows_1(d, n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "type"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"matches": "quality-conditional-1-selection"}]}}).
+syntax_rows_1(d, n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "typed_parameter"}, {"kind": "typed_default_parameter"}, {"kind": "parameters"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"matches": "quality-conditional-1-selection"}]}}).
+syntax_rows_1(d, n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "type_parameter"}, {"kind": "generic_type"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"matches": "quality-conditional-1-selection"}]}}).
+syntax_rows_1(d, n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "integer"}, {"kind": "float"}, {"kind": "true"}, {"kind": "false"}, {"kind": "none"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"matches": "quality-conditional-1-selection"}]}}).
+syntax_rows_1(d, n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "tuple"}, {"kind": "list"}, {"kind": "set"}, {"kind": "dictionary"}, {"kind": "pair"}, {"kind": "pattern_list"}, {"kind": "tuple_pattern"}, {"kind": "list_pattern"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"matches": "quality-conditional-1-selection"}]}}).
+syntax_rows_1(d, n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"not": {"any": [{"kind": "identifier"}, {"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}, {"kind": "call"}, {"kind": "attribute"}, {"kind": "type"}, {"kind": "typed_parameter"}, {"kind": "typed_default_parameter"}, {"kind": "parameters"}, {"kind": "type_parameter"}, {"kind": "generic_type"}, {"kind": "integer"}, {"kind": "float"}, {"kind": "true"}, {"kind": "false"}, {"kind": "none"}, {"kind": "tuple"}, {"kind": "list"}, {"kind": "set"}, {"kind": "dictionary"}, {"kind": "pair"}, {"kind": "pattern_list"}, {"kind": "tuple_pattern"}, {"kind": "list_pattern"}, {"kind": "module"}, {"kind": "class_definition"}, {"kind": "function_definition"}, {"kind": "decorated_definition"}, {"kind": "block"}, {"kind": "expression_statement"}, {"kind": "argument_list"}, {"kind": "keyword_argument"}, {"kind": "assignment"}, {"kind": "augmented_assignment"}, {"kind": "return_statement"}, {"kind": "if_statement"}, {"kind": "elif_clause"}, {"kind": "else_clause"}, {"kind": "match_statement"}, {"kind": "case_clause"}, {"kind": "for_statement"}]}}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"matches": "quality-conditional-1-selection"}]}}).
+syntax_rows_1(d, n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"kind": "module"}, {"kind": "class_definition"}, {"kind": "function_definition"}, {"kind": "decorated_definition"}, {"kind": "block"}, {"kind": "expression_statement"}, {"kind": "argument_list"}, {"kind": "keyword_argument"}, {"kind": "assignment"}, {"kind": "augmented_assignment"}, {"kind": "return_statement"}, {"kind": "if_statement"}, {"kind": "elif_clause"}, {"kind": "else_clause"}, {"kind": "match_statement"}, {"kind": "case_clause"}, {"kind": "for_statement"}]}, {"not": {"any": [{"kind": "comment"}, {"kind": "string_start"}, {"kind": "string_content"}, {"kind": "string_end"}, {"kind": "escape_sequence"}, {"kind": "line_continuation"}]}}, {"matches": "quality-conditional-1-selection"}]}}).
+
+// ---- node_ordinals: row_number() OVER (PARTITION BY parent ORDER BY __start, __end, kind) - 1, under four parent kinds ----
+.decl ordinal_parent_kind(k: symbol)
+ordinal_parent_kind("conditional_expression"). ordinal_parent_kind("default_parameter").
+ordinal_parent_kind("typed_default_parameter"). ordinal_parent_kind("typed_parameter").
+.decl ordinal_row(n: node, p: node)
+ordinal_row(n, p) :- syntax_rows_0(_, n), child(p, n, _), kind(p, k), ordinal_parent_kind(k).
+ordinal_row(n, p) :- syntax_rows_1(_, n), child(p, n, _), kind(p, k), ordinal_parent_kind(k).
+.decl ordinal_before(n: node, m: node)
+ordinal_before(n, m) :- ordinal_row(n, p), ordinal_row(m, p), start(n, s), start(m, t), t < s.
+.decl has_ordinal_before(n: node)
+has_ordinal_before(n) :- ordinal_before(n, _).
+.decl node_ordinals(n: node, ordinal: number)
+node_ordinals(n, 0) :- ordinal_row(n, _), !has_ordinal_before(n).
+node_ordinals(n, k) :- ordinal_before(n, _), k = count : { ordinal_before(n, _) }.
+
+// ---- nodes: the rows; text, edge_parent (ANCESTOR), subject ----
+.decl nodes(d: number, n: node)
+nodes(d, n) :- syntax_rows_0(d, n).
+nodes(d, n) :- syntax_rows_1(d, n).
+// Shard 19's kinds: its `text` is "".
+.decl empty_text_kind(k: symbol)
+empty_text_kind("module"). empty_text_kind("class_definition"). empty_text_kind("function_definition").
+empty_text_kind("decorated_definition"). empty_text_kind("block"). empty_text_kind("expression_statement").
+empty_text_kind("argument_list"). empty_text_kind("keyword_argument"). empty_text_kind("assignment").
+empty_text_kind("augmented_assignment"). empty_text_kind("return_statement"). empty_text_kind("if_statement").
+empty_text_kind("elif_clause"). empty_text_kind("else_clause"). empty_text_kind("match_statement").
+empty_text_kind("case_clause"). empty_text_kind("for_statement").
+.decl nodes_text(n: node, text: symbol)
+nodes_text(n, t) :- nodes(_, n), kind(n, k), !empty_text_kind(k), text(n, t).
+nodes_text(n, "") :- nodes(_, n), kind(n, k), empty_text_kind(k).
+.decl selected_ancestor(n: node, a: node, depth: number)
+selected_ancestor(n, a, k) :- nodes(d, n), nodes(d, a), @within(n, a) = 1, k = @depth(a).
+.decl edge_parent_depth(n: node, depth: number)
+edge_parent_depth(n, k) :- selected_ancestor(n, _, _), k = max j : { selected_ancestor(n, _, j) }.
+.decl nodes_edge_parent(n: node, a: node)
+nodes_edge_parent(n, a) :- selected_ancestor(n, a, k), edge_parent_depth(n, k).
+.decl subject_start(m: node, s: number)
+subject_start(m, s) :- nodes(_, m), kind(m, "match_statement"), field(m, "subject", x), start(x, s).
+.decl first_subject_start(m: node, s: number)
+first_subject_start(m, s) :- subject_start(m, _), s = min t : { subject_start(m, t) }.
+.decl nodes_subject(m: node, x: node)
+nodes_subject(m, x) :- first_subject_start(m, s), field(m, "subject", x), start(x, s).
+
+// ---- edges ----
+.decl edges(src: node, dst: node)
+edges(a, n) :- nodes_edge_parent(n, a).
+
+// ---- functions, ownership, classes, attributes, calls ----
+.decl functions(f: node, name: symbol)
+functions(f, name) :- nodes(_, f), kind(f, "function_definition"), field(f, "name", x), text(x, name).
+// ownership's rows are the nodes; fn and cls are side relations.
+.decl ownership_fn(n: node, fn: node)
+ownership_fn(n, n) :- nodes(_, n), kind(n, "function_definition").
+ownership_fn(n, f) :- nodes(_, n), !kind(n, "function_definition"), nearest(n, f, fdef).
+.decl ownership_cls(n: node, cls: node)
+ownership_cls(n, n) :- nodes(_, n), kind(n, "class_definition").
+ownership_cls(n, c) :- nodes(_, n), !kind(n, "class_definition"), nearest(n, c, cdef).
+.decl classes(c: node, name: symbol)
+classes(c, name) :- nodes(_, c), kind(c, "class_definition"), field(c, "name", x), text(x, name).
+.decl attributes(a: node, attr: symbol, object: node, object_text: symbol)
+attributes(a, attr, o, ot) :- nodes(_, a), kind(a, "attribute"), field(a, "attribute", x), text(x, attr), field(a, "object", o), text(o, ot).
+.decl attribute_node(a: node)
+attribute_node(a) :- attributes(a, _, _, _).
+// callee = coalesce(a.attr, f.text), a the attributes row of the callee f.
+.decl calls(c: node, callee_id: node, full_callee: symbol, callee: symbol)
+calls(c, f, full, callee) :- nodes(d, c), kind(c, "call"), field(c, "function", f), nodes(d, f), nodes_text(f, full), attributes(f, callee, _, _).
+calls(c, f, full, full) :- nodes(d, c), kind(c, "call"), field(c, "function", f), nodes(d, f), nodes_text(f, full), !attribute_node(f).
+
+// ---- descendant_roots, descendants ----
+.decl descendant_roots(r: node)
+descendant_roots(r) :- nodes(_, r), kind(r, "type").
+descendant_roots(r) :- nodes(_, r), kind(r, "assignment"), field(r, "type", _).
+descendant_roots(r) :- functions(r, "require_sql_physical_conditional").
+descendant_roots(r) :- functions(r, "compile_sql_conditional_step").
+descendant_roots(r) :- functions(r, "compile"), docof(r, d), doc(d, p), @rx_matches(p, "(?:^|/)l2070_batching/conditional_step\\.py$") = 1.
+descendant_roots(r) :- nodes(_, a), kind(a, "assignment"), field(a, "left", r).
+descendant_roots(r) :- nodes(_, a), kind(a, "for_statement"), field(a, "left", r).
+descendant_roots(r) :- nodes(_, a), kind(a, "if_statement"), field(a, "condition", r).
+descendant_roots(r) :- nodes(_, a), kind(a, "elif_clause"), field(a, "condition", r).
+descendant_roots(r) :- nodes(_, a), kind(a, "match_statement"), nodes_subject(a, r).
+descendant_roots(r) :- nodes(_, p), kind(p, "conditional_expression"), child(p, r, _), nodes(_, r), node_ordinals(r, 1).
+.decl descendants(root: node, n: node)
+descendants(r, r) :- descendant_roots(r).
+descendants(r, n) :- descendant_roots(r), nodes(d, r), nodes(d, n), @within(n, r) = 1.
+
+// ---- returns, assignments, parameters ----
+.decl returns(r: node, value: node, expr_text: symbol)
+returns(r, v, t) :- nodes(d, r), kind(r, "return_statement"), child(r, v, _), nodes(d, v), nodes_text(v, t).
+.decl assignment_kind(k: symbol)
+assignment_kind("assignment"). assignment_kind("augmented_assignment").
+.decl assignments(a: node, target: node, target_text: symbol)
+assignments(a, l, t) :- nodes(d, a), kind(a, k), assignment_kind(k), field(a, "left", l), nodes(d, l), nodes_text(l, t).
+// value, expr_kind, expr_text (LEFT JOIN nodes r).
+.decl assignments_value(a: node, value: node, expr_kind: symbol, expr_text: symbol)
+assignments_value(a, r, k, t) :- assignments(a, _, _), field(a, "right", r), nodes(_, r), kind(r, k), nodes_text(r, t).
+.decl assignments_typed(a: node)
+assignments_typed(a) :- assignments(a, _, _), field(a, "type", _).
+.decl named_parameter_kind(k: symbol)
+named_parameter_kind("typed_parameter"). named_parameter_kind("default_parameter"). named_parameter_kind("typed_default_parameter").
+.decl parameters(fn: node, p: node, name: symbol)
+parameters(f, p, name) :- functions(f, _), field(f, "parameters", ps), child(ps, p, _), nodes(_, p), kind(p, "identifier"), nodes_text(p, name).
+parameters(f, p, name) :- functions(f, _), field(f, "parameters", ps), child(ps, p, _), nodes(d, p), kind(p, k), named_parameter_kind(k),
+    child(p, n, _), nodes(d, n), node_ordinals(n, 0), kind(n, "identifier"), nodes_text(n, name).
+.decl parameters_annotation(p: node, annotation: node)
+parameters_annotation(p, t) :- parameters(_, p, _), field(p, "type", t).
+
+// ---- module_names, aliases ----
+.decl module_names(d: number, qualified: symbol)
+module_names(d, q) :- nodes(d, m), kind(m, "module"), doc(d, p), @rx_matches(p, "(?:^|/)(?:impl|l2070_batching|scripts)/") = 1,
+    x = @rx_extract(p, "(?:^|/)((?:impl|l2070_batching|scripts)/.*)\\.py$", 1), q = @replace(x, "/", ".").
+module_names(d, q) :- nodes(d, m), kind(m, "module"), doc(d, p), @rx_matches(p, "(?:^|/)(?:impl|l2070_batching|scripts)/") = 0,
+    q = @rx_extract(p, "(?:^|/)([^/]+)\\.py$", 1).
+.decl alias_kind(k: symbol)
+alias_kind("dotted_name"). alias_kind("aliased_import").
+.decl import_kind(k: symbol)
+import_kind("import_statement"). import_kind("import_from_statement").
+// n.__start != coalesce(parent.module_name_start, -1): the item is not the statement's module_name.
+.decl module_name_start(p: node, s: number)
+module_name_start(p, s) :- nodes(_, p), kind(p, "import_from_statement"), field(p, "module_name", x), start(x, s).
+.decl alias_item(n: node, parent: node, d: number, s: number)
+alias_item(n, p, d, s) :- nodes(d, n), kind(n, k), alias_kind(k), child(p, n, _), nodes(d, p), kind(p, pk), import_kind(pk),
+    start(n, s), !module_name_start(p, s).
+.decl aliases(d: number, start: number, local: symbol, origin: symbol)
+aliases(d, s, l, o) :- alias_item(n, p, d, s), kind(n, "aliased_import"), kind(p, "import_statement"),
+    field(n, "alias", a), text(a, l), field(n, "name", x), text(x, o).
+aliases(d, s, l, o) :- alias_item(n, p, d, s), kind(n, "aliased_import"), kind(p, "import_from_statement"),
+    field(n, "alias", a), text(a, l), field(n, "name", x), text(x, nm), field(p, "module_name", mn), text(mn, m),
+    o = @concat(@trim(m, "."), ".", nm).
+aliases(d, s, l, o) :- alias_item(n, p, d, s), kind(n, "dotted_name"), kind(p, "import_statement"), nodes_text(n, o),
+    l = @rx_extract(o, "^([\\w]+)", 1).
+aliases(d, s, t, o) :- alias_item(n, p, d, s), kind(n, "dotted_name"), kind(p, "import_from_statement"), nodes_text(n, t),
+    field(p, "module_name", mn), text(mn, m), o = @concat(@trim(m, "."), ".", t).
+
+// ---- conditional_classes: the latest class of a name per file (max(__start)), module.qualified || '.' || name ----
+.decl class_start(d: number, name: symbol, s: number)
+class_start(d, n, s) :- classes(c, n), docof(c, d), start(c, s).
+.decl class_latest(d: number, name: symbol, s: number)
+class_latest(d, n, s) :- class_start(d, n, _), s = max t : { class_start(d, n, t) }.
+.decl conditional_classes(c: node, name: symbol, qualified_name: symbol)
+conditional_classes(c, n, q) :- classes(c, n), docof(c, d), start(c, s), class_latest(d, n, s), module_names(d, m), q = @dot(m, n).
+.decl class_qualified(q: symbol)
+class_qualified(q) :- conditional_classes(_, _, q).
+
+// ---- class_bases: coalesce(latest alias origin of the head, head) || coalesce(dotted suffix, '') ----
+// The suffix regex matches wherever the head does (its group may be empty).
+.decl base_kind(k: symbol)
+base_kind("identifier"). base_kind("attribute"). base_kind("call").
+.decl class_base_text(cls: node, head: symbol, suffix: symbol)
+class_base_text(c, h, x) :- conditional_classes(c, _, _), docof(c, d), child(c, g, _), nodes(d, g), kind(g, "argument_list"),
+    child(g, b, _), nodes(d, b), kind(b, k), base_kind(k), nodes_text(b, t), h = @rx_extract(t, "^([\\w]+)", 1),
+    x = @rx_extract(t, "^[\\w]+((?:\\.[\\w]+)*)", 1).
+.decl class_base_alias(cls: node, head: symbol, s: number)
+class_base_alias(c, h, s) :- class_base_text(c, h, _), docof(c, d), start(c, cs), aliases(d, s, h, _), s < cs.
+.decl class_base_alias_last(cls: node, head: symbol, s: number)
+class_base_alias_last(c, h, s) :- class_base_alias(c, h, _), s = max t : { class_base_alias(c, h, t) }.
+.decl has_class_base_alias(cls: node, head: symbol)
+has_class_base_alias(c, h) :- class_base_alias(c, h, _).
+.decl class_bases(cls: node, name: symbol)
+class_bases(c, n) :- class_base_text(c, h, x), class_base_alias_last(c, h, s), docof(c, d), aliases(d, s, h, o), n = @concat(o, x).
+class_bases(c, n) :- class_base_text(c, h, x), !has_class_base_alias(c, h), n = @concat(h, x).
+
+// ---- derived_conditionals: a set recursion over the class hierarchy by qualified name ----
+.decl derived_conditionals(name: symbol)
+derived_conditionals("l2070_batching.conditional_step.ConditionalStep").
+derived_conditionals(q) :- derived_conditionals(b), class_bases(c, b), conditional_classes(c, _, q).
+.decl derived_class(c: node)
+derived_class(c) :- conditional_classes(c, _, q), derived_conditionals(q).
+
+// ---- conditional_methods: the latest function of a name per conditional class (max(__start)) ----
+.decl method_start(cls: node, name: symbol, s: number)
+method_start(c, n, s) :- functions(f, n), ownership_cls(f, c), conditional_classes(c, _, _), start(f, s).
+.decl method_latest(cls: node, name: symbol, s: number)
+method_latest(c, n, s) :- method_start(c, n, _), s = max t : { method_start(c, n, t) }.
+.decl conditional_methods(m: node, name: symbol, cls: node)
+conditional_methods(f, n, c) :- method_latest(c, n, s), docof(c, d), functions(f, n), docof(f, d), start(f, s).
+.decl has_method(cls: node, name: symbol)
+has_method(c, n) :- conditional_methods(_, n, c).
+
+// ---- conditional_functions: the latest classless function of a name per file, module.qualified || '.' || name ----
+.decl function_start(d: number, name: symbol, s: number)
+function_start(d, n, s) :- functions(f, n), !ownership_cls(f, _), docof(f, d), start(f, s).
+.decl function_latest(d: number, name: symbol, s: number)
+function_latest(d, n, s) :- function_start(d, n, _), s = max t : { function_start(d, n, t) }.
+.decl conditional_functions(f: node, qualified_name: symbol)
+conditional_functions(f, q) :- function_latest(d, n, s), functions(f, n), docof(f, d), start(f, s), module_names(d, m), q = @dot(m, n).
+
+// ---- function_colors: backend_selection, raises_type_error over the function's descendants ----
+.decl function_colors(f: node)
+function_colors(f) :- functions(f, "require_sql_physical_conditional").
+function_colors(f) :- functions(f, "compile_sql_conditional_step").
+function_colors(f) :- functions(f, "compile"), docof(f, d), doc(d, p), @rx_matches(p, "(?:^|/)l2070_batching/conditional_step\\.py$") = 1.
+.decl backend_attr(a: symbol)
+backend_attr("backend_type"). backend_attr("is_sql_backend"). backend_attr("dialect").
+.decl branch_kind(k: symbol)
+branch_kind("if_statement"). branch_kind("elif_clause"). branch_kind("conditional_expression"). branch_kind("match_statement").
+.decl backend_selection(f: node)
+backend_selection(f) :- function_colors(f), descendants(f, a), kind(a, "identifier"), nodes_text(a, "BackendType").
+backend_selection(f) :- function_colors(f), descendants(f, a), attributes(a, attr, _, _), backend_attr(attr),
+    descendants(f, b), nodes(_, b), kind(b, k), branch_kind(k).
+.decl raises_type_error(f: node)
+raises_type_error(f) :- function_colors(f), descendants(f, r), nodes(_, r), kind(r, "raise_statement"), nodes_text(r, t),
+    @rx_matches(t, "^raise\\s+TypeError(?:\\s*\\(|\\s*$)") = 1.
+
+// ---- contract_blocks: blocks owned by a conditional require_sql_physical_conditional, sequenced by (size, start) ----
+.decl contract_block(b: node, d: number, size: number, s: number)
+contract_block(b, d, z, s) :- nodes(d, b), kind(b, "block"), ownership_fn(b, f), conditional_methods(f, "require_sql_physical_conditional", _),
+    node(d, b, _, s, e), z = @sub(e, s).
+.decl contract_block_before(b: node, c: node)
+contract_block_before(b, c) :- contract_block(b, d, z, _), contract_block(c, d, y, _), y < z.
+contract_block_before(b, c) :- contract_block(b, d, z, s), contract_block(c, d, z, t), t <= s.
+.decl contract_blocks(b: node, parent: node, sequence: number)
+contract_blocks(b, p, k) :- contract_block(b, _, _, _), child(p, b, _), k = count : { contract_block_before(b, _) }.
+
+// ---- callable_names, callable_parameters ----
+.decl callable_parent_excluded(k: symbol)
+callable_parent_excluded("parameters"). callable_parent_excluded("lambda_parameters").
+callable_parent_excluded("list_splat_pattern"). callable_parent_excluded("dictionary_splat_pattern").
+.decl named_definition_kind(k: symbol)
+named_definition_kind("keyword_argument"). named_definition_kind("function_definition"). named_definition_kind("class_definition").
+.decl attribute_at(p: node, s: number)
+attribute_at(p, s) :- nodes(_, p), kind(p, "attribute"), field(p, "attribute", x), start(x, s).
+.decl definition_name_at(p: node, s: number)
+definition_name_at(p, s) :- nodes(_, p), kind(p, k), named_definition_kind(k), field(p, "name", x), start(x, s).
+// LEFT JOIN parent: with no parent row every test is NULL, so the row needs its parent in the table.
+.decl callable_names(n: node)
+callable_names(n) :- nodes(d, n), kind(n, "identifier"), nodes_text(n, "Callable"), child(p, n, _), nodes(d, p), kind(p, pk),
+    !callable_parent_excluded(pk), start(n, s), !attribute_at(p, s), !definition_name_at(p, s).
+.decl callable_parameters(fn: node, name: symbol)
+callable_parameters(f, n) :- parameters(f, p, n), parameters_annotation(p, t), descendants(t, x), callable_names(x).
+
+// ---- block_results ----
+// OUTSIDE: sequential fold with a JSON accumulator — the state map (block id → 1 when the block's statements before its
+// first raise/return include a `raise TypeError`, an if with an else whose blocks all raise, or a match whose case
+// blocks all raise) is built one contract block per step, reading earlier steps' values: a recursion over the syntax
+// tree. Held here as the final map decoded: one row per (document, block, raises).
+.decl block_results(d: number, block: node, raises: number)
+.input block_results
+
+// ---- always_raises, integer_returns, branch_variables, self_stores ----
+.decl always_raises(m: node)
+always_raises(m) :- conditional_methods(m, "require_sql_physical_conditional", _), field(m, "body", b), docof(m, d), block_results(d, b, 1).
+.decl integer_kind(k: symbol)
+integer_kind("integer"). integer_kind("true"). integer_kind("false").
+// A return inside the method's span: a descendant (`@within`). One row per returned value node.
+.decl integer_returns(cls: node, name: symbol, value: node, kind: symbol, text: symbol)
+integer_returns(c, n, v, k, t) :- conditional_methods(m, n, c), returns(r, v, t), @within(r, m) = 1, kind(v, k), integer_kind(k).
+.decl branch_expr_kind(k: symbol)
+branch_expr_kind("identifier"). branch_expr_kind("attribute"). branch_expr_kind("call").
+.decl branch_variables(fn: node, name: symbol, start: number)
+branch_variables(m, name, s) :- conditional_methods(m, _, _), assignments(a, l, _), @within(a, m) = 1, assignments_value(a, _, ek, et),
+    branch_expr_kind(ek), @rx_matches(et, "then_plan\\.steps|else_plan\\.steps|conditional_branch_steps|then_steps|else_steps") = 1,
+    descendants(l, x), kind(x, "identifier"), nodes_text(x, name), start(a, s).
+branch_variables(m, name, s) :- conditional_methods(m, _, _), nodes(_, n), kind(n, "for_statement"), @within(n, m) = 1,
+    field(n, "right", rt), text(rt, src), @rx_matches(src, "then_plan\\.steps|else_plan\\.steps|conditional_branch_steps|then_steps|else_steps") = 1,
+    field(n, "left", l), descendants(l, x), kind(x, "identifier"), nodes_text(x, name), start(n, s).
+.decl self_stores(a: node, cls: node, method: symbol, method_id: node)
+self_stores(a, c, mn, m) :- assignments(a, t, _), attributes(t, _, _, "self"), ownership_fn(a, m), conditional_methods(m, mn, c).
+
+// ---- conditional_findings_0 (the clause's query): SPQ-029 ----
+// The contract's anchor: one of the three classes, or the compiler function, exists.
+.decl anchor_class(q: symbol)
+anchor_class("impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor").
+anchor_class("impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep").
+anchor_class("l2070_batching.conditional_step.ConditionalStep").
+.decl contract_anchor(q: symbol)
+contract_anchor(q) :- class_qualified(q), anchor_class(q).
+contract_anchor("impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step") :-
+    conditional_functions(_, "impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step").
+
+// semantic-compile: ConditionalStep has no `compile` that raises TypeError.
+.decl compile_raises_type_error(cls: node)
+compile_raises_type_error(c) :- conditional_methods(m, "compile", c), raises_type_error(m).
+finding("quality-conditional-1", "SPQ-029", c) :- conditional_classes(c, _, "l2070_batching.conditional_step.ConditionalStep"), !compile_raises_type_error(c).
+// semantic-level: ConditionalStep's `level` returns no literal, or a non-positive one.
+.decl level_return(cls: node)
+level_return(c) :- integer_returns(c, "level", _, _, _).
+.decl level_nonpositive(cls: node)
+level_nonpositive(c) :- integer_returns(c, "level", _, "false", _).
+level_nonpositive(c) :- integer_returns(c, "level", _, "integer", t), i = @cast_int(t), i <= 0.
+finding("quality-conditional-1", "SPQ-029", c) :- conditional_classes(c, _, "l2070_batching.conditional_step.ConditionalStep"), !level_return(c).
+finding("quality-conditional-1", "SPQ-029", c) :- conditional_classes(c, _, "l2070_batching.conditional_step.ConditionalStep"), level_nonpositive(c).
+// executor-hook: SqlBackendExecutor has no `_lower_conditional_step`.
+finding("quality-conditional-1", "SPQ-029", c) :- conditional_classes(c, _, "impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor"),
+    !has_method(c, "_lower_conditional_step").
+// physical-level: SqlConditionalStep's `level` returns a literal other than once, or never 0/False (count 0 is the latter).
+.decl level_count(cls: node, k: number)
+level_count(c, k) :- level_return(c), k = count : { integer_returns(c, "level", _, _, _) }.
+.decl level_zero(cls: node)
+level_zero(c) :- integer_returns(c, "level", _, "false", _).
+level_zero(c) :- integer_returns(c, "level", _, "integer", t), @cast_int(t) = 0.
+finding("quality-conditional-1", "SPQ-029", c) :- conditional_classes(c, _, "impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep"),
+    level_count(c, k), k != 1.
+finding("quality-conditional-1", "SPQ-029", c) :- conditional_classes(c, _, "impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep"),
+    !level_zero(c).
+// physical-role: SqlConditionalStep's `execution_role` never returns StepExecutionRole.SQL.
+.decl sql_execution_role(cls: node)
+sql_execution_role(c) :- conditional_methods(m, "execution_role", c), returns(r, _, "StepExecutionRole.SQL"), @within(r, m) = 1.
+finding("quality-conditional-1", "SPQ-029", c) :- conditional_classes(c, _, "impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep"),
+    !sql_execution_role(c).
+// physical-compile: SqlConditionalStep's `compile` never calls …compile_sql_conditional_step.
+.decl compile_calls_compiler(cls: node)
+compile_calls_compiler(c) :- conditional_methods(m, "compile", c), calls(x, _, full, _), @within(x, m) = 1,
+    @rx_matches(full, "compile_sql_conditional_step$") = 1.
+finding("quality-conditional-1", "SPQ-029", c) :- conditional_classes(c, _, "impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep"),
+    !compile_calls_compiler(c).
+// runtime-state: a self store outside __init__ in a derived conditional.
+finding("quality-conditional-1", "SPQ-029", a) :- self_stores(a, c, mn, _), derived_class(c), mn != "__init__".
+// runtime-callback: __init__ stores a lambda, or a parameter annotated Callable.
+finding("quality-conditional-1", "SPQ-029", a) :- self_stores(a, c, "__init__", _), derived_class(c), assignments_value(a, _, "lambda", _).
+finding("quality-conditional-1", "SPQ-029", a) :- self_stores(a, c, "__init__", m), derived_class(c), assignments_value(a, _, "identifier", t),
+    callable_parameters(m, t).
+// declared-callback: a class-level annotated assignment (no fn) whose annotation names Callable, in a derived conditional.
+finding("quality-conditional-1", "SPQ-029", a) :- assignments(a, _, _), !ownership_fn(a, _), assignments_typed(a), ownership_cls(a, c),
+    derived_class(c), descendants(a, x), callable_names(x).
+// child-compilation: `<branch variable>.compile(…)` after the variable is bound from a branch's steps.
+finding("quality-conditional-1", "SPQ-029", x) :- calls(x, f, _, "compile"), ownership_fn(x, m), conditional_methods(m, _, c), derived_class(c),
+    attributes(f, _, _, ot), branch_variables(m, ot, s), start(x, xs), s < xs.
+// backend-control: a branch in a derived conditional's method tests backend_type/is_sql_backend (match: the subject;
+// conditional_expression: its child of ordinal 1; else the condition).
+.decl backend_test_root(n: node, root: node)
+backend_test_root(n, r) :- nodes(_, n), kind(n, "match_statement"), nodes_subject(n, r).
+backend_test_root(n, r) :- nodes(_, n), kind(n, "conditional_expression"), child(n, r, _), nodes(_, r), node_ordinals(r, 1).
+backend_test_root(n, r) :- nodes(_, n), kind(n, "if_statement"), field(n, "condition", r).
+backend_test_root(n, r) :- nodes(_, n), kind(n, "elif_clause"), field(n, "condition", r).
+finding("quality-conditional-1", "SPQ-029", n) :- backend_test_root(n, r), ownership_fn(n, m), conditional_methods(m, _, c), derived_class(c),
+    descendants(r, a), attributes(a, "backend_type", _, _).
+finding("quality-conditional-1", "SPQ-029", n) :- backend_test_root(n, r), ownership_fn(n, m), conditional_methods(m, _, c), derived_class(c),
+    descendants(r, a), attributes(a, "is_sql_backend", _, _).
+// semantic-contract: ConditionalStep's require_sql_physical_conditional does not always raise; or (missing) no ConditionalStep.
+.decl physical_conditional_raises(cls: node)
+physical_conditional_raises(c) :- conditional_methods(m, "require_sql_physical_conditional", c), always_raises(m).
+finding("quality-conditional-1", "SPQ-029", c) :- conditional_classes(c, _, "l2070_batching.conditional_step.ConditionalStep"),
+    !physical_conditional_raises(c), contract_anchor(_).
+finding_path("quality-conditional-1", "SPQ-029", "l2070_batching/conditional_step.py") :- contract_anchor(_),
+    !class_qualified("l2070_batching.conditional_step.ConditionalStep").
+// physical-contract: SqlConditionalStep is not a derived conditional, or has no require_sql_physical_conditional that
+// neither always raises nor selects a backend; or (missing) no SqlConditionalStep.
+.decl physical_conditional_open(cls: node)
+physical_conditional_open(c) :- conditional_methods(m, "require_sql_physical_conditional", c), !always_raises(m), !backend_selection(m).
+finding("quality-conditional-1", "SPQ-029", c) :- conditional_classes(c, _, "impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep"),
+    !derived_conditionals("impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep"), contract_anchor(_).
+finding("quality-conditional-1", "SPQ-029", c) :- conditional_classes(c, _, "impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep"),
+    !physical_conditional_open(c), contract_anchor(_).
+finding_path("quality-conditional-1", "SPQ-029", "impl/common/l2070_server_plan/steps/sql_conditional.py") :- contract_anchor(_),
+    !class_qualified("impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep").
+// lowering-contract: SqlBackendExecutor's _lower_conditional_step never calls SqlConditionalStep.from_semantic; or (missing).
+.decl lowering_from_semantic(cls: node)
+lowering_from_semantic(c) :- conditional_methods(m, "_lower_conditional_step", c), calls(x, _, full, _), @within(x, m) = 1,
+    @rx_matches(full, "SqlConditionalStep\\.from_semantic$") = 1.
+finding("quality-conditional-1", "SPQ-029", c) :- conditional_classes(c, _, "impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor"),
+    !lowering_from_semantic(c), contract_anchor(_).
+finding_path("quality-conditional-1", "SPQ-029", "impl/common/l2070_server_plan/sql_backend_executor.py") :- contract_anchor(_),
+    !class_qualified("impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor").
+// compiler-contract: compile_sql_conditional_step does not take `step: SqlConditionalStep` (its annotation resolved by
+// the latest alias before the function, suffix by `^[\w]+((?:\.[\w]+)*)$` or ''), or selects a backend, or has no
+// step.require_sql_physical_conditional() call with no *_conditional_strategy call on or before its line; or (missing).
+.decl step_annotation_text(fn: node, head: symbol, suffix: symbol)
+.decl step_annotation_source(fn: node, text: symbol)
+step_annotation_source(f, s) :- conditional_functions(f, "impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step"),
+    parameters(f, p, "step"), parameters_annotation(p, t), nodes(_, t), nodes_text(t, s).
+step_annotation_text(f, h, x) :- step_annotation_source(f, s), h = @rx_extract(s, "^([\\w]+)", 1), x = @rx_extract(s, "^[\\w]+((?:\\.[\\w]+)*)$", 1).
+step_annotation_text(f, h, "") :- step_annotation_source(f, s), h = @rx_extract(s, "^([\\w]+)", 1), @rx_matches(s, "^[\\w]+((?:\\.[\\w]+)*)$") = 0.
+.decl step_alias(fn: node, head: symbol, s: number)
+step_alias(f, h, s) :- step_annotation_text(f, h, _), docof(f, d), start(f, fs), aliases(d, s, h, _), s < fs.
+.decl step_alias_last(fn: node, head: symbol, s: number)
+step_alias_last(f, h, s) :- step_alias(f, h, _), s = max t : { step_alias(f, h, t) }.
+.decl has_step_alias(fn: node, head: symbol)
+has_step_alias(f, h) :- step_alias(f, h, _).
+.decl step_annotation(fn: node, name: symbol)
+step_annotation(f, n) :- step_annotation_text(f, h, x), step_alias_last(f, h, s), docof(f, d), aliases(d, s, h, o), n = @concat(o, x).
+step_annotation(f, n) :- step_annotation_text(f, h, x), !has_step_alias(f, h), n = @concat(h, x).
+.decl physical_call_line(fn: node, line: number)
+physical_call_line(f, l) :- conditional_functions(f, "impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step"),
+    calls(x, _, "step.require_sql_physical_conditional", _), @within(x, f) = 1, l = @line(x).
+.decl strategy_call_line(fn: node, line: number)
+strategy_call_line(f, l) :- conditional_functions(f, "impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step"),
+    calls(y, _, full, _), @within(y, f) = 1, @rx_matches(full, "_conditional_strategy$") = 1, l = @line(y).
+.decl strategy_not_after(fn: node, line: number)
+strategy_not_after(f, l) :- physical_call_line(f, l), strategy_call_line(f, sl), sl <= l.
+.decl compiler_conforms(fn: node)
+compiler_conforms(f) :- step_annotation(f, "impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep"), !backend_selection(f),
+    physical_call_line(f, l), !strategy_not_after(f, l).
+finding("quality-conditional-1", "SPQ-029", f) :- conditional_functions(f, "impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step"),
+    !compiler_conforms(f), contract_anchor(_).
+.decl function_qualified(q: symbol)
+function_qualified(q) :- conditional_functions(_, q).
+finding_path("quality-conditional-1", "SPQ-029", "impl/common/l2070_server_plan/steps/_conditional_compile.py") :- contract_anchor(_),
+    !function_qualified("impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step").

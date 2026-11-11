@@ -1,0 +1,35 @@
+.policy "ruff-ruf007-zip-instead-of-pairwise" revision 2
+.description "Use itertools.pairwise to iterate over successive pairs instead of zipping a sequence with a copy of itself shifted by one; it is clearer and avoids slicing."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF007: `zip(xs, xs[1:])`, successive pairs, which `itertools.pairwise(xs)` gives without slicing.
+// The builtin zip, exactly two positional arguments (keywords such as strict= do not matter). The first is a
+// name or a slice of it, the second a slice of the same name; each slice's lower bound is absent or an int
+// literal, its step absent or 1, and the second starts one after the first. Upper bounds are not compared.
+// pairwise is new in Python 3.10, so code that targets older (option pythonVersion) is not checked.
+//   zip(xs, xs[1:])               ← RUF007
+//   zip(xs[1:-1], xs[2:])         ← RUF007
+//   zip(xs, xs[2:])               not reported: not successive
+//   zip(xs, xs[1::2])             not reported: a step
+#include "python/ruff.rr"
+
+.violation RUF007(at: node) code "RUF007"
+    "Replace this `zip` with `itertools.pairwise(...)` over the sequence, or over the common slice when both arguments are slices; keep `zip` if the upper bounds differ or the argument is not a plain sequence."
+    suppress ruff "RUF007"
+RUF007(c) :- call_q(c, "builtins.zip"), call_nargs(c, 2), ruff_arg(c, 0, a), ruff_arg(c, 1, b),
+    start(a, x, i), unparen(b, sb), kind(sb, "subscript"), start(b, x, j), j - i = 1, targets(10).
+
+// start(e, x, i): e is the name x (start 0), or `x[i:…]` with an int literal or no lower bound and a step of 1.
+.decl start(e: node, x: symbol, i: number)
+start(e, x, 0) :- ruff_arg(_, _, e), unparen(e, m), kind(m, "identifier"), text(m, x).
+start(e, x, i) :- ruff_arg(_, _, e), unparen(e, m), kind(m, "subscript"), field(m, "value", v), kind(v, "identifier"),
+    text(v, x), field(m, "subscript", s), kind(s, "slice"), lower(s, i), unit_step(s),
+    count : { field(m, "subscript", _) } = 1.
+.decl lower(s: node, i: number)
+lower(s, 0) :- kind(s, "slice"), !slice_part(s, "lower", _).
+lower(s, to_number(v)) :- slice_part(s, "lower", l), ruff_int(l, v).
+.decl unit_step(s: node)
+unit_step(s) :- kind(s, "slice"), !slice_part(s, "step", _).
+unit_step(s) :- slice_part(s, "step", t), ruff_int(t, "1").

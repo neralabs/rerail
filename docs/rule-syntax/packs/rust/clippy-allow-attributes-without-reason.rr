@@ -1,0 +1,26 @@
+.policy "clippy-allow-attributes-without-reason" revision 3
+.description "Give every #[allow] and #[expect] attribute in Rust a reason; it tells later readers why the lint is silenced."
+.language rust
+.mode steer
+.scope include "**/*"
+
+#include "rust/syntax-attrs.rr"
+//   lint_attr(at, name, args, a)   a lint attribute name(…) in item a, direct or out of a live cfg_attr
+//   from_cfg_attr(at)   it came out of a cfg_attr;   has_reason(args)   the list ends with reason = "…"
+//   msrv_older(a, v)   under a #[clippy::msrv] older than v
+
+// Clippy's allow_attributes_without_reason (restriction): an allow or expect with no `reason = "…"` as its
+// last item. Reported at the attribute, or for one out of a cfg_attr at its `allow`/`expect`. Inner
+// attributes count too. Not under #[clippy::msrv] older than 1.81, where reasons are not stable.
+//   #[allow(dead_code)]   #![expect(unused)]   #[allow(reason = "x", dead_code)]       reported
+//   #[allow(dead_code, reason = "generated")]   #[cfg_attr(test, allow(dead_code))]   not reported
+// Clippy sees a cfg_attr's attributes only when its predicate holds; see rust/syntax-attrs.rr for the reading.
+.violation allow_attributes_without_reason(at: node, msg: symbol) code "allow_attributes_without_reason" "{msg}"
+    suppress clippy "clippy::allow_attributes_without_reason", "clippy::restriction", "warnings"
+allow_attributes_without_reason(a, "Add a reason to this attribute, e.g. #[allow(dead_code, reason = \"why\")], saying why the lint is silenced.") :-
+    unexplained(p, a), !from_cfg_attr(p).
+allow_attributes_without_reason(p, "Add a reason to this cfg_attr's allow or expect, e.g. allow(dead_code, reason = \"why\"), saying why the lint is silenced.") :-
+    unexplained(p, _), from_cfg_attr(p).
+.decl unexplained(at: node, a: node)
+unexplained(p, a) :- lint_attr(p, x, g, a), (x = "allow" ; x = "expect"), !has_reason(g),
+    !msrv_older(a, "1.81").

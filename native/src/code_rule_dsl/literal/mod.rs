@@ -6,11 +6,13 @@
 pub(crate) mod annotation;
 pub(crate) mod brace;
 pub(crate) mod eslint_directive;
+mod identifier_words;
 pub(crate) mod offsets;
 pub(crate) mod percent;
 pub(crate) mod php_string;
 pub(crate) mod phpdoc;
 pub(crate) mod printf;
+mod python_fstring;
 pub(crate) mod rust_format;
 pub(crate) mod scanf;
 pub(crate) mod semantic;
@@ -24,6 +26,8 @@ use ast_grep_core::matcher::{Pattern, PatternBuilder, PatternError};
 use ast_grep_core::source::{Content, Doc, Edit, SgNode};
 use ast_grep_core::tree_sitter::StrDoc;
 use offsets::Decoded;
+pub(crate) use python_fstring::parse as parse_python_fstring;
+pub(crate) use python_fstring::{pieces as fstring_pieces, template as fstring_template};
 use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::Arc;
@@ -34,6 +38,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 pub(crate) enum Grammar {
     /// printf-style formats (`percent`).
     Percent,
+    /// ASCII identifier words in decoded Python string text.
+    IdentifierWords,
+    /// Literal and interpolation parts of a Python JoinedStr.
+    PythonFString,
     /// `str.format` templates (`brace`).
     Brace,
     /// String type definitions read as Python expressions (`annotation`); the scope table
@@ -74,6 +82,8 @@ impl Grammar {
     /// Every grammar, in the order error messages list them.
     pub(crate) const ALL: &'static [Grammar] = &[
         Self::Percent,
+        Self::IdentifierWords,
+        Self::PythonFString,
         Self::Brace,
         Self::Annotation,
         Self::EslintDirective,
@@ -93,6 +103,8 @@ impl Grammar {
     /// The grammar a `parse.grammar` name selects.
     pub(crate) fn named(name: &str) -> Option<Self> {
         match name {
+            "identifierWords" => Some(Self::IdentifierWords),
+            "pythonFString" => Some(Self::PythonFString),
             "percentFormat" => Some(Self::Percent),
             "braceFormat" => Some(Self::Brace),
             "annotation" => Some(Self::Annotation),
@@ -109,6 +121,8 @@ impl Grammar {
 
     pub(crate) fn name(self) -> &'static str {
         match self {
+            Self::IdentifierWords => "identifierWords",
+            Self::PythonFString => "pythonFString",
             Self::Percent => "percentFormat",
             Self::Brace => "braceFormat",
             Self::Annotation => "annotation",
@@ -125,6 +139,8 @@ impl Grammar {
     /// The kinds a tree of this grammar has, in id order from 1.
     pub(crate) fn kinds(self) -> &'static [&'static str] {
         match self {
+            Self::IdentifierWords => identifier_words::KINDS,
+            Self::PythonFString => python_fstring::KINDS,
             Self::Percent => percent::KINDS,
             Self::Brace => brace::KINDS,
             // Python's own kinds, which the grammar checks when it compiles the rule.
@@ -142,7 +158,11 @@ impl Grammar {
     /// The host nodes the grammar parses.
     pub(crate) fn literal_host(self) -> LiteralHost {
         match self {
-            Self::Percent | Self::Brace | Self::Annotation => LiteralHost::PythonString,
+            Self::Percent
+            | Self::Brace
+            | Self::Annotation
+            | Self::IdentifierWords
+            | Self::PythonFString => LiteralHost::PythonString,
             Self::EslintDirective => LiteralHost::EcmaComment,
             Self::Printf | Self::Scanf => LiteralHost::PhpString,
             Self::PhpDoc => LiteralHost::PhpComment,
@@ -202,6 +222,9 @@ impl Grammar {
     /// Parses decoded text into a tree root.
     fn parse(self, text: &str) -> PNode {
         match self {
+            Self::IdentifierWords => identifier_words::parse(text),
+            // Parsed from host syntax, not from decoded constant text.
+            Self::PythonFString => PNode::new(self, "template", 0, text.len()),
             Self::Percent => percent::parse(text),
             Self::Brace => brace::parse(text),
             Self::Printf => printf::parse(text),
@@ -360,7 +383,11 @@ impl crate::code_rule_dsl::origin::Origin for SubTree {
 
 /// Node ids of sub-trees have the top bit set; tapes use small indices, tree-sitter addresses.
 /// Blade trees (`blade::forte::tree`) draw their ids from the same counter.
-pub(crate) const ID_FLAG: usize = 1 << 63;
+/// On wasm32 (the browser build) the top bit is bit 31, which leaves 7 bits of tree counter above a tree's 24
+/// bits of nodes: enough for an explorer's few files, not for a corpus (wasm/README.md).
+pub(crate) const ID_FLAG: usize = 1 << (usize::BITS - 1);
+/// The tree counter's bits between `ID_FLAG` and a tree's 24 bits of nodes: 39 on 64-bit targets, 7 on wasm32.
+pub(crate) const TREE_MASK: usize = (1 << (usize::BITS - 25)) - 1;
 pub(crate) static NEXT_TREE: AtomicUsize = AtomicUsize::new(0);
 
 impl SubTree {
@@ -413,7 +440,7 @@ impl SubTree {
                 stack.push((child, index));
             }
         }
-        let tree = NEXT_TREE.fetch_add(1, Ordering::Relaxed) & ((1 << 39) - 1);
+        let tree = NEXT_TREE.fetch_add(1, Ordering::Relaxed) & TREE_MASK;
         Self {
             lang: SubLang(grammar),
             source: SubSource { text, offset },
@@ -428,6 +455,27 @@ impl SubTree {
         (node_id & !((1 << 24) - 1) == self.base)
             .then_some(node_id & ((1 << 24) - 1))
             .filter(|index| *index < self.nodes.len())
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    /// The grammar kind of the parsed root.
+    pub(crate) fn root_kind(&self) -> u16 {
+        self.nodes[0].kind
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    /// The grammar kind of the node with this id.
+    pub(crate) fn node_kind(&self, node_id: usize) -> Option<u16> {
+        self.nodes
+            .get(self.index_of(node_id)?)
+            .map(|node| node.kind)
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    /// The source range of the node with this id.
+    pub(crate) fn host_range(&self, node_id: usize) -> Option<Range<usize>> {
+        let rec = self.nodes.get(self.index_of(node_id)?)?;
+        Some(self.map_range(rec.start as usize..rec.end as usize))
     }
 
     /// A range of this tree's nodes (offset included) as decoded bytes.
@@ -474,6 +522,56 @@ impl SubTree {
     pub(crate) fn value(&self, node_id: usize) -> Option<&Value> {
         self.values.get(self.index_of(node_id)?)?.as_ref()
     }
+
+    /// The root's value.
+    pub(crate) fn root_value(&self) -> Option<&Value> {
+        self.values.first()?.as_ref()
+    }
+
+    /// The root's children in order, each its kind's name and its value.
+    pub(crate) fn root_children(
+        &self,
+    ) -> impl Iterator<Item = (&'static str, Option<&Value>)> + '_ {
+        let grammar = self.lang.0;
+        let mut at = self.nodes.first().map_or(NONE, |root| root.first);
+        std::iter::from_fn(move || {
+            let i = (at != NONE).then_some(at as usize)?;
+            at = self.nodes[i].next;
+            Some((
+                grammar.kind_name(self.nodes[i].kind),
+                self.values[i].as_ref(),
+            ))
+        })
+    }
+
+    /// Every node in preorder (the tree's own order: a parent before its children, siblings in order), each with its
+    /// parent's index (`None` at the root) and its range in `text()` (the offset left out).
+    pub(crate) fn preorder(&self) -> impl Iterator<Item = PreNode> + '_ {
+        self.nodes.iter().map(|rec| PreNode {
+            kind: rec.kind,
+            field: rec.field,
+            parent: (rec.parent != NONE).then_some(rec.parent),
+            start: rec.start,
+            end: rec.end,
+            named: rec.named,
+            extra: rec.extra,
+            error: rec.error,
+        })
+    }
+}
+
+/// One node of a `SubTree` (`SubTree::preorder`): its grammar kind and field ids (tree-sitter's, for an annotation:
+/// ERROR is `annotation::ERROR_KIND`), its parent's index, its range in the tree's text and its flags.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PreNode {
+    pub(crate) kind: u16,
+    pub(crate) field: u16,
+    pub(crate) parent: Option<u32>,
+    pub(crate) start: u32,
+    pub(crate) end: u32,
+    pub(crate) named: bool,
+    pub(crate) extra: bool,
+    pub(crate) error: bool,
 }
 
 /// A sub-tree's text. Node ranges are offsets into it plus `offset`, which an annotation's tree
@@ -521,8 +619,9 @@ impl Language for SubLang {
             .flatten()
     }
     fn build_pattern(&self, builder: &PatternBuilder) -> Result<Pattern, PatternError> {
-        // Patterns are Python's, and only annotations hold Python.
-        builder.build(|src| StrDoc::try_new(src, GrammarDialect::Python))
+        // Patterns are Python's, and only annotations hold Python: written as its trees are,
+        // with no token the grammar implies (RER-131).
+        ast_grep_core::Language::build_pattern(&GrammarDialect::Python, builder)
     }
 }
 
@@ -531,6 +630,8 @@ impl Language for SubLang {
 pub(crate) struct SubDoc {
     pub(crate) tree: Arc<SubTree>,
 }
+
+impl SubDoc {}
 
 impl Doc for SubDoc {
     type Source = SubSource;

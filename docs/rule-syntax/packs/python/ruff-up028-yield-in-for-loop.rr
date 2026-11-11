@@ -1,0 +1,49 @@
+.policy "ruff-up028-yield-in-for-loop" revision 2
+.description "Use yield from to delegate to an iterable instead of looping over it and yielding each item."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP028 (pyupgrade): `for x in it: yield x`, which is `yield from it`. The loop's body is that one yield,
+// the loop has no `else`, its function is not `async` (where `yield from` is a SyntaxError), and the yield
+// gives back the target unchanged: the same name, or the same names in the same order (`for a, b in z:
+// yield a, b`). The loop variables must not be read anywhere else in the scope, before or after the loop,
+// nested functions included (`yield from` does not bind them); `del x` reads x too. The finding is at the loop.
+//   for x in y:
+//       yield x                 ← UP028: yield from y
+//   for x, y in z:
+//       yield y, x              not reported: another order
+//   for x in y:
+//       yield x
+//   print(x)                    not reported: x is read after the loop
+#include "python/upgrade.rr"
+//   body_stmt(b, s, i), body_len(b, k), run_scope(n, s, k), is_async(f), look(n, x, s), expr_ctx(n, c)
+
+.violation UP028(at: node, it: node) code "UP028"
+    "Replace this loop with `yield from {it}` (parenthesize a bare tuple). Keep the loop if its target is declared global or nonlocal, or if callers send values the iterable cannot accept."
+    suppress ruff "UP028"
+UP028(l, it) :- kind(l, "for_statement"), !op(l, "async"), !field(l, "alternative", _), field(l, "right", it),
+    field(l, "body", b), body_len(b, 1), body_stmt(b, st, 0), kind(st, "expression_statement"), child(st, y, 0),
+    !child(st, _, 1), kind(y, "yield"), !op(y, "from"), child(y, v, 0), field(l, "left", t), same_names(t, v),
+    run_scope(l, f, "function"), !is_async(f), !read_elsewhere(l).
+// yield_pair(t, v): a for loop's target t and the value v a `yield` in its body gives: the pairs same_names tests.
+// Without them, same_names would pair every identifier with every identifier of that name in the run.
+.decl yield_pair(t: node, v: node)
+yield_pair(t, v) :- kind(l, "for_statement"), field(l, "left", t), field(l, "body", b), body_stmt(b, st, 0),
+    kind(st, "expression_statement"), child(st, y, 0), kind(y, "yield"), child(y, v, 0).
+// same_names(t, v): the loop target t and the yielded value v are the same name, or tuples of the same names.
+.decl same_names(t: node, v: node)
+same_names(t, v) :- yield_pair(t, v), kind(t, "identifier"), unparen(v, w), kind(w, "identifier"), text(t, x), text(w, x).
+same_names(t, v) :- yield_pair(t, v), names_of(t, n), unparen(v, w), names_of(w, n),
+    count : { name_at(t, i, x), !name_at(w, i, x) } = 0.
+// names_of(e, n): e is a tuple (with or without parentheses) of n plain names; name_at gives the i-th.
+.decl name_at(e: node, i: number, x: symbol)
+name_at(e, i, x) :- tuple_kind(e), child(e, c, i), kind(c, "identifier"), text(c, x).
+.decl names_of(e: node, n: number)
+names_of(e, n) :- tuple_kind(e), n = count : { child(e, _, _) }, n = count : { name_at(e, _, _) }.
+.decl tuple_kind(e: node)
+tuple_kind(e) :- kind(e, k), (k = "pattern_list" ; k = "tuple_pattern" ; k = "tuple" ; k = "expression_list").
+// read_elsewhere(l): a target name of loop l is read (or deleted) outside l, from the scope that binds it.
+.decl read_elsewhere(l: node)
+read_elsewhere(l) :- field(l, "left", t), (kind(t, "identifier"), x0 = t ; child(t, x0, _)), text(x0, x),
+    look(x0, x, s), ast_name(n, x), expr_ctx(n, c), c != "store", look(n, x, s), !within(n, l).

@@ -1,0 +1,207 @@
+// tsx/eslint-a-common: the ESTree view of a tree-sitter tree that ESLint's core rules share. ESTree has no node
+// for parentheses, reads a member's or key's name statically, numbers call arguments without comments, and gives
+// `this` the value of the nearest non-arrow function. Every eslint-a-* library builds on this one.
+//
+// What a rule gets from this library:
+//   parentheses and parents
+//     deparen(e, x)            x is expression e without its parentheses: ((a)) gives a (from tsx/modules)
+//     deparen_count(e, x, k)   the same, with k the number of parentheses taken off: ((a)) gives a, 2
+//     estree_parent(x, p)      p is x's ESTree parent: the nearest enclosing node that is not a parenthesis
+//   functions
+//     function_node(f)         f is a function: declaration, expression, arrow, generator or method
+//                              (modules.rr's function_kind; a method is its own FunctionExpression)
+//   static names (ESLint's getStaticPropertyName and getStaticStringValue)
+//     static_string(s, v)      literal or plain template s as String(value): "a" → a, 0x10 → 16, /x/g → /x/g
+//     key_static(k, x)         key node k of a property, method or field has the static name x: `a`, `"a"`, `1`,
+//                              `[`a`]`; `[x]` and `#x` have none
+//     static_prop(n, o, x)     member access n reads property x of object o by a static name: o.x, o["x"],
+//                              o[`x`], o?.x; o is the object without its parentheses
+//   calls
+//     callee(c, f)             f is call c's callee, parentheses skipped: `(eval)(s)`, `eval?.(s)`, `` eval`s` ``
+//     called(c, f)             the same for an ESTree CallExpression only: a tagged template is no call
+//     tagged(c)                c is a tagged template `` f`x` ``, which tree-sitter writes as a call
+//     tagged_template(t)       t is the template of one: the `x` of `` f`x` ``, which is no plain string
+//     call_arg(c, a, i)        a is call (or `new`) c's i-th argument as written, from 0; comments are not arguments
+//     call_arg_count(c, k)     c has k arguments
+//   tokens
+//     token_text(n, s)         s is n's tokens joined by one space, comments left out: ESLint's equalTokens and
+//                              getTokens comparisons. Asked for the nodes of token_text_ask(n), which includers fill
+//   this
+//     this_frame(r)            r is a region with its own `this`: a non-arrow function's code, a class field's value,
+//                              a static block, the program
+//     this_owner(t, s)         `this` or `super` t has the `this` of s: the function, field value, static block or
+//                              program whose frame is nearest around t
+//   scopes
+//     escope_node(s)           s opens an eslint-scope scope (getScope's answer for the nodes inside it)
+//   text
+//     upper_first(s, t)        t is s with its first letter upper-cased (ASCII), for the s of upper_first_ask(s)
+//     capital(x)               identifier text x starts with an upper-case letter (ESLint's startsWithUpperCase)
+//   options
+//     limit(o, d, k)           numeric option k: option o if set, else option "option" (ESLint's bare-number form),
+//                              else default d; the rule states its option and default as a fact limit_rule(o, d)
+//
+// Builds on core and tsx/modules (function_kind, fn_region, not_stmt).
+#include "tsx/modules.rr"
+
+// ---- parentheses and parents -------------------------------------------------------------------------------------
+// deparen is modules.rr's (its directives need it too).
+// deparen_count: no-cond-assign wants `if ((a = b))`, two parentheses, one of them the if's own.
+.decl deparen_count(e: node, x: node, k: number)
+deparen_count(e, e, 0) :- node(_, e, k, _, _), k != "parenthesized_expression".
+deparen_count(e, x, k + 1) :- kind(e, "parenthesized_expression"), child(e, c, _), !not_stmt(c),
+    deparen_count(c, x, k).
+// estree_parent(x, p): ESTree's x.parent. In `f(("a"))` the string's parent is the call's arguments list, through
+// the parentheses; a parenthesized_expression has the parent its contents would have.
+.decl estree_parent(x: node, p: node)
+estree_parent(x, p) :- child(p, x, _), !kind(p, "parenthesized_expression").
+estree_parent(x, p) :- child(q, x, _), kind(q, "parenthesized_expression"), estree_parent(q, p).
+
+// ---- functions -----------------------------------------------------------------------------------------------------
+// function_node(f): where ESLint's astUtils.isFunction holds, and where its climbs stop.
+//   function f() {}   const g = () => 1;   class A { m() {} }     f, the arrow and m
+.decl function_node(f: node)
+function_node(f) :- kind(f, k), function_kind(k).
+
+// ---- static names --------------------------------------------------------------------------------------------------
+// static_string(s, v): getStaticStringValue. A literal as String(value) prints it, or a template without ${…}.
+// "a" is a, 0x10 is 16, true is true, null is null, /x/g is /x/g. (A BigInt's digits: 1n is 1.)
+.decl static_string(s: node, v: symbol)
+static_string(s, v) :- kind(s, "string"), value(s, v).
+static_string(s, v) :- kind(s, "template_string"), value(s, v),
+    count : { child(s, c, _), kind(c, "template_substitution") } = 0.
+static_string(s, v) :- kind(s, "number"), value(s, v).
+static_string(s, v) :- (kind(s, "true") ; kind(s, "false") ; kind(s, "null") ; kind(s, "regex")), text(s, v).
+// key_static(k, x): getStaticPropertyName of a Property, MethodDefinition or PropertyDefinition, from its key node.
+//   ({ a() {}, "a"() {}, ["a"]() {}, [`a`]: 1 })     all four are "a";   { 0x10: 1 } is "16"
+.decl key_static(k: node, x: symbol)
+key_static(k, x) :- (kind(k, "property_identifier") ; kind(k, "identifier")), text(k, x).
+key_static(k, x) :- (kind(k, "string") ; kind(k, "number")), static_string(k, x).
+key_static(k, x) :- kind(k, "computed_property_name"), child(k, e, _), !not_stmt(e), deparen(e, s),
+    static_string(s, x).
+// static_prop(n, o, x): getStaticPropertyName of a MemberExpression. `a.b` gives "b"; `a["b"]` and `` a[`b`] ``
+// give "b"; `a?.b` too (a ChainExpression in ESTree, still a MemberExpression inside). A number index gives its
+// value: a[1] is "1". A private `a.#b` has no static name. The object is given without its parentheses:
+//   (Object).defineProperty      o is Object
+.decl static_prop(n: node, o: node, x: symbol)
+static_prop(n, o, x) :- kind(n, "member_expression"), field(n, "property", p), kind(p, "property_identifier"),
+    text(p, x), field(n, "object", w), deparen(w, o).
+static_prop(n, o, x) :- kind(n, "subscript_expression"), field(n, "index", i), deparen(i, s), static_string(s, x),
+    field(n, "object", w), deparen(w, o).
+
+// ---- calls ---------------------------------------------------------------------------------------------------------
+// callee(c, f): `(eval)(s)` and `eval?.(s)` have callee eval; `(0, eval)(s)` has a sequence, no identifier.
+// tree-sitter writes `` f`x` `` as a call_expression whose arguments are a template: callee keeps it (ESLint's
+// no-eval and no-alert read a tag as a callee), called does not (ESTree's TaggedTemplateExpression is no call).
+.decl callee(c: node, f: node)
+callee(c, f) :- kind(c, "call_expression"), field(c, "function", f0), deparen(f0, f).
+.decl called(c: node, f: node)
+called(c, f) :- callee(c, f), !tagged(c).
+.decl tagged(c: node)
+tagged(c) :- kind(c, "call_expression"), field(c, "arguments", a), kind(a, "template_string").
+.decl tagged_template(t: node)
+tagged_template(t) :- tagged(c), field(c, "arguments", t).
+// call_arg(c, a, i): `f(a, /* why */ b)` gives a at 0 and b at 1; a is as written, parentheses kept (deparen it).
+// A tagged template has no arguments list.
+.decl call_arg(c: node, a: node, i: number)
+call_arg(c, a, i) :- (kind(c, "call_expression") ; kind(c, "new_expression")), field(c, "arguments", al),
+    kind(al, "arguments"), child(al, a, _), !not_stmt(a), i = count : { child(al, o, _), !not_stmt(o), o < a }.
+.decl call_arg_count(c: node, k: number)
+call_arg_count(c, k) :- (kind(c, "call_expression") ; kind(c, "new_expression")), field(c, "arguments", al),
+    kind(al, "arguments"), k = count : { child(al, o, _), !not_stmt(o) }.
+
+// ---- arrows --------------------------------------------------------------------------------------------------------
+// arrow_op(f, m): where arrow function f's `=>` is, for a finding: the source line it is on (a finding is keyed by
+// its line). The tape keeps no `=>` (the kind implies it): it is in the source before the body, so its line is the
+// body's less the line breaks after it.
+.decl arrow_op(f: node, m: span)
+arrow_op(f, m) :- kind(f, "arrow_function"), field(f, "body", b), structural_before(b, g), match("(?s).*=>.*", g),
+    w = @replace_all(g, "(?s)^.*=>", ""), line(b, lb), l = lb - (strlen(w) - strlen(@replace_all(w, "\\n", ""))), node(d, f, _, _, _),
+    src_line(d, l, m).
+
+// ---- tokens --------------------------------------------------------------------------------------------------------
+// token_text(n, s): `a  /* x */ + b` and `a+b` both give "a + b": comments and spacing drop out, as when ESLint
+// compares two nodes token by token. `[`${0} `]` and `[`${0}`]` differ. Asked only of the nodes in token_text_ask,
+// which the including library or rule fills: tokens are a walk per node, so only compared nodes take it.
+.decl token_text_ask(n: node)
+.decl token_text(n: node, s: symbol)
+// The tape keeps no token its grammar implies, so the pieces are the stored leaves and the source between stored
+// children (spacing taken out), in source order: what the tape leaves out is in that source.
+token_text(n, s) :- token_text_ask(n), s = join x by (p, q) sep " " : { tt_piece(n, p, q, x) }.
+.decl tt_part(n: node, p: node)  // p is n or a node inside it
+tt_part(n, n) :- token_text_ask(n).
+tt_part(n, p) :- token_text_ask(n), within(p, n).
+.decl tt_piece(n: node, p: number, q: number, x: symbol)
+// A stored child with no stored children of its own: an anonymous token, a leaf. Comments drop out.
+tt_piece(n, 2 * st, 0, x) :- tt_part(n, p), token(p, _, x, st, _), !tt_inner(p, st).
+.decl tt_inner(p: node, st: number)  // p's child at st is a comment, or has stored children (it gives their pieces)
+tt_inner(p, st) :- tt_part(_, p), child(p, c, _), node(_, c, _, st, _), (comment(c, _) ; token(c, _, _, _, _)).
+// The source before each stored named child, and after the last one.
+tt_piece(n, 2 * cs - 1, 0, x) :- tt_part(n, p), child(p, c, _), node(_, c, _, cs, _), structural_before(c, g),
+    x = @replace_all(g, "\\s+", ""), x != "".
+tt_piece(n, 2 * ce + 1, 0, x) :- tt_part(n, p), child(p, c, i), !tt_later(p, i), node(_, c, _, _, ce),
+    structural_after(c, g), x = @replace_all(g, "\\s+", ""), x != "".
+.decl tt_later(p: node, i: number)
+tt_later(p, i) :- tt_part(_, p), child(p, _, i), child(p, _, j), j > i.
+
+// ---- this ----------------------------------------------------------------------------------------------------------
+// Arrow functions have no `this` of their own, and a method's computed key is outside the method (fn_region).
+// A class field's value and a static block each have the class's `this`; the program has the top-level one.
+//   function f() { [1].map(x => this.g(x)); }                      this is f's
+//   class A { f = this.x; static { this.y; } m() { () => this.z; } }  the field value's, the block's, m's
+.decl this_frame(r: node)
+this_frame(r) :- this_frame_owner(r, _).
+.decl this_frame_owner(r: node, s: node)
+this_frame_owner(r, f) :- fn_region(f, r), !kind(f, "arrow_function").
+this_frame_owner(v, v) :- (kind(c, "field_definition") ; kind(c, "public_field_definition")), field(c, "value", v).
+this_frame_owner(b, b) :- kind(b, "class_static_block").
+this_frame_owner(p, p) :- kind(p, "program").
+// TypeScript's `function f(this: T)` declares the type of this; that `this` is no use of it.
+.decl this_owner(t: node, s: node)
+this_owner(t, s) :- this_use(t), !this_frame(t), nearest(t, r, this_frame), this_frame_owner(r, s).
+this_owner(t, t) :- this_use(t), this_frame(t).  // `x = this`: the value itself
+.decl this_use(t: node)
+this_use(t) :- kind(t, "super").
+this_use(t) :- kind(t, "this"), !this_annotation(t).
+.decl this_annotation(t: node)  // the `this` of a `this: T` parameter
+this_annotation(t) :- kind(t, "this"), field(p, "pattern", t), (kind(p, "required_parameter") ; kind(p, "optional_parameter")).
+
+// ---- scopes --------------------------------------------------------------------------------------------------------
+// escope_node(s): s opens an eslint-scope scope: a function (its body block is no scope of its own), a block, a for
+// or for-in/of head, a catch clause, a switch body, a class body, a static block (its block is no second scope), a
+// class field's value, the program. The switch scope starts after the discriminant: `switch (x)` reads x outside.
+.decl escope_node(s: node)
+escope_node(n) :- kind(n, k), function_kind(k).
+escope_node(n) :- kind(n, k), (k = "program" ; k = "for_statement" ; k = "for_in_statement" ; k = "catch_clause" ;
+    k = "switch_body" ; k = "class_body" ; k = "class_static_block").
+escope_node(b) :- kind(b, "statement_block"), !escope_body(b).
+escope_node(v) :- (kind(f, "field_definition") ; kind(f, "public_field_definition")), field(f, "value", v).
+.decl escope_body(b: node)  // a function's or static block's own `{ … }`
+escope_body(b) :- field(s, "body", b), kind(s, k), (function_kind(k) ; k = "class_static_block").
+
+// ---- text ----------------------------------------------------------------------------------------------------------
+// upper_first(s, t): ESLint's upperCaseFirst, for ASCII words: "async method" gives "Async method". Core has
+// @lower and no @upper (proposed in NOTES), so the first letter goes through a table.
+.decl upper_first_ask(s: symbol)
+.decl upper_first(s: symbol, t: symbol)
+upper_first(s, cat(u, substr(s, 1, strlen(s) - 1))) :- upper_first_ask(s), upper_letter(substr(s, 0, 1), u).
+upper_first(s, s) :- upper_first_ask(s), !upper_letter(substr(s, 0, 1), _).
+.decl upper_letter(l: symbol, u: symbol)
+upper_letter("a", "A"). upper_letter("b", "B"). upper_letter("c", "C"). upper_letter("d", "D").
+upper_letter("e", "E"). upper_letter("f", "F"). upper_letter("g", "G"). upper_letter("h", "H").
+upper_letter("i", "I"). upper_letter("j", "J"). upper_letter("k", "K"). upper_letter("l", "L").
+upper_letter("m", "M"). upper_letter("n", "N"). upper_letter("o", "O"). upper_letter("p", "P").
+upper_letter("q", "Q"). upper_letter("r", "R"). upper_letter("s", "S"). upper_letter("t", "T").
+upper_letter("u", "U"). upper_letter("v", "V"). upper_letter("w", "W"). upper_letter("x", "X").
+upper_letter("y", "Y"). upper_letter("z", "Z").
+// capital(x): s[0] !== s[0].toLowerCase(), for identifier texts: Foo, Ärger, _x is not.
+.decl capital(x: symbol)
+capital(x) :- kind(n, "identifier"), text(n, x), c = @slice(x, 0, 1), c != @lower(c).
+
+// ---- options -------------------------------------------------------------------------------------------------------
+// limit(o, d, k): ESLint's `{ max: 3 }`, or the bare number form (rerail's `option`), or the default d.
+//   max-params: limit_rule("max", 3), and limit("max", 3, k) gives the configured maximum
+.decl limit(o: symbol, d: number, k: number)
+limit(o, d, k) :- limit_rule(o, d), option(o, v), k = to_number(v).
+limit(o, d, k) :- limit_rule(o, d), !option(o, _), option("option", v), k = to_number(v).
+limit(o, d, d) :- limit_rule(o, d), !option(o, _), !option("option", _).
+.decl limit_rule(o: symbol, d: number)  // the including rule's numeric option and default, as facts

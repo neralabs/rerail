@@ -1,0 +1,19 @@
+.policy "eslint-no-new-wrappers" revision 4
+.description "Don't use new with String, Number or Boolean; it creates wrapper objects that behave unlike primitives."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+#include "tsx/eslint-b-scope.rr"
+//   builtin_ref, constructed
+
+// ESLint's no-new-wrappers: `new` on the global String, Number or Boolean makes an object, not a primitive:
+// `new Boolean(false)` is truthy. Calling them without `new` converts, and is fine.
+//   new String("a")   new Number   → reported
+//   String(1)   function f(Number) { new Number(); }   import String from "./s"; new String(1)   → not
+// No options.
+.violation no_new_wrappers(at: node, fn: symbol) code "no-new-wrappers" "Do not use {fn} as a constructor."
+    suppress eslint "no-new-wrappers"
+    suppress oxlint "no-new-wrappers"
+    suppress biome "lint/style/useConsistentBuiltinInstantiation"
+no_new_wrappers(c, x) :- constructed(c, r), builtin_ref(r, x), (x = "String" ; x = "Number" ; x = "Boolean").

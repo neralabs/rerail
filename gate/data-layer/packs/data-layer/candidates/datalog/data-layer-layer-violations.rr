@@ -1,0 +1,89 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl lv_if(kind: symbol)
+lv_if("if_statement").
+.decl api_impl_doc(d: number, p: symbol)
+.decl child(p: node, c: node, i: number)
+.decl conform_impl_doc(d: number, p: symbol)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
+.decl in_scope(d: number)
+.decl layer_cand(d: number, g: symbol)
+.decl layer_digit(c: symbol, v: number)
+.decl layer_doc(d: number, p: symbol)
+.decl layer_exempt(d: number, v: number)
+.decl layer_from(d: number, g: symbol)
+.decl layer_group(g: symbol)
+.decl layer_mod(d: number, m: node, s: symbol)
+.decl layer_num(g: symbol, v: number)
+.decl layer_seg_cand(d: number, g: symbol)
+.decl layer_to(m: node, g: symbol)
+.decl line(n: node, l: number)
+.decl lv_doc(d: number, p: symbol)
+.decl lv_from_import(d: number, n: node, m: node)
+.decl lv_gate(d: number)
+.decl lv_guarded(n: node)
+.decl lv_impl(n: node)
+.decl lv_import(d: number, n: node, m: node)
+.decl lv_type_checking(a: node)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl option_on(name: symbol)
+.decl out_scope(d: number)
+.decl path_part(d: number, s: symbol)
+.decl source(d: number, sp: node)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, child, field, text, line, syntax_error, node_text, path_part, source
+.output violation
+layer_digit("0", 0).
+layer_digit("1", 1).
+layer_digit("2", 2).
+layer_digit("3", 3).
+layer_digit("4", 4).
+layer_digit("5", 5).
+layer_digit("6", 6).
+layer_digit("7", 7).
+layer_digit("8", 8).
+layer_digit("9", 9).
+option_on("sourceGate").
+in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("conform/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+tape_syntax_error(d) :- syntax_error(d).
+lv_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
+lv_gate(d) :- lv_doc(d, _), option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains("import ", s).
+lv_gate(d) :- lv_doc(d, _), option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains("from ", s).
+lv_gate(d) :- lv_doc(d, _), !option_on("sourceGate"), node(d, _, "module", _, _).
+lv_type_checking(a) :- node(_, a, "if_statement", _, _), field(a, "condition", c), node(_, c, "identifier", _, _), text(c, "TYPE_CHECKING").
+lv_guarded(n) :- lv_type_checking(a), inside(n, a, lv_if).
+lv_from_import(d, n, m) :- lv_gate(d), node(d, n, "import_from_statement", _, _), field(n, "module_name", m), !lv_guarded(n).
+lv_import(d, n, n) :- lv_gate(d), node(d, n, "dotted_name", _, _), child(p, n, _), node(d, p, "import_statement", _, _), !lv_guarded(n).
+lv_import(d, n, m) :- lv_gate(d), node(d, n, "aliased_import", _, _), field(n, "name", m), child(p, n, _), node(d, p, "import_statement", _, _), !lv_guarded(n).
+lv_impl(n) :- field(n, "module_name", c), node_text(c, s), prefix("impl.", s).
+lv_impl(n) :- field(n, "name", c), node_text(c, s), prefix("impl.", s).
+lv_impl(n) :- node(_, n, "dotted_name", _, _), node_text(n, s), prefix("impl.", s).
+layer_doc(d, p) :- lv_doc(d, p), match("(?s)(?:.*/)?(?:api|impl)/.*", p), !match("^(?:.*/)?tests/.*$|^(?:.*/)?l0500_ts_models/.*$|^(?:.*/)?l2070_server_plan/.*$|^(?:.*/)?l3000_schema_builder/.*$|^(?:.*/)?l7200_versioned_transactions/(?:.*/)?versioned_lazy_mixin\\.py$|^(?:.*/)?l7200_versioned_transactions/(?:.*/)?versioned_transactions\\.py$|^(?:.*/)?l7200_versioned_transactions/(?:.*/)?plan_revision_history_query\\.py$", p).
+layer_group(g) :- layer_cand(_, g).
+layer_group(g) :- layer_seg_cand(_, g).
+layer_num(g, v) :- layer_group(g), c1 = @substr(g, 0, 1), c2 = @substr(g, 1, 1), c3 = @substr(g, 2, 1), c4 = @substr(g, 3, 1), layer_digit(c1, a), layer_digit(c2, b), layer_digit(c3, c), layer_digit(c4, e), v = @add(@add(@add(@mul(a, 1000), @mul(b, 100)), @mul(c, 10)), e).
+layer_seg_cand(d, g) :- layer_doc(d, _), lv_gate(d), path_part(d, s), match("l[0-9]{4}_.*", s), g = @substr(s, 1, 4).
+layer_from(d, g) :- layer_seg_cand(d, g), layer_doc(d, p), x = @concat(@concat("(?s)(?:(?:[^l/][^/]*|l(?:[^0-9/][^/]*|[0-9](?:[^0-9/][^/]*|[0-9](?:[^0-9/][^/]*|[0-9](?:[^0-9/][^/]*|[0-9](?:[^_/][^/]*)?)?)?)?)?)?/)*l", g), "_.*"), match(x, p).
+layer_cand(d, g) :- layer_from(d, _), source(d, sp), match_group("l(?P<v>[0-9]{4})_", sp, _, "v", gsp), text(gsp, g).
+layer_mod(d, m, s) :- lv_from_import(d, _, m), layer_from(d, _), node_text(m, s), match("(?s).*\\.l[0-9]{4}_.*", s).
+layer_mod(d, m, s) :- lv_import(d, _, m), layer_from(d, _), node_text(m, s), match("(?s).*\\.l[0-9]{4}_.*", s).
+layer_to(m, g) :- layer_mod(d, m, s), layer_cand(d, g), x = @concat(@concat("(?s)(?:[^.]|(?:\\.(?:l[0-9]{0,4})?)*\\.(?:[^l.]|l(?:[^0-9.]|[0-9](?:[^0-9.]|[0-9](?:[^0-9.]|[0-9](?:[^0-9.]|[0-9][^_.]))))))*(?:\\.(?:l[0-9]{0,4})?)*\\.l", g), "_.*"), match(x, s).
+layer_exempt(d, 2200) :- layer_doc(d, p), match("(?s)(?:.*/)?l2100_sql_grammar/.*", p).
+violation("data-layer-layer-violations", "layer-0", "layer_dependency", p, l) :- layer_doc(d, p), lv_from_import(d, n, m), layer_from(d, gf), layer_to(m, gt), layer_num(gf, f), layer_num(gt, t), f < t, !layer_exempt(d, t), line(n, l).
+violation("data-layer-layer-violations", "layer-1", "layer_dependency", p, l) :- layer_doc(d, p), lv_import(d, n, m), layer_from(d, gf), layer_to(m, gt), layer_num(gf, f), layer_num(gt, t), f < t, !layer_exempt(d, t), line(n, l).
+api_impl_doc(d, p) :- lv_doc(d, p), match("^(?:.*/)?api/(?:.*/)?[^/]*\\.py$", p), !match("^(?:.*/)?__init__\\.py$|^(?:.*/)?l9900_ts_models/.*$|^(?:.*/)?api/(?:.*/)?tests/.*$|^(?:.*/)?l8000_admin/(?:.*/)?tools/.*$|^(?:.*/)?l2000_connection/(?:.*/)?connection_factory\\.py$|^(?:.*/)?l4200_event_pipeline/(?:.*/)?bridges/.*$|^(?:.*/)?l3200_metadata/.*$|^(?:.*/)?l1500_llm/(?:.*/)?__init__\\.py$|^(?:.*/)?l1400_config/(?:.*/)?bootstrap\\.py$|^(?:.*/)?l8100_ops_analytics/(?:.*/)?cache_integration\\.py$|^(?:.*/)?l1450_keys/(?:.*/)?cli\\.py$|^(?:.*/)?l2000_connection/(?:.*/)?connection\\.py$|^(?:.*/)?l8100_ops_analytics/(?:.*/)?connection\\.py$|^(?:.*/)?l2090_response/(?:.*/)?cursor_pagination\\.py$|^(?:.*/)?l7250_versioned_operations/(?:.*/)?diff_types\\.py$|^(?:.*/)?l5000_subscriptions/(?:.*/)?dispatcher\\.py$|^(?:.*/)?_internal/(?:.*/)?dynamic_import\\.py$|^(?:.*/)?l5200_vector_index/(?:.*/)?embedding_auto_queue\\.py$|^(?:.*/)?l5200_vector_index/(?:.*/)?embedding_metadata\\.py$|^(?:.*/)?l5200_vector_index/(?:.*/)?embedding_worker\\.py$|^(?:.*/)?l9800_rippling/(?:.*/)?enqueue\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?executor\\.py$|^(?:.*/)?l3500_bulk_ops/(?:.*/)?export_cursor\\.py$|^(?:.*/)?l1450_keys/(?:.*/)?factory\\.py$|^(?:.*/)?l5100_fts/(?:.*/)?fts_search_manager\\.py$|^(?:.*/)?l5200_vector_index/(?:.*/)?index_manager\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?intent_diff_bytes\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?intent_embedding\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?intent_fts_search\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?intent_infrastructure\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?intent_query_extended\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?lazy_runtime\\.py$|^(?:.*/)?l6000_log_table/(?:.*/)?log_table\\.py$|^(?:.*/)?logged_table\\.py$|^(?:.*/)?l7800_versioned_merge/(?:.*/)?merge\\.py$|^(?:.*/)?l4000_permissions/(?:.*/)?ownership_scheme\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?permission_filter\\.py$|^(?:.*/)?index_implementations/(?:.*/)?pgvector\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?plan_helpers\\.py$|^(?:.*/)?l2060_query_builder/(?:.*/)?plan_query_builder\\.py$|^(?:.*/)?l7200_versioned_transactions/(?:.*/)?plan_revision_history_query\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?plan_runtime\\.py$|^(?:.*/)?l9800_rippling/(?:.*/)?processor\\.py$|^(?:.*/)?l2060_query_builder/(?:.*/)?query_spec\\.py$|^(?:.*/)?l4100_queue/(?:.*/)?queue_definition\\.py$|^(?:.*/)?l4000_permissions/(?:.*/)?rbac_models\\.py$|^(?:.*/)?l7900_versioned_rebase/(?:.*/)?rebase\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?resolve_branch_steps\\.py$|^(?:.*/)?l1000_schema/(?:.*/)?schema_def\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?server_query_builder\\.py$|^(?:.*/)?l4400_scheduler/(?:.*/)?service\\.py$|^(?:.*/)?l6000_log_table/(?:.*/)?sparse_change\\.py$|^(?:.*/)?l9700_graph_query/(?:.*/)?sql_graph_runtime\\.py$|^(?:.*/)?l2060_query_builder/(?:.*/)?sql_query_spec\\.py$|^(?:.*/)?l5000_subscriptions/(?:.*/)?subscription\\.py$|^(?:.*/)?testing\\.py$|^(?:.*/)?l2050_transaction/(?:.*/)?transaction\\.py$|^(?:.*/)?l9800_rippling/(?:.*/)?trigger_builder\\.py$|^(?:.*/)?l4100_queue/(?:.*/)?triggers\\.py$|^(?:.*/)?l4000_permissions/(?:.*/)?validation\\.py$|^(?:.*/)?l4100_queue/(?:.*/)?validation\\.py$|^(?:.*/)?l7000_versioned_schema/(?:.*/)?versioned_connection\\.py$|^(?:.*/)?l7250_versioned_operations/(?:.*/)?versioned_operations\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?versioned_select_steps\\.py$|^(?:.*/)?l7200_versioned_transactions/(?:.*/)?versioned_transactions\\.py$", p).
+violation("data-layer-layer-violations", "api_impl-0", "api_impl", p, l) :- api_impl_doc(d, p), lv_from_import(d, n, _), lv_impl(n), line(n, l).
+violation("data-layer-layer-violations", "api_impl-1", "api_impl", p, l) :- api_impl_doc(d, p), lv_import(d, n, _), lv_impl(n), line(n, l).
+conform_impl_doc(d, p) :- lv_doc(d, p), match("^(?:.*/)?conform/(?:.*/)?[^/]*\\.py$", p), !match("^(?:.*/)?conftest\\.py$|^(?:.*/)?bench_all_backends\\.py$|^(?:.*/)?test_bugbot_regressions\\.py$|^(?:.*/)?test_bulk_loader\\.py$|^(?:.*/)?test_config\\.py$|^(?:.*/)?test_cross_backend_import\\.py$|^(?:.*/)?test_export_import\\.py$|^(?:.*/)?test_fts_basic\\.py$|^(?:.*/)?test_fts_pagination\\.py$|^(?:.*/)?test_fts_validation\\.py$|^(?:.*/)?test_incremental_export_import\\.py$|^(?:.*/)?test_log_model_registry\\.py$|^(?:.*/)?test_log_table_export_import\\.py$|^(?:.*/)?test_materialization\\.py$|^(?:.*/)?test_materialization_jobs\\.py$|^(?:.*/)?test_migration_ddl_bugs_round2\\.py$|^(?:.*/)?test_neo4j_validation\\.py$|^(?:.*/)?test_object_history\\.py$|^(?:.*/)?test_permission_audit\\.py$|^(?:.*/)?test_permission_cache\\.py$|^(?:.*/)?test_permission_column_filter\\.py$|^(?:.*/)?test_permission_events\\.py$|^(?:.*/)?test_permission_evolution\\.py$|^(?:.*/)?test_permission_introspection\\.py$|^(?:.*/)?test_permission_noop\\.py$|^(?:.*/)?test_permission_ownership\\.py$|^(?:.*/)?test_permission_pagination\\.py$|^(?:.*/)?test_permission_row_filter\\.py$|^(?:.*/)?test_permission_share\\.py$|^(?:.*/)?test_permission_validation\\.py$|^(?:.*/)?test_pgvector_e2e\\.py$|^(?:.*/)?test_pgvector_low_level\\.py$|^(?:.*/)?test_pgvector_migrations\\.py$|^(?:.*/)?test_pgvector_stress\\.py$|^(?:.*/)?test_pgvector_vs_hnsw_comparison\\.py$|^(?:.*/)?test_polymorphic_inheritance\\.py$|^(?:.*/)?test_rbac_audit_integration\\.py$|^(?:.*/)?test_rbac_foreign_keys\\.py$|^(?:.*/)?test_rbac_integration\\.py$|^(?:.*/)?test_rbac_polymorphic\\.py$|^(?:.*/)?test_rbac_provider\\.py$|^(?:.*/)?test_rbac_schema\\.py$|^(?:.*/)?test_schema_drift_e2e\\.py$|^(?:.*/)?test_security_regression\\.py$|^(?:.*/)?test_sparse_backend_incremental\\.py$|^(?:.*/)?test_sql_roundtrip_efficiency\\.py$|^(?:.*/)?test_uuid_introspection\\.py$|^(?:.*/)?test_uuid_validation\\.py$|^(?:.*/)?test_vector_query_analysis\\.py$|^(?:.*/)?test_versioned_operations\\.py$", p).
+violation("data-layer-layer-violations", "conform_impl-0", "conform_impl", p, l) :- conform_impl_doc(d, p), lv_from_import(d, n, _), lv_impl(n), line(n, l).
+violation("data-layer-layer-violations", "conform_impl-1", "conform_impl", p, l) :- conform_impl_doc(d, p), lv_import(d, n, _), lv_impl(n), line(n, l).

@@ -31,7 +31,7 @@ pub(in crate::code_rule_dsl) struct CaptureAnalysis {
 impl CaptureAnalysis {
     /// Names a matcher may bind into the environment it runs in. `not` and `count` keep what they
     /// bind to themselves; a stop rule runs in an environment of its own. A count's own value
-    /// (`as`) is not among them: no other term reads it (`counts`).
+    /// (`as`) is bound as text; the captures of its counted rule remain local.
     pub(in crate::code_rule_dsl) fn binds(&mut self, matcher: &AstMatcher) -> Names {
         let mut names = Names::new();
         collect_binds(matcher, &mut self.binds, &mut names);
@@ -61,7 +61,7 @@ impl CaptureAnalysis {
 
     /// The names counts bind their values under (`as`) in the environment a matcher runs in: not
     /// under `not` or inside a count (a probe each), in a stop rule (a fresh environment), or in a
-    /// call's frame. Only a finding's message reads them.
+    /// call's frame. Messages and source-text comparisons read them.
     pub(in crate::code_rule_dsl) fn counts(&mut self, matcher: &AstMatcher) -> Names {
         let mut names = Names::new();
         collect_counts(matcher, &mut self.counts, &mut names);
@@ -115,7 +115,7 @@ fn collect_counts(
         AstMatcher::Constrained(core) => collect_counts(&core.rule, summaries, names),
         // Semantic sub-rules are not followed: a count there is not one a message may name.
         AstMatcher::Pattern(_)
-        | AstMatcher::Kind(_)
+        | AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Not(_)
         | AstMatcher::Compare(_)
@@ -160,17 +160,19 @@ fn collect_binds(
             names.extend(call.outward(inner).into_iter().map(str::to_owned));
         }
         AstMatcher::Semantic(semantic) => semantic::collect_binds(semantic, summaries, names),
+        AstMatcher::Count(count) => {
+            names.extend(count.binding.iter().map(|binding| binding.name.clone()))
+        }
         AstMatcher::Constrained(core) => {
             collect_binds(&core.rule, summaries, names);
             for (_, constraint) in &core.constraints {
                 collect_binds(constraint, summaries, names);
             }
         }
-        AstMatcher::Kind(_)
+        AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Not(_)
         | AstMatcher::Compare(_)
-        | AstMatcher::Count(_)
         | AstMatcher::Never => {}
         #[cfg(test)]
         AstMatcher::TestUnknown(_) => {}
@@ -252,7 +254,11 @@ fn binds_and_reads(
             .map(|rule| binds_and_reads(rule, binds, reads))
             .unwrap_or_default(),
         AstMatcher::Count(count) => (
-            Names::new(),
+            count
+                .binding
+                .iter()
+                .map(|binding| binding.name.clone())
+                .collect(),
             binds_and_reads(&count.relation, binds, reads).1,
         ),
         AstMatcher::Util(util) => (
@@ -284,7 +290,7 @@ fn binds_and_reads(
             read.retain(|name| !bound.contains(name));
             (bound, read)
         }
-        AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Never => {
+        AstMatcher::Kind(_) | AstMatcher::Supertype(_) | AstMatcher::Regex(_) | AstMatcher::Never => {
             (Names::new(), Names::new())
         }
         #[cfg(test)]
@@ -373,7 +379,7 @@ fn collect_mentions(
                 collect_mentions(constraint, summaries, names);
             }
         }
-        AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Never => {}
+        AstMatcher::Kind(_) | AstMatcher::Supertype(_) | AstMatcher::Regex(_) | AstMatcher::Never => {}
         #[cfg(test)]
         AstMatcher::TestUnknown(_) => {}
     }
@@ -428,7 +434,7 @@ fn collect_in(
     match matcher {
         AstMatcher::Pattern(pattern) => pattern_variables(&pattern.node, variables),
         // Comparisons and counts bind nothing; counts are not upstream's.
-        AstMatcher::Kind(_)
+        AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Never
         | AstMatcher::Compare(_)

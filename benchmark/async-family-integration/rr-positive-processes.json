@@ -1,0 +1,21 @@
+[
+  {
+    "name": "rr-positive",
+    "command": [
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-4f1d47ecdb5c7ca6",
+      "authored_rr_batched_positive_documents_preserve_all_four_labels",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 0.7184178829193115,
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/results/tape-cache.sqlite",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_RR_POSITIVE_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/results/rr-positive.json"
+    }
+  }
+]

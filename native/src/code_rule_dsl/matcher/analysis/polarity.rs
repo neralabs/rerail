@@ -109,7 +109,7 @@ fn walk(matcher: &AstMatcher, negated: bool, seen: &mut BTreeSet<usize>, out: &m
         }
         AstMatcher::Semantic(Semantic::ImportTarget(_)) => out.import_target = true,
         AstMatcher::Pattern(_)
-        | AstMatcher::Kind(_)
+        | AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Compare(_)
         | AstMatcher::Semantic(Semantic::Resolves(_))
@@ -117,6 +117,8 @@ fn walk(matcher: &AstMatcher, negated: bool, seen: &mut BTreeSet<usize>, out: &m
         | AstMatcher::Semantic(Semantic::Arguments(_))
         | AstMatcher::Semantic(Semantic::Capture(_))
         | AstMatcher::Semantic(Semantic::Layout(_))
+        | AstMatcher::Semantic(Semantic::FilePath(_))
+        | AstMatcher::Semantic(Semantic::Gap(_))
         | AstMatcher::Never => {}
         #[cfg(test)]
         AstMatcher::TestUnknown(_) => {}

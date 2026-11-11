@@ -1,0 +1,37 @@
+.policy "eslint-default-case" revision 5
+.description "Add a default case to every switch, or a trailing \"no default\" comment when omitting it is deliberate."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+// ESLint's default-case: a switch with cases but no `default:` is reported, unless the last comment after its
+// last case matches `commentPattern` (default /^no default$/i, tested on the trimmed comment text).
+//   switch (a) { case 1: f(); }                     → reported
+//   switch (a) { case 1: f(); // no default         not reported
+//   }
+// An empty `switch (a) {}` is not checked.
+.violation default_case(at: node) code "default-case"
+    "Add a default case to this switch, or a `// no default` comment if leaving it out is deliberate."
+    suppress eslint "default-case"
+    suppress oxlint "default-case"
+    suppress biome "lint/style/useDefaultSwitchClause"
+#include "tsx/statements.rr"
+default_case(s) :- kind(s, "switch_statement"), field(s, "body", b), child(b, c, _), kind(c, "switch_case"),
+    count : { child(b, x, _), kind(x, "switch_default") } = 0, !excused(b).
+
+// excused(b): the last comment after the last case is a "no default" note. It is the comment that the body's
+// closing `}` follows directly (comments are not tokens), with no later comment.
+.decl excused(b: node)
+excused(b) :- last_comment(b, c), comment(c, v), note(@replace_all(v, "^\\s+|\\s+$", "")).
+.decl last_comment(b: node, c: node)
+// The code after c is the body's `}` (the tape keeps none: it is in the source after the case c ends), and no
+// comment of b comes later.
+last_comment(b, c) :- kind(b, "switch_body"), within(c, b), is_comment(c), after_stop(c, a, g), child(b, a, _),
+    match("\\s*\\}\\s*", g), count : { within(o, b), is_comment(o), earlier(c, o) } = 0.
+layout_at(c) :- kind(b, "switch_body"), within(c, b), is_comment(c).
+// note(v): the trimmed text matches the pattern. ESLint's test is a search, so `.*` goes round it.
+.decl note(v: symbol)
+note(v) :- comment(_, w), v = @replace_all(w, "^\\s+|\\s+$", ""), !option("commentPattern", _),
+    match("(?i)no default", v).
+note(v) :- comment(_, w), v = @replace_all(w, "^\\s+|\\s+$", ""), option("commentPattern", p),
+    match(cat("[\\s\\S]*(?:", cat(p, ")[\\s\\S]*")), v).

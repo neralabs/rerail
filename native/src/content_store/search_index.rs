@@ -1,14 +1,14 @@
 //! Query-independent tape search index: publication, backlog cursor, and kind presence.
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use super::SEARCH_INDEX_FAMILY_WRITES;
 use super::{
     CODEC_ZSTD, ContentStore, HashKey, MAX_PUBLICATION_BATCH, SearchKindLookup, StoreError,
     StoreResult, StoredKindPresence, TapeId, TapeSearchIndex, UnindexedTape,
 };
 use rusqlite::{TransactionBehavior, params};
-use std::io::Cursor;
-#[cfg(test)]
+use std::collections::{BTreeMap, BTreeSet};
+#[cfg(any(test, feature = "test-hooks"))]
 use std::sync::atomic::Ordering;
 
 /// The maintenance backlog: stored tapes of one grammar version and tape format after a keyset
@@ -26,11 +26,25 @@ pub(super) const TAPES_WITHOUT_SEARCH_INDEX_SQL: &str = "SELECT t.tape_id, t.gra
      AND NOT EXISTS (SELECT 1 FROM search_index_sets x WHERE x.tape_id = t.tape_id) \
      ORDER BY t.tape_id LIMIT ?4";
 
+fn order_kind_tokens(tokens: &[String], frequencies: &BTreeMap<String, i64>) -> Vec<String> {
+    let mut tokens = tokens.to_vec();
+    tokens.sort_unstable_by(|left, right| {
+        frequencies
+            .get(left)
+            .copied()
+            .unwrap_or(i64::MAX)
+            .cmp(&frequencies.get(right).copied().unwrap_or(i64::MAX))
+            .then_with(|| left.cmp(right))
+    });
+    tokens.dedup();
+    tokens
+}
+
 impl ContentStore {
     /// Take `tapes`, which this build can never decode into a search index, out of the maintenance
     /// backlog: each gets an incomplete search-index set, which presence lookups answer as
     /// `Unknown`, so the tape is never narrowed. A tape that already has a set keeps it.
-    pub(crate) fn put_unavailable_search_indexes(
+    pub fn put_unavailable_search_indexes(
         &self,
         tapes: &[TapeId],
         index_version: i64,
@@ -45,7 +59,7 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         // The schema requires a positive node count; nothing reads the count of an incomplete set.
         let mut put_set = transaction.prepare_cached(
             "INSERT INTO search_index_sets(tape_id,index_version,node_count,complete,has_errors) \
@@ -55,14 +69,14 @@ impl ContentStore {
             put_set.execute(params![tape.0, index_version])?;
         }
         drop(put_set);
-        transaction.commit()?;
+        self.commit(transaction)?;
         Ok(())
     }
 
     /// Publish one query-independent FTS document per immutable tape. The kind stream contains one
     /// token per preorder node. All string construction and validation finish before the short
     /// write transaction starts.
-    pub(crate) fn put_search_indexes_bulk(&self, indexes: &[TapeSearchIndex]) -> StoreResult<()> {
+    pub fn put_search_indexes_bulk(&self, indexes: &[TapeSearchIndex]) -> StoreResult<()> {
         if indexes.len() > MAX_PUBLICATION_BATCH {
             return Err(StoreError::Invalid(
                 "search-index publication exceeds 64 tapes".to_owned(),
@@ -89,7 +103,7 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let mut remove_kind =
             transaction.prepare_cached("DELETE FROM search_kind_fts WHERE rowid=?1")?;
         let mut put_kind =
@@ -105,7 +119,7 @@ impl ContentStore {
             // idempotent without a point lookup or stale FTS segments.
             remove_kind.execute([index.tape_id.0])?;
             put_kind.execute(params![index.tape_id.0, index.kind_tokens])?;
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             SEARCH_INDEX_FAMILY_WRITES.fetch_add(1, Ordering::Relaxed);
             put_set.execute(params![
                 index.tape_id.0,
@@ -115,7 +129,7 @@ impl ContentStore {
             ])?;
         }
         drop((remove_kind, put_kind, put_set));
-        transaction.commit()?;
+        self.commit(transaction)?;
         Ok(())
     }
 
@@ -123,7 +137,7 @@ impl ContentStore {
     /// without a search index: tape id, grammar id, source text and decoded tape image. The caller
     /// retains the keyset cursor across maintenance wakes, so each batch seeks past already-indexed
     /// tapes.
-    pub(crate) fn tapes_without_search_index_after(
+    pub fn tapes_without_search_index_after(
         &self,
         grammar_version: i64,
         tape_format_version: i64,
@@ -172,13 +186,13 @@ impl ContentStore {
                 )?
                 .collect::<Result<Vec<_>, _>>()?
         };
-        let decode = |(codec, length, frame, hash): Frame| -> StoreResult<Vec<u8>> {
+        // A source is checked against its hash; its tape against its identity (`HashKey::tape_identity`).
+        let decode = |(codec, length, frame, hash): Frame, identity: &dyn Fn(&[u8]) -> HashKey| -> StoreResult<Vec<u8>> {
             if codec != CODEC_ZSTD {
                 return Err(StoreError::Corrupt("unsupported object codec".to_owned()));
             }
-            let bytes = zstd::stream::decode_all(Cursor::new(frame))?;
-            if usize::try_from(length).ok() != Some(bytes.len()) || HashKey::sha256(&bytes) != hash
-            {
+            let bytes = super::decompress(&frame, 0)?;
+            if usize::try_from(length).ok() != Some(bytes.len()) || identity(&bytes) != hash {
                 return Err(StoreError::Corrupt(
                     "object length or hash does not match metadata".to_owned(),
                 ));
@@ -187,11 +201,12 @@ impl ContentStore {
         };
         rows.into_iter()
             .map(|(tape, grammar, source, image)| {
+                let source_hash = source.3;
                 Ok(UnindexedTape {
                     tape,
                     grammar,
-                    source: decode(source)?,
-                    image: decode(image)?,
+                    source: decode(source, &|bytes| HashKey::sha256(bytes))?,
+                    image: decode(image, &|bytes| HashKey::tape_identity(source_hash, bytes))?,
                 })
             })
             .collect()
@@ -199,10 +214,30 @@ impl ContentStore {
 
     /// Returns whether each complete, error-free stored tape contains any requested root kind.
     /// Missing, stale, malformed, and syntax-error index rows remain non-negative answers.
-    pub(crate) fn get_search_kind_presence_bulk(
+    pub fn get_search_kind_presence_bulk(
         &self,
         lookups: &[SearchKindLookup],
     ) -> StoreResult<Vec<StoredKindPresence>> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("content store mutex poisoned");
+        let tokens = lookups
+            .iter()
+            .flat_map(|lookup| lookup.kind_tokens.iter().cloned())
+            .collect::<BTreeSet<_>>();
+        let tokens = serde_json::to_string(&tokens)
+            .map_err(|error| StoreError::Invalid(error.to_string()))?;
+        let mut frequency_statement = connection.prepare_cached(
+            "SELECT term, cnt FROM search_kind_vocab \
+             WHERE term IN (SELECT CAST(value AS TEXT) FROM json_each(?1))",
+        )?;
+        let frequencies = frequency_statement
+            .query_map([tokens], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        drop(frequency_statement);
         let requests = lookups
             .iter()
             .enumerate()
@@ -211,16 +246,12 @@ impl ContentStore {
                     position,
                     lookup.tape_id.0,
                     lookup.index_version,
-                    lookup.kind_tokens.join(" OR ")
+                    order_kind_tokens(&lookup.kind_tokens, &frequencies).join(" OR ")
                 ])
             })
             .collect::<Vec<_>>();
         let requests = serde_json::to_string(&requests)
             .map_err(|error| StoreError::Invalid(error.to_string()))?;
-        let connection = self
-            .connection
-            .lock()
-            .expect("content store mutex poisoned");
         let mut statement = connection.prepare_cached(
             "WITH requested AS MATERIALIZED (SELECT CAST(json_extract(value,'$[0]') AS INTEGER) position, \
                CAST(json_extract(value,'$[1]') AS INTEGER) tape_id, \
@@ -254,5 +285,27 @@ impl ContentStore {
             };
         }
         Ok(selections)
+    }
+}
+
+#[cfg(test)]
+mod planning_tests {
+    use super::order_kind_tokens;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn kind_search_planning_uses_stored_frequency_then_stable_token_order() {
+        let frequencies = BTreeMap::from([
+            ("k0001".to_owned(), 90_i64),
+            ("k0002".to_owned(), 3_i64),
+            ("k0003".to_owned(), 3_i64),
+        ]);
+        assert_eq!(
+            order_kind_tokens(
+                &["k0001".to_owned(), "k0003".to_owned(), "k0002".to_owned()],
+                &frequencies,
+            ),
+            ["k0002", "k0003", "k0001"]
+        );
     }
 }

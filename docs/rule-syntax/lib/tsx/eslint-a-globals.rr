@@ -1,0 +1,181 @@
+// tsx/eslint-a-globals: built-in globals, the global object and `this`, as ESLint's core rules see them through
+// eslint-scope. For no-alert, no-console, no-eval, no-implied-eval and no-extend-native.
+//
+// What a rule gets from this library:
+//   es_builtin(x)          x is an ECMAScript global (ESLint's ECMASCRIPT_GLOBALS): Array, eval, globalThis, …
+//   global_var(d, x)       document d's global scope has a variable x: a built-in, an environment global
+//                          (es_global) or a `/* global x */` comment
+//   free_ref(r, x)         r names x and nothing in the file declares it: not shadowed, in ESLint's words
+//   global_ref_to(r, x)    r is a reference to the global variable x (free and declared global, or bound to a
+//                          script's top-level `var x`, which is the same variable)
+//   global_object_ref(o, x) o is the global object under the name x: window, global, globalThis, or a chain
+//                          of the same name (window.window), where x is a global variable
+//   default_this(f)        function f's `this` is the default binding when it runs (isDefaultThisBinding)
+//   global_this(t)         `this` t is the global object: at the top of a script, or in a sloppy function
+//                          called with the default binding
+//   in_global_scope(n)     n is directly in a script's global scope: no function, block or class around it
+//   null_or_undefined(a)   a is `null`, `undefined` or `void x` (ESLint's isNullOrUndefined)
+//
+// eslint-scope semantics used here. A name no declaration binds goes "through" every scope to the global scope.
+// There it resolves to a global variable when the environment declares one (ECMAScript's built-ins always; the
+// browser's window or Node's global only with those environments, or a `/* global */` comment), and stays
+// unresolved otherwise. Rules differ in what they ask:
+//   no-alert:        `alert(x)` is reported unless something declares alert (free_ref)
+//   no-implied-eval: `setTimeout("x")` only when setTimeout is a global variable (global_ref_to)
+// A module's or CommonJS file's top level is its own scope below the global one, so `const eval = f` at the top of a
+// module shadows the global; in a script, `var eval` at the top *is* the global variable.
+//
+// Builds on tsx/eslint-a-common (deparen, estree_parent, static_prop, call_arg, call_arg_count, this_owner,
+// capital; also used by the rules), tsx/modules (program, source_type, strict_scope, function_kind) and tsx/names
+// (ref, ref_site, decl_site, directive_global, es_global).
+#include "tsx/eslint-a-common.rr"
+
+// ---- globals -------------------------------------------------------------------------------------------------------
+// es_builtin: the `globals` package's es2026 set, which ESLint 9.39 ships as ECMASCRIPT_GLOBALS, plus the four
+// names ESLint 10.11 (the recorded tool) adds: AsyncDisposableStack, DisposableStack, SuppressedError, Temporal.
+// A fact table, not a list in a rule: no-extend-native reads the capitalised ones, no-eval reads eval and
+// globalThis. The engine's es_global has these too; rrlab has no es_global rows, so they are written out here.
+.decl es_builtin(x: symbol)
+es_builtin("AggregateError"). es_builtin("Array"). es_builtin("ArrayBuffer"). es_builtin("Atomics").
+es_builtin("AsyncDisposableStack"). es_builtin("BigInt"). es_builtin("BigInt64Array").
+es_builtin("BigUint64Array"). es_builtin("Boolean"). es_builtin("DataView"). es_builtin("Date").
+es_builtin("decodeURI"). es_builtin("decodeURIComponent"). es_builtin("DisposableStack").
+es_builtin("encodeURI"). es_builtin("encodeURIComponent"). es_builtin("Error"). es_builtin("escape").
+es_builtin("eval"). es_builtin("EvalError"). es_builtin("FinalizationRegistry"). es_builtin("Float16Array").
+es_builtin("Float32Array"). es_builtin("Float64Array"). es_builtin("Function"). es_builtin("globalThis").
+es_builtin("Infinity"). es_builtin("Int16Array"). es_builtin("Int32Array"). es_builtin("Int8Array").
+es_builtin("Intl"). es_builtin("isFinite"). es_builtin("isNaN"). es_builtin("Iterator"). es_builtin("JSON").
+es_builtin("Map"). es_builtin("Math"). es_builtin("NaN"). es_builtin("Number"). es_builtin("Object").
+es_builtin("parseFloat"). es_builtin("parseInt"). es_builtin("Promise"). es_builtin("Proxy").
+es_builtin("RangeError"). es_builtin("ReferenceError"). es_builtin("Reflect"). es_builtin("RegExp").
+es_builtin("Set"). es_builtin("SharedArrayBuffer"). es_builtin("String"). es_builtin("SuppressedError").
+es_builtin("Symbol"). es_builtin("SyntaxError"). es_builtin("Temporal"). es_builtin("TypeError").
+es_builtin("Uint16Array"). es_builtin("Uint32Array"). es_builtin("Uint8Array"). es_builtin("Uint8ClampedArray").
+es_builtin("undefined"). es_builtin("unescape"). es_builtin("URIError"). es_builtin("WeakMap").
+es_builtin("WeakRef"). es_builtin("WeakSet").
+
+.decl global_var(d: number, x: symbol)
+global_var(d, x) :- program(d, _), es_builtin(x).
+global_var(d, x) :- program(d, _), es_global(x).
+global_var(d, x) :- directive_global(d, x).
+// ESLint gives a CommonJS file four more globals of its own (conf/globals.js).
+global_var(d, x) :- source_type(d, "commonjs"), (x = "exports" ; x = "global" ; x = "module" ; x = "require").
+
+// free_ref(r, x): `alert(1)` with no `alert` declared anywhere in scope. A shorthand `{ eval }` reads eval too.
+.decl free_ref(r: node, x: symbol)
+free_ref(r, x) :- ref(r, x, "value"), !ref_site(r, _).
+// global_ref_to(r, x): `eval` in `var f = eval;` (eval is a built-in), and in a script after `var eval = g;`.
+.decl global_ref_to(r: node, x: symbol)
+global_ref_to(r, x) :- free_ref(r, x), docof(r, d), global_var(d, x).
+global_ref_to(r, x) :- ref_site(r, s), script_global(s, x).
+// script_global(s, x): s declares x with var or function at the top of a script: a property of the global object.
+.decl script_global(s: node, x: symbol)
+script_global(s, x) :- decl_site(p, x, s, f, "value"), (f = "var" ; f = "function"), program(d, p),
+    source_type(d, "script").
+
+// ---- expressions ---------------------------------------------------------------------------------------------------
+// global_object_ref(o, x): `window.eval`, `window.window.eval`, `globalThis.eval`: o is the object eval is read from.
+// ESLint follows the references of the global variables global, window and globalThis, so window needs the
+// browser environment (or `/* global window */`), while globalThis is a built-in.
+.decl global_object_ref(o: node, x: symbol)
+global_object_ref(o, x) :- window_name(x), global_ref_to(o, x).
+global_object_ref(m, x) :- global_object_ref(o, x), static_prop(m, o, x).
+.decl window_name(x: symbol)
+window_name("global"). window_name("window"). window_name("globalThis").
+
+// ---- this ----------------------------------------------------------------------------------------------------------
+// common's this_owner(t, s) gives the frame whose `this` t has: a function, a field value, a static block, the program.
+// global_this(t): `this.eval(s)` at the top of a script (strict or not: the top level's this is the global
+// object), or in `function f() { this.eval(s); }` in sloppy code when f is called plainly. In a module the
+// top-level this is undefined. A class's `extends` clause is strict code, as its body is.
+.decl global_this(t: node)
+global_this(t) :- this_owner(t, p), program(d, p), top_this_global(d).
+global_this(t) :- this_owner(t, f), kind(f, k), function_kind(k), !strict_scope(f), !inside(f, _, "class_heritage"),
+    default_this(f).
+// top_this_global(d): ESLint's isTopLevelOfScript: any file that is not a module, unless the parser's globalReturn
+// is set. A CommonJS file counts, though Node runs it with this = module.exports.
+.decl top_this_global(d: number)
+top_this_global(d) :- source_type(d, t), t != "module", !option("globalReturn", "true").
+
+// default_this(f): ESLint's isDefaultThisBinding, with capIsConstructor. f's this is the default binding unless
+//   f declares `this: T` as a parameter, or is named with a capital (an ES5 constructor), or has a @this comment;
+//   f is a method, a property's value or a class field's value:      { m: function () {} }
+//   f is assigned to a member, or anonymous and assigned to a capitalised name:  o.m = function () {};
+//   f is bound:  f.call(o), f.apply(o), f.bind(o)  (a first argument that is not null or undefined);
+//   f is passed with a this argument:  xs.map(f, o), Array.from(xs, f, o), Reflect.apply(f, o, args).
+// Between f and that context ESLint looks through &&, ||, ??, ?:, a return from a function that is called
+// right away, and an arrow called right away: `(() => function () {})()`, `a || function () {}`.
+.decl default_this(f: node)
+default_this(f) :- kind(f, k), function_kind(k), k != "arrow_function", !bound_this(f).
+.decl bound_this(f: node)
+bound_this(f) :- field(f, "parameters", ps), child(ps, p, _), field(p, "pattern", t), kind(t, "this").
+bound_this(f) :- (kind(f, "function_declaration") ; kind(f, "function_expression") ;
+    kind(f, "generator_function") ; kind(f, "generator_function_declaration")),
+    field(f, "name", n), text(n, x), capital(x).
+bound_this(f) :- this_tag(f).
+bound_this(f) :- reaches(f, n), bound_context(f, n).
+
+// reaches(f, n): f's value flows to n's position: n is f, or an expression f passes through unchanged.
+.decl reaches(f: node, n: node)
+reaches(f, f) :- kind(f, k), function_kind(k).
+reaches(f, p) :- reaches(f, n), estree_parent(n, p), (kind(p, "ternary_expression") ;
+    kind(p, "binary_expression"), (op(p, "&&") ; op(p, "||") ; op(p, "??"))).
+reaches(f, c) :- reaches(f, n), estree_parent(n, r), kind(r, "return_statement"), nearest(r, g, function_kind),
+    callee(c, g).
+reaches(f, c) :- reaches(f, n), field(a, "body", w), deparen(w, n), kind(a, "arrow_function"), callee(c, a).
+.decl bound_context(f: node, n: node)
+// { m: function () {} }, class A { m = function () {} }; a method_definition is never a default binding either.
+bound_context(f, f) :- kind(f, "method_definition").
+bound_context(f, n) :- reaches(f, n), field(p, "value", w), deparen(w, n),
+    (kind(p, "pair") ; kind(p, "field_definition") ; kind(p, "public_field_definition")).
+// o.m = function () {};   Foo = function () {};   var Foo = function () {};
+bound_context(f, n) :- reaches(f, n), field(a, "right", w), deparen(w, n),
+    (kind(a, "assignment_expression") ; kind(a, "assignment_pattern")), field(a, "left", l),
+    (kind(l, "member_expression") ; kind(l, "subscript_expression") ; anonymous(f), capital_id(l)).
+bound_context(f, n) :- reaches(f, n), kind(v, "variable_declarator"), field(v, "value", w), deparen(w, n),
+    anonymous(f), field(v, "name", l), capital_id(l).
+// function g(Ctor = function () {}) {}: in TypeScript the default is a parameter's `value`, not an assignment_pattern.
+bound_context(f, n) :- reaches(f, n), (kind(p, "required_parameter") ; kind(p, "optional_parameter")),
+    field(p, "value", w), deparen(w, n), anonymous(f), field(p, "pattern", l), capital_id(l).
+// f.call(o), f.apply(o), f.bind(o), with a first argument that is not null or undefined.
+bound_context(f, n) :- reaches(f, n), static_prop(m, n, x), (x = "bind" ; x = "call" ; x = "apply"), callee(c, m),
+    call_arg(c, a, 0), !null_or_undefined(a).
+// xs.map(f, o) and the other array methods with a thisArg; Array.from(xs, f, o) (any …Array, and fromAsync,
+// as ESLint 10 reads it); Reflect.apply(f, o, args).
+bound_context(f, n) :- reaches(f, n), call_arg(c, w, 0), deparen(w, n), call_arg_count(c, 2), call_arg(c, a, 1),
+    !null_or_undefined(a),
+    callee(c, m), static_prop(m, _, x), this_arg_method(x).
+bound_context(f, n) :- reaches(f, n), call_arg(c, w, 1), deparen(w, n), call_arg_count(c, 3), call_arg(c, a, 2),
+    !null_or_undefined(a),
+    callee(c, m), static_prop(m, o, x), (x = "from" ; x = "fromAsync"), kind(o, "identifier"), suffix("Array", o).
+bound_context(f, n) :- reaches(f, n), call_arg(c, w, 0), deparen(w, n), call_arg_count(c, 3), call_arg(c, a, 1),
+    !null_or_undefined(a),
+    callee(c, m), static_prop(m, o, "apply"), kind(o, "identifier"), text(o, "Reflect").
+.decl this_arg_method(x: symbol)
+this_arg_method("every"). this_arg_method("filter"). this_arg_method("find"). this_arg_method("findIndex").
+this_arg_method("findLast"). this_arg_method("findLastIndex"). this_arg_method("flatMap").
+this_arg_method("forEach"). this_arg_method("map"). this_arg_method("some").
+.decl anonymous(f: node)
+anonymous(f) :- kind(f, k), function_kind(k), !field(f, "name", _).
+.decl capital_id(n: node)
+capital_id(n) :- kind(n, "identifier"), text(n, x), capital(x).
+// null_or_undefined(a): `null`, `undefined` or `void x`, as ESLint's isNullOrUndefined.
+.decl null_or_undefined(a: node)
+null_or_undefined(a) :- deparen(a, l), (kind(l, "null") ; kind(l, "undefined") ; kind(l, "unary_expression"), op(l, "void")).
+// this_tag(f): a line of the comment just before f (or before the statement f starts) begins with `@this`,
+// after spaces and asterisks:   /** @this Foo */ function f() {}     g(/* @this Sandbox */ function () {});
+.decl this_tag(f: node)
+this_tag(f) :- kind(f, k), function_kind(k), comment(c, v), next_sibling(c, x), jsdoc_target(f, x),
+    match("(?:[\\s\\S]*\\n)?[\\s*]*@this[\\s\\S]*", v).
+.decl jsdoc_target(f: node, x: node)  // a comment before x documents f
+jsdoc_target(f, f) :- kind(f, k), function_kind(k).
+jsdoc_target(f, x) :- kind(f, k), function_kind(k), within(f, x), node(_, f, _, s, _), node(_, x, _, s, _).
+jsdoc_target(f, x) :- kind(f, k), function_kind(k), kind(v, "variable_declarator"), field(v, "value", w),
+    deparen(w, f), child(x, v, _).
+
+// ---- scope ---------------------------------------------------------------------------------------------------------
+// in_global_scope(n): `this.alert()` directly in a script, not in a function, block or class: ESLint's
+// `scope.type === "global"`.
+.decl in_global_scope(n: node)
+in_global_scope(n) :- nearest(n, s, lex_scope), program(d, s), source_type(d, "script").
+

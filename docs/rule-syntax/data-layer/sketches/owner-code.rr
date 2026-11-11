@@ -1,0 +1,49 @@
+// Sketch, not a policy: the one part of expression_owner_propagation that needs addition 6, `ordered by earlier`.
+// Python linter: scripts/lint_expression_owner_propagation.py, _record_assignment and _source_code (:255-301).
+//
+// What the script tracks. Walking a file in ast order, each assignment `x = v` asks for v's code: EOP001 for
+// `….name`, EOP002 for `….field` or getattr(…, "field") or anything with an EOP002 part, and for a bare name y
+// the code y has *at that point*. If v has a code, x gets it (per enclosing def); if not, x keeps the code it
+// had. So a name's code at n comes from its latest earlier assignment whose value has a code: a max over a set
+// that depends on codes, which depend on earlier maxima. Soufflé rejects that cycle; ordered by earlier accepts
+// it because each step looks strictly back.
+//
+// Why plain recursion is not enough: if `x = a.field` then `x = b` (b has no code), x is still EOP002. "Some
+// earlier assignment has a code" would also give EOP001 from an older `x = a.name` before both, which the
+// script has overwritten. "Latest qualifying" needs the max over the recursive relation.
+
+#include "python/ast.rr"
+//   ast_name, expr_ctx, assign_target, assign_value, def_frame, attr_of, call_name
+#include "python/calls.rr"
+//   posarg
+
+// frame(n, f): the def whose value map n uses (context.enclosing_function), or the module.
+.decl frame(n: node, f: node)
+frame(n, f) :- def_frame(n, f).
+frame(n, m) :- docof(n, d), modnode(d, m), !def_frame(n, _).
+
+// write(w, f, x, v): assignment w, in frame f, gives name x the value v (`a = b = v` gives a and b).
+.decl write(w: node, f: node, x: symbol, v: node)
+write(w, f, x, v) :- assign_target(w, t), ast_name(t, x), assign_value(w, v), frame(w, f).
+
+// expr_child(p, c): an approximation of ast.iter_child_nodes limited to expressions: the argument list is looked
+// through and keyword values are skipped, as the script's walk skips ast.keyword.
+.decl expr_child(p: node, c: node)
+expr_child(p, c) :- child(p, c, _), !kind(c, "argument_list"), !kind(c, "keyword_argument"), !kind(c, "comment").
+expr_child(p, c) :- child(p, a, _), kind(a, "argument_list"), child(a, c, _), !kind(c, "keyword_argument").
+
+// src_code(v, c): _source_code(v). The relation is ordered by earlier: its last rule reads src_code under max, at
+// values v2 tied to the head's node n by earlier(v2, n).
+.decl src_code(v: node, c: symbol) ordered by earlier
+src_code(v, "EOP001") :- attr_of(v, _, "name").
+src_code(v, "EOP002") :- attr_of(v, o, "field"), !kind(o, "call").
+src_code(v, "EOP002") :- call_name(v, "getattr"), posarg(v, 1, s), str(s, "field").
+// Any expression part with EOP002 (EOP001 is not inherited). Names and the two attribute shapes answer first.
+src_code(v, "EOP002") :- expr_child(v, ch), src_code(ch, "EOP002"), !ast_name(v, _), !attr_of(v, _, "name"),
+    !attr_of(v, _, "field").
+// A bare name: the code of the latest earlier assignment to it, in the same frame, whose value had a code.
+// The value v2 is visited before n whenever its assignment is (n is never inside its own assignment's value:
+// `x = x.field` reads the x from before).
+src_code(n, c) :- ast_name(n, x), expr_ctx(n, "load"), frame(n, f),
+    k = max i : { write(w2, f, x, v2), earlier(v2, n), src_code(v2, _), visit_index(w2, i) },
+    visit_index(w, k), write(w, f, x, v), src_code(v, c).

@@ -1,0 +1,1 @@
+(?P<TOKEN>\.(?P<METHOD>_execute_direct_internal|_execute_direct_internal_async|_fetchall|_fetchone|execute_grammar_fetchall|execute_grammar_fetchone|fetchall|fetchone)\()

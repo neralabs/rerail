@@ -1,0 +1,294 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.references {"constructorFields":{"fieldToParameter":{"by":"","replace":"^_+"}},"scope":{"exclude":["**/.git/**","**/.venv/**","**/tmp/**","**/__pycache__/**","**/tests/**"],"include":["api/**/*.py","impl/**/*.py","data_layer/**/*.py","_internal/**/*.py","l1000_cache/**/*.py","l1000_schema/**/*.py","l1050_model_registry/**/*.py","l1050_polymorphism/**/*.py","l1100_exceptions/**/*.py","l1200_capabilities/**/*.py","l1200_content_hash/**/*.py","l1200_json/**/*.py","l1200_versioned_ids/**/*.py","l1250_security/**/*.py","l1300_session/**/*.py","l1350_foundational_types/**/*.py","l1400_config/**/*.py","l1400_types/**/*.py","l1450_index_policy_contracts/**/*.py","l1450_keys/**/*.py","l1470_matching_contracts/**/*.py","l1500_llm/**/*.py","l1900_retry/**/*.py","l2000_connection/**/*.py","l2050_transaction/**/*.py","l2055_lazy_result/**/*.py","l2060_query_builder/**/*.py","l2070_batching/**/*.py","l2080_lazy_orm/**/*.py","l2090_byte_tracking/**/*.py","l2090_response/**/*.py","l2091_rtt_tracking/**/*.py","l2092_timing_tracking/**/*.py","l2100_include/**/*.py","l2110_limits/**/*.py","l2150_prepared_cache/**/*.py","l2200_notification/**/*.py","l2500_binary_diff/**/*.py","l3000_schema_builder/**/*.py","l3100_schema_introspector/**/*.py","l3150_schema_diff/**/*.py","l3200_metadata/**/*.py","l3250_migrations/**/*.py","l3260_startup/**/*.py","l3500_bulk_ops/**/*.py","l4000_permissions/**/*.py","l4050_background_reaper/**/*.py","l4100_queue/**/*.py","l4150_scheduler/**/*.py","l4170_inbound_bridge/**/*.py","l4200_event_pipeline/**/*.py","l4250_timers/**/*.py","l4300_ipc/**/*.py","l4300_timers/**/*.py","l4350_timer_driver/**/*.py","l4400_scheduler/**/*.py","l4500_trust/**/*.py","l5000_search_index_policy/**/*.py","l5000_subscriptions/**/*.py","l5100_fts/**/*.py","l5100_llm_router/**/*.py","l5175_chunking/**/*.py","l5195_embedding_compute_tables/**/*.py","l5200_vector_index/**/*.py","l5250_matching/**/*.py","l5300_config_compatibility/**/*.py","l6000_log_table/**/*.py","l6300_config/**/*.py","l6500_evidence/**/*.py","l6510_credentials/**/*.py","l6520_auth/**/*.py","l6530_managed_secrets/**/*.py","l6600_cleanup/**/*.py","l7000_versioned_schema/**/*.py","l7100_versioned_operations/**/*.py","l7200_versioned_transactions/**/*.py","l7250_versioned_operations/**/*.py","l7350_versioned_timer_driver/**/*.py","l7390_versioned_diff_entrypoint/**/*.py","l7400_versioned_diff/**/*.py","l7450_versioned_revert/**/*.py","l7500_commit_triggers/**/*.py","l7800_versioned_merge/**/*.py","l7900_versioned_rebase/**/*.py","l8000_admin/**/*.py","l8100_ops_analytics/**/*.py","l9600_graphs/**/*.py","l9700_graph_query/**/*.py","l9710_graph_algorithms/**/*.py","l9720_sparql/**/*.py","l9750_graphql/**/*.py","l9800_rippling/**/*.py","l9850_workflow/**/*.py","l9875_mcp/**/*.py","l9900_auto_api/**/*.py"]},"siblingLinks":[{"decorator":"(?:legacy_sync|legacy_module_sync|direct_legacy_module_sync)$","name":{"by":"_lazy","replace":"$"}},{"decorator":"(?:legacy_async|legacy_module_async|direct_legacy_module_async)$","name":{"by":"_lazy","replace":"(?:_async)?$"}}]}
+.decl direct_execution_block(kind: symbol)
+direct_execution_block("block").
+.decl direct_execution_cdef(kind: symbol)
+direct_execution_cdef("class_definition").
+.decl direct_execution_fdef(kind: symbol)
+direct_execution_fdef("function_definition").
+.decl direct_execution_scope(kind: symbol)
+direct_execution_scope("module"). direct_execution_scope("function_definition"). direct_execution_scope("class_definition"). direct_execution_scope("lambda"). direct_execution_scope("list_comprehension"). direct_execution_scope("set_comprehension"). direct_execution_scope("dictionary_comprehension"). direct_execution_scope("generator_expression").
+.decl direct_execution_wscope(kind: symbol)
+direct_execution_wscope("module"). direct_execution_wscope("function_definition"). direct_execution_wscope("class_definition"). direct_execution_wscope("lambda").
+.decl eager_signature_params(kind: symbol)
+eager_signature_params("parameters").
+.decl eager_signature_types(kind: symbol)
+eager_signature_types("type").
+.decl caller_reaches(g: node)
+.decl caller_seed(f: node)
+.decl child(p: node, c: node, i: number)
+.decl direct_execution_alias_inner(l: node, i: node)
+.decl direct_execution_bind(s: node, x: symbol, site: node)
+.decl direct_execution_callee(c: node, x: symbol)
+.decl direct_execution_capture(i: node)
+.decl direct_execution_case(n: node)
+.decl direct_execution_case_group(kind: symbol)
+.decl direct_execution_case_or_as(n: node)
+.decl direct_execution_direct(f: node)
+.decl direct_execution_exec(x: symbol)
+.decl direct_execution_exec_call(c: node)
+.decl direct_execution_imperative(f: node)
+.decl direct_execution_later_method(f: node)
+.decl direct_execution_later_module(f: node)
+.decl direct_execution_multi(s: node, x: symbol)
+.decl direct_execution_owner(f: node, c: node, cx: symbol)
+.decl direct_execution_pattern(t: node)
+.decl direct_execution_symbol(f: node)
+.decl direct_execution_target(t: node)
+.decl direct_execution_top(f: node, x: symbol)
+.decl direct_execution_walrus(t: node)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl eager_signature_accessor(f: node)
+.decl eager_signature_context(f: node)
+.decl eager_signature_decorator(f: node, e: node)
+.decl eager_signature_decorator_name(f: node, x: symbol)
+.decl eager_signature_eager(f: node)
+.decl eager_signature_exempt(f: node)
+.decl eager_signature_lazy(f: node)
+.decl eager_signature_param(f: node, p: node)
+.decl eager_signature_param_any(f: node, p: node)
+.decl eager_signature_param_ok(p: node)
+.decl eager_signature_positional(p: node)
+.decl eager_signature_private(f: node)
+.decl eager_signature_self(p: node)
+.decl eager_signature_splat(p: node)
+.decl eager_signature_type_name(t: node)
+.decl eager_signature_typed(p: node)
+.decl field(p: node, f: symbol, c: node)
+.decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl out_scope(d: number)
+.decl reference_edge(src: node, dst: node, via: symbol)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, text, line, node_text, reference_edge
+.output violation
+direct_execution_case_group("case_pattern").
+direct_execution_case_group("union_pattern").
+direct_execution_case_group("list_pattern").
+direct_execution_case_group("tuple_pattern").
+direct_execution_exec("_fetchall").
+direct_execution_exec("_fetchone").
+direct_execution_exec("execute").
+direct_execution_exec("execute_async").
+direct_execution_exec("execute_fire_and_forget").
+direct_execution_exec("execute_grammar").
+direct_execution_exec("execute_grammar_fetchall").
+direct_execution_exec("execute_grammar_fetchone").
+direct_execution_exec("execute_raw").
+direct_execution_exec("fetchall").
+direct_execution_exec("fetchall_raw").
+direct_execution_exec("fetchone").
+direct_execution_exec("fetchone_raw").
+direct_execution_exec("grammar_effect_lazy").
+direct_execution_exec("grammar_fetchall").
+direct_execution_exec("grammar_fetchall_async").
+direct_execution_exec("grammar_fetchone").
+direct_execution_exec("grammar_fetchone_async").
+direct_execution_exec("grammar_row_lazy").
+direct_execution_exec("grammar_rows_lazy").
+direct_execution_exec("raw_execute").
+in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1000_cache/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1000_schema/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1050_model_registry/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1050_polymorphism/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1100_exceptions/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1200_capabilities/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1200_content_hash/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1200_json/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1200_versioned_ids/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1250_security/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1300_session/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1350_foundational_types/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1400_config/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1400_types/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1450_index_policy_contracts/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1450_keys/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1470_matching_contracts/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1500_llm/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l1900_retry/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2000_connection/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2050_transaction/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2055_lazy_result/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2060_query_builder/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2070_batching/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2080_lazy_orm/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2090_byte_tracking/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2090_response/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2091_rtt_tracking/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2092_timing_tracking/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2100_include/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2110_limits/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2150_prepared_cache/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2200_notification/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2500_binary_diff/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l3000_schema_builder/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l3100_schema_introspector/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l3150_schema_diff/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l3200_metadata/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l3250_migrations/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l3260_startup/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l3500_bulk_ops/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4000_permissions/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4050_background_reaper/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4100_queue/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4150_scheduler/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4170_inbound_bridge/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4200_event_pipeline/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4250_timers/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4300_ipc/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4300_timers/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4350_timer_driver/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4400_scheduler/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4500_trust/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l5000_search_index_policy/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l5000_subscriptions/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l5100_fts/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l5100_llm_router/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l5175_chunking/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l5195_embedding_compute_tables/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l5200_vector_index/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l5250_matching/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l5300_config_compatibility/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l6000_log_table/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l6300_config/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l6500_evidence/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l6510_credentials/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l6520_auth/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l6530_managed_secrets/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l6600_cleanup/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7000_versioned_schema/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7100_versioned_operations/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7200_versioned_transactions/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7250_versioned_operations/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7350_versioned_timer_driver/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7390_versioned_diff_entrypoint/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7400_versioned_diff/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7450_versioned_revert/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7500_commit_triggers/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7800_versioned_merge/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7900_versioned_rebase/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l8000_admin/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l8100_ops_analytics/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9600_graphs/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9700_graph_query/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9710_graph_algorithms/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9720_sparql/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9750_graphql/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9800_rippling/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9850_workflow/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9875_mcp/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9900_auto_api/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+tape_syntax_error(d) :- syntax_error(d).
+direct_execution_bind(s, x, n) :- node(_, f, "function_definition", _, _), field(f, "name", n), text(n, x), nearest(f, s, direct_execution_scope).
+direct_execution_bind(s, x, n) :- node(_, f, "class_definition", _, _), field(f, "name", n), text(n, x), nearest(f, s, direct_execution_scope).
+direct_execution_target(t) :- node(_, a, "assignment", _, _), field(a, "left", t).
+direct_execution_target(t) :- node(_, a, "augmented_assignment", _, _), field(a, "left", t).
+direct_execution_target(t) :- node(_, a, "for_statement", _, _), field(a, "left", t).
+direct_execution_target(t) :- node(_, a, "for_in_clause", _, _), field(a, "left", t).
+direct_execution_walrus(t) :- node(_, a, "named_expression", _, _), field(a, "name", t).
+direct_execution_target(t) :- node(_, a, "as_pattern", _, _), field(a, "alias", t).
+direct_execution_target(t) :- node(_, a, "except_clause", _, _), field(a, "alias", t).
+direct_execution_target(t) :- node(_, a, "delete_statement", _, _), child(a, t, _).
+direct_execution_target(c) :- direct_execution_target(t), direct_execution_pattern(t), child(t, c, _).
+direct_execution_pattern(t) :- node(_, t, "pattern_list", _, _).
+direct_execution_pattern(t) :- node(_, t, "tuple_pattern", _, _).
+direct_execution_pattern(t) :- node(_, t, "list_pattern", _, _).
+direct_execution_pattern(t) :- node(_, t, "list_splat_pattern", _, _).
+direct_execution_pattern(t) :- node(_, t, "tuple", _, _).
+direct_execution_pattern(t) :- node(_, t, "list", _, _).
+direct_execution_pattern(t) :- node(_, t, "expression_list", _, _).
+direct_execution_pattern(t) :- node(_, t, "parenthesized_expression", _, _).
+direct_execution_pattern(t) :- node(_, t, "as_pattern_target", _, _).
+direct_execution_pattern(t) :- node(_, t, "list_splat", _, _).
+direct_execution_bind(s, x, t) :- direct_execution_target(t), !direct_execution_walrus(t), node(_, t, "identifier", _, _), text(t, x), nearest(t, s, direct_execution_scope).
+direct_execution_bind(s, x, t) :- direct_execution_walrus(t), node(_, t, "identifier", _, _), text(t, x), nearest(t, s, direct_execution_wscope).
+direct_execution_bind(s, x, n) :- node(_, i, "import_statement", _, _), field(i, "name", dn), node(_, dn, "dotted_name", _, _), child(dn, n, 0), text(n, x), nearest(i, s, direct_execution_scope).
+direct_execution_bind(s, x, n) :- node(_, i, "import_statement", _, _), field(i, "name", al), node(_, al, "aliased_import", _, _), field(al, "alias", n), text(n, x), nearest(i, s, direct_execution_scope).
+direct_execution_bind(s, x, n) :- node(_, i, "import_from_statement", _, _), field(i, "name", dn), node(_, dn, "dotted_name", _, _), child(dn, n, 0), text(n, x), nearest(i, s, direct_execution_scope).
+direct_execution_bind(s, x, n) :- node(_, i, "import_from_statement", _, _), field(i, "name", al), node(_, al, "aliased_import", _, _), field(al, "alias", n), text(n, x), nearest(i, s, direct_execution_scope).
+direct_execution_bind(s, x, n) :- node(_, g, "global_statement", _, _), child(g, n, _), text(n, x), nearest(g, s, direct_execution_scope).
+direct_execution_bind(s, x, n) :- node(_, g, "nonlocal_statement", _, _), child(g, n, _), text(n, x), nearest(g, s, direct_execution_scope).
+direct_execution_bind(s, x, n) :- node(_, t, "type_alias_statement", _, _), field(t, "left", l), direct_execution_alias_inner(l, n), node(_, n, "identifier", _, _), text(n, x), nearest(t, s, direct_execution_scope).
+direct_execution_bind(s, x, n) :- node(_, t, "type_alias_statement", _, _), field(t, "left", l), direct_execution_alias_inner(l, i), node(_, i, "generic_type", _, _), child(i, n, 0), node(_, n, "identifier", _, _), text(n, x), nearest(t, s, direct_execution_scope).
+direct_execution_alias_inner(l, i) :- node(_, l, "type", _, _), child(l, i, 0).
+direct_execution_alias_inner(l, l) :- node(_, a, "type_alias_statement", _, _), field(a, "left", l), !node(_, l, "type", _, _).
+direct_execution_case(c) :- node(_, cc, "case_clause", _, _), child(cc, c, _), node(_, c, k, _, _), direct_execution_case_group(k).
+direct_execution_capture(c) :- direct_execution_case(n), direct_execution_case_or_as(n), child(n, c, _), node(_, c, "identifier", _, _).
+direct_execution_case(c) :- direct_execution_case(n), direct_execution_case_or_as(n), child(n, c, _), !node(_, c, "identifier", _, _).
+direct_execution_case_or_as(n) :- direct_execution_case(n), node(_, n, k, _, _), direct_execution_case_group(k).
+direct_execution_case_or_as(n) :- direct_execution_case(n), node(_, n, "as_pattern", _, _).
+direct_execution_capture(i) :- direct_execution_case(n), node(_, n, "dotted_name", _, _), child(n, i, 0), !child(n, _, 1).
+direct_execution_capture(n) :- direct_execution_case(n), node(_, n, "identifier", _, _).
+direct_execution_capture(i) :- direct_execution_case(n), node(_, n, "splat_pattern", _, _), child(n, i, _), node(_, i, "identifier", _, _).
+direct_execution_case(c) :- direct_execution_case(n), node(_, n, "class_pattern", _, _), child(n, c, i), i > 0.
+direct_execution_case(c) :- direct_execution_case(n), node(_, n, "keyword_pattern", _, _), child(n, c, i), i > 0.
+direct_execution_case(c) :- direct_execution_case(n), node(_, n, "keyword_pattern", _, _), child(n, c, 0), !node(_, c, "identifier", _, _).
+direct_execution_case(c) :- direct_execution_case(n), node(_, n, "dict_pattern", _, _), child(n, c, _), !field(n, "key", c).
+direct_execution_bind(s, x, i) :- direct_execution_capture(i), text(i, x), x != "_", nearest(i, s, direct_execution_scope).
+direct_execution_multi(s, x) :- direct_execution_bind(s, x, _), k = count : { direct_execution_bind(s, x, _) }, k > 1.
+direct_execution_top(f, x) :- node(_, f, "function_definition", _, _), !inside(f, _, direct_execution_fdef), field(f, "name", n), text(n, x).
+direct_execution_owner(f, c, cx) :- direct_execution_top(f, _), nearest(f, c, direct_execution_cdef), field(c, "name", n), text(n, cx).
+direct_execution_later_module(f) :- direct_execution_top(f, x), node(d, f, _, _, fe), direct_execution_top(g, x), !inside(g, _, direct_execution_cdef), node(d, g, _, gs, _), gs >= fe.
+direct_execution_later_method(f) :- direct_execution_owner(f, _, cx), direct_execution_top(f, x), node(d, f, _, _, fe), direct_execution_owner(g, _, cx), direct_execution_top(g, x), node(d, g, _, gs, _), gs >= fe.
+direct_execution_symbol(f) :- direct_execution_top(f, _), !inside(f, _, direct_execution_cdef), !direct_execution_later_module(f).
+direct_execution_symbol(f) :- direct_execution_owner(f, c, cx), direct_execution_top(f, x), !direct_execution_multi(c, x), nearest(c, s, direct_execution_scope), !direct_execution_multi(s, cx).
+direct_execution_symbol(f) :- direct_execution_owner(f, _, _), !direct_execution_later_method(f).
+direct_execution_callee(c, x) :- node(_, c, "call", _, _), field(c, "function", fn), node(_, fn, "identifier", _, _), text(fn, x).
+direct_execution_callee(c, x) :- node(_, c, "call", _, _), field(c, "function", fn), node(_, fn, "attribute", _, _), field(fn, "attribute", a), text(a, x).
+direct_execution_exec_call(c) :- direct_execution_callee(c, x), direct_execution_exec(x).
+direct_execution_exec_call(c) :- direct_execution_callee(c, x), prefix("execute_grammar", x).
+direct_execution_exec_call(c) :- direct_execution_callee(c, x), prefix("grammar_fetch", x).
+direct_execution_direct(f) :- direct_execution_top(f, _), field(f, "body", b), direct_execution_exec_call(c), inside(c, b, direct_execution_block).
+direct_execution_imperative(f) :- direct_execution_symbol(f), direct_execution_direct(f).
+violation("data-layer-imperative-private-functions", "direct-execution", "direct_execution", p, l) :- direct_execution_imperative(f), node(d, f, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), line(f, l).
+eager_signature_private(f) :- direct_execution_top(f, x), !match("__.*__", x), prefix("_", x).
+eager_signature_private(f) :- direct_execution_top(f, x), !match("__.*__", x), direct_execution_owner(f, _, cx), prefix("_", cx).
+eager_signature_decorator(f, e) :- child(dd, f, _), node(_, dd, "decorated_definition", _, _), child(dd, dc, _), node(_, dc, "decorator", _, _), child(dc, e, _).
+eager_signature_decorator_name(f, x) :- eager_signature_decorator(f, e), node(_, e, "identifier", _, _), text(e, x).
+eager_signature_decorator_name(f, x) :- eager_signature_decorator(f, e), node(_, e, "attribute", _, _), field(e, "attribute", a), text(a, x).
+eager_signature_decorator_name(f, x) :- eager_signature_decorator(f, e), direct_execution_callee(e, x).
+eager_signature_accessor(f) :- eager_signature_decorator(f, e), node(_, e, "attribute", _, _), field(e, "attribute", a), text(a, x), (x = "setter" ; x = "deleter").
+eager_signature_accessor(f) :- eager_signature_decorator(f, e), node(_, e, "call", _, _), field(e, "function", fn), node(_, fn, "attribute", _, _), field(fn, "attribute", a), text(a, x), (x = "setter" ; x = "deleter").
+eager_signature_typed(p) :- node(_, p, "typed_parameter", _, _).
+eager_signature_typed(p) :- node(_, p, "typed_default_parameter", _, _).
+eager_signature_param_ok(p) :- eager_signature_typed(p), !eager_signature_splat(p), !eager_signature_positional(p), !eager_signature_self(p).
+eager_signature_splat(p) :- eager_signature_typed(p), child(p, s, _), node(_, s, "list_splat_pattern", _, _).
+eager_signature_splat(p) :- eager_signature_typed(p), child(p, s, _), node(_, s, "dictionary_splat_pattern", _, _).
+eager_signature_positional(p) :- eager_signature_typed(p), child(ps, p, i), child(ps, s, j), node(_, s, "positional_separator", _, _), j > i.
+eager_signature_self(p) :- node(_, p, "typed_parameter", _, _), inside(p, _, direct_execution_cdef), child(p, n, _), node(_, n, "identifier", _, _), text(n, x), (x = "self" ; x = "cls").
+eager_signature_self(p) :- node(_, p, "typed_default_parameter", _, _), inside(p, _, direct_execution_cdef), field(p, "name", n), node(_, n, "identifier", _, _), text(n, x), (x = "self" ; x = "cls").
+eager_signature_param(f, p) :- direct_execution_top(f, _), field(f, "parameters", ps), child(ps, p, _), eager_signature_param_ok(p).
+eager_signature_param_any(f, p) :- direct_execution_top(f, _), field(f, "parameters", ps), eager_signature_param_ok(p), inside(p, ps, eager_signature_params).
+eager_signature_lazy(f) :- direct_execution_top(f, x), suffix("_lazy", x).
+eager_signature_lazy(f) :- eager_signature_decorator_name(f, x), suffix("lazy", x).
+eager_signature_lazy(f) :- direct_execution_top(f, _), field(f, "return_type", t), node_text(t, s), (contains("Lazy", s) ; contains("ServerPlan", s)).
+eager_signature_lazy(f) :- eager_signature_param(f, p), field(p, "type", t), node_text(t, s), (contains("Lazy", s) ; contains("ServerPlan", s)).
+eager_signature_exempt(f) :- eager_signature_decorator_name(f, x), (suffix("abstractmethod", x) ; suffix("property", x) ; suffix("legacy_sync", x) ; suffix("legacy_module_sync", x) ; suffix("direct_legacy_module_sync", x) ; suffix("legacy_async", x) ; suffix("legacy_module_async", x) ; suffix("direct_legacy_module_async", x)).
+eager_signature_exempt(f) :- eager_signature_accessor(f).
+eager_signature_context(f) :- direct_execution_top(f, x), match("(?i).*(?:branch|commit|connection|delete|execute|fetch|graph|insert|lazy|merge|plan|query|read|revision|select|server|transaction|update|versioned|write).*", x).
+eager_signature_context(f) :- direct_execution_owner(f, _, cx), match("(?i).*(?:branch|commit|connection|delete|execute|fetch|graph|insert|lazy|merge|plan|query|read|revision|select|server|transaction|update|versioned|write).*", cx).
+eager_signature_context(f) :- direct_execution_top(f, _), node(d, f, _, _, _), doc(d, p, _), match(".*(?:/connection|/graph_query|/query|/server_plan|/transaction|/versioned).*", p).
+eager_signature_context(f) :- direct_execution_top(f, _), field(f, "return_type", t), eager_signature_type_name(t).
+eager_signature_context(f) :- eager_signature_param_any(f, p), field(p, "type", t), eager_signature_type_name(t).
+eager_signature_type_name(t) :- node(_, t, "type", _, _), node(_, i, "identifier", _, _), inside(i, t, eager_signature_types), text(i, x), match("(?i)(?:databaseconnection|syncdatabaseconnection|lazyresult|lazyseq|readtransaction|serverplan|syncversioneddatabaseconnection|versioneddatabaseconnection|versionedreadtransaction|versionedwritetransaction|writetransaction)", x).
+eager_signature_eager(f) :- eager_signature_private(f), !eager_signature_lazy(f), !eager_signature_exempt(f), eager_signature_context(f).
+violation("data-layer-imperative-private-functions", "eager-signature", "eager_signature", p, l) :- direct_execution_symbol(f), !direct_execution_direct(f), eager_signature_eager(f), node(d, f, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), line(f, l).
+caller_seed(f) :- direct_execution_imperative(f).
+caller_seed(f) :- direct_execution_symbol(f), eager_signature_eager(f).
+caller_reaches(g) :- caller_seed(g), node(_, g, "function_definition", _, _).
+caller_reaches(g) :- node(_, g, "function_definition", _, _), reference_edge(g, h, _), caller_reaches(h).
+violation("data-layer-imperative-private-functions", "caller", "calls_imperative", p, l) :- direct_execution_symbol(f), !direct_execution_direct(f), !eager_signature_eager(f), reference_edge(f, g, _), caller_reaches(g), node(d, f, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), line(f, l).

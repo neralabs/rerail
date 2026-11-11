@@ -1,0 +1,129 @@
+.policy "data-layer:embedding-vector-orchestration" revision 1
+.description "No new connection-owned orchestration in the embedding/vector path; the embedding worker stays lazy and plan-backed."
+.language python
+.mode block
+.mode log EVO107, EVO108          // computed by the collector, never reported by the suite plugin (not in FAILING_CODES)
+.scope dirs "l5200_vector_index", "impl/common/l2070_server_plan"
+.scope include "data_layer/vector_index.py"
+.scope tests false
+// Python linter: scripts/lint_embedding_vector_orchestration.py. Per call `….m(…)` (m an attribute):
+//   EVO001 m is read / write / read_async / write_async on a connection receiver, unless the innermost def's
+//          "path::Class.func" (classes only, then the def's own name; "<module>" outside defs) is grandfathered
+//   In l5200_vector_index/embedding_worker.py ("the worker") only:
+//   EVO106 m is a read/write transaction entrypoint on a connection receiver
+//   EVO101 m is a query terminal (execute, resolve, and their async forms) whose call chain reaches `.query(…)` on a
+//          txn receiver: the first `.query` going inward decides
+//   EVO105 m is query on a txn receiver (use query_lazy)
+//   EVO102 m is resolve / resolve_async and some enclosing def, at any depth, is named *_lazy
+//   EVO104 a def named *_sync_lazy, *_async_lazy, *_lazy_async or *_lazy_sync
+//   EVO107 m is _next_ref;  EVO108 m is _add_server_step outside the three _publish_* helpers (both mode log)
+// A connection receiver: `conn` / `connection`, an attribute named conn / connection / _conn, or `R.session(…)` on
+// one. A txn receiver: a name or an attribute name ending in "txn".
+// The collector runs only on files whose text holds one of its triggers (".read", ".write", ".query", "_lazy", …).
+//
+// How to read this file
+//   1. evo_doc / evo_worker: the trigger gate and the worker file.
+//   2. evo_method(c, m, r): call c is `r.m(…)`; evo_conn and evo_txn classify receivers.
+//   3. evo_callsite: the grandfathering key. evo_query_root: EVO101's walk down the chain.
+//   4. One rule per code.
+
+#include "python/ast.rr"   // unparen, def_frame, class_path
+
+// The collector's source triggers.
+.decl evo_trigger(t: symbol)
+evo_trigger(".read"). evo_trigger(".write"). evo_trigger(".query"). evo_trigger(".resolve"). evo_trigger("_lazy").
+evo_trigger("query_lazy"). evo_trigger("versioned_"). evo_trigger("_add_server_step"). evo_trigger("_next_ref").
+// (The linter's other triggers, "_sync_lazy" and the like, all contain "_lazy".)
+.decl evo_conn_entry(m: symbol)                  // CONNECTION_ENTRYPOINTS
+evo_conn_entry("read"). evo_conn_entry("write"). evo_conn_entry("read_async"). evo_conn_entry("write_async").
+.decl evo_txn_entry(m: symbol)                   // CONNECTION_TRANSACTION_ENTRYPOINTS
+evo_txn_entry("read_transaction"). evo_txn_entry("write_transaction"). evo_txn_entry("async_read_transaction").
+evo_txn_entry("async_write_transaction").
+.decl evo_terminal(m: symbol)                    // QUERY_TERMINALS
+evo_terminal("execute"). evo_terminal("execute_async"). evo_terminal("resolve"). evo_terminal("resolve_async").
+.decl evo_publisher(x: symbol)                   // WORKER_SERVER_STEP_HELPER_NAMES
+evo_publisher("_publish_worker_scalar_string_ref"). evo_publisher("_publish_worker_scalar_int_ref").
+evo_publisher("_publish_claimed_queue_message_ref").
+// GRANDFATHERED_ORCHESTRATION_CALLSITES. The first entry has no directory and can match no file in scope.
+.decl evo_grandfathered(k: symbol)
+evo_grandfathered("l5200_vector_index_task_payloads.py::get_embedding_auto_queue_stats").
+evo_grandfathered("l5200_vector_index/diagnostics.py::get_embedding_worker_stats").
+evo_grandfathered("l5200_vector_index/embedding_metadata.py::cleanup_old_embeddings").
+evo_grandfathered("l5200_vector_index/embedding_metadata.py::cleanup_specific_model_embeddings").
+evo_grandfathered("l5200_vector_index/embedding_metadata.py::get_embedding_staleness").
+evo_grandfathered("l5200_vector_index/embedding_metadata.py::get_staleness_info").
+evo_grandfathered("l5200_vector_index/embedding_metadata.py::process_stale_embeddings").
+evo_grandfathered("l5200_vector_index/embedding_metadata.py::validate_embedding_consistency").
+evo_grandfathered("l5200_vector_index/embedding_queue.py::apply_embeddings").
+evo_grandfathered("l5200_vector_index/index_manager.py::get_index").
+evo_grandfathered("l5200_vector_index/index_manager.py::register_index").
+
+// ---- 1. documents ------------------------------------------------------------------------------------------------
+.decl evo_doc(d: number)
+evo_doc(d) :- source(d, sp), text(sp, t), evo_trigger(g), contains(g, t).
+.decl evo_worker(d: number)
+evo_worker(d) :- evo_doc(d), doc(d, "l5200_vector_index/embedding_worker.py", _).
+
+// ---- 2. calls and receivers --------------------------------------------------------------------------------------
+// evo_method(c, m, r): call c is `r.m(…)`, in a checked document.
+.decl evo_method(c: node, m: symbol, r: node)
+evo_method(c, m, r) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), kind(f, "attribute"),
+    field(f, "attribute", a), text(a, m), field(f, "object", r0), unparen(r0, r), docof(c, d), evo_doc(d).
+// evo_conn(r): r is a connection receiver.
+.decl evo_conn(r: node)
+evo_conn(r) :- kind(r, "identifier"), (text(r, "conn") ; text(r, "connection")).
+evo_conn(r) :- kind(r, "attribute"), field(r, "attribute", a), (text(a, "conn") ; text(a, "connection") ; text(a, "_conn")).
+evo_conn(c) :- evo_method(c, "session", r), evo_conn(r).
+// evo_txn(r): r is a txn receiver.
+.decl evo_txn(r: node)
+evo_txn(r) :- kind(r, "identifier"), text(r, x), suffix("txn", x).
+evo_txn(r) :- kind(r, "attribute"), field(r, "attribute", a), text(a, x), suffix("txn", x).
+
+// ---- 3. callsites and query chains -------------------------------------------------------------------------------
+// evo_callsite(c, k): "path::Outer.Inner.func" for c's innermost def (decorators and defaults belong to it), only
+// the classes around that def and its own name; "path::<module>" outside any def.
+.decl evo_callsite(c: node, k: symbol)
+evo_callsite(c, cat(p, cat("::", q))) :- evo_method(c, _, _), def_frame(c, f), evo_qualname(f, q), docof(c, d),
+    doc(d, p, _).
+evo_callsite(c, cat(p, "::<module>")) :- evo_method(c, _, _), !def_frame(c, _), docof(c, d), doc(d, p, _).
+.decl evo_qualname(f: node, q: symbol)
+evo_qualname(f, @dot(k, x)) :- def_name(f, x), class_path(f, k).
+evo_qualname(f, x) :- def_name(f, x), kind(f, "function_definition"), !nearest(f, _, "class_definition").
+// evo_query_root(c, q): walking in from terminal call c through `….m(…)` calls, q is the first `.query(…)` call.
+.decl evo_walk(c: node, cur: node)
+evo_walk(c, r) :- evo_method(c, m, r), evo_terminal(m).
+evo_walk(c, r) :- evo_walk(c, cur), evo_method(cur, m, r), m != "query".
+.decl evo_txn_query(c: node)
+evo_txn_query(c) :- evo_walk(c, q), evo_method(q, "query", r), evo_txn(r).
+// evo_lazy_around(n): some def around n, at any depth, is named *_lazy.
+.decl evo_lazy_around(n: node)
+evo_lazy_around(n) :- def_frame(n, f), def_name(f, x), suffix("_lazy", x).
+evo_lazy_around(n) :- def_frame(n, f), evo_lazy_around(f).
+
+// ---- 4. findings -------------------------------------------------------------------------------------------------
+.violation EVO001(at: node) "new connection-owned orchestration in embedding/vector scope is forbidden"
+EVO001(c) :- evo_method(c, m, r), evo_conn_entry(m), evo_conn(r), evo_callsite(c, k), !evo_grandfathered(k).
+
+.violation EVO106(at: node) "connection transaction entrypoints are forbidden in embedding worker modules"
+EVO106(c) :- evo_method(c, m, r), evo_txn_entry(m), evo_conn(r), docof(c, d), evo_worker(d).
+
+.violation EVO101(at: node) "worker txn.query(...).terminal() is suspect; prefer lazy/serverplan composition"
+EVO101(c) :- evo_txn_query(c), docof(c, d), evo_worker(d).
+
+.violation EVO105(at: node) "embedding_worker must use txn.query_lazy(...), not txn.query(...)"
+EVO105(c) :- evo_method(c, "query", r), evo_txn(r), docof(c, d), evo_worker(d).
+
+.violation EVO102(at: node) "*_lazy worker body must not call .resolve() / .resolve_async(); use sync/async sibling"
+EVO102(c) :- evo_method(c, m, _), (m = "resolve" ; m = "resolve_async"), evo_lazy_around(c), docof(c, d), evo_worker(d).
+
+.violation EVO104(at: node) "forbidden hybrid lazy/sync worker function name"
+EVO104(f) :- def_name(f, x), kind(f, "function_definition"), glob("*{_sync_lazy,_async_lazy,_lazy_async,_lazy_sync}", x),
+    docof(f, d), evo_worker(d).
+
+.violation EVO107(at: node) "embedding_worker must use next_lazy_plan_ref(...) instead of direct plan._next_ref()"
+EVO107(c) :- evo_method(c, "_next_ref", _), docof(c, d), evo_worker(d).
+
+.violation EVO108(at: node) "embedding_worker may publish server steps only inside dedicated _publish_* helper functions"
+EVO108(c) :- evo_method(c, "_add_server_step", _), docof(c, d), evo_worker(d), !evo_in_publisher(c).
+.decl evo_in_publisher(c: node)
+evo_in_publisher(c) :- def_frame(c, f), def_name(f, x), evo_publisher(x).

@@ -1,0 +1,445 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-lazy-adapter-ownership",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer lazy_adapter_ownership at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "data_layer/**/*.py",
+      "impl/common/**/*.py",
+      "l9750_graphql/**/*.py",
+      "l9900_auto_api/**/*.py",
+      "l3200_metadata/**/*.py",
+      "l2000_connection/**/*.py"
+    ],
+    "exclude": [
+      "**/tests/**",
+      "**/test/**",
+      "**/conform/**",
+      "**/.git/**",
+      "**/.venv/**",
+      "**/__pycache__/**",
+      "**/.pytest_cache/**",
+      "**/node_modules/**",
+      "**/tmp/**",
+      "**/browser_build/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "invalid-source",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "invalid",
+          "rule": {
+            "kind": "module"
+          }
+        }
+      },
+      "violation": {
+        "code": "LAO000",
+        "message": "Cannot inspect Python source",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "entry",
+      "define": {
+        "options": {
+          "entryPoint": {
+            "type": "string",
+            "default": "scan_source"
+          }
+        }
+      }
+    },
+    {
+      "id": "adapter-ownership",
+      "relational": {
+        "inputs": {
+          "target_values": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "keyword_argument"
+                      },
+                      {
+                        "has": {
+                          "regex": "^lazy_name$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "any": [
+                                {
+                                  "kind": "string"
+                                },
+                                {
+                                  "kind": "concatenated_string"
+                                }
+                              ]
+                            },
+                            {
+                              "pattern": "$STRING"
+                            },
+                            {
+                              "regex": "(?i)^[ru]*[\"']"
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "value"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "decorator"
+                            },
+                            {
+                              "pattern": "$DEC"
+                            }
+                          ],
+                          "stopBy": "end"
+                        }
+                      }
+                    ]
+                  },
+                  "transform": {
+                    "DECODED": {
+                      "substring": {
+                        "source": "$STRING",
+                        "value": true,
+                        "startChar": 0
+                      }
+                    }
+                  }
+                }
+              },
+              "project": {
+                "decorator_start": "capture.DEC.startByte",
+                "target": "capture.DECODED.text"
+              }
+            }
+          },
+          "syntax_gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "stages": [
+          {
+            "name": "functions",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",\"parent\",\"edge_parent\",\"kind\",\"line\",\"text\",\"ordinal\",\"parent_start\",\"parent_end\",\"parent_kind\",\"ancestor_start\",\"ancestor_end\",\"ancestor_kind\",\"name_id\",\"name_source\",\"value_id\",\"value_kind\",\"type_id\",\"type_start\",\"type_end\",\"type_kind\",\"function_id\",\"function_start\",\"function_end\",\"function_kind\",\"object_id\",\"object_start\",\"object_end\",\"object_kind\",\"object_source\",\"attribute_id\",\"attribute_source\",\"body_id\",\"body_start\",\"body_end\",\"body_kind\",\"parameters_id\",\"parameters_start\",\"parameters_end\",\"parameters_kind\",\"name\" FROM (SELECT n.*,n.name_source AS name FROM nodes n WHERE n.kind='function_definition')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "classes",
+            "query": "SELECT \"__path\",NULL AS \"__start\",NULL AS \"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_source\",NULL AS \"value_id\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_source\",\"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",\"name\" FROM (SELECT n.*,n.name_source AS name FROM nodes n WHERE n.kind='class_definition')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "attributes",
+            "query": "SELECT \"__path\",NULL AS \"__start\",NULL AS \"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_source\",NULL AS \"value_id\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_source\",NULL AS \"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",\"attr\",\"object\",NULL AS \"object_text\" FROM (SELECT n.*,n.attribute_source AS attr,n.object_id AS object,n.object_source AS object_text FROM nodes n WHERE n.kind='attribute')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "calls",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_source\",NULL AS \"value_id\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_source\",NULL AS \"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",NULL AS \"callee_id\",\"callee_kind\",NULL AS \"full_callee\",\"callee\",\"receiver\" FROM (SELECT n.*,f.id AS callee_id,f.kind AS callee_kind,f.text AS full_callee,coalesce(a.attr,f.text) AS callee,a.object AS receiver FROM nodes n JOIN nodes f ON f.__path=n.__path AND f.id=n.function_id LEFT JOIN attributes a ON a.__path=f.__path AND a.id=f.id WHERE n.kind='call')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "callee"
+              ]
+            ]
+          },
+          {
+            "name": "parameters",
+            "query": "SELECT \"__path\",\"fn\",NULL AS \"id\",\"kind\",NULL AS \"text\",\"name\",\"annotation\",NULL AS \"position\" FROM (SELECT f.__path,f.id AS fn,p.id,p.kind,p.text,n.text AS name,p.type_id AS annotation,\n row_number() OVER(PARTITION BY f.__path,f.id ORDER BY p.__start)-1 AS position FROM functions f JOIN nodes p ON p.__path=f.__path AND p.parent=f.parameters_id JOIN nodes n ON n.__path=p.__path AND n.id=CASE WHEN p.kind='identifier' THEN p.id ELSE (SELECT child.id FROM nodes child WHERE child.__path=p.__path AND child.parent=p.id AND child.ordinal=0 AND child.kind='identifier' LIMIT 1) END\n WHERE p.kind IN ('identifier','typed_parameter','default_parameter','typed_default_parameter'))",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "declaration_parents",
+            "query": "SELECT \"__path\",\"id\",\"parent\",\"region_start\" FROM (SELECT n.__path,n.id,CASE WHEN p.kind='decorated_definition' THEN p.parent ELSE n.parent END parent,CASE WHEN p.kind='decorated_definition' THEN p.__start ELSE n.__start END region_start FROM nodes n LEFT JOIN nodes p ON p.__path=n.__path AND p.id=n.parent WHERE n.kind IN ('function_definition','class_definition'))",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "owned_functions",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",\"parent\",\"edge_parent\",\"kind\",\"line\",\"text\",\"ordinal\",\"parent_start\",\"parent_end\",\"parent_kind\",\"ancestor_start\",\"ancestor_end\",\"ancestor_kind\",\"name_id\",\"name_source\",\"value_id\",\"value_kind\",\"type_id\",\"type_start\",\"type_end\",\"type_kind\",\"function_id\",\"function_start\",\"function_end\",\"function_kind\",\"object_id\",\"object_start\",\"object_end\",\"object_kind\",\"object_source\",\"attribute_id\",\"attribute_source\",\"body_id\",\"body_start\",\"body_end\",\"body_kind\",\"parameters_id\",\"parameters_start\",\"parameters_end\",\"parameters_kind\",\"name\",\"class_name\",\"region_start\" FROM (SELECT f.*,c.name class_name,d.region_start FROM functions f JOIN declaration_parents d ON d.__path=f.__path AND d.id=f.id\n        JOIN nodes parent ON parent.__path=d.__path AND parent.id=d.parent LEFT JOIN classes c ON c.__path=parent.__path AND c.body_id=parent.id LEFT JOIN declaration_parents cd ON cd.__path=c.__path AND cd.id=c.id LEFT JOIN nodes cp ON cp.__path=cd.__path AND cp.id=cd.parent\n        WHERE parent.kind='module' OR c.id IS NOT NULL AND cp.kind='module')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "class_name",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "decorators",
+            "query": "SELECT \"__path\",\"fn\",\"decorator\",\"__start\",\"name\" FROM (SELECT f.__path,f.id fn,d.id decorator,d.__start,coalesce(c.callee,a.attr,x.text) name FROM owned_functions f JOIN nodes wrapper ON wrapper.__path=f.__path AND wrapper.id=f.parent AND wrapper.kind='decorated_definition'\n        JOIN nodes d ON d.__path=wrapper.__path AND d.parent=wrapper.id AND d.kind='decorator' JOIN nodes x ON x.__path=d.__path AND x.parent=d.id LEFT JOIN calls c ON c.__path=x.__path AND c.id=x.id LEFT JOIN attributes a ON a.__path=x.__path AND a.id=x.id)",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "legacy_decorators",
+            "query": "SELECT \"__path\",\"fn\",\"decorator\",\"__start\",\"name\",NULL AS \"chosen\" FROM (SELECT * FROM (SELECT d.*,row_number() OVER(PARTITION BY __path,fn ORDER BY __start) chosen FROM decorators d WHERE name IN ('legacy_async','legacy_module_async','legacy_module_sync','legacy_sync')) WHERE chosen=1)",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "function_contracts",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",\"parent\",\"edge_parent\",\"kind\",\"line\",\"text\",\"ordinal\",\"parent_start\",\"parent_end\",\"parent_kind\",\"ancestor_start\",\"ancestor_end\",\"ancestor_kind\",\"name_id\",\"name_source\",\"value_id\",\"value_kind\",\"type_id\",\"type_start\",\"type_end\",\"type_kind\",\"function_id\",\"function_start\",\"function_end\",\"function_kind\",\"object_id\",\"object_start\",\"object_end\",\"object_kind\",\"object_source\",\"attribute_id\",\"attribute_source\",\"body_id\",\"body_start\",\"body_end\",\"body_kind\",\"parameters_id\",\"parameters_start\",\"parameters_end\",\"parameters_kind\",\"name\",\"class_name\",\"region_start\",\"legacy_decorator\",\"decorator\",\"default_target\",\"external\",\"pure\" FROM (SELECT f.*,d.name legacy_decorator,d.decorator,\n        CASE WHEN d.name IN ('legacy_async','legacy_sync') THEN CASE WHEN f.name GLOB '*_async' THEN substr(f.name,1,length(f.name)-6) WHEN f.name GLOB '*_sync' THEN substr(f.name,1,length(f.name)-5) ELSE f.name END\n        WHEN d.name='legacy_module_async' AND f.name GLOB '*_async' THEN substr(f.name,1,length(f.name)-6) ELSE f.name END||'_lazy' default_target,\n        EXISTS(SELECT 1 FROM decorators x WHERE x.__path=f.__path AND x.fn=f.id AND x.name IN ('direct_legacy_module_async','direct_legacy_module_sync','external_io_boundary','external_io_boundary_async','external_io_boundary_sync')) external,\n        EXISTS(SELECT 1 FROM decorators x WHERE x.__path=f.__path AND x.fn=f.id AND x.name IN ('pure_lazy','lazy')) pure FROM owned_functions f LEFT JOIN legacy_decorators d ON d.__path=f.__path AND d.fn=f.id)",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "function_targets",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",\"parent\",\"edge_parent\",\"kind\",\"line\",\"text\",\"ordinal\",\"parent_start\",\"parent_end\",\"parent_kind\",\"ancestor_start\",\"ancestor_end\",\"ancestor_kind\",\"name_id\",\"name_source\",\"value_id\",\"value_kind\",\"type_id\",\"type_start\",\"type_end\",\"type_kind\",\"function_id\",\"function_start\",\"function_end\",\"function_kind\",\"object_id\",\"object_start\",\"object_end\",\"object_kind\",\"object_source\",\"attribute_id\",\"attribute_source\",\"body_id\",\"body_start\",\"body_end\",\"body_kind\",\"parameters_id\",\"parameters_start\",\"parameters_end\",\"parameters_kind\",\"name\",\"class_name\",\"region_start\",\"legacy_decorator\",\"decorator\",\"default_target\",\"external\",\"pure\",\"target\" FROM (SELECT f.*,coalesce((SELECT target FROM target_values t WHERE t.__path=f.__path AND t.decorator_start=(SELECT __start FROM legacy_decorators d WHERE d.__path=f.__path AND d.fn=f.id) ORDER BY t.__start LIMIT 1),default_target) target FROM function_contracts f)",
+            "indexes": [
+              [
+                "__path",
+                "class_name",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "last_functions",
+            "query": "SELECT \"__path\",NULL AS \"__start\",NULL AS \"__end\",NULL AS \"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_source\",NULL AS \"value_id\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_source\",NULL AS \"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",\"name\",\"class_name\",NULL AS \"region_start\",NULL AS \"legacy_decorator\",NULL AS \"decorator\",NULL AS \"default_target\",NULL AS \"external\",\"pure\",NULL AS \"target\",NULL AS \"chosen\" FROM (SELECT * FROM (SELECT f.*,row_number() OVER(PARTITION BY __path,class_name,name ORDER BY __end DESC) chosen FROM function_targets f) WHERE chosen=1)",
+            "indexes": [
+              [
+                "__path",
+                "class_name",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "body_statements",
+            "query": "SELECT \"__path\",\"fn\",NULL AS \"id\",\"kind\",\"value_kind\",\"value_text\",\"callee\",\"callee_kind\" FROM (SELECT f.__path,f.id fn,n.id,n.kind,v.kind value_kind,v.text value_text,c.callee,c.callee_kind FROM owned_functions f JOIN nodes n ON n.__path=f.__path AND n.parent=f.body_id LEFT JOIN nodes v ON v.__path=n.__path AND v.parent=n.id AND v.ordinal=0 LEFT JOIN calls c ON c.__path=v.__path AND c.id=v.id WHERE n.kind!='comment')",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "stubs",
+            "query": "SELECT \"__path\",\"id\",\"adapter\",\"abstract\" FROM (SELECT f.__path,f.id,\n        EXISTS(SELECT 1 FROM body_statements b WHERE b.__path=f.__path AND b.fn=f.id) AND NOT EXISTS(SELECT 1 FROM body_statements b WHERE b.__path=f.__path AND b.fn=f.id AND NOT (b.kind IN ('pass_statement','raise_statement','delete_statement') OR b.kind='expression_statement' AND (b.value_kind IN ('string','concatenated_string') AND rx_matches(b.value_text,'(?i)^[ru]*[\"'']') OR b.value_kind='ellipsis' OR b.callee_kind='identifier' AND b.callee IN ('_legacy_delegate_stub','_legacy_delegate_stub_async')))) adapter,\n        NOT EXISTS(SELECT 1 FROM body_statements b WHERE b.__path=f.__path AND b.fn=f.id AND NOT (b.kind IN ('pass_statement','raise_statement') OR b.kind='expression_statement' AND (b.value_kind IN ('string','concatenated_string') AND rx_matches(b.value_text,'(?i)^[ru]*[\"'']') OR b.value_kind='ellipsis'))) abstract FROM owned_functions f)",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "parameter_pieces",
+            "query": "SELECT \"__path\",\"fn\",\"name\",\"type\" FROM (WITH RECURSIVE pieces(__path,fn,name,rest,piece) AS (\n        SELECT p.__path,p.fn,p.name,replace(replace(n.text,'[','|'),']','|')||'|','' FROM parameters p JOIN nodes n ON n.__path=p.__path AND n.id=p.annotation WHERE p.kind IN ('typed_parameter','typed_default_parameter')\n        UNION ALL SELECT __path,fn,name,substr(rest,instr(rest,'|')+1),trim(substr(rest,1,instr(rest,'|')-1)) FROM pieces WHERE rest!='') SELECT __path,fn,name,rx_extract(piece,'([^.]*)$',1) AS type FROM pieces WHERE piece!='')"
+          },
+          {
+            "name": "transaction_parameters",
+            "query": "SELECT \"__path\",\"fn\",\"name\" FROM (SELECT DISTINCT __path,fn,name FROM parameter_pieces WHERE type GLOB '*PlanScope' OR type GLOB '*Transaction' AND rx_matches(type,'Read|Write|Schema'))",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "owned_calls",
+            "query": "SELECT \"__path\",\"fn\",NULL AS \"__path:1\",NULL AS \"__start\",NULL AS \"__end\",NULL AS \"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_source\",NULL AS \"value_id\",NULL AS \"value_kind\",NULL AS \"type_id\",NULL AS \"type_start\",NULL AS \"type_end\",NULL AS \"type_kind\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_source\",NULL AS \"body_id\",NULL AS \"body_start\",NULL AS \"body_end\",NULL AS \"body_kind\",NULL AS \"parameters_id\",NULL AS \"parameters_start\",NULL AS \"parameters_end\",NULL AS \"parameters_kind\",NULL AS \"callee_id\",NULL AS \"callee_kind\",NULL AS \"full_callee\",\"callee\",\"receiver\" FROM (SELECT f.__path,f.id fn,c.* FROM owned_functions f JOIN calls c ON c.__path=f.__path AND c.__start>=f.region_start AND c.__end<=f.__end WHERE c.callee_kind='attribute')",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          }
+        ],
+        "query": "SELECT d.*,CASE d.issue\n      WHEN 'LAO001' THEN f.name||' is a legacy adapter but its body contains executable planning or I/O'\n      WHEN 'LAO002' THEN f.name||' delegates to missing module lazy target '||f.target\n      WHEN 'LAO003' THEN f.name||' delegates to '||f.target||', which is not @pure_lazy'\n      WHEN 'LAO004' THEN '@pure_lazy surface '||f.name||' reaches eager terminal '||(SELECT min(c.callee) FROM owned_calls c WHERE c.__path=f.__path AND c.fn=f.id AND c.callee IN ('execute','execute_async','fetch','fetch_async','resolve','resolve_async') )\n      WHEN 'LAO005' THEN 'transaction-facing function '||f.name||' owns eager calls '||(SELECT group_concat(callee,', ') FROM (SELECT DISTINCT c.callee FROM owned_calls c JOIN nodes receiver ON receiver.__path=c.__path AND receiver.id=c.receiver AND receiver.kind='identifier' JOIN transaction_parameters p ON p.__path=c.__path AND p.fn=c.fn AND p.name=receiver.text WHERE c.__path=f.__path AND c.fn=f.id AND c.callee NOT GLOB '*_lazy' ORDER BY c.callee))||' instead of delegating to one @pure_lazy surface'\n      WHEN 'LAO006' THEN 'async transaction-facing function '||f.name||' has no awaited I/O and is not a legacy adapter' END message FROM (SELECT f.__path path,f.__start start_byte,f.__end end_byte,'LAO001' issue,f.id identity FROM function_targets f WHERE legacy_decorator IS NOT NULL AND NOT (SELECT adapter FROM stubs s WHERE s.__path=f.__path AND s.id=f.id) UNION ALL SELECT f.__path path,f.__start start_byte,f.__end end_byte,'LAO002' issue,f.id identity FROM function_targets f WHERE legacy_decorator IS NOT NULL AND class_name IS NULL AND NOT EXISTS(SELECT 1 FROM last_functions t WHERE t.__path=f.__path AND t.class_name IS f.class_name AND t.name=f.target) UNION ALL SELECT f.__path path,f.__start start_byte,f.__end end_byte,'LAO003' issue,f.id identity FROM function_targets f WHERE legacy_decorator IS NOT NULL AND EXISTS(SELECT 1 FROM last_functions t WHERE t.__path=f.__path AND t.class_name IS f.class_name AND t.name=f.target AND NOT t.pure) UNION ALL SELECT f.__path path,f.__start start_byte,f.__end end_byte,'LAO004' issue,f.id identity FROM function_targets f WHERE pure AND EXISTS(SELECT 1 FROM owned_calls c WHERE c.__path=f.__path AND c.fn=f.id AND c.callee IN ('execute','execute_async','fetch','fetch_async','resolve','resolve_async')) UNION ALL SELECT f.__path path,f.__start start_byte,f.__end end_byte,'LAO005' issue,f.id identity FROM function_targets f WHERE legacy_decorator IS NULL AND NOT external AND NOT pure AND EXISTS(SELECT 1 FROM owned_calls c JOIN nodes object ON object.__path=c.__path AND object.id=c.receiver JOIN transaction_parameters p ON p.__path=c.__path AND p.fn=c.fn AND p.name=object.text WHERE c.__path=f.__path AND c.fn=f.id AND object.kind='identifier' AND c.callee NOT GLOB '*_lazy') UNION ALL SELECT f.__path path,f.__start start_byte,f.__end end_byte,'LAO006' issue,f.id identity FROM function_targets f WHERE rx_matches(f.text,'^async\\b') AND legacy_decorator IS NULL AND NOT external AND NOT (SELECT abstract FROM stubs s WHERE s.__path=f.__path AND s.id=f.id) AND EXISTS(SELECT 1 FROM transaction_parameters p WHERE p.__path=f.__path AND p.fn=f.id) AND NOT EXISTS(SELECT 1 FROM nodes n WHERE n.__path=f.__path AND n.kind='await' AND n.__start>=f.region_start AND n.__end<=f.__end)) d JOIN function_targets f ON f.__path=d.path AND f.id=d.identity",
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "partitionBy": "file",
+        "syntax": {
+          "columns": [
+            "__path",
+            "__start",
+            "__end",
+            "id",
+            "parent",
+            "edge_parent",
+            "ordinal",
+            "text",
+            "kind",
+            "line",
+            "parent_start",
+            "parent_end",
+            "parent_kind",
+            "ancestor_start",
+            "ancestor_end",
+            "ancestor_kind",
+            "name_source",
+            "value_kind",
+            "type_start",
+            "type_end",
+            "type_kind",
+            "function_start",
+            "function_end",
+            "function_kind",
+            "object_start",
+            "object_end",
+            "object_kind",
+            "object_source",
+            "attribute_source",
+            "body_start",
+            "body_end",
+            "body_kind",
+            "parameters_start",
+            "parameters_end",
+            "parameters_kind",
+            "name_id",
+            "value_id",
+            "type_id",
+            "function_id",
+            "object_id",
+            "attribute_id",
+            "body_id",
+            "parameters_id"
+          ],
+          "name": "nodes",
+          "gate": "syntax_gate",
+          "fields": [
+            "name",
+            "value",
+            "type",
+            "function",
+            "object",
+            "attribute",
+            "body",
+            "parameters"
+          ],
+          "excludeKinds": [
+            "comment",
+            "string_start",
+            "string_content",
+            "string_end",
+            "escape_sequence",
+            "line_continuation"
+          ],
+          "edges": "edges",
+          "ownership": "ownership",
+          "owners": {
+            "fn": {
+              "kind": "function_definition"
+            },
+            "cls": {
+              "kind": "class_definition"
+            },
+            "top_fn": {
+              "kind": "function_definition",
+              "outermost": true
+            }
+          }
+        },
+        "requireNonemptyInput": "syntax_gate",
+        "message": "message"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

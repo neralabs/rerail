@@ -5,22 +5,83 @@ edition = "2024"
 publish = false
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [features]
+# Every registry language (`languages/<id>.json`) is built by default. A build without `lang-<id>` keeps the
+# language's tables but no grammar: its files are routed to no parser and nothing embeds it (`build.rs`,
+# `GrammarDialect::built`). The browser build (wasm/README.md) picks the languages a page needs.
+default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache"]
+all-languages = ["lang-blade", "lang-javascript", "lang-json", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-sql", "lang-typescript", "lang-vue"]
+lang-blade = []
+lang-javascript = []
+# JSON, parsed by its Bitlex grammar (`transducer::packed::json_parser`); tree-sitter-json for a file it refuses.
+lang-json = ["ast-grep-language/tree-sitter-json"]
+lang-php = ["ast-grep-language/tree-sitter-php"]
+lang-python = []
+# `.rr` rule files, parsed by the rule engine's own parser (`logic::rr::syntax`, decision 0061).
+lang-rr = []
+lang-rust = ["ast-grep-language/tree-sitter-rust"]
+lang-sql = []
+lang-typescript = []
+lang-vue = []
+# The engine without its Node addon (the `rerail-engine` CLI, the browser build): `#[napi]` items compile as plain
+# Rust and register nothing, so a binary links only what it calls rather than the addon's whole API (workspace
+# service, editor, suppressions, embeddings, git). Never on for the addon `npm run build` makes.
+headless = ["napi-derive/noop"]
+# The CLI's `dump` (rules in the earlier JSON/YAML form, compiled and printed as `rir`): off, the CLI links no
+# part of that compiler (the addon still has it).
+dump-cli = []
+# `syntax_error` on Python from a parser that follows CPython's grammar (Ruff's, with its 0.8 MB Unicode name table);
+# off, Python's verdict is tree-sitter's, as the other languages' are.
+python-syntax-error = []
+# The corpus runner's persistent store (`RERAIL_TAPE_CACHE`): tapes kept across runs, the per-file memo, run records
+# and their collection, in zstd frames. Off (the browser build), every run parses every file.
+tape-cache = []
+# Memory attribution: Rust, Tree-sitter and SQLite allocate through the system allocator instead of jemalloc, so
+# macOS's `malloc_history` and `heap` see every live allocation with its stack. Never on for a build that ships.
+system-allocator = []
 code-rule-profile = []
-bench-backends = ["dep:metal"]
+# P's workspace anchor path (Pulling-it-all-together@cbee7a03): its anchor corpus prepared for every
+# rule and read by `FileAnchorIndex::build_at`, in place of W's per-file index. Test builds only, over
+# the test-only copy `matcher::p_anchors`, until open item O20 picks one engine.
+p-anchor-corpus = []
+# The Metal transducer suites (485 tests). Every GPU dispatch takes the process-wide
+# `METAL_EXECUTION_LOCK`, so these run one at a time and were 82% of the default suite's test
+# time; they run as their own gate: `cargo test --lib --features metal-tests -- transducer::`.
+metal-tests = []
 [dependencies]
+# `.rr`'s @ed25519_ok (code_rule_dsl/logic/crypto.rs): W's verify_ed25519, with the crates and versions it used.
+base64 = "=0.22.1"
+ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
+# Relational kernels on every lane and the executor that batches their launches (decision 0098).
+rerail-accel = { path = "../accel" }
+# The content store and the git workspace, built apart (`crates/store`): their sources stay in `src/`.
+rerail-store = { path = "crates/store", features = ["test-hooks"] }
 ast-grep-core = "=0.51.0"
 # Python, TypeScript, TSX and JavaScript are not ast-grep's: Rerail builds them from its patched
-# vendored grammars (grammars/tree-sitter-{python,typescript,javascript}/PATCHES.md), and no second
-# parser is linked.
+# vendored grammars (grammars/tree-sitter-{python,typescript,javascript}/PATCHES.md).
+# Ruff supplies a demanded Python grammar verdict; it does not replace the tape parser.
 # Rust parses with ast-grep's tree-sitter-rust 0.24.2 (MIT), the grammar its feasibility census measured.
-ast-grep-language = { version = "=0.51.0", default-features = false, features = ["tree-sitter-php", "tree-sitter-rust"] }
+# PHP and Rust parse with its grammars when `lang-php` and `lang-rust` are on.
+ast-grep-language = { version = "=0.51.0", default-features = false }
+# The transducer's CPU JIT (code_rule_dsl/transducer/packed).
+cranelift-codegen = "=0.125.4"
+# Tier 1 of the transducer's parsers, a crate of its own so that a change to it rebuilds little.
+rerail-compiler = { path = "crates/compiler" }
+rerail-rr-syntax = { path = "crates/rr_syntax" }
+# The .rr parser: its grammar compiled, the engine's tape from it (`packed::rr_parser`).
+rerail-rr-parser = { path = "crates/rr_parser" }
+rerail-prof = { path = "crates/prof" }
+cranelift-frontend = "=0.125.4"
+cranelift-module = "=0.125.4"
 # The hasher of in-process maps keyed by names, nodes and terms (scope tables, a batch's facts).
 foldhash = "=0.2.0"
-gix = { version = "=0.90.0", default-features = false, features = ["status", "parallel", "sha1", "sha256"] }
+hashbrown = { version = "=0.16.1", default-features = false }
+gix = { version = "=0.90.0", default-features = false, features = ["status", "parallel", "sha1", "sha256", "revision"] }
 globset = "=0.4.21"
+# Multi-literal search for the text layer (code_rule_dsl/text): already in the tree through `regex`.
+aho-corasick = "=1.1.5"
 model2vec-rs = { version = "0.4.0", default-features = false, features = ["fancy-regex", "local-only"] }
 napi = { version = "3.0", default-features = false, features = ["napi8", "dyn-symbols"] }
 napi-derive = "3.0"
@@ -34,24 +95,55 @@ rayon = "=1.12.0"
 serde = { version = "1.0", features = ["derive"] }
 fancy-regex = "=0.17.0"
 regex = "=1.13.1"
+regex-automata = "=0.4.18"
 regex-syntax = "=0.8.11"
-rusqlite = { version = "=0.41.1", features = ["bundled", "limits"] }
+# Held at 0.40.2, not main's 0.41.1: 0.41 registers hooks (`progress_handler`, `commit_hook`,
+# `rollback_hook`, `authorizer`) through `&mut Connection`, and the engine installs them on connections its
+# statements share.
+rusqlite = { version = "=0.41.1", features = ["bundled", "column_decltype", "functions", "hooks", "limits", "modern_sqlite", "series", "vtab"] }
+fallible-iterator = "0.3"
+# Native Python grammar validation, pinned to the source oracle version (3.13).
+# `core.rr`'s `syntax_error` for Python: a parser that follows CPython's grammar (Ruff's), since tree-sitter
+# recovers from errors. 0.0.10 is the last release that builds on the pinned toolchain (1.95).
+# The same crates give CPython's other verdicts on Python source (code_rule_dsl/cpython: ast.unparse, ast.dump,
+# literal_eval, string annotations); 0.0.10 is Ruff's tag 0.16.4 (11c76bf48) as published by Astral.
+ruff_python_parser = "=0.0.10"
+ruff_python_ast = "=0.0.10"
+ruff_text_size = "=0.0.10"
 rustc-hash = "=2.1.3"
 serde_json = "1.0"
 serde_yaml_ng = "=0.10.0"
+# Git blob ids, for run artifacts' input digests (`corpus::inputs`, data-layer/RUN-FACTS.md section 4).
+sha1 = "0.10"
 sha2 = "0.11"
 tree-sitter-language = "=0.1.9"
 tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-regex"] }
 tree-sitter = "=0.27.1"
+# Bitlex's parser (and, in tests, its reference evaluator), for the Bitlex compiler
+# (`transducer/packed/bitlex_compile`). Its library has no dependencies; the tree-sitter oracle is
+# its binary's feature.
+bitlex = { path = "../tools/bitlex", default-features = false }
 # CPython's identifier normalization (NFKC, PEP 3131), which Ruff applies to Python names too.
 unicode-normalization = "=0.1.26"
 zstd = "=0.14.3"
 
-[target.'cfg(unix)'.dependencies]
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+# Executable code needs dedicated mappings, separate from mimalloc heap pages (G).
+cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
+
+# The browser build (wasm32-wasip1, `wasm/README.md`): a page has no executable memory, so the JIT's stand-in
+# fails to build a module and the transducer interprets, as it does before a background JIT compile lands.
+[target.'cfg(target_family = "wasm")'.dependencies]
+cranelift-jit-wasm = { path = "wasm/cranelift-jit" }
 libc = "0.2.189"
 
-# jemalloc does not build for MSVC targets; Windows keeps the system allocator (`lib.rs`).
-[target.'cfg(not(windows))'.dependencies]
+[target.'cfg(unix)'.dependencies]
+# G's global allocator, ported as a dependency only: W keeps jemalloc (`lib.rs`) until O16.
+mimalloc = { version = "=0.1.52", default-features = false }
+libc = "0.2.189"
+
+# jemalloc does not build for MSVC targets or wasm; both keep the system allocator (`lib.rs`).
+[target.'cfg(not(any(windows, target_family = "wasm")))'.dependencies]
 # The addon is dlopen'ed by Node; glibc can't fit jemalloc's initial-exec TLS in its static block.
 tikv-jemallocator = { version = "=0.7.0", features = ["disable_initial_exec_tls"] }
 tikv-jemalloc-ctl = { version = "=0.7.0", features = ["stats"] }
@@ -59,17 +151,31 @@ tikv-jemalloc-ctl = { version = "=0.7.0", features = ["stats"] }
 tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Memory", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-metal = { version = "0.33.0", optional = true }
+block = "0.1.6"
+metal = "0.33.0"
+# The Metal runtime, the slab residency's arena and the block programs' backend.
+rerail-metal = { path = "crates/metal" }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+# Per-thread buffer ledgers for the engine's tests (`rerail_metal::test_pool`).
+rerail-metal = { path = "crates/metal", features = ["test-hooks"] }
 
 [dev-dependencies]
+# Tier 1's test hooks (the relocations' recording) for the engine's tests.
+rerail-compiler = { path = "crates/compiler", features = ["test-hooks"] }
+# The parsers' tests, and every executor of a block program (`regex_block`'s tests).
+rerail-parser-tests = { path = "crates/parser_tests" }
 # The test-only dialects' grammars: `builtin-parser` without tree-sitter-python,
 # tree-sitter-typescript and tree-sitter-javascript, which Rerail vendors.
 ast-grep-language = { version = "=0.51.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
-# Tests count SQLite VM steps (`Connection::progress_handler`) to bound statement work.
-rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks"] }
+# Tests count SQLite VM steps (`Connection::progress_handler`) to bound statement work; G's
+# positional search index (test-only) reads `rarray`.
+rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "array"] }
+# Temporary files in tests copied from P and D (P pins it as a dependency).
+tempfile = "=3.27.0"
 
 [build-dependencies]
 cc = "=1.10.0"
@@ -82,3 +188,8 @@ serde_json = "1.0"
 tree-sitter-generate = { version = "=0.27.1", default-features = false }
 # Reads (and, with RERAIL_GENERATE_PARSERS=1, writes) the generated parser SQL commits gzipped (build.rs's committed_parser).
 flate2 = "=1.1.10"
+
+[[example]]
+name = "sql-session-verify"
+path = "examples/sql_session_verify.rs"
+required-features = ["headless"]

@@ -206,11 +206,48 @@ jobs:
               - 'fixtures/**'
               - 'packs/**'
               - 'languages/**'
+              - 'docs/rule-syntax/**'
+              - 'gate/data-layer/**'
               - 'src/engine/code-rule/code-rule-language-registry.generated.ts'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
               - '.cargo/**'
+              - 'scripts/profiling/reachability/**'
+              - 'scripts/profiling/preparation/**'
+              - 'scripts/profiling/composition.py'
+              - 'test/scripts/test_sql_composition.py'
+              - 'scripts/profiling/reachability_*.py'
+              - 'scripts/profiling/native_*_*.py'
+              - 'test/scripts/test_reachability.py'
+              - 'test/scripts/test_native_relations.py'
+              - 'test/scripts/test_native_sql_plan.py'
+              - 'scripts/profiling/producer-shape.mjs'
+              - 'scripts/profiling/sql-budget.mjs'
+              - 'fixtures/host/data-layer-port/sql-budget-recording.json'
+              - 'fixtures/host/data-layer-port/profiling/sql-execution-opportunities-20261024.json'
+              - 'scripts/profiling/sql-report.mjs'
+              - 'scripts/profiling/sql-session.mjs'
+              - 'benchmark/sql-profile/**'
+              - 'test/scripts/sql-execution-budget.test.mjs'
+              - 'test/scripts/sql-profile.test.mjs'
+              - 'test/scripts/sql-profile/**'
+              - 'test/engine/native/relational-batch.test.ts'
+              - 'test/engine/native/relational-completed.test.ts'
+              - 'test/engine/native/candidate-admission.test.ts'
+              - 'test/engine/native/candidate-publication.test.ts'
+              - 'test/engine/native/compiler-schema.test.ts'
+              - 'test/engine/native/shared-producers.test.ts'
+              - 'test/engine/native/frontier-determinism.test.ts'
+              - 'test/engine/native/recovery/child-demand.test.ts'
+              - 'test/engine/native/recovery/relational-storage.test.ts'
+              - 'test/engine/native/recovery/input-admission.test.ts'
+              - 'test/engine/native/recovery/eponymous-sources.test.ts'
+              - 'test/engine/native/recovery/state-syntax-domain.test.ts'
+              - 'test/engine/native/recovery/selector-materialization.test.ts'
+              - 'scripts/profiling/frontier-audit.mjs'
+              - 'scripts/profiling/post_c_spikes/**'
+              - 'test/scripts/test_post_c_spikes.py'
               - 'package.json'
               - '.github/workflows/ci.yml'
               - '.gitattributes'
@@ -498,6 +535,89 @@ jobs:
 
       - name: Run ${{ matrix.name }}
         run: ${{ matrix.run }}
+
+      - name: Check isolated reachability spike
+        if: matrix.task == 'clippy'
+        run: |
+          cargo fmt --manifest-path scripts/profiling/reachability/Cargo.toml -- --check
+          cargo clippy --manifest-path scripts/profiling/reachability/Cargo.toml --locked --target-dir target/reachability-spike -- -D warnings
+
+      - name: Build isolated reachability extension
+        if: matrix.task == 'test'
+        run: cargo build --manifest-path scripts/profiling/reachability/Cargo.toml --release --locked --target-dir target/reachability-spike
+
+      # The extension is bound to the bundled SQLite's API (modern_sqlite) and refuses an older host;
+      # the runner's Python has SQLite 3.45.1. Build the amalgamation the lock resolves for the tests.
+      - name: Build the SQLite the reachability extension is bound to
+        if: matrix.task == 'test'
+        run: |
+          sys=$(cargo metadata --manifest-path scripts/profiling/reachability/Cargo.toml --format-version 1 --locked \
+            | jq -r '.packages[] | select(.name == "libsqlite3-sys") | .manifest_path')
+          mkdir -p "$RUNNER_TEMP/sqlite"
+          gcc -O2 -shared -fPIC -DSQLITE_THREADSAFE=1 -DSQLITE_ENABLE_LOAD_EXTENSION=1 -DSQLITE_ENABLE_MATH_FUNCTIONS \
+            -o "$RUNNER_TEMP/sqlite/libsqlite3.so.0" "$(dirname "$sys")/sqlite3/sqlite3.c" -lm -lpthread -ldl
+
+      - name: Test SQL and Rust reachability adapters
+        if: matrix.task == 'test'
+        env:
+          RERAIL_REACH_EXTENSION: ${{ github.workspace }}/target/reachability-spike/release/librerail_reachability_spike.so
+          PYTHONDONTWRITEBYTECODE: "1"
+          LD_LIBRARY_PATH: ${{ runner.temp }}/sqlite
+        run: |
+          python3 test/scripts/test_reachability.py
+          python3 test/scripts/test_native_relations.py
+          python3 test/scripts/test_native_sql_plan.py
+
+      # The shape gate requires profiling spans and must never silently skip on a production addon.
+      # Keep this debug addon separate from the package's release artifact.
+      - uses: ./.github/actions/node-deps
+        if: matrix.task == 'test'
+
+      - name: Build profiling addon for the producer shape gate
+        if: matrix.task == 'test'
+        run: |
+          cargo build --manifest-path native/Cargo.toml --features code-rule-profile
+          cp target/debug/librerail_engine.so "$RUNNER_TEMP/rerail-producer-shape.node"
+
+      - name: Enforce broad producer execution shape
+        if: matrix.task == 'test'
+        env:
+          RERAIL_ENGINE_PATH: ${{ runner.temp }}/rerail-producer-shape.node
+        run: npm run test:producer-shape
+
+      - name: Enforce 100 engine SQL submissions for the complete cold job
+        if: matrix.task == 'test'
+        env:
+          RERAIL_ENGINE_PATH: ${{ runner.temp }}/rerail-producer-shape.node
+        run: npm run test:sql-execution-budget -- "$RUNNER_TEMP/rerail-sql-budget"
+
+      - name: Preserve SQL execution budget evidence
+        if: always() && matrix.task == 'test'
+        uses: actions/upload-artifact@v7
+        with:
+          name: sql-execution-budget
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/rerail-sql-budget/provenance.json
+            ${{ runner.temp }}/rerail-sql-budget/chunk-a-budget.json
+            ${{ runner.temp }}/rerail-sql-budget/chunk-b-budget.json
+            ${{ runner.temp }}/rerail-sql-budget/chunk-c-budget.json
+            ${{ runner.temp }}/rerail-sql-budget/capture/profile.json
+            ${{ runner.temp }}/rerail-sql-budget/capture/parity.json
+            ${{ runner.temp }}/rerail-sql-budget/capture/summary.txt
+            ${{ runner.temp }}/rerail-sql-budget/capture/sql/summary.md
+            ${{ runner.temp }}/rerail-sql-budget/capture/sql/execution-budget.json
+
+      - name: Test SQL statement capture and deferred explanations
+        if: matrix.task == 'test'
+        run: cargo test --manifest-path scripts/profiling/reachability/Cargo.toml --no-default-features --locked code_rule_dsl::sql::tests
+
+      - name: Check and test captured SQL replay and composition kernels
+        if: matrix.task == 'test'
+        run: |
+          cargo fmt --manifest-path scripts/profiling/preparation/Cargo.toml -- --check
+          cargo clippy --manifest-path scripts/profiling/preparation/Cargo.toml --locked --all-targets --target-dir target/sql-preparation-lab -- -D warnings
+          cargo test --manifest-path scripts/profiling/preparation/Cargo.toml --locked --target-dir target/sql-preparation-lab
 
   # Builds the package once: dist/ and the release native engine, handed to every test job.
   build:
@@ -832,6 +952,7 @@ jobs:
       - name: Script tests and reference examples
         run: |
           npm run test:scripts
+          npm run test:profiling
           npm run test:reference
 
       # The not-gated and pending lists may only shrink against the base: the pull request's base, or the push's previous

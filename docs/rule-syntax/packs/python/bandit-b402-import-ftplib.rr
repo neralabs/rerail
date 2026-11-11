@@ -1,0 +1,17 @@
+.policy "bandit-b402-import-ftplib" revision 2
+.description "Remove imports of ftplib; FTP sends credentials and data unencrypted, so use SFTP, SCP, or another encrypted protocol."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B402 (its B001 blacklist): an import of ftplib or anything under it.
+// How Bandit matches imports (by prefix, one finding per statement), and the list: python/security.rr (blacklisted).
+//   import ftplib as f                          B402
+//   from ftplib import FTP                      B402
+//   importlib.import_module("ftplib")           B402: a call that imports a listed module (exactly)
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B402(at: node) code "B402"
+    "Remove this ftplib import and use SFTP, SCP, or another encrypted protocol instead."
+    suppress nosec "B402"
+B402(n) :- blacklisted(n, "B402").
