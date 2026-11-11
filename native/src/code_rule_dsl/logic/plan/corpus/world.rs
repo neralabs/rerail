@@ -35,6 +35,7 @@ pub(super) const LOADED_DOC: &str = "loaded_doc";
 /// Whether the program reads the file system or loads documents.
 pub(super) fn wanted(prog: &front::Program) -> bool {
     prog.rules.iter().any(|r| r.head.rel == LOAD || WORLD.iter().any(|(_, d)| *d == r.head.rel))
+        || prog.facts.iter().any(|(rel, rows)| !rows.is_empty() && (rel == LOAD || WORLD.iter().any(|(_, d)| *d == rel)))
 }
 
 /// The requests a program makes, each with what answers it, before a load's per-file rows are added
@@ -44,7 +45,8 @@ pub(super) fn answers(prog: &front::Program) -> BTreeMap<String, Vec<String>> {
         .iter()
         .map(|(rel, req)| (*req, *rel))
         .chain([(LOAD, LOADED)])
-        .filter(|(req, _)| prog.rules.iter().any(|x| x.head.rel == *req))
+        .filter(|(req, _)| prog.rules.iter().any(|x| x.head.rel == *req)
+            || prog.facts.get(*req).is_some_and(|rows| !rows.is_empty()))
         .map(|(req, rel)| (req.to_owned(), vec![rel.to_owned()]))
         .collect();
     // Publish identity rows only when a consumer reads them. The canonical
@@ -138,7 +140,8 @@ impl World {
         // What the requests may read is watched (decision 0105): a directory listed or a file read that the
         // journal says is unchanged is not statted.
         super::observe(|o| o.watch(&roots));
-        let snapshot_metadata = prog.rules.iter().any(|r| r.head.rel == "rr_dir_metadata_req");
+        let snapshot_metadata = prog.rules.iter().any(|r| r.head.rel == "rr_dir_metadata_req")
+            || prog.facts.get("rr_dir_metadata_req").is_some_and(|rows| !rows.is_empty());
         let read_errors = prog.rules.iter().any(|r| r.head.rel == "rr_file_error_req") || prog.facts.contains_key("rr_file_error_req");
         World { roots, root: root.to_path_buf(), budget, snapshot_metadata, read_errors, ..World::default() }
     }

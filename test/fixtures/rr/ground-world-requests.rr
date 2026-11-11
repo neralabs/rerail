@@ -1,0 +1,8 @@
+.policy "ground-world-request-regression" revision 1
+.language python
+.scope include "pkg/a.py"
+.violation Observed(at: span, key: symbol, value: symbol) "{key}: {value}"
+Observed(@place("",0),"metadata",to_string(bytes)) :- dir_metadata("pkg","a.py",1,_,bytes).
+Observed(@place("",0),"listing",name) :- dir_entry("pkg",name,0).
+Observed(@place("",0),"line",text) :- file_line("pkg/a.py",1,text).
+Observed(@place("",0),"error",bytes) :- file_error("pkg/bad.py",_,_,_,bytes,_,_,_).
