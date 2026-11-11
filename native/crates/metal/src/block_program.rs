@@ -1540,7 +1540,8 @@ fn encode_passes(passes: &[Pass<'_>]) -> Result<f64, Error> {
     command.set_label("Rerail block program");
     for pass in passes {
         let encoder = command.new_compute_command_encoder();
-        encoder.set_label("block_program");
+        // The kernel's name, for a trace's encoders (Instruments' Metal System Trace).
+        encoder.set_label(pass.pipeline.label());
         encoder.set_compute_pipeline_state(pass.pipeline);
         for &(index, buffer, offset) in &pass.buffers {
             encoder.set_buffer(index, Some(buffer), offset);

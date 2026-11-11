@@ -934,10 +934,20 @@ static SOURCES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u
 /// again, as `pipeline_named` does (twelve kernels a pass, its source near a megabyte).
 pub(crate) static KERNELS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(u64, &'static str), metal::ComputePipelineState>>> = std::sync::LazyLock::new(Default::default);
 
+/// Sources generated and kernels compiled by this process's serial runs: a benchmark reads it
+/// around its timed runs, which must make none (`prewarm` makes them first).
+static COMPILES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// The sources generated and kernels compiled so far (`COMPILES`).
+pub fn compiles() -> usize {
+    COMPILES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 fn kernel(key: u64, source: &str, name: &'static str) -> Result<metal::ComputePipelineState, Error> {
     if let Some(hit) = KERNELS.lock().ok().and_then(|m| m.get(&(key, name)).cloned()) {
         return Ok(hit);
     }
+    COMPILES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let made = pipeline_named(source, name)?;
     if let Ok(mut m) = KERNELS.lock() {
         m.insert((key, name), made.clone());
@@ -960,7 +970,27 @@ fn serial_source(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (u64, 
     if let Some((source, sw, counted)) = SOURCES.lock().ok().and_then(|m| m.get(&key).cloned()) {
         return (key, source, sw, counted);
     }
+    // `RERAIL_SERIAL_CACHE=dir`: sources kept on disk by key, for runs by hand (a profile, a
+    // trace) that would otherwise make them again in each process.
+    let disk = std::env::var_os("RERAIL_SERIAL_CACHE").map(|d| std::path::PathBuf::from(d).join(format!("{key:016x}.msl")));
+    if let Some(Ok(text)) = disk.as_ref().map(std::fs::read_to_string) {
+        if let Some((head, source)) = text.split_once('\n') {
+            let mut n = head.split(' ').filter_map(|x| x.parse::<usize>().ok());
+            if let (Some(sw), Some(counted)) = (n.next(), n.next()) {
+                let made = (std::sync::Arc::new(source.to_owned()), sw, counted);
+                if let Ok(mut m) = SOURCES.lock() {
+                    m.insert(key, made.clone());
+                }
+                return (key, made.0, made.1, made.2);
+            }
+        }
+    }
+    COMPILES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let (source, sw, counted) = generate_serial(programs, io);
+    if let Some(path) = &disk {
+        let _ = std::fs::create_dir_all(path.parent().unwrap_or(path));
+        let _ = std::fs::write(path, format!("{sw} {counted}\n{source}"));
+    }
     let made = (std::sync::Arc::new(source), sw, counted);
     if let Ok(mut m) = SOURCES.lock() {
         m.insert(key, made.clone());
@@ -1386,6 +1416,34 @@ pub fn run_resident_digested(programs: &[&BlockNative], files: &[BatchFile<'_>],
     Ok((run, kept.ok_or(Error::BackendFailure)?))
 }
 
+/// Compiles `programs`' kernels ahead of their first batch, and what a run learns of them
+/// (`learn`): runs over `sample` until one makes no source or kernel, each compiling what the
+/// one before learned. Nothing is kept of the runs. A process calls it once a program, off the parse's path (a
+/// thread of its own), so no batch waits on Metal's compiler.
+pub fn prewarm(programs: &[&BlockNative], sample: &[BatchFile<'_>], segments: Segments) -> Result<(), Error> {
+    // Until a run makes nothing: each run may learn, and its next compiles what it learned.
+    for _ in 0..6 {
+        let before = compiles();
+        run_split_kept(programs, sample, segments)?;
+        if compiles() == before {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// `run_kept` over `files`, halved where the device refuses it, its results dropped.
+fn run_split_kept(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments) -> Result<(), Error> {
+    match run_kept(programs, files, None, segments, false) {
+        Err(Error::BackendCapacity) if files.len() > 1 => {
+            let (a, b) = files.split_at(files.len() / 2);
+            run_split_kept(programs, a, segments)?;
+            run_split_kept(programs, b, segments)
+        }
+        other => other.map(|_| ()),
+    }
+}
+
 /// The files' bytes admitted once a run, every pass of it reading them where they are.
 fn run_kept(programs: &[&BlockNative], files: &[BatchFile<'_>], digests: Option<&[[u8; 32]]>, segments: Segments, read: bool) -> Result<(SerialRun, Option<Resident>), Error> {
     let bytes: Vec<&[u8]> = files.iter().map(|f| f.bytes).collect();
@@ -1538,8 +1596,17 @@ fn run_passes(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[std
                 }
             }
             rerail_compiler::block_native::Pass::Back(fills) => {
-                let source = back_kernels(fills, passes.slots);
-                let (tables_k, prefix_k, apply_k) = (pipeline_named(&source, "back_tables")?, pipeline_named(&source, "back_prefix")?, pipeline_named(&source, "back_apply")?);
+                let key = {
+                    use std::hash::{Hash, Hasher};
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    ("back", fills, passes.slots).hash(&mut h);
+                    h.finish()
+                };
+                let made = |name| match KERNELS.lock().ok().and_then(|m| m.get(&(key, name)).cloned()) {
+                    Some(hit) => Ok(hit),
+                    None => kernel(key, &back_kernels(fills, passes.slots), name),
+                };
+                let (tables_k, prefix_k, apply_k) = (made("back_tables")?, made("back_prefix")?, made("back_apply")?);
                 let table = crate::pool::upload(&rows)?;
                 let seg_table = crate::pool::upload(&segs)?;
                 let tables = crate::pool::zeroed::<u32>((segs.len() * fills.len()).max(1))?;
@@ -1757,8 +1824,16 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     first.push(Pass { pipeline: &check, buffers: check_buffers.clone(), args: at_round(fit(total)?, 0, 1), groups: groups(total), threads: THREADS });
     if std::env::var("RERAIL_SERIAL_TIMES").is_ok() {
         // Each pass alone, for its time; then the run proper.
-        let times: Vec<String> = first.iter().map(|p| encode_passes(std::slice::from_ref(p)).map(|s| format!("{:.3}", s * 1e3)).unwrap_or_default()).collect();
-        eprintln!("serial: passes ms {}", times.join(" "));
+        // Each kernel's GPU time, and the threads a threadgroup its registers allow (1,024 at
+        // most: fewer when its registers are many).
+        let times: Vec<String> = first
+            .iter()
+            .map(|p| {
+                let ms = encode_passes(std::slice::from_ref(p)).map(|s| s * 1e3).unwrap_or(f64::NAN);
+                format!("{} {ms:.3} ms ({} threads)", p.pipeline.label(), p.pipeline.max_total_threads_per_threadgroup())
+            })
+            .collect();
+        eprintln!("serial: {} segments; {}", total, times.join(", "));
         unsafe { std::ptr::write_bytes(listed.host().cast::<u32>(), 0, 1) };
         unsafe { std::ptr::write_bytes(cins.host().cast::<u64>(), 0, total) };
         unsafe { std::ptr::write_bytes(cws.host().cast::<u64>(), 0, total) };
