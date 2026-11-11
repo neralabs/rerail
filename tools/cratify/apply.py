@@ -216,7 +216,7 @@ def manifest_dir_edits(nodes, edits):
         data = open(n.file, 'rb').read()
         i = data.find(tok)
         while i >= 0:
-            if not data[max(0, i - 8):i].endswith(b'concat!('):
+            if not data[i + len(tok):i + len(tok) + 9].startswith(b', "/../..'):
                 edits.add(n.file, i, i + len(tok), 'concat!(env!("CARGO_MANIFEST_DIR"), "/../..")', 'manifest dir')
             i = data.find(tok, i + 1)
 

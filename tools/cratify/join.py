@@ -91,6 +91,29 @@ def main(edges_json, out, *indexes):
                     w.write(f'{a}\t{b}\t{d[5]}\t{sym.split(" ", 4)[-1]}\t{d[0]}:{d[1] + 1}\t{" ".join(sorted(sites))}\n')
     dump('upward.tsv', up)
     dump('tests.tsv', uptest)
+    # A restricted re-export (`pub(crate) use x::Y;`) outside the engine becomes `pub` (apply.py), so what it names
+    # must be: each reference inside one, to an item of the same crate, counts as read by another crate.
+    REEXPORT = re.compile(r'^\s*pub\s*\([^)]*\)\s+use\b')
+    spans = collections.defaultdict(list)
+    for f, crate in F.items():
+        if crate == 'rerail-engine' or not os.path.exists(os.path.join(ROOT, f)):
+            continue
+        L = lines(f)
+        i = 0
+        while i < len(L):
+            if REEXPORT.match(L[i]):
+                j = i
+                while j < len(L) and ';' not in L[j]:
+                    j += 1
+                spans[f].append((i, j))
+                i = j
+            i += 1
+    for idx in indexes:
+        for row in open(os.path.join(idx, 'refs.tsv')):
+            f, l, c, ec, sym = row.rstrip('\n').split('\t')
+            if f in spans and sym in defs and any(a <= int(l) <= b for a, b in spans[f]) and defs[sym][0] != f:
+                if F.get(defs[sym][0]) == F[f]:
+                    reads[sym].add('re-export')
     with open(os.path.join(out, 'reads.tsv'), 'w') as w:
         w.write('file\tline\tkind\titem\tread_by\n')
         for sym, users in sorted(reads.items()):

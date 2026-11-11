@@ -58,7 +58,8 @@ def main(tsv, *flags):
                     refused.append(f'{f}:{l} {item}: past the file\'s end (a stale index)')
                     continue
                 b = byte_start[i] + len(lines[i][:c].encode())
-                if kind == 'method' and any(s <= b < e for s, e in traits):
+                # anything in a trait or a trait's impl (SCIP's `static` is an associated fn without self, too)
+                if kind != 'field' and any(s <= b < e for s, e in traits):
                     done['trait method'] += 1
                     continue
                 if kind == 'field' and any(s <= b < e for s, e in enums):
