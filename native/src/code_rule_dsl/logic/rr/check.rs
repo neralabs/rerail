@@ -32,12 +32,6 @@ fn term_needs(t: &Term, bound: &BTreeSet<String>) -> BTreeSet<String> {
     }
 }
 
-fn lit_vars(l: &Lit) -> BTreeSet<String> {
-    let mut out = Vec::new();
-    l.vars(&mut out);
-    out.into_iter().collect()
-}
-
 fn is_text_test(rel: &str) -> bool {
     TESTS.iter().any(|(rr, _)| *rr == rel && rel != "match")
 }
