@@ -18,6 +18,7 @@ mod test_watchdog;
 mod code_rule_dsl;
 /// The engine's tools without Node (`rerail-engine dump` / `asm`).
 pub use code_rule_dsl::tools;
+pub(crate) use code_rule_dsl::prof::purge_allocator_pages;
 pub use rerail_store::content_store;
 pub mod git_ignore;
 pub use rerail_store::git_workspace;
@@ -280,22 +281,6 @@ pub(crate) fn release_allocator_memory() {
     #[cfg(not(any(windows, target_family = "wasm")))]
     let _ = tikv_jemalloc_ctl::background_thread::write(true);
     purge_allocator_pages();
-}
-
-/// Return every arena's freed pages to the system.
-pub(crate) fn purge_allocator_pages() {
-    // SAFETY: arena.4096 is jemalloc's all-arenas selector; purge reads and writes no value, so
-    // jemalloc requires null value pointers (`raw::write` passes a non-null one and is refused).
-    #[cfg(not(any(windows, target_family = "wasm")))]
-    unsafe {
-        tikv_jemalloc_sys::mallctl(
-            c"arena.4096.purge".as_ptr(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            0,
-        );
-    }
 }
 
 #[napi]

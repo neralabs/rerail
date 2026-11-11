@@ -15,6 +15,7 @@ pub(crate) static METAL: Metal = Metal;
 pub(crate) fn register() {
     crate::code_rule_dsl::logic::device::register(&METAL);
     crate::code_rule_dsl::transducer::packed::device::register(&METAL);
+    crate::code_rule_dsl::prof::register_device_memory(|| (packed::metal_backend::reserved_mb(), packed::metal_backend::driver_mb()));
 }
 
 fn refused(error: Error) -> Refused {

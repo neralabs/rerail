@@ -11,6 +11,7 @@ use super::native::setfix::{Fresh, JoinRule, Store};
 
 pub(in crate::code_rule_dsl) mod lattice;
 pub(in crate::code_rule_dsl) mod nearest;
+pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::profile::{Report};
 
 /// A join rule's plan on the device, as the device made it (`SolverDevice::compile_join`).
 #[derive(Clone)]
@@ -61,35 +62,3 @@ pub(in crate::code_rule_dsl) fn take_report() -> Option<Report> {
     solver().and_then(|d| d.take_report())
 }
 
-/// What a stratum's device run did, for the profile.
-#[derive(Clone, Debug, Default)]
-pub(in crate::code_rule_dsl) struct Report {
-    pub(in crate::code_rule_dsl) rules: u32,
-    pub(in crate::code_rule_dsl) stages: u32,
-    pub(in crate::code_rule_dsl) submissions: u32,
-    pub(in crate::code_rule_dsl) dispatches: u32,
-    /// Runs again from an overflowing stage.
-    pub(in crate::code_rule_dsl) reruns: u32,
-    pub(in crate::code_rule_dsl) gpu_seconds: f64,
-    /// This thread's CPU: encoding (uploads and sorts' encoding included), waiting, and reading the rows back into
-    /// the store.
-    pub(in crate::code_rule_dsl) encode_cpu: f64,
-    pub(in crate::code_rule_dsl) wait_cpu: f64,
-    pub(in crate::code_rule_dsl) wait_wall: f64,
-    pub(in crate::code_rule_dsl) decode_cpu: f64,
-    /// Head rows left once made distinct on the device (of `rows`).
-    pub(in crate::code_rule_dsl) distinct: u64,
-    pub(in crate::code_rule_dsl) upload_cpu: f64,
-    /// Relations uploaded (and their bytes), found resident; sorts made, found resident.
-    pub(in crate::code_rule_dsl) uploads: u32,
-    pub(in crate::code_rule_dsl) upload_bytes: u64,
-    pub(in crate::code_rule_dsl) resident_hits: u32,
-    pub(in crate::code_rule_dsl) sorts: u32,
-    pub(in crate::code_rule_dsl) sort_hits: u32,
-    /// Rows the heads made (before the store's set), and bindings the stages made.
-    pub(in crate::code_rule_dsl) rows: u64,
-    pub(in crate::code_rule_dsl) bindings: u64,
-    /// Why the device refused the stratum (at open, or at run time: a table past its budget), which then ran on the
-    /// CPU; `None` when it ran here.
-    pub(in crate::code_rule_dsl) refused: Option<String>,
-}

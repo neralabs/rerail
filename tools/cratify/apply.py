@@ -171,6 +171,24 @@ def use_vis_edits(nodes, edits):
                 edits.add(n.file, a, a + len(m.group(1).encode()), 'pub', 'use pub')
 
 
+def upward_use_edits(nodes, edits):
+    """A top-level `use` in a file of crate X naming a module of a crate X does not see (a child of a crate above):
+    dropped. It is a re-export for the crates above, and their facades of the module repeat it (`Facades.body`)."""
+    for p, n in nodes.items():
+        if n.inline or n.owner == ENGINE:
+            continue
+        out = subprocess.run([TOOL, 'items', n.file], capture_output=True, text=True, check=True).stdout
+        data = open(n.file, 'rb').read()
+        for line in out.splitlines():
+            f, s, e, k, name, mod, cfg = line.split('\t')
+            if k != 'use' or mod:
+                continue
+            a = absolute_use(data[int(s):int(e)].decode(), p, nodes)
+            o = use_owner(a, nodes) if a else None
+            if o is not None and o not in sees(n.owner):
+                edits.add(n.file, int(s), int(e), f'// cratify: a re-export of {o}\'s, which its facades of this module make', 'upward use')
+
+
 def hooks(text, modules_too, keep=()):
     """The `test` atoms of the cfg lines of generated text, as cfg_test_edits makes them in files."""
     out = []
@@ -466,6 +484,7 @@ def main(tree_tsv, join_out, *flags):
         edits.add(f, s, e, hooks(new, False, {nodes[p].name for p in keep}), 'declaration')
     module_vis_edits(nodes, edits)
     use_vis_edits(nodes, edits)
+    upward_use_edits(nodes, edits)
     files = sorted({n.file for n in nodes.values() if not n.inline})
     cfg_test_edits(nodes, files, keep, edits)
     manifest_dir_edits(nodes, edits)

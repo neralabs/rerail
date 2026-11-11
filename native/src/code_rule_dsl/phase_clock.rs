@@ -2,7 +2,19 @@
 //! construction (anchor index publication) and execution (anchor selection, relational SQL).
 //! Parse and clause matching are timed per apply in `Metrics`. Read through `workspaceProfile`.
 
+use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+thread_local! {
+    /// Set while this thread runs phase 0 (`logic::plan::corpus::phase0`): `bootstrap.rr` itself is read by the
+    /// builtin reader, and the profiler's roofline measures nothing in it.
+    pub(in crate::code_rule_dsl) static IN_PHASE_0: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether this thread is running phase 0 (`bootstrap.rr` and `core.rr` are then read by the builtin reader).
+pub(in crate::code_rule_dsl) fn active() -> bool {
+    IN_PHASE_0.with(Cell::get)
+}
 
 /// Construction: files published into the anchor index (`Corpus::put`).
 pub(super) static INDEX_PUBLISH: AtomicU64 = AtomicU64::new(0);

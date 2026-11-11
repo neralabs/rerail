@@ -20,20 +20,12 @@
 
 use super::{Error as PlanError, Result};
 use crate::code_rule_dsl::logic::front::Error;
-use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
-thread_local! {
-    /// Set while this thread runs phase 0: `bootstrap.rr` itself is read by the builtin reader.
-    static IN_PHASE_0: Cell<bool> = const { Cell::new(false) };
-}
-
-/// Whether this thread is running phase 0 (`bootstrap.rr` and `core.rr` are then read by the builtin reader).
-pub(in crate::code_rule_dsl) fn active() -> bool {
-    IN_PHASE_0.with(Cell::get)
-}
+// Whether this thread runs phase 0: the flag is the profiler's (`phase_clock`), which reads it too.
+pub(in crate::code_rule_dsl) use crate::code_rule_dsl::phase_clock::{IN_PHASE_0, active};
 
 /// What phase 0 starts from for one program: its text's includes, or its file.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]

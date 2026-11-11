@@ -56,7 +56,7 @@ pub(in crate::code_rule_dsl) mod space;
 #[allow(dead_code)]
 mod stats;
 // Wall time by stage, with RERAIL_PROF set (O28).
-mod prof;
+pub(crate) mod prof;
 // P's hooks are called from its matcher and relational code; W wires them with 03's stage names.
 #[cfg(feature = "code-rule-profile")]
 #[allow(dead_code)]

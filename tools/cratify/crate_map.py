@@ -3,7 +3,9 @@ import json, os, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, '..', '..'))
 DAG = {
-    'rerail-prof': [], 'rerail-rr-syntax': [], 'rerail-store': [],
+    'rerail-rr-syntax': [], 'rerail-store': [],
+    # the profiler records .rr programs' projections (analysis_report::projection)
+    'rerail-prof': ['rerail-rr-syntax'],
     'rerail-lang': ['rerail-prof', 'rerail-rr-syntax'],
     'rerail-facts': ['rerail-lang', 'rerail-store'],
     'rerail-rr': ['rerail-facts', 'rerail-rr-syntax'],

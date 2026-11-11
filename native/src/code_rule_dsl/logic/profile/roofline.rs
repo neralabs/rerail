@@ -102,7 +102,7 @@ pub(super) fn calibrate(units: &std::collections::BTreeSet<Unit>) -> (BTreeMap<U
     let missing: Vec<Unit> = units.iter().copied().filter(|u| !known.contains_key(u)).collect();
     // Phase 0's run (`bootstrap.rr`, inside a run) measures none: its profile is a part of the run's, whose own report
     // measures them after every phase, so the loops (seconds in a debug build) are not charged to the run's loading.
-    if !missing.is_empty() && crate::code_rule_dsl::logic::plan::corpus::phase0::active() {
+    if !missing.is_empty() && crate::code_rule_dsl::phase_clock::active() {
         source = "not measured in phase 0's run (the run's own profile measures them)";
     } else if !missing.is_empty() {
         known.extend(measure(&missing));

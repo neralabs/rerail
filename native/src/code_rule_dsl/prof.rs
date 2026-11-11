@@ -14,7 +14,7 @@ pub(crate) use rerail_prof::{windows_cpu, windows_peak_working_set};
 /// 0.96 GB of footprint against 283 MB live heap and 101 MB of buffers (O30).
 pub(in crate::code_rule_dsl) fn release() {
     let _stage = Stage::start("heap.release");
-    crate::purge_allocator_pages();
+    purge_allocator_pages();
     // The system allocator's freed pages too (SQLite's and the Metal runtime's allocations).
     #[cfg(target_os = "macos")]
     {
@@ -79,8 +79,8 @@ pub(in crate::code_rule_dsl) fn peak(stage: &str) {
                         info.ri_phys_footprint >> 20,
                         tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20,
                         tikv_jemalloc_ctl::stats::resident::read().unwrap_or(0) >> 20,
-                        crate::code_rule_dsl::transducer::packed::metal_backend::reserved_mb(),
-                        crate::code_rule_dsl::transducer::packed::metal_backend::driver_mb()
+                        device_memory().0,
+                        device_memory().1
                     );
                 }
             }
@@ -151,4 +151,34 @@ pub(in crate::code_rule_dsl) fn max_footprint_mb() -> usize {
         }
     }
     0
+}
+
+/// Return every arena's freed pages to the system.
+pub(crate) fn purge_allocator_pages() {
+    // SAFETY: arena.4096 is jemalloc's all-arenas selector; purge reads and writes no value, so
+    // jemalloc requires null value pointers (`raw::write` passes a non-null one and is refused).
+    #[cfg(not(any(windows, target_family = "wasm")))]
+    unsafe {
+        tikv_jemalloc_sys::mallctl(
+            c"arena.4096.purge".as_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+        );
+    }
+}
+
+/// The device's buffers in MB (reserved by the engine, held by the driver), read by the stage reports; the
+/// device registers the reader as the engine loads (`register_device_memory`, Metal's `device_metal::register`).
+static DEVICE_MEMORY: std::sync::OnceLock<fn() -> (usize, usize)> = std::sync::OnceLock::new();
+
+/// Registers the device's buffer reader; the first registration holds.
+pub(in crate::code_rule_dsl) fn register_device_memory(read: fn() -> (usize, usize)) {
+    let _ = DEVICE_MEMORY.set(read);
+}
+
+/// The device's buffers in MB (reserved, driver); none without a device.
+fn device_memory() -> (usize, usize) {
+    DEVICE_MEMORY.get().map_or((0, 0), |read| read())
 }
