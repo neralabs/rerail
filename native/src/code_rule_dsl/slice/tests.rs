@@ -1066,8 +1066,18 @@ fn rer131_pack_keys() {
     let mut rules = Rules::lower(&policies, backend).unwrap();
     let start = cpu();
     let root = directory_root(&store, &dir).unwrap();
-    let found = keys(&audit(&store, WS, root, &mut rules).inspect_err(|error| eprintln!("AUDIT {error:?}")).unwrap());
+    let run = audit(&store, WS, root, &mut rules).inspect_err(|error| eprintln!("AUDIT {error:?}")).unwrap();
+    let found = keys(&run);
     eprintln!("PACK {}: {} rules, {} files, {} keys, cpu {:?}", pack.display(), policies.len(), copied, found.len(), cpu() - start);
+    // The slice runs only the clauses that lower to its wave; a rule with none finds nothing here and has no
+    // coverage, so it is named (the runtime, `rer131_runtime_keys`, evaluates every rule).
+    let (clauses, _) = crate::code_rule_dsl::slice::lowered(&policies).unwrap();
+    let waved: BTreeSet<&str> = clauses.iter().filter_map(|clause| clause.name.split('/').next()).collect();
+    let left: Vec<&str> = policies.iter().map(|(name, _)| name.as_str()).filter(|name| !waved.contains(name)).collect();
+    eprintln!("NOT IN THE WAVE: {} of {} rules", left.len(), policies.len());
+    for name in left {
+        eprintln!("  {name}");
+    }
     crate::code_rule_dsl::prof::report("pack");
     if let Ok(path) = std::env::var("RERAIL_DUMP_KEYS") {
         std::fs::write(&path, found.iter().map(|k| format!("{}\t{}\t{}\t{}\n", k.0, k.1, k.2, k.3)).collect::<String>()).unwrap();
