@@ -214,7 +214,14 @@
                         {
                           "matches": "first-positional",
                           "precedes": {
-                            "stopBy": "neighbor",
+                            "stopBy": {
+                              "not": {
+                                "kind": "comment"
+                              }
+                            },
+                            "not": {
+                              "kind": "comment"
+                            },
                             "matches": "byte-or-str"
                           }
                         }
