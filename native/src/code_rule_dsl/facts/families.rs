@@ -514,7 +514,7 @@ impl Families {
         let digest = match self.take(graph, scope, path, read)? {
             Some(tape) => {
                 let budget = crate::code_rule_dsl::budget::matcher_budget_exhausted;
-                self.rows.push(crate::code_rule_dsl::prof::time("push.prefilter", || crate::code_rule_dsl::prefilter::image(tape.id, &tape.doc, &budget))?);
+                self.rows.push(crate::code_rule_dsl::prof::time("push.prefilter", || prefilter_image(tape.id, &tape.doc, &budget))?);
                 let mut hash = Sha256::new();
                 hash.update(b"rerail.prefilter-rows/v1\0");
                 hash.update(PREFILTER_VERSION.to_le_bytes());
@@ -589,3 +589,29 @@ fn split<'a>(output: &'a str, family: &str) -> StoreResult<(&'a str, &'a str)> {
 
 #[cfg(test)]
 mod tests;
+
+/// What derives a tape's prefilter rows from the tape alone (`prefilter::image`), registered at load; `interrupted`
+/// is polled as it goes.
+pub(crate) type PrefilterImage = fn(
+    crate::content_store::TapeId,
+    &crate::code_rule_dsl::tape::TapeDoc,
+    &dyn Fn() -> bool,
+) -> StoreResult<crate::content_store::TapePrefilter>;
+
+static PREFILTER_IMAGE: std::sync::OnceLock<PrefilterImage> = std::sync::OnceLock::new();
+
+/// Registers what derives a tape's prefilter rows (once, at load).
+pub(crate) fn install_prefilter_image(image: PrefilterImage) {
+    let _ = PREFILTER_IMAGE.set(image);
+}
+
+fn prefilter_image(
+    tape: crate::content_store::TapeId,
+    doc: &crate::code_rule_dsl::tape::TapeDoc,
+    interrupted: &dyn Fn() -> bool,
+) -> StoreResult<crate::content_store::TapePrefilter> {
+    match PREFILTER_IMAGE.get() {
+        Some(image) => image(tape, doc, interrupted),
+        None => Err(crate::content_store::StoreError::Invalid("no prefilter image is registered".to_owned())),
+    }
+}
