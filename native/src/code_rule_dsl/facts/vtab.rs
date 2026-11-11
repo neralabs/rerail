@@ -335,6 +335,7 @@ pub(crate) fn connection_scope(db: &Connection) -> usize {
         let at = at as usize;
         BOUND.lock().retain(|(h, _), _| *h != at);
         VIEWS.lock().retain(|(h, _), _| *h != at);
+        UNRESOLVED.lock().remove(&at);
         crate::code_rule_dsl::logic::native::forget_scope(at);
     }
     let handle = unsafe { db.handle() };
@@ -353,6 +354,21 @@ pub(crate) struct UnmadeView {
     pub base: String,
     pub cols: Vec<usize>,
     pub eqs: Vec<(usize, i64)>,
+}
+
+/// The tables registered on each connection that no statement has resolved yet (`register`).
+static UNRESOLVED: std::sync::LazyLock<parking_lot::Mutex<HashMap<usize, std::collections::BTreeSet<String>>>> = std::sync::LazyLock::new(Default::default);
+
+/// Resolves every table registered on `db` and not yet resolved, by preparing a read of it: an authorizer installed
+/// after this does not see SQLite connect them (an authored query's authorizer refuses what it does not name).
+pub(crate) fn resolve_tables(db: &Connection) -> Result<()> {
+    let names = UNRESOLVED.lock().remove(&connection_scope(db)).unwrap_or_default();
+    for name in names {
+        if BOUND.lock().contains_key(&(connection_scope(db), name.clone())) {
+            db.prepare(&format!("SELECT * FROM {}", quote(&name)))?;
+        }
+    }
+    Ok(())
 }
 
 static VIEWS: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), UnmadeView>>> = std::sync::LazyLock::new(Default::default);
@@ -429,8 +445,9 @@ fn register(db: &Connection, name: &str, binding: Binding, restored:bool) -> Res
         let exists=restored&&db.query_row("SELECT EXISTS(SELECT 1 FROM temp.sqlite_schema WHERE name=?1)",[name],|r|r.get::<_,bool>(0))?;
         if !exists {db.execute_batch(&format!("CREATE VIRTUAL TABLE temp.{} USING {}",quote(name),quote(name)))?;}
     }
-    // Resolve xConnect before an authored-query authorizer is installed.
-    db.prepare(&format!("SELECT * FROM {}", quote(name)))?;
+    // xConnect is resolved before an authored-query authorizer is installed (`resolve_tables`), not here: a run whose
+    // readers are native prepares no statement over its tables.
+    UNRESOLVED.lock().entry(connection_scope(db)).or_default().insert(name.to_owned());
     Ok(())
     })();
     if result.is_err() {
