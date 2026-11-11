@@ -1,9 +1,20 @@
 use super::*;
 use crate::code_rule_dsl::language::{GrammarDialect, dialect_by_label};
 
+/// A file as facts read it, with no request around it.
+struct Text(String, Arc<String>);
+
+impl SourceFile for Text {
+    fn language(&self) -> &str {
+        &self.0
+    }
+    fn source(&self) -> &Arc<String> {
+        &self.1
+    }
+}
+
 fn facts(path: &str, language: &str, source: &str) -> Facts {
-    let file = FileInput::new(path.to_owned(), language.to_owned(), Arc::new(source.to_owned()), None, None, "core")
-        .unwrap_or_else(|e| panic!("{}", e.reason));
+    let file = Text(language.to_owned(), Arc::new(source.to_owned()));
     match build(&file).unwrap() {
         Built::Facts(facts) => facts,
         Built::Unparsed => panic!("{path} did not parse"),

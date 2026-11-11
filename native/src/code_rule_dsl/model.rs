@@ -842,6 +842,16 @@ pub(super) struct FileInput {
     pub(super) package: Option<crate::code_rule_dsl::language::FileManifest>,
 }
 
+/// A request file as facts read it.
+impl crate::code_rule_dsl::facts::core::SourceFile for FileInput {
+    fn language(&self) -> &str {
+        &self.language
+    }
+    fn source(&self) -> &Arc<String> {
+        &self.source
+    }
+}
+
 impl FileInput {
     /// `module` is the module path a host derived for a Python file (Ruff's package walk): a
     /// dotted string, or a list of names when one keeps a dot (`["json.d", "__init__"]`). Without
