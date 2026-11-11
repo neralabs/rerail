@@ -731,8 +731,8 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
 /// The prepared programs kept in the process, by program key: a few of each, one per store whose atoms it holds
 /// (`interned`), so a process serving two stores (a session's and another run's) does not prepare again on each
 /// switch.
-fn prepared_cache() -> &'static std::sync::Mutex<HashMap<[u8; 32], Vec<Prepared>>> {
-    static PREPARED: std::sync::OnceLock<std::sync::Mutex<HashMap<[u8; 32], Vec<Prepared>>>> = std::sync::OnceLock::new();
+fn prepared_cache() -> &'static std::sync::Mutex<HashMap<[u8; 32], Vec<Arc<Prepared>>>> {
+    static PREPARED: std::sync::OnceLock<std::sync::Mutex<HashMap<[u8; 32], Vec<Arc<Prepared>>>>> = std::sync::OnceLock::new();
     PREPARED.get_or_init(Default::default)
 }
 
@@ -742,7 +742,7 @@ const PREPARED_KEPT: usize = 16;
 const PREPARED_STORES: usize = 4;
 
 /// Keeps `p`, prepared under `key`, first among that key's.
-fn keep_prepared(key: [u8; 32], p: Prepared) {
+fn keep_prepared(key: [u8; 32], p: Arc<Prepared>) {
     let mut kept = prepared_cache().lock().expect("the prepared programs");
     if !kept.contains_key(&key) && kept.len() >= PREPARED_KEPT {
         kept.clear();
@@ -1900,7 +1900,7 @@ fn run_observed(
             let found = prepared::lookup(store, source, dialect, &prepared_key).map_err(|e| Error::Plan(e.to_string()))?.filter(|(p, _)| holds(p));
             (found.map(|(p, documents)| {
                 program_sources.extend(documents);
-                p
+                Arc::new(p)
             }), "store")
         }
         (None, None) => (None, ""),
@@ -1911,7 +1911,7 @@ fn run_observed(
         Some(p) => {
             crate::code_rule_dsl::prof::count("corpus.prepared_reused", 1);
             if from == "store" {
-                keep_prepared(prepared_key, p.clone());
+                keep_prepared(prepared_key, Arc::clone(&p));
             }
             p
         }
@@ -1982,13 +1982,15 @@ fn run_observed(
             if let Some(path) = std::env::var_os("RERAIL_SPLIT_DUMP") {
                 dump_split(std::path::Path::new(&path), &split);
             }
-            let prepared = Prepared { prog, vocabulary: Arc::new(vocabulary), lowered, sets, matchers, demanded, pushed, factorized, located, merged, split, interned };
-            keep_prepared(prepared_key, prepared.clone());
+            // One prepared program, shared by the process's cache, the store's writer and this run (each a copy before:
+            // three of a 16 k-rule program's four forms at once, about 0.4 GB of the Python pack's peak).
+            let prepared = Arc::new(Prepared { prog, vocabulary: Arc::new(vocabulary), lowered, sets, matchers, demanded, pushed, factorized, located, merged, split, interned });
+            keep_prepared(prepared_key, Arc::clone(&prepared));
             if let Some(source) = durable {
                 let _keep = crate::code_rule_dsl::logic::profile::span(|| "keep the prepared program in the store (decision 0073), queued".into());
                 // Made into facts, encoded and written by the store's writer (decision 0102); its documents' sources
                 // reach the manifest, queued after it.
-                let (kept, key, late) = (prepared.clone(), prepared_key, Arc::clone(&late_sources));
+                let (kept, key, late) = (Arc::clone(&prepared), prepared_key, Arc::clone(&late_sources));
                 store.write_back(
                     "the prepared program",
                     0,
@@ -2011,14 +2013,17 @@ fn run_observed(
         (false, _) if durable.is_some() => "prepared, and stored for later processes (decision 0073)".to_owned(),
         (false, _) => "prepared".to_owned(),
     });
-    let Prepared { prog, vocabulary, lowered, sets, matchers, demanded, pushed, factorized, located, merged: (remerged, reshared), mut split, interned: _ } = prepared;
+    let Prepared { prog, vocabulary, lowered, sets, matchers, demanded, pushed, factorized, located, merged: (remerged, reshared), split: shared_split, interned: _ } = &*prepared;
+    let (remerged, reshared) = (*remerged, *reshared);
+    // The run takes the split's programs apart (`part` below): its own copy, the kept one shared.
+    let mut split = shared_split.clone();
     // `RERAIL_DUMP_MATCHERS=<file>`: the rules reading a matcher's relation, and each matcher (a debugging aid), from the prepared program, made or kept.
     if let Ok(path) = std::env::var("RERAIL_DUMP_MATCHERS") {
         let mut text = String::new();
         for rule in prog.rules.iter().filter(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| a.rel.starts_with(matchers::PREFIX)))) {
             text.push_str(&format!("{rule}\n"));
         }
-        for (rel, matcher, captures) in &matchers {
+        for (rel, matcher, captures) in matchers.iter() {
             text.push_str(&format!("{rel}\t{captures:?}\t{matcher}\n"));
         }
         let _ = std::fs::write(path, text);
@@ -2063,7 +2068,7 @@ fn run_observed(
             if loading_run { "off: a run that reads the file system answers its loads by the exports' locations".to_owned() } else { "off (RERAIL_FACTORIZE=off or the run's `factorize: off`): every export handed on whole".to_owned() }
         });
     }
-    for line in &factorized {
+    for line in factorized.iter() {
         crate::code_rule_dsl::logic::profile::decision("factorized store (decision 0099)", || line.clone());
     }
     if remerged > 0 {

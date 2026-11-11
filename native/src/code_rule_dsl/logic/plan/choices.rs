@@ -219,7 +219,7 @@ fn write(store: &ContentStore, prepared: &[u8; 32], key: &[u8; 32], chosen: &Cho
         program_facts::write(&mut facts, P, program);
         // A program that does not read back the same is not kept: the next run chooses again.
         let back = program_facts::program(&facts, P);
-        if !back.is_ok_and(|back| format!("{back:?}") == format!("{program:?}")) {
+        if !back.is_ok_and(|back| program_facts::debug_digest(&back) == program_facts::debug_digest(program)) {
             return Ok(false);
         }
         facts.insert(REWRITTEN.to_owned(), vec![vec![Value::Int(1)]]);

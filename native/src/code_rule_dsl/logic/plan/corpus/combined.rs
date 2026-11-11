@@ -95,7 +95,7 @@ pub(super) fn remember(store: &ContentStore, key: &[u8; 32], read: &[LibraryFile
     program_facts::write(&mut facts, P, program);
     // A program that does not read back the same is not kept: the next run combines it again.
     let back = program_facts::program(&facts, P);
-    if !back.is_ok_and(|back| format!("{back:?}") == format!("{program:?}")) {
+    if !back.is_ok_and(|back| program_facts::debug_digest(&back) == program_facts::debug_digest(program)) {
         return Ok(false);
     }
     let rows = read.iter().map(|f| vec![Value::Str(f.path.to_string_lossy().into_owned()), Value::Str(f.sha256.map(|d| hex(&d)).unwrap_or_default())]).collect();
