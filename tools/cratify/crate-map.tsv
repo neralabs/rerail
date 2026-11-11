@@ -280,6 +280,6 @@ logic::front::name	rerail-rr-syntax
 query::plan	rerail-engine
 compile::format_args::php	rerail-engine
 compile::binds::eslint	rerail-engine
-findings::tests::native_oracle	rerail-engine
-findings::tests::s_native_oracle	rerail-engine
+findings::async_reference::native_oracle	rerail-engine
+findings::async_reference::s_native_oracle	rerail-engine
 demand::driver::catalog	rerail-engine

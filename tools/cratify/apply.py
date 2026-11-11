@@ -136,18 +136,41 @@ def module_vis_edits(nodes, edits):
         edits.add(n.decl_file, s, e, 'pub ', 'module pub')
 
 
-_crate_texts = {}
+def test_gated(nodes, q):
+    """Whether q or a module above it exists only in test builds (`cfg(test)`, a `tests` module)."""
+    while q != 'crate':
+        n = nodes[q]
+        if re.search(r'\btest\b', n.cfg) or n.name == 'tests' or n.name.endswith('_tests'):
+            return True
+        q = q.rsplit('::', 1)[0]
+    return False
 
 
-def parent_path_read(nodes, p):
-    """Whether a file of p's crate outside p reads `parent::name::` (p's path from its parent)."""
-    owner = nodes[p].owner
-    if owner not in _crate_texts:
-        _crate_texts[owner] = [(q, open(n.file, 'rb').read()) for q, n in nodes.items()
-                               if n.owner == owner and not n.inline and n.file and os.path.exists(n.file)]
-    parent, name = p.rsplit('::', 2)[-2:]
-    pat = re.compile(rb'(?<![A-Za-z0-9_])' + parent.encode() + rb'::' + name.encode() + rb'::')
-    return any(pat.search(t) for q, t in _crate_texts[owner] if q != p and not q.startswith(p + '::'))
+def hooked_test_modules(nodes, keep):
+    """The test modules (cfg(test), outside the engine) that follow test-hooks: those another crate reads (`keep`),
+    and those code of their own crate that test-hooks builds reads: their declaring file by name (`tally::PARSES`),
+    another file outside test modules by their parent's path (`syntax::candidate_spike::X`), or a helper (one
+    file, no tests nor modules of its own: an impl's methods) in a file whose other test items follow test-hooks."""
+    out = set(keep)
+    texts = {}
+    for q, n in nodes.items():
+        if q != 'crate' and not n.inline and n.file and os.path.exists(n.file) and not test_gated(nodes, q):
+            texts.setdefault(n.owner, []).append((q, open(n.file, 'rb').read()))
+    for p, n in nodes.items():
+        if p == 'crate' or n.owner == ENGINE or not re.search(r'\btest\b', n.cfg) or not n.decl_file:
+            continue
+        name = n.name
+        decl = open(n.decl_file, 'rb').read()
+        s, e = n.decl
+        here = re.search(rb'(?<![A-Za-z0-9_:])' + name.encode() + rb'::', decl[:s] + decl[e:]) is not None
+        parent = p.rsplit('::', 2)[-2]
+        pat = re.compile(rb'(?<![A-Za-z0-9_])' + parent.encode() + rb'::' + name.encode() + rb'::')
+        there = any(pat.search(t) for q, t in texts.get(n.owner, []) if q != p and not q.startswith(p + '::'))
+        helper = (not n.inline and name != 'tests' and not name.endswith('_tests') and os.path.exists(n.file)
+                  and not re.search(rb'#\[test\]|^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*;', open(n.file, 'rb').read(), re.M))
+        if here or there or helper:
+            out.add(p)
+    return out
 
 
 def cfg_test_edits(nodes, files, keep_test_mods, edits):
@@ -165,19 +188,7 @@ def cfg_test_edits(nodes, files, keep_test_mods, edits):
             continue  # done already
         if gated.startswith('mod '):
             p = by_decl.get((os.path.abspath(f), gated[4:]))
-            # a test module stays its crate's test build's, unless another crate reads it or its own file does by
-            # path (`tally::PARSES` under a converted cfg)
-            # (the text after the declaration's own line); or a helper with no tests of its own (an impl's methods)
-            # in a file whose other test items follow test-hooks
-            decl_end = data.find(b'\n', data.find(b'mod ' + gated[4:].encode(), int(e)))
-            read_here = re.search(rb'(?<![A-Za-z0-9_:])' + gated[4:].encode() + rb'::', data[:int(s)] + data[decl_end:]) is not None
-            # (not a `tests` module, and one file: no modules of its own)
-            name = gated[4:]
-            helper = (p is not None and nodes[p].file and name != 'tests' and not name.endswith('_tests')
-                      and not re.search(rb'#\[test\]|^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*;', open(nodes[p].file, 'rb').read(), re.M))
-            # or another file of its crate reads it by its parent's path (`syntax::candidate_spike::X`)
-            read_there = p is not None and parent_path_read(nodes, p)
-            if p is None or (p not in keep_test_mods and not read_here and not helper and not read_there):
+            if p is None or p not in keep_test_mods:
                 continue
         edits.add(os.path.abspath(f), int(s), int(e), HOOKS, 'cfg test')
 
@@ -587,7 +598,7 @@ def main(tree_tsv, join_out, *flags):
     mounts.owners(nodes)
     v = mounts.view(nodes)
     crates = sorted({n.owner for n in nodes.values()} - {ENGINE})
-    keep = read_modules(nodes, join_out)
+    keep = hooked_test_modules(nodes, read_modules(nodes, join_out))
     mounts.KEEP_TEST = set(keep)
     engine_text = open(os.path.join(NATIVE, 'Cargo.toml')).read()
     engine = tomllib.loads(engine_text)
