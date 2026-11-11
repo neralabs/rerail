@@ -61,21 +61,23 @@ behind a gate that shows CPU did not rise.
   barrier every stratum of the level waits at. This is the scoreboard of an out-of-order CPU, applied to the
   dependency graph `by_level` already computes.
 - **Merged components.** A run of small strata in the scoreboard's ready order goes out as one component, with
-  one plan cache entry, one open, one statistics pass and one write-back. Its strata run inside it as fixed,
+  one plan cache entry, one open and one statistics pass. Its strata run inside it as fixed,
   ordered sub-steps, each to its own fixpoint. This is 0101 §3's "stratified sub-steps", built once for every
   stratum rather than only for the pieces of a DRed rewrite.
-- **Strata are jobs on the one executor.** A component that is ready goes to `rerail_accel::Executor` as a host
-  job (`spawn`, with its estimate). It is scored, claimed and helped like every other job. There is no second
+- **Strata are jobs on the one executor, and the executor decides the parallelism.** A component that is ready
+  goes to `rerail_accel::Executor` as a host job with its estimate. It is scored, claimed and helped like every
+  other job. How many components run at once, and on which threads, is the executor's decision, from its
+  scoreboard, its job floor and the machine's load. The strata never read the thread count. There is no second
   scheduler (0100 §1), and one pool runs everything (0100 §12).
 - **In-order retirement.** Components may finish out of order, but each publishes its outputs, new symbols and
   statistics in stratum order. This is the reorder buffer of an out-of-order CPU. The run's outputs, symbol
   ids and stored state are then the same as a serial run's.
 
 **A concrete case.** The local run's widest level has 1,703 strata, most of them one rule over `node` and a
-`kind` test. Today that is 1,703 plans, 1,703 opens and 1,703 write-backs, one after another. Under this
+`kind` test. Today that is 1,703 plans, 1,703 opens and 1,703 statistics passes, one after another. Under this
 decision, the scoreboard issues them as soon as their inputs (the chunk's base relations) are held. They go out
 as about 20 components of about 85 strata each, priced so that each costs well over its fixed work. Those
-components then run on however many threads the pool has free, and retire in order.
+components then run on as many threads as the executor gives them, and retire in order.
 
 ## Prior work consulted
 
@@ -95,8 +97,8 @@ components then run on however many threads the pool has free, and retire in ord
     against a job's handoff of a few µs. A job is one component.
 - **Ledger row 16.** Fusing everything into one statement does not remove repeated work. Fix plans and candidate
   sets first.
-  - **Agrees.** A merged component shares fixed work only: the open, the statistics pass, the plan cache entry
-    and the write-back. It does not fuse its strata's evaluation. Each sub-step keeps its own rules, its own
+  - **Agrees.** A merged component shares fixed work only: the open, the statistics pass and the plan cache
+    entry. It does not fuse its strata's evaluation. Each sub-step keeps its own rules, its own
     plan and its own fixpoint.
 - **Ledger row 26.** Acceptance is structural: work is proportional to the inputs and the results.
   - **Agrees.** 20,589 fixed costs for a 1-file run is work proportional to the program, not to the file. The
@@ -142,8 +144,9 @@ for all of level 4.
 
 ### 2. Merged components
 
-When ready strata outnumber the free threads, or are each below the fixed cost, the issuer packs them into a
-component:
+The issuer packs ready strata into components by their cost alone. It never asks how many threads are free:
+that is the executor's decision (§3). A component is the grain of work, sized so its fixed cost is small
+against it:
 
 - **Members.** Ready strata, taken in program order. A component may also take a stratum that becomes ready
   only through its own earlier members: a chain `a → b → c` of single readers is one component, run as
@@ -152,8 +155,9 @@ component:
   model (0100 §14), is at least *k* times one fixed cost. *k* starts at 8 and is fitted, as the cores' job
   floor is. A stratum whose own estimate is over the bound is a component alone.
 - **What it shares.** One `lent` of the run's state, one statistics pass over the relations its members read,
-  one plan cache entry keyed by the members' rule digests in order, one open of the fixpoint space, one
-  write-back, and one record of plan choices.
+  one plan cache entry keyed by the members' rule digests in order, one open of the fixpoint space, and one
+  record of plan choices, kept in memory (the store's writer keeps it later, 0102). A native stratum writes
+  nothing to SQL, so a component has no write-back of its own.
 - **What it does not share.** Each member keeps its own rules, plan, delta and fixpoint. A member's
   sub-step starts only when the previous one has reached its fixpoint. The meaning is the serial program's,
   by construction.
@@ -164,19 +168,33 @@ component:
 The plan cache entry is what makes merging pay on warm runs too. Today `plan_rule_reused` looks up and rebuilds
 per stratum. A component's entry is one lookup for all its members.
 
-### 3. Issue: components as jobs on the one executor
+### 3. Issue: components as jobs on the one executor, which decides the parallelism
 
-A component that is ready becomes a host job, `Executor::spawn("stratum component", estimate, …)`:
+A component that is ready is submitted to the executor as a host job with its estimate. The strata decide
+**what** may run (the scoreboard: what is ready) and **how big** a job is (the component). The executor decides
+**how many run at once, and where**. No code in the strata reads the thread count, the pool's load or another
+job's state.
 
-- **Placement and claims are the executor's.** The cores' pool takes components largest first. A waiting
-  caller helps by running ready components (`help_until`), as it already runs free launches.
+Today `Executor::spawn` starts every job on the pool at once. That gives no decision to the executor, so this
+decision adds one: a **host stream**, an open batch the issuer adds jobs to as they become ready.
+
+- **The same claims as a batch's launches** (0100 §11). Each submitted job is a launch on the cores, scored on
+  the scoreboard with its estimate, claimed by one atomic exchange. Pool workers claim them largest first. The
+  issuer, when it waits for a component to retire, claims and runs free ones itself (`help_until`), as it
+  already runs a batch's free launches.
+- **How many pool workers serve the stream is the executor's.** It starts a worker for the stream only while
+  the stream's outstanding estimate, spread over the workers serving it, is above its measured job floor (the
+  cost below which a pool job loses to running inline), and while the cores' scoreboard and the machine's load
+  (`cores_slowdown`) leave a thread. Otherwise the jobs wait for the issuer to claim them. With one thread
+  (`RERAIL_THREADS=1`), or on a busy machine, every component runs inline on the issuer, in program order, with
+  no other change.
+- **One floor and one model for every host job.** The floor and the estimates come from the cost model (0100
+  §14), fitted from the scoreboard's samples for the stream's form. The strata pass only an estimate per job.
 - **The run's thread issues and retires.** It owns the scoreboard and the SQL connection. It runs SQL strata
   itself, in their program order, and helps with components while it waits.
 - **Device launches still go out as one batch.** The count tables, seed joins and chained joins of every
   component issued at once go out in one submission per lane, as a level's do today (0100 §5, §11). A
   component that reads a launch waits on it inside its job, through the same suspend and resume as now.
-- **With one thread** (`RERAIL_THREADS=1`), or when the pool is busy, components run inline on the run's
-  thread, in program order. Merging still pays, and nothing else changes.
 
 ### 4. A component's state, and retiring in order
 
@@ -233,14 +251,16 @@ wall, and check the 1-file and 10-file findings against the serial run.
    stratum at a time in ready order. Same outputs, same CPU. The test: a program whose level-5 stratum reads only
    level 0 issues before level 4 ends.
 2. **Merged components, serial.** Pack ready strata into components, and give them one plan cache entry, one
-   open, one statistics pass and one write-back. Run them inline. This is the CPU step. The gate: fixed CPU per
-   run, and components opened.
+   open and one statistics pass. Run them inline. This is the CPU step. The gate: fixed CPU per run, and
+   components opened.
 3. **A component's own state.** Move the thread-local and global state of §4 into a per-component context,
    still run inline. Same outputs, same symbol ids. The test: a run with merging on and off gives identical
    stores.
-4. **Components as jobs.** Issue them on `Executor::spawn`, retire in order. The gate: instructions within 1%,
+4. **The host stream.** Add it to the executor (claims, the scoreboard, the floor, the workers it starts), with
+   its own test: jobs below the floor run on the caller, and a loaded machine starts fewer workers.
+5. **Components as jobs.** Submit them to the host stream, retire in order. The gate: instructions within 1%,
    then wall on 10, 50, 100 and 300 files.
-5. **Device batches from the issued set.** Collect count tables, seed joins and chained joins from the
+6. **Device batches from the issued set.** Collect count tables, seed joins and chained joins from the
    components issued together, not from a level.
 
 ## Open
