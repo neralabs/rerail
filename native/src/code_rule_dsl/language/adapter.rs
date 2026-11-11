@@ -150,6 +150,10 @@ pub(crate) trait Adapter: 'static {
     fn source_type(_path: &str, _package: Option<PackageType>) -> Option<SourceType> {
         Some(SourceType::Module)
     }
+    /// The module name its file's path gives it, where a path names a module (Python's dotted name).
+    fn path_module(_path: &str) -> Option<String> {
+        None
+    }
 }
 
 /// The module a host sends for the file at `file` whose dialect's label is `label`: its
@@ -287,6 +291,9 @@ impl<A: Adapter> super::LanguageBase for pack::Pack<A> {
     }
     fn comment_kinds(&self) -> &'static [&'static str] {
         A::WALK_COMMENT_KINDS
+    }
+    fn path_module(&self, path: &str) -> Option<String> {
+        A::path_module(path)
     }
     fn reads_values(&self) -> bool {
         <<A as Adapter>::Value as ValueRules>::SUPPORTED

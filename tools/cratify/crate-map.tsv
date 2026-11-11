@@ -256,3 +256,4 @@ scope::usage::lang_php	rerail-lang-php
 scope::usage::lang_sql	rerail-lang-sql
 scope::usage::lang_python	rerail-lang-python
 residency::admission::relational::ast_stage	rerail-w
+literal::semantic	rerail-lang-python

@@ -583,3 +583,8 @@ fn folded<D: Doc>(node: &Node<'_, D>) -> Option<(Real, Real)> {
         _ => None,
     }
 }
+
+// Structural equality's tests, which read Python's structure.
+#[cfg(test)]
+#[path = "structure/tests.rs"]
+mod structure_tests;

@@ -2,9 +2,6 @@
 //! (`Equality`), each language's by its own rules (`ValueRules::structure`: Python's is `python_structure`,
 //! as Ruff compares; PHP's `php_structure`).
 
-// Python's structure (`python_structure`, the Python crate's), which the tests read.
-#[cfg(test)]
-use super::{Context, python_structure::{operands, structure}};
 
 /// Which of Ruff's equalities a comparison applies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -73,6 +70,3 @@ impl Real {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

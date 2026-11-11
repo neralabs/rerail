@@ -94,12 +94,12 @@ impl FStrings {
             let n = p.global(local);
             let node = crate::code_rule_dsl::matcher::node_at(&root, id);
             if self.piece {
-                for (i, kind, v) in literal::fstring_pieces(&node).unwrap_or_default() {
+                for (i, kind, v) in literal::python_fstring::pieces(&node).unwrap_or_default() {
                     self.pieces.push([n, i as i64, string(kind.name()) as i64, string(&v) as i64]);
                 }
             }
             for (marker, &m) in self.markers.iter().zip(&markers) {
-                if let Some(v) = literal::fstring_template(&node, marker) {
+                if let Some(v) = literal::python_fstring::template(&node, marker) {
                     self.templates.push([n, m, string(&v) as i64]);
                 }
             }

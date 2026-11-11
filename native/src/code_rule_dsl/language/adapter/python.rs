@@ -11,6 +11,9 @@ impl Adapter for Python {
     const LABEL: &'static str = "python";
     const TERMINATORS: Terminators = Terminators::Newlines;
     const PACKAGES: bool = true;
+    fn path_module(path: &str) -> Option<String> {
+        crate::code_rule_dsl::calls::python::path_module(path)
+    }
     const PACKAGE_MANIFESTS: bool = false;
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = false;

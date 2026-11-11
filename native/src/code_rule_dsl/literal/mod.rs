@@ -27,7 +27,6 @@ use ast_grep_core::matcher::{Pattern, PatternBuilder, PatternError};
 use ast_grep_core::source::{Content, Doc, Edit, SgNode};
 
 use offsets::Decoded;
-pub(crate) use python_fstring::{pieces as fstring_pieces, template as fstring_template};
 use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::Arc;

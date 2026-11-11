@@ -5,7 +5,6 @@
 
 use super::names::Name;
 use super::php;
-use super::python::path_module;
 use super::summary::{BASE, CLASS, DECORATED, METACLASS, OPEN, Summary, UNKNOWN_BASE};
 use crate::code_rule_dsl::language::Family;
 use rayon::prelude::*;
@@ -132,7 +131,8 @@ impl Contribution {
         let mut contribution = Self::default();
         // A file is named by its package module, and by its path where that differs.
         let module = summary.module.map(|module| summary.interned(module));
-        let alternate = path_module(path)
+        let alternate = crate::code_rule_dsl::language::base(Family::Python)
+            .path_module(path)
             .filter(|alternate| Some(alternate.as_str()) != module.map(Name::text));
         let names = |name: &Name| {
             let renamed = module

@@ -651,6 +651,8 @@ pub(crate) trait LanguageBase: Send + Sync {
     fn comment_kinds(&self) -> &'static [&'static str];
     /// Whether W reads values of its nodes (`ValueRules::SUPPORTED`).
     fn reads_values(&self) -> bool;
+    /// The module name its file's path gives it (`Adapter::path_module`).
+    fn path_module(&self, path: &str) -> Option<String>;
 }
 
 /// Whether `kind` is a comment kind of any registered family (`LanguageBase::comment_kinds`).
