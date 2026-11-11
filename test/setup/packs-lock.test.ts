@@ -60,16 +60,29 @@ describe("withPacksLock", () => {
 });
 
 describe("pack changes racing for the lock of one killed while it held it", () => {
-  it("take it one at a time", async () => {
+  // Each racer removes a file in the home 20 ms after it asks to, as a busy disk or a virus scanner can make it. A lock
+  // whose takers judge a dead holder's lock and remove it lets two in when two judge it at once and the second removes
+  // the lock the first has just made in its place. The delay widens that moment from microseconds to 20 ms, so such a
+  // lock fails this race every run, where without the delay it failed one run in three.
+  it("take it one at a time, even where removing a file takes a while", async () => {
     const home = temporaryHome();
-    // Larger than the other locks' races: the packs lock that judged a dead holder's lock gone ran two changes at once
-    // rarely, and 8 processes for 4 rounds caught it in one Linux run of three. 16 for 16 caught it 5 to 11 times in
-    // each of three, and takes this lock about 20 s on a Windows laptop.
-    const size = raceSize({ processes: 16, rounds: 16 });
+    const size = raceSize({ processes: 8, rounds: 4 });
 
     const race = await raceForLock({
-      take: `import { withPacksLock } from ${JSON.stringify(sourceModule("src/setup/packs-lock.ts"))};
-const take = inside => withPacksLock(${JSON.stringify(home)}, inside);`,
+      take: `import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+import { withPacksLock } from ${JSON.stringify(sourceModule("src/setup/packs-lock.ts"))};
+const home = ${JSON.stringify(home)};
+for (const name of ["rmSync", "unlinkSync"]) {
+  const remove = fs[name];
+  fs[name] = (path, ...rest) => {
+    if (String(path).startsWith(home)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    return remove(path, ...rest);
+  };
+}
+// The named imports of node:fs, which the lock's module uses, follow the module object from here on.
+syncBuiltinESMExports();
+const take = inside => withPacksLock(home, inside);`,
       ...size,
     });
 
