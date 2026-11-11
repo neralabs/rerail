@@ -4522,8 +4522,17 @@ fn run_observed(
         let text = |atom: i64| -> Result<String> { Ok(crate::code_rule_dsl::logic::native::sym_text_of(&db, atom)?) };
         let atoms = |texts: &[&str]| -> Result<Vec<i64>> { Ok(crate::code_rule_dsl::logic::native::intern_batch(&db, texts.iter().copied())?) };
         let mut pauses = 0;
+        // Where an answer's time goes (decision 0114 §6): reported once the cone ends.
+        let times = std::cell::RefCell::new(AnswerTimes::default());
         let mut answer_one = |rel: &str, rows: &[Vec<i64>], process: &mut dyn FnMut(Chunk) -> Result<()>| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
             pauses += 1;
+            let t_call = std::time::Instant::now();
+            let _counted = Finally(|| {
+                let mut t = times.borrow_mut();
+                t.calls += 1;
+                t.rows += rows.len();
+                t.total += t_call.elapsed().as_secs_f64();
+            });
             if let Some((produced, _)) = WORLD.iter().find(|(_, req)| *req == rel) {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| format!("answer {rel}"));
                 let mut out = Vec::new();
@@ -4565,6 +4574,8 @@ fn run_observed(
                 asked_rows.push((text(row[0])?, text(row[1])?, text(row[2])?, row));
             }
             asked_rows.sort_by(|a, b| (a.1.matches('.').count(), &a.1, &a.0).cmp(&(b.1.matches('.').count(), &b.1, &b.0)));
+            let t_take = std::time::Instant::now();
+            let _taken = Finally(|| times.borrow_mut().take += t_take.elapsed().as_secs_f64());
             for (asked, module, grammar, row) in asked_rows {
                 // A load asked again (its stratum's requests answered again, t33 K3) is answered alike: the same
                 // document, its rows from the exports, not sent again.
@@ -4598,10 +4609,32 @@ fn run_observed(
             let keys = memo::doc_keys(&all_paths);
             let keys = &keys[keys.len() - fresh.len()..];
             loaded_docs.extend(keys.iter().copied().zip(fresh.iter().map(|d| d.path.clone())));
+            {
+                let mut t = times.borrow_mut();
+                t.fresh += fresh.len();
+                t.again += again.len();
+            }
+            drop(_taken);
             docs_tx.send(keys.iter().copied().zip(fresh).map(|(k, d)| (k, d.path, Some(Arc::from(d.module.as_str())))).collect()).map_err(|_| Error::Plan("the chunk builder ended".to_owned()))?;
-            if !drain(process)? {
+            // The chunks' file-local evaluation, on this thread (`process`), apart from the wait for them to be built.
+            let t_drain = std::time::Instant::now();
+            let mut evaluate = 0.0;
+            let drained = drain(&mut |c: Chunk| {
+                let t = std::time::Instant::now();
+                let r = process(c);
+                evaluate += t.elapsed().as_secs_f64();
+                r
+            });
+            {
+                let mut t = times.borrow_mut();
+                t.evaluate += evaluate;
+                t.built += t_drain.elapsed().as_secs_f64() - evaluate;
+            }
+            if !drained? {
                 return Err(Error::Plan("the chunk builder ended before a load's documents".to_owned()));
             }
+            let t_rows = std::time::Instant::now();
+            let _rows = Finally(|| times.borrow_mut().rows_of += t_rows.elapsed().as_secs_f64());
             // The new documents' rows of the per-file relations the cone reads, from the exports the chunks added
             // (`exports`, held in memory), by their first location column.
             let mut new: std::collections::HashSet<i64> = keys.iter().copied().collect();
@@ -4613,11 +4646,17 @@ fn run_observed(
             }
             Ok(out)
         };
-        while let Some((rel, rows)) = cone.wait_for("the main thread: the cone's requests", || match ask_rx.try_recv() {
-            Ok(asked) => Some(Some(asked)),
-            Err(std::sync::mpsc::TryRecvError::Empty) => None,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(None),
-        }) {
+        let mut idle = 0.0;
+        while let Some((rel, rows)) = {
+            let t = std::time::Instant::now();
+            let got = cone.wait_for("the main thread: the cone's requests", || match ask_rx.try_recv() {
+                Ok(asked) => Some(Some(asked)),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(None),
+            });
+            idle += t.elapsed().as_secs_f64();
+            got
+        } {
             let reply = answer_one(&rel, &rows, &mut process).map_err(|e| e.to_string());
             if let Ok(given) = &reply {
                 for (r, rows) in given {
@@ -4632,6 +4671,11 @@ fn run_observed(
         }
         drop(reply_tx);
         drop(answer_one);
+        {
+            let mut t = times.into_inner();
+            t.idle = idle;
+            t.report();
+        }
         (loading_rows, cone_kept, cone_rounds) = cone.join().map_err(|_| Error::Plan("the cone of requests panicked".to_owned()))??;
         // The documents the rounds loaded and took back (decision 0108): neither the run's documents nor rows of its
         // exports.
@@ -8032,5 +8076,46 @@ fn in_policy(text: &str, e: crate::code_rule_dsl::logic::front::Error) -> crate:
     match (e, name) {
         (Error::Syntax(m), Some(n)) => Error::Syntax(format!("policy {n}: {m}")),
         (e, _) => e,
+    }
+}
+
+/// Where the requests answered inside the fixpoint spent their time (decision 0114 §6), on the thread that
+/// answers them: requests taken (resolved and ordered), chunks waited for (built on workers), chunks evaluated
+/// here, answer rows read back, and the time this thread waited for the cone's next request.
+#[derive(Default)]
+struct AnswerTimes {
+    calls: usize,
+    rows: usize,
+    fresh: usize,
+    again: usize,
+    total: f64,
+    take: f64,
+    built: f64,
+    evaluate: f64,
+    rows_of: f64,
+    idle: f64,
+}
+
+impl AnswerTimes {
+    fn report(&self) {
+        let text = || {
+            format!(
+                "{} requests ({} rows), {} documents loaded, {} answered again: {:.3} s answering (taking {:.3} s, waiting for chunks built on workers {:.3} s, evaluating them on this thread {:.3} s, answer rows {:.3} s); {:.3} s waiting for the cone's next request",
+                self.calls, self.rows, self.fresh, self.again, self.total, self.take, self.built, self.evaluate, self.rows_of, self.idle
+            )
+        };
+        crate::code_rule_dsl::logic::profile::decision("requests answered inside the fixpoint (decision 0114 §6)", text);
+        if std::env::var_os("RERAIL_STRATA_COUNTS").is_some() {
+            eprintln!("RERAIL_ANSWERS {}", text());
+        }
+    }
+}
+
+/// Runs its closure when dropped: a measurement taken on every way out of a block.
+struct Finally<F: FnMut()>(F);
+
+impl<F: FnMut()> Drop for Finally<F> {
+    fn drop(&mut self) {
+        (self.0)();
     }
 }

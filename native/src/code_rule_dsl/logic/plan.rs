@@ -3221,6 +3221,10 @@ pub(in crate::code_rule_dsl) type Answer<'a> = &'a mut dyn FnMut(&str, &[Vec<i64
 
 /// Answers a paused component's requests and adds the answers to its produced relations (decision 0065 §2a).
 /// Rows for a produced relation outside it are kept for the stratum that holds that relation.
+/// Time spent in answer hooks, and their calls (`RERAIL_STRATA_COUNTS` prints them): a measurement.
+pub(in crate::code_rule_dsl) static ANSWER_WAIT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(in crate::code_rule_dsl) static ANSWER_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn answer_pending(db: &Connection, direct: bool, answer: &mut Option<Answer<'_>>, answered: &mut BTreeMap<String, Vec<Vec<i64>>>, log: Option<&mut BTreeMap<String, BTreeSet<Vec<i64>>>>, name: &str, scc: &BTreeSet<String>) -> Result<()> {
     if !direct {
         return Err(Error::Plan(format!("{name}: requests are answered only over atoms (the in-process engine)")));
@@ -3230,7 +3234,11 @@ fn answer_pending(db: &Connection, direct: bool, answer: &mut Option<Answer<'_>>
     let mut by: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
     for (rel, rows) in &asked {
         let _span = super::profile::span(|| format!("answer {rel} ({} rows)", rows.len()));
-        for (p, got) in answer(rel, rows)? {
+        let t0 = std::time::Instant::now();
+        let given = answer(rel, rows)?;
+        ANSWER_WAIT.fetch_add(t0.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        ANSWER_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        for (p, got) in given {
             by.entry(p).or_default().extend(got);
         }
     }
@@ -7501,7 +7509,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     if let Some(b) = &board {
         super::profile::decision("strata issued ahead (decision 0113)", || format!("{:?}", b.counts));
         if std::env::var_os("RERAIL_STRATA_COUNTS").is_some() {
-            eprintln!("RERAIL_STRATA_COUNTS {:?}", b.counts);
+            eprintln!("RERAIL_STRATA_COUNTS {:?} answers {} in {:.3} s", b.counts, ANSWER_CALLS.load(std::sync::atomic::Ordering::Relaxed), ANSWER_WAIT.load(std::sync::atomic::Ordering::Relaxed) as f64 * 1e-9);
         }
     }
     finish_wave(&mut run, &mut waiting, &mut outcome, &mut carry, &sccs, &last)?;
