@@ -11515,3 +11515,52 @@ The tooling suite passes 409 tests and 165 subtests.
 The [progress receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-legacy-execution-final9e5-progress.json.gz) binds the results to Final `9e5fa489e`.
 The inventory has 13 full admissions, 85 drafts, and two absent translations.
 Final advanced to `11ea0e0a7` during the cohort. The next merge has four engine conflicts in the merge preview.
+
+### Final 419 merge and original-suite coverage, 2026-11-10
+
+Merge `6c3330e62` incorporates Final `41962153f`, including the native shortlex lattice.
+The load path retains Final's repeated export handling and the port's document identity answers.
+The optimized root CLI builds in 223.40 wall seconds and 906.19 CPU seconds.
+All 122 policy files pass the reader. The reader checks syntax and types.
+
+The original-suite run uses a fixed CLI and the independent source inventory.
+The first run schedules 1,774 original cases across 29 rules through both APIs.
+The new census records pytest outcomes, native calls, matched positive returns, and missing cases per rule.
+
+The workspace API dropped supplied source files before detection for facade purity, compatibility aliases, and error handling.
+Their policies now accept the caller's buffer directory through a scope option.
+All 29 original cases pass for these three rules through each API, with 10 matched positive returns per API.
+A run with default options reads zero files from that buffer directory for each rule.
+Connection caches uses the same scope option. Both APIs pass the three original cases that exposed its scope defect.
+
+The DynamicModuleLoading undecodable-file test fails in both APIs with `no such table: file_error`.
+A small native program reproduces the error when its load depends on the read error.
+The same file-error request returns the correct invalid UTF-8 diagnostic when it has no dependent load.
+The request cone's produced-relation path still writes SQL rows after the native plan has omitted the table.
+
+Six positive state-tripwire observations match by location and code.
+A seventh exposes the cross-file builder branch that the converter disables.
+A prototype enables that branch and emits both complete findings in input order through each API.
+The full rule still needs its original scanner and project acceptance.
+
+The ServerPlan Quality candidate now reads with typed list relations, native byte slicing, and typed call paths.
+The conditional candidate uses a positive proof that all branch bodies raise.
+A runtime probe exposes a file-path condition inside a matcher traversal stop.
+Widening that stop in the prototype lets the conditional program match one original positive by location and code.
+The complete candidate also needs native projections for the f-string and quoted-annotation captures.
+
+The census has 130 reports from 29 rules, including the HNSW and PR-monitor suites.
+It records 1,505 passing pytest cases and 388 matched positive returns in snapshot mode.
+Workspace mode records 1,497 passing pytest cases and 350 matched positive returns.
+Twenty shards hit the 111-second limit and produced no complete report.
+The census reports these cases as pending. It also reports missing detector returns from completed shards.
+The corpus has shared test modules. The census counts a case once for each rule it covers.
+
+HNSW now carries the caller's path and filename alongside each workspace buffer.
+Both APIs pass all 13 original cases, including all 12 positives, with fixture paths under a directory named `tmp`.
+Both APIs also pass all 48 original PR-monitor cases with their callback fixtures.
+The tooling suite passes 411 tests and 165 subtests.
+
+The conditional quality prototype matches all 22 recorded calls by path, line, and code.
+The comparison uses sets. Full messages, order, and duplicates still need acceptance.
+The migration inventory remains at 98 translations, with 13 full admissions and two absent rules.
