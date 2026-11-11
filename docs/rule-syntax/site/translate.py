@@ -1315,6 +1315,40 @@ def share_metavariables(entries, helpers):
                 always[g] = acc if acc is not None else set()
             if always == prev:
                 break
+        def before(owner, x, seen):
+            # x is bound before every call of owner: each caller binds it first, or its own callers do. (free_in
+            # alone does not say so: a metavariable a callee reads and the rule's own capture binds is free_in
+            # until the capture is known to pass it out.)
+            if owner not in helpers or owner in seen or not callers[owner]:
+                return False
+            return all(bound_at(c, x, owner, seen | {owner}) for c in callers[owner])
+
+        def param_bound(owner, x, seen):
+            # a util param (`unused(n, N)`) is bound before the util runs only where every call passes it a
+            # value bound by then; a caller's fresh `$A` leaves it to the util's own capture, as in main
+            if owner in seen or not callers[owner]:
+                return False
+            names = _split_args(by_owner[owner][0]["e"]["head"].split("(", 1)[1][:-1])
+            if x not in names:
+                return False
+            j = names.index(x)
+            for c in callers[owner]:
+                text = ", ".join(c["e"]["lits"])
+                for a, b in _calls(text, owner):
+                    args = _split_args(text[a + len(owner) + 1:b])
+                    arg = args[j] if j < len(args) else "_"
+                    if arg == "_" or (re.fullmatch(r"[A-Z][A-Z0-9_]*", arg)
+                                      and not bound_at(c, arg, owner, seen | {owner})):
+                        return False
+            return True
+
+        def bound_at(c, x, h, seen):
+            return (x in (forced.get(c["owner"], set())
+                          | (c["tbinds"] - c["local"] - forced.get(c["owner"], set()))
+                          | set().union(set(), *[always[g] for g in c["tcalls"] if g != h]))
+                    or (x in c["params"] and param_bound(c["owner"], x, seen))
+                    or before(c["owner"], x, seen))
+
         for h in helpers:
             if not callers[h]:
                 continue
@@ -1324,10 +1358,7 @@ def share_metavariables(entries, helpers):
             for x in sorted(provides[h] & tprov):
                 if x.startswith("_"):     # `$_F`: matches anything, never compared
                     continue
-                if all(x in (c["params"] | free_in.get(c["owner"], set())
-                             | (c["tbinds"] - c["local"] - forced.get(c["owner"], set()))
-                             | set().union(set(), *[always[g] for g in c["tcalls"] if g != h]))
-                       for c in callers[h]):
+                if all(bound_at(c, x, h, {h}) for c in callers[h]):
                     forced[h].add(x)
             provides[h] -= forced[h]
         for h in helpers:
@@ -1555,7 +1586,15 @@ def _call_sites(lits, h, ctx=()):
     sits in (the rule body, then each enclosing aggregate or disjunction branch). None where a call sits where
     this cannot say (inside another construct)."""
     parts = _split_top_text(", ".join(lits) if isinstance(lits, list) else lits, ",")
-    here = [p for p in parts if (_POSITIVE.match(p) and _balanced(p[p.index("("):]) and not _calls(p, h)) or _EQ.match(p)]
+    def plain(p):
+        return (_POSITIVE.match(p) and _balanced(p[p.index("("):]) and not _calls(p, h)) or _EQ.match(p)
+
+    def plain_alts(p):   # `(kind(n, "a") ; kind(n, "b"))`: each branch plain literals, so the choice limits too
+        if not (p.startswith("(") and p.endswith(")") and _balanced(p)) or _calls(p, h):
+            return False
+        bs = split_alts(p[1:-1])
+        return len(bs) > 1 and all(all(plain(q) for q in _split_top_text(b, ",")) for b in bs)
+    here = [p for p in parts if plain(p) or plain_alts(p)]
     scope = list(ctx) + here
     out = []
     for p in parts:
@@ -1598,70 +1637,173 @@ def demand(entries, helpers, inputs, decls, lib):
                             reach[h].add(g)
                             todo.append(g)
         return reach[h]
-    def try_demand(h):
-        ins = inputs.get(h) or set()
-        if not ins or h not in by:
-            return False
-        params = [a.strip() for a in by[h][0]["head"].split("(", 1)[1][:-1].split(",")]
-        if any(p not in ins and not re.fullmatch(r"[A-Z][A-Z0-9_]*", p) for p in params[1:]):
-            return False
-        pos = [0] + [i for i, p in enumerate(params) if p in ins]
-        dname = f"demand_{h}"
-        rules, ok = [], True
-        for e in entries:
-            if e.get("drop"):
-                continue
-            owner = e["head"].split("(")[0]
-            for site in _call_sites(e["lits"], h):
-                if site is None:
-                    ok = False
-                    break
-                scope, call = site
-                args = _split_args(call[len(h) + 1:-1])
-                want = [args[i] for i in pos]
-                if any(a == "_" for a in want):
-                    ok = False
-                    break
-                # the call's scope, without what could depend on h through recursion other than h's own demand
-                # (any relation a literal names, under `!` and in aggregates too: fewer literals ask for more)
-                def reaches(l):
-                    names = re.findall(r"(?<![\w.])([a-z_]\w*)\(", _mask_ticks(_strip_strings(l)))
-                    # a helper that takes demand itself (or calls one) would make the demand relations
-                    # depend on each other through its rules, which may negate: kept out
-                    return any(g in by and (g == h or h in callees(g) or
-                                            any(inputs.get(x) for x in callees(g) | {g})) for g in names)
-                lits = [l for l in scope if not reaches(l)]
-                if owner == h:      # recursion: the call asks for what the rule's own demand allows
-                    hp = [a.strip() for a in e["head"].split("(", 1)[1][:-1].split(",")]
-                    lits = [f"{dname}({', '.join(hp[i] for i in pos)})"] + lits
-                elif owner in callees(h):   # mutual recursion: not handled
-                    ok = False
-                    break
-                head = f"{dname}({', '.join(want)})"
-                if check_rule(wrap(head, lits)) or not lits:
-                    ok = False
-                    break
-                rules.append((head, lits))
-            if not ok:
-                break
-        if not ok or not rules:
-            return False
-        cols = [c.strip() for c in decls[h][decls[h].index("(") + 1:-1].split(",")]
-        lib[dname] = (f".decl {dname}({', '.join(cols[i] for i in pos)})",
-                      [f"// {dname}: the rows of {h} its callers ask for (the metavariable columns they pass in)"],
-                      [r for i, r in enumerate(rules) if r not in rules[:i]])
-        for e in by[h]:
-            hp = [a.strip() for a in e["head"].split("(", 1)[1][:-1].split(",")]
-            e["lits"] = [f"{dname}({', '.join(hp[i] for i in pos)})"] + e["lits"]
+    def try_demand(group):
+        """Demand for a helper, or for a mutual recursion as one: each member's call inside the group asks for
+        what the calling member's own demand allows."""
+        group = set(group)
+        pos = {}
+        for h in group:
+            ins = inputs.get(h) or set()
+            if not ins or h not in by:
+                return False
+            params = [a.strip() for a in by[h][0]["head"].split("(", 1)[1][:-1].split(",")]
+            if any(p not in ins and not re.fullmatch(r"[A-Z][A-Z0-9_]*", p) for p in params[1:]):
+                return False
+            pos[h] = [0] + [i for i, p in enumerate(params) if p in ins]
+
+        # the call's scope, without what could depend on the group through recursion other than its own demand
+        # (any relation a literal names, under `!` and in aggregates too: fewer literals ask for more)
+        def reaches(l):
+            names = re.findall(r"(?<![\w.])([a-z_]\w*)\(", _mask_ticks(_strip_strings(l)))
+            # a helper that takes demand itself (or calls one) would make the demand relations
+            # depend on each other through its rules, which may negate: kept out
+            return any(g in by and (g in group or group & callees(g) or
+                                    any(inputs.get(x) for x in callees(g) | {g})) for g in names)
+        made = {}
+        for h in sorted(group):
+            dname = f"demand_{h}"
+            rules, owners = [], []
+            for e in entries:
+                if e.get("drop"):
+                    continue
+                owner = e["head"].split("(")[0]
+                for site in _call_sites(e["lits"], h):
+                    if site is None:
+                        return False
+                    scope, call = site
+                    args = _split_args(call[len(h) + 1:-1])
+                    want = [args[i] for i in pos[h]]
+                    if any(a == "_" for a in want):
+                        return False
+                    lits = [l for l in scope if not reaches(l)]
+                    if owner in group:      # recursion: the call asks for what the rule's own demand allows
+                        hp = [a.strip() for a in e["head"].split("(", 1)[1][:-1].split(",")]
+                        lits = [f"demand_{owner}({', '.join(hp[i] for i in pos[owner])})"] + lits
+                    elif any(owner in callees(g) for g in group):   # a recursion through a helper outside it
+                        return False
+                    head = f"{dname}({', '.join(want)})"
+                    if check_rule(wrap(head, lits)) or not lits:
+                        return False
+                    rules.append((head, lits)); owners.append(owner)
+            if not rules:
+                return False
+            made[h] = (rules, owners)
+        for h, (rules, owners) in made.items():
+            dname = f"demand_{h}"
+            cols = [c.strip() for c in decls[h][decls[h].index("(") + 1:-1].split(",")]
+            keep = [i for i, r in enumerate(rules) if r not in rules[:i]]
+            lib[dname] = (f".decl {dname}({', '.join(cols[i] for i in pos[h])})",
+                          [f"// {dname}: the rows of {h} its callers ask for (the metavariable columns they pass in)"],
+                          [rules[i] for i in keep])
+            demand.sites += [(dname, owners[i], k) for k, i in enumerate(keep) if owners[i] not in group]
+            for e in by[h]:
+                hp = [a.strip() for a in e["head"].split("(", 1)[1][:-1].split(",")]
+                # the demand binds the passed-in columns: a `node(_, N, …)` that only bound N for a text read goes
+                bound = {hp[i] for i in pos[h][1:] if re.fullmatch(r"[A-Z][A-Z0-9_]*", hp[i])}
+                e["lits"] = [f"{dname}({', '.join(hp[i] for i in pos[h])})"] + \
+                    [l for l in e["lits"] if not any(l == f"node(_, {x}, _, _, _)" for x in bound)]
         return True
 
-    done = []
-    while True:   # callers first: a caller's own demand is what binds its call's metavariables
-        new = [h for h in sorted(set(helpers) - set(done)) if try_demand(h)]
+    # a mutual recursion takes demand as one group; a helper alone otherwise
+    unit = {}
+    for h in sorted(helpers):
+        if h in by and h not in unit:
+            scc = {g for g in callees(h) if g in helpers and h in callees(g)} | {h}
+            for g in scc:
+                unit[g] = tuple(sorted(scc))
+    units = sorted(set(unit.values()))
+    # callers first: a caller's own demand is what binds its call's metavariables, so a unit waits until every
+    # helper outside it that calls it (and takes inputs) has been tried; a cycle falls back to name order
+    calls_u = {u: set() for u in units}
+    for e in entries:
+        if e.get("drop"):
+            continue
+        owner = e["head"].split("(")[0]
+        for g in set(re.findall(r"(?<![\w.])([a-z_]\w*)\(", _mask_ticks(_strip_strings_keep(", ".join(e["lits"]))))):
+            if g in unit and owner not in unit[g] and owner in helpers and inputs.get(owner):
+                calls_u[unit[g]].add(owner)
+    demand.sites = []
+    done, tried = [], set()
+    while True:
+        ready = [u for u in units if u not in tried and calls_u[u] <= {g for t in tried for g in t}]
+        if not ready:
+            ready = [u for u in units if u not in tried][:1]
+            if not ready:
+                break
+        for u in ready:
+            tried.add(u)
+            if try_demand(u):
+                done += list(u)
+    # a helper tried before a caller took its demand may succeed now (its callers' scopes are narrower)
+    while True:
+        new = [u for u in units if not set(u) & set(done) and try_demand(u)]
         if not new:
             break
-        done += new
+        done += [g for u in new for g in u]
     return done
+
+
+_ANCESTOR = re.compile(r"^(?:within_stop|within)\(([a-z]\w*), ([a-z]\w*)(?:, [^()]*)?\)$")
+_UNARY = re.compile(r"^([a-z_]\w*)\(([a-z]\w*)\)$")
+
+
+def hoist_ancestor_steps(entries, lib):
+    """An `inside` step whose ancestor must match a util (`within_stop(n, p1, S), nested_slot(p1)`) in a body
+    that limits n by a util too (`leaf_slot(n)`): the step is its own relation, from the limited n,
+    up_k(n, p1) :- leaf_slot(n), within_stop(n, p1, S), nested_slot(p1). Joined inline, the engine may plan
+    the step's part apart from n's limits (every node's ancestors, then their siblings: a cross product)."""
+    made = {}
+
+    def hoist(lits, ctx=()):
+        out = list(lits)
+        for j, l in enumerate(out):
+            if l.startswith("(") and l.endswith(")") and _balanced(l) and len(split_alts(l[1:-1])) > 1:
+                # a disjunction's branch: limited by the body around it too
+                outer = [x for x in out if x != l] + list(ctx)
+                alts = [[q.strip() for q in _split_top_text(b.strip(), ",")] for b in split_alts(l[1:-1])]
+                new = [hoist(b, outer) for b in alts]
+                if new != alts:
+                    out[j] = "(" + " ; ".join(", ".join(b) for b in new) + ")"
+        for l in list(out):
+            m = _ANCESTOR.match(l)
+            if not m or l not in out:
+                continue
+            a, p = m.group(1), m.group(2)
+            if a != "n":     # a step up from the rule's own node; a descendant found from above is not one
+                continue
+            ua = [x for x in list(out) + list(ctx) if _UNARY.match(x) and _UNARY.match(x).group(2) == a
+                  and _UNARY.match(x).group(1) not in ("node",)]
+            up = [x for x in out if _UNARY.match(x) and _UNARY.match(x).group(2) == p
+                  or re.fullmatch(r'kind\(' + p + r', "\w+"\)', x)]
+            if not ua or not up:
+                continue
+            # only an ancestor the step finds: one the body reaches from above (`child(n, c3, _)`) limits the
+            # step already, and is the better start
+            if any(re.fullmatch(r"(?:child\(n, " + p + r", \w+\)|field\(n, \"\w+\", " + p + r"\))", x)
+                   for x in list(out) + list(ctx)):
+                continue
+            key = (tuple(ua), l, tuple(up))
+            if key not in made:
+                name = f"up_{len(made) + 1}"
+                ren = lambda t: re.sub(r"\b" + a + r"\b", "n", re.sub(r"\b" + p + r"\b", "p", t)) \
+                    if a != "p" and p != "n" else t
+                made[key] = name
+                lib[name] = (f".decl {name}(n: node, p: node)",
+                             [f"// {name}(n, p): p is an ancestor of n the `inside` step stops at and matches, "
+                              f"from the n the rule allows"],
+                             [(f"{name}(n, p)", [ren(x) for x in ua] + [ren(l)] + [ren(x) for x in up])
+                              if a != "p" and p != "n" else (f"{name}({a}, {p})", ua + [l] + up)])
+            i = out.index(l)
+            out = [x for x in out[:i] if x not in up] + [f"{made[key]}({a}, {p})"] + \
+                [x for x in out[i + 1:] if x not in up]
+        return out
+
+    for e in entries:
+        e["lits"] = hoist(e["lits"])
+    for name in list(lib):
+        if name.startswith("demand_"):
+            decl, notes, rules = lib[name]
+            lib[name] = (decl, notes, [(h, hoist(lits)) for h, lits in rules])
 
 
 def node_demand(entries, helpers, decls, lib):
@@ -1690,7 +1832,8 @@ def node_demand(entries, helpers, decls, lib):
                         reach[h].add(g)
                         todo.append(g)
         return reach[h]
-    fan = re.compile(r"(?<![\w.])(?:within|within_stop)\(\w+, n\b|(?<![\w.])precedes(?:_stop)?\(n, ")
+    # a descendant search (from n, or from a scope n is inside: `within_stop(c2, p1, …)`) or a later sibling
+    fan = re.compile(r"(?<![\w.])(?:within|within_stop)\((?!n\b)\w+, \w+|(?<![\w.])precedes(?:_stop)?\(n, ")
     done, out, sccs = set(), [], []
     for h in sorted(by):
         if h in done or h not in helpers or h not in callees(h):
@@ -1698,9 +1841,17 @@ def node_demand(entries, helpers, decls, lib):
         scc = {g for g in callees(h) if h in callees(g)}
         done |= scc
         sccs.append(scc)
+    # a helper that is only an `inside` step (`in_final(n) :- within_stop(n, p1, …), …`) holds bottom-up at
+    # every node with each of its ancestors: asked where its callers are
+    up = re.compile(r"^(?:within|within_stop|inside)\(n, ")
+    lone = set()
+    for h in sorted(by):
+        if h not in done and h in helpers and by[h] and all(e["lits"] and up.match(e["lits"][0]) for e in by[h]):
+            sccs.append({h})
+            lone.add(h)
     # callers first: a caller's own demand is what limits where it asks
     for scc in sorted(sccs, key=lambda c: (-len(callees(min(c))), min(c))):
-        if any(g not in helpers for g in scc) or not any(fan.search(body_of[g]) for g in scc):
+        if any(g not in helpers for g in scc) or not (scc & lone or any(fan.search(body_of[g]) for g in scc)):
             continue
         if any(e["lits"] and e["lits"][0].startswith("demand_") for g in scc for e in by[g]):
             continue
@@ -1709,7 +1860,12 @@ def node_demand(entries, helpers, decls, lib):
             continue
 
         def reaches(l):
-            return any(g in by and (g in scc or scc & callees(g)) for g in names(l))
+            # a helper that takes demand (or calls one) reads its demand relation, which may read this
+            # recursion's callers: kept out, as in demand()
+            return any(g in by and (g in scc or scc & callees(g) or
+                                    any(e["lits"] and e["lits"][0].startswith("demand_")
+                                        for x in callees(g) | {g} for e in by.get(x, ())))
+                       for g in names(l))
         rules, ok = {g: [] for g in scc}, True
         for e in entries:
             if e.get("drop") or not ok:
@@ -1743,7 +1899,7 @@ def node_demand(entries, helpers, decls, lib):
         for g in sorted(scc):
             col = decls[g][decls[g].index("(") + 1:-1].split(",")[0].strip()
             lib[f"demand_{g}"] = (f".decl demand_{g}({col})",
-                                  [f"// demand_{g}: the nodes {g} is asked at (its recursion looks at every descendant)"],
+                                  [f"// demand_{g}: the nodes {g} is asked at " + ("(it looks at every ancestor of every node)" if g in lone else "(its recursion looks at every descendant)")],
                                   [r for i, r in enumerate(rules[g]) if r not in rules[g][:i]])
             for e in by[g]:
                 hp = [a.strip() for a in e["head"].split("(", 1)[1][:-1].split(",")]
@@ -1971,9 +2127,22 @@ def translate(doc):
     inline_unsafe(entries + helper_entries, helpers)
     demand(entries + helper_entries, helpers, getattr(share_metavariables, "inputs", {}), prog.decls, prog.lib)
     node_demand(entries + helper_entries, helpers, prog.decls, prog.lib)
+    # a recursion's callers ask at few nodes, which also limits what they ask a metavariable helper for:
+    # a demand rule copied from such a caller's body starts with the caller's node demand too
+    for dname, owner, i in getattr(demand, "sites", []):
+        decl, notes, rules = prog.lib[dname]
+        for e in entries + helper_entries:
+            if e.get("drop") or e["head"].split("(")[0] != owner:
+                continue
+            first = e["lits"][0] if e["lits"] else ""
+            if first.startswith(f"demand_{owner}(") and first not in rules[i][1]:
+                rules[i] = (rules[i][0], [first] + rules[i][1])
+            break
     unrolled, empty = unroll_negative(entries + helper_entries, helpers, prog.decls,
                                       getattr(share_metavariables, "inputs", {}))
     body += [("rule", e) for e in unrolled]
+    hoist_ancestor_steps(list({id(e): e for e in entries + helper_entries + unrolled
+                               if not e.get("drop")}.values()), prog.lib)
     for name, decl in empty:
         prog.lib[name] = (decl, [f"// {name}: level -1 of an unrolled recursion, empty"], [])
     body = [(kind, item) for kind, item in body if kind != "rule" or not item.get("drop")]

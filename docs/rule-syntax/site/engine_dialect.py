@@ -202,6 +202,8 @@ def aggregate_spans(body):
 def same_document_joins(text, base):
     def same_doc(m):
         body = m.group(0)
+        if "parsed(" in body:   # a node of a parsed string lives in the string's own (guest) document
+            return body
         spans = aggregate_spans(body)
 
         def scope(pos):     # the innermost aggregate holding pos, or None for the rule body
