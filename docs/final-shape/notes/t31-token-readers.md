@@ -159,7 +159,14 @@ alternative tokens stay:
 - trailing commas (`[a,]`, `f(a,)`), a hole's comma, a for-in head's `const` or `var`;
 - a method's `static`, `get` or `set`, and optional modifiers.
 
-The guard lists each of these tests by rule and path, with its reason.
+Each of these tests says so beside its regex, with the reason:
+
+```json
+{ "regex": "^,$", "stored": "a trailing comma is optional, so the tape keeps it" }
+```
+
+The compiler accepts `stored` only beside a regex, and refuses any other test it can't
+answer (see [The guard](#the-guard)).
 
 ### Layout
 
@@ -191,11 +198,14 @@ over them: `prev_token` for the token before a node, the parent's `token` rows f
 
 | Category | Rules | Tests |
 |---|---:|---:|
-| `lowered` (gap test) | 221 | 1,162 |
-| `layout` (gap window) | 13 | 22 |
-| `excluder` (`not` over a token: an implied one is in no set) | 211 | 487 |
-| `incidental` (a regex over node text, out of the gap test's reach) | 11 | 13 |
-| `root`, `gap`, `gap?`, `below`, read as written (above) | 13 | 18 |
+| `lowered` (gap test) | 222 | 1,164 |
+| `layout` (gap window) | 14 | 22 |
+| `excluder` (`not` over a token: an implied one is in no set) | 220 | 487 |
+| `incidental` (a regex over node text, out of the gap test's reach) | 12 | 13 |
+| `declared` (`stored`: read as written, above) | 4 | 20 |
+| `root`, `gap`, `gap?`, `below` (refused by the compiler) | 0 | 0 |
+
+The 18 `stored` declarations cover 20 tests: two sit in utilities that two clauses use.
 
 Rules are counted by their worst category, so a rule moves when its worst test does.
 
@@ -227,8 +237,12 @@ Each step compares finding keys with a baseline recorded before the step:
 
 - JavaScript: 1,229 = 1,229 keys on 100 files.
 - TypeScript: 302 = 302 keys on 100 files.
-- Python: 885 cases from Ruff's and Bandit's generators (the inline cases in `generate.py`), equal
-  in every chunk. Two chunks hit a stale-store error in both modes (`noqa-PTH113.py`).
+- Python: the whole pack (641 rules) on the runtime path, against a baseline from before the
+  branch, on 16 chunks of probe and noqa files. That is 13,403 keys before and 13,391 after.
+  The difference is the B017 comment probe (the intended fix, two keys) and ten keys that the
+  baseline held twice. The key sets differ only at B017. (An earlier version of this note
+  compared the slice, which runs only the wave's rules; see below.)
+- The slice on pprc-ac and pprc-af, which hit the stale-store error: 69 and 104 keys, no error.
 - The data-layer replay sample: 268 of 268 events give their recorded findings.
 - Rules that are off in the packs, and the rewritten ones: their crafted and upstream cases
   against the engine with the parts walk, on the rules before the rewrite. JS and TS are equal.
@@ -236,9 +250,14 @@ Each step compares finding keys with a baseline recorded before the step:
 
 ### Open
 
-- The guard is a test for now (below), not yet a compile-time refusal.
-- `first_token`, `last_token`, `token_before`, `token_after` relate nodes, and an implied token
-  has none.
+- `first_token`, `last_token`, `token_before`, `token_after` relate a node to stored tokens
+  only (see [Token relations in `.rr` rules](#token-relations-in-rr-rules)).
+- Ten keys the baseline held twice are now held once: PTH106 to PTH111 on line 3 of the
+  `string-annotation-calls` probes, where `os.rmdir(path=p)` and `'os.rmdir(p)'` (a string in a
+  string annotation) share a line. One of the two findings is no longer made. The key sets are
+  equal, so the checks don't see it.
+- Compiling the rules costs more than before the branch. See
+  [CPU on the runtime path](#cpu-on-the-runtime-path).
 - A gap test on the Metal path is a fact, and facts are still made on the host there
   (`metal_host_guard_tests`' remaining entry).
 - A gap's word placed against comments is approximate: before them, with the gap's span.
@@ -279,6 +298,9 @@ The runtime check (`rer131_runtime_keys`) evaluates every rule. On probe chunk a
 gives 467 keys from 641 rules, against the slice's 248, at 16.0 s CPU against 10–12 s.
 The Python checks use the runtime now. The slice oracle names the rules it leaves out.
 
+The runtime baseline from before the branch is equal on all 16 chunks except the B017 comment
+probe (above, under Checks).
+
 With the whole pack on the runtime, the probe and noqa files for AIR303, B017, FAST001,
 FBT001, RUF061, SIM910 and UP015 all get their findings.
 
@@ -305,7 +327,8 @@ At load 15, chunk ad takes 39.3 s (baseline 42.4 s) and pprc-ae takes 19.3 s (ba
 the efficiency cores at lower clocks, with shared caches. CPU time counts the cycles the
 process held, not the work done.
 
-Two checks show the work did not grow:
+On the slice, two checks show that the work did not grow. On the runtime path, compiling
+the rules did grow; see [CPU on the runtime path](#cpu-on-the-runtime-path).
 
 - **The rule rewrites.** The 14 rules as they were before the rewrites and the same rules
   now, same binary, same chunk, back to back: 10.0 / 9.8 s against 10.6 / 10.1 s, with
@@ -314,21 +337,88 @@ Two checks show the work did not grow:
   of the 3,358 samples in engine code (0.3%). The parser's transducer walk takes 1,349,
   store writes 1,617, and SQLite 711.
 
+## CPU on the runtime path
+
+The runtime check compiles every rule, then evaluates it over the chunk. Instructions retired
+(`/usr/bin/time -l`) don't vary with load, so they compare the two binaries directly. On
+pprc-aa, run back to back:
+
+| | before the branch | now | change |
+|---|---:|---:|---:|
+| compiling the 641 rules (no files) | 71.7 G | 94.4 G | +32% |
+| compiling, then evaluating pprc-aa | 113.5 G | 137.8 G | +21% |
+| evaluating alone (the difference) | 41.8 G | 43.3 G | +4% |
+
+The work per file grew by 4%. Compiling grew by a third. The part of that the profile names:
+
+- the compile-time token check (`token_tests::refuse`), about 7% of the run. It rebuilt the
+  grammar's token tables for each rule document until `704809fec`, which builds them once per
+  dialect;
+- the gap test's automaton walk when a relation is compiled (`ast_rule::gap_test`), 4%;
+- pattern parsing on the tape (`language::rule_pattern`, `tape::pattern_doc`), 4% now against
+  1% before.
+
+The baseline is from before the integration merge as well, so part of the rise may be the
+merge's. A rule is compiled once per catalog, not once per file, so it is the oracle that
+spends most of its time compiling. This is still open.
+
 ## The guard
 
-`no_rule_reads_a_token_the_tape_may_leave_out` runs D over every pack rule. It fails on any
-`root`, `below`, `gap` or `gap?` test that is not one of the 18 listed by rule and path
-(`AS_WRITTEN`), each with the reason it holds as written.
+Rule compilation refuses a token test the tapes may not answer. `compile_document` runs D's
+classification (`compile/token_tests.rs`) on every rule document. A `root`, `below`, `gap` or
+`gap?` test is an error that names the test's path and regex:
 
-Next, D's classification moves into rule compilation. A token test whose token the grammar implies
-where the rule looks, and that the gap test does not answer, becomes a compile
-error naming the rule and the test. A rule whose parent can't be placed (today's `gap?`) has to say its parent. After that, a
-rule can't depend on a token the tapes don't hold, and a grammar update that implies a new token
-shows up at compile time.
+```text
+a token test reads a token the tape may leave out, which nothing answers:
+/utils/first-arg/follows (`^\($`, gap) ... or say why the token is stored there (`stored`)
+```
+
+A test that reads a token the tape keeps says so with `stored` (above); it counts as `declared`.
+A grammar update that implies a new token shows up when the rules are compiled.
+
+A neighbour walk (`stopBy: {not: X}`) is answered by the gap test where X is made of kinds,
+utilities and token regexes. The walk passes the stored children that X matches, and the
+implied tokens that its regexes match. That answers F631, RUF030, RUF040, RUF048 and RUF061
+(their stop rule is the `trivia` utility) and clippy's partial-pub-fields as written.
+
+`no_rule_reads_a_token_the_tape_may_leave_out` still runs D over every pack rule, including the
+candidates the catalog doesn't compile.
+
+## Stale store on pprc-ac and pprc-af
+
+Named-only tapes made files of one shape share tape bytes. `os.path.exists("file")` and
+`os.path.isfile("file")` store the same tape, and the names are in the source. Keyed by the
+sha256 of its bytes, the second file's tape was found as the first's, and reading it against the
+other source failed as stale. A tape is now keyed by its bytes and its source's hash
+(`HashKey::tape_identity`), in the store, the working set, families and residency.
+`files_of_one_tape_shape_keep_their_own_sources` checks it.
+
+## Token relations in `.rr` rules
+
+core.rr has two kinds of token relation:
+
+- `token`, `prev_token`, `op` and `op_at` hold the implied tokens too. Their producer reads
+  each parent's gaps, as the gap test does.
+- `first_token`, `last_token`, `token_before` and `token_after` relate a node to a token
+  entity: a stored anonymous child (`Facts::tokens`). An implied token is not an entity, so
+  these relations skip it. `token_before(n, t), text(t, "(")` doesn't hold where the `(` is
+  implied.
+
+No program the engine runs uses the second kind: not the data layer, typing, golden, or gate
+programs. They are used by 48 of the copied `docs/rule-syntax/packs` rules (34 TypeScript,
+7 Python, 4 Vue, 2 Rust, 1 PHP), 122 times. In 45 of those uses the token's text is fixed:
+`;`, `(`, `)`, `,` and `[` most often.
+
+Proposed: the four relations mean the stored tokens, as now. A rule that asks for a token the
+grammar may imply uses `token`/`prev_token`, which the gap test answers. The `.rr` compiler
+refuses a use whose fixed text may be an implied token, as the JSON compiler does. Giving
+implied tokens entity ids instead would rebuild the nodes the tapes leave out.
+
+Doing this means rewriting the copies that ask for implied tokens. The copies are kept as
+copied for now, so this waits on that decision.
 
 ## Checking still to do
 
 The upstream cases with the linters' own findings (`fixtures.expected.json`, `npm run
 fixtures:pull` from S3) are not in this checkout. S7 on every backend and the full data-layer
-checks close the work. The Python key checks need a runtime baseline from before the branch;
-the slice baselines covered only the wave's rules.
+checks close the work. The Python key checks run on the runtime path against a baseline from before the branch.
