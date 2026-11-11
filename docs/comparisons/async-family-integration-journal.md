@@ -1372,3 +1372,39 @@ The first three-process identity fixture restores every requested program with t
 Its fresh process prepares nine programs, while later processes need only three; comparing entire cache populations would be an invalid gate.
 That fixture uses `calls.rr` and has no phase runs. The replacement fixture uses `calls_p3.rr` and requires both `struct` and `types`.
 The phase-level requirement remains open until that stronger fixture passes.
+
+### Integration status and the next planner step
+
+The integration tip remains `1419d4263`. Fetching found no newer remote tip.
+Merge `bd695d685`, compatibility fixes `e78060842`, and bulk admission `4b4388d9f` are published on `jeremy/async-family-integration-comparison`.
+
+The external-containment experiment passes both focused planner tests and O125 step 07 output parity.
+It does not pass the broader work comparison:
+
+| Run | Baseline recorded work | Candidate recorded work |
+|---|---:|---:|
+| Cold at step 06 | 12,274,368 | 12,753,254 |
+| Step 07 maintenance | 9,634,285 | 9,344,946 |
+| Step 07 fresh | 12,352,934 | 12,832,937 |
+
+The maintenance `ifn` plans decrease from 439,749 to 245,619 recorded work units.
+Their attributed CPU decreases from 12.3 ms to 6.5 ms in these single observations.
+Whole maintenance CPU decreases from 4.4 s to 3.7 s, but this is not a repeated timing result.
+The cold work regression prevents accepting this global estimate change.
+Production retains its previous planner. The experiment patch and immutable binary remain under `three-fixes-e78060842`.
+
+The next planner change must explain which joins regress before extending containment estimates to all external relations.
+Use the captured relations to compare restrictive probes and demanded-key joins, then require both incremental and cold work gates.
+The reusable `scripts/profiling/o125/join_shapes.py` records SQL, query plans, CPU, and VM instructions for four shapes.
+It also adds one matching call and one rejected call, so empty captured results cannot conceal a broken rewrite.
+Its seven-iteration run confirms 4,318,500 versus 5,800 versus 2,700 VM instructions for expansion-first, restriction-first, and call-first shapes.
+The demanded-key shape also uses approximately 2,700 VM instructions.
+
+The stronger cross-process fixture failed before execution: `calls_p3.rr` is a typing program, not a library include.
+The next run must load it through `tools::program_text`, as the existing oracle tests do.
+No phase-retention or identity conclusion follows from that failed fixture setup.
+The test source remains in the artifact directory; it is not installed as a failing repository test.
+
+Native profile counters have limits: the alternate whole plan omits per-step counters, and replanning can combine earlier counts under the final order.
+Use isolated fixed-order probes to establish amplification, and treat aggregate replay work as diagnostic evidence with these limits.
+During the build, removal of obsolete object files freed 7.85 GiB from this task's cache. Active objects and artifact binaries were retained.
