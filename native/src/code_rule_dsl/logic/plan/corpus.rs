@@ -4256,10 +4256,10 @@ fn run_observed(
             Vec::new(),
             Box::new(move |store| {
                 let mut ids = Vec::with_capacity(read.len());
-                // Run again after a busy store (the writer's retries): it reads what it holds, moves none of it.
+                // A busy-store retry must leave the captured inputs available.
                 for (path, stat, content) in &read {
-                    if let Some(id) = content.clone().resolve(store)? {
-                        ids.push((path.clone(), stat.clone(), id));
+                    if let Some(id) = content.resolve(store)? {
+                        ids.push((path.clone(), *stat, id));
                     }
                 }
                 store.record_corpus_stats(&root, &ids, started_ns)
@@ -4790,13 +4790,16 @@ fn run_observed(
                         let _s = span("the kept part, from the frames");
                         cell = Some(retain::Retained::from_frames(store, frames_space, ckey, &cross.program)?);
                     }
-                    let cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
+                    let mut cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
                     if kept_frames.is_some() {
                         cross_kept = Some(cut.strata);
                     }
                     if let Some(kept) = cell.as_mut().filter(|_| from_frames.is_some()) {
-                        let (rels, rows) = kept.load(store, &cut, &cross.program)?;
-                        crate::code_rule_dsl::logic::profile::decision("the kept part, from the frames (t33 K4)", || format!("{rels} relations' rows read ({rows} rows) for the strata that run"));
+                        if let Some((rels, rows)) = kept.load(store, &cut, &cross.program)? {
+                            crate::code_rule_dsl::logic::profile::decision("the kept part, from the frames (t33 K4)", || format!("{rels} relations' rows read ({rows} rows) for the strata that run"));
+                        } else {
+                            cut = retain::cut(None, ckey, &cross.program, &digests)?;
+                        }
                     }
                     let was_frames = cell.as_ref().filter(|_| from_frames.is_some()).and_then(|k| k.frames().cloned());
                     // An input with the rows it had is read from the last run's source, with its indexes and statistics.
