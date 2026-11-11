@@ -411,9 +411,13 @@ pub mod tests {
         let tokens: usize = files.iter().map(|f| super::rr::tape(f).len()).sum();
         // (CPU, wall) a pass of `f`, its last pass's tables checked.
         let time = |f: &mut dyn FnMut() -> Option<Vec<super::Columns>>| {
+            // Three calls first: on Metal the second runs a program its first run learned from
+            // (its source made and compiled again), the third the settled one.
             let w = std::time::Instant::now();
-            let _ = f();
-            eprintln!("    (first call {:.2?} wall)", w.elapsed());
+            for _ in 0..3 {
+                let _ = f();
+            }
+            eprintln!("    (three calls first: {:.2?} wall)", w.elapsed());
             let (t, w) = (thread_cpu(), std::time::Instant::now());
             let mut last = None;
             for _ in 0..REPEAT {
@@ -436,43 +440,64 @@ pub mod tests {
             use rerail_metal::block_program::serial::run_resident;
             use rerail_metal::block_program::serial::Resident;
             // Tier 1 on Metal over `files`, halved while the device refuses it for capacity (as
-            // `metal_tapes`): each part's GPU seconds and buffers, in order.
-            fn parts(c: &super::Compiled, files: &[rerail_compiler::block::BatchFile<'_>], out: &mut Vec<(f64, usize, Resident)>) {
-                match run_resident(&[&c.native], files, super::SEGMENTS) {
-                    Ok((run, res)) => out.push((run.run.seconds, files.len(), res)),
+            // `metal_tapes`), each part's buffers given to `each` as they come (held all at once,
+            // they pass the device's budget): its GPU seconds, its first file, its buffers (none:
+            // a file past the device's room alone).
+            fn parts(c: &super::Compiled, files: &[rerail_compiler::block::BatchFile<'_>], at: usize, each: &mut dyn FnMut(f64, usize, usize, Option<&Resident>)) {
+                let (t, w) = (thread_cpu(), std::time::Instant::now());
+                let r = run_resident(&[&c.native], files, super::SEGMENTS);
+                if std::env::var_os("RR_PARTS").is_some() {
+                    eprintln!("      run_resident {} files: {:.2?} CPU {:.2?} wall {}", files.len(), thread_cpu() - t, w.elapsed(), if r.is_ok() { "ok" } else { "refused" });
+                }
+                match r {
+                    Ok((run, res)) => {
+                        let (t, w) = (thread_cpu(), std::time::Instant::now());
+                        each(run.run.seconds, at, files.len(), Some(&res));
+                        let (tc, tw) = (thread_cpu(), std::time::Instant::now());
+                        drop(res);
+                        if std::env::var_os("RR_PARTS").is_some() {
+                            eprintln!("      tier 2 {:.2?} CPU {:.2?} wall; drop {:.2?} CPU {:.2?} wall", tc - t, tw - w, thread_cpu() - tc, tw.elapsed());
+                        }
+                    }
                     Err(rerail_compiler::Error::BackendCapacity) if files.len() > 1 => {
                         let (a, b) = files.split_at(files.len() / 2);
-                        parts(c, a, out);
-                        parts(c, b, out);
+                        parts(c, a, at, each);
+                        parts(c, b, at + a.len(), each);
                     }
+                    Err(rerail_compiler::Error::BackendCapacity) => each(0.0, at, 1, None),
                     Err(e) => panic!("Metal runs the batch: {e:?}"),
                 }
             }
             let batch: Vec<_> = refs.iter().map(|b| rerail_compiler::block::BatchFile { bytes: b, program: 0 }).collect();
-            let (mut gpu, mut t2_cpu, mut n_parts) = (0.0, std::time::Duration::ZERO, 0);
+            let (mut gpu, mut t2_cpu, mut n_parts, mut on_cpu) = (0.0, std::time::Duration::ZERO, 0, 0);
             let metal = time(&mut || {
-                let mut ps = Vec::new();
-                parts(c, &batch, &mut ps);
-                n_parts = ps.len();
-                let t = thread_cpu();
-                let mut out = Vec::with_capacity(want.len());
-                for (secs, n, res) in &ps {
+                let mut out: Vec<Option<super::Columns>> = vec![None; want.len()];
+                let (mut np, mut oc) = (0, 0);
+                parts(c, &batch, 0, &mut |secs, at, n, res| {
                     gpu += secs;
-                    for i in 0..*n {
-                        let k = out.len();
-                        out.push(rerail_metal::tier2_on::columns_on(p, res, i).unwrap_or_else(|_| want[k].clone()));
+                    np += 1;
+                    let t = thread_cpu();
+                    for i in 0..n {
+                        out[at + i] = Some(match res {
+                            Some(res) => rerail_metal::tier2_on::columns_on(p, res, i).unwrap_or_else(|_| want[at + i].clone()),
+                            None => {
+                                oc += 1;
+                                super::tape(&files[at + i])
+                            }
+                        });
                     }
-                }
-                t2_cpu += thread_cpu() - t;
-                Some(out)
+                    t2_cpu += thread_cpu() - t;
+                });
+                (n_parts, on_cpu) = (np, oc);
+                Some(out.into_iter().map(Option::unwrap_or_default).collect())
             });
-            row("one batch, tier 1 on Metal, tier 2 on the CPU", metal, &format!("({n_parts} launches' batches)"));
-            let passes = f64::from(REPEAT + 1);
+            row("one batch, tier 1 on Metal, tier 2 on the CPU", metal, &format!("({n_parts} batches; {on_cpu} files too big, on the CPU)"));
+            let passes = f64::from(REPEAT + 3);
             eprintln!("    tier 1's GPU time {:.1}ms a pass ({:.0} MB/s); tier 2 on the CPU {:.1}ms", gpu / passes * 1e3, mb / (gpu / passes), t2_cpu.as_secs_f64() / passes * 1e3);
             let t1m = time(&mut || {
-                let mut ps = Vec::new();
-                parts(c, &batch, &mut ps);
-                std::hint::black_box(&ps);
+                parts(c, &batch, 0, &mut |_, _, _, res| {
+                    std::hint::black_box(res);
+                });
                 None
             });
             row("  tier 1 alone, one Metal batch", t1m, "");
