@@ -865,6 +865,18 @@ impl Executor {
         self.board.score()
     }
 
+    /// Runs `f` on the caller's thread as one job of `lane`, under `form`: queued, started and finished on the
+    /// scoreboard as a worker's job is, its thread CPU and phases ([`crate::score::add`]) its own. For work a caller
+    /// encodes and submits itself to the lane's one queue (a device stratum's command buffers), so the lane's
+    /// scoreboard holds every job it ran (decision 0100: no executor beside it).
+    pub fn inline<R, E>(&self, lane: Lane, form: &'static str, units: f64, f: impl FnOnce() -> Result<R, E>) -> Result<R, E> {
+        let mut ticket = self.board.queue(lane, vec![Item { form, units, estimate: 0.0, host: 0.0 }]);
+        self.board.start(&mut ticket);
+        let r = f();
+        self.board.finish(ticket, r.is_ok());
+        r
+    }
+
     /// Appends the scoreboard to the trace (`RERAIL_SCOREBOARD`) under `title`.
     pub fn note(&self, title: &str) {
         self.board.note(title);
