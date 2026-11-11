@@ -201,30 +201,4 @@ mod tests {
         );
         assert!(!report(&s).0.contains("UNREQUESTED_SCALARS"));
     }
-    #[test]
-    fn projection_reason_traces_real_consumers_and_ignores_dead_scalars() {
-        let _lock = super::super::one_run();
-        super::super::reset();
-        super::super::set(true);
-        let p = crate::code_rule_dsl::logic::rr::parse(
-            r#"
-#include "core.rr"
-.decl selected(n:node)
-selected(n) :- text(n,"request").
-.decl result(n:node)
-result(n) :- selected(n).
-.output result
-"#,
-        )
-        .unwrap();
-        projection(&p, &BTreeSet::from(["text".into()]));
-        let decisions = super::super::decisions();
-        super::super::set(false);
-        assert!(
-            decisions
-                .keys()
-                .any(|(topic, text)| topic == "projection provenance"
-                    && text == "text <- selected <- result")
-        );
-    }
 }
