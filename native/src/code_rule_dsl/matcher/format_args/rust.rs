@@ -8,6 +8,8 @@
 
 use crate::code_rule_dsl::value::rust::{RustValue, literal};
 use ast_grep_core::{Doc, Node};
+use super::*;
+use crate::code_rule_dsl::literal::rust_format;
 
 /// How many arguments a macro takes before its format string, by name.
 fn leading_arguments(name: &str) -> Option<usize> {
@@ -269,3 +271,69 @@ fn call_argument<'r, D: Doc>(tokens: &[Node<'r, D>]) -> Option<CallArgument<'r, 
 
 #[cfg(test)]
 mod tests;
+
+/// A Rust format macro call (`rust::format_call`) whose template is the string capture: the
+/// arguments no field, width or precision reads (rustc's "argument never used"), by their
+/// first token, and the fields reading an index past the last argument (rustc's "invalid
+/// reference to positional argument"). A capture (`{x}` with no argument `x`) reads a
+/// variable, which `resolves` reads. A call rustc refuses otherwise (a positional argument
+/// after a named one, a template it cannot parse) is unknown.
+pub(super) fn prepare<'t, D: Doc>(this: &FormatArgs, env: &MetaVarEnv<'t, D>) -> Prepared<'t, D> {
+    let Some(string) = env.get_match(&this.string) else {
+        return Prepared::NoMatch;
+    };
+    let Some(call) = string
+        .ancestors()
+        .find(|ancestor| ancestor.kind() == "macro_invocation")
+        .and_then(|invocation| rust::format_call(&invocation))
+        .filter(|call| call.template.range() == string.range())
+    else {
+        return Prepared::NoMatch;
+    };
+    if !call.well_ordered {
+        return Prepared::Unknown;
+    }
+    let tree = match parsed_tree(&call.template, Grammar::expect("rustFormat")) {
+        None | Some(Parsed::NotString) => return Prepared::NoMatch,
+        Some(Parsed::Unknown) => return Prepared::Unknown,
+        Some(Parsed::Tree(tree)) => tree,
+    };
+    let Ok(pieces) = rust_format::parse(&call.value) else {
+        return Prepared::Unknown;
+    };
+    let binding = rust_format::bind(&pieces, call.positional, &call.named);
+    let root = AstGrep::doc(SubDoc { tree: tree.clone() });
+    let parts: Vec<usize> = root.root().children().map(|part| part.node_id()).collect();
+    let unused = binding
+        .unused
+        .iter()
+        .filter_map(|index| call.arguments.get(*index))
+        .map(|argument| (argument.first.clone(), true))
+        .collect();
+    let missing = binding
+        .missing
+        .iter()
+        .filter_map(|piece| parts.get(*piece))
+        .map(|id| (*id, true))
+        .collect();
+    Prepared::Sides {
+        tree,
+        unused: Side::known(unused),
+        missing: Side::known(missing),
+    }
+}
+
+/// Rust's `format_args!` family (`FormatPreparer`).
+pub(crate) struct Rust;
+
+impl super::FormatPreparer for Rust {
+    fn prepare_tape<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, crate::code_rule_dsl::tape::TapeDoc>) -> Prepared<'t, crate::code_rule_dsl::tape::TapeDoc> {
+        prepare(format, env)
+    }
+    fn prepare_sub<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, crate::code_rule_dsl::literal::SubDoc>) -> Prepared<'t, crate::code_rule_dsl::literal::SubDoc> {
+        prepare(format, env)
+    }
+    fn prepare_str<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>) -> Prepared<'t, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>> {
+        prepare(format, env)
+    }
+}

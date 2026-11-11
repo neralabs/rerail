@@ -154,3 +154,27 @@ pub(super) fn expression<'t, D: Doc>(mut node: Node<'t, D>) -> Node<'t, D> {
     }
     node
 }
+
+/// PHP's printf-family calls (`FormatPreparer`).
+pub(crate) struct Printf;
+
+impl super::FormatPreparer for Printf {
+    fn prepare_tape<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, crate::code_rule_dsl::tape::TapeDoc>) -> Prepared<'t, crate::code_rule_dsl::tape::TapeDoc> {
+        match &format.reading {
+            Some(reading) => prepare(&format.string, &format.args, reading, env),
+            None => Prepared::Unknown,
+        }
+    }
+    fn prepare_sub<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, crate::code_rule_dsl::literal::SubDoc>) -> Prepared<'t, crate::code_rule_dsl::literal::SubDoc> {
+        match &format.reading {
+            Some(reading) => prepare(&format.string, &format.args, reading, env),
+            None => Prepared::Unknown,
+        }
+    }
+    fn prepare_str<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>) -> Prepared<'t, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>> {
+        match &format.reading {
+            Some(reading) => prepare(&format.string, &format.args, reading, env),
+            None => Prepared::Unknown,
+        }
+    }
+}

@@ -265,3 +265,6 @@ resolution	rerail-w
 matcher::term	rerail-w
 matcher::arguments::lang_python	rerail-lang-python
 matcher::arguments::lang_php	rerail-lang-php
+matcher::format_args::python	rerail-lang-python
+matcher::format_args::printf	rerail-lang-php
+matcher::format_args::scanf	rerail-lang-php

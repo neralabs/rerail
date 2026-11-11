@@ -26,7 +26,7 @@ mod count;
 mod each;
 mod embedded;
 mod exported;
-mod format_args;
+pub(crate) mod format_args;
 pub(in crate::code_rule_dsl) mod gap;
 mod layout;
 // 06-first-slice S1: reached from the S1 gate only until the slice's wave (S4) calls it.

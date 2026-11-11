@@ -28,7 +28,7 @@ pub(crate) trait LanguageTerm: Send + Sync {
 }
 
 /// `value` as a `B`, where `A` and `B` are one type.
-unsafe fn same<A, B>(a: A) -> B {
+pub(crate) unsafe fn same<A, B>(a: A) -> B {
     debug_assert_eq!(std::mem::size_of::<A>(), std::mem::size_of::<B>());
     let a = std::mem::ManuallyDrop::new(a);
     unsafe { std::ptr::read(&*a as *const A as *const B) }

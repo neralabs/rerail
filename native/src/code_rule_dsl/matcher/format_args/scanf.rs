@@ -78,3 +78,27 @@ pub(super) fn prepare<'t, D: Doc>(
         missing,
     }
 }
+
+/// PHP's `sscanf` and `fscanf` calls (`FormatPreparer`).
+pub(crate) struct Scanf;
+
+impl super::FormatPreparer for Scanf {
+    fn prepare_tape<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, crate::code_rule_dsl::tape::TapeDoc>) -> Prepared<'t, crate::code_rule_dsl::tape::TapeDoc> {
+        match &format.reading {
+            Some(reading) => prepare(&format.string, &format.args, reading, env),
+            None => Prepared::Unknown,
+        }
+    }
+    fn prepare_sub<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, crate::code_rule_dsl::literal::SubDoc>) -> Prepared<'t, crate::code_rule_dsl::literal::SubDoc> {
+        match &format.reading {
+            Some(reading) => prepare(&format.string, &format.args, reading, env),
+            None => Prepared::Unknown,
+        }
+    }
+    fn prepare_str<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>) -> Prepared<'t, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>> {
+        match &format.reading {
+            Some(reading) => prepare(&format.string, &format.args, reading, env),
+            None => Prepared::Unknown,
+        }
+    }
+}
