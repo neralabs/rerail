@@ -106,3 +106,23 @@ Measured at O125 against the engine before this decision, with "same as full" on
 2. **A maintained step's delta path**: no longer dominated by copying the indexes.
 3. **A whole run's CPU**: no worse than about 1.1× today. If probes cost more, that is reported, not
    traded for bytes.
+
+## Measured (2026-11-10)
+
+O125 steps 1–8, run twice each, alternating with the engine before this decision (c04a18cb2). "Same as
+full" held on all 8 steps of all 4 runs. The load average was 24–87.
+
+| | Before | After |
+|---|---|---|
+| Bytes a row, kept relations' indexes ("other", ~1.07M rows) | 53–66 | 4.7–5.5 |
+| Bytes a row, kept relations' indexes ("supports", ~0.78M rows) | 53–65 | 6.8–7.9 |
+| Whole run CPU, user + sys (s) | 38.2, 33.5 | 45.7, 38.7 |
+| Maintained steps' session CPU, summed (s) | 12.7, 10.9 | 14.7, 13.1 |
+
+- **Target 1 is met:** 4.7–7.9 bytes a row, about a 90% cut.
+- **Target 3 is missed:** the whole run's CPU is 1.15–1.20× before, against about 1.1×. The
+  maintained steps are 1.16–1.20×.
+- **Not yet split:** how much of the extra CPU is probes (binary search against a hash lookup) and how
+  much is the dedup test (a lookup in the full-row order for each row derived).
+- **Next:** test the dedup once per wave, by sorting the wave's rows and merging them against the
+  full-row order, as the first spike proposed. Then split the probe cost.
