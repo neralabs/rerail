@@ -34,7 +34,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use crate::code_rule_dsl::text::{Domain, Lowered, Source, Spelling, lower};
 use rusqlite::Connection;
 
-use super::front::{Atom, Literal, Program, Term};
+use super::front::ast::{Atom, Literal, Program, Term};
 
 /// The tests, by name. `i…`: the same, ignoring case (the text layer's case folding). `rx`: a regex in Rust `regex`
 /// syntax (with backreferences beyond it, as `value.regex`).
