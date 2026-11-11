@@ -136,6 +136,20 @@ def module_vis_edits(nodes, edits):
         edits.add(n.decl_file, s, e, 'pub ', 'module pub')
 
 
+_crate_texts = {}
+
+
+def parent_path_read(nodes, p):
+    """Whether a file of p's crate outside p reads `parent::name::` (p's path from its parent)."""
+    owner = nodes[p].owner
+    if owner not in _crate_texts:
+        _crate_texts[owner] = [(q, open(n.file, 'rb').read()) for q, n in nodes.items()
+                               if n.owner == owner and not n.inline and n.file and os.path.exists(n.file)]
+    parent, name = p.rsplit('::', 2)[-2:]
+    pat = re.compile(rb'(?<![A-Za-z0-9_])' + parent.encode() + rb'::' + name.encode() + rb'::')
+    return any(pat.search(t) for q, t in _crate_texts[owner] if q != p and not q.startswith(p + '::'))
+
+
 def cfg_test_edits(nodes, files, keep_test_mods, edits):
     """The `test` atom of every cfg predicate: `any(test, feature = "test-hooks")`, but on a test module no other
     crate reads (it stays its own crate's test build's)."""
@@ -161,7 +175,9 @@ def cfg_test_edits(nodes, files, keep_test_mods, edits):
             name = gated[4:]
             helper = (p is not None and nodes[p].file and name != 'tests' and not name.endswith('_tests')
                       and not re.search(rb'#\[test\]|^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*;', open(nodes[p].file, 'rb').read(), re.M))
-            if p is None or (p not in keep_test_mods and not read_here and not helper):
+            # or another file of its crate reads it by its parent's path (`syntax::candidate_spike::X`)
+            read_there = p is not None and parent_path_read(nodes, p)
+            if p is None or (p not in keep_test_mods and not read_here and not helper and not read_there):
                 continue
         edits.add(os.path.abspath(f), int(s), int(e), HOOKS, 'cfg test')
 
