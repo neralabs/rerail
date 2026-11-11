@@ -20,7 +20,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 /// The grammar: the ladder's last step.
-const GRAMMAR: &str = include_str!("../../rr_syntax/bitlex_ladder/20-json-depth.bitlex");
+const GRAMMAR: &str = include_str!("../../rr_syntax/bitlex_ladder/21-named-only.bitlex");
 
 /// Sample documents, for the profile tier 2 is cut by when the grammar compiles
 /// (docs/parser-generators/28-tier-2-in-clusters.md): 12 of the repository's `.rr`
@@ -229,14 +229,15 @@ pub mod tests {
     /// Tier 2's state machine is built once per rule, not once per place a rule is used: rules
     /// whose calls save states are calls (`grammar::shared`). With every rule inlined into each
     /// place, `.rr` had 858 states and 8,370 arms; shared, 438 and 4,014. A ratchet: lower it as
-    /// the compiler improves.
+    /// the compiler improves. Named-only tapes (step 21) raised it from 234 and 2,225: a group's
+    /// body and an aggregate word's arguments are rules of their own, which drop their `,`.
     #[test]
     fn the_state_machine_shares_its_rules() {
         let c = super::compiled().expect("compiles");
         let states = c.machine.lines().filter(|l| l.starts_with("state ")).count();
         let arms = c.machine.lines().filter(|l| l.starts_with("arm ")).count();
-        assert!(states <= 234, "{states} states");
-        assert!(arms <= 2225, "{arms} arms");
+        assert!(states <= 265, "{states} states");
+        assert!(arms <= 2592, "{arms} arms");
     }
 
     /// The parse path is the compiled code's: the host functions around the two compiled calls

@@ -45,6 +45,9 @@ pub enum Act {
     Open { kind: u16, field: u16, supers: Vec<u16> },
     /// The token's leaf node, of the token's kind, or of `kind` when it is not 0 (`A as K`).
     Leaf { field: u16, supers: Vec<u16>, kind: u16 },
+    /// A token the grammar implies (`implied`): no node; the extras pending before it stay where
+    /// they are, as its leaf's would.
+    Settle,
     /// An extra's leaf, deferred: the nodes closed before the next node leave it out, so it goes
     /// where the next token puts it (`with_extras`).
     Extra,
@@ -134,6 +137,7 @@ pub fn text(states: &[StateRow], arms: &[ArmRow]) -> String {
                     let _ = write!(acts, " relabel f {field} as {moved} inner {inner}");
                 }
                 Act::Extra => acts.push_str(" extra"),
+                Act::Settle => acts.push_str(" settle"),
                 Act::ExtraNow => acts.push_str(" extra now"),
                 Act::Retag { kind } => {
                     let _ = write!(acts, " retag {kind}");
@@ -211,6 +215,9 @@ enum Pos {
     Call(usize),
     Merge { token: u16, into: u16 },
 }
+
+/// A `Pos::Tok`'s leaf kind for a token the grammar implies (`implied`): it makes no leaf.
+const NO_LEAF: u16 = u16::MAX - 3;
 
 /// A rule of the tree section.
 struct Rule {
@@ -409,7 +416,7 @@ impl Builder<'_> {
                 if !toks(&e, &mut ps) {
                     return Err(format!("`as {k}`: not a token"));
                 }
-                let kind = self.kind(k)?;
+                let kind = if k == bitlex::syntax::IMPLIED { NO_LEAF } else { self.kind(k)? };
                 if kind == crate::stream_ir::REMEMBERED {
                     return Err(format!("`as {k}` on a token: a word's kind is for a wrap's, a relabel's or a reading's node"));
                 }
@@ -435,6 +442,10 @@ impl Builder<'_> {
     /// A kind named in the grammar; a `remember` choice's name is its level's word's
     /// (`stream_ir::REMEMBERED`).
     fn kind(&self, name: &str) -> Result<u16, String> {
+        if name == bitlex::syntax::GONE {
+            // `drop`: the node goes (`DEAD`, left out at `ACCEPT`).
+            return Ok(crate::stream_ir::DEAD);
+        }
         if self.remember.iter().any(|r| r == name) { Ok(crate::stream_ir::REMEMBERED) } else { (self.ids.kind)(name) }
     }
 
@@ -967,6 +978,15 @@ pub fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow
                 }
             }
             match positions[q].1 {
+                Pos::Tok(kind, NO_LEAF, remembered) => {
+                    // A token the grammar implies: taken, no leaf.
+                    if p.field != 0 || !p.supers.is_empty() || remembered {
+                        return Err("an implied token with a field, a supertype or a word: it makes no node".into());
+                    }
+                    acts.push(Act::Settle);
+                    let Some(acts) = settled(acts) else { continue };
+                    out.push((kind, acts, q, push.clone()));
+                }
                 Pos::Tok(kind, leaf, remembered) => {
                     acts.push(Act::Leaf { field: p.field, supers: p.supers, kind: leaf });
                     if remembered {
@@ -1174,6 +1194,10 @@ pub fn with_extras(
     marks: &[u16],
 ) -> Result<(Vec<StateRow>, Vec<ArmRow>), String> {
     if extras.is_empty() {
+        // No extras, none pending: an implied token's settle has nothing to keep in place.
+        for a in &mut arms {
+            a.acts.retain(|x| !matches!(x, Act::Settle));
+        }
         return Ok((states, arms));
     }
     if let Some(a) = arms.iter().find(|a| extras.contains(&a.token)) {

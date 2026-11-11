@@ -49,6 +49,11 @@ type Named = (String, String, usize, usize, usize);
 
 /// tree-sitter-json's nodes of `bytes`, or `None` where it finds an error.
 fn tree_sitter_json(bytes: &[u8]) -> Option<Vec<Named>> {
+    tree_sitter_json_with(bytes, false)
+}
+
+/// tree-sitter-json's nodes; with `tokens`, its anonymous tokens too.
+fn tree_sitter_json_with(bytes: &[u8], tokens: bool) -> Option<Vec<Named>> {
     let grammar = tree_sitter::Language::new(tree_sitter_json::LANGUAGE);
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&grammar).expect("tree-sitter-json");
@@ -56,14 +61,19 @@ fn tree_sitter_json(bytes: &[u8]) -> Option<Vec<Named>> {
     if tree.root_node().has_error() {
         return None;
     }
-    fn walk(n: tree_sitter::Node<'_>, field: Option<&str>, out: &mut Vec<Named>) -> usize {
+    // Named-only, as the engine's tapes: an anonymous token (`{`, `,`, `"` …) is left out; a
+    // comment, an extra, stays.
+    fn walk(n: tree_sitter::Node<'_>, field: Option<&str>, tokens: bool, out: &mut Vec<Named>) -> usize {
+        if !tokens && !n.is_named() && !n.is_extra() {
+            return 0;
+        }
         let at = out.len();
         out.push((n.kind().to_owned(), field.unwrap_or("").to_owned(), n.start_byte(), n.end_byte(), 0));
         let mut size = 1;
         let mut c = n.walk();
         if c.goto_first_child() {
             loop {
-                size += walk(c.node(), c.field_name(), out);
+                size += walk(c.node(), c.field_name(), tokens, out);
                 if !c.goto_next_sibling() {
                     break;
                 }
@@ -73,7 +83,7 @@ fn tree_sitter_json(bytes: &[u8]) -> Option<Vec<Named>> {
         size
     }
     let mut out = Vec::new();
-    walk(tree.root_node(), None, &mut out);
+    walk(tree.root_node(), None, tokens, &mut out);
     Some(out)
 }
 
@@ -377,8 +387,9 @@ fn jsonc_comments_equal_tree_sitter() {
     let (mut equal, mut quoted_refused, mut ts_errors, mut problems) = (0usize, 0usize, 0usize, Vec::new());
     for path in &paths {
         let bytes = std::fs::read(path).expect("reads");
-        let Some(tree) = tree_sitter_json(&bytes) else { continue };
-        // Where a comment may go: the start, after each leaf outside a string, after each string.
+        // Where a comment may go: the start, after each token outside a string (a delimiter
+        // too, though the tapes leave it out), after each string.
+        let Some(tree) = tree_sitter_json_with(&bytes, true) else { continue };
         let mut parent: Vec<usize> = vec![usize::MAX; tree.len()];
         let mut open: Vec<usize> = Vec::new();
         for i in 0..tree.len() {

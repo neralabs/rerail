@@ -729,12 +729,10 @@ impl Parser<'_> {
         let node = &mut self.out[id as usize];
         node.end = end.max(node.start);
         let end = node.end;
+        // A node opened for children holds the comments inside it, though it has none (`()`,
+        // its tokens implied).
         if self.next_comment < end {
-            if self.kids.len() > base as usize {
-                self.comments_before(id, end);
-            } else {
-                self.skip_comments(end);
-            }
+            self.comments_before(id, end);
         }
         self.kids.truncate(base as usize);
     }
@@ -832,6 +830,11 @@ impl Parser<'_> {
         self.i += 1;
     }
 
+    /// A token the grammar implies: the tape leaves it out (`syntax::Parser::implied`).
+    fn implied(&mut self) {
+        self.i += 1;
+    }
+
     fn anon_over(&mut self, p: u8, at: usize) {
         self.leaf_over(FIRST_ANONYMOUS + u16::from(p), at, at + 1);
     }
@@ -854,7 +857,18 @@ impl Parser<'_> {
         Ok(())
     }
 
+    /// The punctuation `p`, implied.
     fn p(&mut self, p: u8) -> R<()> {
+        if self.is_p(p) {
+            self.implied();
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    /// The punctuation `p`, stored.
+    fn p_stored(&mut self, p: u8) -> R<()> {
         if self.is_p(p) {
             self.anon();
             Ok(())
@@ -888,7 +902,7 @@ impl Parser<'_> {
         item(self)?;
         self.field(field);
         while self.is_p(COMMA) {
-            self.anon();
+            self.implied();
             item(self)?;
             self.field(field);
         }
@@ -925,10 +939,8 @@ impl Parser<'_> {
         let from = self.i;
         self.braces()?;
         if self.i - from == 3 && self.t[from + 1].kind == ID {
-            self.anon_over(LBRACE, from);
             self.leaf_over(Kind::Identifier as u16, from + 1, from + 2);
             self.field(field);
-            self.anon_over(RBRACE, from + 2);
         } else {
             self.leaf_over(Kind::RawText as u16, from, self.i);
             self.field(field);
@@ -941,12 +953,15 @@ impl Parser<'_> {
         self.id()?;
         self.field(Field::Name);
         if self.is_p(LT) {
-            self.anon();
-            if !self.is_p(GT) {
+            if self.is_p_at(1, GT) {
+                self.anon();
+                self.anon();
+            } else {
+                self.implied();
                 self.id()?;
                 self.field(Field::Argument);
+                self.p(GT)?;
             }
-            self.p(GT)?;
         }
         self.close();
         Ok(())
@@ -1033,7 +1048,7 @@ impl Parser<'_> {
         if self.kind() == HASH {
             let include = self.t[self.i].word == W_INCLUDE;
             self.open(Kind::Include);
-            self.anon();
+            self.implied();
             if !include {
                 return Err(());
             }
@@ -1060,11 +1075,13 @@ impl Parser<'_> {
             let keyword = Kind::DotDecl as u16 + u16::from(d.wrapping_sub(W_DECL));
             self.open(kind);
             if kind == Kind::Setting {
-                self.anon();
+                self.implied();
                 self.bump_as(Kind::Identifier);
                 self.field(Field::Name);
             } else {
-                self.leaf_over(keyword, self.i, self.i + 2);
+                if kind == Kind::IoDirective {
+                    self.leaf_over(keyword, self.i, self.i + 2);
+                }
                 self.i += 2;
             }
             self.directive(first, d, kind)?;
@@ -1080,7 +1097,8 @@ impl Parser<'_> {
         self.id()?;
         self.field(Field::Name);
         if self.is_p(LPAREN) {
-            self.anon();
+            let open = self.i;
+            self.i += 1;
             let from = self.i;
             let mut depth = 1;
             while depth > 0 {
@@ -1093,9 +1111,14 @@ impl Parser<'_> {
                 self.i += 1;
             }
             let close = self.i - 1;
-            self.leaf_over(Kind::RawText as u16, from, close);
-            self.field(Field::Parameters);
-            self.anon_over(RPAREN, close);
+            if from == close {
+                self.anon_over(LPAREN, open);
+                self.field(Field::Parameters);
+                self.anon_over(RPAREN, close);
+            } else {
+                self.leaf_over(Kind::RawText as u16, from, close);
+                self.field(Field::Parameters);
+            }
         }
         self.close();
         Ok(())
@@ -1108,7 +1131,7 @@ impl Parser<'_> {
         self.p(ARROW)?;
         if self.is_p(AT) && self.is_id_at(1) && !self.is_p_at(2, LPAREN) {
             self.open(Kind::FunctorCall);
-            self.anon();
+            self.implied();
             self.id()?;
             self.field(Field::Function);
             self.close();
@@ -1202,16 +1225,16 @@ impl Parser<'_> {
         self.columns()?;
         loop {
             if self.is_id(W_CODE) && self.kind_at(1) == STR {
-                self.anon();
+                self.implied();
                 self.string()?;
                 self.field(Field::Code);
             } else if (self.is_id(W_CODE) || self.is_id(W_TAG)) && self.is_p_at(1, LBRACE) {
                 let is_code = self.is_id(W_CODE);
                 self.open(if is_code { Kind::CodeColumn } else { Kind::TagColumn });
-                self.anon();
+                self.implied();
                 self.brace_column(Field::Column)?;
                 if is_code && self.is_id(W_IN) && self.kind_at(1) == STR {
-                    self.anon();
+                    self.implied();
                     self.string()?;
                     self.field(Field::Codes);
                 }
@@ -1226,7 +1249,7 @@ impl Parser<'_> {
         loop {
             if self.is_id(W_FIX) && self.is_id_at(1) {
                 self.open(Kind::FixLine);
-                self.anon();
+                self.implied();
                 if self.is_id(W_SAFE) && self.is_id_at(1) {
                     self.anon();
                 }
@@ -1238,24 +1261,24 @@ impl Parser<'_> {
                 self.field(Field::Fix);
             } else if self.is_id(W_SUPPRESS) && self.is_id_at(1) && self.kind_at(2) == STR {
                 self.open(Kind::SuppressLine);
-                self.anon();
+                self.implied();
                 self.id()?;
                 self.field(Field::Tool);
                 self.string()?;
                 self.field(Field::Rule);
                 while self.is_p(COMMA) && self.kind_at(1) == STR {
-                    self.anon();
+                    self.implied();
                     self.string()?;
                     self.field(Field::Rule);
                 }
                 if self.is_id(W_OVER) && self.is_p_at(1, LBRACE) {
-                    self.anon();
+                    self.implied();
                     self.brace_column(Field::Over)?;
                 }
                 self.close();
                 self.field(Field::Suppress);
             } else if self.is_id(W_OPTIONS) && self.is_p_at(1, LBRACE) {
-                self.anon();
+                self.implied();
                 self.json(Field::Options)?;
             } else {
                 break;
@@ -1282,17 +1305,17 @@ impl Parser<'_> {
         self.head()?;
         self.field(Field::Head);
         while self.is_p(COMMA) {
-            self.anon();
+            self.implied();
             self.head()?;
             self.field(Field::Head);
         }
         if self.is_p(TURNSTILE) {
-            self.anon();
+            self.implied();
             self.disjunction()?;
             self.field(Field::Body);
         }
         if self.is_p(FAT_ARROW) {
-            self.anon();
+            self.implied();
             self.list(DOT, Field::Edit, |p| p.term().map(|_| ()))?;
         }
         self.p(DOT)?;
@@ -1307,7 +1330,7 @@ impl Parser<'_> {
             self.wrap(from, Kind::Disjunction);
             self.field(Field::Alternative);
             while self.is_p(SEMI) {
-                self.anon();
+                self.implied();
                 self.conjunction()?;
                 self.field(Field::Alternative);
             }
@@ -1321,7 +1344,7 @@ impl Parser<'_> {
         self.literal()?;
         self.field(Field::Literal);
         while self.is_p(COMMA) {
-            self.anon();
+            self.implied();
             self.literal()?;
             self.field(Field::Literal);
         }
@@ -1332,7 +1355,7 @@ impl Parser<'_> {
     fn literal(&mut self) -> R<Lit> {
         if self.is_p(BANG) {
             self.open(Kind::Negation);
-            self.anon();
+            self.implied();
             let inner = self.literal()?;
             self.field(Field::Operand);
             self.close();
@@ -1341,7 +1364,7 @@ impl Parser<'_> {
         if self.is_p(LPAREN) {
             let save = self.mark();
             self.open(Kind::Group);
-            self.anon();
+            self.implied();
             let group = self.disjunction().and_then(|()| {
                 self.field(Field::Body);
                 self.p(RPAREN)
@@ -1359,7 +1382,7 @@ impl Parser<'_> {
         if self.is_p(TILDE) {
             self.wrap(from, Kind::PatternMatch);
             self.field(Field::Subject);
-            self.anon();
+            self.implied();
             if self.kind() != TICK {
                 return Err(());
             }
@@ -1442,18 +1465,18 @@ impl Parser<'_> {
             self.field(Field::Value);
         }
         if self.is_id(W_BY) {
-            self.anon();
+            self.implied();
             if self.is_p(LPAREN) {
                 self.anon();
                 self.list(RPAREN, Field::Key, |p| p.term().map(|_| ()))?;
-                self.p(RPAREN)?;
+                self.p_stored(RPAREN)?;
             } else {
                 self.agg_part()?;
                 self.field(Field::Key);
             }
         }
         if self.is_id(W_SEP) {
-            self.anon();
+            self.implied();
             self.string()?;
             self.field(Field::Separator);
         }
@@ -1502,8 +1525,7 @@ impl Parser<'_> {
             }
             k if k == P0 + MINUS => {
                 self.open(Kind::UnaryExpression);
-                self.anon();
-                self.field(Field::Operator);
+                self.implied();
                 self.primary()?;
                 self.field(Field::Operand);
                 self.close();
@@ -1512,7 +1534,7 @@ impl Parser<'_> {
             k if k == P0 + LPAREN => {
                 // `(f(x))` is still a call: as a literal, an atom.
                 self.open(Kind::ParenthesizedExpression);
-                self.anon();
+                self.implied();
                 let call = self.term()?;
                 self.field(Field::Expression);
                 self.p(RPAREN)?;
@@ -1525,7 +1547,7 @@ impl Parser<'_> {
             }
             k if k == P0 + AT => {
                 self.open(Kind::FunctorCall);
-                self.anon();
+                self.implied();
                 self.id()?;
                 self.field(Field::Function);
                 self.arguments()?;
@@ -1563,7 +1585,7 @@ impl Parser<'_> {
                     self.open(Kind::NamedArgument);
                     self.bump_as(Kind::Identifier);
                     self.field(Field::Name);
-                    self.anon();
+                    self.implied();
                     self.term()?;
                     self.field(Field::Value);
                     self.close();

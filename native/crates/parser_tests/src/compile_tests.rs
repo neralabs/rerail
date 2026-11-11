@@ -882,59 +882,59 @@ state 14 level 17\n\
 state 15 level 17\n\
 state 16 level 17\n\
 state 17 level 17\n\
-arm 0 token 1 to 1 push 2 do open 15 open 17 s 16 leaf\n\
-arm 0 token 5 to 3 push 2 do open 15 open 19 s 16 leaf\n\
-arm 0 token 7 to 4 do open 15 open 20 s 16 leaf\n\
+arm 0 token 1 to 1 push 2 do open 15 open 17 s 16\n\
+arm 0 token 5 to 3 push 2 do open 15 open 19 s 16\n\
+arm 0 token 7 to 4 do open 15 open 20 s 16\n\
 arm 0 token 10 to 2 do open 15 leaf s 16\n\
 arm 0 token 11 to 2 do open 15 leaf s 16\n\
 arm 0 token 12 to 2 do open 15 leaf s 16\n\
 arm 0 token 13 to 2 do open 15 leaf s 16\n\
-arm 1 token 7 to 5 do open 18 open 20 f 1 leaf\n\
-arm 1 token 3 to 6 do leaf\n\
-arm 3 token 1 to 1 push 7 do open 17 s 16 leaf\n\
-arm 3 token 5 to 3 push 7 do open 19 s 16 leaf\n\
-arm 3 token 7 to 8 do open 20 s 16 leaf\n\
+arm 1 token 7 to 5 do open 18 open 20 f 1\n\
+arm 1 token 3 to 6 do\n\
+arm 3 token 1 to 1 push 7 do open 17 s 16\n\
+arm 3 token 5 to 3 push 7 do open 19 s 16\n\
+arm 3 token 7 to 8 do open 20 s 16\n\
 arm 3 token 10 to 7 do leaf s 16\n\
 arm 3 token 11 to 7 do leaf s 16\n\
 arm 3 token 12 to 7 do leaf s 16\n\
 arm 3 token 13 to 7 do leaf s 16\n\
-arm 3 token 6 to 6 do leaf\n\
+arm 3 token 6 to 6 do\n\
 arm 4 token 8 to 4 do leaf\n\
 arm 4 token 9 to 4 do leaf\n\
-arm 4 token 7 to 9 do leaf\n\
+arm 4 token 7 to 9 do\n\
 arm 5 token 8 to 5 do leaf\n\
 arm 5 token 9 to 5 do leaf\n\
-arm 5 token 7 to 10 do leaf\n\
-arm 7 token 2 to 11 do leaf\n\
-arm 7 token 6 to 6 do leaf\n\
+arm 5 token 7 to 10 do\n\
+arm 7 token 2 to 11 do\n\
+arm 7 token 6 to 6 do\n\
 arm 8 token 8 to 8 do leaf\n\
 arm 8 token 9 to 8 do leaf\n\
-arm 8 token 7 to 12 do leaf\n\
-arm 10 token 4 to 13 do close leaf\n\
-arm 11 token 1 to 1 push 7 do open 17 s 16 leaf\n\
-arm 11 token 5 to 3 push 7 do open 19 s 16 leaf\n\
-arm 11 token 7 to 8 do open 20 s 16 leaf\n\
+arm 8 token 7 to 12 do\n\
+arm 10 token 4 to 13 do close\n\
+arm 11 token 1 to 1 push 7 do open 17 s 16\n\
+arm 11 token 5 to 3 push 7 do open 19 s 16\n\
+arm 11 token 7 to 8 do open 20 s 16\n\
 arm 11 token 10 to 7 do leaf s 16\n\
 arm 11 token 11 to 7 do leaf s 16\n\
 arm 11 token 12 to 7 do leaf s 16\n\
 arm 11 token 13 to 7 do leaf s 16\n\
-arm 12 token 2 to 11 do close leaf\n\
-arm 12 token 6 to 6 do close leaf\n\
-arm 13 token 1 to 1 push 14 do open 17 f 2 s 16 leaf\n\
-arm 13 token 5 to 3 push 14 do open 19 f 2 s 16 leaf\n\
-arm 13 token 7 to 15 do open 20 f 2 s 16 leaf\n\
+arm 12 token 2 to 11 do close\n\
+arm 12 token 6 to 6 do close\n\
+arm 13 token 1 to 1 push 14 do open 17 f 2 s 16\n\
+arm 13 token 5 to 3 push 14 do open 19 f 2 s 16\n\
+arm 13 token 7 to 15 do open 20 f 2 s 16\n\
 arm 13 token 10 to 14 do leaf f 2 s 16\n\
 arm 13 token 11 to 14 do leaf f 2 s 16\n\
 arm 13 token 12 to 14 do leaf f 2 s 16\n\
 arm 13 token 13 to 14 do leaf f 2 s 16\n\
-arm 14 token 2 to 16 do close leaf\n\
-arm 14 token 3 to 6 do close leaf\n\
+arm 14 token 2 to 16 do close\n\
+arm 14 token 3 to 6 do close\n\
 arm 15 token 8 to 15 do leaf\n\
 arm 15 token 9 to 15 do leaf\n\
-arm 15 token 7 to 17 do leaf\n\
-arm 16 token 7 to 5 do open 18 open 20 f 1 leaf\n\
-arm 17 token 2 to 16 do close close leaf\n\
-arm 17 token 3 to 6 do close close leaf\n\
+arm 15 token 7 to 17 do\n\
+arm 16 token 7 to 5 do open 18 open 20 f 1\n\
+arm 17 token 2 to 16 do close close\n\
+arm 17 token 3 to 6 do close close\n\
 ";
 
 /// Tier 2's states and arms are the compiler's (doc 18, decisions 0085 and 0053): `grammar` makes

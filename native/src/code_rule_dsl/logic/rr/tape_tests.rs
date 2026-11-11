@@ -27,49 +27,36 @@ fn render(src: &str, nodes: &[Node]) -> String {
     out
 }
 
+/// Decision 0061's example, on a named-only tape (RER-131): the tokens the grammar implies (`.decl`, `(`, `,`, `:`,
+/// `:-`, `!`, `)`, `.`) are left out (`docs/parser-generators/32-named-only-rr-tapes.md`).
 #[test]
 fn the_decisions_example_has_the_decisions_tree() {
     let src = "// Calls of eval.\n.decl bad(n: node)\nbad(c) :- kind(c, \"call\"), !safe(c).\n";
     let expected = r#"source_file
   comment // Calls of eval.
   declaration
-    ".decl"
     name: identifier bad
     columns: column_list
-      "("
       column: column
         name: identifier n
-        ":"
         type: type
           name: identifier node
-      ")"
   clause
     head: head
       relation: identifier bad
       arguments: argument_list
-        "("
         argument: variable c
-        ")"
-    ":-"
     body: conjunction
       literal: atom
         relation: identifier kind
         arguments: argument_list
-          "("
           argument: variable c
-          ","
           argument: string "call"
-          ")"
-      ","
       literal: negation
-        "!"
         operand: atom
           relation: identifier safe
           arguments: argument_list
-            "("
             argument: variable c
-            ")"
-    "."
 "#;
     assert_eq!(render(src, &tape(src)), expected);
 }
@@ -87,20 +74,22 @@ r(x, y) :- (a(x) ; b(x)), y = -1, z = -x, n ~ `eval($X)`, w = count : { c(_) }, 
 "#;
     let tree = render(src, &tape(src));
     for line in [
-        "include\n    \"#include\"\n    path: string \"core.rr\"",
-        "relation: io_relation\n      name: identifier b\n      \"(\"\n      parameters: raw_text IO=json, filename=\"x\"\n      \")\"",
-        "type_declaration\n    \".type\"\n    name: identifier T\n    definition: raw_text <: symbol",
-        "code: code_column\n      \"code\"\n      \"{\"\n      column: identifier c\n      \"}\"\n      \"in\"\n      codes: string \"E[0-9]+\"",
-        "fix: fix_line\n      \"fix\"\n      \"safe\"\n      relation: identifier rewrite\n      description: string \"Use x\"",
-        "suppress: suppress_line\n      \"suppress\"\n      tool: identifier noqa\n      rule: string \"E501\"\n      \",\"\n      rule: string \"E502\"\n      \"over\"\n      \"{\"\n      over: identifier n",
-        "setting\n    \".\"\n    name: identifier mode\n    argument: identifier block",
-        "literal: group\n        \"(\"\n        body: disjunction\n          alternative: conjunction",
+        // Implied tokens are left out; `.input`, `safe`, `count`, `join` and the operators are stored.
+        "include\n    path: string \"core.rr\"",
+        "io_directive\n    \".input\"\n    relation: io_relation\n      name: identifier a",
+        "relation: io_relation\n      name: identifier b\n      parameters: raw_text IO=json, filename=\"x\"",
+        "type_declaration\n    name: identifier T\n    definition: raw_text <: symbol",
+        "code: code_column\n      column: identifier c\n      codes: string \"E[0-9]+\"",
+        "fix: fix_line\n      \"safe\"\n      relation: identifier rewrite\n      description: string \"Use x\"",
+        "suppress: suppress_line\n      tool: identifier noqa\n      rule: string \"E501\"\n      rule: string \"E502\"\n      over: identifier n",
+        "setting\n    name: identifier mode\n    argument: identifier block",
+        "literal: group\n        body: disjunction\n          alternative: conjunction",
         "right: number -1",
-        "right: unary_expression\n          operator: \"-\"\n          operand: variable x",
-        "literal: pattern_match\n        subject: variable n\n        \"~\"\n        pattern: code_literal `eval($X)`",
-        "right: aggregate\n          operator: \"count\"\n          \":\"\n          \"{\"\n          body: conjunction",
-        "right: aggregate\n          operator: \"join\"\n          value: variable v\n          \"by\"\n          key: variable i\n          \"sep\"\n          separator: string \",\"",
-        "right: binary_expression\n          left: functor_call\n            \"@\"\n            function: identifier f",
+        "right: unary_expression\n          operand: variable x",
+        "literal: pattern_match\n        subject: variable n\n        pattern: code_literal `eval($X)`",
+        "right: aggregate\n          operator: \"count\"\n          body: conjunction",
+        "right: aggregate\n          operator: \"join\"\n          value: variable v\n          key: variable i\n          separator: string \",\"",
+        "right: binary_expression\n          left: functor_call\n            function: identifier f",
         "right: binary_expression\n            left: number 2\n            operator: \"*\"\n            right: number 3",
     ] {
         assert!(tree.contains(line), "{line}\nnot in\n{tree}");
@@ -129,7 +118,8 @@ fn a_bad_statement_is_one_error_and_parsing_resumes() {
 }
 
 /// Every `.rr` file in the repository tapes. Its tape has an ERROR exactly when running it fails to parse, every
-/// node's span holds its children's, and the leaves and comments cover every byte but whitespace, once.
+/// node's span holds its children's, and the leaves and comments cover every byte but whitespace and the tokens the
+/// grammar implies, once (a named-only tape, RER-131).
 #[test]
 fn every_rule_file_tapes_and_its_leaves_cover_it() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
@@ -167,9 +157,31 @@ fn every_rule_file_tapes_and_its_leaves_cover_it() {
                 }
             }
         }
-        for (at, (&count, byte)) in covered.iter().zip(src.bytes()).enumerate() {
-            let want = u8::from(!byte.is_ascii_whitespace());
-            assert!(count == want || (count == 1 && byte.is_ascii_whitespace()), "{}: byte {at} ({:?}) covered {count} times", path.display(), byte as char);
+        // A run of uncovered bytes is an implied token (`.decl` as `.` and `decl`).
+        const IMPLIED: &[&str] = &[
+            "(", ")", ",", ":", ":-", "=>", ".", ";", "!", "@", "~", "-", "{", "}", "<", ">", "->", "#include", "decl", "edit",
+            "functor", "type", "lattice", "pragma", "violation", "policy", "code", "tag", "in", "fix", "suppress", "over",
+            "options", "by", "sep",
+        ];
+        let mut at = 0;
+        while at < src.len() {
+            let byte = src.as_bytes()[at];
+            assert!(covered[at] <= 1, "{}: byte {at} ({:?}) covered {} times", path.display(), byte as char, covered[at]);
+            if covered[at] == 1 || byte.is_ascii_whitespace() {
+                at += 1;
+                continue;
+            }
+            let run = src[at..].bytes().take_while(|&b| !b.is_ascii_whitespace()).count();
+            let run = (0..run).take_while(|&k| covered[at + k] == 0).count();
+            let text = &src[at..at + run];
+            let mut rest = text;
+            while !rest.is_empty() {
+                let Some(token) = IMPLIED.iter().filter(|t| rest.starts_with(**t)).max_by_key(|t| t.len()) else {
+                    panic!("{}: byte {at}: {text:?} is no implied token", path.display());
+                };
+                rest = &rest[token.len()..];
+            }
+            at += run;
         }
     }
     assert!(refused < files.len() / 10, "{refused} of {} files do not parse", files.len());

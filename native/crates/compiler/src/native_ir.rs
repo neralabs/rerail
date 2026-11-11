@@ -120,6 +120,9 @@ pub enum StructuralOperation {
     /// node (docs/parser-generators/24-rr-and-bitlex-plan.md §2.3).
     /// `extra`: an extra's leaf placed now, never the node made last at its level.
     Leaf { kind: u16, deferred: bool, extra: bool },
+    /// A token the grammar implies (`implied`, `LEAF m=3`): no node; the extras pending stay
+    /// where they are, as a leaf's would.
+    Settle { kind: u16 },
     /// Mark `order` (its bit in mask `mask` at the token's start; at the stream's end, `end`),
     /// if not yet taken nor passed: take it and run the next word; else skip that word.
     Mark { mask: u16, order: u8, end: bool },
@@ -202,6 +205,7 @@ impl StructuralOperation {
             Self::Open { kind } => (OPEN, 0, kind),
             Self::Close { this } => (CLOSE, u8::from(this), 0),
             Self::Leaf { kind, deferred, extra } => (LEAF, if extra { 2 } else { u8::from(deferred) }, kind),
+            Self::Settle { kind } => (LEAF, 3, kind),
             Self::Mark { mask, order, end } => (MARK, order | if end { 32 } else { 0 }, mask),
             Self::Row { mask } => (ROW, 0, mask),
             Self::Retag { kind, on } => (RETAG, on as u8, kind),
@@ -432,6 +436,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             WORD_IS => StructuralOperation::Word { string: operand, test: mode != 0 },
             OPEN => StructuralOperation::Open { kind: operand },
             CLOSE => StructuralOperation::Close { this: mode != 0 },
+            LEAF if mode == 3 => StructuralOperation::Settle { kind: operand },
             LEAF => StructuralOperation::Leaf { kind: operand, deferred: mode == 1, extra: mode == 2 },
             MARK => StructuralOperation::Mark { mask: operand, order: mode % 32, end: mode & 32 != 0 },
             ROW => StructuralOperation::Row { mask: operand },

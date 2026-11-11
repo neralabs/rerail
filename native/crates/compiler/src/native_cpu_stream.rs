@@ -886,7 +886,7 @@ pub struct SharedRuns {
 fn plain(op: &Op) -> bool {
     matches!(
         op,
-        Op::Span { .. } | Op::Word { test: false, .. } | Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::NodeField { .. } | Op::NodeSuper { .. } | Op::Retag { .. } | Op::Wrap { .. } | Op::Merge { .. } | Op::Push { .. } | Op::Remember { .. } | Op::Flag { op: FlagOp::Set | FlagOp::Clear, .. }
+        Op::Span { .. } | Op::Word { test: false, .. } | Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::Settle { .. } | Op::NodeField { .. } | Op::NodeSuper { .. } | Op::Retag { .. } | Op::Wrap { .. } | Op::Merge { .. } | Op::Push { .. } | Op::Remember { .. } | Op::Flag { op: FlagOp::Set | FlagOp::Clear, .. }
     )
 }
 
@@ -1815,6 +1815,11 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     mset(&mut f, Mem::Nodes, nodes);
                     f.ins().jump(fall, &[]);
                 }
+                Op::Settle { .. } => {
+                    // A token the grammar implies: no node; the extras pending stay where they are.
+                    mset(&mut f, Mem::Pending, zero);
+                    f.ins().jump(fall, &[]);
+                }
                 Op::Remember { kind } => {
                     let k = f.ins().iconst(types::I64, i64::from(kind));
                     mset(&mut f, Mem::Word, k);
@@ -1943,6 +1948,15 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     let x = if matches!(w.operation, Op::Retag { .. }) { kind_of(&mut f, kind, pc) } else { f.ins().iconst(types::I64, i64::from(kind)) };
                     let col = if matches!(w.operation, Op::Retag { .. }) { kind_c } else { field_c };
                     put(&mut f, col, r, x);
+                    if matches!(w.operation, Op::Retag { kind: DEAD, .. }) {
+                        // `drop`: the node goes (a token the grammar implies), left out at
+                        // `ACCEPT`; none is made last at this level until the next.
+                        let dead = mget(&mut f, Mem::Dead);
+                        let dead = f.ins().iadd_imm(dead, 1);
+                        mset(&mut f, Mem::Dead, dead);
+                        let a = slot(&mut f, wc(flast_c), open);
+                        f.ins().istore32(flags, zero, a, 0);
+                    }
                     f.ins().jump(fall, &[]);
                 }
                 Op::Reread { reading } if wrapping => {
@@ -2286,7 +2300,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         let (wraps, dead) = (mget(&mut f, Mem::Wraps), mget(&mut f, Mem::Dead));
                         let wraps = f.ins().iadd(wraps, dead);
                         f.ins().store(flags, wraps, counts_c, 16);
-                        let rereads = words.iter().any(|b| matches!(b.operation, Op::Reread { .. }));
+                        // A program that drops records: it rereads, or it drops a node (`drop`).
+                        let rereads = words.iter().any(|b| matches!(b.operation, Op::Reread { .. } | Op::Retag { kind: DEAD, on: On::Made }));
                         let r = Reorder { nodes, supers, wraps, cols: [kind_c, field_c, start_c, end_c, size_c], out: [wc(6), wc(7), wc(8), wc(9), wc(10)], head: wc(head_c), link: wc(link_c), place: wc(place_c), snode: snode_c, before: rereads.then(|| wc(fbase_c)), counts: counts_c };
                         let args = r.values();
                         if reorder_fn.is_none() {

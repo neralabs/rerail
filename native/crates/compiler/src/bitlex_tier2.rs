@@ -226,6 +226,11 @@ impl Emit<'_> {
                     self.push("LEAF", 1, Arg::Kind(token));
                     continue;
                 }
+                // Mode 3: a token the grammar implies, no node.
+                Act::Settle => {
+                    self.push("LEAF", 3, Arg::Kind(token));
+                    continue;
+                }
                 Act::ExtraNow => {
                     self.push("LEAF", 2, Arg::Kind(token));
                     continue;

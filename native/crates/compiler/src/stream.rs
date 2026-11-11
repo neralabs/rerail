@@ -38,7 +38,8 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         OPEN | NODE_SUPER => mode == 0 && operand != REMEMBERED,
         // `m=1`: an extra's leaf, deferred; `m=2`: an extra's leaf placed now, never the node
         // made last at its level.
-        LEAF => mode <= 2 && operand != REMEMBERED,
+        // `m=3`: a token the grammar implies, no node.
+        LEAF => mode <= 3 && operand != REMEMBERED,
         // Mark `m % 32` (its order), its bit in mask `operand`; `m & 32`: the file's end has it.
         MARK => mode < 64 && usize::from(operand) < masks,
         ROW => mode == 0 && usize::from(operand) < masks,
@@ -440,6 +441,14 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 if opcode == RETAG {
                     let Some(k) = kind_of(operand, word) else { return refuse(pc - 1, "a word's kind, and no word") };
                     nodes[r].kind = k;
+                    if k == DEAD {
+                        // `drop`: the node goes (a token the grammar implies), left out at
+                        // `ACCEPT`; none is made last at this level until the next.
+                        dead = true;
+                        if let Some(l) = lasts_made.last_mut() {
+                            *l = None;
+                        }
+                    }
                 } else {
                     nodes[r].field = operand;
                 }
@@ -507,6 +516,9 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 nodes[at].end = if mode == 1 { end } else if pending > 0 { keep } else { last_end };
                 nodes[at].size = (nodes.len() - pending - base) as u32;
             }
+            // A token the grammar implies (`implied`): no node; the extras pending stay where
+            // they are, as a leaf's would.
+            LEAF if mode == 3 => pending = 0,
             LEAF => {
                 if mode == 1 && pending == 0 {
                     keep = last_end;
