@@ -287,16 +287,20 @@ spt_0_dl_frame_kind("class_definition").
 .decl spt_0_dl_frame(f: node, t: symbol, fn: number)
 spt_0_dl_frame(f, t, 1) :- kind(f, "function_definition"), field(f, "name", m), text(m, t).
 spt_0_dl_frame(f, t, 0) :- kind(f, "class_definition"), field(f, "name", m), text(m, t).
+.decl spt_0_dl_frame_parent(f: node, a: node)
+spt_0_dl_frame_parent(f, a) :- spt_0_dl_frame(f, _, _), nearest(f, a, spt_0_dl_frame_kind).
 .decl spt_0_dl_in_frame(n: node)
-spt_0_dl_in_frame(n) :- nearest(n, _, spt_0_dl_frame_kind).
+spt_0_dl_in_frame(n) :- spt_0_dl_frame_parent(n, _).
 .decl spt_0_dl_qual(f: node, q: symbol, d: number)
 spt_0_dl_qual(f, t, k) :- spt_0_dl_frame(f, t, k), !spt_0_dl_in_frame(f).
-spt_0_dl_qual(f, s, d) :- spt_0_dl_frame(f, t, 1), nearest(f, a, spt_0_dl_frame_kind), spt_0_dl_qual(a, p, k), k > 0, d = k + 1,
+spt_0_dl_qual(f, s, d) :- spt_0_dl_frame(f, t, 1), spt_0_dl_frame_parent(f, a), spt_0_dl_qual(a, p, k), k > 0, d = k + 1,
     s = @concat(@concat(p, ".<locals>."), t).
-spt_0_dl_qual(f, s, d) :- spt_0_dl_frame(f, t, x), nearest(f, a, spt_0_dl_frame_kind), spt_0_dl_qual(a, p, k), (x = 0; k = 0), d = k + x,
+spt_0_dl_qual(f, s, d) :- spt_0_dl_frame(f, t, x), spt_0_dl_frame_parent(f, a), spt_0_dl_qual(a, p, k), (x = 0; k = 0), d = k + x,
     s = @concat(@concat(p, "."), t).
 .decl spt_0_dl_qualname(f: node, q: symbol)
 spt_0_dl_qualname(f, q) :- spt_0_dl_qual(f, q, _).
+.decl spt_0_dl_qualdepth(f: node, d: number)
+spt_0_dl_qualdepth(f, d) :- spt_0_dl_qual(f, _, d).
 // StateDirect0: pinned source line 2433.
 spt_result(n,q,"SPT-006","production-ir tripwire: production IR carrier classes must match the signed production IR allowlist. Only SqlStepIR is permitted.",n,2433,0,0) :- spt_0_events("production-ir-class",n), spt_frame_name(n,q).
 // StateDirect1: pinned source line 2459.
@@ -969,16 +973,20 @@ spt_1_dl_frame_kind("class_definition").
 .decl spt_1_dl_frame(f: node, t: symbol, fn: number)
 spt_1_dl_frame(f, t, 1) :- kind(f, "function_definition"), field(f, "name", m), text(m, t).
 spt_1_dl_frame(f, t, 0) :- kind(f, "class_definition"), field(f, "name", m), text(m, t).
+.decl spt_1_dl_frame_parent(f: node, a: node)
+spt_1_dl_frame_parent(f, a) :- spt_1_dl_frame(f, _, _), nearest(f, a, spt_1_dl_frame_kind).
 .decl spt_1_dl_in_frame(n: node)
-spt_1_dl_in_frame(n) :- nearest(n, _, spt_1_dl_frame_kind).
+spt_1_dl_in_frame(n) :- spt_1_dl_frame_parent(n, _).
 .decl spt_1_dl_qual(f: node, q: symbol, d: number)
 spt_1_dl_qual(f, t, k) :- spt_1_dl_frame(f, t, k), !spt_1_dl_in_frame(f).
-spt_1_dl_qual(f, s, d) :- spt_1_dl_frame(f, t, 1), nearest(f, a, spt_1_dl_frame_kind), spt_1_dl_qual(a, p, k), k > 0, d = k + 1,
+spt_1_dl_qual(f, s, d) :- spt_1_dl_frame(f, t, 1), spt_1_dl_frame_parent(f, a), spt_1_dl_qual(a, p, k), k > 0, d = k + 1,
     s = @concat(@concat(p, ".<locals>."), t).
-spt_1_dl_qual(f, s, d) :- spt_1_dl_frame(f, t, x), nearest(f, a, spt_1_dl_frame_kind), spt_1_dl_qual(a, p, k), (x = 0; k = 0), d = k + x,
+spt_1_dl_qual(f, s, d) :- spt_1_dl_frame(f, t, x), spt_1_dl_frame_parent(f, a), spt_1_dl_qual(a, p, k), (x = 0; k = 0), d = k + x,
     s = @concat(@concat(p, "."), t).
 .decl spt_1_dl_qualname(f: node, q: symbol)
 spt_1_dl_qualname(f, q) :- spt_1_dl_qual(f, q, _).
+.decl spt_1_dl_qualdepth(f: node, d: number)
+spt_1_dl_qualdepth(f, d) :- spt_1_dl_qual(f, _, d).
 spt_1_return_kind_entry(n,k) :- option_item("returnKindNames",i,n), option_item("returnKindValues",i,k).
 spt_1_return_kind_entry(n,k) :- spt_generated(n,k), !option("entryPoint",_).
 
@@ -1450,16 +1458,20 @@ spt_2_dl_frame_kind("class_definition").
 .decl spt_2_dl_frame(f: node, t: symbol, fn: number)
 spt_2_dl_frame(f, t, 1) :- kind(f, "function_definition"), field(f, "name", m), text(m, t).
 spt_2_dl_frame(f, t, 0) :- kind(f, "class_definition"), field(f, "name", m), text(m, t).
+.decl spt_2_dl_frame_parent(f: node, a: node)
+spt_2_dl_frame_parent(f, a) :- spt_2_dl_frame(f, _, _), nearest(f, a, spt_2_dl_frame_kind).
 .decl spt_2_dl_in_frame(n: node)
-spt_2_dl_in_frame(n) :- nearest(n, _, spt_2_dl_frame_kind).
+spt_2_dl_in_frame(n) :- spt_2_dl_frame_parent(n, _).
 .decl spt_2_dl_qual(f: node, q: symbol, d: number)
 spt_2_dl_qual(f, t, k) :- spt_2_dl_frame(f, t, k), !spt_2_dl_in_frame(f).
-spt_2_dl_qual(f, s, d) :- spt_2_dl_frame(f, t, 1), nearest(f, a, spt_2_dl_frame_kind), spt_2_dl_qual(a, p, k), k > 0, d = k + 1,
+spt_2_dl_qual(f, s, d) :- spt_2_dl_frame(f, t, 1), spt_2_dl_frame_parent(f, a), spt_2_dl_qual(a, p, k), k > 0, d = k + 1,
     s = @concat(@concat(p, ".<locals>."), t).
-spt_2_dl_qual(f, s, d) :- spt_2_dl_frame(f, t, x), nearest(f, a, spt_2_dl_frame_kind), spt_2_dl_qual(a, p, k), (x = 0; k = 0), d = k + x,
+spt_2_dl_qual(f, s, d) :- spt_2_dl_frame(f, t, x), spt_2_dl_frame_parent(f, a), spt_2_dl_qual(a, p, k), (x = 0; k = 0), d = k + x,
     s = @concat(@concat(p, "."), t).
 .decl spt_2_dl_qualname(f: node, q: symbol)
 spt_2_dl_qualname(f, q) :- spt_2_dl_qual(f, q, _).
+.decl spt_2_dl_qualdepth(f: node, d: number)
+spt_2_dl_qualdepth(f, d) :- spt_2_dl_qual(f, _, d).
 spt_2_return_kind_entry(n,k) :- option_item("returnKindNames",i,n), option_item("returnKindValues",i,k).
 spt_2_return_kind_entry(n,k) :- spt_generated(n,k), !option("entryPoint",_).
 
@@ -1593,16 +1605,20 @@ spt_3_dl_frame_kind("class_definition").
 .decl spt_3_dl_frame(f: node, t: symbol, fn: number)
 spt_3_dl_frame(f, t, 1) :- kind(f, "function_definition"), field(f, "name", m), text(m, t).
 spt_3_dl_frame(f, t, 0) :- kind(f, "class_definition"), field(f, "name", m), text(m, t).
+.decl spt_3_dl_frame_parent(f: node, a: node)
+spt_3_dl_frame_parent(f, a) :- spt_3_dl_frame(f, _, _), nearest(f, a, spt_3_dl_frame_kind).
 .decl spt_3_dl_in_frame(n: node)
-spt_3_dl_in_frame(n) :- nearest(n, _, spt_3_dl_frame_kind).
+spt_3_dl_in_frame(n) :- spt_3_dl_frame_parent(n, _).
 .decl spt_3_dl_qual(f: node, q: symbol, d: number)
 spt_3_dl_qual(f, t, k) :- spt_3_dl_frame(f, t, k), !spt_3_dl_in_frame(f).
-spt_3_dl_qual(f, s, d) :- spt_3_dl_frame(f, t, 1), nearest(f, a, spt_3_dl_frame_kind), spt_3_dl_qual(a, p, k), k > 0, d = k + 1,
+spt_3_dl_qual(f, s, d) :- spt_3_dl_frame(f, t, 1), spt_3_dl_frame_parent(f, a), spt_3_dl_qual(a, p, k), k > 0, d = k + 1,
     s = @concat(@concat(p, ".<locals>."), t).
-spt_3_dl_qual(f, s, d) :- spt_3_dl_frame(f, t, x), nearest(f, a, spt_3_dl_frame_kind), spt_3_dl_qual(a, p, k), (x = 0; k = 0), d = k + x,
+spt_3_dl_qual(f, s, d) :- spt_3_dl_frame(f, t, x), spt_3_dl_frame_parent(f, a), spt_3_dl_qual(a, p, k), (x = 0; k = 0), d = k + x,
     s = @concat(@concat(p, "."), t).
 .decl spt_3_dl_qualname(f: node, q: symbol)
 spt_3_dl_qualname(f, q) :- spt_3_dl_qual(f, q, _).
+.decl spt_3_dl_qualdepth(f: node, d: number)
+spt_3_dl_qualdepth(f, d) :- spt_3_dl_qual(f, _, d).
 // StateRecovery: pinned source line 2718.
 spt_result(n,q,"SPT-029","projection-recovery tripwire: tuple/projection extraction helpers must not treat missing projected row shape as permission to recover semantics in Python via evaluate/execute/resolve. Require lowered raw projection rows to contain the needed aliases/values.",n,2718,0,0) :- spt_3_finding(_,"SPT-029",n), spt_prefix(n,p), q = cat(p,"if").
 
@@ -1820,16 +1836,20 @@ spt_4_dl_frame_kind("class_definition").
 .decl spt_4_dl_frame(f: node, t: symbol, fn: number)
 spt_4_dl_frame(f, t, 1) :- kind(f, "function_definition"), field(f, "name", m), text(m, t).
 spt_4_dl_frame(f, t, 0) :- kind(f, "class_definition"), field(f, "name", m), text(m, t).
+.decl spt_4_dl_frame_parent(f: node, a: node)
+spt_4_dl_frame_parent(f, a) :- spt_4_dl_frame(f, _, _), nearest(f, a, spt_4_dl_frame_kind).
 .decl spt_4_dl_in_frame(n: node)
-spt_4_dl_in_frame(n) :- nearest(n, _, spt_4_dl_frame_kind).
+spt_4_dl_in_frame(n) :- spt_4_dl_frame_parent(n, _).
 .decl spt_4_dl_qual(f: node, q: symbol, d: number)
 spt_4_dl_qual(f, t, k) :- spt_4_dl_frame(f, t, k), !spt_4_dl_in_frame(f).
-spt_4_dl_qual(f, s, d) :- spt_4_dl_frame(f, t, 1), nearest(f, a, spt_4_dl_frame_kind), spt_4_dl_qual(a, p, k), k > 0, d = k + 1,
+spt_4_dl_qual(f, s, d) :- spt_4_dl_frame(f, t, 1), spt_4_dl_frame_parent(f, a), spt_4_dl_qual(a, p, k), k > 0, d = k + 1,
     s = @concat(@concat(p, ".<locals>."), t).
-spt_4_dl_qual(f, s, d) :- spt_4_dl_frame(f, t, x), nearest(f, a, spt_4_dl_frame_kind), spt_4_dl_qual(a, p, k), (x = 0; k = 0), d = k + x,
+spt_4_dl_qual(f, s, d) :- spt_4_dl_frame(f, t, x), spt_4_dl_frame_parent(f, a), spt_4_dl_qual(a, p, k), (x = 0; k = 0), d = k + x,
     s = @concat(@concat(p, "."), t).
 .decl spt_4_dl_qualname(f: node, q: symbol)
 spt_4_dl_qualname(f, q) :- spt_4_dl_qual(f, q, _).
+.decl spt_4_dl_qualdepth(f: node, d: number)
+spt_4_dl_qualdepth(f, d) :- spt_4_dl_qual(f, _, d).
 // StateSignature0: pinned source line 2512.
 spt_result(n,q,"SPT-015","step-signature raw-type tripwire: ServerPlan step and intent method parameters must not use raw builtin scalar types such as str/int/float/bool/bytes. Introduce branded or domain-specific types instead.",f,2512,0,0) :- spt_4_finding(_,"SPT-015",n), nearest(n,f,spt_frame_kind), spt_frame_qual(f,q).
 // StateSignature1: pinned source line 2529.

@@ -11647,3 +11647,39 @@ The tooling suite passes 416 tests on the source test virtual environment.
 An earlier run used the wrong Python environment and also encountered a full disk. Its results are discarded.
 The original scanner cohort was repeated with fresh caches after space became available.
 All native test commands remain bounded at 110 seconds and run at nice level 19.
+
+### Final 6c672 integration and State Tripwires refresh, 2026-11-10
+
+Commit `3dd67c4b3` records the State Tripwires draft and its original-suite failures.
+Merge `89a58ec57` incorporates Final `6c672ea2b`, including the integration hub and later text-demand changes.
+The merge retains Final's frame ownership and library-load budget model.
+Only fresh loads outside the run's own tree spend that budget.
+Logical aliases retain answers while sharing physical preparation.
+Canonical-path lookups use Final's observer. Request text still decodes in batches.
+Final's `fact_rel` representation replaces the branch's older `fact_empty` marker.
+The existing roundtrip regression now removes `fact_rel` when constructing its legacy input.
+
+The optimized root CLI builds in 168.74 wall seconds and 890.11 CPU seconds.
+Its frozen hash starts with `f0cef331c86123de`.
+The State Tripwires generator also adopts the converter's frame-parent relations and qualified-depth projection.
+
+Both APIs again match all 77 complete original scanner returns, including all 64 positive returns.
+Each API passes 76 of 80 original assertions. The same four assertions remain open.
+All 18 fresh contracts pass through both APIs, including the DFS cycle and diagnostic-order regressions.
+Both policy files pass the reader. The tooling suite passes 416 tests.
+The [State checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-state-tripwires-native-progress-final6c6.json.gz) records this refreshed cohort.
+
+Four loader scenarios pass through the rebuilt CLI, cold and warm:
+
+- Two files inside the run's tree load with a zero library budget.
+- A repeated library alias answers after the budget is spent. A second library file is refused.
+- An existing primary document answers a logical alias with its document identity.
+- An invalid UTF-8 read produces a typed error before a dependent load. Only the valid file loads.
+
+All 30 dynamic-discovery contracts also pass through each API.
+The [integration receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-final6c6-integration.json.gz) preserves their returns, loader programs, build details, and consumed bytes.
+The loader checks execute through the CLI. The Rust library test binary was not rebuilt for this merge.
+No full-repository cold benchmark runs in this phase.
+
+The inventory remains 99 candidates, 13 recorded full admissions, 86 drafts, and one absent translation.
+Those admissions retain their recorded engine identities. This refresh does not admit State Tripwires.

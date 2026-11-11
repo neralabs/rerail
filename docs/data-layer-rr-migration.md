@@ -10,7 +10,12 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 
 ## Active engine
 
-Build and develop the engine in this repository root. Final `af8fee707` is merged in `a2812b53a`.
+Build and develop the engine in this repository root.
+Final `6c672ea2b` is merged in `89a58ec57`. The registered root CLI is `f0cef331c86123de…`.
+State Tripwires, load-request regressions, and dynamic discovery have been checked on this cohort.
+The following paragraphs preserve earlier engine cohorts and their specific acceptance receipts.
+
+Final `af8fee707` was merged in `a2812b53a`.
 The registered root CLI is `e881b006c25f1d92…`. Dispatch passes full recorded-contract admission on this cohort.
 The merge splits the content store into its own crate and records execution costs across runs.
 Commit `0ac28b5ce` exports the existing metadata batch method across the new crate boundary.
@@ -110,7 +115,8 @@ Both APIs match all 77 recorded scanner returns, including 64 positive returns.
 The four failures concern plugin construction, function-node/reachability helpers, and selective fact and runtime-authority analysis.
 The selection tests currently fail their Python observer assertions. The native implementation must enforce and expose the same selection guarantees.
 Its two owned scope assertions and its broader production, supplied-AST, options, signing, CLI, and update contracts remain open.
-The [State Tripwires checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-state-tripwires-native-progress-final733.json.gz) retains these failures alongside the passing scanner observations.
+The [State Tripwires checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-state-tripwires-native-progress-final6c6.json.gz) retains these failures alongside the passing scanner observations.
+All 18 fresh contracts pass through both APIs on the same engine, including 15 positives and three clean cases.
 `no_api_root_imports` passes its complete recorded contract on Final `ec3cfe1b7`.
 Its [admission receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-api-imports-complete-finalec3.json.gz) verifies 467 native executions.
 All four original tests and all 168 public cases pass through both APIs, including import and literal positives.
