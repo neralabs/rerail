@@ -1084,7 +1084,7 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
 /// core.rr's functors only CPython gives, each of a node, and the relations the batches bind them as
 /// (`facts::vtab::syntax::cpython`): `@py_unparse(n)` is the `s` of `cpython_unparse(n, s)`. `@unparse` is decision
 /// 0058's, a tape's text (`rr::lower`, `unparse_of`), not intercepted here.
-const CPYTHON_FUNCTORS: [(&str, &str); 2] = [("py_unparse", syntax::cpython::UNPARSE), ("ast_dump", syntax::cpython::AST_DUMP)];
+const CPYTHON_FUNCTORS: [(&str, &str); 2] = [("py_unparse", crate::code_rule_dsl::facts::core::cpython_relations::UNPARSE), ("ast_dump", crate::code_rule_dsl::facts::core::cpython_relations::AST_DUMP)];
 
 /// Each call of a functor only CPython gives (`CPYTHON_FUNCTORS`) in a rule, lowered to a variable its relation binds
 /// in the rule's body: `v(@sha256(@ast_dump(n))) :- kind(n, "call").` is `v(@sha256(x)) :- kind(n, "call"),
@@ -1132,7 +1132,7 @@ fn cpython_functors(prog: &mut front::Program) -> Result<()> {
         }
     }
     for rel in used {
-        let cols = syntax::cpython::columns(rel);
+        let cols = crate::code_rule_dsl::facts::core::cpython_relations::columns(rel);
         prog.decls.entry(rel.to_owned()).or_insert_with(|| vec![(cols[0].to_owned(), "node".to_owned()), (cols[1].to_owned(), "sym".to_owned())]);
     }
     Ok(())

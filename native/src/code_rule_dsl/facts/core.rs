@@ -797,3 +797,29 @@ static EXECUTORS: std::sync::OnceLock<fn(bool) -> &'static rerail_accel::Executo
 pub(crate) fn install_executors(executor: fn(bool) -> &'static rerail_accel::Executor) {
     let _ = EXECUTORS.set(executor);
 }
+
+/// The relations CPython's facts bind (the corpus's names for the verdict, `ast.unparse`, `ast.dump` and their
+/// hashes) and their columns: base relations the planner reads by name.
+pub(crate) mod cpython_relations {
+    /// The relation the corpus binds for CPython's verdict (core.rr's `syntax_error(d, l, msg)`).
+    pub(crate) const SYNTAX_ERROR: &str = "cpython_syntax_error";
+    /// W's `literal_json` (`cpython::literal`).
+    pub(crate) const LITERAL_JSON: &str = "literal_json";
+    /// core.rr's `@py_unparse(n)` (`cpython::unparse`).
+    pub(crate) const UNPARSE: &str = "cpython_unparse";
+    /// core.rr's `@ast_dump(n)` (`cpython::dump`).
+    pub(crate) const AST_DUMP: &str = "cpython_ast_dump";
+    /// W's `dump_sha256`, `body_sha256` and `signature_sha256` (`cpython::dump`).
+    pub(crate) const DUMP_SHA256: &str = "dump_sha256";
+    pub(crate) const BODY_SHA256: &str = "body_sha256";
+    pub(crate) const SIGNATURE_SHA256: &str = "signature_sha256";
+
+    /// A printed relation's columns.
+    pub(crate) fn columns(rel: &str) -> &'static [&'static str] {
+        match rel {
+            UNPARSE | AST_DUMP => &["n", "s"],
+            DUMP_SHA256 => &["n", "h"],
+            _ => &["f", "h"],
+        }
+    }
+}

@@ -30,18 +30,9 @@ use super::{Dialect, Projected};
 use crate::code_rule_dsl::cpython::printed::{Printed, Want, by_start, of_kind, printed};
 use std::collections::{BTreeSet, HashMap};
 
-/// The relation the corpus binds for CPython's verdict (core.rr's `syntax_error(d, l, msg)`).
-pub(crate) const SYNTAX_ERROR: &str = "cpython_syntax_error";
-/// W's `literal_json` (`cpython::literal`).
-pub(crate) const LITERAL_JSON: &str = "literal_json";
-/// core.rr's `@py_unparse(n)` (`cpython::unparse`).
-pub(crate) const UNPARSE: &str = "cpython_unparse";
-/// core.rr's `@ast_dump(n)` (`cpython::dump`).
-pub(crate) const AST_DUMP: &str = "cpython_ast_dump";
-/// W's `dump_sha256`, `body_sha256` and `signature_sha256` (`cpython::dump`).
-pub(crate) const DUMP_SHA256: &str = "dump_sha256";
-pub(crate) const BODY_SHA256: &str = "body_sha256";
-pub(crate) const SIGNATURE_SHA256: &str = "signature_sha256";
+pub(crate) use crate::code_rule_dsl::facts::core::cpython_relations::{
+    AST_DUMP, BODY_SHA256, DUMP_SHA256, LITERAL_JSON, SIGNATURE_SHA256, SYNTAX_ERROR, UNPARSE, columns,
+};
 
 #[derive(Default)]
 pub(super) struct CPython {
@@ -177,14 +168,6 @@ impl CPython {
     }
 }
 
-/// A printed relation's columns.
-pub(crate) fn columns(rel: &str) -> &'static [&'static str] {
-    match rel {
-        UNPARSE | AST_DUMP => &["n", "s"],
-        DUMP_SHA256 => &["n", "h"],
-        _ => &["f", "h"],
-    }
-}
 
 /// CPython's syntax verdicts, `ast.unparse` and `ast.dump` as a batch's producer (`syntax::Producer`).
 pub(crate) struct Producer;
