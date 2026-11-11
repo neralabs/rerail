@@ -175,7 +175,8 @@ Rerail runs Git for Windows' own `git.exe`, not its launcher, and reads Git's gl
 Every rename in `src/` goes through `src/engine/file-replace.ts`, and the `file-replace` row of
 `npm run check:owned-builtins` fails on any other. To make text the whole of a file, Rerail calls `replaceFile` or
 `replaceFileSync`; `renameWithRetry` and `renameWithRetrySync` move a file or folder that already exists, or a file a
-writer must open itself.
+writer must open itself. A removal that waits out a held file calls `removeWithRetry`, and the `folder-removal` row
+fails on an `rm` given `maxRetries` anywhere else.
 
 On Windows, renaming a file onto or from one another process holds open fails with `EPERM`, `EACCES` or `EBUSY`. The
 holder is often there for a moment only: a status line reading `daemon.json`, an editor with a source file open,

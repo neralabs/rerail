@@ -3,7 +3,8 @@
 //
 // Rerail fixes several classes of Windows defect by sending every use of a built-in through one module. Each row of
 // RULES names that module (the owner), the built-in modules, the names in them only the owner may reach (or none, when
-// no use is safe), the files the rule covers, and the reason:
+// no use is safe) or, for a row with `options`, the options only the owner may call them with, the files the rule
+// covers, and the reason:
 //
 //   child-process   node:child_process, anywhere in src/. On Windows Node starts a child with a visible window unless
 //                   told otherwise, and a console program (git, node, npm, PowerShell) started by a process with no
@@ -21,6 +22,10 @@
 //                   `C:/work/app` with long names, so keys resolved both ways never met and no rule ran in the session.
 //   no-follow       constants.O_NOFOLLOW of node:fs, anywhere in src/. Windows has no O_NOFOLLOW, and `flags |
 //                   undefined` adds nothing, so an open meant to refuse a symbolic link followed a planted one there.
+//   folder-removal  rm of node:fs or node:fs/promises called with maxRetries, or with options the check cannot read
+//                   (a spread, a variable), anywhere in src/; any other rm is free. That rm repeats the retries at every
+//                   level of the folder, each try at a folder removing its contents with a full set again: a file
+//                   Windows held one folder down kept a removal trying for minutes rather than 5.5 s.
 //
 // One walk of each file finds every way to reach a name: an `import` (named, default or namespace), `import x =
 // require(...)`, the module's name as an argument of any call (`require`, `import()`, a `createRequire` result,
@@ -56,7 +61,8 @@ const keyed = path => KEYED.some(entry => (entry.endsWith("/") ? path.startsWith
 
 /**
  * One owned built-in: `names` are dotted paths inside each of `modules` (`constants.O_NOFOLLOW`); without them every
- * value use of the module is the owner's. `covers` picks the files the rule reads, the owner aside.
+ * value use of the module is the owner's. With `options`, reaching the names is free and only a call of one given any of
+ * those options is the owner's. `covers` picks the files the rule reads, the owner aside.
  */
 export const RULES = [
   {
@@ -91,6 +97,15 @@ export const RULES = [
     covers: inSrc,
     message: "reads O_NOFOLLOW, which Windows lacks, so the open follows a symbolic link there; open with openNoFollow or openNoFollowSync from src/engine/no-follow.ts, which refuse one on every platform",
   },
+  {
+    id: "folder-removal",
+    owner: "src/engine/file-replace.ts",
+    modules: FS,
+    names: ["rm"],
+    options: ["maxRetries"],
+    covers: inSrc,
+    message: "gives rm maxRetries, which rm repeats at every level of the folder, so a file Windows holds a folder down stalls the removal for minutes; use removeWithRetry from src/engine/file-replace.ts, which counts its own tries",
+  },
 ].map(rule => ({ ...rule, names: rule.names?.map(name => name.split(".")) }));
 
 const PROGRAM_PATH_MESSAGE = "names a program without its folder, which Windows looks for in the current folder first; pass an absolute path (windowsSystemProgram, programOnPath)";
@@ -123,6 +138,15 @@ function exposes(rule, reach) {
 const within = (reach, key) => ({ module: reach.module, path: [...reach.path, key] });
 
 const keyText = (name) => (ts.isIdentifier(name) || ts.isStringLiteralLike(name) ? name.text : undefined);
+
+/**
+ * The text of a property's name, a computed one's too when it is a string: `a` in `a`, `"a"` and `["a"]`, and none in
+ * `[a]`, whose key is the variable's value.
+ */
+function nameText(name) {
+  if (!ts.isComputedPropertyName(name)) return keyText(name);
+  return ts.isStringLiteralLike(name.expression) ? name.expression.text : undefined;
+}
 
 /** The names in the `{ ... }` of an import or export that are not marked `type`. */
 const valueElements = elements => elements.filter(element => !element.isTypeOnly);
@@ -176,9 +200,19 @@ function importBindings(node) {
 }
 
 /** The property an object pattern's element reads: `a` in `{ a }`, `{ a: b }`, `{ "a": b }` and `{ ["a"]: b }`. */
-function elementKey(element) {
-  const name = element.propertyName ?? element.name;
-  return keyText(ts.isComputedPropertyName(name) ? name.expression : name);
+const elementKey = element => nameText(element.propertyName ?? element.name);
+
+/** Whether an object literal's property may set one of `names`: a spread, a key the check cannot read, or one of them. */
+function propertySets(property, names) {
+  if (ts.isSpreadAssignment(property)) return true;
+  const key = nameText(property.name);
+  return key === undefined || names.includes(key);
+}
+
+/** Whether a call's options argument may set one of `names`: options that are no object literal may hold any. */
+function optionsSet(options, names) {
+  if (options === undefined) return false;
+  return !ts.isObjectLiteralExpression(options) || options.properties.some(property => propertySets(property, names));
 }
 
 /** The paths an `export ... from` clause hands on: the module itself for `*` and `* as m`, else each value name. */
@@ -221,14 +255,16 @@ const CHECKS = new Map([
   [ts.SyntaxKind.ExportSpecifier, ["checkLocalExport"]],
   [ts.SyntaxKind.ExportAssignment, ["checkExportAssignment"]],
   [ts.SyntaxKind.VariableStatement, ["checkExportedVariables"]],
-  [ts.SyntaxKind.CallExpression, ["checkProgram"]],
+  [ts.SyntaxKind.CallExpression, ["checkProgram", "checkOptions"]],
 ]);
 
 /** A file's walk: what each local name reaches inside a watched module, and every finding. */
 class Walk {
   constructor(source, rules) {
     this.source = source;
-    this.rules = rules;
+    /** The rules on reaching a module or a name; {@link optionRules} are on the options a call of a name passes. */
+    this.rules = rules.filter(rule => rule.options === undefined);
+    this.optionRules = rules.filter(rule => rule.options !== undefined);
     this.modules = new Set(rules.flatMap(rule => rule.modules));
     /** @type {Map<string, { module: string, path: string[] }>} */
     this.bindings = new Map();
@@ -392,6 +428,15 @@ class Walk {
     if (!exported(node)) return;
     for (const declaration of node.declarationList.declarations) {
       this.reportNamed(exposes, this.valueOf(declaration), declaration);
+    }
+  }
+
+  /** A call of a name a rule with `options` owns, passing one of them: `rm(path, { maxRetries: 10 })`. */
+  checkOptions(call) {
+    const reach = this.resolve(call.expression);
+    if (reach === undefined) return;
+    for (const rule of this.optionRules) {
+      if (reaches(rule, reach) && optionsSet(call.arguments[1], rule.options)) this.report(call, rule);
     }
   }
 

@@ -122,6 +122,31 @@ describe("check-owned-builtins", () => {
     expect(problems[0].message).toContain(rule("child-process").owner);
   });
 
+  it("flags an rm given retries outside file-replace.ts, however it reaches rm, and options it cannot read", () => {
+    const problems = ownedBuiltinProblems([
+      { path: "src/a.ts", text: 'import { rm } from "node:fs/promises";\nawait rm("x", { recursive: true, force: true, maxRetries: 10 });\n' },
+      { path: "src/b.ts", text: 'import * as fs from "node:fs";\nconst retries = { maxRetries: 10 };\nfs.rm("x", { recursive: true, ...retries }, () => {});\n' },
+      { path: "src/c.ts", text: 'import fs from "fs";\nawait fs.promises.rm("x", options);\n' },
+      { path: "src/d.ts", text: 'import { promises } from "node:fs";\nconst remove = promises.rm;\nawait remove("x", { "maxRetries": 3 });\n' },
+      { path: "src/e.ts", text: 'const { rm: remove } = await import("node:fs/promises");\nawait remove("x", { maxRetries });\nawait remove("y", { [key]: 1 });\n' },
+    ]);
+    expect(rules(problems)).toEqual([
+      "src/a.ts:2:folder-removal", "src/b.ts:3:folder-removal", "src/c.ts:2:folder-removal", "src/d.ts:3:folder-removal",
+      "src/e.ts:2:folder-removal", "src/e.ts:3:folder-removal",
+    ]);
+    expect(problems[0].message).toContain(rule("folder-removal").owner);
+  });
+
+  it("allows any other rm, an rmSync given retries, and the retries in file-replace.ts", () => {
+    expect(ownedBuiltinProblems([
+      { path: rule("folder-removal").owner, text: 'import { rm } from "node:fs/promises";\nawait rm("x", { recursive: true, maxRetries: 10 });\n' },
+      { path: "src/a.ts", text: 'import { rm } from "node:fs/promises";\nawait rm("x");\nawait rm("x", { force: true });\nawait rm("x", { recursive: true, force: true, ["force"]: true });\n' },
+      { path: "src/b.ts", text: 'import { rmSync } from "node:fs";\nrmSync("x", { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });\n' },
+      { path: "src/c.ts", text: 'import { removeWithRetry } from "./engine/file-replace.js";\nawait removeWithRetry("x");\nconst retries = { maxRetries: 10 };\n' },
+      { path: "test/d.ts", text: 'import { rm } from "node:fs/promises";\nawait rm("x", { recursive: true, maxRetries: 10 });\n' },
+    ])).toEqual([]);
+  });
+
   it("flags a program named by a literal Windows would look for in the current folder", () => {
     const problems = ownedBuiltinProblems([
       { path: "src/a.ts", text: 'import { spawn } from "./engine/child-process.js";\nspawn("rundll32", ["url.dll"]);\n' },
