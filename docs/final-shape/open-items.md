@@ -3444,3 +3444,16 @@ CPU (49.9 user + 5.7 sys), 56 s wall, load 15–20.
 element. Not yet traced (parser or tape); the `values` fixture uses `[0, *range(4)]`.
 
 **Closure:** `[*x]` and `(*x,)` keep their `list_splat` node, with a test.
+
+## O-factorize-nothing. The factorized-store test's program hands no export on as its parts
+
+**Seen (2026-11-10).** `an_export_handed_on_as_its_parts_finds_the_same_and_a_changed_choice_misses_the_memo`
+fails on every run. With factorizing on, `factorize_exports` hands on no part (`factorized 0`). The run's
+file-local part then has the same plan as the run with `factorize: off`, so it finds that run's two memo entries.
+This does not depend on how the memo is stored: the memo misses only when the program differs. In the lowered
+program, `uses` is not file-local, because it reads `within`, which the split no longer counts as file-local.
+No rule reads `encl` any more. `bound` and `defined` are refused because no rule of theirs factors
+(`plan 0 of 1`). The test is ignored with this item.
+
+**Closure:** find which change made `within` (and so `uses`) cross-file, and whether that change is right.
+Then give the test a program whose export factorizes, or restore the split, and stop ignoring the test.

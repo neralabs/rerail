@@ -843,13 +843,13 @@ pub(in crate::code_rule_dsl) struct InFrames {
 }
 
 /// The digest of `read` a derived relation records (t33 K4): as `known` has it (an input as the run bound it, a
-/// relation as derived or named), or, for one neither derived nor bound (the program's facts), its identity, which
-/// is the program's.
+/// relation as derived or named), or, for the program's stated facts, their identity, which is the program's.
+/// Anything else (an answer the run binds by another way, as a load's) has none: what reads it is not current.
 fn read_digest(read: &str, known: &HashMap<String, u64>, derived: &BTreeSet<&String>, prog: &front::Program) -> Option<u64> {
     if let Some(d) = known.get(read) {
         return Some(*d);
     }
-    if derived.iter().any(|r| r.as_str() == read) {
+    if derived.iter().any(|r| r.as_str() == read) || !prog.facts.contains_key(read) {
         return None;
     }
     let id = crate::code_rule_dsl::logic::plan::leaf_identity(prog, read);
