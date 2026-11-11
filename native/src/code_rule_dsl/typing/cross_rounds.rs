@@ -357,7 +357,7 @@ pub(crate) fn digest_sorted(rows: &BTreeMap<String, Vec<Vec<i64>>>) -> u64 {
 
 /// What the rounds did.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct Rounds {
+pub struct Rounds {
     /// Rounds run, round 0 included.
     pub run: usize,
     /// The hop relations' rows stopped changing within `K` rounds: the result is the fixpoint.

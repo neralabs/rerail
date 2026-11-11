@@ -46,12 +46,12 @@ fn snapshot_files(json: &str) -> Result<Vec<File>> {
     }
 }
 #[derive(Clone)]
-pub(super) struct Document {
+pub struct Document {
     file: File,
     key: u32,
     pub sources: Sources,
 }
-pub(super) struct Documents {
+pub struct Documents {
     files: BTreeMap<String, Document>,
     families: BTreeMap<String, Arc<Family>>,
     shared: Arc<Shared>,

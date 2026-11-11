@@ -23,12 +23,12 @@ struct Set {
     exact: bool,
 }
 #[derive(serde::Serialize)]
-pub(super) struct Admission {
+pub struct Admission {
     pub consumer: usize,
     pub generated: usize,
     pub broadened: bool,
 }
-pub(super) struct Statement {
+pub struct Statement {
     pub admissions: Vec<Admission>,
     #[cfg(feature = "code-rule-profile")]
     pub producers: crate::code_rule_dsl::producers::Registry<u32>,
@@ -1108,7 +1108,7 @@ fn batch_scope(
 }
 
 #[derive(Clone)]
-pub(super) struct Stage {
+pub struct Stage {
     pub name: String,
     pub sql: String,
     pub index: Option<&'static str>,

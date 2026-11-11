@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 
 const SQL_RESIDENT_BYTES: usize = 256 * 1024 * 1024;
 #[derive(Default)]
-struct Stats {
+pub struct Stats {
     pub partitions: usize,
     pub peak_sessions: usize,
     pub peak_sql_bytes: usize,

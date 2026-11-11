@@ -60,7 +60,7 @@ impl ArgumentRules for Refused {
 }
 
 /// The kit's check of a family's `ArgumentRules`.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub mod kit {
     use super::super::syntax::kit::refusal;
     use super::{ArgumentFeature, ArgumentRules};

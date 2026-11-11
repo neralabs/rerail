@@ -82,7 +82,7 @@ pub fn refused(message: &'static str) -> Result<(), Refusal> {
 }
 
 /// The kit's check of a family's `SyntaxRules`.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub mod kit {
     use super::{SyntaxFeature, SyntaxRules};
     use crate::code_rule_dsl::compile::config::Options;

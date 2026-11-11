@@ -362,7 +362,7 @@ pub struct TapeImage {
 /// where the node sits, not on its kind alone, so they are the node's own, as the parser's
 /// cursor reports them; nodes in the same context share a code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct Code {
+pub struct Code {
     kf: u16,
     pub flags: u8,
     pub alias: u16,
@@ -1598,7 +1598,7 @@ pub struct TapeDoc {
     pub host: Option<Arc<HostLink>>,
     /// The image this document was restored from, and its stored bytes' SHA-256 once asked
     /// (`residency::slabs::admit_docs`, decision 0032): what the device reads in place.
-    image: Arc<TapeImage>,
+    pub image: Arc<TapeImage>,
     digest: Arc<std::sync::OnceLock<[u8; 32]>>,
     /// The document's path, as a run's matchers read it (`with_path`: what a `filePath` test inside a matcher tests).
     path: Option<Arc<str>>,

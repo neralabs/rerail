@@ -156,7 +156,7 @@ pub fn type_name(name: &str, known: &[&str], language: &str) -> Result<(), Refus
     ))
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub mod kit {
     use super::super::{Adapter, Refusal};
     use super::{ValueFeature, ValueRules};

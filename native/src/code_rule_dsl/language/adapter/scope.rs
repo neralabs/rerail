@@ -250,7 +250,7 @@ pub const LEXICAL_FORMS: &[(&str, Form)] = &[
     ("accessor", Form::Accessor),
 ];
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub mod kit {
     use super::{Adapter, ScopeFeature, ScopeRules};
     use crate::code_rule_dsl::language::adapter::Refusal;
@@ -261,6 +261,26 @@ pub mod kit {
     use crate::code_rule_dsl::tape::TapeDoc;
     use ast_grep_core::{AstGrep, Doc};
     use std::sync::Arc;
+
+    /// The tape of a file of `source` in `dialect`, as files are read: Blade's from its Forte tree,
+    /// the rest from tree-sitter's.
+    pub fn file(source: &str, dialect: GrammarDialect) -> TapeDoc {
+        let grammar = crate::code_rule_dsl::tape::Grammar::new(dialect).expect("grammar");
+        let image = crate::code_rule_dsl::tape::TapeImage::parse(&grammar, source, &|| false)
+            .expect("parses")
+            .expect("encodes");
+        TapeDoc::restore(std::sync::Arc::new(source.to_owned()), grammar, &image, &|| false).expect("restores")
+    }
+
+    /// The document of a file of `source` in `dialect` its family's semantics read: the program the
+    /// file embeds, where its dialect embeds one (`embed`), else the file's own tree.
+    pub fn semantic(source: &str, dialect: GrammarDialect) -> AstGrep<TapeDoc> {
+        let host = file(source, dialect);
+        let guest = host
+            .guests()
+            .and_then(|guests| guests.first().map(|guest| guest.doc.clone()));
+        AstGrep::doc(guest.unwrap_or(host))
+    }
 
     /// What one family's scope rules answer.
     pub struct Expect {
@@ -293,7 +313,7 @@ pub mod kit {
         dialect: GrammarDialect,
         name: &str,
     ) -> (AstGrep<TapeDoc>, GrammarDialect, std::ops::Range<usize>) {
-        let doc = super::super::kit::semantic(source, dialect);
+        let doc = semantic(source, dialect);
         let read = *doc.root().get_doc().get_lang();
         let start = doc
             .root()

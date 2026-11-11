@@ -14,7 +14,7 @@ use std::{
 
 // cratify: `tests` is rerail-engine's (it mounts it)
 
-struct Pending {
+pub struct Pending {
     path: Arc<str>,
     start: i64,
     end: i64,

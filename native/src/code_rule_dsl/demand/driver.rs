@@ -201,30 +201,30 @@ pub(in crate::code_rule_dsl) struct SqlFailureRow {
 }
 
 /// Rows returned by SQL after completion filtering and stable ordering.
-pub(in crate::code_rule_dsl) struct QueryOutcome {
-    pub(in crate::code_rule_dsl) rows: Vec<PackedRow>,
-    pub(in crate::code_rule_dsl) violations: Vec<SqlViolationRow>,
-    pub(in crate::code_rule_dsl) failures: Vec<SqlFailureRow>,
-    pub(in crate::code_rule_dsl) counters: QueryCounters,
+pub struct QueryOutcome {
+    pub rows: Vec<PackedRow>,
+    pub violations: Vec<SqlViolationRow>,
+    pub failures: Vec<SqlFailureRow>,
+    pub counters: QueryCounters,
 }
 
 /// Profile counters for one SQL-demanded workspace batch.
-pub(in crate::code_rule_dsl) struct QueryCounters {
-    pub(in crate::code_rule_dsl) statements: usize,
-    pub(in crate::code_rule_dsl) rows: usize,
-    pub(in crate::code_rule_dsl) terminal_executions: usize,
-    pub(in crate::code_rule_dsl) virtual_table_filters: usize,
-    pub(in crate::code_rule_dsl) registrations: usize,
-    pub(in crate::code_rule_dsl) backend_invocations: usize,
-    pub(in crate::code_rule_dsl) hard_partitions: usize,
-    pub(in crate::code_rule_dsl) partitions: Vec<HardPartition>,
-    pub(in crate::code_rule_dsl) demanded_producers: usize,
-    pub(in crate::code_rule_dsl) terminal_tasks: usize,
-    pub(in crate::code_rule_dsl) command_buffers: usize,
-    pub(in crate::code_rule_dsl) packed_dispatches: usize,
-    pub(in crate::code_rule_dsl) anchor_dispatches: usize,
-    pub(in crate::code_rule_dsl) matcher_calls: usize,
-    pub(in crate::code_rule_dsl) host_callbacks: usize,
+pub struct QueryCounters {
+    pub statements: usize,
+    pub rows: usize,
+    pub terminal_executions: usize,
+    pub virtual_table_filters: usize,
+    pub registrations: usize,
+    pub backend_invocations: usize,
+    pub hard_partitions: usize,
+    pub partitions: Vec<HardPartition>,
+    pub demanded_producers: usize,
+    pub terminal_tasks: usize,
+    pub command_buffers: usize,
+    pub packed_dispatches: usize,
+    pub anchor_dispatches: usize,
+    pub matcher_calls: usize,
+    pub host_callbacks: usize,
 }
 
 pub fn split_measured_statement_packets(

@@ -155,7 +155,7 @@ impl CallRules for Refused {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub mod kit {
     use super::{CallFeature, CallRules};
     use crate::code_rule_dsl::calls::names::Name;

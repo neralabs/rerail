@@ -122,7 +122,7 @@ pub(super) fn delta(
 }
 
 #[derive(Clone)]
-pub(super) struct Trace {
+pub struct Trace {
     whole: bool,
     templates: Arc<BTreeMap<usize, frame::Prepared>>,
     prefix: String,

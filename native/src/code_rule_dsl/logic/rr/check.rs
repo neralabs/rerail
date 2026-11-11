@@ -401,7 +401,7 @@ fn tarjan(nodes: &BTreeSet<String>, graph: &BTreeMap<String, BTreeSet<String>>) 
 
 /// Relations a program's rules read that none of its files declares, nor the lowering makes (its built-ins): the
 /// syntax-level form of `front::declared`, which a run and check-rr apply to the lowered program.
-pub(super) fn undeclared(statements: &[&Statement]) -> Vec<String> {
+pub fn undeclared(statements: &[&Statement]) -> Vec<String> {
     fn reads(lits: &[Lit], out: &mut Vec<String>) {
         fn term(t: &Term, out: &mut Vec<String>) {
             match t {

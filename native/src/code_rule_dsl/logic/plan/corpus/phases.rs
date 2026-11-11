@@ -120,7 +120,7 @@ impl Drop for Running {
 }
 
 /// What a program says of itself as a phase: its name and its exports.
-pub(crate) struct Declared {
+pub struct Declared {
     pub(crate) name: String,
     pub exports: Vec<String>,
 }
@@ -169,7 +169,7 @@ pub(crate) fn is_phased(rel: &str) -> bool {
 }
 
 /// One phase's run, as the reader's run reports it.
-pub(crate) struct PhaseRun {
+pub struct PhaseRun {
     pub name: String,
     pub report: Report,
     /// Each export's rows.

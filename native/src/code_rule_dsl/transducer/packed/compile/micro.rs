@@ -42,7 +42,7 @@ const NONE: u32 = u32::MAX;
 
 /// A walk outgrew its frames, captures or steps, or read a cursor it never saved.
 #[derive(Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) struct Overflow(pub(in crate::code_rule_dsl) &'static str);
+pub struct Overflow(pub(in crate::code_rule_dsl) &'static str);
 
 #[derive(Clone, Debug)]
 pub struct Micro {

@@ -1454,7 +1454,7 @@ fn structure_digest(key: &str) -> String {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct PackedRow {
+pub struct PackedRow {
     batch: i64,
     row_kind: RowKind,
     producer_id: Option<i64>,
@@ -1625,17 +1625,17 @@ impl PackedRow {
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(in crate::code_rule_dsl) const fn row_kind(&self) -> RowKind {
+    pub const fn row_kind(&self) -> RowKind {
         self.row_kind
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(in crate::code_rule_dsl) fn is_complete(&self) -> bool {
+    pub fn is_complete(&self) -> bool {
         self.complete != 0
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(in crate::code_rule_dsl) fn error_code(&self) -> Option<&str> {
+    pub fn error_code(&self) -> Option<&str> {
         self.error_code.as_deref()
     }
 

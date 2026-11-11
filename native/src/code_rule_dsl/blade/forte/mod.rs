@@ -101,7 +101,7 @@ impl Budget {
 
 /// Why a template has no tree.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ParseError {
+pub enum ParseError {
     /// Forte throws: a depth limit was reached (its `RuntimeException` message).
     Depth(String),
     /// The step budget ran out (Rerail's bound; Forte has none).

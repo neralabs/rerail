@@ -77,7 +77,7 @@ impl Drop for Scope {
         }
     }
 }
-pub(super) struct Lease {
+pub struct Lease {
     pool: Pool,
     pub id: usize,
     modules: RefCell<Vec<String>>,

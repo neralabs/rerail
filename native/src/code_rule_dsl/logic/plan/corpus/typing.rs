@@ -31,10 +31,10 @@ pub struct Typing {
     /// Summarize the corpus (a site directory) into this cache.
     pub summarize: Option<PathBuf>,
     /// Modules per package (`Universe::demand`); 0 is the default, 64.
-    pub(crate) budget: usize,
+    pub budget: usize,
     /// The language of the files read: `Some(true)` the `.rs` files, `Some(false)` the `.py` files; `None` the more
     /// numerous (`corpus_files`).
-    pub(crate) rust: Option<bool>,
+    pub rust: Option<bool>,
 }
 
 /// What the typing inputs and outputs did.

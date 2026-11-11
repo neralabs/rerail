@@ -121,7 +121,7 @@ pub(crate) struct FoundTerm {
 }
 
 /// Collects the `calls` terms of one query while its rules compile.
-pub(crate) struct CallsCollector {
+pub struct CallsCollector {
     /// What else a term's seed depends on: the query's utilities and language options.
     salt: String,
     /// Collecting for a seed query, which cannot hold `calls` (a shared utility may bring one).
@@ -1184,7 +1184,7 @@ pub fn with_reference_graph<R>(key: contracts::Key, read: impl FnOnce(&Graph) ->
 }
 
 /// Installs an evaluation's `EvaluationCalls` until dropped.
-pub(crate) struct EvaluationSlot {
+pub struct EvaluationSlot {
     previous: Option<EvaluationCalls>,
 }
 

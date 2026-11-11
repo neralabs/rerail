@@ -170,7 +170,7 @@ fn hex(plan: &PlanId) -> String {
 
 /// A plan's observed behaviour on one backend.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(in crate::code_rule_dsl) struct Feedback {
+pub struct Feedback {
     pub selectivity: f64,
     pub ns_per_root: f64,
     pub samples: i64,

@@ -169,7 +169,7 @@ fn text(v: &SqlValue) -> String {
 
 /// How a join literal is read: a range inside one document, or a `nearest` climb or descent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) enum Mode {
+pub enum Mode {
     Range,
     Climb,
     Descend,
@@ -187,7 +187,7 @@ impl Mode {
 
 /// A planned body literal: its position in the rule's body (T compared literals by identity), and its mode.
 #[derive(Clone, Debug)]
-pub(in crate::code_rule_dsl) struct Step {
+pub struct Step {
     pub at: usize,
     pub lit: Literal,
     pub(in crate::code_rule_dsl) mode: Option<Mode>,

@@ -256,11 +256,12 @@ pub(crate) fn generate(
         .into_iter()
         .map(|(_, entry)| entry)
         .collect::<Vec<_>>();
-    std::fs::write(
-        out.join("language_registry.rs"),
-        render_built(&entries, &test_only, omitted),
-    )
-    .expect("generated language registry is writable");
+    let registry = render_built(&entries, &test_only, omitted);
+    // `with_adapter!` alone, for a crate that does not include the registry (the test kit, `adapter/kit.rs`)
+    let start = registry.find("/// Evaluates `$body` with `$a` the adapter").expect("with_adapter");
+    let end = registry.find("\npub(crate) use with_adapter;").expect("with_adapter's use");
+    std::fs::write(out.join("with_adapter.rs"), &registry[start..end]).expect("generated with_adapter is writable");
+    std::fs::write(out.join("language_registry.rs"), registry).expect("generated language registry is writable");
     read
 }
 
@@ -975,6 +976,9 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
     out.push_str("/// Evaluates `$body` with `$a` the adapter of `$family` (`adapter`): one arm per registry family.\n");
     out.push_str("macro_rules! with_adapter {\n    ($family:expr, $a:ident => $body:expr) => {\n        match $family {\n");
     for (family, _, ids) in &families {
+        // the adapter by its module (`adapter::python::Python`): a crate whose `adapter` re-exports the modules,
+        // not their types, expands it too (the test kit, `adapter/kit.rs`, includes `with_adapter.rs`)
+        let module = family.replace('-', "_");
         let family = pascal(family);
         // A family whose every language this build leaves out reads no file: its adapter is never linked.
         if ids.iter().all(|id| omitted.iter().any(|omitted| omitted == id)) {
@@ -986,7 +990,7 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
         }
         let _ = writeln!(
             out,
-            "            $crate::code_rule_dsl::language::Family::{family} => {{\n                type $a = $crate::code_rule_dsl::language::adapter::{family};\n                $body\n            }}"
+            "            $crate::code_rule_dsl::language::Family::{family} => {{\n                type $a = $crate::code_rule_dsl::language::adapter::{module}::{family};\n                $body\n            }}"
         );
     }
     out.push_str("        }\n    };\n}\n\npub(crate) use with_adapter;\n");
@@ -1373,7 +1377,7 @@ mod tests {
         for family in ["One", "Two"] {
             assert_eq!(
                 generated
-                    .matches(&format!("            $crate::code_rule_dsl::language::Family::{family} => {{\n                type $a = $crate::code_rule_dsl::language::adapter::{family};\n                $body\n            }}\n"))
+                    .matches(&format!("            $crate::code_rule_dsl::language::Family::{family} => {{\n                type $a = $crate::code_rule_dsl::language::adapter::{}::{family};\n                $body\n            }}\n", family.to_lowercase()))
                     .count(),
                 1,
                 "{family}"

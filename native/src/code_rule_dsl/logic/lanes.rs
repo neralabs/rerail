@@ -90,7 +90,7 @@ pub mod wave {
     }
 
     /// While held, a form's launches may wait for the wave.
-    pub(in crate::code_rule_dsl) struct Suspendable(bool);
+    pub struct Suspendable(bool);
 
     pub fn suspendable() -> Suspendable {
         let on = !std::env::var("RERAIL_WAVES").is_ok_and(|v| v == "off");

@@ -304,7 +304,7 @@ impl Content for BladeSource {
 }
 
 /// A parsed template as a tree.
-pub(crate) struct BladeTree {
+pub struct BladeTree {
     source: BladeSource,
     nodes: Vec<Rec>,
     /// The flat node each node stands for (`NONE` for leaves).

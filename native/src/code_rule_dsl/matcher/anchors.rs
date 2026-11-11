@@ -678,7 +678,7 @@ const PREFIX_CHARS: usize = 8;
 const DIRECT_TEXT_NODES: usize = 8;
 
 #[derive(Default)]
-struct Values<'tree> {
+pub struct Values<'tree> {
     pub complete: bool,
     pub terms: BTreeMap<&'tree str, Vec<usize>>,
     residue: Vec<usize>,

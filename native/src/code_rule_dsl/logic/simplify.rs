@@ -46,7 +46,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// What was simplified.
 #[derive(Debug, Default, PartialEq)]
-pub(in crate::code_rule_dsl) struct Report {
+pub struct Report {
     pub(in crate::code_rule_dsl) implied: usize,
     pub(in crate::code_rule_dsl) kind_tests: usize,
     /// Variables equal to a constant, replaced by it.

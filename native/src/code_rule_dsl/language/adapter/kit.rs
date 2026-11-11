@@ -4,10 +4,13 @@
 
 use super::value::kit as value_kit;
 use super::{
-    Adapter, ArgumentRules, Blade, CallRules, Ecma, FormatArgRules, Php, Python, Rust, ScopeRules,
-    Sql, ValueRules, Vue, has_import_targets, is_comment_kind, is_paren_kind, parsed_by_forte,
+    Adapter, ArgumentRules, CallRules, FormatArgRules, ScopeRules, ValueRules, has_import_targets, is_comment_kind,
+    is_paren_kind, parsed_by_forte,
 };
-use crate::code_rule_dsl::language::with_adapter;
+use super::{blade::Blade, ecma::Ecma, php::Php, python::Python, rust::Rust, sql::Sql, vue::Vue};
+
+// `with_adapter!` (generated from the registry, `build_languages.rs`): every family's adapter by its module.
+include!(concat!(env!("OUT_DIR"), "/with_adapter.rs"));
 use crate::code_rule_dsl::language::{
     CodeRuleLanguage, Family, GrammarDialect, Semantic, SourceType, Support, kind_ids,
 };
@@ -57,25 +60,8 @@ struct Expect {
     scope: super::scope::kit::Expect,
 }
 
-/// The tape of a file of `source` in `dialect`, as files are read: Blade's from its Forte tree,
-/// the rest from tree-sitter's.
-fn file(source: &str, dialect: GrammarDialect) -> TapeDoc {
-    let grammar = Grammar::new(dialect).expect("grammar");
-    let image = TapeImage::parse(&grammar, source, &|| false)
-        .expect("parses")
-        .expect("encodes");
-    TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).expect("restores")
-}
-
-/// The document of a file of `source` in `dialect` its family's semantics read: the program the
-/// file embeds, where its dialect embeds one (`embed`), else the file's own tree.
-pub(super) fn semantic(source: &str, dialect: GrammarDialect) -> AstGrep<TapeDoc> {
-    let host = file(source, dialect);
-    let guest = host
-        .guests()
-        .and_then(|guests| guests.first().map(|guest| guest.doc.clone()));
-    AstGrep::doc(guest.unwrap_or(host))
-}
+// `file` and `semantic` are the scope kit's (rerail-w), which reads them too.
+use super::scope::kit::{file, semantic};
 
 /// A directory holding a package `pkg`, removed when dropped.
 struct Package(PathBuf);

@@ -73,30 +73,30 @@ pub struct Projection {
     pub reads: Option<BTreeSet<String>>,
     /// The regexes the program runs over `source` or `src_line` spans (`front::Program::rx_spans`): their matches'
     /// groups are spans, rows of `rx_span`.
-    pub(crate) rx_spans: Vec<(crate::code_rule_dsl::logic::front::ast::SpanIn, String)>,
+    pub rx_spans: Vec<(crate::code_rule_dsl::logic::front::ast::SpanIn, String)>,
     /// The AST patterns the program matches (`front::Program::ast_patterns`): rows of `ast_match`.
-    pub(crate) ast_patterns: Vec<String>,
+    pub ast_patterns: Vec<String>,
     /// Source/line spans whose complete text a rule reads, traced through copied relation columns.
     /// None is the unprojected test/export interface; AST subtree text keeps its independent bound.
-    text_spans: Option<BTreeSet<crate::code_rule_dsl::logic::front::ast::SpanIn>>,
+    pub text_spans: Option<BTreeSet<crate::code_rule_dsl::logic::front::ast::SpanIn>>,
     /// The node kinds whose text a rule reads (`text_kind_demand`): their nodes' `text` is made at any length. Any
     /// other node's is made up to `core_rr::TEXT_INLINE` bytes, unless it is token-like, or `long_text_any`: some rule
     /// reads the text of a node of any kind.
-    long_text: BTreeSet<String>,
-    long_text_any: bool,
+    pub long_text: BTreeSet<String>,
+    pub long_text_any: bool,
     /// The nodes whose `text` a rule reads (`TextDemand::read`): those of these kinds, or in these fields of their
     /// parent. `None` is every node.
-    text_nodes: Option<TextNodes>,
+    pub text_nodes: Option<TextNodes>,
     /// The grammars whose guests keep their partial tree when they do not parse (`.on guest_error partial`,
     /// decision 0055 §6); `"*"` is every grammar. Any other broken guest is withheld.
-    pub(crate) partial: BTreeSet<String>,
+    pub partial: BTreeSet<String>,
     /// In T's shape, `syntax_error` is core.rr's `syntax_error(d, l, msg)`, CPython's verdict, not T's
     /// `syntax_error(d)`: the program declares that one (a program of core.rr's base relations, not T's).
-    verdict: bool,
+    pub verdict: bool,
     /// The relations the program's rules derive: the batch binds none of them, made or viewed (T's programs derive
     /// `docof` from `node`, `rr::lower::projections`; a program may name an output as a base relation is named). A
     /// bound table of that name would be the planner's to drop.
-    derived: BTreeSet<String>,
+    pub derived: BTreeSet<String>,
 }
 
 impl Projection {
@@ -172,7 +172,7 @@ pub struct TextNodes {
 }
 
 /// What the rules read of `text` (`text_kind_demand`).
-struct TextDemand {
+pub struct TextDemand {
     /// The kinds whose text is read at any length.
     long: BTreeSet<String>,
     /// The text atoms (rule, body position) of a node of any kind, no twin reading its long text.
@@ -889,7 +889,7 @@ pub struct Dialect {
     operator: Option<u16>,
     /// The `operators` field: a comparison's operator tokens (`a < b <= c`).
     operators: Option<u16>,
-    canonical: Vec<u16>,
+    pub canonical: Vec<u16>,
     codes: HashMap<u16, Vec<u16>>,
     /// Whether W reads values of the dialect's nodes (its family's `ValueRules::SUPPORTED`): `Extra`'s `value` and
     /// `value_type` are W's for its documents, `core_rr`'s literal values for the others (an `.rr` file's).
@@ -1052,7 +1052,7 @@ impl DefIds {
 /// A document's lines, and its spans past its nodes (`Shape::Core`'s): from local id `len()`, its anonymous tokens
 /// (`tokens` of them, in preorder), then its whole text, then each line. Not `Extra`'s spans (`SPAN`), which the
 /// relations core.rr's programs read beyond T's are made over.
-struct Locs {
+pub struct Locs {
     lines: Arc<core_rr::Lines>,
     pub token_spans: OnceLock<Vec<[u32; 2]>>,
     pub tokens: u32,
@@ -1179,7 +1179,7 @@ impl Projected {
     #[inline]
     pub fn size(&self, local: usize) -> u32 { self.sizes()[local] }
     #[inline]
-    fn sizes(&self) -> &[u32] {
+    pub fn sizes(&self) -> &[u32] {
         self.size.get_or_init(|| {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "projection subtree sizes".into());
             let mut out = vec![0; self.core.len()];
@@ -1190,7 +1190,7 @@ impl Projected {
     #[inline]
     pub fn depth(&self, local: usize) -> u32 { self.depths()[local] }
     #[inline]
-    fn depths(&self) -> &[u32] {
+    pub fn depths(&self) -> &[u32] {
         self.depth.get_or_init(|| {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "projection depths".into());
             let mut out = vec![0; self.core.len()];
@@ -1275,7 +1275,7 @@ impl Projected {
 pub struct Batch {
     pub docs: Vec<Projected>,
     pub dialects: HashMap<u8, Dialect>,
-    nodes: Vec<usize>,
+    pub nodes: Vec<usize>,
     children: Vec<usize>,
     fields: Vec<usize>,
     /// Nodes and spans (`Projected::locs`).
@@ -2548,7 +2548,7 @@ impl Batch {
     /// Rows are read in runs of one document, so the last document found (per thread, per offsets array) is tried
     /// before the search: its range is checked against the offsets, so a stale hint costs a comparison, never a
     /// wrong document. The search per row was 13 s of the pack's cold run.
-    fn locate(&self, view: View, row: usize) -> (&Projected, usize) {
+    pub fn locate(&self, view: View, row: usize) -> (&Projected, usize) {
         let offsets = self.offsets(view);
         let key = offsets.as_ptr() as usize;
         let doc = LOCATED.with(|h| {
@@ -2917,7 +2917,7 @@ fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
 impl Batch {
 
     /// The node id of row `row` of the node view.
-    fn id(&self, row: usize) -> i64 {
+    pub fn id(&self, row: usize) -> i64 {
         let (p, local) = self.locate(View::Node, row);
         p.global(local as u32)
     }

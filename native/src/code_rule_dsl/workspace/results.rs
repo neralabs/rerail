@@ -166,7 +166,7 @@ pub(super) fn profile_result(
         .map_err(json_error)
 }
 
-pub(super) struct ResultPageIndex {
+pub struct ResultPageIndex {
     revision: u32,
     /// Each violation as the pages serialize it, in result order. Serialized once when the index is
     /// built, which holds the JSON alone rather than the witnesses it renders.

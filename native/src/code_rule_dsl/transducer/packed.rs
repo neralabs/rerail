@@ -51,14 +51,14 @@ pub mod device;
 pub use device::{RootJobs, RootsFound};
 
 #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
-pub(in crate::code_rule_dsl) fn reset_metal_execution_metrics() {
+pub fn reset_metal_execution_metrics() {
     if let Some(device) = device::matcher() {
         device.reset_execution_metrics();
     }
 }
 
 #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
-pub(in crate::code_rule_dsl) fn metal_execution_metrics() -> (usize, usize) {
+pub fn metal_execution_metrics() -> (usize, usize) {
     device::matcher().map_or((0, 0), |device| device.execution_metrics())
 }
 // The verifier's proofs (05 Phase 4 row 2, from Tempo's transducer, kept under `packed/verify/`

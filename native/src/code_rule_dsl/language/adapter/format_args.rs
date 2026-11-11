@@ -46,7 +46,7 @@ impl FormatArgRules for Refused {
 }
 
 /// The kit's check of a family's `FormatArgRules`.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub mod kit {
     use super::super::syntax::kit::refusal;
     use super::{FormatArgFeature, FormatArgRules};

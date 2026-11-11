@@ -25,7 +25,7 @@ struct Output {
     keys: Keys,
     key_width: usize,
 }
-pub(super) struct Counts {
+pub struct Counts {
     pub keys: usize,
     pub rows: usize,
 }

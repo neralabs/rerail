@@ -86,7 +86,7 @@ static SERVER_ENTRY: LazyLock<Regex> = LazyLock::new(|| {
 /// What the graph reads of one module: whether its directive prologue holds `"use client"`,
 /// and the specifiers it imports, each once, in source order.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Summary {
+pub struct Summary {
     pub client: bool,
     pub specifiers: Vec<String>,
 }
@@ -196,12 +196,12 @@ fn literal<D: Doc>(string: &Node<'_, D>) -> Option<String> {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Config {
     /// The resolved `baseUrl`, workspace-relative.
-    base_url: Option<String>,
+    pub base_url: Option<String>,
     /// `paths` patterns: the text before and after the `*` (`None` for an exact pattern), and
     /// the targets, workspace-relative, each keeping its `*`.
-    paths: Vec<(String, Option<String>, Vec<String>)>,
+    pub paths: Vec<(String, Option<String>, Vec<String>)>,
     /// The package the JSX transform imports its runtime from.
-    jsx_import_source: Option<String>,
+    pub jsx_import_source: Option<String>,
     /// The configuration files read, the package's own first, then its `extends` bases.
     pub files: Vec<String>,
 }
