@@ -200,6 +200,16 @@ pub fn hold(path: &Path) -> Hold {
     Hold(path.to_path_buf(), register(path))
 }
 
+/// Each kind of job's count, bytes and CPU on the writer's thread, in this process (the profile's write-back).
+static BY_KIND: std::sync::LazyLock<Mutex<std::collections::BTreeMap<&'static str, (usize, usize, f64)>>> = std::sync::LazyLock::new(Default::default);
+
+/// Each kind of job written so far in this process: count, bytes and the writer's CPU, costliest first.
+pub fn written_by_kind() -> Vec<(&'static str, usize, usize, f64)> {
+    let mut v: Vec<_> = BY_KIND.lock().expect("the writer's account").iter().map(|(k, (n, b, c))| (*k, *n, *b, *c)).collect();
+    v.sort_by(|a, b| b.3.total_cmp(&a.3));
+    v
+}
+
 /// The writer's account since it started: jobs, bytes and its thread's CPU (user + sys).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Written {
@@ -240,7 +250,16 @@ impl ContentStore {
             }
             return;
         };
-        let mut job: Job = Box::new(move |store| retried(store, what, &mut job));
+        let mut job: Job = Box::new(move |store| {
+            let t0 = thread_cpu();
+            let out = retried(store, what, &mut job);
+            let mut by = BY_KIND.lock().expect("the writer's account");
+            let e = by.entry(what).or_default();
+            e.0 += 1;
+            e.1 += bytes;
+            e.2 += thread_cpu() - t0;
+            out
+        });
         {
             let mut s = w.shared.state.lock().expect("the writer's state");
             // Back-pressure: past the cap, wait for the writer (never for an empty queue).

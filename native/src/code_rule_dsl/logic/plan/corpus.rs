@@ -6250,6 +6250,13 @@ fn run_observed(
         drop(waited);
         let w = store.written_so_far();
         crate::code_rule_dsl::logic::profile::decision("write-back (decision 0102)", || format!("{} writes queued behind the run in {} transactions, {:.1} MB, {:.3} s of the writer's CPU", w.jobs, w.batches, w.bytes as f64 / 1048576.0, w.cpu));
+        // By kind, over the process so far.
+        let kinds = crate::content_store::write_back::written_by_kind();
+        let text = || kinds.iter().map(|(k, n, b, c)| format!("{k}: {n} jobs, {:.1} MB, {c:.3} s", *b as f64 / 1048576.0)).collect::<Vec<_>>().join("; ");
+        crate::code_rule_dsl::logic::profile::decision("write-back by kind, this process so far (decision 0102)", text);
+        if std::env::var_os("RERAIL_WRITES").is_some() {
+            eprintln!("RERAIL_WRITES {}", text());
+        }
         outcome.map_err(|e| Error::Plan(e.to_string()))?;
     }
     crate::code_rule_dsl::logic::profile::decision("chunks", || format!("{chunks} chunks of about {chunk_nodes} nodes; the next chunk is parsed and batched on a worker while this one runs"));
