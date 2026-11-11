@@ -1,7 +1,7 @@
 //! The engine's text tools without Node (list step 18; P `spec-tooling.md` §2.2.1–2.2.2): the
 //! `rerail-engine` binary (`src/bin/rerail-engine.rs`) and the napi wrappers both call these.
 
-pub use super::logic::profile::watch;
+pub use super::logic::profile::watch::watch;
 pub use super::sql_executor::CodeRuleSqlExecutor;
 pub use super::logic::settings::{program_text, program_texts, settings, with_settings};
 pub(crate) use super::logic::settings::process_counters;
@@ -25,7 +25,7 @@ pub fn sql(store: &std::path::Path, request: &str) -> Result<String, String> {
     drop(span);
     if profiling {
         if let Some(directory) = super::logic::profile::directory() {
-            super::logic::profile::write(&directory,"SQL extension request").map_err(|e|e.to_string())?;
+            super::logic::profile::report::write(&directory,"SQL extension request").map_err(|e|e.to_string())?;
         }
     }
     result

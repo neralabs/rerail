@@ -38,11 +38,9 @@ mod analysis_report;
 mod kinds;
 mod memory;
 mod roofline;
-mod watch;
+pub(in crate::code_rule_dsl) mod watch;
 pub(in crate::code_rule_dsl) use roofline::Unit;
-pub use watch::watch;
 pub(in crate::code_rule_dsl) mod report;
-pub(in crate::code_rule_dsl) use report::{placed, write};
 
 static ON: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(std::env::var_os("RERAIL_PROFILE").is_some()));
 
@@ -81,7 +79,7 @@ fn cpu() -> f64 {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let (u, s) = super::plan::corpus::thread_usage();
+        let (u, s) = crate::code_rule_dsl::prof::thread_usage();
         u + s
     }
 }
@@ -1323,7 +1321,7 @@ mod tests {
         }
         sql_in_wave("run", "SELECT 1 FROM xafter", 1_000);
         let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("explain");
-        write(&dir, "header\n").unwrap();
+        report::write(&dir, "header\n").unwrap();
         let report = std::fs::read_to_string(dir.join("profile.txt")).unwrap();
         set(false);
         assert!(report.contains("Stratum xstratum  [engine: native set engine]  (loops=2"), "{report}");
