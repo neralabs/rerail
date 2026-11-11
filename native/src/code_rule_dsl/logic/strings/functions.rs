@@ -160,6 +160,8 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("sql_replace", &[Text, Text, Text], Text),
     ("sql_like", &[Text, Text], Number),
     ("sql_cast_int", &[Text], Number),
+    // `char(n)`: the character of code point n (the data-layer keys' `char(0)` separator).
+    ("sql_char", &[Number], Text),
     // The data-layer programs' regex functions, as W's SQL has them (`residency::admission::relational`): Rust's
     // regex; `rx_extract`'s group, NULL without a match; `rx_replace` every match.
     ("rx_extract", &[Text, Text, Number], Text),
@@ -336,6 +338,7 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "sql_replace" => Some(if t(1).is_empty() { t(0).to_owned() } else { t(0).replace(t(1), t(2)) }),
         "sql_like" => return Value::Integer(i64::from(sql_like(t(1), t(0)))),
         "sql_cast_int" => return Value::Integer(sql_cast_int(t(0))),
+        "sql_char" => Some(u32::try_from(numbers[0]).ok().and_then(char::from_u32).unwrap_or('\u{FFFD}').to_string()),
         "rx_extract" => {
             let group = usize::try_from(numbers[0]).ok();
             return with_regex(t(1), |re| group.and_then(|g| re.captures(t(0))?.get(g).map(|m| Value::Text(m.as_str().to_owned())))).flatten().unwrap_or(Value::Null);

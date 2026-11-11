@@ -953,7 +953,29 @@ fn long_text_twins_where_no_body_fixes_the_kind() {
     ] {
         let mut program = crate::code_rule_dsl::logic::rr::parse(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
         assert_eq!(long_text_twins(&mut program, &[]), twins, "{body}");
-        assert!(text_kind_demand(&program, &[]).1.is_empty(), "{body}: every text is read");
+        assert!(text_kind_demand(&program, &[]).any.is_empty(), "{body}: every text is read");
         assert_eq!(long_text_twins(&mut program, &[]), 0, "{body}: twinned once");
+    }
+}
+
+/// The nodes given `text` are the ones the rules read (decision 0110): a fixed kind, a node's field, or a matcher
+/// capture's kind or field; a node nothing narrows widens it to every node. An `inside`'s `field` is the inner
+/// node's place, not the capture's.
+#[test]
+fn text_only_for_the_nodes_read() {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
+    let fun = |rule: &str| format!(r#"{{"language": "python", "syntax": "valid", "rule": {rule}}}"#);
+    let some = |kinds: &[&str], fields: &[&str]| Some(TextNodes { kinds: kinds.iter().map(|k| k.to_string()).collect(), fields: fields.iter().map(|k| k.to_string()).collect() });
+    for (body, read) in [
+        ("out(t) :- kind(n, \"call\"), text(n, t).".to_owned(), some(&["call"], &[])),
+        ("out(t) :- field(_, \"name\", n), text(n, t).".to_owned(), some(&[], &["name"])),
+        ("out(t) :- node(_, n, _, _, _), text(n, t).".to_owned(), None),
+        (format!("out(t) :- ast(d, f, {}, NAME: n), text(n, t).", fun(r#"{"all": [{"kind": "function_definition"}, {"has": {"pattern": "$NAME", "field": "name"}}]}"#)), some(&[], &["name"])),
+        (format!("out(t) :- ast(d, f, {}, N: n), text(n, t).", fun(r#"{"all": [{"kind": "call"}, {"has": {"all": [{"kind": "identifier"}, {"pattern": "$N"}]}}]}"#)), some(&["identifier"], &[])),
+        (format!("out(t) :- ast(d, f, {}, N: n), text(n, t).", fun(r#"{"all": [{"kind": "call"}, {"inside": {"pattern": "$N", "field": "body"}}]}"#)), None),
+    ] {
+        let mut program = crate::code_rule_dsl::logic::rr::parse(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
+        let matchers = crate::code_rule_dsl::logic::plan::corpus::matchers::lower(&mut program);
+        assert_eq!(text_kind_demand(&program, &matchers).read, read, "{body}");
     }
 }

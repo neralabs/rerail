@@ -1698,6 +1698,8 @@ pub(super) struct TapeDoc {
     /// (`residency::slabs::admit_docs`, decision 0032): what the device reads in place.
     image: Arc<TapeImage>,
     digest: Arc<std::sync::OnceLock<[u8; 32]>>,
+    /// The document's path, as a run's matchers read it (`with_path`: what a `filePath` test inside a matcher tests).
+    path: Option<Arc<str>>,
 }
 
 #[derive(Clone)]
@@ -1944,6 +1946,7 @@ impl TapeDoc {
             host: None,
             image: Arc::new(image.clone()),
             digest: Arc::default(),
+            path: None,
         })
     }
 
@@ -2245,6 +2248,16 @@ impl TapeDoc {
             labels,
             ..self.clone()
         }
+    }
+
+    /// This tape read at `path`: what a `filePath` test inside a matcher tests (`matcher::Fact::nth_bits`).
+    pub(super) fn with_path(&self, path: &str) -> Self {
+        Self { path: Some(Arc::from(path)), ..self.clone() }
+    }
+
+    /// The path the run reads this tape at (`with_path`), if one was given.
+    pub(super) fn path(&self) -> Option<&str> {
+        self.path.as_deref()
     }
 
     /// This tape with its text tests' rows from the term index (`prefilter::terms`).
