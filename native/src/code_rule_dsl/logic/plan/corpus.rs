@@ -287,7 +287,9 @@ pub(crate) fn unchanged(programs: &[&str], root: &Path, typing: &Typing, options
 /// consulted did: the same documents, by path, and every request's answer as it was (`World::still`). `None` when
 /// anything else changed, or the run cannot be compared (its documents named, typing, phases read).
 pub(crate) fn changes(programs: &[&str], root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)]) -> Result<Option<Vec<String>>> {
+    let trace = |why: String| if std::env::var_os("RERAIL_REUSE_TRACE").is_some() { eprintln!("rerail: changes: {why}"); };
     if options.get("inputFiles").is_some() || consulted.is_empty() {
+        trace(format!("not comparable: input files {}, {} consulted", options.get("inputFiles").is_some(), consulted.len()));
         return Ok(None);
     }
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
@@ -296,6 +298,7 @@ pub(crate) fn changes(programs: &[&str], root: &Path, typing: &Typing, options: 
     let programs: Vec<&str> = with_settings.iter().map(String::as_str).collect();
     let prog = combine(&programs, "")?;
     if prog.decls.contains_key("declared_ret") || !phases::wanted(&prog, None)?.is_empty() {
+        trace(format!("not comparable: declared_ret {}, phases {:?}", prog.decls.contains_key("declared_ret"), phases::wanted(&prog, None)?.iter().map(|p| format!("{p:?}").chars().take(60).collect::<String>()).collect::<Vec<_>>()));
         return Ok(None);
     }
     let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned());
@@ -304,13 +307,20 @@ pub(crate) fn changes(programs: &[&str], root: &Path, typing: &Typing, options: 
     let files = found.of(label);
     let docs: Vec<&(String, String, String)> = consulted.iter().filter(|c| c.0 == "doc").collect();
     if files.len() != docs.len() || files.iter().zip(&docs).any(|(f, d)| *f != d.1) {
+        trace(format!("the documents differ: {} files, {} kept", files.len(), docs.len()));
         return Ok(None);
     }
     // A document listed without a digest was not read (none of the run's rules reads a document): its edit changes nothing.
     let changed: Vec<String> = docs.iter().filter(|d| !d.2.is_empty() && world::bytes_digest(&root.join(&d.1)) != d.2).map(|d| d.1.clone()).collect();
     const READERS: [&str; 6] = ["input", "input_dir", "artifact", "base", "git_rev", "git_index"];
     let (read, requests): (Vec<_>, Vec<_>) = consulted.iter().filter(|c| c.0 != "doc").cloned().partition(|c| READERS.contains(&c.0.as_str()));
-    Ok((inputs::still(&prog, root, &read) && world::World::new(root, &prog).still(&requests)).then_some(changed))
+    let (inputs_still, world_still) = (inputs::still(&prog, root, &read), world::World::new(root, &prog).still(&requests));
+    if !(inputs_still && world_still) {
+        trace(format!("inputs as they were {inputs_still} ({} read), requests as they were {world_still} ({} requests)", read.len(), requests.len()));
+    } else if !changed.is_empty() {
+        trace(format!("{} documents changed: {:?}", changed.len(), changed.iter().take(3).collect::<Vec<_>>()));
+    }
+    Ok((inputs_still && world_still).then_some(changed))
 }
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -1685,10 +1695,17 @@ pub(crate) fn run_with_options(
     // Phase 0's observations, written once the run has read everything (they may lag the run, never lead it).
     let did = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "phase 0's observations written".into());
-        observe(|o| {
+        let did = observe(|o| {
             o.flush();
             o.counts.since(&before)
-        })
+        });
+        // The outermost run's last writes, its whole-run record (`reuse::record`) and this flush, are queued after
+        // `run_observed` waited for the observer: wait for them too, or the process ends with them queued, and the
+        // next run finds no record (every warm run evaluated again).
+        if !phase0::active() && RUNS_UNDER_WAY.with(std::cell::Cell::get) == 0 {
+            crate::content_store::observe::written();
+        }
+        did
     };
     // `RERAIL_OBSERVED`: what the run's observer did, on stderr (the profile is written before this).
     if std::env::var_os("RERAIL_OBSERVED").is_some() {
