@@ -77,7 +77,14 @@ cut_hidden(d) :- path_part(d, x), (x = ".git" ; x = ".venv" ; x = "venv" ; x = "
 .decl cut_trigger(d: number)
 cut_trigger(d) :- source(d, sp), text(sp, t), cut_transaction(name), contains(name, t).
 .decl cut_document(d: number)
-cut_document(d) :- doc(d, _, _), file_name(d, name), suffix(".py", name), !cut_test(d), cut_trigger(d),
+.decl cut_api_path(d: number, path: symbol)
+cut_api_path(d,p) :- doc(d,_,_),option("apiSourcePath",p).
+cut_api_path(d,p) :- doc(d,p,_),!option("apiSourcePath",_).
+.decl cut_api_test(d: number)
+cut_api_test(d) :- cut_api_path(d,p),match("(?s)(?:.*/)?(?:tests|test)(?:/.*)?",p).
+// Path.suffix excludes the bare filename '.py'. Explicit files can be outside
+// production roots and inside directories that recursive discovery would skip.
+cut_document(d) :- cut_api_path(d,p),match("(?s)(?:.*/)?[^/]+[.]py",p),file_name(d,name),suffix(".py",name),!cut_api_test(d),cut_trigger(d),
     !syntax_error(d, _, _), option("entryPoint", "analyze_file").
 cut_document(d) :- doc(d, p, _), file_name(d, name), suffix(".py", name), !prefix("test_", name),
     !cut_test(d), !cut_hidden(d), cut_trigger(d), !syntax_error(d, _, _), !option("entryPoint", _),

@@ -1742,10 +1742,17 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/conn-or-txn-union.rr",
-      "sha256": "c482a815008de4cbdddb5d89fcf65b232d3ad128efdc38eb899a49937d34d242",
+      "sha256": "9a59a992f6e1945d4c5b6ed509945775b2d4a9fbab679266dc0f00f3a7e17e43",
       "origin": "authored",
       "upstreamPath": "scripts/lint_conn_or_txn_union.py",
-      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "repairs": [
+        {
+          "before": "c482a815008de4cbdddb5d89fcf65b232d3ad128efdc38eb899a49937d34d242",
+          "after": "84d591bf0715a0739725daafa113dc7a54b384517982f8a674573c30a0177d0a",
+          "reason": "Exact explicit-file scope, including callers outside production roots and the bare .py filename"
+        }
+      ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/async-patterns.rr",
@@ -3631,7 +3638,27 @@
       "legacySha256": "8d783578a716e46d038ed1f28d288355f48f5f40338123e13a38a4f6f0901daa",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/conn-or-txn-union.rr",
-      "ruleSha256": "c482a815008de4cbdddb5d89fcf65b232d3ad128efdc38eb899a49937d34d242"
+      "ruleSha256": "9a59a992f6e1945d4c5b6ed509945775b2d4a9fbab679266dc0f00f3a7e17e43",
+      "migrationProgress": {
+        "status": "scanner-contract-passed",
+        "originalCasesPerAPI": 5,
+        "originalPositiveObservationsPerAPI": 2,
+        "scannerCasesPerAPI": 64,
+        "verifiedNativeExecutions": 138,
+        "checkpoints": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-conn-union-scanner-finalfcce.json.gz",
+            "sha256": "030190a308aef651306b2a5f10c49254f66d9e802b3f5f67e2a5228b300e0ece"
+          }
+        ],
+        "remaining": [
+          "Native collector helpers and registration",
+          "Supplied-fact reporting and signatures",
+          "Production discovery and persistent updates",
+          "CLI and signing administration",
+          "Behavior-removal controls and full admission"
+        ]
+      }
     },
     {
       "check": "async_executor",

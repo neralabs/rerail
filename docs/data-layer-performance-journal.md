@@ -11907,3 +11907,27 @@ The manifest now records fourteen full admissions, eighty-five drafts, and one a
 Earlier admissions retain their original engine identities. The entire migration remains incomplete.
 
 The complete tooling suite passes all 465 tests. The migration inventory audit also passes.
+
+
+### 2026-11-11 — Connection/transaction scanner scope repair
+
+Both APIs pass all five unchanged original tests, including two positive observations.
+A fresh 64-case scanner corpus covers every connection and transaction type, annotation forms, argument precedence, nested definitions, and caller paths.
+The first run exposed nine mismatches. Workspace scope dropped positives outside production roots and in directories excluded from recursive discovery.
+Both APIs also incorrectly analyzed the bare filename `.py`, whose Python suffix is empty.
+The adapter now supplies a stable parser buffer and retains the caller path as a native input.
+The rule applies explicit-file suffix and test-directory checks to that caller path.
+No source callbacks or Python execution run inside the rule.
+
+The first repair used search-style patterns, but `.rr` anchors `match` at both ends.
+It failed the original positive tests. Correct full-path patterns pass the focused positive and exclusion tests.
+The final run passes all 64 scanner cases and all five original tests through each API: 138 native executions.
+The offline generator produces exactly the checked-in rule bytes.
+Ten checkpoint tests retain the red failures and reject omitted positives, omitted observations, changed results, mixed engines, and premature admission.
+
+The red receipt is `rr-conn-union-scanner-red-finalfcce.json.gz`.
+The scanner progress receipt is `rr-conn-union-scanner-finalfcce.json.gz`.
+This rule remains a draft. Collector helpers, supplied facts, signatures, production, CLI, updates, and controls remain open.
+Global admission stays at fourteen rules. No full-repository cold run or additional Linear ticket was created.
+
+The complete tooling suite now passes 475 tests. The migration inventory audit passes. Final shape has no newer local commits.
