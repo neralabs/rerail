@@ -466,23 +466,32 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
         cross_file_aggregate();
     }
 
-    /// Decision 0090 §4: every maintained stratum whose inputs changed derived again instead (no θ, no floor). Its
-    /// relations and their deltas are what the strata above read, maintained or not, so the findings stay a full
-    /// run's: over recursion, counting's supports and aggregates.
+    /// Decision 0090 §4: every maintained stratum whose inputs changed derived again instead (no θ, no floor, no
+    /// pricing). Its relations and their deltas are what the strata above read, maintained or not, so the findings
+    /// stay a full run's: over recursion, counting's supports and aggregates.
     #[test]
     fn a_session_derives_again_the_strata_its_deltas_outgrow() {
+        derive_again_with(&[("RERAIL_AGAIN_THETA", "0"), ("RERAIL_AGAIN_MIN", "0"), ("RERAIL_AGAIN_PRICED", "off")]);
+    }
+
+    /// §4 with its pricing: past θ (here every stratum whose inputs changed), each stratum takes the form priced
+    /// cheaper, so some are maintained and some derived again in one run; the findings stay a full run's.
+    #[test]
+    fn a_session_derives_again_only_the_strata_priced_cheaper_so() {
+        derive_again_with(&[("RERAIL_AGAIN_THETA", "0"), ("RERAIL_AGAIN_MIN", "0")]);
+    }
+
+    fn derive_again_with(vars: &[(&str, &str)]) {
         let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         unsafe {
-            std::env::set_var("RERAIL_AGAIN_THETA", "0");
-            std::env::set_var("RERAIL_AGAIN_MIN", "0");
+            vars.iter().for_each(|(k, v)| std::env::set_var(k, v));
         }
         let run = std::panic::catch_unwind(|| {
             recursive_cross_file_stratum();
             cross_file_aggregate();
         });
         unsafe {
-            std::env::remove_var("RERAIL_AGAIN_THETA");
-            std::env::remove_var("RERAIL_AGAIN_MIN");
+            vars.iter().for_each(|(k, _)| std::env::remove_var(k));
         }
         if let Err(e) = run {
             std::panic::resume_unwind(e);
