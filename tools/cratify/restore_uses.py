@@ -5,10 +5,11 @@ files = subprocess.run(['grep', '-rl', 'cratify: a re-export of', R + 'native/sr
 n = 0
 for rf in files:
     rel = rf[len(R):]
-    try:
-        src = open(SRC + rel).read().split('\n')
-    except FileNotFoundError:
+    # the file before the generator: the tree's commit
+    r = subprocess.run(['git', '-C', R, 'show', 'HEAD:' + rel], capture_output=True, text=True)
+    if r.returncode:
         continue
+    src = r.stdout.split('\n')
     gen = open(rf).read().split('\n')
     out = []
     sm = difflib.SequenceMatcher(None, gen, src, autojunk=False)
