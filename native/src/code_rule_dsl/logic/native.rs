@@ -135,6 +135,25 @@ impl Lattice for Min {
     fn widen(&self, old: i64, new: i64) -> i64 { if new < old { -TOP } else { new } }
 }
 
+/// `shortlex_min<symbol>`: the shortest symbol, then the least by its UTF-8 bytes (`core.rr`), over a run's atoms.
+/// Shortlex is a well-order, so every chain of ever-smaller values is finite. A value the atoms do not hold (`TOP`)
+/// absorbs. The run declares it over its store's atoms (`declare`), as its symbols are those atoms.
+pub(in crate::code_rule_dsl) struct ShortlexMin(pub(in crate::code_rule_dsl) Arc<crate::content_store::atoms::Atoms>);
+impl Lattice for ShortlexMin {
+    fn lub(&self, a: i64, b: i64) -> i64 {
+        if a == TOP || b == TOP {
+            return TOP;
+        }
+        let key = |v: i64| u32::try_from(v).ok().and_then(|atom| self.0.with_str(atom, |s| (s.chars().count(), s.as_bytes().to_vec())));
+        match (key(a), key(b)) {
+            (Some(x), Some(y)) => if y < x { b } else { a },
+            _ => TOP,
+        }
+    }
+    fn top(&self) -> i64 { TOP }
+    fn finite(&self) -> bool { true }
+}
+
 /// Declared lattices by name: the built-ins, and those the logic declares (`declare`), such as the typing's
 /// approximate type terms (Phase 10).
 static LATTICES: LazyLock<Mutex<Vec<(String, Arc<dyn Lattice>)>>> = LazyLock::new(|| {
