@@ -18,14 +18,14 @@
 //! step's running mask, and its popcount is the rows that step passed on.
 
 use super::{Key, ScalarKind, Step};
-use crate::code_rule_dsl::transducer::packed::block::{BlockOp, BlockProgram, CmpOp, Rhs, RowBatch, RowShape};
+use rerail_compiler::block::{BlockOp, BlockProgram, CmpOp, Rhs, RowBatch, RowShape};
 
 /// The rows gathered before the program runs over them.
 pub(super) const CHUNK: usize = 1024;
 
 /// A value of the chunk's rows: an atom column, or a value computed from one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) enum Word {
+pub enum Word {
     /// The atom's column.
     Col(usize),
     /// The atom's column's document: `@doc(x)`, `x >> 32`.
@@ -35,9 +35,9 @@ pub(in crate::code_rule_dsl) enum Word {
 /// A value the same for every row of a chunk: a slot bound before the atom, or a constant, or
 /// its document.
 #[derive(Clone, Copy)]
-pub(super) struct Param {
-    pub(super) key: Key,
-    pub(super) doc: bool,
+pub struct Param {
+    pub key: Key,
+    pub doc: bool,
 }
 
 /// A slot's value within the fused steps.
@@ -48,26 +48,26 @@ enum Val {
 }
 
 /// An atom fused with the steps after it.
-pub(super) struct Fused {
+pub struct Fused {
     /// The steps fused after the atom.
-    pub(super) steps: usize,
-    pub(super) program: BlockProgram,
+    pub steps: usize,
+    pub program: BlockProgram,
     /// The program's columns, each a `Word` of the atom's rows; the raw ones first are gathered,
     /// the computed ones are evaluated from them.
-    pub(super) columns: Vec<Word>,
-    pub(super) params: Vec<Param>,
+    pub columns: Vec<Word>,
+    pub params: Vec<Param>,
     /// For each fused step, the program output whose rows it passed on (`None`: every row).
-    pub(super) passed: Vec<Option<usize>>,
+    pub passed: Vec<Option<usize>>,
     /// The output whose rows go on.
-    pub(super) last: usize,
+    pub last: usize,
     /// The slots set for each row that goes on, from the program's columns or parameters.
-    pub(super) binds: Vec<(usize, Bind)>,
+    pub binds: Vec<(usize, Bind)>,
     /// The gathered columns: (program column, atom column).
     pub(super) gather: Vec<(usize, usize)>,
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum Bind {
+pub enum Bind {
     Column(usize),
     Param(usize),
 }
@@ -147,7 +147,7 @@ pub(super) fn fuse(steps: &[Step]) -> Vec<Option<Box<Fused>>> {
     out
 }
 
-pub(super) fn fused(binds: &[(usize, usize)], after: &[Step]) -> Option<Fused> {
+pub fn fused(binds: &[(usize, usize)], after: &[Step]) -> Option<Fused> {
     let mut env: Vec<(usize, Val)> = binds.iter().map(|&(c, s)| (s, Val::Row(Word::Col(c)))).collect();
     let mut b = Build::default();
     let mut acc: Option<u16> = None;

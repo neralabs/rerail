@@ -4,14 +4,14 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { readRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
-import { LintConfigFormatError, parseJsonc, readTomlStringLists } from "../../../src/engine/catalog/lint-config-formats.js";
+import { LintConfigFormatError, parseJsonc, readTomlStringLists } from "../../../src/engine/catalog/lint-config/lint-config-formats.js";
 import type { RuleCatalog } from "../../../src/engine/catalog/repository-model.js";
 import {
   proposeLintConfigSettings,
   readLintConfigFiles,
   readRepositoryLintConfig,
   ruffSelects,
-} from "../../../src/engine/catalog/repository-lint-config.js";
+} from "../../../src/engine/catalog/lint-config/repository-lint-config.js";
 
 const TYPE_DEFINITIONS = "typescript-eslint-consistent-type-definitions";
 const TSLINT_COMMENT = "typescript-eslint-ban-tslint-comment";
@@ -291,6 +291,20 @@ describe("proposeLintConfigSettings", () => {
         on: null,
         config: { option: "type" },
         because: ".eslintrc.json: \"@typescript-eslint/consistent-type-definitions\": [\"error\",\"type\"]",
+      }],
+      notes: [],
+    });
+  });
+
+  it("configures typescript-eslint's no-unused-expressions from allowShortCircuit and allowTernary", async () => {
+    const root = await repository({ ".eslintrc.json": JSON.stringify({ rules: { "@typescript-eslint/no-unused-expressions": ["error", { allowShortCircuit: true, allowTernary: true }] } }) });
+    expect(readRepositoryLintConfig(root, ruleCatalog, ["typescript"])).toEqual({
+      settings: [{
+        ruleId: "typescript-eslint-no-unused-expressions",
+        folder: "",
+        on: null,
+        config: { allowShortCircuit: true, allowTernary: true },
+        because: ".eslintrc.json: \"@typescript-eslint/no-unused-expressions\": [\"error\",{\"allowShortCircuit\":true,\"allowTernary\":true}]",
       }],
       notes: [],
     });
@@ -809,6 +823,10 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     // process.cwd() and import.meta's own functions are still read.
     const allowed = "const root = process.cwd();\nconst here = import.meta.resolve(\"./x.js\");\nexport default [{ settings: { root, here }, rules: { \"no-console\": \"off\" } }];";
     expect((await flat(allowed, ["javascript"], "eslint.config.mjs")).settings).toMatchObject([{ ruleId: "eslint-no-console", on: false }]);
+    // Only the call with no argument: handed one, process.cwd is a global's call like any other.
+    const withArgument = await flat("const root = process.cwd(\"x\");\nexport default [{ settings: { root }, rules: { \"no-console\": \"off\" } }];", ["javascript"], "eslint.config.mjs");
+    expectEslintPortsOff(withArgument.settings);
+    expect(withArgument.notes).toEqual(["eslint.config.mjs is not statically readable: it runs code Rerail does not read as data (line 1: process.cwd(\"x\")). Rerail never runs your config. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off."]);
   });
 
   // Self-review round 7: node:vm runs code by design, and a config may require itself; calls into either change the

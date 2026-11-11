@@ -1,29 +1,12 @@
 use super::*;
 use crate::code_rule_dsl::{
     language::GrammarDialect,
-    tape::{Grammar, TAPE_FORMAT_VERSION, TapeImage},
+    tape::TAPE_FORMAT_VERSION,
 };
 use crate::content_store::prefilter::TOO_BIG;
-use ast_grep_core::tree_sitter::StrDoc;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::Path;
 
-pub(in crate::code_rule_dsl) fn document(source: &str, lang: GrammarDialect) -> (TapeDoc, Vec<u8>) {
-    let native = StrDoc::new(source, lang);
-    let grammar = Grammar::new(lang).unwrap();
-    let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary;
-    let bytes = image.to_bytes().unwrap();
-    (TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap(), bytes)
-}
-
-/// A fresh store path: the clock alone is not unique across parallel tests (macOS reads it in
-/// microseconds), so a counter disambiguates.
-pub(in crate::code_rule_dsl) fn temp() -> PathBuf {
-    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    std::env::temp_dir().join(format!("rerail-prefilter-{}-{nonce}-{n}.sqlite", std::process::id()))
-}
+pub(in crate::code_rule_dsl) use crate::code_rule_dsl::fixtures::{document, temp};
 
 /// Stores `source` and its tape, publishes the tape's prefilter rows, and returns both.
 pub(in crate::code_rule_dsl) fn put(store: &ContentStore, source: &str, lang: GrammarDialect) -> (TapeId, TapeDoc) {
@@ -55,6 +38,7 @@ pub(in crate::code_rule_dsl) fn matcher(rule: &serde_json::Value, lang: GrammarD
         conflicts: None,
         captures: Default::default(),
         calls: None,
+        instances: None,
         documents: None,
         side: crate::code_rule_dsl::compile::documents::Side::Host,
     };
@@ -199,7 +183,7 @@ fn no_relation_stores_a_row_per_node() {
         nodes += doc.transducer_len();
     }
     for source in ["import os\n\ndef f(a, b=1):\n    \"\"\"Doc.\"\"\"\n    return os.path.join(a, str(b))\n\nclass C:\n    x = [1, 2, 3]\n"] {
-        nodes += put(&store, &source.repeat(50), GrammarDialect::Python).1.transducer_len();
+        nodes += put(&store, &source.repeat(300), GrammarDialect::Python).1.transducer_len();
     }
     assert!(nodes > 50_000, "{nodes}");
     let tables = store

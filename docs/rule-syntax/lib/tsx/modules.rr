@@ -162,8 +162,12 @@ valid_type(dir) :- package_field(dir, "type", t), pkg_type(t).
 // a top-level const/let/class named require, module, exports, __dirname or __filename; those are left out.
 .decl module_syntax(d: number)
 module_syntax(d) :- program(d, p), child(p, s, _), import_decl(s), !op(s, "type").
-module_syntax(d) :- program(d, p), child(p, s, _), kind(s, "export_statement"), !op(s, "type"), !op(s, "="),
+module_syntax(d) :- program(d, p), child(p, s, _), kind(s, "export_statement"), !op(s, "type"), !export_assign(s),
     count : { field(s, "declaration", x), erased(x) } = 0.
+// export_assign(s): `export = v`. The alternative implies its `=` (the tape keeps none): it is in the source before v.
+.decl export_assign(s: node)
+export_assign(s) :- kind(s, "export_statement"), child(s, v, _), !kind(v, "comment"), structural_before(v, g),
+    match("(?s)export\\s*=\\s*", g).
 .decl erased(x: node)
 erased(x) :- kind(x, k), (k = "interface_declaration" ; k = "type_alias_declaration" ; k = "ambient_declaration").
 

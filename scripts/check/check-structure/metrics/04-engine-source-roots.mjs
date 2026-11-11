@@ -32,6 +32,70 @@ function crateDir(repo, path) {
 const RAW_STRING = /b?r(#*)"/y;
 const CHAR = /'(?:\\(?:u\{[0-9a-fA-F]+\}|x[0-9a-fA-F]{2}|.)|[^\\'\n])'/uy;
 
+function lineCommentEnd(text, i, blank) {
+  const newline = text.indexOf("\n", i);
+  const end = newline < 0 ? text.length : newline;
+  blank(i, end);
+  return end;
+}
+
+/** How a block comment's nesting changes at `at`: `/*` opens one, its closer closes one, anything else leaves it. */
+function nestingChange(text, at) {
+  if (text.startsWith("/*", at)) return 1;
+  return text.startsWith("*/", at) ? -1 : 0;
+}
+
+function blockCommentEnd(text, i, blank) {
+  let depth = 0;
+  let end = i;
+  do {
+    const change = nestingChange(text, end);
+    depth += change;
+    end += change === 0 ? 1 : 2;
+  } while (depth > 0 && end < text.length);
+  blank(i, end);
+  return end;
+}
+
+/** The raw string opening at `i`, unless `i` is in the middle of a word. */
+function rawStringAt(text, i) {
+  RAW_STRING.lastIndex = i;
+  return /\w/.test(text[i - 1] ?? "") ? null : RAW_STRING.exec(text);
+}
+
+function rawStringEnd(text, i, raw, blank) {
+  const close = text.indexOf(`"${raw[1]}`, i + raw[0].length);
+  const end = close < 0 ? text.length : close + 1 + raw[1].length;
+  blank(i + raw[0].length, close < 0 ? end : close);
+  return end;
+}
+
+function stringEnd(text, i, blank) {
+  let end = i + 1;
+  while (end < text.length && text[end] !== '"') end += text[end] === "\\" ? 2 : 1;
+  blank(i + 1, end);
+  return end + 1;
+}
+
+function charAt(text, i) {
+  CHAR.lastIndex = i;
+  return text[i] === "'" ? CHAR.exec(text) : null;
+}
+
+/** Where the comment or literal at `i` ends (blanking its contents), or the next character when there is none. */
+function tokenEnd(text, i, blank) {
+  if (text.startsWith("//", i)) return lineCommentEnd(text, i, blank);
+  if (text.startsWith("/*", i)) return blockCommentEnd(text, i, blank);
+  const raw = rawStringAt(text, i);
+  if (raw) return rawStringEnd(text, i, raw, blank);
+  if (text[i] === '"') return stringEnd(text, i, blank);
+  const char = charAt(text, i);
+  if (!char) return i + 1;
+  const end = i + char[0].length;
+  blank(i + 1, end - 1);
+  return end;
+}
+
 /** `text` with comments and the contents of string and character literals blanked, offsets kept. */
 function code(text) {
   const out = text.split("");
@@ -39,42 +103,7 @@ function code(text) {
     for (let i = from; i < to && i < out.length; i += 1) if (out[i] !== "\n") out[i] = " ";
   };
   let i = 0;
-  while (i < text.length) {
-    RAW_STRING.lastIndex = i;
-    CHAR.lastIndex = i;
-    const raw = /\w/.test(text[i - 1] ?? "") ? null : RAW_STRING.exec(text);
-    const char = text[i] === "'" ? CHAR.exec(text) : null;
-    let end;
-    if (text.startsWith("//", i)) {
-      end = text.indexOf("\n", i);
-      if (end < 0) end = text.length;
-      blank(i, end);
-    } else if (text.startsWith("/*", i)) {
-      let depth = 0;
-      end = i;
-      do {
-        if (text.startsWith("/*", end)) depth += 1;
-        else if (text.startsWith("*/", end)) depth -= 1;
-        end += text.startsWith("/*", end) || text.startsWith("*/", end) ? 2 : 1;
-      } while (depth > 0 && end < text.length);
-      blank(i, end);
-    } else if (raw) {
-      const close = text.indexOf(`"${raw[1]}`, i + raw[0].length);
-      end = close < 0 ? text.length : close + 1 + raw[1].length;
-      blank(i + raw[0].length, close < 0 ? end : close);
-    } else if (text[i] === '"') {
-      end = i + 1;
-      while (end < text.length && text[end] !== '"') end += text[end] === "\\" ? 2 : 1;
-      blank(i + 1, end);
-      end += 1;
-    } else if (char) {
-      end = i + char[0].length;
-      blank(i + 1, end - 1);
-    } else {
-      end = i + 1;
-    }
-    i = end;
-  }
+  while (i < text.length) i = tokenEnd(text, i, blank);
   return out.join("");
 }
 

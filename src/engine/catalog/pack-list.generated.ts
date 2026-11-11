@@ -4,7 +4,6 @@
 export const RULE_PACK_LIST: readonly { readonly id: string; readonly packageName: string }[] = [
   { id: "blade", packageName: "@neralabs/rerail-pack-blade" },
   { id: "complexity", packageName: "@neralabs/rerail-pack-complexity" },
-  { id: "data-layer", packageName: "@neralabs/rerail-pack-data-layer" },
   { id: "javascript", packageName: "@neralabs/rerail-pack-javascript" },
   { id: "next", packageName: "@neralabs/rerail-pack-next" },
   { id: "node", packageName: "@neralabs/rerail-pack-node" },

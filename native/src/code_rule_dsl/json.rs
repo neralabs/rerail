@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
-pub(super) fn meta_name(variable: &MetaVariable) -> String {
+pub fn meta_name(variable: &MetaVariable) -> String {
     match variable {
         MetaVariable::Capture(name, _) | MetaVariable::MultiCapture(name) => name.clone(),
         MetaVariable::Dropped(_) => "_".to_owned(),
@@ -12,7 +12,7 @@ pub(super) fn meta_name(variable: &MetaVariable) -> String {
     }
 }
 
-pub(super) fn canonicalize_value(value: Value) -> Value {
+pub fn canonicalize_value(value: Value) -> Value {
     match value {
         Value::Object(values) => {
             let sorted = values
@@ -26,7 +26,7 @@ pub(super) fn canonicalize_value(value: Value) -> Value {
     }
 }
 
-pub(super) fn reject_unknown(
+pub fn reject_unknown(
     object: &Map<String, Value>,
     allowed: &[&str],
     path: &str,
@@ -37,20 +37,20 @@ pub(super) fn reject_unknown(
     Ok(())
 }
 
-pub(super) fn object<'a>(value: &'a Value, path: &str) -> Result<&'a Map<String, Value>> {
+pub fn object<'a>(value: &'a Value, path: &str) -> Result<&'a Map<String, Value>> {
     value
         .as_object()
         .ok_or_else(|| invalid(format!("{path} must be an object")))
 }
 
-pub(super) fn required_str<'a>(value: &'a Value, key: &str, path: &str) -> Result<&'a str> {
+pub fn required_str<'a>(value: &'a Value, key: &str, path: &str) -> Result<&'a str> {
     value
         .get(key)
         .and_then(Value::as_str)
         .ok_or_else(|| invalid(format!("{path}/{key} must be a string")))
 }
 
-pub(super) fn non_empty_str<'a>(value: Option<&'a Value>, path: &str) -> Result<&'a str> {
+pub fn non_empty_str<'a>(value: Option<&'a Value>, path: &str) -> Result<&'a str> {
     value
         .and_then(Value::as_str)
         .filter(|text| !text.trim().is_empty())
@@ -58,7 +58,7 @@ pub(super) fn non_empty_str<'a>(value: Option<&'a Value>, path: &str) -> Result<
 }
 
 /// A pattern source whose UTF-8 length is within the named `capabilities.limits` entry.
-pub(super) fn bounded_text<'a>(
+pub fn bounded_text<'a>(
     value: Option<&'a Value>,
     path: &str,
     limit_name: &str,
@@ -74,14 +74,14 @@ pub(super) fn bounded_text<'a>(
     Ok(text)
 }
 
-pub(super) fn required_u64(value: &Value, key: &str, path: &str) -> Result<u64> {
+pub fn required_u64(value: &Value, key: &str, path: &str) -> Result<u64> {
     value
         .get(key)
         .and_then(Value::as_u64)
         .ok_or_else(|| invalid(format!("{path}/{key} must be a non-negative integer")))
 }
 
-pub(super) fn hex_digest(bytes: &[u8]) -> String {
+pub fn hex_digest(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut hex = String::with_capacity(64);
     for byte in Sha256::digest(bytes) {
@@ -91,10 +91,10 @@ pub(super) fn hex_digest(bytes: &[u8]) -> String {
     hex
 }
 
-pub(super) fn invalid(message: impl Into<String>) -> Error {
+pub fn invalid(message: impl Into<String>) -> Error {
     Error::new(Status::InvalidArg, message.into())
 }
 
-pub(super) fn json_error(error: serde_json::Error) -> Error {
+pub fn json_error(error: serde_json::Error) -> Error {
     invalid(error.to_string())
 }

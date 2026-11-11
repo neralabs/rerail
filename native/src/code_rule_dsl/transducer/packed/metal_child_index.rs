@@ -12,7 +12,7 @@ type ProgramPaths = Vec<Option<RegisterPaths>>;
 #[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 #[repr(u8)]
-pub(super) enum InitialSelector {
+pub enum InitialSelector {
     Field = 0,
     Kind = 1,
     FirstAny = 2,
@@ -21,7 +21,7 @@ pub(super) enum InitialSelector {
 
 #[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(super) struct InitialChild {
+pub struct InitialChild {
     pub guard_offset: usize,
     pub selector: InitialSelector,
     pub maximum_children: usize,
@@ -59,7 +59,7 @@ impl Cardinality {
     }
 }
 
-pub(super) struct ChildIndex {
+pub struct ChildIndex {
     owner: Arc<PackedBatch>,
     fields: Cardinality,
     kinds: Cardinality,
@@ -143,25 +143,25 @@ impl ChildIndex {
         }
         Ok(index)
     }
-    pub(super) fn validate(&self, owner: &Arc<PackedBatch>) -> Result<(), Error> {
+    pub fn validate(&self, owner: &Arc<PackedBatch>) -> Result<(), Error> {
         if !Arc::ptr_eq(&self.owner, owner) {
             return Err(Error::InvalidAnchor);
         }
         Ok(())
     }
     #[cfg(target_os = "macos")]
-    pub(super) fn field_nodes(&self) -> &[u32] {
+    pub fn field_nodes(&self) -> &[u32] {
         &self.fields.unique
     }
     #[cfg(target_os = "macos")]
-    pub(super) fn kind_nodes(&self) -> &[u32] {
+    pub fn kind_nodes(&self) -> &[u32] {
         &self.kinds.unique
     }
 
     /// A failed unique child guard can reject a seed only when every losing
     /// child reaches that guard before the original task can exhaust its work.
     #[cfg(target_os = "macos")]
-    pub(super) fn seed_selector(
+    pub fn seed_selector(
         &self,
         words: &[u32],
         pc: usize,
@@ -230,7 +230,7 @@ impl ChildIndex {
     }
 
     #[cfg(target_os = "macos")]
-    pub(super) fn initial_child(
+    pub fn initial_child(
         &self,
         words: &[u32],
         path: &[usize],
@@ -341,13 +341,13 @@ impl ChildIndex {
                 .collect()
         })
     }
-    pub(super) fn eligible(&self, program: usize) -> bool {
+    pub fn eligible(&self, program: usize) -> bool {
         self.program_paths()
             .get(program)
             .is_some_and(Option::is_some)
     }
     #[cfg(target_os = "macos")]
-    pub(super) fn paths(&self, program: &MetalProgram) -> Result<Option<&Vec<Vec<usize>>>, Error> {
+    pub fn paths(&self, program: &MetalProgram) -> Result<Option<&Vec<Vec<usize>>>, Error> {
         let index = self
             .owner
             .programs
@@ -362,7 +362,7 @@ impl ChildIndex {
 
 /// These guards constrain the selected child without changing its identity.
 /// Branches, predicates, edits, and navigation stop the common guard prefix.
-pub(super) fn selectors(words: &[u32], pc: usize) -> (Option<usize>, Option<usize>) {
+pub fn selectors(words: &[u32], pc: usize) -> (Option<usize>, Option<usize>) {
     let mut field = None;
     let mut kind = None;
     for (at, &word) in words.iter().enumerate().skip(pc + 1).take(64) {
@@ -381,7 +381,7 @@ pub(super) fn selectors(words: &[u32], pc: usize) -> (Option<usize>, Option<usiz
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn lookup_source(words: &[u32], pc: usize, mode: u8) -> Result<String, Error> {
+pub fn lookup_source(words: &[u32], pc: usize, mode: u8) -> Result<String, Error> {
     let (field, kind) = selectors(words, pc);
     if field.is_none() && kind.is_none() {
         return Err(Error::BackendFailure);

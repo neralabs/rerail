@@ -125,7 +125,7 @@ impl FileMemo {
                 self.excluding.insert(key, entry);
             }
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         REMEMBERED_PEAK.set(
             REMEMBERED_PEAK
                 .get()
@@ -138,19 +138,19 @@ thread_local! {
     static MEMO: RefCell<FileMemo> = RefCell::new(FileMemo::default());
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     static REMEMBERED_PEAK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The most verdicts a file's memo held at once on this thread (`reset_remembered_peak` restarts
 /// it).
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn remembered_peak() -> usize {
     REMEMBERED_PEAK.get()
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn reset_remembered_peak() {
     REMEMBERED_PEAK.set(0);
 }
@@ -167,7 +167,7 @@ impl Drop for Scoped {
 }
 
 /// Runs `run` remembering utility verdicts at `root`'s nodes, forgotten when it returns.
-pub(in crate::code_rule_dsl) fn with_file<T>(root: &Root<TapeDoc>, run: impl FnOnce() -> T) -> T {
+pub fn with_file<T>(root: &Root<TapeDoc>, run: impl FnOnce() -> T) -> T {
     let file = FileMemo {
         root: std::ptr::from_ref(root) as usize,
         ..FileMemo::default()
@@ -802,7 +802,7 @@ fn bind<'t>(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::{WalkFilter, bounded, remembered_peak, reset_remembered_peak, with_file};
     use crate::code_rule_dsl::budget::MatchBudget;
     use crate::code_rule_dsl::language::GrammarDialect;

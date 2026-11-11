@@ -1,0 +1,1 @@
+`npx @neralabs/rerail setup` no longer compiles `better-sqlite3` from source, so it works on a Linux image with no compiler, such as `node:24-slim`, where it failed with `not found: make`. It uses the prebuilt binary `better-sqlite3` ships, as `rerail update` already did.

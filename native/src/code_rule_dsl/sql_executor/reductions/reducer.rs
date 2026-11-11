@@ -1,9 +1,9 @@
 //! Group counts, exact sums, and indexed value multiplicities.
 use super::*;
-mod dependencies;
-mod lookup;
-pub(in crate::code_rule_dsl::sql_executor) mod transition;
-pub(super) mod combined;
+pub mod dependencies;
+pub mod lookup;
+pub mod transition;
+pub mod combined;
 #[derive(Clone, Copy)]
 enum Kind {
     Count,

@@ -98,10 +98,10 @@ impl CodeRuleSqlExecutor {
                 let heads = program
                     .rules
                     .iter()
-                    .map(|r| r.head.rel.clone())
+                    .map(|r| r.head.rel.to_string())
                     .collect::<BTreeSet<_>>();
                 for rel in heads {
-                    if program.facts.get(&rel).is_some_and(|r| !r.is_empty()) {
+                    if program.facts.get(rel.as_str()).is_some_and(|r| !r.is_empty()) {
                         continue;
                     }
                     let rules = program
@@ -123,14 +123,14 @@ impl CodeRuleSqlExecutor {
                                     .find_map(|a| {
                                         a.args.iter().enumerate().find_map(|(i, t)| {
                                             matches!(t,front::Term::Var(v) if v==head)
-                                                .then(|| domains.get(&(a.rel.clone(), i)).copied())
+                                                .then(|| domains.get(&(a.rel.to_string(), i)).copied())
                                                 .flatten()
                                         })
                                     })
                             })
                             .collect::<Option<Vec<_>>>();
                         if let Some(copied) = copied.filter(|v| v.iter().all(|d| *d == v[0])) {
-                            domains.insert((rel.clone(), column), copied[0]);
+                            domains.insert((rel.to_string(), column), copied[0]);
                         }
                     }
                 }
@@ -253,7 +253,7 @@ impl CodeRuleSqlExecutor {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn document_and_symbol_cells_compare_across_different_store_local_ids() {

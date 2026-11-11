@@ -1,10 +1,10 @@
 import type { Page } from "@playwright/test";
-import { expect, test, type ScenarioName } from "./dashboard-test.js";
+import { expect, test, type RerailScenarios, type ScenarioName } from "./dashboard-test.js";
 
 /** The packs the daemon recommends for the scenario's primary checkout that are not added there. */
-async function unaddedRecommendations(page: Page, url: string, packIds: readonly string[]): Promise<string[]> {
+async function unaddedRecommendations(rerail: RerailScenarios, url: string, packIds: readonly string[]): Promise<string[]> {
   const scope = new URL(url).searchParams;
-  const response = await page.request.get(new URL(`/api/rule-packs/recommendations?${scope}`, url).href);
+  const response = await rerail.get(new URL(`/api/rule-packs/recommendations?${scope}`, url).href);
   expect(response.ok()).toBe(true);
   const { recommendations } = await response.json() as { recommendations: { packId: string }[] };
   return [...new Set(recommendations.map(r => r.packId).filter(id => !packIds.includes(id)))].sort();
@@ -14,7 +14,7 @@ for (const scenario of ["mature", "packs-no-session", "no-packs"] satisfies Scen
   test(`${scenario}: Create a rule shows the command, and suggests only recommended packs not added`, async ({ page, rerail }) => {
     const { manifest } = await rerail.scenario(scenario);
     const url = await rerail.dashboard(scenario, { hash: "create" });
-    const expected = await unaddedRecommendations(page, url, manifest.primary.packIds);
+    const expected = await unaddedRecommendations(rerail, url, manifest.primary.packIds);
     await page.goto(url);
 
     const content = page.locator("#content");

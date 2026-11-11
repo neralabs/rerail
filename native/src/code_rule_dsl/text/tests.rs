@@ -213,7 +213,7 @@ fn backreferences_run_once_per_string() {
 /// census by form): `--ignored --nocapture` prints the distribution.
 #[test]
 fn serverplan_quality_s_regexes_lower() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/final-shape/data-layer-serverplan-quality.json");
+    let path = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../gate/data-layer/final-shape/data-layer-serverplan-quality.json");
     let document: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let mut patterns = std::collections::BTreeSet::new();
     fn walk(value: &serde_json::Value, out: &mut std::collections::BTreeSet<String>) {
@@ -301,7 +301,7 @@ fn determinizing_a_group_costs_more_than_reading_it() {
         }
     }
     let cpu = || {
-        let (u, s) = crate::code_rule_dsl::logic::plan::corpus::thread_usage();
+        let (u, s) = crate::code_rule_dsl::prof::thread_usage();
         u + s
     };
     let patterns = [

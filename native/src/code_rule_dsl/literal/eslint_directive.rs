@@ -6,7 +6,7 @@
 //! against ESLint 9.39.1 and 10.11.0, whose `-line` and `-next-line` directives in one silence
 //! `no-debugger` and whose `eslint-disable` in one is no directive.
 
-use super::{Grammar, PNode};
+use super::PNode;
 use crate::code_rule_dsl::value::Value;
 use std::ops::Range;
 
@@ -258,7 +258,7 @@ fn js_string(text: &str) -> Value {
 /// ` -- `. `None` for any other comment.
 pub(crate) fn tree(comment: &str) -> Option<PNode> {
     let directive = Directive::parse(comment)?;
-    let grammar = Grammar::EslintDirective;
+    let grammar = GRAMMAR;
     let mut root =
         PNode::new(grammar, "directive", 0, comment.len()).with_value(js_string(&directive.label));
     for item in directive.items(comment) {
@@ -282,7 +282,7 @@ pub(crate) fn tree(comment: &str) -> Option<PNode> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /// A parsed directive: its label, value, description, and items with their settings.
@@ -457,4 +457,64 @@ mod tests {
         assert_eq!(result["failures"][0]["code"], "source-partial", "{result}");
         assert_eq!(texts(&result, broken), Vec::<String>::new());
     }
+}
+
+/// The `eslintDirective` grammar (`literal::LiteralGrammar`).
+pub(crate) struct EslintDirectiveGrammar;
+
+/// Its handle, which the engine registers (`literal::install`).
+pub const GRAMMAR: super::Grammar = super::Grammar::new(&EslintDirectiveGrammar);
+
+impl super::LiteralGrammar for EslintDirectiveGrammar {
+    fn name(&self) -> &'static str {
+        "eslintDirective"
+    }
+    fn kinds(&self) -> &'static [&'static str] {
+        KINDS
+    }
+    fn host_language(&self) -> crate::code_rule_dsl::language::GrammarDialect {
+        crate::code_rule_dsl::language::GrammarDialect::TypeScript
+    }
+    fn host(&self) -> &'static str {
+        "TypeScript comments"
+    }
+    fn host_kinds(&self) -> &'static [&'static str] {
+        &["comment"]
+    }
+    fn reads_comments(&self) -> bool {
+        true
+    }
+    fn item_resolves(&self) -> bool {
+        true
+    }
+    fn parse(&self, grammar: super::Grammar, text: &str) -> super::PNode {
+        // A comment that is no directive has no tree (`parse_comment`).
+        tree(text).unwrap_or_else(|| super::PNode::new(grammar, "directive", 0, text.len()))
+    }
+}
+
+/// Parses a TypeScript comment ESLint reads as a directive (`eslintDirective`): its text, mapped
+/// to the source by a shift. Spends one step of `spend` per byte and tree node; `None` when the
+/// budget ran out.
+pub(crate) fn parse_comment<D: ast_grep_core::Doc>(
+    node: &ast_grep_core::Node<'_, D>,
+    spend: &mut dyn FnMut(usize) -> bool,
+) -> Option<super::Parsed> {
+    let text = node.text();
+    if !spend(text.len() + 1) {
+        return None;
+    }
+    let Some(root) = tree(&text) else {
+        return Some(super::Parsed::NotString);
+    };
+    if !spend(root.size()) {
+        return None;
+    }
+    Some(super::Parsed::Tree(std::sync::Arc::new(super::SubTree::new(
+        GRAMMAR,
+        text.into_owned(),
+        0,
+        root,
+        super::HostMap::Exact(node.range().start as isize),
+    ))))
 }

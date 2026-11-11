@@ -34,7 +34,7 @@ pub(in crate::code_rule_dsl) const STEPS: u32 = 1 << 16;
 /// over every node per word where that is more. A move's candidates are a file's nodes at most, so
 /// a walk with one move from the root takes about that; one with nested moves may take more and
 /// then fails (06 S7: a descent from a 25 K-node module took more than `STEPS`).
-pub(in crate::code_rule_dsl) fn steps(nodes: usize, words: usize) -> u32 {
+pub fn steps(nodes: usize, words: usize) -> u32 {
     u32::try_from(nodes.saturating_mul(words).saturating_mul(2)).unwrap_or(u32::MAX).max(STEPS)
 }
 
@@ -42,15 +42,15 @@ const NONE: u32 = u32::MAX;
 
 /// A walk outgrew its frames, captures or steps, or read a cursor it never saved.
 #[derive(Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) struct Overflow(pub(in crate::code_rule_dsl) &'static str);
+pub struct Overflow(pub(in crate::code_rule_dsl) &'static str);
 
 #[derive(Clone, Debug)]
-pub(in crate::code_rule_dsl) struct Micro {
+pub struct Micro {
     /// The program's words, each `TEXT`'s operand its slot in `texts`.
-    pub(in crate::code_rule_dsl) words: Vec<u32>,
+    pub words: Vec<u32>,
     /// Each text test's value (an index into the program's values) and the kind its node has, where
     /// the test follows a kind test that no jump skips (its domain).
-    pub(in crate::code_rule_dsl) texts: Vec<(u16, Option<u16>)>,
+    pub texts: Vec<(u16, Option<u16>)>,
     /// Set mode's reach (`set_mode::Reach`): a walk emits each label once and drops a frame that
     /// can emit no label not yet fired; None for an exact program.
     pub(in crate::code_rule_dsl) reach: Option<super::set_mode::Reach>,
@@ -71,11 +71,11 @@ struct State {
 /// captures as (capture label, node), in capture order. Integers only: spans and text are the
 /// tape's, read where a row needs them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) struct RootRecord {
-    pub(in crate::code_rule_dsl) start: u32,
-    pub(in crate::code_rule_dsl) label: u16,
-    pub(in crate::code_rule_dsl) captured: u8,
-    pub(in crate::code_rule_dsl) captures: [(u16, u32); ROOT_CAPTURES],
+pub struct RootRecord {
+    pub start: u32,
+    pub label: u16,
+    pub captured: u8,
+    pub captures: [(u16, u32); ROOT_CAPTURES],
 }
 
 impl RootRecord {
@@ -95,7 +95,7 @@ enum Resume {
 
 /// What a walk marks at each path that emits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) enum Emit {
+pub enum Emit {
     /// The start, once: a roots label (the walk stops at the first).
     Start,
     /// The start, at every path: a count by root.
@@ -117,11 +117,11 @@ impl Emit {
 
 /// A walk's frames, kept between walks so a sweep allocates them once.
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct Frames(Vec<(State, Resume)>);
+pub struct Frames(Vec<(State, Resume)>);
 
 impl Micro {
     /// Why `program` is not a micro walk: its first operation outside the walk's, by name.
-    pub(in crate::code_rule_dsl) fn refusal(program: &Program) -> &'static str {
+    pub fn refusal(program: &Program) -> &'static str {
         if program.tree_sitter_query || !program.directives.is_empty() || !program.output_program.instructions.is_empty() {
             return "query, directives or output";
         }
@@ -155,7 +155,7 @@ impl Micro {
     }
 
     /// `program` as a micro walk, where every operation is one.
-    pub(in crate::code_rule_dsl) fn of(program: &Program) -> Option<Self> {
+    pub fn of(program: &Program) -> Option<Self> {
         if program.tree_sitter_query
             || !program.directives.is_empty()
             || !program.output_program.instructions.is_empty()
@@ -211,12 +211,12 @@ impl Micro {
 
     /// Whether a walk ends at its first emit: set mode with one label (the device's root walks
     /// read this, `metal_label_passes`).
-    pub(in crate::code_rule_dsl) fn key_stop(&self) -> bool {
+    pub fn key_stop(&self) -> bool {
         self.reach.as_ref().is_some_and(|reach| reach.labels().len() == 1)
     }
 
     /// The walk's words as (op, mode, arg), for diagnostics.
-    pub(in crate::code_rule_dsl) fn ops(&self) -> Vec<(u8, u8, u16)> {
+    pub fn ops(&self) -> Vec<(u8, u8, u16)> {
         self.words.iter().map(|&word| split(word)).collect()
     }
 
@@ -224,7 +224,7 @@ impl Micro {
     /// at increasing words: a path goes back only by a jump whose loop holds no pushing word (an
     /// axis step or a fork), so it never returns before a word that pushed. Each pushing word
     /// then holds at most one frame. `None` where a loop pushes.
-    pub(in crate::code_rule_dsl) fn depth(&self) -> Option<usize> {
+    pub fn depth(&self) -> Option<usize> {
         let pushes = |word: u32| matches!(split(word).0, FORK | CHILD | DESCEND | FOLLOWING);
         for (pc, &word) in self.words.iter().enumerate() {
             let (op, _, arg) = split(word);
@@ -238,13 +238,13 @@ impl Micro {
     /// Each text slot's bits on `tape` (bit `n` of slot `s`: node `n` passes text test `s`), by the
     /// program's own value programs; `None` where one fails (its work limit), so the program runs
     /// on the interpreter.
-    pub(in crate::code_rule_dsl) fn texts(&self, program: &Program, tape: &TapeDoc) -> Option<Vec<Vec<u64>>> {
+    pub fn texts(&self, program: &Program, tape: &TapeDoc) -> Option<Vec<Vec<u64>>> {
         (0..self.texts.len()).map(|slot| self.slot(program, slot, tape)).collect()
     }
 
     /// Slot `slot`'s bits on `tape` (`texts`): the term index's row where the tape has it
     /// (`R[tid]`, `prefilter::terms`), else each node's text tested.
-    pub(in crate::code_rule_dsl) fn slot(&self, program: &Program, slot: usize, tape: &TapeDoc) -> Option<Vec<u64>> {
+    pub fn slot(&self, program: &Program, slot: usize, tape: &TapeDoc) -> Option<Vec<u64>> {
         if let Some(row) = tape.transducer_text_row(&self.slot_key(program, slot)) {
             crate::code_rule_dsl::prof::count("texts.indexed", 1);
             // `RERAIL_TEXTS_CHECK`: the index's row against the text's.
@@ -275,7 +275,7 @@ impl Micro {
 
     /// Slot `slot`'s test in the text layer (decision 0042); `None` for a Lua pattern, which keeps
     /// its value program.
-    pub(in crate::code_rule_dsl) fn lowered(&self, program: &Program, slot: usize) -> Option<std::sync::Arc<crate::code_rule_dsl::text::Lowered>> {
+    pub fn lowered(&self, program: &Program, slot: usize) -> Option<std::sync::Arc<crate::code_rule_dsl::text::Lowered>> {
         use crate::code_rule_dsl::text::{Domain, Source, Spelling, lower};
         let (value, _) = self.texts[slot];
         let string = |index: u16| String::from_utf8(program.strings.get(usize::from(index))?.clone()).ok();
@@ -317,7 +317,7 @@ impl Micro {
     /// bits cover every node, and a walk reads them only after the slot's kind test, so one row
     /// serves every walk with the test (a fused walk's slots, whose kind is unknown, included).
     /// Another test's key is its value program, the strings it reads and its kind.
-    pub(in crate::code_rule_dsl) fn slot_key(&self, program: &Program, slot: usize) -> String {
+    pub fn slot_key(&self, program: &Program, slot: usize) -> String {
         let (value, kind) = self.texts[slot];
         if let Some(lowered) = self.lowered(program, slot) {
             return lowered.key.0.clone();
@@ -334,7 +334,7 @@ impl Micro {
     /// The walk from `start` on `tape`, whose labels (classes from `DERIVED_CLASS_BASE`) are
     /// `labels` and whose text slots are `texts` (`Micro::texts`): `mark` takes what `emit` says of
     /// each output (a count tallies one call a mark).
-    pub(in crate::code_rule_dsl) fn run(
+    pub fn run(
         &self,
         tape: &TapeDoc,
         labels: &[Vec<u64>],

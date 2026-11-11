@@ -1,12 +1,12 @@
 //! Output ownership and transitive invalidation. Persistent user tables are never owned here.
 use super::*;
-mod statistics;
-mod planning;
-pub(super) use planning::normalize_views;
-pub(super) use statistics::Statistics;
+pub mod statistics;
+pub mod planning;
+pub use planning::normalize_views;
+pub use statistics::Statistics;
 
 #[derive(Clone)]
-pub(super) struct Execution {
+pub struct Execution {
     pub inputs: BTreeSet<String>,
     pub objects: Vec<(String, bool)>,
     pub emitted: Arc<plan::emit::Emitted>,

@@ -1,4 +1,4 @@
-// Writes the TypeScript pack's @vitest/eslint-plugin 1.6.27 candidates: packs/typescript/candidates/rules/vitest-*.json
+// Writes the TypeScript pack's @vitest/eslint-plugin 1.6.27 ports: packs/typescript/rules/vitest-*.json
 // (listed in scripts/generate/README.md; edit this script, not the JSON). It spells once the checks the three ports
 // share (which calls are Vitest's, upstream's valid chains, where findings sit) and writes each document the utilities
 // it needs. It reads no tools; run offline by a maintainer, never in CI; the output is deterministic.
@@ -20,16 +20,21 @@
 // Each violation names its rule under suppress.eslint and, as oxlint 1.88.0's `vitest` plugin implements all three
 // (OXLINT_VITEST_RULES), under suppress.oxlint. suppress.biome belongs to scripts/generate/packs/biome-suppression.mjs:
 // this script carries each violation's suppress.biome over from the committed document, and biome-suppression.mjs, run
-// after it, updates it. The documents are candidates, so each keeps its committed revision, as biome-suppression.mjs
-// leaves candidates' revisions alone; a document with no committed version starts at revision 1.
+// after it, updates it. The documents ship, so one whose content changes gets the next revision, as
+// biome-suppression.mjs bumps a shipped document's; a document with no committed version starts at revision 1.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const RULES = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "packs", "typescript", "candidates", "rules");
+const RULES = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "packs", "typescript", "rules");
 
+/**
+ * TypeScript test files, as the pack's TypeScript rules cover; and every `.js`, `.mjs` and `.cjs` file, the files the
+ * plugin's approved `recommended` configuration lints (it sets no `files`, so ESLint lints its defaults; gates.yaml's
+ * `upstream.lints`). A file with no Vitest call is never reported.
+ */
 const SCOPE = {
-  include: ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx", "**/*.test.mts", "**/*.spec.mts", "**/__tests__/**/*.ts", "**/__tests__/**/*.tsx"],
+  include: ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx", "**/*.test.mts", "**/*.spec.mts", "**/__tests__/**/*.ts", "**/__tests__/**/*.tsx", "**/*.js", "**/*.mjs", "**/*.cjs"],
   exclude: [
     "**/node_modules/**",
     "**/dist/**",
@@ -365,16 +370,25 @@ function chain(self, head) {
   };
 }
 
-/** The first property (not a rest element) of the first object-pattern parameter of a function upstream reads. */
+/** A function upstream reads, whose parameters it looks at. */
+const IN_FUNCTION_PARAMETERS = { inside: { kind: "formal_parameters", inside: { any: [...FUNCTION_KINDS, { kind: "method_definition" }] } } };
+/** In JavaScript's grammar, an object-pattern parameter: the pattern itself, or one with a default (`{ it } = {}`). */
+const JS_OBJECT_PARAMETER = { any: [{ kind: "object_pattern" }, { kind: "assignment_pattern", has: { field: "left", kind: "object_pattern" } }] };
+
+/**
+ * The first property (not a rest element) of the first object-pattern parameter of a function upstream reads. In
+ * TypeScript's grammar the pattern is a parameter node's `pattern`; in JavaScript's it is the parameter itself, or the
+ * `left` of its default.
+ */
 const FIRST_CONTEXT_PROPERTY = {
   nthChild: { position: 1, ofRule: { any: [{ kind: "pair_pattern" }, { kind: "shorthand_property_identifier_pattern" }, { kind: "object_assignment_pattern" }] } },
   inside: {
     kind: "object_pattern",
-    inside: {
-      ...PARAMETER,
-      nthChild: { position: 1, ofRule: { ...PARAMETER, has: { field: "pattern", kind: "object_pattern" } } },
-      inside: { kind: "formal_parameters", inside: { any: [...FUNCTION_KINDS, { kind: "method_definition" }] } },
-    },
+    any: [
+      { inside: { ...PARAMETER, nthChild: { position: 1, ofRule: { ...PARAMETER, has: { field: "pattern", kind: "object_pattern" } } }, ...IN_FUNCTION_PARAMETERS } },
+      { nthChild: { position: 1, ofRule: JS_OBJECT_PARAMETER }, ...IN_FUNCTION_PARAMETERS },
+      { inside: { kind: "assignment_pattern", field: "left", nthChild: { position: 1, ofRule: JS_OBJECT_PARAMETER }, ...IN_FUNCTION_PARAMETERS } },
+    ],
   },
 };
 
@@ -384,7 +398,7 @@ const FIRST_CONTEXT_PROPERTY = {
  */
 const CONTEXT_PROPERTY_NAME = {
   any: [
-    { kind: "shorthand_property_identifier_pattern", any: [FIRST_CONTEXT_PROPERTY, { inside: { kind: "object_assignment_pattern", field: "left", ...FIRST_CONTEXT_PROPERTY } }] },
+    { kind: "shorthand_property_identifier_pattern", any: [{ matches: "vitest-first-context-property" }, { inside: { kind: "object_assignment_pattern", field: "left", matches: "vitest-first-context-property" } }] },
     {
       kind: "identifier",
       pattern: "$CONTEXT_NAME",
@@ -395,7 +409,8 @@ const CONTEXT_PROPERTY_NAME = {
 
 /** Test-context names (upstream's `testContext`), which upstream classifies by their own name. */
 const TEST_CONTEXT = {
-  "vitest-context-pair": { kind: "pair_pattern", ...FIRST_CONTEXT_PROPERTY, has: { field: "key", kind: "property_identifier", pattern: "$CONTEXT_NAME" } },
+  "vitest-first-context-property": FIRST_CONTEXT_PROPERTY,
+  "vitest-context-pair": { kind: "pair_pattern", matches: "vitest-first-context-property", has: { field: "key", kind: "property_identifier", pattern: "$CONTEXT_NAME" } },
   "vitest-test-callback": {
     any: FUNCTION_KINDS,
     all: [
@@ -403,6 +418,8 @@ const TEST_CONTEXT = {
         any: [
           { has: { field: "parameter", kind: "identifier" } },
           { has: { field: "parameters", has: { ...PARAMETER, has: { field: "pattern", kind: "identifier" }, not: { has: { field: "value", regex: "[\\s\\S]" } } } } },
+          // JavaScript's grammar: a plain identifier parameter is the identifier itself.
+          { has: { field: "parameters", has: { kind: "identifier" } } },
         ],
       },
       { inside: { kind: "arguments", inside: { kind: "call_expression", has: { field: "function", kind: "identifier", regex: oneOf(TEST_CASES) } } } },
@@ -674,6 +691,9 @@ for (const [id, { mode, description, clauses }] of Object.entries(DOCUMENTS)) {
   const committed = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : undefined;
   const biome = new Map((committed?.clauses ?? []).filter(clause => clause.violation?.suppress?.biome !== undefined).map(clause => [clause.id, clause.violation.suppress.biome]));
   for (const clause of clauses) if (clause.violation?.suppress !== undefined && biome.has(clause.id)) clause.violation.suppress.biome = biome.get(clause.id);
-  const document = { format: "rerail.policy/v1", id, revision: committed?.revision ?? 1, mode, description, scope: SCOPE, clauses };
+  const content = { mode, description, scope: SCOPE, clauses };
+  const unchanged = committed !== undefined && JSON.stringify({ mode: committed.mode, description: committed.description, scope: committed.scope, clauses: committed.clauses }) === JSON.stringify(content);
+  const revision = committed === undefined ? 1 : unchanged ? committed.revision : committed.revision + 1;
+  const document = { format: "rerail.policy/v1", id, revision, ...content };
   writeFileSync(path, `${JSON.stringify(document, null, 2)}\n`);
 }

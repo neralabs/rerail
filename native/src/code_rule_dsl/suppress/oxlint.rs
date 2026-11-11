@@ -25,6 +25,19 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::ops::Range;
 
+/// Oxlint's `oxlint-disable` comments: oxlint's names of the rule (without a plugin), which a
+/// directive must name (after its last `/`, or name none).
+pub struct Suppressions;
+
+impl super::SuppressionKind for Suppressions {
+    const KEY: &'static str = "oxlint";
+    const DETAIL: &'static str = "oxlint: oxlint-disable comments are Oxlint's";
+    type Spec = Vec<String>;
+    fn spec(value: &serde_json::Value, at: &str) -> napi::Result<Vec<String>> {
+        spec(value, at)
+    }
+}
+
 /// `oxlint.rules`: oxlint's names of the rule (without a plugin), which a disable directive must
 /// name (after its last `/`, or name none) to suppress the violation.
 pub(super) fn spec(oxlint: &Value, at: &str) -> napi::Result<Vec<String>> {
@@ -295,7 +308,7 @@ fn collect_rule_names(text: &str) -> Vec<&str> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_language::LanguageExt;

@@ -6,7 +6,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-pub(in crate::code_rule_dsl::waves::relational) fn save(
+pub fn save(
     db: &Database,
     rule: &str,
     clause: &str,

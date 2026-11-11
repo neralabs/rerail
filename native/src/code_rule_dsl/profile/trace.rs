@@ -55,7 +55,7 @@ impl Drop for Context {
     }
 }
 
-pub(crate) struct Span(Option<ActiveSpan>);
+pub struct Span(Option<ActiveSpan>);
 struct ActiveSpan {
     context: Attribution,
     phase: &'static str,
@@ -67,7 +67,7 @@ struct ActiveSpan {
     memory: Option<super::memory::Sample>,
 }
 impl Span {
-    pub(crate) fn start(phase: &'static str, name: &str) -> Self {
+    pub fn start(phase: &'static str, name: &str) -> Self {
         Self(if *ENABLED {
             Some(ActiveSpan {
                 context: CONTEXT.with(|context| context.borrow().clone()),
@@ -86,7 +86,7 @@ impl Span {
             None
         })
     }
-    pub(crate) fn detail(&mut self, value: impl FnOnce() -> Value) {
+    pub fn detail(&mut self, value: impl FnOnce() -> Value) {
         if let Some(span) = &mut self.0 {
             span.detail = value();
         }
@@ -111,7 +111,7 @@ impl Drop for Span {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn trace_line_is_serialized_before_entering_the_shared_output_stream() {

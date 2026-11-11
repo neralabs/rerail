@@ -1,5 +1,6 @@
-import { lstat, mkdir } from "node:fs/promises";
-import { createServer, request } from "node:http";
+import { lstat, mkdir, unlink } from "node:fs/promises";
+import { createServer, request, type Server } from "node:http";
+import { connect } from "node:net";
 import { dirname, resolve as resolvePath } from "node:path";
 import { z } from "zod/v4";
 import type { AdapterDelivery, AdapterEvent } from "../engine/adapter-contract.js";
@@ -243,6 +244,55 @@ async function routeEngineEvent(
   return deliveries;
 }
 
+function listen(server: Server, socketPath: string): Promise<void> {
+  const listening = Promise.withResolvers<void>();
+  server.once("error", listening.reject);
+  server.listen(socketPath, () => {
+    server.off("error", listening.reject);
+    listening.resolve();
+  });
+  return listening.promise;
+}
+
+/** Whether a process accepts connections on the Unix socket at `socketPath`; false when the file is a dead daemon's. */
+async function socketAnswers(socketPath: string): Promise<boolean> {
+  const probed = Promise.withResolvers<boolean>();
+  const probe = connect(socketPath);
+  probe.once("connect", () => {
+    probe.destroy();
+    probed.resolve(true);
+  });
+  probe.once("error", (error: NodeJS.ErrnoException) => {
+    if (error.code === "ECONNREFUSED" || error.code === "ENOENT") probed.resolve(false);
+    else probed.reject(error);
+  });
+  return probed.promise;
+}
+
+/**
+ * Listens on `socketPath`. A daemon killed without cleanup (`kill -9`, a crash) leaves its Unix socket file behind, and
+ * binding over it fails with EADDRINUSE: when no process answers on that socket, the file is removed and the bind tried
+ * once more; when one does, the error says a live daemon owns it. Windows named pipes leave no file to clear.
+ */
+async function listenOnSocket(server: Server, socketPath: string): Promise<void> {
+  try {
+    await listen(server, socketPath);
+  } catch (error) {
+    if (isWindowsNamedPipe(socketPath) || (error as NodeJS.ErrnoException).code !== "EADDRINUSE") throw error;
+    // Only a socket is a dead daemon's to clear: anything else at the path is left alone, whatever a probe would say.
+    if (!(await lstat(socketPath)).isSocket()) {
+      throw new Error(`Rerail's engine socket path ${socketPath} holds something that is not a socket; move it aside before starting the daemon.`, { cause: error });
+    }
+    if (await socketAnswers(socketPath)) {
+      throw new Error(`Rerail's engine socket ${socketPath} is in use by a running daemon; stop it with \`rerail daemon stop\` before starting another.`, { cause: error });
+    }
+    await unlink(socketPath).catch((unlinkError: NodeJS.ErrnoException) => {
+      if (unlinkError.code !== "ENOENT") throw unlinkError;
+    });
+    await listen(server, socketPath);
+  }
+}
+
 export async function startEngineService(options: EngineServiceOptions): Promise<EngineService> {
   if (!isWindowsNamedPipe(options.socketPath)) await preparePrivateDirectory(dirname(options.socketPath));
   const routing: EngineRoutingState = {
@@ -292,13 +342,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
   };
   server.requestTimeout = 30_000;
   try {
-    const listening = Promise.withResolvers<void>();
-    server.once("error", listening.reject);
-    server.listen(options.socketPath, () => {
-      server.off("error", listening.reject);
-      listening.resolve();
-    });
-    await listening.promise;
+    await listenOnSocket(server, options.socketPath);
   } catch (error) {
     server.close();
     await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));

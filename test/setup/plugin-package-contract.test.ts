@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { build } from "esbuild";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
@@ -30,7 +31,11 @@ const PackageSchema = z.object({
       types: z.literal("./dist/engine/schemas.d.ts"),
       import: z.literal("./dist/engine/schemas.js"),
     }),
-  }),
+    "./pi": z.object({
+      types: z.literal("./dist/hosts/pi/index.d.ts"),
+      import: z.literal("./dist/hosts/pi/index.js"),
+    }),
+  }).catchall(z.object({ types: z.string(), import: z.string() })),
   engines: z.object({ node: z.string().regex(/^>=24$/u) }),
   omp: z.object({ extensions: z.array(z.string()) }),
   pi: z.object({ extensions: z.array(z.string()) }),
@@ -60,6 +65,26 @@ describe("supported host plugin manifests", () => {
     expect(manifest.engines.node).toBe(">=24");
   });
 
+  it("loads typebox, Pi's optional peer, only from the Pi entry point", async () => {
+    const manifest = PackageSchema.parse(await json("package.json"));
+    expect(manifest).toMatchObject({ peerDependencies: { typebox: "*" }, peerDependenciesMeta: { typebox: { optional: true } } });
+    expect(manifest).not.toHaveProperty("dependencies.typebox");
+    // Without the optional peer installed (npm with --legacy-peer-deps, Yarn Berry, any host but Pi) these must still load.
+    const entries = [
+      ...Object.entries(manifest.exports).map(([subpath, target]) => ({ subpath, file: target.import })),
+      { subpath: "bin", file: manifest.bin.rerail },
+      ...manifest.omp.extensions.map(file => ({ subpath: "omp", file })),
+    ];
+    const reaches = async (file: string): Promise<boolean> => {
+      const source = file.replace(/^\.?\/?dist\//u, "src/").replace(/\.js$/u, ".ts");
+      const { metafile } = await build({ entryPoints: [source], bundle: true, platform: "node", format: "esm", packages: "external", write: false, metafile: true, logLevel: "silent" });
+      return Object.values(metafile.inputs).some(input => input.imports.some(imported => imported.path === "typebox" || imported.path.startsWith("typebox/")));
+    };
+    const loading = [];
+    for (const { subpath, file } of entries) if (await reaches(file)) loading.push(subpath);
+    expect(loading).toEqual(["./pi"]);
+  }, 60_000);
+
   it("publishes transport-neutral Claude, Codex, and Cursor plugin manifests", async () => {
     const packageManifest = PackageSchema.parse(await json("package.json"));
 
@@ -79,8 +104,8 @@ describe("supported host plugin manifests", () => {
   it("stamps the package version into the plugin manifests around npm pack", async () => {
     const packageManifest = PackageSchema.parse(await json("package.json"));
 
-    expect(packageManifest.scripts.prepack).toBe("node scripts/build/stamp-plugin-versions.mjs stamp");
-    expect(packageManifest.scripts.postpack).toBe("node scripts/build/stamp-plugin-versions.mjs restore");
+    expect(packageManifest.scripts.prepack).toContain("node scripts/build/stamp-plugin-versions.mjs stamp");
+    expect(packageManifest.scripts.postpack).toContain("node scripts/build/stamp-plugin-versions.mjs restore");
   });
 
   it("writes the package version right after the name and restores the source form", async () => {

@@ -1,6 +1,6 @@
 use super::closure::Graph;
 use super::names::Name;
-use super::summary::{Callee, Summary, callee_at};
+use super::summary::{Callee, python::callee_at};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::{Reading, ScopeTable};
@@ -72,7 +72,7 @@ fn answers(files: &[(String, String)]) -> BTreeMap<String, Vec<Site>> {
             let root = GrammarDialect::Python.ast_grep(source.as_str());
             let errors = root.root().get_doc().tree.root_node().has_error();
             let table = table(source, &module);
-            let summary = Summary::extract(&root.root(), table.as_ref(), Some(&module), errors);
+            let summary = crate::code_rule_dsl::calls::summary::python::extract(&root.root(), table.as_ref(), Some(&module), errors);
             (module, table, Arc::new(summary))
         })
         .collect::<Vec<_>>();
@@ -440,7 +440,7 @@ fn benchmark_python_calls_corpus() {
                 let root = GrammarDialect::Python.ast_grep(source.as_str());
                 let errors = root.root().get_doc().tree.root_node().has_error();
                 let table = table(source, &module);
-                let summary = Summary::extract(&root.root(), table.as_ref(), Some(&module), errors);
+                let summary = crate::code_rule_dsl::calls::summary::python::extract(&root.root(), table.as_ref(), Some(&module), errors);
                 (module, table, errors, Arc::new(summary))
             })
             .collect::<Vec<_>>();

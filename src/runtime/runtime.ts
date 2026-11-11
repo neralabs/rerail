@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants, realpathSync } from "node:fs";
 import { lstat } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { z } from "zod/v4";
 import {
   ADAPTER_CAPABILITIES,
@@ -16,10 +16,11 @@ import {
 } from "../engine/adapter-contract.js";
 import { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState } from "./host-runtime.js";
 import { autostartDaemon } from "./daemon-control.js";
-import { SteerRuleSchema } from "./event-protocol.js";
+import { InactiveSessionError, SteerRuleSchema } from "./event-protocol.js";
 import {
   CodeRuleBridge, generatedEditPaths, ledgerPreimage, type Preimage, type RewoundEdit, type SourceObservationCache,
 } from "../engine/code-rule/code-rule-bridge.js";
+import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
 import {
   buildSteer, type AuditorCloseOptions, type CodeRuleAuditor, type AuditSettings, type CodeRuleViolation, type RuleSteerDelivery,
   type RepositoryAuditHooks, type SteerMetadata, type SteerSourceOf,
@@ -51,6 +52,7 @@ import { rewoundSteer, steerBlock, steerRules, subagentSteer } from "../engine/c
 import { steerOrigin } from "../engine/code-rule/steer-origin.js";
 import { checkoutPathBoundary } from "../engine/path-boundary.js";
 import { SqliteSessionStore, type SessionAttribution } from "./session-store.js";
+import { isDefaultStorageRoot } from "./session-paths.js";
 import type {
   ContentItem,
   ContentSnapshot,
@@ -152,6 +154,8 @@ function auditRequestVerdict(auditIds: readonly string[], audits: readonly (Audi
 
 /** The events whose code-rule work needs the session's evaluator open: a tool call, its result, and a turn's end. */
 const CODE_RULE_BOUNDARIES: Partial<Record<AdapterEvent["kind"], true>> = { call: true, result: true, "turn-end": true };
+/** The window `#noteTurnWindow` opens for a turn; no host names a tool call so. */
+const TURN_WINDOW_ID = "rerail:turn";
 
 /** A turn end that waited longer than this on its settle work is written to the daemon log. */
 const SLOW_TURN_END_WAIT_MS = 1_000;
@@ -513,6 +517,40 @@ interface RuntimeSessionState {
   closed: boolean;
 }
 
+/** A session's ledger as read back when the session opens. */
+interface OpenedLedger {
+  readonly directory: string;
+  readonly path: string;
+  readonly entries: readonly LedgerEntry[];
+  readonly appendState: JsonlAppendState;
+  /** Whether this opening is the session's first observed Rerail participation. */
+  readonly completeTracking: boolean;
+}
+
+/** The conversation rules and turn a session opens with. */
+interface RestoredRegistry {
+  registry: ConversationRuleRegistry | undefined;
+  turn: number;
+  ruleSync?: LiveConversationRules | undefined;
+}
+
+/** A steer now among the pending steers. */
+interface PlacedSteer {
+  /** Its background delivery, when the native boundary that waits for the edit's check waits for it too. */
+  readonly boundaryDelivery: Promise<unknown> | undefined;
+}
+
+/** What a session's initial state is built from. */
+interface SessionStart {
+  readonly session: AdapterSession;
+  readonly checkout: StartingCheckout;
+  readonly startedAt: number;
+  readonly ledger: OpenedLedger;
+  readonly restored: RestoredRegistry;
+  readonly watermarks: WatermarkStore;
+  readonly steerStrategy: SteerStrategy;
+}
+
 async function readLines(path: string): Promise<JsonlReadResult> {
   let content = await readLedgerFile(path, dirname(path));
   if (content === undefined) return { values: [], appendState: { prefix: "", truncateTo: null } };
@@ -580,13 +618,12 @@ const SESSION_RECORDS_GITIGNORE = "# Created by Rerail: session records stay out
 /**
  * Session records hold what the person typed, and the storage root defaults to `<checkout>/.rerail/sessions`. A
  * `.gitignore` of `*` keeps them out of `git status` and `git add -A`, as `.pytest_cache` does, without touching the
- * repository's own ignores. Only a root inside a `.rerail` folder is Rerail's alone: a custom one
- * (`RERAIL_STORAGE_ROOT`) may hold the person's own files, so it is left as it is. In Rerail's own folder the file is
- * rewritten whenever it holds anything else, or is no regular file: a repository that commits one with `!*` would
- * otherwise have the person's next `git add -A` commit their prompts and pre-edit source.
+ * repository's own ignores. Only the default root is Rerail's alone: a custom one (`RERAIL_STORAGE_ROOT`) may hold the
+ * person's own files, so it is left as it is. In Rerail's own folder the file is rewritten whenever it holds anything
+ * else, or is no regular file: a repository that commits one with `!*` would otherwise have the person's next
+ * `git add -A` commit their prompts and pre-edit source.
  */
 async function ignoreInGit(storageRoot: string): Promise<void> {
-  if (basename(dirname(storageRoot)) !== ".rerail") return;
   const path = join(storageRoot, ".gitignore");
   const stats = await lstat(path).catch((error: unknown) => {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
@@ -685,6 +722,8 @@ export interface RerailRuntimeOptions {
 
 export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #storageRoot: string;
+  /** The root is the workspace's default (`isDefaultStorageRoot`), so its records get a `.gitignore`. */
+  readonly #storageRootIsDefault: boolean;
   readonly #embedder: SemanticEmbedder;
   readonly #modelPath: string | undefined;
   readonly #sessionStore: SqliteSessionStore;
@@ -716,6 +755,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   constructor(options: RerailRuntimeOptions) {
     this.#storageRoot = options.storageRoot;
+    this.#storageRootIsDefault = isDefaultStorageRoot(options.storageRoot, options.workspaceRoot);
     this.#modelPath = options.modelPath;
     this.#nativeSession = options.nativeSession;
     this.#deliverBackground = options.deliverBackground;
@@ -809,9 +849,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     // A code-rule boundary reached while the session's evaluator is still opening (indexing) goes on without code rules.
     const bridge = CODE_RULE_BOUNDARIES[event.kind] === true ? await this.#codeRuleWorkspaceNow(state, event) : state.codeRuleBridge;
     bridge?.refreshCodeRules();
+    await this.#noteTurnWindow(state, event);
     if (event.kind === "call") {
       const id = event.toolCallId;
-      const preimages = await bridge?.begin(id, event.toolName, event.input);
+      const preimages = await this.#beginCall(state, bridge, event);
       await this.#append(state, {
         type: "policy-call", toolCallId: id, toolName: event.toolName, paths: generatedEditPaths(event.toolName, event.input),
         ...(preimages === undefined ? {} : { preimages }),
@@ -830,7 +871,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         try {
           // From the finish on, which may check the edit before it returns, to the end of the wait.
           await this.#waitingForEditChecks(state, false, async () => {
-            await bridge?.finish(call!.id, event.failed === true, { rewindable: true });
+            await this.#finishCall(state, bridge, call!.id, event.failed === true);
             await this.#append(state, { type: "policy-result", toolCallId: call!.id });
             await this.#awaitEditChecks(state, bridge, ADAPTER_CAPABILITIES[descriptor.host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS);
           });
@@ -904,6 +945,39 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const milliseconds = performance.now() - startedAt;
     if (milliseconds <= SLOW_TURN_END_WAIT_MS) return;
     this.#timingLog?.(`rerail: turn end of session ${sessionId} waited ${Math.round(milliseconds)} ms for ${waitedOn}\n`);
+  }
+
+  /**
+   * Begins a tool call on the open evaluator. One answered while the evaluator opens is never begun, but what it writes
+   * is the session's own, so it opens only its window (`CodeRuleBridge.unwatchedCall`).
+   */
+  async #beginCall(
+    state: RuntimeSessionState,
+    bridge: CodeRuleBridge | undefined,
+    event: Extract<AdapterEvent, { kind: "call" }>,
+  ): Promise<Readonly<Record<string, Preimage>> | undefined> {
+    if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input);
+    await state.codeRuleBridge?.unwatchedCall(event.toolCallId);
+    return undefined;
+  }
+
+  /**
+   * A host whose own edit tool no hook shows (`observedFileWrite: "shell"`: Codex's `apply_patch`) writes outside every
+   * call's window, so its turn, from the prompt to the turn's end, is one: what is stamped then is the session's own.
+   * A call opens it too, as a turn has one only at its prompt, which a daemon restart in the middle of the turn loses;
+   * a window already open keeps its start. Two of its sessions' turns in one folder at once both take a change made
+   * then, as overlapping calls do.
+   */
+  async #noteTurnWindow(state: RuntimeSessionState, event: AdapterEvent): Promise<void> {
+    if (ADAPTER_CAPABILITIES[state.descriptor.host].observedFileWrite !== "shell") return;
+    if (event.kind === "user-prompt" || event.kind === "call") await state.codeRuleBridge?.unwatchedCall(TURN_WINDOW_ID);
+    else if (event.kind === "turn-end") await state.codeRuleBridge?.unwatchedResult(TURN_WINDOW_ID);
+  }
+
+  /** Finishes a tool call on the open evaluator; one answered while it opened only ends its window (`unwatchedResult`). */
+  async #finishCall(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, toolCallId: string, failed: boolean): Promise<void> {
+    if (bridge !== undefined) await bridge.finish(toolCallId, failed, { rewindable: true });
+    else await state.codeRuleBridge?.unwatchedResult(toolCallId);
   }
 
   /**
@@ -1190,73 +1264,20 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (existing !== undefined) return { processedEventIds: [...existing.processed] };
     const recordedSession = this.#sessionStore.session(session.sessionId);
     const startedAt = recordedSession?.startedAt ?? Date.now();
-    const directory = sessionDirectory(this.#storageRoot, session.sessionId);
-    await makeLedgerFolder(directory);
-    keepPrivate(directory);
-    await ignoreInGit(this.#storageRoot);
-    const ledgerPath = join(directory, "events.jsonl");
-    const { values, appendState } = await readLines(ledgerPath);
-    const ledger = validatedLedger(values);
-    // The ledger marker survives a database reset. Never mistake resumed or reset history for a fresh session.
-    // With no DB, ledger, or native replay history, this is the session's first observed Rerail participation.
-    const completeTracking = recordedSession === undefined && values.length === 0 && (this.#nativeSession?.turn ?? 0) === 0;
-    if (!ledger.some(entry => entry.type === "hud-tracking-start")) {
-      await appendJsonLine(ledgerPath, { type: "hud-tracking-start" }, appendState);
-    }
-    const processed = processedEventIds(ledger);
+    const ledger = await this.#openLedger(session, recordedSession === undefined);
     const checkout = this.#startingCheckout(session);
-    const { registry, turn, ruleSync } = await this.#restoreRegistry(session, ledger, checkout);
-    const items = ledger.flatMap((entry) => (entry.type === "sample" ? [entry.item] : []));
-    const source = new MutableContentSource(items);
-    const watermarks = await JsonlWatermarkStore.open(join(directory, "watermarks.jsonl"));
+    const restored = await this.#restoreRegistry(session, ledger.entries, checkout);
+    const watermarks = await JsonlWatermarkStore.open(join(ledger.directory, "watermarks.jsonl"));
     // Saved settings win over the runtime's defaults; `#scheduleAuditRequests` keeps the strategy current.
     const auditSettings = this.#controls.getWorkspaceSettings(checkout.cwd);
-    const secrets = secretCallsOf(ledger);
-    const opened: RuntimeSessionState = {
-      descriptor: session,
-      checkout,
-      startedAt,
-      processed,
-      source,
-      workspace: new SemanticWorkspace({ sources: [source], watermarks, embedder: this.#embedder }),
-      selections: new Map(),
-      projections: new Map(),
-      ledgerPath,
-      ledgerAppendState: appendState,
-      sampleSequence: items.length,
-      ...(registry === undefined ? {} : { registry }),
-      ruleSync,
-      turn,
-      eventDeliveries: new Map(),
-      pendingSteers: [],
-      steerStrategy: effectiveSteerStrategy(auditSettings ?? this.#auditSettings),
-      resultWindow: undefined,
-      codeRuleRevision: 0,
-      codeRuleSourceVersions: new Map(),
-      undeliveredSources: new Set(),
-      ownerClaim: undefined,
-      codeRuleWorkspace: Promise.resolve(undefined),
-      codeRuleReady: false,
-      codeRuleOpening: false,
-      auditRequestWork: undefined,
-      repositoryAudit: undefined,
-      // Restored whether or not the evaluator opens, so their results still close them in the ledger.
-      pendingCodeRuleCalls: unresolvedCodeRuleCalls(ledger).map(call => ({ id: call.toolCallId, toolName: call.toolName })),
-      overdueEditChecks: undefined,
-      editCheckWaits: 0,
-      yieldWaits: 0,
-      missedFindings: [],
-      secretCalls: secrets.calls,
-      withheldResults: secrets.results,
-      closed: false,
-    };
+    const steerStrategy = effectiveSteerStrategy(auditSettings ?? this.#auditSettings);
+    const opened = this.#initialSessionState({ session, checkout, startedAt, ledger, restored, watermarks, steerStrategy });
     // Set when the evaluator failed to open: what it observed while opening belongs to no live evaluator.
     let retired = false;
     const steerDelivery: RuleSteerDelivery = {
       requestSteer: async (sessionId, requested, content, metadata) => {
         const activeState = this.#sessions.get(sessionId);
         if (activeState !== opened || activeState.closed || retired) return "discarded";
-        const revision = metadata?.revision ?? activeState.codeRuleRevision;
         const pending: PendingSteer = {
           delivery: {
             sessionId,
@@ -1267,59 +1288,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
             rules: metadata?.rules ?? [],
             strategy: "message",
           },
-          revision,
+          revision: metadata?.revision ?? activeState.codeRuleRevision,
           scope: metadata?.scope ?? [],
         };
-        if (!this.#isCurrentSteer(activeState, pending)) {
-          this.#recordUndelivered(activeState, pending);
-          return "discarded";
-        }
-        const strategy = activeState.steerStrategy;
-        if (strategy === "subagent")
-          pending.delivery = { ...pending.delivery, content: subagentSteer(content, activeState.descriptor.host), strategy };
-        const findings = metadata?.generatedEdit;
-        const window = activeState.resultWindow;
-        // The check of the very edit whose result is being ingested: the host can put the steer into that result.
-        const own = window !== undefined && findings !== undefined
-          && activeState.codeRuleBridge?.checks(window.toolCallId, metadata!.revision, metadata!.scope) === true;
-        if (own) pending.delivery = { ...pending.delivery, toolCallId: window.toolCallId };
-        if (strategy === "rewind" && own) {
-          // Queued before the result answers, so the steer goes out with the edit it rolled back.
-          const queued = Promise.withResolvers<void>();
-          window.steers.push(queued.promise);
-          try {
-            await this.#rewind(activeState, window.toolCallId, pending, metadata!);
-            if (activeState.closed || retired) return "discarded";
-            if (!this.#isCurrentSteer(activeState, pending)) {
-              this.#recordUndelivered(activeState, pending);
-              return "discarded";
-            }
-            activeState.pendingSteers.push(pending);
-          } finally {
-            queued.resolve();
-          }
-        } else {
-          const missed = activeState.editCheckWaits === 0 || (activeState.overdueEditChecks !== undefined && activeState.yieldWaits === 0);
-          if (findings !== undefined && missed && missedSteerDigestEnabled()) {
-            // Experimental (off unless enabled): the boundary that waited for this edit has answered, so a steer now would
-            // reach the agent at some later, unrelated step; its findings wait for the digest at the end of the agent's run.
-            const scope = new Set(pending.scope);
-            for (const violation of findings.violations) {
-              const own = violation.path !== undefined && scope.has(violation.path);
-              activeState.missedFindings.push({
-                violation, sourceOf: findings.sourceOf, revision, scope: own ? [violation.path!] : pending.scope,
-              });
-            }
-            return "queued";
-          }
-          activeState.pendingSteers.push(pending);
-        }
-        if (activeState.codeRuleReady && metadata?.background === true && this.#deliverBackground !== undefined) {
-          const inFlight = this.#deliverSteer(activeState, pending, true);
-          const waitsForNativeBoundary = metadata.generatedEdit !== undefined
-            && ADAPTER_CAPABILITIES[activeState.descriptor.host].toolSurface === "native";
-          if (waitsForNativeBoundary) await inFlight;
-        }
+        const placed = await this.#placeSteer(activeState, pending, content, metadata, () => retired);
+        if (typeof placed === "string") return placed;
+        if (placed.boundaryDelivery !== undefined) await placed.boundaryDelivery;
         return "queued";
       },
       revised: (sessionId, revision, paths) => {
@@ -1354,6 +1328,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     let bridge: CodeRuleBridge | undefined;
     this.#sessions.set(session.sessionId, opened);
     try {
+      const followsGitignore = this.#catalogs.followsGitignore(checkout.root);
       auditor = this.#createAuditor({
         workspaceRoot: checkout.cwd,
         steerDelivery,
@@ -1361,7 +1336,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         ...(this.#timingLog === undefined ? {} : { timingLog: this.#timingLog }),
         ...this.#auditSettings,
         ...auditSettings,
-        followGitignore: this.#catalogs.followsGitignore(checkout.root),
+        followGitignore: followsGitignore,
       });
       bridge = new CodeRuleBridge(checkout.cwd, auditor, {
         observations: this.#sourceObservations,
@@ -1371,6 +1346,17 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
           session.sessionId,
           (store, descriptor, attribution) => store.recordDiscoveryPending(descriptor, boundary, attribution),
         ),
+        // A tool edit Git's ignore rules leave unchecked, and a change that makes them ignore more, go on the session's record.
+        onIgnoredEdit: edit => this.#recordSessionFact(
+          session.sessionId,
+          (store, descriptor, attribution) => store.recordIgnoredEdit(descriptor, edit, attribution),
+        ),
+        ...(followsGitignore ? {
+          onIgnoreRulesChanged: (change: IgnoreRulesChange) => this.#recordSessionFact(
+            session.sessionId,
+            (store, descriptor, attribution) => store.recordIgnoreRulesChanged(descriptor, change, attribution),
+          ),
+        } : {}),
         onRevision: (sessionId, revision, paths) => {
           const current = this.#sessions.get(sessionId);
           if (current !== opened || current.closed || paths.length === 0) return;
@@ -1392,7 +1378,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       await this.#beforeSessionPublish?.(session);
       this.#sessionStore.openSession(session, startedAt, this.#repositoryKey(checkout));
       this.#closedSessions.delete(session.sessionId);
-      this.#sessionStore.startHudTracking(session, completeTracking);
+      this.#sessionStore.startHudTracking(session, ledger.completeTracking);
       opened.ownerClaim = this.#controls.registerOwner(session.sessionId, this.#deliverBackground === undefined ? "next-event" : "background");
     } catch (error) {
       await this.#abandonSession(session.sessionId, opened, auditor);
@@ -1400,7 +1386,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
     const settings = { ...this.#auditSettings, ...auditSettings };
     opened.codeRuleOpening = true;
-    opened.codeRuleWorkspace = this.#openCodeRuleWorkspace(opened, bridge, auditor, ledger, settings).then(open => {
+    opened.codeRuleWorkspace = this.#openCodeRuleWorkspace(opened, bridge, auditor, ledger.entries, settings).then(open => {
       if (open === undefined) {
         retired = true;
         opened.pendingSteers = [];
@@ -1432,7 +1418,71 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#evaluatorOpens.add(workspace);
     const released = (): void => { this.#evaluatorOpens.delete(workspace); };
     void workspace.then(released, released);
-    return { processedEventIds: [...processed] };
+    return { processedEventIds: [...opened.processed] };
+  }
+
+  /** Makes the session's ledger folder, reads its ledger back and marks where history tracking began. */
+  async #openLedger(session: AdapterSession, unrecorded: boolean): Promise<OpenedLedger> {
+    const directory = sessionDirectory(this.#storageRoot, session.sessionId);
+    await makeLedgerFolder(directory);
+    keepPrivate(directory);
+    if (this.#storageRootIsDefault) await ignoreInGit(this.#storageRoot);
+    const path = join(directory, "events.jsonl");
+    const { values, appendState } = await readLines(path);
+    const entries = validatedLedger(values);
+    // The ledger marker survives a database reset. Never mistake resumed or reset history for a fresh session.
+    // With no DB, ledger, or native replay history, this is the session's first observed Rerail participation.
+    const completeTracking = unrecorded && values.length === 0 && (this.#nativeSession?.turn ?? 0) === 0;
+    if (!entries.some(entry => entry.type === "hud-tracking-start")) {
+      await appendJsonLine(path, { type: "hud-tracking-start" }, appendState);
+    }
+    return { directory, path, entries, appendState, completeTracking };
+  }
+
+  /** A session's state as its ledger restores it, before anything of the session is live. */
+  #initialSessionState({ session, checkout, startedAt, ledger, restored, watermarks, steerStrategy }: SessionStart): RuntimeSessionState {
+    const { registry, turn, ruleSync } = restored;
+    const items = ledger.entries.flatMap((entry) => (entry.type === "sample" ? [entry.item] : []));
+    const source = new MutableContentSource(items);
+    const secrets = secretCallsOf(ledger.entries);
+    return {
+      descriptor: session,
+      checkout,
+      startedAt,
+      processed: processedEventIds(ledger.entries),
+      source,
+      workspace: new SemanticWorkspace({ sources: [source], watermarks, embedder: this.#embedder }),
+      selections: new Map(),
+      projections: new Map(),
+      ledgerPath: ledger.path,
+      ledgerAppendState: ledger.appendState,
+      sampleSequence: items.length,
+      ...(registry === undefined ? {} : { registry }),
+      ruleSync,
+      turn,
+      eventDeliveries: new Map(),
+      pendingSteers: [],
+      steerStrategy,
+      resultWindow: undefined,
+      codeRuleRevision: 0,
+      codeRuleSourceVersions: new Map(),
+      undeliveredSources: new Set(),
+      ownerClaim: undefined,
+      codeRuleWorkspace: Promise.resolve(undefined),
+      codeRuleReady: false,
+      codeRuleOpening: false,
+      auditRequestWork: undefined,
+      repositoryAudit: undefined,
+      // Restored whether or not the evaluator opens, so their results still close them in the ledger.
+      pendingCodeRuleCalls: unresolvedCodeRuleCalls(ledger.entries).map(call => ({ id: call.toolCallId, toolName: call.toolName })),
+      overdueEditChecks: undefined,
+      editCheckWaits: 0,
+      yieldWaits: 0,
+      missedFindings: [],
+      secretCalls: secrets.calls,
+      withheldResults: secrets.results,
+      closed: false,
+    };
   }
 
   /**
@@ -1775,6 +1825,103 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     };
   }
 
+  /**
+   * Where a steer waits: for its rollback, in the pending steers, or with the findings held for the digest. A steer a
+   * newer revision has overtaken is discarded.
+   */
+  async #placeSteer(
+    state: RuntimeSessionState, pending: PendingSteer, content: string, metadata: SteerMetadata | undefined, isRetired: () => boolean,
+  ): Promise<"discarded" | "queued" | PlacedSteer> {
+    if (!this.#isCurrentSteer(state, pending)) {
+      this.#recordUndelivered(state, pending);
+      return "discarded";
+    }
+    this.#applySubagentStrategy(state, pending, content);
+    const window = this.#ownResultWindow(state, metadata);
+    // The steer rides that result: its delivery names the result's tool call.
+    if (window !== undefined) pending.delivery = { ...pending.delivery, toolCallId: window.toolCallId };
+    if (state.steerStrategy === "rewind" && window !== undefined) return await this.#rewindSteer(state, window, pending, metadata!, isRetired);
+    if (this.#holdForDigest(state, pending, metadata)) return "queued";
+    return this.#pendSteer(state, pending, metadata);
+  }
+
+  /**
+   * Pends the steer and starts its background delivery in the same step. With a wait between the two, a boundary that
+   * collects the pending steers meanwhile takes the steer into its own reply, not the background.
+   */
+  #pendSteer(state: RuntimeSessionState, pending: PendingSteer, metadata: SteerMetadata | undefined): PlacedSteer {
+    state.pendingSteers.push(pending);
+    return { boundaryDelivery: this.#deliverInBackground(state, pending, metadata) };
+  }
+
+  /** The open result window, when the steer is the check of the very edit whose result is being ingested: the host can put the steer into that result. */
+  #ownResultWindow(state: RuntimeSessionState, metadata: SteerMetadata | undefined): ResultWindow | undefined {
+    const window = state.resultWindow;
+    const own = window !== undefined && metadata?.generatedEdit !== undefined
+      && state.codeRuleBridge?.checks(window.toolCallId, metadata.revision, metadata.scope) === true;
+    return own ? window : undefined;
+  }
+
+  /** Under the `subagent` steer strategy, the steer goes out asking the coding agent to hand the fix to a subagent; under any other, it is left as it is. */
+  #applySubagentStrategy(state: RuntimeSessionState, pending: PendingSteer, content: string): void {
+    if (state.steerStrategy === "subagent")
+      pending.delivery = { ...pending.delivery, content: subagentSteer(content, state.descriptor.host), strategy: state.steerStrategy };
+  }
+
+  /** Rolls the edit back, then pends the steer; queued before the result answers, so the steer goes out with the edit it rolled back. */
+  async #rewindSteer(
+    state: RuntimeSessionState, window: ResultWindow, pending: PendingSteer, metadata: SteerMetadata, isRetired: () => boolean,
+  ): Promise<"discarded" | PlacedSteer> {
+    const queued = Promise.withResolvers<void>();
+    window.steers.push(queued.promise);
+    try {
+      await this.#rewind(state, window.toolCallId, pending, metadata);
+      if (state.closed || isRetired()) return "discarded";
+      if (!this.#isCurrentSteer(state, pending)) {
+        this.#recordUndelivered(state, pending);
+        return "discarded";
+      }
+      return this.#pendSteer(state, pending, metadata);
+    } finally {
+      queued.resolve();
+    }
+  }
+
+  /** Whether the boundary that waited for this edit has already answered, so a steer now would reach the agent at some later step. */
+  #boundaryPassed(state: RuntimeSessionState): boolean {
+    return state.editCheckWaits === 0 || (state.overdueEditChecks !== undefined && state.yieldWaits === 0);
+  }
+
+  /**
+   * Experimental (off unless enabled): the boundary that waited for this edit has answered, so a steer now would reach
+   * the agent at some later, unrelated step; its findings wait for the digest at the end of the agent's run.
+   */
+  #holdForDigest(state: RuntimeSessionState, pending: PendingSteer, metadata: SteerMetadata | undefined): boolean {
+    const findings = metadata?.generatedEdit;
+    if (findings === undefined || !this.#boundaryPassed(state) || !missedSteerDigestEnabled()) return false;
+    this.#holdFindings(state, pending, findings);
+    return true;
+  }
+
+  #holdFindings(state: RuntimeSessionState, pending: PendingSteer, findings: NonNullable<SteerMetadata["generatedEdit"]>): void {
+    const scope = new Set(pending.scope);
+    for (const violation of findings.violations) {
+      const own = violation.path !== undefined && scope.has(violation.path);
+      state.missedFindings.push({
+        violation, sourceOf: findings.sourceOf, revision: pending.revision, scope: own ? [violation.path!] : pending.scope,
+      });
+    }
+  }
+
+  /** Starts the steer's background delivery, where it has one; returns it when the native boundary waits for it. */
+  #deliverInBackground(state: RuntimeSessionState, pending: PendingSteer, metadata: SteerMetadata | undefined): Promise<unknown> | undefined {
+    if (!state.codeRuleReady || metadata?.background !== true || this.#deliverBackground === undefined) return undefined;
+    const inFlight = this.#deliverSteer(state, pending, true);
+    const waitsForNativeBoundary = metadata.generatedEdit !== undefined
+      && ADAPTER_CAPABILITIES[state.descriptor.host].toolSurface === "native";
+    return waitsForNativeBoundary ? inFlight : undefined;
+  }
+
   /** Marks the sources whose newer revision keeps a steer, or a held finding, from the agent (`undeliveredSources`). */
   #recordUndelivered(state: RuntimeSessionState, pending: Pick<PendingSteer, "revision" | "scope">): void {
     for (const path of pending.scope)
@@ -1839,7 +1986,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   } {
     const active = this.#sessions.get(event.sessionId)?.descriptor;
     const descriptor = active ?? event.session;
-    if (descriptor === undefined) throw new Error(`Inactive session: ${event.sessionId}`);
+    if (descriptor === undefined) throw new InactiveSessionError(event.sessionId);
     if (descriptor.sessionId !== event.sessionId) throw new Error("Event session descriptor does not match sessionId");
     assertEventHost(descriptor.host);
     if (active !== undefined && event.session !== undefined && active.host !== event.session.host) {
@@ -1866,11 +2013,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     session: AdapterSession,
     ledger: readonly LedgerEntry[],
     checkout: StartingCheckout,
-  ): Promise<{
-    registry: ConversationRuleRegistry | undefined;
-    turn: number;
-    ruleSync?: LiveConversationRules | undefined;
-  }> {
+  ): Promise<RestoredRegistry> {
     if (this.#nativeSession !== undefined) return this.#nativeSession;
     const registry = this.#modelPath === undefined ? undefined : new ConversationRuleRegistry({ modelPath: this.#modelPath });
     if (registry === undefined) {
@@ -1900,7 +2043,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   #session(sessionId: string): RuntimeSessionState {
     const state = this.#sessions.get(sessionId);
-    if (state === undefined) throw new Error(`Inactive session: ${sessionId}`);
+    if (state === undefined) throw new InactiveSessionError(sessionId);
     return state;
   }
 

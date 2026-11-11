@@ -2,7 +2,7 @@
 //! file's scripts. A Vue file is two documents (`embed`): the component's own tree, which holds
 //! its template comments, and the program its scripts make, which holds theirs.
 
-use super::EslintDirectives;
+use super::eslint::EslintDirectives;
 use crate::code_rule_dsl::lines::LineTable;
 use crate::code_rule_dsl::origin::InFile;
 use crate::code_rule_dsl::tape::{TapeDoc, tape_doc};
@@ -299,7 +299,7 @@ fn strip_description(value: &str) -> &str {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::lines::Terminators;

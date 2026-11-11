@@ -10,7 +10,7 @@
 //! holds rendered lines: tab-separated text, its node and number columns as decimals. Their text
 //! columns are interned as symbols when the document is decoded.
 use super::*;
-use crate::content_store::{FactsFrame, atoms::Atoms};
+use crate::content_store::atoms::Atoms;
 use plan::corpus::memo;
 use std::sync::OnceLock;
 
@@ -20,7 +20,7 @@ const PROBE: usize = 1 << 62;
 
 /// The run's documents: each frame, its key, and its entry once decoded.
 pub(super) struct Run {
-    frames: Vec<FactsFrame>,
+    frames: Vec<memo::Frame>,
     keys: Vec<i64>,
     by_key: HashMap<i64, usize>,
     entries: Vec<OnceLock<Option<Arc<memo::Entry>>>>,
@@ -29,7 +29,7 @@ pub(super) struct Run {
 }
 
 impl Run {
-    pub fn open(frames: Vec<FactsFrame>) -> Result<Self> {
+    pub fn open(frames: Vec<memo::Frame>) -> Result<Self> {
         let keys = frames.iter().map(|f| memo::frame_key(f).map_err(|e| error(format!("{}: {e}", f.path)))).collect::<Result<Vec<_>>>()?;
         let by_key = keys.iter().enumerate().map(|(i, k)| (*k, i)).collect();
         let entries = frames.iter().map(|_| OnceLock::new()).collect();

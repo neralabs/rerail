@@ -1,12 +1,13 @@
-mod semantic;
+pub mod semantic;
 
+use crate::code_rule_dsl::tree::Tree;
 use super::collate::natural_compare;
 use super::exported::exported_text;
 use super::transform::Transform;
 use super::value::Reading;
 use ast_grep_core::meta_var::MetaVarEnv;
 use ast_grep_core::{Doc, Node};
-pub(crate) use semantic::SemanticText;
+pub use semantic::SemanticText;
 use std::cmp::Ordering;
 use std::sync::Arc;
 
@@ -17,24 +18,24 @@ use std::sync::Arc;
 /// Over values or property names it is three-valued: where either side is not known, so is the
 /// comparison.
 #[derive(Clone)]
-pub(crate) struct Comparison {
-    pub(crate) left: String,
-    pub(crate) op: CompareOp,
-    pub(crate) right: String,
-    pub(crate) collation: Collation,
-    pub(crate) text: CompareText,
+pub struct Comparison {
+    pub left: String,
+    pub op: CompareOp,
+    pub right: String,
+    pub collation: Collation,
+    pub text: CompareText,
     /// How the semantic modes read the captures (`SemanticText`); set per grammar at compile
     /// time.
     pub(crate) reading: Option<Reading>,
     /// The query's `transform`, where a side names one of its variables: that side is its text.
-    pub(crate) transform: Option<Arc<Transform>>,
+    pub transform: Option<Arc<Transform>>,
     /// `tokens` only: binary operators whose operands compare in either order (ESLint
     /// no-dupe-else-if's `equal`); empty when none.
-    pub(crate) commute: Vec<String>,
+    pub commute: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CompareOp {
+pub enum CompareOp {
     Lt,
     Le,
     Eq,
@@ -46,7 +47,7 @@ pub(crate) enum CompareOp {
 /// How texts are ordered. Every collation compares UTF-16 code units after its fold, as
 /// JavaScript's `<` does, so JavaScript linters' orderings port exactly.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Collation {
+pub enum Collation {
     Ordinal,
     /// `toLowerCase()` first.
     FoldLower,
@@ -61,7 +62,7 @@ pub(crate) enum Collation {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CompareText {
+pub enum CompareText {
     /// The captured node's source text.
     Source,
     /// The source text without one pair of enclosing matching quotes (`'`, `"` or `` ` ``);
@@ -84,7 +85,7 @@ pub(crate) enum CompareText {
 /// (`Comparison::eq_class`): two bound nodes compare unknown where either class is `Unknown`,
 /// true where both are the same `Text`, and false otherwise.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum EqClass {
+pub enum EqClass {
     /// Equal exactly to the nodes of the same text.
     Text(Vec<u16>),
     /// Equal to no node: a key or name it does not have.
@@ -315,35 +316,47 @@ fn element_index<D: Doc>(node: &Node<'_, D>) -> Option<usize> {
     if !node.is_named() || super::util::is_comment_kind(&node.kind()) {
         return None;
     }
+    let (element, list) = outside_parentheses(node)?;
+    if !LISTS.contains(&list.kind().as_ref()) {
+        return None;
+    }
+    commas_before(&list, &element)
+}
+
+/// The outermost parentheses around `node` (or `node` itself, where none are), with its parent.
+fn outside_parentheses<'t, D: Doc>(node: &Node<'t, D>) -> Option<(Node<'t, D>, Node<'t, D>)> {
     let mut node = node.clone();
     let mut parent = node.parent()?;
-    while parent.kind() == "parenthesized_expression" {
+    while super::util::is_paren_kind(&parent.kind()) {
         node = parent;
         parent = node.parent()?;
     }
-    if !LISTS.contains(&parent.kind().as_ref()) {
-        return None;
-    }
-    let mut commas = 0;
-    for child in parent.children() {
-        if child.node_id() == node.node_id() {
-            return Some(commas);
-        }
-        if !child.is_named() && child.text() == "," {
+    Some((node, parent))
+}
+
+/// The `,` tokens among `list`'s children before its child `element`.
+/// The commas before `element` in `list`: those a tape stores (a hole's, a leading one's), and the
+/// one between two elements that none separates, which the grammar implies (RER-131).
+fn commas_before<'r, D: Doc>(list: &Node<'r, D>, element: &Node<'r, D>) -> Option<usize> {
+    let start = element.range().start;
+    let (mut commas, mut after_element) = (0, false);
+    for child in list.children().take_while(|child| child.range().end <= start) {
+        if child.kind() == "," {
             commas += 1;
+            after_element = false;
+        } else if child.is_named() && !super::util::is_comment_kind(&child.kind()) {
+            commas += usize::from(after_element);
+            after_element = true;
         }
     }
-    None
+    Some(commas + usize::from(after_element))
 }
 
 /// The node inside any parentheses: ESTree has none.
 fn unparenthesized<'t, D: Doc>(node: &Node<'t, D>) -> Node<'t, D> {
     let mut node = node.clone();
-    while node.kind() == "parenthesized_expression" {
-        let Some(inner) = node
-            .children()
-            .find(|child| child.is_named() && !super::util::is_comment_kind(&child.kind()))
-        else {
+    while super::util::is_paren_kind(&node.kind()) {
+        let Some(inner) = node.first_code() else {
             break;
         };
         node = inner;
@@ -356,7 +369,7 @@ fn listed_operands<'t, D: Doc>(
     node: &Node<'t, D>,
     commute: &[String],
 ) -> Option<(Node<'t, D>, String, Node<'t, D>)> {
-    let operator = node.field("operator")?.text().into_owned();
+    let operator = node.operator_token()?.text().into_owned();
     if !commute.contains(&operator) {
         return None;
     }
@@ -416,7 +429,7 @@ pub(crate) fn tokens<D: Doc>(node: &Node<'_, D>) -> Vec<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use crate::code_rule_dsl::test_support::*;
     use serde_json::{Value, json};
 

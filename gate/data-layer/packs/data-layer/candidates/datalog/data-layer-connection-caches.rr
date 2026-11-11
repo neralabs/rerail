@@ -1,8 +1,34 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl cc_candidate(n: node)
+.decl cc_exempt(d: number, l: number)
+.decl cc_found(n: node, p: symbol, l: number)
+.decl cc_gate(d: number)
+.decl cc_keyed(n: node)
+.decl cc_p0_hit(n: node)
+.decl cc_p0_next(a: node)
+.decl cc_p1_hit(n: node)
+.decl cc_p2_hit(n: node)
+.decl cc_p2_typed(n: node)
+.decl cc_p3_hit(n: node)
+.decl cc_self_attr(a: node, s: symbol)
+.decl cc_skipped(d: number)
+.decl child(p: node, c: node, i: number)
+.decl col(n: node, c: number)
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl op_at(n: node, i: number, s: symbol)
+.decl option_on(name: symbol)
 .decl out_scope(d: number)
+.decl tape_line(d: number, l: number, sp: node)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, field, child, text, line, tape_line, col, node_text, op_at
+.output violation
+option_on("sourceGate").
 in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
@@ -13,4 +39,37 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
-.output violation
+cc_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), match("(?s:.*)(?:BranchId|RevisionId|branch_tip|cache|tip_revision)(?s:.*)", s).
+cc_gate(d) :- !option_on("sourceGate"), node(d, _, "module", _, _).
+cc_skipped(d) :- doc(d, p, _), match("(?:(?s:.*)/)?(?:\\.pytest_cache|__pycache__|tests)/(?s:.*)", p).
+cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:staging_bypass\\.py)", p), tape_line(d, l, sp), text(sp, s), match("(?s:.*)(?:_expected_tip_revision_id)(?s:.*)", s).
+cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:sql_table_hnsw\\.py)", p), tape_line(d, l, sp), text(sp, s), match("(?s:.*)(?:_max_layer_cache|_entry_point_cache)(?s:.*)", s).
+cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:stmt_versioned\\.py)", p), tape_line(d, l, sp), text(sp, s), match("(?s:.*)(?:_tip_revision)(?s:.*)", s).
+cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:intent_transaction\\.py)", p), tape_line(d, l, sp), text(sp, s), match("(?s:.*)(?:_tip_revision)(?s:.*)", s).
+cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:intent_branch_ops\\.py)", p), tape_line(d, l, sp), text(sp, s), match("(?s:.*)(?:_tip_revision)(?s:.*)", s).
+cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:versioning_intent_steps\\.py)", p), tape_line(d, l, sp), text(sp, s), match("(?s:.*)(?:_tip_revision)(?s:.*)", s).
+cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:branch_ops_steps\\.py)", p), tape_line(d, l, sp), text(sp, s), match("(?s:.*)(?:_tip_revision)(?s:.*)", s).
+cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:commit_branch_steps\\.py)", p), tape_line(d, l, sp), text(sp, s), match("(?s:.*)(?:_tip_revision)(?s:.*)", s).
+cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:sql_versioned_write_transaction\\.py)", p), tape_line(d, l, sp), text(sp, s), match("(?s:.*)(?:_cached_tip_revision_id)(?s:.*)", s).
+cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:stmt_squash_validation\\.py)", p), tape_line(d, l, sp), text(sp, s), match("(?s:.*)(?:_tip_revision_input)(?s:.*)", s).
+cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:squash_steps\\.py)", p), tape_line(d, l, sp), text(sp, s), match("(?s:.*)(?:_resolved_branch_tip_revision|_branch_tip_scalar_ref_id|_resolved_branch_tip_sql)(?s:.*)", s).
+cc_candidate(n) :- cc_p0_hit(n).
+cc_candidate(n) :- cc_p1_hit(n).
+cc_candidate(n) :- cc_p2_hit(n).
+cc_candidate(n) :- cc_p3_hit(n).
+cc_found(n, p, l) :- cc_candidate(n), node(d, n, _, _, _), line(n, l), !cc_exempt(d, l), !cc_skipped(d), cc_gate(d), in_scope(d), !out_scope(d), doc(d, p, _).
+cc_self_attr(a, s) :- node(_, a, "attribute", _, _), field(a, "object", o), node_text(o, t), match("(?s:.*)self", t), field(a, "attribute", x), node_text(x, s).
+cc_keyed(n) :- node(_, n, "assignment", _, _), field(n, "type", t), node_text(t, s), match("dict\\[(?:BranchId|RevisionId)(?s:.*)", s).
+cc_p0_next(a) :- cc_self_attr(a, _), field(p, "left", a), node(_, p, "assignment", _, _).
+cc_p0_next(a) :- cc_self_attr(a, _), field(p, "key", a), node(_, p, "pair", _, _).
+cc_p0_next(a) :- cc_self_attr(a, _), child(p, a, 0), node(_, p, "comparison_operator", _, _), op_at(p, 0, "==").
+cc_p0_hit(a) :- cc_self_attr(a, s), match("_\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*", s), cc_p0_next(a).
+violation("data-layer-connection-caches", "pattern-0", "CC001", p, l) :- cc_p0_hit(n), cc_found(n, p, l).
+cc_p1_hit(n) :- cc_keyed(n), field(n, "left", a), cc_self_attr(a, s), match("_\\w*cache\\w*", s).
+violation("data-layer-connection-caches", "pattern-1", "CC001", p, l) :- cc_p1_hit(n), cc_found(n, p, l).
+cc_p2_hit(n) :- cc_keyed(n), field(n, "left", x), node(_, x, "identifier", _, _), node_text(x, s), match("_\\w+", s).
+cc_p2_hit(n) :- cc_p2_typed(n), node(d, n, _, _, _), line(n, l), tape_line(d, l, sp), text(sp, t), col(n, c), match("\\s*", @substr(t, 0, c)).
+cc_p2_typed(n) :- node(_, n, "typed_parameter", _, _), child(n, x, _), node(_, x, "identifier", _, _), node_text(x, xs), match("_\\w+", xs), field(n, "type", t), node_text(t, ts), match("dict\\[(?:BranchId|RevisionId)(?s:.*)", ts).
+violation("data-layer-connection-caches", "pattern-2", "CC001", p, l) :- cc_p2_hit(n), cc_found(n, p, l).
+cc_p3_hit(n) :- node(_, n, "assignment", _, _), field(n, "left", a), cc_self_attr(a, s), match("_\\w+", s), field(n, "type", t), node_text(t, ts), match("dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)(?s:.*)", ts).
+violation("data-layer-connection-caches", "pattern-3", "CC001", p, l) :- cc_p3_hit(n), cc_found(n, p, l).

@@ -3,7 +3,7 @@ use super::*;
 use ast_grep_core::tree_sitter::LanguageExt;
 
 #[path = "admission_bulk_closure.rs"]
-mod bulk_closure;
+pub mod bulk_closure;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct State {

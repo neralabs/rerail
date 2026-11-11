@@ -10,6 +10,7 @@
 //! PHP coerces. The oracle is PHP 8.5.11 (`fixtures/php/value/generate_php.php`); PHPStan
 //! 2.2.16 reads the constants followed (`fixtures/php/compile/format-args/phpstan/constants.php`).
 
+use crate::code_rule_dsl::tree::Tree;
 use super::{BigInt, ContainerKind, Context, Value};
 use crate::code_rule_dsl::value::NodeRef;
 use ast_grep_core::{Doc, Node};
@@ -87,12 +88,7 @@ pub(crate) const VALUE_KINDS: &[&str] = &[
     "unary_op_expression",
 ];
 
-/// A PHP array key: an integer, or a string that is not a canonical decimal integer.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum Key {
-    Int(i64),
-    Str(Vec<u8>),
-}
+pub use super::types::Key;
 
 /// A PHP number.
 #[derive(Clone, Copy, Debug)]
@@ -197,13 +193,9 @@ pub(crate) fn key<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Opti
     key_of(&known(decode(node, context))?)
 }
 
-fn named<'a, D: Doc>(node: &Node<'a, D>) -> impl Iterator<Item = Node<'a, D>> {
-    node.children()
-        .filter(|child| child.is_named() && child.kind() != "comment")
-}
 
 fn only_child<'a, D: Doc>(node: &Node<'a, D>) -> Option<Node<'a, D>> {
-    let mut children = named(node);
+    let mut children = node.named_code();
     let child = children.next()?;
     children.next().is_none().then_some(child)
 }
@@ -315,7 +307,7 @@ fn single_quoted(text: &str) -> Option<Vec<u8>> {
 /// Whether a double-quoted string or heredoc body holds only literal text and escapes, not an
 /// interpolation, which a constant expression refuses.
 fn literal_parts<D: Doc>(node: &Node<'_, D>) -> bool {
-    named(node).all(|child| matches!(child.kind().as_ref(), "string_content" | "escape_sequence"))
+    node.named_code().all(|child| matches!(child.kind().as_ref(), "string_content" | "escape_sequence"))
 }
 
 fn double_quoted(text: &str) -> Option<Vec<u8>> {
@@ -1097,8 +1089,8 @@ impl Prefix {
     fn of<'a, D: Doc>(node: &Node<'a, D>) -> Option<(Self, Node<'a, D>)> {
         match node.kind().as_ref() {
             "unary_op_expression" => Some((
-                Self::Operator(node.field("operator")?.text().to_string()),
-                node.field("argument").or_else(|| named(node).last())?,
+                Self::Operator(node.operator_token()?.text().to_string()),
+                node.field("argument").or_else(|| node.named_code().last())?,
             )),
             "cast_expression" => Some((
                 Self::Cast(node.field("type")?.text().to_ascii_lowercase()),
@@ -1320,7 +1312,7 @@ fn bitwise(operator: &str, left: &Value, right: &Value) -> Option<Value> {
 }
 
 fn binary<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Option<Value> {
-    let operator = node.field("operator")?.text().to_ascii_lowercase();
+    let operator = node.operator_token()?.text().to_ascii_lowercase();
     let left_node = node.field("left")?;
     let right_node = node.field("right")?;
     if operator == "**" {
@@ -1370,7 +1362,7 @@ fn binary<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Option<Value
         "." => {
             // `.` directly followed by a digit is a float to PHP's lexer (`0x1.5` does not
             // compile), not the concatenation tree-sitter-php reads.
-            if node.field("operator")?.range().end == right_node.range().start
+            if node.operator_token()?.range().end == right_node.range().start
                 && right_node.text().starts_with(|c: char| c.is_ascii_digit())
             {
                 return Some(Value::Unknown);
@@ -1505,8 +1497,8 @@ pub(crate) fn array_entries<'r, D: Doc>(
         return None;
     }
     let mut builder = Builder::new();
-    for element in named(node) {
-        let parts: Vec<_> = named(&element).collect();
+    for element in node.named_code() {
+        let parts: Vec<_> = element.named_code().collect();
         match parts.as_slice() {
             [value]
                 if element.kind() == "array_element_initializer"
@@ -1531,11 +1523,11 @@ fn array<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Option<Value>
     let mut unknown_key = false;
     let mut unknown_value = false;
     let mut has_element = false;
-    for element in named(node) {
+    for element in node.named_code() {
         if element.kind() != "array_element_initializer" {
             return None;
         }
-        let parts: Vec<_> = named(&element).collect();
+        let parts: Vec<_> = element.named_code().collect();
         match parts.as_slice() {
             [spread] if spread.kind() == "variadic_unpacking" => {
                 match known(decode(&only_child(spread)?, context)) {
@@ -1591,7 +1583,7 @@ fn array<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Option<Value>
 /// `a[k]` over a known array (a missing key is `null`, with a warning) or string (one byte; a
 /// negative offset counts from the end; past the end is `""`, with a warning).
 fn subscript<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Option<Value> {
-    let parts: Vec<_> = named(node).collect();
+    let parts: Vec<_> = node.named_code().collect();
     let [object, index] = parts.as_slice() else {
         return None;
     };
@@ -1634,4 +1626,4 @@ fn subscript<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Option<Va
 }
 
 #[cfg(test)]
-pub(crate) mod tests;
+pub mod tests;

@@ -1,7 +1,8 @@
+use crate::code_rule_dsl::tree::Tree;
 use super::*;
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::oracle;
-use crate::code_rule_dsl::value::tests::agrees;
+// cratify: a re-export of rerail-engine's, which its facades of this module make
+// cratify: a re-export of rerail-engine's, which its facades of this module make
 use ast_grep_core::tree_sitter::LanguageExt;
 use serde_json::Value as Json;
 
@@ -309,7 +310,7 @@ fn value_orders_are_get_static_values_relational_operators() {
             };
             let (Some(left), Some(operator), Some(right)) = (
                 expression.field("left"),
-                expression.field("operator"),
+                expression.operator_token(),
                 expression.field("right"),
             ) else {
                 continue;

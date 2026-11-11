@@ -125,7 +125,7 @@ impl Storage {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn reuses_empty_schemas_preserves_bags_and_affinity_and_separates_successive_bindings()

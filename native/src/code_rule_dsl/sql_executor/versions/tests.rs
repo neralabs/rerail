@@ -525,7 +525,7 @@ fn scopes_reuse_sql_slots_and_restore_binding_cells_when_tables_return_on_rollba
 
 #[test]
 fn interrupted_slot_creation_releases_the_module_before_it_can_be_owned() {
-    let db = rusqlite::Connection::open_in_memory().unwrap();
+    let mut db = rusqlite::Connection::open_in_memory().unwrap();
     let store = Store::default();
     db.progress_handler(1, Some(|| true)).unwrap();
     assert!(

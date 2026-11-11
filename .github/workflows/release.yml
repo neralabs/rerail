@@ -1,27 +1,44 @@
 name: Release
 
-# Builds the @neralabs/rerail package: native rules engines for every supported target, the
-# TypeScript runtime, and the bundled UI, packed into one cross-platform tarball.
+# Builds the @neralabs/rerail package with package.yml (native rules engines for every supported target, the
+# TypeScript runtime, and the bundled UI, packed into one cross-platform tarball), installs it on Windows, Linux and
+# macOS, and publishes it.
 #
 # A `v*` tag publishes that tarball to npmjs under the dist-tag derived from the tag: `v1.2.3` -> latest,
-# `v1.2.3-beta.N` -> beta, `v1.2.3-next.N` -> next. The tag must equal package.json's version. Merging the Release
-# pull request makes the tag: release-pr.yml tags the version it set (docs/distribution-model.md, "Release
-# channels"). After publishing, the dist-tags job lists core's dist-tags in the run summary and fails if the channel's
-# dist-tag is not the version just published.
+# `v1.2.3-beta.N` -> beta, `v1.2.3-next.N` -> next. The tag must equal package.json's version, and a preview must not
+# be older than core's `latest`. Merging the Release pull request makes the tag: release-pr.yml tags the version it set
+# (docs/distribution-model.md, "Release channels"). A version published under `latest` moves `next` up to it too,
+# unless `next` is already at a newer preview, so `next` never trails `latest`. After publishing, the dist-tags job
+# lists core's dist-tags in the run summary and fails if the channel's dist-tag is not the version just published, or,
+# for a `latest` or `next` release, `next` is older than `latest`.
 #
 # `workflow_dispatch` with no inputs builds and uploads the tarball as a run artifact without publishing, so a build
 # can be installed and checked by hand. With `latest`, it builds nothing and points core's `latest` dist-tag at that
-# released version, to put core back, behind the same `release` environment approval and with trusted publishing,
-# so no npm login is needed.
+# released version, to put core back (raising `next` to it as well, should `next` be older), behind the same `release`
+# environment approval and with trusted publishing, so no npm login is needed. With `publish`, run from main, it retries
+# a release that failed before publishing: it builds main, checks and publishes it as that version behind the same
+# approval, leaving the version's tag where it is. It is refused unless the version is the one main's package.json
+# names, its tag exists and nothing core ships has changed since the tag (scripts/release/core-retry-check.mjs), so core's
+# own code is the tag's. How the package is built and its changelog can differ, and the run summary lists every path
+# changed since the tag for whoever approves. A release tag can't move, so without this a failed version is lost.
 #
-# The cargo cache is restored, never saved: a tag's run can read caches saved on main but not those an earlier
-# tag's run saved, so saving here bought nothing and cost minutes. release-cache.yml builds and saves it on main.
+# package.yml restores the cargo cache and never saves it: release-cache.yml builds and saves it on main.
+#
+# Once the tarball passes the shrinkwrap check and the managed installs, the github-release job makes the tag's GitHub
+# Release, with the version's CHANGELOG.md section as its notes, beside the npm publish rather than after it: the
+# Release is this repository's, and npm being slow to publish or to serve the version can neither hold it back nor skip
+# it. After a put-back, the same job makes the version put back the repository's latest release.
 
 on:
   workflow_dispatch:
     inputs:
       latest:
         description: A released core version (its v<version> tag exists) to point latest at, to put core back; empty to build without publishing
+        required: false
+        default: ""
+        type: string
+      publish:
+        description: The version to publish from main, retrying a tagged release that failed before publishing; nothing core ships may have changed since its tag. Leave latest empty
         required: false
         default: ""
         type: string
@@ -37,11 +54,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Rejects a malformed tag, one that disagrees with package.json, or a tree Windows cannot check out, before any
-  # engine is built. A tag can name a commit PR CI never ran on.
+  # Rejects a malformed tag, one that disagrees with package.json, a preview older than core's `latest` (published, it
+  # would leave its channel behind the stable one), or a tree Windows cannot check out, before any engine is built. A
+  # tag can name a commit PR CI never ran on.
   metadata:
     name: Release metadata
-    if: ${{ !inputs.latest }}
+    if: ${{ !inputs.latest || inputs.publish }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -49,7 +67,7 @@ jobs:
       version: ${{ steps.release-channel.outputs.version }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -57,15 +75,23 @@ jobs:
       - name: Check every tracked path checks out on Windows
         run: node scripts/check/check-windows-paths.mjs
 
+      - name: Refuse a retry of anything but what main holds
+        if: ${{ inputs.publish }}
+        env:
+          VERSION: ${{ inputs.publish }}
+          LATEST: ${{ inputs.latest }}
+        run: node scripts/release/core-retry-check.mjs
+
       - id: release-channel
         name: Derive npm dist-tag
         env:
-          TAG_PUSH: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          PUBLISHES: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.publish != '' && github.ref == 'refs/heads/main') }}
+          RELEASE_TAG: ${{ inputs.publish && format('v{0}', inputs.publish) || github.ref_name }}
         run: |
           node --input-type=module <<'EOF'
           import { appendFileSync, readFileSync } from "node:fs";
-          if (process.env.TAG_PUSH !== "true") {
+          import { previewRefusal, readPublicDistTags } from "./scripts/release/dist-tags.mjs";
+          if (process.env.PUBLISHES !== "true") {
             console.log("Not a release tag push: the build is uploaded as an artifact and not published.");
             appendFileSync(process.env.GITHUB_OUTPUT, "channel=\n");
             process.exit(0);
@@ -76,258 +102,52 @@ jobs:
           const version = JSON.parse(readFileSync("package.json", "utf8")).version;
           if (version !== tag.slice(1)) throw new Error(`package.json version ${version} does not match ${tag}`);
           const channel = match[2] ?? "latest";
+          if (channel !== "latest") {
+            const refusal = previewRefusal(version, channel, (await readPublicDistTags("@neralabs/rerail")).latest);
+            if (refusal !== null) throw new Error(refusal);
+          }
           console.log(`Publishing ${version} to the ${channel} channel.`);
           appendFileSync(process.env.GITHUB_OUTPUT, `channel=${channel}\nversion=${version}\n`);
           EOF
 
-  native:
-    name: Native ${{ matrix.target }}
-    needs: metadata
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-14
-            target: aarch64-apple-darwin
-          - runner: macos-15-intel
-            target: x86_64-apple-darwin
-          - runner: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-          - runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-          - runner: windows-2025
-            target: x86_64-pc-windows-msvc
-            windows_runtime_smoke: true
-          # Cross-compiled on x64; no hosted Windows arm64 runner is used, so this engine is checked
-          # by import inspection only.
-          - runner: windows-2025
-            target: aarch64-pc-windows-msvc
-            windows_runtime_smoke: false
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
-    steps:
-      # Windows refuses paths over 260 characters unless Git is told to use long paths. `npm run check` keeps
-      # tracked paths well under that (scripts/check/check-windows-paths.mjs), so this is the backstop.
-      - name: Allow long paths in Git on Windows
-        if: runner.os == 'Windows'
-        run: git config --system core.longpaths true
-
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-
-      - uses: ./.github/actions/lfs
-
-      # No npm cache: on a tag, setup-node's cache misses on every runner but macOS arm64, and it saves on a miss.
-      - name: Set up Node.js v24
-        uses: actions/setup-node@v7
-        with:
-          node-version: "24"
-
-      # rust-toolchain.toml is the single pin: rustup reads it whenever cargo runs in this repository,
-      # so the toolchain installed here must be the same channel.
-      - id: rust-toolchain
-        name: Read pinned Rust toolchain
-        shell: bash
-        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
-
-      - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
-        with:
-          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
-          targets: ${{ matrix.target }}
-
-      # Exactly the key release-cache.yml builds from scratch on main (same paths), with no prefix fallback, so a
-      # published engine never links artifacts carried forward from an older cache. A miss builds cold.
-      - name: Restore cargo artifacts
-        uses: actions/cache/restore@v6
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: rerail-release-${{ matrix.target }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'native/Cargo.toml', '.cargo/config.toml') }}
-
-      - name: Install dependencies
-        run: npm ci # NOSONAR githubactions:S6505 -- trusted native dependency lifecycle scripts are required
-
-      - name: Build TypeScript
-        run: npm run build:ts
-
-      - name: Build native engine
-        run: ./node_modules/.bin/napi build --platform --release --target ${{ matrix.target }} --manifest-path native/Cargo.toml --output-dir native
-
-      # Runners ship the Visual C++ runtime, so the load smokes below cannot catch an engine
-      # that needs it; a clean Windows install does not have it.
-      - name: Check Windows engine has no Visual C++ runtime dependency
-        if: endsWith(matrix.target, '-windows-msvc')
-        shell: bash
-        run: node scripts/check/check-windows-runtime.mjs native/rerail_engine.*.node
-
-      - name: Smoke Windows rerail CLI install planning
-        if: matrix.windows_runtime_smoke
-        run: node dist/cli/cli.js install --root . --agents omp,pi,claude-code,codex,cursor --dry-run
-
-      - name: Provision Linux Secret Service
-        if: startsWith(matrix.runner, 'ubuntu')
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes dbus-x11 gnome-keyring libsecret-tools
-
-      - name: Smoke macOS Keychain device storage
-        if: startsWith(matrix.runner, 'macos')
-        run: ./node_modules/.bin/vitest run integration/signed-profile-cli.test.ts
-
-      - name: Smoke Linux Secret Service device storage
-        if: startsWith(matrix.runner, 'ubuntu')
-        run: |
-          dbus-run-session -- bash <<'EOF'
-          set -euo pipefail
-          # --unlock reads the login keyring password from stdin and creates the
-          # keyring when it does not exist; --start never creates it, which left
-          # secret-tool with no default collection. The password only guards this
-          # ephemeral session bus, so any non-empty throwaway value works.
-          eval "$(gnome-keyring-daemon --unlock --components=secrets <<< 'rerail-ci')"
-          if ! printf 'x' | secret-tool store --label=probe rerail-probe 1 \
-            || [ "$(secret-tool lookup rerail-probe 1)" != 'x' ]; then
-            echo '::error::Secret Service default collection is not writable after gnome-keyring-daemon --unlock' >&2
-            exit 1
-          fi
-          secret-tool clear rerail-probe 1
-          ./node_modules/.bin/vitest run integration/signed-profile-cli.test.ts
-          EOF
-
-      - name: Smoke Windows Credential Manager device storage
-        if: matrix.windows_runtime_smoke
-        run: ./node_modules/.bin/vitest run integration/signed-profile-cli.test.ts
-
-      - name: Smoke native engine
-        if: matrix.target != 'aarch64-pc-windows-msvc'
-        run: ./node_modules/.bin/vitest run test/engine/native/native-health.test.ts
-
-      - name: Smoke Windows junction lifecycle
-        if: matrix.windows_runtime_smoke
-        run: ./node_modules/.bin/vitest run test/setup/updater.test.ts test/setup/harness-registration.test.ts -t "Windows.*junction"
-
-      - name: Smoke Windows daemon launch handle isolation
-        if: matrix.windows_runtime_smoke
-        run: ./node_modules/.bin/vitest run test/runtime/windows-daemon-launch.test.ts
-
-      - name: Upload native engine
-        uses: actions/upload-artifact@v7
-        with:
-          name: rerail-native-${{ matrix.target }}
-          path: native/*.node
-          if-no-files-found: error
-
   package:
     name: Package
-    needs: native
+    needs: metadata
+    uses: ./.github/workflows/package.yml
+
+  # The tarball must ship the npm-shrinkwrap.json the tag's package-lock.json gives (docs/release.md, "Shrinkwrap"):
+  # npm installs core's dependencies from it. A missing or stale one fails the release before anything is published.
+  shrinkwrap:
+    name: Packed shrinkwrap
+    needs: package
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    outputs:
-      tarball: ${{ steps.packed-package.outputs.tarball }}
+    timeout-minutes: 5
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
 
-      - uses: ./.github/actions/lfs
-
-      # No npm cache, as in the native job.
       - name: Set up Node.js v24
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
 
-      - name: Install dependencies
-        run: npm ci # NOSONAR githubactions:S6505 -- trusted native dependency lifecycle scripts are required
-
-      - name: Assemble release package
-        run: |
-          npm run build:clean
-          npm run build:ts
-          npm run build:omp
-          npm run build:events
-          npm run build:cursor
-          npm run build:claude
-          npm run build:codex
-          npm run build:ui
-
-      - name: Download native engines
-        uses: actions/download-artifact@v8
-        with:
-          pattern: rerail-native-*
-          path: native
-          merge-multiple: true
-
-      - name: Verify every supported native target is present
-        run: |
-          set -euo pipefail
-          for target in darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64-msvc win32-arm64-msvc; do
-            test -f "native/rerail_engine.${target}.node" || { echo "missing native/rerail_engine.${target}.node" >&2; exit 1; }
-          done
-
-      - id: packed-package
-        name: Pack release package
-        run: |
-          npm pack --json > "$RUNNER_TEMP/packed-package.json"
-          node --input-type=module <<'EOF'
-          import { readFileSync, appendFileSync } from "node:fs";
-          const [{ filename }] = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/packed-package.json`, "utf8"));
-          appendFileSync(process.env.GITHUB_OUTPUT, `tarball=${filename}\n`);
-          EOF
-
-      - name: Smoke installed release package
-        env:
-          PACKAGE_TARBALL: ${{ steps.packed-package.outputs.tarball }}
-        run: |
-          set -euo pipefail
-          smoke_directory="$(mktemp -d)"
-          installed="$smoke_directory/node_modules/@neralabs/rerail"
-          npm install --prefix "$smoke_directory" "$PWD/$PACKAGE_TARBALL"
-          "$smoke_directory/node_modules/.bin/rerail" --help
-          # Every file the package runs by path (src/engine/package-root.ts ENTRY_POINTS: CLI, daemon, hooks, status
-          # line, event stream), read from the installed package itself so a layout change cannot leave this stale.
-          # shellcheck disable=SC2016 # the script is JavaScript; its template literals are not the shell's.
-          node --input-type=module --eval '
-            import { existsSync } from "node:fs";
-            import { join } from "node:path";
-            import { pathToFileURL } from "node:url";
-            const root = process.argv[1];
-            const { ENTRY_POINTS } = await import(pathToFileURL(join(root, "dist", "engine", "package-root.js")).href);
-            const missing = Object.values(ENTRY_POINTS).filter((path) => !existsSync(join(root, path)));
-            if (missing.length > 0) { console.error(`missing ${missing.join(", ")}`); process.exit(1); }
-            console.log(`entry points present: ${Object.keys(ENTRY_POINTS).join(", ")}`);
-          ' "$installed"
-          test -f "$installed/dist/ui/index.html"
-          for notice in LICENSE NOTICE; do
-            test -f "$installed/$notice" || { echo "missing $notice" >&2; exit 1; }
-          done
-          # prepack stamps package.json's version into the host plugin manifests.
-          for host in claude codex cursor; do
-            node -e 'const [pkg, manifest] = process.argv.slice(1).map((path) => require(path)); if (manifest.version !== pkg.version) { console.error(process.argv[2] + " version " + manifest.version + " is not " + pkg.version); process.exit(1); }' \
-              "$installed/package.json" "$installed/.$host-plugin/plugin.json"
-          done
-          (
-            cd "$smoke_directory"
-            node --input-type=module --eval 'import { nativeHealth } from "@neralabs/rerail"; if (!nativeHealth().ok) process.exit(1);'
-          )
-
-      - name: Upload release tarball
-        uses: actions/upload-artifact@v7
+      - name: Download release tarball
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rerail-package
-          path: ${{ steps.packed-package.outputs.tarball }}
-          if-no-files-found: error
+          path: release
+
+      - name: Check the tarball's npm-shrinkwrap.json against package-lock.json
+        env:
+          TARBALL: release/${{ needs.package.outputs.tarball }}
+        run: node scripts/release/shrinkwrap-pack.mjs check "$TARBALL"
 
   # The managed install renames a staged version into place, runs the native engine, and starts the
-  # daemon: behavior the Linux package smoke cannot see. Every release installs on native Windows x64
-  # before it ships.
+  # daemon: behavior the Linux package smoke cannot see. Every release installs on native Windows, Linux
+  # and macOS before it ships.
   windows-install:
     name: Windows x64 managed install
     needs: package
@@ -339,18 +159,18 @@ jobs:
         run: git config --system core.longpaths true
 
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
 
       - name: Set up Node.js v24
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
 
       - name: Download release tarball
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rerail-package
           path: release
@@ -359,15 +179,68 @@ jobs:
         shell: pwsh
         run: ./scripts/host/windows-install-smoke.ps1 -Tarball "release/${{ needs.package.outputs.tarball }}"
 
+  # Linux and macOS the way a user meets them, by the environment matrix's own guest
+  # (scripts/host/azure/guest.sh): Node from nodejs.org, `npx @neralabs/rerail setup` answered in its
+  # JSON lane, then the launcher, daemon and engine, PATH in a new shell (zsh on the Mac), the Claude
+  # Code and Codex hooks, daemon restart, and removal. `matrix.mjs local` runs it on the runner itself.
+  unix-install:
+    name: ${{ matrix.name }} managed install
+    needs: package
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            runner: ubuntu-24.04
+          - name: macOS arm64
+            runner: macos-15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # Runs the driver only; the guest installs its own Node from nodejs.org.
+      - name: Set up Node.js v24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: Download release tarball
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: rerail-package
+          path: release
+
+      - name: Install the release with npx @neralabs/rerail setup
+        env:
+          TARBALL: release/${{ needs.package.outputs.tarball }}
+        run: node scripts/host/azure/matrix.mjs local --tarball "$TARBALL" --out results
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: install-${{ matrix.runner }}
+          path: results
+          if-no-files-found: ignore
+
   # npm trusted publishing: the registry exchanges this job's GitHub OIDC token for a short-lived
   # publish credential, so no npm token exists anywhere. npmjs must list this repository,
-  # `release.yml`, and the `release` environment as the package's trusted publisher.
-  # npm only generates provenance attestations for packages published from a public repository;
-  # until this repository is public, releases publish without provenance.
+  # `release.yml`, and the `release` environment as the package's trusted publisher, allowing `npm dist-tag` as well
+  # as `npm publish` (a `latest` release moves `next` up).
+  # `--provenance` makes npm attach a provenance attestation and fail the publish when it cannot generate one (for
+  # example, if this repository is ever made private again), so no release reaches npm without one. The job can be run
+  # again after a failure: a version npm already has is not published again (npm refuses to publish over it, which
+  # the step reads, as packs-publish.mjs does, since `npm view` can lag a publish by minutes), and `next` is only ever
+  # moved up.
   publish:
     name: Publish to npmjs
-    needs: [metadata, package, windows-install]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [metadata, package, shrinkwrap, windows-install, unix-install]
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.publish != '' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: release
@@ -376,18 +249,24 @@ jobs:
       id-token: write
     steps:
       - name: Set up Node.js v24
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
 
-      # Trusted publishing needs npm CLI 11.5.1 or newer.
+      # Trusted publishing needs npm 11.5.1 or newer; dist-tags over it (moving `next`) 11.21.0.
       - name: Install npm with trusted publishing support
         run: |
-          npm install --global "npm@^11.5.1"
+          npm install --global "npm@^11.21.0"
           npm --version
 
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
       - name: Download release tarball
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rerail-package
           path: release
@@ -396,13 +275,28 @@ jobs:
         env:
           PACKAGE_TARBALL: release/${{ needs.package.outputs.tarball }}
           RELEASE_CHANNEL: ${{ needs.metadata.outputs.channel }}
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           set -euo pipefail
           test -n "$RELEASE_CHANNEL" || { echo "::error::No release channel was derived for ${GITHUB_REF_NAME}" >&2; exit 1; }
-          npm publish "./$PACKAGE_TARBALL" --registry https://registry.npmjs.org --access restricted --tag "$RELEASE_CHANNEL"
+          errors="$RUNNER_TEMP/npm-publish.err"
+          if npm publish "./$PACKAGE_TARBALL" --registry https://registry.npmjs.org --access public --tag "$RELEASE_CHANNEL" --provenance 2> "$errors"; then
+            cat "$errors" >&2
+          else
+            cat "$errors" >&2
+            node --input-type=module -e 'import { readFileSync } from "node:fs"; import { alreadyOnRegistry } from "./scripts/release/packs.mjs"; process.exit(alreadyOnRegistry(readFileSync(process.argv[1], "utf8")) ? 0 : 1);' "$errors" \
+              || { echo "::error::npm publish @neralabs/rerail@${RELEASE_VERSION} failed" >&2; exit 1; }
+            echo "::notice::@neralabs/rerail@${RELEASE_VERSION} is already on npm (a re-run): not published again"
+          fi
 
-  # Reads core's dist-tags back from npm, which for this restricted package needs a read token: the read-only
-  # NPM_PACKS_READ_TOKEN, which must cover @neralabs/rerail as well as the packs.
+      # A preview (`next`, `beta`) leaves `next` alone; a stable release moves it up, unless it is at a newer preview.
+      - name: Keep next from trailing latest
+        if: needs.metadata.outputs.channel == 'latest'
+        env:
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+        run: node scripts/release/raise-next.mjs "@neralabs/rerail@${RELEASE_VERSION}"
+
+  # Reads core's dist-tags back from npm with `npm dist-tag ls`; core is public, so no token is needed.
   dist-tags:
     name: Published dist-tags
     needs: [metadata, publish]
@@ -410,38 +304,27 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Set up Node.js v24
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
 
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
 
-      # The file names the variable, not the token: npm reads NODE_AUTH_TOKEN from the step that runs it.
-      - name: Authenticate npm to read core
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
-        run: |
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error::Reading the restricted @neralabs/rerail needs the repository secret NPM_PACKS_READ_TOKEN"
-            exit 1
-          fi
-          printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
-
       - name: Check core's dist-tag
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
           RELEASED: "@neralabs/rerail@${{ needs.metadata.outputs.version }}:${{ needs.metadata.outputs.channel }}"
         run: node scripts/release/dist-tags-check.mjs
 
-  # Puts core back: points `latest` at a version this repository released (its tag exists) and npm has. Trusted
+  # Puts core back: points `latest` at a version this repository released (its tag exists) and npm has, and `next` there
+  # too should `next` be older, so it never trails `latest` (a put-back to an older version leaves `next` alone). Trusted
   # publishing, as for publish: core's trusted publisher on npmjs must allow `npm dist-tag` as well as `npm publish`.
   put-back:
     name: Point latest at ${{ inputs.latest }}
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.latest && github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.latest && !inputs.publish && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: release
@@ -450,7 +333,7 @@ jobs:
       id-token: write
     steps:
       - name: Set up Node.js v24
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
 
@@ -461,7 +344,7 @@ jobs:
           npm --version
 
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -483,18 +366,57 @@ jobs:
           VERSION: ${{ inputs.latest }}
         run: npm dist-tag add "@neralabs/rerail@${VERSION}" latest --registry https://registry.npmjs.org
 
-      - name: Authenticate npm to read core
+      - name: Keep next from trailing latest
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
-        run: |
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error::Reading the restricted @neralabs/rerail needs the repository secret NPM_PACKS_READ_TOKEN"
-            exit 1
-          fi
-          printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
+          VERSION: ${{ inputs.latest }}
+        run: node scripts/release/raise-next.mjs "@neralabs/rerail@${VERSION}"
 
+      # Core is public, so `npm dist-tag ls` reads it back with no token.
       - name: Check core's dist-tag
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
           RELEASED: "@neralabs/rerail@${{ inputs.latest }}:latest"
         run: node scripts/release/dist-tags-check.mjs
+
+  # The GitHub Release of the tag, once the tarball has passed the checks every publish needs: its notes are the
+  # version's section of the tagged CHANGELOG.md (scripts/release/github-release.mjs), so release notes are written
+  # once, in the changelog. It runs beside the publish and waits on nothing npm does, so a slow publish or a dist-tag
+  # read-back that fails cannot leave the tag without its Release; should the publish fail, the Release stands and a
+  # retry (the `publish` input) runs this job again. A `next` or `beta` release is a pre-release; a `latest` one
+  # becomes the repository's latest release. Run again, it rewrites the notes and flags of the Release it made. After a
+  # put-back it runs for the version put back, whose Release exists already: that rewrite makes it the latest release
+  # again, with its notes from main's CHANGELOG.md, which keeps every released version's section. This is the one job
+  # that writes to the repository, so it alone holds `contents: write`.
+  github-release:
+    name: GitHub Release
+    needs: [metadata, shrinkwrap, windows-install, unix-install, put-back]
+    if: >-
+      ${{
+        !cancelled() && (
+          needs.put-back.result == 'success' ||
+          (
+            needs.metadata.outputs.channel != '' &&
+            needs.shrinkwrap.result == 'success' &&
+            needs.windows-install.result == 'success' &&
+            needs.unix-install.result == 'success'
+          )
+        )
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+
+      - name: Create the GitHub Release from CHANGELOG.md
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASED: ${{ inputs.latest && format('@neralabs/rerail@{0}:latest', inputs.latest) || format('@neralabs/rerail@{0}:{1}', needs.metadata.outputs.version, needs.metadata.outputs.channel) }}
+        run: node scripts/release/github-release.mjs

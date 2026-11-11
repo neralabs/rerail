@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::syntax::{Head, Item, Lit, Statement, Term};
+use rerail_rr_syntax::syntax::{Head, Item, Lit, Statement, Term};
 use crate::code_rule_dsl::logic::front::Error;
 
 /// The types a tape is not: a variable in one of these and in a tape column is refused.
@@ -132,6 +132,4 @@ pub(super) fn check(statements: &[Statement]) -> Result<(), Error> {
     Ok(())
 }
 
-#[cfg(test)]
-#[path = "tape_type_tests.rs"]
-mod tests;
+// cratify: `tests` is rerail-logic's (it mounts it)

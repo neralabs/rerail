@@ -1,0 +1,700 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-practice-callback-for-dom-only",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't wrap a function in useCallback when it is only called or passed to built-in elements' event props; nothing reads its identity, so the memo is wasted work.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": [
+      "**/*.test.*",
+      "**/*.spec.*",
+      "**/*.cy.*",
+      "**/__tests__/**",
+      "**/test/**",
+      "**/tests/**",
+      "**/e2e/**",
+      "**/__mocks__/**",
+      "**/*.stories.*",
+      "**/*.story.*",
+      "**/__stories__/**",
+      "**/__fixtures__/**",
+      "**/fixtures/**",
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js",
+      "**/*.d.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "cdo-fn": {
+            "any": [
+              {
+                "kind": "function_declaration"
+              },
+              {
+                "kind": "generator_function_declaration"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function"
+              },
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "method_definition"
+              }
+            ]
+          },
+          "cdo-react-source": {
+            "kind": "string",
+            "has": {
+              "kind": "string_fragment",
+              "regex": "^(?i:react|react-dom)$"
+            }
+          },
+          "cdo-react-object": {
+            "kind": "identifier",
+            "any": [
+              {
+                "regex": "^React$",
+                "resolves": {
+                  "global": [
+                    "React"
+                  ]
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "any": [
+                        {
+                          "kind": "import_clause"
+                        },
+                        {
+                          "kind": "namespace_import"
+                        }
+                      ],
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "cdo-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "cdo-require-react": {
+            "kind": "call_expression",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "kind": "identifier",
+                  "regex": "^require$"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "has": {
+                    "nthChild": 1,
+                    "matches": "cdo-react-source"
+                  }
+                }
+              }
+            ]
+          },
+          "cdo-react-destructure": {
+            "kind": "variable_declarator",
+            "all": [
+              {
+                "has": {
+                  "field": "name",
+                  "kind": "object_pattern",
+                  "has": {
+                    "kind": "shorthand_property_identifier_pattern",
+                    "regex": "^useCallback$"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "field": "value",
+                  "any": [
+                    {
+                      "matches": "cdo-react-object"
+                    },
+                    {
+                      "matches": "cdo-require-react"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "cdo-callback-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^(?:useCallback)$",
+                "resolves": {
+                  "global": [
+                    "useCallback"
+                  ]
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "import_specifier",
+                      "has": {
+                        "field": "name",
+                        "regex": "^(?:useCallback)$"
+                      },
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "cdo-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "regex": "^useCallback$",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "any": [
+                        {
+                          "matches": "cdo-react-destructure"
+                        },
+                        {
+                          "inside": {
+                            "stopBy": "end",
+                            "matches": "cdo-react-destructure"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "cdo-react-object"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^(?:useCallback)$"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "cdo-callback-call": {
+            "kind": "call_expression",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "cdo-callback-callee"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "has": {
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    },
+                    "any": [
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "function_expression"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "cdo-callback-value": {
+            "any": [
+              {
+                "matches": "cdo-callback-call"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "as_expression"
+                  },
+                  {
+                    "kind": "satisfies_expression"
+                  },
+                  {
+                    "kind": "non_null_expression"
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  }
+                ],
+                "has": {
+                  "nthChild": 1,
+                  "matches": "cdo-callback-value"
+                }
+              }
+            ]
+          },
+          "cdo-hook-fn": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "function_declaration"
+                  },
+                  {
+                    "kind": "generator_function_declaration"
+                  }
+                ],
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^use[A-Z0-9]"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "generator_function"
+                  },
+                  {
+                    "kind": "arrow_function"
+                  }
+                ],
+                "inside": {
+                  "field": "value",
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "name",
+                    "kind": "identifier",
+                    "regex": "^use[A-Z0-9]"
+                  }
+                }
+              }
+            ]
+          },
+          "cdo-component-hoc-call": {
+            "kind": "call_expression",
+            "any": [
+              {
+                "inside": {
+                  "field": "value",
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "name",
+                    "kind": "identifier",
+                    "regex": "^[A-Z]"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "kind": "export_statement",
+                  "has": {
+                    "regex": "^default$"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "kind": "arguments",
+                  "inside": {
+                    "matches": "cdo-component-hoc-call"
+                  }
+                }
+              }
+            ]
+          },
+          "cdo-component-fn": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "function_declaration"
+                  },
+                  {
+                    "kind": "generator_function_declaration"
+                  }
+                ],
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^[A-Z]"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "generator_function"
+                  },
+                  {
+                    "kind": "arrow_function"
+                  }
+                ],
+                "inside": {
+                  "field": "value",
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "name",
+                    "kind": "identifier",
+                    "regex": "^[A-Z]"
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "function_declaration"
+                  },
+                  {
+                    "kind": "generator_function_declaration"
+                  },
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "generator_function"
+                  },
+                  {
+                    "kind": "arrow_function"
+                  }
+                ],
+                "inside": {
+                  "kind": "export_statement",
+                  "has": {
+                    "regex": "^default$"
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "arrow_function"
+                  }
+                ],
+                "inside": {
+                  "kind": "arguments",
+                  "inside": {
+                    "matches": "cdo-component-hoc-call"
+                  }
+                }
+              }
+            ]
+          },
+          "cdo-memo-callback": {
+            "any": [
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "function_expression"
+              }
+            ],
+            "inside": {
+              "kind": "arguments",
+              "inside": {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "regex": "^(?:memo|forwardRef)$"
+                    },
+                    {
+                      "kind": "member_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "object",
+                            "kind": "identifier",
+                            "regex": "^React$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "property",
+                            "regex": "^(?:memo|forwardRef)$"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "cdo-component-or-hook": {
+            "any": [
+              {
+                "matches": "cdo-hook-fn"
+              },
+              {
+                "matches": "cdo-component-fn"
+              },
+              {
+                "matches": "cdo-memo-callback"
+              }
+            ]
+          },
+          "cdo-intrinsic-tag": {
+            "any": [
+              {
+                "kind": "jsx_opening_element"
+              },
+              {
+                "kind": "jsx_self_closing_element"
+              }
+            ],
+            "has": {
+              "field": "name",
+              "kind": "identifier",
+              "regex": "^[a-z][A-Za-z0-9]*$"
+            }
+          },
+          "cdo-handler-slot": {
+            "any": [
+              {
+                "inside": {
+                  "kind": "jsx_expression",
+                  "inside": {
+                    "kind": "jsx_attribute",
+                    "has": {
+                      "kind": "property_identifier",
+                      "regex": "^on[A-Z]"
+                    },
+                    "inside": {
+                      "matches": "cdo-intrinsic-tag"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "as_expression"
+                    },
+                    {
+                      "kind": "satisfies_expression"
+                    },
+                    {
+                      "kind": "non_null_expression"
+                    }
+                  ],
+                  "matches": "cdo-handler-slot"
+                }
+              },
+              {
+                "inside": {
+                  "field": "consequence",
+                  "kind": "ternary_expression",
+                  "matches": "cdo-handler-slot"
+                }
+              },
+              {
+                "inside": {
+                  "field": "alternative",
+                  "kind": "ternary_expression",
+                  "matches": "cdo-handler-slot"
+                }
+              },
+              {
+                "inside": {
+                  "field": "right",
+                  "kind": "binary_expression",
+                  "has": {
+                    "field": "operator",
+                    "regex": "^(?:&&|\\|\\||\\?\\?)$"
+                  },
+                  "matches": "cdo-handler-slot"
+                }
+              }
+            ]
+          },
+          "cdo-dom-handler-value": {
+            "kind": "identifier",
+            "matches": "cdo-handler-slot"
+          },
+          "cdo-direct-callee": {
+            "kind": "identifier",
+            "any": [
+              {
+                "inside": {
+                  "field": "function",
+                  "kind": "call_expression"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "non_null_expression",
+                  "inside": {
+                    "field": "function",
+                    "kind": "call_expression"
+                  }
+                }
+              }
+            ]
+          },
+          "cdo-own-name": {
+            "inside": {
+              "field": "name",
+              "kind": "variable_declarator"
+            }
+          },
+          "cdo-identity-read": {
+            "not": {
+              "any": [
+                {
+                  "matches": "cdo-own-name"
+                },
+                {
+                  "matches": "cdo-dom-handler-value"
+                },
+                {
+                  "matches": "cdo-direct-callee"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "callback-for-dom-only",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$X",
+            "all": [
+              {
+                "inside": {
+                  "field": "name",
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "value",
+                    "matches": "cdo-callback-value"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "cdo-fn"
+                  },
+                  "matches": "cdo-component-or-hook"
+                }
+              },
+              {
+                "binds": {
+                  "used": true
+                }
+              },
+              {
+                "not": {
+                  "binds": {
+                    "occurrence": {
+                      "matches": "cdo-identity-read"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "CALLBACK_FOR_DOM_ONLY",
+        "message": "Declare $X as a plain function, not in useCallback: it is only called or passed to built-in element event props, so nothing reads its identity."
+      }
+    }
+  ]
+}

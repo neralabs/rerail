@@ -433,7 +433,7 @@ impl RelStats {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::RelStats;
     use crate::code_rule_dsl::facts::vtab::syntax;
     use crate::code_rule_dsl::logic::native::component::columns_source;

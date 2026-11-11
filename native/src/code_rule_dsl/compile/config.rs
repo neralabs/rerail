@@ -38,7 +38,7 @@ struct Declaration {
 
 /// The document's options, each with its effective value (its `config` value, else its default).
 #[derive(Default)]
-pub(crate) struct Options {
+pub struct Options {
     values: BTreeMap<String, Value>,
 }
 
@@ -678,7 +678,7 @@ fn resolve_clause(options: &Options, clause: &Value, path: &str) -> Result<Value
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use crate::code_rule_dsl::test_support::*;
     use serde_json::{Value, json};
 

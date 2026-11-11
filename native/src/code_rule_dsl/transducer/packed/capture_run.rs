@@ -2,12 +2,12 @@
 //! Finite bodies form DAGs. Current-node admission retires before the next node.
 use super::*;
 #[path = "capture_run_entry.rs"]
-mod entry;
+pub mod entry;
 #[path = "capture_run_stream.rs"]
-mod stream;
+pub mod stream;
 #[cfg(test)]
 #[path = "capture_run_stream_tests.rs"]
-mod stream_tests;
+pub mod stream_tests;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Limits {

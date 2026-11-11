@@ -14,9 +14,9 @@ pub fn max() -> usize {
     rerail_accel::exec::threads()
 }
 
-/// Makes the one pool, sized to `max`: called before anything uses it (the library's load does, `lib.rs`). On the
-/// process's main thread it is called with `this_thread`, so that thread is one of the pool's (its own work and
-/// its waits are the pool's). A pool already made is left as it is.
+/// Makes the one pool, sized to `max`: called before anything uses it (the engine's `main`; Node's registration of
+/// the addon, `lib.rs`, never its constructor). On the process's main thread it is called with `this_thread`, so that
+/// thread is one of the pool's (its own work and its waits are the pool's). A pool already made is left as it is.
 pub fn configure(this_thread: bool) {
     rerail_accel::exec::configure(this_thread);
 }
@@ -41,7 +41,7 @@ pub fn is_main_thread() -> bool {
 
 /// Jobs on the one pool that borrow the caller's data, within [`scope`]: every one has ended when it returns. Each is
 /// handed the scope again, to start more.
-pub(crate) struct Jobs<'s, 'r>(
+pub struct Jobs<'s, 'r>(
     #[cfg(not(target_family = "wasm"))] &'r rayon::Scope<'s>,
     #[cfg(target_family = "wasm")] std::marker::PhantomData<(&'s (), &'r ())>,
 );
@@ -49,13 +49,13 @@ pub(crate) struct Jobs<'s, 'r>(
 impl<'s> Jobs<'s, '_> {
     /// Starts `f` as the job `name` on the pool (wasm32 has no threads: it runs here). A wait that runs it for
     /// another knows it by its name (`rerail_accel::exec::waits`).
-    pub(crate) fn spawn(&self, name: &'static str, f: impl for<'x> FnOnce(&Jobs<'s, 'x>) + Send + 's) {
+    pub fn spawn(&self, name: &'static str, f: impl for<'x> FnOnce(&Jobs<'s, 'x>) + Send + 's) {
         #[cfg(not(target_family = "wasm"))]
         {
             // The job's span is under the one open where it was started, on whichever thread runs it.
-            let under = crate::code_rule_dsl::profile_here();
+            let under = crate::code_rule_dsl::logic::profile::here();
             self.0.spawn(move |s| {
-                let _span = crate::code_rule_dsl::profile_span_at(under.as_deref(), || format!("{name} (job)"));
+                let _span = crate::code_rule_dsl::logic::profile::span_at(under.as_deref(), || format!("{name} (job)"));
                 rerail_accel::exec::as_job(name, || f(&Jobs(s)))
             });
         }
@@ -68,7 +68,7 @@ impl<'s> Jobs<'s, '_> {
 
 /// Runs `op` on this thread with a scope for jobs that borrow its data; returns once they have all ended (meanwhile,
 /// on one of the pool's threads, it runs the pool's jobs).
-pub(crate) fn scope<'s, R>(op: impl for<'r> FnOnce(&Jobs<'s, 'r>) -> R) -> R {
+pub fn scope<'s, R>(op: impl for<'r> FnOnce(&Jobs<'s, 'r>) -> R) -> R {
     #[cfg(not(target_family = "wasm"))]
     {
         rayon::in_place_scope(|s| op(&Jobs(s)))
@@ -92,10 +92,10 @@ pub(crate) struct Beside<T> {
 pub(crate) fn beside<T: Send + 'static>(name: &'static str, f: impl FnOnce() -> T + Send + 'static) -> Beside<T> {
     let slot = std::sync::Arc::new((parking_lot::Mutex::new(None), std::sync::atomic::AtomicBool::new(false)));
     let held = std::sync::Arc::clone(&slot);
-    let under = crate::code_rule_dsl::profile_here();
+    let under = crate::code_rule_dsl::logic::profile::here();
     let run = move || {
         held.1.store(true, std::sync::atomic::Ordering::Release);
-        let _span = crate::code_rule_dsl::profile_span_at(under.as_deref(), || format!("{name} (job)"));
+        let _span = crate::code_rule_dsl::logic::profile::span_at(under.as_deref(), || format!("{name} (job)"));
         let r = rerail_accel::exec::as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
         *held.0.lock() = Some(r);
     };
@@ -129,7 +129,7 @@ impl<T> Beside<T> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     /// The setting is at least one thread.
     #[test]
     fn the_setting_is_at_least_one_thread() {

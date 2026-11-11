@@ -412,7 +412,7 @@ pub(super) fn check_operands(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use crate::code_rule_dsl::test_support::*;
     use serde_json::{Value, json};
 

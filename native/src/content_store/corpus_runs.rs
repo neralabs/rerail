@@ -598,6 +598,15 @@ impl ContentStore {
                 params![plan, PLAN_ROWS_PER_PASS],
             )?;
             if (n as i64) < PLAN_ROWS_PER_PASS {
+                // The plan's per-file memo (decision 0108): its frames' space.
+                if let Ok(digest) = <[u8; 32]>::try_from(plan.as_slice()) {
+                    let space = super::frames::local_space(&digest);
+                    let frames: i64 = tx.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='frames'", [], |r| r.get(0))?;
+                    if frames > 0 {
+                        tx.execute("DELETE FROM frames WHERE space = ?1", [&space[..]])?;
+                        tx.execute("DELETE FROM frame_spaces WHERE space = ?1", [&space[..]])?;
+                    }
+                }
                 tx.execute("DELETE FROM corpus_plans WHERE plan_digest=?1 AND live=0", [&plan])?;
                 tx.execute("DELETE FROM corpus_plan_relations WHERE plan_digest=?1", [&plan])?;
             }

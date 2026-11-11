@@ -88,7 +88,7 @@ fn py_families_equal_s_producers() {
     for (at, source) in sources.iter().enumerate() {
         calls += check(source, &format!("source {at}"));
     }
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/python");
+    let root = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../fixtures/python");
     let mut stack = vec![root];
     let mut files = 0;
     while let Some(dir) = stack.pop() {

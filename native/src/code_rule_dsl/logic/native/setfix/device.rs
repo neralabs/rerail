@@ -35,6 +35,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Weak};
 use std::time::Instant;
+pub use crate::code_rule_dsl::logic::device::{Report};
 
 /// The most rows a table is given before its stage has run once (a guess; an overflow runs it again exactly).
 const GUESS_MAX: usize = 1 << 21;
@@ -76,7 +77,7 @@ struct PStage {
 
 /// A join rule's device plan.
 #[derive(Clone)]
-pub(super) struct Plan {
+pub(in crate::code_rule_dsl) struct Plan {
     stages: Vec<PStage>,
     head: Vec<Option<i64>>,
     head_slots: Vec<usize>,
@@ -109,7 +110,7 @@ fn step_name(s: &Step) -> &'static str {
 /// The program's columns, parameters, operations and outputs of a fused row program, into `d`; the source of a
 /// column (`Word::Col(c)`) is `kind` (a candidate's column, or the binding's slot `c`).
 fn program(d: &mut mj::Stage, f: &rowcode::Fused, kind: u32) -> Result<(), String> {
-    use crate::code_rule_dsl::transducer::packed::block::{BlockOp, CmpOp, Rhs};
+    use rerail_compiler::block::{BlockOp, CmpOp, Rhs};
     if f.columns.len() > mj::MAX_COLS || f.params.len() > mj::MAX_PARAMS || f.program.ops().len() > mj::MAX_OPS || f.program.outputs().len() > mj::MAX_OUTPUTS || f.steps > mj::MAX_OUTPUTS || f.binds.len() > mj::MAX_BINDS {
         return Err("a row program larger than a stage holds".into());
     }
@@ -185,7 +186,7 @@ fn readable(rel: &InRel, keys: usize) -> Result<(), String> {
 }
 
 /// `j`'s device plan, or the step the device cannot run.
-pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
+pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
     let mut bound = vec![false; j.nslots];
     let mut stages = Vec::new();
     let mut i = 0;
@@ -348,46 +349,13 @@ impl Resident {
     }
 }
 
-/// What a stratum's device run did, for the profile.
-#[derive(Clone, Debug, Default)]
-pub(in crate::code_rule_dsl) struct Report {
-    pub(in crate::code_rule_dsl) rules: u32,
-    pub(in crate::code_rule_dsl) stages: u32,
-    pub(in crate::code_rule_dsl) submissions: u32,
-    pub(in crate::code_rule_dsl) dispatches: u32,
-    /// Runs again from an overflowing stage.
-    pub(in crate::code_rule_dsl) reruns: u32,
-    pub(in crate::code_rule_dsl) gpu_seconds: f64,
-    /// This thread's CPU: encoding (uploads and sorts' encoding included), waiting, and reading the rows back into
-    /// the store.
-    pub(in crate::code_rule_dsl) encode_cpu: f64,
-    pub(in crate::code_rule_dsl) wait_cpu: f64,
-    pub(in crate::code_rule_dsl) wait_wall: f64,
-    pub(in crate::code_rule_dsl) decode_cpu: f64,
-    /// Head rows left once made distinct on the device (of `rows`).
-    pub(in crate::code_rule_dsl) distinct: u64,
-    pub(in crate::code_rule_dsl) upload_cpu: f64,
-    /// Relations uploaded (and their bytes), found resident; sorts made, found resident.
-    pub(in crate::code_rule_dsl) uploads: u32,
-    pub(in crate::code_rule_dsl) upload_bytes: u64,
-    pub(in crate::code_rule_dsl) resident_hits: u32,
-    pub(in crate::code_rule_dsl) sorts: u32,
-    pub(in crate::code_rule_dsl) sort_hits: u32,
-    /// Rows the heads made (before the store's set), and bindings the stages made.
-    pub(in crate::code_rule_dsl) rows: u64,
-    pub(in crate::code_rule_dsl) bindings: u64,
-    /// Why the device refused the stratum (at open, or at run time: a table past its budget), which then ran on the
-    /// CPU; `None` when it ran here.
-    pub(in crate::code_rule_dsl) refused: Option<String>,
-}
-
 /// The report of the last stratum the device ran or refused on this thread (taken).
 pub(in crate::code_rule_dsl) fn take_report() -> Option<Report> {
     LAST.with_borrow_mut(Option::take)
 }
 
 /// Notes that the device refused the stratum being opened or run: it runs on the CPU, and the profile names why.
-pub(super) fn refuse(why: String) {
+pub(in crate::code_rule_dsl) fn refuse(why: String) {
     LAST.with_borrow_mut(|l| *l = Some(Report { refused: Some(why), ..Report::default() }));
 }
 
@@ -606,7 +574,7 @@ impl<'p> Run<'p> {
 /// Runs the seed joins `rules` (each: its plan, its rule, its head relation) on the device, their head rows into
 /// `fresh` as the CPU's run would add them. Returns each rule's head rows (before the store's set). The rules go in
 /// as few submissions as their tables' space allows (`BATCH_MAX`): one, for most strata.
-pub(super) fn run(rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+pub(in crate::code_rule_dsl) fn run(rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device joins".into());
     let c0 = thread_cpu();
     let mut rep = Report { rules: rules.len() as u32, stages: rules.iter().map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
@@ -753,7 +721,7 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &mut [Fresh]
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use rusqlite::Connection;
 
     fn hex(s: &str) -> String {

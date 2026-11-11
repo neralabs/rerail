@@ -37,7 +37,9 @@ pub(super) fn ast_captures<'a>(
         | Semantic::Value(_)
         | Semantic::Layout(_)
         | Semantic::FilePath(_)
-        | Semantic::Host(_) => {}
+        | Semantic::Gap(_)
+        | Semantic::Host(_)
+        | Semantic::Term(_) => {}
     }
 }
 
@@ -78,7 +80,9 @@ pub(super) fn parse_exports<'a>(
         | Semantic::Value(_)
         | Semantic::Layout(_)
         | Semantic::FilePath(_)
-        | Semantic::Host(_) => {}
+        | Semantic::Gap(_)
+        | Semantic::Host(_)
+        | Semantic::Term(_) => {}
     }
 }
 

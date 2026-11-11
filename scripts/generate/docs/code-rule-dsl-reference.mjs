@@ -11,8 +11,10 @@
 //
 //   node scripts/generate/docs/code-rule-dsl-reference.mjs check
 //     Checks every `data-zod` annotation names an existing zod object, that each grammar
-//     production lists exactly that object's keys, and that a key the schema reads with
-//     `z.enum(...)` lists exactly its values as literals. `grammar` is the same check; reads only.
+//     production lists exactly that object's keys, that a key the schema reads with
+//     `z.enum(...)` lists exactly its values as literals, and that every tag the page opens is
+//     closed in order (a stray `</div>` pushes what follows out of its block). `grammar` is the
+//     same check; reads only.
 //     `npm run check:reference` runs it in `check:all`.
 //
 //   node scripts/generate/docs/code-rule-dsl-reference.mjs coverage [--ruff REF|DIR] [--eslint REF|DIR] [--write]
@@ -945,10 +947,11 @@ function fill() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Grammar check: every production `<div class="prod" data-zod="NAME[.key...]">` lists its keys as
-// `<b class="k">key</b>`; they must be exactly the keys of that zod object in code-rule-schema.ts or
-// code-rule-schema-semantic.ts (`SCHEMA_SOURCES`). A key whose zod value is `z.enum(...)` lists its
-// values as `<span class="lit">"value"</span>` after the key, exactly the enum's.
+// Grammar check: every production `<details class="prod" data-zod="NAME[.key...]">` (or a variant of one,
+// `<div class="variant" data-zod="…">`) lists its keys as `<b class="k">key</b>`; they must be exactly the keys
+// of that zod object in code-rule-schema.ts or code-rule-schema-semantic.ts (`SCHEMA_SOURCES`). A key whose
+// zod value is `z.enum(...)` lists its values as `<span class="lit">"value"</span>` after the key, exactly the
+// enum's. A nested object's keys are `<b class="sk">`, which the check does not count.
 
 /**
  * The index after a string, template, comment or regex literal starting at `i` in TypeScript
@@ -1136,15 +1139,15 @@ function zodEnumValues(sources, value) {
 }
 
 /**
- * The literals a production lists for `key`, from its `<b class="k">` to the next key or comment;
- * a range `"a".."b"` stands for `values` from a to b.
+ * The literals a production lists for `key`, from its `<b class="k">` to the next key, comment or note;
+ * a range `"a" to "b"` (or `"a".."b"`) stands for `values` from a to b.
  */
 function documentedLiterals(production, key, values) {
   const start = production.indexOf(`<b class="k">${key}</b>`);
   const rest = production.slice(start + key.length + 17);
-  const end = rest.search(/<b class="k">|<span class="c">/u);
+  const end = rest.search(/<b class="k">|<span class="c">|<p class="gnote">/u);
   const literals = [];
-  const pattern = /<span class="lit">"([^"]*)"<\/span>(?:\.\.<span class="lit">"([^"]*)"<\/span>)?/gu;
+  const pattern = /<span class="lit">"([^"]*)"<\/span>(?:(?:\.\.| to )<span class="lit">"([^"]*)"<\/span>)?/gu;
   for (const [, from, to] of (end < 0 ? rest : rest.slice(0, end)).matchAll(pattern)) {
     const first = values.indexOf(from);
     const last = to === undefined ? -1 : values.indexOf(to);
@@ -1201,6 +1204,28 @@ function deferredSectionFailures(html, accepted) {
   return deferred;
 }
 
+const VOID_ELEMENTS = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]);
+
+/**
+ * Each closing tag of the hand-written page that does not close the element open at that point, as `line N: </tag>`:
+ * one stray `</div>` closes its parent early, so everything after it renders outside its block.
+ */
+function unbalancedTags(html) {
+  const blank = text => text.replace(/[^\n]/gu, " ");
+  const source = html.replace(/<!--[\s\S]*?-->/gu, blank).replace(/(<(script|style)\b[^>]*>)([\s\S]*?)(<\/\2>)/gu, (_, open, _name, body, close) => open + blank(body) + close);
+  const problems = [];
+  const open = [];
+  for (const match of source.matchAll(/<(\/?)([a-zA-Z][\w-]*)\b[^>]*?(\/?)>/gu)) {
+    const [, closing, name, selfClosing] = match;
+    const tag = name.toLowerCase();
+    if (VOID_ELEMENTS.has(tag) || selfClosing === "/") continue;
+    if (closing === "") open.push(tag);
+    else if (open.at(-1) === tag) open.pop();
+    else problems.push(`line ${source.slice(0, match.index).split("\n").length}: </${tag}> while <${open.at(-1) ?? "nothing"}> is open`);
+  }
+  return [...problems, ...open.map(tag => `<${tag}> is never closed`)];
+}
+
 function checkGrammar() {
   const schema = SCHEMA_SOURCES.map(path => readFileSync(join(RERAIL, path), "utf8")).join("\n");
   const sources = ENUM_SOURCES.map(path => readFileSync(join(RERAIL, path), "utf8")).join("\n");
@@ -1208,34 +1233,40 @@ function checkGrammar() {
   const html = readFileSync(REFERENCE, "utf8");
   let failures = 0;
   let productions = 0;
-  for (const match of html.matchAll(/<div class="prod"[^>]*data-zod="([^"]+)"[^>]*>([\s\S]*?)<\/div>/g)) {
+  for (const match of html.matchAll(/<(details|div) class="(?:prod|variant)"[^>]*data-zod="([^"]+)"[^>]*>([\s\S]*?)<\/\1>/g)) {
+    const [, , zod, body] = match;
     productions += 1;
-    const documented = new Set([...match[2].matchAll(/<b class="k">([\w$]+)<\/b>/g)].map(([, key]) => key));
+    const documented = new Set([...body.matchAll(/<b class="k">([\w$]+)<\/b>/g)].map(([, key]) => key));
     let expected;
     let enums;
     try {
-      expected = new Set(zodKeys(schema, match[1]));
-      enums = enumDifferences(schema, sources, match[1], match[2], documented);
+      expected = new Set(zodKeys(schema, zod));
+      enums = enumDifferences(schema, sources, zod, body, documented);
     } catch (error) {
       failures += 1;
-      console.log(`${match[1]}: ${String(error.message ?? error)}`);
+      console.log(`${zod}: ${String(error.message ?? error)}`);
       continue;
     }
     const missing = [...expected].filter(key => !documented.has(key));
     const extra = [...documented].filter(key => !expected.has(key));
     if (missing.length > 0 || extra.length > 0) {
       failures += 1;
-      console.log(`${match[1]}: missing ${missing.join(", ") || "-"}; not in zod ${extra.join(", ") || "-"}`);
+      console.log(`${zod}: missing ${missing.join(", ") || "-"}; not in zod ${extra.join(", ") || "-"}`);
     }
     for (const difference of enums) {
       failures += 1;
-      console.log(`${match[1]}: ${difference}`);
+      console.log(`${zod}: ${difference}`);
     }
   }
   const deferred = deferredSectionFailures(html, acceptedCardIds(schema, compiler));
   if (deferred.length > 0) {
     failures += deferred.length;
     console.log(`supported sections marked deferred: ${deferred.join(", ")}`);
+  }
+  const unbalanced = unbalancedTags(html);
+  if (unbalanced.length > 0) {
+    failures += unbalanced.length;
+    console.log(`tags out of balance: ${unbalanced.slice(0, 10).join("; ")}`);
   }
   console.log(`${productions} productions checked against ${SCHEMA_SOURCES.join(" and ")}, ${failures} differ`);
   return failures === 0 && productions > 0;

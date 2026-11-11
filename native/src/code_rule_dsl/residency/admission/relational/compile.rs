@@ -319,7 +319,7 @@ pub(in crate::code_rule_dsl) fn compile(
                     if fields.is_empty()
                         || fields
                             .iter()
-                            .any(|f| !relational::python_ast::FIELDS.contains(&f.as_str()))
+                            .any(|f| !relational::ast_stage::fields().contains(&f.as_str()))
                     {
                         return Err(invalid("unknown canonical Python AST field"));
                     }
@@ -338,7 +338,7 @@ pub(in crate::code_rule_dsl) fn compile(
                         input_fields.entry(name.clone()).or_default().extend(fields);
                         last_uses.insert(name, index);
                     }
-                    Ok(relational::python_ast::Spec {
+                    Ok(relational::ast_stage::Spec {
                         roots,
                         syntax: source,
                         fields,
@@ -437,7 +437,7 @@ pub(in crate::code_rule_dsl) fn compile(
                 })
                 .transpose()?;
             let query = if let Some(spec) = &python_ast {
-                relational::python_ast::shape(&spec.fields)
+                relational::ast_stage::shape(&spec.fields)
             } else if reachability
                 .as_ref()
                 .is_some_and(|spec| spec.ordered_first.is_some())

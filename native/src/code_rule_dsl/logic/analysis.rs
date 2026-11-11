@@ -1,13 +1,13 @@
 //! Logical proofs shared by planners and executors. No connection, SQL, or row statistics.
-pub(in crate::code_rule_dsl) mod keys;
-pub(in crate::code_rule_dsl) mod storage;
-pub(in crate::code_rule_dsl) mod bags;
-mod program;
-pub(in crate::code_rule_dsl) mod scalars;
-pub(in crate::code_rule_dsl) use program::ProgramAnalysis;
+pub mod keys;
+pub mod storage;
+pub mod bags;
+pub mod program;
+pub mod scalars;
+pub use program::ProgramAnalysis;
 
 #[derive(Clone, Debug, serde::Serialize)]
-pub(in crate::code_rule_dsl) struct Decision {
+pub struct Decision {
     pub proven: bool,
     pub reason: String,
 }
@@ -20,4 +20,4 @@ impl Decision {
     }
 }
 #[cfg(test)]
-mod tests;
+pub mod tests;

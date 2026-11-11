@@ -3,8 +3,8 @@
 //! fixes and text comparisons. `rewrite` is not supported. `line`, `lines` and `count` (Rerail's)
 //! read where a capture stands and how many nodes it holds.
 
-mod semantic;
-mod string_case;
+pub mod semantic;
+pub mod string_case;
 
 use super::exported::exported_span;
 use super::value::Reading;
@@ -14,29 +14,29 @@ use ast_grep_core::source::Content;
 use ast_grep_core::{Doc, Node};
 use regex::Regex;
 use semantic::value_text;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::ops::Range;
-pub(crate) use string_case::{Separator, StringCase};
+pub use string_case::{Separator, StringCase};
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     static LINE_TABLE_CONSTRUCTIONS: Cell<usize> = const { Cell::new(0) };
 }
 
-#[cfg(test)]
-pub(crate) fn reset_line_table_constructions() {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn reset_line_table_constructions() {
     LINE_TABLE_CONSTRUCTIONS.with(|count| count.set(0));
 }
 
-#[cfg(test)]
-pub(crate) fn note_line_table_construction() {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn note_line_table_construction() {
     LINE_TABLE_CONSTRUCTIONS.with(|count| count.set(count.get() + 1));
 }
 
-#[cfg(test)]
-pub(crate) fn line_table_constructions() -> usize {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn line_table_constructions() -> usize {
     LINE_TABLE_CONSTRUCTIONS.with(Cell::get)
 }
 
@@ -44,16 +44,16 @@ pub(crate) fn line_table_constructions() -> usize {
 /// the text it reads as where it is unbound (`default`) and whether it reads the capture's value
 /// rather than its source text (`value`, with how values are read).
 #[derive(Clone)]
-pub(crate) struct Source {
+pub struct Source {
     pub(crate) variable: MetaVariable,
     pub(crate) default: Option<String>,
     pub(crate) value: Option<Reading>,
 }
 
 /// A `value` source whose value is not known and that has no default.
-pub(crate) struct UnknownValue;
+pub struct UnknownValue;
 
-pub(crate) struct TransformLimit;
+pub struct TransformLimit;
 
 /// Why a transformation computed no text: its source's value is not known, or its output exceeds
 /// the budget.
@@ -95,7 +95,7 @@ impl Source {
 }
 
 #[derive(Clone)]
-pub(crate) enum Trans {
+pub enum Trans {
     /// Characters (not bytes) from `start` to `end`; a negative index counts from the end.
     Substring {
         source: Source,
@@ -121,9 +121,38 @@ pub(crate) enum Trans {
     /// The number of nodes the capture holds: a `$$$` capture's named nodes other than comments
     /// (tree-sitter's extras, which the capture holds as upstream's does), 1 for a single one.
     Count { source: Source },
+    /// ECMAScript's `Number.prototype.toPrecision(digits)` of the number the source's text reads
+    /// as (a numeric literal, or a value's text), exactly; empty where it reads as no number or
+    /// `digits` as no integer from 1 to 100.
+    ToPrecision { source: Source, digits: Digits },
+}
+
+/// `toPrecision`'s significant digits: a number written in the rule, or the text of a capture or
+/// transform variable (`$L`), read as an integer.
+#[derive(Clone)]
+pub enum Digits {
+    Fixed(u32),
+    Variable(MetaVariable),
 }
 
 impl Trans {
+    /// The kinds a transformation is written as: the key of its one entry.
+    pub(crate) const KINDS: [&'static str; 7] = [
+        "replace",
+        "substring",
+        "convert",
+        "line",
+        "lines",
+        "count",
+        "toPrecision",
+    ];
+
+    /// `KINDS` as a message lists them: `replace, substring, ... or toPrecision`.
+    pub(crate) fn kinds_listed() -> String {
+        let (last, rest) = Self::KINDS.split_last().expect("transformation kinds");
+        format!("{} or {last}", rest.join(", "))
+    }
+
     fn source_spec(&self) -> &Source {
         match self {
             Self::Substring { source, .. }
@@ -131,8 +160,22 @@ impl Trans {
             | Self::Convert { source, .. }
             | Self::Line { source, .. }
             | Self::Lines { source }
-            | Self::Count { source } => source,
+            | Self::Count { source }
+            | Self::ToPrecision { source, .. } => source,
         }
+    }
+
+    /// The names of every variable the transformation reads, `$` sigils aside: its source, and
+    /// `toPrecision`'s digits where a variable gives them.
+    pub(crate) fn source_names(&self) -> impl Iterator<Item = &str> {
+        let digits = match self {
+            Self::ToPrecision {
+                digits: Digits::Variable(variable),
+                ..
+            } => Some(variable_name(variable)),
+            _ => None,
+        };
+        std::iter::once(self.source_name()).chain(digits)
     }
 
     pub(crate) fn source(&self) -> &MetaVariable {
@@ -146,10 +189,7 @@ impl Trans {
 
     /// The source's name, `$` sigils aside.
     pub(crate) fn source_name(&self) -> &str {
-        match self.source() {
-            MetaVariable::Capture(name, _) | MetaVariable::MultiCapture(name) => name,
-            MetaVariable::Dropped(_) | MetaVariable::Multiple => "",
-        }
+        variable_name(self.source())
     }
 
     /// Whether the transformation reads the capture's node rather than its text.
@@ -170,6 +210,28 @@ impl Trans {
         let or_default =
             |source: &Source, text: Option<String>| text.or_else(|| source.default.clone());
         let output = match self {
+            Self::ToPrecision { source, digits } => {
+                let Some(text) = source
+                    .text(env)
+                    .map_err(|UnknownValue| ComputeError::Unknown)?
+                else {
+                    return Ok(None);
+                };
+                let digits = match digits {
+                    Digits::Fixed(digits) => Some(*digits),
+                    Digits::Variable(variable) => env
+                        .get_var_bytes(variable)
+                        .map(|bytes| <D::Source as Content>::encode_bytes(bytes).into_owned())
+                        .and_then(|text| text.trim().parse::<u32>().ok()),
+                };
+                Some(
+                    digits
+                        .filter(|digits| (1..=100).contains(digits))
+                        .zip(NUMBER_TEXT.get())
+                        .and_then(|(digits, numbers)| numbers.to_precision(&text, digits))
+                        .unwrap_or_default(),
+                )
+            }
             Self::Line { source, end } => {
                 let text = placed(env, &source.variable).map(|(range, file)| {
                     let at = if *end { range.end } else { range.start };
@@ -226,7 +288,10 @@ impl Trans {
                     Self::Convert {
                         case, separators, ..
                     } => case.apply(&text, separators.as_deref()),
-                    Self::Line { .. } | Self::Lines { .. } | Self::Count { .. } => unreachable!(),
+                    Self::Line { .. }
+                    | Self::Lines { .. }
+                    | Self::Count { .. }
+                    | Self::ToPrecision { .. } => unreachable!(),
                 })
             }
         };
@@ -237,6 +302,20 @@ impl Trans {
             return Err(ComputeError::Limit);
         }
         Ok(output)
+    }
+}
+
+/// `text` with each match of `regex` replaced by `by` (`$1`, `${name}` its groups, `$$` a dollar), unbounded: the
+/// `replace` transform's rewrite, as `.rr`'s `@replace_all` computes it (`logic::plan`).
+pub fn replace(text: &str, regex: &Regex, by: &str) -> String {
+    replace_bounded(text, regex, by, usize::MAX).unwrap_or_else(|_| unreachable!("no output limit"))
+}
+
+/// A variable's name, `$` sigils aside.
+fn variable_name(variable: &MetaVariable) -> &str {
+    match variable {
+        MetaVariable::Capture(name, _) | MetaVariable::MultiCapture(name) => name,
+        MetaVariable::Dropped(_) | MetaVariable::Multiple => "",
     }
 }
 
@@ -370,14 +449,14 @@ fn resolve_char(index: Option<i32>, default: i32, len: i32) -> usize {
 
 /// The query's transforms, in an order where each source is computed before it is read.
 #[derive(Clone, Default)]
-pub(crate) struct Transform {
+pub struct Transform {
     pub(crate) steps: Vec<(String, Trans)>,
     pub(crate) max_output_bytes: usize,
 }
 
 impl Transform {
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn simple_case(&self, name: &str) -> Option<(&str, StringCase)> {
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    pub fn simple_case(&self, name: &str) -> Option<(&str, StringCase)> {
         let (
             _,
             Trans::Convert {
@@ -397,15 +476,15 @@ impl Transform {
             .then_some((source_name, *case))
     }
 
-    pub(crate) fn contains(&self, name: &str) -> bool {
+    pub fn contains(&self, name: &str) -> bool {
         self.steps.iter().any(|(key, _)| key == name)
     }
 
-    /// Whether a step reads the variable `name`: each step reads its source alone.
+    /// Whether a step reads the variable `name`: its source, or `toPrecision`'s digits.
     pub(crate) fn reads(&self, name: &str) -> bool {
         self.steps
             .iter()
-            .any(|(_, trans)| trans.source_name() == name)
+            .any(|(_, trans)| trans.source_names().any(|source| source == name))
     }
 
     pub(crate) fn names(&self) -> impl Iterator<Item = &str> {
@@ -414,7 +493,7 @@ impl Transform {
 
     /// Upstream's `apply_transform`: each variable in order, the empty text where its source is
     /// unbound (or its value unknown), de-indented relative to its source node.
-    pub(crate) fn apply<D: Doc>(&self, env: &mut MetaVarEnv<'_, D>) -> Result<(), TransformLimit> {
+    pub fn apply<D: Doc>(&self, env: &mut MetaVarEnv<'_, D>) -> Result<(), TransformLimit> {
         self.apply_steps(env, |_| true)
     }
 
@@ -446,7 +525,7 @@ impl Transform {
 
     /// A transform variable's text over the bindings so far, for a comparison; `Ok(None)` where a
     /// capture it derives from is unbound, `Err` where a value it reads is not known.
-    pub(crate) fn text<D: Doc>(
+    pub fn text<D: Doc>(
         &self,
         name: &str,
         env: &MetaVarEnv<'_, D>,
@@ -478,26 +557,24 @@ impl Transform {
     /// The transform variables `name` is computed from, itself included.
     fn chain(&self, name: &str) -> BTreeSet<&str> {
         let mut chain = BTreeSet::new();
-        let mut next = Some(name);
-        while let Some(key) = next.take() {
+        let mut pending = vec![name];
+        while let Some(key) = pending.pop() {
             let Some((key, trans)) = self.steps.iter().find(|(known, _)| known == key) else {
-                break;
+                continue;
             };
             if chain.insert(key.as_str()) {
-                next = Some(trans.source_name());
+                pending.extend(trans.source_names());
             }
         }
         chain
     }
 
     /// The captures `name` is computed from, following transform variables to their sources.
-    pub(crate) fn roots(&self, name: &str) -> BTreeSet<&str> {
+    pub fn roots(&self, name: &str) -> BTreeSet<&str> {
         let mut roots = BTreeSet::new();
         for key in self.chain(name) {
-            if let Some((_, trans)) = self.steps.iter().find(|(known, _)| known == key)
-                && !self.contains(trans.source_name())
-            {
-                roots.insert(trans.source_name());
+            if let Some((_, trans)) = self.steps.iter().find(|(known, _)| known == key) {
+                roots.extend(trans.source_names().filter(|source| !self.contains(source)));
             }
         }
         roots
@@ -505,8 +582,8 @@ impl Transform {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::replace_bounded;
+pub mod tests {
+    use super::{Trans, replace_bounded};
     use crate::code_rule_dsl::CompiledCodeRuleDsl;
     use crate::code_rule_dsl::test_support::*;
     use regex::Regex;
@@ -907,6 +984,89 @@ mod tests {
     }
 
     #[test]
+    fn to_precision_lays_out_a_number_as_ecmascript_does() {
+        // ESLint's no-loss-of-precision compares a literal with `value.toPrecision(digits)`:
+        // `9223372036854775808` is exact under 19 digits though `String` gives `…6000`. `Z` gives
+        // the digits from another capture; `P` reads it, and is computed after it.
+        let ast = json!({
+            "rule": { "kind": "call_expression", "pattern": "f($N, $K)" },
+            "transform": {
+                "P": { "toPrecision": { "source": "$N", "digits": "$Z" } },
+                "Q": { "toPrecision": { "source": "$N", "digits": 3 } },
+                "Z": { "replace": { "source": "$K", "replace": "_", "by": "" } },
+            },
+        });
+        let source = "f(9223372036854775808, 19);\nf(0x10, 2);\nf(1_000.5, 1_0);\nf(x, 2);\nf(1n, 2);\nf(5, 0);\n";
+        let messages = output(ast, "[$P] [$Q]", None, source)
+            .into_iter()
+            .map(|(message, _)| message)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            messages,
+            [
+                "[9223372036854775808] [9.22e+18]",
+                "[16] [16.0]",
+                "[1000.500000] [1.00e+3]",
+                "[] []",
+                "[] []",
+                "[] [5.00]",
+            ]
+        );
+        for (transform, expected) in [
+            (
+                json!({ "P": { "toPrecision": { "source": "$N", "digits": 0 } } }),
+                "/clauses/0/forbid/ast/transform/P/toPrecision/digits must be an integer from 1 to 100, or a `$NAME` variable",
+            ),
+            (
+                json!({ "P": { "toPrecision": { "source": "$N" } } }),
+                "/clauses/0/forbid/ast/transform/P/toPrecision/digits is required: an integer from 1 to 100, or a `$NAME` variable",
+            ),
+            (
+                json!({ "P": { "toPrecision": { "source": "$N", "digits": "$$$D" } } }),
+                "/clauses/0/forbid/ast/transform/P/toPrecision/digits: the digits are one text (`$NAME`), not a `$$$` list",
+            ),
+            (
+                json!({ "P": { "toPrecision": { "source": "$N", "digits": "$D" } } }),
+                "/clauses/0/forbid/ast/transform/P/digits: `$D` names no capture the query can bind",
+            ),
+            (
+                json!({ "P": { "toPrecision": { "source": "$N", "digits": "$Q" } },
+                        "Q": { "toPrecision": { "source": "$N", "digits": "$P" } } }),
+                "/clauses/0/forbid/ast/transform/P: `P` has a cyclic dependency",
+            ),
+        ] {
+            let ast = json!({
+                "rule": { "kind": "call_expression", "pattern": "f($N, $K)" },
+                "transform": transform,
+            });
+            let error = compile(
+                ast,
+                json!({ "anchor": "witness.span", "code": "X", "message": "x" }),
+            )
+            .err()
+            .expect("refused");
+            assert_eq!(error.reason, expected);
+        }
+    }
+
+    #[test]
+    fn to_precision_is_refused_outside_ecmascript() {
+        // `toPrecision` lays a number out as ECMAScript does: a Python rule has no such numbers.
+        let error = compile(
+            json!({ "language": "python",
+                "rule": { "kind": "call", "pattern": "f($N)" },
+                "transform": { "P": { "toPrecision": { "source": "$N", "digits": 3 } } } }),
+            json!({ "anchor": "witness.span", "code": "X", "message": "x" }),
+        )
+        .err()
+        .expect("refused");
+        assert_eq!(
+            error.reason,
+            "/clauses/0/forbid/ast/transform/P/toPrecision: `toPrecision` lays a number out as ECMAScript's Number.prototype.toPrecision; Python numbers have no such layout"
+        );
+    }
+
+    #[test]
     fn count_passes_over_comments() {
         // A `$$$` capture holds the comments between its nodes, as upstream's does; `count` counts
         // what ESLint's max-params and max-statements count, the parameters and statements.
@@ -1114,7 +1274,8 @@ mod tests {
             (
                 json!({ "B": "substring($A, startChar=1)" }),
                 format!(
-                    "{prefix}/B must be an object with one of replace, substring, convert, line, lines or count; the string form is not supported"
+                    "{prefix}/B must be an object with one of {}; the string form is not supported",
+                    Trans::kinds_listed()
                 ),
             ),
             (
@@ -1144,7 +1305,8 @@ mod tests {
             (
                 json!({ "B": { "substring": { "source": "$A" }, "convert": { "source": "$A", "toCase": "lowerCase" } } }),
                 format!(
-                    "{prefix}/B must hold exactly one of replace, substring, convert, line, lines or count"
+                    "{prefix}/B must hold exactly one of {}",
+                    Trans::kinds_listed()
                 ),
             ),
             (
@@ -1280,4 +1442,59 @@ mod tests {
             );
         }
     }
+}
+
+/// `Number::toString(x)` in base 10: the shortest digits that read back as `x`, laid out as
+/// ECMA-262 §6.1.6.1.20 lays them out.
+pub fn number_to_string(value: f64) -> String {
+    if value.is_nan() {
+        return "NaN".to_owned();
+    }
+    if value == 0.0 {
+        return "0".to_owned();
+    }
+    if value.is_infinite() {
+        return if value > 0.0 { "Infinity" } else { "-Infinity" }.to_owned();
+    }
+    if value < 0.0 {
+        return format!("-{}", number_to_string(-value));
+    }
+    // Rust's shortest round-trip digits, as `d.ddde±x`.
+    let scientific = format!("{value:e}");
+    let (mantissa, exponent) = scientific
+        .split_once('e')
+        .expect("LowerExp writes an exponent");
+    let digits = mantissa.replace('.', "");
+    let exponent: i32 = exponent.parse().expect("an integer exponent");
+    let k = digits.len() as i32;
+    let n = exponent + 1;
+    if k <= n && n <= 21 {
+        format!("{digits}{}", "0".repeat((n - k) as usize))
+    } else if 0 < n && n <= 21 {
+        format!("{}.{}", &digits[..n as usize], &digits[n as usize..])
+    } else if -6 < n && n <= 0 {
+        format!("0.{}{digits}", "0".repeat((-n) as usize))
+    } else {
+        let sign = if n > 0 { '+' } else { '-' };
+        let (first, rest) = digits.split_at(1);
+        if rest.is_empty() {
+            format!("{first}e{sign}{}", (n - 1).abs())
+        } else {
+            format!("{first}.{rest}e{sign}{}", (n - 1).abs())
+        }
+    }
+}
+
+/// The numbers `toPrecision` reads and writes (ECMAScript's: `Number.prototype.toPrecision` of the number a numeric
+/// literal's text or a value's `String(v)` denotes), registered at load.
+pub trait NumberText: Send + Sync {
+    /// `text`'s number to `digits` significant digits (1 to 100); `None` where `text` denotes no number.
+    fn to_precision(&self, text: &str, digits: u32) -> Option<String>;
+}
+
+static NUMBER_TEXT: std::sync::OnceLock<&'static dyn NumberText> = std::sync::OnceLock::new();
+
+/// Registers the numbers `toPrecision` reads (once, at load).
+pub fn install_number_text(numbers: &'static dyn NumberText) {
+    let _ = NUMBER_TEXT.set(numbers);
 }

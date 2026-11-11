@@ -63,7 +63,7 @@
 .decl host_node(n: node, h: node)
 .input parsed, host_node
 // The run's settings (the Python version and platform a branch is decided by, python/conditions.rr). No library
-// is loaded: python/modules.rr is struct.rr's (P1).
+// is loaded: the imports are resolved, and the libraries loaded, by phase 1 (sources.rr).
 .decl env(key: symbol, value: symbol)
 .decl dir_entry(dir: symbol, name: symbol, is_dir: number)
 .decl file_line(path: symbol, i: number, text: symbol)

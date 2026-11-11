@@ -39,13 +39,15 @@ pub(super) fn replay(capture: &std::path::Path) -> (Json, CandidateRows) {
     let files: Vec<i64> = data["files"].as_array().unwrap().iter().map(|v| v.as_i64().unwrap()).collect();
     let counter = Arc::new(AtomicU64::new(0));
     let started = super::cpu_ns();
-    let (rows, temp_bytes) = store
+    let observed = Arc::clone(&counter);
+    store
+        .candidate_progress(STEP, Some(move || {
+            observed.fetch_add(1, Ordering::Relaxed);
+            false
+        }))
+        .unwrap();
+    let result = store
         .candidate_transaction(true, |db| {
-            let observed = Arc::clone(&counter);
-            db.progress_handler(STEP, Some(move || {
-                observed.fetch_add(1, Ordering::Relaxed);
-                false
-            }))?;
             super::super::execute::request(db, &files)?;
             // Connection settings under trial (`RERAIL_LAB_PRAGMAS`, e.g. `PRAGMA temp_store=MEMORY`).
             if let Ok(pragmas) = std::env::var("RERAIL_LAB_PRAGMAS") {
@@ -89,10 +91,10 @@ pub(super) fn replay(capture: &std::path::Path) -> (Json, CandidateRows) {
                 [],
                 |r| r.get::<_, i64>(0),
             )?;
-            db.progress_handler(0, None::<fn() -> bool>)?;
             Ok((rows, temp_bytes))
-        })
-        .unwrap();
+        });
+    store.candidate_progress(0, None::<fn() -> bool>).unwrap();
+    let (rows, temp_bytes) = result.unwrap();
     let cpu_ms = (super::cpu_ns() - started) as f64 / 1e6;
     let mut sorted = rows.clone();
     sorted.sort_unstable();

@@ -90,7 +90,9 @@ to_record(b, _, _) :- mapped_record(b, r) => replace(b, `$r`).
 .decl record_text(s: node, r: symbol)
 record_text(s, r) :- field(s, "index_type", k), text(k, kt), field(s, "type", a), child(a, v, _), !kind(v, "comment"),
     text(v, vt), r0 = cat("Record<", cat(kt, cat(", ", cat(vt, ">")))),
-    (op(s, "readonly"), r = cat("Readonly<", cat(r0, ">")) ; !op(s, "readonly"), r = r0).
+    (ro(s), r = cat("Readonly<", cat(r0, ">")) ; !ro(s), r = r0).
+.decl ro(s: node)
+ro(s) :- kind(s, "index_signature"), op(s, "readonly").
 .decl extends_clause(n: node)
 extends_clause(n) :- kind(n, "interface_declaration"), child(n, e, _), kind(e, "extends_type_clause").
 .decl default_export(n: node)

@@ -7,7 +7,7 @@ pub(crate) struct Sample {
     allocated_bytes: Option<usize>,
     in_use_bytes: Option<usize>,
 }
-pub(crate) fn sample(phase: &str) -> Option<Sample> {
+pub fn sample(phase: &str) -> Option<Sample> {
     if !matches!(
         phase,
         "producer-prepare"
@@ -101,7 +101,7 @@ fn allocator() -> (Option<usize>, Option<usize>) {
     (None, None)
 }
 #[cfg(test)]
-mod tests {
+pub mod tests {
     #[test]
     fn memory_probes_are_limited_to_selected_boundaries() {
         assert!(super::sample("anchor-lower").is_none());

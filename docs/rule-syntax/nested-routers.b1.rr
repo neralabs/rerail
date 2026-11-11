@@ -8,6 +8,7 @@
 // Inputs: the tape relations (kind, field, text, str), plus
 // ref_site(ref, site) from the TypeScript scope table (the fact
 // behind resolves.binding.site).
+#include "tsx/names.rr"   // ref_site
 //
 // How to read this file
 //   1. tag() reads an element's tag name; imported() lists the

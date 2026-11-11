@@ -25,6 +25,9 @@ enum TokenType {
     // Never returned: valid right after `return` and `yield`, where ECMAScript allows no line terminator before the
     // operand (see scan_after_line_terminator).
     NO_LINE_TERMINATOR_HERE,
+    // Never returned: valid after a class member's `static`, `get` or `set`, where a name on the next line is the
+    // member's (see scan_after_line_terminator).
+    MEMBER_NAME_HERE,
 };
 
 void *tree_sitter_javascript_external_scanner_create() { return NULL; }
@@ -228,6 +231,15 @@ static bool scan_after_line_terminator(TSLexer *lexer, const bool *valid_symbols
     // would continue it.
     if (valid_symbols[ARROW_BODY_END]) {
         return lexer->lookahead != ',' && lexer->lookahead != ':' && lexer->lookahead != ';';
+    }
+
+    // After a class member's `static`, `get` or `set`, a property name on the next line is the member's, as ECMAScript
+    // reads a class element (`static get⏎a() {}` is a static getter `a`, `get⏎a() {}` a getter): no semicolon there.
+    // `[` and `*` say so through their own symbols; any other token (`=`, `(`, `;`, `}`) goes on as before.
+    if (valid_symbols[MEMBER_NAME_HERE] &&
+        (is_identifier_char(lexer->lookahead) || lexer->lookahead == '\\' || lexer->lookahead == '#' ||
+         lexer->lookahead == '"' || lexer->lookahead == '\'' || lexer->lookahead > 0x7f)) {
+        return false;
     }
 
     switch (lexer->lookahead) {

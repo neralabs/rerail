@@ -1,10 +1,9 @@
 use super::AstMatcher;
 use super::binding::{binding_node_facts, match_binding_nodes, match_occurrence, occurrence_facts};
 use super::resolve::{
-    file_declaration_sites, file_source_type, file_table, file_usage, table_reading,
+    file_declaration_sites, file_source_type_for, file_table, file_usage, table_reading,
 };
 use super::util::{THREE_VALUED, UNKNOWN};
-use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::scope::usage::{BindingId, PrivateMember, Usage};
@@ -15,18 +14,19 @@ use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// A scope a filter names: a table scope kind, or (TypeScript) eslint-scope's global scope, a
 /// script's top level, told apart from a module's (`ScopeKind::Module`).
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum ScopeName {
+pub enum ScopeName {
     Kind(ScopeKind),
     Global,
 }
 
 /// Filters over a binding: how and where it binds, and whether it is read.
 #[derive(Clone, Default)]
-pub(crate) struct BindingFilter {
+pub struct BindingFilter {
     /// The binding's form is one of these.
     pub(crate) forms: Option<Vec<Form>>,
     /// The scope that holds it is one of these.
@@ -45,7 +45,7 @@ pub(crate) struct BindingFilter {
     /// It is made under a `global` or `nonlocal` declaration.
     pub(crate) outer: Option<bool>,
     /// How many bindings of its name its scope holds, within a captured node or in all.
-    pub(crate) bindings: Option<BindingCount>,
+    pub bindings: Option<BindingCount>,
     /// TypeScript: it is the global variable of a configured global, in a script's top level
     /// (ESLint's `eslintImplicitGlobalSetting`, which no-redeclare's `builtinGlobals` reads).
     pub(crate) builtin: Option<bool>,
@@ -61,9 +61,9 @@ pub(crate) struct BindingFilter {
 /// `bindings`: the bindings of the binding's name in its scope (Ruff's `scope.get_all`, deletions
 /// included), counted where their name node lies inside the node captured as `within`.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct BindingCount {
+pub struct BindingCount {
     /// The capture whose node bounds the count; `None` counts the whole scope.
-    pub(crate) within: Option<String>,
+    pub within: Option<String>,
     pub(crate) min: usize,
     pub(crate) max: Option<usize>,
 }
@@ -153,7 +153,7 @@ impl BindingFilter {
             && self
                 .options
                 .as_deref()
-                .is_some_and(|options| options.global_top_level(file_source_type()));
+                .is_some_and(|options| options.global_top_level(file_source_type_for(options)));
         if global {
             ScopeName::Global
         } else {
@@ -171,7 +171,7 @@ impl BindingFilter {
         self.scope_name(table, id.scope) == ScopeName::Global
             && (commented
                 || self.options.as_deref().is_some_and(|options| {
-                    options.declares_in(id.name, VALUE | TYPE, None, file_source_type())
+                    options.declares_in(id.name, VALUE | TYPE, None, file_source_type_for(options))
                 }))
     }
 
@@ -240,7 +240,7 @@ impl BindingFilter {
         let holds =
             |wanted: Option<bool>, actual: bool| wanted.is_none_or(|wanted| wanted == actual);
         // The flow keys a binding by where it is made: its name node, or a Blade marker.
-        let php = table.php.as_deref().filter(|_| {
+        let php = table.flow.as_deref().filter(|_| {
             self.language
                 .is_some_and(|language| flow(Family::of(language)))
         });
@@ -334,36 +334,36 @@ fn pragma_variable(table: &ScopeTable, name: &str, fragments_only: bool) -> Opti
 /// `binds.redefines`: the binding shadows one that passes these filters and sub-rules, on the same
 /// fork (Ruff's branch path).
 #[derive(Clone)]
-pub(crate) struct Redefines {
-    pub(crate) filter: BindingFilter,
+pub struct Redefines {
+    pub filter: BindingFilter,
     /// Whether the shadowed binding is of the same scope.
     pub(crate) same_scope: Option<bool>,
     /// TypeScript: every other definition of the variable passes, rather than some earlier one.
-    pub(crate) every: bool,
+    pub every: bool,
     /// Whether both are imports of the same qualified name.
     pub(crate) same_import: Option<bool>,
-    pub(crate) site: Option<AstMatcher>,
-    pub(crate) value: Option<AstMatcher>,
-    pub(crate) annotation: Option<AstMatcher>,
+    pub site: Option<AstMatcher>,
+    pub value: Option<AstMatcher>,
+    pub annotation: Option<AstMatcher>,
 }
 
 /// `binds` (a Rerail extension): the node is the name node of a binding (where a linter reports
 /// it) that passes the filters, and each listed sub-rule matches that binding's node. The
 /// sub-rules share the caller's environment, as `has` does, so they may bind captures.
 #[derive(Clone)]
-pub(crate) struct Binds {
+pub struct Binds {
     pub(crate) language: GrammarDialect,
     /// Kinds a name node can have.
     pub(crate) name_kinds: BTreeSet<u16>,
     pub(crate) options: Option<Arc<LanguageOptions>>,
     pub(crate) python: Option<Arc<PythonOptions>>,
-    pub(crate) filter: BindingFilter,
-    pub(crate) site: Option<AstMatcher>,
-    pub(crate) value: Option<AstMatcher>,
-    pub(crate) annotation: Option<AstMatcher>,
+    pub filter: BindingFilter,
+    pub site: Option<AstMatcher>,
+    pub value: Option<AstMatcher>,
+    pub annotation: Option<AstMatcher>,
     /// TypeScript: matches some definition name or reference of the binding's variable.
-    pub(crate) occurrence: Option<AstMatcher>,
-    pub(crate) redefines: Option<Box<Redefines>>,
+    pub occurrence: Option<AstMatcher>,
+    pub redefines: Option<Box<Redefines>>,
 }
 
 impl Binds {
@@ -437,7 +437,7 @@ impl Binds {
     ) -> Option<(Vec<(BindingId<'t>, bool)>, bool)> {
         if flow(table.family) {
             let start = table.binding_of(id).offset as u32;
-            let reach = table.php.as_deref()?.reach(start)?;
+            let reach = table.flow.as_deref()?.reach(start)?;
             if reach.bindings.is_empty() && !reach.unknown {
                 return None;
             }
@@ -673,7 +673,7 @@ impl Binds {
                     continue;
                 }
             }
-            let shadowed_only = with_adapter!(table.family, A => <<A as Adapter>::Scope as ScopeRules>::REDEFINES_SHADOWED);
+            let shadowed_only = { let pack = language_pack::pack(table.family); pack.scope_redefines_shadowed() };
             let shadowed = match self.redefines.as_deref().filter(|_| shadowed_only) {
                 None => None,
                 Some(redefines) => match Self::shadowed(redefines, &table, &usage, id, &region) {
@@ -741,12 +741,12 @@ impl Binds {
 
 /// Whether `family` reads the file's flow (`ScopeRules::FLOW`).
 fn flow(family: Family) -> bool {
-    with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::FLOW)
+    { let pack = language_pack::pack(family); pack.scope_flow() }
 }
 
 impl Binds {
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn facts<'tree, D: Doc>(
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    pub fn facts<'tree, D: Doc>(
         &self,
         node: Node<'tree, D>,
         env: &MetaVarEnv<'tree, D>,
@@ -895,7 +895,7 @@ impl Binds {
 }
 
 impl Binds {
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     fn private_facts<'tree, D: Doc>(
         &self,
         node: &Node<'tree, D>,

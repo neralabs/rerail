@@ -1,14 +1,19 @@
 {
   "format": "rerail.policy/v1",
   "id": "bandit-b101-assert-used",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Avoid assert statements in Python code; they are stripped when Python runs with optimization, so any check they perform silently disappears.",
+  "description": "Avoid assert statements in Python code outside tests; they are stripped when Python runs with optimization, so any check they perform silently disappears.",
   "scope": {
     "include": [
       "**/*"
     ],
-    "exclude": []
+    "exclude": [
+      "**/tests/**",
+      "**/test_*.py",
+      "**/*_test.py",
+      "**/conftest.py"
+    ]
   },
   "clauses": [
     {

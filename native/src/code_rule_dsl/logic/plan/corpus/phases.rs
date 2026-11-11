@@ -44,6 +44,45 @@ thread_local! {
     static HANDED_DOWN: std::cell::RefCell<Vec<(String, Facts)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// Phase 1's name (`sources.rr`): run first, once for a run, by the runner (`corpus::run_observed`), not as a phase a
+/// program's reads start.
+pub(super) const SOURCES: &str = "sources";
+
+/// What phase 1 handed on, for the run that ran it and every phase run inside that run: its documents are theirs.
+pub(super) struct PhaseOne {
+    /// The tree it read, and its grammar: a run of another tree or grammar (phase 0's) does not take its documents.
+    pub(super) root: PathBuf,
+    pub(super) label: String,
+    /// The source files it made documents of, `(path, grammar, content)`, in the order given.
+    pub(super) documents: Vec<(String, String, String)>,
+    /// The library documents the imports reached, `(canonical path, module, grammar, content)`.
+    pub(super) libraries: Vec<(String, String, String, String)>,
+    /// Its exports, as a reader of `sources__<export>` takes them.
+    rows: BTreeMap<String, Vec<Vec<String>>>,
+}
+
+thread_local! {
+    static PHASE_ONE: std::cell::RefCell<Option<std::rc::Rc<PhaseOne>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Holds phase 1's result for the run until dropped.
+pub(super) struct PhaseOneHeld(Option<std::rc::Rc<PhaseOne>>);
+impl PhaseOneHeld {
+    pub(super) fn enter(one: PhaseOne) -> PhaseOneHeld {
+        PhaseOneHeld(PHASE_ONE.with(|p| p.borrow_mut().replace(std::rc::Rc::new(one))))
+    }
+}
+impl Drop for PhaseOneHeld {
+    fn drop(&mut self) {
+        PHASE_ONE.with(|p| *p.borrow_mut() = self.0.take());
+    }
+}
+
+/// Phase 1's result, while a run that ran it is under way on this thread, if it read `root` in `label`.
+pub(super) fn phase_one(root: &Path, label: &str) -> Option<std::rc::Rc<PhaseOne>> {
+    PHASE_ONE.with(|p| p.borrow().clone()).filter(|o| o.root == root && o.label == label)
+}
+
 /// Hands phase `name`'s upstream facts to its run until dropped.
 struct HandedDown;
 impl HandedDown {
@@ -81,13 +120,13 @@ impl Drop for Running {
 }
 
 /// What a program says of itself as a phase: its name and its exports.
-pub(crate) struct Declared {
+pub struct Declared {
     pub(crate) name: String,
-    pub(crate) exports: Vec<String>,
+    pub exports: Vec<String>,
 }
 
 /// The phase `prog` declares (`.phase NAME`, `.export a, b`), if any.
-pub(crate) fn declared(prog: &Program) -> Option<Declared> {
+pub fn declared(prog: &Program) -> Option<Declared> {
     let setting = |key: &str| prog.settings.iter().filter(|(k, _)| k == key).map(|(_, v)| v.trim().to_owned()).collect::<Vec<_>>();
     let name = setting("phase").into_iter().next()?;
     let list = |key: &str| setting(key).iter().flat_map(|v| v.split(',').map(|e| e.trim().trim_end_matches('.').to_owned()).collect::<Vec<_>>()).filter(|e| !e.is_empty()).collect::<Vec<_>>();
@@ -97,11 +136,11 @@ pub(crate) fn declared(prog: &Program) -> Option<Declared> {
 /// The phase program `name`, with its `#include`s read in: `<phase_dir>/<name>.rr` when the run's options name a
 /// `phase_dir`, else `typing/programs/<name>.rr`.
 fn source(name: &str, dir: Option<&Path>) -> Result<Option<String>> {
-    let builtin = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/typing/programs");
+    let builtin = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/typing/programs");
     let Some(path) = dir.into_iter().chain([builtin.as_path()]).map(|d| d.join(format!("{name}.rr"))).find(|p| p.exists()) else {
         return Ok(None);
     };
-    crate::code_rule_dsl::tools::program_text(&path).map(Some).map_err(Error::Plan)
+    crate::code_rule_dsl::logic::settings::program_text(&path).map(Some).map_err(Error::Plan)
 }
 
 /// The relations `prog` reads from earlier phases, by phase: `(the reader's relation, the export)`. A relation named
@@ -130,11 +169,11 @@ pub(crate) fn is_phased(rel: &str) -> bool {
 }
 
 /// One phase's run, as the reader's run reports it.
-pub(crate) struct PhaseRun {
-    pub(crate) name: String,
-    pub(crate) report: Report,
+pub struct PhaseRun {
+    pub name: String,
+    pub report: Report,
     /// Each export's rows.
-    pub(crate) exports: Vec<(String, usize)>,
+    pub exports: Vec<(String, usize)>,
 }
 
 pub(crate) type Facts = BTreeMap<String, Vec<Vec<Value>>>;
@@ -157,6 +196,15 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
     }
     let dir = options.get("phase_dir").and_then(|v| v.as_str()).map(PathBuf::from);
     for (name, reads) in wanted(prog, dir.as_deref())? {
+        // Phase 1 ran before any phase, for the run (`PhaseOne`): its exports are handed on as it left them. A run
+        // that did not run it (given its files, or with `RERAIL_SOURCES_PHASE=off`) reads none.
+        if name == SOURCES {
+            let src = source(&name, dir.as_deref())?.expect("sources.rr, a builtin phase program");
+            let program = crate::code_rule_dsl::logic::rr::parse(&src)?;
+            let rows = PHASE_ONE.with(|p| p.borrow().as_ref().map(|o| o.rows.clone())).unwrap_or_default();
+            hand_on(&name, &program, &reads, &rows, &mut facts)?;
+            continue;
+        }
         // An earlier phase that reads a phase of its own runs that one first, inside its run (struct, then types).
         let _running = Running::enter(&name)?;
         let src = source(&name, dir.as_deref())?.expect("a phase program");
@@ -224,14 +272,15 @@ pub(super) fn current() -> Option<String> {
 
 /// Phase 1's program, the builtin one.
 pub(super) fn sources_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/typing/programs/sources.rr")
+    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/typing/programs/sources.rr")
 }
 
-/// Phase 1, `sources` (decision 0104): the run's source files, each `(path, grammar, content digest)`, loaded as
-/// documents by `sources.rr`, its own run of the same engine. What it hands on is each file that became a document,
-/// `(path, grammar, content)`, in the order given: the later phase's documents.
+/// Phase 1, `sources` (decision 0104): the run's source files, each `(path, module, grammar, content digest)`, loaded
+/// as documents by `sources.rr`, its own run of the same engine, with the libraries their imports reach. What it hands
+/// on is each file that became a document, `(path, grammar, content)`, in the order given, and each library document:
+/// the later phases' documents.
 pub(super) fn sources(
-    files: &[(String, String, String)],
+    files: &[(String, String, String, String)],
     label: &str,
     root: &Path,
     scratch: &Path,
@@ -240,8 +289,8 @@ pub(super) fn sources(
     chunk_nodes: usize,
     typing: &Typing,
     options: &serde_json::Value,
-) -> Result<(Vec<(String, String, String)>, PhaseRun)> {
-    const NAME: &str = "sources";
+) -> Result<(PhaseOne, PhaseRun)> {
+    const NAME: &str = SOURCES;
     let _running = Running::enter(NAME)?;
     let dir = options.get("phase_dir").and_then(|v| v.as_str()).map(PathBuf::from);
     let src = source(NAME, dir.as_deref())?.expect("sources.rr, a builtin phase program");
@@ -259,7 +308,7 @@ pub(super) fn sources(
         options = serde_json::json!({ "inputFiles": [] });
     }
     // The observer's facts: stated, handed down as a phase's exports are (they are its inputs, not its program).
-    let stated: Vec<Vec<Value>> = files.iter().map(|(p, g, c)| vec![Value::Str(p.clone()), Value::Str(g.clone()), Value::Str(c.clone())]).collect();
+    let stated: Vec<Vec<Value>> = files.iter().map(|(p, m, g, c)| vec![Value::Str(p.clone()), Value::Str(m.clone()), Value::Str(g.clone()), Value::Str(c.clone())]).collect();
     let _down = HandedDown::enter(NAME, Facts::from([("observer__source_file".to_owned(), stated)]));
     let out = scratch.join(format!("phase-{NAME}"));
     let report = {
@@ -268,9 +317,21 @@ pub(super) fn sources(
     };
     let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: its exports read")); read_exports(NAME, &program, &declared, &out)? };
     let made: std::collections::HashSet<&str> = rows.get("document").into_iter().flatten().filter_map(|r| r.first().map(String::as_str)).collect();
-    let documents: Vec<(String, String, String)> = files.iter().filter(|(p, _, _)| made.contains(p.as_str())).cloned().collect();
+    let documents: Vec<(String, String, String)> = files.iter().filter(|(p, _, _, _)| made.contains(p.as_str())).map(|(p, _, g, c)| (p.clone(), g.clone(), c.clone())).collect();
+    let mut libraries: Vec<(String, String, String, String)> = rows
+        .get("library")
+        .into_iter()
+        .flatten()
+        .filter_map(|r| match r.as_slice() {
+            [p, m, g, c] => Some((p.clone(), m.clone(), g.clone(), c.clone())),
+            _ => None,
+        })
+        .collect();
+    libraries.sort();
+    libraries.dedup_by(|a, b| a.0 == b.0);
     let exports = declared.exports.iter().map(|e| (e.clone(), rows.get(e).map_or(0, Vec::len))).collect();
-    Ok((documents, PhaseRun { name: NAME.to_owned(), report, exports }))
+    let one = PhaseOne { root: root.to_path_buf(), label: label.to_owned(), documents, libraries, rows };
+    Ok((one, PhaseRun { name: NAME.to_owned(), report, exports }))
 }
 
 /// Whether a program loads documents into its fixed point (a `load` rule, decision 0065 §2a).
@@ -335,7 +396,7 @@ fn hand_on(name: &str, program: &Program, reads: &[(String, String)], rows: &BTr
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use crate::code_rule_dsl::typing::file_local::Binding;
 
     /// Phase 1 (`sources.rr`, decision 0104): a run's documents are those phase 1 loads, one per source file's key.
@@ -359,7 +420,7 @@ mod tests {
         let defs = || std::fs::read_to_string(out.join("defs.csv")).unwrap();
         let first = run();
         let sources = first.phase_runs.iter().find(|r| r.name == "sources").expect("phase 1 ran");
-        assert_eq!(sources.exports, vec![("document".to_owned(), 2)], "each source file is a document of phase 1's");
+        assert_eq!(sources.exports, vec![("document".to_owned(), 2), ("library".to_owned(), 0)], "each source file is a document of phase 1's, and no library is set");
         assert_eq!(defs(), "f\ng\n");
         std::fs::write(src.join("a.py"), "def h():\n    return 1\n").unwrap();
         let second = run();
@@ -367,6 +428,49 @@ mod tests {
         let sources = second.phase_runs.iter().find(|r| r.name == "sources").expect("phase 1 ran");
         assert_eq!(sources.report.memo.0, 1, "phase 1 builds only the edited file");
         assert_eq!(second.memo.0, 1, "so does the run");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Phase 1 resolves the imports to their fixed point: a library an import reaches is loaded, and its own imports in
+    /// turn. A program that reads `sources__library` takes those documents as its own loaded documents, and loads
+    /// nothing. An edit of a library file is followed; the tree's file is not built again.
+    #[test]
+    fn phase_1_loads_the_libraries_the_imports_reach_and_a_reader_takes_them() {
+        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("sources-libraries");
+        let _ = std::fs::remove_dir_all(&dir);
+        let (src, lib) = (dir.join("src"), dir.join("ts/stdlib"));
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&lib).unwrap();
+        std::fs::write(src.join("rerail.env"), "python.typeshed = ../ts\n").unwrap();
+        std::fs::write(src.join("m.py"), "import a\n\ndef own():\n    return 1\n").unwrap();
+        std::fs::write(lib.join("VERSIONS"), "builtins: 3.0-\na: 3.0-\nb: 3.0-\nc: 3.0-\n").unwrap();
+        std::fs::write(lib.join("builtins.pyi"), "class object: ...\n").unwrap();
+        std::fs::write(lib.join("a.pyi"), "import b\ndef fa() -> None: ...\n").unwrap();
+        std::fs::write(lib.join("b.pyi"), "def fb() -> None: ...\n").unwrap();
+        std::fs::write(lib.join("c.pyi"), "def fc() -> None: ...\n").unwrap();
+        let out = dir.join("out");
+        let _no_session = crate::code_rule_dsl::logic::plan::corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        let reader = "#include \"core.rr\"\n.decl sources__library(p: symbol, m: symbol, g: symbol, c: symbol)\n.decl lib(m: symbol)\nlib(m) :- sources__library(_, m, _, _).\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output lib, defs\n";
+        let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
+        let run = || crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::Value::Null).unwrap();
+        let rows = |rel: &str| {
+            let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
+            v.sort();
+            v
+        };
+        let first = run();
+        assert_eq!(first.phase_runs.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["sources"]);
+        let sources = first.phase_runs.iter().find(|r| r.name == "sources").expect("phase 1 ran");
+        assert_eq!(sources.exports, vec![("document".to_owned(), 1), ("library".to_owned(), 3)], "m, and builtins, a and b: c is imported by none");
+        assert_eq!(rows("lib"), ["a", "b", "builtins"]);
+        assert_eq!(rows("defs"), ["fa", "fb", "own"], "the libraries are the reader's documents");
+        std::fs::write(lib.join("b.pyi"), "import c\ndef fb2() -> None: ...\n").unwrap();
+        let second = run();
+        assert_eq!(rows("lib"), ["a", "b", "builtins", "c"], "the edited library's import is followed");
+        assert_eq!(rows("defs"), ["fa", "fb2", "fc", "own"]);
+        let sources = second.phase_runs.iter().find(|r| r.name == "sources").expect("phase 1 ran");
+        assert_eq!(sources.report.memo.0, 3, "phase 1 reads m, builtins and a from the memo, and builds only the edited library and the new one");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -420,7 +524,7 @@ at(n, s) :- kind(n, "function_definition"), field(n, "name", i), text(i, s).
         let first = run(&text).unwrap();
         let r = || std::fs::read_to_string(out.join("r.csv")).unwrap();
         assert_eq!(r(), "m\nm.f\nm.g\n");
-        assert_eq!(first.phase_runs[0].exports, [("unit".to_owned(), 3), ("def".to_owned(), 3)]);
+        assert_eq!(first.phase_runs.iter().find(|r| r.name == "p1").expect("p1 ran").exports, [("unit".to_owned(), 3), ("def".to_owned(), 3)]);
         assert_eq!(first.files, 0, "the reader reads only the phase's exports, so no file");
         // Unchanged, a comment, a body: the exports the reader reads are as they were.
         run(&text).unwrap();
@@ -477,11 +581,11 @@ anc(s, a) :- anc(s, b), p1__base(b, a).
         let reader = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse("#include \"core.rr\"\n.decl p2__anc(s: symbol, a: symbol)\n.decl r(s: symbol, a: symbol)\nr(s, a) :- p2__anc(s, a).\n.output r\n").unwrap()).unwrap();
         let report = run(&reader).unwrap();
         assert_eq!(std::fs::read_to_string(out.join("r.csv")).unwrap(), "B\tA\n");
-        // Both phases are listed flat, in the order they ran, then phase 1 (`sources`), which gives the run its
-        // documents; p2's own run checked p1 once, not again.
+        // Phase 1 (`sources`) first, which gives every run its documents, then both phases, listed flat, in the order
+        // they ran; p2's own run checked p1 once, not again.
         let names: Vec<&str> = report.phase_runs.iter().map(|r| r.name.as_str()).collect();
-        assert_eq!(names, ["p1", "p2", "sources"]);
-        assert!(report.phase_runs[1].report.phase_runs.is_empty(), "p1 is not checked again inside p2's run");
+        assert_eq!(names, ["sources", "p1", "p2"]);
+        assert!(report.phase_runs[2].report.phase_runs.is_empty(), "p1 is not checked again inside p2's run");
         // Nothing changed: the same rows.
         run(&reader).unwrap();
         assert_eq!(std::fs::read_to_string(out.join("r.csv")).unwrap(), "B\tA\n");
@@ -520,7 +624,7 @@ anc(s, a) :- anc(s, b), p1__base(b, a).
         let reader = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
         let report = crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&reader], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
         assert_eq!(std::fs::read_to_string(out.join("r.csv")).unwrap(), "A\tstrict\n");
-        assert_eq!(report.phase_runs.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["p1", "sources"]);
+        assert_eq!(report.phase_runs.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["sources", "p1"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -4,11 +4,15 @@
 
 use super::value::kit as value_kit;
 use super::{
-    Adapter, ArgumentRules, Blade, CallRules, Ecma, FormatArgRules, Php, Python, Rust, ScopeRules,
-    Sql, ValueRules, Vue, with_adapter,
+    Adapter, ArgumentRules, CallRules, FormatArgRules, ScopeRules, ValueRules, has_import_targets, is_comment_kind,
+    is_paren_kind, parsed_by_forte,
 };
+use super::{blade::Blade, ecma::Ecma, php::Php, python::Python, rust::Rust, sql::Sql, vue::Vue};
+
+// `with_adapter!` (generated from the registry, `build_languages.rs`): every family's adapter by its module.
+include!(concat!(env!("OUT_DIR"), "/with_adapter.rs"));
 use crate::code_rule_dsl::language::{
-    CodeRuleLanguage, Family, GrammarDialect, Semantic, SourceType, Support,
+    CodeRuleLanguage, Family, GrammarDialect, Semantic, SourceType, Support, kind_ids,
 };
 use crate::code_rule_dsl::lines::Terminators;
 use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
@@ -56,25 +60,8 @@ struct Expect {
     scope: super::scope::kit::Expect,
 }
 
-/// The tape of a file of `source` in `dialect`, as files are read: Blade's from its Forte tree,
-/// the rest from tree-sitter's.
-fn file(source: &str, dialect: GrammarDialect) -> TapeDoc {
-    let grammar = Grammar::new(dialect).expect("grammar");
-    let image = TapeImage::parse(&grammar, source, &|| false)
-        .expect("parses")
-        .expect("encodes");
-    TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).expect("restores")
-}
-
-/// The document of a file of `source` in `dialect` its family's semantics read: the program the
-/// file embeds, where its dialect embeds one (`embed`), else the file's own tree.
-pub(super) fn semantic(source: &str, dialect: GrammarDialect) -> AstGrep<TapeDoc> {
-    let host = file(source, dialect);
-    let guest = host
-        .guests()
-        .and_then(|guests| guests.first().map(|guest| guest.doc.clone()));
-    AstGrep::doc(guest.unwrap_or(host))
-}
+// `file` and `semantic` are the scope kit's (rerail-w), which reads them too.
+use super::scope::kit::{file, semantic};
 
 /// A directory holding a package `pkg`, removed when dropped.
 struct Package(PathBuf);
@@ -98,8 +85,9 @@ impl Drop for Package {
 }
 
 /// Runs the generic suite over family `A` against `expect`: its identity (`family`, `label`,
-/// `terminators`), name normalisation, the regions of each document, module paths, and each
-/// concern's own kit. A new family adds one `#[test]` function calling `kit::<Family>(&Expect { .. })`.
+/// `terminators`), name normalisation, the regions of each document, module paths, the node kinds
+/// `rerail-ignore` is read by, and each concern's own kit. A new family adds one `#[test]` function
+/// calling `kit::<Family>(&Expect { .. })`.
 fn kit<A: Adapter>(expect: &Expect) {
     assert_eq!(A::FAMILY, expect.family);
     assert_eq!(with_adapter!(expect.family, B => B::LABEL), expect.label);
@@ -143,6 +131,17 @@ fn kit<A: Adapter>(expect: &Expect) {
         (A::PACKAGE_MANIFESTS, A::JSX_RUNTIMES),
         expect.package_manifests
     );
+    // A kind one of the family's grammars lacks (a typo, a renamed node) would leave its
+    // directives silently unread there: every registry dialect of the family has each kind.
+    let dialects = CodeRuleLanguage::ALL
+        .into_iter()
+        .filter(|language| language.family() == A::FAMILY)
+        .flat_map(|language| language.dialects().iter().copied());
+    for dialect in dialects {
+        for kind in [A::COMMENT_KINDS, A::PREAMBLE_KINDS, A::BODY_KINDS].concat() {
+            assert_ne!(dialect.kind_id(kind), 0, "{kind} in {dialect:?}");
+        }
+    }
     value_kit::check::<A>(&expect.value, |s| semantic(s, expect.dialect));
     super::calls::kit::check::<A>(&expect.calls, expect.dialect);
     super::arguments::kit::check::<A>(&expect.arguments, expect.semantic, |s| {
@@ -1189,6 +1188,66 @@ fn adapters_read_the_capabilities_the_registry_supports() {
                 with_adapter!(language.family(), A => reads::<A>(semantic)),
                 "{} {semantic:?}",
                 language.name()
+            );
+        }
+    }
+}
+
+/// The scope kinds, and the kinds the shared walks pass over, are the ones the shared code named
+/// before they moved here, in every registry dialect.
+#[test]
+fn shared_walks_read_the_kinds_they_named() {
+    fn scope_kinds<S: ScopeRules>(dialect: GrammarDialect) {
+        let ids = |names: &[&str]| kind_ids(dialect, names);
+        assert_eq!(
+            ids(S::PAREN_KINDS),
+            ids(&["parenthesized_expression"]),
+            "{dialect:?}"
+        );
+        if S::FLOW {
+            return;
+        }
+        assert_eq!(
+            ids(S::DOTTED_NAME_KINDS),
+            ids(&["dotted_name"]),
+            "{dialect:?}"
+        );
+        assert_eq!(ids(S::THIS_KINDS), ids(&["this"]), "{dialect:?}");
+        let attribute = if S::IMPORT_PATHS {
+            ids(&["scoped_identifier", "scoped_type_identifier"])
+        } else {
+            ids(&["attribute"])
+        };
+        assert_eq!(ids(S::ATTRIBUTE_KINDS), attribute, "{dialect:?}");
+    }
+    for language in CodeRuleLanguage::ALL {
+        for dialect in language.dialects().iter().copied() {
+            with_adapter!(language.family(), A => scope_kinds::<<A as Adapter>::Scope>(dialect));
+            for name in (0..dialect.kind_count() as u16).filter_map(|id| dialect.kind_name(id)) {
+                assert_eq!(
+                    is_comment_kind(name),
+                    matches!(
+                        name,
+                        "comment" | "html_comment" | "line_comment" | "block_comment"
+                    ),
+                    "{name} in {dialect:?}"
+                );
+                assert_eq!(is_paren_kind(name), name == "parenthesized_expression");
+            }
+        }
+    }
+}
+
+/// A file is parsed by Forte, and may ask for import targets, in the families that did before
+/// these moved onto the adapter.
+#[test]
+fn family_choices_stay_with_their_families() {
+    for language in CodeRuleLanguage::ALL {
+        for dialect in language.dialects().iter().copied() {
+            assert_eq!(parsed_by_forte(dialect), dialect == GrammarDialect::Blade);
+            assert_eq!(
+                has_import_targets(dialect),
+                Family::of(dialect) == Family::Ecma
             );
         }
     }

@@ -1,0 +1,214 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-log004-log-exception-outside-except-handler",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use error instead of exception for logging calls made outside an except handler; there is no active exception to record there.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "log-exception-outside-except-handler",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "logger-object": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "resolves": {
+                      "import": [
+                        "logging.getLogger",
+                        "logging.Logger"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "logger-object"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "logging",
+                      "flask.current_app.logger"
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "regex": "^(log|LOG)|(logger|logging|LOGGER|LOGGING)$"
+                    },
+                    {
+                      "kind": "attribute",
+                      "regex": "\\W(log|LOG)\\w*$|(logger|logging|LOGGER|LOGGING)$",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "name-chain",
+                        "not": {
+                          "follows": {
+                            "stopBy": "neighbor",
+                            "regex": "(?s)."
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "not": {
+                    "resolves": {
+                      "import": true
+                    }
+                  }
+                }
+              ]
+            },
+            "name-chain": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "name-chain",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "name-chain"
+                  }
+                }
+              ]
+            },
+            "exception-callee": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "regex": "\\Wexception$",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "logger-object",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "import": [
+                      "logging.exception"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "exception-callee"
+                  }
+                }
+              ]
+            },
+            "call-in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "call",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "exception-callee"
+                      },
+                      "capture": "C"
+                    },
+                    {
+                      "matches": "call-in-string"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "not": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "except_clause"
+              }
+            },
+            "any": [
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "exception-callee"
+                },
+                "pattern": "$C"
+              },
+              {
+                "matches": "call-in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "code": "LOG004",
+        "message": "Call `error` instead of `exception` here: outside an except block there is no exception to attach. Leave it if this code only ever runs while an exception is being handled.",
+        "each": "C",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "LOG004"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

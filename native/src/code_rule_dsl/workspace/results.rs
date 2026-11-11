@@ -12,11 +12,11 @@ use crate::code_rule_dsl::json::{invalid, json_error};
 use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, Evaluation, Metrics, Query};
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::profile;
-use crate::code_rule_dsl::soundness::UNREAD;
+use crate::code_rule_dsl::soundness::{SYNTAX_ERRORS, UNREAD};
 use napi::Result;
 use rayon::prelude::*;
 use serde_json::{Value, json};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -25,17 +25,17 @@ use std::time::Duration;
 
 // Per-thread so concurrently running tests cannot perturb each other's counts. A result page task
 // computes on the thread that runs it, so a test that runs the task observes its own counts.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
-    pub(super) static RESULT_PAGE_WITNESSES_VISITED: Cell<usize> = const { Cell::new(0) };
-    pub(super) static RESULT_PAGE_SORTS: Cell<usize> = const { Cell::new(0) };
-    pub(super) static RESULT_PAGE_EVICTED_RESTORES: Cell<usize> = const { Cell::new(0) };
+    pub static RESULT_PAGE_WITNESSES_VISITED: Cell<usize> = const { Cell::new(0) };
+    pub static RESULT_PAGE_SORTS: Cell<usize> = const { Cell::new(0) };
+    pub static RESULT_PAGE_EVICTED_RESTORES: Cell<usize> = const { Cell::new(0) };
     /// Files whose violations a complete result rendered, and complete results that sorted theirs.
     pub(super) static RESULT_RENDERS: Cell<usize> = const { Cell::new(0) };
     pub(super) static RESULT_SORTS: Cell<usize> = const { Cell::new(0) };
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn count(counter: &'static std::thread::LocalKey<Cell<usize>>, amount: usize) {
     counter.set(counter.get() + amount);
 }
@@ -166,7 +166,7 @@ pub(super) fn profile_result(
         .map_err(json_error)
 }
 
-pub(super) struct ResultPageIndex {
+pub struct ResultPageIndex {
     revision: u32,
     /// Each violation as the pages serialize it, in result order. Serialized once when the index is
     /// built, which holds the JSON alone rather than the witnesses it renders.
@@ -239,7 +239,7 @@ pub(super) fn evicted_file_states(
     if evicted.is_empty() {
         return Ok(Vec::new());
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     count(&RESULT_PAGE_EVICTED_RESTORES, evicted.len());
     let storage = state
         .storage
@@ -251,9 +251,9 @@ pub(super) fn evicted_file_states(
         .collect::<Vec<_>>();
 
     let catalog = candidate_catalog(&state.code_rules)?;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let injected = super::TEST_EVICTED_READ_FAILURE.get();
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-hooks")))]
     let injected = false;
     // A store read that fails reports each file's clauses as unavailable, as `api.rs` does for a
     // resident file: the stored results remain, so a later read answers them (O22).
@@ -371,7 +371,7 @@ fn blind_file(state: &WorkspaceState, file: &FileState) -> Option<Value> {
             ("budget-exceeded" | crate::code_rule_dsl::model::FILE_BUDGET_EXCEEDED, _) => {
                 &mut budget
             }
-            ("source-incomplete", "file has syntax errors" | UNREAD) => &mut syntax,
+            ("source-incomplete", SYNTAX_ERRORS | UNREAD) => &mut syntax,
             _ => return None,
         };
         first.get_or_insert(*message);
@@ -427,7 +427,7 @@ fn build_result_page_index(state: &WorkspaceState) -> Result<ResultPageIndex> {
             let code_rule = &state.code_rules[id.0];
             let clause = &code_rule.clauses[id.1];
             for witness in file_witnesses {
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-hooks"))]
                 count(&RESULT_PAGE_WITNESSES_VISITED, 1);
                 witnesses.push((code_rule, clause, witness));
             }
@@ -504,7 +504,7 @@ fn build_result_page_index(state: &WorkspaceState) -> Result<ResultPageIndex> {
             failures.push(item);
         }
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     count(&RESULT_PAGE_SORTS, 1);
     entries.sort_by(|left, right| {
         (&left.0, left.1, &left.2, &left.3).cmp(&(&right.0, right.1, &right.2, &right.3))
@@ -643,7 +643,7 @@ fn rendering_key(code_rules: u64, file: &FileState) -> u64 {
 
 /// `file`'s reported violations, serialized, in result order.
 fn render(state: &WorkspaceState, file: &FileState) -> Result<Vec<RenderedViolation>> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     count(&RESULT_RENDERS, 1);
     let mut violations = Vec::new();
     for (&id, witnesses) in file.witnesses.iter() {
@@ -881,7 +881,7 @@ pub(super) fn serialize_result(
         violations.retain(|violation| !blocked.contains(violation.rule_id.as_str()));
     }
     if !ordered || !global_violations.is_empty() {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         count(&RESULT_SORTS, 1);
         violations.sort_by(|a, b| a.order().cmp(&b.order()));
     }
@@ -927,7 +927,7 @@ pub(super) fn serialize_result(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::super::api::{CodeRuleDslWorkspace, WorkspaceApplyTask};
     use super::super::storage::StorageContext;
     use super::super::tests::{WORKSPACE_TEST_SLOT, result_page};
@@ -973,6 +973,7 @@ mod tests {
             workspace_id,
             snapshot_id: snapshot,
             owner,
+            secret_names: Default::default(),
             _maintenance: None,
         });
         let compiled =

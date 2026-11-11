@@ -1,4 +1,4 @@
 # Code owners: requested for review when a PR touches their paths, and named by the automated reviewer
 # (neralabs/reviewer) when it escalates. The last matching pattern wins.
-# Everything defaults to Timo and Jeff until areas get their own owners.
-* @Moti-Velz @jeffreysnell
+# Everything defaults to Timo, Jeff, and Gabriel until areas get their own owners.
+* @Moti-Velz @jeffreysnell @gdgiangi-nera

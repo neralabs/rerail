@@ -46,6 +46,19 @@ use ast_grep_core::{Doc, Node};
 use serde_json::Value;
 use std::ops::Range;
 
+/// Biome's `biome-ignore` comments: the lint rules (`lint/<group>/<rule>`) a comment must
+/// name, or their group, or `lint`.
+pub struct Suppressions;
+
+impl super::SuppressionKind for Suppressions {
+    const KEY: &'static str = "biome";
+    const DETAIL: &'static str = "biome: biome-ignore comments are Biome's";
+    type Spec = Vec<String>;
+    fn spec(value: &serde_json::Value, at: &str) -> napi::Result<Vec<String>> {
+        spec(value, at)
+    }
+}
+
 /// `biome.rules`: the lint rules (`lint/<group>/<rule>`) a `biome-ignore` comment must name, or
 /// their group, or `lint`, to suppress the violation.
 pub(super) fn spec(biome: &Value, at: &str) -> napi::Result<Vec<String>> {
@@ -61,7 +74,7 @@ pub(super) fn spec(biome: &Value, at: &str) -> napi::Result<Vec<String>> {
 
 #[rustfmt::skip]
 #[path = "biome_registry.generated.rs"]
-mod registry;
+pub mod registry;
 
 /// A suppression's `RuleCategory`: lint rules are the ones a violation names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -587,7 +600,7 @@ fn named<'a>(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_language::LanguageExt;

@@ -31,7 +31,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 /// JSON files.
-pub(crate) struct Json;
+pub struct Json;
 
 fn refused(message: impl Into<Cow<'static, str>>) -> Result<(), Refusal> {
     Err(Refusal::Refused(message.into()))
@@ -45,6 +45,11 @@ impl Adapter for Json {
     const PACKAGE_MANIFESTS: bool = false;
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = false;
+    const STRIPS_BOM: bool = false;
+    /// tree-sitter-json's `comment` (JSONC's), which walks pass over.
+    const COMMENT_KINDS: &'static [&'static str] = &["comment"];
+    const PREAMBLE_KINDS: &'static [&'static str] = &[];
+    const BODY_KINDS: &'static [&'static str] = &[];
     type Scope = Self;
     type Value = Self;
     type Arguments = Refused;
@@ -90,6 +95,10 @@ impl ScopeRules for Json {
     const SCOPES: &'static [(&'static str, ScopeName)] = &[];
     const REFUSED_FILTERS: &'static [&'static str] = &[];
     const IMPORT_PATHS: bool = false;
+    const PAREN_KINDS: &'static [&'static str] = &[];
+    const DOTTED_NAME_KINDS: &'static [&'static str] = &[];
+    const ATTRIBUTE_KINDS: &'static [&'static str] = &[];
+    const THIS_KINDS: &'static [&'static str] = &[];
 
     fn visit<D: Doc>(_: &mut Builder<'_>, _: &Node<'_, D>, _: Reading) -> Result<(), BuildError> {
         Ok(())
@@ -141,7 +150,7 @@ impl ScopeRules for Json {
         None
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn unbound_locally(_: &ScopeTable, _: &Reference, _: &str, _: bool) -> bool {
         false
     }

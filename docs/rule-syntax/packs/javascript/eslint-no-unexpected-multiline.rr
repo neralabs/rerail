@@ -19,20 +19,25 @@
     suppress oxlint "no-unexpected-multiline"
 no_unexpected_multiline(t, "Move the ( onto the line of the function it calls, or add a semicolon if the previous line ends a statement.") :-
     kind(c, "call_expression"), !field(c, "optional_chain", _), field(c, "arguments", a), kind(a, "arguments"),
-    count : { child(a, x, _), !kind(x, "comment") } > 0, field(c, "function", f), broken_after(f, t).
+    count : { child(a, x, _), !kind(x, "comment") } > 0, before_line(a, l), !line(a, l), t = a.
+layout_at(a) :- kind(c, "call_expression"), field(c, "arguments", a), kind(a, "arguments").
 no_unexpected_multiline(t, "Move the [ onto the line of the object it indexes, or add a semicolon if the previous line ends a statement.") :-
-    kind(m, "subscript_expression"), !field(m, "optional_chain", _), field(m, "object", o), broken_after(o, t).
+    kind(m, "subscript_expression"), !field(m, "optional_chain", _), field(m, "index", i), structural_before(i, g),
+    match("(?s)[^\\[]*\\n[^\\[]*\\[\\s*", g), w = @replace_all(g, "(?s)^.*\\[", ""), line(i, li),
+    l = li - (strlen(w) - strlen(@replace_all(w, "\\n", ""))), node(d, m, _, _, _), src_line(d, l, t).   // at the `[`'s line (the tape keeps no `[`)
 no_unexpected_multiline(q, "Move the template literal onto the line of its tag, or add a semicolon if the previous line ends a statement.") :-
-    kind(c, "call_expression"), field(c, "arguments", q), kind(q, "template_string"), token_before(q, p),
-    end_line(p, l), !line(q, l).
+    kind(c, "call_expression"), field(c, "arguments", q), kind(q, "template_string"), before_line(q, l),
+    !line(q, l).
+layout_at(q) :- kind(c, "call_expression"), field(c, "arguments", q), kind(q, "template_string").
 // `a⏎ /b/g`: a `/` whose left side is a division, followed at once by regex flags. The flags are ESLint 10's,
 // with d and v (9.39 knows only gimsuy).
 no_unexpected_multiline(t, "Move the / onto the line of the numerator, or add a semicolon if the next line starts a regular expression.") :-
     kind(b, "binary_expression"), op(b, "/"), field(b, "left", e), deparen(e, n), kind(n, "binary_expression"),
-    op(n, "/"), token_after(e, s), token_after(s, g), match("[dgimsuvy]+", g),
-    line(s, l), line(g, l), col(s, k), col(g, k + 1), field(n, "left", x), broken_after(x, t).
+    op(n, "/"), field(b, "right", r), structural_before(r, ""), text(r, g), match("(?s)[dgimsuvy]+\\b.*", g),
+    field(n, "left", x), after_line(x, l), !end_line(x, l), div_op(x, t).
+layout_at(x) :- kind(n, "binary_expression"), op(n, "/"), field(n, "left", x).
+// div_op(x, t): the operator after left operand x.
+.stored div_op "a binary operator is a choice, so the tape keeps the token after the left operand"
+.decl div_op(x: node, t: span)
+div_op(x, t) :- kind(n, "binary_expression"), op(n, "/"), field(n, "left", x), token_after(x, t).
 
-// broken_after(x, t): t is the token after x (its parentheses included) and starts a later line than the token
-// before it ends.
-.decl broken_after(x: node, t: span)
-broken_after(x, t) :- token_after(x, t), token_before(t, p), end_line(p, l), !line(t, l).

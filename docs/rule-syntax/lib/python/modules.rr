@@ -44,11 +44,14 @@ py_want(@dot(m, x)) :- py_from_import(_, m, x).
 py_want(m) :- py_want(q), m = @pkg_up(q, 1), m != "".
 py_want("builtins").
 
-// The corpus's own modules: a document that was not loaded.
+// The corpus's own modules: a document that was not loaded, or one the program says is its own.
 .decl py_docmod(d: number, p: symbol, q: symbol)
 py_docmod(d, p, q) :- doc(d, p, q), q != "".
 .decl py_workspace(q: symbol)
 py_workspace(q) :- py_docmod(_, p, q), !loaded(p, _, _).
+// A module of the run's own tree that was loaded (phase 1 loads every source file, `sources.rr`): said by py_own.
+.decl py_own(q: symbol)
+py_workspace(q) :- py_own(q).
 
 // VERSIONS: `name: 3.0-` or `name: 3.0-3.9`, maybe with a comment (`_typeshed: 3.0-  # ...`). A module not listed
 // has its nearest listed parent's range.

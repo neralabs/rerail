@@ -1,21 +1,23 @@
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
-.input doc, node, child, field, text, line, syntax_error
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
 .decl k0(kind: symbol)
 k0("global_statement"). k0("import_from_statement"). k0("import_statement"). k0("nonlocal_statement").
 .decl k1(kind: symbol)
 k1("import_from_statement").
+.decl child(p: node, c: node, i: number)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
 .decl m11(n: node)
 .decl m21(n: node)
 .decl m30(n: node)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl out_scope(d: number)
+.decl syntax_error(d: number)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, child, field, text, line, syntax_error
+.output violation
 in_scope(d) :- doc(d, p, _), glob("**/*.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
@@ -44,4 +46,3 @@ violation("data-layer-serverplan-grammar-surface", "ddl-escapes", "SPG-ddl_escap
 m30(n) :- inside(n, v23, k1), field(v23, "module_name", v24), node(v25, n, _, v26, v27), node(v25, v24, _, v28, v29), v28 <= v26, v27 <= v29, node(_, v23, "import_from_statement", _, _).
 violation("data-layer-serverplan-grammar-surface", "ddl-imports", "SPG-ddl_import", p, l) :- node(_, n, "dotted_name", _, _), text(n, v22), (v22 = "SqlPreRenderedDdlFragment" ; v22 = "SqlPrerenderedDdl"), !m30(n), inside(n, v31, k1), node(_, v31, "import_from_statement", _, _), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 violation("data-layer-serverplan-grammar-surface", "syntax", "SPG-SYNTAX", p, 1) :- node(_, n, "module", _, _), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _).
-.output violation

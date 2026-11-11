@@ -1,8 +1,60 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl comparison_0_bt002_first(c: node, n: number)
+.decl comparison_0_bt002_hit(c: node, d: number, s: symbol)
+.decl comparison_0_bt002_start(c: node, n: number)
+.decl comparison_1_bt001_first(c: node, n: number)
+.decl comparison_1_bt001_hit(c: node, d: number, s: symbol)
+.decl comparison_1_bt001_start(c: node, n: number)
+.decl comparison_1_bt002_first(c: node, n: number)
+.decl comparison_1_bt002_hit(c: node, d: number, s: symbol)
+.decl comparison_1_bt002_start(c: node, n: number)
+.decl comparison_2_bt003_first(c: node, n: number)
+.decl comparison_2_bt003_hit(c: node, d: number, s: symbol)
+.decl comparison_2_bt003_start(c: node, n: number)
+.decl comparison_3_bt000_first(c: node, n: number)
+.decl comparison_3_bt000_hit(c: node, d: number, s: symbol)
+.decl comparison_3_bt000_start(c: node, n: number)
+.decl comparison_3_bt003_first(c: node, n: number)
+.decl comparison_3_bt003_hit(c: node, d: number, s: symbol)
+.decl comparison_3_bt003_start(c: node, n: number)
+.decl comparison_4_bt000_first(c: node, n: number)
+.decl comparison_4_bt000_hit(c: node, d: number, s: symbol)
+.decl comparison_4_bt000_start(c: node, n: number)
+.decl comparison_4_bt003_first(c: node, n: number)
+.decl comparison_4_bt003_hit(c: node, d: number, s: symbol)
+.decl comparison_4_bt003_start(c: node, n: number)
+.decl comparison_5_bt000_first(c: node, n: number)
+.decl comparison_5_bt000_hit(c: node, d: number, s: symbol)
+.decl comparison_5_bt000_start(c: node, n: number)
+.decl comparison_5_bt004_first(c: node, n: number)
+.decl comparison_5_bt004_hit(c: node, d: number, s: symbol)
+.decl comparison_5_bt004_start(c: node, n: number)
+.decl comparison_6_bt000_first(c: node, n: number)
+.decl comparison_6_bt000_hit(c: node, d: number, s: symbol)
+.decl comparison_6_bt000_start(c: node, n: number)
+.decl comparison_6_bt004_first(c: node, n: number)
+.decl comparison_6_bt004_hit(c: node, d: number, s: symbol)
+.decl comparison_6_bt004_start(c: node, n: number)
+.decl comparison_7_bt005_first(c: node, n: number)
+.decl comparison_7_bt005_hit(c: node, d: number, s: symbol)
+.decl comparison_7_bt005_start(c: node, n: number)
+.decl comparison_before(c: node, n: number, q: number)
+.decl comparison_first(c: node, n: number)
+.decl comparison_linestart(c: node, r: symbol)
+.decl comparison_multi(c: node, s: symbol)
+.decl comparison_nl(c: node, n: number)
+.decl comparison_suffix(c: node, r: symbol)
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
 .decl out_scope(d: number)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, field, text, line, node_text
+.output violation
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
@@ -128,4 +180,100 @@ out_scope(d) :- doc(d, p, _), glob("**/*.rst*", p).
 out_scope(d) :- doc(d, p, _), glob("**/*.rst*/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/*security-*", p).
 out_scope(d) :- doc(d, p, _), glob("**/*security-*/**", p).
-.output violation
+comparison_suffix(c, s) :- comparison_multi(c, s).
+comparison_suffix(c, r) :- comparison_suffix(c, q), @strlen(q) > 1, r = @substr(q, 1, 1000000000).
+comparison_nl(c, n) :- comparison_suffix(c, q), @substr(q, 0, 1) = "\n", n = @strlen(q).
+comparison_linestart(c, s) :- comparison_multi(c, s).
+comparison_linestart(c, r) :- comparison_suffix(c, q), @substr(q, 0, 1) = "\n", r = @substr(q, 1, 1000000000).
+comparison_before(c, n, q) :- comparison_first(c, n), comparison_nl(c, q), q > n.
+comparison_0_bt002_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:dialect\\.name\\s*==\\s*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"'])(?s:.*)", s).
+violation("data-layer-backend-type-strings", "comparison-0-BT002", "BT002", p, l) :- comparison_0_bt002_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
+comparison_multi(c, s) :- comparison_0_bt002_hit(c, _, s), contains("\n", s).
+comparison_0_bt002_start(c, n) :- comparison_0_bt002_hit(c, _, s), contains("\n", s), comparison_linestart(c, r), match("(?s)[^\n]*(?:dialect\\.name\\s*==\\s*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']).*", r), n = @strlen(r).
+comparison_0_bt002_first(c, n) :- comparison_0_bt002_hit(c, _, s), contains("\n", s), n = max m : { comparison_0_bt002_start(c, m) }.
+comparison_first(c, n) :- comparison_0_bt002_first(c, n).
+violation("data-layer-backend-type-strings", "comparison-0-BT002", "BT002", p, l) :- comparison_0_bt002_hit(c, d, _), comparison_0_bt002_first(c, n), k = count : { comparison_before(c, n, _) }, line(c, l0), l = @add(l0, k), doc(d, p, _).
+comparison_1_bt001_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:dialect\\.name\\s* in \\s*\\()(?s:.*)", s).
+violation("data-layer-backend-type-strings", "comparison-1-BT001", "BT001", p, l) :- comparison_1_bt001_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
+comparison_multi(c, s) :- comparison_1_bt001_hit(c, _, s), contains("\n", s).
+comparison_1_bt001_start(c, n) :- comparison_1_bt001_hit(c, _, s), contains("\n", s), comparison_linestart(c, r), match("(?s)[^\n]*(?:dialect\\.name\\s* in \\s*\\().*", r), n = @strlen(r).
+comparison_1_bt001_first(c, n) :- comparison_1_bt001_hit(c, _, s), contains("\n", s), n = max m : { comparison_1_bt001_start(c, m) }.
+comparison_first(c, n) :- comparison_1_bt001_first(c, n).
+violation("data-layer-backend-type-strings", "comparison-1-BT001", "BT001", p, l) :- comparison_1_bt001_hit(c, d, _), comparison_1_bt001_first(c, n), k = count : { comparison_before(c, n, _) }, line(c, l0), l = @add(l0, k), doc(d, p, _).
+comparison_1_bt002_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:dialect\\.name\\s+in\\s+\\()(?s:.*)", s), !match("(?s:.*)(?:dialect\\.name\\s* in \\s*\\()(?s:.*)", s).
+violation("data-layer-backend-type-strings", "comparison-1-BT002", "BT002", p, l) :- comparison_1_bt002_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
+comparison_multi(c, s) :- comparison_1_bt002_hit(c, _, s), contains("\n", s).
+comparison_1_bt002_start(c, n) :- comparison_1_bt002_hit(c, _, s), contains("\n", s), comparison_linestart(c, r), match("(?s)[^\n]*(?:dialect\\.name\\s+in\\s+\\().*", r), n = @strlen(r).
+comparison_1_bt002_first(c, n) :- comparison_1_bt002_hit(c, _, s), contains("\n", s), n = max m : { comparison_1_bt002_start(c, m) }.
+comparison_first(c, n) :- comparison_1_bt002_first(c, n).
+violation("data-layer-backend-type-strings", "comparison-1-BT002", "BT002", p, l) :- comparison_1_bt002_hit(c, d, _), comparison_1_bt002_first(c, n), k = count : { comparison_before(c, n, _) }, line(c, l0), l = @add(l0, k), doc(d, p, _).
+comparison_2_bt003_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:backend_type\\s*==\\s*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"'])(?s:.*)", s).
+violation("data-layer-backend-type-strings", "comparison-2-BT003", "BT003", p, l) :- comparison_2_bt003_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
+comparison_multi(c, s) :- comparison_2_bt003_hit(c, _, s), contains("\n", s).
+comparison_2_bt003_start(c, n) :- comparison_2_bt003_hit(c, _, s), contains("\n", s), comparison_linestart(c, r), match("(?s)[^\n]*(?:backend_type\\s*==\\s*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']).*", r), n = @strlen(r).
+comparison_2_bt003_first(c, n) :- comparison_2_bt003_hit(c, _, s), contains("\n", s), n = max m : { comparison_2_bt003_start(c, m) }.
+comparison_first(c, n) :- comparison_2_bt003_first(c, n).
+violation("data-layer-backend-type-strings", "comparison-2-BT003", "BT003", p, l) :- comparison_2_bt003_hit(c, d, _), comparison_2_bt003_first(c, n), k = count : { comparison_before(c, n, _) }, line(c, l0), l = @add(l0, k), doc(d, p, _).
+comparison_3_bt003_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:\\bbackend ==\\s*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"'])(?s:.*)", s).
+violation("data-layer-backend-type-strings", "comparison-3-BT003", "BT003", p, l) :- comparison_3_bt003_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
+comparison_multi(c, s) :- comparison_3_bt003_hit(c, _, s), contains("\n", s).
+comparison_3_bt003_start(c, n) :- comparison_3_bt003_hit(c, _, s), contains("\n", s), comparison_linestart(c, r), match("(?s)[^\n]*(?:\\bbackend ==\\s*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']).*", r), n = @strlen(r).
+comparison_3_bt003_first(c, n) :- comparison_3_bt003_hit(c, _, s), contains("\n", s), n = max m : { comparison_3_bt003_start(c, m) }.
+comparison_first(c, n) :- comparison_3_bt003_first(c, n).
+violation("data-layer-backend-type-strings", "comparison-3-BT003", "BT003", p, l) :- comparison_3_bt003_hit(c, d, _), comparison_3_bt003_first(c, n), k = count : { comparison_before(c, n, _) }, line(c, l0), l = @add(l0, k), doc(d, p, _).
+comparison_3_bt000_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:\\bbackend\\s*==\\s*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"'])(?s:.*)", s), !match("(?s:.*)(?:\\bbackend ==\\s*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"'])(?s:.*)", s).
+violation("data-layer-backend-type-strings", "comparison-3-BT000", "BT000", p, l) :- comparison_3_bt000_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
+comparison_multi(c, s) :- comparison_3_bt000_hit(c, _, s), contains("\n", s).
+comparison_3_bt000_start(c, n) :- comparison_3_bt000_hit(c, _, s), contains("\n", s), comparison_linestart(c, r), match("(?s)[^\n]*(?:\\bbackend\\s*==\\s*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']).*", r), n = @strlen(r).
+comparison_3_bt000_first(c, n) :- comparison_3_bt000_hit(c, _, s), contains("\n", s), n = max m : { comparison_3_bt000_start(c, m) }.
+comparison_first(c, n) :- comparison_3_bt000_first(c, n).
+violation("data-layer-backend-type-strings", "comparison-3-BT000", "BT000", p, l) :- comparison_3_bt000_hit(c, d, _), comparison_3_bt000_first(c, n), k = count : { comparison_before(c, n, _) }, line(c, l0), l = @add(l0, k), doc(d, p, _).
+comparison_4_bt003_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:\\bbackend in\\s+\\([^)]*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"'])(?s:.*)", s).
+violation("data-layer-backend-type-strings", "comparison-4-BT003", "BT003", p, l) :- comparison_4_bt003_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
+comparison_multi(c, s) :- comparison_4_bt003_hit(c, _, s), contains("\n", s).
+comparison_4_bt003_start(c, n) :- comparison_4_bt003_hit(c, _, s), contains("\n", s), comparison_linestart(c, r), match("(?s)[^\n]*(?:\\bbackend in\\s+\\([^)]*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']).*", r), n = @strlen(r).
+comparison_4_bt003_first(c, n) :- comparison_4_bt003_hit(c, _, s), contains("\n", s), n = max m : { comparison_4_bt003_start(c, m) }.
+comparison_first(c, n) :- comparison_4_bt003_first(c, n).
+violation("data-layer-backend-type-strings", "comparison-4-BT003", "BT003", p, l) :- comparison_4_bt003_hit(c, d, _), comparison_4_bt003_first(c, n), k = count : { comparison_before(c, n, _) }, line(c, l0), l = @add(l0, k), doc(d, p, _).
+comparison_4_bt000_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:\\bbackend\\s+in\\s+\\([^)]*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"'])(?s:.*)", s), !match("(?s:.*)(?:\\bbackend in\\s+\\([^)]*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"'])(?s:.*)", s).
+violation("data-layer-backend-type-strings", "comparison-4-BT000", "BT000", p, l) :- comparison_4_bt000_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
+comparison_multi(c, s) :- comparison_4_bt000_hit(c, _, s), contains("\n", s).
+comparison_4_bt000_start(c, n) :- comparison_4_bt000_hit(c, _, s), contains("\n", s), comparison_linestart(c, r), match("(?s)[^\n]*(?:\\bbackend\\s+in\\s+\\([^)]*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']).*", r), n = @strlen(r).
+comparison_4_bt000_first(c, n) :- comparison_4_bt000_hit(c, _, s), contains("\n", s), n = max m : { comparison_4_bt000_start(c, m) }.
+comparison_first(c, n) :- comparison_4_bt000_first(c, n).
+violation("data-layer-backend-type-strings", "comparison-4-BT000", "BT000", p, l) :- comparison_4_bt000_hit(c, d, _), comparison_4_bt000_first(c, n), k = count : { comparison_before(c, n, _) }, line(c, l0), l = @add(l0, k), doc(d, p, _).
+comparison_5_bt004_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:[\"'](?:postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']\\s* in \\s*\\w*class_name)(?s:.*)", s).
+violation("data-layer-backend-type-strings", "comparison-5-BT004", "BT004", p, l) :- comparison_5_bt004_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
+comparison_multi(c, s) :- comparison_5_bt004_hit(c, _, s), contains("\n", s).
+comparison_5_bt004_start(c, n) :- comparison_5_bt004_hit(c, _, s), contains("\n", s), comparison_linestart(c, r), match("(?s)[^\n]*(?:[\"'](?:postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']\\s* in \\s*\\w*class_name).*", r), n = @strlen(r).
+comparison_5_bt004_first(c, n) :- comparison_5_bt004_hit(c, _, s), contains("\n", s), n = max m : { comparison_5_bt004_start(c, m) }.
+comparison_first(c, n) :- comparison_5_bt004_first(c, n).
+violation("data-layer-backend-type-strings", "comparison-5-BT004", "BT004", p, l) :- comparison_5_bt004_hit(c, d, _), comparison_5_bt004_first(c, n), k = count : { comparison_before(c, n, _) }, line(c, l0), l = @add(l0, k), doc(d, p, _).
+comparison_5_bt000_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']\\s+in\\s+\\w*class_name)(?s:.*)", s), !match("(?s:.*)(?:[\"'](?:postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']\\s* in \\s*\\w*class_name)(?s:.*)", s).
+violation("data-layer-backend-type-strings", "comparison-5-BT000", "BT000", p, l) :- comparison_5_bt000_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
+comparison_multi(c, s) :- comparison_5_bt000_hit(c, _, s), contains("\n", s).
+comparison_5_bt000_start(c, n) :- comparison_5_bt000_hit(c, _, s), contains("\n", s), comparison_linestart(c, r), match("(?s)[^\n]*(?:[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']\\s+in\\s+\\w*class_name).*", r), n = @strlen(r).
+comparison_5_bt000_first(c, n) :- comparison_5_bt000_hit(c, _, s), contains("\n", s), n = max m : { comparison_5_bt000_start(c, m) }.
+comparison_first(c, n) :- comparison_5_bt000_first(c, n).
+violation("data-layer-backend-type-strings", "comparison-5-BT000", "BT000", p, l) :- comparison_5_bt000_hit(c, d, _), comparison_5_bt000_first(c, n), k = count : { comparison_before(c, n, _) }, line(c, l0), l = @add(l0, k), doc(d, p, _).
+comparison_6_bt004_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:[\"'](?:postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']\\s* in \\s*type\\()(?s:.*)", s).
+violation("data-layer-backend-type-strings", "comparison-6-BT004", "BT004", p, l) :- comparison_6_bt004_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
+comparison_multi(c, s) :- comparison_6_bt004_hit(c, _, s), contains("\n", s).
+comparison_6_bt004_start(c, n) :- comparison_6_bt004_hit(c, _, s), contains("\n", s), comparison_linestart(c, r), match("(?s)[^\n]*(?:[\"'](?:postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']\\s* in \\s*type\\().*", r), n = @strlen(r).
+comparison_6_bt004_first(c, n) :- comparison_6_bt004_hit(c, _, s), contains("\n", s), n = max m : { comparison_6_bt004_start(c, m) }.
+comparison_first(c, n) :- comparison_6_bt004_first(c, n).
+violation("data-layer-backend-type-strings", "comparison-6-BT004", "BT004", p, l) :- comparison_6_bt004_hit(c, d, _), comparison_6_bt004_first(c, n), k = count : { comparison_before(c, n, _) }, line(c, l0), l = @add(l0, k), doc(d, p, _).
+comparison_6_bt000_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']\\s+in\\s+type\\()(?s:.*)", s), !match("(?s:.*)(?:[\"'](?:postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']\\s* in \\s*type\\()(?s:.*)", s).
+violation("data-layer-backend-type-strings", "comparison-6-BT000", "BT000", p, l) :- comparison_6_bt000_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
+comparison_multi(c, s) :- comparison_6_bt000_hit(c, _, s), contains("\n", s).
+comparison_6_bt000_start(c, n) :- comparison_6_bt000_hit(c, _, s), contains("\n", s), comparison_linestart(c, r), match("(?s)[^\n]*(?:[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']\\s+in\\s+type\\().*", r), n = @strlen(r).
+comparison_6_bt000_first(c, n) :- comparison_6_bt000_hit(c, _, s), contains("\n", s), n = max m : { comparison_6_bt000_start(c, m) }.
+comparison_first(c, n) :- comparison_6_bt000_first(c, n).
+violation("data-layer-backend-type-strings", "comparison-6-BT000", "BT000", p, l) :- comparison_6_bt000_hit(c, d, _), comparison_6_bt000_first(c, n), k = count : { comparison_before(c, n, _) }, line(c, l0), l = @add(l0, k), doc(d, p, _).
+comparison_7_bt005_hit(c, d, s) :- node(d, c, "call", _, _), in_scope(d), !out_scope(d), field(c, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, "lower"), node_text(c, s), match("(?s:.*)(?:__class__\\.__name__\\.lower\\(\\))(?s:.*)", s).
+violation("data-layer-backend-type-strings", "comparison-7-BT005", "BT005", p, l) :- comparison_7_bt005_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
+comparison_multi(c, s) :- comparison_7_bt005_hit(c, _, s), contains("\n", s).
+comparison_7_bt005_start(c, n) :- comparison_7_bt005_hit(c, _, s), contains("\n", s), comparison_linestart(c, r), match("(?s)[^\n]*(?:__class__\\.__name__\\.lower\\(\\)).*", r), n = @strlen(r).
+comparison_7_bt005_first(c, n) :- comparison_7_bt005_hit(c, _, s), contains("\n", s), n = max m : { comparison_7_bt005_start(c, m) }.
+comparison_first(c, n) :- comparison_7_bt005_first(c, n).
+violation("data-layer-backend-type-strings", "comparison-7-BT005", "BT005", p, l) :- comparison_7_bt005_hit(c, d, _), comparison_7_bt005_first(c, n), k = count : { comparison_before(c, n, _) }, line(c, l0), l = @add(l0, k), doc(d, p, _).

@@ -8,7 +8,9 @@ pub(in crate::code_rule_dsl) fn collect(plan: &Plan, rows: &[Rows]) -> Anchors {
     let mut anchors = Anchors::new();
     for (_, rows) in plan.inputs.iter().zip(rows) {
         for witness in &rows.witnesses {
-            let span = anchored_span(&crate::code_rule_dsl::model::Anchor::Span, witness).0;
+            let span = anchored_span(&crate::code_rule_dsl::model::Anchor::Span, witness)
+                .0
+                .expect("a relation's AST witness has a span");
             let key = (span.start_byte, span.end_byte);
             let value = (span, witness.ignored);
             if let Some(by_span) = anchors.get_mut(witness.path.as_str()) {

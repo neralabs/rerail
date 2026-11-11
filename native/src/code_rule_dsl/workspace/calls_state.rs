@@ -14,7 +14,6 @@ use crate::code_rule_dsl::calls::{self, CallsView, FileSeeds, TermId};
 use crate::code_rule_dsl::eval::{file_language, grammar_matcher};
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::Family;
-use crate::code_rule_dsl::language::adapter::{Adapter, CallRules, with_adapter};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, FileInput, Metrics, Query, Terms};
 use crate::code_rule_dsl::tape;
@@ -26,9 +25,10 @@ use napi::Result;
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::AtomicBool;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, LazyLock};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// A consumer file whose results must follow the graph: its new stamp, and the terms silent in
 /// it (no call reaches or may reach their seeds).
@@ -45,7 +45,7 @@ pub(super) type Consumers = BTreeMap<ClauseId, Vec<TermId>>;
 type Stamped = (HashKey, Arc<[TermId]>);
 
 #[derive(Default)]
-pub(super) struct CallsState {
+pub struct CallsState {
     globals: BTreeSet<usize>,
     dirty_globals: BTreeSet<usize>,
     terms: Terms,
@@ -303,7 +303,9 @@ impl CallsState {
             let witnesses = file.witnesses.get(id);
             let starts = witnesses.and_then(|witnesses| {
                 calls::seed_starts(
-                    witnesses.iter().map(|witness| &witness.span),
+                    witnesses
+                        .iter()
+                        .map(|witness| witness.span.as_ref().expect("an ast witness has a span")),
                     scope,
                     summary,
                 )
@@ -379,7 +381,7 @@ impl CallsState {
                     .iter()
                     .map(|(path, summary)| (Arc::from(path.as_str()), Arc::clone(summary)))
                     .collect();
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-hooks"))]
                 GRAPHS_LINKED.with(|count| count.set(count.get() + 1));
                 self.view = Some(Arc::new(CallsView::build_modes(
                     self.terms.questions(),
@@ -474,8 +476,8 @@ impl CallsState {
 
     /// Every consumer file's stamp and silent terms under the current graph, and under one
     /// linked afresh from the same summaries and seeds.
-    #[cfg(test)]
-    pub(super) fn stamps_against_fresh_link(&self) -> [BTreeMap<String, Stamped>; 2] {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn stamps_against_fresh_link(&self) -> [BTreeMap<String, Stamped>; 2] {
         let fresh = CallsView::build_modes(
             self.terms.questions(),
             self.summaries
@@ -568,7 +570,7 @@ pub(super) fn restore_summary(file: &mut FileState, persisted: &[StoredLocalResu
         return;
     }
     let Some(family) =
-        with_adapter!(Family::of(language), A => <<A as Adapter>::Calls as CallRules>::NAMES)
+        ({ let pack = language_pack::pack(Family::of(language)); pack.calls_names() })
     else {
         return;
     };
@@ -655,14 +657,14 @@ pub(super) fn summary_publication(file: &FileState) -> Result<Option<LocalResult
 }
 
 /// Summaries extracted (not restored from the store), in any workspace of the process.
-#[cfg(test)]
-pub(super) static SUMMARIES_EXTRACTED: std::sync::atomic::AtomicUsize =
+#[cfg(any(test, feature = "test-hooks"))]
+pub static SUMMARIES_EXTRACTED: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Call graphs linked from every summary (not updated in place) on this thread.
-    pub(super) static GRAPHS_LINKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub static GRAPHS_LINKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The key consumer results are stored under: the file context and the stamp they were
@@ -720,9 +722,9 @@ pub(super) fn summarize_file(
         open: true,
         bytes: u32::try_from(file.input.source.len()).unwrap_or(u32::MAX),
         // What the file names regardless (`CallRules::unread`).
-        ..with_adapter!(Family::of(language), A => <<A as Adapter>::Calls as CallRules>::unread(
+        ..{ let pack = language_pack::pack(Family::of(language)); pack.calls_unread(
             file.input.module.as_deref(),
-        ))
+        ) }
     };
     // An opaque summary may be a transient failure's: it is this workspace's alone.
     let (summary, shared) = match file.tape.as_ref().filter(|_| taped) {
@@ -805,7 +807,7 @@ pub(super) fn summarize_file(
         Arc::new(summary)
     };
     file.crossfile.summary = Some((file.source_revision, summary));
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     SUMMARIES_EXTRACTED.fetch_add(1, Ordering::Relaxed);
     Ok(())
 }

@@ -5,8 +5,6 @@ use super::model::{ClauseKind, Query};
 use super::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
 use napi::Result;
 use serde_json::{Map, Value, json};
-use std::cell::RefCell;
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub(super) const CAPABILITIES: &str = include_str!("capabilities.json");
@@ -206,51 +204,7 @@ pub(super) fn grammar_matchers(compiled: &CompiledCodeRuleDsl) -> &[GrammarMatch
     matchers
 }
 
-/// A utility-graph walk whose work a test counts: each time it expands a utility's rule (for
-/// `BindingSitePatterns`, each binding-site pattern it compiles).
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(super) enum Walk {
-    SoundVerdict,
-    OptionalCaptures,
-    CaptureVariables,
-    AstCaptures,
-    NodeRegexes,
-    OrderBinds,
-    OrderReads,
-    OrderMentions,
-    BindingSitePatterns,
-    AnchorInlining,
-    /// P's: an anchor index build (P's SQL anchor engine).
-    AnchorBuild,
-    /// A shared utility plan's conditions evaluated by one anchor selection.
-    AnchorSelection,
-    /// A shared utility plan whose value-posting needs an anchor index build collects.
-    AnchorNeeds,
-    /// A root an anchor text selection visits: its scope, which the regex or a value posting then
-    /// tests.
-    AnchorTextNode,
-    /// A sibling an anchor selection's sibling walk around zero-width nodes steps over, or a child
-    /// it reads while building a parent's run of siblings.
-    AnchorSibling,
-    /// A node the Rust usage index visits to find the nodes its references span.
-    UsageNode,
-}
-
-thread_local! {
-    static WALKS: RefCell<BTreeMap<Walk, usize>> = const { RefCell::new(BTreeMap::new()) };
-}
-
-pub(super) fn record_walk(walk: Walk) {
-    WALKS.with(|walks| *walks.borrow_mut().entry(walk).or_default() += 1);
-}
-
-pub(super) fn reset_walks() {
-    WALKS.with(|walks| walks.borrow_mut().clear());
-}
-
-pub(super) fn walks(walk: Walk) -> usize {
-    WALKS.with(|walks| walks.borrow().get(&walk).copied().unwrap_or_default())
-}
+pub(super) use super::walks::{Walk, reset_walks, walks};
 
 /// Levels of the utility diamond fixtures: small enough that a walk doubling per level still ends
 /// quickly, large enough that it exceeds `linear_walk`.
@@ -402,4 +356,50 @@ pub(super) fn php_lossy(bytes: &[u8]) -> String {
         }
     }
     out
+}
+
+/// `0`'s patterns as tree-sitter parses them, every token kept: the reference a tape's patterns
+/// (which leave the tokens the grammar implies out, `tape::pattern_doc`) are checked against, on
+/// tree-sitter's own tree (RER-131).
+#[derive(Clone, Copy)]
+pub(super) struct Unfiltered(pub(super) super::language::GrammarDialect);
+
+impl ast_grep_core::language::Language for Unfiltered {
+    fn kind_to_id(&self, kind: &str) -> u16 {
+        self.0.kind_to_id(kind)
+    }
+    fn field_to_id(&self, field: &str) -> Option<u16> {
+        self.0.field_to_id(field)
+    }
+    fn meta_var_char(&self) -> char {
+        self.0.meta_var_char()
+    }
+    fn expando_char(&self) -> char {
+        self.0.expando_char()
+    }
+    fn pre_process_pattern<'q>(&self, query: &'q str) -> std::borrow::Cow<'q, str> {
+        self.0.pre_process_pattern(query)
+    }
+    fn build_pattern(&self, builder: &ast_grep_core::matcher::PatternBuilder) -> std::result::Result<ast_grep_core::matcher::Pattern, ast_grep_core::matcher::PatternError> {
+        match self.0 {
+            // Forte's trees are Blade's own: no tree-sitter tree to read.
+            super::language::GrammarDialect::Blade => self.0.build_pattern(builder),
+            dialect => builder.build(|source| ast_grep_core::tree_sitter::StrDoc::try_new(source, dialect)),
+        }
+    }
+}
+
+/// `text` as a pattern over tree-sitter's tree of `lang` (every token kept).
+pub(super) fn unfiltered_pattern(text: &str, lang: super::language::GrammarDialect) -> ast_grep_core::matcher::Pattern {
+    ast_grep_core::matcher::Pattern::try_new(text, Unfiltered(lang)).unwrap()
+}
+
+/// `text` as a pattern over documents of type `D` of `lang`: a tape's (`TapeDoc`), else the unfiltered
+/// one over tree-sitter's tree.
+pub(super) fn pattern_for<D: 'static>(text: &str, lang: super::language::GrammarDialect) -> ast_grep_core::matcher::Pattern {
+    if std::any::TypeId::of::<D>() == std::any::TypeId::of::<super::tape::TapeDoc>() {
+        ast_grep_core::matcher::Pattern::try_new(text, lang).unwrap()
+    } else {
+        unfiltered_pattern(text, lang)
+    }
 }

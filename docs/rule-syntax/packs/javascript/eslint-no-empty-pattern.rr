@@ -16,7 +16,11 @@
     suppress oxlint "no-empty-pattern"
     suppress biome "lint/correctness/noEmptyPattern"
 no_empty_pattern(p, "object", "{a = {}} instead of {a: {}}") :- kind(p, "object_pattern"), !has_element(p), !allowed_param(p).
-no_empty_pattern(p, "array", "{a = []} instead of {a: []}") :- kind(p, "array_pattern"), !has_element(p), !op(p, ",").
+no_empty_pattern(p, "array", "{a = []} instead of {a: []}") :- kind(p, "array_pattern"), !has_element(p), !bare_comma(p).
+// An array pattern with no element keeps its commas: no gap there is the word the grammar implies.
+.stored bare_comma "with no element, every comma of an array pattern is in a gap that is not the implied word"
+.decl bare_comma(p: node)
+bare_comma(p) :- kind(p, "array_pattern"), !has_element(p), op(p, ",").
 .decl has_element(p: node)  // a property, element or rest; comments do not count
 has_element(p) :- child(p, c, _), !kind(c, "comment").
 

@@ -6,11 +6,11 @@ use std::collections::{BTreeMap, BTreeSet};
 fn dependencies(p: &Program) -> BTreeMap<String, BTreeSet<String>> {
     let mut deps: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for r in &p.rules {
-        deps.entry(r.head.rel.clone()).or_default().extend(
+        deps.entry(r.head.rel.to_string()).or_default().extend(
             r.body
                 .iter()
                 .filter_map(Literal::atom)
-                .map(|a| a.rel.clone()),
+                .map(|a| a.rel.to_string()),
         );
     }
     for (name, native) in &p.natives {
@@ -121,21 +121,21 @@ fn guards(
     (keys.is_subset(&bound) && !out.is_empty()).then_some(out)
 }
 
-pub(super) fn optimize(program: &mut Program) {
+pub fn optimize(program: &mut Program) {
     let names: BTreeSet<_> = program
         .rules
         .iter()
         .flat_map(|r| &r.body)
         .filter_map(|l| match l {
-            Literal::Agg { atom, .. } if atom.rel.contains("rr_agg") => Some(atom.rel.clone()),
+            Literal::Agg { atom, .. } if atom.rel.contains("rr_agg") => Some(atom.rel.to_string()),
             _ => None,
         })
         .collect();
     for name in names {
         if program.outputs.contains(&name)
             || program.inputs.contains(&name)
-            || program.natives.contains_key(&name)
-            || program.facts.contains_key(&name)
+            || program.natives.contains_key(name.as_str())
+            || program.facts.contains_key(name.as_str())
             || program.decls.contains_key(&format!("rr_demand_agg_{name}"))
         {
             continue;
@@ -183,7 +183,7 @@ pub(super) fn optimize(program: &mut Program) {
                 };
                 demands.push(Rule {
                     head: Atom {
-                        rel: format!("rr_demand_agg_{name}"),
+                        rel: format!("rr_demand_agg_{name}").into(),
                         args,
                         neg: false,
                         gated: false,
@@ -210,14 +210,14 @@ pub(super) fn optimize(program: &mut Program) {
             demand.clone(),
             positions
                 .iter()
-                .map(|&i| program.decls[&name][i].clone())
+                .map(|&i| program.decls[name.as_str()][i].clone())
                 .collect(),
         );
         for rule in next.rules.iter_mut().filter(|r| r.head.rel == name) {
             rule.body.insert(
                 0,
                 Literal::Atom(Atom {
-                    rel: demand.clone(),
+                    rel: demand.clone().into(),
                     args: positions
                         .iter()
                         .map(|&i| rule.head.args[i].clone())
@@ -274,5 +274,66 @@ pub(super) fn optimize(program: &mut Program) {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-logic's (it mounts it)
+
+/// Whether `rel` is a helper the lowering makes (`rr_ctx…`, `rr_agg…`, and their demand `rr_demand_agg_…`), under
+/// any program's prefix.
+fn helper(rel: &str) -> bool {
+    rel.contains("rr_ctx") || rel.contains("rr_agg")
+}
+
+/// The helpers' columns typed again once the library's declarations are known (the combined program).
+///
+/// A program is lowered without the library: a helper column bound only by a library relation (`kind(n, …)`,
+/// `child(p, n, _)`) finds no declaration then, and is a symbol by default. It holds nodes, which the library says;
+/// and a column read through it (a demand's, `rr_demand_agg_…`, copied from the aggregate's) is then a symbol beside
+/// the node the rule's own atoms make it, which no native plan compares. A column a symbol column binds stays one.
+pub fn retype_helpers(program: &mut Program) {
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let helpers: Vec<String> = program.decls.keys().filter(|r| helper(r)).cloned().collect();
+        for rel in helpers {
+            let width = program.decls[&rel].len();
+            for i in 0..width {
+                if program.decls[&rel][i].1 != "sym" {
+                    continue;
+                }
+                let (mut found, mut symbol) = (None::<String>, false);
+                for rule in program.rules.iter().filter(|r| r.head.rel == rel.as_str()) {
+                    let Some(Term::Var(v)) = rule.head.args.get(i) else {
+                        symbol = true;
+                        continue;
+                    };
+                    for literal in &rule.body {
+                        match literal {
+                            Literal::Atom(a) if !a.neg => {
+                                for (j, t) in a.args.iter().enumerate() {
+                                    if !matches!(t, Term::Var(x) if x == v) {
+                                        continue;
+                                    }
+                                    let ty = if front::is_axis(&a.rel) {
+                                        Some("node".to_owned())
+                                    } else {
+                                        program.decls.get(a.rel.as_ref() as &str).and_then(|c| c.get(j)).map(|(_, t)| t.clone())
+                                    };
+                                    match ty.as_deref() {
+                                        Some("sym") if !helper(&a.rel) => symbol = true,
+                                        Some("sym") | None => {}
+                                        Some(t) => found = Some(t.to_owned()),
+                                    }
+                                }
+                            }
+                            Literal::Nearest { n, a, .. } if n == v || a == v => found = Some("node".to_owned()),
+                            _ => {}
+                        }
+                    }
+                }
+                if let (Some(ty), false) = (found, symbol) {
+                    program.decls.get_mut(&rel).expect("a helper")[i].1 = ty;
+                    changed = true;
+                }
+            }
+        }
+    }
+}

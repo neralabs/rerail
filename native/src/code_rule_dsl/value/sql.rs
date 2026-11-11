@@ -4,6 +4,7 @@
 //! `truncate_identifier`) and SQLite's tokenizer are deliberately conservative here:
 //! a value is returned only when their readings agree.
 
+use crate::code_rule_dsl::tree::Tree;
 use super::{Value, int_float_order};
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
@@ -514,7 +515,7 @@ pub(crate) fn decode<D: ast_grep_core::Doc>(node: &ast_grep_core::Node<'_, D>) -
     match node.kind().as_ref() {
         "literal" => literal(&node.text()),
         "parenthesized_expression" | "term" => {
-            let mut c = node.children().filter(|n| n.is_named());
+            let mut c = node.named();
             match (c.next(), c.next()) {
                 (Some(x), None) => decode(&x),
                 _ => Value::Unknown,
@@ -532,7 +533,7 @@ pub(crate) fn node_name<D: ast_grep_core::Doc>(
         .flatten()
 }
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use serde_json::Value as Json;
 
@@ -914,7 +915,7 @@ mod tests {
     fn cv05_reports_beside_positional_parameters() {
         use crate::code_rule_dsl::CodeRuleDslRuntime;
         use crate::code_rule_dsl::test_support::{CAPABILITIES, evaluate_file};
-        let rule = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let rule = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
             .join("../packs/sql/rules/sqlfluff-cv05-convention-is-null.json");
         let document = std::fs::read_to_string(rule).expect("CV05 rule");
         let compiled =

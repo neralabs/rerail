@@ -1,784 +1,202 @@
-341/908 clauses converted
+909/909 clauses converted or authored (264 converted, 88 of them for the default options only; 645 authored)
 
 gaps (clauses):
-    174  relational (SQL stages)
-     74  a regex over file content or paths
-     53  semantic value
-     28  nthChild other than a fixed position
-     26  semantic layout
-     19  a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|def\ compile|execute_runtime|execute_runtime_nested_steps|grammar_|in_server_plan_execution|pending_pipeline_effects|post_op|pre_op|preprocess|runtime_builder|runtime_ref|runtime_result)
-     16  budget
-     14  compare
-     13  a regex on an anonymous token
-     13  a stop rule
-     13  comment nodes (not in node)
-     10  utility call
-      8  no Python matcher
-      6  a regex on the text of list ((?s)^\[\s*(?:#[^\n]*\n\s*)*\]$)
-      6  regex (?s)^\[\s*(?:#[^\n]*\n\s*)*\]$
-      4  a regex on the text of call (grammar_)
-      4  a regex on the text of concatenated_string|string (Any)
-      4  a regex on the text of module (import\ |from\ )
-      3  a regex on the text of module (def\ |class\ |impl\.|=|\()
-      3  semantic arguments
-      3  semantic binds
-      2  a regex on the text of binary_operator (\|)
-      2  a regex on the text of comparison_operator (==|!=)
-      2  a regex on the text of for_statement|with_statement (^async\b)
-      2  a regex on the text of function_definition (Connection)
-      2  a regex on the text of function_definition (\*columns\s*:\s*str\b|columns\s*:\s*str\b|:\s*str\s*\|)
-      2  a regex on the text of integer (^4$)
-      1  a regex on the text of aliased_import (\bgetsource\b)
-      1  a regex on the text of aliased_import (\bgetsourcelines\b)
-      1  a regex on the text of aliased_import|dotted_name (^(?:[A-Za-z_]\w*)?(?:Step|Intent|Strategy)(?:\s+as\s+\w+)?$)
-      1  a regex on the text of aliased_import|dotted_name (^SqlAdminQuery)
-      1  a regex on the text of aliased_import|dotted_name (^SqlBuiltQuery)
-      1  a regex on the text of aliased_import|dotted_name (^SqlDdlStatement)
-      1  a regex on the text of aliased_import|dotted_name (^SqlLegacy)
-      1  a regex on the text of aliased_import|dotted_name (^SqlRawSql)
-      1  a regex on the text of aliased_import|dotted_name (^SqlRawSqlWithParams)
-      1  a regex on the text of aliased_import|dotted_name (^SqlUnsafe)
-      1  a regex on the text of aliased_import|dotted_name (^_SqlPrebuiltCondition)
-      1  a regex on the text of aliased_import|dotted_name (^_SqlPrebuiltQuery)
-      1  a regex on the text of attribute|concatenated_string|identifier|string ((?i)for_update|lock|locked|snapshot|use_for_update)
-      1  a regex on the text of binary_operator (&)
-      1  a regex on the text of call ((?P<AT>__class__)\.__name__\.lower\(\))
-      1  a regex on the text of call (imported_contract)
-      1  a regex on the text of comparison_operator ((?P<AT>["\'])(?:postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\']\s* in \s*\w*class_name)
-      1  a regex on the text of comparison_operator ((?P<AT>["\'])(?:postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\']\s* in \s*type\()
-      1  a regex on the text of comparison_operator ((?P<AT>["\'])(postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)["\']\s+in\s+\w*class_name)
-      1  a regex on the text of comparison_operator ((?P<AT>["\'])(postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)["\']\s+in\s+type\()
-      1  a regex on the text of comparison_operator ((?P<AT>backend_type)\s*==\s*["\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)["\'])
-      1  a regex on the text of comparison_operator ((?P<AT>dialect\.name)\s* in \s*\()
-      1  a regex on the text of comparison_operator ((?P<AT>dialect\.name)\s*==\s*["\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)["\'])
-      1  a regex on the text of comparison_operator ((?P<AT>dialect\.name)\s+in\s+\()
-      1  a regex on the text of comparison_operator (\b(?P<AT>backend) ==\s*["\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)["\'])
-      1  a regex on the text of comparison_operator (\b(?P<AT>backend) in\s+\([^)]*["\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)["\'])
-      1  a regex on the text of comparison_operator (\b(?P<AT>backend)\s*==\s*["\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)["\'])
-      1  a regex on the text of comparison_operator (\b(?P<AT>backend)\s+in\s+\([^)]*["\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)["\'])
-      1  a regex on the text of comparison_operator (\bis\s+None$)
-      1  a regex on the text of concatenated_string|string (Versioned)
-      1  a regex on the text of function_definition (Callable)
-      1  a regex on the text of function_definition (expression\s*:\s*str\b|:\s*str\s*\|)
-      1  a regex on the text of function_definition (versioned_(?:read|write))
-      1  a regex on the text of generic_type|subscript (\bExpression\s*\[\s*Any\s*,\s*Any\s*\]$)
-      1  a regex on the text of import_from_statement (^from\s+\.*api\s+import\b)
-      1  a regex on the text of module ((?<LOCATION>execute_read_plan_workflow\(\
-\ \ \ \ \ \ \ \ conn,\
-\ \ \ \ \ \ \ \ AsyncReadPlanWorkflow))
-      1  a regex on the text of module ((?<LOCATION>execute_read_plan_workflow_async\(\
-\ \ \ \ \ \ \ \ \ \ \ \ conn,\
-\ \ \ \ \ \ \ \ \ \ \ \ SyncReadPlanWorkflow))
-      1  a regex on the text of module ((?<LOCATION>execute_write_plan_workflow\(\
-\ \ \ \ \ \ \ \ conn,\
-\ \ \ \ \ \ \ \ AsyncWritePlanWorkflow))
-      1  a regex on the text of module ((?<LOCATION>execute_write_plan_workflow_async\(\
-\ \ \ \ \ \ \ \ \ \ \ \ conn,\
-\ \ \ \ \ \ \ \ \ \ \ \ SyncWritePlanWorkflow))
-      1  a regex on the text of module ((?<LOCATION>run_read_plan_workflow_async\(\
-\ \ \ \ \ \ \ \ \ \ \ \ self\._async_conn\(\),\
-\ \ \ \ \ \ \ \ \ \ \ \ SyncReadPlanWorkflow))
-      1  a regex on the text of module ((?<LOCATION>run_write_plan_workflow_async\(\
-\ \ \ \ \ \ \ \ \ \ \ \ self\._async_conn\(\),\
-\ \ \ \ \ \ \ \ \ \ \ \ SyncWritePlanWorkflow))
-      1  a regex on the text of module (arbitrary\ grammar\ router)
-      1  a regex on the text of module (async\ def|_async|__aenter__|__aexit__|run_in_executor|to_thread|tracked_run_in_executor|tracked_to_thread|legacy_async|legacy_module_async|pure_lazy|resolve_async)
-      1  a regex on the text of module (compatibility\ router)
-      1  a regex on the text of module (if\ not\ txn\.is_committed\ and\ not\ txn\.is_rolled_back\ and\ not\ txn\.did_publish_branch)
-      1  a regex on the text of module (imported_contract\ =\ imported_contract_fn)
-      1  a regex on the text of module (render|f"|f')
-      1  a regex on the text of string ((?:^[rRuUfF]*(?:'''|\"\"\"|'|")|[\s}])(?:JSON_EXISTS|JSON_GET|JSON_GET_BOOL|JSON_GET_FLOAT|JSON_GET_INT|JSON_GET_TEXT|JSON_KEYS|JSON_LENGTH|JSON_TYPE|JsonAccessKind|SqlJsonAccess|SqlJsonPath|SqlOrderByItem|SqlOrderByItems|build_query_spec_order_by)(?:[\s{]|(?:'''|\"\"\"|'|")$))
-      1  a regex on the text of string ((?m)(?:^[ \t]*[rRuU]*["']{1,3}|^[ \t]*)(?<IMPORT>(?:from api import [^\n]+|import api\s*(?:\n|$))))
-      1  a regex on the text of string (^[rRuU]*(?:'''(?:execute_runtime)'''|"""(?:execute_runtime)"""|'(?:execute_runtime)'|"(?:execute_runtime)")$)
-      1  a regex on the text of string (^[rRuU]*(?:'''(?:relation_output_columns)'''|"""(?:relation_output_columns)"""|'(?:relation_output_columns)'|"(?:relation_output_columns)")$)
-      1  a regex on the text of string (^[rRuU]*(?:'''(?:requires_runtime_sequential_batch)'''|"""(?:requires_runtime_sequential_batch)"""|'(?:requires_runtime_sequential_batch)'|"(?:requires_runtime_sequential_batch)")$)
-      1  a regex on the text of string (^[rRuUfF]*(?:'''|\"\"\"|'|")[\p{L}\p{N}_]+\(.*\)(?:'''|\"\"\"|'|")$)
-      1  a regex on the text of string (^f['"][^\n]*?\{[^}]*ref[^}]*\}[^\n]*?(?:\.raw|\.raw_rows|\.write|\.updated_rows|\.updated_count|_count|_updated_rows|_updated_count))
-      1  an anchor on a capture the rule does not bind
-      1  constraint on $ENUM, not captured
-      1  count
-      1  regex \b\B|^(?:impl/common/l2100_sql_grammar/fast_params\.py|impl/common/l2070_server_plan/steps/intent_transaction\.py)$
-      1  require each (define)
-      1  semantic parse
-      1  sibling walk with a stop rule
 
 approximations (rules):
-      1  \w in a string's content read as any character
-      4  a metavariable twice: equal names
-      8  a module's text read as its file's names
-     35  a regex on a node of any kind as a name
-      2  a run of one character read as at most three
-      1  an interpolated string has no content
-     55  neighbours among named children
-      7  nthChild among named children
-      5  patterns by named children
-      7  siblings among named children
+      1  a metavariable twice: equal names
+     20  a regex on a node of any kind as a name
+      1  a run of one character read as at most three
+     31  neighbours among named children
+      2  nthChild among named children
+      2  patterns by named children
+      2  siblings among named children
 
 per rule:
-  data-layer-admin-async-purity: 3/3
-  data-layer-async-executor: 0/1
-      executor: semantic layout
-  data-layer-async-patterns: 17/32
-      to-thread-impl: semantic layout
-      to-thread-api: semantic layout
-      to-thread-conform: semantic layout
-      executor-impl: semantic layout
-      executor-api: semantic layout
-      executor-conform: semantic layout
-      internal-io-impl: semantic layout
-      internal-io-api: semantic layout
-      internal-io-conform: semantic layout
-      transaction-receiver-impl: semantic value
-      transaction-receiver-api: semantic value
-      transaction-receiver-conform: semantic value
-      session-receiver-impl: utility call
-      session-receiver-api: utility call
-      session-receiver-conform: utility call
-  data-layer-async-sync-boundary: 63/63
-  data-layer-async-sync-delegation: 0/13
-      sync-delegation: a regex on the text of for_statement|with_statement (^async\b)
-      no-await: a regex on the text of for_statement|with_statement (^async\b)
-      mixed-name: a regex on the text of module (async\ def|_async|__aenter__|__aexit__|run_in_executor|to_thread|tracked_run_in_executor|tracked_to_thread|legacy_async|legacy_mo
-      escape-hatch: budget
-      wrapper-shape: compare
-      legacy_sync-missing-lazy: compare
-      legacy_sync-missing-pair: compare
-      legacy_async-missing-lazy: compare
-      legacy_async-missing-pair: compare
-      legacy_module_sync-missing-lazy: compare
-      legacy_module_sync-missing-pair: compare
-      legacy_module_async-missing-lazy: compare
-      legacy_module_async-missing-pair: compare
-  data-layer-authentication-plan-purity: 0/1
-      authentication-contracts: relational (SQL stages)
-  data-layer-backend-coupling: 0/2
-      backend-import: nthChild other than a fixed position
-      sql-in-nonsql: nthChild other than a fixed position
-  data-layer-backend-type-strings: 0/13
-      comparison-0-BT002: a regex on the text of comparison_operator ((?P<AT>dialect\.name)\s*==\s*["\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)["\'])
-      comparison-1-BT001: a regex on the text of comparison_operator ((?P<AT>dialect\.name)\s* in \s*\()
-      comparison-1-BT002: a regex on the text of comparison_operator ((?P<AT>dialect\.name)\s+in\s+\()
-      comparison-2-BT003: a regex on the text of comparison_operator ((?P<AT>backend_type)\s*==\s*["\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)["\'])
-      comparison-3-BT003: a regex on the text of comparison_operator (\b(?P<AT>backend) ==\s*["\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)["\'])
-      comparison-3-BT000: a regex on the text of comparison_operator (\b(?P<AT>backend)\s*==\s*["\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)["\'])
-      comparison-4-BT003: a regex on the text of comparison_operator (\b(?P<AT>backend) in\s+\([^)]*["\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)["\'])
-      comparison-4-BT000: a regex on the text of comparison_operator (\b(?P<AT>backend)\s+in\s+\([^)]*["\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)["\']
-      comparison-5-BT004: a regex on the text of comparison_operator ((?P<AT>["\'])(?:postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\']\s* in \s*\w*class_na
-      comparison-5-BT000: a regex on the text of comparison_operator ((?P<AT>["\'])(postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)["\']\s+in\s+\w*class_name)
-      comparison-6-BT004: a regex on the text of comparison_operator ((?P<AT>["\'])(?:postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\']\s* in \s*type\()
-      comparison-6-BT000: a regex on the text of comparison_operator ((?P<AT>["\'])(postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)["\']\s+in\s+type\()
-      comparison-7-BT005: a regex on the text of call ((?P<AT>__class__)\.__name__\.lower\(\))
-  data-layer-bootstrap-cache-health: 0/2
-      bootstrap-cache: relational (SQL stages)
-      reported-parser-error: relational (SQL stages)
-  data-layer-bootstrap-eager-resolve: 1/2
-      bootstrap-sql: relational (SQL stages)
-  data-layer-bootstrap-engine-invariants: 0/3
-      bootstrap-invariants: relational (SQL stages)
-      primitive-install-coverage: relational (SQL stages)
-      bootstrap-source-syntax: relational (SQL stages)
-  data-layer-bootstrap-lazy-sql: 1/2
-      bootstrap-sql: relational (SQL stages)
-  data-layer-bounded-composed-graph-paths: 0/93
-      text-contract-0: relational (SQL stages)
-      text-contract-1: relational (SQL stages)
-      text-contract-2: relational (SQL stages)
-      text-contract-3: relational (SQL stages)
-      text-contract-4: relational (SQL stages)
-      text-contract-5: relational (SQL stages)
-      text-contract-6: relational (SQL stages)
-      text-contract-7: relational (SQL stages)
-      text-contract-8: relational (SQL stages)
-      text-contract-9: relational (SQL stages)
-      text-contract-10: relational (SQL stages)
-      text-contract-11: relational (SQL stages)
-      text-contract-12: relational (SQL stages)
-      text-contract-13: relational (SQL stages)
-      text-contract-14: relational (SQL stages)
-      text-contract-15: relational (SQL stages)
-      text-contract-16: relational (SQL stages)
-      text-contract-17: relational (SQL stages)
-      text-contract-18: relational (SQL stages)
-      text-contract-19: relational (SQL stages)
-      text-contract-20: relational (SQL stages)
-      text-contract-21: relational (SQL stages)
-      text-contract-22: relational (SQL stages)
-      text-contract-23: relational (SQL stages)
-      text-contract-24: relational (SQL stages)
-      text-contract-25: relational (SQL stages)
-      text-contract-26: relational (SQL stages)
-      text-contract-27: relational (SQL stages)
-      text-contract-28: relational (SQL stages)
-      text-contract-29: relational (SQL stages)
-      text-contract-30: relational (SQL stages)
-      text-contract-31: relational (SQL stages)
-      text-contract-32: relational (SQL stages)
-      text-contract-33: relational (SQL stages)
-      text-contract-34: relational (SQL stages)
-      text-contract-35: relational (SQL stages)
-      text-contract-36: relational (SQL stages)
-      text-contract-37: relational (SQL stages)
-      text-contract-38: relational (SQL stages)
-      text-contract-39: relational (SQL stages)
-      text-contract-40: relational (SQL stages)
-      text-contract-41: relational (SQL stages)
-      text-contract-42: relational (SQL stages)
-      text-contract-43: relational (SQL stages)
-      text-contract-44: relational (SQL stages)
-      text-contract-45: relational (SQL stages)
-      text-contract-46: relational (SQL stages)
-      text-contract-47: relational (SQL stages)
-      text-contract-48: relational (SQL stages)
-      text-contract-49: relational (SQL stages)
-      text-contract-50: relational (SQL stages)
-      text-contract-51: relational (SQL stages)
-      text-contract-52: relational (SQL stages)
-      text-contract-53: relational (SQL stages)
-      text-contract-54: relational (SQL stages)
-      text-contract-55: relational (SQL stages)
-      text-contract-56: relational (SQL stages)
-      text-contract-57: relational (SQL stages)
-      text-contract-58: relational (SQL stages)
-      text-contract-59: relational (SQL stages)
-      text-contract-60: relational (SQL stages)
-      text-contract-61: relational (SQL stages)
-      text-contract-62: relational (SQL stages)
-      text-contract-63: relational (SQL stages)
-      text-contract-64: relational (SQL stages)
-      text-contract-65: relational (SQL stages)
-      text-contract-66: relational (SQL stages)
-      text-contract-67: relational (SQL stages)
-      text-contract-68: relational (SQL stages)
-      text-contract-69: relational (SQL stages)
-      text-contract-70: relational (SQL stages)
-      text-contract-71: relational (SQL stages)
-      text-contract-72: relational (SQL stages)
-      text-contract-73: relational (SQL stages)
-      text-contract-74: relational (SQL stages)
-      text-contract-75: relational (SQL stages)
-      text-contract-76: relational (SQL stages)
-      text-contract-77: relational (SQL stages)
-      text-contract-78: relational (SQL stages)
-      text-contract-79: relational (SQL stages)
-      text-contract-80: relational (SQL stages)
-      text-contract-81: relational (SQL stages)
-      text-contract-82: relational (SQL stages)
-      text-contract-83: relational (SQL stages)
-      text-contract-84: relational (SQL stages)
-      text-contract-85: relational (SQL stages)
-      text-contract-86: relational (SQL stages)
-      text-contract-87: relational (SQL stages)
-      text-contract-88: relational (SQL stages)
-      text-contract-89: relational (SQL stages)
-      text-contract-90: relational (SQL stages)
-      text-contract-91: relational (SQL stages)
-      text-contract-92: relational (SQL stages)
-  data-layer-cached-pure-lazy-allowlist: 0/3
-      cached-policy: relational (SQL stages)
-      memoized-policy: relational (SQL stages)
-      cached-runtime-contract: relational (SQL stages)
-  data-layer-classvar-check: 0/1
-      comparison: a regex on an anonymous token
-  data-layer-conditional-architecture: 0/5
-      conditional-local-0: relational (SQL stages)
-      conditional-local-1: relational (SQL stages)
-      conditional-local-2: relational (SQL stages)
-      conditional-local-3: relational (SQL stages)
-      conditional-structural-contracts: relational (SQL stages)
-  data-layer-conn-or-txn-union: 0/2
-      union: a regex on the text of function_definition (Connection)
-      separate: a regex on the text of function_definition (Connection)
-  data-layer-connection-caches: 0/4
-      pattern-0: a regex on an anonymous token
-      pattern-1: semantic layout
-      pattern-2: semantic layout
-      pattern-3: semantic layout
-  data-layer-connection-mode-split: 0/1
-      mode-split: relational (SQL stages)
-  data-layer-connection-service-architecture: 1/3
-      connection-services: relational (SQL stages)
-      schema-transaction-facades: relational (SQL stages)
-  data-layer-connection-structural-boundaries: 0/1
-      connection-structure: relational (SQL stages)
-  data-layer-data-layer-compat-aliases: 0/2
-      import-alias: compare
-      assignment-alias: compare
-  data-layer-data-layer-facade-purity: 0/6
-      definition: a regex on the text of module (def\ |class\ |impl\.|=|\()
-      impl-from: a regex on the text of module (def\ |class\ |impl\.|=|\()
-      impl-import: a regex on the text of module (def\ |class\ |impl\.|=|\()
-      assignment: comment nodes (not in node)
-      expression: semantic value
-      statement: comment nodes (not in node)
-  data-layer-declared-fact-interrogation: 0/2
-      contract-attribute: semantic value
-      override-identity: a regex on an anonymous token
-  data-layer-dynamic-module-loading: 2/5
-      pattern-0: a regex on an anonymous token
-      pattern-3: semantic layout
-      pattern-4: semantic layout
-  data-layer-eager-resolve: 0/1
-      eager-resolution: relational (SQL stages)
-  data-layer-embedding-vector-orchestration: 0/1
-      embedding-orchestration: relational (SQL stages)
-  data-layer-error-handling: 1/2
-      log-reraise: sibling walk with a stop rule
-  data-layer-execution-authority-bypass: 0/1
-      authority-sites: relational (SQL stages)
-  data-layer-executor-publication-repairs: 0/4
-      cte_output_columns: a regex over file content or paths
-      cte_column_type_hints: a regex over file content or paths
-      publication_contract_cache: a regex over file content or paths
-      cte_publication_contract_cache: a regex over file content or paths
-  data-layer-forwardref: 0/3
-      fwdref001: semantic layout
-      fwdref002: semantic layout
-      fwdref003: semantic layout
-  data-layer-generated-index-sources: 0/1
-      generated-index-source: relational (SQL stages)
-  data-layer-grammar-allowlist-burndown: 0/5
-      allowlist-allowlisted_static_classes: budget
-      allowlist-legacy_allowlisted_classes: budget
-      allowlist-allowlisted_classes: budget
-      allowlist-data_value_params: budget
-      allowlist-operator_params: budget
-  data-layer-grammar-callable-constructors: 7/8
-      constructor-arg: budget
-  data-layer-grammar-fragment-usage: 2/5
-      constructor-fragment: utility call
-      attribute-fragment: semantic value
-      captured-return: budget
-  data-layer-grammar-mutation-invalidation: 0/1
-      mutation: require each (define)
-  data-layer-grammar-render-methods: 0/6
-      fstring: semantic layout
-      join: semantic value
-      format: utility call
-      template: utility call
-      concat: a regex on an anonymous token
-      runtime-static: comment nodes (not in node)
-  data-layer-grammar-str-params: 0/3
-      parameter: a regex on an anonymous token
-      str-call: a regex on an anonymous token
-      str-concat: a regex on an anonymous token
-  data-layer-graph-lazy-sql-plan: 0/9
-      graph-plan-contracts-0: relational (SQL stages)
-      graph-plan-contracts-1: relational (SQL stages)
-      graph-plan-contracts-2: relational (SQL stages)
-      graph-plan-contracts-3: relational (SQL stages)
-      graph-plan-contracts-4: relational (SQL stages)
-      graph-plan-contracts-5: relational (SQL stages)
-      graph-plan-contracts-6: relational (SQL stages)
-      graph-plan-contracts-7: relational (SQL stages)
-      graph-plan-contracts-8: relational (SQL stages)
-  data-layer-graphql-plan-ownership: 0/2
-      graphql-authority: relational (SQL stages)
-      reported-parser-error: relational (SQL stages)
-  data-layer-hasattr-async: 0/2
-      hasattr: semantic layout
-      getattr: nthChild other than a fixed position
-  data-layer-history-serverplan-projection: 3/5
-      history-runtime: semantic value
-      sentinel: semantic value
-  data-layer-hnsw-architecture: 0/2
-      hnsw-architecture: relational (SQL stages)
-      hnsw-forbidden-files: relational (SQL stages)
-  data-layer-imperative-private-functions: 0/3
-      direct-execution: semantic binds
-      eager-signature: semantic binds
-      caller: semantic binds
-  data-layer-impl-direct-execution: 0/1
-      direct-execution-lines: relational (SQL stages)
-  data-layer-internal-dead-code: 0/1
-      unreachable-internal-symbols: relational (SQL stages)
-  data-layer-layer-violations: 0/6
-      layer-0: budget
-      layer-1: budget
-      api_impl-0: a regex on the text of module (import\ |from\ )
-      conform_impl-0: a regex on the text of module (import\ |from\ )
-      api_impl-1: a regex on the text of module (import\ |from\ )
-      conform_impl-1: a regex on the text of module (import\ |from\ )
-  data-layer-lazy-adapter-ownership: 1/2
-      adapter-ownership: relational (SQL stages)
-  data-layer-lazy-architecture: 0/56
-      lazy-architecture: relational (SQL stages)
-      deleted-cold-0: a regex over file content or paths
-      deleted-cold-1: a regex over file content or paths
-      deleted-cold-2: a regex over file content or paths
-      deleted-cold-3: a regex over file content or paths
-      deleted-cold-4: a regex over file content or paths
-      deleted-cold-5: a regex over file content or paths
-      deleted-cold-6: a regex over file content or paths
-      deleted-cold-7: a regex over file content or paths
-      deleted-cold-8: a regex over file content or paths
-      deleted-cold-9: a regex over file content or paths
-      deleted-cold-10: a regex over file content or paths
-      deleted-cold-11: a regex over file content or paths
-      deleted-cold-12: a regex over file content or paths
-      deleted-cold-13: a regex over file content or paths
-      deleted-cold-14: a regex over file content or paths
-      deleted-cold-15: a regex over file content or paths
-      deleted-cold-16: a regex over file content or paths
-      deleted-cold-17: a regex over file content or paths
-      deleted-cold-18: a regex over file content or paths
-      deleted-cold-19: a regex over file content or paths
-      deleted-cold-20: a regex over file content or paths
-      deleted-cold-21: a regex over file content or paths
-      deleted-cold-22: a regex over file content or paths
-      deleted-cold-23: a regex over file content or paths
-      deleted-sidecar-0: a regex over file content or paths
-      deleted-sidecar-1: a regex over file content or paths
-      deleted-sidecar-2: a regex over file content or paths
-      deleted-sidecar-3: a regex over file content or paths
-      deleted-sidecar-4: a regex over file content or paths
-      deleted-sidecar-5: a regex over file content or paths
-      deleted-sidecar-6: a regex over file content or paths
-      deleted-sidecar-7: a regex over file content or paths
-      deleted-sidecar-8: a regex over file content or paths
-      deleted-sidecar-9: a regex over file content or paths
-      deleted-sidecar-10: a regex over file content or paths
-      deleted-sidecar-11: a regex over file content or paths
-      deleted-sidecar-12: a regex over file content or paths
-      deleted-sidecar-13: a regex over file content or paths
-      deleted-sidecar-14: a regex over file content or paths
-      deleted-sidecar-15: a regex over file content or paths
-      deleted-sidecar-16: a regex over file content or paths
-      deleted-sidecar-17: a regex over file content or paths
-      deleted-sidecar-18: a regex over file content or paths
-      deleted-sidecar-19: a regex over file content or paths
-      deleted-sidecar-20: a regex over file content or paths
-      deleted-sidecar-21: a regex over file content or paths
-      deleted-sidecar-22: a regex over file content or paths
-      deleted-sidecar-23: a regex over file content or paths
-      deleted-sidecar-24: a regex over file content or paths
-      deleted-sidecar-25: a regex over file content or paths
-      deleted-sidecar-26: a regex over file content or paths
-      deleted-sidecar-27: a regex over file content or paths
-      deleted-sidecar-28: a regex over file content or paths
-      deleted-sidecar-29: a regex over file content or paths
-      deleted-sidecar-30: a regex over file content or paths
-  data-layer-lazy-result-usage: 0/6
-      execute: comment nodes (not in node)
-      first: comment nodes (not in node)
-      one: comment nodes (not in node)
-      one_or_none: comment nodes (not in node)
-      select_one: comment nodes (not in node)
-      select_one_or_raise: comment nodes (not in node)
-  data-layer-lazy-sql-surface: 0/1
-      sql-surface: relational (SQL stages)
-  data-layer-legacy-callback-quarantine: 3/4
-      callback-call: comment nodes (not in node)
-  data-layer-legacy-execution-surfaces: 11/25
-      raw-cursor-impl/mariadb/fts: a stop rule of any kind
-      raw-cursor-impl/postgres/fts: a stop rule of any kind
-      raw-cursor-impl/sqlite/fts: a stop rule of any kind
-      raw-cursor-l4000_permissions: a stop rule of any kind
-      raw-cursor-l5200_vector_index: a stop rule of any kind
-      raw-cursor-l8000_admin/tools: a stop rule of any kind
-      eager-plan: a stop rule of any kind
-      eager-txn: a stop rule of any kind
-      graph-fallback-none: a regex on the text of comparison_operator (\bis\s+None$)
-      legacy-execution-graphs: relational (SQL stages)
-      inventory-export_cursor.py: a regex over file content or paths
-      inventory-fts_searcher.py: a regex over file content or paths
-      inventory-legacy_wrappers.py: a regex over file content or paths
-      removed-read-leaves: a regex over file content or paths
-  data-layer-matching-architecture: 0/2
-      matching-file-checks: relational (SQL stages)
-      matching-project-ownership: relational (SQL stages)
-  data-layer-missing-async-pairs: 0/3
-      missing-async: utility call
-      missing-sync: utility call
-      argument-mismatch: utility call
-  data-layer-module-level-caches: 27/40
-      list_cache: a regex on the text of list ((?s)^\[\s*(?:#[^\n]*\n\s*)*\]$)
-      list_cache-file-0: a regex on the text of list ((?s)^\[\s*(?:#[^\n]*\n\s*)*\]$)
-      list_cache-file-1: a regex on the text of list ((?s)^\[\s*(?:#[^\n]*\n\s*)*\]$)
-      list_cache-file-2: a regex on the text of list ((?s)^\[\s*(?:#[^\n]*\n\s*)*\]$)
-      list_cache-file-3: a regex on the text of list ((?s)^\[\s*(?:#[^\n]*\n\s*)*\]$)
-      list_cache-file-4: a regex on the text of list ((?s)^\[\s*(?:#[^\n]*\n\s*)*\]$)
-      named-list: regex (?s)^\[\s*(?:#[^\n]*\n\s*)*\]$
-      named-list-file-0: regex (?s)^\[\s*(?:#[^\n]*\n\s*)*\]$
-      named-list-file-1: regex (?s)^\[\s*(?:#[^\n]*\n\s*)*\]$
-      named-list-file-2: regex (?s)^\[\s*(?:#[^\n]*\n\s*)*\]$
-      named-list-file-3: regex (?s)^\[\s*(?:#[^\n]*\n\s*)*\]$
-      named-list-file-4: regex (?s)^\[\s*(?:#[^\n]*\n\s*)*\]$
-      decorator: regex \b\B|^(?:impl/common/l2100_sql_grammar/fast_params\.py|impl/common/l2070_server_plan/steps/intent_transaction\.py)$
-  data-layer-no-api-root-imports: 0/2
-      imports: a regex on the text of import_from_statement (^from\s+\.*api\s+import\b)
-      examples: a regex on the text of string ((?m)(?:^[ \t]*[rRuU]*["']{1,3}|^[ \t]*)(?<IMPORT>(?:from api import [^\n]+|import api\s*(?:\n|$))))
-  data-layer-no-blanket-grammar-bypass: 2/3
-      keyword: an anchor on a capture the rule does not bind
-  data-layer-no-source-inspection: 3/5
-      inspection-3: a regex on the text of aliased_import (\bgetsource\b)
-      inspection-4: a regex on the text of aliased_import (\bgetsourcelines\b)
-  data-layer-permission-error: 0/1
-      raise: semantic layout
-  data-layer-plan-composition-architecture: 1/3
-      plan-composition: relational (SQL stages)
-      composition-runtime-observations: relational (SQL stages)
-  data-layer-plan-helpers-allowlist: 0/1
-      plan-helper-aliases: relational (SQL stages)
-  data-layer-plan-optimizer-v2: 0/2
-      optimizer-file-checks: relational (SQL stages)
-      optimizer-invariant-registry: relational (SQL stages)
-  data-layer-plan-scope-ownership: 7/26
-      runner-nominal-false: nthChild other than a fixed position
-      runner-nominal-true: nthChild other than a fixed position
-      runner-generic: nthChild other than a fixed position
-      runner-broad: nthChild other than a fixed position
-      workflow-SyncReadPlanWorkflow: a regex on the text of concatenated_string|string (Any)
-      workflow-SyncWritePlanWorkflow: a regex on the text of concatenated_string|string (Any)
-      workflow-AsyncReadPlanWorkflow: a regex on the text of concatenated_string|string (Any)
-      workflow-AsyncWritePlanWorkflow: a regex on the text of concatenated_string|string (Any)
-      lifecycle-reflection: semantic value
-      base-versioned-name: a regex on the text of concatenated_string|string (Versioned)
-      invent-contract: a regex on the text of call (imported_contract)
-      terminal-state: a regex on the text of module (if\ not\ txn\.is_committed\ and\ not\ txn\.is_rolled_back\ and\ not\ txn\.did_publish_branch)
-      contract-fallback: a regex on the text of module (imported_contract\ =\ imported_contract_fn)
-      mode-pair-0: a regex on the text of module ((?<LOCATION>execute_read_plan_workflow_async\(\ \ \ \ \ \ \ \ \ \ \ \ \ conn,\ \ \ \ \ \ \ \ \ \ \ \ \ SyncReadPlanWorkflow))
-      mode-pair-1: a regex on the text of module ((?<LOCATION>execute_write_plan_workflow_async\(\ \ \ \ \ \ \ \ \ \ \ \ \ conn,\ \ \ \ \ \ \ \ \ \ \ \ \ SyncWritePlanWorkflow))
-      mode-pair-2: a regex on the text of module ((?<LOCATION>run_read_plan_workflow_async\(\ \ \ \ \ \ \ \ \ \ \ \ \ self\._async_conn\(\),\ \ \ \ \ \ \ \ \ \ \ \ \ SyncReadPlanW
-      mode-pair-3: a regex on the text of module ((?<LOCATION>run_write_plan_workflow_async\(\ \ \ \ \ \ \ \ \ \ \ \ \ self\._async_conn\(\),\ \ \ \ \ \ \ \ \ \ \ \ \ SyncWritePla
-      mode-pair-4: a regex on the text of module ((?<LOCATION>execute_read_plan_workflow\(\ \ \ \ \ \ \ \ \ conn,\ \ \ \ \ \ \ \ \ AsyncReadPlanWorkflow))
-      mode-pair-5: a regex on the text of module ((?<LOCATION>execute_write_plan_workflow\(\ \ \ \ \ \ \ \ \ conn,\ \ \ \ \ \ \ \ \ AsyncWritePlanWorkflow))
-  data-layer-plan-scope-side-effects: 6/6
-  data-layer-post-op-no-internal-dispatch: 3/9
-      duplicate-enum: budget
-      builder-name: constraint on $ENUM, not captured
-      literal-kwargs: semantic value
-      multi-enum-builder: budget
-      removed-surface: nthChild other than a fixed position
-      payload-aliases: relational (SQL stages)
-  data-layer-post-op-side-effects: 0/1
-      signed-surface: relational (SQL stages)
-  data-layer-public-api-triples: 0/1
-      exported-families: relational (SQL stages)
-  data-layer-publication-registry-writes: 1/1
-  data-layer-pure-lazy-runtime-purity: 0/1
-      pure-runtime-state: relational (SQL stages)
-  data-layer-raw-execute-regression: 4/7
-      removed-definitions: compare
-      mixed-marker-3: a regex on the text of module (arbitrary\ grammar\ router)
-      mixed-marker-4: a regex on the text of module (compatibility\ router)
-  data-layer-readthrough-authority-architecture: 8/10
-      runtime-seed: semantic value
-      complete-identity: semantic value
-  data-layer-regex-sql-parsing: 0/9
-      category-0: semantic value
-      category-1: semantic value
-      category-2: semantic value
-      category-3: semantic value
-      category-4: semantic value
-      category-5: semantic value
-      category-6: semantic value
-      category-7: semantic value
-      category-8: semantic value
-  data-layer-removed-compat-surfaces: 3/3
-  data-layer-render-fstrings: 0/1
-      fstring: a regex on the text of module (render|f"|f')
-  data-layer-render-raw-strings: 0/4
-      literal: semantic value
-      fstring-literal: semantic parse
-      template: semantic arguments
-      static: semantic arguments
-  data-layer-revision-ancestry-invariants: 0/10
-      descriptor-SqlAncestryChainCte: a regex over file content or paths
-      descriptor-SqlNativeRevisionValue: a regex over file content or paths
-      descriptor-SqlRevisionAncestryDefinition: a regex over file content or paths
-      descriptor-SqlRevisionInAncestryCondition: a regex over file content or paths
-      descriptor-SparseRowVisibleAtRevisionCondition: a regex over file content or paths
-      descriptor-SqlCopyVisibleSparseAncestors: a regex over file content or paths
-      descriptor-SqlVisibleAncestorsDefinition: a regex over file content or paths
-      removed-surface: a regex over file content or paths
-      stored-text-cast-0: a regex over file content or paths
-      stored-text-cast-1: a regex over file content or paths
-  data-layer-rust-sql-grammar-boundary: 0/8
-      pattern-0: no Python matcher
-      pattern-1: no Python matcher
-      pattern-2: no Python matcher
-      pattern-3: no Python matcher
-      pattern-4: no Python matcher
-      pattern-5: no Python matcher
-      pattern-6: no Python matcher
-      pattern-7: no Python matcher
-  data-layer-schema-architecture: 1/4
-      schema-planning: relational (SQL stages)
-      schema-lifecycle: relational (SQL stages)
-      reported-parser-error: relational (SQL stages)
-  data-layer-schema-bootstrap-contracts: 1/2
-      bootstrap-contracts: relational (SQL stages)
-  data-layer-schema-introspection-data-paths: 0/1
-      schema-introspection: relational (SQL stages)
-  data-layer-serverplan-bypass: 0/3
-      bypass-_execute_raw_sql: budget
-      bypass-_execute_raw_sql_async: budget
-      bypass-_query_raw_sql_async: budget
-  data-layer-serverplan-dispatch-architecture: 2/9
-      executor-provenance: relational (SQL stages)
-      backend-identity: semantic value
-      step-isinstance: a regex on the text of binary_operator (\|)
-      step-type-compare: a regex on the text of binary_operator (\|)
-      step-name-compare: semantic value
-      dialect-compare: semantic value
-      dialect-truth: semantic value
-  data-layer-serverplan-grammar-surface: 7/7
-  data-layer-serverplan-name-inference: 0/4
-      column-shape: a regex on an anonymous token
-      reference-parse: semantic layout
-      reference-synthesis: a regex on the text of string (^f['"][^\n]*?\{[^}]*ref[^}]*\}[^\n]*?(?:\.raw|\.raw_rows|\.write|\.updated_rows|\.updated_count|_count|_updated_rows|_updated_cou
-      column-type: semantic layout
-  data-layer-serverplan-quality: 87/123
-      spq-ordered-semantic-inventory: relational (SQL stages)
-      spq-sync-async-duplication: relational (SQL stages)
-      spq-intent-boilerplate: a regex on the text of integer (^4$)
-      spq-executor-helper-isinstance: nthChild other than a fixed position
-      spq-executor-method-isinstance: nthChild other than a fixed position
-      spq-executor-runtime-bypass: a regex on the text of string (^[rRuU]*(?:'''(?:execute_runtime)'''|"""(?:execute_runtime)"""|'(?:execute_runtime)'|"(?:execute_runtime)")$)
-      spq-strategy-sequential-optin: nthChild other than a fixed position
-      spq-strategy-sequential-probe: a regex on the text of string (^[rRuU]*(?:'''(?:requires_runtime_sequential_batch)'''|"""(?:requires_runtime_sequential_batch)"""|'(?:requires_runtime_sequentia
-      spq-sequential-optins: nthChild other than a fixed position
-      spq-lazy-resolution: nthChild other than a fixed position
-      spq-preop-functions: relational (SQL stages)
-      spq-control-flow-child-compile: a regex on the text of integer (^4$)
-      spq-order-by-strings: a regex on the text of string ((?:^[rRuUfF]*(?:'''|\"\"\"|'|")|[\s}])(?:JSON_EXISTS|JSON_GET|JSON_GET_BOOL|JSON_GET_FLOAT|JSON_GET_INT|JSON_GET_TEXT|JSON_KEYS|J
-      spq-can-batch-lock: a regex on the text of attribute|concatenated_string|identifier|string ((?i)for_update|lock|locked|snapshot|use_for_update)
-      spq-object-id-calls: nthChild other than a fixed position
-      spq-serverplan-fallback-if_statement: a stop rule of any kind
-      spq-serverplan-none-fallback-if_statement: a stop rule of any kind
-      spq-serverplan-fallback-elif_clause: a stop rule of any kind
-      spq-serverplan-none-fallback-elif_clause: a stop rule of any kind
-      spq-serverplan-later-fallback: a stop rule of any kind
-      spq-graphql-internal-probes: nthChild other than a fixed position
-      spq-include-through-if_statement: a regex on the text of comparison_operator (==|!=)
-      spq-include-through-elif_clause: a regex on the text of comparison_operator (==|!=)
-      spq-fk-planning-isinstance: nthChild other than a fixed position
-      spq-vector-filter-literals: nthChild other than a fixed position
-      spq-vector-filter-constants: relational (SQL stages)
-      spq-projection-repairs: relational (SQL stages)
-      spq-statement-batch-rowcounts: nthChild other than a fixed position
-      spq-replay-outer-cte-strings: a regex on the text of string (^[rRuUfF]*(?:'''|\"\"\"|'|")[\p{L}\p{N}_]+\(.*\)(?:'''|\"\"\"|'|")$)
-      spq-replay-relation-columns: a regex on the text of string (^[rRuU]*(?:'''(?:relation_output_columns)'''|"""(?:relation_output_columns)"""|'(?:relation_output_columns)'|"(?:relation_output_
-      spq-replay-step-tags: a regex on the text of binary_operator (&)
-      spq-runtime-state-annotations: relational (SQL stages)
-      strategy-file-size: a regex over file content or paths
-      quality-local-taxonomy: relational (SQL stages)
-      quality-project-taxonomy: relational (SQL stages)
-      conditional-architecture: relational (SQL stages)
-  data-layer-serverplan-state-tripwires: 0/31
-      queue-auth-definitions: a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|
-      queue-auth-calls: a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|
-      terminal-hydration-definitions: a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|
-      large-column-reentry: a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|
-      large-column-hydration: a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|
-      direct-planning-io: a regex on the text of call (grammar_)
-      query-planning-io: a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|
-      preprocess-io: a regex on the text of call (grammar_)
-      provider-io: a regex on the text of call (grammar_)
-      nested-plan-execution: a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|
-      executor-plan-execution: a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|
-      queue-udf-symbols: semantic value
-      materialized-pipeline: a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|
-      context-authority: a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|
-      resolved-ref-access: a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|
-      production-ir-class: a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|
-      production-ir-construction: a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|
-      compiled-ir-value: a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|
-      test-only-acknowledgement: a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|
-      executor-ir-dispatch: nthChild other than a fixed position
-      step-aware-eager-helper: a regex on the text of call (grammar_)
-      graph-id-config: a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|
-      legacy-preop: a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|
-      serverplan-ddl: nthChild other than a fixed position
-      mcp-default-graph: a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|
-      private-lazy-ref: nthChild other than a fixed position
-      graph-terminal-chain: a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|
-      lazy-callback-terminal: nthChild other than a fixed position
-      state-signatures: relational (SQL stages)
-      state-flow-narrow: relational (SQL stages)
-      state-projection-recovery: relational (SQL stages)
-  data-layer-serverplan-steps: 12/21
-      side-effect-tags: semantic value
-      runtime-builder-string-name: nthChild other than a fixed position
-      step-contracts-1: relational (SQL stages)
-      step-contracts-2: relational (SQL stages)
-      step-contracts-3: relational (SQL stages)
-      step-contracts-4: relational (SQL stages)
-      step-contracts-5: relational (SQL stages)
-      step-contracts-6: relational (SQL stages)
-      runtime-reference-summaries: relational (SQL stages)
-  data-layer-serverplan-target-architecture: 12/16
-      executor-imports: a regex on the text of aliased_import|dotted_name (^(?:[A-Za-z_]\w*)?(?:Step|Intent|Strategy)(?:\s+as\s+\w+)?$)
-      strategy-getattr: semantic value
-      strategy-isinstance: nthChild other than a fixed position
-      required-contracts: relational (SQL stages)
-  data-layer-sql-grammar-escape-hatches: 0/11
-      forbidden-class: semantic layout
-      unsafe-parameter: budget
-      usage-0: a regex on the text of aliased_import|dotted_name (^SqlAdminQuery)
-      usage-1: a regex on the text of aliased_import|dotted_name (^SqlBuiltQuery)
-      usage-2: a regex on the text of aliased_import|dotted_name (^SqlDdlStatement)
-      usage-3: a regex on the text of aliased_import|dotted_name (^SqlLegacy)
-      usage-4: a regex on the text of aliased_import|dotted_name (^SqlRawSql)
-      usage-5: a regex on the text of aliased_import|dotted_name (^SqlRawSqlWithParams)
-      usage-6: a regex on the text of aliased_import|dotted_name (^SqlUnsafe)
-      usage-7: a regex on the text of aliased_import|dotted_name (^_SqlPrebuiltCondition)
-      usage-8: a regex on the text of aliased_import|dotted_name (^_SqlPrebuiltQuery)
-  data-layer-swallowed-exceptions: 0/4
-      except-warning: comment nodes (not in node)
-      except-critical: comment nodes (not in node)
-      suppress-legacy: comment nodes (not in node)
-      suppress-critical: semantic layout
-  data-layer-sync-async-signatures: 0/1
-      transaction-connection: utility call
-  data-layer-transaction-callback-wrappers: 0/2
-      callback-helper: a regex on the text of function_definition (Callable)
-      inline-reentrant: a regex on the text of function_definition (versioned_(?:read|write))
-  data-layer-transaction-closures: 0/6
-      inline-mutation: compare
-      inline-subscript: compare
-      named-nonlocal: nthChild other than a fixed position
-      named-global: nthChild other than a fixed position
-      named-mutation: nthChild other than a fixed position
-      named-subscript: nthChild other than a fixed position
-  data-layer-transaction-patterns: 35/58
-      internal-5: semantic value
-      internal-6: semantic value
-      internal-9: semantic value
-      internal-10: semantic value
-      internal-11: semantic value
-      internal-13: semantic value
-      category-14: semantic value
-      internal-14: semantic value
-      category-15: semantic value
-      internal-15: semantic value
-      category-16: semantic value
-      internal-16: semantic value
-      internal-19: semantic value
-      internal-20: semantic value
-      internal-30: semantic value
-      internal-31: semantic value
-      internal-32: semantic value
-      internal-34: semantic value
-      internal-35: semantic value
-      internal-36: semantic value
-      internal-37: semantic value
-      category-39: semantic value
-      internal-39: semantic value
-  data-layer-type-safety-patterns: 1/9
-      text-str_union_expression: a regex on an anonymous token
-      text-str_union_field: a regex on an anonymous token
-      text-expression_any_any: a regex on the text of generic_type|subscript (\bExpression\s*\[\s*Any\s*,\s*Any\s*\]$)
-      text-deprecated_comparison_op: a regex on an anonymous token
-      signature-order_by: semantic layout
-      signature-where: a regex on the text of function_definition (expression\s*:\s*str\b|:\s*str\s*\|)
-      signature-select: a regex on the text of function_definition (\*columns\s*:\s*str\b|columns\s*:\s*str\b|:\s*str\s*\|)
-      signature-group_by: a regex on the text of function_definition (\*columns\s*:\s*str\b|columns\s*:\s*str\b|:\s*str\s*\|)
-  data-layer-unknown-contract-defaults: 1/3
-      or-empty: a regex on an anonymous token
-      bool: count
-  data-layer-unresolved-forward-refs: 0/1
-      inspection: semantic arguments
-  data-layer-versioned-lifecycle-legacy-surfaces: 1/1
-  data-layer-versioned-merged-identity: 0/1
-      constructors: relational (SQL stages)
+  data-layer-admin-async-purity: 3/3 (authored 3)
+  data-layer-async-executor: 1/1 (authored 1)
+  data-layer-async-patterns: 32/32 (authored 32)
+  data-layer-async-sync-boundary: 63/63 (authored 0)
+      sync-wraps-analyzer: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
+      sync-wraps: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-0: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-1: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-3: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-4: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-5: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-6: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-7: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-8: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-10: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-11: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-12: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-13: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-14: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-25: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-26: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-29: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-30: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-31: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      sync-wraps-allowed-file-32: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-analyzer: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
+      async-wraps: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-0: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-1: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-3: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-4: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-5: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-6: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-7: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-8: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-10: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-11: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-12: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-13: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-14: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-25: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-26: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-29: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-30: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-31: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      async-wraps-allowed-file-32: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-analyzer: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
+      executor: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-0: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-1: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-3: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-4: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-5: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-6: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-7: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-8: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-10: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-11: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-12: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-13: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-14: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-25: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-26: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-29: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-30: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-31: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      executor-allowed-file-32: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+  data-layer-async-sync-delegation: 13/13 (authored 13)
+  data-layer-authentication-plan-purity: 1/1 (authored 1)
+  data-layer-backend-coupling: 2/2 (authored 2)
+  data-layer-backend-type-strings: 13/13 (authored 13)
+  data-layer-bootstrap-cache-health: 2/2 (authored 2)
+  data-layer-bootstrap-eager-resolve: 2/2 (authored 1)
+  data-layer-bootstrap-engine-invariants: 3/3 (authored 3)
+  data-layer-bootstrap-lazy-sql: 2/2 (authored 1)
+  data-layer-bounded-composed-graph-paths: 93/93 (authored 93)
+  data-layer-cached-pure-lazy-allowlist: 3/3 (authored 3)
+  data-layer-classvar-check: 1/1 (authored 1)
+  data-layer-conditional-architecture: 5/5 (authored 5)
+  data-layer-conn-or-txn-union: 2/2 (authored 2)
+  data-layer-connection-caches: 4/4 (authored 4)
+  data-layer-connection-mode-split: 1/1 (authored 1)
+  data-layer-connection-service-architecture: 3/3 (authored 2)
+  data-layer-connection-structural-boundaries: 1/1 (authored 1)
+  data-layer-data-layer-compat-aliases: 2/2 (authored 2)
+  data-layer-data-layer-facade-purity: 6/6 (authored 6)
+  data-layer-declared-fact-interrogation: 2/2 (authored 2)
+  data-layer-dynamic-module-loading: 5/5 (authored 5)
+  data-layer-eager-resolve: 1/1 (authored 1)
+  data-layer-embedding-vector-orchestration: 1/1 (authored 1)
+  data-layer-error-handling: 2/2 (authored 1)
+  data-layer-execution-authority-bypass: 1/1 (authored 1)
+  data-layer-executor-publication-repairs: 4/4 (authored 4)
+  data-layer-forwardref: 3/3 (authored 3)
+  data-layer-generated-index-sources: 1/1 (authored 1)
+  data-layer-grammar-allowlist-burndown: 5/5 (authored 5)
+  data-layer-grammar-callable-constructors: 8/8 (authored 3)
+  data-layer-grammar-fragment-usage: 5/5 (authored 3)
+  data-layer-grammar-mutation-invalidation: 1/1 (authored 1)
+  data-layer-grammar-render-methods: 6/6 (authored 6)
+  data-layer-grammar-str-params: 3/3 (authored 3)
+  data-layer-graph-lazy-sql-plan: 9/9 (authored 9)
+  data-layer-graphql-plan-ownership: 2/2 (authored 2)
+  data-layer-hasattr-async: 2/2 (authored 2)
+  data-layer-history-serverplan-projection: 5/5 (authored 2)
+  data-layer-hnsw-architecture: 2/2 (authored 2)
+  data-layer-imperative-private-functions: 3/3 (authored 3)
+  data-layer-impl-direct-execution: 1/1 (authored 1)
+  data-layer-internal-dead-code: 1/1 (authored 1)
+  data-layer-layer-violations: 6/6 (authored 6)
+  data-layer-lazy-adapter-ownership: 2/2 (authored 1)
+  data-layer-lazy-architecture: 56/56 (authored 56)
+  data-layer-lazy-result-usage: 6/6 (authored 6)
+  data-layer-lazy-sql-surface: 1/1 (authored 1)
+  data-layer-legacy-callback-quarantine: 4/4 (authored 1)
+  data-layer-legacy-execution-surfaces: 25/25 (authored 14)
+  data-layer-matching-architecture: 2/2 (authored 2)
+  data-layer-missing-async-pairs: 3/3 (authored 3)
+  data-layer-module-level-caches: 40/40 (authored 15)
+      raw-dict_cache: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
+      dict_cache: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      dict_cache-file-0: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      dict_cache-file-1: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      dict_cache-file-2: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      dict_cache-file-3: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      dict_cache-file-4: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      dict_cache-file-5: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      dict_cache-file-6: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      dict_cache-file-7: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      dict_cache-file-8: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      dict_cache-file-9: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      raw-set_cache: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
+      set_cache: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      set_cache-file-0: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      set_cache-file-1: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      set_cache-file-2: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      set_cache-file-3: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      raw-constructor: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
+      constructor: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      constructor-file-0: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      constructor-file-1: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      raw-decorator: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
+      decorator-file-0: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+      decorator-file-1: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
+  data-layer-no-api-root-imports: 2/2 (authored 2)
+  data-layer-no-blanket-grammar-bypass: 3/3 (authored 1)
+  data-layer-no-source-inspection: 5/5 (authored 2)
+  data-layer-permission-error: 1/1 (authored 1)
+  data-layer-plan-composition-architecture: 3/3 (authored 2)
+  data-layer-plan-helpers-allowlist: 1/1 (authored 1)
+  data-layer-plan-optimizer-v2: 2/2 (authored 2)
+  data-layer-plan-scope-ownership: 26/26 (authored 26)
+  data-layer-plan-scope-side-effects: 6/6 (authored 1)
+  data-layer-post-op-no-internal-dispatch: 9/9 (authored 9)
+  data-layer-post-op-side-effects: 1/1 (authored 1)
+  data-layer-public-api-triples: 1/1 (authored 1)
+  data-layer-publication-registry-writes: 1/1 (authored 0)
+  data-layer-pure-lazy-runtime-purity: 1/1 (authored 1)
+  data-layer-raw-execute-regression: 7/7 (authored 7)
+  data-layer-readthrough-authority-architecture: 10/10 (authored 2)
+  data-layer-regex-sql-parsing: 9/9 (authored 9)
+  data-layer-removed-compat-surfaces: 3/3 (authored 0)
+  data-layer-render-fstrings: 1/1 (authored 1)
+  data-layer-render-raw-strings: 4/4 (authored 4)
+  data-layer-revision-ancestry-invariants: 10/10 (authored 10)
+  data-layer-rust-sql-grammar-boundary: 8/8 (authored 8)
+  data-layer-schema-architecture: 4/4 (authored 4)
+  data-layer-schema-bootstrap-contracts: 2/2 (authored 1)
+  data-layer-schema-introspection-data-paths: 2/2 (authored 2)
+  data-layer-serverplan-bypass: 3/3 (authored 3)
+  data-layer-serverplan-dispatch-architecture: 9/9 (authored 7)
+  data-layer-serverplan-grammar-surface: 7/7 (authored 0)
+  data-layer-serverplan-name-inference: 4/4 (authored 4)
+  data-layer-serverplan-quality: 123/123 (authored 36)
+  data-layer-serverplan-state-tripwires: 31/31 (authored 31)
+  data-layer-serverplan-steps: 21/21 (authored 9)
+  data-layer-serverplan-target-architecture: 16/16 (authored 4)
+  data-layer-sql-grammar-escape-hatches: 11/11 (authored 11)
+  data-layer-swallowed-exceptions: 4/4 (authored 4)
+  data-layer-sync-async-signatures: 1/1 (authored 1)
+  data-layer-transaction-callback-wrappers: 2/2 (authored 2)
+  data-layer-transaction-closures: 6/6 (authored 6)
+  data-layer-transaction-patterns: 58/58 (authored 58)
+  data-layer-type-safety-patterns: 9/9 (authored 8)
+  data-layer-unknown-contract-defaults: 3/3 (authored 2)
+  data-layer-unresolved-forward-refs: 1/1 (authored 1)
+  data-layer-versioned-lifecycle-legacy-surfaces: 1/1 (authored 0)
+  data-layer-versioned-merged-identity: 1/1 (authored 1)

@@ -24,24 +24,24 @@ use super::*;
 use crate::code_rule_dsl::waves::schedule;
 
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Emitted {
-    pub(in crate::code_rule_dsl) value_types: std::sync::Arc<BTreeMap<String, Vec<String>>>,
-    pub(in crate::code_rule_dsl) analysis: std::sync::Arc<super::super::analysis::ProgramAnalysis>,
-    pub(in crate::code_rule_dsl) program: schedule::Program,
+pub struct Emitted {
+    pub value_types: std::sync::Arc<BTreeMap<String, Vec<String>>>,
+    pub analysis: std::sync::Arc<super::super::analysis::ProgramAnalysis>,
+    pub program: schedule::Program,
     /// Statements the steps read besides the program's relations: `rdl_int`, then the views.
-    pub(in crate::code_rule_dsl) setup: Vec<String>,
+    pub setup: Vec<String>,
     /// Each step's checked query, as `program.steps` (`None`: a relation's constant rows).
-    pub(in crate::code_rule_dsl) queries: Vec<Option<Query>>,
+    pub queries: Vec<Option<Query>>,
     /// Planner-selected projection queries. Session execution can schedule them as retained relations.
-    pub(in crate::code_rule_dsl) views: Vec<(String, Query)>,
+    pub views: Vec<(String, Query)>,
     /// The program's inputs, which its statements may read.
-    pub(in crate::code_rule_dsl) inputs: Vec<String>,
+    pub inputs: Vec<String>,
 }
 
 impl Emitted {
     /// Connection-local extension views must not shadow the public fact modules. All references
     /// are rewritten through the checked query tree; SQL literals and user SQL are untouched.
-    pub(in crate::code_rule_dsl) fn for_session(&mut self, namespace: &str, bound: &BTreeSet<String>) {
+    pub fn for_session(&mut self, namespace: &str, bound: &BTreeSet<String>) {
         let names: BTreeMap<String, String> = self.views.iter().filter(|(rel,_)|bound.contains(rel)).map(|(rel, _)| (rel.clone(), format!("__sql_{namespace}_{rel}"))).collect();
         for (old, new) in &names {
             if let Some(types) = self.value_types.get(old).cloned() { std::sync::Arc::make_mut(&mut self.value_types).insert(new.clone(),types); }
@@ -77,7 +77,7 @@ impl Emitted {
 /// in the product's input mode (`run_atoms`).
 /// `counts` are a previous run's `rows.<relation>`; `batch` maps the inputs a wave reads from its
 /// chunk's batch to their source and row estimate (`Inputs::batch`).
-pub(in crate::code_rule_dsl) fn emit(
+pub fn emit(
     lowered: &lower::Lowered,
     db: &Connection,
     stats: &str,
@@ -133,9 +133,9 @@ pub(in crate::code_rule_dsl) fn emit_inputs(prog:&Program, db:&Connection, name:
             if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = &s.lit
                 && derived(&a.rel)
                 && keep(&a.rel)
-                && !out.contains(&a.rel)
+                && !out.iter().any(|x| x == &a.rel)
             {
-                out.push(a.rel.clone());
+                out.push(a.rel.to_string());
             }
         }
         out
@@ -193,7 +193,7 @@ pub(in crate::code_rule_dsl) fn emit_inputs(prog:&Program, db:&Connection, name:
             record(rule,"full query",explain,started.map_or(0.0,|t|super::super::profile::now()-t));
             planned.push((rule, order));
         }
-        let own = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg && scc.contains(&a.rel));
+        let own = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg && scc.contains(a.rel.as_str()));
         let recursive = scc.len() > 1 || planned.iter().flat_map(|(_, o)| o).any(|s| own(&s.lit));
         for (rule, order) in &planned {
             let query = model.checked_query(prog, &rule.head, order, None, None)?;
@@ -216,7 +216,7 @@ pub(in crate::code_rule_dsl) fn emit_inputs(prog:&Program, db:&Connection, name:
                     let at = order.iter().position(|s| s.at == i).ok_or_else(|| Error::Plan(format!("{}: no delta atom", rule.head)))?;
                     let query = model.checked_query(prog, &rule.head, &order, Some(at), None)?;
                     let Literal::Atom(a) = l else { unreachable!("an own atom") };
-                    step(&rule.head.rel, stratum, vec![a.rel.clone()], &query.render(), Some(query));
+                    step(&rule.head.rel, stratum, vec![a.rel.to_string()], &query.render(), Some(query));
                 }
             }
             model.stats.solve(BTreeSet::new());
@@ -236,7 +236,7 @@ pub(in crate::code_rule_dsl) fn emit_inputs(prog:&Program, db:&Connection, name:
 
 /// `source` (a program over batch inputs alone) as the wave program `name`: parsed, lowered (its
 /// names interned by `intern`) and emitted, with no statistics to read.
-pub(in crate::code_rule_dsl) fn emit_batch(
+pub fn emit_batch(
     source: &str,
     name: &str,
     batch: &HashMap<String, (Source, f64)>,
@@ -246,7 +246,7 @@ pub(in crate::code_rule_dsl) fn emit_batch(
 }
 
 /// `emit_batch` of a program already parsed (or built, as a wave's demand program is).
-pub(in crate::code_rule_dsl) fn emit_program(
+pub fn emit_program(
     prog: &crate::code_rule_dsl::logic::front::Program,
     name: &str,
     batch: &HashMap<String, (Source, f64)>,
@@ -265,7 +265,7 @@ pub(in crate::code_rule_dsl) fn emit_program(
 /// `output` alone, and keeps the setup that is not a view (`rdl_int`). Refused where a step reads a
 /// relation of its own stratum or a later one (recursion), reads a walk or constant rows, or the
 /// program has lattices.
-pub(in crate::code_rule_dsl) fn single(emitted: Emitted, output: &str) -> Result<Emitted> {
+pub fn single(emitted: Emitted, output: &str) -> Result<Emitted> {
     let Emitted { value_types, analysis, program, setup, queries, views, inputs } = emitted;
     let fail = |message: String| Error::Plan(format!("{}: {message}", program.name));
     if !program.lattices.is_empty() {
@@ -350,9 +350,9 @@ pub(in crate::code_rule_dsl) fn single(emitted: Emitted, output: &str) -> Result
 }
 
 /// The emitted program's outputs on `db` after it ran, decoded as `run_atoms` decodes its own.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[allow(clippy::type_complexity)]
-pub(in crate::code_rule_dsl) fn outputs(
+pub fn outputs(
     lowered: &lower::Lowered,
     db: &Connection,
 ) -> Result<(BTreeMap<String, Vec<String>>, BTreeMap<String, Vec<usize>>)> {

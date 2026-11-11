@@ -40,19 +40,25 @@ dot_notation(p, cat("[\"", cat(x, cat("\"] instead of .", cat(x, ", a syntax err
 
 // to_dot: `[` … `]` become `.v` (`?.` already has its dot). The edits are the three pieces of that range.
 // A name that would run into the next token gets a space: `a['b']in c` becomes `a.b in c`.
-to_dot(i, _) :- key(n, i, v, _), !commented(n), field(n, "index", x), token_before(x, lb), last_token(n, rb),
-    dot_for(n, d), !glued(rb) => replace(lb, `$d$v`), replace(x, ``), replace(rb, ``).
-to_dot(i, _) :- key(n, i, v, _), !commented(n), field(n, "index", x), token_before(x, lb), last_token(n, rb),
-    dot_for(n, d), glued(rb) => replace(lb, `$d$v`), replace(x, ``), replace(rb, ` `).
-.decl glued(rb: span)  // ESLint: the next token starts right after `]` with a name character
-glued(rb) :- key(n, _, _, _), last_token(n, rb), token_after(rb, t), line(rb, l), line(t, l), col(rb, c), col(t, c + 1),
-    match("([A-Za-z0-9_$\\\\]|[^\\x00-\\x7f]).*", t).
+// The tape keeps no `[` or `]`, so n is written whole: its object, the dot, the name (and a space if glued).
+to_dot(i, _) :- key(n, i, v, _), !commented(n), field(n, "object", o), text(o, ot), dot_text(n, d), glue(n, g),
+    y = cat(ot, cat(d, cat(v, g))) => replace(n, `$y`).
+.decl dot_text(n: node, d: symbol)  // what comes between object and name: `?.` stays
+dot_text(n, "?.") :- key(n, _, _, _), field(n, "optional_chain", _).
+dot_text(n, d) :- key(n, _, _, _), !field(n, "optional_chain", _), dot_for(n, d).
+.decl glue(n: node, g: symbol)
+glue(n, " ") :- glued(n).
+glue(n, "") :- key(n, _, _, _), !glued(n).
+.decl glued(n: node)  // ESLint: the next token starts right after `]` with a name character
+glued(n) :- key(n, _, _, _), touch_after(n, t), match("([A-Za-z0-9_$\\\\]|[^\\x00-\\x7f]).*", t).
+layout_at(n) :- key(n, _, _, _).
 .decl dot_for(n: node, d: symbol)
 dot_for(n, "") :- field(n, "optional_chain", _).
 dot_for(n, " .") :- kind(n, "subscript_expression"), !field(n, "optional_chain", _), decimal_object(n).
 dot_for(n, ".") :- kind(n, "subscript_expression"), !field(n, "optional_chain", _), !decimal_object(n).
 .decl decimal_object(n: node)  // ESLint's isDecimalInteger: 5["a"] must become 5 .a, as 5.a is a syntax error
 decimal_object(n) :- field(n, "object", o), kind(o, "number"), match("0|0[0-7]*[89][0-9]*|[1-9](_?[0-9])*", o).
+.stored to_brackets "a member expression's `.` is a choice with `?.`, so the tape keeps it"
 // to_brackets: `.class` becomes `["class"]`; not after `let` (`let["x"]` would declare), nor across a comment.
 to_brackets(p, _) :- dotted_member(n, o, p), text(p, x), !commented(n), !field(n, "optional_chain", _),
     !text(o, "let"), token_before(p, dot) => delete(dot), replace(p, `["$x"]`).

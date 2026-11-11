@@ -238,7 +238,9 @@ result(x) :- names(q), split_dot(q, "{prefix}", x).
         let db = Connection::open_in_memory().unwrap();
         super::super::super::strings::register(&db).unwrap();
         let rows = q.execute(&db, &p, None, &mut Hooks::default()).unwrap();
-        assert_eq!(rows.outputs["result"], ["path.waitpid", "waitpid"]);
+        // `split_dot` splits at the last dot, its x dot-free (core.rr): "{prefix}.path.waitpid" is
+        // ("{prefix}.path", "waitpid"), not of the prefix.
+        assert_eq!(rows.outputs["result"], ["waitpid"]);
         assert_eq!(rows.outputs["bound"], ["waitpid"]);
     }
 }

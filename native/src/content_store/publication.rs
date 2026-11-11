@@ -1,6 +1,7 @@
 //! Bulk overlay publication: object preparation, identity resolution, and the publish transaction.
 
 use super::connection::retry_busy;
+use super::compression::{compress_source, compress_tape, file_tag};
 use super::objects::{compress_documents, validate_tape_payload};
 use super::relationships::{
     execute_relationship_pass, prepare_relationship_pass, relationship_references_current,
@@ -9,11 +10,11 @@ use super::rows::{hash_params, validate_relative_path};
 use super::{
     BusyRetries, CODEC_ZSTD, CandidateClause, ContentStore, HashKey, MAX_PUBLICATION_BATCH,
     OverlayFilePublication, PublicationResult, STRING_CLAUSE_KEY, STRING_PATH, SourceId,
-    StoreError, StoreResult, StoredFile, TapeId, TapePayload, WorkspaceId, compress,
+    StoreError, StoreResult, StoredFile, TapeId, TapePayload, WorkspaceId,
 };
 use rayon::prelude::*;
 use rusqlite::limits::Limit;
-use rusqlite::{Connection, Transaction, TransactionBehavior, params};
+use rusqlite::{Connection, TransactionBehavior, params};
 #[cfg(any(test, feature = "test-hooks"))]
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -121,10 +122,11 @@ impl ContentStore {
                         ));
                     }
                     validate_tape_payload(publication.tape)?;
+                    let source = HashKey::sha256(publication.source);
                     Ok((
                         publication,
-                        HashKey::sha256(publication.source),
-                        publication.tape.map(|tape| HashKey::sha256(tape.bytes)),
+                        source,
+                        publication.tape.map(|tape| HashKey::tape_identity(source, tape.bytes)),
                     ))
                 })
                 .collect::<StoreResult<Vec<_>>>()
@@ -146,7 +148,7 @@ impl ContentStore {
                 .lock()
                 .expect("content store connection unavailable");
             let transaction =
-                connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
+                super::connection::begin(&mut connection, TransactionBehavior::Deferred)?;
             let existing = stored_object_identities(&transaction, &identities)?;
             let path_ids = stored_path_ids(&transaction, &path_hashes)?;
             let interned = resolve_publication_identities(&transaction, &candidate_identities)?;
@@ -164,12 +166,12 @@ impl ContentStore {
                     |((publication, source_hash, tape_hash), (source_id, tape_id))| {
                         let source_frame = source_id
                             .is_none()
-                            .then(|| compress(publication.source, self.compression_level))
+                            .then(|| compress_source(publication.source, self.compression_level, file_tag(publication.path, publication.tape.map(|tape| tape.bytes))))
                             .transpose()?;
                         let tape_frame = publication
                             .tape
                             .filter(|_| tape_id.is_none())
-                            .map(|payload| compress(payload.bytes, self.compression_level))
+                            .map(|payload| compress_tape(payload.bytes, self.compression_level))
                             .transpose()?;
                         // A stored tape's documents are stored with it: only a new tape's are
                         // written.
@@ -274,7 +276,7 @@ impl ContentStore {
                         .lock()
                         .expect("content store connection unavailable");
                     let transaction =
-                        connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                        super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
                     #[cfg(any(test, feature = "test-hooks"))]
                     let _write_lock = super::WriteLockSection::enter();
                     let started = Instant::now();
@@ -309,7 +311,7 @@ impl ContentStore {
                         .lock()
                         .expect("content store connection unavailable");
                     let transaction =
-                        connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
+                        super::connection::begin(&mut connection, TransactionBehavior::Deferred)?;
                     let stored_objects =
                         stored_object_identities(&transaction, &corrected_identities)?;
                     let path_ids = stored_path_ids(&transaction, &path_hashes)?;
@@ -398,7 +400,7 @@ impl ContentStore {
                 .lock()
                 .expect("content store connection unavailable");
             let transaction =
-                connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
             #[cfg(any(test, feature = "test-hooks"))]
             let _write_lock = super::WriteLockSection::enter();
             let transaction_started = Instant::now();
@@ -533,13 +535,13 @@ fn prepare_missing_object_frames(
     ) in prepared.iter_mut().zip(stored_objects)
     {
         if source_id.is_none() && source_frame.is_none() {
-            *source_frame = Some(compress(publication.source, compression_level)?);
+            *source_frame = Some(compress_source(publication.source, compression_level, file_tag(publication.path, publication.tape.map(|tape| tape.bytes)))?);
         }
         if let Some(tape) = publication.tape
             && tape_id.is_none()
         {
             if tape_frame.is_none() {
-                *tape_frame = Some(compress(tape.bytes, compression_level)?);
+                *tape_frame = Some(compress_tape(tape.bytes, compression_level)?);
             }
             if document_frames.is_none() && !tape.documents.is_empty() {
                 *document_frames = Some(compress_documents(tape.documents, compression_level)?);
@@ -638,7 +640,7 @@ fn prepare_object_pass(
                     payload.documents.iter().zip(frames).enumerate()
                 {
                     let document_source = HashKey::sha256(document.source);
-                    let document_tape = HashKey::sha256(document.tape);
+                    let document_tape = HashKey::tape_identity(document_source, document.tape);
                     hashes.insert(document_source);
                     hashes.insert(document_tape);
                     source_rows.push((
@@ -874,7 +876,7 @@ fn prepare_object_pass(
 }
 
 fn execute_object_pass(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     pass: &PreparedObjectPass,
 ) -> StoreResult<usize> {
     let mut statements = 0;

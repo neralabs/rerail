@@ -1,37 +1,35 @@
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl fwdref_scope_kinds(kind: symbol)
+fwdref_scope_kinds("function_definition"). fwdref_scope_kinds("module").
+.decl fwdref_tuple(kind: symbol)
+fwdref_tuple("tuple").
 .decl child(p: node, c: node, i: number)
-.decl text(n: node, s: symbol)
-.decl op(n: node, s: symbol)
-.input doc, node, child, text, op
-.decl k0(kind: symbol)
-k0("function_definition"). k0("module").
-.decl k1(kind: symbol)
-k1("assignment").
-.decl blocked11(low: node, high: node)
-.decl blocked16(low: node, high: node)
-.decl blocked31(low: node, high: node)
-.decl blocked36(low: node, high: node)
-.decl blocked51(low: node, high: node)
-.decl blocked56(low: node, high: node)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
+.decl fwdref_anc(n: node, s: node)
+.decl fwdref_asked(n: node)
+.decl fwdref_assign(a: node)
+.decl fwdref_call(c: node, fname: symbol, args: node)
+.decl fwdref_guard(g: node)
+.decl fwdref_guarded(a: node, c: node)
+.decl fwdref_hit(c: node)
+.decl fwdref_nearer(n: node, s: node)
+.decl fwdref_own(n: node, s: node)
+.decl fwdref_pair(a: node, c: node)
+.decl fwdref_scope(s: node)
+.decl fwdref_target(c: node, clause: symbol)
+.decl fwdref_type(t: node)
 .decl in_scope(d: number)
-.decl m12(n: node)
-.decl m14(n: node)
-.decl m17(n: node)
-.decl m29(n: node)
-.decl m32(n: node)
-.decl m34(n: node)
-.decl m37(n: node)
-.decl m49(n: node)
-.decl m52(n: node)
-.decl m54(n: node)
-.decl m57(n: node)
-.decl m9(n: node)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl op(n: node, s: symbol)
 .decl out_scope(d: number)
-.decl u13(n: node)
-.decl u33(n: node)
-.decl u53(n: node)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, text, op, line
+.output violation
 in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("public/**/*.py", p).
@@ -42,37 +40,27 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
-m9(n) :- node(_, n, "call", _, _), child(n, v1, 0), node(_, v1, "identifier", _, _), text(v1, "isinstance"), child(n, v2, 1), node(_, v2, "argument_list", _, _), child(v2, v3, 0), node(_, v3, "identifier", _, _), text(v3, "annotation"), child(v2, v4, 1), node(_, v4, "identifier", _, _), text(v4, "type"), !child(v2, _, 2), !child(n, _, 2).
-m9(n) :- node(_, n, "call", _, _), child(n, v5, 0), node(_, v5, "identifier", _, _), text(v5, "isinstance"), child(n, v6, 1), node(_, v6, "argument_list", _, _), child(v6, v7, 0), node(_, v7, "identifier", _, _), text(v7, "annotation"), child(v6, v8, 1), node(_, v8, "identifier", _, _), text(v8, "type"), !child(n, _, 2).
-m12(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
-m12(n) :- node(_, n, "module", _, _).
-blocked11(low, high) :- inside(low, s, k0), m12(s), inside(s, high, k0).
-m14(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
-m14(n) :- node(_, n, "module", _, _).
-u13(n) :- m14(n).
-m17(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
-m17(n) :- node(_, n, "module", _, _).
-blocked16(low, high) :- inside(low, s, k0), m17(s), inside(s, high, k0).
-m29(n) :- node(_, n, "call", _, _), child(n, v23, 0), node(_, v23, "identifier", _, _), text(v23, "issubclass"), child(n, v24, 1), node(_, v24, "argument_list", _, _), child(v24, v25, 0), node(_, v25, "identifier", _, _), text(v25, "annotation"), !child(v24, _, 1), !child(n, _, 2).
-m29(n) :- node(_, n, "call", _, _), child(n, v26, 0), node(_, v26, "identifier", _, _), text(v26, "issubclass"), child(n, v27, 1), node(_, v27, "argument_list", _, _), child(v27, v28, 0), node(_, v28, "identifier", _, _), text(v28, "annotation"), !child(n, _, 2).
-m32(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
-m32(n) :- node(_, n, "module", _, _).
-blocked31(low, high) :- inside(low, s, k0), m32(s), inside(s, high, k0).
-m34(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
-m34(n) :- node(_, n, "module", _, _).
-u33(n) :- m34(n).
-m37(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
-m37(n) :- node(_, n, "module", _, _).
-blocked36(low, high) :- inside(low, s, k0), m37(s), inside(s, high, k0).
-m49(n) :- node(_, n, "call", _, _), child(n, v43, 0), node(_, v43, "identifier", _, _), text(v43, "callable"), child(n, v44, 1), node(_, v44, "argument_list", _, _), child(v44, v45, 0), node(_, v45, "identifier", _, _), text(v45, "annotation"), !child(v44, _, 1), !child(n, _, 2).
-m49(n) :- node(_, n, "call", _, _), child(n, v46, 0), node(_, v46, "identifier", _, _), text(v46, "callable"), child(n, v47, 1), node(_, v47, "argument_list", _, _), child(v47, v48, 0), node(_, v48, "identifier", _, _), text(v48, "annotation"), !child(n, _, 2).
-m52(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
-m52(n) :- node(_, n, "module", _, _).
-blocked51(low, high) :- inside(low, s, k0), m52(s), inside(s, high, k0).
-m54(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
-m54(n) :- node(_, n, "module", _, _).
-u53(n) :- m54(n).
-m57(n) :- node(_, n, "function_definition", _, _), !op(n, "async").
-m57(n) :- node(_, n, "module", _, _).
-blocked56(low, high) :- inside(low, s, k0), m57(s), inside(s, high, k0).
-.output violation
+tape_syntax_error(d) :- syntax_error(d).
+fwdref_scope(s) :- node(_, s, "function_definition", _, _), !op(s, "async").
+fwdref_scope(s) :- node(_, s, "module", _, _).
+fwdref_call(c, f, a) :- node(_, c, "call", _, _), field(c, "function", fn), node(_, fn, "identifier", _, _), text(fn, f), field(c, "arguments", a), node(_, a, "argument_list", _, _), child(a, x, 0), node(_, x, "identifier", _, _), text(x, "annotation").
+fwdref_target(c, "fwdref001") :- fwdref_call(c, "isinstance", a), child(a, t, 1), node(_, t, "identifier", _, _), text(t, "type").
+fwdref_target(c, "fwdref002") :- fwdref_call(c, "issubclass", _).
+fwdref_target(c, "fwdref003") :- fwdref_call(c, "callable", _).
+fwdref_type(t) :- node(_, t, "identifier", _, _), text(t, "ForwardRef").
+fwdref_type(t) :- node(_, t, "attribute", _, _), field(t, "attribute", a), node(_, a, "identifier", _, _), text(a, "ForwardRef").
+fwdref_type(t) :- node(_, t, "tuple", _, _), inside(i, t, fwdref_tuple), node(_, i, "identifier", _, _), text(i, "ForwardRef").
+fwdref_guard(g) :- fwdref_call(g, "isinstance", a), child(a, t, 1), fwdref_type(t).
+fwdref_assign(a) :- node(_, a, "assignment", _, _), field(a, "left", l), node(_, l, "identifier", _, _), text(l, "annotation"), field(a, "right", r), node(_, r, "attribute", _, _), field(r, "attribute", x), node(_, x, "identifier", _, _), text(x, "annotation").
+fwdref_asked(n) :- fwdref_target(n, _).
+fwdref_asked(n) :- fwdref_guard(n).
+fwdref_asked(n) :- fwdref_assign(n).
+fwdref_anc(n, s) :- fwdref_asked(n), inside(n, s, fwdref_scope_kinds), fwdref_scope(s).
+fwdref_nearer(n, s) :- fwdref_anc(n, s), fwdref_anc(n, t), inside(t, s, fwdref_scope_kinds).
+fwdref_own(n, s) :- fwdref_anc(n, s), !fwdref_nearer(n, s).
+fwdref_pair(a, c) :- fwdref_target(c, _), fwdref_own(c, s), fwdref_assign(a), fwdref_own(a, s), node(_, a, _, _, ae), node(_, c, _, cs, _), cs >= ae.
+fwdref_guarded(a, c) :- fwdref_pair(a, c), fwdref_own(a, s), fwdref_guard(g), fwdref_own(g, s), node(_, a, _, _, ae), node(_, g, _, gs, ge), node(_, c, _, cs, _), gs >= ae, cs >= ge.
+fwdref_hit(c) :- fwdref_pair(a, c), !fwdref_guarded(a, c).
+violation("data-layer-forwardref", "fwdref001", "FWDREF001", p, l) :- fwdref_target(c, "fwdref001"), fwdref_hit(c), node(d, c, _, _, _), doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(c, l).
+violation("data-layer-forwardref", "fwdref002", "FWDREF002", p, l) :- fwdref_target(c, "fwdref002"), fwdref_hit(c), node(d, c, _, _, _), doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(c, l).
+violation("data-layer-forwardref", "fwdref003", "FWDREF003", p, l) :- fwdref_target(c, "fwdref003"), fwdref_hit(c), node(d, c, _, _, _), doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(c, l).

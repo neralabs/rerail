@@ -1375,16 +1375,27 @@ oracles and messages; the census counts 100.
 ## O73. Hand-written `.rr` constructs that lowering refuses
 
 Lowered now (decision 0046, reader section): `.violation` at a node, a span or a `@place`; `code "X"`,
-`code {c} in "re"`, `tag` and `suppress` lines; `match` captures, arithmetic, the string functions, Soufflé's
-`cat`/`max`/`min`/`to_number`/`to_float`/`%`, floats; `sum` and `join` (and aggregates over terms, inside
-terms, and compared with each other); `.input` with parameters; `within`, `within_stop`, `nearest` (a named
-ancestor negated too), `inside` and `has` over kind sets and over node-valued sets; `precedes_stop`; negated
-conjunctions (a helper relation); `must, may`; `unset`; recursion that makes values bounded by the tree, a
-count, a shrinking text or a function between rows (`front::cycles`); `dfs_first` and `dfs_first_memo`, computed natively over the edge relation (`logic::native::dfs_first`), so `data-layer/lazy-architecture.rr` lowers (944 rules). Still refused by name (census of
-2026-11-06, clauses alone): `ordered by` (37 clauses: eslint-one-var, the owner-code sketch), `@place` as a
-value outside a `.violation`'s head (3 clauses, 12 files), `~` patterns
-(1), `mean`, `=> edits`. `UnboundedValueCycle` still stops 15 library clauses (73 files) whose bound is not
-one of those (`hex_place`, `norm`/`sci`, `unescape`, `slot_walk` over tokens, `b005_char`, `era_re`).
+`code {c} in "re"`, `tag` and `suppress` lines (`suppress TOOL "rule", … [over {c}]`, and `fix [safe] F "title"`,
+kept as findings-layer settings and not applied yet); `match` captures, `match_all` and `match_group`,
+arithmetic, the string functions, Soufflé's `cat` (any arity)/`max`/`min`/`to_number`/`to_float`/`%`, floats;
+`@lower` as Unicode lowercase; `@dot("", b) = b`; `sum` (0 of nothing) and `join x by k sep "s"` (the distinct
+rows of its value and keys; no `sep` joins as they are; `""` of nothing), aggregates over terms, inside terms,
+and compared with each other; `.input` with parameters; `within`, `within_stop`, `nearest` (a named ancestor
+negated too), `inside` and `has` over kind sets and over node-valued sets (`has` tests the set on the
+descendant); `precedes_stop`; `!within_stop`, `!split_dot`, `split_dot` at the last dot only; negated
+conjunctions and disjunctions (a helper relation per alternative); `must, may`; `unset`; recursion that makes
+values bounded by the tree, a count, a shrinking text or a function between rows (`front::cycles`). A place is
+the loc value `-2 - (path << 32 | line)`; its finding is at that path and line. A function with no value gives
+no row. Still refused by name (census of 2026-11-06, clauses alone): `ordered by` (37 clauses: eslint-one-var,
+the owner-code sketch), `@place` as a value outside a `.violation`'s head (3 clauses, 12 files),
+`dfs_first`/`dfs_first_memo` (2), `~` patterns (1), `mean`, `=> edits`, a `.violation` at a span the engine does
+not make (regex-capture spans: noqa-sec-ratchet, ruff TD00x; tokens), and `!within_stop`, `!precedes_stop` or
+`!split_dot` with a node unnamed. `UnboundedValueCycle` still stops 15 library clauses (73 files) whose bound is
+not one of those (`hex_place`, `norm`/`sci`, `unescape`, `slot_walk` over tokens, `b005_char`, `era_re`;
+pyflakes' `negate`/`number`). `hand_written_rules_lowering_report` (with `RERAIL_RR_REPORT_EXTRA`) on
+`final-rerail-shape-lowering` before this merge: 118 files, 75 lower; More-ergonomic-rule-syntax's 949 packs, 393.
+`dfs_first` and `dfs_first_memo` are now computed natively over the edge relation (`logic::native::dfs_first`), so
+`data-layer/lazy-architecture.rr` lowers (944 rules); they are no longer refused.
 **Closure:** list step 30.
 
 ## O74. Translated programs declare the base relations themselves
@@ -1404,28 +1415,36 @@ reference scripts (`front/rdl.py`, `magic/golden/generate.py`, `plan/golden/gene
 
 ## O76. Base relations and inputs the engine does not make yet
 
-Hand-written rules read relations the engine does not make yet: `parsed` and `string_annotation` (strings
-parsed as code) are read as empty, each named in the profile. Inputs read from a file in the repository
-(`.input r(IO=json, filename="…")`) are empty when the file is absent; when it exists the run stops,
-since reading it is not written. **Closure:** these relations are built natively and the files are read. (`option`, `option_item`, `file` and
-`package*` are made now, decision 0046; `parsed` and `string_annotation` are O80.) 2026-11-07: `parsed` is
-made (decision 0055); `string_annotation` is still empty. 2026-11-07, after the data-layer engine merge
-(ca930d974): repository files are read (`corpus::inputs`: JSON, YAML, JSON Lines, TSV, lines, `dir=` inputs, and
-`input_error` rows for missing or malformed files). The revision and stamped-artifact readers are still not written.
+Hand-written rules read relations the engine did not make: `parsed` and `string_annotation` (strings parsed as
+code) were read as empty, each named in the profile. 2026-11-07: `parsed` is made as guest documents of the chunk,
+asked for in rounds (decision 0055); `string_annotation` is made natively from Ruff's table
+(`facts::vtab::syntax::annotation`), nested annotations found in their outer annotation's guest. `option`,
+`option_item`, `file` and `package*` are made too (decision 0046). After the data-layer engine merge (ca930d974):
+repository files are read (`corpus::inputs`: JSON, YAML, JSON Lines, TSV, lines, `dir=` inputs, and `input_error`
+rows for missing or malformed files). The revision and stamped-artifact readers are still not written.
 
 ## O77. Lowering shortcuts in `.rr`
 
 - A `match` capture is computed per row (`rx_group`, one cached regex per pattern), not as a chunk-at-a-time
   text test. Over a `source` or `src_line` span, captures are spans (`rx_span`, decision 0054); on a node they
-  are still symbols (O80).
+  are still symbols. `match_all("re", sp, m)` and `match_group` (three and five arguments) are relations of each
+  regex's matches in the batch's spans (`logic::strings::as_relations`, `facts::vtab::syntax`).
 - `unset(x)` is the id -1. Its text is "" (`text(x, t)` of it lowers to `t = ""`), and `!unset(x)` is
   `x != -1` (decision 0046). Inside an aggregate, `nearest` or `ast` it is still refused.
 - `within(n, a)` where nothing else gives `n` lists the nodes below `a` by following `child` down from the
   `a`'s the rule gives (named children only), not by reading the id range `a + 1 ..= a + size`; the native
   path has no range read yet.
-- `earlier` and `visit_index` are preorder, not CPython's ast order.
-- The value-cycle check (`front::cycles`) accepts the bounds decision 0046 lists; a bound it does not know is
-  refused, never run.
+- `earlier` compares `visit_index`, CPython's `ast.NodeVisitor` order (`facts::vtab::syntax::tree`), made for
+  Python documents only (O80).
+- The value-cycle check (`front::cycles`) accepts the bounds decision 0046 lists (parts of values, values from
+  lower strata, guarded counters, keys moving one way along document order or shortening a string); a bound it
+  does not know is refused, never run. It cannot see an involution such as pyflakes' `negate`, whose values stay
+  two per input.
+- An axis over a set of nodes or of derived kinds, and `precedes_stop`, are recursions over `child`, not the
+  transducer's tape pass.
+- `join` reads its symbol columns through the symbol table's text (`sym_text`), so a kind or field atom as a
+  join value or key would read the wrong text; no library join uses one.
+- `@place` needs symbols stored as atoms: text-mode SQL refuses it by name.
 **Closure:** each is lowered as `core.rr` describes, or the description changed.
 
 ## O78. Where the `.rr` library and rules differ from the recorded findings
@@ -1470,24 +1489,28 @@ tokens have no field.
 
 ## O80. `core.rr` base relations not made yet, or made with a bound (decision 0046)
 
-- `parsed` and `string_annotation` (O76) are still read as empty. A string parsed as code needs its tree grafted
-  into the batch's node space, on demand (rrlab answers requests in rounds); not built. 2026-11-07: `parsed`
-  is made, as guest documents of the chunk asked for in rounds (decision 0055); `string_annotation` is not.
+- `parsed` is made as guest documents of the chunk asked for in rounds (decision 0055); `string_annotation` (O76)
+  natively, from Ruff's table (`facts::vtab::syntax::annotation`). A guest is parsed as `( … )` and judged by
+  CPython's module grammar, where W asked `ast.parse(value, mode="eval")`: the two can differ (`(yield x)`).
 - `match_all`, and `match` captures as spans, are made over `source` and `src_line` spans (`rx_span`, one scan
   per file and pattern) and over symbols (a native relation): decision 0054. 2026-11-08: over a node of a kind
   and over an earlier capture too, each distinct text matched once per batch (decision 0081); a node bound to no kind is still
-  refused, and the scan is per distinct text, not chunked (O122).
-  (`docof` of a span is made: the lowering reads `core.rr`'s `docof` as an input.)
+  refused, and the scan is per distinct text, not chunked (O122). `match_all("re", sp, m)` and `match_group` over any
+  span are relations the batches make (O77). (`docof` of a span is made: the lowering reads `core.rr`'s `docof` as
+  an input.)
 - `text` of a node longer than 256 bytes that is not token-like has no row; a test on it is 0042 §3's file scan.
-- `syntax_error` for Python is CPython's grammar's verdict, from Ruff's parser (`ruff_python_parser` 0.0.10, the
-  last on the pinned toolchain; 2026-11-07), not tree-sitter's; compile-time errors CPython's compiler raises after
-  parsing (`return` outside a function) are not checked, and its cost on the full corpus is not measured yet. A
-  document with one is withheld in `core.rr`'s shape (no facts but `doc`, its path and `syntax_error`), and `.on syntax_error report CODE
-  [at line 1]` and `.on input_error report CODE` report (2026-11-07); T's shape keeps every document.
+- `syntax_error(d, l, msg)` for Python is CPython 3.13's `ast.parse` verdict (`cpython::syntax`, through
+  `facts::vtab::syntax::python_syntax`, Ruff's parser `ruff_python_parser` 0.0.10, the last on the pinned
+  toolchain), not tree-sitter's; compile-time errors CPython's compiler raises after parsing (`return` outside a
+  function) are not checked. `cpython_syntax_error` is the same verdict under the converter's name. A document with
+  one is withheld in `core.rr`'s shape (no facts but `doc`, its path and `syntax_error`), and `.on syntax_error
+  report CODE [at line 1]` and `.on input_error report CODE` report (2026-11-07); T's shape keeps every document;
+  the tape's `syntax_error(d)` is tree-sitter's ERROR/MISSING.
 - `static_value` is `value`: file-local constants are not followed.
 - `tsconfig*`, `package_export`, `git_*`, `signed_list` and `list_len` are not read. `input_error` has its
   `missing` rows (a `.input` file that is absent, decision 0054); the other kinds wait on reading files (O76).
-- `earlier` and `visit_index` are preorder, not CPython's ast order (as O77).
+- `earlier` compares `visit_index`, CPython's `ast.NodeVisitor` order, made for Python documents only
+  (`facts::vtab::syntax::tree`); other languages have no `visit_index` row, so no `earlier` row.
 **Closure:** each made as `core.rr` says, or `core.rr`'s description changed.
 
 
@@ -3437,6 +3460,31 @@ After the merges of 2026-11-08 (`0078ba091`, with the collection rules), 2026-11
 CPU (49.9 user + 5.7 sys), 56 s wall, load 15–20.
 **Closure:** the cause found, or twenty runs on an isolated store all `3988 303 298 0`.
 
+## O-metal-fact-rows. Metal tests facts the host found
+
+**Status:** open (2026-11-09, RER-131; deferred by the user). On Metal, a clause's facts are found on the host before
+any pass (`fact_rows` in `transducer/packed/compile/matcher.rs`'s `metal`: `Fact::found` per tape, the `tokens` facts'
+regexes over each token text included), and the device only tests the rows it is handed (`Pass::Fact`, the pattern
+kernel's `FACT` case). That is host evaluation on the Metal path, which is not allowed: what Metal's kernels answer,
+the device computes. It is the one entry `metal_host_guard_tests::REMAINING` still lists.
+**Why it matters:** the host's facts run single-file on the CPU before the command buffer, in the Metal run's critical
+path; and a fact Metal cannot find is a fact Metal does not own.
+**Closure:** facts found by kernels (their text tests by chunked DFA, as string matching is everywhere else), `fact_rows`
+gone from `metal`, and the entry removed from `REMAINING`; S7's keys equal on all four backends, full and named-only.
+
+## O-metal-root-programs. After Metal labels a batch, the wave runs the root programs on the host
+
+**Status:** open (2026-11-09, RER-131; deferred by the user). `LoweredWave::labelled_metal` hands the wave the labels
+as views of its tapes, and `demand(batch)` then runs each clause's root program on the host for its results
+(captures, spans), which a label keeps only as bits. The root walks Metal does run (`root_records_*`, `RootsFound`)
+cover a program that is a micro walk of at most 32 frames; any other, a walk that overflowed, or records past the
+buffer, the host walks too. The guard does not see this yet: it is in the wave, not the Metal entry points.
+**Why it matters:** same rule as O-metal-fact-rows, and the host's root runs are the rest of the CPU a Metal audit
+spends after the device.
+**Closure:** every root program's results made on the device (captures and spans in the root records, every depth
+by a device stack, overflow as a rerun on the device), `demand` on Metal reading them only; the wave's Metal path
+added to `metal_host_guard_tests`' scan.
+
 ## O-parse-single-splat. A list of one `*` element loses its `list_splat` node
 
 **Seen (2026-11-09).** In `A = [*range(4)]` the list's one child is a `call` whose text is `*range(4)`: no
@@ -3444,3 +3492,121 @@ CPU (49.9 user + 5.7 sys), 56 s wall, load 15–20.
 element. Not yet traced (parser or tape); the `values` fixture uses `[0, *range(4)]`.
 
 **Closure:** `[*x]` and `(*x,)` keep their `list_splat` node, with a test.
+
+## O-factorize-nothing. The factorized-store test's program hands no export on as its parts
+
+**Seen (2026-11-10).** `an_export_handed_on_as_its_parts_finds_the_same_and_a_changed_choice_misses_the_memo`
+fails on every run. With factorizing on, `factorize_exports` hands on no part (`factorized 0`). The run's
+file-local part then has the same plan as the run with `factorize: off`, so it finds that run's two memo entries.
+This does not depend on how the memo is stored: the memo misses only when the program differs. In the lowered
+program, `uses` is not file-local, because it reads `within`, which the split no longer counts as file-local.
+No rule reads `encl` any more. `bound` and `defined` are refused because no rule of theirs factors
+(`plan 0 of 1`). The test is ignored with this item.
+
+**Closure:** find which change made `within` (and so `uses`) cross-file, and whether that change is right.
+Then give the test a program whose export factorizes, or restore the split, and stop ignoring the test.
+
+## O-suite-five. Five engine tests fail in files the merges of 2026-11-10 did not touch
+
+**Seen (2026-11-10).** These five tests fail in the full engine suite after the merge of
+`More-ergonomic-rule-syntax` at 96d4720ab, and fail on their own too:
+
+| Test | Failure |
+|---|---|
+| `logic::simplify::tests::an_existence_count_is_a_negation` | one existence count rewritten, not two |
+| `sql_executor::tests::scaling::walks_with_negative_and_aggregate_seed_and_output_match_fresh_runs` | refreshed strata: 0, not 2 |
+| `sql_executor::tests::recovery::original_cpython_programs_use_private_projections_and_bounded_join_work` | 1755 against 1841 |
+| `transducer::packed::backend_parity_tests::the_verifier_and_the_metal_interpreter_share_one_opcode_set` | tier 2's words lack 83 |
+| `transducer::packed::compile_matcher_tests::the_gate_catches_a_widened_walk` | only 2 widened clauses differ |
+
+Neither the merge nor this branch's memo and frames work changes these tests' files or what they run. Five other
+failures in that run need the pack fixtures, which come from S3 (`fixtures:pull`) and are not in this worktree:
+`python_shortcuts_change_no_pack_result_f811`, `…_f821`, `…_f841`, `reproduces_sqlfluff_rf01_and_al05` and
+`vue::view::tests::corpus`.
+
+**Closure:** each of the five passes on the hub, or its owner fixes it or ignores it with a reason.
+
+**Closed (2026-11-10).** After the merge of `More-ergonomic-rule-syntax` at b9e20bfe9, the full suite gave 3,064
+passed and 6 failed. Four of the five pass now. The fifth, `the_gate_catches_a_widened_walk`, failed in the suite
+and passes on its own, so the suite's load made it fail. The pack fixtures came from `236fc98d2~1` with
+`git archive`, outside the index. With them, the other five failures pass.
+
+## O148. Measured key domains price joins apart from T
+
+Commit 2ab61d7b4 ("Plan delta joins from measured key domains before expansion") changes the estimate on purpose:
+a binding's distinct values are capped by the rows its constant filters leave, and containment applies to every
+relation, not only to the component being solved. That moves T's recorded plans under T's numbering:
+
+```text
+// workload plan 16: estimated work 417 (T) → 412 (port)
+bound_in($f, $x)  kind($f, "function_definition")  []  412
+// calls plan 54: a different anchor
+classmeth($f)  builtin_ref($e, "classmethod")   (T: dexpr($f, $e))
+```
+
+About 20 lines of `workload`, `workload_demand` and `calls` differ. `keeps`'s copy-pricing test flips with the same
+estimate: the copy is now priced above the reader, so it is no longer inlined.
+
+The three tests are ignored with this item: `t_programs_plan_and_run_like_t`,
+`t_programs_over_atoms_plan_and_run_like_t` and `observed_selectivities_price_a_copy_that_never_ran`.
+
+**Closure:** decide whether the port keeps T's estimates where T's plans are the test (and the new estimate only
+where T has no plan), or takes the new estimate and records new goldens. Then stop ignoring the tests.
+
+**Closed (2026-11-11): the new estimate, with goldens of plans measured to do no more work.** The user's call was
+the new estimate, on condition that the new plans are shown to be better, not just recorded. Measured with
+`o148_plans_and_their_work` (each statement's SQLite VM steps, deterministic) on a build at 2ab61d7b4's parent,
+whose plans are T's goldens exactly, against the hub:
+
+| Program | VM steps, T's plans | VM steps, the new plans | |
+|---|---|---|---|
+| `workload` | 55.75 M | 55.37 M | 0.993x |
+| `workload_demand` | 5.68 M | 5.46 M | 0.962x |
+| `calls` | 10.91 M | 10.38 M | 0.951x |
+
+Every output equals T's in both. By head, the plans that changed order do no more work: `classmeth` 82 → 35,
+`pv` 527 k → 514 k, `attr_open` 21.6 k → 20.2 k, `vopen` 1.71 M → 1.25 M, `returns` 1.07 M → 0.70 M, `lookup`
+(demand) 1.72 M → 1.51 M; the largest increase is `decl` +0.7% (3,070 → 3,093). On O125 steps 1–8 (the native engine,
+the estimate switched alone): join work 0.94x on the full runs and 0.999x on the session steps, instructions retired
+within ±1% across three rounds (the user CPU moved with the machine's load, 36–79). `keeps`'s copy-pricing test
+flipped because the new estimate gets its case right from the start: by the test's own selectivities the copy is
+about 66 k rows against 18 k stored, and `ctx` now stays stored without needing the observed side (the test says
+so; `the_side_that_ran_is_believed` keeps `weigh`'s correction covered). The three tests run again; the goldens
+are the new plans; `scripts/profiling/o148/compare.py` compares two builds' measurements.
+
+## O-wave-b602-nosec. The wave misses B602 on a line whose `# nosec` names another code
+
+**Seen (2026-11-10).** `the_findings_are_ws_violations` had not run on any worktree for a while: the bandit and
+ruff fixtures were missing since the pack test data moved to S3. With them restored (from `236fc98d2~1`, checked
+against each tool's `test-data.lock` by files and bytes), the wave finds 16 keys and W finds 17. The one only W
+finds is `bandit-b602-subprocess-popen-with-shell-equals-true` on `f006.py` line 10,
+`subprocess.Popen('/bin/ls *', shell=True) # type: ... # nosec B607 # noqa: E501 ; pylint: disable=line-too-long`.
+Bandit's `nosec B607` suppresses only B607, so B602 stands. The same run lowers 13 more clauses than the last
+blessed `wave.rir` (B403–B413 imports and five ruff rules), and 140 families changed. Not yet traced: whether the
+wave drops B602 for the comment, or the clause's lowering misses this call. The test is ignored with this item.
+
+**Closure:** the wave reports B602 on that line, or the difference is shown to be W's, and the test runs again.
+
+## O-p0-stats-flake. Phase 0 sometimes finds no statistics for `p0_file_t_shape` under parallel tests
+
+Under the test harness's parallel threads, `corpus::base_tests` fails intermittently with `phase 0: no
+statistics for p0_file_t_shape.c0`. Each time it is a different test (`fstrings_are_ws_python_fstring_trees`,
+`match_group_joined_on_its_match_column`, `a_lines_regex_is_src_line_text_and_match`, and others). It happened in
+8 of 20 runs on the pre-merge hub engine, with or without strands (decision 0113), and never with
+`--test-threads=1`. The failing model is built in `make_plan` from the caller's given statistics, which have
+neither the relation's columns nor a lazy entry. The run comes through `cone_rounds` on a pool thread
+(`maintained::run`). So something process-wide is suspected, shared between concurrent runs: a store keyed by
+connection address or by path (`""` for in-memory databases). Not yet traced.
+
+**Closure:** the shared state is found and keyed per run, and `base_tests` passes 20 of 20 in parallel.
+
+## O-wave-test-shared. `closures_of_one_level_launch_in_one_wave` fails beside other tests
+
+Run with the rest of `logic::plan::tests` on the harness's parallel threads, this test sometimes sees its level's
+three closures go out as more than one wave of three launches. Alone, or with `--test-threads=1`, it passes, and
+the run has no requests, so decision 0114's suspension on them is not on its path. The device wave
+(`lanes::wave`) is process-wide, so a concurrent test's launches, or its flush, are suspected of splitting this
+test's wave.
+
+**Closure:** a wave belongs to its run (or the test counts only its own launches), and the test passes 20 of 20
+beside the others.

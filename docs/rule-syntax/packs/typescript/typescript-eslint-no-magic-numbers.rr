@@ -32,7 +32,9 @@ no_magic_numbers(at, cat("No magic number: ", cat(raw, "."))) :- signed(n, f, _,
     !option(o, "true"), !listed(v), ts_shown(n, at, raw).
 no_magic_numbers(f, "Number constants declarations must use 'const'.") :- signed(n, f, _, _), estree_parent(f, p),
     !excused(f), !ts_place(f, _), kind(p, "variable_declarator"), option("enforceConst", "true"), estree_parent(p, d),
-    !op(d, "const").
+    !const_decl(d).
+.decl const_decl(d: node)
+const_decl(d) :- kind(d, "lexical_declaration"), op(d, "const").
 
 // signed(n, f, raw, v): literal n, or the unary -n / +n holding it, is the number f, written raw, of value v.
 // A BigInt's value ends in n (-2n), so it never equals a Number's.
@@ -74,7 +76,10 @@ excused(f) :- option("ignoreClassFieldInitialValues", "true"), estree_parent(f, 
 excused(f) :- option("ignoreArrayIndexes", "true"), estree_parent(f, p), kind(p, "subscript_expression"),
     field(p, "index", i), deparen(i, f), signed(_, f, _, v), array_index(v).
 excused(f) :- parse_radix(f).
-excused(f) :- estree_parent(f, p), kind(p, k), prefix("jsx_", k).
+// ESLint asks whether the parent's type starts with JSX; a kind is no text, so the grammar's JSX kinds are listed.
+excused(f) :- estree_parent(f, p), (kind(p, "jsx_element") ; kind(p, "jsx_self_closing_element") ; kind(p, "jsx_opening_element") ;
+    kind(p, "jsx_closing_element") ; kind(p, "jsx_attribute") ; kind(p, "jsx_expression") ; kind(p, "jsx_namespace_name") ;
+    kind(p, "jsx_text")).
 .decl listed(v: symbol)  // the ignore list has value v
 listed(v) :- signed(_, _, _, v), option_item("ignore", _, i), ignored(i, v).
 

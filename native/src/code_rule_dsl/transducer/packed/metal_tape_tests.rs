@@ -2,7 +2,7 @@
 //! batch's node records they replace (decision 0032): every node of a batch of stored fixtures.
 use super::*;
 use crate::code_rule_dsl::language::{self, GrammarDialect};
-use crate::code_rule_dsl::prefilter::tests::{document, temp};
+// cratify: a re-export of rerail-engine's, which its facades of this module make
 use crate::code_rule_dsl::residency::slabs::{self, DocTable, DocView};
 use crate::code_rule_dsl::tape::{Grammar, TAPE_FORMAT_VERSION};
 use crate::content_store::ContentStore;
@@ -41,10 +41,13 @@ fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
     let store = ContentStore::open(&path).unwrap();
     let (mut digests, mut tapes) = (Vec::new(), Vec::new());
     for (source, lang) in SOURCES {
-        let (tape, bytes) = document(source, lang);
+        // The device reads full images in place; a tree-sitter tape is stored named-only
+        // (RER-131), so the store holds the document's restored image here.
+        let (tape, _stored) = document(source, lang);
+        let bytes = tape.resident_parts().unwrap().0;
         let source_id = store.put_source(source.as_bytes(), &[]).unwrap();
         store.put_tape(source_id, i64::from(language::tape_tag(lang).unwrap()), 1, i64::from(TAPE_FORMAT_VERSION), &bytes).unwrap();
-        digests.push(<[u8; 32]>::from(Sha256::digest(&bytes)));
+        digests.push(crate::code_rule_dsl::tape::tape_identity(&Sha256::digest(source.as_bytes()).into(), &bytes));
         tapes.push(tape);
     }
     let grammar = |id: i64| Grammar::new(u8::try_from(id).ok().and_then(language::from_tape_tag).ok_or("unknown grammar")?);

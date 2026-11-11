@@ -1,8 +1,8 @@
-use crate::code_rule_dsl::CompiledCodeRuleDsl;
+// cratify: a re-export of rerail-engine's, which its facades of this module make
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::matcher::{FileScopeSlot, UtilLimit};
 use crate::code_rule_dsl::scope::ScopeTable;
-use crate::code_rule_dsl::test_support::*;
+// cratify: a re-export of rerail-engine's, which its facades of this module make
 use ast_grep_language::LanguageExt;
 use napi::Result;
 use serde_json::{Value, json};
@@ -1386,12 +1386,24 @@ class A {
         "class A { #a; #b; m() { return class B { #a; n() { return this.#a + this.#b; } }; } }\n";
     let rule =
         json!({ "rule": { "kind": "private_property_identifier", "binds": { "used": false } } });
-    assert_eq!(run_typescript(rule, "a.ts", source), ["1:#a"]);
+    assert_eq!(run_typescript(rule.clone(), "a.ts", source), ["1:#a"]);
+    // A private name's escapes are decoded, as espree decodes them: `#\u0061` is `#a`.
+    for source in [
+        "class A { #\\u0061 = 1; m() { return this.#a; } }\n",
+        "class A { #a = 1; m() { return this.#\\u{61}; } }\n",
+    ] {
+        assert_eq!(
+            run_typescript(rule.clone(), "a.ts", source),
+            Vec::<String>::new(),
+            "{source}"
+        );
+    }
 }
 
 #[test]
 fn typescript_marks_what_typescript_eslint_marks_used() {
-    // typescript-eslint 8.70.1's no-unused-vars reports only `unusedHere`.
+    // typescript-eslint 8.70.1's no-unused-vars reports only `q`, the parameters `ns` and `p`
+    // (a qualified type name's head reads types only) and `unusedHere`.
     let source = "\
 enum Foo { a }
 export type T = { [Foo.a]: 1 };
@@ -1399,10 +1411,18 @@ namespace foo.bar { export interface User {} }
 declare global { namespace jest { interface Matchers<R> { seven: () => R; } } }
 export declare namespace Outer { namespace Inner { const x: number; } }
 declare module 'm' { type Hidden = 1; }
+declare module 'n' { declare const aVar: string; declare function aFn(): void; declare class AClass {} declare namespace ANs {} }
+declare module q { declare module bar {} }
+import * as ns from 'ns';
+export class A { constructor(ns: ns.T) {} }
+export function f(p: number) { let x: p.Q; return x; }
 const unusedHere = 1;
 ";
     let rule = json!({ "rule": { "any": typescript_names(), "binds": { "used": false, "exported": false } } });
-    assert_eq!(run_typescript(rule, "a.ts", source), ["7:unusedHere"]);
+    assert_eq!(
+        run_typescript(rule, "a.ts", source),
+        ["8:q", "10:ns", "11:p", "12:unusedHere"]
+    );
 }
 
 /// M9b's `bindings` and `only` on TypeScript (M10b): `bindings` counts a scope's declarations of the

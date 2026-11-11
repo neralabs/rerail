@@ -33,7 +33,7 @@ pub(crate) fn collect(
         admits,
     )
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) fn experiment(
     g: &Grammar,
     f: &Facts,

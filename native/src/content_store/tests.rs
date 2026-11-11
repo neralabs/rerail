@@ -9,6 +9,7 @@ use super::*;
 use rusqlite::limits::Limit;
 use rusqlite::params;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::fs;
 use std::io::Cursor;
 use std::sync::Arc;
 use std::thread;
@@ -486,8 +487,13 @@ fn source_and_tape_objects_deduplicate_and_round_trip() {
     {
         let cache = store.decompressed_cache.lock().unwrap();
         assert!(cache.contains(CacheKey::Source(HashKey::sha256(b"print('hello')\n"))));
-        assert!(cache.contains(CacheKey::Tape(HashKey::sha256(b"compact tape"))));
+        assert!(cache.contains(CacheKey::Tape(HashKey::tape_identity(HashKey::sha256(b"print('hello')\n"), b"compact tape"))));
     }
+    // Another source with the same tape bytes (a named-only tape holds no text) has its own tape.
+    let other = store.put_source(b"print('world')\n", &[]).unwrap();
+    let other_tape = store.put_tape(other, 1, 45, 1, b"compact tape").unwrap();
+    assert_ne!(other_tape, tape);
+    assert_eq!(store.tape_by_source(other, 1, 45, 1).unwrap(), Some(other_tape));
     {
         let connection = store.connection.lock().unwrap();
         let source_frame: (i64, Vec<u8>) = connection
@@ -2751,4 +2757,71 @@ fn a_single_language_tape_writes_no_document_rows() {
         .query_row("SELECT count(*) FROM file_documents", [], |row| row.get(0))
         .unwrap();
     assert_eq!(rows, 0);
+}
+
+#[cfg(unix)]
+fn mode_of(path: &std::path::Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::symlink_metadata(path)
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777
+}
+
+#[cfg(unix)]
+fn set_mode(path: &std::path::Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_new_store_and_the_wal_beside_it_are_private_to_their_user() {
+    let root = temporary_database("private-new").with_extension("d");
+    let folder = root.join("cache");
+    let path = folder.join(STORE_FILE_NAME);
+    drop(ContentStore::open(&path).unwrap());
+    assert_eq!(mode_of(&folder), 0o700);
+    assert_eq!(mode_of(&path), 0o600);
+    // The store is in WAL mode; SQLite creates the WAL with the database file's mode.
+    let writer = Connection::open(&path).unwrap();
+    writer
+        .execute_batch("CREATE TABLE private_probe (x)")
+        .unwrap();
+    let mut wal = path.as_os_str().to_owned();
+    wal.push("-wal");
+    assert_eq!(mode_of(std::path::Path::new(&wal)), 0o600);
+    drop(writer);
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn opening_a_store_others_can_read_takes_their_access_away() {
+    let folder = temporary_database("private-existing").with_extension("d");
+    let path = folder.join(STORE_FILE_NAME);
+    drop(ContentStore::open(&path).unwrap());
+    set_mode(&folder, 0o755);
+    set_mode(&path, 0o644);
+    let store = ContentStore::open(&path).unwrap();
+    assert_eq!(mode_of(&folder), 0o700);
+    assert_eq!(mode_of(&path), 0o600);
+    drop(store);
+    std::fs::remove_dir_all(&folder).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_store_folder_that_is_a_symlink_is_not_followed_when_tightening() {
+    let root = temporary_database("private-symlink").with_extension("d");
+    let elsewhere = root.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    set_mode(&elsewhere, 0o755);
+    let linked = root.join("linked");
+    std::os::unix::fs::symlink(&elsewhere, &linked).unwrap();
+    drop(ContentStore::open(&linked.join(STORE_FILE_NAME)).unwrap());
+    assert_eq!(mode_of(&elsewhere), 0o755);
+    assert_eq!(mode_of(&elsewhere.join(STORE_FILE_NAME)), 0o600);
+    std::fs::remove_dir_all(&root).unwrap();
 }
