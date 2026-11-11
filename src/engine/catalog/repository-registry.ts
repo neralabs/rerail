@@ -6,7 +6,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, parse, resolve } from "node:path";
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, sql, type SQL } from "drizzle-orm";
 import { physicalPath, storedPath, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
 import { gitExecutable, GitUnavailableError, runGit } from "../git.js";
@@ -329,6 +329,22 @@ function absorbAliasOwner(tx: Writer, key: RepositoryKey, alias: RepositoryKey):
   return [other.repositoryKey, ...other.aliases];
 }
 
+const FOLDER_CASE_FOLDS = process.platform === "win32";
+
+/**
+ * `checkout_path` as the reads of the checkouts at, above or below a folder compare it. On Windows one folder can be
+ * recorded under spellings that differ in letter case: a folder outside Git is recorded as it was named (a VS Code
+ * session's `c:\work`, a terminal's `C:\work`), a Git checkout as Git names its top level. There these reads match
+ * without regard to ASCII letter case, as `withinCheckout` (path.relative) does, through the `checkouts_path_nocase`
+ * index; elsewhere byte for byte, through the path key.
+ */
+export const comparedCheckoutPath: SQL = FOLDER_CASE_FOLDS ? sql`${checkouts.checkoutPath} collate nocase` : sql`${checkouts.checkoutPath}`;
+
+/** `path` as {@link comparedCheckoutPath} compares it: on Windows with ASCII letters in lower case, as SQLite's NOCASE. */
+function comparedPath(path: string): string {
+  return FOLDER_CASE_FOLDS ? path.replace(/[A-Z]+/gu, letters => letters.toLowerCase()) : path;
+}
+
 /** The folders that hold `path`, from its parent folder up to the filesystem root. */
 function enclosingFolders(path: string): string[] {
   const folders: string[] = [];
@@ -341,13 +357,15 @@ function enclosingFolders(path: string): string[] {
 }
 
 /**
- * The recorded checkouts of the same repository whose folder contains `checkout`, nearest first; never itself. Only the
- * rows recorded at the folders above it are read, through the path key, so the cost follows its depth and not how many
- * checkouts are recorded.
+ * The recorded checkouts of the same repository whose folder contains `checkout`, nearest first; never itself. On
+ * Windows a row of its own folder under another spelling is one, nearest of all. Only the rows recorded at its folder
+ * and the folders above it are read, through an index ({@link comparedCheckoutPath}), so the cost follows its depth and
+ * not how many checkouts are recorded.
  */
 export function parentCheckouts(db: Reader, checkout: Pick<CheckoutContext, "checkoutPath" | "repositoryKey">): CheckoutRecord[] {
-  return db.select().from(checkouts).where(inArray(checkouts.checkoutPath, enclosingFolders(checkout.checkoutPath))).all()
-    .filter(row => row.repositoryKey === checkout.repositoryKey)
+  const folders = [checkout.checkoutPath, ...enclosingFolders(checkout.checkoutPath)];
+  return db.select().from(checkouts).where(inArray(comparedCheckoutPath, folders)).all()
+    .filter(row => row.repositoryKey === checkout.repositoryKey && row.checkoutPath !== checkout.checkoutPath)
     .sort((left, right) => right.checkoutPath.length - left.checkoutPath.length);
 }
 
@@ -396,38 +414,57 @@ interface CheckoutStateRow {
   readonly configuredAt: number | null;
 }
 
-/** The paths one read asks for: the checkouts, each with the folders above it, and all of them as the statement's parameter. */
+/** A checkout's folder and the folders above it, nearest first: as its row reads them, and as the statement compares them. */
+interface CheckoutFolders {
+  readonly paths: readonly string[];
+  readonly compared: readonly string[];
+}
+
+/** The paths one read asks for: the checkouts, each with its folders, and all of them as the statement's parameter. */
 interface CheckoutsQuestion {
   readonly asked: readonly string[];
-  readonly folders: ReadonlyMap<string, readonly string[]>;
+  readonly folders: ReadonlyMap<string, CheckoutFolders>;
   readonly parameter: string;
 }
 
 /** `last` when it asks the same checkouts; each checkout's folders come from `known`, worked out once per checkout. */
-function checkoutsQuestion(asked: readonly string[], last: CheckoutsQuestion | undefined, known: Map<string, readonly string[]>): CheckoutsQuestion {
+function checkoutsQuestion(asked: readonly string[], last: CheckoutsQuestion | undefined, known: Map<string, CheckoutFolders>): CheckoutsQuestion {
   if (last !== undefined && last.asked.length === asked.length && last.asked.every((path, index) => path === asked[index])) return last;
   const folders = new Map(asked.map(path => {
-    let above = known.get(path);
-    if (above === undefined) {
-      above = enclosingFolders(path);
-      known.set(path, above);
+    let own = known.get(path);
+    if (own === undefined) {
+      const paths = [path, ...enclosingFolders(path)];
+      own = { paths, compared: paths.map(comparedPath) };
+      known.set(path, own);
     }
-    return [path, above];
+    return [path, own];
   }));
-  return { asked: [...asked], folders, parameter: JSON.stringify([...new Set([...asked, ...[...folders.values()].flat()])]) };
+  return { asked: [...asked], folders, parameter: JSON.stringify([...new Set([...folders.values()].flatMap(own => own.paths))]) };
 }
 
-/** Each asked checkout that has a row, with its parents and status from the rows at the folders above it. */
-function recordedStatuses(question: CheckoutsQuestion, rows: ReadonlyMap<string, CheckoutStateRow>): Map<string, RecordedCheckoutStatus> {
+/** The rows by the folder they record, as the statement compared it: on Windows a folder's spellings share one entry. */
+function rowsByFolder(rows: readonly CheckoutStateRow[]): Map<string, CheckoutStateRow[]> {
+  const byFolder = new Map<string, CheckoutStateRow[]>();
+  for (const row of rows) {
+    const folder = comparedPath(row.checkoutPath);
+    const known = byFolder.get(folder);
+    if (known === undefined) byFolder.set(folder, [row]);
+    else known.push(row);
+  }
+  return byFolder;
+}
+
+/** Each asked checkout that has a row, with its parents and status from the rows at its folder and the folders above it. */
+function recordedStatuses(question: CheckoutsQuestion, rows: readonly CheckoutStateRow[]): Map<string, RecordedCheckoutStatus> {
+  const byPath = new Map(rows.map(row => [row.checkoutPath, row]));
+  const byFolder = rowsByFolder(rows);
   const read = new Map<string, RecordedCheckoutStatus>();
   for (const path of question.asked) {
-    const own = rows.get(path);
+    const own = byPath.get(path);
     if (own === undefined) continue;
-    // The folders run from the parent folder up, so the parents found are nearest first.
-    const parents = question.folders.get(path)!.flatMap(folder => {
-      const row = rows.get(folder);
-      return row?.repositoryKey === own.repositoryKey ? [row] : [];
-    });
+    // From the checkout's own folder (on Windows, a row of it under another spelling) up, so the parents are nearest first.
+    const parents = question.folders.get(path)!.compared.flatMap(folder =>
+      (byFolder.get(folder) ?? []).filter(row => row !== own && row.repositoryKey === own.repositoryKey));
     read.set(path, {
       repositoryKey: own.repositoryKey,
       cloneId: own.cloneId,
@@ -440,9 +477,10 @@ function recordedStatuses(question: CheckoutsQuestion, rows: ReadonlyMap<string,
 
 /**
  * {@link parentCheckouts} and {@link checkoutStatus} of many recorded checkouts in one statement, prepared once for the
- * connection: the rows at each checkout's path and at the folders above it, with their repository's start state and
+ * connection: the rows at each checkout's folder and at the folders above it, with their repository's start state and
  * set-up. A reader that asks after every checkout it knows on every event pays one statement, not five per checkout,
- * and asking the same checkouts as last time works out their folders once. A path with no row is left out.
+ * and asking the same checkouts as last time works out their folders once. A path with no row of that spelling is left
+ * out, as `checkoutStatus` reads a checkout's own row.
  */
 export function recordedCheckoutsReader(db: Reader): (checkoutPaths: readonly string[]) => Map<string, RecordedCheckoutStatus> {
   const query = db.select({
@@ -454,15 +492,14 @@ export function recordedCheckoutsReader(db: Reader): (checkoutPaths: readonly st
     configuredAt: repositories.configuredAt,
   }).from(checkouts)
     .leftJoin(repositories, eq(repositories.repositoryKey, checkouts.repositoryKey))
-    .where(sql`${checkouts.checkoutPath} IN (SELECT value FROM json_each(${sql.placeholder("paths")}))`)
+    .where(sql`${comparedCheckoutPath} IN (SELECT value FROM json_each(${sql.placeholder("paths")}))`)
     .prepare();
-  const folders = new Map<string, readonly string[]>();
+  const folders = new Map<string, CheckoutFolders>();
   let last: CheckoutsQuestion | undefined;
   return checkoutPaths => {
     const question = checkoutsQuestion(checkoutPaths, last, folders);
     last = question;
-    const rows = new Map(query.all({ paths: question.parameter }).map(row => [row.checkoutPath, row]));
-    return recordedStatuses(question, rows);
+    return recordedStatuses(question, query.all({ paths: question.parameter }));
   };
 }
 

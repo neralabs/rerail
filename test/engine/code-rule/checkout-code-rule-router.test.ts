@@ -829,6 +829,46 @@ describe("CheckoutCodeRuleRouter lanes after review", () => {
     ]);
   });
 
+  it.runIf(process.platform === "win32")("leaves a nested checkout's files out of the folder around it, recorded under another spelling of that folder", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const stored = join(root, "workspace");
+    await mkdir(join(stored, "packages"), { recursive: true });
+    await writeFile(join(stored, "top.py"), "NEEDLE\n");
+    await writeFile(join(stored, "packages", "outer.py"), "NEEDLE\n");
+    const service = await repository(join(stored, "packages", "service"));
+    await writeFile(join(service, "api", "inner.py"), "NEEDLE\n");
+    // A session in VS Code names the drive in lower case, and a folder outside Git is recorded as named; Git names the
+    // nested checkout as the folder is stored.
+    const drive = stored[0]!;
+    const typed = `${drive === drive.toUpperCase() ? drive.toLowerCase() : drive.toUpperCase()}${stored.slice(1)}`;
+    setUpTestRepository(typed, { library: [file(needle("test:outer", "OUTER"))] }, databasePath);
+    setUpTestRepository(service, { library: [file(needle("test:service", "SERVICE"))] }, databasePath);
+    // As the runtime starts a session in a folder outside Git.
+    const owners = new CheckoutOwners();
+    owners.addPlainRoot(typed);
+    const catalogs = new CheckoutCatalogs(databasePath);
+    const { recorder, audits } = recordingAudits();
+    const auditor = new CheckoutCodeRuleRouter({
+      sessionRoot: typed, startingCheckout: startingCheckout(owners, typed).checkoutRoot, owners, catalogs,
+      steerDelivery: { requestSteer: async () => undefined }, audits: recorder,
+    });
+    cleanups.push(async () => {
+      await auditor.close();
+      catalogs.close();
+    });
+    expect(catalogs.recordedCheckoutsWithin(typed)).toEqual([service]);
+
+    await auditor.openWorkspace("spelling");
+    await auditor.audit("spelling", { scope: "touched-files", mode: "log", paths: ["packages"] });
+    await auditor.audit("spelling", { scope: "repository", mode: "log" });
+    await auditor.settle();
+
+    // The folder audit, then the repository audit.
+    expect(violations(audits).filter(violation => violation.checkout === typed).map(violation => violation.path))
+      .toEqual(["packages/outer.py", "packages/outer.py", "top.py"]);
+  });
+
   it("names the checkouts whose ignore rules the session follows: its own and, each level down, the nested ones that run rules", async () => {
     const root = await temporaryRoot();
     const databasePath = join(root, "rerail.sqlite");

@@ -29,6 +29,7 @@ import {
 } from "../catalog/repository-model.js";
 import { repositoryIdentityLocation, type RepositoryIdentityLocation } from "../catalog/repository-identity.js";
 import {
+  comparedCheckoutPath,
   followsGitignore,
   recordedCheckoutsReader,
   recordedCheckoutsVersion,
@@ -344,7 +345,7 @@ export class CheckoutCatalogs {
     this.#capabilities = options.capabilities ?? loadCodeRuleCapabilities();
     this.#recorded = recordedCheckoutsReader(this.database);
     this.#recordedWithin = this.database.select({ checkoutPath: checkouts.checkoutPath }).from(checkouts)
-      .where(and(gte(checkouts.checkoutPath, sql.placeholder("from")), lt(checkouts.checkoutPath, sql.placeholder("to"))))
+      .where(and(gte(comparedCheckoutPath, sql.placeholder("from")), lt(comparedCheckoutPath, sql.placeholder("to"))))
       .prepare();
   }
 
@@ -401,8 +402,9 @@ export class CheckoutCatalogs {
 
   /**
    * The recorded checkouts strictly inside `root` (physical paths), at any depth. Each path inside it starts with `root`
-   * and a separator, so only the rows in that range of the path key are read, not every recorded checkout: the
-   * session's ignore rules ask this at every tool call. Recorded paths are spelled as Git spells the folder, as `root` is.
+   * and a separator, so only the rows in that range of an index are read, not every recorded checkout: the session's
+   * ignore rules ask this at every tool call. On Windows the range takes `root` in any letter case
+   * (`comparedCheckoutPath`): a folder outside Git is recorded as it was named, and a checkout in it as Git names it.
    */
   recordedCheckoutsWithin(root: string): string[] {
     const from = root.endsWith(sep) ? root : `${root}${sep}`;

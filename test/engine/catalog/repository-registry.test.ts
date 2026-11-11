@@ -7,15 +7,18 @@ import { afterEach, describe, expect, it } from "vitest";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
 import {
   adoptRemote,
+  checkoutStatus,
   linkAlias,
   listRepositories,
   lookupCheckout,
   parentCheckouts,
   pruneCheckouts,
   recordCheckout,
+  recordedCheckoutsReader,
 } from "../../../src/engine/catalog/repository-registry.js";
 import { repositoryIdentityLocation } from "../../../src/engine/catalog/repository-identity.js";
 import { setUpRepository } from "../../../src/engine/catalog/rule-configuration.js";
+import { setCheckoutStarted } from "../../../src/runtime/index.js";
 
 const temporaryDirectories: string[] = [];
 const openDatabases: RerailDatabase[] = [];
@@ -50,6 +53,12 @@ function caseInsensitiveFilesystem(): boolean {
   } finally {
     rmSync(probe, { recursive: true, force: true });
   }
+}
+
+/** `path` with its drive letter in the other case: Windows names the same folder. */
+function otherDriveCase(path: string): string {
+  const drive = path[0]!;
+  return `${drive === drive.toUpperCase() ? drive.toLowerCase() : drive.toUpperCase()}${path.slice(1)}`;
 }
 
 function open(path: string): RerailDatabase {
@@ -252,6 +261,24 @@ describe("the repository registry", () => {
     expect(worktree).toBe(join(root, "elsewhere", "feature"));
 
     expect(pruneCheckouts(database)).toEqual([]);
+  });
+
+  it.runIf(process.platform === "win32")("takes a folder outside Git recorded under another spelling of it for a parent, as Windows names one folder", async () => {
+    const root = await temporary("rerail-registry-spelling-");
+    const database = open(join(root, "rerail.sqlite"));
+    const notes = join(root, "notes");
+    mkdirSync(notes);
+    // A folder outside Git is recorded as it was named: VS Code names the drive in lower case, a terminal as stored.
+    const vscode = recordCheckout(database, otherDriveCase(notes));
+    const terminal = recordCheckout(database, notes);
+    expect([vscode.checkoutPath, terminal.checkoutPath]).toEqual([otherDriveCase(notes), notes]);
+    // `rerail stop` in the terminal.
+    setCheckoutStarted(database, terminal, false);
+
+    expect(parentCheckouts(database, vscode).map(row => row.checkoutPath)).toEqual([notes]);
+    const stopped = { started: false, setUp: false, startedBy: "parent" };
+    expect(checkoutStatus(database, vscode)).toEqual(stopped);
+    expect(recordedCheckoutsReader(database)([vscode.checkoutPath]).get(vscode.checkoutPath)).toMatchObject({ parents: [notes], status: stopped });
   });
 
   it("looks a checkout up without writing anything or creating a clone id", async () => {

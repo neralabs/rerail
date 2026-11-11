@@ -176,6 +176,8 @@ export const repositories = sqliteTable(
  * One working copy of a repository: a clone's main checkout or a linked worktree, keyed by its physical
  * git top-level. `clone_id` is the id in the clone's git common dir, so worktrees of one clone stay together.
  * `started` null follows the nearest containing checkout of the repository, then the repository.
+ * `checkouts_path_nocase` serves the reads of the checkouts above or below a folder on Windows, where one folder may be
+ * recorded under spellings that differ in letter case (`comparedCheckoutPath` in `repository-registry.ts`).
  */
 export const checkouts = sqliteTable(
   "checkouts",
@@ -189,7 +191,11 @@ export const checkouts = sqliteTable(
     createdAt: integer("created_at").notNull(),
     lastSeenAt: integer("last_seen_at").notNull(),
   },
-  table => [index("checkouts_clone").on(table.cloneId), index("checkouts_repository").on(table.repositoryKey)],
+  table => [
+    index("checkouts_clone").on(table.cloneId),
+    index("checkouts_repository").on(table.repositoryKey),
+    index("checkouts_path_nocase").on(sql`${table.checkoutPath} collate nocase`),
+  ],
 );
 
 /**
