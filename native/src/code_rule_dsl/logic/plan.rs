@@ -6527,8 +6527,15 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                         }
                         continue;
                     }
-                    let (types, flat, _) = ks.rows(q).ok_or_else(|| Error::Plan(format!("{q}: kept as clean, but its rows are not kept")))?;
-                    let rows: Vec<Vec<i64>> = if types.is_empty() { Vec::new() } else { flat.chunks_exact(types.len()).map(<[i64]>::to_vec).collect() };
+                    let rows: Vec<Vec<i64>> = if let Some((types, flat, _)) = ks.rows(q) {
+                        if types.is_empty() { Vec::new() } else { flat.chunks_exact(types.len()).map(<[i64]>::to_vec).collect() }
+                    } else if !rules_by.contains_key(q) {
+                        // Stated facts and caller inputs are leaves, already held
+                        // in this run. They have no derived stratum to keep.
+                        run.completed_request(q)?
+                    } else {
+                        return Err(Error::Plan(format!("{q}: kept as clean, but its rows are not kept")));
+                    };
                     let answer = run.answer.as_deref_mut().expect("answering");
                     for (p, got) in answer(q, &rows)? {
                         replayed.entry(p).or_default().extend(got);

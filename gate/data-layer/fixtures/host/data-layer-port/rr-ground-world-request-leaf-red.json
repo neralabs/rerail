@@ -1,0 +1,5 @@
+{
+  "error": "rr_dir_metadata_req: kept as clean, but its rows are not kept",
+  "engineSha256": "befad8350d563ee71d6deb8aa0da6265557628e551038cc1a4e7135ca2cec4e5",
+  "fixtureSha256": "ed05b73a7af913fdbc9e867926c995c2a60d43562921583c78857eaf99f586a0"
+}
