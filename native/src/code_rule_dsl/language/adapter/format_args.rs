@@ -3,6 +3,8 @@
 use super::{Php, Python, Refusal, Refused};
 use crate::code_rule_dsl::matcher::Style;
 use std::borrow::Cow;
+pub(in crate::code_rule_dsl) mod lang_python;
+pub(in crate::code_rule_dsl) mod lang_php;
 
 /// An option of `formatArgs` a family may not read.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -27,48 +29,6 @@ pub(crate) trait FormatArgRules {
 
 fn refused(message: &'static str) -> Result<(), Refusal> {
     Err(Refusal::Refused(Cow::Borrowed(message)))
-}
-
-/// `str.format` templates and `%` formats.
-impl FormatArgRules for Python {
-    const SUPPORTED: bool = true;
-    const FOLLOWS_STRINGS: bool = false;
-
-    fn feature(feature: FormatArgFeature) -> Result<(), Refusal> {
-        match feature {
-            FormatArgFeature::Style(Style::Brace | Style::Percent) => Ok(()),
-            FormatArgFeature::Style(Style::Printf) => refused(
-                "`printf` reads PHP's printf-family calls; Python's printf formats are style `percent`",
-            ),
-            FormatArgFeature::Style(Style::Scanf) => {
-                refused("`scanf` reads PHP's sscanf and fscanf calls; Python has no scanf formats")
-            }
-            FormatArgFeature::Style(Style::Rust) => refused(
-                "`rust` reads Rust's format macros; Python's format calls are styles `brace` and `percent`",
-            ),
-        }
-    }
-}
-
-/// The printf family and `sscanf`/`fscanf`.
-impl FormatArgRules for Php {
-    const SUPPORTED: bool = true;
-    const FOLLOWS_STRINGS: bool = true;
-
-    fn feature(feature: FormatArgFeature) -> Result<(), Refusal> {
-        match feature {
-            FormatArgFeature::Style(Style::Printf | Style::Scanf) => Ok(()),
-            FormatArgFeature::Style(Style::Percent) => refused(
-                "`percent` reads Python's `%` formats; PHP's printf-family calls are style `printf`",
-            ),
-            FormatArgFeature::Style(Style::Brace) => refused(
-                "`brace` reads Python's `str.format` calls; PHP has no such templates (its printf-family calls are style `printf`)",
-            ),
-            FormatArgFeature::Style(Style::Rust) => refused(
-                "`rust` reads Rust's format macros; PHP's printf-family calls are style `printf`",
-            ),
-        }
-    }
 }
 
 /// No format calls: every style is another family's.

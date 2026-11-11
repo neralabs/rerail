@@ -202,3 +202,23 @@ logic::rr::tape_type	rerail-rr
 device_metal	rerail-device-metal
 logic::profile::report	rerail-logic
 logic::profile::watch	rerail-logic
+# each family adapter's trait impls (tools/cratify/moves3.tsv)
+language::adapter::blade	rerail-lang-php
+language::adapter::scope::lang_ecma	rerail-lang-ecma
+language::adapter::scope::lang_php	rerail-lang-php
+language::adapter::scope::lang_python	rerail-lang-python
+language::adapter::value::lang_ecma	rerail-lang-ecma
+language::adapter::value::lang_php	rerail-lang-php
+language::adapter::value::lang_python	rerail-lang-python
+language::adapter::calls::lang_blade	rerail-lang-php
+language::adapter::calls::lang_php	rerail-lang-php
+language::adapter::calls::lang_python	rerail-lang-python
+language::adapter::arguments::lang_ecma	rerail-lang-ecma
+language::adapter::arguments::lang_php	rerail-lang-php
+language::adapter::arguments::lang_python	rerail-lang-python
+language::adapter::format_args::lang_php	rerail-lang-php
+language::adapter::format_args::lang_python	rerail-lang-python
+language::adapter::syntax::lang_blade	rerail-lang-php
+language::adapter::syntax::lang_ecma	rerail-lang-ecma
+language::adapter::syntax::lang_php	rerail-lang-php
+language::adapter::syntax::lang_python	rerail-lang-python

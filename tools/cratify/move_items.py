@@ -199,7 +199,7 @@ def apply(moves, edges_json):
             print(f'{src.replace(DSL, "")} -> {dst.replace(DSL, "")}: {len(got)} items (declared by hand)')
             continue
         if child:
-            decl = f'pub(in crate::code_rule_dsl) use {stem}::{{{", ".join(names)}}};\n'
+            decl = f'pub(in crate::code_rule_dsl) use {stem}::{{{", ".join(names)}}};\n' if names else ''
             if f'mod {stem};'.encode() not in text and not created_mod.get(dst):
                 decl = f'pub(in crate::code_rule_dsl) mod {stem};\n' + decl
             created_mod[dst] = True

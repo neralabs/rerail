@@ -10,6 +10,10 @@ use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use serde_json::Value;
 use std::borrow::Cow;
 use std::sync::Arc;
+pub(in crate::code_rule_dsl) mod lang_python;
+pub(in crate::code_rule_dsl) mod lang_ecma;
+pub(in crate::code_rule_dsl) mod lang_php;
+pub(in crate::code_rule_dsl) mod lang_blade;
 
 /// An option of a policy a family may not read.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -61,161 +65,6 @@ fn unhosted(grammar: Grammar, reason: &str) -> Result<(), Refusal> {
 
 fn refused(message: &'static str) -> Result<(), Refusal> {
     Err(Refusal::Refused(Cow::Borrowed(message)))
-}
-
-/// String literals: formats and annotations.
-impl SyntaxRules for Python {
-    const DOLLAR_NAMES: bool = true;
-
-    fn feature(feature: SyntaxFeature) -> Result<(), Refusal> {
-        match feature {
-            SyntaxFeature::LanguageOptions => Ok(()),
-            SyntaxFeature::Parse(grammar) => match grammar.literal_host() {
-                LiteralHost::PythonString => Ok(()),
-                LiteralHost::EcmaComment | LiteralHost::PhpComment | LiteralHost::RustString => {
-                    unhosted(grammar, "")
-                }
-                LiteralHost::PhpString => match grammar {
-                    Grammar::Scanf => unhosted(grammar, "; Python has no scanf formats"),
-                    _ => unhosted(grammar, "; Python's printf formats are `percentFormat`"),
-                },
-            },
-        }
-    }
-
-    fn compile_language_options(value: &Value, path: &str) -> napi::Result<QueryOptions> {
-        let python = options::compile_python_options(value, path)?;
-        Ok((None, Some(Arc::new(python))))
-    }
-
-    fn compile_when(
-        value: &Value,
-        path: &str,
-        _: Option<&LanguageOptions>,
-        python: Option<&PythonOptions>,
-        document: &Options,
-    ) -> napi::Result<QueryWhen> {
-        Ok((
-            options::compile_python_when(value, path, python, document)?,
-            None,
-        ))
-    }
-}
-
-/// Comments: ESLint's directives.
-impl SyntaxRules for Ecma {
-    const DOLLAR_NAMES: bool = false;
-
-    fn feature(feature: SyntaxFeature) -> Result<(), Refusal> {
-        match feature {
-            SyntaxFeature::LanguageOptions => Ok(()),
-            SyntaxFeature::Parse(grammar) => match grammar.literal_host() {
-                LiteralHost::EcmaComment => Ok(()),
-                LiteralHost::PythonString
-                | LiteralHost::PhpString
-                | LiteralHost::PhpComment
-                | LiteralHost::RustString => unhosted(grammar, ""),
-            },
-        }
-    }
-
-    fn compile_language_options(value: &Value, path: &str) -> napi::Result<QueryOptions> {
-        let options = options::compile_language_options(value, path)?;
-        Ok((Some(Arc::new(options)), None))
-    }
-
-    fn compile_when(
-        value: &Value,
-        path: &str,
-        options: Option<&LanguageOptions>,
-        _: Option<&PythonOptions>,
-        document: &Options,
-    ) -> napi::Result<QueryWhen> {
-        options::compile_ecma_when(value, path, options, document)
-    }
-}
-
-/// Strings (printf and scanf formats) and doc comments.
-impl SyntaxRules for Php {
-    const DOLLAR_NAMES: bool = true;
-
-    fn feature(feature: SyntaxFeature) -> Result<(), Refusal> {
-        match feature {
-            SyntaxFeature::LanguageOptions => {
-                refused("`languageOptions` is not available for php policies")
-            }
-            SyntaxFeature::Parse(grammar) => match grammar.literal_host() {
-                LiteralHost::PhpString | LiteralHost::PhpComment => Ok(()),
-                LiteralHost::EcmaComment | LiteralHost::RustString => unhosted(grammar, ""),
-                LiteralHost::PythonString => match grammar {
-                    Grammar::Percent => {
-                        unhosted(grammar, "; PHP's printf formats are `printfFormat`")
-                    }
-                    Grammar::Brace => unhosted(
-                        grammar,
-                        "; PHP has no str.format templates (its printf formats are `printfFormat`)",
-                    ),
-                    Grammar::Annotation => unhosted(
-                        grammar,
-                        "; PHP holds no type in a string: its declared types are syntax, and its PHPDoc types are `phpDoc`",
-                    ),
-                    _ => unhosted(grammar, ""),
-                },
-            },
-        }
-    }
-
-    fn compile_language_options(value: &Value, path: &str) -> napi::Result<QueryOptions> {
-        <Ecma as SyntaxRules>::compile_language_options(value, path)
-    }
-
-    fn compile_when(
-        value: &Value,
-        path: &str,
-        options: Option<&LanguageOptions>,
-        python: Option<&PythonOptions>,
-        document: &Options,
-    ) -> napi::Result<QueryWhen> {
-        // A PHP file has no module system: a `when.sourceType` reads ESLint's default, a module.
-        let (applies, types) =
-            <Ecma as SyntaxRules>::compile_when(value, path, options, python, document)?;
-        Ok((
-            applies && types.is_none_or(|types| types.contains(&SourceType::Module)),
-            None,
-        ))
-    }
-}
-
-/// A template's own tree holds no literal `parse` reads: its PHP's are the embedded program's
-/// (`blade::view`), a PHP document (`ast.embedded`, `embedded`).
-impl SyntaxRules for Blade {
-    const DOLLAR_NAMES: bool = false;
-
-    fn feature(feature: SyntaxFeature) -> Result<(), Refusal> {
-        match feature {
-            SyntaxFeature::LanguageOptions => {
-                refused("`languageOptions` is not available for blade policies")
-            }
-            SyntaxFeature::Parse(grammar) => unhosted(
-                grammar,
-                "; a template's PHP is its embedded program's: read it with `ast.embedded: compiled-view` or `embedded`",
-            ),
-        }
-    }
-
-    fn compile_language_options(value: &Value, path: &str) -> napi::Result<QueryOptions> {
-        <Php as SyntaxRules>::compile_language_options(value, path)
-    }
-
-    fn compile_when(
-        value: &Value,
-        path: &str,
-        options: Option<&LanguageOptions>,
-        python: Option<&PythonOptions>,
-        document: &Options,
-    ) -> napi::Result<QueryWhen> {
-        <Php as SyntaxRules>::compile_when(value, path, options, python, document)
-    }
 }
 
 /// The kit's check of a family's `SyntaxRules`.

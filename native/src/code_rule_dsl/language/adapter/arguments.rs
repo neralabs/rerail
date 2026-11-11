@@ -4,6 +4,9 @@ use super::{Ecma, Php, Python, Refusal, Refused};
 use crate::code_rule_dsl::matcher::{Arguments, Passed};
 use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
+pub(in crate::code_rule_dsl) mod lang_python;
+pub(in crate::code_rule_dsl) mod lang_ecma;
+pub(in crate::code_rule_dsl) mod lang_php;
 
 /// An option of `arguments` a family may not read.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -40,83 +43,6 @@ fn markers(detail: &str) -> Result<(), Refusal> {
 
 fn refused(message: &'static str) -> Result<(), Refusal> {
     Err(Refusal::Refused(Cow::Borrowed(message)))
-}
-
-/// Positional-only and keyword-only parameters; keywords; Ruff's syntactic reading.
-impl ArgumentRules for Python {
-    const SUPPORTED: bool = true;
-    const CALL_KINDS: &'static [&'static str] = &["call"];
-
-    fn feature(feature: ArgumentFeature) -> Result<(), Refusal> {
-        match feature {
-            ArgumentFeature::SignatureMarkers | ArgumentFeature::Syntactic => Ok(()),
-            ArgumentFeature::Estree => refused(
-                "`estree` reads ESLint's `node.arguments`; use language or syntactic for Python",
-            ),
-        }
-    }
-
-    fn passed<'r, D: Doc>(arguments: &Arguments, call: &Node<'r, D>) -> Option<Vec<Passed<'r, D>>> {
-        Some(if arguments.syntactic {
-            arguments.syntactic(call)
-        } else {
-            arguments.python(call)
-        })
-    }
-}
-
-/// Arguments by position only; ESLint's `node.arguments`.
-impl ArgumentRules for Ecma {
-    const SUPPORTED: bool = true;
-    const CALL_KINDS: &'static [&'static str] = &["call_expression", "new_expression"];
-
-    fn feature(feature: ArgumentFeature) -> Result<(), Refusal> {
-        match feature {
-            ArgumentFeature::SignatureMarkers => {
-                markers("JavaScript passes arguments by position only")
-            }
-            ArgumentFeature::Syntactic => refused(
-                "`syntactic` finds arguments by position and keyword as Ruff's find_argument does; TypeScript has no keywords",
-            ),
-            ArgumentFeature::Estree => Ok(()),
-        }
-    }
-
-    fn passed<'r, D: Doc>(arguments: &Arguments, call: &Node<'r, D>) -> Option<Vec<Passed<'r, D>>> {
-        Some(arguments.typescript(call))
-    }
-}
-
-/// Named arguments that bind any parameter; Ruff's syntactic reading.
-impl ArgumentRules for Php {
-    const SUPPORTED: bool = true;
-    const CALL_KINDS: &'static [&'static str] = &[
-        "function_call_expression",
-        "member_call_expression",
-        "nullsafe_member_call_expression",
-        "scoped_call_expression",
-        "object_creation_expression",
-    ];
-
-    fn feature(feature: ArgumentFeature) -> Result<(), Refusal> {
-        match feature {
-            ArgumentFeature::SignatureMarkers => {
-                markers("PHP has no positional-only or keyword-only parameters")
-            }
-            ArgumentFeature::Syntactic => Ok(()),
-            ArgumentFeature::Estree => refused(
-                "`estree` reads ESLint's `node.arguments` of ESTree, JavaScript's syntax tree; php has none (use language or syntactic)",
-            ),
-        }
-    }
-
-    fn passed<'r, D: Doc>(arguments: &Arguments, call: &Node<'r, D>) -> Option<Vec<Passed<'r, D>>> {
-        if arguments.syntactic {
-            arguments.php_syntactic(call)
-        } else {
-            arguments.php(call)
-        }
-    }
 }
 
 /// No calls: the capability's refusal (`unsupported_semantic`) precedes any feature's.
