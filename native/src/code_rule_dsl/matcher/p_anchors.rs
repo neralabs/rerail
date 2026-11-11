@@ -59,7 +59,7 @@ impl<'tree> AnchorCursor<'tree> for tree_sitter::TreeCursor<'tree> {
 }
 
 #[cfg(test)]
-pub(in crate::code_rule_dsl) struct TapeCursor<'tree>(crate::code_rule_dsl::tape::TapeNode<'tree>);
+pub struct TapeCursor<'tree>(crate::code_rule_dsl::tape::TapeNode<'tree>);
 
 #[cfg(test)]
 impl<'tree> AnchorCursor<'tree> for TapeCursor<'tree> {

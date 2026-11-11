@@ -81,7 +81,7 @@ pub(in crate::code_rule_dsl) use blade::{Blade};
 pub(crate) struct Refused;
 
 /// A registry family's semantics.
-pub(crate) trait Adapter: 'static {
+pub trait Adapter: 'static {
     /// The family dispatch names it by; the adapter kit checks the two agree.
     #[cfg_attr(not(test), allow(dead_code))]
     const FAMILY: Family;
