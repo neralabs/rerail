@@ -270,6 +270,28 @@ A token that is no keyword pays one test.
 The tree over the kind and every word together cost 6 instructions a switch more.
 Cranelift's own code did as well, so the run is the same (468.0M); the code is smaller.
 
+## Measured: state in registers, within a function
+
+Tier 2's state lives in memory: each word loads and stores the fields it uses.
+Holding fields in registers inside each function (SSA variables)
+runs fewer instructions but more cycles:
+
+| Fields held | Instructions | Cycles | IPC |
+|---|---|---|---|
+| None | 468.1M | 87.6M | 5.35 |
+| The token's 7 (start, end, limit, next, taken, ...) | 462.0M | 92.9M | 4.97 |
+| Those and 2 more | 475.4M | 96.7M | 4.92 |
+| Those and 5 more | 481.2M | 102.5M | 4.70 |
+
+Each call stores the held fields and each return loads them again.
+A function is a rule, and a token crosses about one call,
+so the stores and loads move rather than go away, and the moves land on the critical path.
+Loads from a stack frame that stays in place are cheap on this core.
+
+Passing the fields as a call's arguments and results is the way to do it,
+but the lowering refuses argument passing when it makes calls (`Cut::pass` with `Cut::calls`).
+That is the next piece to build, before held fields can pay.
+
 ## The order
 
 1. One symbol a token: rows and keywords in the record, one switch a state.
