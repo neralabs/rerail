@@ -11826,3 +11826,25 @@ The control now uses a recorded positive import case, and both APIs detect remov
 Receipt: gate/data-layer/fixtures/host/data-layer-port/rr-generated-indexes-progress-final2911.json.gz.
 Generated-index plugin reporting, CLI contracts, persistent updates, production integration, and shared registration acceptance remain open.
 The rule remains a draft. The inventory remains 13 full admissions, 86 drafts, and one absent translation.
+
+### 2026-11-11 — Final fcce merge and generated-index refresh
+
+Merge b9aee60a0 adopts four Final commits through fcce32b26.
+It takes the upstream demanded-text, matcher file-path, module-path, checker, and character-function changes without conflicts.
+The adopted source cohort retains 47 reviewed generic extension files.
+
+The optimized CLI build took 105.85 wall seconds and 628.20 CPU seconds.
+The CPU total contains 617.05 user seconds and 11.15 system seconds. Compilation remains separate from execution measurements.
+The registered root binary hash starts f5e7abbacdd014c5.
+
+Generated-index acceptance repeats all five original cases and 117 supplemental cases through each API on that binary.
+Each API retains all four original positive observations and all 72 supplemental finding-positive cases.
+All 14 native removal controls pass. The new checkpoint records 256 native executions.
+The nine earlier failing identifier cases retain their Final 2911 engine identity; they are not relabelled as newer-engine results.
+All 451 tooling tests pass. The migration inventory audit passes.
+
+Receipt: gate/data-layer/fixtures/host/data-layer-port/rr-generated-indexes-progress-finalfcce.json.gz.
+The historical census now contains 923 reports. Its 55-rule evidence count and 41 complete historical identity unions remain unchanged.
+Per-rule progress now links the source-inspection and generated-index checkpoints and names their remaining acceptance work.
+The full migration remains open: 13 full admissions, 86 drafts, and one absent translation.
+No full-repository cold run or additional Linear ticket was created.

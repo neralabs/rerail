@@ -82,7 +82,8 @@ def validate(value):
     for item in value['harness'].values():require(sha(item['text'].encode())==item['sha256'],'Harness snapshot differs')
     history=value['identifierRegression'];policy=history['policy'];report=history['report']
     require(sha(policy['text'].encode())==policy['sha256'],'Identifier regression policy differs')
-    require(report['engineSha256']==value['engineSource']['cliArtifact']['sha256'] and not report['semanticFallbacks'],'Identifier regression engine differs')
+    history_engine=history.get('engineSource',value['engineSource'])
+    require(report['engineSha256']==history_engine['cliArtifact']['sha256'] and not report['semanticFallbacks'],'Identifier regression engine differs')
     require(len(report['cases'])==9 and all(not c['passed'] and not equal(c['actual'],c['expected']) for c in report['cases']),'Identifier regression failures missing')
     for c in report['cases']:
         require(any(p['sha256']==policy['sha256'] for n in c['native'] for p in n['programInputs']),'Identifier regression did not consume its recorded policy')
@@ -102,6 +103,9 @@ def pack(work):
             text=(work/'pre-identifier-policy.rr').read_text(),sha256=sha((work/'pre-identifier-policy.rr').read_bytes()))),
         remaining=['Native plugin and supplied-fact reporting','CLI contracts','Persistent workspace updates','Full production and shared registration acceptance'])
     mutations={r['policySha256']:r['mutatedPolicy'] for r in value['controls']['cases']}
+    history=value['identifierRegression']
+    history['engineSource']=next(s for s in [manifest['engineSource'],*manifest.get('engineSourceSnapshots',[])]
+        if s.get('cliArtifact',{}).get('sha256')==history['report']['engineSha256'])
     def collect(row):
         if isinstance(row,dict):
             for p in row.get('programInputs',[]):

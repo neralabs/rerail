@@ -57,3 +57,7 @@ class GeneratedIndexesCheckpointTests(unittest.TestCase):
     def test_identifier_red_policy_must_match_the_consumed_bytes(self):
         value=self.example();value['identifierRegression']['policy']['text']+='\\n'
         with self.assertRaisesRegex(ValueError,'regression policy differs'):validate(value)
+
+    def test_historical_regression_cannot_be_relabelled_to_another_engine(self):
+        value=self.example();value['identifierRegression']['engineSource']={'cliArtifact':{'sha256':'other'}}
+        with self.assertRaisesRegex(ValueError,'regression engine differs'):validate(value)

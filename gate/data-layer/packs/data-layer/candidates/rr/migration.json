@@ -3231,7 +3231,49 @@
       "legacySha256": "89f2000f352654e02459f7e7bef1609b0e846a46c64bb1d6606169ef7872185f",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/no-source-inspection.rr",
-      "ruleSha256": "a65f008fe7595df87a6b86b28c8f5ee35e46c2e3bddeb2a51fc7a60cc50481c0"
+      "ruleSha256": "a65f008fe7595df87a6b86b28c8f5ee35e46c2e3bddeb2a51fc7a60cc50481c0",
+      "migrationProgress": {
+        "status": "native-contract-progress",
+        "fullMigrationAcceptance": false,
+        "checkpoint": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-inspection-plugin-progress-final2911.json.gz",
+          "sha256": "f87a9230ab04659133f91fe1d828e9ee2c5a8d7ef226b045ff576f0db26bc884"
+        },
+        "summary": {
+          "admitted": false,
+          "controls": 6,
+          "nativeExecutions": 840,
+          "originals": {
+            "snapshot": {
+              "failed": 1,
+              "passed": 131,
+              "pending": [
+                "tests/l9875_mcp/test_mcp_architecture_contracts.py::test_mcp_repository_plan_composition_probes_pass"
+              ],
+              "required": 132
+            },
+            "workspace": {
+              "failed": 1,
+              "passed": 131,
+              "pending": [
+                "tests/l9875_mcp/test_mcp_architecture_contracts.py::test_mcp_repository_plan_composition_probes_pass"
+              ],
+              "required": 132
+            }
+          },
+          "pluginCasesPerAPI": 21,
+          "primaryFullValuesPerAPI": 80,
+          "primaryPositivesPerAPI": 54,
+          "sharedFullValuesPerAPI": 8,
+          "sharedReporterCases": 144
+        },
+        "engineSha256": "4bc20970e2aabd2f1227211d947b9ac66252f177b3af3900ce6d52cbda4a58ee",
+        "remaining": [
+          "One shared original application-runtime-probe test remains unrepresented",
+          "Refresh public, production, CLI and persistent-update contracts with the changed plugin and shared reporter",
+          "Complete full-contract admission"
+        ]
+      }
     },
     {
       "check": "serverplan_name_inference",
@@ -4713,7 +4755,31 @@
       "legacySha256": "80fba2624934f3f927a0777746fe9af604c63c6df6391e532ef739c5c36e3f5f",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
-      "ruleSha256": "4c531277d7df5d3bd76b10c67fd7b021c594fd8a2a4c03dd4cd29a96e0f3659b"
+      "ruleSha256": "4c531277d7df5d3bd76b10c67fd7b021c594fd8a2a4c03dd4cd29a96e0f3659b",
+      "migrationProgress": {
+        "status": "native-contract-progress",
+        "fullMigrationAcceptance": false,
+        "checkpoint": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-generated-indexes-progress-finalfcce.json.gz",
+          "sha256": "d2a48866f5be44cc564ff0da3df6c61d9f2d731fea8f1a66a0e68f02f89b67d1"
+        },
+        "summary": {
+          "admitted": false,
+          "controls": 14,
+          "nativeExecutions": 256,
+          "originalCasesPerAPI": 5,
+          "originalPositiveObservationsPerAPI": 4,
+          "supplementalCasesPerAPI": 117,
+          "supplementalFindingPositiveCases": 72
+        },
+        "engineSha256": "f5e7abbacdd014c52f5a62cccab974fd370616a1471a04248f016a8f9fd7559d",
+        "remaining": [
+          "Native plugin and supplied-fact reporting",
+          "CLI contracts",
+          "Persistent workspace updates",
+          "Full production and shared registration acceptance"
+        ]
+      }
     }
   ],
   "syntaxSnapshots": [
@@ -5158,21 +5224,21 @@
     ],
     "cliArtifact": {
       "format": "rerail.root-engine-build/v1",
-      "engineCommit": "340401b11ee52846a13a1c0c37e9e5a13992f0b2",
-      "upstreamCommit": "2911f61c5b0238c13e783536302a00d720334982",
+      "engineCommit": "2a49af005003a4712d15f71faf35536e2082f9d3",
+      "upstreamCommit": "fcce32b26cf5e561ded72575ed6d327394f822fe",
       "sourceTrees": {
-        "native": "7896682064ab6a817e84b7c090a7c4d8821a140e",
+        "native": "50bff15b8b58c3893aad15875484846643562b61",
         "accel": "c0a9697122e57c9e213919c4e9b9686dd17a1b07",
         "tools/bitlex": "3699290356d32d790f91b76c5df41186268ada69",
         "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
         "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
       },
-      "path": ".rerail/modern-engine-alignment/cli-4bc20970e2aabd2f",
-      "sha256": "4bc20970e2aabd2f1227211d947b9ac66252f177b3af3900ce6d52cbda4a58ee",
+      "path": ".rerail/modern-engine-alignment/cli-f5e7abbacdd014c5",
+      "sha256": "f5e7abbacdd014c52f5a62cccab974fd370616a1471a04248f016a8f9fd7559d",
       "command": "nice -n 19 rustup run 1.95.0 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling",
-      "wallSeconds": 201.89,
-      "userCpuSeconds": 880.52,
-      "systemCpuSeconds": 22.33
+      "wallSeconds": 105.85,
+      "userCpuSeconds": 617.05,
+      "systemCpuSeconds": 11.15
     },
     "adoptionAudit": {
       "format": "rerail.engine-cohort-adoption/v1",
