@@ -183,6 +183,21 @@ impl<'s> Stream<'s, '_> {
         }
     }
 
+    /// Whether `h`'s job ended (its result is waiting for [`Stream::wait`]).
+    pub fn done<R>(&self, h: &Handle<R>) -> bool {
+        h.slot.lock().unwrap_or_else(|p| p.into_inner()).is_some()
+    }
+
+    /// Runs one of the stream's queued jobs here, largest first, else one of the pool's: whether it ran one. For a
+    /// caller that waits on more than one job and has other work between (`plan::issue`).
+    pub fn help(&self) -> bool {
+        if IN_JOB.get() == 0 && let Some(j) = self.state.claim(None, false) {
+            self.state.run(j, true);
+            return true;
+        }
+        on_pool() && help_once()
+    }
+
     /// Whether `h`'s job is still queued: no one has claimed it.
     pub fn queued<R>(&self, h: &Handle<R>) -> bool {
         self.state.queue.lock().unwrap_or_else(|p| p.into_inner()).iter().any(|j| j.id == h.id)

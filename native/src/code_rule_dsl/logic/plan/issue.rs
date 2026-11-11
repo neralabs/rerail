@@ -69,6 +69,8 @@ pub(super) struct Board<'a> {
     held: Vec<usize>,
     member_of: Vec<Option<usize>>,
     comps: Vec<Component<'a>>,
+    /// The components submitted whose jobs are not collected yet.
+    flying: Vec<usize>,
     in_flight: usize,
     k: f64,
     fixed: f64,
@@ -125,6 +127,7 @@ impl<'a> Board<'a> {
             held: Vec::new(),
             member_of: vec![None; sccs.len()],
             comps: Vec::new(),
+            flying: Vec::new(),
             in_flight: 0,
             k: if merge { env_f("RERAIL_STRATA_K", 8.0) } else { 0.0 },
             fixed: env_f("RERAIL_STRATA_FIXED", 136e-6),
@@ -310,6 +313,7 @@ impl<'a> Board<'a> {
         for c in issued {
             let est = self.comps[c].estimate;
             let State::Inline(strand, data) = std::mem::replace(&mut self.comps[c].state, State::Done(0, None)) else { unreachable!() };
+            self.flying.push(c);
             self.comps[c].state = State::Job(stream.submit(est, move || {
                 let _in = ambient.enter();
                 let mut strand = strand;
@@ -344,39 +348,84 @@ impl<'a> Board<'a> {
         }
     }
 
-    /// The stratum at `at`, as its component left it: waited for (or run here) when it is the component's first.
-    pub(super) fn retire_at<'s>(&mut self, at: usize, run: &mut Run<'a, '_>, stream: &Stream<'s, '_>) -> Result<Got> {
-        let Some(c) = self.member_of[at] else { return Ok(Got::Not) };
+    /// Collects the components whose jobs ended, out of order (decision 0114 §1): each is absorbed and its members
+    /// retire on the scoreboard now, so their readers are ready before the loop reaches them. A component writes only
+    /// its own relations, so the order of absorbing is not the program's.
+    pub(super) fn collect<'s>(&mut self, run: &mut Run<'a, '_>, stream: &Stream<'s, '_>) -> Result<()> {
+        let mut k = 0;
+        while k < self.flying.len() {
+            let c = self.flying[k];
+            if matches!(&self.comps[c].state, State::Job(h) if stream.done(h)) {
+                self.flying.swap_remove(k);
+                self.finish(c, run, stream)?;
+            } else {
+                k += 1;
+            }
+        }
+        Ok(())
+    }
+
+    /// Waits for component `c`'s job (or runs it here) and absorbs it; its members that ran retire.
+    fn finish<'s>(&mut self, c: usize, run: &mut Run<'a, '_>, stream: &Stream<'s, '_>) -> Result<()> {
         let comp = &mut self.comps[c];
-        if !matches!(comp.state, State::Done(..)) {
-            let (strand, n, stop, times, reserved, inline) = match std::mem::replace(&mut comp.state, State::Done(0, None)) {
-                State::Job(h) => {
-                    let (s, n, stop, times, reserved) = stream.wait(h).map_err(Error::Plan)?;
-                    (s, n, stop, times, reserved, false)
-                }
-                State::Inline(mut strand, data) => {
-                    let mut times = Vec::new();
-                    let mut reserved = Default::default();
-                    let (n, stop) = strand.run_members(&data, &mut times, &mut reserved);
-                    (strand, n, stop, times, reserved, true)
-                }
-                State::Done(..) => unreachable!(),
-            };
-            // Its strand's relations are those its members that ran made: the others' are not held.
-            run.absorb(strand, &comp.own, &comp.digests);
-            // Its relations are published: so are its atoms (decision 0114 §4).
-            self.counts.atoms += reserved.len();
-            drop(reserved);
-            self.in_flight -= comp.members.len();
-            self.counts.ran += n;
-            if let Some(t) = self.trace.as_mut() {
-                for (k, &m) in comp.members.iter().enumerate().take(n) {
-                    let (a, b) = times[k];
-                    t.rows[m] = Some(((a - t.t0).as_secs_f64(), (b - t.t0).as_secs_f64(), if inline { 2 } else { 1 }));
+        let (strand, n, stop, times, reserved, inline) = match std::mem::replace(&mut comp.state, State::Done(0, None)) {
+            State::Job(h) => {
+                let (s, n, stop, times, reserved) = stream.wait(h).map_err(Error::Plan)?;
+                (s, n, stop, times, reserved, false)
+            }
+            State::Inline(mut strand, data) => {
+                let mut times = Vec::new();
+                let mut reserved = Default::default();
+                let (n, stop) = strand.run_members(&data, &mut times, &mut reserved);
+                (strand, n, stop, times, reserved, true)
+            }
+            State::Done(..) => return Ok(()),
+        };
+        // Its strand's relations are those its members that ran made: the others' are not held.
+        run.absorb(strand, &comp.own, &comp.digests);
+        // Its relations are published: so are its atoms (decision 0114 §4).
+        self.counts.atoms += reserved.len();
+        drop(reserved);
+        self.in_flight -= comp.members.len();
+        self.counts.ran += n;
+        if let Some(t) = self.trace.as_mut() {
+            for (k, &m) in comp.members.iter().enumerate().take(n) {
+                let (a, b) = times[k];
+                t.rows[m] = Some(((a - t.t0).as_secs_f64(), (b - t.t0).as_secs_f64(), if inline { 2 } else { 1 }));
+            }
+        }
+        comp.state = State::Done(n, stop);
+        let ran: Vec<usize> = self.comps[c].members[..n].to_vec();
+        ran.into_iter().for_each(|m| self.retire(m));
+        Ok(())
+    }
+
+    /// The stratum at `at`, as its component left it: waited for (or run here) when it is the component's first.
+    /// While it waits, the components that end are collected and what they make ready is issued (`more`).
+    pub(super) fn retire_at<'s, 'r>(&mut self, at: usize, run: &mut Run<'a, 'r>, stream: &Stream<'s, '_>, more: &mut dyn FnMut(&mut Self, &mut Run<'a, 'r>) -> Result<()>) -> Result<Got> {
+        let Some(c) = self.member_of[at] else { return Ok(Got::Not) };
+        let mut nap = 20e-6f64;
+        loop {
+            match &self.comps[c].state {
+                State::Done(..) => break,
+                State::Job(h) if !stream.done(h) && !stream.queued(h) => {}
+                _ => {
+                    self.flying.retain(|&x| x != c);
+                    self.finish(c, run, stream)?;
+                    break;
                 }
             }
-            comp.state = State::Done(n, stop);
+            let before = self.counts.components;
+            self.collect(run, stream)?;
+            more(self, run)?;
+            if self.counts.components != before || stream.help() {
+                nap = 20e-6;
+                continue;
+            }
+            std::thread::sleep(std::time::Duration::from_secs_f64(nap));
+            nap = (nap * 2.0).min(1e-3);
         }
+        let comp = &mut self.comps[c];
         let k = comp.members.iter().position(|&m| m == at).expect("a member");
         let State::Done(n, stop) = &mut comp.state else { unreachable!() };
         if k < *n {

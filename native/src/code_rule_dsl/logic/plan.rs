@@ -7362,8 +7362,9 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                         }
                         Ok(())
                     };
+                    b.collect(&mut run, stream)?;
                     b.issue(at, &mut run, &sccs, &rules_of, &wants_of, &mut waved, &mut load_early, stream, &ambient)?;
-                    b.retire_at(at, &mut run, stream)?
+                    b.retire_at(at, &mut run, stream, &mut |b, run| b.issue(at, run, &sccs, &rules_of, &wants_of, &mut waved, &mut load_early, stream, &ambient))?
                 }
                 None => issue::Got::Not,
             };
