@@ -710,10 +710,26 @@ export class ManagedUpdater {
       await this.validate({ version, packageRoot: join(stagingPrefix, "node_modules", "@neralabs", "rerail") });
       await this.renameStaging(stagingPrefix, finalPrefix);
     } catch (error) {
-      await removeWithRetry(stagingPrefix, { platform: this.platform });
+      await this.removeStaging(stagingPrefix, error);
       throw error;
     }
     return installation;
+  }
+
+  /**
+   * Removes the staging folder of an install that failed with `failure`. When that fails too, the error thrown carries
+   * both, `failure` first: its message leads with why the install failed, then names the folder left behind and why.
+   */
+  private async removeStaging(stagingPrefix: string, failure: unknown): Promise<void> {
+    try {
+      await removeWithRetry(stagingPrefix, { platform: this.platform });
+    } catch (cleanup) {
+      const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+      throw new AggregateError(
+        [failure, cleanup],
+        `${reason(failure)}; the staging folder ${stagingPrefix} it left could not be removed: ${reason(cleanup)}`,
+      );
+    }
   }
 
   /**
