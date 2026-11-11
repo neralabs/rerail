@@ -17,7 +17,7 @@ import type {
 import type { AuditMode } from "../audit/audit.js";
 import { fileStamp } from "../file-stamp.js";
 import {
-  gitBranchTips, gitCommitsBetween, gitHead, gitModifiedOrUntrackedPaths, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs,
+  gitBranchTips, gitCommitsBetween, gitHeadReader, gitModifiedOrUntrackedPaths, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs,
 } from "../git.js";
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
@@ -158,7 +158,7 @@ interface GitView extends GitBlobs {
   readonly stopped: boolean;
 }
 async function readGitView(discovery: SourceDiscovery, checkout: string, paths: readonly string[]): Promise<GitBlobs | undefined> {
-  const head = await gitHead(checkout);
+  const head = await discovery.readHead(checkout);
   if (head === undefined) return undefined;
   const from = discovery.heads.get(checkout);
   if (from === undefined) discovery.heads.set(checkout, head);
@@ -400,6 +400,8 @@ interface SourceDiscovery {
   passedCheckouts: ReadonlySet<string>;
   /** Reads a checkout's unmerged entries now. Every pass asks, so a Git process runs only if its index file changed. */
   readonly readUnmerged: ReturnType<typeof gitUnmergedReader>;
+  /** Reads a checkout's `HEAD` now. Every pass asks, so a Git process runs only if a file Git reads it from changed. */
+  readonly readHead: ReturnType<typeof gitHeadReader>;
   /** When the session's tool calls ran: a change the session folder's walk finds is its own only when one ran then. */
   readonly toolCalls: ToolCallWindows;
 }
@@ -816,7 +818,8 @@ export class CodeRuleBridge {
       const discovery: SourceDiscovery = {
         startedAt, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
         versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
-        heads: new Map(), unmerged: new Map(), passedCheckouts: new Set(), readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched,
+        heads: new Map(), unmerged: new Map(), passedCheckouts: new Set(), readUnmerged: gitUnmergedReader(), readHead: gitHeadReader(),
+        toolCalls: this.#unwatched,
       };
       this.#unwatched = new ToolCallWindows();
       this.#discovery = discovery;
@@ -1562,9 +1565,9 @@ export class CodeRuleBridge {
    * reads the checkout around it, whose unmerged paths Git lists from its top folder.
    * Read on every pass, not only one that finds changes: a modify/delete conflict can stop a merge without changing a
    * file, and the next pass must still know that conflict was there before the edit it finds. So a checkout inside the
-   * session folder that no walk has found a change in has its entries read too, and not its `HEAD`: the entries cost a
-   * `stat` while its index file is as it was, where `HEAD` costs a Git process. A checkout whose entries Git could not
-   * list is left out of `unmerged`, so the last entries read stay its snapshot.
+   * session folder that no walk has found a change in has its entries read too, and not its `HEAD`. Both readers start a
+   * Git process only once their files change (`readUnmerged`, `readHead`), so a pass where nothing moved starts none.
+   * A checkout whose entries Git could not list is left out of `unmerged`, so the last entries read stay its snapshot.
    */
   async #readCheckouts(discovery: SourceDiscovery, worktrees?: readonly string[]): Promise<Pick<WalkStart, "heads" | "unmerged">> {
     const heads = new Map<string, string>();
@@ -1579,7 +1582,7 @@ export class CodeRuleBridge {
     const session = this.#owningCheckout(discovery.root, "");
     const withHead = new Set(worktrees ?? (session === undefined ? others : [session, ...others]));
     for (const root of withHead) {
-      const head = await gitHead(root);
+      const head = await discovery.readHead(root);
       if (head === undefined) continue;
       heads.set(root, head);
       await readEntries(root);

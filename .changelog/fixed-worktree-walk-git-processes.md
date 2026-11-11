@@ -1,0 +1,1 @@
+With many worktrees, Rerail no longer starts a Git process for every worktree each time it looks them over: it reads each worktree's `HEAD` from the files Git keeps it in, and asks Git only once those files change.

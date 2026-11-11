@@ -1233,6 +1233,31 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await bridge.settleWorktreeWalk();
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
   });
+
+  it("starts no Git process in a walk where no worktree's HEAD moved, and asks Git for a moved one alone", async () => {
+    const root = await twoBranches();
+    const roots: string[] = [];
+    for (const name of ["w0", "w1", "w2"]) {
+      const place = join(await workspace(), name);
+      git(root, "worktree", "add", "--quiet", "-b", name, place, "other");
+      roots.push(await realpath(place));
+    }
+    const { bridge } = await opened(root, {
+      sourceRoot: path => roots.find(known => resolve(root, path).startsWith(`${known}${sep}`)) ?? root,
+      worktreeRoots: () => roots,
+    });
+    const walk = async () => {
+      await bridge.checkpoint("turn");
+      await bridge.settleWorktreeWalk();
+    };
+    asyncGitCalls.args.length = 0;
+    await walk();
+    expect(asyncGitCalls.args).toEqual([]);
+    // A commit moves the worktree's HEAD and writes no file it holds.
+    git(roots[1]!, "commit", "--quiet", "--allow-empty", "-m", "moved");
+    expect((await gitReads(walk)).heads).toBe(1);
+    expect((await gitReads(walk)).heads).toBe(0);
+  });
 });
 
 describe("CodeRuleBridge and Git's own writes", () => {
@@ -1437,16 +1462,19 @@ describe("CodeRuleBridge and Git's own writes", () => {
     expect(batch.edits[0]?.generatedText).toContain("<<<<<<<");
   });
 
-  it("starts no Git process for the unmerged entries until the index file changes", async () => {
+  it("starts no Git process for HEAD or the unmerged entries until the files they are read from change", async () => {
     const root = await twoBranches();
     const { bridge, auditGeneratedEdits } = await opened(root);
-    // A pass that finds nothing, then one that finds a shell edit: neither wrote the index.
-    expect(await gitReads(() => bridge.checkpoint("turn"))).toEqual({ heads: 1, entries: 0 });
-    expect((await gitReads(() => shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\nmine\n")))).entries).toBe(0);
+    // A pass that finds nothing, then one that finds a shell edit: neither moved HEAD or wrote the index.
+    expect(await gitReads(() => bridge.checkpoint("turn"))).toEqual({ heads: 0, entries: 0 });
+    expect((await gitReads(() => shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\nmine\n"))))).toEqual({ heads: 0, entries: 0 });
     expect(auditGeneratedEdits).toHaveBeenCalledTimes(1);
     // The pass after an index write reads it once, and the one after that does not.
-    expect((await gitReads(() => shell(bridge, () => git(root, "add", "src/a.py")))).entries).toBe(1);
-    expect(await gitReads(() => bridge.checkpoint("turn"))).toEqual({ heads: 1, entries: 0 });
+    expect(await gitReads(() => shell(bridge, () => git(root, "add", "src/a.py")))).toEqual({ heads: 0, entries: 1 });
+    expect(await gitReads(() => bridge.checkpoint("turn"))).toEqual({ heads: 0, entries: 0 });
+    // The pass after a commit asks Git for HEAD once, and the one after that does not.
+    expect((await gitReads(() => shell(bridge, () => git(root, "commit", "--quiet", "-m", "mine")))).heads).toBe(1);
+    expect(await gitReads(() => bridge.checkpoint("turn"))).toEqual({ heads: 0, entries: 0 });
   });
 
   it("reads one checkout each pass for a session opened in a subfolder of it, once a walk has found a change there too", async () => {
@@ -1454,6 +1482,8 @@ describe("CodeRuleBridge and Git's own writes", () => {
     const { bridge, auditGeneratedEdits } = await opened(join(root, "src"), { sourceRoot: () => root });
     await shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\nmine\n"));
     expect(auditGeneratedEdits).toHaveBeenCalledTimes(1);
+    // HEAD moves, so a pass that read the subfolder apart from the checkout would ask Git twice.
+    git(root, "commit", "--quiet", "--allow-empty", "-m", "moved");
     asyncGitCalls.args.length = 0;
     await bridge.checkpoint("turn");
     expect(asyncGitCalls.args.filter(args => args.includes("--verify"))).toHaveLength(1);
@@ -1551,12 +1581,13 @@ describe("CodeRuleBridge and Git's own writes", () => {
   it("starts no Git process for a checkout inside the session's folder until its index file changes", async () => {
     const { root, nested, extra } = await nestedCheckout();
     const { bridge } = await opened(root, extra);
-    // A pass that finds nothing reads the session checkout's `HEAD`, and nothing of the one inside it.
-    expect(await gitReads(() => bridge.checkpoint("turn"))).toEqual({ heads: 1, entries: 0 });
+    // A pass that finds nothing starts no Git process: the session checkout's `HEAD` is as the last pass read it, and the
+    // `HEAD` of the checkout inside it is not read.
+    expect(await gitReads(() => bridge.checkpoint("turn"))).toEqual({ heads: 0, entries: 0 });
     // The pass after a write to its index lists its entries once, and the one after that does not.
     const stopped = () => shell(bridge, () => { try { git(nested, "merge", "--quiet", "other"); } catch { /* The conflict is the point. */ } });
-    expect(await gitReads(stopped)).toEqual({ heads: 1, entries: 1 });
-    expect(await gitReads(() => bridge.checkpoint("turn"))).toEqual({ heads: 1, entries: 0 });
+    expect(await gitReads(stopped)).toEqual({ heads: 0, entries: 1 });
+    expect(await gitReads(() => bridge.checkpoint("turn"))).toEqual({ heads: 0, entries: 0 });
   });
 
   it("audits nothing of a worktree added inside the session's folder", async () => {

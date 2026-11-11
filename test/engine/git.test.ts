@@ -1,13 +1,25 @@
 import { execFileSync } from "node:child_process";
+import type * as ChildProcess from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitExcludeFiles, gitHead, gitInstalled, gitUnmergedReader, headMovedOnlyByCommits,
-  readGitBlobIds, readGitBlobs, runGit,
+  gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitExcludeFiles, gitHead, gitHeadReader, gitInstalled, gitUnmergedReader,
+  headMovedOnlyByCommits, readGitBlobIds, readGitBlobs, runGit,
 } from "../../src/engine/git.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
+
+/** The arguments of every Git process started without blocking, for the tests that count what a read costs. */
+const started = vi.hoisted(() => ({ args: [] as string[][] }));
+vi.mock("node:child_process", async importOriginal => {
+  const actual = await importOriginal<typeof ChildProcess>();
+  const execFile = (...call: Parameters<typeof actual.execFile>) => {
+    if (Array.isArray(call[1])) started.args.push([...(call[1] as readonly string[])]);
+    return (actual.execFile as (...forwarded: unknown[]) => ReturnType<typeof actual.execFile>)(...call);
+  };
+  return { ...actual, execFile };
+});
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -336,6 +348,157 @@ describe("gitUnmergedReader", () => {
     const again = await read(root);
     expect(again).toEqual(first);
     expect(again).not.toBe(first);
+  });
+});
+
+describe("gitHeadReader", () => {
+  /** `HEAD` as `git rev-parse --verify --quiet HEAD` names it in `cwd`, or undefined where it names no commit. */
+  function gitAnswer(cwd: string): string | undefined {
+    try {
+      return execFileSync("git", ["rev-parse", "--verify", "--quiet", "HEAD"], { cwd, encoding: "utf8" }).trim();
+    } catch {
+      return undefined;
+    }
+  }
+  /** Reads `cwd` with `read`, checks that it answers as Git does, and gives how many Git processes the read started. */
+  async function processes(read: (cwd: string) => Promise<string | undefined>, cwd: string): Promise<number> {
+    started.args.length = 0;
+    const answer = await read(cwd);
+    const count = started.args.length;
+    expect(answer).toBe(gitAnswer(cwd));
+    return count;
+  }
+  /** Whether this Git makes a reftable repository: 2.45.0 on. */
+  function makesReftable(): boolean {
+    const match = /(\d+)\.(\d+)/u.exec(execFileSync("git", ["--version"], { encoding: "utf8" }));
+    return match !== null && (Number(match[1]) > 2 || (Number(match[1]) === 2 && Number(match[2]) >= 45));
+  }
+
+  it("answers as Git does, and starts no Git process while the files Git reads HEAD from are unchanged", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    await mkdir(join(root, "src"));
+    const read = gitHeadReader();
+    // The first read asks Git where the checkout keeps HEAD, then asks for HEAD.
+    expect(await processes(read, root)).toBe(2);
+    expect(await processes(read, root)).toBe(0);
+    git(root, "commit", "--quiet", "--allow-empty", "-m", "two");
+    expect(await processes(read, root)).toBe(1);
+    expect(await processes(read, root)).toBe(0);
+    // Another branch at the same commit, then a detached HEAD.
+    git(root, "switch", "--quiet", "-c", "other");
+    expect(await processes(read, root)).toBe(1);
+    git(root, "switch", "--quiet", "--detach", "HEAD~");
+    expect(await processes(read, root)).toBe(1);
+    expect(await processes(read, root)).toBe(0);
+    // A folder below the top asks Git every time: a `.git` made between it and the top would change the answer.
+    expect(await processes(read, join(root, "src"))).toBe(1);
+    expect(await processes(read, join(root, "src"))).toBe(1);
+  });
+
+  it("follows a branch another process moved, as a loose ref and once packed", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    const branch = git(root, "symbolic-ref", "HEAD").trim();
+    const seed = gitAnswer(root)!;
+    git(root, "commit", "--quiet", "--allow-empty", "-m", "two");
+    const two = gitAnswer(root)!;
+    const read = gitHeadReader({ settleMs: 0 });
+    await processes(read, root);
+    git(root, "update-ref", branch, seed);
+    expect(await processes(read, root)).toBe(1);
+    // Packed: the loose ref is gone, and packed-refs holds the branch.
+    git(root, "pack-refs", "--all");
+    expect(await processes(read, root)).toBe(1);
+    expect(await processes(read, root)).toBe(0);
+    git(root, "update-ref", branch, two);
+    expect(await processes(read, root)).toBe(1);
+    git(root, "pack-refs", "--all");
+    git(root, "commit", "--quiet", "--allow-empty", "-m", "three");
+    git(root, "pack-refs", "--all");
+    expect(await processes(read, root)).toBe(1);
+    expect(await processes(read, root)).toBe(0);
+  });
+
+  it("asks Git again while packed-refs is newer than the time it must stand unchanged", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    git(root, "pack-refs", "--all");
+    const read = gitHeadReader({ settleMs: 3_600_000 });
+    expect(await processes(read, root)).toBe(2);
+    expect(await processes(read, root)).toBe(1);
+  });
+
+  it("reads a linked worktree's own HEAD, and its branch moved from the main checkout", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    git(root, "branch", "first");
+    const worktree = `${root}-worktree`;
+    roots.push(worktree);
+    git(root, "worktree", "add", "--quiet", worktree, "first");
+    const read = gitHeadReader();
+    expect(await processes(read, worktree)).toBe(2);
+    expect(await processes(read, root)).toBe(2);
+    git(worktree, "commit", "--quiet", "--allow-empty", "-m", "in the worktree");
+    expect(await processes(read, worktree)).toBe(1);
+    expect(await processes(read, root)).toBe(0);
+    git(root, "update-ref", "refs/heads/first", git(root, "rev-parse", "HEAD").trim());
+    expect(await processes(read, worktree)).toBe(1);
+    git(worktree, "switch", "--quiet", "--detach");
+    expect(await processes(read, worktree)).toBe(1);
+    expect(await processes(read, worktree)).toBe(0);
+  });
+
+  it("follows the Git folder of a worktree Git adds again at the same path", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    for (const branch of ["one", "two", "three"]) git(root, "branch", branch);
+    const parent = await mkdtemp(join(tmpdir(), "rerail-git-head-"));
+    roots.push(parent);
+    // Both folders are named `wt`, so each takes the Git folder `worktrees/wt` while it is free.
+    const place = join(parent, "a", "wt");
+    git(root, "worktree", "add", "--quiet", place, "one");
+    const read = gitHeadReader();
+    expect(await processes(read, place)).toBe(2);
+    git(root, "worktree", "remove", place);
+    git(root, "worktree", "add", "--quiet", join(parent, "b", "wt"), "two");
+    git(root, "worktree", "add", "--quiet", place, "three");
+    expect(await processes(read, place)).toBe(2);
+    // The worktree's HEAD now lives in another Git folder than the one first read.
+    git(place, "commit", "--quiet", "--allow-empty", "-m", "three moved");
+    expect(await processes(read, place)).toBe(1);
+  });
+
+  it("names no commit outside a repository or before the first commit, and the first commit once made", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-git-head-"));
+    roots.push(root);
+    const read = gitHeadReader();
+    expect(await read(root)).toBeUndefined();
+    git(root, "init", "--quiet");
+    expect(await read(root)).toBeUndefined();
+    expect(await read(root)).toBeUndefined();
+    git(root, "commit", "--quiet", "--allow-empty", "-m", "first");
+    expect(await processes(read, root)).toBe(1);
+    expect(await processes(read, root)).toBe(0);
+  });
+
+  it("asks Git every time for a branch that names another ref", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    const branch = git(root, "symbolic-ref", "HEAD").trim();
+    git(root, "symbolic-ref", "refs/heads/alias", branch);
+    git(root, "symbolic-ref", "HEAD", "refs/heads/alias");
+    const read = gitHeadReader();
+    await processes(read, root);
+    git(root, "commit", "--quiet", "--allow-empty", "-m", "two");
+    expect(await processes(read, root)).toBe(1);
+    expect(await processes(read, root)).toBe(1);
+  });
+
+  it.skipIf(!makesReftable())("asks Git every time in a reftable repository", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-git-head-"));
+    roots.push(root);
+    git(root, "init", "--quiet", "--ref-format=reftable");
+    git(root, "commit", "--quiet", "--allow-empty", "-m", "first");
+    const read = gitHeadReader();
+    expect(await processes(read, root)).toBe(2);
+    git(root, "commit", "--quiet", "--allow-empty", "-m", "two");
+    expect(await processes(read, root)).toBe(1);
+    expect(await processes(read, root)).toBe(1);
   });
 });
 
