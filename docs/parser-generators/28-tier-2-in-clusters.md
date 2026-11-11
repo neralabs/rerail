@@ -116,11 +116,65 @@ competes with every state's values. A cluster's function has only its own.
 - **Metal gets the same cut.** A cluster is a function of a smaller kernel, or a kernel of its
   own.
 
+## Built and measured
+
+Tier 2 can now be lowered in clusters (`native_cpu_clusters`, `native_cpu_stream::compile_cut`).
+`rr_tier2_clusters` (in `rr_parser`, run by hand) measures it on `.rr`.
+
+### The shape as built
+
+- **The cut is of words, not states.** Each word is in one cluster, so no word is copied. A
+  word shared by states of two clusters is a crossing only where control passes it.
+- **A cluster is a function** in Cranelift's `tail` calling convention, taking `ctx` and the
+  index of the place it enters at. Its first block picks that place (a jump table).
+- **A jump to another cluster's word is a tail call** (`return_call`) with the word's index.
+  No stack grows.
+- **The state stays in memory**, in `tempo_stream`'s stack frame. Its address is in the pinned
+  register (x21), which no cluster allocates. Passed as an argument, the allocator spilled it,
+  and every access of the state first reloaded the address: 16K more loads.
+- **One cluster is the old function**, unchanged: its state in its own frame, no driver.
+- **The shape check still holds.** A cluster may tail-call only the clusters. Loops across
+  clusters are checked as a function's are: from each place a cluster is entered at, the calls
+  it reaches before a loop head; over all clusters, no cycle of those.
+- **The cut** (`by_traffic`) merges the pairs of words with the most traffic first, under a
+  cap in words. Words the profile never ran join a neighbour; the clusters left are packed
+  into as few as hold them.
+
+### The numbers
+
+A profile of 41 files (every 34th: 0.26 s CPU in a debug build), measured over all 1,362.
+Tier 2's compile alone; tier 2's time over the corpus with tier 1's buffers made before, each
+form's best of five rounds, the forms in turn. Every file's table equals the one function's.
+
+| | functions | crossings, of the corpus's steps | register allocation | instructions | tier 2 |
+|---|---|---|---|---|---|
+| one function | 1 | 0 | 0.147 s | 122,469 | 40.8 ms |
+| cap 600 | 14 | 0.47% | 0.079 s | 139,740 | 44.5 ms |
+| cap 1,200 | 7 | 0.05% | 0.085 s | 140,404 | 40.5 ms |
+| cap 2,500 | 4 | 0.03% | 0.102 s | 139,012 | 37.6 ms |
+| by the program alone, cap 1,200 | 7 | 17% | 0.079 s | 133,651 | 87.6 ms |
+| by the program alone, cap 2,500 | 4 | 6.4% | 0.089 s | 133,158 | 55.9 ms |
+
+- **Register allocation halves.** A cluster's live ranges are its own.
+- **The whole compile does not shrink.** It was 0.39 s, and stays 0.37 to 0.45 s. IR building,
+  the verifier and the shape checks are the rest, and do not depend on the cut.
+- **The run is no slower, and at 2,500 words a little faster.** That held in four runs: 37 to
+  38 ms against 40 to 41.
+- **Spills are the same.** Stack loads and stores other than the state's: 15,600 in the one
+  function, 15,400 to 16,700 in clusters.
+- **The code is 14% larger.** Each crossing site is a tail call; each cluster reloads `ctx`'s
+  fields at its entry and reads the pinned register once a block.
+- **A crossing costs about 10 ns**: the callee-saved registers restored and saved again, and
+  `ctx`'s fields loaded at the next cluster's entry. So the cut must come from a profile. The
+  program's own edges cross 6 to 25% of the steps, and the run is 1.4 to 2.7 times slower.
+- **A small profile is enough.** 11 files (90 ms of CPU) gave a cut at 2,500 words no slower
+  than the one function.
+
 ## Not measured yet
 
-- **The cut by grammar levels.** Each nested rule as its own cluster: static, and it may come
-  close to the traffic's cut.
-- **Register pressure per cluster.** `native_cpu_pressure`, run on each cluster's code once it
-  is a function.
-- **The time, the spills and the compile time** of a lowering that emits clusters.
-- **A grammar much larger than `.rr`.**
+- **Compiling the clusters in parallel.** They are independent functions. Register allocation
+  and emission could run on a thread each, then be defined in the module.
+- **A profile for the product's path.** The grammar's compile needs sample documents: the
+  ladder's, or a few the grammar ships with.
+- **Cheaper crossings.** A cluster's entry could load only the `ctx` fields its words use.
+- **The cut by grammar levels**, and a grammar much larger than `.rr`.

@@ -712,12 +712,21 @@ pub mod tests {
         let c = super::compiled().expect("compiles");
         let native = rerail_compiler::native_ir::lower(&c.program, 0, 0).expect("lowers");
         let files = corpus();
-        let sample: Vec<&[u8]> = files.iter().step_by(4).map(|f| f.as_bytes()).collect();
+        let every: usize = std::env::var("RR_PROFILE_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
+        let sample: Vec<&[u8]> = files.iter().step_by(every).map(|f| f.as_bytes()).collect();
         let t = thread_cpu();
         let traffic = traffic(&c.program, &sample);
         eprintln!("{} words; the profile of {} files: {:.2?} CPU", native.structural.len(), sample.len(), thread_cpu() - t);
+        // The whole corpus's traffic, for the crossings off the sample too.
+        let all: Vec<&[u8]> = files.iter().map(|f| f.as_bytes()).collect();
+        let whole = rerail_compiler::native_cpu_clusters::traffic(&c.program, &all);
         let caps: Vec<usize> = std::env::var("RR_CAPS").ok().map(|v| v.split(',').filter_map(|x| x.parse().ok()).collect()).unwrap_or_else(|| vec![600, 1200, 2500]);
-        let cuts: Vec<(String, Cut)> = std::iter::once(("one function".to_owned(), Cut::one(native.structural.len()))).chain(caps.iter().map(|&cap| (format!("cap {cap}"), by_traffic(&native, &traffic, cap)))).collect();
+        // By the traffic, and by the program alone (no profile: its own edges, in order of place).
+        let none = std::collections::HashMap::new();
+        let cuts: Vec<(String, Cut)> = std::iter::once(("one function".to_owned(), Cut::one(native.structural.len())))
+            .chain(caps.iter().map(|&cap| (format!("cap {cap}"), by_traffic(&native, &traffic, cap))))
+            .chain(caps.iter().map(|&cap| (format!("static {cap}"), by_traffic(&native, &none, cap))))
+            .collect();
         // Tier 1's buffers, a batch a file, made once.
         let one = &c.parser;
         let batches: Vec<_> = files
@@ -763,8 +772,8 @@ pub mod tests {
                 assert!(got == want[k], "{name}: file {k} differs from the one function's");
             }
             eprintln!(
-                "{name:>12}: {:>3} functions, {:>4} tail calls, {:.3} of the steps cross; compile {compile:.2?} CPU (register allocation {regalloc} s); {code} instructions, {} stack loads/stores, {state} of them the state's",
-                p.tier2.clusters, p.tier2.crossings, crossings(&native, cut, &traffic), stack
+                "{name:>12}: {:>3} functions, {:>4} tail calls, {:.3} of the sample's steps cross ({:.4} of the corpus's); compile {compile:.2?} CPU (register allocation {regalloc} s); {code} instructions, {} stack loads/stores, {state} of them the state's",
+                p.tier2.clusters, p.tier2.crossings, crossings(&native, cut, &traffic), crossings(&native, cut, &whole), stack
             );
             made.push((name, p));
         }
