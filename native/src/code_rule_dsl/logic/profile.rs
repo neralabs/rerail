@@ -1118,7 +1118,7 @@ pub fn reset() {
 }
 
 /// The statements recorded, by SQLite's time, most first: (span, text, totals).
-pub(in crate::code_rule_dsl) fn statements() -> Vec<(String, String, SqlTotal)> {
+pub fn statements() -> Vec<(String, String, SqlTotal)> {
     let state = state();
     let mut all: Vec<_> = state.sql.iter().map(|((p, t), s)| (p.clone(), t.clone(), s.clone())).collect();
     all.sort_by_key(|(_, _, s)| std::cmp::Reverse(s.ns));
