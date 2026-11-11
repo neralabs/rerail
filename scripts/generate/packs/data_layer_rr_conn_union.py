@@ -25,13 +25,13 @@ cut_trigger(d) :- source(d, sp), text(sp, t), cut_transaction(name), contains(na
 .decl cut_document(d: number)
 .decl cut_api_path(d: number, path: symbol)
 cut_api_path(d,p) :- doc(d,_,_),option("apiSourcePath",p).
-cut_api_path(d,p) :- doc(d,p,_),!option("apiSourcePath",_).
+cut_api_path(d,p) :- doc(d,p,_),!option("apiSourcePath",_),!option_item("cutApiBuffers",_,_).
 .decl cut_api_test(d: number)
 cut_api_test(d) :- cut_api_path(d,p),match("(?s)(?:.*/)?(?:tests|test)(?:/.*)?",p).
 // Path.suffix excludes the bare filename '.py'. Explicit files can be outside
 // production roots and inside directories that recursive discovery would skip.
 cut_document(d) :- cut_api_path(d,p),match("(?s)(?:.*/)?[^/]+[.]py",p),file_name(d,name),suffix(".py",name),!cut_api_test(d),cut_trigger(d),
-    !syntax_error(d, _, _), option("entryPoint", "analyze_file").
+    !syntax_error(d, _, _), cut_api_scan().
 cut_document(d) :- doc(d, p, _), file_name(d, name), suffix(".py", name), !prefix("test_", name),
     !cut_test(d), !cut_hidden(d), cut_trigger(d), !syntax_error(d, _, _), !option("entryPoint", _),
     (prefix("impl/", p) ; prefix("conform/", p) ; prefix("data_layer/", p) ; prefix("_internal/", p) ; cut_layer(d)).
@@ -89,9 +89,9 @@ cut_issue(f, "SEPARATE_PARAMS", cat("Has both connection (", connections, ") and
     connections = join item by (r, i) sep ", " : { cut_parameter(f, _, name, ann, r, i), cut_conn(ann), annotation_text(ann, printed), item = cat(name, ": ", printed) },
     transactions = join item by (r, i) sep ", " : { cut_parameter(f, _, name, ann, r, i), cut_txn(ann), annotation_text(ann, printed), item = cat(name, ": ", printed) }.
 .violation UnionAPI(at: node, function_name: symbol, details: symbol, ordinal: number) code "UNION" "{details}"
-UnionAPI(f, q, details, i) :- cut_issue(f, "UNION", details), cut_qualified(f, _, q), visit_index(f, i), option("entryPoint", "analyze_file").
+UnionAPI(f, q, details, i) :- cut_issue(f, "UNION", details), cut_qualified(f, _, q), visit_index(f, i), cut_api_scan().
 .violation SeparateAPI(at: node, function_name: symbol, details: symbol, ordinal: number) code "SEPARATE_PARAMS" "{details}"
-SeparateAPI(f, q, details, i) :- cut_issue(f, "SEPARATE_PARAMS", details), cut_qualified(f, _, q), visit_index(f, i), option("entryPoint", "analyze_file").
+SeparateAPI(f, q, details, i) :- cut_issue(f, "SEPARATE_PARAMS", details), cut_qualified(f, _, q), visit_index(f, i), cut_api_scan().
 .violation ConnectionUnion(at: span, function_name: symbol, details: symbol, ordinal: number) code "UNION" "{function_name}: {details}"
 ConnectionUnion(@place(p,l), q, details, i) :- cut_issue(f, "UNION", details), cut_qualified(f, _, q), visit_index(f, i),line(f,l),docof(f,d),pp_doc(d,p),!cut_report_skip(p),!option("entryPoint", _),allow_status("conn_or_txn_union", "valid").
 .violation Separate(at: span, function_name: symbol, details: symbol, ordinal: number) code "SEPARATE_PARAMS" "{function_name}: {details}"
@@ -121,4 +121,32 @@ def conn_or_txn_union(source,target,header):
         allowlist=json.dumps(sorted(original.ALLOWLIST)),layer_regex='(?s)l'+character_class(str.isdecimal)+r'{4}_[^\n].*')
     text+='\n.decl cut_setting(key: symbol, value: symbol)\n'
     for key,value in settings.items():text+='cut_setting('+q(key)+','+q(value)+').\n'
-    return text+'#include "data-layer/conn-union-api.rr"\n#include "data-layer/conn-union-production.rr"\n'
+    return text+'#include "data-layer/conn-union-api.rr"\n#include "data-layer/conn-union-production.rr"\n'+cli_suffix(source)
+
+
+def cli_suffix(source):
+    import ast
+    from data_layer_rr_dynamic_cli import literal,printed
+    tree=ast.parse((source/'scripts/lint_conn_or_txn_union.py').read_text())
+    fn=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='cli_main')
+    parser=next(n for n in ast.walk(fn) if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr=='ArgumentParser')
+    discovery=ast.parse((source/'scripts/lint_lib/discovery.py').read_text())
+    args_fn=next(n for n in discovery.body if isinstance(n,ast.FunctionDef) and n.name=='add_discovery_args')
+    calls=[n.value for body in [fn.body,args_fn.body] for n in body if isinstance(n,ast.Expr) and isinstance(n.value,ast.Call) and isinstance(n.value.func,ast.Attribute) and n.value.func.attr=='add_argument']
+    schema=[dict(name=literal(c.args[0]),kwargs={k.arg:(k.value.id if isinstance(k.value,ast.Name) else literal(k.value)) for k in c.keywords}) for c in calls]
+    positive=next(n for n in fn.body if isinstance(n,ast.If) and isinstance(n.test,ast.Name) and n.test.id=='all_violations')
+    loop=next(i for i,n in enumerate(positive.body) if isinstance(n,ast.For))
+    total=next(i for i,n in enumerate(positive.body) if isinstance(n,ast.Expr) and isinstance(n.value,ast.Call) and n.value.args and isinstance(n.value.args[0],ast.JoinedStr) and ast.unparse(n.value.args[0]).startswith("f'Total:"))
+    parts=positive.body[total].value.args[0].values
+    if len(parts)!=3 or ast.unparse(parts[1].value)!='len(all_violations)':raise ValueError('Review the changed connection-union count format')
+    failure=next(n for n in ast.walk(fn) if isinstance(n,ast.If) and isinstance(n.test,ast.UnaryOp) and isinstance(n.test.operand,ast.Call) and isinstance(n.test.operand.func,ast.Attribute) and n.test.operand.func.attr=='verify_allowlist')
+    sign=next(n for n in ast.walk(fn) if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr=='sign_and_update_allowlist')
+    settings=dict(cli_schema=json.dumps(dict(description=literal(next(k.value for k in parser.keywords if k.arg=='description')),arguments=schema)),
+        cli_header=printed(positive.body[:loop]),cli_footer=printed(positive.body[total+1:]),cli_clean=printed(positive.orelse),
+        cli_count_prefix=literal(parts[0]),cli_count_suffix=literal(parts[2])+'\n',cli_verify_failure=printed(failure.body),
+        cli_linter=literal(sign.args[1]),cli_signature_variable=literal(sign.args[3]))
+    text=''
+    for key,value in settings.items():text+='cut_setting('+json.dumps(key)+','+json.dumps(value)+').\n'
+    _,space,_=classes();variable=settings['cli_signature_variable']
+    pattern='(?m)^('+re.escape(variable)+'(?:'+space+'*:'+space+'*str)?'+space+'*='+space+'*)(?:"[^"]*"|NEEDS_SIGNING|UNSIGNED)(.*)'
+    return text+'aadm_sign_pattern('+json.dumps(pattern)+').\n#include "data-layer/conn-union-cli.rr"\n'

@@ -40,6 +40,9 @@ def cases(_module):
     rows.extend(dict(id='report-'+str(i),kind='report',bundles=[dict(key='a.py',path='ignored.py',value=v)]) for i,v in enumerate(values))
     rows.extend([dict(id='report-path-order',kind='report',bundles=[dict(key=p,value=[hit]) for p in ['z.py','a/z.py','a-.py','a.py']]),
         dict(id='report-line-field-collision',kind='report',bundles=[dict(key='a.py',value=[dict(hit,line=999)])]),
+        dict(id='report-nonfinite-mixed',kind='report',bundles=[dict(key='a.py',value=[dict(hit,line_number='$NAN'),hit,dict(hit,details='$INF')])]),
+        dict(id='report-tuple-namespace',kind='report',bundles=[dict(key='a.py',value={'$tuple':[hit]})]),
+        dict(id='report-tuple-row-mixed',kind='report',bundles=[dict(key='a.py',value=[{'$tuple':[]},hit])]),
         dict(id='report-test-basename',kind='report',bundles=[dict(key='test_a.py',value=[hit]),dict(key='nested/a.py',value=[hit])]),
         dict(id='report-test-directory',kind='report',bundles=[dict(key='tests/a.py',value=[hit])]),
         dict(id='report-absolute',kind='report',bundles=[dict(key='$ROOT/a.py',value=[hit])]),
@@ -71,7 +74,14 @@ def component_value(module,case,scratch):
             value=module._violation_to_fact(module.Violation(Path('a.py'),case['line'],'function','TYPE','details'))
         elif case['kind']=='report':
             from scripts.lint_lib.linter_plugin import PerFileFactBundle,ProjectFactView
-            bundles={Path(b['key'].replace('$ROOT',str(root))):PerFileFactBundle(Path(b.get('path',b['key'])),'fixture',facts=b.get('facts',{family:b.get('value')})) for b in case['bundles']}
+            def hydrate(value):
+                if isinstance(value,str):return {'$NAN':float('nan'),'$INF':float('inf')}.get(value,value)
+                if isinstance(value,list):return [hydrate(v) for v in value]
+                if isinstance(value,dict):
+                    if list(value)==['$tuple']:return tuple(hydrate(v) for v in value['$tuple'])
+                    return {k:hydrate(v) for k,v in value.items()}
+                return value
+            bundles={Path(b['key'].replace('$ROOT',str(root))):PerFileFactBundle(Path(b.get('path',b['key'])),'fixture',facts=hydrate(b.get('facts',{family:b.get('value')}))) for b in case['bundles']}
             with patch.object(module,'ALLOWLIST',set(case['entries']) if case.get('entries') is not None else module.ALLOWLIST),patch.object(module,'_ALLOWLIST_SIGNATURE',case['signature'] if case.get('signature') is not None else module._ALLOWLIST_SIGNATURE):
                 plugin=module.conn_or_txn_union_plugin(root);value=plugin.reporter(ProjectFactView(root,bundles,plugin.required_facts))
         else:raise AssertionError(case['kind'])

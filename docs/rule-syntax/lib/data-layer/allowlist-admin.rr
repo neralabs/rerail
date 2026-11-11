@@ -1,0 +1,31 @@
+// Canonical allowlist verification and explicit signing protocol.
+// The caller declares its signature assignment pattern. Keys remain in the native utility.
+#include "data-layer/signing.rr"
+.decl aadm_sign_pattern(pattern: symbol)
+.violation AllowlistAdminOutput(at: span,phase: number,ordinal: number,channel: symbol,text: symbol) code "ADMIN_OUTPUT" "administrative output"
+// Canonical helper messages preserve the supplied list's order and duplicates.
+.decl aadm_verifying()
+aadm_verifying() :- option("entryPoint","_admin_verify").
+.decl aadm_message(message: symbol)
+aadm_message(cat("{\"allowlist\":[",body,"],\"linter\":",@json_str(l),",\"version\":",v,"}")) :- aadm_verifying(),option("verifyLinter",l),option("verifyVersion",v),body=join q by i sep "," : { option_item("verifyEntries",i,e),q=@json_str(e) }.
+.violation AllowlistAdminVerify(at: span,ok: number) code "ADMIN_VERIFY" "verification result"
+AllowlistAdminVerify(@place("",0),1) :- aadm_verifying(),option("verifySignature",s),!unsigned_sig(s),aadm_message(m),nera_key(k),@ed25519_ok(k,m,s)=1.
+AllowlistAdminVerify(@place("",0),0) :- aadm_verifying(),option("verifySignature",s),!unsigned_sig(s),aadm_message(m),nera_key(k),@ed25519_ok(k,m,s)=0.
+AllowlistAdminVerify(@place("",0),1) :- aadm_verifying(),option("verifySignature",s),unsigned_sig(s),option("verifyWarn","1").
+AllowlistAdminVerify(@place("",0),0) :- aadm_verifying(),option("verifySignature",s),unsigned_sig(s),option("verifyWarn","0").
+AllowlistAdminOutput(@place("",0),0,0,"stderr",cat("WARNING: Allowlist for ",l," is ",label,"\n")) :- aadm_verifying(),option("verifySignature",s),unsigned_sig(s),option("verifyLinter",l),option("verifyWarn","1"),(s="NEEDS_SIGNING",label="needs signing" ; s!="NEEDS_SIGNING",label="unsigned").
+AllowlistAdminOutput(@place("",0),0,0,"stderr",cat("FAIL: WARNING: Allowlist for ",l," is ",label,". Sign with --sign-allowlist.\n")) :- aadm_verifying(),option("verifySignature",s),unsigned_sig(s),option("verifyLinter",l),option("verifyWarn","0"),(s="NEEDS_SIGNING",label="needs signing" ; s!="NEEDS_SIGNING",label="unsigned").
+AllowlistAdminOutput(@place("",0),0,0,"stderr",cat("FAIL: Allowlist signature verification failed for ",l,": ",@ed25519_error(k,m,s),"\n")) :- aadm_verifying(),option("verifySignature",s),!unsigned_sig(s),aadm_message(m),nera_key(k),@ed25519_ok(k,m,s)=0,option("verifyLinter",l).
+
+.decl aadm_sign_message(message: symbol)
+aadm_sign_message(cat("{\"allowlist\":[",body,"],\"linter\":",@json_str(l),",\"version\":",v,"}")) :- option("entryPoint","_admin_sign_request"),option("signLinter",l),option("signVersion",v),body=join q by i sep "," : { option_item("signEntries",i,e),q=@json_str(e) }.
+.violation AllowlistAdminSignRequest(at: span,request_id: symbol,key_env: symbol,message: symbol) code "ADMIN_SIGN_REQUEST" "signing request"
+AllowlistAdminSignRequest(@place("",0),"allowlist.signing","NERA_SIGNING_KEY",m) :- aadm_sign_message(m).
+.violation AllowlistAdminSignResult(at: span,ok: number,write_file: number,updated_source: symbol,stdout: symbol,stderr: symbol) code "ADMIN_SIGN_RESULT" "signing result"
+AllowlistAdminSignResult(@place("",0),0,0,"","","ERROR: NERA_SIGNING_KEY environment variable not set.\nOnly the user may have access to NERA_SIGNING_KEY. Ask the user to run the documented `uv run ... --sign-allowlist` command in an environment where the key is already present.\nAI agents must never have access to this proof-of-human key and must never try to obtain it.\n") :- option("entryPoint","_admin_sign_error"),option("signStatus","missing-key").
+AllowlistAdminSignResult(@place("",0),0,0,"","","ERROR: NERA_SIGNING_KEY must be 32 bytes\n") :- option("entryPoint","_admin_sign_error"),option("signStatus","key-length").
+AllowlistAdminSignResult(@place("",0),0,0,"","",cat("ERROR: Failed to decode NERA_SIGNING_KEY: ",d,"\n")) :- option("entryPoint","_admin_sign_error"),option("signStatus","invalid-hex"),option("signDetail",d).
+.decl aadm_sign_matched()
+aadm_sign_matched() :- option("entryPoint","_admin_sign_update"),option("scriptSource",s),aadm_sign_pattern(p),@count_matches(p,s)>0.
+AllowlistAdminSignResult(@place("",0),1,1,@replace_all(s,p,cat("${1}\"",sig,"\"${2}")),cat("Updated ",v," in ",path,"\n"),"") :- option("entryPoint","_admin_sign_update"),option("scriptSource",s),option("scriptPath",path),option("newSignature",sig),option("signVariable",v),aadm_sign_pattern(p),aadm_sign_matched().
+AllowlistAdminSignResult(@place("",0),0,0,"","",cat("ERROR: Could not find ",v," in ",p,"\n")) :- option("entryPoint","_admin_sign_update"),option("scriptPath",p),option("signVariable",v),!aadm_sign_matched().

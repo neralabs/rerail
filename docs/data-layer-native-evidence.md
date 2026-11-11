@@ -30,7 +30,7 @@ Older reports without a recorded API appear in the unspecified column. No API is
 | unresolved_forward_refs | draft | 119 | 116 | 116 | 117 |
 | classvar_check | full-contract-passed | 8 | 8 | 8 | 8 |
 | type_safety_patterns | draft | 193 | 0 | 0 | 193 |
-| conn_or_txn_union | draft | 5 | 5 | 5 | 5 |
+| conn_or_txn_union | full-contract-passed | 5 | 5 | 5 | 5 |
 | async_executor | draft | 117 | 0 | 0 | 117 |
 | async_patterns | draft | 11 | 0 | 0 | 11 |
 | async_sync_boundary | draft | 5 | 5 | 5 | 5 |

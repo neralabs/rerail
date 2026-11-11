@@ -61,13 +61,13 @@ cut_trigger(d) :- source(d, sp), text(sp, t), cut_transaction(name), contains(na
 .decl cut_document(d: number)
 .decl cut_api_path(d: number, path: symbol)
 cut_api_path(d,p) :- doc(d,_,_),option("apiSourcePath",p).
-cut_api_path(d,p) :- doc(d,p,_),!option("apiSourcePath",_).
+cut_api_path(d,p) :- doc(d,p,_),!option("apiSourcePath",_),!option_item("cutApiBuffers",_,_).
 .decl cut_api_test(d: number)
 cut_api_test(d) :- cut_api_path(d,p),match("(?s)(?:.*/)?(?:tests|test)(?:/.*)?",p).
 // Path.suffix excludes the bare filename '.py'. Explicit files can be outside
 // production roots and inside directories that recursive discovery would skip.
 cut_document(d) :- cut_api_path(d,p),match("(?s)(?:.*/)?[^/]+[.]py",p),file_name(d,name),suffix(".py",name),!cut_api_test(d),cut_trigger(d),
-    !syntax_error(d, _, _), option("entryPoint", "analyze_file").
+    !syntax_error(d, _, _), cut_api_scan().
 cut_document(d) :- doc(d, p, _), file_name(d, name), suffix(".py", name), !prefix("test_", name),
     !cut_test(d), !cut_hidden(d), cut_trigger(d), !syntax_error(d, _, _), !option("entryPoint", _),
     (prefix("impl/", p) ; prefix("conform/", p) ; prefix("data_layer/", p) ; prefix("_internal/", p) ; cut_layer(d)).
@@ -125,9 +125,9 @@ cut_issue(f, "SEPARATE_PARAMS", cat("Has both connection (", connections, ") and
     connections = join item by (r, i) sep ", " : { cut_parameter(f, _, name, ann, r, i), cut_conn(ann), annotation_text(ann, printed), item = cat(name, ": ", printed) },
     transactions = join item by (r, i) sep ", " : { cut_parameter(f, _, name, ann, r, i), cut_txn(ann), annotation_text(ann, printed), item = cat(name, ": ", printed) }.
 .violation UnionAPI(at: node, function_name: symbol, details: symbol, ordinal: number) code "UNION" "{details}"
-UnionAPI(f, q, details, i) :- cut_issue(f, "UNION", details), cut_qualified(f, _, q), visit_index(f, i), option("entryPoint", "analyze_file").
+UnionAPI(f, q, details, i) :- cut_issue(f, "UNION", details), cut_qualified(f, _, q), visit_index(f, i), cut_api_scan().
 .violation SeparateAPI(at: node, function_name: symbol, details: symbol, ordinal: number) code "SEPARATE_PARAMS" "{details}"
-SeparateAPI(f, q, details, i) :- cut_issue(f, "SEPARATE_PARAMS", details), cut_qualified(f, _, q), visit_index(f, i), option("entryPoint", "analyze_file").
+SeparateAPI(f, q, details, i) :- cut_issue(f, "SEPARATE_PARAMS", details), cut_qualified(f, _, q), visit_index(f, i), cut_api_scan().
 .violation ConnectionUnion(at: span, function_name: symbol, details: symbol, ordinal: number) code "UNION" "{function_name}: {details}"
 ConnectionUnion(@place(p,l), q, details, i) :- cut_issue(f, "UNION", details), cut_qualified(f, _, q), visit_index(f, i),line(f,l),docof(f,d),pp_doc(d,p),!cut_report_skip(p),!option("entryPoint", _),allow_status("conn_or_txn_union", "valid").
 .violation Separate(at: span, function_name: symbol, details: symbol, ordinal: number) code "SEPARATE_PARAMS" "{function_name}: {details}"
@@ -148,3 +148,14 @@ cut_setting("allowlist","[\"GenericSparseVersionedWriteTransaction.__init__\", \
 cut_setting("layer_regex","(?s)l[\\x{30}-\\x{39}\\x{660}-\\x{669}\\x{6f0}-\\x{6f9}\\x{7c0}-\\x{7c9}\\x{966}-\\x{96f}\\x{9e6}-\\x{9ef}\\x{a66}-\\x{a6f}\\x{ae6}-\\x{aef}\\x{b66}-\\x{b6f}\\x{be6}-\\x{bef}\\x{c66}-\\x{c6f}\\x{ce6}-\\x{cef}\\x{d66}-\\x{d6f}\\x{de6}-\\x{def}\\x{e50}-\\x{e59}\\x{ed0}-\\x{ed9}\\x{f20}-\\x{f29}\\x{1040}-\\x{1049}\\x{1090}-\\x{1099}\\x{17e0}-\\x{17e9}\\x{1810}-\\x{1819}\\x{1946}-\\x{194f}\\x{19d0}-\\x{19d9}\\x{1a80}-\\x{1a89}\\x{1a90}-\\x{1a99}\\x{1b50}-\\x{1b59}\\x{1bb0}-\\x{1bb9}\\x{1c40}-\\x{1c49}\\x{1c50}-\\x{1c59}\\x{a620}-\\x{a629}\\x{a8d0}-\\x{a8d9}\\x{a900}-\\x{a909}\\x{a9d0}-\\x{a9d9}\\x{a9f0}-\\x{a9f9}\\x{aa50}-\\x{aa59}\\x{abf0}-\\x{abf9}\\x{ff10}-\\x{ff19}\\x{104a0}-\\x{104a9}\\x{10d30}-\\x{10d39}\\x{11066}-\\x{1106f}\\x{110f0}-\\x{110f9}\\x{11136}-\\x{1113f}\\x{111d0}-\\x{111d9}\\x{112f0}-\\x{112f9}\\x{11450}-\\x{11459}\\x{114d0}-\\x{114d9}\\x{11650}-\\x{11659}\\x{116c0}-\\x{116c9}\\x{11730}-\\x{11739}\\x{118e0}-\\x{118e9}\\x{11950}-\\x{11959}\\x{11c50}-\\x{11c59}\\x{11d50}-\\x{11d59}\\x{11da0}-\\x{11da9}\\x{11f50}-\\x{11f59}\\x{16a60}-\\x{16a69}\\x{16ac0}-\\x{16ac9}\\x{16b50}-\\x{16b59}\\x{1d7ce}-\\x{1d7ff}\\x{1e140}-\\x{1e149}\\x{1e2f0}-\\x{1e2f9}\\x{1e4f0}-\\x{1e4f9}\\x{1e950}-\\x{1e959}\\x{1fbf0}-\\x{1fbf9}]{4}_[^\\n].*").
 #include "data-layer/conn-union-api.rr"
 #include "data-layer/conn-union-production.rr"
+cut_setting("cli_schema","{\"description\": \"Lint for Connection/Transaction anti-patterns\", \"arguments\": [{\"name\": \"--check\", \"kwargs\": {\"action\": \"store_true\", \"help\": \"Exit 1 if violations found\"}}, {\"name\": \"paths\", \"kwargs\": {\"nargs\": \"*\", \"default\": null, \"help\": \"Directories to scan (default: api impl conform)\"}}, {\"name\": \"--sign-allowlist\", \"kwargs\": {\"action\": \"store_true\", \"help\": \"Sign the allowlist with NERA_SIGNING_KEY\"}}, {\"name\": \"--skip-signature-check\", \"kwargs\": {\"action\": \"store_true\", \"help\": \"Skip allowlist signature verification\"}}, {\"name\": \"--root\", \"kwargs\": {\"type\": \"str\", \"default\": null, \"help\": \"Project root directory to scan (default: data layer repo root)\"}}, {\"name\": \"--dirs\", \"kwargs\": {\"type\": \"str\", \"nargs\": \"*\", \"default\": null, \"help\": \"Subdirectories under --root to scan (default: production roots for the detected layout)\"}}]}").
+cut_setting("cli_header","======================================================================\nConnection/Transaction Anti-Pattern Violations\n======================================================================\n\nFunctions must accept EITHER Connection OR Transaction, not both.\nThis anti-pattern creates ambiguity about transaction lifecycle ownership.\n\nTwo patterns are detected:\n  1. UNION: Single param with Connection|Transaction union type\n  2. SEPARATE_PARAMS: Separate optional conn and txn parameters\n\nViolations found:\n\n").
+cut_setting("cli_footer","\nFix: Refactor to take Transaction only (preferred) or Connection only.\nSee CLAUDE.md section on 'Transaction API Design Patterns' for guidance.\n").
+cut_setting("cli_clean","No Connection/Transaction anti-pattern violations found.\n").
+cut_setting("cli_count_prefix","Total: ").
+cut_setting("cli_count_suffix"," violation(s)\n").
+cut_setting("cli_verify_failure","\nConnection/transaction allowlist failed signature verification.\nIf the changes are legitimate, sign with:\n  uv run python scripts/lint_conn_or_txn_union.py --sign-allowlist\n").
+cut_setting("cli_linter","lint_conn_or_txn_union").
+cut_setting("cli_signature_variable","_ALLOWLIST_SIGNATURE").
+aadm_sign_pattern("(?m)^(_ALLOWLIST_SIGNATURE(?:[\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}-\\x{2029}\\x{202f}\\x{205f}\\x{3000}]*:[\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}-\\x{2029}\\x{202f}\\x{205f}\\x{3000}]*str)?[\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}-\\x{2029}\\x{202f}\\x{205f}\\x{3000}]*=[\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}-\\x{2029}\\x{202f}\\x{205f}\\x{3000}]*)(?:\"[^\"]*\"|NEEDS_SIGNING|UNSIGNED)(.*)").
+#include "data-layer/conn-union-cli.rr"

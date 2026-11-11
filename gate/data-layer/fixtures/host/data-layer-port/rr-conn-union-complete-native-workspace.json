@@ -1,0 +1,1582 @@
+{
+  "format": "rerail.rr-original-assertions/v1",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "oracle": false,
+  "engineSha256": "f4db14313662e14ca1e1924296c91acb48107035461e85db4a2977d61b6ce6e2",
+  "exitCode": 0,
+  "sourceFiles": {
+    "scripts/tests/test_lint_conn_or_txn_union.py": "f6c2804ddce14271b02abdb83946f4fbd23224b387ef89b135d42e6acd194668",
+    "scripts/lint_conn_or_txn_union.py": "cc57b59556fca232665b7f8faf17423af35cef4cc3c6d8bd072269fbf4bd14b5"
+  },
+  "ruleRoot": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr",
+  "testTargets": [
+    "scripts/tests/test_lint_conn_or_txn_union.py"
+  ],
+  "api": "workspace-cli",
+  "mode": "workspace",
+  "harnessFiles": {
+    "scripts/dsl/data_layer_audit/native_guard.py": "9de4f513c0855f77870f14a3de6723cc0f65ca933cb6df28a7f49c8ed53f68b8",
+    "scripts/dsl/data_layer_batch_eight.py": "b0aa06282577557f293ab4493adbca1d36eb7c3cd72bc32f11b98f5c706684d9",
+    "scripts/dsl/data_layer_batch_five.py": "c4bd8edcb10c65ddbac6eea03eca11bad9389a0ec727d77889334a554010d34d",
+    "scripts/dsl/data_layer_batch_four.py": "af190011454ce4c136164cb31813375f607f765ced3a13393fd0cbfebb816ef1",
+    "scripts/dsl/data_layer_batch_seven.py": "06b95e9a6d34683f68b15a67bc65bdac95cc532ba0e3f2ab282cddc6ee7f0951",
+    "scripts/dsl/data_layer_batch_six.py": "c696511c6b23941317878d5fa77322b860e0ee061ac0da6fb5318eb06823a3ad",
+    "scripts/dsl/data_layer_batch_three.py": "bb528abe50676159a06c3bfc071fdbeca0aae200db90945d187cccb412c9b7e8",
+    "scripts/dsl/data_layer_batch_two.py": "04835aa6befc2229b7d7de6c6d23f6cb17ee7dd546d90bc731f0377313b17df9",
+    "scripts/dsl/data_layer_probe_record.py": "24c6a5d37b67e2d7569224523b046bb64617179dfa1d881804a4694ce7fbb1db",
+    "scripts/dsl/data_layer_probe_three.py": "e46fa55d33f3888b97a694e81a3c370eb0cf2362d723bbfb65cb7095d9ed3f8c",
+    "scripts/dsl/data_layer_record.py": "7d32c79a7eda75b2c40e2be6bcae2dee08f3b02f8fa0a2226bf504b5e568af9e",
+    "scripts/dsl/data_layer_rr/allowlist_admin_port.py": "42e25d713584f79832696125b98f66c1ca4228799f60c36b6cabc8ed4ac54425",
+    "scripts/dsl/data_layer_rr/conn_union_cli_port.py": "58cddf1478daed26be6babd3916dbb24b2ca71e3e8d058daf26d3479f569346b",
+    "scripts/dsl/data_layer_rr/conn_union_port.py": "0bfd8ec5155c0a6d608638ec1cf17a3abda241cab02fe4cda432d8d694408f09",
+    "scripts/dsl/data_layer_rr/dto.py": "086cdf3ed267e340c8e29ab33016d448590f10f8f074d277977ffa51a85cee4f",
+    "scripts/dsl/data_layer_rr/fact_transport.py": "ed88c12a4c01ab4c475dde76901f4d4a18c04d0af7e887b611324192fa4cddfa",
+    "scripts/dsl/data_layer_rr/framework_fixtures.py": "01eb634cc14db618cca8f837a62cd42477805af4eb4cb11428cb248fd4cc4bc1",
+    "scripts/dsl/data_layer_rr/migration.py": "e4cd1e3073f4a21ddab81d0dabe65361a65ac9a6e3e2a1f041dc645500bda305",
+    "scripts/dsl/data_layer_rr/policy_routes.py": "4e7390039fd78720823f8424d308e39c4420a72d18d0e52dff733a1a03262f22",
+    "scripts/dsl/data_layer_rr/python_value_transport.py": "91e260760d5a586f4d0fb4076cfb3f10401bdc8d982f9834ab931451ab8e80ed",
+    "scripts/dsl/data_layer_rr/replay.py": "c1d4bbd11057736c7883c90660df690768302cd475cdb06b0a5ec649c129249b",
+    "scripts/dsl/data_layer_rr/suite.py": "8e7d0273ecc6d2ad5e5ab56170d8dad2ffee4071a229457d458ae248c4a0e3e5",
+    "scripts/dsl/data_layer_rr/typed_fact_transport.py": "b5d5d3c9bcb51ddae5715221e359de6a11bc6e8dedcf96301b0ed59a1a22300d",
+    "scripts/dsl/data_layer_rule_audit.py": "9a87c1d158f1f621f3a7b32bf46ff43228f4bf2c2e186894dcf160f16d1e80ef"
+  },
+  "policySha256": {
+    "conn_or_txn_union": "1a67207a910f4d87f9e8788673d5e00fa4bcf35568027573d6f46a61df535a14"
+  },
+  "sourceFilesChecked": 1466,
+  "missingResults": [],
+  "collected": [
+    "scripts/tests/test_lint_conn_or_txn_union.py::test_flags_union_parameter",
+    "scripts/tests/test_lint_conn_or_txn_union.py::test_flags_separate_connection_and_transaction_parameters",
+    "scripts/tests/test_lint_conn_or_txn_union.py::test_allows_transaction_parameter",
+    "scripts/tests/test_lint_conn_or_txn_union.py::test_allows_connection_lifecycle_parameter",
+    "scripts/tests/test_lint_conn_or_txn_union.py::test_invalid_python_is_tolerated"
+  ],
+  "part": 0,
+  "parts": 1,
+  "cases": {
+    "scripts/tests/test_lint_conn_or_txn_union.py::test_flags_union_parameter": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_conn_or_txn_union.py::test_flags_separate_connection_and_transaction_parameters": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_conn_or_txn_union.py::test_allows_transaction_parameter": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_conn_or_txn_union.py::test_allows_connection_lifecycle_parameter": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_conn_or_txn_union.py::test_invalid_python_is_tolerated": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ]
+  },
+  "calls": [
+    {
+      "test": "<native-configuration>",
+      "check": "conn_or_txn_union",
+      "entry": "_cut_configuration",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/conn-or-txn-union.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "_cut_configuration"
+      },
+      "findings": 17,
+      "diagnostics": [
+        {
+          "policy": "data-layer-conn-or-txn-union",
+          "clause": "UnionConfiguration",
+          "code": "CUT_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "configuration",
+          "parameters": {
+            "key": "allowlist",
+            "value": "[\"GenericSparseVersionedWriteTransaction.__init__\", \"Neo4jCrossBranchQuery.__init__\", \"Neo4jQuery.__init__\", \"Neo4jRevisionHistoryQuery.__init__\", \"SqlCrossBranchQuery.__init__\", \"SqlCrossBranchQuery.from_spec\", \"SqlQuery.__init__\", \"SqlQueryBase.__init__\", \"SqlRevisionHistoryQuery.__init__\", \"VersionedWriteSqlQuery.__init__\", \"_get_metadata_id_for_revision\", \"_lookup_doltdb_metadata_by_revision_id\", \"_revision_id_from_metadata_id\", \"execute_vector_query\", \"index_versioned_table_at_revision\", \"process_trigger_ripple\", \"search_versioned_table_with_replay\"]"
+          }
+        },
+        {
+          "policy": "data-layer-conn-or-txn-union",
+          "clause": "UnionConfiguration",
+          "code": "CUT_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "configuration",
+          "parameters": {
+            "key": "cli_clean",
+            "value": "No Connection/Transaction anti-pattern violations found.\n"
+          }
+        },
+        {
+          "policy": "data-layer-conn-or-txn-union",
+          "clause": "UnionConfiguration",
+          "code": "CUT_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "configuration",
+          "parameters": {
+            "key": "cli_count_prefix",
+            "value": "Total: "
+          }
+        },
+        {
+          "policy": "data-layer-conn-or-txn-union",
+          "clause": "UnionConfiguration",
+          "code": "CUT_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "configuration",
+          "parameters": {
+            "key": "cli_count_suffix",
+            "value": " violation(s)\n"
+          }
+        },
+        {
+          "policy": "data-layer-conn-or-txn-union",
+          "clause": "UnionConfiguration",
+          "code": "CUT_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "configuration",
+          "parameters": {
+            "key": "cli_footer",
+            "value": "\nFix: Refactor to take Transaction only (preferred) or Connection only.\nSee CLAUDE.md section on 'Transaction API Design Patterns' for guidance.\n"
+          }
+        },
+        {
+          "policy": "data-layer-conn-or-txn-union",
+          "clause": "UnionConfiguration",
+          "code": "CUT_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "configuration",
+          "parameters": {
+            "key": "cli_header",
+            "value": "======================================================================\nConnection/Transaction Anti-Pattern Violations\n======================================================================\n\nFunctions must accept EITHER Connection OR Transaction, not both.\nThis anti-pattern creates ambiguity about transaction lifecycle ownership.\n\nTwo patterns are detected:\n  1. UNION: Single param with Connection|Transaction union type\n  2. SEPARATE_PARAMS: Separate optional conn and txn parameters\n\nViolations found:\n\n"
+          }
+        },
+        {
+          "policy": "data-layer-conn-or-txn-union",
+          "clause": "UnionConfiguration",
+          "code": "CUT_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "configuration",
+          "parameters": {
+            "key": "cli_linter",
+            "value": "lint_conn_or_txn_union"
+          }
+        },
+        {
+          "policy": "data-layer-conn-or-txn-union",
+          "clause": "UnionConfiguration",
+          "code": "CUT_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "configuration",
+          "parameters": {
+            "key": "cli_schema",
+            "value": "{\"description\": \"Lint for Connection/Transaction anti-patterns\", \"arguments\": [{\"name\": \"--check\", \"kwargs\": {\"action\": \"store_true\", \"help\": \"Exit 1 if violations found\"}}, {\"name\": \"paths\", \"kwargs\": {\"nargs\": \"*\", \"default\": null, \"help\": \"Directories to scan (default: api impl conform)\"}}, {\"name\": \"--sign-allowlist\", \"kwargs\": {\"action\": \"store_true\", \"help\": \"Sign the allowlist with NERA_SIGNING_KEY\"}}, {\"name\": \"--skip-signature-check\", \"kwargs\": {\"action\": \"store_true\", \"help\": \"Skip allowlist signature verification\"}}, {\"name\": \"--root\", \"kwargs\": {\"type\": \"str\", \"default\": null, \"help\": \"Project root directory to scan (default: data layer repo root)\"}}, {\"name\": \"--dirs\", \"kwargs\": {\"type\": \"str\", \"nargs\": \"*\", \"default\": null, \"help\": \"Subdirectories under --root to scan (default: production roots for the detected layout)\"}}]}"
+          }
+        },
+        {
+          "policy": "data-layer-conn-or-txn-union",
+          "clause": "UnionConfiguration",
+          "code": "CUT_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "configuration",
+          "parameters": {
+            "key": "cli_signature_variable",
+            "value": "_ALLOWLIST_SIGNATURE"
+          }
+        },
+        {
+          "policy": "data-layer-conn-or-txn-union",
+          "clause": "UnionConfiguration",
+          "code": "CUT_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "configuration",
+          "parameters": {
+            "key": "cli_verify_failure",
+            "value": "\nConnection/transaction allowlist failed signature verification.\nIf the changes are legitimate, sign with:\n  uv run python scripts/lint_conn_or_txn_union.py --sign-allowlist\n"
+          }
+        },
+        {
+          "policy": "data-layer-conn-or-txn-union",
+          "clause": "UnionConfiguration",
+          "code": "CUT_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "configuration",
+          "parameters": {
+            "key": "connections",
+            "value": "[\"Connection\", \"DoltDbConnection\", \"MariaDbConnection\", \"MongoDbConnection\", \"SyncDatabaseConnection\", \"SyncNeo4jConnection\", \"SyncPostgresConnection\", \"SyncSqliteConnection\"]"
+          }
+        },
+        {
+          "policy": "data-layer-conn-or-txn-union",
+          "clause": "UnionConfiguration",
+          "code": "CUT_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "configuration",
+          "parameters": {
+            "key": "extractor",
+            "value": "{\"extractor_id\": \"conn_or_txn_union.violations\", \"schema_version\": \"1\", \"implementation_version\": \"conn-or-txn-union-v2\", \"parser_mode\": \"ast_collect\", \"source_triggers\": [\"AsyncReadTransaction\", \"AsyncWriteTransaction\", \"LazyVersionedReadTransaction\", \"LazyVersionedWriteTransaction\", \"ReadTransaction\", \"SchemaTransaction\", \"Transaction\", \"WriteTransaction\"], \"source_trigger_groups\": [], \"cacheable\": true, \"workload_scope\": \"file\", \"project_input_facts\": [], \"project_input_scope\": null, \"implementation_digest\": \"cc57b59556fca232\", \"node_kinds\": [\"ClassDef\", \"FunctionDef\", \"AsyncFunctionDef\"]}"
+          }
+        },
+        {
+          "policy": "data-layer-conn-or-txn-union",
+          "clause": "UnionConfiguration",
+          "code": "CUT_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "configuration",
+          "parameters": {
+            "key": "layer_regex",
+            "value": "(?s)l[\\x{30}-\\x{39}\\x{660}-\\x{669}\\x{6f0}-\\x{6f9}\\x{7c0}-\\x{7c9}\\x{966}-\\x{96f}\\x{9e6}-\\x{9ef}\\x{a66}-\\x{a6f}\\x{ae6}-\\x{aef}\\x{b66}-\\x{b6f}\\x{be6}-\\x{bef}\\x{c66}-\\x{c6f}\\x{ce6}-\\x{cef}\\x{d66}-\\x{d6f}\\x{de6}-\\x{def}\\x{e50}-\\x{e59}\\x{ed0}-\\x{ed9}\\x{f20}-\\x{f29}\\x{1040}-\\x{1049}\\x{1090}-\\x{1099}\\x{17e0}-\\x{17e9}\\x{1810}-\\x{1819}\\x{1946}-\\x{194f}\\x{19d0}-\\x{19d9}\\x{1a80}-\\x{1a89}\\x{1a90}-\\x{1a99}\\x{1b50}-\\x{1b59}\\x{1bb0}-\\x{1bb9}\\x{1c40}-\\x{1c49}\\x{1c50}-\\x{1c59}\\x{a620}-\\x{a629}\\x{a8d0}-\\x{a8d9}\\x{a900}-\\x{a909}\\x{a9d0}-\\x{a9d9}\\x{a9f0}-\\x{a9f9}\\x{aa50}-\\x{aa59}\\x{abf0}-\\x{abf9}\\x{ff10}-\\x{ff19}\\x{104a0}-\\x{104a9}\\x{10d30}-\\x{10d39}\\x{11066}-\\x{1106f}\\x{110f0}-\\x{110f9}\\x{11136}-\\x{1113f}\\x{111d0}-\\x{111d9}\\x{112f0}-\\x{112f9}\\x{11450}-\\x{11459}\\x{114d0}-\\x{114d9}\\x{11650}-\\x{11659}\\x{116c0}-\\x{116c9}\\x{11730}-\\x{11739}\\x{118e0}-\\x{118e9}\\x{11950}-\\x{11959}\\x{11c50}-\\x{11c59}\\x{11d50}-\\x{11d59}\\x{11da0}-\\x{11da9}\\x{11f50}-\\x{11f59}\\x{16a60}-\\x{16a69}\\x{16ac0}-\\x{16ac9}\\x{16b50}-\\x{16b59}\\x{1d7ce}-\\x{1d7ff}\\x{1e140}-\\x{1e149}\\x{1e2f0}-\\x{1e2f9}\\x{1e4f0}-\\x{1e4f9}\\x{1e950}-\\x{1e959}\\x{1fbf0}-\\x{1fbf9}]{4}_[^\\n].*"
+          }
+        },
+        {
+          "policy": "data-layer-conn-or-txn-union",
+          "clause": "UnionConfiguration",
+          "code": "CUT_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "configuration",
+          "parameters": {
+            "key": "plugin",
+            "value": "{\"name\": \"conn_or_txn_union\", \"enforcement\": \"hard-fail\", \"description\": \"Connection|Transaction union anti-pattern\"}"
+          }
+        },
+        {
+          "policy": "data-layer-conn-or-txn-union",
+          "clause": "UnionConfiguration",
+          "code": "CUT_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "configuration",
+          "parameters": {
+            "key": "signature",
+            "value": "ZDB3lnXE+wc2ztyJcW5+ZxuYWvWLeUR6pFYjt2h1vhC8GxbFfsSdSM8RG9L27JrZMyadyW/LBazWmrWvfEkECQ=="
+          }
+        },
+        {
+          "policy": "data-layer-conn-or-txn-union",
+          "clause": "UnionConfiguration",
+          "code": "CUT_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "configuration",
+          "parameters": {
+            "key": "source_type_triggers",
+            "value": "[\"AsyncReadTransaction\", \"AsyncWriteTransaction\", \"Connection\", \"DoltDbConnection\", \"LazyVersionedReadTransaction\", \"LazyVersionedWriteTransaction\", \"MariaDbConnection\", \"MongoDbConnection\", \"ReadTransaction\", \"SchemaTransaction\", \"SyncDatabaseConnection\", \"SyncNeo4jConnection\", \"SyncPostgresConnection\", \"SyncSqliteConnection\", \"Transaction\", \"WriteTransaction\"]"
+          }
+        },
+        {
+          "policy": "data-layer-conn-or-txn-union",
+          "clause": "UnionConfiguration",
+          "code": "CUT_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "configuration",
+          "parameters": {
+            "key": "transactions",
+            "value": "[\"AsyncReadTransaction\", \"AsyncWriteTransaction\", \"LazyVersionedReadTransaction\", \"LazyVersionedWriteTransaction\", \"ReadTransaction\", \"SchemaTransaction\", \"Transaction\", \"WriteTransaction\"]"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/allowlist-admin.rr",
+          "sha256": "0e2d2c649cf00c76b30a3b7340f3346d118b8d5885b1078e1f5bf4d9ed82a367"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/conn-union-api.rr",
+          "sha256": "4bd7987b22d80c11af899021f813f627352c767f1a6e30b78bf72f2e85e0dd61"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/conn-union-cli.rr",
+          "sha256": "dec9d9de4b8d3639882ba0f044e47e57b67304b2b5aabcbe0954a70594e460e8"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/conn-union-production.rr",
+          "sha256": "2f8ad68e4ad72bfd48acf74ce732a1cce52d39e472c528c9e642a073325a59c5"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/signing.rr",
+          "sha256": "1febd2ef9d290e65e67ee9ed62e0c8b2affede76cad1ec03b746d73bed78b553"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/print.rr",
+          "sha256": "24809b89ce3f52d039eb4ebd518a49132f18416031fdc192283552497da24055"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/conn-or-txn-union.rr",
+          "sha256": "1a67207a910f4d87f9e8788673d5e00fa4bcf35568027573d6f46a61df535a14"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.05614899999999998,
+          "systemCpuSeconds": 0.0017639999999999982,
+          "peakRssMB": 95.731712,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 2.000000000002e-06,
+          "systemCpuSeconds": 4.999999999991123e-06,
+          "peakRssMB": 142.032896,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 142.032896,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.08293500000000001,
+          "systemCpuSeconds": 0.006792000000000003,
+          "peakRssMB": 113.54112,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.05105599999999999,
+          "systemCpuSeconds": 0.0026219999999999993,
+          "peakRssMB": 134.692864,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.029278000000000026,
+          "systemCpuSeconds": 0.001453999999999997,
+          "peakRssMB": 141.983744,
+          "submittedStatements": 52
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 5.3999999999998494e-05,
+          "systemCpuSeconds": 0.0025389999999999996,
+          "peakRssMB": 142.032896,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_conn_or_txn_union.py::test_flags_union_parameter",
+      "check": "conn_or_txn_union",
+      "entry": "analyze_file",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/conn-or-txn-union.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [
+        {
+          "path": "impl/input.py",
+          "sourceSha256": "74899ade022c8f4a6a2deecaeff10daa67d8f937fae4c30b657913807badea89"
+        }
+      ],
+      "options": {
+        "entryPoint": "analyze_file",
+        "cutAllowOverride": "true",
+        "cutAllowEntries": [
+          "GenericSparseVersionedWriteTransaction.__init__",
+          "Neo4jCrossBranchQuery.__init__",
+          "Neo4jQuery.__init__",
+          "Neo4jRevisionHistoryQuery.__init__",
+          "SqlCrossBranchQuery.__init__",
+          "SqlCrossBranchQuery.from_spec",
+          "SqlQuery.__init__",
+          "SqlQueryBase.__init__",
+          "SqlRevisionHistoryQuery.__init__",
+          "VersionedWriteSqlQuery.__init__",
+          "_get_metadata_id_for_revision",
+          "_lookup_doltdb_metadata_by_revision_id",
+          "_revision_id_from_metadata_id",
+          "execute_vector_query",
+          "index_versioned_table_at_revision",
+          "process_trigger_ripple",
+          "search_versioned_table_with_replay"
+        ],
+        "cutAllowSignature": "ZDB3lnXE+wc2ztyJcW5+ZxuYWvWLeUR6pFYjt2h1vhC8GxbFfsSdSM8RG9L27JrZMyadyW/LBazWmrWvfEkECQ==",
+        "apiInputDirs": [
+          "impl"
+        ],
+        "apiSourcePath": "impl/module.py",
+        "decodeError": "false"
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer-conn-or-txn-union",
+          "clause": "UnionAPI",
+          "code": "UNION",
+          "path": "impl/input.py",
+          "line": 1,
+          "at": 3529723894605283328,
+          "tag": null,
+          "message": "Parameter 'owner' accepts both: SyncDatabaseConnection | ReadTransaction",
+          "parameters": {
+            "function_name": "load",
+            "details": "Parameter 'owner' accepts both: SyncDatabaseConnection | ReadTransaction",
+            "ordinal": 1
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/allowlist-admin.rr",
+          "sha256": "0e2d2c649cf00c76b30a3b7340f3346d118b8d5885b1078e1f5bf4d9ed82a367"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/conn-union-api.rr",
+          "sha256": "4bd7987b22d80c11af899021f813f627352c767f1a6e30b78bf72f2e85e0dd61"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/conn-union-cli.rr",
+          "sha256": "dec9d9de4b8d3639882ba0f044e47e57b67304b2b5aabcbe0954a70594e460e8"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/conn-union-production.rr",
+          "sha256": "2f8ad68e4ad72bfd48acf74ce732a1cce52d39e472c528c9e642a073325a59c5"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/signing.rr",
+          "sha256": "1febd2ef9d290e65e67ee9ed62e0c8b2affede76cad1ec03b746d73bed78b553"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/print.rr",
+          "sha256": "24809b89ce3f52d039eb4ebd518a49132f18416031fdc192283552497da24055"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/conn-or-txn-union.rr",
+          "sha256": "1a67207a910f4d87f9e8788673d5e00fa4bcf35568027573d6f46a61df535a14"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.055521,
+          "systemCpuSeconds": 0.0010650000000000017,
+          "peakRssMB": 56.901632,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 3.8000000000038e-05,
+          "systemCpuSeconds": 2.9999999999995308e-05,
+          "peakRssMB": 107.88864,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.000246000000000024,
+          "systemCpuSeconds": 0.00028199999999999753,
+          "peakRssMB": 107.88864,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.081954,
+          "systemCpuSeconds": 0.005269999999999997,
+          "peakRssMB": 92.618752,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.040624167000000044,
+          "systemCpuSeconds": 0.011249999999999996,
+          "peakRssMB": 107.88864,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 0.0001314990000000349,
+          "systemCpuSeconds": 0.0008770000000000028,
+          "peakRssMB": 107.88864,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.00983299999999998,
+          "systemCpuSeconds": 0.0006140000000000034,
+          "peakRssMB": 107.88864,
+          "submittedStatements": 34
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.028192999999999968,
+          "systemCpuSeconds": 0.0009119999999999961,
+          "peakRssMB": 107.88864,
+          "submittedStatements": 53
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 4.700000000001925e-05,
+          "systemCpuSeconds": 0.0020840000000000025,
+          "peakRssMB": 107.88864,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_conn_or_txn_union.py::test_flags_separate_connection_and_transaction_parameters",
+      "check": "conn_or_txn_union",
+      "entry": "analyze_file",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/conn-or-txn-union.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [
+        {
+          "path": "impl/input.py",
+          "sourceSha256": "ea6bdb6431527afa9778dafdbc216e5ef296d1a6ad87aed7144e33dc75478062"
+        }
+      ],
+      "options": {
+        "entryPoint": "analyze_file",
+        "cutAllowOverride": "true",
+        "cutAllowEntries": [
+          "GenericSparseVersionedWriteTransaction.__init__",
+          "Neo4jCrossBranchQuery.__init__",
+          "Neo4jQuery.__init__",
+          "Neo4jRevisionHistoryQuery.__init__",
+          "SqlCrossBranchQuery.__init__",
+          "SqlCrossBranchQuery.from_spec",
+          "SqlQuery.__init__",
+          "SqlQueryBase.__init__",
+          "SqlRevisionHistoryQuery.__init__",
+          "VersionedWriteSqlQuery.__init__",
+          "_get_metadata_id_for_revision",
+          "_lookup_doltdb_metadata_by_revision_id",
+          "_revision_id_from_metadata_id",
+          "execute_vector_query",
+          "index_versioned_table_at_revision",
+          "process_trigger_ripple",
+          "search_versioned_table_with_replay"
+        ],
+        "cutAllowSignature": "ZDB3lnXE+wc2ztyJcW5+ZxuYWvWLeUR6pFYjt2h1vhC8GxbFfsSdSM8RG9L27JrZMyadyW/LBazWmrWvfEkECQ==",
+        "apiInputDirs": [
+          "impl"
+        ],
+        "apiSourcePath": "impl/module.py",
+        "decodeError": "false"
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer-conn-or-txn-union",
+          "clause": "SeparateAPI",
+          "code": "SEPARATE_PARAMS",
+          "path": "impl/input.py",
+          "line": 1,
+          "at": 3529723894605283328,
+          "tag": null,
+          "message": "Has both connection (conn: SyncDatabaseConnection) and transaction (txn: ReadTransaction) params",
+          "parameters": {
+            "function_name": "load",
+            "details": "Has both connection (conn: SyncDatabaseConnection) and transaction (txn: ReadTransaction) params",
+            "ordinal": 1
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/allowlist-admin.rr",
+          "sha256": "0e2d2c649cf00c76b30a3b7340f3346d118b8d5885b1078e1f5bf4d9ed82a367"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/conn-union-api.rr",
+          "sha256": "4bd7987b22d80c11af899021f813f627352c767f1a6e30b78bf72f2e85e0dd61"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/conn-union-cli.rr",
+          "sha256": "dec9d9de4b8d3639882ba0f044e47e57b67304b2b5aabcbe0954a70594e460e8"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/conn-union-production.rr",
+          "sha256": "2f8ad68e4ad72bfd48acf74ce732a1cce52d39e472c528c9e642a073325a59c5"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/signing.rr",
+          "sha256": "1febd2ef9d290e65e67ee9ed62e0c8b2affede76cad1ec03b746d73bed78b553"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/print.rr",
+          "sha256": "24809b89ce3f52d039eb4ebd518a49132f18416031fdc192283552497da24055"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/conn-or-txn-union.rr",
+          "sha256": "1a67207a910f4d87f9e8788673d5e00fa4bcf35568027573d6f46a61df535a14"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.05512499999999999,
+          "systemCpuSeconds": 0.0014729999999999986,
+          "peakRssMB": 58.212352,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 4.0000000000095515e-05,
+          "systemCpuSeconds": 3.300000000000525e-05,
+          "peakRssMB": 102.97344,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0002889999999999837,
+          "systemCpuSeconds": 0.00042199999999999876,
+          "peakRssMB": 102.97344,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.08970800000000001,
+          "systemCpuSeconds": 0.007543000000000001,
+          "peakRssMB": 94.683136,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.032978541999999944,
+          "systemCpuSeconds": 0.008657000000000001,
+          "peakRssMB": 102.97344,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": -2.725000000003419e-05,
+          "systemCpuSeconds": 0.0010350000000000012,
+          "peakRssMB": 102.97344,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.009361999999999981,
+          "systemCpuSeconds": 0.0005749999999999991,
+          "peakRssMB": 102.97344,
+          "submittedStatements": 34
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.02695000000000003,
+          "systemCpuSeconds": 0.000895999999999994,
+          "peakRssMB": 102.97344,
+          "submittedStatements": 53
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 4.499999999996174e-05,
+          "systemCpuSeconds": 0.002257000000000002,
+          "peakRssMB": 102.97344,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_conn_or_txn_union.py::test_allows_transaction_parameter",
+      "check": "conn_or_txn_union",
+      "entry": "analyze_file",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/conn-or-txn-union.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [
+        {
+          "path": "impl/input.py",
+          "sourceSha256": "eaeb8526cb87e4a996c481330b69294aa2a95bbfd3a6552dea5c83c7b6c07189"
+        }
+      ],
+      "options": {
+        "entryPoint": "analyze_file",
+        "cutAllowOverride": "true",
+        "cutAllowEntries": [
+          "GenericSparseVersionedWriteTransaction.__init__",
+          "Neo4jCrossBranchQuery.__init__",
+          "Neo4jQuery.__init__",
+          "Neo4jRevisionHistoryQuery.__init__",
+          "SqlCrossBranchQuery.__init__",
+          "SqlCrossBranchQuery.from_spec",
+          "SqlQuery.__init__",
+          "SqlQueryBase.__init__",
+          "SqlRevisionHistoryQuery.__init__",
+          "VersionedWriteSqlQuery.__init__",
+          "_get_metadata_id_for_revision",
+          "_lookup_doltdb_metadata_by_revision_id",
+          "_revision_id_from_metadata_id",
+          "execute_vector_query",
+          "index_versioned_table_at_revision",
+          "process_trigger_ripple",
+          "search_versioned_table_with_replay"
+        ],
+        "cutAllowSignature": "ZDB3lnXE+wc2ztyJcW5+ZxuYWvWLeUR6pFYjt2h1vhC8GxbFfsSdSM8RG9L27JrZMyadyW/LBazWmrWvfEkECQ==",
+        "apiInputDirs": [
+          "impl"
+        ],
+        "apiSourcePath": "impl/module.py",
+        "decodeError": "false"
+      },
+      "findings": 0,
+      "diagnostics": [],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/allowlist-admin.rr",
+          "sha256": "0e2d2c649cf00c76b30a3b7340f3346d118b8d5885b1078e1f5bf4d9ed82a367"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/conn-union-api.rr",
+          "sha256": "4bd7987b22d80c11af899021f813f627352c767f1a6e30b78bf72f2e85e0dd61"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/conn-union-cli.rr",
+          "sha256": "dec9d9de4b8d3639882ba0f044e47e57b67304b2b5aabcbe0954a70594e460e8"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/conn-union-production.rr",
+          "sha256": "2f8ad68e4ad72bfd48acf74ce732a1cce52d39e472c528c9e642a073325a59c5"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/signing.rr",
+          "sha256": "1febd2ef9d290e65e67ee9ed62e0c8b2affede76cad1ec03b746d73bed78b553"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/print.rr",
+          "sha256": "24809b89ce3f52d039eb4ebd518a49132f18416031fdc192283552497da24055"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/conn-or-txn-union.rr",
+          "sha256": "1a67207a910f4d87f9e8788673d5e00fa4bcf35568027573d6f46a61df535a14"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.054500999999999994,
+          "systemCpuSeconds": 0.0011839999999999993,
+          "peakRssMB": 56.049664,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 3.2999999999838714e-05,
+          "systemCpuSeconds": 3.999999999998449e-05,
+          "peakRssMB": 102.678528,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0002670000000000172,
+          "systemCpuSeconds": 0.0003850000000000034,
+          "peakRssMB": 102.678528,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.094798,
+          "systemCpuSeconds": 0.007961999999999999,
+          "peakRssMB": 91.766784,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.03774500000000003,
+          "systemCpuSeconds": 0.009774000000000001,
+          "peakRssMB": 102.678528,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 1.4583000000012447e-05,
+          "systemCpuSeconds": 0.0010000000000000009,
+          "peakRssMB": 102.678528,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.009810999999999959,
+          "systemCpuSeconds": 0.0007150000000000004,
+          "peakRssMB": 102.678528,
+          "submittedStatements": 34
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.026787000000000005,
+          "systemCpuSeconds": 0.0009590000000000015,
+          "peakRssMB": 102.678528,
+          "submittedStatements": 53
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 3.900000000001125e-05,
+          "systemCpuSeconds": 0.002019,
+          "peakRssMB": 102.678528,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_conn_or_txn_union.py::test_allows_connection_lifecycle_parameter",
+      "check": "conn_or_txn_union",
+      "entry": "analyze_file",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/conn-or-txn-union.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [
+        {
+          "path": "impl/input.py",
+          "sourceSha256": "6ce79aff63f91a8af1e7e0e33bf1d6e219358e26be0caeb2dc714f601d7b9135"
+        }
+      ],
+      "options": {
+        "entryPoint": "analyze_file",
+        "cutAllowOverride": "true",
+        "cutAllowEntries": [
+          "GenericSparseVersionedWriteTransaction.__init__",
+          "Neo4jCrossBranchQuery.__init__",
+          "Neo4jQuery.__init__",
+          "Neo4jRevisionHistoryQuery.__init__",
+          "SqlCrossBranchQuery.__init__",
+          "SqlCrossBranchQuery.from_spec",
+          "SqlQuery.__init__",
+          "SqlQueryBase.__init__",
+          "SqlRevisionHistoryQuery.__init__",
+          "VersionedWriteSqlQuery.__init__",
+          "_get_metadata_id_for_revision",
+          "_lookup_doltdb_metadata_by_revision_id",
+          "_revision_id_from_metadata_id",
+          "execute_vector_query",
+          "index_versioned_table_at_revision",
+          "process_trigger_ripple",
+          "search_versioned_table_with_replay"
+        ],
+        "cutAllowSignature": "ZDB3lnXE+wc2ztyJcW5+ZxuYWvWLeUR6pFYjt2h1vhC8GxbFfsSdSM8RG9L27JrZMyadyW/LBazWmrWvfEkECQ==",
+        "apiInputDirs": [
+          "impl"
+        ],
+        "apiSourcePath": "impl/module.py",
+        "decodeError": "false"
+      },
+      "findings": 0,
+      "diagnostics": [],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/allowlist-admin.rr",
+          "sha256": "0e2d2c649cf00c76b30a3b7340f3346d118b8d5885b1078e1f5bf4d9ed82a367"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/conn-union-api.rr",
+          "sha256": "4bd7987b22d80c11af899021f813f627352c767f1a6e30b78bf72f2e85e0dd61"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/conn-union-cli.rr",
+          "sha256": "dec9d9de4b8d3639882ba0f044e47e57b67304b2b5aabcbe0954a70594e460e8"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/conn-union-production.rr",
+          "sha256": "2f8ad68e4ad72bfd48acf74ce732a1cce52d39e472c528c9e642a073325a59c5"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/signing.rr",
+          "sha256": "1febd2ef9d290e65e67ee9ed62e0c8b2affede76cad1ec03b746d73bed78b553"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/print.rr",
+          "sha256": "24809b89ce3f52d039eb4ebd518a49132f18416031fdc192283552497da24055"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/conn-or-txn-union.rr",
+          "sha256": "1a67207a910f4d87f9e8788673d5e00fa4bcf35568027573d6f46a61df535a14"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.053904999999999995,
+          "systemCpuSeconds": 0.0014149999999999996,
+          "peakRssMB": 56.147968,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 4.7000000000066086e-05,
+          "systemCpuSeconds": 4.49999999999973e-05,
+          "peakRssMB": 103.170048,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.00029600000000000026,
+          "systemCpuSeconds": 0.0005069999999999996,
+          "peakRssMB": 103.170048,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.08075000000000002,
+          "systemCpuSeconds": 0.005922,
+          "peakRssMB": 92.192768,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.03448762599999988,
+          "systemCpuSeconds": 0.009024,
+          "peakRssMB": 103.170048,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 0.00042670799999999787,
+          "systemCpuSeconds": 0.0006320000000000006,
+          "peakRssMB": 103.170048,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.009289000000000047,
+          "systemCpuSeconds": 0.000615000000000001,
+          "peakRssMB": 103.170048,
+          "submittedStatements": 34
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.026388000000000078,
+          "systemCpuSeconds": 0.0008379999999999985,
+          "peakRssMB": 103.170048,
+          "submittedStatements": 51
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 3.999999999992898e-05,
+          "systemCpuSeconds": 0.001793000000000003,
+          "peakRssMB": 103.170048,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_conn_or_txn_union.py::test_invalid_python_is_tolerated",
+      "check": "conn_or_txn_union",
+      "entry": "analyze_file",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/conn-or-txn-union.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [
+        {
+          "path": "impl/input.py",
+          "sourceSha256": "e5c39b5d9e483c96898f2970978fee4d8e5a3814e685d9ab37365a5aa333b5ad"
+        }
+      ],
+      "options": {
+        "entryPoint": "analyze_file",
+        "cutAllowOverride": "true",
+        "cutAllowEntries": [
+          "GenericSparseVersionedWriteTransaction.__init__",
+          "Neo4jCrossBranchQuery.__init__",
+          "Neo4jQuery.__init__",
+          "Neo4jRevisionHistoryQuery.__init__",
+          "SqlCrossBranchQuery.__init__",
+          "SqlCrossBranchQuery.from_spec",
+          "SqlQuery.__init__",
+          "SqlQueryBase.__init__",
+          "SqlRevisionHistoryQuery.__init__",
+          "VersionedWriteSqlQuery.__init__",
+          "_get_metadata_id_for_revision",
+          "_lookup_doltdb_metadata_by_revision_id",
+          "_revision_id_from_metadata_id",
+          "execute_vector_query",
+          "index_versioned_table_at_revision",
+          "process_trigger_ripple",
+          "search_versioned_table_with_replay"
+        ],
+        "cutAllowSignature": "ZDB3lnXE+wc2ztyJcW5+ZxuYWvWLeUR6pFYjt2h1vhC8GxbFfsSdSM8RG9L27JrZMyadyW/LBazWmrWvfEkECQ==",
+        "apiInputDirs": [
+          "impl"
+        ],
+        "apiSourcePath": "impl/module.py",
+        "decodeError": "false"
+      },
+      "findings": 0,
+      "diagnostics": [],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/allowlist-admin.rr",
+          "sha256": "0e2d2c649cf00c76b30a3b7340f3346d118b8d5885b1078e1f5bf4d9ed82a367"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/conn-union-api.rr",
+          "sha256": "4bd7987b22d80c11af899021f813f627352c767f1a6e30b78bf72f2e85e0dd61"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/conn-union-cli.rr",
+          "sha256": "dec9d9de4b8d3639882ba0f044e47e57b67304b2b5aabcbe0954a70594e460e8"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/conn-union-production.rr",
+          "sha256": "2f8ad68e4ad72bfd48acf74ce732a1cce52d39e472c528c9e642a073325a59c5"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/signing.rr",
+          "sha256": "1febd2ef9d290e65e67ee9ed62e0c8b2affede76cad1ec03b746d73bed78b553"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/print.rr",
+          "sha256": "24809b89ce3f52d039eb4ebd518a49132f18416031fdc192283552497da24055"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/conn-or-txn-union.rr",
+          "sha256": "1a67207a910f4d87f9e8788673d5e00fa4bcf35568027573d6f46a61df535a14"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.088418,
+          "systemCpuSeconds": 0.002977999999999998,
+          "peakRssMB": 58.32704,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 4.700000000007476e-05,
+          "systemCpuSeconds": 4.400000000000237e-05,
+          "peakRssMB": 103.579648,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0002770000000000272,
+          "systemCpuSeconds": 0.00033299999999999996,
+          "peakRssMB": 103.579648,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.08535499999999999,
+          "systemCpuSeconds": 0.006423999999999999,
+          "peakRssMB": 94.961664,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.07322245900000002,
+          "systemCpuSeconds": 0.027292000000000004,
+          "peakRssMB": 103.579648,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 0.00015929199999997756,
+          "systemCpuSeconds": 0.0009510000000000005,
+          "peakRssMB": 103.579648,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.010029999999999983,
+          "systemCpuSeconds": 0.000678999999999999,
+          "peakRssMB": 103.579648,
+          "submittedStatements": 34
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.02847999999999995,
+          "systemCpuSeconds": 0.0007669999999999969,
+          "peakRssMB": 103.579648,
+          "submittedStatements": 51
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 4.300000000001525e-05,
+          "systemCpuSeconds": 0.0017890000000000059,
+          "peakRssMB": 103.579648,
+          "submittedStatements": 0
+        }
+      ]
+    }
+  ],
+  "assertionTranslations": [],
+  "configurationBindings": {
+    "conn_or_txn_union": {
+      "nativeCall": 0,
+      "names": [
+        "CONN_OR_TXN_UNION_EXTRACTOR",
+        "ALLOWLIST",
+        "CONNECTION_TYPES",
+        "TRANSACTION_TYPES",
+        "SOURCE_TYPE_TRIGGERS",
+        "_ALLOWLIST_SIGNATURE"
+      ]
+    }
+  },
+  "hostTransfers": [],
+  "originalRecordingSha256": "4078f554b9f1b3857f419bd8a4e68e91684f737d6115dd1b0d24fcf23e90588c",
+  "detectorObservations": [
+    {
+      "test": "scripts/tests/test_lint_conn_or_txn_union.py::test_flags_union_parameter",
+      "check": "conn_or_txn_union",
+      "entry": "analyze_file",
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "expectedSourceResult": [
+        {
+          "kind": "dataclass",
+          "type": "scripts.lint_conn_or_txn_union.Violation",
+          "fields": {
+            "file_path": {
+              "kind": "path",
+              "value": "impl/module.py"
+            },
+            "line_number": 1,
+            "function_name": "load",
+            "violation_type": "UNION",
+            "details": "Parameter 'owner' accepts both: SyncDatabaseConnection | ReadTransaction"
+          }
+        }
+      ],
+      "actualSourceResult": [
+        {
+          "kind": "dataclass",
+          "type": "scripts.lint_conn_or_txn_union.Violation",
+          "fields": {
+            "file_path": {
+              "kind": "path",
+              "value": "impl/module.py"
+            },
+            "line_number": 1,
+            "function_name": "load",
+            "violation_type": "UNION",
+            "details": "Parameter 'owner' accepts both: SyncDatabaseConnection | ReadTransaction"
+          }
+        }
+      ],
+      "expected": [
+        {
+          "path": "impl/module.py",
+          "line": 1,
+          "column": null,
+          "code": "UNION",
+          "message": "Parameter 'owner' accepts both: SyncDatabaseConnection | ReadTransaction",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ],
+      "actual": [
+        {
+          "path": "impl/module.py",
+          "line": 1,
+          "column": null,
+          "code": "UNION",
+          "message": "Parameter 'owner' accepts both: SyncDatabaseConnection | ReadTransaction",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ],
+      "status": "passed"
+    },
+    {
+      "test": "scripts/tests/test_lint_conn_or_txn_union.py::test_flags_separate_connection_and_transaction_parameters",
+      "check": "conn_or_txn_union",
+      "entry": "analyze_file",
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "expectedSourceResult": [
+        {
+          "kind": "dataclass",
+          "type": "scripts.lint_conn_or_txn_union.Violation",
+          "fields": {
+            "file_path": {
+              "kind": "path",
+              "value": "impl/module.py"
+            },
+            "line_number": 1,
+            "function_name": "load",
+            "violation_type": "SEPARATE_PARAMS",
+            "details": "Has both connection (conn: SyncDatabaseConnection) and transaction (txn: ReadTransaction) params"
+          }
+        }
+      ],
+      "actualSourceResult": [
+        {
+          "kind": "dataclass",
+          "type": "scripts.lint_conn_or_txn_union.Violation",
+          "fields": {
+            "file_path": {
+              "kind": "path",
+              "value": "impl/module.py"
+            },
+            "line_number": 1,
+            "function_name": "load",
+            "violation_type": "SEPARATE_PARAMS",
+            "details": "Has both connection (conn: SyncDatabaseConnection) and transaction (txn: ReadTransaction) params"
+          }
+        }
+      ],
+      "expected": [
+        {
+          "path": "impl/module.py",
+          "line": 1,
+          "column": null,
+          "code": "SEPARATE_PARAMS",
+          "message": "Has both connection (conn: SyncDatabaseConnection) and transaction (txn: ReadTransaction) params",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ],
+      "actual": [
+        {
+          "path": "impl/module.py",
+          "line": 1,
+          "column": null,
+          "code": "SEPARATE_PARAMS",
+          "message": "Has both connection (conn: SyncDatabaseConnection) and transaction (txn: ReadTransaction) params",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ],
+      "status": "passed"
+    },
+    {
+      "test": "scripts/tests/test_lint_conn_or_txn_union.py::test_allows_transaction_parameter",
+      "check": "conn_or_txn_union",
+      "entry": "analyze_file",
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "expectedSourceResult": [],
+      "actualSourceResult": [],
+      "expected": [],
+      "actual": [],
+      "status": "passed"
+    },
+    {
+      "test": "scripts/tests/test_lint_conn_or_txn_union.py::test_allows_connection_lifecycle_parameter",
+      "check": "conn_or_txn_union",
+      "entry": "analyze_file",
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "expectedSourceResult": [],
+      "actualSourceResult": [],
+      "expected": [],
+      "actual": [],
+      "status": "passed"
+    },
+    {
+      "test": "scripts/tests/test_lint_conn_or_txn_union.py::test_invalid_python_is_tolerated",
+      "check": "conn_or_txn_union",
+      "entry": "analyze_file",
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "expectedSourceResult": [],
+      "actualSourceResult": [],
+      "expected": [],
+      "actual": [],
+      "status": "passed"
+    }
+  ],
+  "pythonHashSeed": null,
+  "executionIsolation": "One owned persistent cache per assertion shard; shared-cache concurrency is tested separately",
+  "semanticFallbacks": [],
+  "hostProtocolCalls": [],
+  "casesWithoutNativeCalls": []
+}

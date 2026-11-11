@@ -1742,7 +1742,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/conn-or-txn-union.rr",
-      "sha256": "32bf41d7730246f725033b1c97bc72512ad5da339099861dfdec2d6f0cf203cf",
+      "sha256": "1a67207a910f4d87f9e8788673d5e00fa4bcf35568027573d6f46a61df535a14",
       "origin": "authored",
       "upstreamPath": "scripts/lint_conn_or_txn_union.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1751,6 +1751,11 @@
           "before": "c482a815008de4cbdddb5d89fcf65b232d3ad128efdc38eb899a49937d34d242",
           "after": "84d591bf0715a0739725daafa113dc7a54b384517982f8a674573c30a0177d0a",
           "reason": "Exact explicit-file scope, including callers outside production roots and the bare .py filename"
+        },
+        {
+          "before": "32bf41d7730246f725033b1c97bc72512ad5da339099861dfdec2d6f0cf203cf",
+          "after": "1a67207a910f4d87f9e8788673d5e00fa4bcf35568027573d6f46a61df535a14",
+          "reason": "Native batched CLI and signing administration; preserve typed supplied facts including nonfinite values and tuple containers"
         }
       ]
     },
@@ -2966,7 +2971,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/conn-union-api.rr",
-      "sha256": "77c4c165609dbb82b90626b8aea7f757594dc2a62eb1e1487b066f800765b8c1",
+      "sha256": "4bd7987b22d80c11af899021f813f627352c767f1a6e30b78bf72f2e85e0dd61",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_conn_or_txn_union.py"
@@ -2977,6 +2982,20 @@
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_conn_or_txn_union.py",
       "sha256": "2f8ad68e4ad72bfd48acf74ce732a1cce52d39e472c528c9e642a073325a59c5"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/conn-union-cli.rr",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_conn_or_txn_union.py",
+      "sha256": "dec9d9de4b8d3639882ba0f044e47e57b67304b2b5aabcbe0954a70594e460e8"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/allowlist-admin.rr",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_conn_or_txn_union.py",
+      "sha256": "0e2d2c649cf00c76b30a3b7340f3346d118b8d5885b1078e1f5bf4d9ed82a367"
     }
   ],
   "rules": [
@@ -3650,15 +3669,15 @@
       "batch": 2,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-conn-or-txn-union.json",
       "legacySha256": "8d783578a716e46d038ed1f28d288355f48f5f40338123e13a38a4f6f0901daa",
-      "status": "draft",
+      "status": "full-contract-passed",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/conn-or-txn-union.rr",
-      "ruleSha256": "32bf41d7730246f725033b1c97bc72512ad5da339099861dfdec2d6f0cf203cf",
+      "ruleSha256": "1a67207a910f4d87f9e8788673d5e00fa4bcf35568027573d6f46a61df535a14",
       "migrationProgress": {
-        "status": "component-and-production-contracts-passed",
+        "status": "full-contract-passed",
         "originalCasesPerAPI": 5,
         "originalPositiveObservationsPerAPI": 2,
         "scannerCasesPerAPI": 64,
-        "verifiedNativeExecutions": 370,
+        "verifiedNativeExecutions": 1226,
         "checkpoints": [
           {
             "path": "gate/data-layer/fixtures/host/data-layer-port/rr-conn-union-scanner-finalfcce.json.gz",
@@ -3673,12 +3692,62 @@
             "sha256": "0680c3ee45c2c644198745529f9c2da2b5d904c555865b2960b9a974350bcf3d"
           }
         ],
-        "remaining": [
-          "CLI and signing administration",
-          "Persistent updates and behavior-removal controls",
-          "Mechanical replay of earlier batch-two inputs",
-          "Final single-cohort scanner refresh and admission"
-        ]
+        "remaining": []
+      },
+      "evidence": {
+        "assertions": 5,
+        "positives": 2,
+        "failures": 0,
+        "skipped": 0,
+        "semanticFallbacks": 0,
+        "ruleSha256": "1a67207a910f4d87f9e8788673d5e00fa4bcf35568027573d6f46a61df535a14",
+        "engineCommit": "4e07746800e7fb958a57c5208c1ea956bc8f7412",
+        "engineSha256": "f4db14313662e14ca1e1924296c91acb48107035461e85db4a2977d61b6ce6e2",
+        "corpusSha256": "4078f554b9f1b3857f419bd8a4e68e91684f737d6115dd1b0d24fcf23e90588c",
+        "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "originalInventory": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory-v2.json",
+          "sha256": "a3636d7f8dbb210cfec64aa05b20ff37a97899365b68b3ba2a4ab855ccdda0db"
+        },
+        "reports": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-conn-union-complete-native-snapshot.json",
+            "sha256": "2064411e1be4539970705fccad65070babf78e44bb1999a65a65dc9a655b94af"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-conn-union-complete-native-workspace.json",
+            "sha256": "7534746f48602acaabcc6d852af5fd67f5f7c32eed3c72048191dad00d037117"
+          }
+        ],
+        "acceptanceCheckpoints": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-conn-union-complete-finalfcce.json.gz",
+            "sha256": "1b4718a8ab74458f423a1db24d4ef1455baeea951fe96b7fcf199b470d98eb22"
+          }
+        ],
+        "supplemental": {
+          "check": "conn_or_txn_union",
+          "originalCasesPerAPI": 5,
+          "originalPositiveObservationsPerAPI": 2,
+          "scannerCasesPerAPI": 64,
+          "nativeExecutions": 1226,
+          "admitted": true,
+          "fullMigrationAcceptance": false,
+          "casesPerAPI": {
+            "scanner": 64,
+            "components": 118,
+            "production": 18,
+            "cli": 36,
+            "legacy": 15
+          },
+          "persistentStepsPerAPI": 22,
+          "controls": 24,
+          "hostProtocols": {
+            "parser-help": "Unchanged argparse help exits before rule evaluation.",
+            "parser-bad-option": "Unchanged argparse rejects the unknown option before rule evaluation."
+          }
+        },
+        "scope": "All original assertions, all retained batch-two inputs, scanners, registered extraction, type helpers, supplied facts, CLI, production, persistent updates and removal controls through both native APIs."
       }
     },
     {

@@ -11,7 +11,7 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 The latest registered root CLI is `f4db14313662e14c…`, built from native repair commit `4e0774680`.
-It includes Final `fcce32b26`. Generated-index sources passes complete acceptance on this cohort.
+It includes Final `fcce32b26`. Generated-index sources and connection-union pass complete acceptance on this cohort.
 The thirteen earlier admissions retain their recorded engine versions.
 
 Build and develop the engine in this repository root.
@@ -3437,3 +3437,40 @@ The inventory remains fourteen admitted rules, eighty-five drafts, and one absen
 The native file-error reader still constructs line vectors for successful reads.
 That work is unnecessary for an error-only consumer. It is a performance observation, not a missing rule representation feature.
 No full-repository cold benchmark or additional Linear ticket was created.
+
+### 2026-11-11 — Complete connection-union migration
+
+The complete receipt certifies 1,226 native executions on the existing Final fcce binary.
+Both APIs pass all five unchanged original tests, including both finding-positive observations.
+Each API also passes 64 scanner cases, 118 component cases, eighteen production cases, and 36 CLI cases.
+The legacy replay retains all fifteen connection-union inputs: five original recordings and ten probes from batch two.
+The earlier commentary count of seventeen was incorrect. The admission checks the exact corpus identities and hashes.
+
+Each API passes 22 persistent repository steps, including unchanged files, deletion, aliases, linked roots, and signature changes.
+All 24 behavior-removal controls produce their intended parity failures without invalid native programs or source callbacks.
+Controls cover union detection, separate parameters, allowlists, argument precedence, helper traversal, supplied facts, field types, signatures, production, and CLI behavior.
+
+CLI selection and rendering now run in native relations. One document batch serves all selected CLI files.
+The adapter transfers argparse values, filesystem observations, passive DTOs, and native output rows.
+The shared allowlist administration library supplies verification, signing requests, assignment replacement, and exact error messages.
+Signing tests remove the user key from the worker environment and use only the known fixture seed.
+Rules never invoke Python. Argparse help and unknown-option rejection remain the two identified host protocols.
+
+Three new reporter cases exposed losses from nonfinite values and tuple containers in the JSON envelope.
+The typed transport preserves those values as data. Native relations retain valid rows and apply the source's strict type checks.
+Exception recording now supports Python type objects. Two unit tests reproduce the previous serialization failure.
+
+The CLI callback tests also exposed an unstable fixture path on macOS: `/var` resolves to `/private/var`.
+The fixture now resolves its scratch root before recording. Source and native runs retain the same callback arguments and complete streams.
+Separate red receipts preserve the source-callback failure, typed-envelope failures, and fixture path mismatch with their actual consumed bytes.
+
+The admission tests were committed before the validator. All fourteen admission tests now pass.
+They reject missing positives, missing cases, changed streams, missing native calls, mixed engines, invalid controls, changed snapshots, and incomplete updates.
+All 500 migration tooling tests pass, with 165 subtests. The manifest inventory audit passes.
+No engine source changed and no compilation was required. Execution counts do not claim a performance improvement.
+
+The complete receipt is `rr-conn-union-complete-finalfcce.json.gz`.
+The inventory now records fifteen admissions, eighty-four drafts, and one absent translation.
+Earlier admissions retain their recorded engine versions. This receipt does not certify those rules on the current binary.
+The remote Final branch and sibling worktree still point to `fcce32b26`; that commit is already merged here.
+No full-repository cold run or additional Linear ticket was created.

@@ -5,6 +5,8 @@ from functools import wraps
 import inspect
 import json
 import sys
+from typed_fact_transport import encode_bundles
+from conn_union_cli_port import install as install_cli
 
 CHECK='conn_or_txn_union'
 
@@ -117,10 +119,9 @@ def install(backend,module,detectors=False):
         if any(r['code']!='CUT_DIRECTORY' for r in rows):raise ValueError('Unexpected native union directory selection')
         directories=tuple(Path(r['parameters']['directory']) for r in sorted(rows,key=lambda r:(r['parameters']['rank'],r['parameters']['directory'])))
         def report(view):
-            from fact_transport import encode_bundles
             family=module.CONN_OR_TXN_UNION_EXTRACTOR.extractor_id
             bundles=encode_bundles([dict(path=str(key),source_path=str(key),value=bundle.facts.get(family)) for key,bundle in view.files.items()])
-            rows=backend.native(CHECK,'_report_facts',[dict(path='conn-reporter-facts.json',source=json.dumps(dict(bundles=bundles),ensure_ascii=False))],dict(signed_options(module),cutOwnerRoot=str(root)))
+            rows=backend.native(CHECK,'_report_facts',[dict(path='conn-reporter-facts.json',source=json.dumps(dict(bundles=bundles),ensure_ascii=False,allow_nan=False))],dict(signed_options(module),cutOwnerRoot=str(root)))
             emit_logs(rows)
             if any(r['code'] not in {'SF_ROOT','SF_REPORT','CUT_SIGNATURE_ERROR','CUT_SIGNATURE_LOG'} for r in rows):raise ValueError('Unexpected native union report')
             reports=[]
@@ -131,13 +132,30 @@ def install(backend,module,detectors=False):
         return module.LinterPlugin(**json.loads(config['plugin']),file_scope=module.FileScopeSpec(directories=directories,include_tests=False),required_facts=(module.CONN_OR_TXN_UNION_EXTRACTOR,),reporter=report)
     backend.replace(module,'conn_or_txn_union_plugin',plugin)
     module._rerail_union_extract=lambda path,source:extract(backend,module,path,source)
-    if detectors:
-        original=module.analyze_file;signature=inspect.signature(original)
-        @wraps(original)
-        def analyze(*args,**kwargs):
-            values=signature.bind(*args,**kwargs);values.apply_defaults()
-            return scan(backend,'analyze_file',module,values.arguments)
-        backend.replace(module,'analyze_file',analyze)
+    original=module.analyze_file;signature=inspect.signature(original)
+    @wraps(original)
+    def analyze(*args,**kwargs):
+        values=signature.bind(*args,**kwargs);values.apply_defaults()
+        return scan(backend,'analyze_file',module,values.arguments)
+    analyze._rerail_union_scanner=True
+    backend.replace(module,'analyze_file',analyze)
+    install_cli(backend,module,config,batch)
+
+
+def batch(backend,module,paths,root):
+    files=[];logical=[];errors={}
+    for i,path in enumerate(paths):
+        try:source=path.read_text(encoding='utf-8')
+        except UnicodeDecodeError as error:errors[i]=error;source=''
+        except OSError:source=''
+        logical.append(path.relative_to(root).as_posix() if path.is_relative_to(root) else path.as_posix().lstrip('/'))
+        files.append(dict(path=f'impl/cli-{i}.py',source=source))
+    rows=backend.native(CHECK,'_cli_scan',files,dict(signed_options(module),apiInputDirs=['impl'],cutApiBuffers=[r['path'] for r in files],cutApiPaths=logical,cutDecodeErrors=[str(int(i in errors)) for i in range(len(files))]))
+    bad=[r for r in rows if r['code']=='CUT_CLI_DECODE_ERROR']
+    if bad:raise errors[bad[0]['parameters']['ordinal']]
+    if any(r['code'] not in {'UNION','SEPARATE_PARAMS'} for r in rows):raise ValueError('Unexpected native CLI scan')
+    positions={r['path']:i for i,r in enumerate(files)}
+    return [module.Violation(paths[positions[r['path']]],r['line'],r['parameters']['function_name'],r['code'],r['parameters']['details']) for r in sorted(rows,key=lambda r:(positions[r['path']],r['parameters']['ordinal']))]
 
 
 def scan(suite, entry, module, args):

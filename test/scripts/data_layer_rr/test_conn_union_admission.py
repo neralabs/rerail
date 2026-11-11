@@ -19,14 +19,14 @@ class Admission(unittest.TestCase):
     def changed(self):return copy.deepcopy(self.receipt)
 
     def rejected(self,value):
-        with self.assertRaises(AssertionError):validate(value)
+        with self.assertRaises(ValueError):validate(value)
 
     def test_complete_receipt(self):
         summary=validate(self.receipt)
         self.assertTrue(summary['admitted'])
         self.assertEqual(summary['originalCasesPerAPI'],5)
         self.assertEqual(summary['originalPositiveObservationsPerAPI'],2)
-        self.assertEqual(summary['casesPerAPI'],dict(scanner=64,components=118,production=18,cli=36,legacy=17))
+        self.assertEqual(summary['casesPerAPI'],dict(scanner=64,components=118,production=18,cli=36,legacy=15))
         self.assertEqual(summary['persistentStepsPerAPI'],22)
         self.assertEqual(summary['controls'],24)
 

@@ -6,6 +6,8 @@ import json
 
 
 def canonical(value, root=None):
+    if isinstance(value,type):
+        return dict(kind='type',name=value.__module__+'.'+value.__qualname__)
     if isinstance(value, bytes):
         return dict(kind='bytes', hex=value.hex())
     if isinstance(value, Enum):

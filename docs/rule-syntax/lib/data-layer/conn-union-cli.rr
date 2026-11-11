@@ -1,0 +1,92 @@
+#include "data-layer/allowlist-admin.rr"
+.violation UnionCliAction(at: span,value: symbol) code "CUT_CLI_ACTION" "CLI action"
+UnionCliAction(@place("",0),"sign") :- option("entryPoint","_cut_cli_start"),option("cutCliSign","1").
+UnionCliAction(@place("",0),"verify") :- option("entryPoint","_cut_cli_start"),option("cutCliSign","0"),option("cutCliSkipSignature","0").
+UnionCliAction(@place("",0),"resolve") :- option("entryPoint","_cut_cli_start"),option("cutCliSign","0"),option("cutCliSkipSignature","1").
+UnionCliAction(@place("",0),"resolve") :- option("entryPoint","_cut_cli_verified"),option("cutCliResult","1").
+.violation UnionCliExit(at: span,status: number) code "CUT_CLI_EXIT" "CLI exit status"
+UnionCliExit(@place("",0),0) :- option("entryPoint","_cut_cli_signed"),option("cutCliResult","1").
+UnionCliExit(@place("",0),1) :- option("entryPoint","_cut_cli_signed"),option("cutCliResult","0").
+UnionCliExit(@place("",0),1) :- option("entryPoint","_cut_cli_verified"),option("cutCliResult","0").
+.violation UnionCliOutput(at: span,phase: number,path_key: symbol,sign: number,length: number,digits: symbol,ordinal: number,text: symbol) code "CUT_CLI_OUTPUT" "CLI output"
+UnionCliOutput(@place("",0),0,"",0,0,"",0,t) :- option("entryPoint","_cut_cli_verified"),option("cutCliResult","0"),cut_setting("cli_verify_failure",t).
+
+.violation UnionCliRoot(at: span,path: symbol) code "CUT_CLI_ROOT" "CLI root"
+UnionCliRoot(@place("",0),p) :- option("entryPoint","_cut_cli_root"),option("cutCliHasRoot","1"),option("cutCliRoot",p).
+UnionCliRoot(@place("",0),@dir(@dir(@dir(p)))) :- option("entryPoint","_cut_cli_root"),option("cutCliHasRoot","0"),option("cutCliDiscoverySource",p).
+.decl cut_cli_arg(i: number,path: symbol)
+cut_cli_arg(i,p) :- option("entryPoint","_cut_cli_root"),option("cutCliHasDirs","1"),option_item("cutCliDirs",i,p).
+cut_cli_arg(i,p) :- option("entryPoint","_cut_cli_root"),option("cutCliHasDirs","0"),option("cutCliHasDefaults","1"),option_item("cutCliDefaults",i,p).
+cut_cli_arg(0,"public") :- option("entryPoint","_cut_cli_root"),option("cutCliHasDirs","0"),option("cutCliHasDefaults","0").
+.violation UnionCliArgument(at: span,ordinal: number,path: symbol) code "CUT_CLI_ARGUMENT" "CLI directory argument"
+UnionCliArgument(@place("",0),i,p) :- cut_cli_arg(i,p).
+.violation UnionCliNeedsPublic(at: span) code "CUT_CLI_NEEDS_PUBLIC" "directory observations required"
+UnionCliNeedsPublic(@place("",0)) :- cut_cli_arg(_,"public").
+.decl cut_cli_layer(name: symbol)
+cut_cli_layer(n) :- cut_directory(_,n),cut_setting("layer_regex",r),match(r,n).
+.decl cut_cli_modern()
+cut_cli_modern() :- cut_directory(_,"data_layer").
+cut_cli_modern() :- cut_directory(_,"_internal").
+cut_cli_modern() :- cut_cli_layer(_).
+.decl cut_cli_default(rank: number,path: symbol)
+cut_cli_default(0,"impl") :- cut_cli_modern(),cut_directory(_,"impl").
+cut_cli_default(1,"data_layer") :- cut_cli_modern(),cut_directory(_,"data_layer").
+cut_cli_default(2,"_internal") :- cut_cli_modern(),cut_directory(_,"_internal").
+cut_cli_default(3,n) :- cut_cli_layer(n).
+cut_cli_default(0,"api") :- !cut_cli_modern(),cut_directory(_,"api").
+cut_cli_default(1,"impl") :- !cut_cli_modern(),cut_directory(_,"impl").
+.decl cut_cli_expanded(i: number,rank: number,path: symbol)
+cut_cli_expanded(i,0,p) :- option("entryPoint","_cut_cli_expand"),option_item("cutCliRawDirs",i,p),p!="public".
+cut_cli_expanded(i,r,p) :- option("entryPoint","_cut_cli_expand"),option_item("cutCliRawDirs",i,"public"),cut_cli_default(r,p).
+.decl cut_cli_public()
+cut_cli_public() :- option_item("cutCliRawDirs",_,"public").
+.decl cut_cli_previous(i: number,rank: number,path: symbol)
+cut_cli_previous(i,r,p) :- cut_cli_expanded(i,r,p),cut_cli_expanded(j,s,p),(j<i;j=i,s<r).
+.violation UnionCliDirectory(at: span,argument: number,rank: number,path: symbol) code "CUT_CLI_DIRECTORY" "CLI directory"
+UnionCliDirectory(@place("",0),i,r,p) :- cut_cli_expanded(i,r,p),(!cut_cli_public();!cut_cli_previous(i,r,p)).
+.violation UnionCliRequested(at: span,ordinal: number,path: symbol) code "CUT_CLI_REQUESTED" "requested scan path"
+UnionCliRequested(@place("",0),i,p) :- option("entryPoint","_cut_cli_requested"),option_item("cutCliPositional",i,p).
+UnionCliRequested(@place("",0),i,p) :- option("entryPoint","_cut_cli_requested"),!option_item("cutCliPositional",_,_),option_item("cutCliExpandedDirs",i,p).
+.decl cut_cli_cache(i: number)
+cut_cli_cache(i) :- option_item("cutCliRelative",i,p),match("(?s)(?:.*/)?__pycache__/.*",p).
+.violation UnionCliFile(at: span,ordinal: number,path: symbol) code "CUT_CLI_FILE" "CLI file"
+UnionCliFile(@place("",0),i,p) :- option("entryPoint","_cut_cli_files"),option_item("cutCliCandidates",i,p),option_item("cutCliKinds",i,"direct").
+UnionCliFile(@place("",0),i,p) :- option("entryPoint","_cut_cli_files"),option_item("cutCliCandidates",i,p),option_item("cutCliKinds",i,"walk"),option_item("cutCliNames",i,n),suffix(".py",n),!prefix("test_",n),!cut_cli_cache(i).
+
+// One document batch serves all selected CLI files. Caller paths remain data.
+cut_api_path(d,p) :- doc(d,b,_),option_item("cutApiBuffers",i,b),option_item("cutApiPaths",i,p).
+.decl cut_api_scan()
+cut_api_scan() :- option("entryPoint","analyze_file").
+cut_api_scan() :- option("entryPoint","_cli_scan").
+.decl cut_cli_bad_decode(i: number)
+cut_cli_bad_decode(i) :- option("entryPoint","_cli_scan"),option_item("cutDecodeErrors",i,"1").
+.violation UnionCliDecodeError(at: span,ordinal: number) code "CUT_CLI_DECODE_ERROR" "source decoding failed"
+UnionCliDecodeError(@place("",0),i) :- cut_cli_bad_decode(i),i=min j:{cut_cli_bad_decode(j)}.
+
+.decl cut_cli_path(i: number,value: symbol)
+.input cut_cli_path(IO=json,filename="conn-cli-values.json",path="/items/*/path",projection="python-str")
+.decl cut_cli_line(i: number,value: symbol)
+.input cut_cli_line(IO=json,filename="conn-cli-values.json",path="/items/*/line",projection="python-str")
+.decl cut_cli_line_type(i: number,value: symbol)
+.input cut_cli_line_type(IO=json,filename="conn-cli-values.json",path="/items/*/line",projection="type")
+.decl cut_cli_line_json(i: number,value: symbol)
+.input cut_cli_line_json(IO=json,filename="conn-cli-values.json",path="/items/*/line",projection="json")
+.decl cut_cli_function(i: number,value: symbol)
+.input cut_cli_function(IO=json,filename="conn-cli-values.json",path="/items/*/function",projection="python-str")
+.decl cut_cli_type(i: number,value: symbol)
+.input cut_cli_type(IO=json,filename="conn-cli-values.json",path="/items/*/type",projection="python-str")
+.decl cut_cli_details(i: number,value: symbol)
+.input cut_cli_details(IO=json,filename="conn-cli-values.json",path="/items/*/details",projection="python-str")
+.decl cut_cli_integer(i: number,value: symbol)
+cut_cli_integer(i,v) :- cut_cli_line_type(i,"number"),cut_cli_line_json(i,v),@count_matches("[.eE]",v)=0.
+cut_cli_integer(i,"1") :- cut_cli_line_type(i,"boolean"),cut_cli_line_json(i,"true").
+cut_cli_integer(i,"0") :- cut_cli_line_type(i,"boolean"),cut_cli_line_json(i,"false").
+sf_line(-1,i,v,j) :- option("entryPoint","_cut_cli_report"),cut_cli_integer(i,v),cut_cli_line_json(i,j).
+.decl cut_cli_count(n: number)
+cut_cli_count(n) :- option("entryPoint","_cut_cli_report"),n=count:{cut_cli_path(_,_)}.
+UnionCliOutput(@place("",0),0,"",0,0,"",0,t) :- cut_cli_count(0),cut_setting("cli_clean",t).
+UnionCliOutput(@place("",0),0,"",0,0,"",0,t) :- cut_cli_count(n),n>0,cut_setting("cli_header",t).
+UnionCliOutput(@place("",0),1,p,s,n,d,i,cat("  ",p,":",l,"\n    Function: ",f,"\n    Type: ",c,"\n    ",m,"\n\n")) :- option("entryPoint","_cut_cli_report"),cut_cli_path(i,p),cut_cli_line(i,l),cut_cli_integer(i,num),sf_line_key(num,s,n,d),cut_cli_function(i,f),cut_cli_type(i,c),cut_cli_details(i,m).
+UnionCliOutput(@place("",0),2,"",0,0,"",0,cat(a,to_string(n),b,c)) :- cut_cli_count(n),n>0,cut_setting("cli_count_prefix",a),cut_setting("cli_count_suffix",b),cut_setting("cli_footer",c).
+UnionCliExit(@place("",0),1) :- cut_cli_count(n),n>0,option("cutCliCheck","1").
+UnionCliExit(@place("",0),0) :- cut_cli_count(n),(n=0;option("cutCliCheck","0")).

@@ -101,14 +101,18 @@ sf_shape(b,r,k) :- cut_shape(b,r,k).
 sf_member(b,r,f,"line") :- cut_member(b,r,f,"line_number").
 sf_member(b,r,f,k) :- cut_member(b,r,f,k),k!="line",k!="line_number".
 .decl cut_value(b: number, r: number, f: number, value: symbol)
-.input cut_value(IO=json,filename="conn-reporter-facts.json",path="/bundles/*/rows/*/fields/*/value",projection="python-str")
+.input cut_value(IO=json,filename="conn-reporter-facts.json",path="/bundles/*/rows/*/fields/*/encoded/1",projection="python-str")
 sf_value(b,r,f,v) :- cut_value(b,r,f,v).
 .decl cut_value_type(b: number, r: number, f: number, kind: symbol)
-.input cut_value_type(IO=json,filename="conn-reporter-facts.json",path="/bundles/*/rows/*/fields/*/value",projection="type")
-sf_value_type(b,r,f,k) :- cut_value_type(b,r,f,k).
+.input cut_value_type(IO=json,filename="conn-reporter-facts.json",path="/bundles/*/rows/*/fields/*/encoded/0",projection="python-str")
+sf_value_type(b,r,f,"number") :- cut_value_type(b,r,f,"int").
+sf_value_type(b,r,f,"boolean") :- cut_value_type(b,r,f,"bool").
+sf_value_type(b,r,f,"string") :- cut_value_type(b,r,f,"str").
+sf_value_type(b,r,f,k) :- cut_value_type(b,r,f,k),k!="int",k!="bool",k!="str".
 .decl cut_value_json(b: number, r: number, f: number, value: symbol)
-.input cut_value_json(IO=json,filename="conn-reporter-facts.json",path="/bundles/*/rows/*/fields/*/value",projection="json")
-sf_value_json(b,r,f,v) :- cut_value_json(b,r,f,v).
+.input cut_value_json(IO=json,filename="conn-reporter-facts.json",path="/bundles/*/rows/*/fields/*/encoded/1",projection="json")
+sf_value_json(b,r,f,v) :- cut_value_json(b,r,f,v),!cut_value_type(b,r,f,"int").
+sf_value_json(b,r,f,v) :- cut_value(b,r,f,v),cut_value_type(b,r,f,"int").
 sf_path_input(b,r,p) :- sf_active(b,r),sf_source_bundle(b,p).
 sf_message(b,r,cat(f,": ",d)) :- sf_active(b,r),sf_field(b,r,"function_name",f),sf_field(b,r,"details",d).
 sf_excluded(b) :- sf_source_bundle(b,p),match("(?s)(?:.*/)?test_[^/]*",p).
