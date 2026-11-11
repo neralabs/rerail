@@ -471,11 +471,11 @@ impl Parser<'_> {
                     return self.fail("a pragma's two strings");
                 };
                 self.i += 2;
-                if key != crate::code_rule_dsl::typing::cross_rounds::PRAGMA || k.parse::<usize>().is_err() {
+                if key != PRAGMA || k.parse::<usize>().is_err() {
                     self.i -= 2;
                     return self.fail("`.pragma \"cross-rounds\" \"k\"`");
                 } else {
-                    prog.settings.push(crate::code_rule_dsl::typing::cross_rounds::setting(&k));
+                    prog.settings.push(setting(&k));
                 }
             }
             "kindset" => {
@@ -924,3 +924,26 @@ mod data_layer_census_tests;
 #[cfg(test)]
 mod data_layer_tests;
 pub(in crate::code_rule_dsl) mod yaml;
+
+/// The pragma by which a program asks for bounded rounds (decision 0056): `.pragma "cross-rounds" "4"`. A typing
+/// program declares it: its cross-file recursion is over interface summaries, cut at `k` file crossings, with the
+/// pending round when it also declares `unconverged`. A program that does not declare it (a rule) has its
+/// cross-file part run as one fixpoint, which no chain length cuts.
+pub(crate) const PRAGMA: &str = "cross-rounds";
+
+/// The program setting `.pragma "cross-rounds" "k"` lowers to (from `.rr`, or the `.rdl` copies' same line).
+pub(crate) fn setting(k: &str) -> (String, String) {
+    ("pragma".to_owned(), format!("\"{PRAGMA}\" \"{k}\""))
+}
+
+/// A base relation's document column, including raw text views.
+pub(crate) fn document_column(relation: &str) -> Option<usize> {
+    match relation {
+        "node" | "doc" | "pkg" | "path_part" | "file_name" | "syntax_error" | "cpython_syntax_error" |
+        "source" | "src_line" | "src_line_lf" | "tape_line" | "split_line" | "lf_line" | "line_count" | "parsed"
+        // Decision 0055's: a guest and its host are one file (`corpus::guests` attributes its rows to the host).
+        | "doc_role" | "doc_root" | "tape_of" | "guest" | "host_node" => Some(0),
+        "docof" => Some(1),
+        _ => None,
+    }
+}

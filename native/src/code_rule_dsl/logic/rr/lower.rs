@@ -320,8 +320,8 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
                     l.prog.demand.extend(relations.split(',').map(str::trim).filter(|r| !r.is_empty()).map(str::to_owned));
                 }
                 // `.pragma "cross-rounds" "k"` (decision 0056): kept as written, for the corpus runner.
-                [key, k] if key == crate::code_rule_dsl::typing::cross_rounds::PRAGMA && k.parse::<usize>().is_ok() => {
-                    l.prog.settings.push(crate::code_rule_dsl::typing::cross_rounds::setting(k));
+                [key, k] if key == crate::code_rule_dsl::logic::front::PRAGMA && k.parse::<usize>().is_ok() => {
+                    l.prog.settings.push(crate::code_rule_dsl::logic::front::setting(k));
                 }
                 // `.pragma "cross-memo" "r s"` (decision 0076): cross-file relations memoised per import component.
                 [key, rels] if key == "cross-memo" => {
@@ -1223,7 +1223,7 @@ impl Lowerer {
             let loc = self.siblings.iter().find_map(|l| match l {
                 Lit::Atom { rel, args, neg: false } => {
                     let decl = self.prog.decls.get(rel);
-                    let doc = crate::code_rule_dsl::typing::file_local::document_column(rel);
+                    let doc = crate::code_rule_dsl::logic::front::document_column(rel);
                     args.iter().enumerate().find_map(|(c, a)| match a {
                         STerm::Var(v) if Some(c) == doc || decl.and_then(|d| d.get(c)).is_some_and(|(_, t)| t == "node") => Some(v.clone()),
                         _ => None,

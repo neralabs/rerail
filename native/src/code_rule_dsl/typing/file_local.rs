@@ -347,17 +347,7 @@ fn close_under(vars: &mut std::collections::BTreeSet<String>, equal: &[(String, 
     }
 }
 
-/// A base relation's document column, including raw text views.
-pub(crate) fn document_column(relation: &str) -> Option<usize> {
-    match relation {
-        "node" | "doc" | "pkg" | "path_part" | "file_name" | "syntax_error" | "cpython_syntax_error" |
-        "source" | "src_line" | "src_line_lf" | "tape_line" | "split_line" | "lf_line" | "line_count" | "parsed"
-        // Decision 0055's: a guest and its host are one file (`corpus::guests` attributes its rows to the host).
-        | "doc_role" | "doc_root" | "tape_of" | "guest" | "host_node" => Some(0),
-        "docof" => Some(1),
-        _ => None,
-    }
-}
+pub(crate) use crate::code_rule_dsl::logic::front::document_column;
 
 /// Base relations whose rows a chunk makes for itself and that name no document (decision 0058 §4).
 const CHUNK_VALUES: [&str; 3] = ["parse_of", "unparse_of", "splice_of"];

@@ -42,17 +42,9 @@ pub(crate) const K: usize = 4;
 /// that read `unconverged(1)` make unknown what a missing row would otherwise decide.
 pub(crate) const UNCONVERGED: &str = "unconverged";
 
-/// The pragma by which a program asks for bounded rounds (decision 0056): `.pragma "cross-rounds" "4"`. A typing
-/// program declares it: its cross-file recursion is over interface summaries, cut at `k` file crossings, with the
-/// pending round when it also declares `unconverged`. A program that does not declare it (a rule) has its
-/// cross-file part run as one fixpoint, which no chain length cuts.
-pub(crate) const PRAGMA: &str = "cross-rounds";
+pub(crate) use crate::code_rule_dsl::logic::front::PRAGMA;
 
 /// The rounds `prog` declares (`PRAGMA`), if it declares them.
-/// The program setting `.pragma "cross-rounds" "k"` lowers to (from `.rr`, or the `.rdl` copies' same line).
-pub(crate) fn setting(k: &str) -> (String, String) {
-    ("pragma".to_owned(), format!("\"{PRAGMA}\" \"{k}\""))
-}
 
 pub(crate) fn declared(prog: &Program) -> Option<usize> {
     prog.settings.iter().filter(|(key, _)| key == "pragma").find_map(|(_, text)| {
