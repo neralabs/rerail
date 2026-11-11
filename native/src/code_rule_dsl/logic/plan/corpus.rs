@@ -1308,7 +1308,8 @@ fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store
     let path = store.database_path().to_path_buf();
     let late = Arc::clone(late);
     let mut reading = reading;
-    store.write_back(
+    // Alone: collection, on its own connection, reads the manifest it starts after.
+    store.write_back_alone(
         "the run's manifest",
         0,
         Vec::new(),
@@ -5982,7 +5983,7 @@ fn run_observed(
         let outcome = store.written();
         drop(waited);
         let w = store.written_so_far();
-        crate::code_rule_dsl::logic::profile::decision("write-back (decision 0102)", || format!("{} writes queued behind the run, {:.1} MB, {:.3} s of the writer's CPU", w.jobs, w.bytes as f64 / 1048576.0, w.cpu));
+        crate::code_rule_dsl::logic::profile::decision("write-back (decision 0102)", || format!("{} writes queued behind the run in {} transactions, {:.1} MB, {:.3} s of the writer's CPU", w.jobs, w.batches, w.bytes as f64 / 1048576.0, w.cpu));
         outcome.map_err(|e| Error::Plan(e.to_string()))?;
     }
     crate::code_rule_dsl::logic::profile::decision("chunks", || format!("{chunks} chunks of about {chunk_nodes} nodes; the next chunk is parsed and batched on a worker while this one runs"));

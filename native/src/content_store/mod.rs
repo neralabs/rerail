@@ -642,7 +642,13 @@ impl Drop for ContentStore {
     /// Appends the atoms still pending (decision 0049 §4.3); another handle or the next open
     /// writes them if this fails, and nothing durable names them meanwhile.
     fn drop(&mut self) {
-        // The queued writes first: they may name atoms this handle still holds.
+        // With a writer, the atoms are its to write: every handle shares them, and its batch's commit appends them (a
+        // handle dropped inside a wave writes nothing). The queued writes first: they may name atoms this handle holds.
+        if self.atoms.pending() && self.write_back.is_some() {
+            self.write_back("the atoms at a handle's close", 0, Vec::new(), Box::new(|store| store.flush_atoms()));
+            self.end_writer();
+            return;
+        }
         self.end_writer();
         if self.atoms.pending()
             && let Err(error) = self.immediate_transaction(|_| Ok(()))

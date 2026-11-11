@@ -297,8 +297,10 @@ impl ThreadConnection {
             let Some(connection) = connection.upgrade() else {
                 return false;
             };
+            // One inside a transaction stays: the writer's batch holds its transaction open between jobs.
             if *path == self.database_path
                 && let Some(mut connection) = connection.try_lock()
+                && connection.as_ref().is_none_or(Connection::is_autocommit)
             {
                 connection.take();
             }
@@ -461,7 +463,7 @@ impl ContentStore {
     /// Runs `operation` in one immediate (write-locking) transaction, retried under `retry_busy`.
     pub(super) fn immediate_transaction<T>(
         &self,
-        mut operation: impl FnMut(&Transaction<'_>) -> StoreResult<T>,
+        mut operation: impl FnMut(&Connection) -> StoreResult<T>,
     ) -> StoreResult<T> {
         retry_busy(&mut BusyRetries::default(), || {
             self.immediate_transaction_once(&mut operation)
@@ -472,13 +474,14 @@ impl ContentStore {
     /// held the store for one SQLite busy timeout. For background writes that run again later.
     pub(super) fn immediate_transaction_once<T>(
         &self,
-        operation: impl FnOnce(&Transaction<'_>) -> StoreResult<T>,
+        operation: impl FnOnce(&Connection) -> StoreResult<T>,
     ) -> StoreResult<T> {
+        self.yield_writer();
         let mut connection = self
             .connection
             .lock()
             .expect("content store connection unavailable");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let value = operation(&transaction)?;
         self.commit(transaction)?;
         Ok(value)
@@ -489,15 +492,104 @@ impl ContentStore {
     /// the host's thread) tries once.
     pub(super) fn immediate_transaction_no_wait<T>(
         &self,
-        operation: impl FnOnce(&Transaction<'_>) -> StoreResult<T>,
+        operation: impl FnOnce(&Connection) -> StoreResult<T>,
     ) -> StoreResult<T> {
         // Opening the thread's connection (if an idle release closed it) is not a wait for
         // another writer, and must not fail as one.
+        self.yield_writer();
         let mut connection = self.connection.lock().map_err(StoreError::Invalid)?;
         let _no_wait = NoBusyWait::enter();
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let value = operation(&transaction)?;
         self.commit(transaction)?;
         Ok(value)
+    }
+}
+
+thread_local! {
+    /// Whether this thread runs the store writer's batch (`ContentStore::in_one_transaction`).
+    static BATCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A store write's transaction: its own, or a savepoint inside the writer's batch, which commits every job it
+/// drained at once.
+pub(super) enum Tx<'c> {
+    Top(Transaction<'c>),
+    Inner(rusqlite::Savepoint<'c>),
+}
+
+impl std::ops::Deref for Tx<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        match self {
+            Tx::Top(t) => t,
+            Tx::Inner(s) => s,
+        }
+    }
+}
+
+impl Tx<'_> {
+    /// Commits it, or releases the savepoint into the batch.
+    pub(super) fn commit(self) -> rusqlite::Result<()> {
+        match self {
+            Tx::Top(t) => t.commit(),
+            Tx::Inner(s) => s.commit(),
+        }
+    }
+}
+
+/// `connection`'s transaction for one store write: a savepoint when the writer's batch holds it open on this
+/// thread, else a transaction of its own with `behavior`.
+pub(super) fn begin(connection: &mut Connection, behavior: TransactionBehavior) -> rusqlite::Result<Tx<'_>> {
+    if BATCH.with(std::cell::Cell::get) && !connection.is_autocommit() {
+        return connection.savepoint().map(Tx::Inner);
+    }
+    connection.transaction_with_behavior(behavior).map(Tx::Top)
+}
+
+impl ContentStore {
+    /// Runs `body` (the writer's batch of jobs) inside one immediate transaction of this thread's connection,
+    /// committed once with the atoms the jobs added: each job's store writes are savepoints in it (`begin`), so a
+    /// job that fails rolls back alone. Waits for another writer as one write does.
+    pub(super) fn in_one_transaction<T>(&self, body: impl FnOnce() -> T) -> StoreResult<T> {
+        retry_busy(&mut BusyRetries::default(), || {
+            let connection = self.connection.lock().map_err(StoreError::Invalid)?;
+            connection.execute_batch("BEGIN IMMEDIATE")?;
+            Ok(())
+        })?;
+        struct Batch;
+        impl Drop for Batch {
+            fn drop(&mut self) {
+                BATCH.with(|b| b.set(false));
+            }
+        }
+        BATCH.with(|b| b.set(true));
+        let batch = Batch;
+        let value = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+        drop(batch);
+        let connection = self.connection.lock().map_err(StoreError::Invalid)?;
+        let value = match value {
+            Ok(value) => value,
+            Err(panic) => {
+                let _ = connection.execute_batch("ROLLBACK");
+                std::panic::resume_unwind(panic);
+            }
+        };
+        let committed = self.atoms.write_pending(&connection).and_then(|upto| {
+            connection.execute_batch("COMMIT")?;
+            Ok(upto)
+        });
+        match committed {
+            Ok(upto) => {
+                self.atoms.committed(upto);
+                Ok(value)
+            }
+            Err(error) => {
+                if !connection.is_autocommit() {
+                    let _ = connection.execute_batch("ROLLBACK");
+                }
+                Err(error)
+            }
+        }
     }
 }

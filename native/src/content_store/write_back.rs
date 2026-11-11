@@ -102,6 +102,10 @@ struct State {
     error: Option<String>,
     /// Jobs run, bytes written and the writer's CPU, since the writer started.
     done: (usize, usize, f64),
+    /// Transactions the writer committed its batches in.
+    batches: usize,
+    /// Whether the writer holds a batch's transaction open now.
+    open: bool,
 }
 
 #[derive(Default)]
@@ -110,8 +114,26 @@ struct Shared {
     changed: Condvar,
 }
 
-/// A queued job, the bytes it holds, the keys it writes and the holder it pins its sources under.
-type Queued = (Job, usize, Vec<Key>, Option<(String, i64)>);
+/// A queued job, the bytes it holds, the keys it writes, the holder it pins its sources under, and how it runs.
+type Queued = (Job, usize, Vec<Key>, Option<(String, i64)>, Run);
+
+/// How the writer runs a job.
+#[derive(Clone, Copy, PartialEq)]
+enum Run {
+    /// In the open batch.
+    Batched,
+    /// After the batch commits, in transactions of its own (`write_back_alone`).
+    Alone,
+    /// Nothing: it commits the batch, for a wait for the writer (`commit_now`). Not counted as a write.
+    Commit,
+}
+
+/// How long the writer's batch stays open with no job queued: jobs come all through a run, so a run's writes commit
+/// in about one transaction.
+const BATCH_IDLE: Duration = Duration::from_millis(500);
+
+/// The bytes a batch holds before it commits: half the queue's cap, so the back-pressure is never waiting on it.
+const BATCH_BYTES: usize = CAP_BYTES / 2;
 
 struct Lane {
     tx: mpsc::Sender<Queued>,
@@ -184,6 +206,8 @@ pub struct Written {
     pub jobs: usize,
     pub bytes: usize,
     pub cpu: f64,
+    /// The transactions they were committed in.
+    pub batches: usize,
 }
 
 impl ContentStore {
@@ -195,7 +219,20 @@ impl ContentStore {
     /// `bytes` is what it holds until written; `keys` are what it writes, each with the value a
     /// read of it gets meanwhile (`None`: a read waits for the job). The writer's own handle (in a
     /// job) writes at once.
+    ///
+    /// The writer drains what is queued into one transaction (`ContentStore::in_one_transaction`), each job a
+    /// savepoint in it, and a read of a key waits for its batch's commit.
     pub fn write_back(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job) {
+        self.queue(what, bytes, keys, job, Run::Batched);
+    }
+
+    /// [`Self::write_back`] for a job that must commit before it goes on (it starts work on another connection that
+    /// reads what it wrote): the batch before it commits first, and it runs in transactions of its own.
+    pub fn write_back_alone(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job) {
+        self.queue(what, bytes, keys, job, Run::Alone);
+    }
+
+    fn queue(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job, run: Run) {
         let mut job = job;
         let Some(w) = self.writer() else {
             if let Err(e) = retried(self, what, &mut job) {
@@ -227,15 +264,15 @@ impl ContentStore {
         // No threads in the browser build: written now, in order.
         if cfg!(target_family = "wasm") {
             let outcome = job(self);
-            finish(&w.shared, bytes, &keys, outcome, 0.0);
+            finish(&w.shared, bytes, &keys, outcome, 0.0, run != Run::Commit);
             return;
         }
         let mut lane = w.lane.lock().expect("the writer");
         let lane = lane.get_or_insert_with(|| self.start_writer(w));
-        if let Err(mpsc::SendError((mut job, bytes, keys, _))) = lane.tx.send((job, bytes, keys, holder)) {
+        if let Err(mpsc::SendError((mut job, bytes, keys, _, _))) = lane.tx.send((job, bytes, keys, holder, run)) {
             // The writer is gone (it panicked): written here, in order, as the writer would have.
             let outcome = job(self);
-            finish(&w.shared, bytes, &keys, outcome, 0.0);
+            finish(&w.shared, bytes, &keys, outcome, 0.0, run != Run::Commit);
         }
     }
 
@@ -248,12 +285,60 @@ impl ContentStore {
             .spawn(move || {
                 // What this thread sends to SQLite no wave waits for.
                 super::hazards::behind_the_run();
-                for (mut job, bytes, keys, holder) in rx {
-                    *store.holder.lock() = holder;
+                let mut next: Option<Queued> = None;
+                loop {
+                    let Some(first) = next.take().or_else(|| rx.recv().ok()) else { break };
                     let before = thread_cpu();
-                    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
-                        .unwrap_or_else(|_| Err(StoreError::Invalid("a queued write panicked".into())));
-                    finish(&w.shared, bytes, &keys, outcome, thread_cpu() - before);
+                    if first.4 != Run::Batched {
+                        let (mut job, bytes, keys, holder, run) = first;
+                        *store.holder.lock() = holder;
+                        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
+                            .unwrap_or_else(|_| Err(StoreError::Invalid("a queued write panicked".into())));
+                        finish(&w.shared, bytes, &keys, outcome, thread_cpu() - before, run != Run::Commit);
+                        continue;
+                    }
+                    // One transaction while jobs keep coming: it commits once the queue is idle for `BATCH_IDLE`, holds
+                    // `BATCH_BYTES`, or a job comes that runs alone (a wait for the writer sends one: `written`).
+                    let mut batch = vec![first];
+                    let run = |batch: &mut Vec<Queued>, next: &mut Option<Queued>| -> Vec<StoreResult<()>> {
+                        let mut outcomes = Vec::new();
+                        let mut bytes = 0;
+                        loop {
+                            for (job, b, _, holder, _) in &mut batch[outcomes.len()..] {
+                                *store.holder.lock() = holder.clone();
+                                bytes += *b;
+                                outcomes.push(
+                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
+                                        .unwrap_or_else(|_| Err(StoreError::Invalid("a queued write panicked".into()))),
+                                );
+                            }
+                            if bytes >= BATCH_BYTES {
+                                return outcomes;
+                            }
+                            match rx.recv_timeout(BATCH_IDLE) {
+                                Ok(q) if q.4 != Run::Batched => {
+                                    *next = Some(q);
+                                    return outcomes;
+                                }
+                                Ok(q) => batch.push(q),
+                                Err(_) => return outcomes,
+                            }
+                        }
+                    };
+                    let outcomes = match store.in_one_transaction(|| {
+                        w.shared.state.lock().expect("the writer's state").open = true;
+                        let outcomes = run(&mut batch, &mut next);
+                        w.shared.state.lock().expect("the writer's state").open = false;
+                        outcomes
+                    }) {
+                        Ok(outcomes) => outcomes,
+                        Err(e) => batch.iter().map(|_| Err(StoreError::Invalid(format!("the batch's commit: {e}")))).collect(),
+                    };
+                    let cpu = (thread_cpu() - before) / batch.len() as f64;
+                    w.shared.state.lock().expect("the writer's state").batches += 1;
+                    for ((_, bytes, keys, _, _), outcome) in batch.into_iter().zip(outcomes) {
+                        finish(&w.shared, bytes, &keys, outcome, cpu, true);
+                    }
                 }
             })
             .expect("the store's writer thread");
@@ -269,6 +354,9 @@ impl ContentStore {
     /// Waits for the jobs that write `key`, if any is queued; a read of anything else never waits.
     pub fn settle(&self, key: &Key) {
         let Some(w) = self.writer() else { return };
+        if w.shared.state.lock().expect("the writer's state").keys.contains_key(key) {
+            self.commit_now();
+        }
         let mut s = w.shared.state.lock().expect("the writer's state");
         let t = s.keys.contains_key(key).then(std::time::Instant::now);
         while s.keys.contains_key(key) {
@@ -283,6 +371,9 @@ impl ContentStore {
     /// a job met since the last call.
     pub fn written(&self) -> StoreResult<()> {
         let Some(w) = self.writer() else { return Ok(()) };
+        if w.shared.state.lock().expect("the writer's state").jobs > 0 {
+            self.commit_now();
+        }
         let mut s = w.shared.state.lock().expect("the writer's state");
         let t = (s.jobs > 0).then(std::time::Instant::now);
         while s.jobs > 0 {
@@ -297,11 +388,24 @@ impl ContentStore {
         }
     }
 
+    /// Before a write of this handle's own (not queued): the writer's open batch commits, so the write waits for the
+    /// jobs it holds, not for the batch to go idle. Every such write is one to move behind the writer.
+    pub(super) fn yield_writer(&self) {
+        if self.writer().is_some_and(|w| w.shared.state.lock().expect("the writer's state").open) {
+            self.commit_now();
+        }
+    }
+
+    /// Ends the writer's open batch: an empty job that runs alone, queued behind it.
+    fn commit_now(&self) {
+        self.queue("a wait for the writer", 0, Vec::new(), Box::new(|_| Ok(())), Run::Commit);
+    }
+
     /// What the writer has done since it started.
     pub fn written_so_far(&self) -> Written {
         let Some(w) = self.writer() else { return Written::default() };
         let s = w.shared.state.lock().expect("the writer's state");
-        Written { jobs: s.done.0, bytes: s.done.1, cpu: s.done.2 }
+        Written { jobs: s.done.0, bytes: s.done.1, cpu: s.done.2, batches: s.batches }
     }
 
     /// This handle gone (its drop): the last of the store's ends the writer, its queue written.
@@ -312,11 +416,11 @@ impl ContentStore {
     }
 }
 
-fn finish(shared: &Shared, bytes: usize, keys: &[Key], outcome: StoreResult<()>, cpu: f64) {
+fn finish(shared: &Shared, bytes: usize, keys: &[Key], outcome: StoreResult<()>, cpu: f64, counted: bool) {
     let mut s = shared.state.lock().expect("the writer's state");
     s.bytes -= bytes;
     s.jobs -= 1;
-    s.done = (s.done.0 + 1, s.done.1 + bytes, s.done.2 + cpu);
+    s.done = (s.done.0 + usize::from(counted), s.done.1 + bytes, s.done.2 + cpu);
     for key in keys {
         if let Some(slot) = s.keys.get_mut(key) {
             slot.0 -= 1;
