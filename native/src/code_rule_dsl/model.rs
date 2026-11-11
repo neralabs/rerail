@@ -850,6 +850,9 @@ impl crate::code_rule_dsl::facts::core::SourceFile for FileInput {
     fn source(&self) -> &Arc<String> {
         &self.source
     }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 impl FileInput {

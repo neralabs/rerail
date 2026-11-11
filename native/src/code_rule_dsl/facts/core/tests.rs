@@ -11,6 +11,9 @@ impl SourceFile for Text {
     fn source(&self) -> &Arc<String> {
         &self.1
     }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 fn facts(path: &str, language: &str, source: &str) -> Facts {

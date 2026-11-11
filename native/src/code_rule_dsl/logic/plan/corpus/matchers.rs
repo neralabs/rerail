@@ -5,10 +5,9 @@
 //! elsewhere. Each chunk fills the relations by running the matchers' wave over its documents' tapes
 //! (`facts::vtab::syntax::with_matchers`); a captured matcher's rows read W's bindings at each matched root. The
 //! joins read the matches as any base relation.
-use crate::code_rule_dsl::facts::vtab::syntax::Matcher;
 use crate::code_rule_dsl::logic::front::{Atom, Literal, Program, Term};
 use std::collections::{BTreeSet, HashMap};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 /// tree-sitter-python's grammar (`grammar.json`), parsed once.
 fn python_grammar() -> Option<&'static serde_json::Value> {
@@ -333,31 +332,11 @@ fn transformed(text: &str) -> BTreeSet<String> {
         .unwrap_or_default()
 }
 
-/// The process's lowered matchers, by their text and their base policy's: lowered once.
-type Lowered = Result<(Arc<crate::code_rule_dsl::transducer::packed::LoweredMatcher>, Vec<crate::code_rule_dsl::matcher::DocumentGate>, Arc<crate::code_rule_dsl::waves::policies::Captor>), String>;
-static LOWERED: std::sync::LazyLock<Mutex<HashMap<(String, String), Lowered>>> = std::sync::LazyLock::new(Default::default);
-
-/// Each relation's matcher lowered for the transducer, over the program's first `.policy` (its utils). A matcher that
-/// does not lower fails the run, naming it.
+/// Each relation's matcher compiled for the transducer, over the program's first `.policy` (its utils), by the
+/// registered compiler (`facts::vtab::syntax::AstCompiler`). A matcher that does not lower fails the run, naming it.
 pub(in crate::code_rule_dsl) fn compiled(matchers: &[(String, String, Vec<String>)], policies: &[serde_json::Value]) -> Result<crate::code_rule_dsl::facts::vtab::syntax::Matchers, String> {
-    let base = policies.first();
-    let base_text = base.map(|b| b.to_string()).unwrap_or_default();
     let _span = crate::code_rule_dsl::logic::profile::span(|| "ast matchers lowered".into());
-    matchers
-        .iter()
-        .map(|(rel, text, captures)| {
-            let key = (text.clone(), base_text.clone());
-            let got = {
-                let mut kept = LOWERED.lock().unwrap_or_else(|p| p.into_inner());
-                kept.entry(key)
-                    .or_insert_with(|| crate::code_rule_dsl::waves::policies::lower_matcher(text, base).map(|(m, g, c)| (Arc::new(m), g, Arc::new(c))))
-                    .clone()
-            };
-            let (lowered, gates, captor) = got.map_err(|why| format!("{rel}: the matcher {text} does not lower: {why}"))?;
-            Ok(Matcher { rel: rel.clone(), lowered, gates, captures: captures.clone(), captor })
-        })
-        .collect::<Result<Vec<_>, String>>()
-        .and_then(crate::code_rule_dsl::facts::vtab::syntax::Matchers::new)
+    crate::code_rule_dsl::facts::vtab::syntax::compile_matchers(matchers, policies)
 }
 
 #[cfg(test)]

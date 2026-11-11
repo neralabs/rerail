@@ -16,11 +16,39 @@ use std::sync::Arc;
 
 /// A file as facts read it: its dialect's label and its text. The engine's request files implement it
 /// (`model::FileInput`).
-pub(crate) trait SourceFile {
+pub(crate) trait SourceFile: Send + Sync {
     /// Its dialect's label (`language::dialect_by_label`).
     fn language(&self) -> &str;
     /// Its text.
     fn source(&self) -> &Arc<String>;
+    /// The file as its implementation's own type (the engine's request file).
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+
+/// What reads the values of a file's nodes off its tape (W's, `matcher::file_values`), registered at load:
+/// `each(followed, ordinal, text, types)` for every node with a known value, the plain reading where `plain`, the
+/// one that follows bindings where `follow`.
+pub(crate) trait ValueReader: Send + Sync {
+    fn values(
+        &self,
+        tape: &TapeDoc,
+        file: &dyn SourceFile,
+        plain: bool,
+        follow: bool,
+        each: &mut dyn FnMut(bool, u32, Option<String>, &[&'static str]),
+    );
+}
+
+static VALUE_READER: std::sync::OnceLock<&'static dyn ValueReader> = std::sync::OnceLock::new();
+
+/// Registers the reader of values (once, at load).
+pub(crate) fn install_value_reader(reader: &'static dyn ValueReader) {
+    let _ = VALUE_READER.set(reader);
+}
+
+/// The registered reader of values; `None` where no engine registered one.
+pub(crate) fn value_reader() -> Option<&'static dyn ValueReader> {
+    VALUE_READER.get().copied()
 }
 
 /// The dialect of `file`'s label.
@@ -446,57 +474,6 @@ pub(crate) fn text(source: Arc<String>) -> Facts {
         syntax_errors: false,
         python_syntax: Default::default(),
     };
-    index(&mut f);
-    (f.class_keys, f.class_offsets, f.class_nodes) = postings(Vec::new());
-    f
-}
-
-/// The facts of a parsed literal (`literal::SubTree`) as a document of its own, in the dialect whose tape tag is `tag`
-/// (the tree's kinds and fields are that grammar's: an annotation's are Python's): its source is the tree's text
-/// (decoded), its lines Ruff's (`\r\n`, `\r`, `\n`), its ranges in that text. A tree has no abstract classes.
-pub(crate) fn from_subtree(tag: u8, tree: &crate::code_rule_dsl::literal::SubTree) -> Facts {
-    let source = Arc::new(tree.text().to_owned());
-    let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::Newlines));
-    let n = tree.len();
-    let mut f = Facts {
-        tag,
-        source,
-        lines,
-        kind: Vec::with_capacity(n),
-        parent: Vec::with_capacity(n),
-        start: Vec::with_capacity(n),
-        end: Vec::with_capacity(n),
-        subtree_end: Vec::with_capacity(n),
-        flags: Vec::with_capacity(n),
-        field: Vec::with_capacity(n),
-        child_offsets: Vec::new(),
-        children: Vec::new(),
-        kind_keys: Vec::new(),
-        kind_offsets: Vec::new(),
-        kind_nodes: Vec::new(),
-        class_keys: Vec::new(),
-        class_offsets: Vec::new(),
-        class_nodes: Vec::new(),
-        syntax_errors: false,
-        python_syntax: Default::default(),
-    };
-    for node in tree.preorder() {
-        f.kind.push(kind_atom(tag, node.kind));
-        f.parent.push(node.parent.unwrap_or(NONE));
-        f.start.push(node.start);
-        f.end.push(node.end);
-        f.subtree_end.push(f.kind.len() as u32);
-        f.flags.push(u8::from(node.named) | u8::from(node.extra) << 1 | u8::from(node.error) << 3);
-        f.field.push(node.field);
-        f.syntax_errors |= node.error;
-    }
-    // Preorder: a node's descendants end where its last child's do.
-    for id in (0..n).rev() {
-        let p = f.parent[id];
-        if p != NONE {
-            f.subtree_end[p as usize] = f.subtree_end[p as usize].max(f.subtree_end[id]);
-        }
-    }
     index(&mut f);
     (f.class_keys, f.class_offsets, f.class_nodes) = postings(Vec::new());
     f

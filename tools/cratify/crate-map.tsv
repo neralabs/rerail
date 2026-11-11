@@ -242,3 +242,4 @@ literal::python_string	rerail-lang-python
 literal::printf	rerail-lang-php
 literal::scanf	rerail-lang-php
 facts::vtab::syntax::annotation	rerail-lang-python
+facts::vtab::syntax::ast_wave	rerail-engine

@@ -570,6 +570,10 @@ pub(crate) fn install_languages() {
         #[cfg(feature = "lang-blade")]
         (language::Via::CompiledView, embed::compiled_view::scope),
     ]);
+    // What reads W's values off a file's tape for facts' `value` relations.
+    facts::core::install_value_reader(&matcher::Values);
+    // What compiles a program's `ast` matchers into the transducer wave facts runs (decision 0106).
+    facts::vtab::syntax::install_ast_compiler(&facts::vtab::syntax::ast_wave::Compiler);
     // The literal grammars `parse` applies, in the order messages list them (`literal::LiteralGrammar`).
     literal::install(vec![
         literal::percent::GRAMMAR,

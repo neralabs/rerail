@@ -415,6 +415,32 @@ pub(in crate::code_rule_dsl) fn file_values(
     UTIL_EXCEEDED.set(None);
 }
 
+/// W's reader of values, which facts asks (`facts::core::ValueReader`).
+pub(crate) struct Values;
+
+impl crate::code_rule_dsl::facts::core::ValueReader for Values {
+    fn values(
+        &self,
+        tape: &crate::code_rule_dsl::tape::TapeDoc,
+        file: &dyn crate::code_rule_dsl::facts::core::SourceFile,
+        plain: bool,
+        follow: bool,
+        each: &mut dyn FnMut(bool, u32, Option<String>, &[&'static str]),
+    ) {
+        // A file that is no request's has no module or package: read as a request file with none.
+        let made;
+        let file = match file.as_any().downcast_ref::<crate::code_rule_dsl::model::FileInput>() {
+            Some(file) => file,
+            None => {
+                made = crate::code_rule_dsl::model::FileInput::new(String::new(), file.language().to_owned(), Arc::clone(file.source()), None, None, "values")
+                    .expect("a file with no module or package");
+                &made
+            }
+        };
+        file_values(tape, file, plain, follow, each);
+    }
+}
+
 /// [`file_values`]' `each(followed, ordinal, text, types)`.
 pub(in crate::code_rule_dsl) type ValueSink<'a> = dyn FnMut(bool, u32, Option<String>, &[&'static str]) + 'a;
 

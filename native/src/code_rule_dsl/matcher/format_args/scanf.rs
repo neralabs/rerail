@@ -6,7 +6,7 @@
 
 use super::printf::{call_values, format_tree};
 use super::{Fields, Key, Prepared, Side, key_of, positional_past};
-use crate::code_rule_dsl::literal::{Grammar, SubDoc};
+use crate::code_rule_dsl::literal::SubDoc;
 use crate::code_rule_dsl::matcher::value::Reading;
 use ast_grep_core::meta_var::MetaVarEnv;
 use ast_grep_core::{AstGrep, Doc};
