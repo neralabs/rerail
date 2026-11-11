@@ -157,7 +157,10 @@ def cfg_test_edits(nodes, files, keep_test_mods, edits):
             # in a file whose other test items follow test-hooks
             decl_end = data.find(b'\n', data.find(b'mod ' + gated[4:].encode(), int(e)))
             read_here = re.search(rb'(?<![A-Za-z0-9_:])' + gated[4:].encode() + rb'::', data[:int(s)] + data[decl_end:]) is not None
-            helper = p is not None and nodes[p].file and b'#[test]' not in open(nodes[p].file, 'rb').read()
+            # (not a `tests` module, and one file: no modules of its own)
+            name = gated[4:]
+            helper = (p is not None and nodes[p].file and name != 'tests' and not name.endswith('_tests')
+                      and not re.search(rb'#\[test\]|^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*;', open(nodes[p].file, 'rb').read(), re.M))
             if p is None or (p not in keep_test_mods and not read_here and not helper):
                 continue
         edits.add(os.path.abspath(f), int(s), int(e), HOOKS, 'cfg test')

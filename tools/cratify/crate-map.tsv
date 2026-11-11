@@ -276,7 +276,8 @@ matcher::arguments_sql	rerail-lang-sql
 functors	rerail-engine
 stats::identity	rerail-facts
 waves::schedule::batches	rerail-engine
-waves::relational	rerail-engine
+waves::relational	rerail-w
+waves::relational::execution	rerail-engine
 rule_api	rerail-w
 logic::front::name	rerail-rr-syntax
 query::plan	rerail-engine
