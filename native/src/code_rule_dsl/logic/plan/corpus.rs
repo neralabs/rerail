@@ -4212,9 +4212,9 @@ fn run_observed(
             Vec::new(),
             Box::new(move |store| {
                 let mut ids = Vec::with_capacity(read.len());
-                for (path, stat, content) in read {
+                for (path, stat, content) in &read {
                     if let Some(id) = content.resolve(store)? {
-                        ids.push((path, stat, id));
+                        ids.push((path.clone(), *stat, id));
                     }
                 }
                 store.record_corpus_stats(&root, &ids, started_ns)

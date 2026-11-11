@@ -1224,3 +1224,84 @@ The probe-fix build required a retry after an out-of-space failure.
 Only obsolete object files in this task's build cache were removed, freeing 37.8 GiB.
 The source, test logs, and benchmark results remain intact.
 Final artifacts use `final-tests`, `final-native-sessions`, `final-composed-sessions`, and `final-full-native` under the merge artifact directory.
+
+
+## Integration merge: 1419d4263 (2026-11-10)
+
+Merged the committed local integration tip, `1419d4263`, into `jeremy/async-family-integration-comparison`.
+The fetched remote tip was `7110969e6`; the local tip includes it.
+The merge commit is `bd695d685`. The merge had no conflicts.
+The unfinished bulk-admission changes and regression tests remain separate from the merge.
+Their backup is stash commit `330dac216ba3b6f78e096abe64c39f4f9b03b196`.
+
+### Incoming fixes change the remaining work
+
+- `033fed100` fixes the `docof.n` statistics failure that stopped our O125 and identity runs.
+  Matcher lowering now declares `docof` as an input only when no rule derives it.
+- `302b0852a` preserves empty fact relations in stored programs through `fact_rel`.
+  The previous encoding lost these relations and changed the restored program's memo key.
+- Frame collection now counts one outer run per space, instead of one run per program.
+  The previous count could collect the types phase's frames before the cold job ended.
+- `0dbeb76d7` reads native row counts and input projections directly from their sources.
+  Its recorded O125 step-03 count falls from 507 SQL statements to 15.
+  This figure is integration evidence, not a new measurement from this merge.
+
+The identity investigation now needs independent process-level checks of these fixes.
+It does not need another serialization design without evidence of a remaining failure.
+The merged default retention path still calls `frame_rows` separately for relations and input granules.
+
+### Next work
+
+1. Finish bulk admission in `Retained::from_frames/load` and the older `kept_strata::load` path.
+   Admit input digests together, then admit demanded derived rows and changed-input granules through bounded key batches.
+   Check metadata and input digests before accepting rows. Reject replaced payloads and recompute the affected work.
+   The pre-merge regression records 1,312 storage executions for the default-path fixture; its ceiling is 16.
+   Both replacement regressions fail on that baseline.
+   These are storage executions, separate from the core execution ceiling.
+2. Reproduce O125 step 07 on this revision, then compare early `icall` filtering with a demanded-key semijoin.
+   Keep the complete result comparison against a fresh run.
+   Measure intermediate rows, probes, and CPU before changing the planner.
+   The historical 0.53-million-work join remains a hypothesis for this revision until reproduced.
+3. Run three separate processes against one store and compare prepared identities, findings, and phase reuse.
+   Check both the empty-fact fix and the corrected frame-collection lifetime.
+   Make another production change only if these checks find a remaining failure.
+
+Bulk admission closes a concrete execution-shape and consistency defect.
+The previous 5,725-file warm profile attributes only 1.0 ms to all 79 wave SQL executions.
+That fixture does not support a large CPU-saving claim for storage batching.
+The O125 join investigation is the next direct CPU target.
+
+Integration also records a failed demand rewrite: `found` pulled six relations into a larger recursive component.
+Join work increased by 13.5%, while the eager relation itself cost only 279 work units.
+Demand restrictions need a measured expensive producer and an analysis of recursive dependencies.
+Fewer rows or statements at one boundary do not prove less total work.
+
+Build and qualification artifacts are under `async-family-comparison/merge-1419d4263`.
+
+
+### Merge build fixes
+
+The first build failed at two write-back callers after integration changed queued jobs from `FnOnce` to `FnMut`.
+A tape write consumed its optional source recorder. A file-stat write consumed its list of files.
+Both callers now borrow their captured data. The file-stat job constructs owned rows for each attempt.
+These changes preserve the data that a retry needs.
+The original failed build remains in `build.log`; the retry uses `fixed-build.log`.
+
+The engine build passes after those fixes.
+The storage test build found one old publication-test call without the new run token.
+The test now supplies a token. Production publication code already uses the new signature.
+This test-only correction does not change the engine binary under qualification.
+
+
+### Qualification results
+
+All nine frame-storage tests pass, including collection across multiple programs in one run.
+The publication fixture uses 18 statements and 74,776 VM instructions, within its unchanged ceilings.
+Five focused engine checks pass: empty facts, stored preparation, loading-cone retention, cross-process retained facts, and the positive async fixture.
+The positive fixture checks all 120 expected findings.
+
+The 5,725-file job passes cold and warm, with matching findings.
+Core SQL counts remain 8 cold and 20 warm, both below the unchanged ceiling of 100.
+These counts exclude storage SQL. The corpus has no findings; the positive fixture supplies the nonempty correctness check.
+These runs qualify the merge. They do not establish a CPU improvement or complete the three outstanding tasks.
+The three-process identity regression and O125 comparison remain pending.
