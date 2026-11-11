@@ -245,7 +245,7 @@ impl Vocabulary {
             return out;
         }
         let words = self.tests.len().div_ceil(64);
-        let (mut tested, t0) = (0, super::plan::corpus::thread_usage());
+        let (mut tested, t0) = (0, crate::code_rule_dsl::prof::thread_usage());
         // The strings not seen before, tested by every test's plans at once (the text layer's vocabulary engine).
         // `seen` is not held while they are tested: the searchers run on the thread pool, and a pool thread waiting
         // there runs other queued jobs, among them another batch's call here. Held, that call waited on the lock
@@ -287,7 +287,7 @@ impl Vocabulary {
             }
         }
         drop(seen);
-        let t1 = super::plan::corpus::thread_usage();
+        let t1 = crate::code_rule_dsl::prof::thread_usage();
         let mut total = self.tested.lock().unwrap();
         total.0 += tested;
         total.1 += (t1.0 - t0.0) + (t1.1 - t0.1);

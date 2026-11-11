@@ -182,3 +182,35 @@ pub(in crate::code_rule_dsl) fn register_device_memory(read: fn() -> (usize, usi
 fn device_memory() -> (usize, usize) {
     DEVICE_MEMORY.get().map_or((0, 0), |read| read())
 }
+
+/// The calling thread's CPU (user, system) seconds.
+pub(crate) fn thread_usage() -> (f64, f64) {
+    #[cfg(target_os = "macos")]
+    {
+        let mut info: libc::thread_basic_info = unsafe { std::mem::zeroed() };
+        let mut count = (std::mem::size_of::<libc::thread_basic_info>() / std::mem::size_of::<libc::integer_t>()) as libc::mach_msg_type_number_t;
+        // SAFETY: THREAD_BASIC_INFO fills a `thread_basic_info` of `count` integers for this thread's port (the
+        // pthread's own, so no port right is taken).
+        let port = unsafe { libc::pthread_mach_thread_np(libc::pthread_self()) };
+        unsafe { libc::thread_info(port, libc::THREAD_BASIC_INFO as libc::thread_flavor_t, (&raw mut info).cast(), &mut count) };
+        let t = |v: libc::time_value_t| f64::from(v.seconds) + f64::from(v.microseconds) / 1e6;
+        (t(info.user_time), t(info.system_time))
+    }
+    // The browser build's one thread (`prof::single_thread_cpu`), all of it user time.
+    #[cfg(target_family = "wasm")]
+    {
+        (single_thread_cpu().as_secs_f64(), 0.0)
+    }
+    #[cfg(windows)]
+    {
+        let (user, kernel) = windows_cpu(true);
+        (user.as_secs_f64(), kernel.as_secs_f64())
+    }
+    #[cfg(not(any(target_os = "macos", target_family = "wasm", windows)))]
+    {
+        let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+        unsafe { libc::getrusage(libc::RUSAGE_THREAD, &mut u) };
+        let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
+        (s(u.ru_utime), s(u.ru_stime))
+    }
+}
