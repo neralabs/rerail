@@ -645,8 +645,8 @@ impl Retained {
             if g.2 > 0 {
                 out.push(format!("SPIKE grown, all kept: {} offers, {} held; today {:.1} ms {:.1} B/row; mixed {:.1} ms (set {:.1}, placed {:.1}, orders {:.1}) {:.1} B/row; {} rows read again by doublings", g.2, g.3, g.0, g.4 as f64 / g.3.max(1) as f64, g.1, g.6, g.7, g.8, g.5 as f64 / g.3.max(1) as f64, g.14));
                 let (v, orders, unprobed) = InRel::index_spike_variants();
-                for (name, x) in ["eager (merged as they come)", "tagged (eager, a 16-bit tag an id)", "lazy (a run a wave, merged once where probes pay)", "lazy tagged"].iter().zip(v) {
-                    out.push(format!("SPIKE orders {name}: grow {:.1} ms, merge once {:.1} ms, probes {:.1} ms, total {:.1} ms; mean probe {:.0} ns; {} {}", x.0, x.2, x.1, x.0 + x.1 + x.2, x.3 / orders.max(1) as f64, x.4, if name.starts_with("lazy") { "orders merged once" } else { "ids merged or rows read in merges" }));
+                for (name, x) in ["eager (merged as they come)", "tagged (eager, a 16-bit tag an id)", "lazy (a run a wave, merged once where probes pay)", "lazy tagged", "tagged, interpolated probe", "lazy tagged, interpolated probe"].iter().zip(v) {
+                    out.push(format!("SPIKE orders {name}: grow {:.1} ms, merge once {:.1} ms, probes {:.1} ms, total {:.1} ms; mean probe {:.0} ns; {} {}", x.0, x.2, x.1, x.0 + x.1 + x.2, x.3 / orders.max(1) as f64, x.4, if name.starts_with("lazy") { "orders merged once" } else if name.contains("interpolated") { "of the rows read in merges, tag collisions" } else { "ids merged or rows read in merges" }));
                 }
                 out.push(format!("SPIKE orders: {orders} orders, {unprobed} with no probe this step"));
                 out.push(format!("SPIKE delta path, all kept ({} relations with a maintained run's rows, the rest their last wave): {} offers; today {:.1} ms + copy {:.1} ms; mixed {:.1} ms + copy {:.1} ms", g.15, g.9, g.10, g.11, g.12, g.13));

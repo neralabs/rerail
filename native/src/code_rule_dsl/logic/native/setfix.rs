@@ -2281,7 +2281,7 @@ impl InRel {
                 best
             };
             // (grow ms, probe-weighted ms over what it ends as, merge-once ms or 0, probe ns, rows read by merges)
-            let mut sums = [(0.0f64, 0.0f64, 0.0f64, 0.0f64, 0usize); 4];
+            let mut sums = [(0.0f64, 0.0f64, 0.0f64, 0.0f64, 0usize); 6];
             for (oi, order) in orders.iter().enumerate() {
                 let len = prefix[oi];
                 let ks = keys(order, len);
@@ -2300,6 +2300,10 @@ impl InRel {
                 let grow = t.elapsed().as_secs_f64() * 1e3;
                 let ns = best_ns(&|| for key in &ks { std::hint::black_box(tagged.count(rows, k, key)); });
                 sums[1] = (sums[1].0 + grow, sums[1].1 + w * ns / 1e6, 0.0, sums[1].3 + ns, sums[1].4 + tagged.row_compares);
+                // 4: the same, its probes from the tag's interpolated place (mldb's PathIndex); the merges' tag
+                // collisions (ties of different leading values).
+                let ns = best_ns(&|| for key in &ks { std::hint::black_box(tagged.count_interp(rows, k, key)); });
+                sums[4] = (sums[4].0 + grow, sums[4].1 + w * ns / 1e6, 0.0, sums[4].3 + ns, sums[4].4 + tagged.collisions);
                 // 2: never merged; merged once where its probes pay for it.
                 let t = Instant::now();
                 let mut lazy = ordered::Runs::with_fanout(order.clone(), usize::MAX);
@@ -2322,9 +2326,17 @@ impl InRel {
                 let t = Instant::now();
                 let one = lazy_t.merged_all(rows, k);
                 let merge_ms = t.elapsed().as_secs_f64() * 1e3;
+                let merge_ms_t = merge_ms;
                 let ns_one = best_ns(&|| for key in &ks { std::hint::black_box(one.count(rows, k, key)); });
                 let (over_runs, merged_then) = (w * ns_runs / 1e6, merge_ms + w * ns_one / 1e6);
                 let (probe_ms, merge_ms, ns) = if merged_then < over_runs { (w * ns_one / 1e6, merge_ms, ns_one) } else { (over_runs, 0.0, ns_runs) };
+                // 5: the same, probed from the tags' interpolated places.
+                let merge_once = merge_ms_t;
+                let ns_runs = best_ns(&|| for key in &ks { std::hint::black_box(lazy_t.count_interp(rows, k, key)); });
+                let ns_one = best_ns(&|| for key in &ks { std::hint::black_box(one.count_interp(rows, k, key)); });
+                let (over_runs, merged_then) = (w * ns_runs / 1e6, merge_once + w * ns_one / 1e6);
+                let (probe_i, merge_i, ns_i) = if merged_then < over_runs { (w * ns_one / 1e6, merge_once, ns_one) } else { (over_runs, 0.0, ns_runs) };
+                sums[5] = (sums[5].0 + grow, sums[5].1 + probe_i, sums[5].2 + merge_i, sums[5].3 + ns_i, sums[5].4 + usize::from(merge_i > 0.0));
                 sums[3] = (sums[3].0 + grow, sums[3].1 + probe_ms, sums[3].2 + merge_ms, sums[3].3 + ns, sums[3].4 + usize::from(merge_ms > 0.0));
             }
             let unprobed = probes.iter().filter(|&&p| p == 0).count();
@@ -2366,7 +2378,7 @@ impl InRel {
     /// The spike's growth totals since the last take: today's ms, the mixed ms, offers, rows held, today's bytes, the
     /// mixed bytes, and the mixed ms by part (set, placed, orders).
     /// The orders' totals by variant since the last take (`VARIANTS`).
-    pub fn index_spike_variants() -> ([(f64, f64, f64, f64, usize); 4], usize, usize) {
+    pub fn index_spike_variants() -> ([(f64, f64, f64, f64, usize); 6], usize, usize) {
         VARIANTS.with(|f| std::mem::take(&mut *f.borrow_mut()))
     }
     pub fn index_spike_grown() -> Grown {
@@ -2573,7 +2585,7 @@ thread_local! {
     /// The orders grown four ways (`InRel::grow_spike`: eager, tagged, lazy, lazy tagged): grow ms, probe-weighted
     /// ms, merge-once ms, probe ns summed over orders, and rows read by merges (eager, tagged) or orders merged once
     /// (lazy); then orders, and orders no probe read.
-    static VARIANTS: std::cell::RefCell<([(f64, f64, f64, f64, usize); 4], usize, usize)> = const { std::cell::RefCell::new(([(0.0, 0.0, 0.0, 0.0, 0); 4], 0, 0)) };
+    static VARIANTS: std::cell::RefCell<([(f64, f64, f64, f64, usize); 6], usize, usize)> = const { std::cell::RefCell::new(([(0.0, 0.0, 0.0, 0.0, 0); 6], 0, 0)) };
 }
 
 /// Tests: this thread's count steps build their tables at their first probe.
