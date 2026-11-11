@@ -29,6 +29,7 @@ mod live;
 mod maintenance;
 mod overlay;
 mod phase;
+mod planning;
 mod producers;
 mod profiling;
 mod recursive;
@@ -89,6 +90,8 @@ pub struct CodeRuleSqlExecutor {
     stats_ready: std::cell::Cell<bool>,
     statistics: session::Statistics,
     last_sql_work_plan: Option<Value>,
+    planning: Option<planning::Operation>,
+    last_planning: Option<super::logic::costs::sql_plans::Report>,
     worker_profile_totals: Arc<work_graph::Accounting>,
     catalog_dirty: std::cell::Cell<bool>,
     control_ready: std::cell::Cell<bool>,
@@ -109,6 +112,7 @@ impl CodeRuleSqlExecutor {
         wire::register(&db)?;
         lattices::builtins(&db)?;
         reductions::register(&db)?;
+        super::logic::costs::start();
         let worker_profile_totals = Arc::new(work_graph::Accounting::default());
         let mut scratch = scratch::Pool::default();
         scratch.worker_accounting = Some(worker_profile_totals.clone());
@@ -130,6 +134,8 @@ impl CodeRuleSqlExecutor {
             stats_ready: std::cell::Cell::new(false),
             statistics: session::Statistics::default(),
             last_sql_work_plan: None,
+            planning: None,
+            last_planning: None,
             worker_profile_totals,
             catalog_dirty: std::cell::Cell::new(true),
             control_ready: std::cell::Cell::new(false),
@@ -674,6 +680,8 @@ impl CodeRuleSqlExecutor {
         max_waves: u32,
     ) -> Result<String> {
         self.statistics.materialize(&self.db)?;
+        let planning_digest = self.planning.as_ref()
+            .map(|_| planning::digest(&program, dialect, &self.lattice_extensions));
         let outputs = program.outputs.clone();
         let declared = Arc::new(program.clone());
         let arities: BTreeMap<_, _> = program
@@ -722,6 +730,7 @@ impl CodeRuleSqlExecutor {
         affected.extend(self.affected(&changed));
         let limits = self.limits.clone();
         let mut budget = None;
+        let mut evaluation = None;
         let result = (|| {
             self.remove_executions(&affected)?;
             self.clear_control()?;
@@ -814,6 +823,7 @@ impl CodeRuleSqlExecutor {
                 counts,
                 emitted: Arc::new(emitted.clone()),
                 program: declared.clone(),
+                planning_digest,
                 producers: producers.clone(),
                 outputs: outputs.clone(),
                 max_waves,
@@ -831,16 +841,26 @@ impl CodeRuleSqlExecutor {
             let retained_initial = retained && !self.legacy_initial;
             #[cfg(not(test))]
             let retained_initial = retained;
-            let native_initial = if retained_initial {
-                temporal::initial::run(&mut work, &self.versions, &mut execution, trace_namespace, &emitted.program, !minimal_setup, native_relations.clone())?
-            } else { None };
+            evaluation = self.planning.as_mut().and_then(|planning| {
+                planning.evaluation(&execution, max_waves, |name| {
+                    self.inputs.get(name).map(|source| source.estimated_len() as u64)
+                        .or_else(|| self.executions.iter().rev().find_map(|run| run.counts.get(name).copied()))
+                        .unwrap_or(0)
+                }, |_| (0, 0))
+            });
             let mut initializations = Vec::new();
+            let native_initial = if retained_initial {
+                temporal::initial::run(&mut work, &self.versions, &mut execution, trace_namespace, &emitted.program, !minimal_setup, native_relations.clone(), evaluation.as_mut())?
+            } else { None };
             let waves = if let Some(waves) = native_initial {
                 for (table,columns) in &indexes {
                     if native_relations.contains(table) { session::index(&self.db,table,columns).map_err(error)?; }
                 }
                 waves
             } else {
+                if let Some(eval) = &mut evaluation {
+                    eval.choose_cold_schedule();
+                }
                 let _scope = profiling::scope(&self.db, "cold execution");
                 if native_frontiers {
                     frontiers::declare(&work, &emitted.program)?;
@@ -916,6 +936,9 @@ impl CodeRuleSqlExecutor {
                 .map_err(error)?;
             Ok((waves, execution, work.pool, preparation))
         })();
+        if let (Some(planning), Some(evaluation)) = (&mut self.planning, evaluation) {
+            planning.record(evaluation);
+        }
         if let Some(budget) = budget {
             budget.leave(self.db.connection_mut());
         }

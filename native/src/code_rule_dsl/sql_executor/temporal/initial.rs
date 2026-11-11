@@ -36,6 +36,7 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
     original: &schedule::Program,
     declared_counts: bool,
     native_relations: BTreeSet<String>,
+    mut evaluation: Option<&mut planning::Evaluation>,
 ) -> Result<Option<u32>> {
     if !eligible(&run.emitted, &run.producers) { return Ok(None); }
     let e = run.emitted.clone();
@@ -49,6 +50,14 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
         .map(|(s, q)| (s.clone(), q.clone()))
         .collect::<Vec<_>>();
     let batch_selected = batch::selected(steps.len(), w);
+    if let Some(eval) = evaluation.as_deref_mut() {
+        let strategy = if batch_selected {
+            planning::Strategy::FullWaveBatch
+        } else {
+            planning::Strategy::SparseRetained
+        };
+        eval.choose(strategy, batch::wide(steps.len()));
+    }
     let lattice_names = original.lattices.iter().map(|(r, _, _)| r.clone()).collect();
     let relation_widths = original.relations.iter().cloned().collect();
     let (cache_decisions, stage_decisions) = if batch_selected {
@@ -110,6 +119,9 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
         trace.batch = batch::History::prepare(&trace, w.db)?;
     }
     if batch_selected && trace.batch.is_none() {
+        if let Some(eval) = evaluation {
+            eval.choose(planning::Strategy::SparseRetainedAfterBatchAttempt, false);
+        }
         let steps = Arc::make_mut(&mut trace.steps);
         trace.cache_decisions = compact(steps, &lattice_names);
         trace.stage_decisions = plan::acyclic::analyze(steps, &relation_widths, &lattice_names);

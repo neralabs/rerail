@@ -17,10 +17,14 @@ const REUSE: &str = "__rr_batch_reuse";
 const NEXT: &str = "__rr_batch_next";
 const COLLECT: &str = "__rr_batch_collect";
 
+pub(super) fn wide(trace_width: usize) -> bool {
+    trace_width > 32
+}
+
 pub(super) fn selected(trace_width: usize, w: &Work<'_>) -> bool {
     // A broad retained graph can use several submissions even in a single wave.
     // Keep the sparse context path when it has room to complete.
-    trace_width > 32
+    wide(trace_width)
         && super::super::super::sql_admission::current()
             .is_some_and(|ledger| ledger.available() < trace_width.saturating_mul(2) + 40)
         && w.versions.is_some()

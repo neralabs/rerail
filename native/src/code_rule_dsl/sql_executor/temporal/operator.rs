@@ -226,6 +226,7 @@ impl Operator {
             temporal: BTreeMap::new(),
             // A temporal trace's one step is a rule's query, not a producer's.
             program: Arc::new(crate::code_rule_dsl::logic::front::Program::default()),
+            planning_digest: None,
             producers: BTreeMap::new(),
         };
         let planned = if sql_kernel || opaque.is_some() { reductions::pool::Plans::default() } else { reductions::planned(w.db, &run, true)? };

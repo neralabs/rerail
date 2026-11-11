@@ -679,6 +679,8 @@ See the [implementation plan](sql-unification-and-updates-plan.md#retained-recur
 
 ## Explain and profiling
 
+The cost database and SQL plan forecasts are described in [Cost-based SQL planning](sql-planning-feedback.md).
+
 SQL sessions use the shared query profiler, including the standalone headless engine.
 Set `RERAIL_SQL_PROFILE_DIR` before the process opens a session:
 

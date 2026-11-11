@@ -8,7 +8,11 @@ pub(in crate::code_rule_dsl) struct Observed {
     database: usize,
     ledger: Arc<Ledger>,
     reservation: Option<Arc<Reservation>>,
-    running: Mutex<HashMap<usize, Option<(String, [i32; 4])>>>,
+    running: Mutex<HashMap<usize, Running>>,
+}
+struct Running {
+    receipt: Option<(String, [i32; 4])>,
+    vm_before: Option<i32>,
 }
 impl Observed {
     pub fn ledger(&self) -> Arc<Ledger> {
@@ -26,11 +30,19 @@ impl Observed {
         } else {
             unsafe { CStr::from_ptr(sql) }.to_string_lossy()
         };
-        let sample = self.ledger.listening().then(|| {
+        let receipt = self.ledger.listening().then(|| {
             let counters = statuses().map(|s| unsafe { ffi::sqlite3_stmt_status(statement, s, 0) });
             (sql.to_string(), counters)
         });
-        running.insert(statement as usize, sample);
+        let vm_before = self.ledger.measure_vm_steps.load(Relaxed).then(|| {
+            receipt.as_ref().map_or_else(
+                || unsafe {
+                    ffi::sqlite3_stmt_status(statement, ffi::SQLITE_STMTSTATUS_VM_STEP, 0)
+                },
+                |(_, counters)| counters[0],
+            )
+        });
+        running.insert(statement as usize, Running { receipt, vm_before });
         drop(running);
         let first = sql.trim_start().split_whitespace().next().unwrap_or("");
         let recovery =
@@ -45,12 +57,28 @@ impl Observed {
         }
     }
     pub fn end(&self, statement: *mut ffi::sqlite3_stmt) {
-        if let Some(Some((sql, before))) = self.running.lock().remove(&(statement as usize)) {
-            let after = statuses().map(|s| unsafe { ffi::sqlite3_stmt_status(statement, s, 0) });
-            self.ledger.record(Receipt {
-                sql,
-                counters: std::array::from_fn(|i| after[i].saturating_sub(before[i]).max(0) as u64),
-            });
+        let running = self.running.lock().remove(&(statement as usize));
+        if let Some(Running { receipt, vm_before }) = running {
+            let mut measured_steps = None;
+            if let Some((sql, before)) = receipt {
+                let after =
+                    statuses().map(|s| unsafe { ffi::sqlite3_stmt_status(statement, s, 0) });
+                measured_steps = Some(after[0]);
+                self.ledger.record(Receipt {
+                    sql,
+                    counters: std::array::from_fn(|i| {
+                        after[i].saturating_sub(before[i]).max(0) as u64
+                    }),
+                });
+            }
+            if let Some(before) = vm_before {
+                let after = measured_steps.unwrap_or_else(|| unsafe {
+                    ffi::sqlite3_stmt_status(statement, ffi::SQLITE_STMTSTATUS_VM_STEP, 0)
+                });
+                self.ledger
+                    .vm_steps
+                    .fetch_add(after.saturating_sub(before).max(0) as u64, Relaxed);
+            }
         }
     }
 }

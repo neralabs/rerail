@@ -8,6 +8,7 @@ mod scaling;
 mod updates;
 mod temporal;
 mod profiling;
+mod planning;
 mod initial;
 mod frontiers;
 mod cte;

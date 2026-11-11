@@ -13,6 +13,8 @@
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
+pub(in crate::code_rule_dsl) mod sql_plans;
+
 /// The samples kept per machine: older ones are deleted past this.
 const KEPT: i64 = 500_000;
 /// The recent samples a run's prices are fitted from.
@@ -52,6 +54,7 @@ fn open(path: &PathBuf) -> rusqlite::Result<rusqlite::Connection> {
            cold INTEGER, ok INTEGER, load REAL);
          CREATE INDEX IF NOT EXISTS samples_by_machine ON samples(machine, at);",
     )?;
+    sql_plans::create(&db)?;
     Ok(db)
 }
 
@@ -60,12 +63,13 @@ static WRITER: Mutex<Option<rusqlite::Connection>> = Mutex::new(None);
 
 /// Writes the samples the executor kept since the last write: one transaction.
 fn write() {
-    let (samples, dropped) = rerail_accel::score::take_samples();
-    if samples.is_empty() {
-        return;
-    }
     let Some(path) = path() else { return };
     let mut w = WRITER.lock().unwrap_or_else(|p| p.into_inner());
+    let (samples, dropped) = rerail_accel::score::take_samples();
+    let plans = sql_plans::take();
+    if samples.is_empty() && plans.is_empty() {
+        return;
+    }
     if w.is_none() {
         *w = open(&path).ok();
         // Past `KEPT`, the oldest of this machine's samples go.
@@ -73,21 +77,35 @@ fn write() {
             let _ = db.execute("DELETE FROM samples WHERE machine = ?1 AND at < (SELECT at FROM samples WHERE machine = ?1 ORDER BY at DESC LIMIT 1 OFFSET ?2)", rusqlite::params![machine(), KEPT]);
         }
     }
-    let Some(db) = w.as_mut() else { return };
+    let Some(db) = w.as_mut() else {
+        sql_plans::retry(plans);
+        return;
+    };
     let (machine, threads) = (machine(), rerail_accel::exec::threads() as i64);
     let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
-    let r = (|| -> rusqlite::Result<()> {
+    let r = (|| -> rusqlite::Result<Vec<i64>> {
         let tx = db.transaction()?;
-        {
+        if !samples.is_empty() {
             let mut ins = tx.prepare_cached("INSERT INTO samples VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)")?;
             for s in &samples {
                 ins.execute(rusqlite::params![at, machine, threads, s.lane.name(), s.forms, s.launches, s.units, s.estimate, s.host_estimate, s.wall, s.cpu, s.waited, s.phases, s.cold, s.ok, s.load])?;
             }
         }
-        tx.commit()
+        let ids = if plans.is_empty() {
+            Vec::new()
+        } else {
+            sql_plans::insert(&tx, &machine, threads, at, &plans)?
+        };
+        tx.commit()?;
+        Ok(ids)
     })();
-    if let Err(e) = r {
-        crate::code_rule_dsl::logic::profile::decision("cost statistics", || format!("{} samples not written: {e}", samples.len()));
+    match r {
+        Ok(ids) if !ids.is_empty() => sql_plans::learn(ids, &plans),
+        Ok(_) => {}
+        Err(e) => {
+            crate::code_rule_dsl::logic::profile::decision("cost statistics", || format!("{} job samples and {} SQL reports not written: {e}", samples.len(), plans.len()));
+            sql_plans::retry(plans);
+        }
     }
     if dropped > 0 {
         crate::code_rule_dsl::logic::profile::decision("cost statistics", || format!("{dropped} samples dropped: the writer fell behind"));
@@ -102,11 +120,15 @@ fn read() {
     }
     let r = (|| -> rusqlite::Result<Vec<rerail_accel::score::Sample>> {
         let db = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let machine = machine();
+        if let Err(e) = sql_plans::read(&db, &machine, rerail_accel::exec::threads() as i64) {
+            eprintln!("rerail: SQL planning observations not read from {}: {e}", path.display());
+        }
         let mut q = db.prepare(
             "SELECT lane, forms, launches, units, estimate, host_estimate, wall, cpu, waited, phases, cold, ok, load
              FROM samples WHERE machine = ?1 ORDER BY at DESC LIMIT ?2",
         )?;
-        let rows = q.query_map(rusqlite::params![machine(), READ], |r| {
+        let rows = q.query_map(rusqlite::params![machine, READ], |r| {
             let lane: String = r.get(0)?;
             Ok(rerail_accel::score::Sample {
                 lane: rerail_accel::Lane::ALL.into_iter().find(|l| l.name() == lane).unwrap_or(rerail_accel::Lane::Cpu),
@@ -149,6 +171,7 @@ pub(in crate::code_rule_dsl) fn start() {
         if path().is_none() {
             return;
         }
+        sql_plans::enable();
         rerail_accel::score::keep_samples(true);
         let _ = std::thread::Builder::new().name("rerail-costs".into()).spawn(|| {
             loop {

@@ -174,7 +174,8 @@ impl CodeRuleSqlExecutor {
             super::super::logic::native::forget_inputs(&self.db);
             let mut reports = Vec::new();
             for i in affected {
-                let run = &mut executions[i];
+                let (upstream, remaining) = executions.split_at_mut(i);
+                let run = &mut remaining[0];
                 if !run
                     .inputs
                     .iter()
@@ -183,7 +184,27 @@ impl CodeRuleSqlExecutor {
                     continue;
                 }
                 let limit = max_waves.unwrap_or(run.max_waves);
-                let mut report = maintenance::maintain(&mut work, run, &mut deltas, limit)?;
+                let mut evaluation = self.planning.as_mut().and_then(|planning| {
+                    planning.evaluation(run, limit, |name| {
+                        prepared.iter().find(|p| p.name == name).map(|p| &p.source)
+                            .or_else(|| self.inputs.get(name))
+                            .map(|source| source.estimated_len() as u64)
+                            .or_else(|| upstream.iter().rev().find_map(|run| run.counts.get(name).copied()))
+                            .unwrap_or(0)
+                    }, |name| deltas.get(name).map_or((0, 0), |d| (d.inserted, d.deleted)))
+                });
+                if let Some(eval) = &mut evaluation {
+                    let strategy = run.temporal.get(&0).map_or(
+                        planning::Strategy::GroupedMaintenance,
+                        temporal::Trace::planning_strategy,
+                    );
+                    eval.choose(strategy, run.emitted.program.steps.len() > 32);
+                }
+                let result = maintenance::maintain(&mut work, run, &mut deltas, limit);
+                if let (Some(planning), Some(evaluation)) = (&mut self.planning, evaluation) {
+                    planning.record(evaluation);
+                }
+                let mut report = result?;
                 report["program"] = json!(i);
                 report["migrated_views"] = json!(0);
                 reports.push(report);

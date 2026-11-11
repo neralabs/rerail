@@ -40,10 +40,22 @@ impl CodeRuleSqlExecutor {
     ) -> Result<T> {
         let _scope = scope(&self.db, name);
         let _operation = self.db.profile_scope(|| json!({"operation":name}));
-        let result = match self.db.admission().enter(name) {Ok(_admission)=>f(self),Err(e)=>Err(error(e))};
+        let ledger = self.db.admission();
+        self.planning = planning::Operation::start(name, &self.db, &self.limits);
+        let measurement = self.planning.as_ref().map(|_| ledger.measure());
+        let (result, denied) = match ledger.enter(name) {
+            Ok(_admission) => (f(self), false),
+            Err(e) => (Err(error(e)), true),
+        };
         let result=if result.is_err() && self.db.admission().exhausted() {
             Err(error(format!("SQL session submission allowance exhausted: {}",self.db.admission().snapshot())))
         }else{result};
+        drop(measurement);
+        if let Some(operation) = self.planning.take() {
+            let report = operation.finish(result.is_ok(), denied || ledger.exhausted());
+            super::super::logic::costs::sql_plans::submit(report.clone());
+            self.last_planning = Some(report);
+        }
         if let Some(p) = self.db.profiler() {
             p.result(name, result.as_ref().err().map(ToString::to_string));
         }

@@ -2,6 +2,7 @@
 use parking_lot::Mutex;
 use std::cell::RefCell;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 
 pub(in crate::code_rule_dsl) mod observer;
 #[cfg(test)]
@@ -17,7 +18,11 @@ struct State {
     listeners: Vec<std::sync::Weak<Mutex<Vec<Receipt>>>>,
 }
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct Ledger(Mutex<State>);
+pub(in crate::code_rule_dsl) struct Ledger {
+    state: Mutex<State>,
+    measure_vm_steps: AtomicBool,
+    vm_steps: AtomicU64,
+}
 thread_local! {static CURRENT:RefCell<Option<Arc<Ledger>>>=const{RefCell::new(None)};}
 pub(in crate::code_rule_dsl) fn current() -> Option<Arc<Ledger>> {
     CURRENT.with(|v| v.borrow().clone())
@@ -38,19 +43,30 @@ pub(in crate::code_rule_dsl) struct Receipt {
     pub counters: [u64; 4],
 }
 impl Ledger {
+    pub fn measure(&self) -> Measurement<'_> {
+        self.measure_vm_steps.store(true, Relaxed);
+        Measurement(self)
+    }
+    pub fn counters(&self) -> (usize, u64) {
+        (self.state.lock().used, self.vm_steps.load(Relaxed))
+    }
+    pub fn credits(&self) -> Option<usize> {
+        let s = self.state.lock();
+        s.limit.map(|_| if s.stopped { 0 } else { available(&s) })
+    }
     pub fn receipts(&self) -> Arc<Mutex<Vec<Receipt>>> {
         let rows = Arc::new(Mutex::new(Vec::new()));
-        let mut state = self.0.lock();
+        let mut state = self.state.lock();
         state.listeners.retain(|w| w.strong_count() > 0);
         state.listeners.push(Arc::downgrade(&rows));
         rows
     }
     fn listening(&self) -> bool {
-        self.0.lock().listeners.iter().any(|w| w.strong_count() > 0)
+        self.state.lock().listeners.iter().any(|w| w.strong_count() > 0)
     }
     fn record(&self, row: Receipt) {
         let listeners = self
-            .0
+            .state
             .lock()
             .listeners
             .iter()
@@ -64,7 +80,7 @@ impl Ledger {
         Arc::new(Self::default())
     }
     pub fn configure(&self, limit: Option<usize>) -> Result<(), String> {
-        let mut s = self.0.lock();
+        let mut s = self.state.lock();
         if limit.is_some_and(|n| n < s.used + s.reserved) {
             return Err(format!(
                 "SQL session already used {} submissions and reserved {}; cannot set a smaller allowance",
@@ -76,15 +92,15 @@ impl Ledger {
         Ok(())
     }
     pub fn exhausted(&self) -> bool {
-        self.0.lock().stopped
+        self.state.lock().stopped
     }
     pub fn available(&self) -> usize {
-        let s = self.0.lock();
+        let s = self.state.lock();
         if s.stopped { 0 } else { available(&s) }
     }
     /// Preflight owner operations that cannot roll back their native schema changes.
     pub fn require_owner(&self, statements: impl FnOnce() -> usize) -> Result<(), String> {
-        let s = self.0.lock();
+        let s = self.state.lock();
         if s.limit.is_none() {
             return Ok(());
         }
@@ -98,7 +114,7 @@ impl Ledger {
         Ok(())
     }
     pub fn snapshot(&self) -> serde_json::Value {
-        let s = self.0.lock();
+        let s = self.state.lock();
         serde_json::json!({"limit":s.limit,"executed":s.used,"reserved":s.reserved,
             "recovery_reserve":s.recovery,"available":s.limit.map(|_|if s.stopped{0}else{available(&s)}),"exhausted":s.stopped,
             "policy":"Session lifetime; owner and workers share credits; failed executions and recovery count; diagnostic EXPLAIN does not execute work"})
@@ -112,7 +128,7 @@ impl Ledger {
                 8
             };
         let previous = {
-            let mut s = self.0.lock();
+            let mut s = self.state.lock();
             let previous = s.recovery;
             s.recovery = s.recovery.max(recovery);
             if !metadata && (s.stopped || available(&s) == 0) {
@@ -131,7 +147,7 @@ impl Ledger {
         })
     }
     pub fn reserve(self: &Arc<Self>, count: usize) -> Result<Arc<Reservation>, String> {
-        let mut s = self.0.lock();
+        let mut s = self.state.lock();
         if s.stopped || count > available(&s) {
             return Err(format!(
                 "SQL work plan needs {count} submissions; {} session credits remain",
@@ -148,7 +164,7 @@ impl Ledger {
         }))
     }
     fn charge(&self, recovery: bool, reserved: bool) -> bool {
-        let mut s = self.0.lock();
+        let mut s = self.state.lock();
         if reserved {
             s.reserved = s.reserved.saturating_sub(1);
         }
@@ -167,6 +183,12 @@ impl Ledger {
         }
     }
 }
+pub(in crate::code_rule_dsl) struct Measurement<'a>(&'a Ledger);
+impl Drop for Measurement<'_> {
+    fn drop(&mut self) {
+        self.0.measure_vm_steps.store(false, Relaxed);
+    }
+}
 pub(in crate::code_rule_dsl) struct Scope {
     ledger: Arc<Ledger>,
     previous: usize,
@@ -174,7 +196,7 @@ pub(in crate::code_rule_dsl) struct Scope {
 }
 impl Drop for Scope {
     fn drop(&mut self) {
-        self.ledger.0.lock().recovery = self.previous;
+        self.ledger.state.lock().recovery = self.previous;
         CURRENT.with(|v| v.replace(self.prior.take()));
     }
 }
@@ -199,6 +221,6 @@ impl Reservation {
 impl Drop for Reservation {
     fn drop(&mut self) {
         let count = *self.remaining.get_mut();
-        self.ledger.0.lock().reserved -= count;
+        self.ledger.state.lock().reserved -= count;
     }
 }

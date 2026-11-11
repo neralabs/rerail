@@ -186,6 +186,13 @@ mod replay_tests {
 }
 
 impl Trace {
+    pub fn planning_strategy(&self) -> planning::Strategy {
+        if self.batch.is_some() {
+            planning::Strategy::FullWaveBatch
+        } else {
+            planning::Strategy::SparseRetained
+        }
+    }
     pub(in crate::code_rule_dsl::sql_executor) fn retained_explanations(&self) -> Vec<Value> {
         self.templates.iter().flat_map(|(id,p)|p.operator.run.reductions.iter().flat_map(|s|s.values()).map(move |state| {
             let mut value=state.explain();
