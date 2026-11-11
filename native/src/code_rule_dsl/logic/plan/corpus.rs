@@ -3779,6 +3779,7 @@ fn run_observed(
                 if !split.exports.iter().any(|e| e == rel) {
                     return Ok(());
                 }
+                let _span = crate::code_rule_dsl::logic::profile::span(|| "hand off an export (copy, statistics)".into());
                 let types: Vec<&str> = lowered.program.decls[rel].iter().map(|(_, t)| t.as_str()).collect();
                 let rows = crate::code_rule_dsl::logic::native::component::derived(&db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?;
                 let inserted = exports.borrow_mut().add(rel, types.len(), rows.as_ref());
