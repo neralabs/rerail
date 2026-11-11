@@ -327,10 +327,12 @@ def manifest(c, engine):
             if sect in t:
                 lines += ['', f"[target.'{target}'.{sect}]"]
                 for k, v in t[sect].items():
+                    if k.startswith('rerail-') and (sect == 'dev-dependencies' or c != 'rerail-device-metal'):
+                        continue  # Metal's runtime is the Metal device's alone
                     lines.append(f'{k} = {toml_value(rebase(v, d))}')
     lines += ['', '[dev-dependencies]']
     for k, v in engine.get('dev-dependencies', {}).items():
-        if k.startswith('rerail-') and k in DIRS:
+        if k.startswith('rerail-'):
             continue
         lines.append(f'{k} = {toml_value(rebase(v, d))}')
     if c == 'rerail-lang':
@@ -346,7 +348,8 @@ def merge_manifest(path, c, engine):
     text = open(path).read()
     have = tomllib.loads(text)
     d = os.path.dirname(path)
-    tables = {'dependencies': {k: rebase(v, d) for k, v in engine['dependencies'].items() if not k.startswith('rerail-') or (k not in DIRS and k != 'rerail-metal')}}
+    # external dependencies only: the rerail crates outside the split (compiler, metal, rr-parser) stand on these
+    tables = {'dependencies': {k: rebase(v, d) for k, v in engine['dependencies'].items() if not k.startswith('rerail-')}}
     for x in direct(c):
         dep = {'path': os.path.relpath(os.path.join(ROOT, DIRS[x]), d)}
         if x not in EXISTING:
@@ -354,7 +357,7 @@ def merge_manifest(path, c, engine):
         tables['dependencies'][x] = dep
     for target, t in engine.get('target', {}).items():
         if 'dependencies' in t:
-            tables[f"target.'{target}'.dependencies"] = {k: rebase(v, d) for k, v in t['dependencies'].items() if k != 'rerail-metal'}
+            tables[f"target.'{target}'.dependencies"] = {k: rebase(v, d) for k, v in t['dependencies'].items() if not k.startswith('rerail-')}
     def existing(name):
         node = have
         for part in re.findall(r"'[^']*'|[^.]+", name):
