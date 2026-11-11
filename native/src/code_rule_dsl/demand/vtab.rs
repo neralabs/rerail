@@ -1625,17 +1625,17 @@ impl PackedRow {
     }
 
     #[cfg(test)]
-    pub(in crate::code_rule_dsl) const fn row_kind(&self) -> RowKind {
+    pub const fn row_kind(&self) -> RowKind {
         self.row_kind
     }
 
     #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn is_complete(&self) -> bool {
+    pub fn is_complete(&self) -> bool {
         self.complete != 0
     }
 
     #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn error_code(&self) -> Option<&str> {
+    pub fn error_code(&self) -> Option<&str> {
         self.error_code.as_deref()
     }
 

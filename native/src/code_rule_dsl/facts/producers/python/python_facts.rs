@@ -121,7 +121,7 @@ pub(crate) enum QualifiedOrigin {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Qualification {
+pub enum Qualification {
     Qualified {
         name: String,
         origin: QualifiedOrigin,

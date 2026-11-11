@@ -880,7 +880,7 @@ impl Class {
 /// A dialect's kinds as T's exporter reads them. T's kinds were names, and a grammar gives some names several codes
 /// (aliases): the `kind` column holds each name's canonical code (`KindCatalog::kind_id`, what a program's constant
 /// lowers to), and a lookup reads the postings of every code of that name.
-pub(crate) struct Dialect {
+pub struct Dialect {
     tag: u8,
     family: Family,
     catalog: KindCatalog,
@@ -888,7 +888,7 @@ pub(crate) struct Dialect {
     operator: Option<u16>,
     /// The `operators` field: a comparison's operator tokens (`a < b <= c`).
     operators: Option<u16>,
-    canonical: Vec<u16>,
+    pub canonical: Vec<u16>,
     codes: HashMap<u16, Vec<u16>>,
     /// Whether W reads values of the dialect's nodes (its family's `ValueRules::SUPPORTED`): `Extra`'s `value` and
     /// `value_type` are W's for its documents, `core_rr`'s literal values for the others (an `.rr` file's).
@@ -1178,7 +1178,7 @@ impl Projected {
     #[inline]
     fn size(&self, local: usize) -> u32 { self.sizes()[local] }
     #[inline]
-    fn sizes(&self) -> &[u32] {
+    pub fn sizes(&self) -> &[u32] {
         self.size.get_or_init(|| {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "projection subtree sizes".into());
             let mut out = vec![0; self.core.len()];
@@ -1189,7 +1189,7 @@ impl Projected {
     #[inline]
     fn depth(&self, local: usize) -> u32 { self.depths()[local] }
     #[inline]
-    fn depths(&self) -> &[u32] {
+    pub fn depths(&self) -> &[u32] {
         self.depth.get_or_init(|| {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "projection depths".into());
             let mut out = vec![0; self.core.len()];
@@ -1271,10 +1271,10 @@ impl Projected {
 }
 
 /// One wave's documents, sorted by key, and the row offsets of the views.
-pub(crate) struct Batch {
+pub struct Batch {
     docs: Vec<Projected>,
     dialects: HashMap<u8, Dialect>,
-    nodes: Vec<usize>,
+    pub nodes: Vec<usize>,
     children: Vec<usize>,
     fields: Vec<usize>,
     /// Nodes and spans (`Projected::locs`).
@@ -2547,7 +2547,7 @@ impl Batch {
     /// Rows are read in runs of one document, so the last document found (per thread, per offsets array) is tried
     /// before the search: its range is checked against the offsets, so a stale hint costs a comparison, never a
     /// wrong document. The search per row was 13 s of the pack's cold run.
-    fn locate(&self, view: View, row: usize) -> (&Projected, usize) {
+    pub fn locate(&self, view: View, row: usize) -> (&Projected, usize) {
         let offsets = self.offsets(view);
         let key = offsets.as_ptr() as usize;
         let doc = LOCATED.with(|h| {
@@ -2916,7 +2916,7 @@ fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
 impl Batch {
 
     /// The node id of row `row` of the node view.
-    fn id(&self, row: usize) -> i64 {
+    pub fn id(&self, row: usize) -> i64 {
         let (p, local) = self.locate(View::Node, row);
         p.global(local as u32)
     }

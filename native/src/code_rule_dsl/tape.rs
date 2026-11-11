@@ -1575,7 +1575,7 @@ impl Rec {
 }
 
 #[derive(Clone)]
-pub(super) struct TapeDoc {
+pub struct TapeDoc {
     // P's: the source's digest, read by P's anchor corpus (`matcher::p_anchors`, test-only).
     #[cfg_attr(not(test), allow(dead_code))]
     source_digest: [u8; 32],
@@ -1599,7 +1599,7 @@ pub(super) struct TapeDoc {
     pub(in crate::code_rule_dsl) host: Option<Arc<HostLink>>,
     /// The image this document was restored from, and its stored bytes' SHA-256 once asked
     /// (`residency::slabs::admit_docs`, decision 0032): what the device reads in place.
-    image: Arc<TapeImage>,
+    pub image: Arc<TapeImage>,
     digest: Arc<std::sync::OnceLock<[u8; 32]>>,
     /// The document's path, as a run's matchers read it (`with_path`: what a `filePath` test inside a matcher tests).
     path: Option<Arc<str>>,
@@ -2216,7 +2216,7 @@ impl TapeDoc {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct TapeNode<'a> {
+pub struct TapeNode<'a> {
     nodes: &'a [Rec],
     grammar: &'a Grammar,
     points: &'a Points,
