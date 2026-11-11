@@ -3608,6 +3608,13 @@ impl<'a> Run<'a, '_> {
         for r in rels {
             if let Some(create) = self.pending.remove(r) {
                 crate::code_rule_dsl::facts::vtab::setup_now(self.db)?;
+                // A view's SQL may read another view not yet made, or a relation the native engine holds (a library's
+                // relation derived once for the run): each is made, or moved to its table, before the view is.
+                let named = |n: &String| sql_names(&create, &crate::code_rule_dsl::logic::sql::ident(n));
+                let views: Vec<String> = self.pending.keys().filter(|n| named(n)).cloned().collect();
+                self.ensure(&views)?;
+                let held: Vec<String> = self.native_rels.iter().filter(|n| named(n)).cloned().collect();
+                self.materialize(&held)?;
                 self.db.execute_batch(&create)?;
             }
         }
@@ -5690,13 +5697,22 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 connection::bind(db,&rel,source)?;
             }
         }
-        let mut out=compose::run(prog,db,inputs,lowered,&mut hooks)?;
+        // The composed query is one statement over every needed rule. Where SQLite cannot prepare it (a relation it
+        // reads that only the engine holds, or SQLite's limits on a statement's references and nesting), the program
+        // runs by strata instead, as one the composer does not accept does: composition is a plan, not a semantics.
+        let plan=compose::planned(prog,db,inputs.clone())?;
+        if let Err(e)=db.prepare_cached(&plan.sql) {
+            super::profile::decision("composed relational query", || format!("declined: SQLite cannot prepare it ({e}); the program runs by strata"));
+            if let Some(unload)=hooks.unload.as_deref_mut(){unload(&reads)?;}
+        } else {
+        let mut out=plan.execute(db,prog,lowered,&mut hooks)?;
         if let Some(unload)=hooks.unload.as_deref_mut(){unload(&reads)?;}
         for rel in &sentinels {
             if let Some(rows)=out.outputs.get_mut(rel){for row in rows {*row=row.split_once('\t').map_or(String::new(),|(_,r)|r.into());}}
             if let Some(cols)=out.nodes.get_mut(rel){*cols=cols.iter().filter_map(|i|i.checked_sub(1)).collect();}
         }
         return Ok(out);
+        }
     }
     // The previous run's tables are dropped; its views are kept where this run plans the same (`plan_views`). A
     // connection whose runs left nothing in SQL is not asked what they left (`temp_left`).
@@ -6903,3 +6919,25 @@ mod sql_kernel;
 
 #[cfg(test)]
 mod tests;
+
+/// Whether the SQL text `sql` names the identifier `name` (as a whole word, outside string literals).
+fn sql_names(sql: &str, name: &str) -> bool {
+    let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let mut in_str = false;
+    let bytes: Vec<(usize, char)> = sql.char_indices().collect();
+    let mut i = 0;
+    while i < bytes.len() {
+        let (at, c) = bytes[i];
+        if c == '\'' {
+            in_str = !in_str;
+        } else if !in_str && sql[at..].starts_with(name) {
+            let before = sql[..at].chars().next_back().is_none_or(|b| !word(b));
+            let after = sql[at + name.len()..].chars().next().is_none_or(|a| !word(a));
+            if before && after {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}

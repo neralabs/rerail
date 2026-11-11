@@ -764,7 +764,7 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
     let parsing = crate::code_rule_dsl::logic::profile::span(|| format!("parse each program ({})", programs.len()));
     // Each text read once, for its modules and its program, when the two are of the same text (no `extra`).
     let mut texts: Vec<Option<crate::code_rule_dsl::logic::rr::Text>> = if programs.len() > 1 && extra.is_empty() {
-        programs.iter().map(|text| crate::code_rule_dsl::logic::rr::read_text(text).map(Some)).collect::<std::result::Result<_, _>>()?
+        programs.iter().map(|text| crate::code_rule_dsl::logic::rr::read_text(text).map(Some).map_err(|e| in_policy(text, e))).collect::<std::result::Result<_, _>>()?
     } else {
         programs.iter().map(|_| None).collect()
     };
@@ -7281,4 +7281,14 @@ uses(n, f) :- imp(n, q), def(f, q).
 pub(in crate::code_rule_dsl) enum LazyKept {
     Patched(retain::Patched),
     Measured(Vec<(String, i64, i64, i64, i64)>, Vec<(String, i64, i64)>, BTreeSet<(usize, i64)>),
+}
+
+/// A reader's refusal of one of a run's programs, named by the program's `.policy` (a run reads texts, not files).
+fn in_policy(text: &str, e: crate::code_rule_dsl::logic::front::Error) -> crate::code_rule_dsl::logic::front::Error {
+    use crate::code_rule_dsl::logic::front::Error;
+    let name = text.lines().find_map(|l| l.trim().strip_prefix(".policy ").and_then(|r| r.split('"').nth(1)).map(str::to_owned));
+    match (e, name) {
+        (Error::Syntax(m), Some(n)) => Error::Syntax(format!("policy {n}: {m}")),
+        (e, _) => e,
+    }
 }
