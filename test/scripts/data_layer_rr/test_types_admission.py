@@ -68,5 +68,13 @@ class Admission(unittest.TestCase):
     def test_another_engine(self):
         value=copy.deepcopy(self.value);value['updates']['snapshot'][0]['engineSha256']='other';self.rejected(value)
 
+    def test_unrelated_mutation(self):
+        value=copy.deepcopy(self.value);value['controls'][0]['cases'][0]['programCopies']={};self.rejected(value)
+
+    def test_missing_alias_scope_control(self):
+        value=copy.deepcopy(self.value)
+        for report in value['controls']:report['cases'][:]=[r for r in report['cases'] if r['control']!='alias-scope']
+        self.rejected(value)
+
 
 if __name__=='__main__':unittest.main()

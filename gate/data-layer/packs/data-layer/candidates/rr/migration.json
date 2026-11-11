@@ -3921,9 +3921,94 @@
       "batch": 2,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-type-safety-patterns.json",
       "legacySha256": "311eda52dff8cfc9108b52fcb2971412c59f1ea97c1784d6b4e47173ac8e61ca",
-      "status": "draft",
+      "status": "full-contract-passed",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/type-safety-patterns.rr",
-      "ruleSha256": "dac658fe16191ca667ebd33ca4e4bd28ca0c1807ca49f4ceb7108441c49ffeb0"
+      "ruleSha256": "dac658fe16191ca667ebd33ca4e4bd28ca0c1807ca49f4ceb7108441c49ffeb0",
+      "evidence": {
+        "assertions": 193,
+        "positives": 31,
+        "failures": 0,
+        "skipped": 0,
+        "semanticFallbacks": 0,
+        "ruleSha256": "dac658fe16191ca667ebd33ca4e4bd28ca0c1807ca49f4ceb7108441c49ffeb0",
+        "engineCommit": "4e07746800e7fb958a57c5208c1ea956bc8f7412",
+        "engineSha256": "f4db14313662e14ca1e1924296c91acb48107035461e85db4a2977d61b6ce6e2",
+        "corpusSha256": "090a4e31ed6d0549b3e0e1495975905f9c4f6641689dc1a2d6dab476a4b48c2b",
+        "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "originalInventory": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory-v2.json",
+          "sha256": "a3636d7f8dbb210cfec64aa05b20ff37a97899365b68b3ba2a4ab855ccdda0db"
+        },
+        "reports": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-type-safety-complete-native-snapshot.json",
+            "sha256": "5b02f2ec08832809406fee842d40c199ca68825beef2c64d74ced049970fa8ba"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-type-safety-complete-native-workspace.json",
+            "sha256": "b4e22e01deba7db36f4cb5e1d138aaaf82eed11de0f4c0a46f203be327d370a4"
+          }
+        ],
+        "acceptanceCheckpoints": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-type-safety-complete-finalfcce.json.gz",
+            "sha256": "f1aff126acc24900fdf5ce23986b09d1d90408e83109354abdd40d02c4c1f884"
+          }
+        ],
+        "supplemental": {
+          "admitted": true,
+          "fullMigrationAcceptance": false,
+          "originalCasesPerAPI": 193,
+          "originalPositiveObservationsPerAPI": 31,
+          "originalConfigurationOrPassiveCasesPerAPI": 31,
+          "configurationCasesPerAPI": 23,
+          "storageCasesPerAPI": 5,
+          "protocolCasesPerAPI": 3,
+          "casesPerAPI": {
+            "public": 99,
+            "components": 95,
+            "production": 15,
+            "cli": 27,
+            "legacy": 61
+          },
+          "nativeExecutions": 1788,
+          "fullRuleMigrationAcceptance": true,
+          "persistentStepsPerAPI": 20,
+          "controls": 46
+        },
+        "scope": "All 193 original assertions, including 31 finding-positive observations. Native configuration, passive DTO and parser protocols are identified. Public APIs, registered collectors, supplied facts, CLI, production, all earlier inputs, persistent updates and removal controls pass through both APIs."
+      },
+      "migrationProgress": {
+        "status": "full-contract-passed",
+        "admitted": true,
+        "verifiedNativeExecutions": 1788,
+        "checkpoint": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-type-safety-complete-finalfcce.json.gz",
+          "sha256": "f1aff126acc24900fdf5ce23986b09d1d90408e83109354abdd40d02c4c1f884"
+        },
+        "summary": {
+          "admitted": true,
+          "fullMigrationAcceptance": false,
+          "originalCasesPerAPI": 193,
+          "originalPositiveObservationsPerAPI": 31,
+          "originalConfigurationOrPassiveCasesPerAPI": 31,
+          "configurationCasesPerAPI": 23,
+          "storageCasesPerAPI": 5,
+          "protocolCasesPerAPI": 3,
+          "casesPerAPI": {
+            "public": 99,
+            "components": 95,
+            "production": 15,
+            "cli": 27,
+            "legacy": 61
+          },
+          "nativeExecutions": 1788,
+          "fullRuleMigrationAcceptance": true,
+          "persistentStepsPerAPI": 20,
+          "controls": 46
+        },
+        "remaining": []
+      }
     },
     {
       "check": "conn_or_txn_union",

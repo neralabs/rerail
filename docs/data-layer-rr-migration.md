@@ -3651,3 +3651,26 @@ The repaired update sequences are rerunning when this entry is written.
 
 The coherent checkpoint still cannot grant full admission. Complete update evidence and admission tests remain required.
 No engine source changes, engine build, full-repository cold run, or new Linear ticket are part of this work.
+
+### 2026-11-11 — Complete type-safety admission
+
+All original assertions and expanded contracts pass through both native execution APIs on one coherent policy revision.
+The complete receipt retains 1,788 native executions.
+Each API passes 193 original assertions, including all 31 finding-positive observations.
+Each API also passes 99 public cases, 95 component cases, fifteen production cases, 27 CLI cases, and 61 historical inputs.
+
+All twenty persistent-update steps pass through each API after the fixture cleanup repair.
+All 46 behavior-removal controls detect the specified semantic changes. Invalid native programs cannot satisfy a removal control.
+The admission validator also checks each mutated program against its exact mutation recipe.
+Fifteen admission tests reject missing positives, omitted contracts, weakened updates, invalid controls, scope omissions, and mixed engines.
+The full Python tooling suite passes 550 tests.
+
+The complete receipt is `rr-type-safety-complete-finalfcce.json.gz`.
+The admission includes the explicit boundaries for 23 native-configuration assertions, five passive storage assertions, and three host protocol assertions.
+Every original assertion executes. No source linter function supplies native inference or CLI behavior.
+The generator reproduces the admitted rule exactly. The manifest inventory audit passes.
+The native binary and engine source remain unchanged. Compilation time is zero.
+
+The inventory now records seventeen full admissions, eighty-two drafts, and one absent translation.
+Earlier admissions retain their own recorded engine and adapter versions.
+The next rule is `async_executor`. Its unchanged source suite passes all 117 assertions and records 28 finding-positive observations.
