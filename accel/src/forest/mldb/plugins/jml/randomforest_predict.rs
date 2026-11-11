@@ -11,10 +11,12 @@
 //!
 //! A prediction is the two labels' weighted leaf distributions (label 1's is the probability the row is true).
 
+use std::collections::HashMap;
+
 use crate::forest::bucket::{BucketList, CellValue};
 use crate::forest::compute_kernel_grid::ComputeKernelArgument;
-use crate::forest::compute_kernel_metal::{alloc_uninitialized_array_sync, transfer_to_device_immutable, transfer_to_host_sync, MetalComputeQueue};
-use crate::forest::dataset_feature_space::DatasetFeatureSpace;
+use crate::forest::compute_kernel_metal::{alloc_uninitialized_array_sync, transfer_to_device_immutable, MetalComputeQueue};
+use crate::forest::dataset_feature_space::{ColumnData, DatasetFeatureSpace};
 use crate::forest::jml::committee::Committee;
 use crate::forest::jml::decision_tree::DecisionTree;
 use crate::forest::jml::split::Op;
@@ -106,9 +108,10 @@ impl HostForest {
 pub struct PredictNode {
     pub feature: u16,
     /// The bits of each of the feature's buckets (`RowBuckets` packs the feature's column with them).
-    pub bucket_bits: u16,
-    pub split_bucket: u16,
-    pub ordinal: u16,
+    pub bucket_bits: u8,
+    /// 1: true is below the split bucket; 0: true is the split bucket; 2: true is in subset `split_bucket`.
+    pub ordinal: u8,
+    pub split_bucket: u32,
     /// A node's index when at least 0; leaf -(child + 1) when below 0.
     pub child_true: i32,
     pub child_false: i32,
@@ -172,17 +175,17 @@ impl FlatForest {
                 // A categorical subset split: its set's place among the subsets.
                 let (split_bucket, ordinal) = if !node.split_subset.is_empty() {
                     let at = self.subsets.len() / 16;
-                    if at > u16::MAX as usize || node.split_subset.len() != 16 {
-                        return Err("more than 65536 subset splits, or a subset not of 512 buckets".into());
+                    if node.split_subset.len() != 16 {
+                        return Err("a subset not of 512 buckets".into());
                     }
                     self.subsets.extend_from_slice(&node.split_subset);
-                    (at as u16, 2)
+                    (at as u32, 2)
                 } else {
-                    (node.split_bucket as u16, (node.split.op() == Op::Less) as u16)
+                    (node.split_bucket as u32, (node.split.op() == Op::Less) as u8)
                 };
                 self.nodes.push(PredictNode {
                     feature: feature as u16,
-                    bucket_bits: prediction_bucket_bits(column) as u16,
+                    bucket_bits: prediction_bucket_bits(column) as u8,
                     split_bucket,
                     ordinal,
                     child_true: 0,
@@ -213,45 +216,169 @@ pub fn lanes_per_row(num_rows: usize, num_trees: usize) -> u32 {
     1 << (usize::BITS - 1 - want.leading_zeros())
 }
 
-/// A flattened forest resident on the device: uploaded once, predicting batch after batch.
+/// Flattened forests resident on the device, uploaded once and predicting batch after batch: every forest over
+/// every row in one dispatch (a model of several forests, such as the K-bucket regressor's, is one wait). The rows'
+/// and the predictions' buffers are kept from call to call (grown when a batch needs more), so a call allocates
+/// nothing on the device: it writes the rows into the kept buffer, dispatches, waits and reads the predictions.
 pub struct DeviceForest {
     nodes: metal::Buffer,
     roots: metal::Buffer,
     weights: metal::Buffer,
     leaves: metal::Buffer,
     subsets: metal::Buffer,
-    num_trees: u32,
+    forest_tree_start: metal::Buffer,
+    num_forests: u32,
+    /// The most trees a forest has (the lanes a prediction takes).
+    max_trees: u32,
     max_depth: u32,
     num_features: usize,
     feature_bits: Vec<u32>,
+    scratch: std::sync::Mutex<Scratch>,
+}
+
+/// What a forest keeps from call to call: the rows' bucket columns and the predictions (with their capacities, in
+/// u32 and f32), its queue (whose next command buffer is made as the last commits), and the launch plans by
+/// (items, lanes a row, column stride): a call whose batch shape was seen before skips the grid's solve.
+#[derive(Default)]
+struct Scratch {
+    data: Option<(metal::Buffer, usize)>,
+    out: Option<(metal::Buffer, usize)>,
+    queue: Option<MetalComputeQueue>,
+    plans: HashMap<(usize, u32, usize), crate::forest::compute_kernel_grid::GridLaunchPlan>,
+    /// `predict_values`: rowBuckets' plans by (rows, stride), and the columns' descriptions, numbers, codes and
+    /// code tables.
+    row_plans: HashMap<(usize, usize), crate::forest::compute_kernel_grid::GridLaunchPlan>,
+    columns: Option<(metal::Buffer, usize)>,
+    numbers: Option<(metal::Buffer, usize)>,
+    codes: Option<(metal::Buffer, usize)>,
+    tables: Option<(metal::Buffer, usize)>,
+}
+
+/// The words describing a column to `rowBuckets` (`ROW_BUCKET_WORDS` in the kernels).
+const ROW_BUCKET_WORDS: usize = 8;
+
+/// A feature space's columns as the device bucketizes prediction rows (`DeviceForest::predict_values`): built once
+/// per feature space, the bucket rules of `ColumnInfo::bucket_of` (numbers by the numeric splits, strings by name,
+/// a null in bucket 0 when the column had nulls, anything else in the unseen bucket).
+pub struct DeviceBucketizer {
+    columns: Vec<BucketizerColumn>,
+    split_keys: metal::Buffer,
+}
+
+struct BucketizerColumn {
+    bits: u32,
+    split_start: u32,
+    num_splits: u32,
+    numeric_offset: u32,
+    null_bucket: u32,
+    unseen: u32,
+    strings: HashMap<String, u32>,
+}
+
+impl DeviceBucketizer {
+    pub fn new(fs: &DatasetFeatureSpace) -> Result<Self, String> {
+        use crate::forest::dataset_feature_space::{order_key, unseen_bucket};
+        let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
+        let mut keys: Vec<i64> = Vec::new();
+        let mut columns = Vec::new();
+        for i in 0..fs.column_info.len() {
+            let c = fs.column(i).ok_or_else(|| format!("no column {i}"))?;
+            let d = &c.bucket_descriptions;
+            let unseen = unseen_bucket(d);
+            let numeric = d.numeric.active;
+            columns.push(BucketizerColumn {
+                bits: prediction_bucket_bits(c),
+                split_start: keys.len() as u32,
+                num_splits: if numeric { d.numeric.splits.len() as u32 } else { 0 },
+                numeric_offset: if numeric { d.numeric.offset } else { unseen },
+                null_bucket: if d.has_nulls { 0 } else { unseen },
+                unseen,
+                strings: d.strings.buckets.iter().enumerate().map(|(j, s)| (s.clone(), d.strings.offset + j as u32)).collect(),
+            });
+            if numeric {
+                keys.extend(d.numeric.splits.iter().map(|&s| order_key(s)));
+            }
+        }
+        keys.push(0);
+        Ok(DeviceBucketizer { columns, split_keys: transfer_to_device_immutable(&shared.device, &keys) })
+    }
+}
+
+/// A kept buffer of at least `n` elements of `T` (`slot`'s when it is big enough, else a new one, twice the size).
+fn kept<T>(device: &metal::DeviceRef, slot: &mut Option<(metal::Buffer, usize)>, n: usize) -> metal::Buffer {
+    match slot {
+        Some((b, cap)) if *cap >= n => b.clone(),
+        _ => {
+            let cap = (n * 2).max(1024);
+            let b = alloc_uninitialized_array_sync::<T>(device, cap);
+            *slot = Some((b.clone(), cap));
+            b
+        }
+    }
 }
 
 impl DeviceForest {
     pub fn new(flat: &FlatForest) -> Result<Self, String> {
+        Self::new_many(&[flat])
+    }
+
+    /// Several forests over the same feature space, predicted together: `predict` gives each row's predictions
+    /// forest after forest.
+    pub fn new_many(flats: &[&FlatForest]) -> Result<Self, String> {
+        let first = flats.first().ok_or("no forest")?;
+        let mut all = FlatForest { num_features: first.num_features, feature_bits: first.feature_bits.clone(), ..Default::default() };
+        let mut starts = vec![0u32];
+        for f in flats {
+            if f.num_features != first.num_features || f.feature_bits != first.feature_bits {
+                return Err("forests over different feature spaces".into());
+            }
+            let (node0, leaf0, subset0) = (all.nodes.len() as i32, (all.leaf_preds.len() / 2) as i32, (all.subsets.len() / 16) as u32);
+            // A child is a node (at least 0) or a leaf (-(leaf + 1)): each moves past the forests before.
+            let moved = |c: i32| if c >= 0 { c + node0 } else { c - leaf0 };
+            all.nodes.extend(f.nodes.iter().map(|n| PredictNode {
+                child_true: moved(n.child_true),
+                child_false: moved(n.child_false),
+                split_bucket: if n.ordinal == 2 { n.split_bucket + subset0 } else { n.split_bucket },
+                ..*n
+            }));
+            all.roots.extend(f.roots.iter().map(|&r| moved(r)));
+            all.weights.extend_from_slice(&f.weights);
+            all.leaf_preds.extend_from_slice(&f.leaf_preds);
+            all.subsets.extend_from_slice(&f.subsets);
+            all.max_depth = all.max_depth.max(f.max_depth);
+            starts.push(all.roots.len() as u32);
+        }
         let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
         let device = &shared.device;
         let one = [PredictNode::default()];
         Ok(DeviceForest {
-            nodes: transfer_to_device_immutable(device, if flat.nodes.is_empty() { &one[..] } else { &flat.nodes }),
-            roots: transfer_to_device_immutable(device, &flat.roots),
-            weights: transfer_to_device_immutable(device, &flat.weights),
-            leaves: transfer_to_device_immutable(device, &flat.leaf_preds),
-            subsets: transfer_to_device_immutable(device, if flat.subsets.is_empty() { &[0u32; 16][..] } else { &flat.subsets }),
-            num_trees: flat.roots.len() as u32,
-            max_depth: flat.max_depth,
-            num_features: flat.num_features,
-            feature_bits: flat.feature_bits.clone(),
+            nodes: transfer_to_device_immutable(device, if all.nodes.is_empty() { &one[..] } else { &all.nodes }),
+            roots: transfer_to_device_immutable(device, &all.roots),
+            weights: transfer_to_device_immutable(device, &all.weights),
+            leaves: transfer_to_device_immutable(device, &all.leaf_preds),
+            subsets: transfer_to_device_immutable(device, if all.subsets.is_empty() { &[0u32; 16][..] } else { &all.subsets }),
+            forest_tree_start: transfer_to_device_immutable(device, &starts),
+            num_forests: flats.len() as u32,
+            max_trees: starts.windows(2).map(|w| w[1] - w[0]).max().unwrap_or(0),
+            max_depth: all.max_depth,
+            num_features: all.num_features,
+            feature_bits: all.feature_bits,
+            scratch: Default::default(),
         })
     }
 
-    /// The predictions for a batch of rows: their buckets uploaded, one dispatch, one wait.
+    pub fn num_forests(&self) -> usize {
+        self.num_forests as usize
+    }
+
+    /// The predictions for a batch of rows: their buckets written to the kept buffer, one dispatch, one wait. Row
+    /// `r`'s prediction by forest `f` is at `r * num_forests() + f`.
     pub fn predict(&self, rows: &RowBuckets) -> Result<Vec<[f32; 2]>, String> {
         Ok(self.predict_timed(rows)?.0)
     }
 
     /// `predict`, with the seconds the GPU spent on the dispatch.
     pub fn predict_timed(&self, rows: &RowBuckets) -> Result<(Vec<[f32; 2]>, f64), String> {
-        use ComputeKernelArgument::{Buffer as B, Int};
         if rows.columns.len() != self.num_features {
             return Err(format!("{} columns for a forest over {}", rows.columns.len(), self.num_features));
         }
@@ -262,41 +389,168 @@ impl DeviceForest {
             return Err(format!("column {i} has {}-bit buckets, the forest's {}", rows.columns[i].entry_bits, self.feature_bits[i]));
         }
         let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
-        let device = &shared.device;
+        let mut scratch = self.scratch.lock().map_err(|_| "a prediction panicked")?;
         // Every column at the same stride (the widest column's words), so a node finds its column without a load.
         let stride = rows.columns.iter().map(|c| c.storage.data().len()).max().unwrap_or(0) + 1;
-        let mut data = vec![0u32; stride * rows.columns.len() + 1];
+        let words = stride * rows.columns.len() + 1;
+        let d_data = kept::<u32>(&shared.device, &mut scratch.data, words);
+        let data = unsafe { std::slice::from_raw_parts_mut(d_data.contents().cast::<u32>(), words) };
         for (i, c) in rows.columns.iter().enumerate() {
             data[i * stride..i * stride + c.storage.data().len()].copy_from_slice(c.storage.data());
         }
-        let nr = rows.num_rows as u32;
-        let d_data = transfer_to_device_immutable(device, &data);
-        let d_out = alloc_uninitialized_array_sync::<f32>(device, rows.num_rows * 2);
-        let mut queue = MetalComputeQueue::new(&shared.queue);
+        self.launch(&mut scratch, &d_data, rows.num_rows, stride)
+    }
+
+    /// The predictions on rows of values (`RowBuckets::from_values`'s columns as `ColumnData`, in the feature
+    /// space's column order), bucketized on the device (`rowBuckets`) in the command buffer that predicts them; the
+    /// host only copies the values and maps each categorical column's names (not its rows) to buckets.
+    pub fn predict_values(&self, b: &DeviceBucketizer, columns: &[ColumnData]) -> Result<Vec<[f32; 2]>, String> {
+        Ok(self.predict_values_timed(b, columns)?.0)
+    }
+
+    /// `predict_values`, with the GPU's seconds (bucketizing and predicting).
+    pub fn predict_values_timed(&self, b: &DeviceBucketizer, columns: &[ColumnData]) -> Result<(Vec<[f32; 2]>, f64), String> {
+        use ComputeKernelArgument::{Buffer as B, Int};
+        if columns.len() != self.num_features || b.columns.len() != self.num_features {
+            return Err(format!("{} columns and a bucketizer of {} for a forest over {}", columns.len(), b.columns.len(), self.num_features));
+        }
+        if let Some(i) = (0..self.num_features).find(|&i| b.columns[i].bits != self.feature_bits[i]) {
+            return Err(format!("column {i} has {}-bit buckets, the forest's {}", b.columns[i].bits, self.feature_bits[i]));
+        }
+        let num_rows = columns.first().map_or(0, |c| c.len());
+        if columns.iter().any(|c| c.len() != num_rows) {
+            return Err("the columns differ in length".into());
+        }
+        if num_rows == 0 {
+            return Ok((Vec::new(), 0.0));
+        }
+        let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
+        let device = &shared.device;
+        let mut scratch = self.scratch.lock().map_err(|_| "a prediction panicked")?;
+        let words: Vec<usize> = b.columns.iter().map(|c| crate::forest::bucket::WritableBucketList::words_required(num_rows, (1u32 << c.bits) - 1)).collect();
+        let stride = words.iter().copied().max().unwrap_or(0) + 1;
+        let (mut num_numbers, mut num_codes, mut num_table) = (0usize, 0usize, 0usize);
+        for c in columns {
+            match c {
+                ColumnData::Numeric(v) => num_numbers += v.len(),
+                ColumnData::Categorical { codes, names } => {
+                    num_codes += codes.len();
+                    num_table += names.len() + 1;
+                }
+            }
+        }
+        let d_columns = kept::<u32>(device, &mut scratch.columns, columns.len() * ROW_BUCKET_WORDS);
+        let d_numbers = kept::<u64>(device, &mut scratch.numbers, num_numbers.max(1));
+        let d_codes = kept::<u32>(device, &mut scratch.codes, num_codes.max(1));
+        let d_tables = kept::<u32>(device, &mut scratch.tables, num_table.max(1));
+        let view = |buf: &metal::Buffer, n: usize| unsafe { std::slice::from_raw_parts_mut(buf.contents().cast::<u32>(), n) };
+        let desc = view(&d_columns, columns.len() * ROW_BUCKET_WORDS);
+        let numbers = unsafe { std::slice::from_raw_parts_mut(d_numbers.contents().cast::<f64>(), num_numbers) };
+        let codes_out = view(&d_codes, num_codes);
+        let tables = view(&d_tables, num_table);
+        let (mut at_number, mut at_code, mut at_table) = (0usize, 0usize, 0usize);
+        for (i, (c, bc)) in columns.iter().zip(&b.columns).enumerate() {
+            let d = &mut desc[i * ROW_BUCKET_WORDS..(i + 1) * ROW_BUCKET_WORDS];
+            d[1] = bc.bits;
+            d[7] = words[i] as u32;
+            match c {
+                ColumnData::Numeric(v) => {
+                    numbers[at_number..at_number + v.len()].copy_from_slice(v);
+                    d[0] = 0;
+                    d[2] = at_number as u32;
+                    d[3] = bc.num_splits;
+                    d[4] = bc.split_start;
+                    d[5] = bc.numeric_offset;
+                    d[6] = bc.null_bucket;
+                    at_number += v.len();
+                }
+                ColumnData::Categorical { codes, names } => {
+                    codes_out[at_code..at_code + codes.len()].copy_from_slice(codes);
+                    let t = &mut tables[at_table..at_table + names.len() + 1];
+                    for (e, name) in t.iter_mut().zip(names) {
+                        *e = bc.strings.get(name.as_str()).copied().unwrap_or(bc.unseen);
+                    }
+                    t[names.len()] = bc.null_bucket;
+                    d[0] = 1;
+                    d[2] = at_code as u32;
+                    d[3] = names.len() as u32;
+                    d[4] = at_table as u32;
+                    d[5] = 0;
+                    d[6] = bc.null_bucket;
+                    at_code += codes.len();
+                    at_table += names.len() + 1;
+                }
+            }
+        }
+        let d_data = kept::<u32>(device, &mut scratch.data, stride * columns.len() + 1);
+        let k = kernel("rowBuckets")?;
+        let buffers: [(&str, &metal::BufferRef); 6] =
+            [("columns", &d_columns), ("numbers", &d_numbers), ("codes", &d_codes), ("splitKeys", &b.split_keys), ("codeTables", &d_tables), ("bucketDataOut", &d_data)];
+        let key = (num_rows, stride);
+        if !scratch.row_plans.contains_key(&key) {
+            let mut named = vec![("numRows", Int(num_rows as i64)), ("numColumns", Int(columns.len() as i64)), ("columnStride", Int(stride as i64))];
+            named.extend(buffers.iter().map(|&(n, b)| (n, B(b))));
+            if scratch.row_plans.len() >= 64 {
+                scratch.row_plans.clear();
+            }
+            scratch.row_plans.insert(key, k.plan(&named, &[(columns.len() * stride) as u32])?);
+        }
+        {
+            let Scratch { queue, row_plans: plans, .. } = &mut *scratch;
+            let queue = queue.get_or_insert_with(|| MetalComputeQueue::new(&shared.queue));
+            let mut ctx = queue.new_bind_context(k.function);
+            k.launch_plan(&plans[&key], &buffers, &mut ctx)?;
+        }
+        self.launch(&mut scratch, &d_data, num_rows, stride)
+    }
+
+    /// Predicts the rows whose bucket columns are (or will be, earlier in the queue's command buffer) in `d_data`
+    /// at `stride` words a column, and commits the command buffer.
+    fn launch(&self, scratch: &mut Scratch, d_data: &metal::BufferRef, num_rows: usize, stride: usize) -> Result<(Vec<[f32; 2]>, f64), String> {
+        use ComputeKernelArgument::{Buffer as B, Int};
+        let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
+        let device = &shared.device;
+        let items = num_rows * self.num_forests as usize;
+        let d_out = kept::<f32>(device, &mut scratch.out, items * 2);
         let k = kernel("predictForest")?;
+        let lanes = lanes_per_row(items, self.max_trees as usize);
+        let buffers: [(&str, &metal::BufferRef); 8] = [
+            ("bucketData", d_data),
+            ("nodes", &self.nodes),
+            ("subsets", &self.subsets),
+            ("forestTreeStart", &self.forest_tree_start),
+            ("treeRoots", &self.roots),
+            ("treeWeights", &self.weights),
+            ("leafPreds", &self.leaves),
+            ("predictionsOut", &d_out),
+        ];
+        let key = (items, lanes, stride);
+        if !scratch.plans.contains_key(&key) {
+            let mut named = vec![
+                ("numItems", Int(items as i64)),
+                ("numForests", Int(self.num_forests as i64)),
+                ("maxDepth", Int(self.max_depth as i64 + 1)),
+                ("lanesPerRow", Int(lanes as i64)),
+                ("columnStride", Int(stride as i64)),
+            ];
+            named.extend(buffers.iter().map(|&(n, b)| (n, B(b))));
+            if scratch.plans.len() >= 64 {
+                scratch.plans.clear();
+            }
+            scratch.plans.insert(key, k.plan(&named, &[items as u32])?);
+        }
+        let Scratch { queue, plans, .. } = scratch;
+        let queue = queue.get_or_insert_with(|| MetalComputeQueue::new(&shared.queue));
         let mut ctx = queue.new_bind_context(k.function);
-        k.enqueue(&[
-            ("numRows", Int(nr as i64)),
-            ("numTrees", Int(self.num_trees as i64)),
-            ("maxDepth", Int(self.max_depth as i64 + 1)),
-            ("lanesPerRow", Int(lanes_per_row(rows.num_rows, self.num_trees as usize) as i64)),
-            ("columnStride", Int(stride as i64)),
-            ("bucketData", B(&d_data)),
-            ("nodes", B(&self.nodes)),
-            ("subsets", B(&self.subsets)),
-            ("treeRoots", B(&self.roots)),
-            ("treeWeights", B(&self.weights)),
-            ("leafPreds", B(&self.leaves)),
-            ("predictionsOut", B(&d_out)),
-        ], &[nr], &mut ctx)?;
+        k.launch_plan(&plans[&key], &buffers, &mut ctx)?;
         drop(ctx);
         let event = queue.flush();
         event.await_()?;
-        let out = transfer_to_host_sync::<f32>(&d_out, rows.num_rows * 2);
-        if out.iter().any(|v| v.is_nan()) {
+        let out = unsafe { std::slice::from_raw_parts(d_out.contents().cast::<[f32; 2]>(), items) };
+        if out.iter().any(|v| v[0].is_nan()) {
             return Err("a walk did not reach a leaf".into());
         }
-        Ok((out.chunks(2).map(|c| [c[0], c[1]]).collect(), event.gpu_seconds()))
+        Ok((out.to_vec(), event.gpu_seconds()))
     }
 }
 
@@ -304,7 +558,7 @@ impl DeviceForest {
 mod tests {
     use super::*;
     use crate::forest::dataset_feature_space::FeatureType;
-    use crate::forest::randomforest_procedure::{train_forest, training_data, RandomForestProcedureConfig};
+    use crate::forest::randomforest_procedure::{train_forest, train_regression_forest, training_data, RandomForestProcedureConfig};
     use std::sync::Arc;
 
     /// Columns of values: real (with more distinct values than 255 buckets), real with nulls, categorical with
@@ -347,11 +601,14 @@ mod tests {
         assert_eq!(fs.column(2).unwrap().info, FeatureType::Categorical);
         assert!(fs.column(0).unwrap().distinct_values <= 256);
         let all = training_data(fs.clone(), &labels, None, None).unwrap();
-        let config = RandomForestProcedureConfig { feature_vector_samplings: 3, feature_samplings: 4, max_depth: 10, feature_sampling_prop: 0.7, ..Default::default() };
+        let mut flats = Vec::new();
+        for subsets in [false, true] {
+        let config = RandomForestProcedureConfig { feature_vector_samplings: 3, feature_samplings: 4, max_depth: 10, feature_sampling_prop: 0.7, categorical_subsets: subsets, ..Default::default() };
         let forest = train_forest(&all, &config).unwrap();
         let flat = FlatForest::new(&forest).unwrap();
+        flats.push(flat.clone());
         assert!(flat.max_depth >= 3, "{}", flat.max_depth);
-        assert!(!flat.subsets.is_empty(), "categorical subset splits to predict with");
+        assert_eq!(!flat.subsets.is_empty(), subsets, "categorical subset splits to predict with");
 
         let (mut test, test_labels) = columns(3000, 2);
         test[2][7] = CellValue::String("violet".into());
@@ -378,8 +635,27 @@ mod tests {
             }
             let right = host.iter().zip(l).filter(|(p, l)| (p[1] > 0.5) == (**l != 0.0)).count() as f64 / host.len() as f64;
             assert!(right > 0.75, "{what}: {right} right");
-            eprintln!("{what}: {right:.3} right");
+            eprintln!("{what}, subsets {subsets}: {right:.3} right");
         }
+        }
+        // Both forests (one with subset splits) in one dispatch: each row's predictions are each forest's alone, and
+        // the kept buffers serve batches that shrink and grow.
+        let both = DeviceForest::new_many(&[&flats[0], &flats[1]]).unwrap();
+        let alone: Vec<DeviceForest> = flats.iter().map(|f| DeviceForest::new(f).unwrap()).collect();
+        for b in [3000usize, 7, 3000, 1] {
+            let few: Vec<Vec<CellValue>> = cols.iter().map(|col| col[..b].to_vec()).collect();
+            let rows = RowBuckets::from_values(&fs, &few).unwrap();
+            let p = both.predict(&rows).unwrap();
+            assert_eq!(p.len(), 2 * b);
+            for (f, a) in alone.iter().enumerate() {
+                let q = a.predict(&rows).unwrap();
+                for r in 0..b {
+                    // (Within rounding: more items give a row fewer lanes, so its trees sum in another order.)
+                    assert!((p[2 * r + f][1] - q[r][1]).abs() < 1e-6, "batch {b}, row {r}, forest {f}: {:?} {:?}", p[2 * r + f], q[r]);
+                }
+            }
+        }
+        let config = RandomForestProcedureConfig { feature_vector_samplings: 3, feature_samplings: 4, max_depth: 10, feature_sampling_prop: 0.7, ..Default::default() };
 
         // Upstream's value walk, on the columns whose values and buckets agree (no nulls, no strings): numbers as
         // themselves. Only column 0 and 3 qualify; a forest over them alone.
@@ -488,6 +764,13 @@ mod tests {
         (r, w.elapsed().as_secs_f64(), crate::exec::process_cpu() - c)
     }
 
+    /// `timed`, with the GPU seconds of the forest kernels' command buffers the run awaited.
+    fn timed_gpu<T>(f: impl FnOnce() -> T) -> (T, f64, f64, f64) {
+        let g = crate::forest::compute_kernel_metal::gpu_seconds_awaited();
+        let (r, w, c) = timed(f);
+        (r, w, c, crate::forest::compute_kernel_metal::gpu_seconds_awaited() - g)
+    }
+
     fn train_bench(what: &str, cols: &[Vec<CellValue>], labels: &[f32], config: &RandomForestProcedureConfig) -> (Arc<DatasetFeatureSpace>, Forest) {
         let names = ["lane", "forms", "launches", "units", "cold", "load", "threads"];
         let named: Vec<(String, Vec<CellValue>)> = names.iter().zip(cols).map(|(n, c)| (n.to_string(), c.clone())).collect();
@@ -589,5 +872,467 @@ mod tests {
                 assert!((host.get(r).map_or(dev[r][1], |h| h[1]) - dev[r][1]).abs() < 1e-5 && (res[r][1] - dev[r][1]).abs() < 1e-5);
             }
         }
+    }
+
+    /// One data set of the comparison with other libraries: rows to train on and rows held out, each with a label
+    /// (classification) and a target (regression).
+    struct Suite {
+        name: String,
+        train: Vec<Job>,
+        test: Vec<Job>,
+        train_labels: Vec<f32>,
+        test_labels: Vec<f32>,
+        train_targets: Vec<f32>,
+        test_targets: Vec<f32>,
+    }
+
+    const NAMES: [&str; 7] = ["lane", "forms", "launches", "units", "cold", "load", "threads"];
+
+    fn named(cols: Vec<Vec<CellValue>>) -> Vec<(String, Vec<CellValue>)> {
+        NAMES.iter().zip(cols).map(|(n, c)| (n.to_string(), c)).collect()
+    }
+
+    fn regression_scores(p: &[f64], t: &[f32]) -> (f64, f64) {
+        let mean = t.iter().map(|&t| t as f64).sum::<f64>() / t.len() as f64;
+        let se: f64 = p.iter().zip(t).map(|(p, &t)| (p - t as f64).powi(2)).sum();
+        let st: f64 = t.iter().map(|&t| (t as f64 - mean).powi(2)).sum();
+        ((se / t.len() as f64).sqrt(), 1.0 - se / st)
+    }
+
+    /// `x` solved from `a x = b` (n x n, row major), by elimination with partial pivoting.
+    fn solve(mut a: Vec<f64>, mut b: Vec<f64>) -> Vec<f64> {
+        let n = b.len();
+        for c in 0..n {
+            let p = (c..n).max_by(|&i, &j| a[i * n + c].abs().total_cmp(&a[j * n + c].abs())).unwrap();
+            for k in 0..n { a.swap(c * n + k, p * n + k); }
+            b.swap(c, p);
+            let d = a[c * n + c];
+            if d.abs() < 1e-300 { continue; }
+            for r in 0..n {
+                if r != c {
+                    let f = a[r * n + c] / d;
+                    for k in 0..n { a[r * n + k] -= f * a[c * n + k]; }
+                    b[r] -= f * b[c];
+                }
+            }
+        }
+        (0..n).map(|i| if a[i * n + i].abs() < 1e-300 { 0.0 } else { b[i] / a[i * n + i] }).collect()
+    }
+
+    /// A probability's log odds, the probability kept off 0 and 1 (a leaf of one label's rows gives either).
+    fn log_odds(p: f32) -> f64 {
+        let p = (p as f64).clamp(1e-4, 1.0 - 1e-4);
+        (p / (1.0 - p)).ln()
+    }
+
+    /// The logistic curve `1 / (1 + exp(-(a x + b)))` of least log loss over `(x, label)` (Platt 1999): the labels
+    /// smoothed to Platt's targets, `(n+ + 1) / (n+ + 2)` and `1 / (n- + 2)`, so that separable data has a finite
+    /// fit; Newton's method, each step halved until the loss falls.
+    fn platt(x: &[f64], labels: &[f32]) -> (f64, f64) {
+        let pos = labels.iter().filter(|&&l| l != 0.0).count() as f64;
+        let neg = labels.len() as f64 - pos;
+        let (hi, lo) = ((pos + 1.0) / (pos + 2.0), 1.0 / (neg + 2.0));
+        let y: Vec<f64> = labels.iter().map(|&l| if l != 0.0 { hi } else { lo }).collect();
+        let loss = |a: f64, b: f64| -> f64 {
+            x.iter().zip(&y).map(|(&x, &y)| {
+                let z = a * x + b;
+                // log(1 + e^z) - y z, stably
+                (if z > 0.0 { z + (-z).exp().ln_1p() } else { z.exp().ln_1p() }) - y * z
+            }).sum()
+        };
+        let (mut a, mut b) = (1.0, 0.0);
+        let mut current = loss(a, b);
+        for _ in 0..100 {
+            let (mut ga, mut gb, mut haa, mut hab, mut hbb) = (0.0, 0.0, 1e-12, 0.0, 1e-12);
+            for (&x, &y) in x.iter().zip(&y) {
+                let q = 1.0 / (1.0 + (-(a * x + b)).exp());
+                let (g, h) = (q - y, q * (1.0 - q));
+                ga += g * x;
+                gb += g;
+                haa += h * x * x;
+                hab += h * x;
+                hbb += h;
+            }
+            let det = haa * hbb - hab * hab;
+            let (da, db) = ((hbb * ga - hab * gb) / det, (haa * gb - hab * ga) / det);
+            let mut step = 1.0;
+            while step > 1e-8 && loss(a - step * da, b - step * db) > current {
+                step /= 2.0;
+            }
+            if step <= 1e-8 {
+                break;
+            }
+            a -= step * da;
+            b -= step * db;
+            let next = loss(a, b);
+            let done = current - next < 1e-12 * current.abs().max(1.0);
+            current = next;
+            if done {
+                break;
+            }
+        }
+        (a, b)
+    }
+
+    /// `cols` cycled to `n` rows.
+    fn cycled(cols: &[Vec<CellValue>], n: usize) -> Vec<Vec<CellValue>> {
+        cols.iter().map(|c| (0..n).map(|i| c[i % c.len()].clone()).collect()).collect()
+    }
+
+    /// Batch prediction on resident forests (one dispatch and wait each): per batch size, the call's wall and CPU
+    /// and the GPU's time, the mean of several calls.
+    /// Batch prediction at each size, three ways: the values bucketized on the host (`RowBuckets::from_values`,
+    /// timed alone), the forest on those buckets (`predict`), and values to predictions on the device
+    /// (`predict_values`: bucketizing in the same command buffer). The values come as typed columns
+    /// (`ColumnData`), as a caller holds them; turning cells into them is not timed.
+    fn batch_timings(what: &str, fs: &DatasetFeatureSpace, forests: &DeviceForest, test_cols: &[Vec<CellValue>]) {
+        let bucketizer = DeviceBucketizer::new(fs).unwrap();
+        for b in [1usize, 16, 256, 4096, 65536] {
+            let cells = cycled(test_cols, b);
+            let typed = typed_columns(&cells);
+            let reps = if b <= 256 { 20 } else { 3 };
+            let r = reps as f64;
+            let (rows, hw, hc) = timed(|| {
+                let mut rows = None;
+                for _ in 0..reps {
+                    rows = Some(RowBuckets::from_values(fs, &cells).unwrap());
+                }
+                rows.unwrap()
+            });
+            let (gpu, w, c) = timed(|| (0..reps).map(|_| forests.predict_timed(&rows).unwrap().1).sum::<f64>());
+            let (dgpu, dw, dc) = timed(|| (0..reps).map(|_| forests.predict_values_timed(&bucketizer, &typed).unwrap().1).sum::<f64>());
+            eprintln!("BATCH {what} batch {b:6}: host bucketize {:8.1} us wall {:8.1} us CPU; predict buckets {:8.1} us wall {:8.1} us CPU {:8.1} us GPU; \
+                device bucketize+predict {:8.1} us wall {:8.1} us CPU {:8.1} us GPU a call; {:8.1} ns/row wall",
+                hw / r * 1e6, hc / r * 1e6, w / r * 1e6, c / r * 1e6, gpu / r * 1e6, dw / r * 1e6, dc / r * 1e6, dgpu / r * 1e6, dw / r / b as f64 * 1e9);
+        }
+    }
+
+    /// Cells as the typed columns a caller holds (`ColumnData`).
+    fn typed_columns(cols: &[Vec<CellValue>]) -> Vec<ColumnData> {
+        cols.iter().enumerate().map(|(i, c)| ColumnData::from_values(&format!("c{i}"), c).unwrap()).collect()
+    }
+
+    /// One data set: exported for the other libraries (`BENCH_EXPORT`), then this forest's runs.
+    /// - classification and regression, upstream's categorical split and CART's, depth 20 and 8;
+    /// - the K-bucket regressor for each K in `BENCH_K`: K - 1 forests, forest k predicting "the target is above
+    ///   the training targets' k/K quantile", trained on 80% of the training rows; the value from those
+    ///   probabilities by the bucket medians (expected value) and by least squares fitted on the other 20%;
+    /// - batch prediction for the regression and K-bucket forests.
+    fn run_suite(s: &Suite) {
+        if let Ok(dir) = std::env::var("BENCH_EXPORT") {
+            for (part, jobs, labels, targets) in [("train", &s.train, &s.train_labels, &s.train_targets), ("test", &s.test, &s.test_labels, &s.test_targets)] {
+                let mut out = String::from("lane,forms,launches,units,cold,load,threads,label,target\n");
+                for ((j, l), t) in jobs.iter().zip(labels.iter()).zip(targets.iter()) {
+                    out += &format!("{},{},{},{},{},{},{},{},{}\n", j.lane, j.forms.replace(',', ";"), j.launches, j.units, j.cold, j.load, j.threads, l, t);
+                }
+                std::fs::write(format!("{dir}/{}_{part}.csv", s.name), out).unwrap();
+            }
+        }
+        let only = std::env::var("BENCH_ONLY").unwrap_or_default();
+        let want = |w: &str| only.is_empty() || only.split(',').any(|o| o == w);
+        let (train_cols, test_cols) = (named(columns_of(&s.train)), columns_of(&s.test));
+        let fsp: f32 = std::env::var("BENCH_FSP").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
+        let fs_class = Arc::new(DatasetFeatureSpace::from_columns(&train_cols, FeatureType::Boolean).unwrap());
+        let fs_real = Arc::new(DatasetFeatureSpace::from_columns(&train_cols, FeatureType::Real).unwrap());
+        // Warm the kernels.
+        train_forest(&training_data(fs_class.clone(), &s.train_labels, None, None).unwrap(), &RandomForestProcedureConfig { feature_vector_samplings: 1, feature_samplings: 2, ..Default::default() }).unwrap();
+        let nt = s.test.len();
+        // The rows a calibrated model trains on (80% of the training rows) and calibrates on (the other 20%).
+        let fit: Vec<usize> = (0..s.train.len()).filter(|&i| h(i, 13) % 5 != 0).collect();
+        let cal: Vec<usize> = (0..s.train.len()).filter(|&i| h(i, 13) % 5 == 0).collect();
+        let pick = |cols: &[(String, Vec<CellValue>)], rows: &[usize]| -> Vec<Vec<CellValue>> { cols.iter().map(|(_, c)| rows.iter().map(|&i| c[i].clone()).collect()).collect() };
+        let fit_cols = named(pick(&train_cols, &fit));
+        let cal_cols: Vec<Vec<CellValue>> = pick(&train_cols, &cal);
+        let fs_fit = Arc::new(DatasetFeatureSpace::from_columns(&fit_cols, FeatureType::Boolean).unwrap());
+        // BENCH_MIN_LEAF: the fewest rows a leaf may have; BENCH_PER_TREE: a row sample per tree (100 bags of one
+        // tree) rather than upstream's 5 bags of 20.
+        let min_leaf: u32 = std::env::var("BENCH_MIN_LEAF").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+        let per_tree = std::env::var("BENCH_PER_TREE").is_ok();
+        let depths: Vec<i32> = std::env::var("BENCH_DEPTHS").ok().map(|v| v.split(',').map(|x| x.parse().unwrap()).collect()).unwrap_or(vec![20, 8]);
+        let tag = format!("{}{}", if min_leaf > 1 { format!("-leaf{min_leaf}") } else { String::new() }, if per_tree { "-pertree" } else { "" });
+        for &depth in &depths {
+            for subsets in [false, true] {
+                let mut config = RandomForestProcedureConfig { max_depth: depth, categorical_subsets: subsets, feature_sampling_prop: fsp, min_leaf_examples: min_leaf, ..Default::default() };
+                if per_tree {
+                    config.feature_vector_samplings = 100;
+                    config.feature_samplings = 1;
+                }
+                let kind = format!("{}{tag}", if subsets { "cart" } else { "one-vs-rest" });
+                if want("classification") {
+                    let (forest, w, c, tg) = timed_gpu(|| train_forest(&training_data(fs_class.clone(), &s.train_labels, None, None).unwrap(), &config).unwrap());
+                    let flat = FlatForest::new(&forest).unwrap();
+                    let rows = RowBuckets::from_values(&fs_class, &test_cols).unwrap();
+                    let resident = DeviceForest::new(&flat).unwrap();
+                    let ((p, gpu), pw, pc) = timed(|| resident.predict_timed(&rows).unwrap());
+                    let ll = p.iter().zip(&s.test_labels).map(|(p, &l)| -((if l != 0.0 { p[1] } else { p[0] }).clamp(1e-6, 1.0) as f64).ln()).sum::<f64>() / p.len() as f64;
+                    eprintln!("RESULT {} rerail-{kind} classification depth {depth}: train {:.0} ms wall {:.0} ms CPU {:.0} ms GPU; {} nodes; predict {nt} {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; accuracy {:.4} logloss {:.4}",
+                        s.name, w * 1e3, c * 1e3, tg * 1e3, flat.nodes.len(), pw * 1e3, pc * 1e3, gpu * 1e3, right(&p, &s.test_labels), ll);
+                }
+                if want("calibrated") {
+                    // The forest on 80% of the training rows; a logistic curve over its log odds fitted on the other
+                    // 20% (Platt's calibration, mldb's GLZ probabilizer with a logit link).
+                    let fit_labels: Vec<f32> = fit.iter().map(|&i| s.train_labels[i]).collect();
+                    let cal_labels: Vec<f32> = cal.iter().map(|&i| s.train_labels[i]).collect();
+                    let ((resident, a, b), w, c, tg) = timed_gpu(|| {
+                        let forest = train_forest(&training_data(fs_fit.clone(), &fit_labels, None, None).unwrap(), &config).unwrap();
+                        let resident = DeviceForest::new(&FlatForest::new(&forest).unwrap()).unwrap();
+                        let p = resident.predict(&RowBuckets::from_values(&fs_fit, &cal_cols).unwrap()).unwrap();
+                        let (a, b) = platt(&p.iter().map(|p| log_odds(p[1])).collect::<Vec<_>>(), &cal_labels);
+                        (resident, a, b)
+                    });
+                    let rows = RowBuckets::from_values(&fs_fit, &test_cols).unwrap();
+                    let ((p, gpu), pw, pc) = timed(|| {
+                        let (p, gpu) = resident.predict_timed(&rows).unwrap();
+                        (p.iter().map(|p| { let q = 1.0 / (1.0 + (-(a * log_odds(p[1]) + b)).exp()); [(1.0 - q) as f32, q as f32] }).collect::<Vec<_>>(), gpu)
+                    });
+                    let ll = p.iter().zip(&s.test_labels).map(|(p, &l)| -((if l != 0.0 { p[1] } else { p[0] }).clamp(1e-6, 1.0) as f64).ln()).sum::<f64>() / p.len() as f64;
+                    eprintln!("RESULT {} rerail-{kind}-platt classification depth {depth}: train {:.0} ms wall {:.0} ms CPU {:.0} ms GPU; curve {a:.3} x + {b:.3}; predict {nt} {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; accuracy {:.4} logloss {:.4}",
+                        s.name, w * 1e3, c * 1e3, tg * 1e3, pw * 1e3, pc * 1e3, gpu * 1e3, right(&p, &s.test_labels), ll);
+                }
+                if want("regression") {
+                    let (forest, w, c, tg) = timed_gpu(|| train_regression_forest(fs_real.clone(), &s.train_targets, None, None, &config).unwrap());
+                    let flat = FlatForest::new(&forest).unwrap();
+                    let rows = RowBuckets::from_values(&fs_real, &test_cols).unwrap();
+                    let resident = DeviceForest::new(&flat).unwrap();
+                    let ((p, gpu), pw, pc) = timed(|| resident.predict_timed(&rows).unwrap());
+                    let values: Vec<f64> = p.iter().map(|p| forest.regression_value(*p).unwrap()).collect();
+                    let (rmse, r2) = regression_scores(&values, &s.test_targets);
+                    eprintln!("RESULT {} rerail-{kind} regression depth {depth}: train {:.0} ms wall {:.0} ms CPU {:.0} ms GPU; {} nodes; predict {nt} {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; rmse {rmse:.4} r2 {r2:.4}",
+                        s.name, w * 1e3, c * 1e3, tg * 1e3, flat.nodes.len(), pw * 1e3, pc * 1e3, gpu * 1e3);
+                    if depth == 20 && !subsets && want("batch") {
+                        batch_timings(&format!("{} regression depth {depth}", s.name), &fs_real, &resident, &test_cols);
+                    }
+                }
+                if !want("kbucket") {
+                    continue;
+                }
+                let ks: Vec<usize> = std::env::var("BENCH_K").ok().map(|v| v.split(',').map(|x| x.parse().unwrap()).collect()).unwrap_or(vec![2, 4, 8, 16]);
+                let fs = &fs_fit;
+                let mut sorted: Vec<f32> = fit.iter().map(|&i| s.train_targets[i]).collect();
+                sorted.sort_by(f32::total_cmp);
+                for &k in &ks {
+                    let thresholds: Vec<f32> = (1..k).map(|q| sorted[q * sorted.len() / k]).collect();
+                    // Each bucket's median target, bucket b holding the targets between thresholds b - 1 and b.
+                    let medians: Vec<f64> = (0..k).map(|b| sorted[(2 * b + 1) * sorted.len() / (2 * k)] as f64).collect();
+                    // The K - 1 forests, resident together: one dispatch predicts them all.
+                    let ((forests, nodes), w, c, tg) = timed_gpu(|| {
+                        let mut flats = Vec::new();
+                        for &t in &thresholds {
+                            let labels: Vec<f32> = fit.iter().map(|&i| (s.train_targets[i] > t) as u8 as f32).collect();
+                            let forest = train_forest(&training_data(fs.clone(), &labels, None, None).unwrap(), &config).unwrap();
+                            flats.push(FlatForest::new(&forest).unwrap());
+                        }
+                        let nodes: usize = flats.iter().map(|f| f.nodes.len()).sum();
+                        (DeviceForest::new_many(&flats.iter().collect::<Vec<_>>()).unwrap(), nodes)
+                    });
+                    // The probabilities "above threshold k", per row, for a set of rows (bucketized on the device).
+                    let bucketizer = DeviceBucketizer::new(&fs).unwrap();
+                    let probs = |cols: &[ColumnData]| -> (Vec<Vec<f64>>, f64) {
+                        let (p, gpu) = forests.predict_values_timed(&bucketizer, cols).unwrap();
+                        (p.chunks(k - 1).map(|r| r.iter().map(|p| p[1] as f64).collect()).collect(), gpu)
+                    };
+                    // Least squares over [1, p_1 .. p_{K-1}] on the calibration rows (a little ridge).
+                    let (cal_p, _) = probs(&typed_columns(&cal_cols));
+                    let test_typed = typed_columns(&test_cols);
+                    let n = k;
+                    let (mut a, mut b) = (vec![0.0; n * n], vec![0.0; n]);
+                    for (p, &i) in cal_p.iter().zip(&cal) {
+                        let x: Vec<f64> = std::iter::once(1.0).chain(p.iter().copied()).collect();
+                        for r in 0..n {
+                            b[r] += x[r] * s.train_targets[i] as f64;
+                            for q in 0..n {
+                                a[r * n + q] += x[r] * x[q];
+                            }
+                        }
+                    }
+                    for r in 1..n {
+                        a[r * n + r] += 1e-3;
+                    }
+                    let coef = solve(a, b);
+                    let ((test_p, gpu), pw, pc) = timed(|| probs(&test_typed));
+                    let expected: Vec<f64> = test_p.iter().map(|p| medians[0] + p.iter().enumerate().map(|(q, &pq)| pq * (medians[q + 1] - medians[q])).sum::<f64>()).collect();
+                    let fitted: Vec<f64> = test_p.iter().map(|p| coef[0] + p.iter().zip(&coef[1..]).map(|(p, c)| p * c).sum::<f64>()).collect();
+                    let (rmse_e, r2_e) = regression_scores(&expected, &s.test_targets);
+                    let (rmse_l, r2_l) = regression_scores(&fitted, &s.test_targets);
+                    eprintln!("RESULT {} rerail-{kind}-k{k} kbucket depth {depth}: train {:.0} ms wall {:.0} ms CPU {:.0} ms GPU; {nodes} nodes; predict {nt} {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; expected rmse {rmse_e:.4} r2 {r2_e:.4}; least squares rmse {rmse_l:.4} r2 {r2_l:.4}",
+                        s.name, w * 1e3, c * 1e3, tg * 1e3, pw * 1e3, pc * 1e3, gpu * 1e3);
+                    if depth == 20 && !subsets && k == 8 && want("batch") {
+                        batch_timings(&format!("{} kbucket k{k} depth {depth}", s.name), &fs, &forests, &test_cols);
+                    }
+                }
+            }
+        }
+    }
+
+    /// The comparison with other libraries (`BENCH_DATA`: `synthetic`, `real` or both, the default):
+    /// - synthetic: the synthetic jobs, `BENCH_SIZES[0]` rows to train on and 20,000 held out; the label "the lane
+    ///   beats the CPU", the target ln(wall);
+    /// - real: the job samples (`BENCH_SAMPLES`), 70% to train on and 30% held out; the label "slower than its
+    ///   price", the target ln(wall).
+    #[test]
+    #[ignore = "benchmark: run by name with --ignored --nocapture, BENCH_SAMPLES and BENCH_EXPORT set"]
+    fn compare_with_libraries() {
+        if crate::gpu::shared::get().is_none() {
+            return;
+        }
+        let real = real_jobs();
+        assert!(!real.is_empty(), "BENCH_SAMPLES");
+        let data = std::env::var("BENCH_DATA").unwrap_or("synthetic,real".into());
+        let target = |j: &Job| j.wall.max(1e-9).ln() as f32;
+        if data.split(',').any(|d| d == "synthetic") {
+            let n: usize = std::env::var("BENCH_SIZES").ok().and_then(|v| v.split(',').next()?.parse().ok()).unwrap_or(20000);
+            let (train, train_labels) = synthetic(&real, n, 1);
+            let (test, test_labels) = synthetic(&real, 20000, 7);
+            let (train_targets, test_targets) = (train.iter().map(target).collect(), test.iter().map(target).collect());
+            run_suite(&Suite { name: format!("synthetic{n}"), train, test, train_labels, test_labels, train_targets, test_targets });
+        }
+        if data.split(',').any(|d| d == "real") {
+            let (train, test): (Vec<(usize, &Job)>, Vec<(usize, &Job)>) = real.iter().enumerate().partition(|(i, _)| h(*i, 11) % 10 < 7);
+            let train: Vec<Job> = train.into_iter().map(|(_, j)| j.clone()).collect();
+            let test: Vec<Job> = test.into_iter().map(|(_, j)| j.clone()).collect();
+            let label = |j: &Job| (j.wall > j.estimate) as u8 as f32;
+            run_suite(&Suite {
+                name: "real".into(),
+                train_labels: train.iter().map(label).collect(),
+                test_labels: test.iter().map(label).collect(),
+                train_targets: train.iter().map(target).collect(),
+                test_targets: test.iter().map(target).collect(),
+                train,
+                test,
+            });
+        }
+    }
+
+    /// Rows of values bucketized on the device give the host's bucket words (`RowBuckets::from_values`) and
+    /// predictions, with values training never saw: numbers past the splits, unseen strings, nulls in a column that
+    /// had none, and numbers in a categorical column.
+    #[test]
+    fn device_bucketizing_is_the_host_s() {
+        if crate::gpu::shared::get().is_none() {
+            return;
+        }
+        let (cols, labels) = columns(3000, 3);
+        let named: Vec<(String, Vec<CellValue>)> = cols.iter().enumerate().map(|(i, c)| (format!("c{i}"), c.clone())).collect();
+        let fs = Arc::new(DatasetFeatureSpace::from_columns(&named, FeatureType::Boolean).unwrap());
+        let forest = train_forest(&training_data(fs.clone(), &labels, None, None).unwrap(), &RandomForestProcedureConfig::default()).unwrap();
+        let f = DeviceForest::new(&FlatForest::new(&forest).unwrap()).unwrap();
+        let b = DeviceBucketizer::new(&fs).unwrap();
+        let (mut test, _) = columns(777, 9);
+        for (i, c) in test.iter_mut().enumerate() {
+            for (r, v) in c.iter_mut().enumerate() {
+                match (r % 11, i) {
+                    (0, _) => *v = CellValue::Empty,
+                    (1, _) if matches!(v, CellValue::String(_)) => *v = CellValue::String(format!("never seen {r}")),
+                    (2, _) if matches!(v, CellValue::Float(_) | CellValue::Integer(_)) => *v = CellValue::Float(1e300 * if r % 2 == 0 { 1.0 } else { -1.0 }),
+                    (3, _) if matches!(v, CellValue::Float(_) | CellValue::Integer(_)) => *v = CellValue::Float(-0.0),
+                    _ => {}
+                }
+            }
+        }
+        for n in [777usize, 1, 33] {
+            let part: Vec<Vec<CellValue>> = test.iter().map(|c| c[..n].to_vec()).collect();
+            // A categorical column given numbers: every number is unseen there.
+            let mut values: Vec<ColumnData> = part.iter().enumerate().map(|(i, c)| ColumnData::from_values(&format!("c{i}"), c).unwrap()).collect();
+            let host = RowBuckets::from_values(&fs, &part).unwrap();
+            let want = f.predict(&host).unwrap();
+            let got = f.predict_values(&b, &values).unwrap();
+            assert_eq!(got, want, "{n} rows");
+            let stride = host.columns.iter().map(|c| c.storage.data().len()).max().unwrap() + 1;
+            let data = f.scratch.lock().unwrap().data.clone().unwrap().0;
+            let data = unsafe { std::slice::from_raw_parts(data.contents().cast::<u32>(), stride * host.columns.len()) };
+            for (i, c) in host.columns.iter().enumerate() {
+                assert_eq!(&data[i * stride..i * stride + c.storage.data().len()], c.storage.data(), "{n} rows, column {i}");
+            }
+            if let Some(i) = values.iter().position(|v| matches!(v, ColumnData::Categorical { .. })) {
+                values[i] = ColumnData::Numeric((0..n).map(|r| r as f64).collect());
+                let mut swapped = part.clone();
+                swapped[i] = (0..n).map(|r| CellValue::Float(r as f64)).collect();
+                assert_eq!(f.predict_values(&b, &values).unwrap(), f.predict(&RowBuckets::from_values(&fs, &swapped).unwrap()).unwrap());
+            }
+        }
+    }
+
+    /// Where a single-row call's time goes: each phase of `predict_timed`, the mean over many calls (wall and the
+    /// process's CPU).
+    #[test]
+    #[ignore = "benchmark: run by name with --ignored --nocapture"]
+    fn single_row_call_phases() {
+        use ComputeKernelArgument::{Buffer as B, Int};
+        if crate::gpu::shared::get().is_none() {
+            return;
+        }
+        let (cols, labels) = columns(4000, 1);
+        let named: Vec<(String, Vec<CellValue>)> = cols.iter().enumerate().map(|(i, c)| (format!("c{i}"), c.clone())).collect();
+        let fs = Arc::new(DatasetFeatureSpace::from_columns(&named, FeatureType::Boolean).unwrap());
+        let forest = train_forest(&training_data(fs.clone(), &labels, None, None).unwrap(), &RandomForestProcedureConfig::default()).unwrap();
+        let f = DeviceForest::new(&FlatForest::new(&forest).unwrap()).unwrap();
+        let one: Vec<Vec<CellValue>> = cols.iter().map(|c| c[..1].to_vec()).collect();
+        let rows = RowBuckets::from_values(&fs, &one).unwrap();
+        for _ in 0..20 {
+            f.predict(&rows).unwrap();
+        }
+        let n = 300;
+        let thread_cpu = || { let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 }; unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) }; ts.tv_sec as f64 + ts.tv_nsec as f64 * 1e-9 };
+        let wait = std::env::var("WAIT").unwrap_or("wait".into());
+        let mut t = [(0.0f64, 0.0f64); 8];
+        let mut tt = [0.0f64; 8];
+        let names = ["lock + write rows", "queue (command buffer)", "encoder", "grid enqueue", "end encoder", "commit", "wait", "read out"];
+        let shared = crate::gpu::shared::get().unwrap();
+        for _ in 0..n {
+            let mut mark = (std::time::Instant::now(), crate::exec::process_cpu(), thread_cpu());
+            let mut phase = |i: usize, t: &mut [(f64, f64); 8]| {
+                let now = (std::time::Instant::now(), crate::exec::process_cpu(), thread_cpu());
+                t[i].0 += (now.0 - mark.0).as_secs_f64();
+                t[i].1 += now.1 - mark.1;
+                tt[i] += now.2 - mark.2;
+                mark = now;
+            };
+            let mut scratch = f.scratch.lock().unwrap();
+            let stride = rows.columns.iter().map(|c| c.storage.data().len()).max().unwrap_or(0) + 1;
+            let words = stride * rows.columns.len() + 1;
+            let d_data = kept::<u32>(&shared.device, &mut scratch.data, words);
+            let data = unsafe { std::slice::from_raw_parts_mut(d_data.contents().cast::<u32>(), words) };
+            for (i, c) in rows.columns.iter().enumerate() {
+                data[i * stride..i * stride + c.storage.data().len()].copy_from_slice(c.storage.data());
+            }
+            let d_out = kept::<f32>(&shared.device, &mut scratch.out, 2);
+            phase(0, &mut t);
+            let mut queue = MetalComputeQueue::new(&shared.queue);
+            phase(1, &mut t);
+            let k = kernel("predictForest").unwrap();
+            let mut ctx = queue.new_bind_context(k.function);
+            phase(2, &mut t);
+            k.enqueue(&[
+                ("numItems", Int(1)), ("numForests", Int(1)), ("maxDepth", Int(f.max_depth as i64 + 1)),
+                ("lanesPerRow", Int(lanes_per_row(1, f.max_trees as usize) as i64)), ("columnStride", Int(stride as i64)),
+                ("bucketData", B(&d_data)), ("nodes", B(&f.nodes)), ("subsets", B(&f.subsets)), ("forestTreeStart", B(&f.forest_tree_start)),
+                ("treeRoots", B(&f.roots)), ("treeWeights", B(&f.weights)), ("leafPreds", B(&f.leaves)), ("predictionsOut", B(&d_out)),
+            ], &[1], &mut ctx).unwrap();
+            phase(3, &mut t);
+            drop(ctx);
+            phase(4, &mut t);
+            let event = queue.flush();
+            phase(5, &mut t);
+            match wait.as_str() {
+                // Spinning on the status: the thread's CPU while the GPU works, no wake-up.
+                "spin" => while !matches!(event.command_buffer.status(), metal::MTLCommandBufferStatus::Completed | metal::MTLCommandBufferStatus::Error) { std::hint::spin_loop() },
+                "yield" => while !matches!(event.command_buffer.status(), metal::MTLCommandBufferStatus::Completed | metal::MTLCommandBufferStatus::Error) { std::thread::yield_now() },
+                _ => event.await_().unwrap(),
+            }
+            phase(6, &mut t);
+            let _ = unsafe { std::slice::from_raw_parts(d_out.contents().cast::<[f32; 2]>(), 1) }.to_vec();
+            drop(queue);
+            phase(7, &mut t);
+        }
+        for (name, (w, c)) in names.iter().zip(t) {
+            let i = names.iter().position(|x| x == name).unwrap();
+            eprintln!("PHASE {wait} {name:24} {:7.1} us wall {:7.1} us process CPU {:7.1} us this thread", w / n as f64 * 1e6, c / n as f64 * 1e6, tt[i] / n as f64 * 1e6);
+        }
+        // The whole call as `predict` makes it (a kept queue, a cached plan).
+        let (w0, c0, t0) = (std::time::Instant::now(), crate::exec::process_cpu(), thread_cpu());
+        for _ in 0..n {
+            f.predict(&rows).unwrap();
+        }
+        eprintln!("PHASE predict() whole call           {:7.1} us wall {:7.1} us process CPU {:7.1} us this thread", w0.elapsed().as_secs_f64() / n as f64 * 1e6, (crate::exec::process_cpu() - c0) / n as f64 * 1e6, (thread_cpu() - t0) / n as f64 * 1e6);
     }
 }

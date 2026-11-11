@@ -340,7 +340,10 @@ impl MetalComputeEvent {
     pub fn await_(&self) -> Result<(), String> {
         self.command_buffer.wait_until_completed();
         match self.command_buffer.status() {
-            metal::MTLCommandBufferStatus::Completed => Ok(()),
+            metal::MTLCommandBufferStatus::Completed => {
+                GPU_NANOS.fetch_add((self.gpu_seconds() * 1e9) as u64, std::sync::atomic::Ordering::Relaxed);
+                Ok(())
+            }
             s => Err(format!("Metal command buffer: {s:?}")),
         }
     }
@@ -353,6 +356,14 @@ impl MetalComputeEvent {
         let (start, end): (f64, f64) = unsafe { (msg_send![cb, GPUStartTime], msg_send![cb, GPUEndTime]) };
         end - start
     }
+}
+
+static GPU_NANOS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The GPU seconds of every command buffer awaited so far in this process (`MetalComputeEvent::await_`): the
+/// difference over a run is the device time of its kernels (training's, prediction's), however the host waited.
+pub fn gpu_seconds_awaited() -> f64 {
+    GPU_NANOS.load(std::sync::atomic::Ordering::Relaxed) as f64 * 1e-9
 }
 
 /// Runs `f` in an autorelease pool: the Metal objects it makes come autoreleased, and a thread with no pool never
