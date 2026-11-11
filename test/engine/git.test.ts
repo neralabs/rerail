@@ -6,8 +6,8 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   findGit, gitBehindLauncher, gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitCrlfPaths, gitExcludeFiles, gitExecutable, gitHead, gitHome,
-  gitInstalled, GitReads, GitUnavailableError, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs,
-  runGit, searchGitFrom,
+  gitInstalled, gitModifiedOrUntrackedPaths, GitReads, GitUnavailableError, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobIds,
+  readGitBlobs, runGit, searchGitFrom,
 } from "../../src/engine/git.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -161,6 +161,9 @@ describe("GitReads", () => {
     await expect(reads.run(signal => gitHead(root, { signal }))).resolves.toBeUndefined();
     await expect(reads.run(signal => readGitBlobs(root, ["HEAD:./a.py"], { maxBlobBytes: 1_000, signal }))).resolves.toEqual(new Map());
     await expect(new GitReads().run(signal => gitHead(root, { signal }))).resolves.toMatch(/^[0-9a-f]{40}/u);
+    await writeFile(join(root, "b.py"), "untracked\n");
+    await expect(reads.run(signal => gitModifiedOrUntrackedPaths(root, { signal }))).resolves.toEqual([]);
+    await expect(new GitReads().run(signal => gitModifiedOrUntrackedPaths(root, { signal }))).resolves.toEqual(["b.py"]);
   });
 });
 
@@ -315,6 +318,17 @@ describe("gitUnmergedReader", () => {
     expect(() => git(root, "merge", "--quiet", "second")).toThrow();
     return root;
   }
+
+  it("answers a read its signal stopped as one Git could not answer, starting no Git, and lists the entries next time", async () => {
+    const root = await conflicted();
+    const read = gitUnmergedReader();
+    const stopped = new GitReads();
+    await stopped.stop();
+
+    await expect(stopped.run(signal => read(root, { signal }))).resolves.toBeUndefined();
+    expect([...(await reader()(root)).keys()]).toEqual(["a.py"]);
+    expect([...((await read(root)) ?? new Map()).keys()]).toEqual(["a.py"]);
+  });
 
   it("cannot say outside a repository, and has nothing where nothing is unmerged", async () => {
     const outside = await mkdtemp(join(tmpdir(), "rerail-git-unmerged-"));
