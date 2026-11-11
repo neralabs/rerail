@@ -93,7 +93,7 @@ facts::facts_a	rerail-w
 
 # Language packs
 cpython	rerail-lang-python
-identifier	rerail-lang-python
+identifier	rerail-w
 module_path	rerail-lang-python
 calls::python	rerail-lang-python
 facts::producers::python	rerail-lang-python
