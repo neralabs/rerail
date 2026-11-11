@@ -4162,6 +4162,9 @@ fn run_observed(
                 cone_inputs.push((rel.clone(), Arc::clone(&source)));
                 bind(&rel, source)?;
             }
+            // The rounds bind them too (`cone_rounds::Inputs`): a request a constant decides (phase 1's loads, from
+            // the observer's source files) is asked in a round as in the fixpoint.
+            let constant_rows: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = constants_in.iter().map(|(r, s)| (r.clone(), Arc::clone(s))).collect();
             for (rel, source) in constants_in {
                 cone_inputs.push((rel.clone(), Arc::clone(&source)));
                 bind(&rel, source)?;
@@ -4197,7 +4200,7 @@ fn run_observed(
             }
             let rounds_stats = load_stats.clone();
             let on = lowered_round.as_ref().zip(rounds_key).map(|(lowered, key)| cone_rounds::On { db: &db2, modules: &modules, lowered, key, stats: &rounds_stats, keep: &keep_rounds, modes: &modes });
-            let rounds_in = cone_rounds::Inputs { per_file: &corpus_rows, corpus: &corpus_docs };
+            let rounds_in = cone_rounds::Inputs { per_file: &corpus_rows, constants: &constant_rows, corpus: &corpus_docs };
             let mut gave_up = None;
             if let (Some(r), Some(on), Some(k)) = (&round, &on, from_rounds) {
                 match r.run(on, &rounds_in, cone_rounds::Start::Kept(k), cone_rounds::Answers::default(), &mut answer) {

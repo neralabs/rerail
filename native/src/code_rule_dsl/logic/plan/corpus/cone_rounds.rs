@@ -114,6 +114,8 @@ fn rows(source: &dyn Source) -> Vec<Vec<i64>> {
 pub(in crate::code_rule_dsl) struct Inputs<'a> {
     /// The corpus's rows of each per-file relation, and its location column.
     pub(in crate::code_rule_dsl) per_file: &'a [(String, Arc<dyn Source>, usize)],
+    /// The cone's constants (the observer's facts, an earlier phase's exports), bound in every round as given.
+    pub(in crate::code_rule_dsl) constants: &'a [(String, Arc<dyn Source>)],
     /// The corpus's documents.
     pub(in crate::code_rule_dsl) corpus: &'a HashSet<i64>,
 }
@@ -240,6 +242,8 @@ impl RoundProgram {
                 let width = self.program.decls[&rel].len();
                 let source = if let Some(keys) = open.get(&rel) {
                     of_rows(width, keys.iter())
+                } else if let Some((_, given)) = inputs.constants.iter().find(|(r, _)| *r == rel) {
+                    Arc::clone(given)
                 } else {
                     let mut seen: HashSet<&Vec<i64>> = HashSet::new();
                     let all = corpus_rows.get(rel.as_str()).into_iter().flatten().chain(provisional.get(&rel).into_iter().flatten()).chain(answers.rows.get(&rel).into_iter().flatten()).filter(|r| seen.insert(*r));
