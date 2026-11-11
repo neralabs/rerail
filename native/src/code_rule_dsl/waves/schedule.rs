@@ -467,7 +467,7 @@ pub(in crate::code_rule_dsl) fn run_over(
     declare(&**lease, program,false)?;
     // A program that reads a `py.*` family reads it as a fact of its own (decision 0029).
     if program.steps.iter().any(|step| step.reads.iter().any(|read| crate::code_rule_dsl::facts::vtab::syntax::is_family(read))) {
-        inputs.extend(crate::code_rule_dsl::facts::families::py_inputs(graph, scope, &documents)?);
+        inputs.extend(crate::code_rule_dsl::facts::families::derived_inputs(graph, scope, &documents)?);
     }
     inputs.sort_by(|a, b| a.name.cmp(&b.name));
     inputs.dedup_by(|a, b| a.name == b.name);

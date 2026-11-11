@@ -9,7 +9,7 @@ struct Producer {
     width: usize,
 }
 
-pub(super) fn register(db: &Connection, binding: &Binding) -> Result<()> {
+pub(crate) fn register(db: &Connection, binding: &Binding) -> Result<()> {
     const MODULE: Module<ProducerTable> = Module::eponymous_only_module();
     for (kind, width) in [
         ("qualified", 2),

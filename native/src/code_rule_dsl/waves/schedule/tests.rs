@@ -150,7 +150,9 @@ fn steps_read_the_chunks_demand_batch() {
 /// rows' own) and reads it as an input of its families: a rerun records nothing and changes nothing.
 #[test]
 fn a_program_reading_py_families_records_them_once() {
-    use crate::code_rule_dsl::facts::families::{py_name, py_producer};
+    use crate::code_rule_dsl::facts::families::derived_name;
+    use crate::code_rule_dsl::facts::vtab::syntax::Families as _;
+    let py = &crate::code_rule_dsl::facts::vtab::syntax::py_families::Families;
     let (store, docs) = store("py", 3);
     let calls = Program {
         name: "calls".into(),
@@ -172,9 +174,9 @@ fn a_program_reading_py_families_records_them_once() {
         assert_eq!(count(&lease, "SELECT count(*) FROM called"), count(&lease, "SELECT count(DISTINCT callee) FROM py_call"));
     }
     for d in &docs {
-        let name = py_name("/w", &d.path);
+        let name = derived_name(py, "/w", &d.path);
         assert!(store.binding(&name).unwrap().is_some(), "{name}");
         let read = store.derivations_reading(&[d.core.clone()]).unwrap();
-        assert!(read.iter().any(|r| r.output == name && r.producer == py_producer()), "{name}");
+        assert!(read.iter().any(|r| r.output == name && r.producer == py.producer()), "{name}");
     }
 }

@@ -1,7 +1,7 @@
 //! Test-only bridge from immutable core facts to typed candidate rows.
 use super::*;
 use crate::code_rule_dsl::facts::producers::python::families as py;
-use crate::code_rule_dsl::facts::producers::python::{families::candidate_spike, import_screen::Imports};
+use crate::code_rule_dsl::facts::producers::python::families::candidate_spike;
 impl Batch {
     pub(crate) fn candidate_spike(&self, targets: &std::collections::BTreeSet<String>) -> Result<Vec<Vec<rusqlite::types::Value>>, String> {
         use rusqlite::types::Value;
@@ -16,7 +16,7 @@ impl Batch {
         let mut total = candidate_spike::Work::default();
         for p in self.docs.iter().filter(|p| p.tag == py.grammar.tag()) {
             let (rows, work) = candidate_spike::experiment(&py.grammar, &p.facts, 2, &members, collector_mode, |n| {
-                let imports = p.python_imports.get_or_init(|| Imports::from_core(&p.facts, &self.dialects[&p.tag].catalog, p.module.as_ref()));
+                let imports = py.imports(self, p);
                 if mode=="typed_ranges" {
                     use crate::code_rule_dsl::facts::producers::python::python_facts::Fact;
                     match candidate_spike::eligibility(&py.grammar,&p.facts,n) {

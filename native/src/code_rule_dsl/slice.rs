@@ -213,7 +213,7 @@ fn execute(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, 
     let mut inputs: Vec<DerivationInput> = documents.iter().map(|d| DerivationInput { name: Some(d.core.clone()), digest: d.digest }).collect();
     // The demand statement's `py.*` families are facts the wave reads (decision 0029).
     if rules.wave.demand_reads_py() {
-        inputs.extend(crate::code_rule_dsl::facts::families::py_inputs(store, scope, &documents)?);
+        inputs.extend(crate::code_rule_dsl::facts::families::derived_inputs(store, scope, &documents)?);
     }
     // A file-local program without recursion: one wave per stratum and chunk.
     let limits = Limits { max_waves: program.strata(), ..Limits::default() };

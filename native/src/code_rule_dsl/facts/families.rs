@@ -24,6 +24,7 @@ use super::observe::{Push, observe_root, path_name};
 use super::propagate::propagate;
 use crate::code_rule_dsl::language::{GrammarDialect, dialect_by_label, label_of_path, tape_tag};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
+use crate::code_rule_dsl::facts::vtab::syntax::{Families as LazyFamilies, families};
 use crate::code_rule_dsl::tape::{self, FileImage, TAPE_FORMAT_VERSION, TapeDoc, TapeImage};
 use crate::code_rule_dsl::build_ids::grammar_version;
 use crate::content_store::prefilter::{PREFILTER_VERSION, TapePrefilter};
@@ -39,7 +40,6 @@ const TAPE: &str = "#tape:";
 const CORE: &str = "#core:";
 const PREFILTER: &str = "#prefilter:";
 const KINDS: &str = "#kinds:";
-const PY: &str = "#py:";
 /// A tape's readers in the next wave: core and prefilter.
 const TAPE_READERS: u8 = 2;
 /// New paths per chunk of a push: a chunk's tapes and facts are resident at once.
@@ -61,8 +61,9 @@ pub(crate) fn kinds_name(scope: &str, path: &str) -> String {
     format!("{scope}{KINDS}{path}")
 }
 
-pub(crate) fn py_name(scope: &str, path: &str) -> String {
-    format!("{scope}{PY}{path}")
+/// A document's derivation name for a registered family's relations (`Families::derived`).
+pub(crate) fn derived_name(families: &dyn LazyFamilies, scope: &str, path: &str) -> String {
+    format!("{scope}{}{path}", families.derived())
 }
 
 /// The producer of tape derivations: the tape format and the grammars that encode it.
@@ -94,25 +95,14 @@ pub(crate) fn kinds_producer() -> [u8; 32] {
     Sha256::digest(b"rerail.kinds/v1\0").into()
 }
 
-/// The producer of `py.*` derivations (decision 0029): the rows' version, over core facts.
-pub(crate) fn py_producer() -> [u8; 32] {
-    let mut hash = Sha256::new();
-    hash.update(b"rerail.py/v1\0");
-    hash.update(crate::code_rule_dsl::facts::producers::python::families::VERSION.to_le_bytes());
-    hash.finalize().into()
-}
-
-/// The `py.*` derivation of `path` over the core facts `facts` its core name binds as `read`: the
-/// rows' digest, `ABSENT` without facts. The rows are not stored: a wave makes them from the core
+/// The derivation of `families`' relations for `path` over the core facts `facts` its core name binds as `read`
+/// (decision 0029): the rows' digest, `ABSENT` without facts. The rows are not stored: a wave makes them from the core
 /// facts it holds (`facts::vtab::syntax`), as the core facts are made from the tape.
-pub(crate) fn py_record(scope: &str, path: &str, read: [u8; 32], facts: Option<&Facts>) -> DerivationRecord {
-    use crate::code_rule_dsl::facts::producers::python::families as py;
-    let digest = facts.zip(tape_tag(GrammarDialect::Python)).map_or(ABSENT, |(facts, tag)| {
-        py::digest(&py::rows(&py::Grammar::new(tag, &GrammarDialect::Python.kinds()), facts))
-    });
+pub(crate) fn derived_record(families: &dyn LazyFamilies, scope: &str, path: &str, read: [u8; 32], facts: Option<&Facts>) -> DerivationRecord {
+    let digest = facts.map_or(ABSENT, |facts| families.rows_digest(facts));
     DerivationRecord {
-        output: py_name(scope, path),
-        producer: py_producer(),
+        output: derived_name(families, scope, path),
+        producer: families.producer(),
         inputs: vec![DerivationInput { name: Some(core_name(scope, path)), digest: read }],
         digest,
         status: 0,
@@ -120,22 +110,21 @@ pub(crate) fn py_record(scope: &str, path: &str, read: [u8; 32], facts: Option<&
     }
 }
 
-/// The `py.*` families of `documents` as a wave reads them: each document's name and digest, its
-/// derivation recorded the first time a wave reads it (a family nobody reads is never made), then
+/// The registered families' relations of `documents` as a wave reads them (Python's `py.*`): each document's name
+/// and digest, its derivation recorded the first time a wave reads it (a family nobody reads is never made), then
 /// kept current by propagation from its core name (`Families::recompute`).
-pub(crate) fn py_inputs(
+pub(crate) fn derived_inputs(
     graph: &(impl Graph + ?Sized),
     scope: &str,
     documents: &[crate::code_rule_dsl::facts::vtab::syntax::Document],
 ) -> StoreResult<Vec<DerivationInput>> {
-    let python = documents.iter().filter(|d| dialect(&d.path) == Some(GrammarDialect::Python));
     let (mut inputs, mut records) = (Vec::new(), Vec::new());
-    for d in python {
-        let name = py_name(scope, &d.path);
+    for (families, d) in families().iter().flat_map(|&f| documents.iter().filter(move |d| dialect(&d.path) == Some(f.dialect())).map(move |d| (f, d))) {
+        let name = derived_name(families, scope, &d.path);
         let digest = match graph.binding(&name)? {
             Some(digest) => digest,
             None => {
-                let record = py_record(scope, &d.path, d.digest, Some(&d.facts));
+                let record = derived_record(families, scope, &d.path, d.digest, Some(&d.facts));
                 let digest = record.digest;
                 records.push(record);
                 digest
@@ -289,7 +278,7 @@ impl Families {
         graph: &(impl Graph + ?Sized),
         frontier: &[Derivation],
     ) -> StoreResult<Vec<DerivationRecord>> {
-        let (tape, core, prefilter, kinds, py) = (tape_producer(), core_producer(), prefilter_producer(), kinds_producer(), py_producer());
+        let (tape, core, prefilter, kinds) = (tape_producer(), core_producer(), prefilter_producer(), kinds_producer());
         let mut records = Vec::new();
         for derivation in frontier {
             if derivation.producer == tape {
@@ -304,9 +293,9 @@ impl Families {
             } else if derivation.producer == kinds {
                 let (scope, path) = split(&derivation.output, KINDS)?;
                 records.push(self.kinds(graph, scope, path)?);
-            } else if derivation.producer == py {
-                let (scope, path) = split(&derivation.output, PY)?;
-                records.push(self.py(graph, scope, path)?);
+            } else if let Some(families) = families().iter().find(|f| f.producer() == derivation.producer) {
+                let (scope, path) = split(&derivation.output, families.derived())?;
+                records.push(self.derived(*families, graph, scope, path)?);
             }
         }
         self.publish(graph)?;
@@ -549,16 +538,16 @@ impl Families {
         graph.publish_prefilters(std::mem::take(&mut self.rows))
     }
 
-    /// The `py.*` derivation of `path`, from the facts its core name binds now: those this push
+    /// The derivation of `families`' relations for `path`, from the facts its core name binds now: those this push
     /// built (kinds may have taken them), else rebuilt from the stored tape.
-    pub(crate) fn py(&mut self, graph: &(impl Graph + ?Sized), scope: &str, path: &str) -> StoreResult<DerivationRecord> {
+    pub(crate) fn derived(&mut self, families: &dyn LazyFamilies, graph: &(impl Graph + ?Sized), scope: &str, path: &str) -> StoreResult<DerivationRecord> {
         let read = graph.binding(&core_name(scope, path))?.unwrap_or(ABSENT);
         let facts = match self.facts.get(&read) {
             Some(facts) => Some(Arc::clone(facts)),
             None if read == ABSENT => None,
             None => self.core(graph, scope, path)?.1.filter(|facts| core::digest(facts) == read),
         };
-        Ok(py_record(scope, path, read, facts.as_deref()))
+        Ok(derived_record(families, scope, path, read, facts.as_deref()))
     }
 
     /// The kinds derivation of `path`, from the facts its core name binds now.

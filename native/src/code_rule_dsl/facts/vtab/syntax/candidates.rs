@@ -2,7 +2,7 @@
 use super::*;
 use crate::code_rule_dsl::facts::producers::python::families as py;
 use crate::code_rule_dsl::facts::producers::python::{
-    families::candidates, import_screen::Imports, python_facts::Fact,
+    families::candidates, python_facts::Fact,
 };
 impl Batch {
     pub(crate) fn python_candidates(
@@ -42,15 +42,8 @@ impl Batch {
         {
             let (rows, work) = candidates::collect(&py.grammar, &p.facts, kind, &members, |n| {
                 match candidates::eligibility(&py.grammar, &p.facts, n) {
-                    Fact::Known(chain) => p
-                        .python_imports
-                        .get_or_init(|| {
-                            Imports::from_core(
-                                &p.facts,
-                                &self.dialects[&p.tag].catalog,
-                                p.module.as_ref(),
-                            )
-                        })
+                    Fact::Known(chain) => py
+                        .imports(self, p)
                         .may_qualify_parts(
                             chain.head,
                             chain.attributes,

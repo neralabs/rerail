@@ -980,8 +980,6 @@ impl Dialect {
 /// (`core.rr`'s).
 pub(crate) struct Projected {
     module: Option<crate::code_rule_dsl::module_path::ModulePath>,
-    python_imports: std::sync::OnceLock<crate::code_rule_dsl::facts::producers::python::import_screen::Imports>,
-    python_semantics: std::sync::Mutex<Option<python_demand::Semantics>>,
     key: u32,
     tag: u8,
     facts: Arc<Facts>,
@@ -1086,7 +1084,7 @@ impl Projected {
         let identity_span = crate::code_rule_dsl::logic::profile::span(|| "identity maps".into());
         let f = &*facts;
         let mut p = Projected {
-            module:None, python_imports:Default::default(), python_semantics:Default::default(),
+            module:None,
             key,
             tag: f.tag,
             core: Vec::new(),
@@ -1332,8 +1330,15 @@ pub(crate) trait Families: Send + Sync {
     fn columns(&self) -> &'static [&'static [&'static str]];
     /// The strings its rows hold as atoms, interned with the batch's.
     fn strings(&self) -> &'static [&'static str];
-    /// The families of a batch with documents of the dialect (`tag`, its kinds `catalog`), `atoms` its strings'.
-    fn bind(&self, tag: u8, catalog: &KindCatalog, atoms: &[i64]) -> Box<dyn BoundFamilies>;
+    /// The families of a batch of `documents` documents, some of the dialect (`tag`, its kinds `catalog`), `atoms`
+    /// its strings'.
+    fn bind(&self, tag: u8, catalog: &KindCatalog, atoms: &[i64], documents: usize) -> Box<dyn BoundFamilies>;
+    /// The infix of a document's derivation name for the families (`{scope}#py:{path}`, decision 0029).
+    fn derived(&self) -> &'static str;
+    /// The producer of their derivations: the rows' version, over core facts.
+    fn producer(&self) -> [u8; 32];
+    /// The digest of their rows over a document's core facts.
+    fn rows_digest(&self, facts: &Facts) -> [u8; 32];
 }
 
 /// A batch's [`Families`].
@@ -1363,7 +1368,7 @@ pub(crate) fn install_families(families: Vec<&'static dyn Families>) {
     let _ = FAMILIES.set(families);
 }
 
-fn families() -> &'static [&'static dyn Families] {
+pub(crate) fn families() -> &'static [&'static dyn Families] {
     FAMILIES.get().map_or(&[], Vec::as_slice)
 }
 
@@ -2425,7 +2430,7 @@ impl Batch {
         let bound: Vec<Option<Box<dyn BoundFamilies>>> = families()
             .iter()
             .zip(vocabulary)
-            .map(|(f, v)| v.map(|(tag, strings)| f.bind(tag, &dialects[&tag].catalog, &strings.into_iter().map(atom).collect::<Vec<_>>())))
+            .map(|(f, v)| v.map(|(tag, strings)| f.bind(tag, &dialects[&tag].catalog, &strings.into_iter().map(atom).collect::<Vec<_>>(), docs.len())))
             .collect();
         let _relations_span = crate::code_rule_dsl::logic::profile::span(|| "relations".into());
         let relation = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {

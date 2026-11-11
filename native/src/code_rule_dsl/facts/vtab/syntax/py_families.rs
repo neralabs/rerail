@@ -34,7 +34,24 @@ impl super::Families for Families {
     fn strings(&self) -> &'static [&'static str] {
         &STRINGS
     }
-    fn bind(&self, tag: u8, catalog: &KindCatalog, atoms: &[i64]) -> Box<dyn BoundFamilies> {
+    fn derived(&self) -> &'static str {
+        "#py:"
+    }
+    fn producer(&self) -> [u8; 32] {
+        use sha2::{Digest, Sha256};
+        let mut hash = Sha256::new();
+        hash.update(b"rerail.py/v1\0");
+        hash.update(py::VERSION.to_le_bytes());
+        hash.finalize().into()
+    }
+    fn rows_digest(&self, facts: &Facts) -> [u8; 32] {
+        use crate::code_rule_dsl::language::GrammarDialect;
+        match crate::code_rule_dsl::language::tape_tag(GrammarDialect::Python) {
+            Some(tag) => py::digest(&py::rows(&py::Grammar::new(tag, &GrammarDialect::Python.kinds()), facts)),
+            None => crate::content_store::ABSENT,
+        }
+    }
+    fn bind(&self, tag: u8, catalog: &KindCatalog, atoms: &[i64], documents: usize) -> Box<dyn BoundFamilies> {
         let (contexts, spreads) = atoms.split_at(py::CONTEXTS.len());
         Box::new(Py {
             grammar: py::Grammar::new(tag, catalog),
@@ -42,6 +59,8 @@ impl super::Families for Families {
             spreads: spreads.try_into().expect("a spread's atom each"),
             rows: Default::default(),
             argument_rows: Default::default(),
+            imports: (0..documents).map(|_| Default::default()).collect(),
+            semantics: (0..documents).map(|_| Default::default()).collect(),
         })
     }
 }
@@ -53,6 +72,24 @@ pub(crate) struct Py {
     pub(crate) spreads: [i64; 3],
     rows: std::sync::OnceLock<Vec<Relation>>,
     pub(crate) argument_rows: std::sync::OnceLock<Relation>,
+    /// Per batch document (in the batch's order), its imports' screen, made on its first read.
+    imports: Vec<std::sync::OnceLock<crate::code_rule_dsl::facts::producers::python::import_screen::Imports>>,
+    /// Per batch document, its scopes for semantic demands (`python_demand`), made on the first that needs them.
+    pub(crate) semantics: Vec<std::sync::Mutex<Option<super::python_demand::Semantics>>>,
+}
+
+impl Py {
+    /// `p`'s place in `batch` (documents are in key order).
+    pub(crate) fn at(batch: &Batch, p: &Projected) -> usize {
+        batch.docs.binary_search_by_key(&p.key, |q| q.key).expect("a document of the batch")
+    }
+
+    /// Document `p`'s imports' screen, made on its first read.
+    pub(crate) fn imports(&self, batch: &Batch, p: &Projected) -> &crate::code_rule_dsl::facts::producers::python::import_screen::Imports {
+        self.imports[Self::at(batch, p)].get_or_init(|| {
+            crate::code_rule_dsl::facts::producers::python::import_screen::Imports::from_core(&p.facts, &batch.dialects[&p.tag].catalog, p.module.as_ref())
+        })
+    }
 }
 
 impl BoundFamilies for Py {

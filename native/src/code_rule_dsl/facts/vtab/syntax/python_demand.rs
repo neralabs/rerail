@@ -3,7 +3,6 @@ use super::{Batch, NONE, Projected};
 use crate::code_rule_dsl::facts::producers::python::families as py;
 use crate::code_rule_dsl::{
     facts::producers::python::{
-        import_screen::Imports,
         python_facts::{self, Fact, NodeFacts, Qualification},
     },
     language::GrammarDialect,
@@ -128,7 +127,8 @@ impl Batch {
             {
                 return Err("Python producer received another grammar".into());
             }
-            let grammar = &self.bound::<super::py_families::Py>().ok_or("Python facts unavailable")?.grammar;
+            let py_families = self.bound::<super::py_families::Py>().ok_or("Python facts unavailable")?;
+            let grammar = &py_families.grammar;
             let mut ids = BTreeSet::new();
             for n in low {
                 let local = p
@@ -195,9 +195,7 @@ impl Batch {
                 .iter()
                 .filter_map(|s| s.strip_prefix("builtins.").map(str::to_owned))
                 .collect();
-            let imports = p.python_imports.get_or_init(|| {
-                Imports::from_core(&p.facts, &self.dialects[&p.tag].catalog, p.module.as_ref())
-            });
+            let imports = py_families.imports(self, p);
             if kind == "qualified" {
                 ids.retain(|&n| {
                     py::qualification_chain(grammar, &p.facts, n).is_none_or(|(head, tail)| {
@@ -221,8 +219,7 @@ impl Batch {
                 .copied()
                 .filter(|&n| py::qualification_chain(grammar, &p.facts, n).is_some())
                 .collect();
-            let mut state = p
-                .python_semantics
+            let mut state = py_families.semantics[index]
                 .lock()
                 .map_err(|_| "Python semantic cache poisoned")?;
             if !references.is_empty() {
@@ -366,8 +363,8 @@ use crate::code_rule_dsl::facts::producers::python::families as py;
             "only the unshadowed first document qualifies"
         );
         assert!(matches!(rows[0][0],Value::Integer(n) if n>>32==0));
-        for (i, p) in batch.docs.iter().enumerate() {
-            let state = p.python_semantics.lock().unwrap();
+        for (i, _) in batch.docs.iter().enumerate() {
+            let state = batch.bound::<super::super::py_families::Py>().unwrap().semantics[i].lock().unwrap();
             if i == 2 {
                 assert!(state.is_none(), "screened document built scopes");
             } else {

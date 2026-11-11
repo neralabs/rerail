@@ -29,7 +29,7 @@ use std::{
 };
 pub(in crate::code_rule_dsl) mod schema;
 pub(in crate::code_rule_dsl) mod syntax;
-mod python;
+pub(crate) mod python;
 pub(crate) mod demand;
 
 /// `idx_num` of a filter on several `=` columns, listed in `idx_str`.
@@ -303,7 +303,7 @@ impl Modules {
             stats: Arc::new(Counters::default()),
         };
         register(db, name, binding.clone(), restored)?;
-        if name == "node" { python::register(db, &binding)?; demand::register(db)?; }
+        if name == "node" { for register in node_tables() { register(db, &binding)?; } demand::register(db)?; }
         BOUND.lock().insert((connection_scope(db), name.to_owned()), binding.clone());
         bindings.insert(name.into(), binding);
         Ok(())
@@ -353,6 +353,20 @@ impl Drop for Modules {
 /// The scope of what this process keeps per connection (its handle, an address), with a hook that drops all of it
 /// when the connection closes: the vtab bindings here and the native engine's relations
 /// (`logic::native::forget_scope`). A closed connection's address is reused by the next one opened.
+/// What registers a family's tables over the bound `node` relation (Python's semantic producers, `vtab::python`).
+pub(crate) type NodeTables = fn(&Connection, &Binding) -> Result<()>;
+
+static NODE_TABLES: std::sync::OnceLock<Vec<NodeTables>> = std::sync::OnceLock::new();
+
+/// Registers the families' tables over `node` (once, at load).
+pub(crate) fn install_node_tables(tables: Vec<NodeTables>) {
+    let _ = NODE_TABLES.set(tables);
+}
+
+fn node_tables() -> &'static [NodeTables] {
+    NODE_TABLES.get().map_or(&[], Vec::as_slice)
+}
+
 pub(crate) fn connection_scope(db: &Connection) -> usize {
     const KEY: &std::ffi::CStr = c"rerail.connection-scope";
     // Each close bumps the generation: a thread's last connection with its hook set (`LAST`) is known to have it
