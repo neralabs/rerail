@@ -4,6 +4,9 @@
 //! re-exports both under the same names.
 
 pub mod lean;
+#[doc(hidden)]
+pub mod lean_scalar;
+mod micro;
 pub mod syntax;
 pub mod tape;
 

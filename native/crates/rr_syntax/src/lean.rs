@@ -4,11 +4,13 @@
 //! It reads the grammar `syntax::Parser` reads and gives the same tape (`crate::tape`), node for
 //! node, written as a fast hand-written parser would be:
 //!
-//! - **A token is one 16-byte record**: kind, span, line, and the word it is when the grammar
-//!   looks at that word (`code`, `min`, `decl`, …), found once by the lexer. The parser compares
-//!   one-byte codes, never text.
-//! - **The lexer** finds the ends of comments, strings and literals 8 bytes a step (as `memchr`
-//!   does without SIMD), and classes bytes by a table.
+//! - **A token is one 12-byte record**: kind, span, and the word it is when the grammar looks
+//!   at that word (`code`, `min`, `decl`, …), found once by the lexer from one 8-byte load.
+//!   The parser compares one-byte codes, never text. A line is asked only by a few
+//!   statements, from an index of the newlines made when first asked.
+//! - **The lexer** is simdjson's shape over Bitlex's 64-byte block masks (`micro`): a block's
+//!   token starts found at once and taken one at a time (`lex`). A word ends at its run of
+//!   word bits; a comment, string or backtick literal by its micro-lexer, run from its start.
 //! - **No statements.** Only the tape is built: each node is written in preorder as it opens.
 //!   The open nodes and their children are a stack.
 //! - **A wrap** (an operator found after its left operand: `a - b`, `x <= y`) puts its node
@@ -18,6 +20,7 @@
 //!   one's start is kept, so a node costs one compare for them.
 //! - **Backtracking** cuts the tape, the stack and the comments back to a mark.
 
+use crate::micro;
 use crate::tape::{ERROR, FIRST_ANONYMOUS, Field, Kind, Node};
 
 // Token kinds; punctuation is `P0` plus its place in `syntax::PUNCT` (and in the anonymous kinds).
@@ -94,45 +97,6 @@ const W_POLICY: u8 = 30;
 /// `#include`, on a `HASH` token.
 const W_INCLUDE: u8 = 31;
 
-fn word_of(w: &[u8]) -> u8 {
-    if w.len() > 9 {
-        return 0;
-    }
-    match w {
-        b"must" => W_MUST,
-        b"may" => W_MAY,
-        b"code" => W_CODE,
-        b"in" => W_IN,
-        b"tag" => W_TAG,
-        b"fix" => W_FIX,
-        b"safe" => W_SAFE,
-        b"suppress" => W_SUPPRESS,
-        b"over" => W_OVER,
-        b"options" => W_OPTIONS,
-        b"by" => W_BY,
-        b"sep" => W_SEP,
-        b"count" => W_COUNT,
-        b"min" => W_MIN,
-        b"max" => W_MAX,
-        b"sum" => W_SUM,
-        b"mean" => W_MEAN,
-        b"join" => W_JOIN,
-        b"product" => W_PRODUCT,
-        b"_" => W_WILD,
-        b"decl" => W_DECL,
-        b"edit" => W_EDIT,
-        b"functor" => W_FUNCTOR,
-        b"type" => W_TYPE,
-        b"input" => W_INPUT,
-        b"output" => W_OUTPUT,
-        b"lattice" => W_LATTICE,
-        b"pragma" => W_PRAGMA,
-        b"violation" => W_VIOLATION,
-        b"policy" => W_POLICY,
-        _ => 0,
-    }
-}
-
 fn is_aggregate_word(w: u8) -> bool {
     matches!(w, W_MIN | W_MAX | W_SUM | W_PRODUCT | W_MEAN | W_JOIN)
 }
@@ -165,6 +129,86 @@ static CLASS: [u8; 256] = {
     c
 };
 
+// What a byte starts, by byte (`START_OF`): one jump table dispatches a token.
+const S_BAD: u8 = 0;
+const S_PUNCT: u8 = 1;
+/// Punctuation that may begin a two-byte one (`:-`, `=>`, `!=`, `<=`, `>=`, `<:`, `->`).
+const S_PUNCT2: u8 = 2;
+const S_WORD: u8 = 3;
+const S_DIGIT: u8 = 4;
+const S_QUOTE: u8 = 5;
+const S_TICK: u8 = 6;
+const S_SLASH: u8 = 7;
+const S_HASH: u8 = 8;
+
+static START_OF: [u8; 256] = {
+    let mut t = [S_BAD; 256];
+    let mut i = 0;
+    while i < 256 {
+        let b = i as u8;
+        t[i] = if b.is_ascii_alphabetic() || b == b'_' {
+            S_WORD
+        } else if b.is_ascii_digit() {
+            S_DIGIT
+        } else {
+            match b {
+                b'"' => S_QUOTE,
+                b'`' => S_TICK,
+                b'/' => S_SLASH,
+                b'#' => S_HASH,
+                b':' | b'=' | b'!' | b'<' | b'>' | b'-' => S_PUNCT2,
+                b'(' | b')' | b',' | b'.' | b';' | b'{' | b'}' | b'|' | b'@' | b'*' | b'[' | b']' | b'+' | b'%' | b'~' | b'^' | b'&' => S_PUNCT,
+                _ => S_BAD,
+            }
+        };
+        i += 1;
+    }
+    t
+};
+
+/// An ordinary token's kind by its first byte: a word, a one-byte punctuation, or a byte the
+/// lexer cannot read (`BAD`).
+static KIND_OF: [u8; 256] = {
+    let mut t = [BAD; 256];
+    let mut i = 0;
+    while i < 256 {
+        if START_OF[i] == S_WORD {
+            t[i] = ID;
+        } else if PUNCT1[i] != 0 {
+            t[i] = P0 + PUNCT1[i] - 1;
+        }
+        i += 1;
+    }
+    t
+};
+
+/// A two-byte punctuation's kind by its first byte (`<:` aside: `<` takes `=` or `:`).
+static PAIR_KIND: [u8; 256] = {
+    let mut t = [0u8; 256];
+    t[b':' as usize] = P0 + TURNSTILE;
+    t[b'=' as usize] = P0 + FAT_ARROW;
+    t[b'!' as usize] = P0 + NE;
+    t[b'<' as usize] = P0 + LE;
+    t[b'>' as usize] = P0 + GE;
+    t[b'-' as usize] = P0 + ARROW;
+    t
+};
+
+/// A run of two-byte punctuation's first bytes (`=>=`), read left to right: one whose first
+/// byte is the second of the one before is none.
+fn left_to_right(mut m: u64) -> u64 {
+    let mut kept = 0;
+    while m != 0 {
+        let i = m.trailing_zeros();
+        kept |= 1 << i;
+        m &= !(1 << i);
+        if i < 63 {
+            m &= !(1 << (i + 1));
+        }
+    }
+    kept
+}
+
 /// One-byte punctuation, by byte: its place in `syntax::PUNCT` plus one (0: none).
 static PUNCT1: [u8; 256] = {
     let mut t = [0u8; 256];
@@ -181,7 +225,6 @@ static PUNCT1: [u8; 256] = {
 struct Tok {
     start: u32,
     end: u32,
-    line: u32,
     kind: u8,
     word: u8,
 }
@@ -193,233 +236,308 @@ struct Lexed {
     comments: Vec<(u32, u32)>,
 }
 
-// Searches 8 bytes a step, as `memchr`'s portable path does: each byte equal to the one
-// sought gets its top bit set, exactly (no carry from one byte to the next).
-const LO7: u64 = 0x7f7f_7f7f_7f7f_7f7f;
-const HI: u64 = 0x8080_8080_8080_8080;
-const ONES: u64 = 0x0101_0101_0101_0101;
-
-fn equal(word: u64, x: u8) -> u64 {
-    let v = word ^ (ONES * u64::from(x));
-    !(((v & LO7) + LO7) | v) & HI
-}
-
-fn word_at(b: &[u8], i: usize) -> u64 {
-    u64::from_le_bytes(b[i..i + 8].try_into().expect("8 bytes"))
-}
-
-/// The first `x` in `b`.
-fn find(b: &[u8], x: u8) -> Option<usize> {
-    let mut i = 0;
-    while i + 8 <= b.len() {
-        let m = equal(word_at(b, i), x);
-        if m != 0 {
-            return Some(i + (m.trailing_zeros() / 8) as usize);
-        }
-        i += 8;
-    }
-    b[i..].iter().position(|&c| c == x).map(|e| i + e)
-}
-
-/// The first `x` or `y` in `b`.
-fn find2(b: &[u8], x: u8, y: u8) -> Option<usize> {
-    let mut i = 0;
-    while i + 8 <= b.len() {
-        let w = word_at(b, i);
-        let m = equal(w, x) | equal(w, y);
-        if m != 0 {
-            return Some(i + (m.trailing_zeros() / 8) as usize);
-        }
-        i += 8;
-    }
-    b[i..].iter().position(|&c| c == x || c == y).map(|e| i + e)
-}
-
-/// The first place `needle` (not empty) starts in `b`: its first byte found, then the rest compared.
-fn find_str(b: &[u8], needle: &[u8]) -> Option<usize> {
-    let mut i = 0;
-    while let Some(e) = find(&b[i..], needle[0]) {
-        let at = i + e;
-        if b.len() - at < needle.len() {
-            return None;
-        }
-        if &b[at..at + needle.len()] == needle {
+/// Where a fence of three or more backticks next starts, from `from`: a `pair` of backticks,
+/// then the rest compared (rare: such literals are 0.02% of blocks).
+fn find_fence(b: &[u8], from: usize, fence: &[u8]) -> Option<usize> {
+    let mut i = from;
+    loop {
+        let at = micro::find_pair(b, i, b'`', b'`')?;
+        if b[at..].starts_with(fence) {
             return Some(at);
         }
         i = at + 1;
     }
-    None
 }
 
-fn newlines(b: &[u8]) -> u32 {
-    let (mut n, mut i) = (0, 0);
-    while i + 8 <= b.len() {
-        n += equal(word_at(b, i), b'\n').count_ones();
-        i += 8;
+/// A word's text as one word of memory: little-endian, zeros past its end.
+const fn key(s: &[u8]) -> u64 {
+    let (mut v, mut i) = (0u64, 0);
+    while i < s.len() {
+        v |= (s[i] as u64) << (8 * i);
+        i += 1;
     }
-    n + b[i..].iter().filter(|&&c| c == b'\n').count() as u32
+    v
 }
 
-/// `syntax::lex`'s tokens, without their text.
+/// The words the grammar looks at, and their codes.
+const WORD_LIST: [(&[u8], u8); 30] = [
+    (b"must", W_MUST),
+    (b"may", W_MAY),
+    (b"code", W_CODE),
+    (b"in", W_IN),
+    (b"tag", W_TAG),
+    (b"fix", W_FIX),
+    (b"safe", W_SAFE),
+    (b"suppress", W_SUPPRESS),
+    (b"over", W_OVER),
+    (b"options", W_OPTIONS),
+    (b"by", W_BY),
+    (b"sep", W_SEP),
+    (b"count", W_COUNT),
+    (b"min", W_MIN),
+    (b"max", W_MAX),
+    (b"sum", W_SUM),
+    (b"mean", W_MEAN),
+    (b"join", W_JOIN),
+    (b"product", W_PRODUCT),
+    (b"_", W_WILD),
+    (b"decl", W_DECL),
+    (b"edit", W_EDIT),
+    (b"functor", W_FUNCTOR),
+    (b"type", W_TYPE),
+    (b"input", W_INPUT),
+    (b"output", W_OUTPUT),
+    (b"lattice", W_LATTICE),
+    (b"pragma", W_PRAGMA),
+    (b"violation", W_VIOLATION),
+    (b"policy", W_POLICY),
+];
+
+/// A word's slot in `WORDS`: its first 8 bytes and its length, hashed by a multiplier under
+/// which the 30 words take 30 slots.
+const fn word_slot(key: u64, len: usize) -> usize {
+    ((key ^ len as u64).wrapping_mul(0x9c65_3938_2b05_37e7) >> 57) as usize
+}
+
+/// Each slot's word: its first 8 bytes, its length, its code (0: none).
+static WORDS: [(u64, u8, u8); 128] = {
+    let mut t = [(0u64, 0u8, 0u8); 128];
+    let mut i = 0;
+    while i < WORD_LIST.len() {
+        let (w, code) = WORD_LIST[i];
+        let k = key(if w.len() > 8 { w.split_at(8).0 } else { w });
+        let slot = word_slot(k, w.len());
+        assert!(t[slot].2 == 0, "two words in a slot");
+        t[slot] = (k, w.len() as u8, code);
+        i += 1;
+    }
+    t
+};
+
+/// The code (`W_…`) of a word of `len` bytes, from its first 9 (`raw`: the first 8, zeros
+/// past the text), without a branch: masked to its length, looked up in `WORDS`. A word of 9
+/// bytes (only `violation`) checks its last byte too.
+#[inline(always)]
+fn word_code(raw: u64, ninth: u8, len: usize) -> u8 {
+    let w = raw & (u64::MAX >> (64 - 8 * len.clamp(1, 8)));
+    let (k, l, code) = WORDS[word_slot(w, len)];
+    let hit = (k == w) & (usize::from(l) == len) & ((len != 9) | (ninth == b'n'));
+    code & 0u8.wrapping_sub(u8::from(hit))
+}
+
+/// `word_code` of the word `b[s..s + len]`, read from the text (a word across a block's end).
+fn word_of(b: &[u8], s: usize, len: usize) -> u8 {
+    let mut pad = [0u8; 9];
+    let have = (b.len() - s).min(9);
+    pad[..have].copy_from_slice(&b[s..s + have]);
+    word_code(u64::from_le_bytes(pad[..8].try_into().expect("8 bytes")), pad[8], len)
+}
+
+/// Where the word bytes from `from` end: the run of the block's `word` bits, and on past the
+/// block a byte at a time (a word across a block's end: rare).
+#[inline(always)]
+fn word_end(b: &[u8], w: &micro::Window, from: usize) -> usize {
+    let q = from - w.base;
+    let mut end = from;
+    if q < 64 {
+        let r = micro::run(w.word, q as u32) as usize;
+        end += r;
+        if q + r < 64 {
+            return end;
+        }
+    }
+    while end < b.len() && CLASS[b[end] as usize] & IDENT != 0 {
+        end += 1;
+    }
+    end
+}
+
+/// `syntax::lex`'s tokens, without their text, in simdjson's shape: a block's token starts
+/// found at once, then written without a branch a token.
+///
+/// A block is the 64 bytes from `base` (`micro::Window`). Its starts are every byte not
+/// whitespace, but a word's bytes after its first (`!space & !(word & word << 1)`), and but a
+/// two-byte punctuation's second byte (`pair`). The rare starts (`rare`: a string, a comment,
+/// a backtick literal, `#`, a number, a non-ASCII character) cut the block into runs. A run's
+/// tokens are written straight: the kind by the first byte (a pair's by its own table), the
+/// end by the run of `word` bits, the word's code by one load and a table. A rare token is
+/// read by its micro-lexer, and the starts it covers are cleared; one that ends past the block
+/// starts the next block where it ends.
 fn lex(src: &str) -> Lexed {
     let b = src.as_bytes();
     let n = b.len();
-    let mut toks = Vec::with_capacity(n / 4 + 8);
+    // Written behind, as simdjson writes its index: room for a token a byte (each takes one at
+    // least) and the `EOF`s, so a write needs no check.
+    let mut toks: Vec<Tok> = Vec::with_capacity(n + 8);
+    let (out, mut len) = (toks.as_mut_ptr(), 0usize);
     let mut comments = Vec::new();
-    let (mut pos, mut line) = (0usize, 1u32);
     macro_rules! tok {
-        ($kind:expr, $start:expr, $end:expr, $word:expr) => {
-            toks.push(Tok { start: $start as u32, end: $end as u32, line, kind: $kind, word: $word })
-        };
+        ($kind:expr, $start:expr, $end:expr, $word:expr) => {{
+            // SAFETY: fewer than `n + 8` tokens are written (see above).
+            unsafe { out.add(len).write(Tok { start: $start as u32, end: $end as u32, kind: $kind, word: $word }) };
+            len += 1;
+        }};
     }
-    'read: loop {
-        while pos < n && CLASS[b[pos] as usize] & WS != 0 {
-            line += u32::from(b[pos] == b'\n');
-            pos += 1;
+    // No token starts before `cursor`.
+    let (mut base, mut cursor) = (0usize, 0usize);
+    'read: while base < n {
+        let w = micro::Window::at(b, base);
+        let valid = if n - base >= 64 { !0 } else { (1u64 << (n - base)) - 1 };
+        let mut starts = !w.space & !(w.word & (w.word << 1)) & valid & micro::bits(cursor.saturating_sub(base) as u32, 64);
+        let mut pairs = w.pair & starts;
+        if pairs & (pairs << 1) != 0 {
+            pairs = left_to_right(pairs);
         }
-        if pos >= n {
-            break;
-        }
-        let start = pos;
-        let c = b[pos];
-        let d = if pos + 1 < n { b[pos + 1] } else { 0 };
-        match c {
-            b'/' if d == b'/' => {
-                pos = find(&b[pos..], b'\n').map_or(n, |e| pos + e);
-                comments.push((start as u32, pos as u32));
+        starts &= !(pairs << 1);
+        loop {
+            let rare = starts & w.rare;
+            // The run: the starts before the next rare one.
+            let mut run = starts & (rare.wrapping_sub(1) & !rare);
+            while run != 0 {
+                let q = run.trailing_zeros();
+                run &= run - 1;
+                let (pos, at) = (base + q as usize, (q & 63) as usize);
+                // The token's first bytes, from the window: in bounds, no check.
+                let (c, d) = (w.bytes[at], w.bytes[at + 1]);
+                let raw = u64::from_le_bytes(w.bytes[at..at + 8].try_into().expect("8 bytes"));
+                let ninth = w.bytes[at + 8];
+                let words = micro::run(w.word, q) as usize;
+                let pair = ((pairs >> q) & 1) as u8;
+                // The kind: by the first byte, or a pair's (`<:` its own), by selects.
+                let pk = if d == b':' { P0 + SUBTYPE } else { PAIR_KIND[c as usize] };
+                let m = 0u8.wrapping_sub(pair);
+                let kind = (KIND_OF[c as usize] & !m) | (pk & m);
+                let mut end = pos + words.max(1) + pair as usize;
+                let mut code = word_code(raw, ninth, words);
+                if at + words == 64 {
+                    // A word on past the block: the last start of it.
+                    end = word_end(b, &w, pos);
+                    cursor = end;
+                    code = word_of(b, pos, end - pos);
+                }
+                tok!(kind, pos, end, code);
             }
-            // As `str::find("*/")` from the comment's first byte: `/*/` ends at once.
-            b'/' if d == b'*' => match find_str(&b[pos + 1..], b"*/") {
-                Some(e) => {
-                    let end = pos + 1 + e + 2;
-                    line += newlines(&b[pos..end]);
-                    pos = end;
-                    comments.push((start as u32, pos as u32));
-                }
-                None => {
-                    tok!(BAD, start, n, 0);
-                    break;
-                }
-            },
-            b'"' => {
-                // To the closing quote, past escapes; only a `\u` escape can be refused.
-                let (mut end, mut u) = (pos + 1, false);
-                loop {
-                    match find2(&b[end..], b'"', b'\\') {
-                        None => {
-                            end = n;
-                            break;
-                        }
-                        Some(e) => {
-                            end += e;
-                            if b[end] == b'"' {
-                                break;
-                            }
-                            u |= end + 1 < n && b[end + 1] == b'u';
-                            end += 2;
-                            if end >= n {
-                                break;
-                            }
-                        }
-                    }
-                }
-                if end >= n {
-                    tok!(BAD, start, n, 0);
-                    break 'read;
-                }
-                let ok = !u || crate::syntax::unescape(&src[pos + 1..end]).is_ok();
-                tok!(if ok { STR } else { BAD }, start, end + 1, 0);
-                line += newlines(&b[start..end]);
-                pos = end + 1;
+            if rare == 0 {
+                break;
             }
-            b'`' => {
-                let mut k = 1;
-                while pos + k < n && b[pos + k] == b'`' {
-                    k += 1;
+            let pos = base + rare.trailing_zeros() as usize;
+            let start = pos;
+            let c = b[pos];
+            let d = if pos + 1 < n { b[pos + 1] } else { 0 };
+            cursor = match c {
+                b'/' if d == b'/' => {
+                    let end = micro::find(b, pos, b'\n').unwrap_or(n);
+                    comments.push((start as u32, end as u32));
+                    end
                 }
-                let body = pos + k;
-                match find_str(&b[body..], &b[pos..pos + k]) {
-                    Some(close) => {
-                        let end = body + close + k;
-                        tok!(TICK, start, end, 0);
-                        line += newlines(&b[start..end]);
-                        pos = end;
-                    }
-                    None if k == 2 => {
-                        tok!(TICK, start, pos + 2, 0);
-                        pos += 2;
+                // As `str::find("*/")` from the comment's first byte: `/*/` ends at once.
+                b'/' if d == b'*' => match micro::find_pair(b, pos + 1, b'*', b'/') {
+                    Some(at) => {
+                        comments.push((start as u32, at as u32 + 2));
+                        at + 2
                     }
                     None => {
                         tok!(BAD, start, n, 0);
-                        break;
+                        break 'read;
+                    }
+                },
+                b'/' => {
+                    tok!(P0 + SLASH, start, pos + 1, 0);
+                    pos + 1
+                }
+                b'"' => {
+                    // To the closing quote, past escapes; only a `\u` escape can be refused.
+                    let (end, u) = micro::string_end(b, pos + 1);
+                    let Some(end) = end else {
+                        tok!(BAD, start, n, 0);
+                        break 'read;
+                    };
+                    let ok = !u || crate::syntax::unescape(&src[pos + 1..end]).is_ok();
+                    tok!(if ok { STR } else { BAD }, start, end + 1, 0);
+                    end + 1
+                }
+                b'`' => {
+                    let mut k = 1;
+                    while pos + k < n && b[pos + k] == b'`' {
+                        k += 1;
+                    }
+                    let body = pos + k;
+                    // The closing fence: a backtick, a pair of them, or a longer fence.
+                    let close = match k {
+                        1 => micro::find(b, body, b'`'),
+                        2 => micro::find_pair(b, body, b'`', b'`'),
+                        _ => find_fence(b, body, &b[pos..pos + k]),
+                    };
+                    match close {
+                        Some(at) => {
+                            tok!(TICK, start, at + k, 0);
+                            at + k
+                        }
+                        None if k == 2 => {
+                            tok!(TICK, start, pos + 2, 0);
+                            pos + 2
+                        }
+                        None => {
+                            tok!(BAD, start, n, 0);
+                            break 'read;
+                        }
                     }
                 }
-            }
-            b'0'..=b'9' => {
-                let mut end = pos + 1;
-                while end < n && CLASS[b[end] as usize] & DIGIT != 0 {
-                    end += 1;
-                }
-                // `1.5`: a `.` between digits; `0.` ends a clause.
-                if end + 1 < n && b[end] == b'.' && b[end + 1].is_ascii_digit() {
-                    end += 2;
+                b'0'..=b'9' => {
+                    let mut end = pos + 1;
                     while end < n && CLASS[b[end] as usize] & DIGIT != 0 {
                         end += 1;
                     }
-                    tok!(FLOAT, start, end, 0);
-                } else {
-                    let ok = end - pos < 19 || src[pos..end].parse::<i64>().is_ok();
-                    tok!(if ok { NUM } else { BAD }, start, end, 0);
+                    // `1.5`: a `.` between digits; `0.` ends a clause.
+                    if end + 1 < n && b[end] == b'.' && b[end + 1].is_ascii_digit() {
+                        end += 2;
+                        while end < n && CLASS[b[end] as usize] & DIGIT != 0 {
+                            end += 1;
+                        }
+                        tok!(FLOAT, start, end, 0);
+                    } else {
+                        let ok = end - pos < 19 || src[pos..end].parse::<i64>().is_ok();
+                        tok!(if ok { NUM } else { BAD }, start, end, 0);
+                    }
+                    // A word right after the number (`12abc`) is a word of its own.
+                    if end < n && CLASS[b[end] as usize] & IDENT != 0 {
+                        let from = end;
+                        while end < n && CLASS[b[end] as usize] & IDENT != 0 {
+                            end += 1;
+                        }
+                        tok!(ID, from, end, word_of(b, from, end - from));
+                    }
+                    end
                 }
-                pos = end;
-            }
-            b'#' => {
-                let mut end = pos + 1;
-                while end < n && CLASS[b[end] as usize] & IDENT != 0 {
-                    end += 1;
+                b'#' => {
+                    let end = word_end(b, &w, pos + 1);
+                    tok!(HASH, start, end, if &b[pos + 1..end] == b"include" { W_INCLUDE } else { 0 });
+                    end
                 }
-                tok!(HASH, start, end, if &b[pos + 1..end] == b"include" { W_INCLUDE } else { 0 });
-                pos = end;
-            }
-            _ if CLASS[c as usize] & START != 0 => {
-                let mut end = pos + 1;
-                while end < n && CLASS[b[end] as usize] & IDENT != 0 {
-                    end += 1;
-                }
-                tok!(ID, start, end, word_of(&b[pos..end]));
-                pos = end;
-            }
-            _ => {
-                let two = match (c, d) {
-                    (b':', b'-') => TURNSTILE,
-                    (b'=', b'>') => FAT_ARROW,
-                    (b'!', b'=') => NE,
-                    (b'<', b'=') => LE,
-                    (b'>', b'=') => GE,
-                    (b'<', b':') => SUBTYPE,
-                    (b'-', b'>') => ARROW,
-                    _ => u8::MAX,
-                };
-                if two != u8::MAX {
-                    tok!(P0 + two, start, pos + 2, 0);
-                    pos += 2;
-                } else if PUNCT1[c as usize] != 0 {
-                    tok!(P0 + PUNCT1[c as usize] - 1, start, pos + 1, 0);
-                    pos += 1;
-                } else {
+                // A non-ASCII character: what the lexer cannot read.
+                _ => {
                     let end = pos + src[pos..].chars().next().map_or(1, char::len_utf8);
                     tok!(BAD, start, end, 0);
-                    pos = end;
+                    end
                 }
+            };
+            if cursor >= base + 64 {
+                break;
             }
+            starts &= micro::bits((cursor - base) as u32, 64);
         }
+        if pairs >> 63 != 0 {
+            // A pair's second byte is the next block's first.
+            cursor = cursor.max(base + 65);
+        }
+        base = cursor.max(base + 64);
     }
-    let real = toks.len();
-    // The file's end: its line counts every newline, also after a token that ended the read.
-    let eof_line = if pos >= n { line } else { newlines(b) + 1 };
+    let real = len;
     for _ in 0..4 {
-        toks.push(Tok { start: n as u32, end: n as u32, line: eof_line, kind: EOF, word: 0 });
+        tok!(EOF, n, n, 0);
     }
+    // SAFETY: the first `len` tokens are written.
+    unsafe { toks.set_len(len) };
     Lexed { toks, n: real, comments }
 }
 
@@ -462,6 +580,8 @@ struct Parser<'s> {
     /// The next comment to place, and where it starts (`u32::MAX`: none left).
     comment: usize,
     next_comment: u32,
+    /// Where each newline is, made when a line is first asked (`micro::newline_positions`).
+    lines: std::cell::OnceCell<Vec<u32>>,
 }
 
 /// The lexer alone (its tokens' count), to measure apart from the parse.
@@ -475,7 +595,7 @@ pub fn tape(src: &str) -> Vec<Node> {
     let mut out = Vec::with_capacity(n + n / 2 + comments.len() + 8);
     out.push(Node { kind: Kind::SourceFile as u16, field: 0, start: 0, end: src.len() as u32, parent: None, extra: false });
     let next_comment = comments.first().map_or(u32::MAX, |c| c.0);
-    let mut p = Parser { b: src.as_bytes(), t: toks, n, i: 0, no_named: false, out, open: vec![(0, 0)], kids: Vec::with_capacity(64), comments, comment: 0, next_comment };
+    let mut p = Parser { b: src.as_bytes(), t: toks, n, i: 0, no_named: false, out, open: vec![(0, 0)], kids: Vec::with_capacity(64), comments, comment: 0, next_comment, lines: Default::default() };
     while p.kind() != EOF {
         let save = p.mark();
         if p.statement().is_err() {
@@ -522,18 +642,21 @@ impl Parser<'_> {
         self.t.get(self.i).map_or(self.b.len() as u32, |t| t.start)
     }
 
+    /// The line of byte `at`, from 1, as `syntax::Lines` gives it.
+    fn line_of(&self, at: u32) -> u32 {
+        let lines = self.lines.get_or_init(|| micro::newline_positions(self.b));
+        lines.partition_point(|&newline| newline < at) as u32 + 1
+    }
+
     fn line(&self) -> u32 {
-        self.t.get(self.i).map_or(self.t[self.n].line, |t| t.line)
+        self.line_of(self.start())
     }
 
     /// The line of the token before the next one's last byte.
     fn last_line(&self) -> u32 {
-        let Some(j) = self.i.checked_sub(1) else { return 0 };
-        let Some(t) = self.t.get(j) else { return 0 };
-        if matches!(t.kind, STR | TICK | BAD) {
-            t.line + newlines(&self.b[t.start as usize..(t.end as usize).saturating_sub(1).max(t.start as usize)])
-        } else {
-            t.line
+        match self.i.checked_sub(1).and_then(|j| self.t.get(j)) {
+            Some(t) => self.line_of(t.end.saturating_sub(1)),
+            None => 0,
         }
     }
 
@@ -890,7 +1013,7 @@ impl Parser<'_> {
     }
 
     fn statement(&mut self) -> R<()> {
-        let line = self.line();
+        let first = self.i;
         if self.kind() == HASH {
             let include = self.t[self.i].word == W_INCLUDE;
             self.open(Kind::Include);
@@ -928,7 +1051,7 @@ impl Parser<'_> {
                 self.leaf_over(keyword, self.i, self.i + 2);
                 self.i += 2;
             }
-            self.directive(line, d, kind)?;
+            self.directive(first, d, kind)?;
             self.close();
             Ok(())
         } else {
@@ -983,7 +1106,8 @@ impl Parser<'_> {
         Ok(())
     }
 
-    fn directive(&mut self, line: u32, d: u8, kind: Kind) -> R<()> {
+    /// A directive's statement, after its `.word`; `first` its first token.
+    fn directive(&mut self, first: usize, d: u8, kind: Kind) -> R<()> {
         match d {
             W_DECL => {
                 self.id()?;
@@ -1042,7 +1166,7 @@ impl Parser<'_> {
                 serde_json::from_slice::<serde_json::Value>(text).map_err(|_| ())?;
             }
             _ => {
-                let mut line = line;
+                let mut line = self.line_of(self.t[first].start);
                 while self.kind() != EOF && (self.line() == line || (self.i > 0 && self.t[self.i - 1].kind == P0 + COMMA)) {
                     line = self.line();
                     if self.is_p(LBRACE) {
@@ -1441,6 +1565,70 @@ impl Parser<'_> {
 
 #[cfg(test)]
 mod tests {
+    /// The `.rr` files of the repository.
+    fn corpus() -> Vec<(String, String)> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let (mut files, mut work) = (Vec::new(), vec![root]);
+        while let Some(dir) = work.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+            for e in entries.flatten() {
+                let p = e.path();
+                let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
+                if p.is_dir() && !skip {
+                    work.push(p);
+                } else if p.extension().is_some_and(|x| x == "rr") {
+                    files.extend(std::fs::read_to_string(&p).ok().map(|t| (p.display().to_string(), t)));
+                }
+            }
+        }
+        files
+    }
+
+    /// The lexer's tokens and comments are the engine's lexer's (`syntax::lex`), kind for kind
+    /// and span for span, on every `.rr` file.
+    #[test]
+    fn lean_tokens_are_the_engines() {
+        use crate::syntax::Tok;
+        let files = corpus();
+        for (path, text) in &files {
+            let lexed = super::lex(text);
+            let engine = crate::syntax::lex(text);
+            let want: Vec<(u8, u32, u32)> = engine
+                .toks
+                .iter()
+                .map(|(t, s, e)| {
+                    let k = match t {
+                        Tok::Id(_) => super::ID,
+                        Tok::Str(_) => super::STR,
+                        Tok::Num(_) => super::NUM,
+                        Tok::Float(_) => super::FLOAT,
+                        Tok::Tick(_) => super::TICK,
+                        Tok::Hash(_) => super::HASH,
+                        Tok::Bad => super::BAD,
+                        Tok::P(p) => super::P0 + crate::syntax::PUNCT.iter().position(|q| q == p).expect("punctuation") as u8,
+                        Tok::Eof => super::EOF,
+                    };
+                    (k, *s as u32, *e as u32)
+                })
+                .collect();
+            let got: Vec<(u8, u32, u32)> = lexed.toks[..lexed.n].iter().map(|t| (t.kind, t.start, t.end)).collect();
+            if got != want {
+                let k = got.iter().zip(&want).position(|(a, b)| a != b).unwrap_or(got.len().min(want.len()));
+                let at = want.get(k).or(got.get(k)).map_or(0, |t| t.1 as usize);
+                panic!("{path}: token {k}: lean {:?}, engine {:?}, near {:?}", got.get(k), want.get(k), text.get(at.saturating_sub(20)..(at + 20).min(text.len())));
+            }
+            let comments: Vec<(u32, u32)> = engine.comments.iter().map(|&(s, e)| (s as u32, e as u32)).collect();
+            assert_eq!(lexed.comments, comments, "{path}");
+            for (t, (tok, _, _)) in lexed.toks.iter().zip(&engine.toks) {
+                if let Tok::Id(word) = tok {
+                    assert_eq!(t.word, super::word_of(word.as_bytes(), 0, word.len()), "{path}: {word}");
+                    let listed = super::WORD_LIST.iter().find(|w| w.0 == word.as_bytes()).map_or(0, |w| w.1);
+                    assert_eq!(t.word, listed, "{path}: {word}");
+                }
+            }
+        }
+    }
+
     /// Every `.rr` file of the repository, and every prefix of each at a few cut points (to run
     /// the recovery paths), gives `crate::tape`'s tape.
     #[test]
@@ -1472,7 +1660,21 @@ mod tests {
             }
             for at in cuts {
                 let src = &text[..at];
-                assert_eq!(super::tape(src), crate::tape(src), "{path} cut at {at}");
+                let (lean, engine) = (super::tape(src), crate::tape(src));
+                if lean != engine {
+                    // The first node that differs, and the text it is at.
+                    let k = lean.iter().zip(&engine).position(|(a, b)| a != b).unwrap_or(lean.len().min(engine.len()));
+                    let near = engine.get(k).or(lean.get(k)).map_or(0, |x| x.start as usize);
+                    let (from, to) = (near.saturating_sub(40), (near + 40).min(src.len()));
+                    panic!(
+                        "{path} cut at {at}: node {k} of {} / {}\n lean   {:?}\n engine {:?}\n near {:?}",
+                        lean.len(),
+                        engine.len(),
+                        lean.get(k),
+                        engine.get(k),
+                        src.get(from..to)
+                    );
+                }
                 checked += 1;
             }
         }

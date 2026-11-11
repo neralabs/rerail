@@ -25,9 +25,9 @@ It is written as a fast hand-written parser would be:
   and the word it is when the grammar looks at that word
   (`code`, `min`, `decl`, …), found once by the lexer.
   The parser compares one-byte codes, never text.
-- The lexer classes bytes by a table.
-  It finds the ends of comments, strings and code literals
-  8 bytes a step, as `memchr` does without SIMD.
+- The lexer is a block lexer in Bitlex's shape (page 31):
+  a block's token starts found at once, written without a branch a token,
+  comments, strings and backtick literals read by micro-lexers.
 - No statements are built. Each node is written in preorder as it opens.
   The open nodes and their children are a stack.
 - An operator found after its left operand (`a - b`, `x <= y`)
@@ -54,41 +54,47 @@ so `memchr` would run unoptimized, and inflate the lexer threefold.
 
 The bench `rr_against_rust` runs each parser over the 1,360 files
 the compiled grammar accepts (8.8 MB, 1.9 million nodes), in turns.
-Each figure is the least of five rounds.
-The Rust parsers are built at `opt-level=3`.
+Each figure is the least of seven rounds.
+The Rust parsers are built as release code:
+`opt-level=3`, overflow checks and debug assertions off.
 
 ```
 cargo test -p rerail-rr-parser --no-run \
-  --config 'profile.dev.package.rerail-rr-syntax.opt-level=3'
-RR_ROUNDS=5 <test binary> rr_against_rust --ignored --nocapture
+  --config 'profile.dev.package.rerail-rr-syntax.opt-level=3' \
+  --config 'profile.dev.package.rerail-rr-syntax.overflow-checks=false' \
+  --config 'profile.dev.package.rerail-rr-syntax.debug-assertions=false'
+RR_ROUNDS=7 <test binary> rr_against_rust --ignored --nocapture
 ```
 
 | | instructions | cycles | a node | IPC |
 |---|---|---|---|---|
 | tier 1 | 532M | 106M | 280 / 56 | 5.0 |
-| tier 2 | 642M | 152M | 338 / 80 | 4.2 |
-| **compiled, both tiers** | **1,174M** | **259M** | **618 / 136** | |
-| lean: lexer alone | 130M | 34M | 68 / 18 | 3.9 |
-| lean: lexer and parse | 436M | 82M | 229 / 43 | 5.3 |
-| engine's Rust parser | 3,370M | 700M | 1,775 / 369 | 4.8 |
+| tier 2 | 642M | 151M | 338 / 79 | 4.3 |
+| **compiled, both tiers** | **1,174M** | **257M** | **618 / 135** | |
+| lean: lexer alone | 156M | 33M | 82 / 18 | 4.7 |
+| lean: lexer and parse | 466M | 84M | 245 / 44 | 5.6 |
+| engine's Rust parser | 3,235M | 670M | 1,704 / 353 | 4.8 |
 
 "A node" is instructions / cycles per tape node.
-The load average was about 24 during the run.
+The load average was 35 to 60 during the run.
+
+Earlier runs on this page built the Rust with the debug profile's
+overflow checks and debug assertions still on.
+They cost the engine's parser 4% of its instructions.
 
 What it shows:
 
-- **The compiled grammar takes 3.2 times the lean parser's cycles**
-  (259M against 82M), and 2.7 times its instructions.
+- **The compiled grammar takes 3.1 times the lean parser's cycles**
+  (257M against 84M), and 2.5 times its instructions.
 - **Tier 2 against the lean parse alone** (the whole less the lexer:
-  306M instructions, 48M cycles):
-  2.1 times the instructions, 3.2 times the cycles.
-  Its IPC is lower too, 4.2 against 6.4:
+  310M instructions, 51M cycles):
+  2.1 times the instructions, 3.0 times the cycles.
+  Its IPC is lower too, 4.3 against 6.1:
   its branches are harder to predict and its loads wait longer.
-- **Tier 1 against a scalar lexer:**
-  4.1 times the instructions and 3.2 times the cycles.
-  The lean lexer has no SIMD and reads whitespace and words
-  a byte at a time, so tier 1 should beat it, not trail it.
-- The engine's parser costs 8.5 times the lean one.
+- **Tier 1 against the lean lexer:**
+  3.4 times the instructions and 3.2 times the cycles,
+  though both have the same block shape (page 31).
+- The engine's parser costs 8 times the lean one.
 
 A first draft of the lean parser, which compared words as strings
 and scanned with byte loops, took 804M instructions and 151M cycles.
@@ -98,13 +104,12 @@ Most of the difference was its lexer (409M instructions, 79M cycles).
 
 It is not the floor:
 
-- whitespace, words and numbers are still read a byte at a time;
 - every token and node access is bounds-checked;
 - each term goes down four calls (`term`, `product`, `primary`
   and the list it is in), as recursive descent does.
 
-A SIMD lexer is tier 1's own design,
-so the lexer's number is the bar tier 1 must clear by a margin.
+The lexer's 33M cycles is the bar for tier 1 (page 31 says why
+its block shape is at parity with a byte lexer on this corpus).
 The parse's 200 instructions a token is a fair bar for tier 2.
 
 ## Why tier 2 is heavy
@@ -146,4 +151,4 @@ from the grammar file through the compiler:
 - the token state as values inside a rule's function.
 
 Tier 1 needs its own look:
-it trails a scalar lexer threefold.
+it takes three times the lean lexer's cycles, in the same shape (page 31).
