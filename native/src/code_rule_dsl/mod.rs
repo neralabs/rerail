@@ -605,6 +605,8 @@ pub(crate) fn install_languages() {
     resolution::install(import_target::held::RESOLUTIONS);
     // A repository's context as its index reads it (ECMAScript's `package.json` files).
     workspace::ingest::install_repository_context(workspace::ingest::ecma::repository_context);
+    // The language terms (ECMAScript's `importTarget`).
+    matcher::install_terms(vec![compile::import_target::TERM]);
     // What compiles a program's `ast` matchers into the transducer wave facts runs (decision 0106).
     facts::vtab::syntax::install_ast_compiler(&facts::vtab::syntax::ast_wave::Compiler);
     // The literal grammars `parse` applies, in the order messages list them (`literal::LiteralGrammar`).

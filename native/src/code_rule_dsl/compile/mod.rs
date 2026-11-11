@@ -12,7 +12,7 @@ pub(super) mod evidence;
 #[cfg(test)]
 mod examples_tests;
 mod format_args;
-mod import_target;
+pub(crate) mod import_target;
 mod layout;
 mod line_state;
 mod nth_child;

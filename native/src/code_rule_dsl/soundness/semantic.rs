@@ -23,7 +23,7 @@ pub(super) fn optional_outward_captures(
         | Semantic::Gap(_)
         | Semantic::Host(_)
         | Semantic::Embedded(_)
-        | Semantic::ImportTarget(_) => {}
+        | Semantic::Term(_) => {}
         Semantic::FormatArgs(test) => {
             if let Some(unused) = &test.unused {
                 walk(unused, under_any, outward);
@@ -55,7 +55,7 @@ pub(super) fn sound(
         // A target is the node's own value and the files around it; its style reads the
         // statement around it, which a recovered tree may tell wrongly, so a negated target is no
         // fact.
-        Semantic::ImportTarget(_) => !negated,
+        Semantic::Term(_) => !negated,
         // A parsed tree is the node's own text, whatever the rest of the file holds; its `host`
         // rules read the file around it, each as sound as it is alone, and none negated.
         Semantic::Parse(test) => {
@@ -109,7 +109,7 @@ pub(super) fn leaves_witness(semantic: &Semantic, memo: &mut UtilitySummary<usiz
         | Semantic::FilePath(_)
 
         | Semantic::Gap(_)
-        | Semantic::ImportTarget(_) => false,
+        | Semantic::Term(_) => false,
         Semantic::Host(_) | Semantic::Embedded(_) => true,
         Semantic::FormatArgs(test) => test
             .unused

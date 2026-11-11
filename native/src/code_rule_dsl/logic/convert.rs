@@ -1220,7 +1220,7 @@ fn semantic_name(s: &Semantic) -> &'static str {
         Semantic::Gap(_) => "gap",
         Semantic::FilePath(_) => "file path",
         Semantic::Calls(_) => "calls",
-        Semantic::ImportTarget(_) => "importTarget",
+        Semantic::Term(term) => term.key(),
     }
 }
 

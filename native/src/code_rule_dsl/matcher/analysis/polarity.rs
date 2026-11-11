@@ -107,7 +107,7 @@ fn walk(matcher: &AstMatcher, negated: bool, seen: &mut BTreeSet<usize>, out: &m
                 both(rule, seen, out);
             }
         }
-        AstMatcher::Semantic(Semantic::ImportTarget(_)) => out.import_target = true,
+        AstMatcher::Semantic(Semantic::Term(term)) => out.import_target |= term.reads_resolution(),
         AstMatcher::Pattern(_)
         | AstMatcher::Kind(_) | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)

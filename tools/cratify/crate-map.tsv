@@ -262,3 +262,4 @@ crate::panic_boundary	rerail-w
 crate::content_store	rerail-store
 crate::git_workspace	rerail-store
 resolution	rerail-w
+matcher::term	rerail-w

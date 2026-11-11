@@ -126,7 +126,8 @@ use util::{THREE_VALUED, UNKNOWN};
 pub(super) use value::{Bound, Reading, ValueTest};
 pub(crate) use value::Values;
 
-pub(super) use crate::code_rule_dsl::import_target::term::ImportTargetTest;
+pub(crate) mod term;
+pub(crate) use term::{LanguageTerm, TermCompiler, install_terms};
 #[derive(Clone)]
 pub(super) struct GrammarMatcher {
     /// The dialect of the document the matcher reads: the file's own, or for an embedded clause
