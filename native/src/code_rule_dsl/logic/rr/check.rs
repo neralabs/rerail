@@ -83,8 +83,9 @@ fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>,
             let ready = force || needs.is_subset(bound);
             (none(), needs, ready)
         }
-        Lit::Pattern { neg: true, .. } => {
-            let vs = lit_vars(l);
+        // A negated pattern reads its subject; its captures are its own.
+        Lit::Pattern { subject, neg: true, .. } => {
+            let vs = vars_of(subject);
             let ready = force || vs.is_subset(bound);
             (none(), vs, ready)
         }

@@ -412,6 +412,16 @@ fn negated_named_groups_lower() {
     parse(src).expect("a negated match with named groups lowers");
 }
 
+/// A negated match's named groups are plain groups.
+#[test]
+fn a_negated_match_reads_its_named_groups_as_groups() {
+    // A negated match binds nothing, so its named groups are plain groups: `!match("(?<z>.*)", y)` is
+    // `!match("(?:.*)", y)` (it was refused as "named groups … not lowered yet").
+    let p = parse(".decl a(x: symbol)\na(x) :- a(x), a(y), !match(\"(?<z>.*)\", y).").unwrap();
+    let text = format!("{p:?}");
+    assert!(text.contains("(?:.*)") && !text.contains("(?<z>"), "{text}");
+}
+
 /// `.violation` rows become the engine's findings; fixes are left out; arithmetic and Soufflé's string
 /// functions are functors; a computed atom argument is bound first; `!nearest(n, _, set)` is `!inside`.
 #[test]
