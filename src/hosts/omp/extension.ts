@@ -25,6 +25,7 @@ import {
   type AdapterEvent,
   type AdapterSession,
 } from "../../engine/adapter-contract.js";
+import { isStartedState, REPOSITORY_START_STATES } from "../../engine/catalog/repository-model.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../../engine/package-root.js";
 import { resolveSessionPaths } from "../../runtime/session-paths.js";
 import { registerConversationRulesCommand } from "./command.js";
@@ -78,13 +79,14 @@ async function rerailStarted(cwd: string, databasePath: string | undefined): Pro
   if (reader !== undefined) return reader.isRerailStarted(cwd, databasePath);
   if (databasePath === undefined) {
     const answered = await readRepositoryState(cwd, "omp");
-    if (answered !== null) return answered !== "stopped";
+    if (answered !== null) return isStartedState(answered);
   }
   const cli = join(PACKAGE_ROOT, ENTRY_POINTS.cli);
   if (!existsSync(cli)) return false;
   const databaseArgs = databasePath === undefined ? [] : ["--database", databasePath];
   const { stdout } = await execFileAsync(nodeExecutable(), [cli, "state", "--repo", cwd, ...databaseArgs], { cwd, timeout: STATE_CHECK_TIMEOUT_MS });
-  return ["started", "not-set-up"].includes(stdout.trim());
+  const state = REPOSITORY_START_STATES.find(known => known === stdout.trim());
+  return state !== undefined && isStartedState(state);
 }
 
 /**
