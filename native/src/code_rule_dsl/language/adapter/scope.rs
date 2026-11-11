@@ -20,7 +20,6 @@ use std::sync::Arc;
 pub(in crate::code_rule_dsl) mod lang_python;
 pub(in crate::code_rule_dsl) mod lang_ecma;
 pub(in crate::code_rule_dsl) mod lang_php;
-pub(in crate::code_rule_dsl) use lang_php::{php_feature};
 
 /// A `resolves` or `binds` option some family has no counterpart for.
 #[derive(Clone, Copy, Debug, PartialEq)]

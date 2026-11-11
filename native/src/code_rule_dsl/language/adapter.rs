@@ -230,7 +230,7 @@ pub(crate) fn has_import_targets(dialect: GrammarDialect) -> bool {
 
 /// What tree-sitter parses for a file of `dialect`: its family's `Adapter::parse_input`.
 pub(crate) fn parse_input(dialect: GrammarDialect, source: &str) -> Cow<'_, str> {
-    with_adapter!(Family::of(dialect), A => A::parse_input(source))
+    super::base(Family::of(dialect)).parse_input(source)
 }
 
 /// `dialect`'s ast-grep tree of `parse_input`, reading `source`'s text.
@@ -275,4 +275,17 @@ pub(crate) fn gate(path: &str, verdict: Result<(), Refusal>) -> napi::Result<()>
         Refusal::Refused(message) => invalid(format!("{path}: {message}")),
         Refusal::NotSupportedYet(message) => language_not_supported(format!("{path}: {message}")),
     })
+}
+
+/// Every adapter as the lang-level questions (`language::LanguageBase`), registered beside its pack.
+impl<A: Adapter> super::LanguageBase for pack::Pack<A> {
+    fn parse_input<'s>(&self, source: &'s str) -> Cow<'s, str> {
+        A::parse_input(source)
+    }
+    fn terminators(&self) -> Terminators {
+        A::TERMINATORS
+    }
+    fn source_type(&self, path: &str, package: Option<PackageType>) -> Option<SourceType> {
+        A::source_type(path, package)
+    }
 }

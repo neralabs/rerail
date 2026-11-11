@@ -26,10 +26,8 @@ use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Nesting a decode follows before it gives up (`Unknown`).
 pub(crate) const MAX_DEPTH: usize = 256;
-/// Bytes a decoded string or bytes value may hold: UTF-8 for Python `str`, two per UTF-16 code
-/// unit for JavaScript strings. An operation that would build a longer one is `Unknown` before it
-/// allocates.
-pub(crate) const MAX_STRING_BYTES: usize = 64 * 1024;
+// The longest string a value holds (`text_regex`, below the values: the tape crate reads it).
+pub(crate) use text_regex::MAX_STRING_BYTES;
 /// Elements a tuple or array built by an operation (`(1,) * n`, a spread) may hold.
 pub(crate) const MAX_ELEMENTS: usize = 4096;
 /// Bits a Python `int` may hold, sign aside (`2 ** 4095` does, `2 ** 4096` does not). A literal or

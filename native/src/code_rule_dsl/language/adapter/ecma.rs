@@ -90,12 +90,6 @@ impl Ecma {
         path: &str,
         package: Option<PackageType>,
     ) -> SourceType {
-        let name = path.rsplit('/').next().unwrap_or(path);
-        match name.rsplit_once('.').map(|(_, extension)| extension) {
-            Some("mjs" | "mts") => SourceType::Module,
-            Some("cjs" | "cts") => SourceType::CommonJs,
-            _ if package == Some(PackageType::Module) => SourceType::Module,
-            _ => SourceType::CommonJs,
-        }
+        SourceType::by_package_type(path, package)
     }
 }

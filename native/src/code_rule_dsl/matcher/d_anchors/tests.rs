@@ -822,7 +822,7 @@ fn sibling_projections_are_exact_among_blade_overlapping_siblings() {
     ];
     for source in sources {
         let grammar = Grammar::new(GrammarDialect::Blade).unwrap();
-        let image = TapeImage::encode_template(&grammar, source, &|| false).unwrap();
+        let image = crate::code_rule_dsl::blade::tape::encode_template(&grammar, source, &|| false).unwrap();
         let tape = AstGrep::doc(
             TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap(),
         );

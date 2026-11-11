@@ -83,7 +83,7 @@ impl ValueRules for Php {
     /// Whether no token of the node is one an embedder wrote (a Blade view's `@unless` `!(`),
     /// which a comparison of tokens must not read as the template's (`embed::rewritten`).
     fn spelled<D: Doc>(node: &Node<'_, D>) -> bool {
-        !crate::code_rule_dsl::embed::rewritten(node)
+        !crate::code_rule_dsl::origin::rewritten(node)
     }
 
     /// The name PHP looks a symbol up by, or a string literal's value.

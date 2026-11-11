@@ -604,7 +604,7 @@ mod tests {
         let grammar = crate::code_rule_dsl::tape::Grammar::new(GrammarDialect::Blade).unwrap();
         let source = "{{ $a + }}\n{{-- open\n";
         let image =
-            crate::code_rule_dsl::tape::TapeImage::encode_template(&grammar, source, &|| false)
+            crate::code_rule_dsl::blade::tape::encode_template(&grammar, source, &|| false)
                 .unwrap();
         let blade =
             TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();

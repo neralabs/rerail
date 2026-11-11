@@ -67,7 +67,6 @@ transducer::packed::compile_matcher::matcher_metal	rerail-device-metal
 blade	rerail-lang-php
 calls	rerail-w
 compile	rerail-w
-embed	rerail-w
 eval	rerail-w
 findings	rerail-w
 literal	rerail-w
@@ -222,3 +221,9 @@ language::adapter::syntax::lang_blade	rerail-lang-php
 language::adapter::syntax::lang_ecma	rerail-lang-ecma
 language::adapter::syntax::lang_php	rerail-lang-php
 language::adapter::syntax::lang_python	rerail-lang-python
+embed	rerail-lang
+embed::compiled_view	rerail-lang-php
+embed::script_block	rerail-lang-ecma
+suppress::kinds	rerail-lang
+blade::tape	rerail-lang-php
+transducer::packed::json_parser::tape	rerail-lang-json

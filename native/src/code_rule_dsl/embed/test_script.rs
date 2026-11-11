@@ -34,7 +34,7 @@ pub(crate) fn html(source: &str) -> AstGrep<TapeDoc> {
 pub(crate) struct TestScript;
 
 impl Embedder for TestScript {
-    fn build(root: TsNode<'_>, source: &str) -> Option<Program> {
+    fn build(&self, root: TsNode<'_>, source: &str) -> Option<Program> {
         let mut scripts = Vec::new();
         let mut handlers = Vec::new();
         let mut cursor = root.walk();

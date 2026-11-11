@@ -524,14 +524,23 @@ pub(crate) fn install_languages() {
     use language::adapter::pack::{Pack, pack, register};
     use language::adapter::{Blade, Ecma, Json, Php, Python, Rr, Rust, Sql, Vue};
     register(Family::Python, &Pack::<Python>::NEW);
+    language::register_base(Family::Python, &Pack::<Python>::NEW);
     register(Family::Ecma, &Pack::<Ecma>::NEW);
+    language::register_base(Family::Ecma, &Pack::<Ecma>::NEW);
     register(Family::Php, &Pack::<Php>::NEW);
+    language::register_base(Family::Php, &Pack::<Php>::NEW);
     register(Family::Blade, &Pack::<Blade>::NEW);
+    language::register_base(Family::Blade, &Pack::<Blade>::NEW);
     register(Family::Rust, &Pack::<Rust>::NEW);
+    language::register_base(Family::Rust, &Pack::<Rust>::NEW);
     register(Family::Sql, &Pack::<Sql>::NEW);
+    language::register_base(Family::Sql, &Pack::<Sql>::NEW);
     register(Family::Vue, &Pack::<Vue>::NEW);
+    language::register_base(Family::Vue, &Pack::<Vue>::NEW);
     register(Family::Rr, &Pack::<Rr>::NEW);
+    language::register_base(Family::Rr, &Pack::<Rr>::NEW);
     register(Family::Json, &Pack::<Json>::NEW);
+    language::register_base(Family::Json, &Pack::<Json>::NEW);
     // The linters' suppressions, in the order `suppress` is parsed and checked in.
     {
         use suppress::{eslint, noqa, nosec, oxlint, biome, phpstan, psalm, phpcs, clippy, sqlfluff, kind};
@@ -547,6 +556,33 @@ pub(crate) fn install_languages() {
             kind::<clippy::Suppressions>(),
             kind::<sqlfluff::Suppressions>(),
         ]);
+    }
+    // The embedders, by `Via` (`embed::Embedder`), and the program scopes an embedding gives a meaning of its own.
+    embed::install_embedders(vec![
+        #[cfg(feature = "lang-blade")]
+        (language::Via::CompiledView, &embed::CompiledView),
+        #[cfg(feature = "lang-vue")]
+        (language::Via::ScriptBlock, &embed::ScriptBlock),
+        #[cfg(any(test, feature = "test-hooks"))]
+        (language::Via::TestScript, &embed::TestScript),
+    ]);
+    scope::install_program_scopes(vec![
+        #[cfg(feature = "lang-blade")]
+        (language::Via::CompiledView, embed::compiled_view::scope),
+    ]);
+    // What a `package` file condition reads of a file without a manifest (ECMA's default Node range).
+    language::set_no_manifest(&package_manifest::NoManifest);
+    // The dialects their languages parse themselves (`tape::TreeParser`). A build without a language's
+    // feature routes no file to it, so its parser is not linked.
+    {
+        let mut parsers: Vec<(language::GrammarDialect, &'static dyn tape::TreeParser)> = Vec::new();
+        if cfg!(feature = "lang-blade") {
+            parsers.push((language::GrammarDialect::Blade, &blade::tape::Forte));
+        }
+        if cfg!(feature = "lang-json") {
+            parsers.push((language::GrammarDialect::Json, &transducer::packed::json_parser::tape::Bitlex));
+        }
+        tape::install_parsers(parsers);
     }
     // Every family the build has, registered (`pack` refuses one that is not).
     Family::ALL.into_iter().for_each(|family| _ = pack(family));

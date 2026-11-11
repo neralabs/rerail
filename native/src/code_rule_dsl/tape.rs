@@ -7,10 +7,8 @@
 //! program it derives (`DerivedImage`), with a tape of its own over the program's text and the
 //! segments that map that text back to the document it was derived from. The store keeps each
 //! derived tape as a row of its own (`file_documents`); no tape holds another.
-use crate::code_rule_dsl::blade::forte::tree::{BladeNode, BladeTree, parse_tree};
-use crate::code_rule_dsl::blade::view::{ReadError, View};
 use crate::code_rule_dsl::embed::segments::{FileRanges, SegmentMap};
-use crate::code_rule_dsl::embed::{Embedder, Program};
+use crate::code_rule_dsl::embed::Program;
 use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog, Via};
 use crate::code_rule_dsl::lines::LineTable;
 use crate::code_rule_dsl::lines::Terminators;
@@ -75,14 +73,14 @@ pub(in crate::code_rule_dsl) const TAIL_FROM_START: u8 = 0x80;
 const CODE_EXTRA: u8 = 1;
 const CODE_ERROR: u8 = 2;
 const CODE_MISSING: u8 = 4;
-const KIND_LIMIT: usize = 1024;
-const FIELD_LIMIT: usize = 64;
+pub(in crate::code_rule_dsl) const KIND_LIMIT: usize = 1024;
+pub(in crate::code_rule_dsl) const FIELD_LIMIT: usize = 64;
 const SENTINEL: u16 = u16::MAX;
 const NONE: u32 = u32::MAX;
 const CHECKPOINT_LIMIT: usize = 0x00ff_ffff;
 /// Tree-sitter's ERROR symbol does not fit the 10-bit kind code. ERROR records store the
 /// grammar's hidden end symbol, which never labels a visible node, and are listed in `error`.
-const ERROR_CODE: u16 = 0;
+pub(in crate::code_rule_dsl) const ERROR_CODE: u16 = 0;
 
 // P's index columns, read by `prefilter`'s `nera_tree` (the §17 SQL fallback, tests only so far).
 #[allow(dead_code)]
@@ -180,7 +178,7 @@ pub(super) fn take_table_reservation() -> usize {
 /// Deterministic grammar-wide codes: kind code is the dialect's kind id, field code its field id
 /// (zero means no field), both as `GrammarDialect::kinds` numbers them.
 pub(super) struct Grammar {
-    lang: GrammarDialect,
+    pub(in crate::code_rule_dsl) lang: GrammarDialect,
     kinds: KindCatalog,
     /// Each kind code's name and whether it is named, read once: Tree-sitter answers a name
     /// by measuring and validating its C string on every call, and `kind` is the matcher's
@@ -253,14 +251,62 @@ impl Grammar {
     }
 }
 
-/// Why a Blade template has no tape (`TapeImage::encode_template`).
+/// Why a file its dialect's own parser reads has no tape (`TreeParser`).
 #[derive(Debug)]
 pub(crate) enum TemplateError {
-    /// Forte stopped at a limit (its nesting depth, its step budget) on the template or on a
-    /// template it holds: that says nothing about its syntax, and nothing was read.
-    Parser(crate::code_rule_dsl::blade::forte::ParseError),
+    /// The parser stopped at a limit (Forte's nesting depth, its step budget) on the file or on a
+    /// template it holds: that says nothing about its syntax, and nothing was read. Why, as the parser says.
+    Parser(&'static str),
     /// Interrupted, or no tape could be encoded.
     Encode(String),
+}
+
+/// A parser's own kinds: its kind names by id (from 1), its first anonymous id, and its field names by id.
+pub(crate) type OwnTable = (&'static [&'static str], u16, &'static [&'static str]);
+
+/// A dialect whose files a language parses itself, not with tree-sitter (Blade's Forte), or with a parser
+/// standing in for tree-sitter's (JSON's Bitlex parser). The crate that owns the parser registers it for its
+/// dialect as the engine loads (`install_parsers`); the tape reads the file through it (`TapeImage::parse`).
+pub(crate) trait TreeParser: Send + Sync {
+    /// The file's documents: `None` where the parser leaves the file to tree-sitter, `Err(Parser)` where
+    /// it stopped at a limit before it read the file.
+    fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>>;
+
+    /// Its own kinds, where its trees are not a tree-sitter grammar's.
+    fn kinds(&self) -> Option<OwnTable> {
+        None
+    }
+
+    /// The kinds a rule's `kind` names, where it names more than its own.
+    fn kind_names(&self, _kind: &str) -> Option<&'static [&'static str]> {
+        None
+    }
+
+    /// Its patterns, where they are its own trees: else they are tapes, as documents are (`pattern_doc`).
+    fn build_pattern(
+        &self,
+        _builder: &ast_grep_core::matcher::PatternBuilder,
+    ) -> Option<Result<ast_grep_core::matcher::Pattern, ast_grep_core::matcher::PatternError>> {
+        None
+    }
+
+    /// Whether it stands in for the dialect's tree-sitter grammar, node for node (a file it refuses goes to
+    /// tree-sitter). A workspace that times its own tree-sitter parse reads such a dialect with tree-sitter.
+    fn stands_in_for_tree_sitter(&self) -> bool {
+        false
+    }
+}
+
+static PARSERS: std::sync::OnceLock<Vec<(GrammarDialect, &'static dyn TreeParser)>> = std::sync::OnceLock::new();
+
+/// The engine's tree parsers, by dialect; the first call holds.
+pub(crate) fn install_parsers(parsers: Vec<(GrammarDialect, &'static dyn TreeParser)>) {
+    let _ = PARSERS.set(parsers);
+}
+
+/// `dialect`'s own parser, where its language registered one.
+pub(crate) fn tree_parser(dialect: GrammarDialect) -> Option<&'static dyn TreeParser> {
+    PARSERS.get()?.iter().find(|(lang, _)| *lang == dialect).map(|(_, parser)| *parser)
 }
 
 impl From<String> for TemplateError {
@@ -269,14 +315,6 @@ impl From<String> for TemplateError {
     }
 }
 
-impl From<ReadError> for TemplateError {
-    fn from(error: ReadError) -> Self {
-        match error {
-            ReadError::Parser(error) => Self::Parser(error),
-            ReadError::Interrupted => Self::Encode("tape operation interrupted".into()),
-        }
-    }
-}
 
 /// Owns only compact structure and a binding to the exact source and grammar.
 /// The first derived class id (`TapeDoc::with_labels`), above every grammar's kinds and supertypes
@@ -450,7 +488,7 @@ pub(super) struct DerivedImage {
 impl DerivedImage {
     /// The image of `program`, which `via` built from document `parent` of `host`'s dialect over
     /// `source`.
-    fn encode(
+    pub(in crate::code_rule_dsl) fn encode(
         via: Via,
         program: Program,
         parent: u32,
@@ -714,19 +752,19 @@ impl Documents for TapeImage {
 }
 
 #[derive(Clone)]
-struct Pending {
-    kf: u16,
-    parent: Option<u32>,
-    start: u32,
-    length: u32,
-    size: u32,
-    extra: bool,
-    error: bool,
-    missing: bool,
-    kind_alias: Option<(String, bool)>,
+pub(in crate::code_rule_dsl) struct Pending {
+    pub(in crate::code_rule_dsl) kf: u16,
+    pub(in crate::code_rule_dsl) parent: Option<u32>,
+    pub(in crate::code_rule_dsl) start: u32,
+    pub(in crate::code_rule_dsl) length: u32,
+    pub(in crate::code_rule_dsl) size: u32,
+    pub(in crate::code_rule_dsl) extra: bool,
+    pub(in crate::code_rule_dsl) error: bool,
+    pub(in crate::code_rule_dsl) missing: bool,
+    pub(in crate::code_rule_dsl) kind_alias: Option<(String, bool)>,
 }
 
-fn checked(budget: &impl Fn() -> bool) -> Result<(), String> {
+pub(in crate::code_rule_dsl) fn checked(budget: &impl Fn() -> bool) -> Result<(), String> {
     if budget() {
         Err("tape operation interrupted".into())
     } else {
@@ -955,121 +993,6 @@ fn encode_node<'l>(
     Ok(index)
 }
 
-/// Where a Blade template's syntax error (`BladeTree::error_ranges`) sits in its tree as an ERROR
-/// leaf: under the deepest node whose span holds it with bytes on both sides (a zero-width error
-/// strictly inside), after the children that end at or before its start. Siblings then still end
-/// in byte order. The node's id and the child index the leaf goes before.
-fn error_place(root: BladeNode<'_>, error: &Range<usize>) -> (usize, usize) {
-    let mut node = root;
-    loop {
-        let inner = node.children().find(|child| {
-            let range = child.range();
-            range.start <= error.start
-                && error.end <= range.end
-                && range.start < error.end
-                && error.start < range.end
-        });
-        match inner {
-            Some(child) => node = child,
-            None => break,
-        }
-    }
-    let before = node
-        .children()
-        .take_while(|child| child.range().end <= error.start)
-        .count();
-    (node.node_id(), before)
-}
-
-/// Appends a Blade template's tree (`blade::forte::tree`) to `nodes` in preorder, its kinds and
-/// fields the tree's, and its syntax errors `errors` (as Blade reads them, `View::read`) as ERROR
-/// leaves (`error_place`).
-fn encode_blade_tree(
-    nodes: &mut Vec<Pending>,
-    tree: &BladeTree,
-    errors: &[Range<usize>],
-    budget: &impl Fn() -> bool,
-) -> Result<(), String> {
-    enum Item<'t> {
-        Node(BladeNode<'t>),
-        Error(Range<usize>),
-    }
-    let mut errors = errors
-        .iter()
-        .map(|error| {
-            let (node, before) = error_place(tree.root(), error);
-            (node, before, error.clone())
-        })
-        .collect::<Vec<_>>();
-    errors.sort_by_key(|(node, before, error)| (*node, *before, error.start, error.end));
-    let mut stack = vec![(Item::Node(tree.root()), None)];
-    let mut visited = 0usize;
-    while let Some((item, parent)) = stack.pop() {
-        if visited.is_multiple_of(256) {
-            checked(budget)?;
-        }
-        visited += 1;
-        let index = u32::try_from(nodes.len()).map_err(|_| "rec6 node count overflow")?;
-        let node = match item {
-            Item::Error(range) => {
-                let start = u32::try_from(range.start).map_err(|_| "node span overflow")?;
-                let end = u32::try_from(range.end).map_err(|_| "node span overflow")?;
-                nodes.push(Pending {
-                    kf: ERROR_CODE,
-                    parent,
-                    start,
-                    length: end.checked_sub(start).ok_or("inverted node span")?,
-                    size: 1,
-                    extra: false,
-                    error: true,
-                    missing: false,
-                    kind_alias: None,
-                });
-                continue;
-            }
-            Item::Node(node) => node,
-        };
-        let field = node.field_id();
-        let code = node.kind_id();
-        if code == ERROR_CODE
-            || usize::from(code) >= KIND_LIMIT
-            || usize::from(field) >= FIELD_LIMIT
-        {
-            return Err(format!(
-                "Blade kind {code} or field {field} exceeds the tape's codes"
-            ));
-        }
-        let range = node.range();
-        let start = u32::try_from(range.start).map_err(|_| "node span overflow")?;
-        let end = u32::try_from(range.end).map_err(|_| "node span overflow")?;
-        nodes.push(Pending {
-            kf: code | (field << 10),
-            parent,
-            start,
-            length: end.checked_sub(start).ok_or("inverted node span")?,
-            size: 1,
-            extra: false,
-            error: false,
-            missing: false,
-            kind_alias: None,
-        });
-        let id = node.node_id();
-        let here = errors.partition_point(|(node, ..)| *node < id)
-            ..errors.partition_point(|(node, ..)| *node <= id);
-        let mut placed = errors[here].iter().peekable();
-        let mut items = Vec::with_capacity(node.children().len() + placed.len());
-        for (position, child) in node.children().enumerate() {
-            while let Some((_, _, error)) = placed.next_if(|(_, before, _)| *before <= position) {
-                items.push(Item::Error(error.clone()));
-            }
-            items.push(Item::Node(child));
-        }
-        items.extend(placed.map(|(_, _, error)| Item::Error(error.clone())));
-        stack.extend(items.into_iter().rev().map(|item| (item, Some(index))));
-    }
-    Ok(())
-}
-
 impl TapeImage {
     pub(super) fn to_bytes(&self) -> Result<Vec<u8>, String> {
         let language =
@@ -1239,11 +1162,14 @@ impl TapeImage {
         source: &str,
         budget: &impl Fn() -> bool,
     ) -> Option<Result<FileImage, String>> {
-        // A build without `lang-blade` routes no file to Blade (`GrammarDialect::built`), so Forte is not linked.
-        if cfg!(feature = "lang-blade") && super::language::adapter::parsed_by_forte(grammar.lang) {
-            return match Self::encode_template(grammar, source, budget) {
+        // A dialect its language parses itself (Blade's Forte), or reads with a parser standing in for
+        // tree-sitter's (JSON's Bitlex parser, which may leave the file to tree-sitter-json below).
+        if let Some(parser) = tree_parser(grammar.lang)
+            && let Some(parsed) = parser.parse(grammar, source, &budget)
+        {
+            return match parsed {
                 Ok(image) => Some(Ok(image)),
-                // Forte stopped at a limit: like tree-sitter giving up, it read nothing.
+                // The parser stopped at a limit: like tree-sitter giving up, it read nothing.
                 Err(TemplateError::Parser(_)) => None,
                 Err(TemplateError::Encode(error)) => Some(Err(error)),
             };
@@ -1252,28 +1178,11 @@ impl TapeImage {
         if grammar.lang == GrammarDialect::Rr {
             return Some(Self::encode_rr(grammar, source, budget).map(FileImage::single));
         }
-        // A JSON file: the Bitlex parser's tree, node for node tree-sitter-json's (`json_parser`). A file it refuses
-        // goes to tree-sitter-json below.
-        if cfg!(feature = "lang-json")
-            && grammar.lang == GrammarDialect::Json
-            && grammar.lang.embeds().is_empty()
-            && matches!(super::language::adapter::parse_input(grammar.lang, source), std::borrow::Cow::Borrowed(_))
-        {
-            let parse = crate::code_rule_dsl::logic::profile::span(|| "bitlex parse".into());
-            let columns = crate::code_rule_dsl::transducer::packed::json_parser::columns(source);
-            drop(parse);
-            if let Some(columns) = columns {
-                crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::SourceByte, source.len() as u64);
-                let _encode = crate::code_rule_dsl::logic::profile::span(|| "tape encode".into());
-                return Some(Self::encode_columns(grammar, source, &columns, budget).map(FileImage::single));
-            }
-            crate::code_rule_dsl::logic::profile::decision("JSON parse", || "a file the Bitlex parser refused: tree-sitter-json".to_owned());
-        }
         let mut parser = tree_sitter::Parser::new();
         if let Err(error) = parser.set_language(&grammar.lang.get_ts_language()) {
             return Some(Err(error.to_string()));
         }
-        let parsed = super::language::adapter::parse_input(grammar.lang, source);
+        let parsed = super::language::base(super::language::Family::of(grammar.lang)).parse_input(source);
         let bytes = parsed.as_bytes();
         let mut input = |offset: usize, _: tree_sitter::Point| &bytes[offset..];
         let mut progress = |_: &tree_sitter::ParseState| {
@@ -1315,13 +1224,11 @@ impl TapeImage {
             if embeds[..index].iter().any(|&(earlier, _)| earlier == via) {
                 continue;
             }
-            crate::code_rule_dsl::language::with_embedder!(via, E => {
-                if let Some(program) = <E as Embedder>::build(root, source) {
-                    image
-                        .derived
-                        .push(DerivedImage::encode(via, program, 0, grammar, source, budget)?);
-                }
-            });
+            if let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(root, source) {
+                image
+                    .derived
+                    .push(DerivedImage::encode(via, program, 0, grammar, source, budget)?);
+            }
         }
         Ok(image)
     }
@@ -1357,121 +1264,6 @@ impl TapeImage {
         Self::finish(nodes, supertypes, grammar, source, budget)
     }
 
-    /// The documents of a Blade template, parsed with Rerail's port of Forte (`encode_blade`).
-    pub(super) fn encode_template(
-        grammar: &Grammar,
-        source: &str,
-        budget: &impl Fn() -> bool,
-    ) -> Result<FileImage, TemplateError> {
-        checked(budget)?;
-        let tree = parse_tree(source.as_bytes()).map_err(TemplateError::Parser)?;
-        Self::encode_blade(&tree, grammar, source, budget)
-    }
-
-    /// The documents of a Blade template from its Forte tree (`tree::parse_tree`): the
-    /// template's tree, its syntax errors as ERROR leaves, and the document its embedded PHP
-    /// derives (`blade::view`, the `compiled-view` embedding).
-    pub(super) fn encode_blade(
-        tree: &BladeTree,
-        grammar: &Grammar,
-        source: &str,
-        budget: &impl Fn() -> bool,
-    ) -> Result<FileImage, TemplateError> {
-        Self::check_blade_input(grammar, source, budget)?;
-        // The template's syntax errors are ERROR leaves where Blade reads them (`View::read`).
-        let read = View::read(tree, source, budget)?;
-        let mut nodes = Vec::<Pending>::new();
-        encode_blade_tree(&mut nodes, tree, &read.syntax_errors, budget)?;
-        let image = FileImage::single(Self::finish(nodes, Vec::new(), grammar, source, budget)?);
-        Self::with_compiled_view(image, read.view, grammar, source, budget)
-    }
-
-    /// Why `encode_blade` can't encode `source` with `grammar`: the budget ran out, the
-    /// grammar isn't one Forte parses, or the source is past the tape's range.
-    fn check_blade_input(
-        grammar: &Grammar,
-        source: &str,
-        budget: &impl Fn() -> bool,
-    ) -> Result<(), TemplateError> {
-        checked(budget)?;
-        if !super::language::adapter::parsed_by_forte(grammar.lang) {
-            return Err("only a Blade template is encoded from a Forte tree"
-                .to_owned()
-                .into());
-        }
-        if source.len() > u32::MAX as usize {
-            return Err("source exceeds tape range".to_owned().into());
-        }
-        Ok(())
-    }
-
-    /// `image` with the document its template's embedded PHP derives, where it embeds any
-    /// (`blade::view`, the `compiled-view` embedding).
-    fn with_compiled_view(
-        mut image: FileImage,
-        view: Option<View>,
-        grammar: &Grammar,
-        source: &str,
-        budget: &impl Fn() -> bool,
-    ) -> Result<FileImage, TemplateError> {
-        if let Some(view) = view {
-            image.derived.push(DerivedImage::encode(
-                Via::CompiledView,
-                view.into_program(),
-                0,
-                grammar,
-                source,
-                budget,
-            )?);
-        }
-        Ok(image)
-    }
-
-    /// The tape of a node table a Bitlex parser wrote (`transducer::packed::json_parser::Columns`), in the
-    /// grammar's tree-sitter ids: kinds, fields, spans, parents, extras and supertypes, as `encode_tree` reads them
-    /// off a tree-sitter tree.
-    pub(super) fn encode_columns(
-        grammar: &Grammar,
-        source: &str,
-        columns: &crate::code_rule_dsl::transducer::packed::json_parser::Columns,
-        budget: &impl Fn() -> bool,
-    ) -> Result<Self, String> {
-        use crate::code_rule_dsl::transducer::packed::json_parser::NO_PARENT;
-        checked(budget)?;
-        if source.len() > u32::MAX as usize {
-            return Err("source exceeds tape range".into());
-        }
-        let mut nodes = Vec::with_capacity(columns.len());
-        for i in 0..columns.len() {
-            let (kind, field, extra) = (columns.kind[i], columns.field[i], columns.extra[i] != 0);
-            let error = kind == u32::from(u16::MAX);
-            if !error && (kind as usize >= KIND_LIMIT || field as usize >= FIELD_LIMIT || kind == u32::from(ERROR_CODE)) {
-                return Err(format!("kind {kind} or field {field} exceeds the tape's codes"));
-            }
-            // An extra hangs from no field, as `encode_tree` leaves it.
-            let field = if extra { 0 } else { field as u16 };
-            nodes.push(Pending {
-                kf: if error { ERROR_CODE } else { kind as u16 | (field << 10) },
-                parent: (columns.parent[i] != NO_PARENT).then_some(columns.parent[i]),
-                start: columns.start[i],
-                length: columns.end[i].checked_sub(columns.start[i]).ok_or("inverted node span")?,
-                size: 1,
-                extra,
-                error,
-                missing: false,
-                kind_alias: None,
-            });
-        }
-        let mut supertypes = Vec::with_capacity(columns.super_node.len());
-        for (&node, &class) in columns.super_node.iter().zip(&columns.super_kind) {
-            if class as usize >= KIND_LIMIT {
-                return Err("supertype symbol exceeds tape limit".into());
-            }
-            supertypes.push((node, class as u16));
-        }
-        Self::finish(nodes, supertypes, grammar, source, budget)
-    }
-
     /// The tape of a `.rr` file: the tree `logic::rr::syntax` builds as it reads the statements, its comments as
     /// extras and each statement that does not parse an ERROR leaf (decision 0061).
     pub(super) fn encode_rr(grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
@@ -1482,7 +1274,7 @@ impl TapeImage {
         if source.len() > u32::MAX as usize {
             return Err("source exceeds tape range".into());
         }
-        let nodes = crate::code_rule_dsl::logic::rr::tape(source)
+        let nodes = rerail_rr_syntax::tape(source)
             .into_iter()
             .map(|node| {
                 let error = node.is_error();
@@ -1506,7 +1298,7 @@ impl TapeImage {
     }
 
     /// The image of `nodes`, in preorder with their parents set.
-    fn finish(
+    pub(in crate::code_rule_dsl) fn finish(
         mut nodes: Vec<Pending>,
         mut supertypes: Vec<(u32, u16)>,
         grammar: &Grammar,
@@ -1777,7 +1569,7 @@ pub(super) struct TapeDoc {
     // P's: the source's digest, read by P's anchor corpus (`matcher::p_anchors`, test-only).
     #[cfg_attr(not(test), allow(dead_code))]
     source_digest: [u8; 32],
-    source: Arc<String>,
+    pub(in crate::code_rule_dsl) source: Arc<String>,
     grammar: Arc<Grammar>,
     data: Arc<Vec<Rec>>,
     lines: Arc<LineTable>,
@@ -1794,7 +1586,7 @@ pub(super) struct TapeDoc {
     /// A host's guests (`embed`); the host a guest reads links to them weakly, as they hold it.
     guests: Guests,
     /// A guest's link to the file it is embedded in.
-    host: Option<Arc<HostLink>>,
+    pub(in crate::code_rule_dsl) host: Option<Arc<HostLink>>,
     /// The image this document was restored from, and its stored bytes' SHA-256 once asked
     /// (`residency::slabs::admit_docs`, decision 0032): what the device reads in place.
     image: Arc<TapeImage>,
@@ -1819,13 +1611,13 @@ pub(crate) struct Guest {
 /// What a guest document reads of the file it is embedded in: the embedding, the segments that
 /// map its text to the file's bytes, the file's bytes it cannot be read through, and the host
 /// document (which links back to its guests weakly).
-struct HostLink {
-    via: Via,
-    segments: Arc<SegmentMap>,
-    host_errors: Arc<Vec<(u32, u32)>>,
-    host: TapeDoc,
+pub(in crate::code_rule_dsl) struct HostLink {
+    pub(in crate::code_rule_dsl) via: Via,
+    pub(in crate::code_rule_dsl) segments: Arc<SegmentMap>,
+    pub(in crate::code_rule_dsl) host_errors: Arc<Vec<(u32, u32)>>,
+    pub(in crate::code_rule_dsl) host: TapeDoc,
     /// Each node's extent in the program (`node_extents`), by preorder index.
-    extents: Vec<(u32, u32)>,
+    pub(in crate::code_rule_dsl) extents: Vec<(u32, u32)>,
 }
 
 /// The program bytes each node of a guest's records stands for: from the first of its leaves that
@@ -2660,53 +2452,6 @@ impl Doc for TapeDoc {
     }
 }
 
-/// A host's bytes are the file's; a guest's program text stands for the file ranges its segments
-/// map it to (`SegmentMap::file_ranges`), and a guest node for those of its extent, from its first
-/// leaf standing for file bytes to its last (`node_extents`), white space between its ranges
-/// included, as a tree's node holds the white space between its tokens (`FileRanges::bridged`).
-impl crate::code_rule_dsl::origin::Origin for TapeDoc {
-    fn of_node(&self, id: usize, range: Range<usize>) -> Option<FileRanges> {
-        Some(match &self.host {
-            None => FileRanges::one(range),
-            Some(link) => {
-                let (start, end) = *link.extents.get(id)?;
-                link.segments
-                    .file_ranges(start as usize..end as usize)
-                    .bridged(&link.host.source)
-            }
-        })
-    }
-
-    fn of_range(&self, range: Range<usize>) -> Option<FileRanges> {
-        Some(match &self.host {
-            None => FileRanges::one(range),
-            Some(link) => link.segments.file_ranges(range).bridged(&link.host.source),
-        })
-    }
-
-    fn bounds(&self, id: usize, range: Range<usize>) -> Option<Range<usize>> {
-        Some(match &self.host {
-            None => range,
-            Some(link) => {
-                let (start, end) = *link.extents.get(id)?;
-                link.segments.bounds(start as usize..end as usize)
-            }
-        })
-    }
-
-    fn copied(&self, range: Range<usize>) -> Option<Range<usize>> {
-        match &self.host {
-            None => Some(range),
-            Some(link) => link.segments.copied_span(range),
-        }
-    }
-
-    fn copies(&self, range: Range<usize>) -> bool {
-        self.host
-            .as_ref()
-            .is_none_or(|link| link.segments.copies(range))
-    }
-}
 
 /// The children of `node` a tape of `lang` stores, in order: tree-sitter's, the tokens the grammar
 /// implies left out (`tokens::TokenGrammar::stored_children`). For tests that compare a tape with

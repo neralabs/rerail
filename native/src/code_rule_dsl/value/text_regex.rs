@@ -3,9 +3,13 @@
 //! character repeats) runs on fancy-regex, a backtracking engine, with a backtrack limit and a cap
 //! on the text it reads; past either the verdict is unknown.
 
-use crate::code_rule_dsl::value::MAX_STRING_BYTES;
 use regex::Regex;
 use regex_syntax::ast::ErrorKind;
+
+/// Bytes a decoded string or bytes value may hold: UTF-8 for Python `str`, two per UTF-16 code
+/// unit for JavaScript strings. An operation that would build a longer one is `Unknown` before it
+/// allocates.
+pub(crate) const MAX_STRING_BYTES: usize = 64 * 1024;
 
 /// Backtracking steps one match may take.
 pub(crate) const BACKTRACK_LIMIT: usize = 1_000_000;

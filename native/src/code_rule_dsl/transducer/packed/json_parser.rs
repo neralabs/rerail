@@ -56,6 +56,9 @@ fn compile() -> Result<Compiled, String> {
 
 /// `src`'s node table, with tree-sitter-json's ids; `None` where the grammar refuses the file (or
 /// did not compile: the reason is [`compile_error`]).
+// Its tape (`tape::TreeParser`).
+pub(in crate::code_rule_dsl) mod tape;
+
 pub(in crate::code_rule_dsl) fn columns(src: &str) -> Option<Columns> {
     compiled().ok()?.parser.columns(src.as_bytes()).ok()
 }

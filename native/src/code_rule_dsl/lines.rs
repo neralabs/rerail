@@ -3,7 +3,6 @@
 use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::language::GrammarDialect;
 use serde::{Deserialize, Serialize};
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// A diagnostic span: the byte offsets of its start and end, and their 0-based lines and byte
 /// columns. It serializes as the JSON object of those six fields, its fields declared in key
@@ -31,7 +30,7 @@ pub(crate) enum Terminators {
 impl Terminators {
     /// The linter a language's ports follow (`Adapter::TERMINATORS`).
     pub(crate) fn of(language: GrammarDialect) -> Self {
-        { let pack = language_pack::pack(Family::of(language)); pack.terminators() }
+        crate::code_rule_dsl::language::base(Family::of(language)).terminators()
     }
 
     pub(crate) const fn index(self) -> usize {

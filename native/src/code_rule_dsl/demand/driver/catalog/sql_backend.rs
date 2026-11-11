@@ -4,7 +4,7 @@
 //! calls `xFilter` with the batch token. The first call executes the packed backend and stores its
 //! normalized relation. No host callback or semantic matcher can be registered here.
 
-use crate::code_rule_dsl::language::adapter::{Adapter, ValueRules, with_adapter};
+use crate::code_rule_dsl::language::adapter::Adapter;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::matcher::{Reading, ValueTest};
 use crate::code_rule_dsl::transducer::packed::{
@@ -1172,9 +1172,7 @@ impl PackedDemand {
                                     {
                                         use crate::code_rule_dsl::calls::summary::Callee;
                                         use crate::code_rule_dsl::language::Family;
-                                        use crate::code_rule_dsl::language::adapter::{
-                                            Adapter, CallRules, with_adapter,
-                                        };
+                                        use crate::code_rule_dsl::language::adapter::Adapter;
                                         facts.rows.clear();
                                         let callee = { let pack = language_pack::pack(Family::of(test.language)); language_pack::calls_callee_at(pack, 
                                             &node,

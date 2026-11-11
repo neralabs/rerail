@@ -190,3 +190,66 @@ impl<'t> InFile<'t> {
         self.lines().span(range.start, range.end)
     }
 }
+
+/// A host's bytes are the file's; a guest's program text stands for the file ranges its segments
+/// map it to (`SegmentMap::file_ranges`), and a guest node for those of its extent, from its first
+/// leaf standing for file bytes to its last (`node_extents`), white space between its ranges
+/// included, as a tree's node holds the white space between its tokens (`FileRanges::bridged`).
+impl Origin for TapeDoc {
+    fn of_node(&self, id: usize, range: Range<usize>) -> Option<FileRanges> {
+        Some(match &self.host {
+            None => FileRanges::one(range),
+            Some(link) => {
+                let (start, end) = *link.extents.get(id)?;
+                link.segments
+                    .file_ranges(start as usize..end as usize)
+                    .bridged(&link.host.source)
+            }
+        })
+    }
+
+    fn of_range(&self, range: Range<usize>) -> Option<FileRanges> {
+        Some(match &self.host {
+            None => FileRanges::one(range),
+            Some(link) => link.segments.file_ranges(range).bridged(&link.host.source),
+        })
+    }
+
+    fn bounds(&self, id: usize, range: Range<usize>) -> Option<Range<usize>> {
+        Some(match &self.host {
+            None => range,
+            Some(link) => {
+                let (start, end) = *link.extents.get(id)?;
+                link.segments.bounds(start as usize..end as usize)
+            }
+        })
+    }
+
+    fn copied(&self, range: Range<usize>) -> Option<Range<usize>> {
+        match &self.host {
+            None => Some(range),
+            Some(link) => link.segments.copied_span(range),
+        }
+    }
+
+    fn copies(&self, range: Range<usize>) -> bool {
+        self.host
+            .as_ref()
+            .is_none_or(|link| link.segments.copies(range))
+    }
+}
+
+/// Whether an embedder wrote a token of `node`, a guest document's, that the host does not spell
+/// (Blade's `@unless(c)` `!(`, a `:` after a directive; the parentheses and `;` Vue's view wraps
+/// an interpolation in): the node is then not the code its host bytes are, and what reads its
+/// tokens (structure, names, references) does not know it. A token copied, or written over the
+/// same text (Blade's `@isset(` `isset(`), spells itself. A host document's nodes spell
+/// themselves.
+pub(crate) fn rewritten<D: Doc>(node: &Node<'_, D>) -> bool {
+    let Some(doc) = crate::code_rule_dsl::tape::tape_doc(node).filter(|doc| doc.is_guest()) else {
+        return false;
+    };
+    let file = InFile::tape(doc);
+    node.dfs()
+        .any(|token| !token.is_named() && token.is_leaf() && !file.spells(&token))
+}

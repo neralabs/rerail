@@ -960,3 +960,40 @@ mod tests {
         }
     }
 }
+
+/// A manifest as a `package` file condition reads it.
+impl crate::code_rule_dsl::language::ProjectManifest for Manifest {
+    fn is_bin(&self, path: &str) -> bool {
+        Manifest::is_bin(self, path)
+    }
+    fn node_range_is_subset_of(&self, range: &Range) -> bool {
+        Manifest::node_range_is_subset_of(self, range)
+    }
+    fn depends_on(&self, names: &[String]) -> bool {
+        Manifest::depends_on(self, names)
+    }
+    fn relative_path<'p>(&self, path: &'p str) -> Option<&'p str> {
+        Manifest::relative_path(self, path)
+    }
+    fn in_server_graph(&self, path: &str) -> Option<bool> {
+        Manifest::in_server_graph(self, path)
+    }
+    fn is_private(&self) -> bool {
+        Manifest::is_private(self)
+    }
+    fn publishes(&self, path: &str) -> Option<bool> {
+        Manifest::publishes(self, path)
+    }
+}
+
+/// A file without a `package.json`: its Node range eslint-plugin-n's default (`node_range_is_subset_of`).
+pub(crate) struct NoManifest;
+
+impl crate::code_rule_dsl::language::ProjectManifest for NoManifest {
+    fn is_bin(&self, _: &str) -> bool {
+        false
+    }
+    fn node_range_is_subset_of(&self, range: &Range) -> bool {
+        node_range_is_subset_of(None, range)
+    }
+}

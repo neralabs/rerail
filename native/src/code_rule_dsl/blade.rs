@@ -15,6 +15,8 @@ mod oracle_tests;
 #[cfg(test)]
 mod tests;
 pub(crate) mod view;
+// Its tape (`tape::TreeParser`).
+pub(crate) mod tape;
 
 /// What a marker (`view`'s empty statement over a directive) does to the template's variables.
 #[derive(Debug, Default, PartialEq)]

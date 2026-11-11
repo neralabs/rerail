@@ -6,7 +6,7 @@ use super::view::View;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::scope::php::{Defined, Quiet};
 use crate::code_rule_dsl::scope::{Reading, ScopeTable};
-use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
+use crate::code_rule_dsl::tape::{Grammar, TapeDoc};
 use crate::code_rule_dsl::value::Context;
 use crate::code_rule_dsl::value::php::{decode, tests::agrees};
 use ast_grep_core::{AstGrep, Doc, Node};
@@ -122,7 +122,7 @@ fn blade_view_reads_the_regions_blade_compiles() {
 /// whose nodes stand for template bytes (`origin::InFile`); `None` where it embeds none.
 fn view(source: &str) -> Option<AstGrep<TapeDoc>> {
     let grammar = Grammar::new(GrammarDialect::Blade).expect("grammar");
-    let image = TapeImage::encode_template(&grammar, source, &|| false).expect("encodes");
+    let image = crate::code_rule_dsl::blade::tape::encode_template(&grammar, source, &|| false).expect("encodes");
     let host = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
         .expect("restores");
     let guests = host.guests().expect("owned");

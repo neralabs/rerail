@@ -364,6 +364,22 @@ pub(crate) const ANNOTATION_RANGE: usize = 1 << (usize::BITS - 2);
 const ANNOTATION_SHIFT: u32 = if usize::BITS == 32 { 16 } else { 24 };
 
 /// Where the names of the annotation with this index start.
+/// The scope of a program an embedding gives a meaning of its own (`embed::Embedder`): its crate registers it
+/// for its `Via` as the engine loads (Blade's compiled view, `embed::compiled_view::scope`).
+pub(crate) type ProgramScope = fn(&mut Builder<'_>, &Node<'_, crate::code_rule_dsl::tape::TapeDoc>) -> Result<(), BuildError>;
+
+static PROGRAM_SCOPES: OnceLock<Vec<(crate::code_rule_dsl::language::Via, ProgramScope)>> = OnceLock::new();
+
+/// The engine's program scopes, by `Via`; the first call holds.
+pub(crate) fn install_program_scopes(scopes: Vec<(crate::code_rule_dsl::language::Via, ProgramScope)>) {
+    let _ = PROGRAM_SCOPES.set(scopes);
+}
+
+/// `via`'s program scope, where its embedding registered one.
+fn program_scope(via: crate::code_rule_dsl::language::Via) -> Option<ProgramScope> {
+    PROGRAM_SCOPES.get()?.iter().find(|(known, _)| *known == via).map(|(_, scope)| *scope)
+}
+
 pub(crate) fn annotation_offset(index: usize) -> usize {
     ANNOTATION_RANGE | (index << ANNOTATION_SHIFT)
 }
@@ -581,11 +597,14 @@ impl ScopeTable {
         };
         builder.push(ScopeKind::Module, root.range());
         // A program a file embeds is read as its embedder says (`embed::Embedder::scope`).
-        match crate::code_rule_dsl::tape::tape_doc(&root)
+        let program_scope = crate::code_rule_dsl::tape::tape_doc(&root)
             .and_then(crate::code_rule_dsl::tape::TapeDoc::via)
-        {
-            Some(via) => {
-                crate::code_rule_dsl::language::with_embedder!(via, E => <E as crate::code_rule_dsl::embed::Embedder>::scope(family, &mut builder, &root, reading))?
+            .and_then(program_scope);
+        match program_scope {
+            Some(scope) => {
+                // A program's document is a tape's (`tape_doc`).
+                let root = unsafe { &*(&root as *const Node<'_, D> as *const Node<'_, crate::code_rule_dsl::tape::TapeDoc>) };
+                scope(&mut builder, root)?
             }
             None => {
                 { let pack = language_pack::pack(family); language_pack::scope_visit(pack, &mut builder, &root, reading) }?

@@ -93,7 +93,7 @@ impl ValueRules for Ecma {
     /// interpolation, a character reference's character), which a comparison of tokens must not
     /// read as the file's (`embed::rewritten`).
     fn spelled<D: Doc>(node: &Node<'_, D>) -> bool {
-        !crate::code_rule_dsl::embed::rewritten(node)
+        !crate::code_rule_dsl::origin::rewritten(node)
     }
 
     /// ESTree's name.

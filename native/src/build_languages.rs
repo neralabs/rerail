@@ -720,17 +720,6 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
     out.push_str(
         "            #[cfg(any(test, feature = \"test-hooks\"))]\n            _ => test_embeds(self),\n        }\n    }\n}\n\n",
     );
-    out.push_str("/// Evaluates `$body` with `$e` the embedder of `$via` (`embed::<Via>`): one arm per `Via`.\n");
-    out.push_str("macro_rules! with_embedder {\n    ($via:expr, $e:ident => $body:expr) => {\n        match $via {\n");
-    for via in &unique_vias {
-        let via = pascal(via);
-        let _ = writeln!(
-            out,
-            "            $crate::code_rule_dsl::language::Via::{via} => {{\n                type $e = $crate::code_rule_dsl::embed::{via};\n                $body\n            }}"
-        );
-    }
-    out.push_str("            #[cfg(any(test, feature = \"test-hooks\"))]\n            $crate::code_rule_dsl::language::Via::TestScript => {\n                type $e = $crate::code_rule_dsl::embed::TestScript;\n                $body\n            }\n");
-    out.push_str("        }\n    };\n}\n\npub(crate) use with_embedder;\n\n");
 
     out.push_str("const DIALECTS: &[Dialect] = &[\n");
     for entry in &supported {

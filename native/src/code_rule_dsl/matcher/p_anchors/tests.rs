@@ -818,7 +818,7 @@ fn sibling_projections_are_exact_in_both_blade_documents() {
     ];
     for source in sources {
         let grammar = Grammar::new(GrammarDialect::Blade).unwrap();
-        let image = TapeImage::encode_template(&grammar, source, &|| false).unwrap();
+        let image = crate::code_rule_dsl::blade::tape::encode_template(&grammar, source, &|| false).unwrap();
         let host =
             TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
         let guests = host.guests().unwrap();

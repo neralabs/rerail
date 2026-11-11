@@ -695,3 +695,18 @@ impl TokenGrammar {
             .clone()
     }
 }
+
+/// `parent`'s stored children and its gaps; `None` where its kind has no automaton.
+pub(in crate::code_rule_dsl) fn stored_gaps<'t, 'g, D: ast_grep_core::Doc>(grammar: &'g TokenGrammar, parent: &ast_grep_core::Node<'t, D>) -> Option<(Vec<ast_grep_core::Node<'t, D>>, Gaps<'g>)> {
+    let kind = parent.kind();
+    let mut fields: std::collections::HashMap<usize, &str> = std::collections::HashMap::new();
+    for field in grammar.fields_of(&kind) {
+        for child in parent.field_children(field) {
+            fields.insert(child.node_id(), field);
+        }
+    }
+    let children: Vec<ast_grep_core::Node<'t, D>> = parent.children().collect();
+    let kinds: Vec<(bool, String, &str)> = children.iter().map(|child| (child.is_named(), child.kind().into_owned(), fields.get(&child.node_id()).copied().unwrap_or(""))).collect();
+    let gaps = grammar.gaps(&kind, kinds.iter().map(|(named, kind, field)| (*named, kind.as_str(), *field)))?;
+    Some((children, gaps))
+}

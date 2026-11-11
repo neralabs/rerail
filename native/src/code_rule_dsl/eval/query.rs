@@ -1258,7 +1258,7 @@ fn applies(grammar: &GrammarMatcher, file: &FileInput, source_type: Option<Sourc
             condition.holds(
                 &file.path,
                 file.module.as_deref(),
-                file.package.as_deref(),
+                file.package.as_deref().map(|manifest| manifest as &dyn crate::code_rule_dsl::language::ProjectManifest),
                 &file.source,
             )
         })

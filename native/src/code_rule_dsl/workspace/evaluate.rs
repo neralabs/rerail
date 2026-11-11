@@ -11,7 +11,6 @@ use super::{
 };
 #[cfg(test)]
 use super::{TEST_STORAGE_PREFETCH_FAILURE, pass_deadline_at_test_phase, pause_at_test_phase};
-use crate::code_rule_dsl::blade::forte::tree::parse_tree;
 use crate::code_rule_dsl::budget::{
     MatchBudget, matcher_budget_exhausted, matcher_budget_observed, with_allowance,
 };
@@ -23,7 +22,6 @@ use crate::code_rule_dsl::import_target::ViewSlot;
 use crate::code_rule_dsl::import_target::fs::View;
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::language::adapter::parsed_by_forte;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::{FileGates, FileScopeSlot, GrammarMatcher, UtilLimit};
 #[cfg(not(all(test, feature = "p-anchor-corpus")))]
@@ -1289,11 +1287,14 @@ pub(super) fn encode_tape(
     // Parser and the only native tree are scoped to this one source revision.
     // Neither can overlap with the restored document during selection.
     let interrupted = || closed.load(Ordering::Relaxed) || matcher_budget_exhausted();
-    let image = if parsed_by_forte(language) {
-        match encode_forte_image(file, grammar, &interrupted, metrics) {
-            Ok(image) => Some(image),
-            Err(failure) => return Ok(Err(failure)),
-        }
+    let own = tape::tree_parser(language).filter(|parser| !parser.stands_in_for_tree_sitter());
+    let own_image = match own.map(|parser| encode_own_image(file, grammar, parser, &interrupted, metrics)) {
+        Some(Err(failure)) => return Ok(Err(failure)),
+        Some(Ok(image)) => image,
+        None => None,
+    };
+    let image = if let Some(image) = own_image {
+        Some(image)
     } else if language == GrammarDialect::Rr {
         // A `.rr` file: the rule engine's own parser (decision 0061).
         tape::TapeImage::parse(grammar, &file.input.source, &interrupted)
@@ -1303,38 +1304,34 @@ pub(super) fn encode_tape(
     Ok(keep_tape(file, image))
 }
 
-/// Parses `file`'s template with Forte and encodes its tape. `Err(failure)` where Forte stopped
-/// at a limit.
-fn encode_forte_image(
+/// Parses `file` with its dialect's own parser (Blade's Forte, `tape::TreeParser`) and encodes its tape.
+/// `Err(failure)` where the parser stopped at a limit; `None` where it left the file to tree-sitter.
+fn encode_own_image(
     file: &FileState,
     grammar: &Arc<tape::Grammar>,
+    parser: &dyn tape::TreeParser,
     interrupted: &impl Fn() -> bool,
     metrics: &mut Metrics,
-) -> std::result::Result<std::result::Result<tape::FileImage, String>, LocalFailure> {
-    // Forte's step budget bounds the parse; closing the workspace or the matcher budget
-    // interrupts the view and the encoding.
+) -> std::result::Result<Option<std::result::Result<tape::FileImage, String>>, LocalFailure> {
+    // The parser's own limits bound the parse; closing the workspace or the matcher budget
+    // interrupts the encoding.
     #[cfg(feature = "code-rule-profile")]
     let _native_owner = profile::NativeOwner::start();
     #[cfg(feature = "code-rule-profile")]
     let parse_timer = profile::PhaseTimer::start(profile::Phase::Parse);
     let parse_started = Instant::now();
-    let parsed = parse_tree(file.input.source.as_bytes());
+    #[cfg(test)]
+    pause_at_test_phase("native-tree", &file.input.source);
+    let parsed = parser.parse(grammar, &file.input.source, interrupted);
     #[cfg(feature = "code-rule-profile")]
     drop(parse_timer);
     metrics.ast_parse_nanoseconds += parse_started.elapsed().as_nanos() as u64;
-    // Forte stopping at a limit says nothing about the template: no tape, and no clause runs.
-    let tree = match parsed {
-        Ok(tree) => tree,
-        Err(error) => return Err((FILE_BUDGET_EXCEEDED, error.message())),
-    };
-    #[cfg(test)]
-    pause_at_test_phase("native-tree", &file.input.source);
-    #[cfg(feature = "code-rule-profile")]
-    let _encode_timer = profile::PhaseTimer::start(profile::Phase::TapeEncode);
-    match tape::TapeImage::encode_blade(&tree, grammar, &file.input.source, interrupted) {
-        Ok(image) => Ok(Ok(image)),
-        Err(tape::TemplateError::Parser(error)) => Err((FILE_BUDGET_EXCEEDED, error.message())),
-        Err(tape::TemplateError::Encode(error)) => Ok(Err(error)),
+    match parsed {
+        None => Ok(None),
+        Some(Ok(image)) => Ok(Some(Ok(image))),
+        // The parser stopping at a limit says nothing about the file: no tape, and no clause runs.
+        Some(Err(tape::TemplateError::Parser(error))) => Err((FILE_BUDGET_EXCEEDED, error)),
+        Some(Err(tape::TemplateError::Encode(error))) => Ok(Some(Err(error))),
     }
 }
 

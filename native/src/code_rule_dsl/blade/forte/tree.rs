@@ -892,29 +892,10 @@ impl Language for BladeLang {
     fn expando_char(&self) -> char {
         'µ'
     }
-    /// `$X`, `$_`, `$$X` and `$$$X` become `µX`, `µ_`, `µµX` and `µµµX`; a `$` before anything
-    /// else (`$x`, `$$x`) is PHP's.
+    /// The core's metavariables for a dialect Rerail parses itself (`language::own_metavariables`): `$X` is
+    /// `µX`, a `$` before anything else (`$x`, `$$x`) PHP's.
     fn pre_process_pattern<'q>(&self, query: &'q str) -> Cow<'q, str> {
-        let mut processed = String::with_capacity(query.len());
-        let mut dollars = 0;
-        for character in query.chars() {
-            if character == '$' {
-                dollars += 1;
-                continue;
-            }
-            let expando = matches!(character, 'A'..='Z' | '_') || dollars == 3;
-            processed.extend(std::iter::repeat_n(
-                if expando { 'µ' } else { '$' },
-                dollars,
-            ));
-            dollars = 0;
-            processed.push(character);
-        }
-        processed.extend(std::iter::repeat_n(
-            if dollars == 3 { 'µ' } else { '$' },
-            dollars,
-        ));
-        Cow::Owned(processed)
+        crate::code_rule_dsl::language::own_metavariables(query)
     }
     fn build_pattern(&self, builder: &PatternBuilder) -> Result<Pattern, PatternError> {
         builder.build(|src| {
