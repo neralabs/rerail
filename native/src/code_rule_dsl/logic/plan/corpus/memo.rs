@@ -123,6 +123,16 @@ pub(in crate::code_rule_dsl) fn program_digest(program: &crate::code_rule_dsl::l
     digest
 }
 
+/// A local memo's stored statistics are a projection demanded by its consumers.
+/// Include the projection in the key so a wider consumer cannot reuse a narrower frame.
+pub(super) fn with_tree_demand(digest: [u8; 32], tree: bool) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.corpus-local-tree-demand/v1\0");
+    hash.update(digest);
+    hash.update([u8::from(tree)]);
+    hash.finalize().into()
+}
+
 /// `digest` with the run's options folded in: the key of a file-local part that reads them (`option_item`).
 pub(super) fn with_options(digest: [u8; 32], options: &serde_json::Value) -> [u8; 32] {
     let mut hash = Sha256::new();
@@ -219,7 +229,11 @@ impl Frame {
     }
 
     fn entry(&self) -> StoreResult<Entry> {
-        let mut entry = from_rows(&self.frame.rows()?)?;
+        self.projected(&|_| true)
+    }
+
+    fn projected(&self, keep: &dyn Fn(&str) -> bool) -> StoreResult<Entry> {
+        let mut entry = from_rows_projected(&self.frame.rows()?, keep)?;
         entry.key = self.key;
         Ok(entry)
     }
@@ -278,12 +292,20 @@ pub(super) enum Found {
 impl Found {
     /// The entry, when it is the document's (`key`).
     pub(super) fn entry(&self, key: i64) -> StoreResult<Option<Entry>> {
-        Ok(match self {
-            Found::Held(e) => Some((**e).clone()),
-            Found::Frame(f) => Some(f.entry()?),
-        }
-        .filter(|e| e.key == key))
+        self.projected(key, &|_| true)
     }
+
+    /// Decode only demanded relations. Skipped relations' rows are checked, not kept.
+    pub(super) fn projected(&self, key: i64, keep: &dyn Fn(&str) -> bool) -> StoreResult<Option<Entry>> {
+        let entry = match self {
+            Found::Held(e) => Entry { key: e.key, nodes: e.nodes,
+                rows: e.rows.iter().filter(|(r, _)| keep(r)).map(|(r, v)| (r.clone(), v.clone())).collect(),
+                lines: e.lines.clone() },
+            Found::Frame(f) => f.projected(keep)?,
+        };
+        Ok(Some(entry).filter(|e| e.key == key))
+    }
+
 }
 
 /// `lookup_all`, each entry found and not decoded: the contents' digests in one read, their frames in one more. The
@@ -656,6 +678,11 @@ fn to_rows(entry: &Entry) -> crate::content_store::FrameRows {
 
 /// The entry `to_rows` made (its key is the frame's).
 fn from_rows(frame: &crate::content_store::FrameRows) -> StoreResult<Entry> {
+    from_rows_projected(frame, &|_| true)
+}
+
+/// `from_rows` keeping only the relations `keep` takes: the others' rows are checked, not kept.
+fn from_rows_projected(frame: &crate::content_store::FrameRows, keep: &dyn Fn(&str) -> bool) -> StoreResult<Entry> {
     let bad = |what: &str| StoreError::Invalid(format!("a corpus memo entry's frame {what}"));
     let width = frame.types.len();
     if width < 3 || frame.rows.len() != width * frame.n {
@@ -705,7 +732,10 @@ fn from_rows(frame: &crate::content_store::FrameRows) -> StoreResult<Entry> {
         String::from_utf8(b).map_err(|_| bad("has text that is not UTF-8"))
     };
     for (_, w, len, name, values) in rels {
-        entry.rows.insert(text(name, len)?, (w, values));
+        let name = text(name, len)?;
+        if keep(&name) {
+            entry.rows.insert(name, (w, values));
+        }
     }
     for (name, len, columns, lines) in outs {
         let lines = lines.into_iter().map(|(n, b)| text(b, n)).collect::<StoreResult<Vec<_>>>()?;
@@ -717,6 +747,29 @@ fn from_rows(frame: &crate::content_store::FrameRows) -> StoreResult<Entry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn projection_preserves_outputs_and_validates_skipped_payloads() {
+        let mut entry = Entry { key: 5, nodes: 100, ..Entry::default() };
+        entry.rows.insert("wanted".into(), (2, vec![5,9]));
+        entry.rows.insert("unused".into(), (2, vec![1;2000]));
+        entry.lines.insert("diagnostic".into(), (vec![0], vec!["5\tbad".into()]));
+        let keep = |r: &str| r == "wanted";
+        let rows = to_rows(&entry);
+        let entry_copy = entry.clone();
+        let projected = Entry { key: 5, ..from_rows_projected(&rows, &keep).unwrap() };
+        assert_eq!(projected.rows.len(),1);
+        assert_eq!(projected.rows["wanted"],entry.rows["wanted"]);
+        assert_eq!(projected.lines,entry.lines);
+        assert_eq!(projected.nodes,100);
+        let held = Found::Held(std::sync::Arc::new(entry));
+        assert_eq!(held.projected(5,&keep).unwrap(),Some(projected));
+        assert!(held.projected(6,&keep).unwrap().is_none());
+        let mut cut = to_rows(&entry_copy);
+        cut.rows.truncate(cut.rows.len() - 1);
+        assert!(from_rows_projected(&cut,&keep).is_err(),"a truncated unused payload is still corrupt");
+        assert_ne!(with_tree_demand([0;32],false),with_tree_demand([0;32],true),"wider consumers cannot hit narrower frames");
+    }
 
     #[test]
     fn an_entry_round_trips_and_keys_are_stable() {

@@ -1643,7 +1643,7 @@ pub fn step_counts(conn: &Connection, name: &str) -> Result<Vec<Vec<(i64, i64)>>
 
 /// A relation's live statistics (`stats`): rows, then per column its distinct values and sum of squared postings,
 /// and for a column of at most `FREQ_NDV` values each value's postings.
-pub struct Live { pub n: i64, pub ndv: Vec<i64>, pub sq: Vec<i64>, pub freq: Vec<(usize, Vec<(i64, i64)>)> }
+pub struct Live { pub n: i64, pub delta: i64, pub ndv: Vec<i64>, pub sq: Vec<i64>, pub freq: Vec<(usize, Vec<(i64, i64)>)> }
 pub fn live(conn: &Connection, name: &str) -> Result<Vec<Live>> {
     let comp = component(conn, name)?;
     let comp = comp.lock().unwrap();
@@ -1655,6 +1655,7 @@ pub fn live(conn: &Connection, name: &str) -> Result<Vec<Live>> {
             .collect();
         Live {
             n: r.n as i64,
+            delta: (r.hi - r.lo) as i64,
             ndv: cols.iter().map(|sk| sk.ndv() as i64).collect(),
             sq: cols.iter().map(|sk| sk.sq() as i64).collect(),
             freq,

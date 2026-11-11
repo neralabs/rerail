@@ -1112,3 +1112,90 @@ fn a_gate_is_joined_once_its_key_is_bound() {
     let atoms: Vec<&str> = order.iter().filter_map(|s| s.lit.atom()).filter(|a| !a.neg).map(|a| a.rel.as_str()).collect();
     assert_eq!(atoms, ["dir", "k", "done_n_b"], "{:?}", order.iter().map(|s| s.lit.to_string()).collect::<Vec<_>>());
 }
+
+/// Maintenance must drive from measured changed scopes, including when the recursive delta is walk.
+#[test]
+fn changed_scope_demands_precede_walk_and_seed_caches_notice_constant_frequencies() {
+    let p = parse(".decl walk(n:number,x:number,s:number)\n.decl bound(s:number,x:number)\n.decl changed__plus(s:number,k:number)\n.decl out(n:number,x:number,s:number)\nout(n,x,s) :- walk(n,x,s), !bound(s,x), changed__plus(s,1).\n.output out\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived = p.rules.iter().map(|r| r.head.rel.clone()).collect();
+    let mut model = Model {docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv:HashMap::new(),docof:HashMap::new(),view_src:HashMap::new(),inputs,derived};
+    for (rel, rows, ndv) in [("walk",71976.0,vec![50000.0,10000.0,1000.0]),("bound",40000.0,vec![1000.0,10000.0]),("changed__plus",7000.0,vec![7000.0,20.0])] {
+        model.stats.card.insert(rel.into(),rows);
+        for (c,n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel.into(),c),n);
+            model.stats.fan.insert((rel.into(),c),rows/n);
+        }
+    }
+    // Walk is highly skewed. Distinct changed scopes are key probes, not random walk rows.
+    model.stats.fan.insert(("walk".into(),2),40000.0);
+    model.stats.nodes=300000.0;
+    let r=&p.rules[0];
+    let _plans=KeepPlans::start(None);
+    // Unknown delta distribution first, then an exact zero for the constant, at identical row counts.
+    let _ = model.plan_rule_reused(&p,&r.head,&r.body,None).unwrap();
+    model.stats.memo.insert("changed__plus".into(),HashMap::from([(("c1".into(),Constant::Int(1)),0)]));
+    let ((order,work,_),_)=model.plan_rule_reused(&p,&r.head,&r.body,None).unwrap();
+    assert_eq!(order[0].lit.atom().unwrap().rel,"changed__plus", "the seed must not retain the old full-walk scan");
+    assert!(work < 10.0, "zero constant postings precede all walk/binding work: {work}");
+    model.stats.solve(["walk","out"].into_iter().map(str::to_owned).collect());
+    model.stats.memo.get_mut("changed__plus").unwrap().insert(("c1".into(),Constant::Int(1)),12);
+    let ((order,work,_),_)=model.plan_rule_live(&p,&r.head,&r.body,Some(0)).unwrap();
+    assert_eq!(order[0].lit.atom().unwrap().rel,"changed__plus", "a changed-input demand can precede a delta read");
+    assert!(order.iter().position(|s|s.at==0).unwrap()>0);
+    assert!(work<5000.0,"probe walk by the demanded scopes: {work}");
+    // The same rule later has one new walk row. Rescanning the full changed-input demand each wave is worse.
+    model.stats.delta_rows.insert("walk".into(),1.0);
+    let ((small,_,_),_)=model.plan_rule_live(&p,&r.head,&r.body,Some(0)).unwrap();
+    assert_eq!(small[0].at,0,"a one-row delta drives its own probe");
+
+}
+
+#[test]
+fn live_statistics_invalidate_only_changed_distribution_slots() {
+    let p=parse(".decl a(x:number,y:number)\n").unwrap();
+    let mut model=Model {docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv:HashMap::new(),docof:HashMap::new(),view_src:HashMap::new(),inputs:Inputs::file(),derived:HashSet::new()};
+    let sample=|key| LiveRel {n:10,delta:2,ndv:vec![10,1],sq:vec![10,100],freq:vec![(1,HashMap::from([(Constant::Int(key),10)]))]};
+    assert_eq!(live_stats(&mut model,"a",sample(1)),vec![0,1,2]);
+    assert!(live_stats(&mut model,"a",sample(1)).is_empty());
+    assert_eq!(live_stats(&mut model,"a",sample(2)),vec![2],"equal counts and fanouts with new keys must invalidate");
+}
+
+#[test]
+fn projection_statistics_keep_demanded_constants_only_when_rows_are_preserved() {
+    let p=parse(".decl raw(d:number,n:number,k:number)\n.input raw\n.decl tags(n:number,k:number)\ntags(n,k) :- raw(_,n,k).\n.decl filtered(n:number,k:number)\nfiltered(n,k) :- raw(1,n,k).\n.decl kinds(k:number)\nkinds(k) :- raw(_,_,k).\n").unwrap();
+    let mut model=Model {docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv:HashMap::new(),docof:HashMap::new(),view_src:HashMap::new(),inputs:Inputs::file(),derived:p.rules.iter().map(|r|r.head.rel.clone()).collect()};
+    model.stats.card.insert("raw".into(),7000.0);
+    for (c,n) in [10.0,7000.0,20.0].into_iter().enumerate() {
+        model.ndv.insert(("raw".into(),c),n); model.stats.fan.insert(("raw".into(),c),7000.0/n);
+    }
+    model.stats.memo.insert("raw".into(),HashMap::from([(("c0".into(),Constant::Int(1)),100),(("c2".into(),Constant::Int(9)),12)]));
+    for r in &p.rules { model.view_stats(&r.head.rel,&r.head,r.body[0].atom().unwrap()); }
+    assert_eq!(model.stats.const_freq("tags","c1",&Constant::Int(9)),Some(12));
+    assert_eq!(model.stats.const_freq("filtered","c1",&Constant::Int(9)),None,"filtered marginal counts are not exact");
+    assert_eq!(model.stats.const_freq("kinds","c0",&Constant::Int(9)),None,"deduplicating projection changes frequencies");
+}
+
+#[test]
+fn statistics_versions_accumulate_drift_and_publish_changed_keys() {
+    let p=parse(".decl a(x:number,y:number)\n.decl b(x:number)\n.decl p(x:number)\np(x) :- a(x,_), b(x).\n").unwrap();
+    let mut model=Model {docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv:HashMap::new(),docof:HashMap::new(),view_src:HashMap::new(),inputs:Inputs::file(),derived:HashSet::new()};
+    let mut watch=replanning::Watch::new(&BTreeMap::from([("a".into(),0)]),&[(&p.rules[0],0,vec![])]);
+    watch.delta(0,5);
+    model.stats.card.insert("a".into(),100.0); watch.record(0,0,&model,"a"); watch.record(0,1,&model,"a");
+    assert!(watch.take(0));
+    model.stats.card.insert("a".into(),150.0); watch.record(0,0,&model,"a");
+    assert!(!watch.take(0),"small drift keeps the priced signature");
+    model.stats.card.insert("a".into(),210.0); watch.record(0,0,&model,"a");
+    assert!(watch.take(0),"small changes accumulate against the last published size");
+    for key in [1,2] {
+        model.stats.dfreq.insert(("a".into(),0),HashMap::from([(Constant::Int(key),210)]));
+        watch.record(0,1,&model,"a");
+        assert!(watch.take(0),"new key domains publish even at identical row counts");
+    }
+    model.stats.fan.insert(("a".into(),1),999.0); watch.record(0,2,&model,"a");
+    assert!(!watch.take(0),"an unused wildcard column has no dependent plan");
+    watch.delta(0,0);
+    model.stats.card.insert("a".into(),1000.0); watch.record(0,0,&model,"a");
+    assert!(!watch.take(0)); watch.delta(0,1); assert!(watch.take(0));
+}

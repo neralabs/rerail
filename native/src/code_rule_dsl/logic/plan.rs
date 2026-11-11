@@ -74,6 +74,7 @@ mod choices;
 mod demand;
 pub(in crate::code_rule_dsl) mod keeps;
 mod native_demand;
+mod replanning;
 mod compose;
 mod connection;
 pub(in crate::code_rule_dsl) mod sketch;
@@ -295,6 +296,8 @@ pub(in crate::code_rule_dsl) struct Stats {
     nodes: f64,
     parents: IndexMap<String, IndexMap<String, f64>>,
     pub(in crate::code_rule_dsl) card: HashMap<String, f64>,
+    /// Current wave cardinalities, distinct from full relation cardinalities.
+    delta_rows: HashMap<String, f64>,
     /// (rel, col) → posting-weighted fanout of an equality probe: sq / rows.
     pub(in crate::code_rule_dsl) fan: HashMap<(String, usize), f64>,
     /// (derived rel, col) → {value: postings}, for a column of few values (native statistics).
@@ -369,6 +372,7 @@ impl Stats {
             nodes: 0.0,
             parents: IndexMap::new(),
             card: HashMap::new(),
+            delta_rows: HashMap::new(),
             fan: HashMap::new(),
             dfreq: HashMap::new(),
             obs: HashMap::new(),
@@ -517,6 +521,7 @@ impl Stats {
                 })
                 .collect(),
             card: HashMap::new(),
+            delta_rows: HashMap::new(),
             fan: HashMap::new(),
             dfreq: HashMap::new(),
             obs: HashMap::new(),
@@ -846,6 +851,8 @@ pub(in crate::code_rule_dsl) const PRICE_DRIFT: f64 = 2.0;
 fn near(then: &[f64], now: &[f64]) -> bool {
     then.len() == now.len()
         && then.iter().zip(now).all(|(a, b)| {
+            // Negative signatures distinguish unknown and proven-empty constant postings.
+            if *a < 0.0 || *b < 0.0 { return a == b; }
             let (a, b) = (a.max(1.0), b.max(1.0));
             a <= b * PRICE_DRIFT && b <= a * PRICE_DRIFT
         })
@@ -962,7 +969,7 @@ impl Model {
     /// Bound a binding's distinct values by measured rows surviving its constant filters. The full column's
     /// domain is too wide after, for example, `kind(n, function_definition)`: those bindings are functions,
     /// not random nodes. Treating them as random misses underprices expansion from each function to its body.
-    fn binding_domains(&self, prog: &Program, a: &Atom) -> Vec<Option<f64>> {
+    fn binding_domains(&self, _prog: &Program, a: &Atom) -> Vec<Option<f64>> {
         let mut cap = self.stats.card.get(&a.rel).copied().unwrap_or(f64::INFINITY);
         for (c, t) in a.args.iter().enumerate() {
             let Some(k) = constant(t) else { continue };
@@ -971,10 +978,8 @@ impl Model {
                 self.stats.kfreq.get(&key).map(|n| *n as f64)
             } else if let Some(freq) = self.stats.dfreq.get(&(a.rel.clone(), c)) {
                 Some(freq.get(&k).copied().unwrap_or(0) as f64)
-            } else if self.is_input(prog, &a.rel) {
-                self.stats.const_freq(&a.rel, &self.col(&a.rel, c), &k).map(|n| n as f64)
             } else {
-                None
+                self.stats.memo.get(&a.rel).and_then(|m| m.get(&(self.col(&a.rel, c), k))).map(|n| *n as f64)
             };
             if let Some(n) = measured { cap = cap.min(n); }
         }
@@ -1019,7 +1024,8 @@ impl Model {
     /// Orders a rule body (T's `plan_rule`). Dynamic programming over subsets of the join literals (Selinger): the
     /// cheapest order of each subset, with the filters applied as early as they can run. Work counts rows produced per
     /// step plus tape reads for `nearest` (climb: steps per row; descent: mean subtree size per row). With `first`
-    /// (a body position), only orders anchored on that atom (a semi-naive delta).
+    /// (a body position), that atom reads its semi-naive delta. A smaller connected changed-input demand may
+    /// precede its indexed probe.
     pub(in crate::code_rule_dsl) fn plan_rule(&self, prog: &Program, head: &Atom, body: &[Literal], first: Option<usize>) -> Result<Plan> {
         Ok(self.plan_rule_explained(prog, head, body, first)?.0)
     }
@@ -1053,7 +1059,7 @@ impl Model {
             plan_cache(0);
             return self.plan_inner(prog, head, body, first, None, true);
         };
-        let sizes = self.read_sizes(body);
+        let sizes = self.live_sizes(body, first);
         let remember = |key: &PlanKey, got: &(Plan, Option<super::profile::RulePlan>)| {
             PLANS.with(|p| {
                 if let Some(k) = p.borrow_mut().as_mut().and_then(|p| p.get_mut(key)) {
@@ -1063,12 +1069,13 @@ impl Model {
         };
         if let Some((_, _, _, _, Some(priced))) = &kept
             && near(&priced.sizes, &sizes)
+            && self.valid_live_driver(&priced.got.0.0, body, first)
         {
             super::profile::decision("plan cache (decision 0038)", || format!("a kept plan reused at its kept price: no size it reads moved over {PRICE_DRIFT}x"));
             plan_cache(2);
             return Ok(priced.got.clone());
         }
-        if let Some((order, per_node, searched, gap, _)) = kept {
+        if let Some((order, per_node, searched, gap, previous)) = kept {
             let priced = {
                 let _span = super::profile::span(|| "re-price".into());
                 // The search's EXPLAIN (its steps' rows as the search priced them), with this pricing's work, rows and
@@ -1087,7 +1094,10 @@ impl Model {
                     plan_cache(4);
                     super::profile::decision("plan cache (decision 0038)", || "replanned: a start much cheaper than when the kept order was searched".into())
                 }
-                Ok(got) if got.0.1 / nodes <= REPLAN * per_node.max(1e-12) || got.0.1 - per_node * nodes <= REPLAN_ROWS => {
+                Ok(got) if self.valid_live_driver(&got.0.0, body, first) && previous.as_ref().is_some_and(|p| {
+                    let cards = 1 + usize::from(first.is_some()) + body.iter().filter(|l| matches!(l, Literal::Atom(_) | Literal::Agg { .. })).count();
+                    near(&p.sizes[cards..], &sizes[cards..])
+                }) && (got.0.1 / nodes <= REPLAN * per_node.max(1e-12) || got.0.1 - per_node * nodes <= REPLAN_ROWS) => {
                     super::profile::decision("plan cache (decision 0038)", || "a kept plan reused, re-priced with this chunk's statistics".into());
                     plan_cache(3);
                     remember(&key, &got);
@@ -1150,8 +1160,12 @@ impl Model {
     /// search pays for itself; its distinct values and fanouts can change the cheapest order even at fixed size.
     pub(in crate::code_rule_dsl) fn live_sizes(&self, body: &[Literal], _first: Option<usize>) -> Vec<f64> {
         let mut sizes = self.read_sizes(body);
+        if let Some(a) = _first.and_then(|f| body[f].atom()) {
+            sizes.push(self.stats.delta_rows.get(&a.rel).copied().unwrap_or(-1.0));
+        }
         for a in body.iter().filter_map(Literal::atom) {
             for (c,t) in a.args.iter().enumerate() {
+                if matches!(t, Term::Wild) { continue; }
                 sizes.push(self.ndv.get(&(a.rel.clone(),c)).copied().unwrap_or(1.0));
                 sizes.push(self.stats.fan.get(&(a.rel.clone(),c)).copied().unwrap_or(1.0));
                 if let Some(k) = constant(t) {
@@ -1162,7 +1176,7 @@ impl Model {
                         self.stats.dfreq.get(&(a.rel.clone(),c)).map(|f|f.get(&k).copied().unwrap_or(0))
                             .or_else(||self.stats.const_freq(&a.rel,&self.col(&a.rel,c),&k))
                     };
-                    sizes.push(n.unwrap_or(1) as f64);
+                    sizes.push(n.map_or(-1.0, |n| if n == 0 { -2.0 } else { n as f64 }));
                 }
             }
         }
@@ -1170,6 +1184,19 @@ impl Model {
         // One bit per literal; 1 -> 4 crosses PRICE_DRIFT and also changes the driver's exact signature.
         sizes.extend((0..body.len()).map(|i| if misses.contains(&i) { 4.0 } else { 1.0 }));
         sizes
+    }
+
+    fn smaller_change(&self, body: &[Literal], delta: usize, candidate: usize) -> bool {
+        let (Some(d), Some(a)) = (body[delta].atom(), body[candidate].atom()) else { return false };
+        !a.neg && self.stats.solving.contains(&d.rel) && !self.stats.solving.contains(&a.rel)
+            && (a.rel.ends_with("__plus") || a.rel.ends_with("__minus"))
+            && !d.vars().is_disjoint(&a.vars())
+            && self.card(&a.rel) < self.stats.delta_rows.get(&d.rel).copied()
+                .unwrap_or_else(|| if small_batches(&d.rel) { 0.0 } else { self.card(&d.rel) })
+    }
+
+    fn valid_live_driver(&self, order: &[Step], body: &[Literal], first: Option<usize>) -> bool {
+        first.is_none_or(|f| order.first().is_some_and(|s| s.at == f || self.smaller_change(body, f, s.at)))
     }
 
     /// A stratum's plan searched again from its live counts between waves (`plan_rule_explained`), kept with the
@@ -1188,11 +1215,11 @@ impl Model {
         }
         let key = self.plan_key("live ", head, body, first);
         let sizes = self.live_sizes(body, first);
-        let cardinalities = 1 + body.iter().filter(|l| matches!(l,Literal::Atom(_) | Literal::Agg{..})).count();
+        let cardinalities = 1 + usize::from(first.is_some()) + body.iter().filter(|l| matches!(l,Literal::Atom(_) | Literal::Agg{..})).count();
         // The last price, and the work of the order when it was searched.
         let kept = PLANS.with(|p| p.borrow().as_ref().and_then(|p| p.get(&key)).and_then(|k| Some((k.4.clone()?, k.1))));
         if let Some((priced, searched)) = &kept {
-            if near(&priced.sizes, &sizes) {
+            if near(&priced.sizes, &sizes) && self.valid_live_driver(&priced.got.0.0, body, first) {
                 super::profile::decision("plan cache (decision 0038)", || format!("a live replan kept: no size it reads moved over {PRICE_DRIFT}x"));
                 return Ok(priced.got.clone());
             }
@@ -1206,6 +1233,7 @@ impl Model {
                 self.plan_inner(prog, head, body, first, Some(&priced.got.0.0), false)
             };
             if let Ok((plan, _)) = repriced
+                && self.valid_live_driver(&plan.0, body, first)
                 && near(&priced.sizes[cardinalities..], &sizes[cardinalities..])
                 && (plan.1 <= REPLAN * then.max(1.0) || plan.1 - then <= REPLAN_ROWS)
             {
@@ -1305,6 +1333,8 @@ impl Model {
             .map(|a| (a, a.vars(), self.binding_domains(prog, a))).collect();
         let delta_misses = self.delta_misses(body, first);
         let delta_vars = first.and_then(|f| body[f].atom()).map(Atom::vars);
+        let delta_size = first.and_then(|f| body[f].atom()).and_then(|a| self.stats.delta_rows.get(&a.rel)).copied();
+        let starts = |i: usize| first.is_none_or(|f| f == i || self.smaller_change(body, f, i));
         let atom_rows_ = |a: &Atom, bound: &BTreeSet<String>| -> f64 {
             if delta_vars.as_ref().is_some_and(|v| v.is_subset(bound))
                 && delta_misses.iter().any(|&i| body[i].atom() == Some(a)) {
@@ -1342,16 +1372,28 @@ impl Model {
             // other bound columns divide by their NDV.
             let postings = |c: usize| -> f64 {
                 let k = constant(&a.args[c]);
-                if let Some(k) = &k
-                    && self.is_input(prog, &a.rel)
-                    && let Some(f) = stats.const_freq(&a.rel, &self.col(&a.rel, c), k)
-                {
-                    return f as f64;
+                if let Some(k) = &k {
+                    if let Some(d) = stats.dfreq.get(&(a.rel.clone(), c)) {
+                        return d.get(k).copied().unwrap_or(0) as f64;
+                    }
+                    // Retained derived inputs and maintenance deltas have measured postings too.
+                    // A missing entry is not an absence proof unless this is an input's complete constant memo.
+                    if let Some(&f) = stats.memo.get(&a.rel).and_then(|m| m.get(&(self.col(&a.rel, c), k.clone()))) {
+                        return f as f64;
+                    }
+                    if self.is_input(prog, &a.rel) && let Some(f) = stats.const_freq(&a.rel, &self.col(&a.rel, c), k) {
+                        return f as f64;
+                    }
                 }
-                if let Some(k) = &k
-                    && let Some(d) = stats.dfreq.get(&(a.rel.clone(), c))
-                {
-                    return d.get(k).copied().unwrap_or(0) as f64;
+                if let Term::Var(v) = &a.args[c] {
+                    let distinct_demand = binding_domains.iter().any(|(d, vars, _)| {
+                        !std::ptr::eq(*d, a) && vars.is_subset(bound)
+                            && (d.rel.ends_with("__plus") || d.rel.ends_with("__minus"))
+                            && !stats.solving.contains(&d.rel)
+                            && d.args.iter().enumerate().any(|(dc, t)| matches!(t, Term::Var(x) if x == v)
+                                && self.ndv.get(&(d.rel.clone(), dc)).is_some_and(|n| *n >= self.card(&d.rel)))
+                    });
+                    if distinct_demand { return self.card(&a.rel) / self.ndv_or_1(&a.rel, c); }
                 }
                 stats.fan.get(&(a.rel.clone(), c)).map(|f| (f * skew(&a.rel, c, 1)).max(1.0)).unwrap_or_else(|| self.card(&a.rel) / self.ndv_or_1(&a.rel, c))
             };
@@ -1436,6 +1478,9 @@ impl Model {
         };
         let atom_rows = |a: &Atom, bound: &BTreeSet<String>| -> f64 {
             let mut rows = atom_rows_(a, bound);
+            if first.is_some_and(|f| body[f].atom().is_some_and(|d| std::ptr::eq(d, a))) {
+                if let Some(n) = delta_size { rows = rows.min(n.max(0.01)); }
+            }
             // A cross product never filters a binding: each one reads every matching row, and a relation empty
             // where the plan was priced is not empty where it is reused. At least one row per binding, so a connected
             // atom of fanout one is never ordered after it.
@@ -1635,7 +1680,7 @@ impl Model {
                 let mut best: Option<(usize, f64, f64, Option<Mode>)> = None;
                 for i in 0..joins.len() {
                     let l = &body[joins[i]];
-                    if done & (1 << i) != 0 || order.is_empty() && (!matches!(l, Literal::Atom(_)) || first.is_some_and(|f| f != joins[i])) {
+                    if done & (1 << i) != 0 || order.is_empty() && (!matches!(l, Literal::Atom(_)) || !starts(joins[i])) {
                         continue;
                     }
                     if disconnected(i, done, &bound) || gate_waits(i, &|v: &str| bound.contains(v)) {
@@ -1806,8 +1851,8 @@ impl Model {
                     if prev == 0 && !matches!(l, Literal::Atom(_)) {
                         continue; // an anchor is an atom
                     }
-                    if prev == 0 && first.is_some_and(|f| f != joins[i]) {
-                        continue; // semi-naive: the delta first
+                    if prev == 0 && !starts(joins[i]) {
+                        continue; // The delta or a connected, fixed changed-input demand.
                     }
                     let (bound, h_prev) = &closed[prev as usize];
                     if gate_waits(i, &|v: &str| bound >> var_ids[v] & 1 == 1) {
@@ -1849,7 +1894,7 @@ impl Model {
             }
             Some((cell.work, cell.rows, order, bound, rest))
         };
-        let explain = std::env::var("RDL_EXPLAIN").is_ok_and(|r| r == head.rel);
+        let explain = std::env::var("RDL_EXPLAIN").is_ok_and(|r| r.split(',').any(|name| name == head.rel));
         for mask in (0..cells.len() as u64).filter(|&m| cells[m as usize].is_some()) {
             if mask == full_mask || (explain && mask.count_ones() == 2) {
                 if let Some(b) = rebuild(mask) {
@@ -1860,7 +1905,7 @@ impl Model {
         subsets_reached = cells.iter().filter(|c| c.is_some()).count() as u64;
         }
         let full: u64 = (0..joins.len()).map(|i| 1u64 << i).sum();
-        if std::env::var("RDL_EXPLAIN").is_ok_and(|r| r == head.rel) {
+        if std::env::var("RDL_EXPLAIN").is_ok_and(|r| r.split(',').any(|name| name == head.rel)) {
             // The chosen order's estimates step by step, and every two-step prefix's, for this head's rules.
             if let Some((work, rows, order, _, _)) = best_of.get(&full) {
                 eprintln!("EXPLAIN {head} (delta {first:?}): work {work:.0} rows {rows:.1}");
@@ -2002,6 +2047,15 @@ impl Model {
         let card = rows.round_ties_even().max(1.0);
         self.stats.card.insert(rel.to_owned(), card);
         let src = first_columns(a);
+        // Exact constant counts survive a projection that retains a measured key and filters no rows.
+        // Marginal counts cannot be copied through a filter, or through a projection that deduplicates rows.
+        let variables: Vec<_> = a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }).collect();
+        let no_filter = a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild))
+            && variables.iter().collect::<BTreeSet<_>>().len() == variables.len();
+        let preserves_key = h.args.iter().any(|t| match t {
+            Term::Var(v) => src.get(v.as_str()).is_some_and(|bc| self.ndv.get(&(a.rel.clone(), *bc)) == Some(&base)),
+            _ => false,
+        });
         for (c, t) in h.args.iter().enumerate() {
             let Term::Var(v) = t else { continue };
             let Some(&bc) = src.get(v.as_str()) else { continue };
@@ -2009,6 +2063,13 @@ impl Model {
             self.ndv.insert((rel.to_owned(), c), n);
             let fan = (self.stats.fan[&(a.rel.clone(), bc)] * rows / base.max(1.0)).max(1.0);
             self.stats.fan.insert((rel.to_owned(), c), fan);
+            if no_filter && preserves_key {
+                let from = self.col(&a.rel, bc);
+                let to = self.col(rel, c);
+                let values: Vec<_> = self.stats.memo.get(&a.rel).into_iter().flatten()
+                    .filter(|((name, _), _)| name == &from).map(|((_, v), n)| ((to.clone(), v.clone()), *n)).collect();
+                self.stats.memo.entry(rel.to_owned()).or_default().extend(values);
+            }
         }
     }
 }
@@ -2864,7 +2925,7 @@ impl Fx<'_> {
         if self.direct {
             return Ok(super::native::component::live(self.db, name)?
                 .into_iter()
-                .map(|l| LiveRel { n: l.n, ndv: l.ndv, sq: l.sq, freq: l.freq.into_iter().map(|(c, v)| (c, v.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect())).collect() })
+                .map(|l| LiveRel { n: l.n, delta: l.delta, ndv: l.ndv, sq: l.sq, freq: l.freq.into_iter().map(|(c, v)| (c, v.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect())).collect() })
                 .collect());
         }
         let text: String = self.db.query_row("SELECT set_fixpoint_stats(?1)", [name], |r| r.get(0))?;
@@ -2933,8 +2994,8 @@ struct Driving<'a> {
     counted: Vec<Vec<(u64, u64)>>,
     timed: Vec<f64>,
     chunk: i64,
-    /// Per probe, the sizes its last live replan read (`live_sizes`).
-    replanned_at: Vec<Option<Vec<f64>>>,
+    /// Relation/column versions and their dependent probe plans.
+    replanned_at: replanning::Watch,
     started: std::time::Instant,
     placed: placement::Placement,
     shape: placement::Shape,
@@ -3404,6 +3465,7 @@ impl Run<'_, '_> {
             let stats = source.statistics().expect("retained relations own their statistics");
             live_stats(&mut self.model, rel, LiveRel {
                 n: source.len() as i64,
+                delta: source.len() as i64,
                 ndv: stats.iter().map(|s| s.2).collect(),
                 sq: stats.iter().map(|s| s.3).collect(),
                 freq: Vec::new(),
@@ -3536,6 +3598,7 @@ fn prog_types<'p>(prog: &'p Program, r: &str) -> Vec<&'p str> {
 /// postings, and each value's postings in a column of few values.
 struct LiveRel {
     n: i64,
+    delta: i64,
     ndv: Vec<i64>,
     sq: Vec<i64>,
     freq: Vec<(usize, HashMap<Constant, i64>)>,
@@ -3564,7 +3627,7 @@ impl LiveRel {
                 Some((c, freq))
             })
             .collect();
-        LiveRel { n, ndv: rest[..k].to_vec(), sq: rest[k..].to_vec(), freq }
+        LiveRel { n, delta: n, ndv: rest[..k].to_vec(), sq: rest[k..].to_vec(), freq }
     }
 }
 
@@ -3609,25 +3672,33 @@ fn prior_now(model: &mut Model, prog: &Program, r: &str, fill: bool) -> Option<f
     Some((rows as f64).max(1.0))
 }
 
-fn live_stats(model: &mut Model, r: &str, live: LiveRel) {
-    // A levels stratum's `h__live` (decision 0090) hides its kept rows while they wait for their level, so its live
-    // counts are not its size: it keeps `h__old`'s (`prior_stats`). Counted live, it read as nearly empty, and the
-    // checks joined it in any order (`pv__held` scanned `fv__live` by two columns, not `alook__live` by its bound one).
-    if r.ends_with("__live") {
-        return;
-    }
-    // Its live counts replace the old rows' it would have taken when first planned with (`prior_stats`).
+fn live_stats(model: &mut Model, r: &str, live: LiveRel) -> Vec<usize> {
+    // Level-held rows are represented by their prior statistics, not their temporarily visible subset.
+    if r.ends_with("__live") { return Vec::new(); }
     model.stats.prior_later.remove(r);
-    let n = live.n;
-    model.stats.card.insert(r.to_owned(), (n as f64).max(1.0));
+    let mut changed = Vec::new();
+    let card = (live.n as f64).max(1.0);
+    if model.stats.card.insert(r.to_owned(), card) != Some(card) { changed.push(0); }
+    let mut freq: HashMap<_, _> = live.freq.into_iter().collect();
     for (c, (&ndv, &sq)) in live.ndv.iter().zip(&live.sq).enumerate() {
-        model.ndv.insert((r.to_owned(), c), ndv.max(1) as f64);
-        model.stats.fan.insert((r.to_owned(), c), if n != 0 { sq as f64 / n as f64 } else { 1.0 });
-        model.stats.dfreq.remove(&(r.to_owned(), c));
+        let key = (r.to_owned(), c);
+        let ndv = ndv.max(1) as f64;
+        let fan = if live.n != 0 { sq as f64 / live.n as f64 } else { 1.0 };
+        let new_freq = freq.remove(&c);
+        let moved = model.ndv.get(&key) != Some(&ndv)
+            || model.stats.fan.get(&key) != Some(&fan)
+            || model.stats.dfreq.get(&key) != new_freq.as_ref();
+        if moved {
+            changed.push(c + 1);
+            model.ndv.insert(key.clone(), ndv);
+            model.stats.fan.insert(key.clone(), fan);
+            match new_freq {
+                Some(f) => { model.stats.dfreq.insert(key, f); }
+                None => { model.stats.dfreq.remove(&key); }
+            }
+        }
     }
-    for (c, freq) in live.freq {
-        model.stats.dfreq.insert((r.to_owned(), c), freq);
-    }
+    changed
 }
 
 /// A plan's step strings, which say whether a replan changed it.
@@ -4756,7 +4827,7 @@ impl<'a> Run<'a, '_> {
             }
         }
         order_rules.extend(probes.iter().map(|p| obs_rule(&p.0.head, &p.0.body)));
-        let replanned_at = vec![None; probes.len()];
+        let replanned_at = replanning::Watch::new(&ri, &probes);
         let d = Driving {
             scc: scc.clone(),
             solving: !self.model.stats.solving.is_empty(),
@@ -4806,7 +4877,6 @@ impl<'a> Run<'a, '_> {
         let profiling = super::profile::on();
         // This thread's CPU at the stratum's start, less what other strata spent while it waited.
         let cpu_at = if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_own } else { 0.0 };
-        let keeping_plans = PLANS.with(|p| p.borrow().is_some());
         loop {
             let f: String = {
                 let _wave = super::lanes::wave::suspendable();
@@ -4853,10 +4923,12 @@ impl<'a> Run<'a, '_> {
             }
             let text_symbols = |i: usize, c: usize| self.model.inputs.atoms.is_none() && prog_types(prog, rels[i]).get(c) == Some(&"sym");
             let live = self.fx().stats(&name, &text_symbols)?;
-            let mut nonempty = BTreeSet::new();
-            for (r, l) in rels.iter().zip(live) {
-                if l.n > 0 { nonempty.insert(r.as_str()); }
-                live_stats(&mut self.model, r, l);
+            for (i, (r, l)) in rels.iter().zip(live).enumerate() {
+                replanned_at.delta(i, l.delta);
+                self.model.stats.delta_rows.insert((*r).clone(), l.delta as f64);
+                for slot in live_stats(&mut self.model, r, l) {
+                    replanned_at.record(i, slot, &self.model, r);
+                }
             }
             if f.last() == Some(&"1") || chunk == 0 {
                 break;
@@ -4894,18 +4966,9 @@ impl<'a> Run<'a, '_> {
                     continue;
                 }
                 let (r, ai) = (probes[k].0, probes[k].1);
-                if chunk == 1 && r.body[ai].atom().is_some_and(|a| !nonempty.contains(a.rel.as_str())) {
-                    continue;
-                }
-                // No size it reads moved since its last replan: `plan_rule_live` would give the plan it gave then
-                // (kept with those sizes, while plans are kept), which the probe runs.
-                if keeping_plans {
-                    let sizes = self.model.live_sizes(&r.body, Some(ai));
-                    if replanned_at[k].as_ref() == Some(&sizes) {
-                        continue;
-                    }
-                    replanned_at[k] = Some(sizes);
-                }
+                // The dependency index invalidates only affected plans. An empty delta leaves its plan dirty
+                // until it can run; unchanged probes never rebuild keys or statistics signatures.
+                if !replanned_at.take(k) { continue; }
                 let span = planning(r, "replan");
                 let t0 = if profiling { super::profile::now() } else { 0.0 };
                 let ((new, _, _), x) = self.model.plan_rule_live(prog, &r.head, &r.body, Some(ai))?;
@@ -5021,6 +5084,7 @@ impl<'a> Run<'a, '_> {
         {
             let _close = super::profile::span(|| "engine close".into());
             self.fx().close(&name)?;
+            for r in &rels { self.model.stats.delta_rows.remove(r.as_str()); }
         }
         if let Some(capture) = lab {
             super::native::component::lab::capture_outputs(self.db, capture);
