@@ -4717,7 +4717,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "41962153f967d8c0d8fe3154698818a1bcf06869",
-    "status": "Final 41962153f merged. Root CLI build and broad original-suite acceptance are in progress.",
+    "status": "Final 41962153f root CLI built. Broad original-suite acceptance is in progress.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -5030,6 +5030,24 @@
         "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
         "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
       }
+    },
+    "cliArtifact": {
+      "format": "rerail.root-engine-build/v1",
+      "engineCommit": "8d57a19870ece2f9223eb6ea63376d49cee6bae5",
+      "upstreamCommit": "41962153f967d8c0d8fe3154698818a1bcf06869",
+      "sourceTrees": {
+        "native": "0b90b44c32f4ff8065b1a7d4eda6e6bbbd6bd69b",
+        "accel": "81d49bce9e756ba3c44b85d319be41cf37779a53",
+        "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
+        "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
+        "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
+      },
+      "path": ".rerail/modern-engine-alignment/cli-e41d01a2eef49dac",
+      "sha256": "e41d01a2eef49dace2d13e6e1537a74272a3cbdfcb6350ae0187fd8634af35f2",
+      "command": "nice -n 19 rustup run 1.95.0 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling",
+      "wallSeconds": 223.4,
+      "userCpuSeconds": 885.99,
+      "systemCpuSeconds": 20.2
     }
   },
   "engineSourceSnapshots": [
