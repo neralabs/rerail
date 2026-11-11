@@ -38,7 +38,7 @@ pub(in crate::code_rule_dsl) enum Seed {
 
 /// The include graph phase 0 derived.
 #[derive(Clone, Debug, Default)]
-pub(in crate::code_rule_dsl) struct Graph {
+pub struct Graph {
     /// For each includer ("text:0", a module's path, or "engine"), its includes in order: (offset, name, file).
     pub(in crate::code_rule_dsl) includes: BTreeMap<String, Vec<(i64, String, PathBuf)>>,
     /// The names with no file: (includer, offset, name).

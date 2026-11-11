@@ -2,7 +2,7 @@
 use super::*;
 
 #[derive(Clone, Default)]
-pub(super) struct Pool {
+pub struct Pool {
     tables: BTreeMap<(String, bool, bool), Vec<String>>,
     next: usize,
 }

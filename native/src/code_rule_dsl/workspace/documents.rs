@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 /// One logical file's exact version: path, source content, file context and the grammar build and
 /// grammar a tape of it is parsed with.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(super) struct FileVersion {
+pub struct FileVersion {
     pub(super) path: String,
     source: HashKey,
     context: HashKey,
@@ -50,7 +50,7 @@ impl FileVersion {
 }
 
 /// A document the contract loaded: exactly the source and documents of one file version.
-pub(super) struct Document {
+pub struct Document {
     /// P's syntax facts, shared by P's relational inputs (test-only, open item O18).
     pub(super) syntax: std::sync::OnceLock<Arc<crate::code_rule_dsl::relational::syntax::Facts>>,
     pub(super) source: Arc<String>,
@@ -61,7 +61,7 @@ pub(super) struct Document {
 
 /// Resident documents, bounded in bytes. A load beyond the bound evicts the least recently used
 /// documents; an evicted document is loaded again from the store or reparsed, never approximated.
-pub(super) struct DocumentCache {
+pub struct DocumentCache {
     limit: usize,
     used: usize,
     clock: u64,
@@ -71,7 +71,7 @@ pub(super) struct DocumentCache {
 
 /// Where loaded documents came from, so tests and profiles can tell eviction happened.
 #[derive(Clone, Copy, Default)]
-pub(super) struct DocumentLoads {
+pub struct DocumentLoads {
     pub(super) resident: usize,
     pub(super) cached: usize,
     pub(super) stored: usize,

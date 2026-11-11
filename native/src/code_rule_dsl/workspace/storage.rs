@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Arc as StdArc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
-pub(super) struct StoreRegistryEntry {
+pub struct StoreRegistryEntry {
     store: std::sync::Weak<ContentStore>,
     maintenance: std::sync::Weak<StorageMaintenance>,
 }
@@ -58,7 +58,7 @@ pub(super) fn shared_content_store(
     Ok((store, maintenance))
 }
 
-pub(super) struct StorageMaintenance {
+pub struct StorageMaintenance {
     stop: StdArc<AtomicBool>,
     workspaces: StdArc<Mutex<HashMap<WorkspaceId, (String, usize)>>>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -250,7 +250,7 @@ impl Drop for StorageMaintenance {
     }
 }
 
-pub(super) struct StorageRegistration {
+pub struct StorageRegistration {
     maintenance: StdArc<StorageMaintenance>,
     workspace_id: WorkspaceId,
 }

@@ -105,7 +105,7 @@ impl Schema {
     }
 }
 #[derive(Clone)]
-pub(super) struct Version {
+pub struct Version {
     schema: Arc<Schema>,
     full: Link<Row>,
     primary: Link<Row>,
@@ -664,7 +664,7 @@ impl Drop for Scope<'_> {
         let _ = self.store.mount(self.previous);
     }
 }
-pub(super) struct Transaction<'a> {
+pub struct Transaction<'a> {
     store: &'a Store,
     db: &'a rusqlite::Connection,
     committed: bool,

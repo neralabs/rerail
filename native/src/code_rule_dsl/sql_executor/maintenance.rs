@@ -4,7 +4,7 @@ use super::super::logic::sql::sql_ast::{SqlBinaryOperator as B, SqlExpression as
 use super::*;
 
 #[derive(Clone)]
-pub(super) struct Delta {
+pub struct Delta {
     pub plus: String,
     pub minus: String,
     pub inserted: u64,

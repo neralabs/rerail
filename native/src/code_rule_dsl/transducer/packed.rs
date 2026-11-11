@@ -754,7 +754,7 @@ enum PackedPattern {
     },
 }
 
-pub(in crate::code_rule_dsl) struct AstPatternCapture {
+pub struct AstPatternCapture {
     pub(in crate::code_rule_dsl) label: String,
     pub(in crate::code_rule_dsl) occurrence: usize,
     pub(in crate::code_rule_dsl) node: u32,

@@ -137,7 +137,7 @@ impl Lattice for Min {
 /// `shortlex_min<symbol>`: the shortest symbol, then the least by its UTF-8 bytes (`core.rr`), over a run's atoms.
 /// Shortlex is a well-order, so every chain of ever-smaller values is finite. A value the atoms do not hold (`TOP`)
 /// absorbs. The run declares it over its store's atoms (`declare`), as its symbols are those atoms.
-pub struct ShortlexMin(pub(in crate::code_rule_dsl) Arc<crate::content_store::atoms::Atoms>);
+pub struct ShortlexMin(pub Arc<crate::content_store::atoms::Atoms>);
 impl Lattice for ShortlexMin {
     fn lub(&self, a: i64, b: i64) -> i64 {
         if a == TOP || b == TOP {

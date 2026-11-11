@@ -45,7 +45,7 @@ pub(super) type Consumers = BTreeMap<ClauseId, Vec<TermId>>;
 type Stamped = (HashKey, Arc<[TermId]>);
 
 #[derive(Default)]
-pub(super) struct CallsState {
+pub struct CallsState {
     globals: BTreeSet<usize>,
     dirty_globals: BTreeSet<usize>,
     terms: Terms,

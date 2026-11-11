@@ -363,7 +363,7 @@ pub(super) struct TapeImage {
 /// where the node sits, not on its kind alone, so they are the node's own, as the parser's
 /// cursor reports them; nodes in the same context share a code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct Code {
+pub struct Code {
     kf: u16,
     flags: u8,
     alias: u16,

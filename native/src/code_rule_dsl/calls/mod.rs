@@ -71,7 +71,7 @@ impl Through {
 
 /// The graph relation and the node at which a term asks its reachability question.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct Mode {
+pub struct Mode {
     pub(crate) through: Through,
     pub(crate) references: bool,
     pub(crate) definition: bool,
@@ -124,7 +124,7 @@ pub(crate) struct FoundTerm {
 }
 
 /// Collects the `calls` terms of one query while its rules compile.
-pub(crate) struct CallsCollector {
+pub struct CallsCollector {
     /// What else a term's seed depends on: the query's utilities and language options.
     salt: String,
     /// Collecting for a seed query, which cannot hold `calls` (a shared utility may bring one).
@@ -1187,7 +1187,7 @@ pub(crate) fn with_reference_graph<R>(key: contracts::Key, read: impl FnOnce(&Gr
 }
 
 /// Installs an evaluation's `EvaluationCalls` until dropped.
-pub(crate) struct EvaluationSlot {
+pub struct EvaluationSlot {
     previous: Option<EvaluationCalls>,
 }
 

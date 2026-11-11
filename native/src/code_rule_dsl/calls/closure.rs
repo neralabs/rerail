@@ -520,7 +520,7 @@ pub(crate) struct ReferenceEdge {
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) struct ReferenceRows {
+pub struct ReferenceRows {
     pub(crate) edges: Vec<ReferenceEdge>,
     pub(crate) incomplete: BTreeSet<Arc<str>>,
 }

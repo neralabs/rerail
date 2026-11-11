@@ -8,7 +8,7 @@ mod tests;
 
 const SQL_RESIDENT_BYTES: usize = 256 * 1024 * 1024;
 #[derive(Default)]
-struct Stats {
+pub struct Stats {
     partitions: usize,
     peak_sessions: usize,
     peak_sql_bytes: usize,

@@ -79,7 +79,7 @@ fn parse_with(src: &str, clauses: bool) -> Result<Program, Error> {
 /// A program text read once (its tape, its statements, its includes resolved), for what a run needs of it: its
 /// library modules (`modules`) and its program (`lower`). A run of a pack asks both of every program; each read of
 /// a text makes its tape and resolves its includes again.
-pub(in crate::code_rule_dsl) struct Text(Read);
+pub struct Text(Read);
 
 enum Read {
     /// A text that includes nothing: read as it is.
@@ -189,7 +189,7 @@ impl Text {
 /// A program text's library modules (decision 0089): the files its `#include`s name, as `parse` reads them, and
 /// what the text itself declares and derives. `None` for a text that includes nothing (a printed program).
 #[derive(Clone, Debug)]
-pub(in crate::code_rule_dsl) struct Modules {
+pub struct Modules {
     /// Each library file, includes first: its canonical path, its bytes' digest and the relations it declares.
     pub files: Vec<(PathBuf, [u8; 32], std::collections::BTreeSet<String>)>,
     /// The relations the text's own clauses derive or state facts of.

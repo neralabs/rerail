@@ -15,7 +15,7 @@ use std::{
 #[cfg(test)]
 mod tests;
 
-struct Pending {
+pub struct Pending {
     path: Arc<str>,
     start: i64,
     end: i64,

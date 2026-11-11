@@ -23,7 +23,7 @@ use reducer::Reducer;
 pub(super) use reducer::transition::{Transition,Initial};
 
 #[derive(Clone)]
-pub(super) struct Retained {
+pub struct Retained {
     output: String,
     heads: String,
     width: usize,

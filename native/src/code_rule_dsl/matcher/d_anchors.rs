@@ -607,7 +607,7 @@ const DIRECT_TEXT_NODES: usize = 8;
 
 #[cfg(test)]
 #[derive(Default)]
-struct Values<'tree> {
+pub struct Values<'tree> {
     complete: bool,
     terms: BTreeMap<&'tree str, Vec<usize>>,
     residue: Vec<usize>,

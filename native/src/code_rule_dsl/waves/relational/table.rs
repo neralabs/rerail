@@ -24,7 +24,7 @@ struct Shared {
     stats: Arc<Counters>,
 }
 #[derive(Clone)]
-pub(super) struct Binding {
+pub struct Binding {
     current: Arc<parking_lot::RwLock<Arc<dyn Source>>>,
     schema: Arc<Metadata>,
 }

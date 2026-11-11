@@ -19,7 +19,7 @@ use std::process::{Command, Stdio};
 const ORACLE: &str = include_str!("oracle.py");
 
 /// A corpus: its name and its files (absolute path, path to show).
-pub(crate) struct Corpus {
+pub struct Corpus {
     pub(crate) name: String,
     pub(crate) files: Vec<(PathBuf, String)>,
 }

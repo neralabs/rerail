@@ -9,7 +9,7 @@ mod proof;
 mod seeds;
 
 #[derive(Clone)]
-pub(super) struct Partitioned {
+pub struct Partitioned {
     columns: BTreeMap<String, usize>,
     rules: Vec<(schedule::Step, Query)>,
     steps: Vec<(schedule::Step, Query)>,

@@ -6,7 +6,7 @@ pub(super) use planning::normalize_views;
 pub(super) use statistics::Statistics;
 
 #[derive(Clone)]
-pub(super) struct Execution {
+pub struct Execution {
     pub inputs: BTreeSet<String>,
     pub objects: Vec<(String, bool)>,
     pub emitted: Arc<plan::emit::Emitted>,

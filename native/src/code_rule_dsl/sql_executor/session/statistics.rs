@@ -8,7 +8,7 @@ pub(in crate::code_rule_dsl::sql_executor) struct Statistics {
     modules: Modules,
     current: RefCell<Option<Arc<Rows>>>,
 }
-pub(in crate::code_rule_dsl::sql_executor) struct Rows(Vec<(String, i64)>);
+pub struct Rows(Vec<(String, i64)>);
 impl Source for Rows {
     fn columns(&self) -> Vec<String> {
         vec!["tbl".into(), "rows".into()]

@@ -75,7 +75,7 @@ pub(in crate::code_rule_dsl) struct Tree {
     pub facts: Arc<super::syntax::Facts>,
     pub visible: Arc<Vec<u32>>,
 }
-pub(in crate::code_rule_dsl) struct Demand {
+pub struct Demand {
     pub roots: Vec<Root>,
     pub trees: Vec<Tree>,
     pub paths: Vec<String>,

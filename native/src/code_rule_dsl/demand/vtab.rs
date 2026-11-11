@@ -1454,7 +1454,7 @@ fn structure_digest(key: &str) -> String {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct PackedRow {
+pub struct PackedRow {
     batch: i64,
     row_kind: RowKind,
     producer_id: Option<i64>,
