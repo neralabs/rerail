@@ -1,7 +1,7 @@
 //! randomforest_procedure.h and the bagging of randomforest_procedure.cc, in Rust.
 //!
 //! Mathieu Marquis Bolduc, 11 March 2016. Copyright (c) 2016 mldb.ai inc. This file is part of MLDB. Apache-2.0
-//! (see the LICENSE at `accel/src/forest/mldb/`).
+//! (see the LICENSE at `forest/src/mldb/`).
 //!
 //! Trains a random forest binary classifier: the training rows (`training_data`: the rows kept, their labels and
 //! weights), then per feature vector sampling a bag (`bag`: in 32 stretches of the rows, a proportion
@@ -31,11 +31,11 @@
 //! The RNG is MT19937 as upstream; the shuffles are Fisher-Yates over `rng() % n` and the uniform draws `rng() /
 //! 2^32`, as `std::shuffle` and `uniform_real_distribution` are not the same across C++ libraries.
 
-use crate::forest::dataset_feature_space::DatasetFeatureSpace;
-use crate::forest::memory_region::MemorySerializer;
-use crate::forest::randomforest::{PartitionData, TrainingScheme};
-use crate::forest::randomforest_types::get_leaf;
-use crate::forest::tree::Tree;
+use crate::dataset_feature_space::DatasetFeatureSpace;
+use crate::memory_region::MemorySerializer;
+use crate::randomforest::{PartitionData, TrainingScheme};
+use crate::randomforest_types::get_leaf;
+use crate::tree::Tree;
 use std::sync::Arc;
 
 /// `RandomForestProcedureConfig`: what the procedure is configured with (less its SQL, model file and function).
@@ -62,11 +62,15 @@ pub struct RandomForestProcedureConfig {
     /// The fewest rows a leaf may have (rerail's addition; upstream's is 1). Without it a regression tree, whose
     /// nodes are never pure, splits down to single rows.
     pub min_leaf_examples: u32,
+    /// The threads training takes at most (0: `MAX_BAGS_AT_ONCE`), each with its device memory for a tree.
+    pub max_threads: usize,
+    /// Train at the background quality of service (macOS): the threads yield the cores to everything else.
+    pub background: bool,
 }
 
 impl Default for RandomForestProcedureConfig {
     fn default() -> Self {
-        RandomForestProcedureConfig { feature_vector_samplings: 5, feature_vector_sampling_prop: 0.3, feature_samplings: 20, feature_sampling_prop: 0.3, max_depth: 20, sample_feature_vectors: true, training_scheme: TrainingScheme::Partitioned, categorical_subsets: false, min_leaf_examples: 1 }
+        RandomForestProcedureConfig { feature_vector_samplings: 5, feature_vector_sampling_prop: 0.3, feature_samplings: 20, feature_sampling_prop: 0.3, max_depth: 20, sample_feature_vectors: true, training_scheme: TrainingScheme::Partitioned, categorical_subsets: false, min_leaf_examples: 1, max_threads: 0, background: false }
     }
 }
 
@@ -161,7 +165,7 @@ impl TargetScale {
 /// range. The feature space's label must be real (`FeatureType::Real`), which makes the splits' criterion the
 /// variance (`SplitCriterion::of`).
 pub fn regression_training_data(fs: Arc<DatasetFeatureSpace>, targets: &[f32], wheres: Option<&[f32]>, weights: Option<&[f32]>) -> Result<(PartitionData, TargetScale), String> {
-    if fs.label_info != crate::forest::dataset_feature_space::FeatureType::Real {
+    if fs.label_info != crate::dataset_feature_space::FeatureType::Real {
         return Err(format!("a regression's label must be real, not {:?}", fs.label_info));
     }
     if targets.iter().any(|t| t.is_infinite()) {
@@ -174,7 +178,7 @@ pub fn regression_training_data(fs: Arc<DatasetFeatureSpace>, targets: &[f32], w
 }
 
 /// The training rows, each kept row written by `write` (the writer, the row, its weight).
-fn training_rows(fs: Arc<DatasetFeatureSpace>, labels: &[f32], wheres: Option<&[f32]>, weights: Option<&[f32]>, write: &mut dyn FnMut(&mut crate::forest::randomforest_types::RowWriter, usize, f32) -> Result<(), String>) -> Result<PartitionData, String> {
+fn training_rows(fs: Arc<DatasetFeatureSpace>, labels: &[f32], wheres: Option<&[f32]>, weights: Option<&[f32]>, write: &mut dyn FnMut(&mut crate::randomforest_types::RowWriter, usize, f32) -> Result<(), String>) -> Result<PartitionData, String> {
     let n = labels.len();
     if wheres.is_some_and(|w| w.len() != n) || weights.is_some_and(|w| w.len() != n) {
         return Err("the label, where and weight columns differ in length".into());
@@ -308,6 +312,14 @@ pub fn train_forest(all_data: &PartitionData, config: &RandomForestProcedureConf
     train_forest_compacted(all_data, config)
 }
 
+/// Puts the calling thread at the background quality of service (macOS): it runs when the cores are free.
+pub fn set_background_qos() {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_BACKGROUND, 0);
+    }
+}
+
 /// The most bags trained at once (threads, each with its device memory for a tree).
 const MAX_BAGS_AT_ONCE: usize = 8;
 
@@ -316,7 +328,7 @@ const MAX_BAGS_AT_ONCE: usize = 8;
 /// bag costs its draw and its trees, not a trainer of its own; the trees are those of `train_forest_compacted`.
 /// Bags go to up to `MAX_BAGS_AT_ONCE` threads, each scheduling its trees a few ahead of the one it finishes.
 pub fn train_forest_weighted(all_data: &PartitionData, config: &RandomForestProcedureConfig) -> Result<Forest, String> {
-    use crate::forest::randomforest::{FeatureSamplingTrainerKernel, FeatureSamplingTrainerPartition, TreeRows};
+    use crate::randomforest::{FeatureSamplingTrainerKernel, FeatureSamplingTrainerPartition, TreeRows};
     use rayon::prelude::*;
     const TREES_IN_FLIGHT: usize = 4;
     let n = all_data.rows.row_count();
@@ -336,14 +348,20 @@ pub fn train_forest_weighted(all_data: &PartitionData, config: &RandomForestProc
     }
     let bags = config.feature_vector_samplings;
     let samplings: Vec<Vec<Vec<i32>>> = (0..bags).map(|b| bag_feature_samplings(&data, b, config)).collect::<Result<_, _>>()?;
-    let threads = bags.clamp(1, MAX_BAGS_AT_ONCE);
+    let threads = bags.clamp(1, if config.max_threads > 0 { config.max_threads } else { MAX_BAGS_AT_ONCE });
     let chunks: Vec<Vec<usize>> = (0..threads).map(|t| (t..bags).step_by(threads).collect()).collect();
-    let trained: Vec<Result<Vec<(usize, Vec<Tree>)>, String>> = chunks.par_iter().map(|chunk| {
+    let background = config.background;
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .start_handler(move |_| if background { set_background_qos() })
+        .build()
+        .map_err(|e| e.to_string())?;
+    let trained: Vec<Result<Vec<(usize, Vec<Tree>)>, String>> = pool.install(|| chunks.par_iter().map(|chunk| {
         let mine: Vec<Vec<i32>> = chunk.iter().flat_map(|&b| samplings[b].iter().cloned()).collect();
         let mut partition = FeatureSamplingTrainerPartition::allocate(&trainer, &mine, "forest")?;
         let mut in_flight = std::collections::VecDeque::new();
         let mut out: Vec<(usize, Vec<Tree>)> = Vec::new();
-        let finish = |partition: &FeatureSamplingTrainerPartition, (b, i, scheduled, d): (usize, usize, crate::forest::randomforest::ScheduledTree, crate::forest::randomforest::PartitionControlData), out: &mut Vec<(usize, Vec<Tree>)>| -> Result<(), String> {
+        let finish = |partition: &FeatureSamplingTrainerPartition, (b, i, scheduled, d): (usize, usize, crate::randomforest::ScheduledTree, crate::randomforest::PartitionControlData), out: &mut Vec<(usize, Vec<Tree>)>| -> Result<(), String> {
             scheduled.event.await_()?;
             let mut tree = partition.finish(i as i32, &format!("bag {b}"), &d, &scheduled).map_err(|e| format!("error training bag {b}: {e}"))?;
             if !tree.root.is_some() {
@@ -378,7 +396,7 @@ pub fn train_forest_weighted(all_data: &PartitionData, config: &RandomForestProc
             finish(&partition, t, &mut out)?;
         }
         Ok(out)
-    }).collect();
+    }).collect());
     let mut by_bag: Vec<Vec<Tree>> = (0..bags).map(|_| Vec::new()).collect();
     for t in trained {
         for (b, trees) in t? {
@@ -423,11 +441,11 @@ pub fn train_forest_compacted(all_data: &PartitionData, config: &RandomForestPro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::forest::compute_kernel_metal::transfer_to_host_sync;
-    use crate::forest::randomforest::tests::deep_dataset;
-    use crate::forest::randomforest::{compare_trees, FeatureSamplingTrainerKernel};
-    use crate::forest::randomforest_recursive::decode_rows;
-    use crate::forest::randomforest_types::{PartitionIndex, WeightFormat};
+    use crate::compute_kernel_metal::transfer_to_host_sync;
+    use crate::randomforest::tests::deep_dataset;
+    use crate::randomforest::{compare_trees, FeatureSamplingTrainerKernel};
+    use crate::randomforest_recursive::decode_rows;
+    use crate::randomforest_types::{PartitionIndex, WeightFormat};
 
     #[test]
     fn mt19937_is_the_standard_one() {
@@ -560,7 +578,7 @@ mod tests {
         let wheres: Vec<f32> = (0..n).map(|r| if r % 7 == 3 { 0.0 } else { 1.0 }).collect();
         let weights: Vec<f32> = (0..n).map(|r| 1.0 + (r % 3) as f32).collect();
         let mut real = (*d.fs).clone();
-        real.label_info = crate::forest::dataset_feature_space::FeatureType::Real;
+        real.label_info = crate::dataset_feature_space::FeatureType::Real;
         let real = Arc::new(real);
         let base = RandomForestProcedureConfig { feature_vector_samplings: 3, feature_samplings: 2, max_depth: 8, feature_sampling_prop: 0.6, ..Default::default() };
         let configs = [
@@ -598,7 +616,7 @@ mod tests {
         let n = 5000u32;
         let d = deep_dataset(n);
         let mut fs = (*d.fs).clone();
-        fs.label_info = crate::forest::dataset_feature_space::FeatureType::Real;
+        fs.label_info = crate::dataset_feature_space::FeatureType::Real;
         let fs = Arc::new(fs);
         let bucket = |f: usize, r: u32| d.features[f].buckets.get(r) as f32;
         // A function of three features, with noise; some rows without a target, or left out.
@@ -615,10 +633,10 @@ mod tests {
         }
         // The predictions: the mean squared error is a small part of the targets' variance.
         // The dataset's bucket b is the value b.
-        let columns: Vec<Vec<crate::forest::bucket::CellValue>> = (0..d.features.len()).map(|f| (0..n).map(|r| crate::forest::bucket::CellValue::Float(bucket(f, r) as f64)).collect()).collect();
-        let rows = crate::forest::randomforest_predict::RowBuckets::from_values(&device.fs, &columns).unwrap();
+        let columns: Vec<Vec<crate::bucket::CellValue>> = (0..d.features.len()).map(|f| (0..n).map(|r| crate::bucket::CellValue::Float(bucket(f, r) as f64)).collect()).collect();
+        let rows = crate::randomforest_predict::RowBuckets::from_values(&device.fs, &columns).unwrap();
         let host = device.predict_host(&rows).unwrap();
-        let on_device = crate::forest::randomforest_predict::FlatForest::new(&device).unwrap().predict_device(&rows).unwrap();
+        let on_device = crate::randomforest_predict::FlatForest::new(&device).unwrap().predict_device(&rows).unwrap();
         let kept: Vec<usize> = (0..n as usize).filter(|&r| targets[r].is_finite()).collect();
         let mean = kept.iter().map(|&r| targets[r] as f64).sum::<f64>() / kept.len() as f64;
         let var = kept.iter().map(|&r| (targets[r] as f64 - mean).powi(2)).sum::<f64>() / kept.len() as f64;

@@ -2,7 +2,7 @@
 //! (in progress: what is here has been cut from the .cc, the rest is still there).
 //!
 //! Jeremy Barnes, 21 July 2021. Copyright (c) 2021 Jeremy Barnes. This file is part of MLDB. Copyright 2016 mldb.ai
-//! inc. Apache-2.0 (see the LICENSE at `accel/src/forest/mldb/`).
+//! inc. Apache-2.0 (see the LICENSE at `forest/src/mldb/`).
 //!
 //! Metal compute functions and their libraries: a library compiled from (preprocessed) source on a device, its
 //! functions with their pipeline states, and each function's arguments as Metal's reflection describes them, which
@@ -401,7 +401,7 @@ impl MetalComputeQueue {
 
     /// `enqueueFillArray`: `count` copies of `value` into `dst` from element `offset` (all of it when `count` is
     /// `None`).
-    pub fn enqueue_fill_array<T: crate::forest::memory_region::Pod>(&self, dst: &metal::BufferRef, value: &T, offset: usize, count: Option<usize>) {
+    pub fn enqueue_fill_array<T: crate::memory_region::Pod>(&self, dst: &metal::BufferRef, value: &T, offset: usize, count: Option<usize>) {
         let size = std::mem::size_of::<T>();
         let count = count.unwrap_or(dst.length() as usize / size - offset);
         let one = unsafe { std::slice::from_raw_parts((value as *const T).cast::<u8>(), size) };
@@ -446,14 +446,14 @@ pub fn alloc_uninitialized_array_sync<T>(device: &DeviceRef, length: usize) -> m
 }
 
 /// `transferToDeviceImmutable`/`manageMemoryRegionSync`: device memory holding `data`.
-pub fn transfer_to_device_immutable<T: crate::forest::memory_region::Pod>(device: &DeviceRef, data: &[T]) -> metal::Buffer {
+pub fn transfer_to_device_immutable<T: crate::memory_region::Pod>(device: &DeviceRef, data: &[T]) -> metal::Buffer {
     let b = alloc_uninitialized_array_sync::<T>(device, data.len());
     unsafe { std::ptr::copy_nonoverlapping(data.as_ptr().cast::<u8>(), b.contents().cast::<u8>(), std::mem::size_of_val(data)) };
     b
 }
 
 /// `transferToHostSync`: the first `length` elements (the work writing them must have completed).
-pub fn transfer_to_host_sync<T: crate::forest::memory_region::Pod + Clone>(buffer: &metal::BufferRef, length: usize) -> Vec<T> {
+pub fn transfer_to_host_sync<T: crate::memory_region::Pod + Clone>(buffer: &metal::BufferRef, length: usize) -> Vec<T> {
     assert!(length * std::mem::size_of::<T>() <= buffer.length() as usize);
     unsafe { std::slice::from_raw_parts(buffer.contents().cast::<T>(), length).to_vec() }
 }
@@ -463,7 +463,7 @@ pub struct MetalBindContext {
     pub encoder: metal::ComputeCommandEncoder,
 }
 
-impl crate::forest::compute_kernel_grid::GridBindContext for MetalBindContext {
+impl crate::compute_kernel_grid::GridBindContext for MetalBindContext {
     fn set_primitive(&mut self, arg_num: u64, bytes: &[u8]) {
         self.encoder.set_bytes(arg_num, bytes.len() as u64, bytes.as_ptr().cast());
     }

@@ -1,7 +1,7 @@
 //! dataset_feature_space.h and the parts of dataset_feature_space.cc training and prediction need, in Rust.
 //!
 //! Jeremy Barnes, 13 March 2015. Copyright (c) 2015 mldb.ai inc. This file is part of MLDB. Apache-2.0 (see the
-//! LICENSE at `accel/src/forest/mldb/`).
+//! LICENSE at `forest/src/mldb/`).
 //!
 //! Feature space for datasets to allow training of classifiers: one feature per column, each column with its info,
 //! and (when bucketized) its bit-packed bucket numbers and bucket descriptions, which the trainer reads.
@@ -16,8 +16,8 @@
 //! feature to column hash mapping is the one dataset_feature_space.cc defines (type 1, then the hash's high and low
 //! 32 bits), not the "type 0" its header's comment describes.
 
-use crate::forest::bucket::{BucketDescriptions, BucketList};
-use crate::forest::jml::feature::{Feature, MISSING_FEATURE};
+use crate::bucket::{BucketDescriptions, BucketList};
+use crate::jml::feature::{Feature, MISSING_FEATURE};
 use std::collections::HashMap;
 use std::fmt;
 
@@ -178,9 +178,9 @@ impl ColumnInfo {
     /// `Dataset::getColumnBuckets` makes them, from core/dataset.cc): the distinct values described in up to
     /// `max_num_buckets` buckets (upstream asked for 255), each row's bucket, and the column real when it has
     /// numbers (an error when it also has strings), categorical when it has strings.
-    pub fn from_values(column_name: &str, values: &[crate::forest::bucket::CellValue], max_num_buckets: i32) -> Result<ColumnInfo, String> {
-        use crate::forest::bucket::{CellValue, WritableBucketList};
-        use crate::forest::memory_region::MemorySerializer;
+    pub fn from_values(column_name: &str, values: &[crate::bucket::CellValue], max_num_buckets: i32) -> Result<ColumnInfo, String> {
+        use crate::bucket::{CellValue, WritableBucketList};
+        use crate::memory_region::MemorySerializer;
         let mut sorted: Vec<(&CellValue, u32)> = values.iter().zip(0u32..).collect();
         sorted.sort();
         let mut distinct_values: Vec<CellValue> = Vec::new();
@@ -228,14 +228,14 @@ impl ColumnInfo {
     /// numbers (the strings' buckets are offset), for nulls (training put them in bucket 0, on the left; prediction
     /// took the missing branch, an empty leaf), and for values on a split point of a column with more distinct
     /// values than buckets (those split points are values, which the buckets put on the left and `<` on the right).
-    pub fn bucket_of(&self, value: &crate::forest::bucket::CellValue) -> u32 {
+    pub fn bucket_of(&self, value: &crate::bucket::CellValue) -> u32 {
         self.bucket_descriptions.get_bucket(value).unwrap_or_else(|_| unseen_bucket(&self.bucket_descriptions))
     }
 
     /// A column of values in this column's buckets (`bucket_of`), bit-packed, with room for the unseen bucket.
-    pub fn bucketize(&self, values: &[crate::forest::bucket::CellValue]) -> BucketList {
-        use crate::forest::bucket::WritableBucketList;
-        use crate::forest::memory_region::MemorySerializer;
+    pub fn bucketize(&self, values: &[crate::bucket::CellValue]) -> BucketList {
+        use crate::bucket::WritableBucketList;
+        use crate::memory_region::MemorySerializer;
         let mut s = MemorySerializer;
         let mut w = WritableBucketList::new(values.len(), unseen_bucket(&self.bucket_descriptions) + 1, &mut s);
         for v in values {
@@ -248,7 +248,7 @@ impl ColumnInfo {
 impl DatasetFeatureSpace {
     /// The feature space over the columns given, each bucketized (`ColumnInfo::from_values`, 255 buckets), in
     /// parallel; a column's index is its place in the list (upstream: the dataset's columns that were asked for).
-    pub fn from_columns(columns: &[(String, Vec<crate::forest::bucket::CellValue>)], label_info: FeatureType) -> Result<Self, String> {
+    pub fn from_columns(columns: &[(String, Vec<crate::bucket::CellValue>)], label_info: FeatureType) -> Result<Self, String> {
         use rayon::prelude::*;
         let infos: Vec<ColumnInfo> = columns.par_iter().map(|(name, values)| ColumnInfo::from_values(name, values, 255)).collect::<Result<_, _>>()?;
         let mut fs = DatasetFeatureSpace { label_info, ..Default::default() };
@@ -282,8 +282,8 @@ pub const NULL_CODE: u32 = u32::MAX;
 impl ColumnData {
     /// The values of a column of cells: numeric when they are numbers (and nulls), categorical when strings (and
     /// nulls); both is the error `ColumnInfo::from_values` gives, and other kinds are not taken by the device.
-    pub fn from_values(column_name: &str, values: &[crate::forest::bucket::CellValue]) -> Result<ColumnData, String> {
-        use crate::forest::bucket::CellValue;
+    pub fn from_values(column_name: &str, values: &[crate::bucket::CellValue]) -> Result<ColumnData, String> {
+        use crate::bucket::CellValue;
         let numeric = values.iter().any(|v| matches!(v, CellValue::Integer(_) | CellValue::Float(_)));
         let strings = values.iter().any(|v| matches!(v, CellValue::String(_)));
         if numeric && strings {
@@ -348,13 +348,13 @@ impl ColumnInfo {
     /// The buckets are packed on the device (`packBucketsKernel`). The host's work is a pass for the keys, the split
     /// points over the distinct values, and one copy of the packed words.
     pub fn from_column_device(column_name: &str, data: &ColumnData, max_num_buckets: i32) -> Result<ColumnInfo, String> {
-        use crate::forest::compute_kernel_grid::ComputeKernelArgument::{Buffer as B, Int};
-        use crate::forest::compute_kernel_metal::{alloc_uninitialized_array_sync, transfer_to_device_immutable, transfer_to_host_sync, MetalComputeQueue};
-        use crate::forest::randomforest_kernels_grid::kernel;
+        use crate::compute_kernel_grid::ComputeKernelArgument::{Buffer as B, Int};
+        use crate::compute_kernel_metal::{alloc_uninitialized_array_sync, transfer_to_device_immutable, transfer_to_host_sync, MetalComputeQueue};
+        use crate::randomforest_kernels_grid::kernel;
         let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
         let device = &shared.device;
         let n = data.len();
-        let run = |queue: &MetalComputeQueue, name: &str, args: &[(&str, crate::forest::compute_kernel_grid::ComputeKernelArgument)], grid: u32| -> Result<(), String> {
+        let run = |queue: &MetalComputeQueue, name: &str, args: &[(&str, crate::compute_kernel_grid::ComputeKernelArgument)], grid: u32| -> Result<(), String> {
             let k = kernel(name)?;
             let mut ctx = queue.new_bind_context(k.function);
             k.enqueue(args, &[grid], &mut ctx)
@@ -368,8 +368,8 @@ impl ColumnInfo {
                 let keys: Vec<i64> = values.iter().map(|&v| if v.is_nan() { has_nulls = true; NULL_ORDER_KEY } else { order_key(v) }).collect();
                 let mut distinct: Vec<f64> = Vec::new();
                 if n > 0 {
-                    let sorted = crate::gpu::join::Keyed::sort(vec![crate::gpu::join::Column::upload(&keys)?])?;
-                    distinct = sorted.run_keys().into_iter().filter(|&k| k != NULL_ORDER_KEY).map(from_order_key).collect();
+                    let sorted = crate::distinct_keys(&keys)?;
+                    distinct = sorted.into_iter().filter(|&k| k != NULL_ORDER_KEY).map(from_order_key).collect();
                 }
                 descriptions.initialize_from(has_nulls, distinct, Vec::new(), max_num_buckets)?;
                 let split_keys: Vec<i64> = descriptions.numeric.splits.iter().map(|&s| order_key(s)).collect();
@@ -395,15 +395,15 @@ impl ColumnInfo {
                 descriptions.initialize_from(present[nc] != 0, Vec::new(), used, max_num_buckets)?;
                 let mut code_buckets = vec![0u32; nc + 1];
                 for c in (0..nc).filter(|&c| present[c] != 0) {
-                    code_buckets[c] = descriptions.get_bucket(&crate::forest::bucket::CellValue::String(names[c].clone()))?;
+                    code_buckets[c] = descriptions.get_bucket(&crate::bucket::CellValue::String(names[c].clone()))?;
                 }
                 let d_code_buckets = transfer_to_device_immutable(device, &code_buckets);
                 run(&queue, "categoricalBuckets", &[("numRows", Int(n as i64)), ("numCodes", Int(nc as i64)), ("codes", B(&d_codes)), ("codeBuckets", B(&d_code_buckets)), ("bucketsOut", B(&buckets))], n as u32)?;
             }
         }
         let num_buckets = descriptions.num_buckets() as u32;
-        let entry_bits = crate::forest::bucket::highest_bit(num_buckets, 0) as u32 + 1;
-        let num_words = crate::forest::bucket::WritableBucketList::words_required(n, num_buckets);
+        let entry_bits = crate::bucket::highest_bit(num_buckets, 0) as u32 + 1;
+        let num_words = crate::bucket::WritableBucketList::words_required(n, num_buckets);
         let words = alloc_uninitialized_array_sync::<u32>(device, num_words);
         run(&queue, "packBuckets", &[
             ("numRows", Int(n as i64)),
@@ -414,7 +414,7 @@ impl ColumnInfo {
         ], num_words as u32)?;
         queue.flush().await_()?;
         let words = transfer_to_host_sync::<u32>(&words, num_words);
-        let mut s = crate::forest::memory_region::MemorySerializer;
+        let mut s = crate::memory_region::MemorySerializer;
         let buckets = BucketList::from_packed(n, num_buckets, &words, &mut s);
         let info = if descriptions.numeric.active {
             FeatureType::Real
@@ -447,7 +447,7 @@ impl DatasetFeatureSpace {
 #[cfg(test)]
 mod device_tests {
     use super::*;
-    use crate::forest::bucket::CellValue;
+    use crate::bucket::CellValue;
 
     fn h(i: usize, k: u64) -> u64 {
         let mut x = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ k.wrapping_mul(0xD6E8_FEB8_6659_FD93);

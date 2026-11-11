@@ -1,7 +1,7 @@
 //! split.h, split_fwd.h and split.cc, in Rust.
 //!
 //! Jeremy Barnes, 5 March 2009. Copyright (c) 2009 Jeremy Barnes. This file is part of MLDB. Copyright 2015 mldb.ai
-//! inc. Apache-2.0 (see the LICENSE at `accel/src/forest/mldb/`).
+//! inc. Apache-2.0 (see the LICENSE at `forest/src/mldb/`).
 //!
 //! Split class to divide a feature set up based upon the value of one feature.
 //!

@@ -1,11 +1,11 @@
 //! rf_kernel_test.cc, in Rust.
 //!
 //! Jeremy Barnes, 29 December 2018. Copyright (c) 2007 Jeremy Barnes. This file is part of MLDB. Copyright 2015
-//! mldb.ai inc. Apache-2.0 (see the LICENSE at `accel/src/forest/mldb/`).
+//! mldb.ai inc. Apache-2.0 (see the LICENSE at `forest/src/mldb/`).
 //!
 //! Test of the partition index (the header's "tick counter" was stale upstream).
 
-use crate::forest::randomforest_types::PartitionIndex;
+use crate::randomforest_types::PartitionIndex;
 
 #[test]
 fn test_partition_index() {

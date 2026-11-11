@@ -1,7 +1,7 @@
 //! randomforest_kernels_grid.cc, in Rust.
 //!
 //! Jeremy Barnes, 8 September 2021. Copyright (c) 2021 Jeremy Barnes. This file is part of MLDB. Copyright 2016
-//! mldb.ai inc. Apache-2.0 (see the LICENSE at `accel/src/forest/mldb/`).
+//! mldb.ai inc. Apache-2.0 (see the LICENSE at `forest/src/mldb/`).
 //!
 //! Kernels for the random forest algorithm, as grid kernels: each registration names the kernel's dimensions,
 //! parameters, tuneables, constraints and grid expressions, and its compute function in the `randomforest_kernels`
@@ -9,8 +9,8 @@
 //! `registerGridComputeKernel` and the context's `getKernel`). `ComputeDevice::host()` on two registrations
 //! (unused by the grid runtime) is not kept.
 
-use crate::forest::compute_kernel_grid::{GridComputeKernelSpecialization, GridComputeKernelTemplate};
-use crate::forest::randomforest_types::{WIndexed, W};
+use crate::compute_kernel_grid::{GridComputeKernelSpecialization, GridComputeKernelTemplate};
+use crate::randomforest_types::{WIndexed, W};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
@@ -266,7 +266,7 @@ pub fn kernel(name: &str) -> Result<&'static GridComputeKernelSpecialization, St
         return Ok(k);
     }
     let t = template(name).ok_or_else(|| format!("no grid kernel {name}"))?;
-    let f = crate::forest::randomforest_kernels_metal::function(&t.function_name)?;
+    let f = crate::randomforest_kernels_metal::function(&t.function_name)?;
     let k: &'static GridComputeKernelSpecialization = Box::leak(Box::new(GridComputeKernelSpecialization::new(&t, f)?));
     ks.insert(name.to_string(), k);
     Ok(k)
@@ -290,12 +290,12 @@ mod tests {
         }
     }
 
-    use crate::forest::bucket::WritableBucketList;
-    use crate::forest::compute_kernel_grid::ComputeKernelArgument::{self, Buffer as B, Float, Int};
-    use crate::forest::compute_kernel_metal::MetalComputeQueue;
-    use crate::forest::memory_region::{MemorySerializer, Pod};
-    use crate::forest::randomforest_kernels as host;
-    use crate::forest::randomforest_types::*;
+    use crate::bucket::WritableBucketList;
+    use crate::compute_kernel_grid::ComputeKernelArgument::{self, Buffer as B, Float, Int};
+    use crate::compute_kernel_metal::MetalComputeQueue;
+    use crate::memory_region::{MemorySerializer, Pod};
+    use crate::randomforest_kernels as host;
+    use crate::randomforest_types::*;
 
     fn buf<T: Pod>(v: &[T]) -> metal::Buffer {
         let shared = crate::gpu::shared::get().unwrap();
@@ -395,7 +395,7 @@ mod tests {
         }
         let total = *numbers.last().unwrap();
         let active: Vec<u32> = (0..nf as u32).collect();
-        let ordinal = vec![1u32, crate::forest::randomforest_types::FEATURE_KIND_SUBSETS, 1];
+        let ordinal = vec![1u32, crate::randomforest_types::FEATURE_KIND_SUBSETS, 1];
         let max_parts = 8usize;
         let tti = [TreeTrainingInfo { num_rows: nr, max_depth: 4, num_active_features: nf as u16, num_features: nf as u16, max_num_active_partitions: max_parts as u16, num_active_buckets: total, max_num_finished_partitions: u32::MAX, split_criterion: if regression { SplitCriterion::Variance } else { SplitCriterion::Sqrt }.0, ..Default::default() }];
         let mut tdi = [TreeDepthInfo::default()];

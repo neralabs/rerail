@@ -13,17 +13,17 @@
 
 use std::collections::HashMap;
 
-use crate::forest::bucket::{BucketList, CellValue};
-use crate::forest::compute_kernel_grid::ComputeKernelArgument;
-use crate::forest::compute_kernel_metal::{alloc_uninitialized_array_sync, transfer_to_device_immutable, MetalComputeQueue};
-use crate::forest::dataset_feature_space::{ColumnData, DatasetFeatureSpace};
-use crate::forest::jml::committee::Committee;
-use crate::forest::jml::decision_tree::DecisionTree;
-use crate::forest::jml::split::Op;
-use crate::forest::jml::tree::{Ptr, Tree};
-use crate::forest::memory_region::Pod;
-use crate::forest::randomforest_kernels_grid::kernel;
-use crate::forest::randomforest_procedure::Forest;
+use crate::bucket::{BucketList, CellValue};
+use crate::compute_kernel_grid::ComputeKernelArgument;
+use crate::compute_kernel_metal::{alloc_uninitialized_array_sync, transfer_to_device_immutable, MetalComputeQueue};
+use crate::dataset_feature_space::{ColumnData, DatasetFeatureSpace};
+use crate::jml::committee::Committee;
+use crate::jml::decision_tree::DecisionTree;
+use crate::jml::split::Op;
+use crate::jml::tree::{Ptr, Tree};
+use crate::memory_region::Pod;
+use crate::randomforest_kernels_grid::kernel;
+use crate::randomforest_procedure::Forest;
 
 /// The rows to predict: per feature (in the feature space's column order), the rows' buckets.
 pub struct RowBuckets {
@@ -50,12 +50,12 @@ impl RowBuckets {
 }
 
 /// The bits of a column's buckets at prediction (`ColumnInfo::bucketize`: its buckets and the unseen one).
-pub fn prediction_bucket_bits(column: &crate::forest::dataset_feature_space::ColumnInfo) -> u32 {
-    crate::forest::bucket::highest_bit(crate::forest::dataset_feature_space::unseen_bucket(&column.bucket_descriptions) + 1, 0) as u32 + 1
+pub fn prediction_bucket_bits(column: &crate::dataset_feature_space::ColumnInfo) -> u32 {
+    crate::bucket::highest_bit(crate::dataset_feature_space::unseen_bucket(&column.bucket_descriptions) + 1, 0) as u32 + 1
 }
 
 /// The column index of a feature.
-fn column_index(fs: &DatasetFeatureSpace, feature: &crate::forest::jml::feature::Feature) -> Result<usize, String> {
+fn column_index(fs: &DatasetFeatureSpace, feature: &crate::jml::feature::Feature) -> Result<usize, String> {
     let hash = fs.get_hash(*feature)?;
     Ok(fs.column_info.get(&hash).ok_or("a split's feature is not in the feature space")?.index as usize)
 }
@@ -79,7 +79,7 @@ impl Forest {
 /// The committee on the host, built once (its trees and the features' columns), predicting batch after batch.
 pub struct HostForest {
     committee: Committee,
-    index: std::collections::HashMap<crate::forest::jml::feature::Feature, usize>,
+    index: std::collections::HashMap<crate::jml::feature::Feature, usize>,
 }
 
 impl HostForest {
@@ -120,7 +120,7 @@ unsafe impl Pod for PredictNode {}
 
 /// A forest flattened for the device: every tree's nodes in one array, each tree's root, the trees' weights and
 /// the leaves' distributions (two per leaf).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct FlatForest {
     pub nodes: Vec<PredictNode>,
     pub roots: Vec<i32>,
@@ -136,6 +136,35 @@ pub struct FlatForest {
 }
 
 impl FlatForest {
+    /// The forest's prediction for one row on the host, from the row's bucket in each feature (the device's walk,
+    /// `predictForestImpl`, tree after tree: the same leaves; the sums may differ in the last bit, in another order).
+    pub fn predict_row(&self, buckets: &[u32]) -> Result<[f32; 2], String> {
+        let (mut p0, mut p1) = (0f32, 0f32);
+        for (&root, &w) in self.roots.iter().zip(&self.weights) {
+            let mut at = root;
+            for _ in 0..self.max_depth + 1 {
+                if at < 0 {
+                    break;
+                }
+                let n = &self.nodes[at as usize];
+                let b = buckets[n.feature as usize];
+                let is_true = match n.ordinal {
+                    1 => b < n.split_bucket,
+                    0 => b == n.split_bucket,
+                    _ => b < 512 && (self.subsets[n.split_bucket as usize * 16 + (b >> 5) as usize] >> (b & 31)) & 1 != 0,
+                };
+                at = if is_true { n.child_true } else { n.child_false };
+            }
+            if at >= 0 {
+                return Err("a walk did not reach a leaf".into());
+            }
+            let leaf = (-(at + 1)) as usize;
+            p0 += w * self.leaf_preds[2 * leaf];
+            p1 += w * self.leaf_preds[2 * leaf + 1];
+        }
+        Ok([p0, p1])
+    }
+
     pub fn new(forest: &Forest) -> Result<Self, String> {
         let nf = forest.fs.column_info.len();
         let feature_bits = (0..nf).map(|i| forest.fs.column(i).map_or(0, prediction_bucket_bits)).collect();
@@ -210,7 +239,7 @@ impl FlatForest {
 /// The threads a row takes in `predictForestKernel`: enough that a batch keeps the device's threads busy (about
 /// 64k of them), at most one a tree and at most the group's threads; a power of 2.
 pub fn lanes_per_row(num_rows: usize, num_trees: usize) -> u32 {
-    let group = crate::forest::randomforest_kernels_grid::PREDICT_GROUP_THREADS as usize;
+    let group = crate::randomforest_kernels_grid::PREDICT_GROUP_THREADS as usize;
     let want = (65536 / num_rows.max(1)).clamp(1, group).min(num_trees.max(1).next_power_of_two());
     // The largest power of 2 not above `want`.
     1 << (usize::BITS - 1 - want.leading_zeros())
@@ -244,10 +273,10 @@ struct Scratch {
     data: Option<(metal::Buffer, usize)>,
     out: Option<(metal::Buffer, usize)>,
     queue: Option<MetalComputeQueue>,
-    plans: HashMap<(usize, u32, usize), crate::forest::compute_kernel_grid::GridLaunchPlan>,
+    plans: HashMap<(usize, u32, usize), crate::compute_kernel_grid::GridLaunchPlan>,
     /// `predict_values`: rowBuckets' plans by (rows, stride), and the columns' descriptions, numbers, codes and
     /// code tables.
-    row_plans: HashMap<(usize, usize), crate::forest::compute_kernel_grid::GridLaunchPlan>,
+    row_plans: HashMap<(usize, usize), crate::compute_kernel_grid::GridLaunchPlan>,
     columns: Option<(metal::Buffer, usize)>,
     numbers: Option<(metal::Buffer, usize)>,
     codes: Option<(metal::Buffer, usize)>,
@@ -257,28 +286,32 @@ struct Scratch {
 /// The words describing a column to `rowBuckets` (`ROW_BUCKET_WORDS` in the kernels).
 const ROW_BUCKET_WORDS: usize = 8;
 
-/// A feature space's columns as the device bucketizes prediction rows (`DeviceForest::predict_values`): built once
-/// per feature space, the bucket rules of `ColumnInfo::bucket_of` (numbers by the numeric splits, strings by name,
-/// a null in bucket 0 when the column had nulls, anything else in the unseen bucket).
-pub struct DeviceBucketizer {
-    columns: Vec<BucketizerColumn>,
-    split_keys: metal::Buffer,
+/// A feature space's bucket rules for prediction rows (`ColumnInfo::bucket_of`): numbers by the numeric splits,
+/// strings by name, a null in bucket 0 when the column had nulls, anything else in the unseen bucket. Plain data,
+/// built once per feature space: the host bucketizes by them (`bucket_of_number`, `bucket_of_name`) and the device
+/// takes them (`DeviceBucketizer`), and they give the same buckets.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BucketRules {
+    pub columns: Vec<BucketizerColumn>,
+    /// Every numeric column's split keys (`order_key`), column after column.
+    pub split_keys: Vec<i64>,
 }
 
-struct BucketizerColumn {
-    bits: u32,
-    split_start: u32,
-    num_splits: u32,
-    numeric_offset: u32,
-    null_bucket: u32,
-    unseen: u32,
-    strings: HashMap<String, u32>,
+/// One column's rules (`BucketRules`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BucketizerColumn {
+    pub bits: u32,
+    pub split_start: u32,
+    pub num_splits: u32,
+    pub numeric_offset: u32,
+    pub null_bucket: u32,
+    pub unseen: u32,
+    pub strings: HashMap<String, u32>,
 }
 
-impl DeviceBucketizer {
+impl BucketRules {
     pub fn new(fs: &DatasetFeatureSpace) -> Result<Self, String> {
-        use crate::forest::dataset_feature_space::{order_key, unseen_bucket};
-        let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
+        use crate::dataset_feature_space::{order_key, unseen_bucket};
         let mut keys: Vec<i64> = Vec::new();
         let mut columns = Vec::new();
         for i in 0..fs.column_info.len() {
@@ -299,8 +332,46 @@ impl DeviceBucketizer {
                 keys.extend(d.numeric.splits.iter().map(|&s| order_key(s)));
             }
         }
+        Ok(BucketRules { columns, split_keys: keys })
+    }
+
+    /// Column `c`'s bucket for a number (a NaN is a null), as `rowBucketOf` gives it.
+    pub fn bucket_of_number(&self, c: usize, v: f64) -> u32 {
+        let col = &self.columns[c];
+        if v.is_nan() {
+            return col.null_bucket;
+        }
+        let k = crate::dataset_feature_space::order_key(v);
+        let splits = &self.split_keys[col.split_start as usize..(col.split_start + col.num_splits) as usize];
+        col.numeric_offset + splits.partition_point(|&s| s < k) as u32
+    }
+
+    /// Column `c`'s bucket for a string (`None`: a null).
+    pub fn bucket_of_name(&self, c: usize, name: Option<&str>) -> u32 {
+        let col = &self.columns[c];
+        match name {
+            None => col.null_bucket,
+            Some(n) => col.strings.get(n).copied().unwrap_or(col.unseen),
+        }
+    }
+}
+
+/// The bucket rules on the device (`DeviceForest::predict_values`).
+pub struct DeviceBucketizer {
+    columns: Vec<BucketizerColumn>,
+    split_keys: metal::Buffer,
+}
+
+impl DeviceBucketizer {
+    pub fn new(fs: &DatasetFeatureSpace) -> Result<Self, String> {
+        Self::from_rules(&BucketRules::new(fs)?)
+    }
+
+    pub fn from_rules(rules: &BucketRules) -> Result<Self, String> {
+        let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
+        let mut keys = rules.split_keys.clone();
         keys.push(0);
-        Ok(DeviceBucketizer { columns, split_keys: transfer_to_device_immutable(&shared.device, &keys) })
+        Ok(DeviceBucketizer { columns: rules.columns.clone(), split_keys: transfer_to_device_immutable(&shared.device, &keys) })
     }
 }
 
@@ -427,7 +498,7 @@ impl DeviceForest {
         let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
         let device = &shared.device;
         let mut scratch = self.scratch.lock().map_err(|_| "a prediction panicked")?;
-        let words: Vec<usize> = b.columns.iter().map(|c| crate::forest::bucket::WritableBucketList::words_required(num_rows, (1u32 << c.bits) - 1)).collect();
+        let words: Vec<usize> = b.columns.iter().map(|c| crate::bucket::WritableBucketList::words_required(num_rows, (1u32 << c.bits) - 1)).collect();
         let stride = words.iter().copied().max().unwrap_or(0) + 1;
         let (mut num_numbers, mut num_codes, mut num_table) = (0usize, 0usize, 0usize);
         for c in columns {
@@ -557,8 +628,8 @@ impl DeviceForest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::forest::dataset_feature_space::FeatureType;
-    use crate::forest::randomforest_procedure::{train_forest, train_regression_forest, training_data, RandomForestProcedureConfig};
+    use crate::dataset_feature_space::FeatureType;
+    use crate::randomforest_procedure::{train_forest, train_regression_forest, training_data, RandomForestProcedureConfig};
     use std::sync::Arc;
 
     /// Columns of values: real (with more distinct values than 255 buckets), real with nulls, categorical with
@@ -759,23 +830,23 @@ mod tests {
     }
 
     fn timed<T>(f: impl FnOnce() -> T) -> (T, f64, f64) {
-        let (w, c) = (std::time::Instant::now(), crate::exec::process_cpu());
+        let (w, c) = (std::time::Instant::now(), crate::process_cpu());
         let r = f();
-        (r, w.elapsed().as_secs_f64(), crate::exec::process_cpu() - c)
+        (r, w.elapsed().as_secs_f64(), crate::process_cpu() - c)
     }
 
     /// `timed`, with the GPU seconds of the forest kernels' command buffers the run awaited.
     fn timed_gpu<T>(f: impl FnOnce() -> T) -> (T, f64, f64, f64) {
-        let g = crate::forest::compute_kernel_metal::gpu_seconds_awaited();
+        let g = crate::compute_kernel_metal::gpu_seconds_awaited();
         let (r, w, c) = timed(f);
-        (r, w, c, crate::forest::compute_kernel_metal::gpu_seconds_awaited() - g)
+        (r, w, c, crate::compute_kernel_metal::gpu_seconds_awaited() - g)
     }
 
     fn train_bench(what: &str, cols: &[Vec<CellValue>], labels: &[f32], config: &RandomForestProcedureConfig) -> (Arc<DatasetFeatureSpace>, Forest) {
         let names = ["lane", "forms", "launches", "units", "cold", "load", "threads"];
         let named: Vec<(String, Vec<CellValue>)> = names.iter().zip(cols).map(|(n, c)| (n.to_string(), c.clone())).collect();
         let (fs, w0, c0) = timed(|| Arc::new(DatasetFeatureSpace::from_columns(&named, FeatureType::Boolean).unwrap()));
-        let typed: Vec<(String, crate::forest::dataset_feature_space::ColumnData)> = named.iter().map(|(n, v)| (n.clone(), crate::forest::dataset_feature_space::ColumnData::from_values(n, v).unwrap())).collect();
+        let typed: Vec<(String, crate::dataset_feature_space::ColumnData)> = named.iter().map(|(n, v)| (n.clone(), crate::dataset_feature_space::ColumnData::from_values(n, v).unwrap())).collect();
         let _ = DatasetFeatureSpace::from_columns_device(&typed[..1], FeatureType::Boolean).unwrap();
         let (fsd, wd, cd) = timed(|| DatasetFeatureSpace::from_columns_device(&typed, FeatureType::Boolean).unwrap());
         for i in 0..names.len() {
@@ -1279,9 +1350,9 @@ mod tests {
         let names = ["lock + write rows", "queue (command buffer)", "encoder", "grid enqueue", "end encoder", "commit", "wait", "read out"];
         let shared = crate::gpu::shared::get().unwrap();
         for _ in 0..n {
-            let mut mark = (std::time::Instant::now(), crate::exec::process_cpu(), thread_cpu());
+            let mut mark = (std::time::Instant::now(), crate::process_cpu(), thread_cpu());
             let mut phase = |i: usize, t: &mut [(f64, f64); 8]| {
-                let now = (std::time::Instant::now(), crate::exec::process_cpu(), thread_cpu());
+                let now = (std::time::Instant::now(), crate::process_cpu(), thread_cpu());
                 t[i].0 += (now.0 - mark.0).as_secs_f64();
                 t[i].1 += now.1 - mark.1;
                 tt[i] += now.2 - mark.2;
@@ -1329,10 +1400,10 @@ mod tests {
             eprintln!("PHASE {wait} {name:24} {:7.1} us wall {:7.1} us process CPU {:7.1} us this thread", w / n as f64 * 1e6, c / n as f64 * 1e6, tt[i] / n as f64 * 1e6);
         }
         // The whole call as `predict` makes it (a kept queue, a cached plan).
-        let (w0, c0, t0) = (std::time::Instant::now(), crate::exec::process_cpu(), thread_cpu());
+        let (w0, c0, t0) = (std::time::Instant::now(), crate::process_cpu(), thread_cpu());
         for _ in 0..n {
             f.predict(&rows).unwrap();
         }
-        eprintln!("PHASE predict() whole call           {:7.1} us wall {:7.1} us process CPU {:7.1} us this thread", w0.elapsed().as_secs_f64() / n as f64 * 1e6, (crate::exec::process_cpu() - c0) / n as f64 * 1e6, (thread_cpu() - t0) / n as f64 * 1e6);
+        eprintln!("PHASE predict() whole call           {:7.1} us wall {:7.1} us process CPU {:7.1} us this thread", w0.elapsed().as_secs_f64() / n as f64 * 1e6, (crate::process_cpu() - c0) / n as f64 * 1e6, (thread_cpu() - t0) / n as f64 * 1e6);
     }
 }

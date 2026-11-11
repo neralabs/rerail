@@ -1,7 +1,7 @@
 //! tree.h and tree.cc, in Rust.
 //!
 //! Jeremy Barnes, 24 April 2006. Copyright (c) 2006 Jeremy Barnes. This file is part of MLDB. Copyright 2015 mldb.ai
-//! inc. Apache-2.0 (see the LICENSE at `accel/src/forest/mldb/`).
+//! inc. Apache-2.0 (see the LICENSE at `forest/src/mldb/`).
 //!
 //! Class to hold and manage a tree. The tree owns the memory of its nodes and leaves (boost object pools upstream,
 //! two vectors here), which keeps everything close together in memory. A `Ptr` is an index into them.

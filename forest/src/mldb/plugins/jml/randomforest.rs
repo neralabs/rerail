@@ -1,7 +1,7 @@
 //! randomforest.h and randomforest.cc, in Rust.
 //!
 //! Mathieu Marquis Bolduc, 11 March 2016; Jeremy Barnes. Copyright (c) 2016 mldb.ai inc. This file is part of
-//! MLDB. Apache-2.0 (see the LICENSE at `accel/src/forest/mldb/`).
+//! MLDB. Apache-2.0 (see the LICENSE at `forest/src/mldb/`).
 //!
 //! Optimized random forest algorithm for dense data and binary classification.
 //!
@@ -24,16 +24,16 @@
 //! upstream. The recursive trainer's sides are trained one after the other, as upstream (`singleThreadOnly`); the
 //! trees of `trainMultipleSamplings` in parallel.
 
-use crate::forest::compute_kernel_grid::ComputeKernelArgument::{self, Buffer as B, Float, Int};
-use crate::forest::compute_kernel_metal::{alloc_uninitialized_array_sync, transfer_to_device_immutable, transfer_to_host_sync, MetalComputeEvent, MetalComputeQueue};
-use crate::forest::dataset_feature_space::DatasetFeatureSpace;
-use crate::forest::memory_region::FrozenMemoryRegionT;
-use crate::forest::randomforest_kernels_grid::kernel;
-use crate::forest::bucket::{BucketList, WritableBucketList};
-use crate::forest::memory_region::{MappedSerializer, MemorySerializer};
-use crate::forest::randomforest_recursive::{extract_tree, side_of, split_and_recurse_partitioned, test_all};
-use crate::forest::randomforest_types::*;
-use crate::forest::tree::{Ptr, Tree};
+use crate::compute_kernel_grid::ComputeKernelArgument::{self, Buffer as B, Float, Int};
+use crate::compute_kernel_metal::{alloc_uninitialized_array_sync, transfer_to_device_immutable, transfer_to_host_sync, MetalComputeEvent, MetalComputeQueue};
+use crate::dataset_feature_space::DatasetFeatureSpace;
+use crate::memory_region::FrozenMemoryRegionT;
+use crate::randomforest_kernels_grid::kernel;
+use crate::bucket::{BucketList, WritableBucketList};
+use crate::memory_region::{MappedSerializer, MemorySerializer};
+use crate::randomforest_recursive::{extract_tree, side_of, split_and_recurse_partitioned, test_all};
+use crate::randomforest_types::*;
+use crate::tree::{Ptr, Tree};
 use metal::Buffer;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -120,7 +120,7 @@ pub enum TrainingScheme {
     BothAndCompare = 3,
 }
 
-fn bytes_of<T: crate::forest::memory_region::Pod>(v: &[T]) -> &[u8] {
+fn bytes_of<T: crate::memory_region::Pod>(v: &[T]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(v.as_ptr().cast::<u8>(), std::mem::size_of_val(v)) }
 }
 
@@ -732,7 +732,7 @@ pub fn tree_from_splits(tree_depth_info: &TreeDepthInfo, all_partition_splits: &
 #[allow(clippy::too_many_arguments)]
 pub fn train_partitioned_end_to_end(feature_vector_sampling: i32, _feature_sampling: i32, debug_name: &str, depth: i32, max_depth: i32, tree: &mut Tree, rows: &Rows, features: &[Feature], bucket_memory: FrozenMemoryRegionT<u32>, fs: &DatasetFeatureSpace) -> Result<Ptr, String> {
     if depth != 0 {
-        return crate::forest::randomforest_recursive::train_partitioned_end_to_end_cpu(depth, max_depth, tree, rows, features, fs);
+        return crate::randomforest_recursive::train_partitioned_end_to_end_cpu(depth, max_depth, tree, rows, features, fs);
     }
     let features_active: Vec<i32> = features.iter().enumerate().filter(|(_, f)| f.active).map(|(i, _)| i as i32).collect();
     let trainer = FeatureSamplingTrainerKernel::init(debug_name, max_depth, rows, features, bucket_memory, fs)?;
@@ -1054,9 +1054,9 @@ impl PartitionData {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::forest::dataset_feature_space::{ColumnInfo, FeatureType};
-    use crate::forest::memory_region::FrozenMemoryRegion;
-    use crate::forest::randomforest_kernels as host;
+    use crate::dataset_feature_space::{ColumnInfo, FeatureType};
+    use crate::memory_region::FrozenMemoryRegion;
+    use crate::randomforest_kernels as host;
 
     /// Rows with int-multiple weights (as the device decodes them) and the features given (bucket count, ordinal,
     /// the bucket of each row), their buckets in one blob; example numbers are row numbers.
@@ -1088,7 +1088,7 @@ pub(crate) mod tests {
             let (nb, ordinal) = specs[f];
             let raw: FrozenMemoryRegion = bucket_memory.raw().range(start * 4, (start + len) * 4);
             let buckets = BucketList { storage: FrozenMemoryRegionT::new(raw), entry_bits, num_buckets: nb as i32, num_entries: nr as usize };
-            let mut bucket_descriptions = crate::forest::bucket::BucketDescriptions::default();
+            let mut bucket_descriptions = crate::bucket::BucketDescriptions::default();
             bucket_descriptions.initialize_from(false, (0..nb).map(|v| v as f64).collect(), vec![], nb as i32).unwrap();
             let info = fs.add_column(ColumnInfo { column_name: format!("f{f}"), info: if ordinal { FeatureType::Real } else { FeatureType::Categorical }, index: -1, distinct_values: nb as i32, buckets: buckets.clone(), bucket_descriptions, ..Default::default() });
             features.push(Feature { active: true, ordinal, subsets: false, info: Some(info), buckets });
@@ -1250,7 +1250,7 @@ pub(crate) mod tests {
                 d.train_partitioned(0, 0, how, 0, max_depth, &mut tree).unwrap_or_else(|e| panic!("{e}"));
             }
             "cpu" => {
-                tree.root = crate::forest::randomforest_recursive::train_partitioned_end_to_end_cpu(0, max_depth, &mut tree, &d.rows, &d.features, &d.fs).unwrap_or_else(|e| panic!("{e}"));
+                tree.root = crate::randomforest_recursive::train_partitioned_end_to_end_cpu(0, max_depth, &mut tree, &d.rows, &d.features, &d.fs).unwrap_or_else(|e| panic!("{e}"));
             }
             _ => {
                 tree.root = d.train(0, 0, how, 0, max_depth, &mut tree, TrainingScheme::Recursive).unwrap_or_else(|e| panic!("{e}"));

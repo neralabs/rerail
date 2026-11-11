@@ -1,7 +1,7 @@
 //! decision_tree.h and decision_tree.cc's prediction, in Rust.
 //!
 //! Jeremy Barnes, 22 March 2004. Copyright (c) 2004 Jeremy Barnes. This file is part of MLDB. Copyright 2015 mldb.ai
-//! inc. Apache-2.0 (see the LICENSE at `accel/src/forest/mldb/`).
+//! inc. Apache-2.0 (see the LICENSE at `forest/src/mldb/`).
 //!
 //! Decision tree classifier: a tree of arbitrary depth (CART, without pruning). Prediction walks the tree from the
 //! root; at a node, the split says how much of the example goes each way (true, false, missing), and each leaf

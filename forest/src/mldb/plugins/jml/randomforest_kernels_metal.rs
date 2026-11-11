@@ -1,7 +1,7 @@
 //! randomforest_kernels_metal.cc and randomforest_kernels_metal.h, in Rust.
 //!
 //! Jeremy Barnes, 8 September 2021. Copyright (c) 2021 Jeremy Barnes. This file is part of MLDB. Copyright 2016
-//! mldb.ai inc. Apache-2.0 (see the LICENSE at `accel/src/forest/mldb/`).
+//! mldb.ai inc. Apache-2.0 (see the LICENSE at `forest/src/mldb/`).
 //!
 //! Kernels for the random forest algorithm, on Metal: the `randomforest_kernels` library. Upstream registered a
 //! generator that loaded a prebuilt `randomforest_metal.metallib` (or compiled the source file); here the build
@@ -9,7 +9,7 @@
 //! source on the shared device (`gpu::shared`) the first time it is asked for, once per process. Its functions,
 //! with their pipeline states and reflected arguments, are made once each.
 
-use crate::forest::compute_kernel_metal::{MetalComputeFunction, MetalComputeFunctionLibrary};
+use crate::compute_kernel_metal::{MetalComputeFunction, MetalComputeFunctionLibrary};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
@@ -65,7 +65,7 @@ pub fn function(name: &str) -> Result<&'static MetalComputeFunction, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::forest::compute_kernel_metal::{GridComputeFunctionArgumentDisposition as D, KernelBaseType};
+    use crate::compute_kernel_metal::{GridComputeFunctionArgumentDisposition as D, KernelBaseType};
 
     /// Every kernel of the trainer compiles from the one C source, through the Metal shim, on this device; their
     /// arguments reflect as the grid registrations bind them (buffers by name, the `args` structures by member,

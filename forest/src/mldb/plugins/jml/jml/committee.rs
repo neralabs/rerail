@@ -1,7 +1,7 @@
 //! committee.h and committee.cc's prediction, in Rust.
 //!
 //! Jeremy Barnes, 15 March 2006. Copyright (c) 2006 Jeremy Barnes. This file is part of MLDB. Copyright 2015 mldb.ai
-//! inc. Apache-2.0 (see the LICENSE at `accel/src/forest/mldb/`).
+//! inc. Apache-2.0 (see the LICENSE at `forest/src/mldb/`).
 //!
 //! A committee of classifiers: the prediction is the bias plus each classifier's prediction times its weight
 //! (classifiers of weight zero skipped). The random forest's committee is of decision trees, so the members here
