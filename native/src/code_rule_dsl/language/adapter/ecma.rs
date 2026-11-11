@@ -1,6 +1,7 @@
 //! Moved from `adapter.rs` by the crate split (tools/cratify/moves.tsv).
 
 use super::*;
+use crate::code_rule_dsl::suppress::{biome::BiomeSuppressions, eslint::EslintDirectives, oxlint::OxlintDirectives};
 
 /// TypeScript, TSX and JavaScript: ESLint's semantics.
 pub(crate) struct Ecma;

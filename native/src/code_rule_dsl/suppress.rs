@@ -3,18 +3,7 @@
 //! `rerail-ignore` comments (`rerail`) are read for every code rule.
 
 use ast_grep_core::{Doc, Node};
-pub(crate) use biome::BiomeSuppressions;
-pub(crate) use clippy::ClippyIndex;
-pub(crate) use eslint::EslintDirectives;
-pub(crate) use noqa::{NoqaIndex, PARENT_KINDS, parent_statement};
-pub(crate) use nosec::NosecIndex;
-pub(crate) use oxlint::OxlintDirectives;
-pub(crate) use phpcs::PhpcsIndex;
-pub(crate) use phpstan::PhpstanIndex;
-pub(crate) use psalm::PsalmIndex;
 pub(crate) use rerail::RerailIgnores;
-pub(crate) use sqlfluff::SqlfluffIndex;
-pub(crate) use vue::{VueDirectives, script_directives as vue_script_directives};
 // The kinds and what a violation asks of them, below the linters (`kinds`, the lang crate's).
 pub(crate) mod kinds;
 pub(crate) use kinds::*;
@@ -58,7 +47,7 @@ mod rerail;
 #[cfg(test)]
 mod ruff;
 pub(crate) mod sqlfluff;
-mod vue;
+pub(crate) mod vue;
 
 #[cfg(test)]
 mod tests {

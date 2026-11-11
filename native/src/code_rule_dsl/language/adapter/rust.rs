@@ -30,7 +30,8 @@ use crate::code_rule_dsl::scope::{
     Binding, BuildError, Builder, Directives, Form, Lookup, Reading, Reference, ScopeKind,
     ScopeTable, TYPE,
 };
-use crate::code_rule_dsl::suppress::{ClippyIndex, Suppress, root};
+use crate::code_rule_dsl::suppress::clippy::ClippyIndex;
+use crate::code_rule_dsl::suppress::{Suppress, root};
 use crate::code_rule_dsl::value::rust::{FloatTy, IntTy, RustValue, evaluate, evaluate_following};
 use crate::code_rule_dsl::value::structure::{Equality, Tok};
 use crate::code_rule_dsl::value::{BigInt, Context, NodeRef, Value};

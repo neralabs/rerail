@@ -9,8 +9,6 @@ mod string_case;
 use super::exported::exported_span;
 use super::value::Reading;
 use crate::code_rule_dsl::origin::InFile;
-use crate::code_rule_dsl::value::Value;
-use crate::code_rule_dsl::value::ecma::{number, to_precision};
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
 use ast_grep_core::source::Content;
 use ast_grep_core::{Doc, Node};
@@ -226,17 +224,11 @@ impl Trans {
                         .map(|bytes| <D::Source as Content>::encode_bytes(bytes).into_owned())
                         .and_then(|text| text.trim().parse::<u32>().ok()),
                 };
-                let precision = |number: f64, digits: u32| {
-                    if !number.is_finite() {
-                        number_to_string(number)
-                    } else {
-                        to_precision(number, digits)
-                    }
-                };
                 Some(
-                    ecma_number(&text)
-                        .zip(digits.filter(|digits| (1..=100).contains(digits)))
-                        .map(|(number, digits)| precision(number, digits))
+                    digits
+                        .filter(|digits| (1..=100).contains(digits))
+                        .zip(NUMBER_TEXT.get())
+                        .and_then(|(digits, numbers)| numbers.to_precision(&text, digits))
                         .unwrap_or_default(),
                 )
             }
@@ -325,26 +317,6 @@ fn variable_name(variable: &MetaVariable) -> &str {
         MetaVariable::Capture(name, _) | MetaVariable::MultiCapture(name) => name,
         MetaVariable::Dropped(_) | MetaVariable::Multiple => "",
     }
-}
-
-/// The number an ECMAScript numeric literal's text (`value::ecma::number`) or a value's `String(v)`
-/// (signed, `Infinity`, `NaN`) denotes; `None` for any other text, a BigInt included, whose
-/// `toPrecision` throws.
-fn ecma_number(text: &str) -> Option<f64> {
-    let text = text.trim();
-    let (negative, unsigned) = match text.strip_prefix('-') {
-        Some(rest) => (true, rest),
-        None => (false, text.strip_prefix('+').unwrap_or(text)),
-    };
-    let magnitude = match unsigned {
-        "Infinity" => f64::INFINITY,
-        "NaN" => f64::NAN,
-        _ => match number(unsigned) {
-            Value::Float(magnitude) => magnitude,
-            _ => return None,
-        },
-    };
-    Some(if negative { -magnitude } else { magnitude })
 }
 
 fn replace_bounded(
@@ -1511,4 +1483,18 @@ pub(crate) fn number_to_string(value: f64) -> String {
             format!("{first}.{rest}e{sign}{}", (n - 1).abs())
         }
     }
+}
+
+/// The numbers `toPrecision` reads and writes (ECMAScript's: `Number.prototype.toPrecision` of the number a numeric
+/// literal's text or a value's `String(v)` denotes), registered at load.
+pub(crate) trait NumberText: Send + Sync {
+    /// `text`'s number to `digits` significant digits (1 to 100); `None` where `text` denotes no number.
+    fn to_precision(&self, text: &str, digits: u32) -> Option<String>;
+}
+
+static NUMBER_TEXT: std::sync::OnceLock<&'static dyn NumberText> = std::sync::OnceLock::new();
+
+/// Registers the numbers `toPrecision` reads (once, at load).
+pub(crate) fn install_number_text(numbers: &'static dyn NumberText) {
+    let _ = NUMBER_TEXT.set(numbers);
 }

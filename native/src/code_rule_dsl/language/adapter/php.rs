@@ -1,6 +1,7 @@
 //! Moved from `adapter.rs` by the crate split (tools/cratify/moves.tsv).
 
 use super::*;
+use crate::code_rule_dsl::suppress::{phpcs::PhpcsIndex, phpstan::PhpstanIndex, psalm::PsalmIndex};
 
 /// PHP's family.
 pub(crate) struct Php;

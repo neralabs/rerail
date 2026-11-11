@@ -1,6 +1,7 @@
 //! Moved from `adapter.rs` by the crate split (tools/cratify/moves.tsv).
 
 use super::*;
+use crate::code_rule_dsl::suppress::{noqa::{NoqaIndex, parent_statement}, nosec::NosecIndex};
 
 /// Python's family: Ruff's semantics.
 pub(crate) struct Python;

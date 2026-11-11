@@ -754,3 +754,34 @@ fn object<D: Doc>(node: &Node<'_, D>) -> Value {
 
 #[cfg(test)]
 mod tests;
+
+/// ECMAScript's numbers as `toPrecision` reads them (`matcher::transform::NumberText`).
+pub(crate) struct Numbers;
+
+impl crate::code_rule_dsl::matcher::NumberText for Numbers {
+    fn to_precision(&self, text: &str, digits: u32) -> Option<String> {
+        let number = ecma_number(text)?;
+        Some(if number.is_finite() { to_precision(number, digits) } else { crate::code_rule_dsl::matcher::number_to_string(number) })
+    }
+}
+
+/// The number an ECMAScript numeric literal's text (`value::ecma::number`) or a value's `String(v)`
+/// (signed, `Infinity`, `NaN`) denotes; `None` for any other text, a BigInt included, whose
+/// `toPrecision` throws.
+fn ecma_number(text: &str) -> Option<f64> {
+    let text = text.trim();
+    let (negative, unsigned) = match text.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, text.strip_prefix('+').unwrap_or(text)),
+    };
+    let magnitude = match unsigned {
+        "Infinity" => f64::INFINITY,
+        "NaN" => f64::NAN,
+        _ => match number(unsigned) {
+            Value::Float(magnitude) => magnitude,
+            _ => return None,
+        },
+    };
+    Some(if negative { -magnitude } else { magnitude })
+}
+

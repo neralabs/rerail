@@ -27,7 +27,8 @@ use crate::code_rule_dsl::scope::{
     Binding, BuildError, Builder, Directives, Form, Lookup, Reading, Reference, ScopeKind,
     ScopeTable, sql,
 };
-use crate::code_rule_dsl::suppress::{SqlfluffIndex, Suppress, root};
+use crate::code_rule_dsl::suppress::sqlfluff::SqlfluffIndex;
+use crate::code_rule_dsl::suppress::{Suppress, root};
 use crate::code_rule_dsl::value::structure::{Equality, Tok};
 use crate::code_rule_dsl::value::{self, BigInt, Context, NodeRef, Value};
 use ast_grep_core::{Doc, Node};

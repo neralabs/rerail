@@ -121,7 +121,7 @@ compile::import_target	rerail-lang-ecma
 module_graph	rerail-lang-ecma
 npm_ignore	rerail-lang-ecma
 package_manifest	rerail-lang-ecma
-semver	rerail-lang-ecma
+semver	rerail-w
 scope::ecma	rerail-lang-ecma
 scope::usage::ecma	rerail-lang-ecma
 value::ecma	rerail-lang-ecma

@@ -54,10 +54,7 @@ use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::{file_index};
 use crate::code_rule_dsl::model::{ViolationSpec, python_module_path_on_disk};
-use crate::code_rule_dsl::suppress::{
-    BiomeSuppressions, EslintDirectives, NoqaIndex, NosecIndex, OxlintDirectives, PhpcsIndex,
-    PhpstanIndex, PsalmIndex, Suppress, parent_statement, root,
-};
+use crate::code_rule_dsl::suppress::{Suppress, root};
 use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_core::{AstGrep, Doc, Node};
 use ast_grep_language::LanguageExt;

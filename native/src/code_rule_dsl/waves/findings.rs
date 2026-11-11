@@ -54,7 +54,8 @@ use crate::code_rule_dsl::model::{
     python_module_in,
 };
 use crate::code_rule_dsl::soundness::{SyntaxErrors, SyntaxReading};
-use crate::code_rule_dsl::suppress::{NoqaIndex, NosecIndex, PARENT_KINDS, RerailIgnores};
+use crate::code_rule_dsl::suppress::RerailIgnores;
+use crate::code_rule_dsl::suppress::{noqa::{NoqaIndex, PARENT_KINDS}, nosec::NosecIndex};
 use crate::content_store::{ContentStore, DerivationInput, StoreError, StoreResult};
 use ast_grep_core::{AstGrep, Doc as _};
 use regex::Regex;

@@ -109,6 +109,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 pub(super) use transform::{Digits, Separator, Source, StringCase, Trans, Transform};
 
+pub(crate) use transform::{NumberText, install_number_text, number_to_string};
 #[cfg(test)]
 pub(crate) use transform::{
     line_table_constructions, note_line_table_construction, reset_line_table_constructions,
