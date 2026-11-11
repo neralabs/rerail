@@ -71,6 +71,7 @@ type Result<T> = std::result::Result<T, Error>;
 pub(in crate::code_rule_dsl) mod corpus;
 pub(in crate::code_rule_dsl) mod placement;
 mod choices;
+mod issue;
 mod demand;
 pub(in crate::code_rule_dsl) mod keeps;
 mod native_demand;
@@ -4085,6 +4086,11 @@ impl<'a> Run<'a, '_> {
     /// reads no SQL (every relation its rules read is the engine's, its own, or an input bound in place), answers no
     /// request, and runs no native operator. `None`: it runs here.
     fn strand_reads(&self, scc: &BTreeSet<String>, rules: &[&Rule]) -> Option<BTreeSet<String>> {
+        self.strand_reads_with(scc, rules, &BTreeSet::new())
+    }
+
+    /// `strand_reads`, with the relations `held` (a component's earlier members', decision 0113 §2) taken as held.
+    fn strand_reads_with(&self, scc: &BTreeSet<String>, rules: &[&Rule], held_too: &BTreeSet<String>) -> Option<BTreeSet<String>> {
         let prog = self.prog;
         if std::env::var_os("RERAIL_RELATIONAL_LAB").is_some() || !self.model.inputs.atoms.is_some() {
             return None;
@@ -4103,7 +4109,7 @@ impl<'a> Run<'a, '_> {
                 if scc.contains(rel) {
                     continue;
                 }
-                let held = self.native_rels.contains(rel);
+                let held = self.native_rels.contains(rel) || held_too.contains(rel);
                 let bound = self.inputs.contains(rel) && crate::code_rule_dsl::facts::vtab::bound_source(self.db, rel).is_some();
                 let viewed = self.in_place(rel) && self.model.view_src.get(rel).is_some_and(|(base, _)| crate::code_rule_dsl::facts::vtab::bound_source(self.db, base).is_some());
                 if !(held || bound || viewed) {
@@ -4158,10 +4164,58 @@ impl<'a> Run<'a, '_> {
 }
 
 impl<'a> Strand<'a> {
-    /// Runs the stratum to its fixpoint on this thread (its device waves go out as its own batches): whether the
-    /// native engine ran it; else why not.
-    fn run(&mut self, scc: &BTreeSet<String>, rules: &[&'a Rule]) -> Result<std::result::Result<(), (Option<String>, Option<String>)>> {
-        if self.0.native_stratum_now(scc, rules)? { Ok(Ok(())) } else { Ok(Err((self.0.why_not.take(), self.0.why_class.take()))) }
+    /// Runs a component's members (decision 0113 §2) in program order on this thread, each to its fixpoint (its
+    /// device waves go out as its own batches): how many ran natively, and what stopped the next, if one did (a
+    /// decline and its reason, or an error).
+    fn run_members(&mut self, members: &[(BTreeSet<String>, Vec<&'a Rule>)]) -> (usize, Option<Result<(Option<String>, Option<String>)>>) {
+        // Ahead of the run's order, it gives out no new atom (decision 0113 §4): a member that would stops here.
+        let _held = crate::content_store::atoms::held_only();
+        struct Clear;
+        impl Drop for Clear {
+            fn drop(&mut self) {
+                super::native::component::held_failed_clear();
+            }
+        }
+        let _clear = Clear;
+        // Members that wait on their device wave (decision 0113 §3): the next members run meanwhile, and their
+        // launches go out as one wave, when a member reads a waiting one or the component ends.
+        let mut waiting: Vec<(usize, Box<Driving<'a>>)> = Vec::new();
+        let finish = |run: &mut Run<'a, 'static>, waiting: &mut Vec<(usize, Box<Driving<'a>>)>| -> Result<()> {
+            while !waiting.is_empty() {
+                super::lanes::wave::flush(waiting.len()).map_err(Error::Plan)?;
+                for (k, d) in std::mem::take(waiting) {
+                    match run.native_resume(d)? {
+                        Native::Ran => {}
+                        Native::Waiting(d) => waiting.push((k, d)),
+                        Native::Declined => return Err(Error::Plan(format!("{:?}: a stratum that waited on its wave declined", members[k].0))),
+                    }
+                }
+            }
+            Ok(())
+        };
+        for (k, (scc, rules)) in members.iter().enumerate() {
+            let reads_waiting = waiting.iter().any(|(w, _)| rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).any(|a| members[*w].0.contains(a.rel.as_str())));
+            if reads_waiting && let Err(e) = finish(&mut self.0, &mut waiting) {
+                return (0, Some(Err(e)));
+            }
+            let stop = match self.0.native_stratum(scc, rules) {
+                Ok(Native::Ran) => continue,
+                Ok(Native::Waiting(d)) => {
+                    waiting.push((k, d));
+                    continue;
+                }
+                Ok(Native::Declined) => Ok((self.0.why_not.take(), self.0.why_class.take())),
+                Err(e) => Err(e),
+            };
+            return match finish(&mut self.0, &mut waiting) {
+                Ok(()) => (k, Some(stop)),
+                Err(e) => (0, Some(Err(e))),
+            };
+        }
+        match finish(&mut self.0, &mut waiting) {
+            Ok(()) => (members.len(), None),
+            Err(e) => (0, Some(Err(e))),
+        }
     }
 }
 
@@ -6903,6 +6957,10 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     let mut unheld: BTreeSet<String> = BTreeSet::new();
     let mut evaluated: Vec<usize> = Vec::new();
     let (mut clean_strata, mut held_again, mut held_rows) = (0usize, 0usize, 0usize);
+    // Decision 0113: native strata issued ahead, as components on the executor's host stream, retired here in order.
+    let mut board = (issue::on() && native.contains("program") && prog.again.is_empty() && strata_kept.is_none()).then(|| issue::Board::new(&sccs, &deps));
+    let ambient = Ambient::here();
+    super::lanes::executor().stream("strata", |stream| -> Result<()> {
     for (at, scc) in sccs.iter().enumerate() {
         if !waiting.is_empty() {
             let reads_waiting = || {
@@ -6912,6 +6970,9 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             if level_of[at] != level_of[waiting[0].0] || reads_waiting() {
                 finish_wave(&mut run, &mut waiting, &mut outcome, &mut carry, &sccs, &last)?;
             }
+        }
+        if let Some(b) = board.as_mut() {
+            b.advance(at, &waiting.iter().map(|w| w.0).collect::<Vec<_>>());
         }
         super::lanes::prof::level(Some(level_of[at]));
         if let Some(ks) = strata_kept.as_deref_mut() {
@@ -7262,30 +7323,33 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         if native.contains("program") && !scc.iter().all(|r| run.views.contains(r)) {
             let native_span = super::profile::span(|| "native".into());
             let t0 = level_trace().map(|_| thread_cpu());
-            // On its own model (decision 0113 §4) where it may run off this thread: `RERAIL_STRANDS=inline` runs the
-            // strand here, to check that its model and the run's give the same plans and rows.
-            let reads = (strands_inline() && prog.again.is_empty() && strata_kept.is_none() && deferred.is_empty()).then(|| run.strand_reads(scc, &rules)).flatten();
-            let digests: Vec<u64> = rules.iter().map(|r| obs_rule(&r.head, &r.body)).collect();
-            // A stratum whose statistics cannot be made for its strand (one its rules read and the native engine's
-            // own planning leaves out) runs here, as it would have.
-            let strand = reads.and_then(|reads| run.strand(&reads, &digests, &Model::read_by(rules.iter().copied())).ok());
-            let ran = if let Some(mut strand) = strand {
-                match strand.run(scc, &rules) {
-                    Ok(Ok(())) => {
-                        run.absorb(strand, scc, &digests);
-                        Native::Ran
-                    }
-                    Ok(Err((why, class))) => {
-                        run.why_not = why;
-                        run.why_class = class;
-                        Native::Declined
-                    }
-                    // It reads SQL after all (an input not yet loaded in the engine): it runs here.
-                    Err(e) if off_thread(&e) => run.native_stratum(scc, &rules)?,
-                    Err(e) => return Err(e),
+            // Decision 0113: the strata ready after this one are issued as components; this one, if a component's,
+            // is retired from it (its first member waits for the component's job, or runs it here).
+            let got = match board.as_mut() {
+                Some(b) => {
+                    let rules_of = |j: usize| -> Vec<&Rule> { sccs[j].iter().flat_map(|rel| rules_by.get(rel.as_str()).into_iter().flatten().copied()).collect() };
+                    let mut load_early = |j: usize| -> Result<()> {
+                        if let Some(load) = hooks.load.as_deref_mut() {
+                            let now: Vec<String> = std::mem::take(&mut loads[j]);
+                            if !now.is_empty() {
+                                load(&now)?;
+                            }
+                        }
+                        Ok(())
+                    };
+                    b.issue(at, &mut run, &sccs, &rules_of, &wants_of, &mut waved, &mut load_early, stream, &ambient)?;
+                    b.retire_at(at, &mut run, stream)?
                 }
-            } else {
-                run.native_stratum(scc, &rules)?
+                None => issue::Got::Not,
+            };
+            let ran = match got {
+                issue::Got::Ran => Native::Ran,
+                issue::Got::Declined(why, class) => {
+                    run.why_not = why;
+                    run.why_class = class;
+                    Native::Declined
+                }
+                issue::Got::Not | issue::Got::Here => run.native_stratum(scc, &rules)?,
             };
             drop(native_span);
             // `RERAIL_LEVEL_TRACE=<file>`: each native stratum's level and thread CPU (decision 0100 step 6).
@@ -7402,6 +7466,14 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             }
         }
     }
+    Ok(())
+    })?;
+    if let Some(b) = &board {
+        super::profile::decision("strata issued ahead (decision 0113)", || format!("{:?}", b.counts));
+        if std::env::var_os("RERAIL_STRATA_COUNTS").is_some() {
+            eprintln!("RERAIL_STRATA_COUNTS {:?}", b.counts);
+        }
+    }
     finish_wave(&mut run, &mut waiting, &mut outcome, &mut carry, &sccs, &last)?;
     super::lanes::prof::level(None);
     if let Some(ks) = strata_kept.as_deref_mut() {
@@ -7465,12 +7537,6 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
 /// Whether `e` is a strand's read of SQL (`Db::sql`): the stratum runs on the run's thread instead.
 fn off_thread(e: &Error) -> bool {
     e.to_string().contains("off the run's thread")
-}
-
-/// `RERAIL_STRANDS=inline`: native strata that may run off the run's thread run on their own models, here.
-fn strands_inline() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("RERAIL_STRANDS").is_ok_and(|v| v == "inline"))
 }
 
 /// The strata in order of their levels (stable; with `sort`), and each one's level: one more than the deepest level of a stratum

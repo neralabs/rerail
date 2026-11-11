@@ -11,8 +11,11 @@
 //!   (`RERAIL_THREADS=1`), or on a loaded machine, every job runs on the caller, in the order it waits for them.
 //! - **The floor** is measured: the stream's workers' start latency (from being started to their first claim), at
 //!   least `RERAIL_STREAM_FLOOR` seconds (100 µs).
-//! - **Waiting.** [`Stream::wait`] runs the awaited job itself if no worker has claimed it, else the stream's other
-//!   queued jobs, largest first, then the pool's ([`crate::exec::help_once`]), until the job ends.
+//! - **Waiting.** [`Stream::wait`] runs the awaited job itself if no worker has claimed it, else helps the pool
+//!   ([`crate::exec::help_once`]) until the job ends.
+//! - **No nesting.** A job never runs inside another on one thread: a job that waits (on a device batch) and helps
+//!   the pool may take a stream worker, which then claims nothing, since the outer job may hold what the inner
+//!   needs (a lock).
 //!
 //! The jobs may borrow what outlives the stream ([`Executor::stream`] runs it as a scope), and a job that panics is an
 //! error to its waiter.
@@ -25,6 +28,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 type Slot<R> = Arc<Mutex<Option<std::thread::Result<R>>>>;
+
+thread_local! {
+    /// Stream jobs running on this thread now (a waiter or a helper may run one inside another's wait).
+    static IN_JOB: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
 
 struct Queued<'s> {
     id: u64,
@@ -65,7 +73,9 @@ impl<'s> State<'s> {
         self.board.start(&mut j.ticket);
         let now = self.running.fetch_add(1, Ordering::AcqRel) + 1;
         self.peak.fetch_max(now, Ordering::AcqRel);
+        IN_JOB.set(IN_JOB.get() + 1);
         (j.job)();
+        IN_JOB.set(IN_JOB.get() - 1);
         self.running.fetch_sub(1, Ordering::AcqRel);
         self.board.finish(j.ticket, true);
         if caller { &self.by_caller } else { &self.by_workers }.fetch_add(1, Ordering::Relaxed);
@@ -139,15 +149,19 @@ impl<'s> Stream<'s, '_> {
                 let ns = started.elapsed().as_nanos() as u64;
                 let old = state.latency.load(Ordering::Relaxed);
                 state.latency.store(if old == 0 { ns } else { (old * 7 + ns) / 8 }, Ordering::Relaxed);
-                while let Some(j) = state.claim(None, false) {
-                    state.run(j, false);
+                // A worker started on a thread inside a stream job (a job's wait helped the pool and took it)
+                // claims nothing: the job it would run nests under one that may hold what it needs.
+                if IN_JOB.get() == 0 {
+                    while let Some(j) = state.claim(None, false) {
+                        state.run(j, false);
+                    }
                 }
                 state.serving.fetch_sub(1, Ordering::AcqRel);
             });
         }
     }
 
-    /// Waits for `h`: runs it here if no worker claimed it, else the stream's other jobs and the pool's meanwhile.
+    /// Waits for `h`: runs it here if no worker claimed it, else helps the pool meanwhile.
     pub fn wait<R>(&self, h: Handle<R>) -> Result<R, String> {
         let st = &self.state;
         let mut nap = 20e-6f64;
@@ -234,6 +248,24 @@ mod tests {
             s.counts()
         });
         assert_eq!((counts.by_caller, counts.by_workers), (32, 0), "{counts:?}");
+    }
+
+    #[test]
+    fn a_worker_inside_a_job_claims_nothing() {
+        let exec = Executor::with(vec![Arc::new(crate::exec::CpuBackend::default())]);
+        exec.stream("nested", |s| {
+            let h = s.submit(1.0, || IN_JOB.get());
+            assert_eq!(s.wait(h).unwrap(), 1, "a job runs marked");
+        });
+        IN_JOB.set(1);
+        let st = Executor::with(vec![Arc::new(crate::exec::CpuBackend::default())]);
+        let counts = st.stream("marked", |s| {
+            let h = s.submit(1.0, || 7);
+            let got = s.wait(h).unwrap();
+            (got, s.counts())
+        });
+        IN_JOB.set(0);
+        assert_eq!(counts.0, 7);
     }
 
     #[test]
