@@ -1,9 +1,13 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("node:child_process", { spy: true });
+
 import {
   findGit, gitBehindLauncher, gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitCrlfPaths, gitExcludeFiles, gitExecutable, gitHead, gitHome,
   gitInstalled, gitModifiedOrUntrackedPaths, GitReads, GitUnavailableError, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobIds,
@@ -11,6 +15,8 @@ import {
 } from "../../src/engine/git.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+
+const actualChildProcess = await vi.importActual<typeof import("node:child_process")>("node:child_process");
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => removeFolder(root))); });
@@ -164,6 +170,35 @@ describe("GitReads", () => {
     await writeFile(join(root, "b.py"), "untracked\n");
     await expect(reads.run(signal => gitModifiedOrUntrackedPaths(root, { signal }))).resolves.toEqual([]);
     await expect(new GitReads().run(signal => gitModifiedOrUntrackedPaths(root, { signal }))).resolves.toEqual(["b.py"]);
+  });
+
+  /**
+   * Has the next Git a read streams from print `output`, then stay running with its output open until it is ended, as a
+   * Git still at work does. Resolves once that output has reached the read.
+   */
+  function streamingGitThatStays(output: string): Promise<void> {
+    const printed = Promise.withResolvers<void>();
+    vi.mocked(spawn).mockImplementationOnce((_git, args, options) => {
+      const script = `process.stdout.write(${JSON.stringify(output)}); setTimeout(() => {}, 30_000)`;
+      const child = actualChildProcess.spawn(process.execPath, ["-e", script, "--", ...args], options);
+      // Ahead of the read's own listener, which has the chunk by the time this is awaited.
+      child.stdout?.once("data", () => printed.resolve());
+      return child;
+    });
+    return printed.promise;
+  }
+
+  it("stops a read still streaming from its Git at once, with the blobs it had read", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    const printed = streamingGitThatStays(`${"a".repeat(40)} blob 2\n1\n\n`);
+    const reads = new GitReads();
+    // A timeout this long never ends the read here: only the stop does.
+    const read = reads.run(signal => readGitBlobs(root, ["HEAD:./a.py", "HEAD:./b.py"], { maxBlobBytes: 1_000, timeout: 60_000, signal }));
+    await printed;
+
+    const stopped = reads.stop().then(() => "stopped");
+    await expect(Promise.race([stopped, delay(3_000, "still running", { ref: false })])).resolves.toBe("stopped");
+    await expect(read).resolves.toEqual(new Map([["HEAD:./a.py", Buffer.from("1\n")]]));
   });
 });
 
