@@ -197,8 +197,8 @@ impl<'a> FeatureSamplingTrainerKernel<'a> {
         for f in features {
             let buckets = &f.buckets;
             bucket_entry_bits.push(buckets.entry_bits as u32);
-            feature_is_ordinal.push(f.ordinal as u32);
-            if f.active && !f.ordinal && f.buckets.num_buckets as usize > MAX_CATEGORICAL_BUCKETS {
+            feature_is_ordinal.push(f.kind());
+            if f.active && !f.ordinal && f.subsets && f.buckets.num_buckets as usize > MAX_CATEGORICAL_BUCKETS {
                 return Err(format!("a categorical feature with {} buckets (at most {MAX_CATEGORICAL_BUCKETS})", f.buckets.num_buckets));
             }
             if !f.active {
@@ -694,6 +694,14 @@ impl PartitionData {
         PartitionData { fs, rows: Rows::default(), bucket_memory: Default::default(), features }
     }
 
+    /// Whether the categorical features' splits are CART's subsets (rerail's extension) or upstream's one bucket
+    /// against the rest (the default).
+    pub fn set_categorical_subsets(&mut self, subsets: bool) {
+        for f in &mut self.features {
+            f.subsets = subsets && !f.ordinal;
+        }
+    }
+
     pub fn clear(&mut self) {
         self.rows.clear();
         self.features.clear();
@@ -800,7 +808,7 @@ impl PartitionData {
                 Some((start, len, entry_bits, num_buckets)) => BucketList { storage: FrozenMemoryRegionT::new(bucket_memory.raw().range(start * 4, (start + len) * 4)), entry_bits, num_buckets, num_entries: num_non_zero },
                 None => BucketList::default(),
             };
-            Feature { active: f.active, ordinal: f.ordinal, info: f.info, buckets }
+            Feature { active: f.active, ordinal: f.ordinal, subsets: f.subsets, info: f.info, buckets }
         }).collect();
         Ok(PartitionData { fs: self.fs.clone(), rows: src_rows, bucket_memory, features })
     }
@@ -813,7 +821,7 @@ impl PartitionData {
         let mut it = self.rows.get_row_iterator();
         for _ in 0..self.rows.row_count() {
             let row = it.get_row();
-            let side = side_of(f.buckets.get(row.example_num()), split_value, subset, f.ordinal);
+            let side = side_of(f.buckets.get(row.example_num()), split_value, subset, f);
             writers[side as usize].add_row_with(&row, self.rows.target_of(row.label(), row.example_num()));
         }
         let [w0, w1] = writers;
@@ -831,7 +839,7 @@ impl PartitionData {
         let mut it = self.rows.get_row_iterator();
         for side_of_row in lr.iter_mut() {
             let mut row = it.get_row();
-            let side = side_of(f.buckets.get(row.example_num()), split_value, subset, f.ordinal);
+            let side = side_of(f.buckets.get(row.example_num()), split_value, subset, f);
             *side_of_row = side;
             // The target by the row's example number here, before the side numbers it.
             let target = self.rows.target_of(row.label(), row.example_num());
@@ -996,7 +1004,7 @@ pub(crate) mod tests {
             let mut bucket_descriptions = crate::forest::bucket::BucketDescriptions::default();
             bucket_descriptions.initialize_from(false, (0..nb).map(|v| v as f64).collect(), vec![], nb as i32).unwrap();
             let info = fs.add_column(ColumnInfo { column_name: format!("f{f}"), info: if ordinal { FeatureType::Real } else { FeatureType::Categorical }, index: -1, distinct_values: nb as i32, buckets: buckets.clone(), bucket_descriptions, ..Default::default() });
-            features.push(Feature { active: true, ordinal, info: Some(info), buckets });
+            features.push(Feature { active: true, ordinal, subsets: false, info: Some(info), buckets });
         }
         PartitionData { fs: Arc::new(fs), rows, bucket_memory, features }
     }
@@ -1051,7 +1059,7 @@ pub(crate) mod tests {
         let all: &[u32] = d.bucket_memory.data();
         let offsets: Vec<u32> = d.features.iter().map(|f| ((f.buckets.storage.data().as_ptr() as usize - base) / 4) as u32).chain([all.len() as u32 * 2]).collect();
         let entry_bits: Vec<u32> = d.features.iter().map(|f| f.buckets.entry_bits as u32).collect();
-        let ordinal: Vec<u32> = d.features.iter().map(|f| f.ordinal as u32).collect();
+        let ordinal: Vec<u32> = d.features.iter().map(|f| f.kind()).collect();
         let active: Vec<u32> = (0..nf as u32).collect();
         let mut numbers = vec![0u32];
         for f in &d.features {
@@ -1179,11 +1187,18 @@ pub(crate) mod tests {
             eprintln!("no Metal device: skipped");
             return;
         }
-        let d = dataset(2000);
-        for max_depth in [1, 3, 6] {
-            let device = train_with(&d, max_depth, "device");
-            same(&device, &train_with(&d, max_depth, "cpu"), &d.fs, &format!("cpu, max depth {max_depth}"));
-            same(&device, &train_with(&d, max_depth, "recursive"), &d.fs, &format!("recursive, max depth {max_depth}"));
+        // Upstream's categorical splits (one bucket against the rest), then CART's subsets.
+        for d in with_both_categorical_splits(dataset(2000)) {
+            let cart = d.features.iter().any(|f| f.subsets);
+                let kind = if cart { "subsets" } else { "one vs rest" };
+            for max_depth in [1, 3, 6] {
+                let device = train_with(&d, max_depth, "device");
+                // (Its categorical feature's 3 buckets split best one against two here; the regression test finds
+                // wider subsets.)
+                assert!(cart || subset_splits(&device) == 0, "{kind}, max depth {max_depth}: subset splits");
+                same(&device, &train_with(&d, max_depth, "cpu"), &d.fs, &format!("{kind}: cpu, max depth {max_depth}"));
+                same(&device, &train_with(&d, max_depth, "recursive"), &d.fs, &format!("{kind}: recursive, max depth {max_depth}"));
+            }
         }
         let d = deep_dataset(20000);
         let device = train_with(&d, 10, "device");
@@ -1198,6 +1213,13 @@ pub(crate) mod tests {
             }
         }
         assert!(widths.iter().any(|&w| w > 254), "a level wider than 254 partitions: {widths:?}");
+    }
+
+    /// `d` with upstream's categorical splits, and with CART's.
+    pub(crate) fn with_both_categorical_splits(d: PartitionData) -> [PartitionData; 2] {
+        let mut cart = d.clone();
+        cart.set_categorical_subsets(true);
+        [d, cart]
     }
 
     /// The nodes whose split is a categorical subset of more than one bucket (CART's).
@@ -1237,18 +1259,23 @@ pub(crate) mod tests {
             eprintln!("no Metal device: skipped");
             return;
         }
-        for (d, depths) in [(as_regression(&dataset(2000)), vec![1, 3, 6]), (as_regression(&deep_dataset(20000)), vec![10])] {
-            for max_depth in depths {
-                let device = train_with(&d, max_depth, "device");
-                assert!(device.node(device.root).is_some(), "a root split");
-                if max_depth >= 6 {
-                    assert!(subset_splits(&device) > 0, "max depth {max_depth}: no categorical split of several buckets");
+        let sets = [(as_regression(&dataset(2000)), vec![1, 3, 6]), (as_regression(&deep_dataset(20000)), vec![10])];
+        for (d0, depths) in sets {
+            for d in with_both_categorical_splits(d0) {
+                let cart = d.features.iter().any(|f| f.subsets);
+                let kind = if cart { "subsets" } else { "one vs rest" };
+                for &max_depth in &depths {
+                    let device = train_with(&d, max_depth, "device");
+                    assert!(device.node(device.root).is_some(), "a root split");
+                    if max_depth >= 6 {
+                        assert_eq!(subset_splits(&device) > 0, cart, "{kind}, max depth {max_depth}: subset splits");
+                    }
+                    if max_depth <= 6 {
+                        same(&device, &train_on_host(&d, max_depth), &d.fs, &format!("{kind}: host schedule, max depth {max_depth}"));
+                    }
+                    same(&device, &train_with(&d, max_depth, "cpu"), &d.fs, &format!("{kind}: cpu, max depth {max_depth}"));
+                    same(&device, &train_with(&d, max_depth, "recursive"), &d.fs, &format!("{kind}: recursive, max depth {max_depth}"));
                 }
-                if max_depth <= 6 {
-                    same(&device, &train_on_host(&d, max_depth), &d.fs, &format!("host schedule, max depth {max_depth}"));
-                }
-                same(&device, &train_with(&d, max_depth, "cpu"), &d.fs, &format!("cpu, max depth {max_depth}"));
-                same(&device, &train_with(&d, max_depth, "recursive"), &d.fs, &format!("recursive, max depth {max_depth}"));
             }
         }
     }

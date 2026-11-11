@@ -18,7 +18,7 @@ use crate::forest::bucket::BucketListRef;
 use crate::forest::fixed_point_accum::FixedPointAccum32;
 use crate::forest::memory_region::FrozenMemoryRegionT;
 use crate::forest::randomforest_types::{
-    IndexedPartitionSplit, PartitionIndex, PartitionInfo, PartitionSplit, PartitionSplitDirection, RowPartitionInfo, Rows, TreeDepthInfo, TreeTrainingInfo, UpdateWorkEntry, WeightFormat, W, RowWeights, SplitCriterion, in_category_set,
+    IndexedPartitionSplit, PartitionIndex, PartitionInfo, PartitionSplit, PartitionSplitDirection, RowPartitionInfo, Rows, TreeDepthInfo, TreeTrainingInfo, UpdateWorkEntry, WeightFormat, W, RowWeights, SplitCriterion, in_category_set, FEATURE_KIND_ORDINAL, FEATURE_KIND_SUBSETS,
 };
 use std::ops::Range;
 
@@ -114,7 +114,7 @@ pub fn get_partition_splits_kernel(fidx: u32, naf: u32, tree_training_info: &[Tr
         let max_bucket = end_bucket as i32 - start_bucket as i32 - 1;
         let w_feature = &buckets[p * total_buckets + start_bucket..];
         let criterion = if tree_training_info[0].split_criterion == SplitCriterion::Variance as u32 { SplitCriterion::Variance } else { SplitCriterion::Sqrt };
-        let (score, value, left, right, subset) = choose_split_kernel(w_feature, max_bucket, feature_is_ordinal[f] != 0, &w_all[p], criterion);
+        let (score, value, left, right, subset) = choose_split_kernel(w_feature, max_bucket, feature_is_ordinal[f] == FEATURE_KIND_ORDINAL, feature_is_ordinal[f] == FEATURE_KIND_SUBSETS, &w_all[p], criterion);
         result.score = score as f32;
         result.value = value as i16;
         result.subset = subset;
@@ -315,12 +315,13 @@ pub fn update_partition_numbers_kernel(row_range: Range<u32>, _tree_training_inf
         let split_feature = split_feature as usize;
         let split_value = partition_splits[partition as usize].split.value as u32;
         let subset = partition_splits[partition as usize].split.subset;
-        let ordinal = feature_is_ordinal[split_feature] != 0;
+        let kind = feature_is_ordinal[split_feature];
+        let ordinal = kind == FEATURE_KIND_ORDINAL;
 
         // Get buckets for the split feature.
         let buckets = *feature_buckets_cache[split_feature].get_or_insert_with(|| feature_buckets(split_feature, all_bucket_data, bucket_data_offsets, bucket_numbers, bucket_entry_bits));
         let bucket = buckets.get(r);
-        let side = if ordinal { bucket >= split_value } else { !in_category_set(&subset, bucket) }; // false = left, true = right
+        let side = if ordinal { bucket >= split_value } else if kind == FEATURE_KIND_SUBSETS { !in_category_set(&subset, bucket) } else { bucket != split_value }; // false = left, true = right
 
         // Set the new partition number.
         let new_partition_number = (if side { info.right } else { info.left }) as u16;

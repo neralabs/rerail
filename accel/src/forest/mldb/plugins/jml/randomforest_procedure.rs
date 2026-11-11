@@ -55,11 +55,14 @@ pub struct RandomForestProcedureConfig {
     pub sample_feature_vectors: bool,
     /// How the trees are trained (upstream: partitioned).
     pub training_scheme: TrainingScheme,
+    /// A categorical feature's splits: CART's best subset (rerail's extension) when set, else upstream's best
+    /// bucket against the rest.
+    pub categorical_subsets: bool,
 }
 
 impl Default for RandomForestProcedureConfig {
     fn default() -> Self {
-        RandomForestProcedureConfig { feature_vector_samplings: 5, feature_vector_sampling_prop: 0.3, feature_samplings: 20, feature_sampling_prop: 0.3, max_depth: 20, sample_feature_vectors: true, training_scheme: TrainingScheme::Partitioned }
+        RandomForestProcedureConfig { feature_vector_samplings: 5, feature_vector_sampling_prop: 0.3, feature_samplings: 20, feature_sampling_prop: 0.3, max_depth: 20, sample_feature_vectors: true, training_scheme: TrainingScheme::Partitioned, categorical_subsets: false }
     }
 }
 
@@ -295,7 +298,8 @@ pub fn train_forest(all_data: &PartitionData, config: &RandomForestProcedureConf
     let bags: Vec<Result<Vec<Tree>, String>> = pool.install(|| {
         (0..config.feature_vector_samplings).into_par_iter().map(|b| {
             let debug_name = format!("bag {b}");
-            let (data, samplings) = bag(all_data, b, config).map_err(|e| format!("error training {debug_name}: {e}"))?;
+            let (mut data, samplings) = bag(all_data, b, config).map_err(|e| format!("error training {debug_name}: {e}"))?;
+            data.set_categorical_subsets(config.categorical_subsets);
             let trees = data.train_multiple_samplings(b as i32, &debug_name, config.max_depth, &samplings, config.training_scheme).map_err(|e| format!("error training {debug_name}: {e}"))?;
             if trees.len() != samplings.len() {
                 return Err(format!("{debug_name}: {} trees for {} samplings", trees.len(), samplings.len()));

@@ -106,9 +106,10 @@ impl HostForest {
 pub struct PredictNode {
     pub feature: u16,
     /// The bits of each of the feature's buckets (`RowBuckets` packs the feature's column with them).
-    pub bucket_bits: u16,
-    pub split_bucket: u16,
-    pub ordinal: u16,
+    pub bucket_bits: u8,
+    /// 1: true is below the split bucket; 0: true is the split bucket; 2: true is in subset `split_bucket`.
+    pub ordinal: u8,
+    pub split_bucket: u32,
     /// A node's index when at least 0; leaf -(child + 1) when below 0.
     pub child_true: i32,
     pub child_false: i32,
@@ -172,17 +173,17 @@ impl FlatForest {
                 // A categorical subset split: its set's place among the subsets.
                 let (split_bucket, ordinal) = if !node.split_subset.is_empty() {
                     let at = self.subsets.len() / 16;
-                    if at > u16::MAX as usize || node.split_subset.len() != 16 {
-                        return Err("more than 65536 subset splits, or a subset not of 512 buckets".into());
+                    if node.split_subset.len() != 16 {
+                        return Err("a subset not of 512 buckets".into());
                     }
                     self.subsets.extend_from_slice(&node.split_subset);
-                    (at as u16, 2)
+                    (at as u32, 2)
                 } else {
-                    (node.split_bucket as u16, (node.split.op() == Op::Less) as u16)
+                    (node.split_bucket as u32, (node.split.op() == Op::Less) as u8)
                 };
                 self.nodes.push(PredictNode {
                     feature: feature as u16,
-                    bucket_bits: prediction_bucket_bits(column) as u16,
+                    bucket_bits: prediction_bucket_bits(column) as u8,
                     split_bucket,
                     ordinal,
                     child_true: 0,
@@ -347,11 +348,12 @@ mod tests {
         assert_eq!(fs.column(2).unwrap().info, FeatureType::Categorical);
         assert!(fs.column(0).unwrap().distinct_values <= 256);
         let all = training_data(fs.clone(), &labels, None, None).unwrap();
-        let config = RandomForestProcedureConfig { feature_vector_samplings: 3, feature_samplings: 4, max_depth: 10, feature_sampling_prop: 0.7, ..Default::default() };
+        for subsets in [false, true] {
+        let config = RandomForestProcedureConfig { feature_vector_samplings: 3, feature_samplings: 4, max_depth: 10, feature_sampling_prop: 0.7, categorical_subsets: subsets, ..Default::default() };
         let forest = train_forest(&all, &config).unwrap();
         let flat = FlatForest::new(&forest).unwrap();
         assert!(flat.max_depth >= 3, "{}", flat.max_depth);
-        assert!(!flat.subsets.is_empty(), "categorical subset splits to predict with");
+        assert_eq!(!flat.subsets.is_empty(), subsets, "categorical subset splits to predict with");
 
         let (mut test, test_labels) = columns(3000, 2);
         test[2][7] = CellValue::String("violet".into());
@@ -378,8 +380,10 @@ mod tests {
             }
             let right = host.iter().zip(l).filter(|(p, l)| (p[1] > 0.5) == (**l != 0.0)).count() as f64 / host.len() as f64;
             assert!(right > 0.75, "{what}: {right} right");
-            eprintln!("{what}: {right:.3} right");
+            eprintln!("{what}, subsets {subsets}: {right:.3} right");
         }
+        }
+        let config = RandomForestProcedureConfig { feature_vector_samplings: 3, feature_samplings: 4, max_depth: 10, feature_sampling_prop: 0.7, ..Default::default() };
 
         // Upstream's value walk, on the columns whose values and buckets agree (no nulls, no strings): numbers as
         // themselves. Only column 0 and 3 qualify; a forest over them alone.
@@ -587,6 +591,79 @@ mod tests {
             let _ = per;
             for r in 0..b {
                 assert!((host.get(r).map_or(dev[r][1], |h| h[1]) - dev[r][1]).abs() < 1e-5 && (res[r][1] - dev[r][1]).abs() < 1e-5);
+            }
+        }
+    }
+
+    /// The comparison with other libraries: the synthetic jobs (`BENCH_SIZES[0]` rows to train on, 20,000 held out)
+    /// as a classification ("the lane beats the CPU") and a regression (the log of the job's wall), written to
+    /// `BENCH_EXPORT` as CSV for the other libraries' runs; this forest's training and prediction times and its
+    /// held-out scores, with upstream's categorical splits and with CART's.
+    #[test]
+    #[ignore = "benchmark: run by name with --ignored --nocapture, BENCH_SAMPLES and BENCH_EXPORT set"]
+    fn compare_with_libraries() {
+        use crate::forest::randomforest_procedure::train_regression_forest;
+        if crate::gpu::shared::get().is_none() {
+            return;
+        }
+        let real = real_jobs();
+        assert!(!real.is_empty(), "BENCH_SAMPLES");
+        let n: usize = std::env::var("BENCH_SIZES").ok().and_then(|v| v.split(',').next()?.parse().ok()).unwrap_or(20000);
+        let (train, train_labels) = synthetic(&real, n, 1);
+        let (test, test_labels) = synthetic(&real, 20000, 7);
+        let target = |j: &Job| j.wall.ln() as f32;
+        let train_targets: Vec<f32> = train.iter().map(target).collect();
+        let test_targets: Vec<f32> = test.iter().map(target).collect();
+        if let Ok(dir) = std::env::var("BENCH_EXPORT") {
+            for (name, jobs, labels) in [(format!("train_{n}.csv"), &train, &train_labels), ("test.csv".to_string(), &test, &test_labels)] {
+                let mut out = String::from("lane,forms,launches,units,cold,load,threads,label,target\n");
+                for (j, l) in jobs.iter().zip(labels.iter()) {
+                    out += &format!("{},{},{},{},{},{},{},{},{}\n", j.lane, j.forms.replace(',', ";"), j.launches, j.units, j.cold, j.load, j.threads, l, target(j));
+                }
+                std::fs::write(format!("{dir}/{name}"), out).unwrap();
+            }
+        }
+        let names = ["lane", "forms", "launches", "units", "cold", "load", "threads"];
+        let named = |cols: Vec<Vec<CellValue>>| -> Vec<(String, Vec<CellValue>)> { names.iter().zip(cols).map(|(n, c)| (n.to_string(), c)).collect() };
+        let (train_cols, test_cols) = (named(columns_of(&train)), columns_of(&test));
+        // Warm the kernels.
+        let fs = Arc::new(DatasetFeatureSpace::from_columns(&train_cols, FeatureType::Boolean).unwrap());
+        train_forest(&training_data(fs.clone(), &train_labels, None, None).unwrap(), &RandomForestProcedureConfig { feature_vector_samplings: 1, feature_samplings: 2, ..Default::default() }).unwrap();
+        for depth in [20, 8] {
+            for subsets in [false, true] {
+                let fsp: f32 = std::env::var("BENCH_FSP").ok().and_then(|v| v.parse().ok()).unwrap_or(0.3);
+                let config = RandomForestProcedureConfig { max_depth: depth, categorical_subsets: subsets, feature_sampling_prop: fsp, ..Default::default() };
+                let kind = if subsets { "cart" } else { "one-vs-rest" };
+                // Classification.
+                let ((fs, forest), w, c) = timed(|| {
+                    let fs = Arc::new(DatasetFeatureSpace::from_columns(&train_cols, FeatureType::Boolean).unwrap());
+                    let all = training_data(fs.clone(), &train_labels, None, None).unwrap();
+                    let forest = train_forest(&all, &config).unwrap();
+                    (fs, forest)
+                });
+                let rows = RowBuckets::from_values(&fs, &test_cols).unwrap();
+                let resident = DeviceForest::new(&FlatForest::new(&forest).unwrap()).unwrap();
+                let ((p, gpu), pw, pc) = timed(|| resident.predict_timed(&rows).unwrap());
+                let ll = p.iter().zip(&test_labels).map(|(p, &l)| -((if l != 0.0 { p[1] } else { p[0] }).clamp(1e-6, 1.0) as f64).ln()).sum::<f64>() / p.len() as f64;
+                eprintln!("RESULT rerail-{kind} classification depth {depth}: train {:.0} ms wall {:.0} ms CPU; predict 20000 {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; accuracy {:.4} logloss {:.4}",
+                    w * 1e3, c * 1e3, pw * 1e3, pc * 1e3, gpu * 1e3, right(&p, &test_labels), ll);
+                // Regression.
+                let ((fs, forest), w, c) = timed(|| {
+                    let fs = Arc::new(DatasetFeatureSpace::from_columns(&train_cols, FeatureType::Real).unwrap());
+                    let forest = train_regression_forest(fs.clone(), &train_targets, None, None, &config).unwrap();
+                    (fs, forest)
+                });
+                let rows = RowBuckets::from_values(&fs, &test_cols).unwrap();
+                let resident = DeviceForest::new(&FlatForest::new(&forest).unwrap()).unwrap();
+                let ((p, gpu), pw, pc) = timed(|| resident.predict_timed(&rows).unwrap());
+                let mean = test_targets.iter().map(|&t| t as f64).sum::<f64>() / test_targets.len() as f64;
+                let (mut se, mut st) = (0.0, 0.0);
+                for (p, &t) in p.iter().zip(&test_targets) {
+                    se += (forest.regression_value(*p).unwrap() - t as f64).powi(2);
+                    st += (t as f64 - mean).powi(2);
+                }
+                eprintln!("RESULT rerail-{kind} regression depth {depth}: train {:.0} ms wall {:.0} ms CPU; predict 20000 {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; rmse {:.4} r2 {:.4}",
+                    w * 1e3, c * 1e3, pw * 1e3, pc * 1e3, gpu * 1e3, (se / test_targets.len() as f64).sqrt(), 1.0 - se / st);
             }
         }
     }

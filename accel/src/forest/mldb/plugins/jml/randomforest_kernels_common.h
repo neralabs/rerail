@@ -801,6 +801,7 @@ PartitionSplit, chooseSplit)
      RWLOCAL(WIndexed) wRanked,  // [MAX_CATEGORICAL_BUCKETS]: a categorical feature's buckets in CART's order
      RWLOCAL(uint16_t) ranked,   // [MAX_CATEGORICAL_BUCKETS]: the bucket at each place of that order
      bool ordinal,
+     bool subsets,               // a categorical feature's split is CART's subset, not one bucket against the rest
      uint32_t criterion,
      uint16_t threadIdx, uint16_t numThreads,
      uint16_t f,
@@ -826,7 +827,7 @@ PartitionSplit, chooseSplit)
     // Contains the best split from the previous iteration
     RWLOCAL(WIndexed) wBest = wStartBest + 1;
     
-    if (!ordinal && numBuckets > MAX_CATEGORICAL_BUCKETS)
+    if (!ordinal && subsets && numBuckets > MAX_CATEGORICAL_BUCKETS)
         SYNC_RETURN(result);
 
     if (threadIdx == 0) {
@@ -847,7 +848,7 @@ PartitionSplit, chooseSplit)
     //using namespace std;
     //cerr << "threadIdx = " << threadIdx << " numThreads = " << numThreads << " numBuckets = " << numBuckets << endl;
 
-    if (!ordinal) {
+    if (!ordinal && subsets) {
         // CART: a categorical feature's buckets ranked by mean target (categoryBefore), then scanned as an ordinal
         // feature's are, in one pass: the best prefix of the order is the best subset. The buckets are staged in
         // wRanked, each ranked against all (a bounded loop); then wRanked holds them in rank order, each indexed by
@@ -876,8 +877,9 @@ PartitionSplit, chooseSplit)
         ukl_threadgroup_barrier();
     }
 
-    // An ordinal feature's buckets in order, a block of wLocalSize at a time.
-    for (uint32_t startBucket = 0;  ordinal && startBucket < numBuckets;  startBucket += wLocalSize) {
+    // An ordinal feature's buckets in order, a block of wLocalSize at a time; or upstream's categorical split, each
+    // bucket alone against the rest (no prefix sum).
+    for (uint32_t startBucket = 0;  (ordinal || !subsets) && startBucket < numBuckets;  startBucket += wLocalSize) {
 
         //if (startBucket != 0) {
         //    printf("f %d p %d startBucket %d\n",
@@ -933,7 +935,7 @@ PartitionSplit, chooseSplit)
         ukl_threadgroup_barrier();
 
         RWLOCAL(WIndexed) wScan = wLocal;
-        {
+        if (ordinal) {
             // Now we've read it in, we can do our prefix sum
             SYNC_CALL_4(prefixSumW, wScan, numBucketsInIteration, threadIdx, numThreads);
 
@@ -996,8 +998,10 @@ PartitionSplit, chooseSplit)
 
     result.score = scoreSplitWAll(wBest->w, wAll, criterion);
     result.feature = f;
-    result.value = wBest->index + 1;  // the buckets (or ranks) below the split's value are on the left
-    if (!ordinal) {
+    // Ordinal: the buckets below the split's value are on the left (indexes are offset by 1); CART: the ranks below
+    // it; upstream's categorical: the bucket itself.
+    result.value = wBest->index + (ordinal || subsets);
+    if (!ordinal && subsets) {
         // The subset: the buckets ranked below the split's value.
         for (int32_t k = 0;  k < result.value;  ++k) {
             uint32_t b = ranked[k];
@@ -1127,10 +1131,12 @@ getPartitionSplitsImpl) (CONSTBUFFER(TreeTrainingInfo) treeTrainingInfo,
             + (totalBuckets * partition)
             + bucketStart;
         
-        bool ordinal = featureIsOrdinal[f];
+        // FEATURE_KIND_*: 0 categorical (one against the rest), 1 ordinal, 2 categorical (CART's subsets)
+        bool ordinal = featureIsOrdinal[f] == 1;
+        bool subsets = featureIsOrdinal[f] == 2;
 
-        best = SYNC_CALL_14(chooseSplit, myW, numBuckets, wAll[partition],
-                         wLocal, wLocalSize, wStartBest, wRanked, ranked, ordinal, treeTrainingInfo[0].splitCriterion,
+        best = SYNC_CALL_15(chooseSplit, myW, numBuckets, wAll[partition],
+                         wLocal, wLocalSize, wStartBest, wRanked, ranked, ordinal, subsets, treeTrainingInfo[0].splitCriterion,
                          workerId, workGroupSize, f, partition);
         
         if (workerId == 0) {
@@ -1656,7 +1662,7 @@ updatePartitionNumbersImpl) (CONSTBUFFER(TreeTrainingInfo) treeTrainingInfo,
             else {
                 int16_t splitFeature = allPartitionSplits[partition].feature;
                 uint16_t splitValue = allPartitionSplits[partition].value;
-                uint16_t ordinal = featureIsOrdinal[splitFeature];
+                uint32_t kind = featureIsOrdinal[splitFeature];  // FEATURE_KIND_*
 
                 // Split feature values go here
                 uint32_t splitBucketDataOffset = bucketDataOffsets[splitFeature];
@@ -1669,8 +1675,10 @@ updatePartitionNumbersImpl) (CONSTBUFFER(TreeTrainingInfo) treeTrainingInfo,
                                             splitBucketData, 0 /*splitBucketDataLength*/,
                                             splitBucketBits, 0 /*splitNumBuckets*/);
                 
-                // A categorical split's left is its subset.
-                uint16_t side = ordinal ? bucket >= splitValue : !inCategorySet(allPartitionSplits[partition].subset, bucket);
+                // An ordinal split's left is below its value; a categorical split's is its bucket, or (CART) its subset.
+                uint16_t side = kind == 1 ? bucket >= splitValue
+                    : kind == 2 ? !inCategorySet(allPartitionSplits[partition].subset, bucket)
+                    : bucket != splitValue;
 
                 // Set the new partition number
                 uint16_t newPartitionNumber = side ? info.right : info.left;
@@ -1994,10 +2002,10 @@ fixupBucketsImpl) (CONSTBUFFER(TreeTrainingInfo) treeTrainingInfo,
 // below 0.
 typedef struct PredictNode {
     uint16_t feature;       // The feature's index (its bucket column)
-    uint16_t bucketBits;    // The bits of each of the feature's buckets
-    uint16_t splitBucket;   // The bucket the trainer split at; for a subset, its place in the subsets
-    uint16_t ordinal;       // 1: true is the buckets below splitBucket; 0: true is splitBucket itself; 2: true is
+    uint8_t bucketBits;     // The bits of each of the feature's buckets
+    uint8_t ordinal;        // 1: true is the buckets below splitBucket; 0: true is splitBucket itself; 2: true is
                             // the buckets of subset splitBucket (CART's categorical split)
+    uint32_t splitBucket;   // The bucket the trainer split at; for a subset, its place in the subsets
     int32_t childTrue;
     int32_t childFalse;
 } PredictNode;
