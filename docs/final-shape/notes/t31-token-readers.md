@@ -191,11 +191,32 @@ over them: `prev_token` for the token before a node, the parent's `token` rows f
 
 | Category | Rules | Tests |
 |---|---:|---:|
-| `lowered` (gap test) | 182 | 1,048 |
+| `lowered` (gap test) | 221 | 1,162 |
 | `layout` (gap window) | 13 | 22 |
-| `excluder` (`not` over a token: an implied one is in no set) | 192 | 487 |
-| `incidental` (a regex over node text) | 69 | 127 |
+| `excluder` (`not` over a token: an implied one is in no set) | 211 | 487 |
+| `incidental` (a regex over node text, out of the gap test's reach) | 11 | 13 |
 | `root`, `gap`, `gap?`, `below`, read as written (above) | 13 | 18 |
+
+Rules are counted by their worst category, so a rule moves when its worst test does.
+
+### Regexes that match any node
+
+The gap test once skipped a regex that also matches names (`(?s).`, `[\s\S]`, `^`), taking it
+for a test of a node's text. Most of these are `not: {follows: {regex: "(?s)."}}`, a first
+child, or its `precedes` twin, a last child. A node after an implied `(` was never a first
+child, and on a named-only tape it would be one. That changed 17 tests in 13 rules: an ASI check
+that now passed through `(`, a TODO link found past a `)`, `(a!) == b` flagged by the rule whose
+message recommends it, and others. So the gap test now takes any regex that matches an implied
+token, and a `not` of an extra (a comment) beside it. A `has` in a field takes it only where some
+implied word holds a matching token in that field: `has: {field: type, regex: "(?s).*"}` asks
+for a `type` child, and no grammar implies one. Each of these tests answers as the full tree
+did, with no rule rewritten.
+
+The 13 tests left are `inside`, `has` to the end and `stopBy` forms that the gap test does not
+take. Each was read against the grammars, and they answer as before, with two exceptions. In
+react-hooks-refs, a bare `return;` now counts as returning no node; the `return` keyword used to
+match `[^;]`, so that test never held. In react-hooks-rules-of-hooks, only an empty tagged
+template, useEffect``, differs.
 
 String annotations parse into trees of their own. Those drop implied tokens too, as a tape does,
 so a rule reads the same structure inside an annotation as outside it.

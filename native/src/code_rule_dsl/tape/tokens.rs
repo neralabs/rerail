@@ -434,11 +434,17 @@ impl TokenGrammar {
         &self.implied_texts
     }
 
-    /// Whether `regex` tests a token the grammar implies somewhere: it matches one, and is not a
-    /// test of a node's text that reaches tokens by accident (`(?s).*`, `.`, `^_`: it also matches
-    /// a name or a number), which a tape's leaving the token out does not change.
+    /// Whether `regex` tests a token the grammar implies somewhere: it matches one. A regex that
+    /// also matches names (`(?s).`, `^`) counts too: `not follows (?s).` asks for a first child,
+    /// and a node after an implied `(` was never one.
     pub(in crate::code_rule_dsl) fn tests_implied(&self, regex: &regex::Regex) -> bool {
-        self.implied_texts.iter().any(|token| regex.is_match(token)) && !["x", "foo_bar", "0"].iter().any(|text| regex.is_match(text))
+        self.implied_texts.iter().any(|token| regex.is_match(token))
+    }
+
+    /// Whether `regex` tests a token the grammar implies in `field` somewhere: a `has` in a field
+    /// whose implied words hold no such token asks only for stored children.
+    pub(in crate::code_rule_dsl) fn tests_implied_in(&self, regex: &regex::Regex, field: &str) -> bool {
+        self.kinds.values().flat_map(|automaton| automaton.implied.to.values().chain(automaton.implied.end.iter().flatten())).flatten().any(|label| self.texts[label.field as usize] == field && regex.is_match(&self.texts[label.name as usize]))
     }
 
     /// Whether `kind` is one of the grammar's extras (a comment and the like).

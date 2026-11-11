@@ -1279,8 +1279,10 @@ pub(in crate::code_rule_dsl) fn gap_test(key: &str, relation: &Value, language: 
         ("precedes", true, None) => Place::Later,
         _ => return None,
     };
+    let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(language)?;
     // A token regex, alone or beside a `not` that holds on every implied token: a `not` of kinds
-    // none of which is the token's own (an implied `accessor` is no `property_identifier`).
+    // none of which is the token's own (an implied `accessor` is no `property_identifier`), or of
+    // an extra (no implied token is a comment).
     let bare = |rule: &Value| -> Option<String> {
         let rule = rule.as_object()?;
         let regex = rule.get("regex")?.as_str()?;
@@ -1293,12 +1295,12 @@ pub(in crate::code_rule_dsl) fn gap_test(key: &str, relation: &Value, language: 
                 _ => false,
             }
         }
-        if !rule.iter().all(|(key, value)| key == "regex" || (key == "not" && other_kinds(value, &compiled))) {
+        let extra = |rule: &Value| rule.as_object().filter(|rule| rule.len() == 1).and_then(|rule| rule.get("kind")?.as_str()).is_some_and(|kind| grammar.is_extra(kind));
+        if !rule.iter().all(|(key, value)| key == "regex" || (key == "not" && (other_kinds(value, &compiled) || extra(value)))) {
             return None;
         }
         Some(format!("(?:{regex})"))
     };
-    let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(language)?;
     let target: serde_json::Map<String, Value> = object.iter().filter(|(key, _)| !matches!(key.as_str(), "stopBy" | "field")).map(|(k, v)| (k.clone(), v.clone())).collect();
     // `{not: {kind: comment}}` beside the regex holds on every implied token: none is an extra.
     let not_extra = |rule: &Value| {
@@ -1321,7 +1323,11 @@ pub(in crate::code_rule_dsl) fn gap_test(key: &str, relation: &Value, language: 
         return None;
     }
     let regex = Regex::new(&regexes.join("|")).ok()?;
-    if !grammar.tests_implied(&regex) {
+    let tests = match &place {
+        Place::Field(field) => grammar.tests_implied_in(&regex, field),
+        _ => grammar.tests_implied(&regex),
+    };
+    if !tests {
         return None;
     }
     let past = if past_extras { Some(past?) } else { None };
