@@ -1962,8 +1962,7 @@ pub(super) fn sql_workspace_ranges_for_statement(
         .expect("workspace SQL statement");
     let columns = statement
         .column_names()
-        .iter()
-        .map(|name| name.to_string())
+        .map(str::to_owned)
         .collect::<Vec<_>>();
     let column = |name: &str| columns.iter().position(|column| column == name);
     let file = column("file_index").expect("file column");
@@ -2221,14 +2220,18 @@ fn sql_outcome_with_failure(
         .map(|node| tape.transducer_span(node))
         .collect::<Vec<_>>();
     let roots = (0..tape.transducer_len() as u32).collect::<Vec<_>>();
+    // Every producer runs and completes, but a terminal of another dialect than the file's visits
+    // no node: the tape's kind ids are another grammar's, which the catalog driver never gives it.
     let anchors = plan
         .terminals()
         .iter()
         .map(|terminal| {
-            if matches!(
-                terminal.kind(),
-                TerminalKind::File | TerminalKind::Transform
-            ) {
+            if terminal.dialect() != dialect
+                || matches!(
+                    terminal.kind(),
+                    TerminalKind::File | TerminalKind::Transform
+                )
+            {
                 Vec::new()
             } else if terminal.kind() == TerminalKind::Navigation {
                 vec![0]
@@ -2336,7 +2339,6 @@ fn sql_outcome_with_failure(
         .expect("executable SQL plan");
     let columns = statement
         .column_names()
-        .into_iter()
         .map(str::to_owned)
         .collect::<Vec<_>>();
     let metadata = file_metadata(

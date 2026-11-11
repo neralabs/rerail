@@ -482,11 +482,18 @@ fn open_paths() -> (Vec<String>, usize) {
 /// open then. Also rewrites `memory.tsv` in the profile directory, so the timeline covers the caller's work too.
 pub(in crate::code_rule_dsl) fn peaks() -> String {
     let (now, max) = memory::footprint();
-    let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
-    // SAFETY: fills a `rusage` for this process.
-    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
-    // macOS reports bytes, Linux kilobytes.
-    let rss = if cfg!(target_os = "macos") { usage.ru_maxrss as f64 } else { usage.ru_maxrss as f64 * 1024.0 };
+    // macOS reports bytes, Linux kilobytes; Windows has its peak working set, the browser build no counter.
+    #[cfg(unix)]
+    let rss = {
+        let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
+        // SAFETY: fills a `rusage` for this process.
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+        if cfg!(target_os = "macos") { usage.ru_maxrss as f64 } else { usage.ru_maxrss as f64 * 1024.0 }
+    };
+    #[cfg(windows)]
+    let rss = crate::code_rule_dsl::prof::windows_peak_working_set() as f64;
+    #[cfg(target_family = "wasm")]
+    let rss = 0.0;
     let mut r = format!("process: footprint {} MB now, {} MB at most; resident set {} MB at most\n", memory::mb(now as f64), memory::mb(max as f64), memory::mb(rss));
     memory::sampled_report(&mut r);
     if let Some(dir) = directory() {

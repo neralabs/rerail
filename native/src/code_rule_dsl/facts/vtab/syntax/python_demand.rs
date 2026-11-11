@@ -342,7 +342,7 @@ mod tests {
                 }
             })
             .collect();
-        let (batch, _, _) = Batch::build(&store, docs, &Projection::default(), false).unwrap();
+        let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
         let grammar = &batch.py.as_ref().unwrap().grammar;
         let mut requests = Vec::new();
         let mut calls = Vec::new();

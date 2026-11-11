@@ -1,0 +1,96 @@
+// data-layer-readthrough-authority-architecture: runtime-seed and complete-identity, which read W's `value`.
+// The clauses read `value` on `string` and `concatenated_string` nodes as W's `value: { eq: "…" }` does
+// (`ValueTest::holds`, three-valued):
+// - W's value is the str "x": `value(s, "x"), value_type_of(s, "str")` (a bytes literal b"x" has a known value,
+//   type `bytes`, no `value` row, and W's eq with "x" is false).
+// - W's value is unknown (an f-string with a replacement field, a t-string, a malformed escape, mixed str/bytes):
+//   no `value_type_of` row, as `file_values` gives types only for known values. W's eq is then Unknown: it never
+//   matches, and under `not` it stays Unknown, which reports nothing.
+// The leading `regex: (?s).*` of each clause holds for every node and is left out. No options.
+
+.decl tape_syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+
+// ---- runtime-seed -----------------------------------------------------------------------------------------------
+// Every string or concatenated_string whose value is the str "__readthrough_local_overlays" (a string inside a
+// concatenated_string is tested on its own value too, as W visits it).
+.decl runtime_seed_kind(k: symbol)
+runtime_seed_kind("string").
+runtime_seed_kind("concatenated_string").
+
+violation("data-layer-readthrough-authority-architecture", "runtime-seed", "RTA002", p, l) :-
+    node(d, s, k, _, _), runtime_seed_kind(k), value(s, "__readthrough_local_overlays"), value_type_of(s, "str"),
+    in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(s, l).
+
+// ---- complete-identity ------------------------------------------------------------------------------------------
+// class ReadThroughDeleteChangedPrincipalRowsStep, unless a direct statement X of its body is a `compile` method
+// (a function_definition named compile, or a decorated_definition with one as a direct child) that no earlier
+// sibling compile method precedes (`not follows`, stopBy end) and that has, anywhere below it, a string or
+// concatenated_string of each of the six identity values. Three-valued as W: a value test on a string with no
+// known value is Unknown, so `has` of a key is Unknown when no node matches it and some string below is Unknown;
+// the six-way `all` is false when one key is definitely missing, else Unknown when one is Unknown. The class is
+// reported only when every X is definitely false; an Unknown X makes the `not` Unknown, which reports nothing.
+.decl complete_identity_fdef(k: symbol)
+complete_identity_fdef("function_definition").
+
+.decl complete_identity_strkind(k: symbol)
+complete_identity_strkind("string").
+complete_identity_strkind("concatenated_string").
+
+.decl complete_identity_key(v: symbol)
+complete_identity_key("upstream_namespace").
+complete_identity_key("authority_namespace").
+complete_identity_key("authorization_epoch").
+complete_identity_key("catalog_fingerprint").
+complete_identity_key("admitted_session_id").
+complete_identity_key("principal_user_id").
+
+// A function_definition named compile.
+.decl complete_identity_compile(g: node)
+complete_identity_compile(g) :-
+    node(_, g, "function_definition", _, _), field(g, "name", nm), node(_, nm, "identifier", _, _),
+    text(nm, "compile").
+
+// m is a compile method (the `any` of the clause), g its function_definition.
+.decl complete_identity_def(m: node, g: node)
+complete_identity_def(m, m) :- complete_identity_compile(m).
+complete_identity_def(m, g) :-
+    node(_, m, "decorated_definition", _, _), child(m, g, _), complete_identity_compile(g).
+
+// Key t has a string whose value is the str t below g.
+.decl complete_identity_hit(g: node, t: symbol)
+complete_identity_hit(g, t) :-
+    complete_identity_compile(g), inside(s, g, complete_identity_fdef), node(_, s, k, _, _),
+    complete_identity_strkind(k), value(s, t), complete_identity_key(t), value_type_of(s, "str").
+
+// Some string below g has no known value.
+.decl complete_identity_unknown(g: node)
+complete_identity_unknown(g) :-
+    complete_identity_compile(g), inside(s, g, complete_identity_fdef), node(_, s, k, _, _),
+    complete_identity_strkind(k), !value_type_of(s, _).
+
+// Some key has no string of its value below g.
+.decl complete_identity_miss(g: node)
+complete_identity_miss(g) :- complete_identity_compile(g), complete_identity_key(t), !complete_identity_hit(g, t).
+
+// g's six-way `all` is true or Unknown (not definitely false).
+.decl complete_identity_open(g: node)
+complete_identity_open(g) :- complete_identity_compile(g), !complete_identity_miss(g).
+complete_identity_open(g) :- complete_identity_miss(g), complete_identity_unknown(g).
+
+// m follows an earlier compile method among its siblings.
+.decl complete_identity_after(m: node)
+complete_identity_after(m) :-
+    child(b, m, i), complete_identity_def(m, _), child(b, x, j), j < i, complete_identity_def(x, _).
+
+// The body block b has a statement X that is true or Unknown.
+.decl complete_identity_open_body(b: node)
+complete_identity_open_body(b) :-
+    child(b, m, _), complete_identity_def(m, g), !complete_identity_after(m), complete_identity_open(g).
+
+violation("data-layer-readthrough-authority-architecture", "complete-identity", "RTA008", p, l) :-
+    node(d, c, "class_definition", _, _), field(c, "name", nm), node(_, nm, "identifier", _, _),
+    text(nm, "ReadThroughDeleteChangedPrincipalRowsStep"), field(c, "body", b), !complete_identity_open_body(b),
+    in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(c, l).

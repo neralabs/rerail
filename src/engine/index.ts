@@ -15,6 +15,7 @@ export {
   type RerailEventLoop,
   type RerailHost,
   RULE_MESSAGE_TYPE,
+  STEER_LINE_MESSAGE_TYPE,
   STEER_STRATEGIES,
   type SteerRule,
   type SteerStrategy,
@@ -24,7 +25,9 @@ export { SqliteAuditControlStore } from "./audit/audit-control.js";
 export { SqliteAuditReader, SqliteAuditStore } from "./audit/audit-store.js";
 export { type AuditInput, type AuditRecorder, type AuditResult, isUnreadFailure, UNREAD_FAILURE_HEAD } from "./audit/audit.js";
 export { loadPackRuleDocuments } from "./catalog/rule-documents.js";
-export { installedPackDirectories, installedPacksPrefix, loadRuleCatalog, readRuleCatalog } from "./catalog/rule-catalog.js";
+export { INSTALLED_PACKS_DIR, installedPackDirectories, installedPacksPrefix, loadRuleCatalog, readRuleCatalog } from "./catalog/rule-catalog.js";
+export { WORKTREE_PACK_ID, WORKTREE_PUBLISHER, WORKTREE_RULES_FOLDER, worktreeRuleCatalog } from "./catalog/worktree-pack.js";
+export { approve, currentSubject, isApproved, packSubject, ruleSubject } from "./catalog/rule-approval.js";
 export { RULE_PACK_LIST } from "./catalog/pack-list.generated.js";
 export { ConversationRuleRegistry } from "./catalog/registry.js";
 export { repositoryIdentityLocation, resolveCloneId } from "./catalog/repository-identity.js";
@@ -39,7 +42,7 @@ export {
   type RepositoryStatus,
 } from "./catalog/repository-model.js";
 export { adoptRemote, checkoutStatus, listRepositories, lookupCheckout, recordCheckout } from "./catalog/repository-registry.js";
-export { exportRulesDump, importRulesDump, type RulesDump } from "./catalog/rule-bootstrap.js";
+export { exportRulesDump, importRulesDump, RULES_DUMP_FILE, type RulesDump } from "./catalog/rule-bootstrap.js";
 export { offerSetupReview } from "./catalog/setup-review.js";
 export {
   addAttachment,
@@ -50,7 +53,7 @@ export {
   setUpRepository,
 } from "./catalog/rule-configuration.js";
 export { getLibraryRule, listLibraryRules, upsertLibraryRule, writeLibraryRule } from "./catalog/rule-library.js";
-export { RULE_MODES, type RuleMode } from "./catalog/rule-mode.js";
+export { BLOCK_STEERS_NOTE, RULE_MODES, type RuleMode } from "./catalog/rule-mode.js";
 export {
   loadRulePacks,
   RULE_PACK_RULE_ID,
@@ -62,6 +65,7 @@ export {
   rulePackPackageSchema,
 } from "./catalog/rule-packs.js";
 export { type ConversationRule, parseConversationRule } from "./catalog/rule-schema.js";
+export { engineRegexIssues, type RegexIssue } from "./catalog/rule-regexes.js";
 export { type RuleDocument, SqliteRuleStore } from "./catalog/rule-store.js";
 export { CodeRuleBridge } from "./code-rule/code-rule-bridge.js";
 export {
@@ -83,7 +87,7 @@ export {
 export { CODE_RULE_FORMAT, type CodeRule, codeRuleSchema, type CodeRuleScope } from "./code-rule/code-rule-schema.js";
 export { type CodeRuleAuditor, type CodeRuleSourceLanguage, type CodeRuleViolation, renderSteer, type RuleSteerDelivery } from "./code-rule/code-rule.js";
 export {
-  asLateSteer, headlineText, SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, steerBlock, steerHeadlines, steerRules, type SteerFinding, type SteerTrigger,
+  asLateSteer, headlineText, messageSteer, SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, steerBlock, steerHeadlines, steerRules, type SteerFinding, type SteerTrigger,
 } from "./code-rule/rerail-steer.js";
 export { steerOrigin } from "./code-rule/steer-origin.js";
 export { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
@@ -99,12 +103,15 @@ export {
 } from "./native/native.js";
 export { NativeSemanticEmbedder, SemanticWorkspace } from "./native/semantic-primitives.js";
 export { type SemanticEmbedder, type Watermark } from "./native/semantic-types.js";
+export { deniedByPathBoundary, SENSITIVE_FILE_NAMES } from "./path-boundary.js";
+export { agentTranscriptPayload, callNamesDeniedPath, WITHHELD_INPUT, WITHHELD_OUTPUT, WITHHELD_PAYLOAD } from "./transcript-boundary.js";
 export { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "./stable-json.js";
 export {
   databaseInstalledAt,
   defaultRerailDatabasePath,
   openRerailDatabase,
   openSqliteDatabase,
+  RERAIL_DATABASE_FILE,
   type RerailDatabase,
   resetRepositoryHistory,
   resetRepositoryHistoryIn,
@@ -134,6 +141,7 @@ export {
   ruleAttachments,
   ruleViolationRollup,
   ruleCatalogIdentities,
+  ruleApprovals,
   schemaMigrations,
   rules,
   ruleSettings,
@@ -141,9 +149,7 @@ export {
   steerFeedback,
   workLinks,
 } from "./storage/schema.js";
-export { ENTRY_POINTS, PACKAGE_ROOT } from "./package-root.js";
+export { bundledModelPath, ENTRY_POINTS, PACKAGE_ROOT, REQUIRED_NODE_MAJOR } from "./package-root.js";
 export { RERAIL_HOSTS, type CodingAgentState } from "./adapter-contract.js";
 export { type ApiCaller } from "./catalog/repository-model.js";
 
-export { approve, ruleSubject, currentSubject } from "./catalog/rule-approval.js";
-export { worktreeRuleCatalog } from "./catalog/worktree-pack.js";

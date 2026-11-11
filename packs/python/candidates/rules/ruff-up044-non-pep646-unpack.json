@@ -1,0 +1,171 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up044-non-pep646-unpack",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use star unpacking instead of typing.Unpack in variadic generic arguments and star-args annotations on Python 3.11 and above; it is the shorter PEP 646 syntax.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "unpack": {
+            "any": [
+              {
+                "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+                "resolves": {"import": ["typing.Unpack", "typing_extensions.Unpack", "_typeshed.Unpack"]}
+              },
+              {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "unpack"}}
+            ]
+          },
+          "element": {
+            "not": {
+              "any": [
+                {"kind": "comment"},
+                {"regex": "^[\\[\\](),]$"},
+                {"precedes": {"stopBy": {"not": {"kind": "comment"}}, "regex": "^\\[$"}}
+              ]
+            }
+          },
+          "alone": {
+            "all": [
+              {"not": {"precedes": {"stopBy": {"not": {"kind": "comment"}}, "regex": "^,$"}}},
+              {"count": {"follows": {"stopBy": "end", "matches": "element"}, "max": 0}}
+            ]
+          },
+          "wrapper": {"any": [{"kind": "parenthesized_expression"}, {"kind": "type"}]},
+          "unpackable": {
+            "any": [
+              {"kind": "identifier"},
+              {"kind": "attribute"},
+              {"kind": "subscript"},
+              {"kind": "generic_type"},
+              {"matches": "wrapper", "has": {"stopBy": "neighbor", "matches": "unpackable"}}
+            ]
+          },
+          "unpack-subscript": {
+            "any": [
+              {
+                "kind": "subscript",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "unpack",
+                  "precedes": {"stopBy": {"not": {"kind": "comment"}}, "regex": "^\\[$"}
+                },
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "element",
+                      "all": [{"matches": "unpackable"}, {"matches": "alone"}]
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "generic_type",
+                "has": {"stopBy": "neighbor", "matches": "unpack"},
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "type_parameter",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "element",
+                        "all": [{"matches": "unpackable"}, {"matches": "alone"}]
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "index-tuple": {
+            "matches": "element",
+            "all": [
+              {"matches": "alone"},
+              {
+                "any": [
+                  {"kind": "tuple"},
+                  {"matches": "wrapper", "has": {"stopBy": {"not": {"matches": "wrapper"}}, "kind": "tuple"}}
+                ]
+              }
+            ]
+          },
+          "unpack-use": {
+            "matches": "unpack-subscript",
+            "any": [
+              {
+                "not": {"precedes": {"stopBy": {"not": {"kind": "comment"}}, "regex": "^\\[$"}},
+                "inside": {
+                  "stopBy": {"not": {"matches": "wrapper"}},
+                  "any": [{"kind": "subscript"}, {"kind": "type_parameter"}]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {"not": {"matches": "wrapper"}},
+                  "kind": "tuple",
+                  "inside": {
+                    "stopBy": {"not": {"matches": "wrapper"}},
+                    "any": [{"kind": "subscript"}, {"kind": "type_parameter"}],
+                    "has": {"stopBy": "neighbor", "matches": "index-tuple"}
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {"not": {"matches": "wrapper"}},
+                  "kind": "typed_parameter",
+                  "has": {"stopBy": "neighbor", "kind": "list_splat_pattern"}
+                }
+              }
+            ]
+          },
+          "unpack-in-string": {
+            "kind": "string",
+            "not": {"any": [{"regex": "\\\\"}, {"matches": "forward-ref-excluded"}]},
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [{"matches": "unpack-use", "capture": "T"}, {"matches": "unpack-in-string"}]
+              }
+            }
+          },
+          "forward-ref-excluded": {
+            "inside": {
+              "stopBy": "end",
+              "any": [{"kind": "generic_type"}, {"kind": "subscript"}],
+              "has": {
+                "stopBy": "neighbor",
+                "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+                "resolves": {"import": ["typing.Literal", "typing_extensions.Literal"]}
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "unpack-subscript",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {"pythonVersion": {"min": "3.11"}},
+          "rule": {"any": [{"matches": "unpack-use", "pattern": "$T"}, {"matches": "unpack-in-string"}]}
+        }
+      },
+      "violation": {
+        "anchor": "capture.T",
+        "each": "T",
+        "code": "UP044",
+        "message": "Replace `Unpack[X]` with `*X`. They are different objects at runtime, so keep `Unpack` if the annotation is introspected.",
+        "suppress": {"noqa": {"codes": ["UP044"]}}
+      }
+    }
+  ]
+}

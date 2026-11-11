@@ -7,7 +7,7 @@ fn replay_preserves_rows_empty_results_and_cross_query_reuse() {
     let path = dir.path().join("input.sqlite");
     let db = rusqlite::Connection::open(&path).unwrap();
     db.execute_batch(include_str!(
-        "../../../../native/src/code_rule_dsl/matcher/anchors/sql/schema.sql"
+        "../../../../native/src/code_rule_dsl/matcher/p_anchors/sql/schema.sql"
     ))
     .unwrap();
     db.execute_batch("INSERT INTO file(fid,nodes,path,digest,lang,src,rec,spans,checkpoints,parb,sizb,flags) VALUES(1,1,'a.ts',x'01',1,x'78',zeroblob(6),zeroblob(2),zeroblob(6),x'',x'',x'02'); INSERT INTO ftsk(rowid,k) VALUES(1,'k1')").unwrap();
@@ -53,7 +53,7 @@ fn cache_budget_replay_preserves_bags_and_requested_file_scope() {
     let dir = tempfile::tempdir().unwrap();
     let db = rusqlite::Connection::open(dir.path().join("input.sqlite")).unwrap();
     db.execute_batch(include_str!(
-        "../../../../native/src/code_rule_dsl/matcher/anchors/sql/schema.sql"
+        "../../../../native/src/code_rule_dsl/matcher/p_anchors/sql/schema.sql"
     ))
     .unwrap();
     db.execute_batch("INSERT INTO ftsk(rowid,k) VALUES(1,'k1'),(2,'k1')")
@@ -109,7 +109,7 @@ fn shared_owner_capture_replay_preserves_nonshared_schemas_and_duplicate_rows() 
     let dir = tempfile::tempdir().unwrap();
     let db = rusqlite::Connection::open(dir.path().join("input.sqlite")).unwrap();
     db.execute_batch(include_str!(
-        "../../../../native/src/code_rule_dsl/matcher/anchors/sql/schema.sql"
+        "../../../../native/src/code_rule_dsl/matcher/p_anchors/sql/schema.sql"
     ))
     .unwrap();
     drop(db);

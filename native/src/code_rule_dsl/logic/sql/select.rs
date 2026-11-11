@@ -95,13 +95,30 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "doc" => &["d", "path", "module"],
         "child" => &["p", "c", "idx"],
         "field" => &["p", "f", "c"],
-        "text" | "name" | "str" | "strprefix" | "value" => &["n", "s"],
+        "text" | "name" | "str" | "strprefix" | "node_text" | "comment" => &["n", "s"],
+        // W's values (`facts::vtab::syntax::Extra`).
+        "value" | "static_value" => &["n", "v"],
+        "value_type_of" => &["n", "t"],
+        "value_type" => &["v", "t"],
+        // W's f-string trees (`facts::vtab::syntax::fstring`).
+        "fstring_piece" => &["n", "i", "kind", "v"],
+        "fstring_template" => &["n", "marker", "v"],
+        // CPython's verdict (`facts::vtab::syntax::cpython`; core.rr's `syntax_error(d, l, msg)`).
+        "cpython_syntax_error" => &["d", "l", "msg"],
+        // Ruff's string annotations and their trees (`facts::vtab::syntax::annotation`).
+        "string_annotation" => &["s"],
+        "parsed" => &["s", "grammar", "root"],
+        // W's pythonAst `literal_json` (`facts::vtab::syntax::cpython`).
+        "literal_json" => &["n", "v"],
+        // core.rr's @py_unparse(n) and @ast_dump(n), and W's hashes of dumps (`facts::vtab::syntax::cpython`).
+        "cpython_unparse" | "cpython_ast_dump" => &["n", "s"],
+        "dump_sha256" => &["n", "h"],
+        "body_sha256" | "signature_sha256" => &["f", "h"],
         "intval" => &["n", "v"],
         "op_at" => &["n", "i", "s"],
-        "op" | "op_t" | "comment" | "static_value" => &["n", "s"],
+        "op" | "op_t" => &["n", "s"],
         // `core.rr`'s (`facts::vtab::syntax`, decision 0046).
         "syntax_error" => &["d", "l", "msg"],
-        "value_type" => &["v", "t"],
         "spread" => &["n"],
         "next_sibling" => &["a", "b"],
         "visit_index" => &["n", "i"],
@@ -112,7 +129,7 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "col" => &["n", "c"],
         "docof" => &["n", "d"],
         "source" => &["d", "sp"],
-        "src_line" => &["d", "l", "sp"],
+        "src_line" | "src_line_lf" | "tape_line" => &["d", "l", "sp"],
         "split_line" | "lf_line" => &["d", "l", "t"],
         "str_part" => &["lit", "i", "v", "at", "spec"],
         "str_part_word" => &["lit", "i", "w", "at", "spec"],
@@ -120,6 +137,12 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "first_token" | "last_token" => &["n", "t"],
         "token_before" | "token_after" => &["x", "t"],
         "tree_digest" | "def_digest" => &["n", "s"],
+        // core.rr's tokens (`facts::vtab::syntax::tree`).
+        "prev_token" => &["n", "s"],
+        "token" => &["p", "i", "s", "start", "end_"],
+        // W's Python reference graph (`logic::plan::corpus::references`).
+        "reference_edge" => &["src", "dst", "via"],
+        "reference_open" => &["n"],
         "rx_span" => &["p", "c", "j", "g", "m"],
         "ast_match" => &["p", "n", "g", "c"],
         // Decision 0055's (`facts::vtab::syntax::guests`).
@@ -127,7 +150,6 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "doc_role" => &["d", "r"],
         "doc_root" => &["d", "n"],
         "tape_of" => &["d", "t"],
-        "parsed" => &["s", "grammar", "root"],
         "sub_tape" => &["at", "grammar", "t"],
         "host_node" => &["n", "h"],
         // Decision 0058's tape operations.
@@ -153,6 +175,9 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) => &["s"],
         // An `ast` matcher's matched nodes (decision 0106).
         rel if rel.starts_with(crate::code_rule_dsl::logic::plan::corpus::AST_MATCHES) => crate::code_rule_dsl::logic::plan::corpus::ast_columns(rel),
+        // A `match_all` regex's matches (`logic::strings::as_relations`, `facts::vtab::syntax::Extra`).
+        rel if rel.starts_with(crate::code_rule_dsl::logic::strings::MATCHES) => &["sp", "m"],
+        rel if rel.starts_with(crate::code_rule_dsl::logic::strings::GROUPS) => &["sp", "m", "g", "gsp"],
         // The `py.*` families (`facts::vtab::syntax::PY`).
         rel if rel.starts_with("py_") => crate::code_rule_dsl::facts::vtab::syntax::PY.iter().position(|&p| p == rel).map(|i| crate::code_rule_dsl::facts::vtab::syntax::PY_COLUMNS[i])?,
         _ => return None,

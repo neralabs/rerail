@@ -11,7 +11,6 @@ use super::{
     WorkspaceCompletion, rows::intern_hash,
 };
 use rusqlite::params;
-use std::io::Cursor;
 
 mod snapshot_trees;
 #[cfg(test)]
@@ -256,7 +255,7 @@ impl ContentStore {
             .into_iter()
             .map(
                 |(prefix, page_index, page_count, raw_length, file_count, frame)| {
-                    let bytes = zstd::stream::decode_all(Cursor::new(frame))?;
+                    let bytes = super::decompress(&frame, 0)?;
                     if bytes.len() != usize::try_from(raw_length).unwrap_or(usize::MAX) {
                         return Err(StoreError::Corrupt(
                             "tree result length mismatch".to_owned(),

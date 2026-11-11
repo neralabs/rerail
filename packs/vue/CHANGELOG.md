@@ -1,5 +1,30 @@
 # @neralabs/rerail-pack-vue
 
+Every notable change to this rule pack, latest first. Each release says how many rules the pack ships, then lists its changes, rule by rule, under Added, Changed, Deprecated, Removed, Fixed and Security, as in [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/); releases from before the pack's notes took that format list them without those headings. There are two differences: a heading reads `## <version> (<date>)` rather than `## [<version>] - <date>`, and changes waiting for the next release are [changesets](../../.changeset/README.md), so there is no `## Unreleased`.
+
+Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. Below 1.0.0 every release is a patch, and a patch can add, change or remove rules, so read the notes before you update.
+
+## 0.1.7 (2026-11-06)
+
+23 rules, 21 of them on by default.
+
+### Changed
+
+- The pack's npm page lists keywords: Rerail, its language and the tools it ports, so a search on npm finds it. Its rules are unchanged.
+
+## 0.1.6 (2026-11-04)
+
+23 rules, 21 of them on by default.
+
+- 4 new rules: `eslint-plugin-vue-no-dupe-keys`, `eslint-plugin-vue-require-valid-default-prop` and `eslint-plugin-vue-return-in-computed-property` start in Steer; `eslint-plugin-vue-no-unused-refs` starts off.
+
+## 0.1.5
+
+### Patch Changes
+
+- 7392aea: README and licence notes: the pack's test data now lives outside the package; no rule changes.
+- 115b81b: Vue pack: eslint-plugin-vue is gated by port readiness, and 19 rules that pass every rule gate and the pack's conformance check ship: `attribute-hyphenation`, `no-async-in-computed-properties`, `no-child-content`, `no-deprecated-v-on-native-modifier`, `no-duplicate-attributes`, `no-export-in-script-setup`, `no-mutating-props`, `no-ref-as-operand`, `no-side-effects-in-computed-properties`, `no-template-shadow`, `no-unused-vars`, `no-use-v-if-with-v-for`, `no-v-html`, `no-v-text-v-html-on-component`, `no-watch-after-await`, `require-v-for-key`, `v-on-event-hyphenation` and `valid-v-for` on, as `flat/recommended` turns them on, and `no-setup-props-reactivity-loss` off (no recommended eslint-plugin-vue configuration turns it on). The ports report the ranges eslint-plugin-vue reports (the directive, attribute, start tag, identifier or child content, no longer a point at its start), `no-unused-vars` reads a Vue 2 filter's name as no reference, as vue-eslint-parser does, and `no-mutating-props` checks `v-model` before the prop lookup so it stays within the engine's work budget. 5 remain candidates.
+
 ## 0.1.4
 
 ### Patch Changes

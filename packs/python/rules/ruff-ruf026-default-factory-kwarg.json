@@ -1,0 +1,225 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf026-default-factory-kwarg",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Pass the default factory to defaultdict as the first positional argument; a default_factory keyword is stored as an ordinary dictionary entry.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "default-factory-kwarg",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "collections.defaultdict"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "positional": {
+              "not": {
+                "any": [
+                  {
+                    "kind": "comment"
+                  },
+                  {
+                    "kind": "keyword_argument"
+                  },
+                  {
+                    "kind": "dictionary_splat"
+                  },
+                  {
+                    "regex": "^[(),]$"
+                  }
+                ]
+              }
+            },
+            "non-callable": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "integer"
+                    },
+                    {
+                      "kind": "float"
+                    },
+                    {
+                      "kind": "none"
+                    },
+                    {
+                      "kind": "true"
+                    },
+                    {
+                      "kind": "false"
+                    },
+                    {
+                      "kind": "ellipsis"
+                    },
+                    {
+                      "kind": "string"
+                    },
+                    {
+                      "kind": "concatenated_string"
+                    },
+                    {
+                      "kind": "list"
+                    },
+                    {
+                      "kind": "dictionary"
+                    },
+                    {
+                      "kind": "set"
+                    },
+                    {
+                      "kind": "tuple"
+                    },
+                    {
+                      "kind": "list_comprehension"
+                    },
+                    {
+                      "kind": "set_comprehension"
+                    },
+                    {
+                      "kind": "dictionary_comprehension"
+                    },
+                    {
+                      "kind": "generator_expression"
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "non-callable"
+                  }
+                }
+              ]
+            },
+            "bad-call": {
+              "kind": "call",
+              "all": [
+                {
+                  "has": {
+                    "field": "function",
+                    "matches": "callee"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "arguments",
+                    "kind": "argument_list",
+                    "all": [
+                      {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "positional"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "keyword_argument",
+                          "all": [
+                            {
+                              "has": {
+                                "field": "name",
+                                "regex": "^default_factory$"
+                              }
+                            },
+                            {
+                              "has": {
+                                "field": "value",
+                                "not": {
+                                  "matches": "non-callable"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "in-string": {
+              "kind": "string",
+              "not": {
+                "regex": "\\\\"
+              },
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "bad-call",
+                      "capture": "C"
+                    },
+                    {
+                      "matches": "in-string"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "bad-call",
+                "pattern": "$C"
+              },
+              {
+                "matches": "in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "code": "RUF026",
+        "message": "Pass the factory positionally, as in `defaultdict(list)`; `default_factory=` is stored as a dict entry and leaves the dict without a default. Leave it if that entry is intended.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF026"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -26,7 +26,6 @@ pub(crate) fn describe(db: &Connection, name: &str) -> Result<Columns> {
     Ok(db
         .prepare(&format!("SELECT * FROM {}", quote(name)))?
         .columns()
-        .iter()
         .map(|column| Column {
             name: column.name().to_owned(),
             declared_type: column.decl_type().unwrap_or("").to_owned(),

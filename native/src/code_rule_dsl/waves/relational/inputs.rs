@@ -78,7 +78,9 @@ impl Sink<'_> {
         if self.path.as_ref() != witness.path {
             self.path = Arc::from(witness.path.as_str());
         }
-        let location = anchored_span(&self.input.anchor, &witness).0;
+        let location = anchored_span(&self.input.anchor, &witness)
+            .0
+            .expect("a relation's AST witness has a span");
         self.pending.push(Pending {
             path: Arc::clone(&self.path),
             start: location.start_byte as i64,

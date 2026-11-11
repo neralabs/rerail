@@ -43,13 +43,15 @@ pub(crate) fn kind_code(atom: u32) -> u16 {
     }
 }
 
-/// The tape tag of a document's dialect: its root's kind's.
+/// The tape tag of a document's dialect (`Facts::tag`): a text-only document, which has no nodes, has its own.
 pub(crate) fn facts_tag(f: &Facts) -> u8 {
-    f.kind.first().map_or(0, |&k| kind_tag(k))
+    f.tag
 }
 
 /// One file's facts. Columns are indexed by node id.
 pub(crate) struct Facts {
+    /// The tape tag of the file's dialect, which every kind atom is of.
+    pub tag: u8,
     pub source: Arc<String>,
     pub lines: Arc<LineTable>,
     /// node(id, kind, parent, start, end) + subtree_end, flags, field.
@@ -74,8 +76,18 @@ pub(crate) struct Facts {
     pub class_offsets: Vec<u32>,
     pub class_nodes: Vec<u32>,
     pub syntax_errors: bool,
-    /// Computed only for a demanded Python syntax verdict; shared by every projection of this tape.
-    pub python_syntax: std::sync::OnceLock<Option<(u32, String)>>,
+    /// Computed only for a demanded Python syntax verdict; shared by every projection of this tape. `Err`: `ast.parse`
+    /// raises another exception than `SyntaxError` (`facts::vtab::syntax::python_syntax`).
+    pub python_syntax: std::sync::OnceLock<Result<Option<(u32, String)>, String>>,
+}
+
+/// An anonymous child: a token the tape stores ([`Facts::tokens`]).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct Token {
+    pub kind: u32,
+    pub field: u16,
+    pub start: u32,
+    pub end: u32,
 }
 
 pub(crate) enum Built {
@@ -115,33 +127,6 @@ pub(crate) fn build_with_tape(file: &FileInput, keep: bool) -> Result<(Built, Op
     let facts = from_image(Arc::clone(&file.source), &grammar, &image.primary, lines)?;
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.start.len() as u64);
     Ok((Built::Facts(facts), doc))
-}
-
-/// A document read as text only (`.scope text`): its source and lines, and no tree. Its `doc`, `source` and
-/// `src_line` rows are a file's; no node rule matches it, whatever the run's grammar.
-pub(crate) fn text_only(source: Arc<String>) -> Facts {
-    let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::Newlines));
-    Facts {
-        source,
-        lines,
-        kind: Vec::new(),
-        parent: Vec::new(),
-        start: Vec::new(),
-        end: Vec::new(),
-        subtree_end: Vec::new(),
-        flags: Vec::new(),
-        field: Vec::new(),
-        child_offsets: vec![0],
-        children: Vec::new(),
-        kind_keys: Vec::new(),
-        kind_offsets: vec![0],
-        kind_nodes: Vec::new(),
-        class_keys: Vec::new(),
-        class_offsets: vec![0],
-        class_nodes: Vec::new(),
-        syntax_errors: false,
-        python_syntax: Default::default(),
-    }
 }
 
 /// [`build`], with the file's tape kept in `cache` (a content store, keyed by the source's content,
@@ -346,7 +331,7 @@ mod postings;
 pub(crate) fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, String> {
     let tag = tape_tag(doc.file_dialect()).ok_or("the tape's dialect has no tape tag")?;
     let n = doc.transducer_len();
-    let mut f = empty(Arc::clone(doc.document_source()), lines, n);
+    let mut f = empty(tag, Arc::clone(doc.document_source()), lines, n);
     f.syntax_errors = !doc.syntax_error_ranges().is_empty();
     let columns_span = crate::code_rule_dsl::logic::profile::span(|| "node columns".into());
     for id in 0..n as u32 {
@@ -368,8 +353,9 @@ pub(crate) fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, S
 }
 
 /// Allocates only the core columns. Line numbers are lookups in the shared source line table.
-fn empty(source: Arc<String>, lines: Arc<LineTable>, n: usize) -> Facts {
+fn empty(tag: u8, source: Arc<String>, lines: Arc<LineTable>, n: usize) -> Facts {
     Facts {
+        tag,
         source,
         lines,
         kind: Vec::with_capacity(n),
@@ -397,11 +383,11 @@ fn empty(source: Arc<String>, lines: Arc<LineTable>, n: usize) -> Facts {
 pub(crate) fn from_image(source: Arc<String>, grammar: &crate::code_rule_dsl::tape::Grammar,
     image: &crate::code_rule_dsl::tape::TapeImage, lines: Arc<LineTable>) -> Result<Facts, String> {
     let tag = tape_tag(grammar.dialect()).ok_or("the tape's dialect has no tape tag")?;
-    let mut f = empty(Arc::clone(&source), lines, 0);
+    let mut f = empty(tag, Arc::clone(&source), lines, 0);
     let mut classes = Vec::new();
     let decode = crate::code_rule_dsl::logic::profile::span(|| "validated tape columns".into());
     crate::code_rule_dsl::tape::validated::visit(&source, grammar, image, &|| false, |node, memberships| {
-        if node.id == 0 { f = empty(Arc::clone(&f.source), Arc::clone(&f.lines), image.node_count()); }
+        if node.id == 0 { f = empty(tag, Arc::clone(&f.source), Arc::clone(&f.lines), image.node_count()); }
         f.kind.push(kind_atom(tag, node.kind));
         f.parent.push(node.parent);
         f.start.push(node.start);
@@ -417,6 +403,91 @@ pub(crate) fn from_image(source: Arc<String>, grammar: &crate::code_rule_dsl::ta
     let _classes = crate::code_rule_dsl::logic::profile::span(|| "class postings".into());
     (f.class_keys, f.class_offsets, f.class_nodes) = postings(classes);
     Ok(f)
+}
+
+/// The tape tag of a text-only document's facts (`text`): no dialect has it.
+pub(crate) const TEXT: u8 = u8::MAX;
+
+/// The facts of a file read as text only (core.rr's `.scope text`): its source and lines, no tree. Its lines are W's
+/// for a file with no grammar (`Terminators::Eslint`: `\r\n`, `\r`, `\n`, U+2028, U+2029).
+pub(crate) fn text(source: Arc<String>) -> Facts {
+    let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::Eslint));
+    let mut f = Facts {
+        tag: TEXT,
+        source,
+        lines,
+        kind: Vec::new(),
+        parent: Vec::new(),
+        start: Vec::new(),
+        end: Vec::new(),
+        subtree_end: Vec::new(),
+        flags: Vec::new(),
+        field: Vec::new(),
+        child_offsets: Vec::new(),
+        children: Vec::new(),
+        kind_keys: Vec::new(),
+        kind_offsets: Vec::new(),
+        kind_nodes: Vec::new(),
+        class_keys: Vec::new(),
+        class_offsets: Vec::new(),
+        class_nodes: Vec::new(),
+        syntax_errors: false,
+        python_syntax: Default::default(),
+    };
+    index(&mut f);
+    (f.class_keys, f.class_offsets, f.class_nodes) = postings(Vec::new());
+    f
+}
+
+/// The facts of a parsed literal (`literal::SubTree`) as a document of its own, in the dialect whose tape tag is `tag`
+/// (the tree's kinds and fields are that grammar's: an annotation's are Python's): its source is the tree's text
+/// (decoded), its lines Ruff's (`\r\n`, `\r`, `\n`), its ranges in that text. A tree has no abstract classes.
+pub(crate) fn from_subtree(tag: u8, tree: &crate::code_rule_dsl::literal::SubTree) -> Facts {
+    let source = Arc::new(tree.text().to_owned());
+    let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::Newlines));
+    let n = tree.len();
+    let mut f = Facts {
+        tag,
+        source,
+        lines,
+        kind: Vec::with_capacity(n),
+        parent: Vec::with_capacity(n),
+        start: Vec::with_capacity(n),
+        end: Vec::with_capacity(n),
+        subtree_end: Vec::with_capacity(n),
+        flags: Vec::with_capacity(n),
+        field: Vec::with_capacity(n),
+        child_offsets: Vec::new(),
+        children: Vec::new(),
+        kind_keys: Vec::new(),
+        kind_offsets: Vec::new(),
+        kind_nodes: Vec::new(),
+        class_keys: Vec::new(),
+        class_offsets: Vec::new(),
+        class_nodes: Vec::new(),
+        syntax_errors: false,
+        python_syntax: Default::default(),
+    };
+    for node in tree.preorder() {
+        f.kind.push(kind_atom(tag, node.kind));
+        f.parent.push(node.parent.unwrap_or(NONE));
+        f.start.push(node.start);
+        f.end.push(node.end);
+        f.subtree_end.push(f.kind.len() as u32);
+        f.flags.push(u8::from(node.named) | u8::from(node.extra) << 1 | u8::from(node.error) << 3);
+        f.field.push(node.field);
+        f.syntax_errors |= node.error;
+    }
+    // Preorder: a node's descendants end where its last child's do.
+    for id in (0..n).rev() {
+        let p = f.parent[id];
+        if p != NONE {
+            f.subtree_end[p as usize] = f.subtree_end[p as usize].max(f.subtree_end[id]);
+        }
+    }
+    index(&mut f);
+    (f.class_keys, f.class_offsets, f.class_nodes) = postings(Vec::new());
+    f
 }
 
 /// The derived columns: the children CSR (preorder lists a parent's children in order) and the
@@ -493,6 +564,23 @@ impl Facts {
         let a = self.child_offsets[id as usize] as usize;
         let b = self.child_offsets[id as usize + 1] as usize;
         &self.children[a..b]
+    }
+    /// Whether `id` has no children.
+    pub fn is_leaf(&self, id: u32) -> bool {
+        self.children(id).is_empty()
+    }
+    /// `id`'s anonymous children in source order: the tokens the tape stores (the grammar's implied
+    /// ones are not, RER-131).
+    pub fn tokens(&self, id: u32) -> Vec<Token> {
+        self.children(id)
+            .iter()
+            .filter(|&&c| !self.named(c))
+            .map(|&c| Token { kind: self.kind[c as usize], field: self.field[c as usize], start: self.start[c as usize], end: self.end[c as usize] })
+            .collect()
+    }
+    /// A token's text.
+    pub fn token_text(&self, token: &Token) -> &str {
+        &self.source[token.start as usize..token.end as usize]
     }
     pub fn of_kind(&self, kind: u32) -> &[u32] {
         posting(&self.kind_keys, &self.kind_offsets, &self.kind_nodes, kind)

@@ -374,8 +374,8 @@ fn close_under(vars: &mut std::collections::BTreeSet<String>, equal: &[(String, 
 /// A base relation's document column, including raw text views.
 pub(crate) fn document_column(relation: &str) -> Option<usize> {
     match relation {
-        "node" | "doc" | "pkg" | "path_part" | "file_name" | "syntax_error" |
-        "source" | "src_line" | "split_line" | "lf_line" | "line_count" | "parsed"
+        "node" | "doc" | "pkg" | "path_part" | "file_name" | "syntax_error" | "cpython_syntax_error" |
+        "source" | "src_line" | "src_line_lf" | "tape_line" | "split_line" | "lf_line" | "line_count" | "parsed"
         // Decision 0055's: a guest and its host are one file (`corpus::guests` attributes its rows to the host).
         | "doc_role" | "doc_root" | "tape_of" | "guest" | "host_node" => Some(0),
         "docof" => Some(1),
@@ -478,14 +478,22 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
     use crate::code_rule_dsl::logic::front::{Literal, Term};
     use std::collections::{BTreeMap, BTreeSet};
     let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
-    // A base relation's location columns: node columns, the document column of `node`, `doc`, `pkg` and
-    // `syntax_error`, and `docof(n, d)`'s document.
+    // A base relation's location columns: node columns, the document column (`document_column`: `node`, `doc`, `pkg`,
+    // `syntax_error`, `cpython_syntax_error`, the source text's, the path's, the guests') and `docof(n, d)`'s
+    // document. The reference graph's (`reference_edge`, `reference_open`) have none: an edge's ends are in any
+    // files, and the graph is made of every file's.
     let base_locations = |rel: &str| -> Vec<usize> {
+        if matches!(rel, "reference_edge" | "reference_open") {
+            return Vec::new();
+        }
         let mut columns: Vec<usize> = prog.decls.get(rel).map_or_else(Vec::new, |cols| cols.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect());
         if let Some(column) = document_column(rel) {
             columns.push(column);
         }
         if rel == "docof" && !columns.contains(&1) {
+            columns.push(1);
+        }
+        if rel == "docof" {
             columns.push(1);
         }
         columns
@@ -766,6 +774,8 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
     l.lattice.retain(|rel, _| is_local(rel));
     l.gates.retain(|(rel, _)| is_local(rel));
     l.outputs = prog.outputs.iter().filter(|o| is_local(o)).cloned().chain(exports.iter().cloned()).collect::<BTreeSet<_>>().into_iter().collect();
+    // The reference graph is bound for the cross-file part only (no rule reading it is file-local): no chunk has it.
+    l.inputs.retain(|i| !matches!(i.as_str(), "reference_edge" | "reference_open"));
     let mut c = prog.clone();
     c.rules.retain(|r| in_cross(&r.head.rel));
     c.natives.retain(|rel, _| in_cross(rel));
@@ -1524,8 +1534,9 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
 
 /// Gives every relation the chunks hand on (an export, or a file-local output) a location column, so each of its
 /// rows names its document (decision 0052): a relation without one, `r(p, l)`, is derived by the chunks as
-/// `r_at(d, p, l)`, `d` a document its rules bind (from `node`, `doc`, …, or a node through `node(d, n, …)`), and
-/// the cross-file part reads `r(p, l) :- r_at(_, p, l)`. A relation that file-local rules also read, a lattice, or
+/// `r_at(d, p, l)` (`r_at_` where the program has an `r_at` of its own), `d` a document its rules bind (from `node`,
+/// `doc`, `tape_line`, …, a document column left unnamed included, or a node through `node(d, n, …)`), and the
+/// cross-file part reads `r(p, l) :- r_at(_, p, l)`. A relation that file-local rules also read, a lattice, or
 /// one whose rule binds no location is left; its name is returned in the `Err`: its rows are not attributable.
 pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Result<Vec<String>, Vec<String>> {
     use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
@@ -1543,7 +1554,7 @@ pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> 
     let docof = prog.inputs.iter().any(|r| r == "docof");
     let decls = prog.decls.clone();
     let node_typed = |rel: &str, c: usize| decls.get(rel).and_then(|cols| cols.get(c)).is_some_and(|(_, t)| t == "node");
-    let doc_type = prog.decls.get("node").and_then(|cols| cols.first()).map(|(_, t)| t.clone()).unwrap_or_else(|| "number".to_owned());
+    let doc_type = prog.decls.get("node").and_then(|cols| cols.first()).map(|(_, t)| t.clone()).unwrap_or_else(|| "int".to_owned());
     let (mut located, mut blocked) = (Vec::new(), Vec::new());
     let mut rules = std::mem::take(&mut prog.rules);
     // How many rules of a file-local head read each relation (not their own): a target read so is blocked. Kept as
@@ -1562,7 +1573,13 @@ pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> 
             blocked.push(rel.clone());
             continue;
         };
-        // Each rule's document: a document column it binds, else one through a node it binds.
+        // The located relation: `r_at`, unless the program has a relation of that name (then `r_at_`, …).
+        let mut at = format!("{rel}_at");
+        while prog.decls.contains_key(&at) {
+            at.push('_');
+        }
+        // Each rule's document: a document column it binds, or one it leaves unnamed (`tape_line(_, l, sp)`, which
+        // then names it), else one through a node it binds.
         let mut made = Vec::new();
         for rule in rules.iter().filter(|r| r.head.rel == *rel) {
             let positive = || rule.body.iter().filter_map(|l| match l {
@@ -1574,13 +1591,26 @@ pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> 
                 _ => None,
             });
             let mut body = rule.body.clone();
-            let doc = match doc {
-                Some(d) => d,
-                None => {
+            let unnamed = rule.body.iter().enumerate().find_map(|(i, l)| match l {
+                Literal::Atom(a) if !a.neg => document_column(&a.rel).filter(|&c| matches!(a.args.get(c), Some(Term::Wild))).map(|c| (i, c)),
+                _ => None,
+            });
+            let doc = match (doc, unnamed) {
+                (Some(d), _) => d,
+                (None, Some((i, c))) => {
+                    let d = "__located_d".to_owned();
+                    if let Literal::Atom(a) = &mut body[i] {
+                        a.args[c] = Term::Var(d.clone());
+                    }
+                    d
+                }
+                (None, None) => {
+                    // Through `docof`, or `node` where the program declares it (one that declares neither, as a
+                    // program of a few base relations may, is not located).
                     let Some(node) = positive().find_map(|a| a.args.iter().enumerate().find_map(|(c, t)| match t {
                         Term::Var(v) if node_typed(&a.rel, c) => Some(v.clone()),
                         _ => None,
-                    })) else {
+                    })).filter(|_| docof || decls.contains_key("node")) else {
                         break;
                     };
                     let d = "__located_d".to_owned();
@@ -1593,7 +1623,7 @@ pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> 
                 }
             };
             let mut head = rule.head.clone();
-            head.rel = format!("{rel}_at");
+            head.rel = at.clone();
             head.args.insert(0, Term::Var(doc));
             made.push(Rule { head, body });
         }
@@ -1601,7 +1631,6 @@ pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> 
             blocked.push(rel.clone());
             continue;
         }
-        let at = format!("{rel}_at");
         let mut at_cols = vec![("d".to_owned(), doc_type.clone())];
         at_cols.extend(cols.iter().cloned());
         prog.decls.insert(at.clone(), at_cols);

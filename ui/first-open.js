@@ -58,8 +58,9 @@ export function overviewBody({ ruleCount, sessionsEver, topCount }) {
 }
 
 /**
- * Violations steered X of Y (Jeff's decision 1): Y every distinct violation in range, X those recorded while their
- * rule was on Steer or Block (distinct less the ones recorded in Log mode). `rerails` counts steer deliveries, which can
+ * Violations steered X of Y (Jeff's decision 1): Y every distinct violation in range, X those recorded by an audit in
+ * Steer mode while their rule was on Steer or Block (distinct less the ones recorded in Log mode, the audit's or the
+ * rule's). `rerails` counts steer deliveries, which can
  * exceed Y, so it is not used. Unmeasured rules (conversation rules, inactive code rules) record none.
  * @param {Record<string, { measured?: boolean, distinctViolations: number, loggedViolations?: number }>} activity
  * @returns {{ steered: number, total: number }}

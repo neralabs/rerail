@@ -1,7 +1,7 @@
 use super::AstMatcher;
 use super::binding::{binding_node_facts, match_binding_nodes, match_occurrence, occurrence_facts};
 use super::resolve::{
-    file_declaration_sites, file_source_type, file_table, file_usage, table_reading,
+    file_declaration_sites, file_source_type_for, file_table, file_usage, table_reading,
 };
 use super::util::{THREE_VALUED, UNKNOWN};
 use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
@@ -153,7 +153,7 @@ impl BindingFilter {
             && self
                 .options
                 .as_deref()
-                .is_some_and(|options| options.global_top_level(file_source_type()));
+                .is_some_and(|options| options.global_top_level(file_source_type_for(options)));
         if global {
             ScopeName::Global
         } else {
@@ -171,7 +171,7 @@ impl BindingFilter {
         self.scope_name(table, id.scope) == ScopeName::Global
             && (commented
                 || self.options.as_deref().is_some_and(|options| {
-                    options.declares_in(id.name, VALUE | TYPE, None, file_source_type())
+                    options.declares_in(id.name, VALUE | TYPE, None, file_source_type_for(options))
                 }))
     }
 

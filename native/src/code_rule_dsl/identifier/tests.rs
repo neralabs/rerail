@@ -58,6 +58,18 @@ fn normalizes_compatibility_letters_and_borrows_normal_text() {
     assert_eq!(name_in(GrammarDialect::Python, "𝒞".into()), "C");
     assert_eq!(name_in(GrammarDialect::JavaScript, "𝒞".into()), "𝒞");
     assert_eq!(name_in(GrammarDialect::Php, "𝒞".into()), "𝒞");
+    // ECMAScript names decode their escapes, as espree's `Identifier.name` does; Python's and
+    // PHP's have none.
+    assert_eq!(name_in(GrammarDialect::JavaScript, "\\u0061b".into()), "ab");
+    assert_eq!(
+        name_in(GrammarDialect::Tsx, "\\u{20BB7}\\u{29E3D}".into()),
+        "𠮷𩸽"
+    );
+    assert!(matches!(ecma_name("plain".into()), Cow::Borrowed("plain")));
+    // An escape that decodes to no character stays as written (a parse error ESLint never reads).
+    assert_eq!(ecma_name("a\\u{D800}".into()), "a\\u{D800}");
+    assert_eq!(ecma_name("a\\u00".into()), "a\\u00");
+    assert_eq!(name_in(GrammarDialect::Php, "\\u0061".into()), "\\u0061");
 }
 
 /// Every identifier token of the oracle's modules reads as the name CPython's parser makes of it.

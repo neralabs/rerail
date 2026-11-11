@@ -1,0 +1,528 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf068-duplicate-entry-in-dunder-all",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't list the same name twice in a module's __all__; a repeat has no effect and often hides a copy-paste mistake.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "duplicate-entry",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "plain-str": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "value": {
+                "type": "str"
+              },
+              "not": {
+                "has": {
+                  "stopBy": "end",
+                  "kind": "string_start",
+                  "regex": "[fFtT]"
+                }
+              }
+            },
+            "current": {
+              "any": [
+                {
+                  "matches": "plain-str",
+                  "pattern": "$DUP"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "current"
+                  }
+                }
+              ]
+            },
+            "dunder-all": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^__all__$"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dunder-all"
+                  }
+                }
+              ]
+            },
+            "extend-method": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "object",
+                        "matches": "dunder-all"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "attribute",
+                        "regex": "^extend$"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "extend-method"
+                  }
+                }
+              ]
+            },
+            "dunder-all-target": {
+              "any": [
+                {
+                  "matches": "dunder-all"
+                },
+                {
+                  "kind": "tuple_pattern",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dunder-all-target"
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  }
+                }
+              ]
+            },
+            "other-scope": {
+              "any": [
+                {
+                  "kind": "class_definition"
+                },
+                {
+                  "kind": "type_parameter"
+                },
+                {
+                  "kind": "type_alias_statement"
+                },
+                {
+                  "kind": "block",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "function_definition"
+                  }
+                },
+                {
+                  "kind": "type",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "typed_parameter"
+                      },
+                      {
+                        "kind": "typed_default_parameter"
+                      },
+                      {
+                        "kind": "function_definition"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "lambda"
+                  },
+                  "follows": {
+                    "stopBy": "end",
+                    "regex": "^:$"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "body",
+                    "any": [
+                      {
+                        "kind": "list_comprehension"
+                      },
+                      {
+                        "kind": "set_comprehension"
+                      },
+                      {
+                        "kind": "dictionary_comprehension"
+                      },
+                      {
+                        "kind": "generator_expression"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "if_clause"
+                },
+                {
+                  "kind": "for_in_clause",
+                  "follows": {
+                    "stopBy": "end",
+                    "kind": "for_in_clause"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "for_in_clause",
+                    "field": "left"
+                  }
+                }
+              ]
+            },
+            "assign-context": {
+              "kind": "assignment",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "left",
+                "matches": "dunder-all-target"
+              },
+              "not": {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "assignment"
+                }
+              }
+            },
+            "augment-context": {
+              "kind": "augmented_assignment",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "matches": "dunder-all-target"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "operator",
+                    "regex": "^\\+=$"
+                  }
+                }
+              ]
+            },
+            "extend-context": {
+              "kind": "argument_list",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "extend-method"
+                }
+              },
+              "matches": "one-arg"
+            },
+            "sequence": {
+              "any": [
+                {
+                  "kind": "list"
+                },
+                {
+                  "kind": "tuple"
+                },
+                {
+                  "kind": "expression_list"
+                }
+              ],
+              "inside": {
+                "stopBy": {
+                  "not": {
+                    "kind": "parenthesized_expression"
+                  }
+                },
+                "any": [
+                  {
+                    "matches": "assign-context"
+                  },
+                  {
+                    "matches": "augment-context"
+                  },
+                  {
+                    "matches": "extend-context"
+                  }
+                ]
+              },
+              "not": {
+                "inside": {
+                  "stopBy": "end",
+                  "matches": "other-scope"
+                }
+              }
+            },
+            "dup": {
+              "matches": "current",
+              "follows": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "any": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "kind": "concatenated_string"
+                      }
+                    ],
+                    "value": {
+                      "type": "str"
+                    },
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "string_start",
+                        "regex": "[fFtT]"
+                      }
+                    },
+                    "pattern": "$FIRST"
+                  },
+                  {
+                    "kind": "parenthesized_expression",
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "string"
+                        },
+                        {
+                          "kind": "concatenated_string"
+                        }
+                      ],
+                      "value": {
+                        "type": "str"
+                      },
+                      "not": {
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "string_start",
+                          "regex": "[fFtT]"
+                        }
+                      },
+                      "stopBy": {
+                        "not": {
+                          "kind": "parenthesized_expression"
+                        }
+                      },
+                      "pattern": "$FIRST"
+                    }
+                  }
+                ],
+                "compare": {
+                  "left": "FIRST",
+                  "op": "eq",
+                  "right": "DUP",
+                  "text": "value"
+                }
+              }
+            },
+            "ann-extend": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "identifier",
+                        "regex": "^extend$",
+                        "follows": {
+                          "stopBy": "end",
+                          "regex": "^\\.$"
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "dunder-all",
+                        "precedes": {
+                          "stopBy": "end",
+                          "regex": "^\\.$"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "ann-extend"
+                  }
+                }
+              ]
+            },
+            "ann-sequence": {
+              "any": [
+                {
+                  "kind": "list"
+                },
+                {
+                  "kind": "tuple"
+                }
+              ],
+              "inside": {
+                "stopBy": {
+                  "not": {
+                    "kind": "parenthesized_expression"
+                  }
+                },
+                "kind": "argument_list",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "ann-extend",
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "kind": "argument_list"
+                    }
+                  }
+                },
+                "matches": "one-arg"
+              },
+              "not": {
+                "inside": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "lambda"
+                    },
+                    {
+                      "kind": "list_comprehension"
+                    },
+                    {
+                      "kind": "set_comprehension"
+                    },
+                    {
+                      "kind": "dictionary_comprehension"
+                    },
+                    {
+                      "kind": "generator_expression"
+                    }
+                  ]
+                }
+              }
+            },
+            "dup-in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "dup",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "matches": "ann-sequence"
+                      }
+                    },
+                    {
+                      "matches": "dup-in-string"
+                    }
+                  ]
+                }
+              }
+            },
+            "one-arg": {
+              "count": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "comment"
+                      },
+                      {
+                        "kind": "line_continuation"
+                      },
+                      {
+                        "regex": "^[(),]$"
+                      }
+                    ]
+                  }
+                },
+                "min": 1,
+                "max": 1
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "dup",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "sequence"
+                }
+              },
+              {
+                "matches": "dup-in-string",
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "matches": "other-scope"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.DUP",
+        "code": "RUF068",
+        "message": "$DUP is already listed earlier in this `__all__` list; remove the repeat, or correct it if another name was meant.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF068"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,8 +1,145 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl ss_assign_k(kind: symbol)
+ss_assign_k("assignment").
+.decl ss_class_k(kind: symbol)
+ss_class_k("class_definition").
+.decl ss_import_k(kind: symbol)
+ss_import_k("import_statement"). ss_import_k("import_from_statement").
+.decl child(p: node, c: node, i: number)
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl op(n: node, s: symbol)
+.decl option_json(name: symbol, pointer: symbol, v: symbol)
+.decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
+.decl rr_agg21(e: symbol, q: symbol)
+.decl rr_agg22(e: symbol, q: symbol)
+.decl rr_agg23(n: node, q: symbol, v: symbol)
+.decl ss_any_finding(x: number)
+.decl ss_assign_to(a: node, x: symbol)
+.decl ss_bad_fate(f: symbol)
+.decl ss_broad(v: symbol)
+.decl ss_bypass(d: number)
+.decl ss_case(ep: symbol)
+.decl ss_dataclass_decorator(dec: node)
+.decl ss_digit(c: symbol, v: number)
+.decl ss_doc(d: number, p: symbol)
+.decl ss_entry(ep: symbol)
+.decl ss_fate(sym: symbol, fate: symbol)
+.decl ss_fate_entry(entry: symbol)
+.decl ss_fate_valid(x: number)
+.decl ss_finding(code: symbol)
+.decl ss_first_override(sym: symbol, fate: symbol)
+.decl ss_flag(d: number)
+.decl ss_fn(d: number, f: node, name: symbol, start: number, end: number)
+.decl ss_fn_def(f: node)
+.decl ss_fn_first(d: number, f: node, name: symbol, start: number, end: number)
+.decl ss_key(hex: symbol)
+.decl ss_member(d: number, cls: symbol, x: symbol)
+.decl ss_membership(sym: symbol)
+.decl ss_message(list: symbol, m: symbol)
+.decl ss_ov_at(i: number, sym: symbol, fate: symbol)
+.decl ss_ov_digits(p: symbol, ds: symbol)
+.decl ss_ov_index(i: number, e: symbol)
+.decl ss_override(entry: symbol, sym: symbol, fate: symbol)
+.decl ss_override_rest(e: symbol, q: symbol)
+.decl ss_override_sym(sym: symbol)
+.decl ss_reachable(sym: symbol)
+.decl ss_ref_name(x: symbol)
+.decl ss_ref_slot(n: node)
+.decl ss_reg(n: node, v: symbol)
+.decl ss_reg_value(v: symbol)
+.decl ss_registry(d: number, n: node, v: symbol)
+.decl ss_registry_node(d: number, n: node)
+.decl ss_return(d: number, s: number, e: number, l: number)
+.decl ss_runtime_ref(d: number, n: node)
+.decl ss_runtime_valid(x: number)
+.decl ss_sig_concat_at(s: number)
+.decl ss_sig_node(n: node)
+.decl ss_sig_start(s: number)
+.decl ss_sig_value(s: symbol)
+.decl ss_signature(d: number, n: node, start: number)
+.decl ss_signed_with(list: symbol, sig: symbol)
+.decl ss_spec(d: number, x: symbol)
+.decl ss_string(d: number, n: node, start: number, end: number, v: symbol)
+.decl ss_strnode(d: number, n: node, start: number, end: number)
+.decl ss_surface(sym: symbol)
+.decl ss_surface_valid(x: number)
+.decl ss_top(n: node)
+.decl ss_top_assign(a: node)
+.decl ss_trusted(entry: symbol, sym: symbol, fate: symbol)
+.decl ss_trusted_sym(sym: symbol)
+.decl ss_unit(x: number)
+.decl ss_val(n: node, v: symbol)
+.decl ss_verification(d: number, s: number, e: number, l: number)
+.decl ss_verified(list: symbol)
+.decl ss_verifier(d: number, s: number, e: number)
+.decl ss_verifier_first(d: number, s: number, l: number)
+.decl ss_verify_in(d: number, s: number, l: number)
+.decl ss_verify_name(x: symbol)
+.decl strprefix(n: node, p: symbol)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, text, op, line, value, strprefix
+.output violation
+option_json("fateOverrides", "/0", "PostOpBehavior.EXCEPTION_ONLY=exception_only").
+option_json("fateOverrides", "/1", "PostOpBehavior.TERMINAL_ARRAY=keep_terminal").
+option_json("fateOverrides", "/2", "PostOpBehavior.TERMINAL_OBJECT=keep_terminal").
+option_json("fateOverrides", "/3", "PostOpBehavior.TERMINAL_SCALAR=keep_terminal").
+option_json("fateOverrides", "/4", "PostOpKind.ASSERT_RESULT=exception_only").
+option_json("fateOverrides", "/5", "PostOpKind.MATERIALIZE_RESULT=keep_terminal").
+option_value("entryPoint", "plugin.reporter").
+option_value("fatesSignature", "O5p2GYtRWESKK6seL21Gfmhwt2BbRXEnKngA04J0vENAIfu6AjtJFZ19ohuzcRF5cudla5PLEZiRVdCvwyGKAw==").
+option_value("surfaceSignature", "emKOwGOeajpPhSrYX3SEMcDDgJEjK05SpABfUYhg2WFXVJH4GzV55DwdK9Ddy6zisH4M5r1bh1T8OOkaWQYqBg==").
+ss_bad_fate("audit_required").
+ss_bad_fate("delete_after_inline").
+ss_bad_fate("move_to_domain_step").
+ss_bad_fate("move_to_plan_effect").
+ss_bad_fate("move_to_sql").
+ss_broad("materializer.generic").
+ss_broad("materializer.materialize_result").
+ss_broad("materializer.terminal_array").
+ss_broad("materializer.terminal_object").
+ss_broad("materializer.terminal_scalar").
+ss_case("_collect_runtime_allowlist_bypass_violations_from_tree").
+ss_case("_collect_violations").
+ss_case("_collect_broad_runtime_authority_violations").
+ss_case("_collect_exact_runtime_symbol_coverage_violations").
+ss_digit("0", 0).
+ss_digit("1", 1).
+ss_digit("2", 2).
+ss_digit("3", 3).
+ss_digit("4", 4).
+ss_digit("5", 5).
+ss_digit("6", 6).
+ss_digit("7", 7).
+ss_digit("8", 8).
+ss_digit("9", 9).
+ss_key("7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6").
+ss_ref_name("RebaseResultCollectorSpec").
+ss_ref_name("ResolvedRefs").
+ss_ref_name("RuntimeReferenceField").
+ss_ref_name("RuntimeStructuredResultSpec").
+ss_ref_name("lookup_ref").
+ss_ref_name("require_runtime_ref").
+ss_ref_name("runtime_ref").
+ss_ref_name("runtime_ref_ids").
+ss_ref_name("runtime_refs").
+ss_ref_name("source_ref").
+ss_ref_name("source_ref_id").
+ss_ref_name("sys_id_ref").
+ss_ref_name("validated_expires_at_holder").
+ss_ref_name("validation_state_holder").
+ss_ref_name("visible_rows_ref").
+ss_unit(0).
+ss_verify_name("_post_op_allowlist_signature_valid").
+ss_verify_name("verify_allowlist").
 in_scope(d) :- doc(d, p, _), glob("l2070_batching/post_op.py", p).
 in_scope(d) :- doc(d, p, _), glob("l2070_batching/post_op_specs.py", p).
 in_scope(d) :- doc(d, p, _), glob("l2070_batching/post_op_domain_decoders.py", p).
@@ -17,4 +154,109 @@ out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
-.output violation
+tape_syntax_error(d) :- syntax_error(d).
+ss_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
+ss_top(n) :- child(m, n, _), node(_, m, "module", _, _).
+ss_top(n) :- child(dd, n, _), node(_, dd, "decorated_definition", _, _), child(m, dd, _), node(_, m, "module", _, _).
+ss_top_assign(a) :- node(_, a, "assignment", _, _), child(es, a, _), node(_, es, "expression_statement", _, _), child(m, es, _), node(_, m, "module", _, _).
+ss_assign_to(a, x) :- node(_, a, "assignment", _, _), field(a, "left", l), node(_, l, "identifier", _, _), text(l, x).
+ss_fn(d, f, x, s, e) :- node(d, f, "function_definition", s, e), ss_doc(d, _), ss_top(f), field(f, "name", nm), text(nm, x).
+ss_fn_def(f) :- ss_fn(_, f, _, _, _), !op(f, "async").
+ss_fn_first(d, f, x, s, e) :- ss_fn(d, f, x, s, e), s = min t : { ss_fn(d, _, x, t, _) }.
+ss_member(d, c, x) :- ss_assign_to(a, x), node(d, a, _, _, _), ss_doc(d, _), inside(a, k, ss_class_k), ss_top(k), field(k, "name", cn), text(cn, c).
+ss_dataclass_decorator(dec) :- node(_, dec, "decorator", _, _), child(dec, i, _), node(_, i, "identifier", _, _), text(i, "dataclass").
+ss_dataclass_decorator(dec) :- node(_, dec, "decorator", _, _), child(dec, c, _), node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, "dataclass").
+ss_spec(d, x) :- node(d, k, "class_definition", _, _), ss_doc(d, _), ss_top(k), field(k, "name", cn), text(cn, x), suffix("Spec", x), child(dd, k, _), node(_, dd, "decorated_definition", _, _), child(dd, dec, _), ss_dataclass_decorator(dec).
+ss_strnode(d, n, s, e) :- node(d, n, "string", s, e), ss_doc(d, _), strprefix(n, p), match("[ru]*", p).
+ss_strnode(d, n, s, e) :- node(d, n, "concatenated_string", s, e), ss_doc(d, _), child(n, f, 0), strprefix(f, p), match("[ru]*", p).
+ss_val(n, v) :- ss_strnode(_, n, _, _), value(n, v).
+ss_val(n, "") :- ss_strnode(_, n, _, _), !value(n, _).
+ss_string(d, n, s, e, v) :- ss_strnode(d, n, s, e), ss_val(n, v).
+ss_registry_node(d, n) :- ss_strnode(d, n, _, _), inside(n, a, ss_assign_k), ss_assign_to(a, "SIGNED_POST_OP_SYMBOLS"), ss_top_assign(a).
+ss_registry(d, n, v) :- ss_registry_node(d, n), ss_val(n, v).
+ss_signature(d, n, s) :- ss_strnode(d, n, s, _), inside(n, a, ss_assign_k), ss_assign_to(a, "ALLOWLIST_SIGNATURE"), field(a, "type", _), ss_top_assign(a).
+ss_ref_slot(n) :- field(p, "name", n), node(_, p, "function_definition", _, _).
+ss_ref_slot(n) :- field(p, "name", n), node(_, p, "class_definition", _, _).
+ss_ref_slot(n) :- field(p, "name", n), node(_, p, "keyword_argument", _, _).
+ss_ref_slot(n) :- field(p, "attribute", n), node(_, p, "attribute", _, _).
+ss_runtime_ref(d, n) :- node(d, n, "identifier", _, _), ss_doc(d, _), text(n, x), ss_ref_name(x), !inside(n, _, ss_import_k), !ss_ref_slot(n).
+ss_runtime_ref(d, n) :- node(d, n, "attribute", _, _), ss_doc(d, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, x), ss_ref_name(x).
+ss_runtime_ref(d, n) :- ss_string(d, n, _, _, v), ss_ref_name(v).
+ss_flag(d) :- ss_assign_to(a, "ENFORCE_POST_OP_RUNTIME_ALLOWLIST"), ss_top_assign(a), node(d, a, _, _, _), ss_doc(d, _).
+ss_verification(d, s, e, l) :- node(d, c, "call", s, e), ss_doc(d, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, x), ss_verify_name(x), line(c, l).
+ss_verification(d, s, e, l) :- node(d, c, "call", s, e), ss_doc(d, _), field(c, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, x), ss_verify_name(x), line(c, l).
+ss_return(d, s, e, l) :- node(d, r, "return_statement", s, e), ss_doc(d, _), line(r, l).
+ss_override_rest(e, e) :- option_json("fateOverrides", _, e).
+ss_override_rest(e, t) :- ss_override_rest(e, q), @strlen(q) > 0, @substr(q, 0, 1) != "=", t = @substr(q, 1, 1000000000).
+ss_override(e, s, f) :- ss_override_rest(e, q), @substr(q, 0, 1) = "=", s = @substr(e, 0, @sub(@strlen(e), @strlen(q))), f = @substr(q, 1, 1000000000).
+ss_override(e, "", e) :- ss_override_rest(e, "").
+ss_override_sym(s) :- ss_override(_, s, _).
+ss_ov_digits(p, ds) :- option_json("fateOverrides", p, _), @substr(p, 0, 1) = "/", ds = @substr(p, 1, 1000000000).
+ss_ov_index(i, e) :- option_json("fateOverrides", p, e), ss_ov_digits(p, ds), @strlen(ds) = 1, ss_digit(ds, i).
+ss_ov_index(i, e) :- option_json("fateOverrides", p, e), ss_ov_digits(p, ds), @strlen(ds) = 2, rr_t1 = @substr(ds, 0, 1), ss_digit(rr_t1, a), rr_t2 = @substr(ds, 1, 1), ss_digit(rr_t2, b), i = @add(@mul(a, 10), b).
+ss_ov_index(i, e) :- option_json("fateOverrides", p, e), ss_ov_digits(p, ds), @strlen(ds) = 3, rr_t3 = @substr(ds, 0, 1), ss_digit(rr_t3, a), rr_t4 = @substr(ds, 1, 1), ss_digit(rr_t4, b), rr_t5 = @substr(ds, 2, 1), ss_digit(rr_t5, c), i = @add(@add(@mul(a, 100), @mul(b, 10)), c).
+ss_ov_index(i, e) :- option_json("fateOverrides", p, e), ss_ov_digits(p, ds), @strlen(ds) = 4, rr_t6 = @substr(ds, 0, 1), ss_digit(rr_t6, a), rr_t7 = @substr(ds, 1, 1), ss_digit(rr_t7, b), rr_t8 = @substr(ds, 2, 1), ss_digit(rr_t8, c), rr_t9 = @substr(ds, 3, 1), ss_digit(rr_t9, x), i = @add(@add(@add(@mul(a, 1000), @mul(b, 100)), @mul(c, 10)), x).
+ss_ov_index(i, e) :- option_json("fateOverrides", p, e), ss_ov_digits(p, ds), @strlen(ds) = 5, rr_t10 = @substr(ds, 0, 1), ss_digit(rr_t10, a), rr_t11 = @substr(ds, 1, 1), ss_digit(rr_t11, b), rr_t12 = @substr(ds, 2, 1), ss_digit(rr_t12, c), rr_t13 = @substr(ds, 3, 1), ss_digit(rr_t13, x), rr_t14 = @substr(ds, 4, 1), ss_digit(rr_t14, y), i = @add(@add(@add(@add(@mul(a, 10000), @mul(b, 1000)), @mul(c, 100)), @mul(x, 10)), y).
+ss_ov_index(i, e) :- option_json("fateOverrides", p, e), ss_ov_digits(p, ds), @strlen(ds) = 6, rr_t15 = @substr(ds, 0, 1), ss_digit(rr_t15, a), rr_t16 = @substr(ds, 1, 1), ss_digit(rr_t16, b), rr_t17 = @substr(ds, 2, 1), ss_digit(rr_t17, c), rr_t18 = @substr(ds, 3, 1), ss_digit(rr_t18, x), rr_t19 = @substr(ds, 4, 1), ss_digit(rr_t19, y), rr_t20 = @substr(ds, 5, 1), ss_digit(rr_t20, z), i = @add(@add(@add(@add(@add(@mul(a, 100000), @mul(b, 10000)), @mul(c, 1000)), @mul(x, 100)), @mul(y, 10)), z).
+ss_ov_at(i, s, f) :- ss_ov_index(i, e), ss_override(e, s, f).
+ss_first_override(s, f) :- ss_ov_at(i, s, f), i = min j : { ss_ov_at(j, s, _) }.
+ss_membership(@concat(c, @concat(".", x))) :- ss_member(d, c, x), ss_doc(d, p), (p = "l2070_batching/post_op.py" ; p = "l2070_batching/post_op_specs.py"), (c = "PostOpKind" ; c = "PostOpBehavior").
+ss_fate(s, f) :- ss_membership(s), ss_first_override(s, f).
+ss_fate(s, "audit_required") :- ss_membership(s), !ss_override_sym(s).
+ss_fate_entry(@concat(s, @concat("=", f))) :- ss_fate(s, f).
+ss_surface(@concat(c, @concat(".", x))) :- ss_member(d, c, x), ss_doc(d, "l2070_batching/post_op.py"), (c = "PostOpKind" ; c = "PostOpBehavior").
+ss_surface(@concat(c, @concat(".", x))) :- ss_member(d, c, x), ss_doc(d, "l2070_batching/post_op_specs.py"), c = "DomainPostOpDecoderKind".
+ss_surface(@concat("post_op_factory.", x)) :- ss_fn(d, f, x, _, _), ss_doc(d, "l2070_batching/post_op.py"), glob("*_post_op", x), ss_fn_def(f).
+ss_surface(@concat("post_op_spec.", x)) :- ss_spec(d, x), ss_doc(d, "l2070_batching/post_op_specs.py").
+rr_agg21(e, q) :- ss_fate_entry(e), q = @json_str(e).
+ss_message("fates", @concat("{\"allowlist\":[", @concat(b, "],\"linter\":\"post_op_side_effects\",\"version\":1}"))) :- ss_unit(0), b = join q by (e) sep "," : { rr_agg21(e, q) }.
+rr_agg22(e, q) :- ss_surface(e), q = @json_str(e).
+ss_message("surface", @concat("{\"allowlist\":[", @concat(b, "],\"linter\":\"post_op_surface\",\"version\":1}"))) :- ss_unit(0), b = join q by (e) sep "," : { rr_agg22(e, q) }.
+rr_agg23(n, q, v) :- ss_reg(n, v), q = @json_str(v).
+ss_message("runtime", @concat("{\"allowlist\":[", @concat(b, "],\"linter\":\"post_op_runtime_allowlist\",\"version\":1}"))) :- ss_unit(0), b = join q by (v, n) sep "," : { rr_agg23(n, q, v) }.
+ss_reachable(v) :- ss_string(d, _, s, e, v), ss_doc(d, "l2070_batching/post_op.py"), (prefix("assertion.", v) ; prefix("materializer.", v)), ss_fn_first(d, _, "post_op_runtime_symbol", fs, fe), fs < s, fe >= e.
+ss_reachable(@concat("decoder.", @concat(c, @concat(".", x)))) :- ss_member(d, c, x), ss_doc(d, "l2070_batching/post_op_specs.py"), c = "DomainPostOpDecoderKind".
+ss_reg(n, v) :- ss_registry(d, n, v), ss_doc(d, "l2070_batching/post_op_allowlist.py").
+ss_reg_value(v) :- ss_reg(_, v).
+ss_sig_start(m) :- ss_signature(d, _, _), ss_doc(d, "l2070_batching/post_op_allowlist.py"), m = min s : { ss_signature(d, _, s) }.
+ss_sig_node(n) :- ss_sig_start(m), ss_signature(_, n, m), node(_, n, "concatenated_string", _, _).
+ss_sig_node(n) :- ss_sig_start(m), ss_signature(_, n, m), node(_, n, "string", _, _), !ss_sig_concat_at(m).
+ss_sig_concat_at(m) :- ss_sig_start(m), ss_signature(_, n, m), node(_, n, "concatenated_string", _, _).
+ss_sig_value(s) :- ss_sig_node(n), ss_val(n, s).
+ss_sig_value("") :- ss_unit(0), !ss_sig_start(_).
+ss_signed_with("fates", c) :- option_value("fatesSignature", s), c = @rx_replace(s, "[^A-Za-z0-9+/=]", "").
+ss_signed_with("surface", c) :- option_value("surfaceSignature", s), c = @rx_replace(s, "[^A-Za-z0-9+/=]", "").
+ss_signed_with("runtime", c) :- ss_sig_value(s), c = @rx_replace(s, "[^A-Za-z0-9+/=]", "").
+ss_verified(l) :- ss_message(l, m), ss_signed_with(l, s), ss_key(k), @ed25519_ok(k, m, s) = 1.
+ss_fate_valid(0) :- ss_verified("fates").
+ss_surface_valid(0) :- ss_verified("surface").
+ss_runtime_valid(0) :- ss_verified("runtime").
+ss_verifier(d, s, e) :- ss_fn_first(d, _, "assert_post_op_symbol_signed", s, e).
+ss_verify_in(d, s, l) :- ss_verifier(d, s, e), ss_verification(d, vs, ve, l), vs >= s, ve <= e.
+ss_verifier_first(d, s, l) :- ss_verify_in(d, s, _), l = min x : { ss_verify_in(d, s, x) }.
+ss_bypass(d) :- ss_doc(d, _), ss_flag(d).
+ss_bypass(d) :- ss_doc(d, _), !ss_verifier(d, _, _).
+ss_bypass(d) :- ss_verifier(d, s, _), !ss_verifier_first(d, s, _).
+ss_bypass(d) :- ss_verifier(d, s, e), ss_verifier_first(d, s, l), ss_return(d, rs, re, rl), rs >= s, re <= e, rl < l.
+ss_entry(ep) :- option_value("entryPoint", ep).
+ss_trusted(o, s, f) :- ss_override(o, s, f), ss_entry("_collect_violations").
+ss_trusted(o, s, f) :- ss_override(o, s, f), ss_entry(ep), ep != "_collect_violations", ss_fate_valid(0).
+ss_trusted_sym(s) :- ss_trusted(_, s, _).
+ss_finding("POSTOP200") :- ss_runtime_ref(d, _), ss_doc(d, p), (p = "l2070_batching/post_op.py" ; p = "l2070_batching/post_op_specs.py" ; p = "l2070_batching/post_op_domain_decoders.py").
+ss_finding("POSTOP203") :- ss_bypass(d), ss_doc(d, "l2070_batching/post_op_allowlist.py").
+ss_finding("POSTOP204") :- ss_reg(_, v), !prefix("assertion.", v), !prefix("decoder.DomainPostOpDecoderKind.", v), !prefix("materializer.", v).
+ss_finding("POSTOP204") :- ss_reg(_, v), ss_broad(v).
+ss_finding("POSTOP205") :- ss_reachable(s), !ss_reg_value(s).
+ss_finding("POSTOP206") :- ss_reg_value(v), !ss_reachable(v).
+ss_finding("POSTOP202") :- ss_unit(0), !ss_runtime_valid(0).
+ss_finding("POSTOP201") :- ss_unit(0), !ss_surface_valid(0).
+ss_finding("POSTOP001") :- ss_trusted(_, s, _), !ss_membership(s).
+ss_finding("POSTOP002") :- ss_membership(s), ss_trusted_sym(s), ss_first_override(s, f), ss_bad_fate(f).
+ss_finding("POSTOP002") :- ss_membership(s), !ss_trusted_sym(s).
+ss_any_finding(0) :- ss_finding(_).
+violation("data-layer-post-op-side-effects", "signed-surface", c, "l2070_batching/post_op.py", 1) :- ss_entry(ep), !ss_case(ep), ss_finding(c).
+violation("data-layer-post-op-side-effects", "signed-surface", "POSTOP000", "l2070_batching/post_op.py", 1) :- ss_entry(ep), !ss_case(ep), !ss_fate_valid(0), !ss_any_finding(0).
+violation("data-layer-post-op-side-effects", "signed-surface", "POSTOP203", p, 1) :- ss_entry("_collect_runtime_allowlist_bypass_violations_from_tree"), ss_bypass(d), ss_doc(d, p).
+violation("data-layer-post-op-side-effects", "signed-surface", c, "l2070_batching/post_op.py", 1) :- ss_entry("_collect_violations"), ss_finding(c).
+violation("data-layer-post-op-side-effects", "signed-surface", "POSTOP204", "l2070_batching/post_op.py", 1) :- ss_entry("_collect_broad_runtime_authority_violations"), ss_finding("POSTOP204").
+violation("data-layer-post-op-side-effects", "signed-surface", c, "l2070_batching/post_op.py", 1) :- ss_entry("_collect_exact_runtime_symbol_coverage_violations"), ss_finding(c), (c = "POSTOP205" ; c = "POSTOP206").

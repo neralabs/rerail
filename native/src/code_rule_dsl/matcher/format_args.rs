@@ -5,6 +5,7 @@
 //! and `fscanf` calls as PHP 8.5.11 validates them (`scanf`), and for Rust's `format_args!`
 //! family as rustc 1.99.0 binds them (`rust`).
 
+use crate::code_rule_dsl::tree::Tree;
 use super::AstMatcher;
 use super::each::{self, HostRanges};
 use super::exported::export;
@@ -385,8 +386,7 @@ fn first<'t, D: Doc>(
 fn unparenthesized<'t, D: Doc>(mut node: Node<'t, D>) -> Node<'t, D> {
     while node.kind() == "parenthesized_expression" {
         let mut inner = node
-            .children()
-            .filter(|child| child.is_named() && child.kind() != "comment");
+            .named_code();
         let (Some(expression), None) = (inner.next(), inner.next()) else {
             break;
         };
@@ -396,11 +396,6 @@ fn unparenthesized<'t, D: Doc>(mut node: Node<'t, D>) -> Node<'t, D> {
     node
 }
 
-fn named<'t, D: Doc>(node: &Node<'t, D>) -> Vec<Node<'t, D>> {
-    node.children()
-        .filter(|child| child.is_named() && child.kind() != "comment")
-        .collect()
-}
 
 /// `str.format(...)`: positional arguments by index (F523 skips starred ones and reads the rest
 /// by position), keywords by name (F522, unknown past `**kw`); fields whose index is past the
@@ -533,7 +528,7 @@ fn mapping_values<'t, D: Doc>(
     fields: &Fields,
     keys: &[&str],
 ) -> (Side<Node<'t, D>>, Side<usize>) {
-    let entries = named(dict);
+    let entries = dict.named_code().collect::<Vec<_>>();
     if entries.iter().any(|entry| entry.kind() != "pair") {
         return (Side::unknown(), Side::unknown());
     }
@@ -573,7 +568,7 @@ fn sequence_values<'t, D: Doc>(
     positional: usize,
 ) -> (Side<Node<'t, D>>, Side<usize>) {
     if operand.kind() == "tuple" {
-        let elements = named(operand);
+        let elements = operand.named_code().collect::<Vec<_>>();
         if elements
             .iter()
             .any(|element| element.kind() == "list_splat")
@@ -642,7 +637,7 @@ fn percent_list<'t, D: Doc>(
 fn plain_literal<D: Doc>(node: &Node<'_, D>) -> bool {
     let parts = match node.kind().as_ref() {
         "string" => vec![node.clone()],
-        "concatenated_string" => named(node),
+        "concatenated_string" => node.named_code().collect::<Vec<_>>(),
         _ => return false,
     };
     parts.iter().all(|part| {
@@ -780,7 +775,7 @@ fn resolve<D: Doc>(node: &Node<'_, D>) -> Type {
             let parts = if node.kind() == "string" {
                 vec![node.clone()]
             } else {
-                named(&node)
+                node.named_code().collect::<Vec<_>>()
             };
             let prefixes: String = parts
                 .iter()
@@ -821,7 +816,7 @@ fn resolve<D: Doc>(node: &Node<'_, D>) -> Type {
             .field("value")
             .map_or(Type::Unknown, |value| resolve(&value)),
         "conditional_expression" => {
-            let parts = named(&node);
+            let parts = node.named_code().collect::<Vec<_>>();
             match parts.as_slice() {
                 [body, _, orelse] => resolve(body).union(resolve(orelse)),
                 _ => Type::Unknown,
@@ -833,7 +828,7 @@ fn resolve<D: Doc>(node: &Node<'_, D>) -> Type {
         },
         "not_operator" => atom(Atom::Bool),
         "unary_operator" => {
-            let (Some(operator), Some(operand)) = (node.field("operator"), node.field("argument"))
+            let (Some(operator), Some(operand)) = (node.operator_token(), node.field("argument"))
             else {
                 return Type::Unknown;
             };
@@ -854,7 +849,7 @@ fn resolve<D: Doc>(node: &Node<'_, D>) -> Type {
         "binary_operator" => {
             let (Some(left), Some(operator), Some(right)) = (
                 node.field("left"),
-                node.field("operator"),
+                node.operator_token(),
                 node.field("right"),
             ) else {
                 return Type::Unknown;

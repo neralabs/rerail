@@ -1,0 +1,109 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-no-missing-import",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Import only modules that exist: each import source must resolve, as Node.js resolves it, to an installed package or a file in the repository.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "moduleSystem": "package-type"
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "string",
+                "inside": {
+                  "field": "source",
+                  "any": [
+                    {
+                      "kind": "import_statement"
+                    },
+                    {
+                      "kind": "export_statement"
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "number"
+                  },
+                  {
+                    "kind": "true"
+                  },
+                  {
+                    "kind": "false"
+                  },
+                  {
+                    "kind": "null"
+                  },
+                  {
+                    "kind": "regex"
+                  }
+                ],
+                "nthChild": {
+                  "position": 1,
+                  "ofRule": {
+                    "not": {
+                      "kind": "comment"
+                    }
+                  }
+                },
+                "inside": {
+                  "kind": "arguments",
+                  "inside": {
+                    "field": "arguments",
+                    "kind": "call_expression",
+                    "has": {
+                      "field": "function",
+                      "kind": "import"
+                    }
+                  }
+                }
+              }
+            ],
+            "importTarget": {
+              "via": "import",
+              "builtin": false,
+              "failed": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/no-missing-import",
+        "message": "This module cannot be resolved: no installed package or file in the repository provides it.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/no-missing-import"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

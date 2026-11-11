@@ -1,15 +1,21 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { mkdir, readdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { Readable, Writable } from "node:stream";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { type AdapterDelivery, sessionStartNote } from "../../src/engine/index.js";
 import {
   emitHookOutput,
+  holdStopSteers,
   pendingPath,
   persistPending,
   readPending,
+  replacePending,
+  routeDeliveries,
+  scrubbedPendingText,
   serveHook,
   takePending,
+  withPendingFileLock,
   withSessionLock,
   type HookInput,
   type HookOutput,
@@ -108,6 +114,13 @@ describe("hook steers", () => {
     expect(await readPending(path)).toEqual([{ ...older, rules: [] }, { ...older, rules: [{ id: "rule:b", state: "steered" }] }]);
   });
 
+  it("reads a steer the 0.1.2 hook held at Stop, marked shown, as held late, and drops a mark that is not true", async () => {
+    const path = pendingPath(await temporaryDirectory(), "claude-code", "session-1");
+    await mkdir(join(path, ".."), { recursive: true });
+    await writeFile(path, JSON.stringify([{ ...delivery("old"), shown: true }, { ...delivery("new"), late: true }, { ...delivery("plain"), late: "yes" }]));
+    expect(await readPending(path)).toEqual([{ ...delivery("old"), late: true }, { ...delivery("new"), late: true }, delivery("plain")]);
+  });
+
   it("does not count synchronous, asynchronous or serialization failures", async () => {
     const root = await temporaryDirectory();
     const options = hookOptions(root);
@@ -152,6 +165,22 @@ describe("hook steers", () => {
     expect(JSON.parse(served.stdout)).toEqual({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: `${sessionStartNote(undefined, "claude-code", "session-1", { setUp: true, ruleCount: null })}\n\nguidance` } });
     expect(served.stderr).toMatch(/^rerail hook: /);
   });
+
+  it("does nothing on a Node older than Rerail runs on, and says so in one line on stderr", async () => {
+    const written = { stdout: "", stderr: "" };
+    let ran = false;
+    await serveHook(async () => {
+      ran = true;
+      return { decision: "block" };
+    }, {
+      stdin: Readable.from([JSON.stringify({ session_id: "session-1", hook_event_name: "SessionStart" })]),
+      stdout: { write: (chunk, callback) => { written.stdout += chunk; callback(); } },
+      stderr: { write: chunk => (written.stderr += chunk) },
+    }, "22.23.4");
+    expect(ran).toBe(false);
+    expect(written.stdout).toBe("{}\n");
+    expect(written.stderr).toMatch(/^rerail hook: Rerail needs Node 24 or newer and this is Node 22\.23\.4[^\n]*\n$/u);
+  });
 });
 
 describe("hook host durable state", () => {
@@ -179,6 +208,27 @@ describe("hook host durable state", () => {
     expect(await readPending(path)).toEqual([delivery("steer"), { ...delivery("block"), requested: "block" }]);
   });
 
+  it.skipIf(process.platform === "win32")("refuses held steers through a symlink under .rerail, says so, and writes nothing where it leads", async () => {
+    const root = await temporaryDirectory();
+    const storageRoot = join(root, ".rerail", "sessions");
+    const elsewhere = join(root, "elsewhere");
+    await mkdir(storageRoot, { recursive: true });
+    await mkdir(elsewhere);
+    await symlink(elsewhere, join(storageRoot, "claude-code-pending"));
+    const path = pendingPath(storageRoot, "claude-code", "session-1");
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      await expect(persistPending(path, [delivery("first")])).rejects.toThrow(`through ${join(storageRoot, "claude-code-pending")}: it is a symbolic link`);
+      expect(await readdir(elsewhere)).toEqual([]);
+      // Nor is a steer planted there read back as one Rerail held.
+      await writeFile(join(elsewhere, basename(path)), JSON.stringify([delivery("planted")]));
+      await expect(readPending(path)).rejects.toThrow("it is a symbolic link");
+      expect(stderr).toHaveBeenCalledWith(expect.stringContaining("it is a symbolic link"));
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
   it("serializes one-shot work per host session and releases the lock after failure", async () => {
     const root = await temporaryDirectory();
     const order: string[] = [];
@@ -203,5 +253,63 @@ describe("hook host durable state", () => {
       throw new Error("ingest failed");
     })).rejects.toThrow("ingest failed");
     await expect(withSessionLock(root, "codex", "session-1", async () => "recovered")).resolves.toBe("recovered");
+  });
+
+  it("holds steers on disk scrubbed of secrets and hands the hook their original text", async () => {
+    const root = await temporaryDirectory();
+    const path = pendingPath(root, "claude-code", "session-1");
+    // Assembled from parts, so no secret scanner takes this file for one holding a key.
+    const secret = ["glpat", "-x7Kq2mZ9vL4pR8tN1wB6"].join("");
+    const leaky = delivery(`Move the key in \`const key = "${secret}"\` to the environment.`);
+    const stored = { ...leaky, content: leaky.content.replace(secret, `[redacted:gitlab-token:${createHash("sha256").update(secret).digest("hex").slice(0, 6)}]`) };
+
+    await holdStopSteers(path, [leaky]);
+    expect(await readFile(path, "utf8")).not.toContain(secret);
+    expect(await readPending(path)).toEqual([{ ...stored, late: true }]);
+
+    await replacePending(path, [leaky, delivery("plain")]);
+    expect(await readFile(path, "utf8")).not.toContain(secret);
+    expect(await readPending(path)).toEqual([stored, delivery("plain")]);
+
+    // A context event delivers the steers it carries as they came; the one held earlier comes back as it was stored.
+    expect(await routeDeliveries(path, "SessionStart", [leaky], { SessionStart: true })).toEqual([stored, delivery("plain"), leaky]);
+    await persistPending(path, [leaky]);
+    expect(await readFile(path, "utf8")).not.toContain(secret);
+  });
+
+  it("rewrites a pending file held before steers were scrubbed, and leaves a clean or foreign one", async () => {
+    const secret = ["glpat", "-x7Kq2mZ9vL4pR8tN1wB6"].join("");
+    const older = JSON.stringify([delivery(`key ${secret}`), delivery("plain"), "stray"]);
+    const rewritten = scrubbedPendingText(older);
+    expect(rewritten).not.toContain(secret);
+    expect(JSON.parse(rewritten!)).toEqual([
+      delivery(`key [redacted:gitlab-token:${createHash("sha256").update(secret).digest("hex").slice(0, 6)}]`), delivery("plain"), "stray",
+    ]);
+    expect(scrubbedPendingText(rewritten!)).toBeUndefined();
+    expect(scrubbedPendingText("{\"not\": \"an array\"}")).toBeUndefined();
+    expect(scrubbedPendingText("not json")).toBeUndefined();
+  });
+
+  it("locks a pending file with the lock its session's hooks hold", async () => {
+    const root = await temporaryDirectory();
+    const order: string[] = [];
+    const hookEntered = Promise.withResolvers<void>();
+    const releaseHook = Promise.withResolvers<void>();
+
+    const hook = withSessionLock(root, "cursor", "session-1", async () => {
+      order.push("hook-start");
+      hookEntered.resolve();
+      await releaseHook.promise;
+      order.push("hook-end");
+    });
+    await hookEntered.promise;
+    const scrub = withPendingFileLock(pendingPath(root, "cursor", "session-1"), async () => {
+      order.push("scrub");
+    });
+    releaseHook.resolve();
+    await Promise.all([hook, scrub]);
+
+    expect(order).toEqual(["hook-start", "hook-end", "scrub"]);
+    await expect(withPendingFileLock(join(root, "cursor-pending", "notes.json"), async () => undefined)).rejects.toThrow("Not a pending steer file");
   });
 });

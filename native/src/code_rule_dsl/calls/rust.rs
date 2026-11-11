@@ -6,6 +6,7 @@
 //! A macro's tokens are not parsed: a macro invocation whose expansion may call a function of the
 //! crate is `Open` (`macro_may_call`), so a call there is left open, never absent.
 
+use crate::code_rule_dsl::tree::Tree;
 use super::names::Name;
 use super::summary::{self, Def, OPEN, Summary};
 use crate::code_rule_dsl::language::Family;
@@ -178,7 +179,7 @@ impl Items {
         let mut stack: Vec<(Node<'r, D>, Rc<str>)> = Vec::new();
         let push_children =
             |stack: &mut Vec<(Node<'r, D>, Rc<str>)>, node: &Node<'r, D>, prefix: Rc<str>| {
-                let children: Vec<_> = node.children().filter(|child| child.is_named()).collect();
+                let children: Vec<_> = node.named().collect();
                 stack.extend(
                     children
                         .into_iter()

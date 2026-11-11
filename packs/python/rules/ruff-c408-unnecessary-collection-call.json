@@ -1,0 +1,238 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-c408-unnecessary-collection-call",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use a literal instead of calling dict(), list() or tuple() with no arguments, or dict() with only named keyword arguments; the literal is clearer and skips a call.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unnecessary-collection-call",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee-dict": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "dict"
+                    ],
+                    "import": [
+                      "builtins.dict"
+                    ]
+                  }
+                },
+                {
+                  "regex": "^(dict)$",
+                  "matches": "global-declared-builtin"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee-dict"
+                  }
+                }
+              ]
+            },
+            "callee-sequence": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "list",
+                      "tuple"
+                    ],
+                    "import": [
+                      "builtins.list",
+                      "builtins.tuple"
+                    ]
+                  }
+                },
+                {
+                  "regex": "^(list|tuple)$",
+                  "matches": "global-declared-builtin"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee-sequence"
+                  }
+                }
+              ]
+            },
+            "global-declared-builtin": {
+              "kind": "identifier",
+              "resolves": {
+                "imported": [
+                  "builtins"
+                ],
+                "seenBefore": true
+              },
+              "not": {
+                "any": [
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "not": {
+                            "kind": "global_statement"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "resolves": {
+                      "unresolved": true
+                    }
+                  }
+                ]
+              }
+            },
+            "element": {
+              "not": {
+                "any": [
+                  {
+                    "kind": "comment"
+                  },
+                  {
+                    "kind": "line_continuation"
+                  },
+                  {
+                    "regex": "^[\\[\\](),]$"
+                  }
+                ]
+              }
+            },
+            "target": {
+              "kind": "call",
+              "any": [
+                {
+                  "all": [
+                    {
+                      "has": {
+                        "field": "function",
+                        "matches": "callee-dict"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "arguments",
+                        "kind": "argument_list",
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "element",
+                            "not": {
+                              "kind": "keyword_argument"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "has": {
+                        "field": "function",
+                        "matches": "callee-sequence"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "arguments",
+                        "kind": "argument_list",
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "element"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "in-annotation": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "target",
+                      "capture": "CALL"
+                    },
+                    {
+                      "matches": "in-annotation"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "target",
+                "pattern": "$CALL"
+              },
+              {
+                "matches": "in-annotation"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CALL",
+        "code": "C408",
+        "message": "Replace the call with a literal: `{}` for `dict()`, `{\"a\": 1}` for `dict(a=1)`, `[]` for `list()`, `()` for `tuple()`.",
+        "each": "CALL",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C408"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

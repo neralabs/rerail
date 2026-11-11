@@ -250,15 +250,38 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
     if inline.is_empty() {
         return Ok(None);
     }
-    // A relation inlined into another inlined one is unfolded into its copies in turn; one inlined relation reading
-    // another is unfolded first, readers after, so a pass takes one level. A chain deeper than the passes stores
-    // the rest.
-    let mut rules: Vec<Rule> = prog.rules.clone();
     // Each rule's origin: the program's rule it was unfolded from, and the relations unfolded into it, so what a
     // copy does when it runs is the inlined side's observation of that reader (`copied`).
+    let (rules, origin) = unfold_reads(prog.rules.clone(), &inline);
+    let unfinished: BTreeSet<String> = rules
+        .iter()
+        .filter(|r| !inline.contains(&r.head.rel))
+        .flat_map(|r| r.body.iter().filter_map(Literal::atom))
+        .filter(|a| inline.contains(&a.rel))
+        .map(|a| a.rel.clone())
+        .collect();
+    // An inlined relation some reader still reads (a chain deeper than the passes) keeps its rules.
+    let mut out = prog.clone();
+    let kept: Vec<(Rule, (usize, BTreeSet<String>))> = rules.into_iter().zip(origin).filter(|(r, _)| !inline.contains(&r.head.rel) || unfinished.contains(&r.head.rel)).collect();
+    copied(kept.iter().filter(|(_, (_, into))| !into.is_empty()).map(|(r, (o, into))| (super::obs_rule(&r.head, &r.body), super::obs_rule(&prog.rules[*o].head, &prog.rules[*o].body), into)));
+    out.rules = kept.into_iter().map(|(r, _)| r).collect();
+    let done: Vec<String> = inline.into_iter().filter(|r| !unfinished.contains(r)).collect();
+    if done.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some((out, done)))
+}
+
+/// `rules` with the reads of the `inline` relations unfolded into their readers (`unfold`), and each rule's origin:
+/// the index in `rules` of the rule it was unfolded from, and the relations unfolded into it. A relation inlined into
+/// another inlined one is unfolded into its copies in turn; one inlined relation reading another is unfolded first,
+/// readers after, so a pass takes one level. A chain deeper than the passes leaves its reads (the caller stores the
+/// rest). A pass unfolds a rule's first such read, so a rule reading two is unfolded over two passes: a copy's
+/// variables are named by its pass, or the second read's copy takes the first's names (`layer_num(gf, f),
+/// layer_num(gt, t)` would join the two numbers' digits as one). A first pass's copy is so named as the one priced
+/// (`unfold(…, 0)`), and an earlier chunk's observation of it is found by its text.
+fn unfold_reads(mut rules: Vec<Rule>, inline: &BTreeSet<String>) -> (Vec<Rule>, Vec<(usize, BTreeSet<String>)>) {
     let mut origin: Vec<(usize, BTreeSet<String>)> = (0..rules.len()).map(|i| (i, BTreeSet::new())).collect();
-    // A copy's variables are named apart by the pass (each rule unfolds one read a pass), so a first-level copy is
-    // the one priced above, and an earlier chunk's observation of it is found by its text.
     for pass in 0..8 {
         let bodies: BTreeMap<String, Vec<Rule>> = inline
             .iter()
@@ -299,23 +322,7 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
             break;
         }
     }
-    let unfinished: BTreeSet<String> = rules
-        .iter()
-        .filter(|r| !inline.contains(&r.head.rel))
-        .flat_map(|r| r.body.iter().filter_map(Literal::atom))
-        .filter(|a| inline.contains(&a.rel))
-        .map(|a| a.rel.clone())
-        .collect();
-    // An inlined relation some reader still reads (a chain deeper than the passes) keeps its rules.
-    let mut out = prog.clone();
-    let kept: Vec<(Rule, (usize, BTreeSet<String>))> = rules.into_iter().zip(origin).filter(|(r, _)| !inline.contains(&r.head.rel) || unfinished.contains(&r.head.rel)).collect();
-    copied(kept.iter().filter(|(_, (_, into))| !into.is_empty()).map(|(r, (o, into))| (super::obs_rule(&r.head, &r.body), super::obs_rule(&prog.rules[*o].head, &prog.rules[*o].body), into)));
-    out.rules = kept.into_iter().map(|(r, _)| r).collect();
-    let done: Vec<String> = inline.into_iter().filter(|r| !unfinished.contains(r)).collect();
-    if done.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some((out, done)))
+    (rules, origin)
 }
 
 /// A candidate's price (`price_all`): too small to price, a reader copy that does not plan, or weighed.
@@ -1423,5 +1430,15 @@ mod tests {
         assert!(prog.qualified("r", "inline") && prog.qualified("s", "no_magic") && prog.qualified("t", "no_inline") && prog.qualified("t", "magic"));
         assert!(!prog.qualified("r", "magic"));
         assert!(super::super::super::rr::parse(".decl r(x: node) inline no_inline\n").is_err());
+    }
+
+    /// A reader of one inlined relation twice has the second read unfolded a pass after the first, its copy's
+    /// variables named apart from the first copy's: the same names would join the two reads' rows as one.
+    #[test]
+    fn two_reads_of_one_relation_unfold_apart() {
+        let reader = rule("o(x) :- a(y), r(x), r(y).");
+        let def = rule("r(z) :- b(z, w), a(w).");
+        let (rules, _) = unfold_reads(vec![reader, def], &BTreeSet::from(["r".to_owned()]));
+        assert_eq!(rules[0].to_string(), "o($x) :- a($y), b($x, $w_i0_1), a($w_i0_1), b($y, $w_i1_1), a($w_i1_1)");
     }
 }

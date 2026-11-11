@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
+import { CURRENT_LINK } from "../engine/storage/rerail-home.js";
 import {
   CODEX_TRUST_NOTE,
   detectHarnesses,
@@ -40,7 +41,7 @@ export function codingAgentHome(): string {
 
 /** Registrations point at `<rerail home>/current` once set-up has run; before that, at the running package. */
 export function registrationRoot(rerailHome: string, packageRoot: string): string {
-  const current = join(rerailHome, "current");
+  const current = join(rerailHome, CURRENT_LINK);
   return existsSync(join(current, "package.json")) ? current : packageRoot;
 }
 
@@ -267,7 +268,7 @@ async function piToSwap(root: string, home: string, agents: readonly Harness[]):
  * the agents found since, so it never undoes `rerail install --remove --agents <id>` or an earlier `--agents` that
  * left one out, and does retry an agent whose config it could not read.
  */
-const SEEN_AGENTS_FILE = "coding-agents.json";
+export const SEEN_AGENTS_FILE = "coding-agents.json";
 
 /**
  * The coding agents recorded as seen, or undefined when there is no record to go by: none written yet (an install from

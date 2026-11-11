@@ -77,7 +77,7 @@ pub(crate) fn tape_producer() -> [u8; 32] {
 /// The producer of core derivations: the tape format the facts are read from.
 pub(crate) fn core_producer() -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"rerail.core/v2\0");
+    hash.update(b"rerail.core/v4\0");
     hash.update(TAPE_FORMAT_VERSION.to_le_bytes());
     hash.finalize().into()
 }

@@ -1,8 +1,36 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl allowlist_arg_at(g: node, i: number)
+.decl allowlist_args(g: node)
+.decl allowlist_at(clause: symbol, path: symbol, line: number)
+.decl allowlist_f_concat(c: node)
+.decl allowlist_first_arg(g: node, c: node)
+.decl allowlist_first_doc(clause: symbol, d: number)
+.decl allowlist_member(n: node)
+.decl allowlist_names(clause: symbol, name: symbol)
+.decl allowlist_row(clause: symbol, d: number)
+.decl allowlist_set_string(n: node)
+.decl allowlist_value(r: node)
+.decl child(p: node, c: node, i: number)
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl op(n: node, s: symbol)
 .decl out_scope(d: number)
+.decl strprefix(n: node, p: symbol)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, text, op, line, strprefix, value_type_of
+.output violation
+allowlist_names("allowlist-allowlisted_static_classes", "ALLOWLISTED_STATIC_CLASSES").
+allowlist_names("allowlist-legacy_allowlisted_classes", "LEGACY_ALLOWLISTED_CLASSES").
+allowlist_names("allowlist-allowlisted_classes", "ALLOWLISTED_CLASSES").
+allowlist_names("allowlist-data_value_params", "DATA_VALUE_PARAMS").
+allowlist_names("allowlist-operator_params", "OPERATOR_PARAMS").
 in_scope(d) :- doc(d, p, _), glob("scripts/**/*.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
@@ -11,4 +39,23 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
-.output violation
+tape_syntax_error(d) :- syntax_error(d).
+allowlist_f_concat(c) :- node(_, c, "concatenated_string", _, _), child(c, s, _), node(_, s, "string", _, _), strprefix(s, x), contains("f", x).
+allowlist_member(n) :- node(_, n, "string", _, _), strprefix(n, x), !contains("f", x), value_type_of(n, "str").
+allowlist_member(n) :- node(_, n, "concatenated_string", _, _), !allowlist_f_concat(n), value_type_of(n, "str").
+allowlist_set_string(n) :- node(_, n, "set", _, _), child(n, c, _), allowlist_member(c).
+allowlist_set_string(n) :- node(_, n, "binary_operator", _, _), op(n, "|"), field(n, "left", c), allowlist_set_string(c).
+allowlist_set_string(n) :- node(_, n, "binary_operator", _, _), op(n, "|"), field(n, "right", c), allowlist_set_string(c).
+allowlist_args(g) :- node(_, r, "call", _, _), field(r, "arguments", g).
+allowlist_arg_at(g, i) :- allowlist_args(g), child(g, c, i), !node(_, c, "comment", _, _).
+allowlist_first_arg(g, c) :- allowlist_args(g), child(g, c, i), !node(_, c, "comment", _, _), i = min j : { allowlist_arg_at(g, j) }.
+allowlist_value(r) :- allowlist_set_string(r).
+allowlist_value(r) :- node(_, r, "call", _, _), field(r, "arguments", g), allowlist_first_arg(g, c), allowlist_set_string(c).
+allowlist_row(c, d) :- allowlist_names(c, x), node(d, a, "assignment", _, _), field(a, "left", l), node(_, l, "identifier", _, _), text(l, x), field(a, "right", r), allowlist_value(r), in_scope(d), !out_scope(d), !tape_syntax_error(d).
+allowlist_first_doc(c, d) :- allowlist_row(c, _), d = min e : { allowlist_row(c, e) }.
+allowlist_at(c, p, l) :- allowlist_first_doc(c, d), doc(d, p, _), node(d, m, "module", _, _), line(m, l).
+violation("data-layer-grammar-allowlist-burndown", "allowlist-allowlisted_static_classes", "allowlist_grew", p, l) :- allowlist_at("allowlist-allowlisted_static_classes", p, l).
+violation("data-layer-grammar-allowlist-burndown", "allowlist-legacy_allowlisted_classes", "allowlist_grew", p, l) :- allowlist_at("allowlist-legacy_allowlisted_classes", p, l).
+violation("data-layer-grammar-allowlist-burndown", "allowlist-allowlisted_classes", "allowlist_grew", p, l) :- allowlist_at("allowlist-allowlisted_classes", p, l).
+violation("data-layer-grammar-allowlist-burndown", "allowlist-data_value_params", "allowlist_grew", p, l) :- allowlist_at("allowlist-data_value_params", p, l).
+violation("data-layer-grammar-allowlist-burndown", "allowlist-operator_params", "allowlist_grew", p, l) :- allowlist_at("allowlist-operator_params", p, l).

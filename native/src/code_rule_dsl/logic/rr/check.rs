@@ -103,7 +103,7 @@ fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>,
             (b, none(), true)
         }
         Lit::Atom { rel, args, neg: true } => {
-            let vs = if matches!(rel.as_str(), "match" | "match_all") { args.iter().skip(1).flat_map(vars_of).collect() } else { atom_vars(rel, args) };
+            let vs = if matches!(rel.as_str(), "match" | "match_all" | "match_group") { args.iter().skip(1).flat_map(vars_of).collect() } else { atom_vars(rel, args) };
             let ready = force || vs.is_subset(bound);
             (none(), vs, ready)
         }
@@ -112,18 +112,23 @@ fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>,
             let ready = force || vs.is_subset(bound);
             (none(), vs, ready)
         }
-        Lit::Atom { rel, args, neg: false } if matches!(rel.as_str(), "match" | "match_all") => {
+        Lit::Atom { rel, args, neg: false } if matches!(rel.as_str(), "match" | "match_all" | "match_group") => {
             let mut g = match args.first() {
-                Some(Term::Str(re)) => groups(re),
+                Some(Term::Str(re)) if rel != "match_group" => groups(re),
                 _ => none(),
             };
-            // `match_all(re, s, i, a, b)` binds each match's ordinal and offsets too: only the subject is read.
-            let subject: BTreeSet<String> = if rel == "match_all" {
-                g.extend(args.iter().skip(2).flat_map(vars_of));
-                args.iter().skip(1).take(1).flat_map(vars_of).collect()
-            } else {
-                args.iter().skip(1).flat_map(vars_of).collect()
+            // `match_all("re", sp, m)`, `match_group("re", sp, m, g, gsp)`: the match, the group and its span are
+            // bound by it, the span `sp` needed.
+            let (subject, binds) = match args.as_slice() {
+                [_, sp, m] if rel == "match_all" => (std::slice::from_ref(sp), std::slice::from_ref(m)),
+                // `match_all(re, s, i, a, b)` over a symbol binds each match's ordinal and offsets too.
+                [_, s, rest @ ..] if rel == "match_all" && rest.len() == 3 => (std::slice::from_ref(s), rest),
+                [_, sp, rest @ ..] if rel == "match_group" => (std::slice::from_ref(sp), rest),
+                [_, rest @ ..] => (rest, &[][..]),
+                [] => (&[][..], &[][..]),
             };
+            g.extend(binds.iter().flat_map(vars_of));
+            let subject: BTreeSet<String> = subject.iter().flat_map(vars_of).collect();
             let ready = force || subject.is_subset(bound);
             (g, subject, ready)
         }
@@ -251,7 +256,7 @@ pub(super) fn fix_relations(statements: &[Statement]) -> BTreeSet<String> {
     statements
         .iter()
         .flat_map(|(item, _)| match item {
-            Item::Violation { fixes, .. } => fixes.clone(),
+            Item::Violation { fixes, .. } => fixes.iter().map(|f| f.name.clone()).collect(),
             Item::Edit { name } => vec![name.clone()],
             _ => Vec::new(),
         })
@@ -286,7 +291,7 @@ pub(super) fn declarations(files: &[(String, Vec<Statement>)]) -> Vec<String> {
     }
     let mut out = Vec::new();
     for (name, files) in decls {
-        if TESTS.iter().any(|(rr, _)| *rr == name) || name == "match_all" {
+        if TESTS.iter().any(|(rr, _)| *rr == name) || name == "match_all" || name == "match_group" {
             out.push(format!("{name} is a built-in constraint and cannot be declared ({})", files.join(", ")));
         }
         if files.len() > 1 {

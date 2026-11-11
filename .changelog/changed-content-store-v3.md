@@ -1,0 +1,1 @@
+The content store's file is now `content-v3.sqlite`: names and strings are stored once each, in a few large writes per run. The `content-v1.sqlite` store earlier versions left (with its `-wal` and `-shm`) is no longer read and is safe to delete once no earlier version runs.

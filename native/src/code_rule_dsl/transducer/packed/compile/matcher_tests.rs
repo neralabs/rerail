@@ -262,6 +262,48 @@ fn the_gate_catches_a_widened_walk() {
     panic!("only {caught} widened clauses differ from W's matcher");
 }
 
+/// A recursive utility inside another (RUF005's `list-add` inside `outer-operand`) settles round
+/// after round within the outer one's group: `x`'s right side is a `list-add` only through its
+/// left operand, itself one, which a single round of `list-add` does not reach.
+#[test]
+fn a_recursive_utility_inside_another_settles() {
+    let policy = r#"{
+        "format": "rerail.policy/v1", "id": "nested-recursion", "revision": 1, "mode": "steer",
+        "description": "A recursive utility inside another.", "scope": { "include": ["**/*"], "exclude": [] },
+        "clauses": [{
+            "id": "nested",
+            "forbid": { "ast": {
+                "language": "python",
+                "utils": {
+                    "list-expr": { "any": [
+                        { "kind": "list" },
+                        { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "list-expr" } },
+                        { "matches": "list-add" }
+                    ] },
+                    "list-add": { "kind": "binary_operator", "has": { "stopBy": "neighbor", "matches": "list-expr" } },
+                    "outer": { "any": [
+                        { "matches": "list-add" },
+                        { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "outer" } }
+                    ] }
+                },
+                "rule": { "kind": "assignment", "has": { "stopBy": "neighbor", "matches": "outer" } }
+            } },
+            "violation": { "anchor": "witness.span", "code": "NESTED", "message": "A list concatenation." }
+        }]
+    }"#;
+    let compiled = CodeRuleDslRuntime::compile(policy.to_owned(), "json".to_owned(), CAPABILITIES.to_owned()).expect("the policy compiles");
+    let (_, grammar) = python_matchers(&compiled).next().expect("a Python clause");
+    let program = LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles");
+    let tape = python_tape("x = ['a'] + b + c\ny = (['a'] + b) + c\nz = d + e\n");
+    let root = Root::doc(tape.clone());
+    let mut work = usize::MAX;
+    let expected = (0..tape.transducer_len() as u32)
+        .filter(|&ordinal| grammar.match_root(node_at(&root, ordinal), &mut work).ok().flatten().is_some())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(expected.len(), 2, "W's matcher finds x and y");
+    assert_eq!(program.roots(&tape).unwrap(), expected);
+}
+
 /// S2's parity gate (O23, F1): every lowered clause's passes run on Metal over the whole batch of
 /// fixtures, in one command buffer (plus one per extra round of a recursive group), and give the
 /// CPU interpreter's root sets on every fixture.

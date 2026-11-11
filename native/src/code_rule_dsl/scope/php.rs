@@ -19,6 +19,7 @@
 //! The oracles are PHPStan 2.2.16's `variable.undefined` and Psalm 6.19.1's unused-variable
 //! reports (`fixtures/php/scope/php`).
 
+use crate::code_rule_dsl::tree::Tree;
 use super::php_names::{self, PhpNames, Resolved};
 use super::{Binding, BuildError, Builder, Form, NodeRef, ScopeKind, Site, VALUE};
 use crate::code_rule_dsl::value::{Context as Decoding, php as php_value};
@@ -379,7 +380,7 @@ fn visit<D: Doc>(builder: &mut Builder, root: &Node<'_, D>, blade: bool) -> Visi
         scope: 0,
         blade,
     };
-    let state = visitor.statements(named(root), Some(State::default()))?;
+    let state = visitor.statements(root.named_code(), Some(State::default()))?;
     let returns = visitor.returns.take();
     visitor.end(0, join(state, returns));
     let mut flow = std::mem::take(&mut visitor.flow);
@@ -406,13 +407,6 @@ fn visit<D: Doc>(builder: &mut Builder, root: &Node<'_, D>, blade: bool) -> Visi
     Ok(())
 }
 
-fn named<'r, D: Doc>(node: &Node<'r, D>) -> impl Iterator<Item = Node<'r, D>> {
-    let children: Vec<_> = node
-        .children()
-        .filter(|child| child.is_named() && child.kind() != "comment")
-        .collect();
-    children.into_iter()
-}
 
 /// A variable node's name, `$` included; `None` for `$$x` and `${...}`.
 fn variable<D: Doc>(node: &Node<'_, D>) -> Option<String> {
@@ -428,12 +422,12 @@ fn self_reads<D: Doc>(value: &Node<'_, D>, name: &str) -> Vec<usize> {
     ];
     match value.kind().as_ref() {
         "variable_name" if value.text() == name => vec![value.range().start],
-        "parenthesized_expression" => named(value)
+        "parenthesized_expression" => value.named_code()
             .flat_map(|inner| self_reads(&inner, name))
             .collect(),
         "binary_expression"
             if value
-                .field("operator")
+                .operator_token()
                 .is_some_and(|operator| COMPUTING.contains(&operator.text().as_ref())) =>
         {
             ["left", "right"]
@@ -773,20 +767,20 @@ impl Visitor<'_, '_> {
     fn statement_inner<D: Doc>(&mut self, node: &Node<'_, D>, mut state: Flowing) -> Visit {
         match node.kind().as_ref() {
             "compound_statement" | "colon_block" | "declare_statement" => {
-                self.statements(named(node), state)
+                self.statements(node.named_code(), state)
             }
             "namespace_definition" => match node.field("body") {
-                Some(body) => self.statements(named(&body), state),
+                Some(body) => self.statements(body.named_code(), state),
                 None => Ok(state),
             },
             "expression_statement" | "echo_statement" | "const_declaration" => {
-                for child in named(node) {
+                for child in node.named_code() {
                     state = self.expression(&child, state)?;
                 }
                 Ok(state)
             }
             "return_statement" => {
-                for child in named(node) {
+                for child in node.named_code() {
                     state = self.expression(&child, state)?;
                 }
                 // A `finally` around it runs first (`try_statement`).
@@ -794,13 +788,13 @@ impl Visitor<'_, '_> {
                 Ok(None)
             }
             "exit_statement" => {
-                for child in named(node) {
+                for child in node.named_code() {
                     state = self.expression(&child, state)?;
                 }
                 Ok(None)
             }
             "break_statement" | "continue_statement" => {
-                let levels = named(node)
+                let levels = node.named_code()
                     .next()
                     .and_then(|level| level.text().parse::<usize>().ok())
                     .unwrap_or(1)
@@ -824,7 +818,7 @@ impl Visitor<'_, '_> {
             "switch_statement" => self.switch_statement(node, state),
             "try_statement" => self.try_statement(node, state),
             "unset_statement" => {
-                for child in named(node) {
+                for child in node.named_code() {
                     match variable(&child) {
                         Some(name) => {
                             self.builder.reference(child.range(), VALUE);
@@ -844,7 +838,7 @@ impl Visitor<'_, '_> {
                 Ok(state)
             }
             "global_declaration" => {
-                for child in named(node) {
+                for child in node.named_code() {
                     self.bind(
                         &child,
                         Form::Global,
@@ -858,7 +852,7 @@ impl Visitor<'_, '_> {
                 Ok(state)
             }
             "function_static_declaration" => {
-                for declaration in named(node) {
+                for declaration in node.named_code() {
                     if let Some(value) = declaration.field("value") {
                         state = self.expression(&value, state)?;
                     }
@@ -924,7 +918,7 @@ impl Visitor<'_, '_> {
             None => taken,
         };
         let mut else_seen = false;
-        for clause in named(node) {
+        for clause in node.named_code() {
             match clause.kind().as_ref() {
                 "else_if_clause" => {
                     (taken, rest) = match clause.field("condition") {
@@ -1044,7 +1038,7 @@ impl Visitor<'_, '_> {
     }
 
     fn foreach_statement<D: Doc>(&mut self, node: &Node<'_, D>, state: Flowing) -> Visit {
-        let parts: Vec<_> = named(node).collect();
+        let parts: Vec<_> = node.named_code().collect();
         let body = node.field("body");
         let mut state = state;
         let (subject, target) = match parts.as_slice() {
@@ -1076,14 +1070,14 @@ impl Visitor<'_, '_> {
     ) -> Visit {
         match target.kind().as_ref() {
             "pair" => {
-                let parts: Vec<_> = named(target).collect();
+                let parts: Vec<_> = target.named_code().collect();
                 for part in parts {
                     state = self.foreach_target(&part, foreach, state)?;
                 }
                 Ok(state)
             }
             "by_ref" => {
-                for part in named(target) {
+                for part in target.named_code() {
                     if variable(&part).is_some() {
                         self.bind(
                             &part,
@@ -1128,7 +1122,7 @@ impl Visitor<'_, '_> {
         let cases: Vec<_> = node
             .field("body")
             .map(|block| {
-                named(&block)
+                block.named_code()
                     .filter(|case| {
                         matches!(case.kind().as_ref(), "case_statement" | "default_statement")
                     })
@@ -1151,7 +1145,7 @@ impl Visitor<'_, '_> {
         let has_default = cases.iter().any(|case| case.kind() == "default_statement");
         for (case, entry) in cases.iter().zip(entries) {
             let entry = join(entry.unwrap_or_else(|| unmatched.clone()), fall.take());
-            let statements: Vec<_> = named(case)
+            let statements: Vec<_> = case.named_code()
                 .filter(|child| {
                     case.field("value")
                         .is_none_or(|value| value.range() != child.range())
@@ -1190,7 +1184,7 @@ impl Visitor<'_, '_> {
     }
 
     fn try_statement<D: Doc>(&mut self, node: &Node<'_, D>, state: Flowing) -> Visit {
-        let finally = named(node)
+        let finally = node.named_code()
             .find(|clause| clause.kind() == "finally_clause")
             .and_then(|clause| clause.field("body"));
         // A `finally` runs before a `break`, `continue` or `return` of the body or a catch goes
@@ -1208,7 +1202,7 @@ impl Visitor<'_, '_> {
         }
         let mut out = end;
 
-        for clause in named(node) {
+        for clause in node.named_code() {
             if clause.kind() != "catch_clause" {
                 continue;
             }
@@ -1289,16 +1283,16 @@ impl Visitor<'_, '_> {
         state: Flowing,
     ) -> Visit<(Flowing, Flowing)> {
         match node.kind().as_ref() {
-            "parenthesized_expression" => match named(node).next() {
+            "parenthesized_expression" => match node.named_code().next() {
                 Some(inner) => self.condition(&inner, state),
                 None => Ok((state.clone(), state)),
             },
             "unary_op_expression"
                 if node
-                    .field("operator")
+                    .operator_token()
                     .is_some_and(|operator| operator.text() == "!") =>
             {
-                match node.field("argument").or_else(|| named(node).last()) {
+                match node.field("argument").or_else(|| node.named_code().last()) {
                     Some(operand) => {
                         let (truthy, falsy) = self.condition(&operand, state)?;
                         Ok((falsy, truthy))
@@ -1308,7 +1302,7 @@ impl Visitor<'_, '_> {
             }
             "binary_expression" => {
                 let operator = node
-                    .field("operator")
+                    .operator_token()
                     .map(|operator| operator.text().to_ascii_lowercase())
                     .unwrap_or_default();
                 let (Some(left), Some(right)) = (node.field("left"), node.field("right")) else {
@@ -1411,11 +1405,11 @@ impl Visitor<'_, '_> {
         let Some(arguments) = node.field("arguments") else {
             return Vec::new();
         };
-        named(&arguments)
+        arguments.named_code()
             .filter(|argument| argument.kind() == "argument")
             .filter_map(|argument| {
                 let name = argument.field("name");
-                named(&argument).find(|part| {
+                argument.named_code().find(|part| {
                     name.as_ref()
                         .is_none_or(|name| name.range() != part.range())
                         && part.kind() != "reference_modifier"
@@ -1460,14 +1454,14 @@ impl Visitor<'_, '_> {
             }
             "dynamic_variable_name" => {
                 // `$$name` reads a variable the source does not spell.
-                state = self.expressions(named(node), state)?;
+                state = self.expressions(node.named_code(), state)?;
                 self.flow.reads_all.insert(self.scope);
                 Ok(state)
             }
             "assignment_expression" | "reference_assignment_expression" => {
                 let reference = node.kind() == "reference_assignment_expression";
                 let (Some(left), Some(right)) = (node.field("left"), node.field("right")) else {
-                    return self.expressions(named(node), state);
+                    return self.expressions(node.named_code(), state);
                 };
                 if reference && variable(&right).is_some() {
                     // `&$b` creates `$b` if it is undefined; both now name one value.
@@ -1497,10 +1491,10 @@ impl Visitor<'_, '_> {
             }
             "augmented_assignment_expression" => {
                 let (Some(left), Some(right)) = (node.field("left"), node.field("right")) else {
-                    return self.expressions(named(node), state);
+                    return self.expressions(node.named_code(), state);
                 };
                 let coalesce = node
-                    .field("operator")
+                    .operator_token()
                     .is_some_and(|operator| operator.text() == "??=");
                 if coalesce {
                     // `$a ??= v` assigns only where `$a` is null or undefined; either way `$a` is
@@ -1567,7 +1561,7 @@ impl Visitor<'_, '_> {
             }
             "update_expression" => {
                 let Some(argument) = node.field("argument") else {
-                    return self.expressions(named(node), state);
+                    return self.expressions(node.named_code(), state);
                 };
                 let discarded = Self::discarded(node);
                 match variable(&argument) {
@@ -1599,11 +1593,11 @@ impl Visitor<'_, '_> {
             }
             "binary_expression" => {
                 let operator = node
-                    .field("operator")
+                    .operator_token()
                     .map(|operator| operator.text().to_ascii_lowercase())
                     .unwrap_or_default();
                 let (Some(left), Some(right)) = (node.field("left"), node.field("right")) else {
-                    return self.expressions(named(node), state);
+                    return self.expressions(node.named_code(), state);
                 };
                 match operator.as_str() {
                     "&&" | "and" | "||" | "or" => {
@@ -1623,7 +1617,7 @@ impl Visitor<'_, '_> {
             }
             "conditional_expression" => {
                 let Some(condition) = node.field("condition") else {
-                    return self.expressions(named(node), state);
+                    return self.expressions(node.named_code(), state);
                 };
                 let (truthy, falsy) = self.condition(&condition, state)?;
                 let body = match node.field("body") {
@@ -1642,7 +1636,7 @@ impl Visitor<'_, '_> {
                 }
                 let mut out = None;
                 if let Some(block) = node.field("body") {
-                    for arm in named(&block) {
+                    for arm in block.named_code() {
                         if let Some(conditions) = arm.field("conditional_expressions") {
                             state = self.expression(&conditions, state)?;
                         }
@@ -1660,7 +1654,7 @@ impl Visitor<'_, '_> {
                 self.method_call_chain(node, state)
             }
             "scoped_call_expression" | "object_creation_expression" => {
-                for child in named(node) {
+                for child in node.named_code() {
                     if child.kind() != "arguments" {
                         state = self.expression(&child, state)?;
                     }
@@ -1671,14 +1665,14 @@ impl Visitor<'_, '_> {
             | "include_once_expression"
             | "require_expression"
             | "require_once_expression" => {
-                state = self.expressions(named(node), state)?;
+                state = self.expressions(node.named_code(), state)?;
                 // The included file runs in this scope: it may read, define and unset anything.
                 self.flow.reads_all.insert(self.scope);
                 Self::arbitrary(&mut state);
                 Ok(state)
             }
             "throw_expression" => {
-                state = self.expressions(named(node), state)?;
+                state = self.expressions(node.named_code(), state)?;
                 self.may_throw(&state);
                 Ok(None)
             }
@@ -1691,7 +1685,7 @@ impl Visitor<'_, '_> {
                 Ok(state)
             }
             "class_declaration" | "anonymous_class" => {
-                for child in named(node) {
+                for child in node.named_code() {
                     if child.kind() == "arguments" {
                         state = self.arguments(node, None, state)?;
                     }
@@ -1714,9 +1708,9 @@ impl Visitor<'_, '_> {
                 {
                     self.flow.reads_all.insert(self.scope);
                 }
-                self.expressions(named(node), state)
+                self.expressions(node.named_code(), state)
             }
-            _ => self.expressions(named(node), state),
+            _ => self.expressions(node.named_code(), state),
         }
     }
 
@@ -1731,7 +1725,7 @@ impl Visitor<'_, '_> {
             "subscript_expression"
             | "member_access_expression"
             | "nullsafe_member_access_expression" => {
-                let parts: Vec<_> = named(node).collect();
+                let parts: Vec<_> = node.named_code().collect();
                 let mut state = state;
                 for (index, part) in parts.iter().enumerate() {
                     state = if index == 0 {
@@ -1765,7 +1759,7 @@ impl Visitor<'_, '_> {
                 self.builder.leave();
             }
             let object = call.field("object").map(|object| object.range());
-            for child in named(call) {
+            for child in call.named_code() {
                 let evaluated = index > 0 && object.as_ref() == Some(&child.range());
                 if child.kind() != "arguments" && !evaluated {
                     state = self.expression(&child, state)?;
@@ -1796,7 +1790,7 @@ impl Visitor<'_, '_> {
             Some("compact") => {
                 for argument in Self::argument_values(node) {
                     let literal = matches!(argument.kind().as_ref(), "string" | "encapsed_string")
-                        && named(&argument).all(|part| part.kind() == "string_content");
+                        && argument.named_code().all(|part| part.kind() == "string_content");
                     if literal {
                         // `compact('a')` reads `$a`: a read at the string, which PHPStan reports
                         // as it does any undefined read.
@@ -1865,19 +1859,19 @@ impl Visitor<'_, '_> {
     ) -> Visit {
         let Some(arguments) = node
             .field("arguments")
-            .or_else(|| named(node).find(|child| child.kind() == "arguments"))
+            .or_else(|| node.named_code().find(|child| child.kind() == "arguments"))
         else {
             self.may_throw(&state);
             return Ok(state);
         };
         let mut position = 0usize;
-        for argument in named(&arguments) {
+        for argument in arguments.named_code() {
             if argument.kind() != "argument" {
                 state = self.expression(&argument, state)?;
                 continue;
             }
             let name = argument.field("name");
-            let Some(value) = named(&argument).find(|part| {
+            let Some(value) = argument.named_code().find(|part| {
                 name.as_ref()
                     .is_none_or(|name| name.range() != part.range())
                     && part.kind() != "reference_modifier"
@@ -2022,7 +2016,7 @@ impl Visitor<'_, '_> {
                 self.destructure(node, Form::Assignment, site, source, state)
             }
             "dynamic_variable_name" => {
-                state = self.expressions(named(node), state)?;
+                state = self.expressions(node.named_code(), state)?;
                 Self::dynamic(&mut state);
                 Ok(state)
             }
@@ -2040,7 +2034,7 @@ impl Visitor<'_, '_> {
     /// `$GLOBALS` element whose key is not a literal may be; anything else is not.
     fn reference_outer<D: Doc>(left: &Node<'_, D>, right: &Node<'_, D>) -> Outer {
         let parts: Vec<_> = match right.kind().as_ref() {
-            "subscript_expression" => named(right).collect(),
+            "subscript_expression" => right.named_code().collect(),
             _ => return Outer::Local,
         };
         let ([base, key], Some(name)) = (parts.as_slice(), variable(left)) else {
@@ -2050,7 +2044,7 @@ impl Visitor<'_, '_> {
             return Outer::Local;
         }
         let literal = matches!(key.kind().as_ref(), "string" | "encapsed_string")
-            && named(key).all(|part| part.kind() == "string_content");
+            && key.named_code().all(|part| part.kind() == "string_content");
         if !literal {
             return Outer::Unknown;
         }
@@ -2102,7 +2096,7 @@ impl Visitor<'_, '_> {
     fn target_base<D: Doc>(&mut self, node: &Node<'_, D>, mut state: Flowing) -> Visit {
         match node.kind().as_ref() {
             "subscript_expression" => {
-                let parts: Vec<_> = named(node).collect();
+                let parts: Vec<_> = node.named_code().collect();
                 for part in parts.iter().skip(1) {
                     state = self.expression(part, state)?;
                 }
@@ -2191,7 +2185,7 @@ impl Visitor<'_, '_> {
         }
         let mut base = node.clone();
         while base.kind() == "subscript_expression" {
-            let Some(inner) = named(&base).next() else {
+            let Some(inner) = base.named_code().next() else {
                 return;
             };
             base = inner;
@@ -2207,7 +2201,7 @@ impl Visitor<'_, '_> {
     fn unset_base<D: Doc>(&mut self, node: &Node<'_, D>, state: Flowing) -> Visit {
         let mut base = node.clone();
         while base.kind() == "subscript_expression" {
-            let Some(inner) = named(&base).next() else {
+            let Some(inner) = base.named_code().next() else {
                 break;
             };
             base = inner;
@@ -2278,7 +2272,7 @@ impl Visitor<'_, '_> {
                     state
                 }
                 "by_ref" => {
-                    for part in named(&target) {
+                    for part in target.named_code() {
                         if variable(&part).is_some() {
                             self.bind(
                                 &part,
@@ -2308,9 +2302,9 @@ impl Visitor<'_, '_> {
     #[allow(clippy::type_complexity)]
     fn slots<'r, D: Doc>(node: &Node<'r, D>) -> Vec<(Option<Node<'r, D>>, Option<Node<'r, D>>)> {
         if node.kind() == "array_creation_expression" {
-            return named(node)
+            return node.named_code()
                 .map(|element| {
-                    let parts: Vec<_> = named(&element).collect();
+                    let parts: Vec<_> = element.named_code().collect();
                     match parts.as_slice() {
                         [key, target] => (Some(key.clone()), Some(target.clone())),
                         [target] => (None, Some(target.clone())),
@@ -2401,7 +2395,7 @@ impl Visitor<'_, '_> {
         let (outer, _) = self.enter_scope(node, ScopeKind::Class);
         let class = std::mem::replace(&mut self.class, true);
         let body = node.field("body").or_else(|| {
-            named(node).find(|child| {
+            node.named_code().find(|child| {
                 matches!(
                     child.kind().as_ref(),
                     "declaration_list" | "enum_declaration_list"
@@ -2409,11 +2403,11 @@ impl Visitor<'_, '_> {
             })
         });
         if let Some(body) = body {
-            for member in named(&body) {
+            for member in body.named_code() {
                 // Property defaults, constants and enum cases are constant expressions: they read
                 // no variables, and a property's `$name` is none.
                 if member.kind() == "method_declaration" {
-                    let is_static = named(&member).any(|child| child.kind() == "static_modifier");
+                    let is_static = member.named_code().any(|child| child.kind() == "static_modifier");
                     self.function(
                         &member,
                         Context::Function {
@@ -2448,11 +2442,11 @@ impl Visitor<'_, '_> {
         {
             // A closure's `use` variables are its own, copied (or referenced) at its creation.
             if let Some(clause) =
-                named(node).find(|child| child.kind() == "anonymous_function_use_clause")
+                node.named_code().find(|child| child.kind() == "anonymous_function_use_clause")
             {
-                for part in named(&clause) {
+                for part in clause.named_code() {
                     let (variable_node, by_reference) = match part.kind().as_ref() {
-                        "by_ref" => match named(&part).next() {
+                        "by_ref" => match part.named_code().next() {
                             Some(inner) => (inner, true),
                             None => continue,
                         },
@@ -2491,14 +2485,14 @@ impl Visitor<'_, '_> {
     }
 
     fn parameters<D: Doc>(&mut self, node: &Node<'_, D>, mut state: Flowing) -> Visit {
-        for parameter in named(node) {
+        for parameter in node.named_code() {
             if let Some(default) = parameter.field("default_value") {
                 // A default is a constant expression: its reads leave the parameters' state as is.
                 self.expression(&default, state.clone())?;
             }
             let name = parameter.field("name");
             let (name, by_reference) = match name {
-                Some(name) if name.kind() == "by_ref" => match named(&name).next() {
+                Some(name) if name.kind() == "by_ref" => match name.named_code().next() {
                     Some(inner) => (inner, true),
                     None => continue,
                 },
@@ -2522,12 +2516,12 @@ impl Visitor<'_, '_> {
         // The `use` clause runs where the closure is created: a by-value variable is read there,
         // a by-reference one is created there if undefined.
         if let Some(clause) =
-            named(node).find(|child| child.kind() == "anonymous_function_use_clause")
+            node.named_code().find(|child| child.kind() == "anonymous_function_use_clause")
         {
-            for part in named(&clause) {
+            for part in clause.named_code() {
                 match part.kind().as_ref() {
                     "by_ref" => {
-                        if let Some(inner) = named(&part).next() {
+                        if let Some(inner) = part.named_code().next() {
                             // The closure's variable is a reference to this one: what it holds
                             // now is what the closure reads when it runs (silently: `&` creates
                             // an undefined one), and what reaches here may be read or changed

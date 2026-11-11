@@ -1,0 +1,802 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-practice-memo-trivial-expression",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't wrap a dependency, or a cheap operator or property-read expression over only the dependencies, in useMemo; use or compute it during render.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": [
+      "**/*.test.*",
+      "**/*.spec.*",
+      "**/*.cy.*",
+      "**/__tests__/**",
+      "**/test/**",
+      "**/tests/**",
+      "**/e2e/**",
+      "**/__mocks__/**",
+      "**/*.stories.*",
+      "**/*.story.*",
+      "**/__stories__/**",
+      "**/__fixtures__/**",
+      "**/fixtures/**",
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js",
+      "**/*.d.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "mte-react-source": {
+            "kind": "string",
+            "has": {
+              "kind": "string_fragment",
+              "regex": "^(?i:react|react-dom)$"
+            }
+          },
+          "mte-react-object": {
+            "kind": "identifier",
+            "any": [
+              {
+                "regex": "^React$",
+                "resolves": {
+                  "global": [
+                    "React"
+                  ]
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "any": [
+                        {
+                          "kind": "import_clause"
+                        },
+                        {
+                          "kind": "namespace_import"
+                        }
+                      ],
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "mte-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "mte-memo-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^useMemo$",
+                "resolves": {
+                  "global": [
+                    "useMemo"
+                  ]
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "import_specifier",
+                      "has": {
+                        "field": "name",
+                        "regex": "^useMemo$"
+                      },
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "mte-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "mte-react-object"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^useMemo$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "identifier",
+                "regex": "^useMemo$",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "has": {
+                        "field": "value",
+                        "matches": "mte-react-object"
+                      },
+                      "all": [
+                        {
+                          "has": {
+                            "field": "name",
+                            "kind": "object_pattern",
+                            "has": {
+                              "kind": "shorthand_property_identifier_pattern",
+                              "regex": "^useMemo$"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "pattern": "$CALLEE",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "has": {
+                        "field": "value",
+                        "matches": "mte-react-object"
+                      },
+                      "all": [
+                        {
+                          "has": {
+                            "field": "name",
+                            "kind": "object_pattern",
+                            "has": {
+                              "kind": "pair_pattern",
+                              "has": {
+                                "field": "key",
+                                "regex": "^useMemo$"
+                              },
+                              "all": [
+                                {
+                                  "has": {
+                                    "field": "value",
+                                    "pattern": "$CALLEE"
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "mte-callback": {
+            "any": [
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "function_expression"
+              }
+            ],
+            "not": {
+              "any": [
+                {
+                  "regex": "^async\\b"
+                },
+                {
+                  "has": {
+                    "field": "parameter",
+                    "kind": "identifier"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "parameters",
+                    "kind": "formal_parameters",
+                    "not": {
+                      "regex": "^\\(\\s*\\)$"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "mte-first": {
+            "nthChild": {
+              "position": 1,
+              "ofRule": {
+                "not": {
+                  "kind": "comment"
+                }
+              }
+            },
+            "not": {
+              "kind": "comment"
+            }
+          },
+          "mte-second": {
+            "nthChild": {
+              "position": 2,
+              "ofRule": {
+                "not": {
+                  "kind": "comment"
+                }
+              }
+            },
+            "not": {
+              "kind": "comment"
+            }
+          },
+          "mte-cast": {
+            "any": [
+              {
+                "kind": "as_expression"
+              },
+              {
+                "kind": "satisfies_expression"
+              },
+              {
+                "kind": "non_null_expression"
+              }
+            ]
+          },
+          "mte-access": {
+            "any": [
+              {
+                "kind": "member_expression"
+              },
+              {
+                "kind": "subscript_expression"
+              }
+            ]
+          },
+          "mte-costly": {
+            "any": [
+              {
+                "kind": "call_expression"
+              },
+              {
+                "kind": "new_expression"
+              },
+              {
+                "kind": "object"
+              },
+              {
+                "kind": "array"
+              },
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function"
+              },
+              {
+                "kind": "class"
+              },
+              {
+                "kind": "jsx_element"
+              },
+              {
+                "kind": "jsx_self_closing_element"
+              },
+              {
+                "kind": "template_substitution"
+              },
+              {
+                "kind": "await_expression"
+              },
+              {
+                "kind": "yield_expression"
+              },
+              {
+                "kind": "assignment_expression"
+              },
+              {
+                "kind": "augmented_assignment_expression"
+              },
+              {
+                "kind": "update_expression"
+              },
+              {
+                "kind": "sequence_expression"
+              },
+              {
+                "kind": "regex"
+              },
+              {
+                "kind": "this"
+              },
+              {
+                "kind": "super"
+              },
+              {
+                "kind": "import"
+              },
+              {
+                "kind": "meta_property"
+              },
+              {
+                "kind": "statement_block"
+              },
+              {
+                "kind": "spread_element"
+              },
+              {
+                "kind": "unary_expression",
+                "regex": "^(?:delete|void)\\b"
+              }
+            ]
+          },
+          "mte-cheap": {
+            "all": [
+              {
+                "not": {
+                  "matches": "mte-costly"
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "end",
+                    "matches": "mte-costly"
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "identifier"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "mte-dep": {
+            "params": [
+              "T"
+            ],
+            "rule": {
+              "has": {
+                "field": "arguments",
+                "has": {
+                  "matches": "mte-second",
+                  "kind": "array",
+                  "has": {
+                    "pattern": "$D",
+                    "not": {
+                      "kind": "comment"
+                    },
+                    "compare": {
+                      "left": "D",
+                      "op": "eq",
+                      "right": "T",
+                      "text": "reference"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "mte-memo": {
+            "kind": "call_expression",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "mte-memo-callee"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "all": [
+                    {
+                      "not": {
+                        "has": {
+                          "nthChild": {
+                            "position": 3,
+                            "ofRule": {
+                              "not": {
+                                "kind": "comment"
+                              }
+                            }
+                          },
+                          "not": {
+                            "kind": "comment"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "matches": "mte-second",
+                        "kind": "array",
+                        "not": {
+                          "regex": "^\\[\\s*,?\\s*\\]$"
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "matches": "mte-first",
+                        "all": [
+                          {
+                            "matches": "mte-callback"
+                          },
+                          {
+                            "has": {
+                              "field": "body",
+                              "any": [
+                                {
+                                  "not": {
+                                    "kind": "statement_block"
+                                  },
+                                  "pattern": "$E",
+                                  "matches": "mte-cheap"
+                                },
+                                {
+                                  "kind": "statement_block",
+                                  "not": {
+                                    "has": {
+                                      "nthChild": {
+                                        "position": 2,
+                                        "ofRule": {
+                                          "not": {
+                                            "kind": "comment"
+                                          }
+                                        }
+                                      },
+                                      "not": {
+                                        "kind": "comment"
+                                      }
+                                    }
+                                  },
+                                  "has": {
+                                    "matches": "mte-first",
+                                    "kind": "return_statement",
+                                    "has": {
+                                      "matches": "mte-first",
+                                      "pattern": "$E",
+                                      "all": [
+                                        {
+                                          "matches": "mte-cheap"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "not": {
+                              "has": {
+                                "stopBy": "end",
+                                "kind": "member_expression",
+                                "has": {
+                                  "field": "property",
+                                  "regex": "^current$"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "field": "arguments",
+                    "has": {
+                      "matches": "mte-first",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "identifier",
+                        "pattern": "$R",
+                        "not": {
+                          "any": [
+                            {
+                              "inside": {
+                                "stopBy": {
+                                  "kind": "call_expression"
+                                },
+                                "kind": "call_expression",
+                                "matches": {
+                                  "mte-dep": {
+                                    "T": "$R"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "inside": {
+                                "stopBy": {
+                                  "not": {
+                                    "any": [
+                                      {
+                                        "kind": "member_expression"
+                                      },
+                                      {
+                                        "kind": "subscript_expression"
+                                      },
+                                      {
+                                        "kind": "non_null_expression"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "any": [
+                                  {
+                                    "kind": "member_expression"
+                                  },
+                                  {
+                                    "kind": "subscript_expression"
+                                  },
+                                  {
+                                    "kind": "non_null_expression"
+                                  }
+                                ],
+                                "pattern": "$X",
+                                "inside": {
+                                  "stopBy": {
+                                    "kind": "call_expression"
+                                  },
+                                  "kind": "call_expression",
+                                  "matches": {
+                                    "mte-dep": {
+                                      "T": "$X"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "mte-identity": {
+            "any": [
+              {
+                "matches": {
+                  "mte-dep": {
+                    "T": "$E"
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "has": {
+                        "matches": "mte-first",
+                        "has": {
+                          "stopBy": "end",
+                          "pattern": "$E",
+                          "matches": "mte-cast",
+                          "has": {
+                            "matches": "mte-first",
+                            "pattern": "$I"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "matches": {
+                      "mte-dep": {
+                        "T": "$I"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "mte-property-read": {
+            "has": {
+              "field": "arguments",
+              "has": {
+                "matches": "mte-first",
+                "has": {
+                  "stopBy": "end",
+                  "pattern": "$E",
+                  "any": [
+                    {
+                      "matches": "mte-access"
+                    },
+                    {
+                      "any": [
+                        {
+                          "kind": "as_expression"
+                        },
+                        {
+                          "kind": "satisfies_expression"
+                        },
+                        {
+                          "kind": "non_null_expression"
+                        },
+                        {
+                          "kind": "parenthesized_expression"
+                        }
+                      ],
+                      "has": {
+                        "matches": "mte-first",
+                        "all": [
+                          {
+                            "matches": "mte-access"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "identity",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "matches": "mte-memo"
+              },
+              {
+                "matches": "mte-identity"
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "MEMO_IDENTITY",
+        "anchor": "witness.span",
+        "message": "Use `$E` directly instead of this useMemo: it only hands back a value already in its dependency list, so other dependencies never give it a new identity."
+      }
+    },
+    {
+      "id": "property-read",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "matches": "mte-memo"
+              },
+              {
+                "not": {
+                  "matches": "mte-identity"
+                }
+              },
+              {
+                "matches": "mte-property-read"
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "MEMO_PROPERTY_READ",
+        "anchor": "witness.span",
+        "message": "Read `$E` inline during render instead of in useMemo, unless it is a getter that builds a new object or you mean to keep the first value while the object mutates in place."
+      }
+    },
+    {
+      "id": "operator",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "matches": "mte-memo"
+              },
+              {
+                "not": {
+                  "matches": "mte-identity"
+                }
+              },
+              {
+                "not": {
+                  "matches": "mte-property-read"
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "MEMO_TRIVIAL_EXPRESSION",
+        "anchor": "witness.span",
+        "message": "Compute `$E` inline during render instead of in useMemo: it reads only the memo's dependencies and costs less than the dependency check."
+      }
+    }
+  ]
+}

@@ -1,149 +1,233 @@
 # Privacy
 
-Rerail runs on your machine. This page says what it never does, what it sends over the network, and what it keeps on
-your disk. It describes the code in this repository; the file named after each section is where to check it.
+Rerail runs on your machine. Each claim below names the file in this repository that implements it.
 
 ## What Rerail never does
 
-- **No telemetry.** Rerail has no telemetry, analytics, crash reporting or usage metrics, and depends on no library
-  that provides them (`package.json`).
-- **Never sends your work anywhere you did not name.** Rerail itself never transmits your source code, prompts,
-  coding-agent transcripts, rules or findings, except to a [remote](remote-sink.md) you add yourself (in internal
-  testing; there is none until you add one). Its other network traffic is listed below, and none of it carries them.
-- **No hosted model.** Semantic matching uses an embedding model that ships inside the package
-  (`model/`, `minishlab/potion-base-8M`), runs in-process, and is verified against its SHA-256 manifest before it
-  loads. The engine is built with no HTTP or socket code (`native/Cargo.toml`, `native/src/model.rs`). Rerail calls no
-  hosted LLM or inference API.
-- **No silent updates.** A new version arrives only when you run `rerail update` or `rerail setup` (`src/setup/updater.ts`).
-- **No pack install scripts.** Rule packs are installed and removed with `npm --ignore-scripts`
+Rerail sends nothing about you or your work unless you add a remote, and calls no hosted model.
+
+- **No telemetry**, analytics, crash reporting or usage metrics.
+- **No sending your work** except to a [remote](remote-sink.md) you add.
+- **No hosted model or LLM API.** Semantic matching runs a bundled model in-process.
+- **No silent updates**, no pack install scripts, no remote Git, no third-party dashboard resources.
+
+<details>
+<summary>Details and source files</summary>
+
+- **No telemetry**, analytics, crash reporting or usage metrics, and no dependency providing them (`package.json`).
+- **No sending your work.** Code, prompts, agent transcripts, rules and findings go only to a [remote](remote-sink.md)
+  you add (in internal testing; none by default). Rerail's other network traffic, listed below, carries none of them.
+- **No hosted model or LLM API.** Semantic matching uses a bundled embedding model (`model/`,
+  `minishlab/potion-base-8M`), run in-process after a SHA-256 manifest check. The engine has no HTTP or socket code
+  (`native/Cargo.toml`, `native/src/model.rs`).
+- **No silent updates.** Only `rerail update` or `rerail setup` installs a version (`src/setup/updater.ts`).
+- **No pack install scripts.** Packs are installed and removed with `npm --ignore-scripts`
   (`src/setup/rule-pack-store.ts`).
-- **No remote Git operations.** Every Git command Rerail runs is local, with hooks and fsmonitor disabled
-  (`src/engine/git.ts`).
-- **No third-party resources in the dashboard.** The local dashboard loads nothing from outside your machine (`ui/`).
+- **No remote Git.** All Git commands are local, with hooks and fsmonitor disabled (`src/engine/git.ts`).
+- **No third-party dashboard resources.** The dashboard loads nothing from outside your machine (`ui/`).
+
+</details>
 
 ## What goes over the network
 
-All of it goes through `npm`, to the registry your own npm configuration names, and carries package names and versions
-only (`src/runtime/npm.ts`):
+Only `npm` traffic to your configured registry, carrying package names and versions; rule evaluation needs no network.
+
+npm runs for updates, setup, listing and adding packs, and SQLite rebuilds (`src/runtime/npm.ts`).
+
+<details>
+<summary>When npm runs</summary>
 
 | When | What npm fetches |
 | --- | --- |
-| `rerail update` (and `rerail update check`) | The latest version of `@neralabs/rerail` on your channel, then that version |
-| `rerail setup` from a copy that is not the managed install (for example `npx`) | The managed install of `@neralabs/rerail` |
-| Set-up, `rerail start`, `rerail packs list` and `rerail packs recommend` | Every Rerail rule pack, to match them against your repository **locally**; nothing about the repository is sent |
-| `rerail packs add` and the packs you confirm in set-up | The packs you chose |
-| When the SQLite binding fails its load check | `npm rebuild better-sqlite3`, which may fetch a prebuilt binary or Node headers through that package's own tooling |
+| `rerail update`, `rerail update check` | Latest `@neralabs/rerail` on your channel, then that version |
+| `rerail setup` from a non-managed copy (e.g. `npx`) | The managed `@neralabs/rerail` install |
+| Set-up, `rerail start`, `rerail packs list`, `rerail packs recommend` | Every rule pack, matched to your repository **locally**; nothing about it is sent |
+| `rerail packs add`, packs confirmed in set-up | The chosen packs |
+| SQLite binding fails its load check | `npm rebuild better-sqlite3`; may fetch a prebuilt binary or Node headers through that package's own tooling |
 
-Once installed, rules are evaluated without the network.
+</details>
 
-The remote sink, in internal testing, sends to each remote **you** add with `rerail remote add` this machine's
-sessions, events (with their payloads, unless the remote was added with `--no-content`), audits, violations, the rules
-they ran and headless scans, except for repositories you exclude; with no remote, it sends nothing. What it sends,
-and where its token is kept, is in [Remote sink](remote-sink.md) (`src/runtime/remote-outbox.ts`).
+Two internal-testing features also send to endpoints **you** supply.
 
-Signed customer profiles, which are in internal testing, add one more request: `rerail activate --code` sends the
-activation code, a device public key, your platform and architecture, and the Rerail version to the activation URL
-**you** supply. `rerail activate --file` is the offline alternative (`src/activation/customer-profile.ts`).
+<details>
+<summary>Remote sink and signed customer profiles</summary>
+
+- **Remote sink:** `rerail remote add` targets get sessions, events (payloads unless `--no-content`), audits,
+  violations, their rules and headless scans, minus excluded repositories. With no remote, it sends nothing. See
+  [Remote sink](remote-sink.md) for what it sends and where its token is kept (`src/runtime/remote-outbox.ts`).
+- **Signed customer profiles:** `rerail activate --code` sends the code, a device public key, platform, architecture
+  and Rerail version to the activation URL **you** supply. `rerail activate --file` is offline
+  (`src/activation/customer-profile.ts`).
+
+</details>
 
 ## Your coding agent's provider
 
-Rerail steers your coding agent by adding messages to its session. Your agent sends its whole session, Rerail's
-messages included, to its own model provider on its next request, under that provider's terms. Those messages can hold
-file paths and line numbers, a rule's message (which may quote the matched code), a suggested fix, and the text of
-rules you wrote. Rerail does not make that request; your agent does.
+Steers reach your agent's model provider through your agent, never through Rerail.
+
+Rerail steers by adding messages to the agent's session. The agent's next request sends that session to its provider,
+under the provider's terms. Steers can hold paths, line numbers, rule messages quoting matched code, suggested fixes
+and your rules' text.
 
 ## What Rerail keeps on your machine
 
-Rerail stores what it needs to evaluate rules and show you their history. None of it is encrypted at rest.
+Rerail stores rules, history and every agent event unencrypted, in `~/.rerail/`, `~/.cache/rerail/` and each
+repository's `.rerail/sessions/`.
+
+<details>
+<summary>Storage locations</summary>
 
 | Where | What |
 | --- | --- |
-| `~/.rerail/` (or `$RERAIL_HOME`) | `rerail.sqlite`: rules, repositories, sessions, audits and findings, the one-line reasons your coding agent gave for not following a steer (`rerail feedback`, which sends them nowhere; `rerail feedback list` prints them if you want to attach them to an issue), and every event your coding agents report: your prompts, the agent's replies, and tool calls with their inputs and outputs. Also the daemon's state and log, your consent answer, installed rule packs and managed installs |
-| `~/.cache/rerail/` | `content-v1.sqlite`: compressed copies of the source files Rerail has read, with their syntax trees and check results |
-| `<your repository>/.rerail/sessions/` | One ledger per coding-agent session: its events, and the text of files as they were before the agent edited them. The folder holds a `.gitignore` of `*`, so Git never shows or commits it |
+| `~/.rerail/` (or `$RERAIL_HOME`) | `rerail.sqlite`: rules, repositories, sessions, audits, findings, steer feedback, and all agent events (prompts, replies, tool inputs and outputs). Also daemon state and log, consent answer, rule packs, managed installs |
+| `~/.cache/rerail/` | `content-v3.sqlite`: compressed source files Rerail read, with syntax trees and check results |
+| `<your repository>/.rerail/sessions/` | One ledger per session: events and pre-edit file text. Its `.gitignore` of `*` keeps it out of Git |
 
-Rerail redacts secrets it can recognize before anything reaches disk (`src/engine/secret-scrub.ts`). Rules and steers
-still read the original text in memory. This applies to stored events (your prompts, the agent's replies, tool inputs
-and outputs), session ledgers, stored findings, and the lines Rerail writes to `daemon.log`. The scrubber redacts:
+Steer feedback is the agent's one-line reason for ignoring a steer (`rerail feedback`). It is sent nowhere;
+`rerail feedback list` prints it for an issue.
 
-- **Secrets in known formats.** Keys and tokens from cloud providers, Git hosts, chat, payment and AI providers;
-  private keys; JWTs; URL passwords; and `Authorization` credentials. Each becomes `[redacted:<kind>:<6 hex>]`, where
-  the hex is the start of the secret's SHA-256, so the same secret shows the same marker.
-- **Values assigned to a secret-like key** such as `password`, `api_key` or `token`, when the value is long and random
-  enough. Such a value becomes `[redacted:<kind>]` with no hash, because it may be a password.
+</details>
 
-Hashes, UUIDs, lockfile integrity strings and code are left as they are. A secret in a format Rerail does not know can
-still be stored. `rerail scrub` redacts history an earlier version stored the same way: the database, its pre-update
-copy, every recorded checkout's ledgers, and `daemon.log`. It then rewrites the database file.
+### Secrets
 
-Rerail also leaves out what it recognizes by name. A file name is secret-like when it matches the list in
-`src/engine/path-boundary.ts` (`SENSITIVE_FILE_NAMES`, such as `.env`, `id_rsa` or `secrets.yaml`) or sits in a
-folder such as `.ssh`. A hidden name alone, such as `.github/`, is not secret-like.
+Rerail redacts recognized secrets before they reach disk and skips output of secret-like files; unknown formats can
+still be stored.
 
-- When a tool call names a secret-like path, such as `cat .env`, its output is not stored. The database records that
-  it was left out and its size in bytes, and the ledger records the sample without its text. The call itself is
-  kept. Rerail recognizes paths by name only: it sees no path a command builds at run time.
-- When a file is secret-like by name, or its text holds a recognized secret, Rerail keeps only its SHA-256 and size
-  from before an edit, not its text. A session resumed from the ledger therefore cannot rewind that file.
+`rerail scrub` redacts older history, then rewrites the database file.
 
-`~/.rerail/`, `~/.cache/rerail/`, the databases, the daemon's state, capability and log files and the session ledgers
-are created readable by your user only (directories `0700`, files `0600`). SQLite gives the files it adds beside a
-database the database's own mode. On macOS and Linux, Rerail also repairs these when they are too open, for example
-when an older release or a loose umask made them. When it opens one that your user owns and that allows group or other
-access, it removes that access. This covers the home and cache folders, `rerail.sqlite*` (pre-update copies
-included), `content-v1.sqlite*`, `harness.sqlite*`, `daemon.json`, `access-token` and `daemon.log`. It never follows a
-symlink to do so, and it leaves other users' files alone.
+<details>
+<summary>How redaction works</summary>
 
-A repository controls what is in its own `.rerail/` folder. Rerail therefore refuses to keep session records through a
-symlink at `.rerail`, `.rerail/sessions`, or any folder or file below them, so a repository cannot send them
-elsewhere. It names the path in the error and in the log, and the coding agent's session goes on without Rerail. The
-`.gitignore` in `.rerail/sessions/` is the exception: when it is a symlink or holds anything but Rerail's `*`, Rerail
-writes its own over it, so a committed `!*` cannot make `git add -A` commit your session records.
+Redaction covers stored events, session ledgers, findings and `daemon.log`. Rules and steers still see the original
+text in memory (`src/engine/secret-scrub.ts`).
+
+- **Known formats** (cloud, Git host, chat, payment and AI keys and tokens; private keys; JWTs; URL passwords;
+  `Authorization` credentials) become `[redacted:<kind>:<6 hex>]`. The hex starts the secret's SHA-256, so a secret
+  always gets the same marker.
+- **Secret-like keys** (`password`, `api_key`, `token`) with long, random values become `[redacted:<kind>]`, unhashed
+  since they may be passwords.
+
+Hashes, UUIDs, lockfile integrity strings and code are kept. Secrets in unknown formats can still be stored.
+`rerail scrub` covers the database, its pre-update copy, recorded checkouts' ledgers and `daemon.log`.
+
+</details>
+
+<details>
+<summary>Secret-like files</summary>
+
+Secret-like file names match `SENSITIVE_FILE_NAMES` in `src/engine/path-boundary.ts` (`.env`, `id_rsa`,
+`secrets.yaml`) or sit in folders like `.ssh`. Hidden names alone, like `.github/`, are not.
+
+- **Tool output** from a call naming such a path (`cat .env`) is not stored. The database keeps the omission and byte
+  size, the ledger the sample without text, and the call itself is kept. Paths built at run time are not seen.
+- **Pre-edit text** of such a file, or one holding a recognized secret, is kept only as SHA-256 and size. A session
+  resumed from the ledger cannot rewind it.
+
+</details>
+
+### Permissions
+
+Rerail's files are private to your user: directories `0700`, files `0600`.
+
+<details>
+<summary>What is covered and repaired</summary>
+
+This covers `~/.rerail/`, `~/.cache/rerail/`, the databases, daemon state, capability and log files, and ledgers.
+SQLite side files inherit the database's mode.
+
+On macOS and Linux, Rerail removes group and other access from these when it opens one your user owns, fixing old
+releases or loose umasks. Covered: home and cache folders, `rerail.sqlite*` (pre-update copies too),
+`content-v3.sqlite*`, `harness.sqlite*`, `daemon.json`, `access-token`, `daemon.log`. It never follows symlinks or
+touches other users' files.
+
+</details>
+
+### Symlinks
+
+Rerail refuses to write session records through a symlink at `.rerail`, `.rerail/sessions` or anything below.
+
+<details>
+<summary>Why, and the `.gitignore` exception</summary>
+
+A repository controls its own `.rerail/` folder, so this stops it redirecting your records. Rerail names the path in
+the error and log; the agent continues without Rerail.
+
+Exception: a symlinked or edited `.rerail/sessions/.gitignore` is overwritten with `*`, so a committed `!*` cannot make
+`git add -A` commit your records.
+
+</details>
 
 ## The local dashboard and API
 
-The daemon serves the dashboard, its API and an MCP endpoint for your coding agents on `127.0.0.1:4737` by default
-(`src/daemon/daemon.ts`). It refuses to listen on any other address unless you pass `--allow-remote`. It answers
-`421` to any request whose `Host` header is not loopback or a name you allowed, which blocks DNS rebinding, and `403`
-to a cross-origin write to its API (`src/api/http.ts`).
+The daemon serves the dashboard, API and an MCP endpoint on loopback, behind an access capability.
 
-Every request for your data needs the daemon's access capability, a random value kept readable by your user only
-(`access-token` in `~/.rerail`, and `daemon.json`); anything without it is answered `401`. Your browser gets it from
-the link `rerail daemon start` prints or `rerail manage` opens, and keeps it in that page's own storage, which no
-other site or local server can read. So another user of the same computer, or a
-sandboxed program that may reach localhost, cannot read your history or change your rules through the daemon. A
-program running as you can read that file, as it can read your files; the capability is not a boundary against it.
-A daemon started with `--allow-remote` or `--public-host` can be reached from other machines and makes a fresh
-capability on each start. It serves HTTPS with the certificate you pass (`--tls-cert`, `--tls-key`), and refuses to
-start over plain HTTP unless you pass `--insecure-http`. Rerail's own clients check the certificate's recorded
-fingerprint before they send the capability.
+- **Address:** `127.0.0.1:4737` by default; other addresses need `--allow-remote` (`src/daemon/daemon.ts`).
+- **Capability:** a random value readable only by you; your browser gets it from the link `rerail daemon start` prints
+  or `rerail manage` opens.
+
+<details>
+<summary>Status codes, capability scope and remote exposure</summary>
+
+- **`421`** for a non-loopback `Host` you did not allow, blocking DNS rebinding.
+- **`403`** for cross-origin API writes (`src/api/http.ts`).
+- **`401`** without the capability (`access-token` in `~/.rerail`, and `daemon.json`).
+
+The browser keeps the capability in that page's storage, unreadable by other sites or local servers.
+
+This blocks other users and sandboxed programs that reach localhost from reading your history or changing your rules.
+It does not block programs running as you; they can read the file.
+
+`--allow-remote` or `--public-host` exposes the daemon with a fresh capability per start. It serves HTTPS with
+`--tls-cert` and `--tls-key`, and refuses plain HTTP without `--insecure-http`. Rerail's clients verify the
+certificate's recorded fingerprint before sending the capability.
+
+</details>
 
 ## Support bundles
 
-`rerail support-bundle` writes one file for you to attach to an issue, and only when you run it; it sends nothing
-(`src/cli/support-bundle.ts`). What goes in is an allowlist: versions, Rerail's state, rule ids and modes, a session's
-timeline by event kind and tool name, its steers as delivered, its violations by rule and line, and the end of the
-daemon's log. Your prompts, the agent's replies, tool input and output, source code and rule text are never read into
-it. The daemon's capabilities, home folders, the paths and names of your recorded repositories, your user name and the
-computer's name are replaced, and what looks like a secret or an email address is taken out; other absolute paths stay,
-patterns cannot catch everything, and steer text can quote your code, so read the file before you attach it
-([what it holds](troubleshooting.md#reporting-a-problem)). Issues are public.
-`/rerail-bug-report` has your coding agent read the file with you, so it goes to the agent's provider like the
-rest of your session ([above](#your-coding-agents-provider)).
-To look for an existing issue, it searches GitHub with a shipped rule's id or the words of an error, never your own
-rule's id, a path or a project's name. Its report reaches GitHub only when you submit the form or ask it to file the issue.
+`rerail support-bundle` writes one local file for an issue, only when run, and sends nothing (`src/cli/support-bundle.ts`).
+
+It leaves out prompts, replies, tool data, source code and rule text. Read it before attaching
+([what it holds](troubleshooting.md#reporting-a-problem)); issues are public.
+
+<details>
+<summary>What the bundle holds</summary>
+
+- **Included (an allowlist):** versions, Rerail state, rule ids and modes, session timeline by event kind and tool,
+  delivered steers, violations by rule and line, the daemon log's tail.
+- **Never read:** prompts, replies, tool input and output, source code, rule text.
+- **Replaced:** capabilities, home folders, recorded repositories' paths and names, user and computer names. Apparent
+  secrets and emails are removed.
+
+Other absolute paths remain, patterns miss some secrets, and steers can quote code.
+
+`/rerail-bug-report` reads the file with your agent, so it reaches the agent's provider
+([above](#your-coding-agents-provider)). To find an existing issue, it searches GitHub with a shipped rule's id or
+error words, never your rule ids, paths or project names. Nothing is filed until you submit the form or ask it to.
+
+</details>
 
 ## Deleting your data
 
-- `rerail reset`, run inside a repository, deletes that repository's recorded history (sessions, events, steer
-  feedback notes, audits) from the database. It keeps rules and settings, and does not touch `.rerail/sessions/`, the
-  content cache or the daemon log. It then rewrites the database file, so the deleted history cannot be read back from
-  it. Every write to the database also zeroes the space it frees (`secure_delete`).
-- `rerail install --remove` disconnects every coding agent, stops the daemon and takes Rerail off your `PATH`. It
-  **moves** the database to a backup folder, `~/.rerail-clean-YYYYMMDD`, rather than deleting it.
-- `rerail install --remove --delete-data` deletes instead: the databases, every `~/.rerail-clean-*` backup, the
-  content cache, and the `.rerail/sessions/` folder of every checkout Rerail recorded. `--dry-run` lists what it would
-  delete. It does not reach ledgers in checkouts Rerail never recorded, or in a custom `RERAIL_STORAGE_ROOT`.
+Three commands remove data, each reaching further.
 
-Questions about this page: [open an issue](https://github.com/neralabs/rerail/issues). Report a vulnerability as
-[SECURITY.md](../SECURITY.md) describes.
+- **`rerail reset`** deletes the current repository's history.
+- **`rerail install --remove`** uninstalls Rerail and **moves** the database to a backup.
+- **`rerail install --remove --delete-data`** deletes the databases, backups, cache and recorded ledgers.
+
+<details>
+<summary>Exactly what each command removes</summary>
+
+- **`rerail reset`** in a repository deletes its history (sessions, events, steer feedback, audits) and rewrites the
+  database so it cannot be recovered. Rules, settings, `.rerail/sessions/`, the content cache and daemon log stay. All
+  writes zero freed space (`secure_delete`).
+- **`rerail install --remove`** disconnects agents, stops the daemon, removes Rerail from `PATH`, and **moves** the
+  database to `~/.rerail-clean-YYYYMMDD`.
+- **`rerail install --remove --delete-data`** deletes the databases, every `~/.rerail-clean-*` backup, the content cache
+  and recorded checkouts' `.rerail/sessions/`. `--dry-run` previews. Unrecorded checkouts and a custom
+  `RERAIL_STORAGE_ROOT` are not reached.
+
+</details>
+
+Questions: [open an issue](https://github.com/neralabs/rerail/issues). Report vulnerabilities per
+[SECURITY.md](../SECURITY.md).

@@ -1,10 +1,10 @@
 //! `select_when` evaluated over its leaves' rows.
 //!
 //! A `select_when` reports its `select` side's witnesses when its `exists` side has a witness
-//! anywhere. Its sides are regex or AST queries (leaves), or `select_when`s themselves. A leaf is
-//! read file by file as `LeafRow`s: whether the leaf failed in the file (its witnesses there are
-//! unknown), whether the file was read around syntax errors, and how many witnesses the file
-//! holds. `answer` decides everything else: which sides are read at all, whether the answer is
+//! anywhere. Its sides are regex, AST or file queries (leaves), or `select_when`s themselves. A
+//! leaf is read file by file as `LeafRow`s: whether the leaf failed in the file (its witnesses
+//! there are unknown), whether the file was read around syntax errors, and how many witnesses the
+//! file holds. `answer` decides everything else: which sides are read at all, whether the answer is
 //! known (and if not, at which failed row), which witnesses are reported (a witness budget's
 //! worth, in row order) and which partially read files the answer relied on.
 //!
@@ -69,8 +69,8 @@ pub(in crate::code_rule_dsl) struct Answer {
 pub(in crate::code_rule_dsl) type Unknown = (usize, usize);
 
 impl<L> Plan<L> {
-    /// `query`'s plan; `decision` when a single witness answers it. `leaf` names each regex or
-    /// AST query, given whether its witnesses may be reported.
+    /// `query`'s plan; `decision` when a single witness answers it. `leaf` names each regex, AST
+    /// or file query, given whether its witnesses may be reported.
     pub(in crate::code_rule_dsl) fn new<'q>(
         query: &'q Query,
         decision: bool,
@@ -101,7 +101,7 @@ impl<L> Plan<L> {
                 };
                 self.node(select, decision, reported, leaf);
             }
-            Query::Regex { .. } | Query::Ast { .. } => {
+            Query::Regex { .. } | Query::Ast { .. } | Query::File => {
                 self.nodes.push(Node::Leaf(self.leaves.len()));
                 self.leaves.push(Leaf {
                     id: leaf(query, reported),

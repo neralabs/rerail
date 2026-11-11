@@ -15,7 +15,7 @@ fn source_edits_retain_results_and_match_a_fresh_snapshot() {
     e.bind_relation(json!({"name":"external","columns":["v"],"rows":[[7]]}).to_string())
         .unwrap();
     let root = rows(
-        &e,
+        &mut e,
         "SELECT rootpage FROM temp.sqlite_schema WHERE name='names'",
     );
     let retained = Arc::clone(&e.documents.as_ref().unwrap()["b.py"].sources["node"]);
@@ -30,12 +30,12 @@ fn source_edits_retain_results_and_match_a_fresh_snapshot() {
         assert_eq!(report["programs"][0]["program"], 0);
         assert_eq!(
             rows(
-                &e,
+                &mut e,
                 "SELECT rootpage FROM temp.sqlite_schema WHERE name='names'"
             ),
             root
         );
-        assert_eq!(rows(&e, "SELECT * FROM external"), json!([[7]]));
+        assert_eq!(rows(&mut e, "SELECT * FROM external"), json!([[7]]));
         if files.iter().any(|(p, _)| *p == "b.py") {
             assert!(Arc::ptr_eq(
                 &retained,
@@ -47,16 +47,16 @@ fn source_edits_retain_results_and_match_a_fresh_snapshot() {
         cold.run(NAMES.into(), "python".into(), None).unwrap();
         // Symbol ids are store-local: compare their values.
         assert_eq!(
-            rows(&e, "SELECT sym_text(c0) FROM names ORDER BY 1"),
-            rows(&cold, "SELECT sym_text(c0) FROM names ORDER BY 1")
+            rows(&mut e, "SELECT sym_text(c0) FROM names ORDER BY 1"),
+            rows(&mut cold, "SELECT sym_text(c0) FROM names ORDER BY 1")
         );
         assert_eq!(
             rows(
-                &e,
+                &mut e,
                 "SELECT sym_text(v),sym_text(t) FROM value_type ORDER BY 1,2"
             ),
             rows(
-                &cold,
+                &mut cold,
                 "SELECT sym_text(v),sym_text(t) FROM value_type ORDER BY 1,2"
             )
         );
@@ -69,27 +69,27 @@ fn native_edits_are_atomic_and_identical_snapshots_are_noops() {
     let first = snapshot(&[("a.py", "alpha = 1\n")]);
     e.bind_snapshot(first.clone()).unwrap();
     e.run(NAMES.into(), "python".into(), None).unwrap();
-    let before = rows(&e, "SELECT * FROM names");
+    let before = rows(&mut e, "SELECT * FROM names");
     assert!(
         e.apply_snapshot(snapshot(&[("a.py", "def broken(\n")]), None)
             .is_err()
     );
-    assert_eq!(rows(&e, "SELECT * FROM names"), before);
+    assert_eq!(rows(&mut e, "SELECT * FROM names"), before);
     e.set_limits("{\"max_steps\":1}".into()).unwrap();
     assert!(
         e.apply_snapshot(snapshot(&[("a.py", "beta = 2\n")]), None)
             .is_err()
     );
     e.set_limits("{}".into()).unwrap();
-    assert_eq!(rows(&e, "SELECT * FROM names"), before);
-    assert_eq!(rows(&e, "SELECT sym_text(s) FROM name"), json!([["alpha"]]));
+    assert_eq!(rows(&mut e, "SELECT * FROM names"), before);
+    assert_eq!(rows(&mut e, "SELECT sym_text(s) FROM name"), json!([["alpha"]]));
     let noop: Value = serde_json::from_str(&e.apply_snapshot(first, None).unwrap()).unwrap();
     assert_eq!(noop["rebuilt_files"], 0);
     assert_eq!(noop["programs"], json!([]));
     e.apply_snapshot(snapshot(&[("a.py", "beta = 2\n")]), None)
         .unwrap();
     assert_eq!(
-        rows(&e, "SELECT sym_text(c0) FROM names"),
+        rows(&mut e, "SELECT sym_text(c0) FROM names"),
         json!([["beta"]])
     );
 }
@@ -101,13 +101,13 @@ fn native_snapshot_shared_literal_types_survive_one_document_deletion() {
         .unwrap();
     let program = ".decl value_type(v:symbol,t:symbol)\n.input value_type\n.decl types(v:symbol,t:symbol)\ntypes(v,t) :- value_type(v,t).\n.output types\n";
     e.run(program.into(), "python".into(), None).unwrap();
-    let before = rows(&e, "SELECT * FROM types");
-    assert_eq!(rows(&e, "SELECT count(*) FROM value_type"), json!([[1]]));
+    let before = rows(&mut e, "SELECT * FROM types");
+    assert_eq!(rows(&mut e, "SELECT count(*) FROM value_type"), json!([[1]]));
     e.apply_snapshot(snapshot(&[("b.py", "b = 1\n")]), None)
         .unwrap();
-    assert_eq!(rows(&e, "SELECT * FROM types"), before);
+    assert_eq!(rows(&mut e, "SELECT * FROM types"), before);
     e.apply_snapshot(snapshot(&[]), None).unwrap();
-    assert_eq!(rows(&e, "SELECT * FROM types"), json!([]));
+    assert_eq!(rows(&mut e, "SELECT * FROM types"), json!([]));
 }
 
 #[test]
@@ -127,9 +127,9 @@ fn native_lazy_tree_lookups_work_across_repeated_edits() {
         let (_dir, mut cold) = executor();
         cold.bind_snapshot(next).unwrap();
         let q = "SELECT count(*) FROM node n JOIN within w ON w.n=n.n JOIN node a ON a.n=w.a WHERE kind_name('python',n.kind)='return_statement'";
-        let actual = rows(&e, q);
+        let actual = rows(&mut e, q);
         assert!(actual[0][0].as_u64().unwrap() > 0);
-        assert_eq!(actual, rows(&cold, q));
+        assert_eq!(actual, rows(&mut cold, q));
     }
 }
 
@@ -155,9 +155,9 @@ fn native_shards_match_the_original_batch_and_both_probe_directions() {
                 core: String::new(),
                 digest: [0; 32],
                 facts: Arc::new(facts),
+                tape: None,
                 guest: None,
                 module: None,
-                tape: None,
             }
         })
         .collect();
@@ -230,7 +230,7 @@ fn file_patches_are_atomic_and_interoperate_with_complete_snapshots() {
         &stable,
         &e.documents.as_ref().unwrap()["b.py"].sources["node"]
     ));
-    let before = rows(&e, "SELECT sym_text(c0) FROM names ORDER BY 1");
+    let before = rows(&mut e, "SELECT sym_text(c0) FROM names ORDER BY 1");
     assert!(e.apply_file_changes(json!({"upsert":[{"path":"a.py","language":"python","source":"bad(\n"}],"delete":["b.py"]}).to_string(),None).is_err());
     e.set_limits("{\"max_steps\":1}".into()).unwrap();
     assert!(
@@ -239,7 +239,7 @@ fn file_patches_are_atomic_and_interoperate_with_complete_snapshots() {
     );
     e.set_limits("{}".into()).unwrap();
     assert_eq!(
-        rows(&e, "SELECT sym_text(c0) FROM names ORDER BY 1"),
+        rows(&mut e, "SELECT sym_text(c0) FROM names ORDER BY 1"),
         before
     );
     let noop = patch(&mut e, &[("b.py", "beta = 1\n")], &["missing.py"]);
@@ -247,18 +247,18 @@ fn file_patches_are_atomic_and_interoperate_with_complete_snapshots() {
     assert_eq!(noop["programs"], json!([]));
     patch(&mut e, &[], &["b.py"]);
     assert_eq!(
-        rows(&e, "SELECT sym_text(c0) FROM names ORDER BY 1"),
+        rows(&mut e, "SELECT sym_text(c0) FROM names ORDER BY 1"),
         json!([["delta"], ["gamma"]])
     );
     e.apply_snapshot(snapshot(&[("c.py", "delta = 1\n")]), None)
         .unwrap();
     assert_eq!(
-        rows(&e, "SELECT sym_text(c0) FROM names"),
+        rows(&mut e, "SELECT sym_text(c0) FROM names"),
         json!([["delta"]])
     );
     patch(&mut e, &[("z.py", "zeta = 1\n")], &["c.py"]);
     assert_eq!(
-        rows(&e, "SELECT sym_text(c0) FROM names"),
+        rows(&mut e, "SELECT sym_text(c0) FROM names"),
         json!([["zeta"]])
     );
     for batch in [
@@ -269,7 +269,7 @@ fn file_patches_are_atomic_and_interoperate_with_complete_snapshots() {
         assert!(e.apply_file_changes(batch.to_string(), None).is_err());
     }
     assert_eq!(
-        rows(&e, "SELECT sym_text(c0) FROM names"),
+        rows(&mut e, "SELECT sym_text(c0) FROM names"),
         json!([["zeta"]])
     );
 }
@@ -285,26 +285,26 @@ fn shared_literal_reference_indexes_handle_partial_deletions_and_retry() {
     .unwrap();
     e.run(".decl value_type(v:symbol,t:symbol)\n.input value_type\n.decl result(v:symbol,t:symbol)\nresult(v,t) :- value_type(v,t).\n.output result\n".into(),"python".into(),None).unwrap();
     patch(&mut e, &[("a.py", "a = 2\n")], &[]);
-    assert_eq!(rows(&e, "SELECT count(*) FROM value_type"), json!([[2]]));
+    assert_eq!(rows(&mut e, "SELECT count(*) FROM value_type"), json!([[2]]));
     e.set_limits("{\"max_steps\":1}".into()).unwrap();
     assert!(
         e.apply_file_changes(json!({"delete":["b.py"]}).to_string(), None)
             .is_err()
     );
     e.set_limits("{}".into()).unwrap();
-    assert_eq!(rows(&e, "SELECT count(*) FROM result"), json!([[2]]));
+    assert_eq!(rows(&mut e, "SELECT count(*) FROM result"), json!([[2]]));
     patch(&mut e, &[], &["b.py"]);
-    assert_eq!(rows(&e, "SELECT sym_text(c0) FROM result"), json!([["2"]]));
+    assert_eq!(rows(&mut e, "SELECT sym_text(c0) FROM result"), json!([["2"]]));
     patch(&mut e, &[], &["a.py"]);
     assert_eq!(
         rows(
-            &e,
+            &mut e,
             "SELECT sym_text(v) FROM value_type WHERE t=sym_atom('int')"
         ),
         json!([["2"]])
     );
     patch(&mut e, &[], &["c.py"]);
-    assert_eq!(rows(&e, "SELECT * FROM result"), json!([]));
+    assert_eq!(rows(&mut e, "SELECT * FROM result"), json!([]));
 }
 
 #[test]
@@ -330,8 +330,8 @@ fn a_file_patch_updates_logarithmic_metadata_and_does_not_visit_the_inventory() 
             second["metadata_nodes"].as_u64().unwrap() < 2000,
             "{second}"
         );
-        assert_eq!(rows(&e, "SELECT count(*) FROM names"), json!([[n]]));
-        assert_eq!(rows(&e, "SELECT count(*) FROM value_type"), json!([[n]]));
+        assert_eq!(rows(&mut e, "SELECT count(*) FROM names"), json!([[n]]));
+        assert_eq!(rows(&mut e, "SELECT count(*) FROM value_type"), json!([[n]]));
         work.push(second["metadata_nodes"].as_u64().unwrap());
     }
     assert!(
@@ -371,7 +371,7 @@ fn mixed_file_patches_match_cold_execution_with_shared_values_and_lazy_queries()
             "SELECT count(*) FROM within",
             "SELECT count(*) FROM span_within",
         ] {
-            assert_eq!(rows(&e, q), rows(&cold, q), "step {step}: {q}");
+            assert_eq!(rows(&mut e, q), rows(&mut cold, q), "step {step}: {q}");
         }
     }
 }

@@ -56,9 +56,9 @@ fn document(store: &ContentStore, file: FileInput) -> Result<Document> {
         core: String::new(),
         digest: [0; 32],
         facts: Arc::new(facts),
+        tape: None,
         guest: None,
         module: None,
-        tape: None,
     };
     Ok(Document {
         file,

@@ -5,6 +5,8 @@
 use super::{
     Binding, BuildError, Builder, Form, Grammar, NodeRef, ScopeKind, ScopeTable, Site, TYPE, VALUE,
 };
+use crate::code_rule_dsl::identifier::ecma_name;
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::literal::eslint_directive::Directive;
 use ast_grep_core::{Doc, Node};
@@ -232,9 +234,6 @@ fn script(dialect: GrammarDialect) -> &'static Script {
 
 type Visit = Result<(), BuildError>;
 
-fn named<'a, 'r, D: Doc>(node: &'a Node<'r, D>) -> impl Iterator<Item = Node<'r, D>> + 'a {
-    node.children().filter(|child| child.is_named())
-}
 
 fn field<'r, D: Doc>(node: &Node<'r, D>, id: u16) -> Option<Node<'r, D>> {
     if id == 0 {
@@ -353,7 +352,7 @@ impl Visitor<'_, '_> {
     }
 
     fn children<D: Doc>(&mut self, node: &Node<'_, D>) -> Visit {
-        for child in named(node) {
+        for child in node.named() {
             self.visit(&child)?;
         }
         Ok(())
@@ -364,7 +363,7 @@ impl Visitor<'_, '_> {
         node: &Node<'_, D>,
         skip: &[Option<Node<'_, D>>],
     ) -> Visit {
-        for child in named(node) {
+        for child in node.named() {
             if !skip.iter().any(|skip| same(&child, skip.as_ref())) {
                 self.visit(&child)?;
             }
@@ -460,7 +459,7 @@ impl Visitor<'_, '_> {
                 }
                 self.builder.push(ScopeKind::Block, node.range());
                 if let Some(body) = field(node, fields.body) {
-                    for member in named(&body) {
+                    for member in body.named() {
                         let site = site(Form::TypeParameter, &member);
                         match self.tag(&member) {
                             Tag::PropertyIdentifier => {
@@ -485,7 +484,7 @@ impl Visitor<'_, '_> {
             Tag::Module => self.module(node)?,
             Tag::AmbientDeclaration => {
                 // `declare global { ... }` is the only form with a bare block.
-                match named(node).find(|child| self.tag(child) == Tag::StatementBlock) {
+                match node.named().find(|child| self.tag(child) == Tag::StatementBlock) {
                     Some(body) => {
                         self.builder
                             .push(ScopeKind::GlobalAugmentation, node.range());
@@ -526,7 +525,7 @@ impl Visitor<'_, '_> {
                 }
             }
             Tag::InferType => {
-                let mut parts = named(node);
+                let mut parts = node.named();
                 if let Some(name) = parts.next() {
                     if self.tag(&name) == Tag::TypeIdentifier {
                         let target = self
@@ -551,7 +550,7 @@ impl Visitor<'_, '_> {
             }
             Tag::ImportStatement => self.import(node)?,
             Tag::ImportAlias => {
-                let mut parts = named(node);
+                let mut parts = node.named();
                 if let Some(name) = parts.next() {
                     self.bind(Target::Block, &name, VALUE | TYPE, site(Form::Import, node));
                 }
@@ -564,7 +563,7 @@ impl Visitor<'_, '_> {
                 // `export = x` and `export default x` may name a type or a value (typescript-eslint's
                 // `referenceDualValueType`).
                 if field(node, fields.source).is_none() {
-                    for child in named(node) {
+                    for child in node.named() {
                         if self.tag(&child) == Tag::Identifier {
                             self.builder.reference(child.range(), VALUE | TYPE);
                         } else {
@@ -586,11 +585,23 @@ impl Visitor<'_, '_> {
                 }
             }
             Tag::NestedTypeIdentifier => {
-                if let Some(module) = field(node, fields.module) {
-                    if self.tag(&module) == Tag::Identifier {
-                        self.builder.reference(module.range(), VALUE | TYPE);
+                // The head of a qualified type name (`foo.Foo`, `a.b.C`) reads only the type
+                // namespace, as typescript-eslint's `TSQualifiedName`: a value-only binding such as
+                // a parameter never takes it.
+                if let Some(mut head) = field(node, fields.module) {
+                    while matches!(
+                        head.kind().as_ref(),
+                        "nested_identifier" | "member_expression"
+                    ) {
+                        match field(&head, fields.object) {
+                            Some(object) => head = object,
+                            None => break,
+                        }
+                    }
+                    if self.tag(&head) == Tag::Identifier {
+                        self.builder.reference(head.range(), TYPE);
                     } else {
-                        self.visit(&module)?;
+                        self.visit(&head)?;
                     }
                 }
             }
@@ -655,7 +666,7 @@ impl Visitor<'_, '_> {
     fn is_eval<D: Doc>(&self, callee: &Node<'_, D>) -> bool {
         let mut callee = callee.clone();
         while callee.kind() == "parenthesized_expression" {
-            let inner = named(&callee).find(|child| self.tag(child) != Tag::Comment);
+            let inner = callee.named().find(|child| self.tag(child) != Tag::Comment);
             match inner {
                 Some(inner) => callee = inner,
                 None => return false,
@@ -690,14 +701,14 @@ impl Visitor<'_, '_> {
     }
 
     fn bind<D: Doc>(&mut self, target: Target, name: &Node<'_, D>, spaces: u8, site: Site) {
-        let text = name.text();
+        let text = ecma_name(name.text());
         self.bind_name(target, &text, spaces, site, Some(NodeRef::of(name)));
     }
 
     /// The type a `type` field's annotation holds, without its `:`.
     fn annotation<D: Doc>(&self, node: &Node<'_, D>) -> Option<NodeRef> {
         let annotation = field(node, self.fields().ty)?;
-        let mut inner = named(&annotation).filter(|child| self.tag(child) != Tag::Comment);
+        let mut inner = annotation.named().filter(|child| self.tag(child) != Tag::Comment);
         Some(match (inner.next(), inner.next()) {
             (Some(ty), None) => NodeRef::of(&ty),
             _ => NodeRef::of(&annotation),
@@ -759,7 +770,7 @@ impl Visitor<'_, '_> {
                 self.bind(target, node, VALUE, site)
             }
             Tag::ObjectPattern | Tag::ArrayPattern | Tag::RestPattern => {
-                for child in named(node) {
+                for child in node.named() {
                     self.pattern(&child, target, site)?;
                 }
             }
@@ -793,7 +804,7 @@ impl Visitor<'_, '_> {
     /// it takes (which `value.follow` does not read, as eslint-utils reads no destructured one).
     fn declaration<D: Doc>(&mut self, node: &Node<'_, D>, target: Target) -> Visit {
         let fields = self.fields();
-        for declarator in named(node) {
+        for declarator in node.named() {
             if self.tag(&declarator) != Tag::VariableDeclarator {
                 self.visit(&declarator)?;
                 continue;
@@ -829,9 +840,8 @@ impl Visitor<'_, '_> {
         let fields = self.fields();
         self.builder.push(ScopeKind::Block, node.range());
         let left = field(node, fields.left);
-        let declared = node.children().find(|child| {
-            !child.is_named() && matches!(child.kind().as_ref(), "var" | "let" | "const")
-        });
+        // `using` and `await using` bind in the loop head as `let` and `const` do.
+        let declared = node.tokens().find(|token| matches!(token.kind().as_ref(), "var" | "let" | "const" | "using"));
         if let Some(left) = &left {
             let site = site(Form::For, node);
             match declared.map(|keyword| keyword.kind() == "var") {
@@ -849,7 +859,7 @@ impl Visitor<'_, '_> {
     /// decorators are read in that scope.
     fn parameters<D: Doc>(&mut self, node: &Node<'_, D>) -> Visit {
         let fields = self.fields();
-        for parameter in named(node) {
+        for parameter in node.named() {
             let site = site(Form::Parameter, &parameter);
             match self.tag(&parameter) {
                 Tag::Parameter => {
@@ -861,7 +871,7 @@ impl Visitor<'_, '_> {
                         };
                         self.pattern(pattern, Target::Block, site)?;
                     }
-                    for child in named(&parameter) {
+                    for child in parameter.named() {
                         if !same(&child, pattern.as_ref()) && child.kind() != "decorator" {
                             self.visit(&child)?;
                         }
@@ -892,11 +902,11 @@ impl Visitor<'_, '_> {
         }
         // Parameter decorators run in the scope around the method (typescript-eslint's class
         // visitor), before its own.
-        let parameter_decorators = named(node)
+        let parameter_decorators = node.named()
             .filter(|child| child.kind() == "formal_parameters")
-            .flat_map(|parameters| named(&parameters).collect::<Vec<_>>())
+            .flat_map(|parameters| parameters.named().collect::<Vec<_>>())
             .flat_map(|parameter| {
-                named(&parameter)
+                parameter.named()
                     .filter(|child| child.kind() == "decorator")
                     .collect::<Vec<_>>()
             })
@@ -923,7 +933,7 @@ impl Visitor<'_, '_> {
             self.pattern(&parameter, Target::Block, site)?;
         }
         let body = field(node, fields.body);
-        for child in named(node) {
+        for child in node.named() {
             if same(&child, name.as_ref())
                 || same(&child, body.as_ref())
                 || same(&child, field(node, fields.parameter).as_ref())
@@ -987,12 +997,12 @@ impl Visitor<'_, '_> {
         }
         self.builder.push(ScopeKind::Class, node.range());
         if let Some(inner) = &inner_name {
-            let text = inner.text();
+            let text = ecma_name(inner.text());
             let name = own_name.then(|| NodeRef::of(inner));
             let site = site(Form::Definition, node);
             self.bind_name(Target::Block, &text, VALUE | TYPE, site, name);
         }
-        for child in named(node) {
+        for child in node.named() {
             if same(&child, name.as_ref())
                 || decorators
                     .iter()
@@ -1011,9 +1021,7 @@ impl Visitor<'_, '_> {
     /// global augmentation like `declare global { }`: it binds no name, nor do its declarations.
     fn module<D: Doc>(&mut self, node: &Node<'_, D>) -> Visit {
         let fields = self.fields();
-        let keyword = node.children().any(|child| {
-            !child.is_named() && matches!(child.kind().as_ref(), "namespace" | "module")
-        });
+        let keyword = node.has_any_token(&["namespace", "module"]);
         if !keyword {
             self.builder
                 .push(ScopeKind::GlobalAugmentation, node.range());
@@ -1052,10 +1060,10 @@ impl Visitor<'_, '_> {
     /// Default, namespace and named imports, and `import x = require()`: each binds both spaces.
     fn import<D: Doc>(&mut self, node: &Node<'_, D>) -> Visit {
         let fields = self.fields();
-        for child in named(node) {
+        for child in node.named() {
             match self.tag(&child) {
                 Tag::ImportClause => {
-                    for part in named(&child) {
+                    for part in child.named() {
                         match self.tag(&part) {
                             Tag::Identifier => {
                                 let site = site(Form::Import, &child);
@@ -1063,14 +1071,14 @@ impl Visitor<'_, '_> {
                             }
                             Tag::NamespaceImport => {
                                 if let Some(name) =
-                                    named(&part).find(|name| self.tag(name) == Tag::Identifier)
+                                    part.named().find(|name| self.tag(name) == Tag::Identifier)
                                 {
                                     let site = site(Form::Import, &part);
                                     self.bind(Target::Block, &name, VALUE | TYPE, site);
                                 }
                             }
                             Tag::NamedImports => {
-                                for specifier in named(&part) {
+                                for specifier in part.named() {
                                     if self.tag(&specifier) != Tag::ImportSpecifier {
                                         continue;
                                     }
@@ -1089,7 +1097,7 @@ impl Visitor<'_, '_> {
                     }
                 }
                 Tag::ImportRequireClause => {
-                    if let Some(name) = named(&child).find(|name| self.tag(name) == Tag::Identifier)
+                    if let Some(name) = child.named().find(|name| self.tag(name) == Tag::Identifier)
                     {
                         let site = site(Form::Import, &child);
                         self.bind(Target::Block, &name, VALUE | TYPE, site);
@@ -1113,13 +1121,13 @@ impl Visitor<'_, '_> {
                 .builder
                 .push_reference(node.range(), VALUE, true, false),
             Tag::ObjectPattern | Tag::ArrayPattern | Tag::RestPattern => {
-                for child in named(node) {
+                for child in node.named() {
                     self.write_target(&child)?;
                 }
             }
             Tag::Wrapper => {
                 let inner = self.wrapped(node);
-                for child in named(node) {
+                for child in node.named() {
                     if same(&child, inner.as_ref()) {
                         self.write_target(&child)?;
                     } else {
@@ -1194,7 +1202,7 @@ impl Visitor<'_, '_> {
             let index = (part.kind() == "subscript_expression")
                 .then(|| field(part, self.fields().index))
                 .flatten();
-            for child in named(part) {
+            for child in part.named() {
                 let inner = parts.iter().any(|other| other.node_id() == child.node_id())
                     || child.node_id() == head.node_id();
                 if inner {
@@ -1219,7 +1227,7 @@ impl Visitor<'_, '_> {
 
     /// The expression inside a wrapper: `(x)`, `x!`, `x as T`, `x satisfies T`, `<T>x`.
     fn wrapped<'r, D: Doc>(&self, node: &Node<'r, D>) -> Option<Node<'r, D>> {
-        let mut children = named(node).filter(|child| self.tag(child) != Tag::Comment);
+        let mut children = node.named().filter(|child| self.tag(child) != Tag::Comment);
         if node.kind() == "type_assertion" {
             children.last()
         } else {

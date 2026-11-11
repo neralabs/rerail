@@ -1,6 +1,6 @@
 import type { ExtensionAPI, Theme } from "@oh-my-pi/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import { RULE_MESSAGE_TYPE, steerBlock, steerRules, type SteerFinding, type SteerRule } from "../../../src/engine/index.js";
+import { RULE_MESSAGE_TYPE, STEER_LINE_MESSAGE_TYPE, steerBlock, steerRules, type SteerFinding, type SteerRule } from "../../../src/engine/index.js";
 import { formatOmpSteer, registerOmpSteerRenderer, type SteerTheme } from "../../../src/hosts/omp/steer-renderer.js";
 import { fixturesPath } from "../../support/oracles.js";
 
@@ -51,16 +51,15 @@ class Container {
 
 type Renderer = (message: { customType: string; content: unknown; details?: unknown }, options: { expanded: boolean }, theme: Theme) => unknown;
 
-function registered(components: { Container?: unknown; Text?: unknown } | undefined, hyperlinks: boolean): Renderer {
-  let renderer: Renderer | undefined;
+/** The renderer registered for `customType`: OMP draws a later steer's message and an edit's steer line alike. */
+function registered(components: { Container?: unknown; Text?: unknown } | undefined, hyperlinks: boolean, customType: string = RULE_MESSAGE_TYPE): Renderer {
+  const renderers = new Map<string, Renderer>();
   registerOmpSteerRenderer({
-    registerMessageRenderer: (customType: string, render: Renderer) => {
-      expect(customType).toBe(RULE_MESSAGE_TYPE);
-      renderer = render;
-    },
+    registerMessageRenderer: (type: string, render: Renderer) => { renderers.set(type, render); },
     pi: components,
   } as unknown as Pick<ExtensionAPI, "registerMessageRenderer"> & { pi?: Partial<Pick<ExtensionAPI["pi"], "Container" | "Text">> }, () => hyperlinks, () => MARK);
-  return renderer!;
+  expect([...renderers.keys()]).toEqual([RULE_MESSAGE_TYPE, STEER_LINE_MESSAGE_TYPE]);
+  return renderers.get(customType)!;
 }
 
 /** What OMP draws for `steer`, with each OSC 8 link written as a tag so the golden shows where it lands. */
@@ -115,5 +114,18 @@ describe("OMP steer renderer", () => {
     const content = [{ type: "text", text }];
     const steer = registered({ Container, Text }, true)({ customType: RULE_MESSAGE_TYPE, content, details }, { expanded: false }, theme as Theme);
     expect((steer as Container).children).toHaveLength(1);
+  });
+
+  it("draws an edit's steer line, whose steer rode the edit's result, as it draws a later steer's message", () => {
+    const { content, details } = codeRuleSteer(NO_EXPLICIT_ANY, NO_FLOATING_PROMISES);
+    for (const expanded of [false, true]) {
+      const rows = (customType: string) => (registered({ Container, Text }, true, customType)({ customType, content, details }, { expanded }, theme as Theme) as Container).render(WIDTH);
+      expect(rows(STEER_LINE_MESSAGE_TYPE)).toEqual(rows(RULE_MESSAGE_TYPE));
+    }
+    const line = (registered({ Container, Text }, true, STEER_LINE_MESSAGE_TYPE)({ customType: STEER_LINE_MESSAGE_TYPE, content, details }, { expanded: false }, theme as Theme) as Container).render(WIDTH);
+    expect(line).toEqual([
+      ` <accent>◆</accent> ${MARK}<dim> · </dim>typescript-eslint-no-explicit-any  <accent>steered</accent><dim>  ·  </dim>\u001b]8;;${DASHBOARD}#rule/typescript-eslint-no-explicit-any\u0007<mdLink>why?</mdLink>\u001b]8;;\u0007`,
+      ` <accent>◆</accent> ${MARK}<dim> · </dim>typescript-eslint-no-floating-promises  <accent>steered</accent><dim>  ·  </dim>\u001b]8;;${DASHBOARD}#rule/typescript-eslint-no-floating-promises\u0007<mdLink>why?</mdLink>\u001b]8;;\u0007`,
+    ]);
   });
 });

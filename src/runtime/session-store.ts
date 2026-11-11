@@ -3,7 +3,8 @@ import { deserialize, serialize } from "node:v8";
 import { and, asc, count, desc, eq, gt, gte, inArray, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { AdapterSession } from "../engine/adapter-contract.js";
-import type { DiscoveryPendingBoundary } from "../engine/code-rule/code-rule-bridge.js";
+import type { DiscoveryPendingBoundary, IgnoredEdit } from "../engine/code-rule/code-rule-bridge.js";
+import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { isWorktreePack, WORKTREE_PACK_ID, worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
@@ -60,7 +61,13 @@ export interface SessionGaps {
   droppedEvents: number;
   uncheckedBoundaries: number;
   codeRulesPendingBoundaries: number;
+  /** Tool edits of files no rule checked because Git ignores them (`ignored-edit`). */
+  ignoredEdits: number;
+  /** Changes seen during the session that make Git's ignore rules ignore more (`ignore-rules-changed`). */
+  ignoreRuleChanges: number;
 }
+
+const NO_GAPS: SessionGaps = { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0 };
 
 export interface SessionPageQuery {
   /** Only sessions started at or after this instant. */
@@ -278,6 +285,26 @@ export class SqliteSessionStore {
     }, session, attribution);
   }
 
+  /** Marks a tool edit of a file no rule checked because Git ignores it, with the pattern, file and line that ignore it. */
+  recordIgnoredEdit(session: AdapterSession, edit: IgnoredEdit, attribution?: SessionAttribution): void {
+    this.append({
+      sessionId: session.sessionId,
+      eventId: `ignored-edit:${randomUUID()}`,
+      kind: "ignored-edit",
+      payload: edit,
+    }, session, attribution);
+  }
+
+  /** Marks a change seen in the session that makes Git's ignore rules ignore more, with the file and the patterns. */
+  recordIgnoreRulesChanged(session: AdapterSession, change: IgnoreRulesChange, attribution?: SessionAttribution): void {
+    this.append({
+      sessionId: session.sessionId,
+      eventId: `ignore-rules-changed:${randomUUID()}`,
+      kind: "ignore-rules-changed",
+      payload: change,
+    }, session, attribution);
+  }
+
   recordRuleCoverage(session: AdapterSession, coverage: RuleCoverage): void {
     const latest = this.#database.select({ payloadJson: events.payloadJson }).from(events)
       .where(and(eq(events.sessionId, session.sessionId), eq(events.kind, "rule-coverage")))
@@ -437,21 +464,25 @@ export class SqliteSessionReader {
 
   /**
    * What the session's whole transcript says it missed, however much of it a reader has loaded: events its host
-   * never delivered (`events-dropped` counts), and boundaries that answered before the shell-write check finished or
-   * before code rules were running. Indexed by session and kind.
+   * never delivered (`events-dropped` counts), boundaries that answered before the shell-write check finished or
+   * before code rules were running, tool edits of files Git ignores, and changes to Git's ignore rules. Indexed by
+   * session and kind.
    */
   gaps(sessionId: string): SessionGaps {
     const database = this.#database.open();
-    if (database === undefined) return { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0 };
+    if (database === undefined) return { ...NO_GAPS };
     const row = database.all<SessionGaps>(sql`
       SELECT
         coalesce(sum(CASE WHEN ${events.kind} = 'events-dropped' THEN coalesce(json_extract(${events.payloadJson}, '$.count'), 0) END), 0) AS droppedEvents,
         count(*) FILTER (WHERE ${events.kind} = 'source-discovery-pending') AS uncheckedBoundaries,
-        count(*) FILTER (WHERE ${events.kind} = 'code-rules-pending') AS codeRulesPendingBoundaries
+        count(*) FILTER (WHERE ${events.kind} = 'code-rules-pending') AS codeRulesPendingBoundaries,
+        count(*) FILTER (WHERE ${events.kind} = 'ignored-edit') AS ignoredEdits,
+        count(*) FILTER (WHERE ${events.kind} = 'ignore-rules-changed') AS ignoreRuleChanges
       FROM ${events}
-      WHERE ${events.sessionId} = ${sessionId} AND ${events.kind} IN ('events-dropped', 'source-discovery-pending', 'code-rules-pending')
+      WHERE ${events.sessionId} = ${sessionId}
+        AND ${events.kind} IN ('events-dropped', 'source-discovery-pending', 'code-rules-pending', 'ignored-edit', 'ignore-rules-changed')
     `)[0];
-    return row ?? { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0 };
+    return row ?? { ...NO_GAPS };
   }
 
   events(sessionId: string, query: SessionEventQuery = {}): readonly SessionEventRecord[] {

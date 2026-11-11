@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
-import { importAccessOnlyAuth } from "../scripts/host/host-auth.js";
+import { importAccessOnlyAuth, removeAccessOnlyAuth } from "../scripts/host/host-auth.js";
 import { OmpHost } from "./support/omp-host.js";
 
 function token(expires: number): string {
@@ -40,6 +40,8 @@ describe("access-only sandbox credentials", () => {
       expect(await readFile(source)).toEqual(before);
       expect((await readFile(authPath)).includes(Buffer.from("original-refresh-secret"))).toBe(false);
       expect((await readFile(authPath)).includes(Buffer.from("disabled-refresh-secret"))).toBe(false);
+      await host.close();
+      host = undefined;
 
       const piPath = join(cwd, "pi-auth.json");
       await importAccessOnlyAuth("pi", source, piPath, 180_000);
@@ -58,6 +60,10 @@ describe("access-only sandbox credentials", () => {
       } });
       expect((await stat(codexPath)).mode & 0o777).toBe(0o600);
       expect(await readFile(codexSource, "utf8")).toBe(codexOriginal);
+
+      // Cleanup leaves nothing of any copy, including any SQLite files the real OMP AuthStorage wrote beside its database.
+      for (const copy of [authPath, piPath, codexPath]) await removeAccessOnlyAuth(copy);
+      expect((await readdir(cwd)).filter((name) => /^(sandbox-auth\.db|pi-auth\.json|codex-auth\.json)/.test(name))).toEqual([]);
     } finally {
       try { await host?.close(); } finally { await rm(cwd, { recursive: true, force: true }); }
     }
@@ -72,6 +78,34 @@ describe("access-only sandbox credentials", () => {
       await expect(importAccessOnlyAuth("codex", source, join(cwd, "sandbox.json"), 900_000)).rejects.toThrow("smoke timeout");
       await expect(importAccessOnlyAuth("codex", source, source, 1_000)).rejects.toThrow("must differ");
       expect(await readFile(source, "utf8")).toBe(original);
+    } finally { await rm(cwd, { recursive: true, force: true }); }
+  });
+
+  it("writes the copy owner-only in an owner-only directory and removes it with its journal files", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "rerail-auth-mode-"));
+    try {
+      const source = join(cwd, "source.json");
+      const expires = Date.now() + 3_600_000;
+      await writeFile(source, JSON.stringify({ tokens: { access_token: token(expires), id_token: token(expires), refresh_token: "codex-refresh-secret" } }), { mode: 0o600 });
+      const directory = join(cwd, "shared");
+      await mkdir(directory);
+      await chmod(directory, 0o755);
+      const copy = join(directory, "auth.json");
+      await importAccessOnlyAuth("codex", source, copy, 180_000);
+      expect((await stat(directory)).mode & 0o777).toBe(0o700);
+      expect((await stat(copy)).mode & 0o777).toBe(0o600);
+      expect(await readFile(copy, "utf8")).not.toContain("codex-refresh-secret");
+      // An existing copy is never overwritten or widened.
+      await expect(importAccessOnlyAuth("codex", source, copy, 180_000)).rejects.toThrow();
+      expect((await stat(copy)).mode & 0o777).toBe(0o600);
+
+      // A harness that opened the copy as SQLite may leave journal files holding credential pages beside it.
+      await writeFile(`${copy}-wal`, "journal");
+      await writeFile(`${copy}-shm`, "journal");
+      await removeAccessOnlyAuth(copy);
+      expect(await readdir(directory)).toEqual([]);
+      // A smoke that failed before importing anything still cleans up without error.
+      await expect(removeAccessOnlyAuth(copy)).resolves.toBeUndefined();
     } finally { await rm(cwd, { recursive: true, force: true }); }
   });
 });

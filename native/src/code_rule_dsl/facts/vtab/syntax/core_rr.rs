@@ -15,7 +15,7 @@
 
 use super::{Dialect, Projected, Relation};
 use crate::code_rule_dsl::facts::core::Facts;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::HashSet;
 
 /// A document's text may be long: `text` holds a node's when it is at most this many bytes, or the node is
 /// token-like (a leaf, a comment, a string literal). Longer texts have no symbol: interning them all is
@@ -487,17 +487,18 @@ pub(super) fn str_parts<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8)> {
 
 /// A shared native grammar verdict. Raw text projections do not request it.
 /// Without `python-syntax-error` (the browser build), Python's verdict is tree-sitter's, as for the other languages:
-/// it misses what tree-sitter accepts and CPython does not (Python 2's `print "x"`).
-pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Option<(u32, String)> {
+/// it misses what tree-sitter accepts and CPython does not (Python 2's `print "x"`). `Err`: `ast.parse` raises no
+/// `SyntaxError` but another exception, which fails the batch (`python_syntax::failure`).
+pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Result<Option<(u32, String)>, String> {
     #[cfg(feature = "python-syntax-error")]
     if dialect.family == Family::Python {
         return f.python_syntax.get_or_init(|| super::python_syntax::error(&f.source)).clone();
     }
     // A `.rr` file's error is the one running it gives (`logic::rr::syntax_error`).
     if dialect.family == Family::Rr {
-        return f.syntax_errors.then(|| crate::code_rule_dsl::logic::rr::syntax_error(&f.source)).flatten().map(|(line, message)| (line as u32, message));
+        return Ok(f.syntax_errors.then(|| crate::code_rule_dsl::logic::rr::syntax_error(&f.source)).flatten().map(|(line, message)| (line as u32, message)));
     }
-    first_error(f, &Lines::shared(std::sync::Arc::clone(&f.source), dialect.family == Family::Python), &|id| dialect.name(f, id))
+    Ok(first_error(f, &Lines::shared(std::sync::Arc::clone(&f.source), dialect.family == Family::Python), &|id| dialect.name(f, id)))
 }
 
 /// The first error of a document, in preorder: its line and message (`syntax_error/3`). tree-sitter's ERROR and
@@ -535,8 +536,8 @@ pub(super) struct CoreRows {
     name: Vec<[i64; 2]>,
     str: Vec<[i64; 2]>,
     strprefix: Vec<[i64; 2]>,
-    value: Vec<[i64; 2]>,
-    value_type: HashSet<[i64; 2]>,
+    /// `value(n, v)` with v's `value_type` t: (n, v, t).
+    value: Vec<[i64; 3]>,
     comment: Vec<[i64; 2]>,
     spread: Vec<i64>,
     next_sibling: Vec<[i64; 2]>,
@@ -556,11 +557,7 @@ pub(super) struct CoreRows {
     tree_digest: Vec<[i64; 2]>,
     /// `def_digest(n, h)`: each definition unit's own-content hash (`digests`).
     def_digest: Vec<[i64; 2]>,
-    rx_span: Vec<[i64; 5]>,
     ast_match: Vec<[i64; 4]>,
-    /// A pattern's matches in a node's or capture's text, by pattern and text, for the batch (decision 0081): each
-    /// distinct text is scanned once. Each match's groups as (match, group, start, end), offsets in the text.
-    rx_memo: HashMap<(usize, Box<str>), std::sync::Arc<[(u32, u32, u32, u32)]>>,
 }
 
 /// `node`'s relations a program does not read, each family's rows left unmade (all made by default). Measured on
@@ -579,8 +576,8 @@ pub(super) struct Skip {
 }
 
 /// Every match of `re` in `text`, each named group (and the whole match, group 0) that takes part: (match, group,
-/// start, end), byte offsets in `text`.
-fn scan(re: &regex::Regex, names: &[Option<&str>], text: &str) -> std::sync::Arc<[(u32, u32, u32, u32)]> {
+/// start, end), byte offsets in `text`. `rx_span`'s scan (`Extra::document`).
+pub(super) fn scan(re: &regex::Regex, names: &[Option<&str>], text: &str) -> std::sync::Arc<[(u32, u32, u32, u32)]> {
     let mut out = Vec::new();
     for (j, caps) in re.captures_iter(text).enumerate() {
         for (g, name) in names.iter().enumerate() {
@@ -599,8 +596,8 @@ fn scan(re: &regex::Regex, names: &[Option<&str>], text: &str) -> std::sync::Arc
 /// block program (`transducer::packed::regex_block`), which marks where a match can end.
 pub(super) type SpanPattern<'a> = (crate::code_rule_dsl::logic::front::SpanIn, &'a str, regex::Regex, Option<std::sync::Arc<crate::code_rule_dsl::transducer::packed::regex_block::SpanPrefilter>>);
 
-/// Texts past this are scanned where they are, not kept in `CoreRows::rx_memo`.
-const RX_MEMO_TEXT: usize = 4096;
+/// Texts past this are scanned where they are, not kept in `Extra::rx_memo`.
+pub(super) const RX_MEMO_TEXT: usize = 4096;
 
 impl CoreRows {
     /// Node `local`'s rows: what its anonymous children, its kind and its own text give.
@@ -611,14 +608,15 @@ impl CoreRows {
         let kind = dialect.name(f, id);
         let text = f.text(id);
         let children = f.children(id);
-        // `op`: every anonymous child; `op_at`: those that are no punctuation, in order, Python's two-word
-        // operators as one ("not in", "is not"), which `op` has too.
+        // `op`: every anonymous child, those the grammar implies among them (from the gaps, `tree::parts`); `op_at`:
+        // those that are no punctuation, in order, Python's two-word operators as one ("not in", "is not"), which
+        // `op` has too.
         let mut ops: Vec<String> = Vec::new();
-        for &c in children.iter().filter(|_| !self.skip.ops) {
-            if f.named(c) {
+        for part in (!self.skip.ops).then(|| super::tree::parts(f, dialect, id)).into_iter().flatten() {
+            if part.child.is_some_and(|c| f.named(c)) {
                 continue;
             }
-            let t = dialect.name(f, c);
+            let t = part.child.map_or(part.text, |c| dialect.name(f, c));
             self.op.push([n, string(t) as i64]);
             if !is_punct(t) {
                 let two = dialect.family == Family::Python && matches!((ops.last().map(String::as_str), t), (Some("not"), "in") | (Some("is"), "not"));
@@ -672,9 +670,7 @@ impl CoreRows {
                 self.str.push([n, string(v) as i64]);
             }
             if let Some((v, ty)) = &lit.value {
-                let v = string(v) as i64;
-                self.value.push([n, v]);
-                self.value_type.insert([v, string(ty) as i64]);
+                self.value.push([n, string(v) as i64, string(ty) as i64]);
             }
             if dialect.family == Family::Python
                 && (wants_parts || wants_part_starts || wants_words)
@@ -717,8 +713,9 @@ impl CoreRows {
     }
 
     /// A document's rows: its source-text spans (a file's own, `own_text`; a guest's text is part of its file's), and
-    /// its tokens.
-    pub(super) fn document(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_split_lines: bool, wants_lf_lines: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool, projection: &super::Projection) {
+    /// its tokens (none for a text-only document, `dialect` `None`: it has no node).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_split_lines: bool, wants_lf_lines: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool, projection: &super::Projection) {
         let f = &*p.facts;
         let x = p.extra.as_ref().expect("core.rr's spans");
         let key = i64::from(p.key);
@@ -748,15 +745,13 @@ impl CoreRows {
                 let [a, b] = p.span(p.len() + i as u32);
                 let requested_container = (wants_source_text && i == x.tokens as usize)
                     || (wants_line_text && i > x.tokens as usize && i <= x.tokens as usize + x.lines.count());
-                if requested_container || i < x.tokens as usize || i >= x.matched() as usize || (b - a) as usize <= TEXT_INLINE {
+                if requested_container || i < x.tokens as usize || (b - a) as usize <= TEXT_INLINE {
                     self.text.push([p.global(p.len() + i as u32), string(&f.source[a as usize..b as usize]) as i64]);
                 }
             }
         }
         drop(text_span);
-        if !wants_tokens {
-            return;
-        }
+        let Some(dialect) = dialect.filter(|_| wants_tokens) else { return };
         let _tokens_span = crate::code_rule_dsl::logic::profile::span(|| "tokens".into());
         // Tokens: the leaves, named or anonymous, other than comments, in source order (ESLint's token store).
         let mut toks: Vec<(u32, u32, i64)> = (0..p.len())
@@ -793,111 +788,6 @@ impl CoreRows {
         }
     }
 
-    /// `rx_span(p, c, j, g, m)`: group `g` of match `j` (from 0) of regex `p` in span `c` is span `m`, made here past
-    /// the lines (`Extra::matched`). Group "" is the whole match; a group that takes no part in a match has no row.
-    /// Matches do not overlap, as `match_all` says; a `match` pattern is anchored (`rr::lower`), so it has one.
-    ///
-    /// A span `c` is a document's `source`, one of its lines (`src_line`), a comment, a node of a kind, or a span an
-    /// earlier pattern's group captured (`SpanIn`). The source is scanned once per pattern (decision 0042 §3). A
-    /// line's, node's or capture's text is scanned once per distinct text in the batch (0042 §2, `rx_memo`), and its
-    /// matches placed at each span holding it: nodes of one kind seldom nest, and a capture lies inside its text.
-    pub(super) fn matches(&mut self, p: &mut Projected, dialect: &Dialect, patterns: &[SpanPattern<'_>], ends: &[Option<Vec<u64>>], string: &mut dyn FnMut(&str) -> usize) {
-        use crate::code_rule_dsl::logic::front::SpanIn;
-        let facts = std::sync::Arc::clone(&p.facts);
-        let src = facts.source.as_str();
-        let base = p.len();
-        // Nodes by kind, for the kinds a pattern runs over (comments by the dialect's test): their own spans.
-        let kinds: BTreeSet<&str> = patterns.iter().filter_map(|(w, _, _, _)| if let SpanIn::Kind(k) = w { Some(k.as_str()) } else { None }).collect();
-        let wants_comments = patterns.iter().any(|(w, _, _, _)| *w == SpanIn::Comment);
-        let mut of_kind: HashMap<&str, Vec<([u32; 2], u32)>> = HashMap::new();
-        let mut comments: Vec<([u32; 2], u32)> = Vec::new();
-        if wants_comments || !kinds.is_empty() {
-            for l in 0..base {
-                let name = dialect.name(&facts, p.core[l as usize]);
-                if wants_comments && is_comment(name) {
-                    comments.push((p.span(l), l));
-                }
-                if let Some(k) = kinds.get(name) {
-                    of_kind.entry(k).or_default().push((p.span(l), l));
-                }
-            }
-        }
-        let x = p.extra.as_mut().expect("core.rr's spans");
-        let source = x.tokens;
-        // Spans each (pattern, group) captured in this document: the containers of a `SpanIn::Capture`.
-        let mut captured: HashMap<(&str, &str), Vec<([u32; 2], u32)>> = HashMap::new();
-        // A capture's container is made by an earlier pattern: patterns run once theirs has.
-        // Patterns whose containers wait on each other (a cycle of captures) run in order, with what is made by then.
-        let mut done = vec![false; patterns.len()];
-        let mut force = false;
-        // Bytes scanned, reported as profile work.
-        let mut scanned = 0u64;
-        loop {
-            let mut progressed = false;
-            for (i, (within, pattern, re, prefilter)) in patterns.iter().enumerate() {
-                if done[i] {
-                    continue;
-                }
-                if !force
-                    && let SpanIn::Capture(from, _) = within
-                    && patterns.iter().enumerate().any(|(k, (_, q, _, _))| !done[k] && k != i && *q == from.as_str())
-                {
-                    continue;
-                }
-                done[i] = true;
-                progressed = true;
-                let pat = string(pattern) as i64;
-                let (containers, memo): (Vec<([u32; 2], u32)>, bool) = match within {
-                    SpanIn::Source => (vec![([0, src.len() as u32], base + source)], false),
-                    SpanIn::Line => ((1..=x.lines.count() as u32).map(|l| (x.lines.span(l as usize), base + source + l)).collect(), true),
-                    SpanIn::Comment => (comments.clone(), true),
-                    SpanIn::Kind(k) => (of_kind.get(k.as_str()).cloned().unwrap_or_default(), true),
-                    SpanIn::Capture(from, g) => (captured.get(&(from.as_str(), g.as_str())).cloned().unwrap_or_default(), true),
-                };
-                let names: Vec<Option<&str>> = re.capture_names().enumerate().map(|(g, n)| if g == 0 { Some("") } else { n }).collect();
-                // The bytes a match can end after (decision 0081 §3), from the batch's run of the block programs: a
-                // source or line where none can is not scanned.
-                let ends = match (&ends[i], prefilter) {
-                    (Some(e), _) => Some(std::borrow::Cow::Borrowed(e.as_slice())),
-                    (None, Some(f)) => Some(std::borrow::Cow::Owned(f.ends(src.as_bytes()))),
-                    (None, None) => None,
-                };
-                for ([a, b], c) in containers {
-                    if let Some(ends) = &ends
-                        && !crate::code_rule_dsl::transducer::packed::regex_block::SpanPrefilter::any_in(ends, a as usize, b as usize)
-                    {
-                        continue;
-                    }
-                    let cid = Projected::id(p.key, &p.defs, c);
-                    let text = &src[a as usize..b as usize];
-                    let found: std::sync::Arc<[(u32, u32, u32, u32)]> = match memo && text.len() <= RX_MEMO_TEXT {
-                        true => match self.rx_memo.get(&(pat as usize, Box::from(text))) {
-                            Some(f) => std::sync::Arc::clone(f),
-                            None => {
-                                let f = { scanned += text.len() as u64; scan(re, &names, text) };
-                                self.rx_memo.insert((pat as usize, Box::from(text)), std::sync::Arc::clone(&f));
-                                f
-                            }
-                        },
-                        false => { scanned += text.len() as u64; scan(re, &names, text) },
-                    };
-                    for &(j, g, s0, e0) in found.iter() {
-                        let name = names[g as usize].expect("a named group");
-                        let id = base + x.matched() + x.matches.len() as u32;
-                        x.matches.push([a + s0, a + e0]);
-                        self.rx_span.push([pat, cid, i64::from(j), string(name) as i64, Projected::id(p.key, &p.defs, id)]);
-                        captured.entry((pattern, name)).or_default().push(([a + s0, a + e0], id));
-                    }
-                }
-            }
-            if done.iter().all(|d| *d) {
-                break;
-            }
-            force = !progressed;
-        }
-        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, scanned);
-    }
-
     /// `ast_match(p, n, g, c)`: AST pattern `p` (``n ~ `p` ``, `rr::lower`) matches node `n`, and its metavariable
     /// `g` captured node `c`; capture "" is `n` itself. ast-grep matches each pattern over the document's tree once;
     /// a match is the projected node of its kind and byte range (the outermost, when nodes share both).
@@ -932,7 +822,6 @@ impl CoreRows {
             }
         }
     }
-
     /// `tree_digest(n, h)` (`@tree_digest(n)`): a structural hash of n's subtree, without
     /// positions. This is not CPython ast.dump serialization. A node hashes its kind, and its children's field and hash in order; a leaf, or a literal with a
     /// static value, its text or value. Comments and punctuation are left out, and a parenthesized expression is
@@ -1030,6 +919,17 @@ impl CoreRows {
         }
     }
 
+    /// `text` rows made beside these: the text of `Extra`'s spans (`granules::ExtraSpan`), which `core_rr`'s `text` has not.
+    pub(super) fn extend_text(&mut self, rows: &[[i64; 2]]) {
+        self.text.extend_from_slice(rows);
+    }
+
+    /// The literal values (n, v, v's type) of the nodes of documents `docs`: where `Extra`'s W's values are bound, a
+    /// document W reads no values of (`Dialect::values`) has these.
+    pub(super) fn values_of<'a>(&'a self, docs: &'a HashSet<u32>) -> impl Iterator<Item = [i64; 3]> + 'a {
+        self.value.iter().filter(move |r| docs.contains(&((r[0] >> 32) as u32))).copied()
+    }
+
     /// The relations, the strings' indexes made atoms by `atom`.
     pub(super) fn relations(self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
         fn make<const N: usize>(columns: &[&str], rows: &[[i64; N]], sym: [bool; N], atom: &dyn Fn(i64) -> i64) -> Relation {
@@ -1045,7 +945,8 @@ impl CoreRows {
         }
         let node_sym = |rows: &[[i64; 2]]| make(&["n", "s"], rows, [false, true], atom);
         let pair = |columns: &[&str; 2], rows: &[[i64; 2]]| make(columns, rows, [false, false], atom);
-        let mut value_type: Vec<[i64; 2]> = self.value_type.into_iter().collect();
+        let value: Vec<[i64; 2]> = self.value.iter().map(|&[n, v, _]| [n, v]).collect();
+        let mut value_type: Vec<[i64; 2]> = self.value.iter().map(|&[_, v, t]| [v, t]).collect::<HashSet<_>>().into_iter().collect();
         value_type.sort_unstable();
         let spread: Vec<[i64; 1]> = self.spread.iter().map(|&n| [n]).collect();
         vec![
@@ -1055,8 +956,9 @@ impl CoreRows {
             ("name", node_sym(&self.name)),
             ("str", node_sym(&self.str)),
             ("strprefix", node_sym(&self.strprefix)),
-            ("value", node_sym(&self.value)),
-            ("static_value", node_sym(&self.value)),
+            // Named as `Extra`'s W's values are, which a batch binds instead where the program reads them.
+            ("value", make(&["n", "v"], &value, [false, true], atom)),
+            ("static_value", make(&["n", "v"], &value, [false, true], atom)),
             ("value_type", make(&["v", "t"], &value_type, [true, true], atom)),
             ("comment", node_sym(&self.comment)),
             ("spread", make(&["n"], &spread, [false], atom)),
@@ -1076,7 +978,6 @@ impl CoreRows {
             ("token_after", pair(&["x", "t"], &self.token_after)),
             ("tree_digest", node_sym(&self.tree_digest)),
             ("def_digest", node_sym(&self.def_digest)),
-            ("rx_span", make(&["p", "c", "j", "g", "m"], &self.rx_span, [true, false, false, true, false], atom)),
             ("ast_match", make(&["p", "n", "g", "c"], &self.ast_match, [true, false, true, false], atom)),
         ]
     }
@@ -1092,10 +993,11 @@ mod tests {
     #[cfg(feature = "python-syntax-error")]
     fn python_syntax_errors_follow_cpythons_grammar() {
         use super::super::python_syntax::error as python_error;
-        assert_eq!(python_error("x = 1\n"), None);
-        assert_eq!(python_error("match x:\n    case 1:\n        pass\n"), None);
-        assert_eq!(python_error("y = 2\nprint \"x\"\n").map(|e| e.0), Some(2));
-        assert_eq!(python_error("y = 2\r\nz = 3\rdef (:\n").map(|e| e.0), Some(3), "lines as src_line counts them");
+        assert_eq!(python_error("x = 1\n"), Ok(None));
+        assert_eq!(python_error("match x:\n    case 1:\n        pass\n"), Ok(None));
+        assert_eq!(python_error("y = 2\nprint \"x\"\n").map(|e| e.map(|e| e.0)), Ok(Some(2)));
+        assert_eq!(python_error("y = 2\r\nz = 3\rdef (:\n").map(|e| e.map(|e| e.0)), Ok(Some(3)), "lines as src_line counts them");
+        assert!(python_error("f\"{x:\\x}\"\n").is_err_and(|e| e.starts_with("UnicodeDecodeError: ")), "ast.parse raises");
     }
 
     #[test]

@@ -1,1 +1,0 @@
-<p>{{ sizeof($items) }}</p>

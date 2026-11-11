@@ -303,7 +303,7 @@ pub enum Item {
     /// `.lattice L<base> { Op -> term, … }`.
     Lattice { name: String, base: String, ops: Vec<(String, Term)> },
     Pragma(Vec<String>),
-    /// `.violation V(at: loc, …) "message"`, its `fix` lines' relations, its `suppress` lines, and `options { … }`.
+    /// `.violation V(at: loc, …) "message"`, its `fix` lines, its `suppress` lines, and `options { … }`.
     /// `code {c}` names the column holding the finding's code (`in "re"`: the codes it may produce), `code "X"` gives
     /// it, and `tag {t}` names an extra key field.
     Violation {
@@ -313,7 +313,7 @@ pub enum Item {
         code_in: Option<String>,
         tag: Option<String>,
         message: String,
-        fixes: Vec<String>,
+        fixes: Vec<Fix>,
         suppress: Vec<Suppress>,
     },
     /// `.policy { … }`: a policy document in JSON.
@@ -330,12 +330,21 @@ pub enum Code {
     Constant(String),
 }
 
-/// A `.violation`'s `suppress TOOL "rule", … [over {c}]` line: the tool comments that silence its findings.
+/// A `.violation`'s `suppress TOOL "rule", … [over {c}]` line: the tool comments that silence its findings, and the
+/// column whose lines are read for them besides `at`'s.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Suppress {
     pub tool: String,
     pub rules: Vec<String>,
     pub over: Option<String>,
+}
+
+/// A `.violation`'s `fix [safe] F "title"` line: the fix relation it offers.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Fix {
+    pub name: String,
+    pub safe: bool,
+    pub title: String,
 }
 
 /// A statement and the line it starts on.
@@ -949,15 +958,17 @@ impl<'s> Parser<'s> {
                     if self.is_id("fix") && matches!(self.peek_at(1), Tok::Id(_)) {
                         self.open(Kind::FixLine);
                         self.anon();
-                        if self.is_id("safe") && matches!(self.peek_at(1), Tok::Id(_)) {
+                        let safe = self.is_id("safe") && matches!(self.peek_at(1), Tok::Id(_));
+                        if safe {
                             self.anon();
                         }
-                        fixes.push(self.id()?);
+                        let name = self.id()?;
                         self.field(Field::Relation);
-                        self.string()?;
+                        let title = self.string()?;
                         self.field(Field::Description);
                         self.close();
                         self.field(Field::Fix);
+                        fixes.push(Fix { name, safe, title });
                     } else if self.is_id("suppress") && matches!(self.peek_at(1), Tok::Id(_)) && matches!(self.peek_at(2), Tok::Str(_)) {
                         self.open(Kind::SuppressLine);
                         self.anon();
@@ -1341,7 +1352,7 @@ impl<'s> Parser<'s> {
         t
     }
 
-    /// `min(a, b)` is a call unless a `:` follows the parentheses (`min (a + b) : { … }`).
+    /// `min (a, b)`: a call, or an aggregate `min (a + b) : { … }` when a `:` follows the parentheses.
     fn call_or_aggregate(&mut self, op: String) -> Result<Term, Error> {
         let save = self.save();
         self.open(Kind::Call);
