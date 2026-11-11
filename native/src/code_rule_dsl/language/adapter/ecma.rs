@@ -11,6 +11,9 @@ impl Adapter for Ecma {
     const LABEL: &'static str = "typescript";
     const TERMINATORS: Terminators = Terminators::Eslint;
     const PACKAGES: bool = false;
+    fn cooked_template(chunk: &str) -> Option<String> {
+        crate::code_rule_dsl::value::ecma::cooked_text(chunk)
+    }
     const PACKAGE_MANIFESTS: bool = true;
     const JSX_RUNTIMES: bool = true;
     const DECLARATION_FILES: bool = true;

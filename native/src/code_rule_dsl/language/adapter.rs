@@ -162,6 +162,11 @@ pub(crate) trait Adapter: 'static {
     fn path_module(_path: &str) -> Option<String> {
         None
     }
+    /// A template literal chunk's cooked text (escapes decoded, lone surrogates replaced), where the family has
+    /// template literals (ECMAScript's).
+    fn cooked_template(_chunk: &str) -> Option<String> {
+        None
+    }
 }
 
 /// The module a host sends for the file at `file` whose dialect's label is `label`: its
@@ -285,6 +290,9 @@ impl<A: Adapter> super::LanguageBase for pack::Pack<A> {
     }
     fn path_module(&self, path: &str) -> Option<String> {
         A::path_module(path)
+    }
+    fn cooked_template(&self, chunk: &str) -> Option<String> {
+        A::cooked_template(chunk)
     }
     fn module_path(&self, file: &Path) -> Option<serde_json::Value> {
         A::module_path(file)

@@ -2309,7 +2309,7 @@ impl Batch {
             let guest = d.guest.as_deref().filter(|_| core);
             let error = match dialect {
                 Some(dialect) if (core && (projection.wants("syntax_error") || guest.is_some())) || (!core && projection.verdict) => {
-                    core_rr::verdict(&d.facts, dialect).map_err(|raised| python_syntax::failure(&d.path, &raised))?
+                    core_rr::verdict(&d.facts, dialect).map_err(|raised| core_rr::failure(&d.path, &raised))?
                 }
                 _ => None,
             };

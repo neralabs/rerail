@@ -293,7 +293,7 @@ pub(super) fn literal(family: Family, kind: &str, text: &str, interpolated: bool
         }
         (Family::Ecma, "template_string") => {
             if !text.contains("${") && text.len() >= 2 {
-                let body = crate::code_rule_dsl::value::ecma::cooked_text(&text[1..text.len() - 1]).unwrap_or_else(|| unescape(&text[1..text.len() - 1]));
+                let body = crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::Ecma).cooked_template(&text[1..text.len() - 1]).unwrap_or_else(|| unescape(&text[1..text.len() - 1]));
                 out.value = Some((body.clone(), "string"));
                 out.str = Some(body);
             }
@@ -513,6 +513,11 @@ pub(super) fn str_parts_with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(Strin
 #[cfg(test)]
 pub(super) fn str_parts<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8)> {
     super::python_parts::with_offsets(parts).into_iter().map(|(v, n, spec, _)| (v, n, spec)).collect()
+}
+
+/// The error a batch reading CPython's facts of document `path` fails with, where `ast.parse` raises no `SyntaxError`.
+pub(crate) fn failure(path: &str, raised: &str) -> crate::content_store::StoreError {
+    crate::content_store::StoreError::Invalid(format!("{path}: CPython's ast.parse raises {raised}"))
 }
 
 /// A shared native grammar verdict. Raw text projections do not request it.

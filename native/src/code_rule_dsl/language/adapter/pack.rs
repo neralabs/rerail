@@ -44,6 +44,7 @@ pub(crate) trait LanguagePack: Send + Sync {
     fn suppresses_str(&self, violation: &crate::code_rule_dsl::model::ViolationSpec, suppress: &crate::code_rule_dsl::suppress::Suppress, node: &ast_grep_core::Node<'_, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>, source: &str, lines: &crate::code_rule_dsl::lines::LineTable, anchored: std::ops::Range<usize>, witness: (usize, usize)) -> bool;
     fn source_type(&self, _path: &str, _package: Option<crate::code_rule_dsl::language::PackageType>) -> Option<crate::code_rule_dsl::language::SourceType>;
     fn path_module(&self, _path: &str) -> Option<String>;
+    fn cooked_template(&self, _chunk: &str) -> Option<String>;
     // SyntaxRules
     fn syntax_parse_literal_tape(&self, grammar: crate::code_rule_dsl::literal::Grammar, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::tape::TapeDoc>, interpolation: &str, spend: &mut dyn FnMut (usize) -> bool) -> Option<crate::code_rule_dsl::literal::Parsed>;
     fn syntax_parse_literal_sub(&self, grammar: crate::code_rule_dsl::literal::Grammar, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::literal::SubDoc>, interpolation: &str, spend: &mut dyn FnMut (usize) -> bool) -> Option<crate::code_rule_dsl::literal::Parsed>;
@@ -251,6 +252,9 @@ impl<A: Adapter + SyntaxRules> LanguagePack for Pack<A> {
     }
     fn path_module(&self, _path: &str) -> Option<String> {
         <A as Adapter>::path_module(_path)
+    }
+    fn cooked_template(&self, _chunk: &str) -> Option<String> {
+        <A as Adapter>::cooked_template(_chunk)
     }
     // SyntaxRules
     fn syntax_parse_literal_tape(&self, grammar: crate::code_rule_dsl::literal::Grammar, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::tape::TapeDoc>, interpolation: &str, spend: &mut dyn FnMut (usize) -> bool) -> Option<crate::code_rule_dsl::literal::Parsed> {

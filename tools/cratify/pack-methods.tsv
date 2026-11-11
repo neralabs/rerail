@@ -18,6 +18,7 @@ Adapter	module_path	fn	module_path
 Adapter	suppresses	free	suppresses
 Adapter	source_type	fn	source_type
 Adapter	path_module	fn	path_module
+Adapter	cooked_template	fn	cooked_template
 SyntaxRules	parse_literal	free	syntax_parse_literal
 SyntaxRules	DOLLAR_NAMES	const	syntax_dollar_names
 SyntaxRules	feature	fn	syntax_feature

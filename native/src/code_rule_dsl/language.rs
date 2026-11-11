@@ -655,6 +655,8 @@ pub(crate) trait LanguageBase: Send + Sync {
     fn reads_values(&self) -> bool;
     /// The module name its file's path gives it (`Adapter::path_module`).
     fn path_module(&self, path: &str) -> Option<String>;
+    /// A template literal chunk's cooked text, where the family has template literals (`Adapter::cooked_template`).
+    fn cooked_template(&self, chunk: &str) -> Option<String>;
     /// The module a host sends for its file at `file` (`Adapter::module_path`).
     fn module_path(&self, file: &std::path::Path) -> Option<serde_json::Value>;
     /// Whether its files take their module from package markers (`Adapter::PACKAGES`).
