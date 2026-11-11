@@ -292,9 +292,7 @@ class Facades(mounts.Facades):
             o = use_owner(a, self.nodes)
             if o is not None and o not in sees(self.c):
                 continue
-            # private: a child's `use super::*` sees it, and a re-export another crate restricts cannot fail
-            a = re.sub(r'^((?:#\[[^\]]*\]\s*)*)pub(?:\s*\([^)]*\))?\s+use\b', r'\1use', a.strip())
-            body = '\n'.join(indent + l for l in a.split('\n'))
+            body = '\n'.join(indent + l for l in a.strip().split('\n'))
             lines.append(f'{indent}#[allow(unused_imports)]\n{body}\n')
 
 
