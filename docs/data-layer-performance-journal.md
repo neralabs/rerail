@@ -11742,3 +11742,35 @@ Full production, generated-file mutation, scanner supplied-AST, project options,
 
 The inventory stays at 13 admitted ports, 86 drafts, and one absent translation.
 No engine rebuild or full-repository cold benchmark ran. Test commands remained bounded at 110 seconds.
+
+### Final 2911 integration and deterministic generation, 2026-11-10
+
+Merge `340401b11` brings in 50 Final commits through `2911f61c5`.
+The merge takes the upstream request-cone, deferred SQL setup, range, and regex-binding changes.
+Request answers use bulk insertion. Fresh loaded-document identity and answer publication remain intact.
+The adopted source cohort contains 47 reviewed generic extension files.
+
+The root CLI build uses Rust 1.95.0, profile `profiling`, and nice 19. Only the CLI target was built.
+
+| Measurement | Seconds |
+| --- | ---: |
+| Build wall | 201.89 |
+| Build user CPU | 880.52 |
+| Build system CPU | 22.33 |
+| Build total CPU | 902.85 |
+
+The registered binary hash starts `4bc20970e2aabd2f`. These are compilation costs, not rule execution measurements.
+The [integration receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-final2911-state-integration.json.gz) contains the build record and validation results.
+
+Both APIs pass all 80 original State Tripwires module tests. All 77 scanner values match, including 64 positives.
+All 51 plugin cases and three signed-filter cases also pass through both APIs on the rebuilt engine.
+All 99 existing candidate policies pass the reader. This checks syntax compatibility, not semantic parity for all 99.
+Four focused loader scenarios pass cold and warm. All 421 tooling tests pass.
+
+Provider-token generation now uses sorted order. Hash seeds 1 and 99 produce identical policy bytes.
+The main policy hash is `e74f64b257ebd83d82a7b4c0d7aaee9ae9f12e43ccb04decd78b1fe428ea594e`.
+The source policy hash is `095022a333bda78d1f6f0188fa878ba5727e41c109da6c5c9f0204c1b1a0c90d`.
+
+The Quality sibling's results remain partial. Its native relations are implementation material, rather than acceptance evidence for the missing port.
+State's shared scope, supplied scanner AST, project options, production, signing administration, CLI, and persistent-update gaps remain open.
+The inventory remains 13 admitted ports, 86 drafts, and one absent translation. No full-repository cold benchmark ran.

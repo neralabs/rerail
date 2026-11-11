@@ -3895,8 +3895,8 @@
         "status": "native-plugin-progress",
         "fullMigrationAcceptance": false,
         "checkpoint": {
-          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-state-tripwires-plugin-progress-final6c6.json.gz",
-          "sha256": "dbb200d88fef27cb9de1c683d8efe4d6fc3ec2dc5c449910a8968f78a59c2396"
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-final2911-state-integration.json.gz",
+          "sha256": "d4bf25f660520e72962e72f73c71b1fe73d40db1bc5ec4e29a67a9e80fb4f287"
         },
         "summary": {
           "snapshot": {
@@ -3925,7 +3925,8 @@
           "Production integration, signature administration, CLI enforcement and persistent workspace acceptance.",
           "The current world interface requires exported file requests before post-load option and fact validation; supplied reporter reads are prefetched."
         ],
-        "failedOriginalCases": []
+        "failedOriginalCases": [],
+        "engineCommit": "340401b11ee52846a13a1c0c37e9e5a13992f0b2"
       },
       "migrationProgressHistory": [
         {
@@ -4809,7 +4810,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "2911f61c5b0238c13e783536302a00d720334982",
-    "status": "Final 2911f61c5 merged, including deferred SQL setup and request-cone updates. CLI rebuild pending.",
+    "status": "Final 2911f61c5 root CLI rebuilt; State original and plugin contracts, all candidate readers, and focused loader checks validated.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -5145,21 +5146,21 @@
     ],
     "cliArtifact": {
       "format": "rerail.root-engine-build/v1",
-      "engineCommit": "904a7ee1223a4bc748c6bc11218677d77ac1153a",
-      "upstreamCommit": "6c672ea2b65eaf74dc420dc9726bf567e52a9850",
+      "engineCommit": "340401b11ee52846a13a1c0c37e9e5a13992f0b2",
+      "upstreamCommit": "2911f61c5b0238c13e783536302a00d720334982",
       "sourceTrees": {
-        "native": "c4191a7f6758cecc071bac3534c947420c6d02a4",
-        "accel": "33eaf05b5ca2dbd0f6af59e669d75454fc831fc5",
+        "native": "7896682064ab6a817e84b7c090a7c4d8821a140e",
+        "accel": "c0a9697122e57c9e213919c4e9b9686dd17a1b07",
         "tools/bitlex": "3699290356d32d790f91b76c5df41186268ada69",
         "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
         "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
       },
-      "path": ".rerail/modern-engine-alignment/cli-f0cef331c86123de",
-      "sha256": "f0cef331c86123de843bb9bb298b86667ead61c01e343f153daf86188402399e",
+      "path": ".rerail/modern-engine-alignment/cli-4bc20970e2aabd2f",
+      "sha256": "4bc20970e2aabd2f1227211d947b9ac66252f177b3af3900ce6d52cbda4a58ee",
       "command": "nice -n 19 rustup run 1.95.0 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling",
-      "wallSeconds": 168.74,
-      "userCpuSeconds": 868.8,
-      "systemCpuSeconds": 21.31
+      "wallSeconds": 201.89,
+      "userCpuSeconds": 880.52,
+      "systemCpuSeconds": 22.33
     },
     "adoptionAudit": {
       "format": "rerail.engine-cohort-adoption/v1",

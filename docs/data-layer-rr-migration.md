@@ -11,9 +11,14 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root.
-Final `6c672ea2b` is merged in `89a58ec57`. The registered root CLI is `f0cef331c86123de…`.
-State Tripwires, load-request regressions, and dynamic discovery have been checked on this cohort.
+Final `2911f61c5` is merged in `340401b11`. The registered root CLI is `4bc20970e2aabd2f…`.
+State Tripwires passes its 80 original module tests and 54 plugin contracts through both APIs on this cohort.
+All 99 candidate policies pass the reader. Four loader scenarios pass cold and warm.
+The [integration receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-final2911-state-integration.json.gz) binds these results to the rebuilt CLI and consumed programs.
 The following paragraphs preserve earlier engine cohorts and their specific acceptance receipts.
+
+Final `6c672ea2b` was merged in `89a58ec57`. Its registered root CLI was `f0cef331c86123de…`.
+State Tripwires, load-request regressions, and dynamic discovery were checked on that cohort.
 
 Final `af8fee707` was merged in `a2812b53a`.
 The registered root CLI is `e881b006c25f1d92…`. Dispatch passes full recorded-contract admission on this cohort.
@@ -119,9 +124,10 @@ The two selection tests observe actual native inference scopes. Their assertion 
 The preceding analysis checkpoint records 31 helper contracts, 29 analysis-scope contracts, and four passing mutation controls through both APIs.
 The shared scope suite remains incomplete: one assertion runs in Python; the factory loop fails when it reaches the next linter.
 Broader production, scanner supplied-AST, options, signing administration, CLI, and update contracts remain open.
-The [plugin checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-state-tripwires-plugin-progress-final6c6.json.gz) retains the 80-test replay and supplied-fact results.
+The [current integration checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-final2911-state-integration.json.gz) retains the 80-test replay and supplied-fact results on Final `2911f61c5`.
+The [preceding plugin checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-state-tripwires-plugin-progress-final6c6.json.gz) preserves those results on Final `6c672ea2b`.
 The [analysis checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-state-tripwires-analysis-progress-final6c6.json.gz) preserves its earlier program and harness bytes.
-All 18 fresh contracts pass through both APIs on the same engine, including 15 positives and three clean cases.
+The earlier Final `6c672ea2b` cohort also passed 18 fresh scanner contracts through both APIs, including 15 positives and three clean cases.
 `no_api_root_imports` passes its complete recorded contract on Final `ec3cfe1b7`.
 Its [admission receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-api-imports-complete-finalec3.json.gz) verifies 467 native executions.
 All four original tests and all 168 public cases pass through both APIs, including import and literal positives.
@@ -3260,3 +3266,23 @@ These two cases remain outside State's completed native coverage. They are retai
 Reporter file requests use the engine's exported environment interface. The physical ratchet read can precede post-load validation.
 Generated-file mutations, scanner supplied ASTs, complete project options, production integration, signing administration, CLI, and persistent updates remain open.
 The inventory remains 13 full admissions, 86 drafts, and one absent translation.
+
+### Final 2911 integration and State Tripwires replay, 2026-11-10
+
+Merge `340401b11` adopts 50 further Final commits through `2911f61c5`.
+The merge takes Final's request-cone, deferred SQL setup, range handling, and regex-binding resolutions.
+Answered rows retain bulk insertion. Fresh loads retain their document identity and answer rows.
+The source cohort records 47 reviewed generic extension files. It uses the root engine and no retired checkout.
+
+The optimized CLI build took 201.89 seconds wall time, with 880.52 user and 22.33 system CPU seconds.
+The registered binary hash starts `4bc20970e2aabd2f`. Compilation is separate from execution measurements.
+
+State Tripwires passes all 80 original module tests through each API on this binary.
+Both APIs match all 77 complete scanner values, including 64 positives. All 51 plugin and three signed-filter contracts pass through each API.
+All 99 existing candidate policies pass the reader. Four loader scenarios pass cold and warm. All 421 tooling tests pass.
+The [integration receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-final2911-state-integration.json.gz) preserves programs, harnesses, build details, and native results.
+
+Provider-token generation now sorts its frozenset. Hash seeds 1 and 99 produce identical main and source policies.
+The shared scope suite and the broader State migration gaps remain open. No additional rule receives full admission in this checkpoint.
+The Quality sibling contains useful relations and documented partial results. It does not supply complete acceptance for the absent Quality translation.
+No full-repository cold benchmark ran.
