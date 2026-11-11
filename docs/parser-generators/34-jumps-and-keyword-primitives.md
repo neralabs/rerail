@@ -312,6 +312,40 @@ A call keeps the level's word and flags only where its callee's level may change
 The rules are 55 functions, the smallest 23 words: none is small enough to copy into callers.
 The lean parser has 45.
 
+## Open: keyword marks from the records
+
+A keyword mark is written in bytes:
+
+```
+mask fix_w  = id_first & c_f & next(c_i) & next(c_x, 2) & ~next(ident, 3)
+mark fix_on = fix_w & next(id_ahead, 3)
+```
+
+`fix_w` holds where an identifier token's text is `fix`.
+The record already says so: its word code, as the lean lexer's `word_of`.
+Tested in tier 2 (the lean parser's `is_id(W_FIX)`), the term leaves tier 1,
+and so do its letters' masks (about 180 of tier 1's 865 operations a block).
+
+The rewrite must be proved, term by term:
+
+- the term holds only at the grammar's token starts;
+- there, it holds exactly where a row that can begin with the word's first byte starts
+  and its token's text is the word (`Lowering::keyword` over the row's start and last).
+
+The first proves. The second does not, for any of the `.rr` marks.
+`ident` is `fill(w & alpha, ~w)` and `w` is `code & word & ~hashword`:
+whether a letter continues the identifier depends on `code`, a toggle.
+The prover does not carry a toggle from one byte to the next,
+so it cannot show where the identifier's last byte is.
+A larger search budget does not help.
+
+Two ways on:
+
+1. **The prover carries toggles across lags:** a toggle is unchanged across a byte
+   that none of its events can be. Then the rewrite is checked for any grammar.
+2. **A grammar primitive** for a token's word, which the mark names directly.
+   The byte-level reference evaluator then needs tokens.
+
 ## The order
 
 1. One symbol a token: rows and keywords in the record, one switch a state.
