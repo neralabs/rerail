@@ -261,6 +261,59 @@ Each step compares finding keys with a baseline recorded before the step:
 - `tree.rs` had token helpers that nothing called (`count_tokens_before`, `count_tokens`,
   `Token::is_punctuation`). They are deleted; the others answer implied tokens from the gaps.
 
+## Python checks: the slice runs half the pack
+
+Rules that a pack turns off (`"on": false` in `pack.json`) are still loaded and run by
+the key checks. But the Python checks ran the slice (`rer131_pack_keys`), and the slice
+evaluates only the clauses that lower to its wave. On the Python pack, 342 of 641 rules
+have no such clause, so they find nothing there:
+
+| | in the wave | not in the wave |
+|---|---|---|
+| on in `pack.json` | 199 | 219 |
+| off in `pack.json` | 96 | 123 |
+
+So the findings that seemed lost with the off rules were never computed. It is not a
+cross-file effect either: B017 and SIM910 alone in a pack find nothing on the slice.
+The runtime check (`rer131_runtime_keys`) evaluates every rule. On probe chunk aa it
+gives 467 keys from 641 rules, against the slice's 248, at 16.0 s CPU against 10–12 s.
+The Python checks use the runtime now. The slice oracle names the rules it leaves out.
+
+With the whole pack on the runtime, the probe and noqa files for AIR303, B017, FAST001,
+FBT001, RUF061, SIM910 and UP015 all get their findings.
+
+## B017: a comment before the string
+
+`pytest.raises(Exception,  # c` followed by `"op()")` is the legacy form, which B017
+exempts. The rule asked for the string as the first argument's next neighbour, and found
+the comment instead. It now steps past comments. The comment probe gets no B017 with the
+whole pack; the noqa and continuation probes still do.
+
+## CPU on the Python probe chunks
+
+The 20–27% rise compared a run at load 25–112 with a baseline taken at a different load. On
+this machine, the same binary on the same chunk varies with load alone:
+
+| chunk aa, one binary | load | CPU |
+|---|---|---|
+| | 112 | 26.0 s, 26.7 s |
+| | about 100 | 12.4 s |
+| | 28 | 10.1 s, 10.6 s |
+
+At load 15, chunk ad takes 39.3 s (baseline 42.4 s) and pprc-ae takes 19.3 s (baseline
+18.9 s). Under contention, nice-19 work spends more CPU time per unit of work: it runs on
+the efficiency cores at lower clocks, with shared caches. CPU time counts the cycles the
+process held, not the work done.
+
+Two checks show the work did not grow:
+
+- **The rule rewrites.** The 14 rules as they were before the rewrites and the same rules
+  now, same binary, same chunk, back to back: 10.0 / 9.8 s against 10.6 / 10.1 s, with
+  the same 248 keys.
+- **A profile.** `sample` over 25 s of chunk ad: the gap lookups (`matcher::gap`) take 9
+  of the 3,358 samples in engine code (0.3%). The parser's transducer walk takes 1,349,
+  store writes 1,617, and SQLite 711.
+
 ## The guard
 
 `no_rule_reads_a_token_the_tape_may_leave_out` runs D over every pack rule. It fails on any
@@ -276,5 +329,6 @@ shows up at compile time.
 ## Checking still to do
 
 The upstream cases with the linters' own findings (`fixtures.expected.json`, `npm run
-fixtures:pull` from S3) are not in this checkout. S7 on every backend, the full data-layer checks
-and a CPU measurement against a same-window baseline close the work.
+fixtures:pull` from S3) are not in this checkout. S7 on every backend and the full data-layer
+checks close the work. The Python key checks need a runtime baseline from before the branch;
+the slice baselines covered only the wave's rules.
