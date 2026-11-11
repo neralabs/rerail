@@ -178,8 +178,6 @@ class Suite:
                            originalRetainedReason=original.get('retained_reason'))
         self.observations.append(observation)
         from data_layer_record import ADAPTERS, snapshot, normalize
-        if check == 'generated_index_sources':
-            from generated_indexes_port import normalize
         if check=='plan_scope_ownership':
             from plan_ownership_port import snapshot
             files,scope,root=snapshot(module,entry,args,kwargs)
@@ -209,7 +207,7 @@ class Suite:
         elif check == 'backend_coupling':
             from coupling_port import snapshot
             files, scope, root = snapshot(args[2], args[3])
-        elif check == 'sync_async_signatures':
+        elif check in {'sync_async_signatures','generated_index_sources'}:
             files, scope, root = snapshot(module, 'file', args, kwargs)
         elif check == 'serverplan_target_architecture':
             from target_architecture_port import files_for
@@ -259,7 +257,10 @@ class Suite:
             scope = dict(include=[], exclude=[])
         compare_inputs(original, files, scope)
         from data_layer_batch_two import normalize as normalize_two
-        if check == 'unresolved_forward_refs' and entry == 'AnnotationUsageFinder.analyze':
+        if check == 'generated_index_sources':
+            from generated_indexes_port import normalize
+            actual = normalize(result, root)
+        elif check == 'unresolved_forward_refs' and entry == 'AnnotationUsageFinder.analyze':
             actual = normalize_two(check, result['findings'], root, files)
         elif check == 'backend_type_strings' and entry in {'should_skip_file', 'find_python_files'}:
             actual = []
@@ -314,6 +315,9 @@ class Suite:
         return files
 
     def scan(self, check, entry, module, arguments):
+        if check=='generated_index_sources':
+            from generated_indexes_port import scan
+            return scan(self,entry,module,arguments)
         if check=='hasattr_async':
             from hasattr_port import scan
             return scan(self,entry,arguments)

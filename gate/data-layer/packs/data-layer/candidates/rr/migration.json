@@ -160,7 +160,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
-      "sha256": "b96b7f4f2e5cd4de77642d67b189ac155deabf51ba034b513dfa0515bbee7af1",
+      "sha256": "4c531277d7df5d3bd76b10c67fd7b021c594fd8a2a4c03dd4cd29a96e0f3659b",
       "importedSha256": "b96b7f4f2e5cd4de77642d67b189ac155deabf51ba034b513dfa0515bbee7af1",
       "repairs": [
         {
@@ -172,6 +172,11 @@
           "before": "044afec8e629614ef57ba317c3cea3027651938d5a62ac54911222870c58ebcb",
           "after": "b96b7f4f2e5cd4de77642d67b189ac155deabf51ba034b513dfa0515bbee7af1",
           "reason": "Use the generator entry point and distinguish generated table headers from a policy description"
+        },
+        {
+          "before": "b96b7f4f2e5cd4de77642d67b189ac155deabf51ba034b513dfa0515bbee7af1",
+          "after": "4c531277d7df5d3bd76b10c67fd7b021c594fd8a2a4c03dd4cd29a96e0f3659b",
+          "reason": "Exact native generated-index scopes, collector order, duplicate keywords, path fallback, and normalized identifiers"
         }
       ]
     },
@@ -4708,7 +4713,7 @@
       "legacySha256": "80fba2624934f3f927a0777746fe9af604c63c6df6391e532ef739c5c36e3f5f",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
-      "ruleSha256": "b96b7f4f2e5cd4de77642d67b189ac155deabf51ba034b513dfa0515bbee7af1"
+      "ruleSha256": "4c531277d7df5d3bd76b10c67fd7b021c594fd8a2a4c03dd4cd29a96e0f3659b"
     }
   ],
   "syntaxSnapshots": [

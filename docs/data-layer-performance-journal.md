@@ -11799,3 +11799,30 @@ Separate complete module runs now establish the reported coverage without changi
 
 Receipt: gate/data-layer/fixtures/host/data-layer-port/rr-inspection-plugin-progress-final2911.json.gz.
 The inventory remains 100 historical ports, 99 native candidates, 13 full admissions, 86 drafts, and one absent translation.
+
+### 2026-11-11 — Whole-migration evidence and generated-index repairs
+
+The new evidence census covers all 100 historical ports and 921 native assertion reports from committed receipts.
+It finds reported original-test passes for 55 rules. Forty-one have every owned test identity reported passing across historical revisions.
+Those unions can mix engines, programs, and APIs. They do not certify current parity or replace the 13 recorded full admissions.
+The census retains receipt hashes, JSON locations, engine identities, native-call observations, and host protocols.
+Unknown APIs remain unspecified. Missing observations, changed original tests, semantic fallbacks, and incomplete phases cannot supply passing evidence.
+Four rules have no independently discovered original assertions; that absence does not certify them.
+
+The table is docs/data-layer-native-evidence.md. Its machine receipt is rr-historical-evidence-census-20261111.json.gz.
+The remaining work must distinguish existing historical test evidence from current engine failures and missing integrations.
+
+The generated-index candidate now accepts supplied file buffers and preserves collector output order.
+It selects the first duplicate source keyword, retains the malformed-path message fallback, and normalizes Python identifier spellings.
+Raw collector trigger text remains unchanged. The nine identifier regressions fail before normalization and pass after the repair.
+All five unchanged original tests pass through each native API, including all four positive observations and complete rendered strings.
+All 117 supplemental cases pass through each API, including 72 finding-positive cases. Fourteen native removal controls detect missing behavior.
+One supplemental UTF-8 error case transfers the caller's file-read exception; it has no native execution claim.
+The checkpoint records 256 native executions on Final 2911. All 450 tooling tests pass. No native engine source changed.
+
+The alias-only control initially selected a clean source case. The source trigger gate skipped that file.
+The control now uses a recorded positive import case, and both APIs detect removal of alias support.
+
+Receipt: gate/data-layer/fixtures/host/data-layer-port/rr-generated-indexes-progress-final2911.json.gz.
+Generated-index plugin reporting, CLI contracts, persistent updates, production integration, and shared registration acceptance remain open.
+The rule remains a draft. The inventory remains 13 full admissions, 86 drafts, and one absent translation.
