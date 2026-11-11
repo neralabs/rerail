@@ -19,8 +19,9 @@ pub const SOURCE: &str = include_str!(concat!(env!("OUT_DIR"), "/randomforest_ke
 /// The library's name in the registry.
 pub const LIBRARY_NAME: &str = "randomforest_kernels";
 
-/// The trainer's kernels (`randomforest_kernels.metal`), in the order a tree's training runs them.
-pub const KERNELS: [&str; 9] = [
+/// The trainer's kernels (`randomforest_kernels.metal`), in the order a tree's training runs them, then the
+/// forest's prediction and the feature space's columns.
+pub const KERNELS: [&str; 14] = [
     "decompressRowsKernel",
     "testFeatureKernel",
     "getPartitionSplitsKernel",
@@ -30,6 +31,11 @@ pub const KERNELS: [&str; 9] = [
     "updatePartitionNumbersKernel",
     "updateBucketsKernel",
     "fixupBucketsKernel",
+    "predictForestKernel",
+    "numericBucketsKernel",
+    "markCodesKernel",
+    "categoricalBucketsKernel",
+    "packBucketsKernel",
 ];
 
 /// The kernels' library, compiled on the shared device the first time it is asked for.

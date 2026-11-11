@@ -22,9 +22,13 @@ pub mod feature;
 pub mod split;
 #[path = "mldb/plugins/jml/jml/tree.rs"]
 pub mod tree;
-/// JML (`mldb/plugins/jml/jml/`): features, splits, trees.
+#[path = "mldb/plugins/jml/jml/decision_tree.rs"]
+pub mod decision_tree;
+#[path = "mldb/plugins/jml/jml/committee.rs"]
+pub mod committee;
+/// JML (`mldb/plugins/jml/jml/`): features, splits, trees, decision trees and committees.
 pub mod jml {
-    pub use super::{feature, split, tree};
+    pub use super::{committee, decision_tree, feature, split, tree};
 }
 #[path = "mldb/plugins/jml/dataset_feature_space.rs"]
 pub mod dataset_feature_space;
@@ -44,6 +48,10 @@ pub mod compute_kernel_grid;
 pub mod randomforest_kernels_grid;
 #[path = "mldb/plugins/jml/randomforest.rs"]
 pub mod randomforest;
+#[path = "mldb/plugins/jml/randomforest_procedure.rs"]
+pub mod randomforest_procedure;
+#[path = "mldb/plugins/jml/randomforest_predict.rs"]
+pub mod randomforest_predict;
 #[cfg(test)]
 #[path = "mldb/plugins/jml/testing/rf_kernel_test.rs"]
 mod rf_kernel_test;

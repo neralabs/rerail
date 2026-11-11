@@ -32,6 +32,27 @@ pub(super) fn base_key(rel: &str) -> String {
     format!("base:{rel}")
 }
 
+/// Which column of a base relation's row (in `input_columns` order) names the file the row is kept for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Owner {
+    /// A node or a document key: the row is its document's (`document_of`).
+    Node(usize),
+    /// A string: the row is each file's whose text holds it, as a text test's row is (`strings::TEXT_COLUMNS`).
+    Text(usize),
+}
+
+/// The owner column of `rel`'s rows. Most base relations lead with their node or document; a pattern's spans and
+/// matches lead with the pattern (`rx_span(p, c, …)`, `ast_match(p, n, …)`), so their node is the second column;
+/// `value_type(v, t)` is keyed by the value itself, a string some file's `value(n, v)` holds.
+pub(super) fn owner(rel: &str) -> Owner {
+    match rel {
+        "rx_span" | "ast_match" => Owner::Node(1),
+        "value_type" => Owner::Text(0),
+        _ if rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) => Owner::Text(0),
+        _ => Owner::Node(0),
+    }
+}
+
 /// What the chunks handed on for one document.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(in crate::code_rule_dsl) struct Entry {
@@ -85,7 +106,7 @@ fn plan(program: &[u8; 32]) -> FactsPlanSet {
 
 /// A digest of a program part: its rules, declarations, inputs and outputs as lowered, every fact, those the engine
 /// reads (a guest policy) as well as those its rules read, and the spans and patterns the batch matches for it.
-pub(super) fn program_digest(program: &crate::code_rule_dsl::logic::front::Program) -> [u8; 32] {
+pub(in crate::code_rule_dsl) fn program_digest(program: &crate::code_rule_dsl::logic::front::Program) -> [u8; 32] {
     let facts: std::collections::BTreeMap<&String, _> = program.facts.iter().collect();
     let mut hash = Sha256::new();
     hash.update(b"rerail.corpus-local-program/v3\0");
@@ -93,7 +114,17 @@ pub(super) fn program_digest(program: &crate::code_rule_dsl::logic::front::Progr
     // What the batch makes for the part besides its rules' reads: the regex spans and AST patterns it matches
     // (O-stored-patterns).
     hash.update(format!("\n{:?}\n{:?}", program.rx_spans, program.ast_patterns).as_bytes());
-    hash.finalize().into()
+    let digest: [u8; 32] = hash.finalize().into();
+    // `RERAIL_MEMO_PROGRAM_DUMP=dir`: what the digest is of, a file a digest (to find what moved a memo's key).
+    if let Some(dir) = std::env::var_os("RERAIL_MEMO_PROGRAM_DUMP") {
+        let name: String = digest[..6].iter().map(|b| format!("{b:02x}")).collect();
+        let text = format!(
+            "rules {:#?}\ndecls {:#?}\nfacts {:#?}\ninputs {:#?}\noutputs {:#?}\nrx_spans {:#?}\nast_patterns {:#?}\n",
+            program.rules, program.decls, facts, program.inputs, program.outputs, program.rx_spans, program.ast_patterns
+        );
+        let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.txt")), text);
+    }
+    digest
 }
 
 /// `digest` with the run's options folded in: the key of a file-local part that reads them (`option_item`).

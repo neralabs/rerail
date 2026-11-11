@@ -80,6 +80,13 @@ py_qrest(q, h, t) :- py_want(q), h = @head(q), r = substr(q, strlen(h), strlen(q
 py_qlast(q, pt, x) :- py_want(q), split_dot(q, m, x), h = @head(q), r = substr(m, strlen(h), strlen(m) - strlen(h)),
     pt = @replace_all(r, "\\.", "/").
 
+// py_want_top(q, h, x): an outside module q wanted, its top package h and that package's stub file name x.
+.decl py_want_top(q: symbol, h: symbol, x: symbol)
+py_want_top(q, h, x) :- py_want(q), !py_workspace(q), h = @head(q), x = cat(h, ".pyi").
+// py_stub_dir(b): a distribution's directory in typeshed's third-party stubs.
+.decl py_stub_dir(b: symbol)
+py_stub_dir(b) :- py_stubs(r), dir_entry(r, w, 1), b = cat(r, "/", w).
+
 // py_try(q, layer, b, top): in that layer, q's top package is the directory or file `top` in directory b (`top` is
 // `a-stubs` for a stub package of `a`).
 .decl py_try(q: symbol, layer: symbol, b: symbol, top: symbol)
@@ -88,8 +95,11 @@ py_try(q, "stub package", s, n) :- py_want(q), !py_workspace(q), py_site(s), h =
 py_try(q, "typed package", s, h) :- py_want(q), !py_workspace(q), py_site(s), h = @head(q), dir_entry(s, h, 1), d = cat(s, "/", h),
     dir_entry(d, "py.typed", 0).
 py_try(q, "stdlib", r, h) :- py_want(q), !py_workspace(q), py_admitted(q), py_stdlib(r), h = @head(q).
-py_try(q, "stubs", b, h) :- py_want(q), !py_workspace(q), py_stubs(r), dir_entry(r, w, 1), b = cat(r, "/", w), h = @head(q),
-    (dir_entry(b, h, 1) ; x = cat(h, ".pyi"), dir_entry(b, x, 0)).
+// The stubs layer: one directory per distribution, the top package a directory or a `.pyi` in it. The wanted tops and
+// the distributions' directories are relations of their own, so each top is looked up by its name, not every entry of
+// every distribution joined with every want.
+py_try(q, "stubs", b, h) :- py_want_top(q, h, _), dir_entry(b, h, 1), py_stub_dir(b).
+py_try(q, "stubs", b, h) :- py_want_top(q, h, x), dir_entry(b, x, 0), py_stub_dir(b).
 py_try(q, "untyped", s, h) :- env("python.untyped", "read"), py_want(q), !py_workspace(q), py_site(s), h = @head(q).
 // The layers whose packages are sources: a `.py` file is read where no `.pyi` is.
 .decl py_source_layer(l: symbol)

@@ -1961,6 +1961,61 @@ pub fn output_rows(conn: &Connection, table: &str, text: &[bool]) -> Result<Opti
     Ok(Some(out))
 }
 
+/// The rows of `src`, an input bound on `conn`, as an output is read (`output_rows`): its columns `text` gives as the
+/// symbols' text, the others as integers. An input the run hands on as an output is read where it is bound.
+pub fn source_rows(conn: &Connection, src: &dyn crate::code_rule_dsl::facts::vtab::Source, text: &[bool]) -> Result<Vec<Vec<Value>>> {
+    let syms = symbols(conn)?;
+    let syms = syms.read().unwrap();
+    let k = src.columns().len();
+    let mut out = Vec::with_capacity(src.len());
+    for row in 0..src.len() {
+        let mut vals = Vec::with_capacity(k);
+        for c in 0..k {
+            let v = src.value(row, c);
+            vals.push(if text.get(c).copied().unwrap_or(false) {
+                if v < 0 || v as usize >= syms.len() {
+                    return Err(err(format!("no symbol {v}")));
+                }
+                Value::Text(syms.name(v))
+            } else {
+                Value::Integer(v)
+            });
+        }
+        out.push(vals);
+    }
+    Ok(out)
+}
+
+/// `finding` decoded where the engine holds it: each (check, node) with the node's document's path and the node's
+/// start, from the bound `node` and `doc` inputs, as SQL's join of `finding` with them gives (each distinct).
+/// `None`: the run holds no `finding`, or `node` or `doc` is not bound in place.
+pub fn finding_rows(conn: &Connection) -> Result<Option<Vec<(String, String, i64)>>> {
+    let Some(rel) = held(conn, "finding") else { return Ok(None) };
+    let (Some(node), Some(doc)) = (crate::code_rule_dsl::facts::vtab::bound_source(conn, "node"), crate::code_rule_dsl::facts::vtab::bound_source(conn, "doc")) else { return Ok(None) };
+    let col = |src: &dyn crate::code_rule_dsl::facts::vtab::Source, name: &str| src.columns().iter().position(|c| c == name);
+    let (Some(nn), Some(nd), Some(ns), Some(dd), Some(dp)) = (col(node.as_ref(), "n"), col(node.as_ref(), "d"), col(node.as_ref(), "start"), col(doc.as_ref(), "d"), col(doc.as_ref(), "path")) else { return Ok(None) };
+    let syms = symbols(conn)?;
+    let syms = syms.read().unwrap();
+    let name = |v: i64| if v < 0 || v as usize >= syms.len() { Err(err(format!("finding: no symbol {v}"))) } else { Ok(syms.name(v)) };
+    let mut out = Vec::with_capacity(rel.rows());
+    for id in 0..rel.len() {
+        if is_dead(&rel.dead, id as u32) {
+            continue;
+        }
+        let row = rel.row(id);
+        let Some(ks) = node.lookup(nn, &[row[1]]) else { return Ok(None) };
+        for k in ks {
+            let Some(ds) = doc.lookup(dd, &[node.value(k, nd)]) else { return Ok(None) };
+            for d in ds {
+                out.push((name(row[0])?, name(doc.value(d, dp))?, node.value(k, ns)));
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    Ok(Some(out))
+}
+
 /// Puts a relation kept from an earlier run into `conn`'s next run as the input `table`: its strata read it in place,
 /// with the indexes it has (`r:` sources), not copied into a source and indexed again. The run's planner takes the
 /// names (`adopted`).
@@ -2072,7 +2127,7 @@ impl InRel {
     /// row was pushed at; 4096 rows a wave without levels), with as many duplicates offered as its derivations had
     /// (`RERAIL_SPIKE_DERIVATIONS`), into today's dedup set and chains (`Rel::push`, the engine's own) and into the
     /// mixed shape grown (`Growing` for the whole row and `hot`, `Runs` for the `orders`, each wave's run its delta).
-    fn grow_spike(&self, name: &str, hot: &[Vec<usize>], orders: Vec<Vec<usize>>, rest: &[Vec<usize>]) -> String {
+    fn grow_spike(&self, name: &str, hot: &[Vec<usize>], orders: Vec<Vec<usize>>, rest: &[Vec<usize>], rest_counts: &[u64]) -> String {
         let (k, n, rows) = (self.k, self.n, &self.rows);
         // Waves: runs of one level, or of 4096 rows.
         // The rows a maintained run added to the kept relation it started as (`Origin::Based`), else the last wave:
@@ -2197,43 +2252,110 @@ impl InRel {
             }
         }
         let new_ms = t.elapsed().as_secs_f64() * 1e3;
-        // The orders' growth again at each fanout: its time, the ids its merges copied, its runs, and a probe's time
-        // over its runs against one run of them all (each order's longest covered key, at sampled rows).
-        let mut by_fanout = Vec::new();
+        // The orders grown again four ways, each timed, with a probe's time over what it ends as (each order's
+        // longest covered key, at sampled rows) and the step's probes of the order (its covered sets' counts):
+        // merged as runs come (fanout 2), the same with each id's tag, never merged (a run a wave), and that too
+        // with tags. A run never merged is merged once (timed) where the step's probes would cost more over its
+        // runs than over one run and the merge.
+        let mut variants = String::new();
         if !orders.is_empty() {
             let live: Vec<u32> = (0..n as u32).filter(|&id| !is_dead(&self.dead, id)).collect();
             let sample: Vec<u32> = live.iter().step_by((live.len() / 2048).max(1)).copied().collect();
-            for t in [2usize, 4, 8] {
-                let tg = Instant::now();
-                let mut grown: Vec<ordered::Runs> = orders.iter().cloned().map(|o| ordered::Runs::with_fanout(o, t)).collect();
-                for f in &waves_fresh {
-                    for r in &mut grown {
-                        r.add_wave(rows, k, f.clone());
-                    }
+            // Each covered set's probes go to the first order it is a prefix of.
+            let mut probes = vec![0u64; orders.len()];
+            for (s, &c) in rest.iter().zip(rest_counts) {
+                if let Some(i) = orders.iter().position(|o| o[..s.len()].iter().all(|c| s.contains(c))) {
+                    probes[i] += c;
                 }
-                let ms = tg.elapsed().as_secs_f64() * 1e3;
-                let probe = |rs: &[ordered::Runs]| -> f64 {
-                    let mut best = f64::MAX;
-                    for _ in 0..3 {
-                        let tp = Instant::now();
-                        for (r, &len) in rs.iter().zip(&prefix) {
-                            let mut key = vec![0i64; len];
-                            for &id in &sample {
-                                let row = self.row(id as usize);
-                                for (j, &c) in r.order[..len].iter().enumerate() { key[j] = row[c]; }
-                                std::hint::black_box(r.count(rows, k, &key));
-                            }
-                        }
-                        best = best.min(tp.elapsed().as_nanos() as f64 / (sample.len() * rs.len()).max(1) as f64);
-                    }
-                    best
-                };
-                let (ns, one) = (probe(&grown), probe(&grown.iter().map(|r| r.merged_all(rows, k)).collect::<Vec<_>>()));
-                let merged: usize = grown.iter().map(|r| r.merged).sum();
-                let nruns: usize = grown.iter().map(|r| r.runs.len()).sum();
-                FANOUT.with(|f| { let e = &mut f.borrow_mut()[t / 4]; e.0 += ms; e.1 += merged; e.2 += nruns; e.3 += ns; e.4 += one; e.5 += 1; });
-                by_fanout.push(format!("T{t} {ms:.1} ms, {merged} copied, {nruns} runs, probe {ns:.0} ns vs {one:.0} one run"));
             }
+            let keys = |order: &[usize], len: usize| -> Vec<Vec<i64>> {
+                sample.iter().map(|&id| { let r = self.row(id as usize); order[..len].iter().map(|&c| r[c]).collect() }).collect()
+            };
+            let best_ns = |f: &dyn Fn() -> ()| -> f64 {
+                let mut best = f64::MAX;
+                for _ in 0..3 {
+                    let t = Instant::now();
+                    f();
+                    best = best.min(t.elapsed().as_nanos() as f64 / sample.len().max(1) as f64);
+                }
+                best
+            };
+            // (grow ms, probe-weighted ms over what it ends as, merge-once ms or 0, probe ns, rows read by merges)
+            let mut sums = [(0.0f64, 0.0f64, 0.0f64, 0.0f64, 0usize); 6];
+            for (oi, order) in orders.iter().enumerate() {
+                let len = prefix[oi];
+                let ks = keys(order, len);
+                let w = probes[oi] as f64;
+                // 0: merged as they come.
+                let t = Instant::now();
+                let mut eager = ordered::Runs::with_fanout(order.clone(), 2);
+                for f in &waves_fresh { eager.add_wave(rows, k, f.clone()); }
+                let grow = t.elapsed().as_secs_f64() * 1e3;
+                let ns = best_ns(&|| for key in &ks { std::hint::black_box(eager.count(rows, k, key)); });
+                sums[0] = (sums[0].0 + grow, sums[0].1 + w * ns / 1e6, 0.0, sums[0].3 + ns, sums[0].4 + eager.merged);
+                // 1: the same with tags.
+                let t = Instant::now();
+                let mut tagged = ordered::TaggedRuns::with_fanout(order.clone(), 2);
+                for f in &waves_fresh { tagged.add_wave(rows, k, f.clone()); }
+                let grow = t.elapsed().as_secs_f64() * 1e3;
+                let ns = best_ns(&|| for key in &ks { std::hint::black_box(tagged.count(rows, k, key)); });
+                sums[1] = (sums[1].0 + grow, sums[1].1 + w * ns / 1e6, 0.0, sums[1].3 + ns, sums[1].4 + tagged.row_compares);
+                // 4: the same, its probes from the tag's interpolated place (mldb's PathIndex); the merges' tag
+                // collisions (ties of different leading values).
+                let ns = best_ns(&|| for key in &ks { std::hint::black_box(tagged.count_interp(rows, k, key)); });
+                sums[4] = (sums[4].0 + grow, sums[4].1 + w * ns / 1e6, 0.0, sums[4].3 + ns, sums[4].4 + tagged.collisions);
+                // 2: never merged; merged once where its probes pay for it.
+                let t = Instant::now();
+                let mut lazy = ordered::Runs::with_fanout(order.clone(), usize::MAX);
+                for f in waves_fresh.iter().filter(|f| !f.is_empty()) { lazy.add_wave(rows, k, f.clone()); }
+                let grow = t.elapsed().as_secs_f64() * 1e3;
+                let ns_runs = best_ns(&|| for key in &ks { std::hint::black_box(lazy.count(rows, k, key)); });
+                let t = Instant::now();
+                let one = lazy.merged_all(rows, k);
+                let merge_ms = t.elapsed().as_secs_f64() * 1e3;
+                let ns_one = best_ns(&|| for key in &ks { std::hint::black_box(one.count(rows, k, key)); });
+                let (over_runs, merged_then) = (w * ns_runs / 1e6, merge_ms + w * ns_one / 1e6);
+                let (probe_ms, merge_ms, ns) = if merged_then < over_runs { (w * ns_one / 1e6, merge_ms, ns_one) } else { (over_runs, 0.0, ns_runs) };
+                sums[2] = (sums[2].0 + grow, sums[2].1 + probe_ms, sums[2].2 + merge_ms, sums[2].3 + ns, sums[2].4 + usize::from(merge_ms > 0.0));
+                // 3: never merged, tagged; merged once where its probes pay for it.
+                let t = Instant::now();
+                let mut lazy_t = ordered::TaggedRuns::with_fanout(order.clone(), usize::MAX);
+                for f in waves_fresh.iter().filter(|f| !f.is_empty()) { lazy_t.add_wave(rows, k, f.clone()); }
+                let grow = t.elapsed().as_secs_f64() * 1e3;
+                let ns_runs = best_ns(&|| for key in &ks { std::hint::black_box(lazy_t.count(rows, k, key)); });
+                let t = Instant::now();
+                let one = lazy_t.merged_all(rows, k);
+                let merge_ms = t.elapsed().as_secs_f64() * 1e3;
+                let merge_ms_t = merge_ms;
+                let ns_one = best_ns(&|| for key in &ks { std::hint::black_box(one.count(rows, k, key)); });
+                let (over_runs, merged_then) = (w * ns_runs / 1e6, merge_ms + w * ns_one / 1e6);
+                let (probe_ms, merge_ms, ns) = if merged_then < over_runs { (w * ns_one / 1e6, merge_ms, ns_one) } else { (over_runs, 0.0, ns_runs) };
+                // 5: the same, probed from the tags' interpolated places.
+                let merge_once = merge_ms_t;
+                let ns_runs = best_ns(&|| for key in &ks { std::hint::black_box(lazy_t.count_interp(rows, k, key)); });
+                let ns_one = best_ns(&|| for key in &ks { std::hint::black_box(one.count_interp(rows, k, key)); });
+                let (over_runs, merged_then) = (w * ns_runs / 1e6, merge_once + w * ns_one / 1e6);
+                let (probe_i, merge_i, ns_i) = if merged_then < over_runs { (w * ns_one / 1e6, merge_once, ns_one) } else { (over_runs, 0.0, ns_runs) };
+                sums[5] = (sums[5].0 + grow, sums[5].1 + probe_i, sums[5].2 + merge_i, sums[5].3 + ns_i, sums[5].4 + usize::from(merge_i > 0.0));
+                sums[3] = (sums[3].0 + grow, sums[3].1 + probe_ms, sums[3].2 + merge_ms, sums[3].3 + ns, sums[3].4 + usize::from(merge_ms > 0.0));
+            }
+            let unprobed = probes.iter().filter(|&&p| p == 0).count();
+            VARIANTS.with(|v| {
+                let mut v = v.borrow_mut();
+                for (i, x) in sums.iter().enumerate() {
+                    v.0[i].0 += x.0;
+                    v.0[i].1 += x.1;
+                    v.0[i].2 += x.2;
+                    v.0[i].3 += x.3;
+                    v.0[i].4 += x.4;
+                }
+                v.1 += orders.len();
+                v.2 += unprobed;
+            });
+            variants = format!(
+                "; orders: eager {:.1}+{:.1} ms, tagged {:.1}+{:.1} ms, lazy {:.1}+{:.1}+{:.1} ms, lazy tagged {:.1}+{:.1}+{:.1} ms (grow + probes [+ merge once]; {unprobed} of {} orders unprobed)",
+                sums[0].0, sums[0].1, sums[1].0, sums[1].1, sums[2].0, sums[2].2, sums[2].1, sums[3].0, sums[3].2, sums[3].1, orders.len()
+            );
         }
         let new_bytes = set.bytes() + placed.iter().map(ordered::Growing::bytes).sum::<usize>() + runs.iter().map(ordered::Runs::bytes).sum::<usize>();
         GROWN.with(|g| { let mut g = g.borrow_mut(); g.0 += now_ms; g.1 += new_ms; g.2 += offered; g.3 += held_now; g.4 += now_bytes; g.5 += new_bytes; g.6 += t_set * 1e3; g.7 += t_placed * 1e3; g.8 += t_runs * 1e3; g.9 += delta_offers; g.10 += now_delta; g.11 += now_copy; g.12 += new_delta; g.13 += new_copy; g.14 += set.rehashed + placed.iter().map(|p| p.rehashed).sum::<usize>(); g.15 += usize::from(based.is_some()); });
@@ -2251,13 +2373,13 @@ impl InRel {
             set.rehashed,
             runs.iter().map(|r| r.runs.len()).collect::<Vec<_>>(),
             if based.is_some() { " (a maintained run's)" } else { " (the last wave)" }
-        ) + &if by_fanout.is_empty() { String::new() } else { format!("; orders by fanout: {}", by_fanout.join(", ")) }
+        ) + &variants
     }
     /// The spike's growth totals since the last take: today's ms, the mixed ms, offers, rows held, today's bytes, the
     /// mixed bytes, and the mixed ms by part (set, placed, orders).
-    /// The orders' growth totals by fanout (2, 4, 8) since the last take.
-    pub fn index_spike_fanout() -> [(f64, usize, usize, f64, f64, usize); 3] {
-        FANOUT.with(|f| std::mem::take(&mut *f.borrow_mut()))
+    /// The orders' totals by variant since the last take (`VARIANTS`).
+    pub fn index_spike_variants() -> ([(f64, f64, f64, f64, usize); 6], usize, usize) {
+        VARIANTS.with(|f| std::mem::take(&mut *f.borrow_mut()))
     }
     pub fn index_spike_grown() -> Grown {
         GROWN.with(|g| std::mem::replace(&mut *g.borrow_mut(), GROWN_ZERO))
@@ -2390,7 +2512,8 @@ impl InRel {
             let hot: Vec<Vec<usize>> = measured.iter().filter(|(_, d, f, p, c)| !*d && *c as usize >= live_n && p < f).map(|m| m.0.clone()).collect();
             let mut chains = ordered::cover(&rest, k);
             chains.retain(|o| rest.iter().any(|s| o[..s.len()].iter().all(|c| s.contains(c))));
-            parts.push(self.grow_spike(name, &hot, chains, &rest));
+            let rest_counts: Vec<u64> = rest.iter().map(|r| measured.iter().find(|m| !m.1 && m.0 == *r).map_or(0, |m| m.4)).collect();
+            parts.push(self.grow_spike(name, &hot, chains, &rest, &rest_counts));
         }
         parts.push(format!("mixed {:.1} B/row", mixed_bytes as f64 / live_n as f64));
         Some((
@@ -2459,9 +2582,10 @@ thread_local! {
     static MIXED: std::cell::RefCell<(usize, f64)> = const { std::cell::RefCell::new((0, 0.0)) };
     /// Its growth totals (`InRel::grow_spike`).
     static GROWN: std::cell::RefCell<Grown> = const { std::cell::RefCell::new(GROWN_ZERO) };
-    /// The orders' growth by fanout 2, 4, 8 (`InRel::grow_spike`): ms, ids copied by merges, runs, probe ns summed
-    /// over relations, the same over one run, relations.
-    static FANOUT: std::cell::RefCell<[(f64, usize, usize, f64, f64, usize); 3]> = const { std::cell::RefCell::new([(0.0, 0, 0, 0.0, 0.0, 0); 3]) };
+    /// The orders grown four ways (`InRel::grow_spike`: eager, tagged, lazy, lazy tagged): grow ms, probe-weighted
+    /// ms, merge-once ms, probe ns summed over orders, and rows read by merges (eager, tagged) or orders merged once
+    /// (lazy); then orders, and orders no probe read.
+    static VARIANTS: std::cell::RefCell<([(f64, f64, f64, f64, usize); 6], usize, usize)> = const { std::cell::RefCell::new(([(0.0, 0.0, 0.0, 0.0, 0); 6], 0, 0)) };
 }
 
 /// Tests: this thread's count steps build their tables at their first probe.
@@ -3250,6 +3374,18 @@ impl crate::code_rule_dsl::facts::vtab::Source for Stored {
     }
     fn composite(&self) -> bool { true }
     fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<Vec<usize>> {
+        // Omitted columns read as zero, just as `value` does. They have no array to sort or probe.
+        // Remove their satisfied predicates before using an order over the columns that are held.
+        if equal.iter().any(|&(c, _)| self.values[c].get().is_none()) {
+            if equal.iter().any(|&(c, v)| self.values[c].get().is_none() && v != 0) {
+                return Some(Vec::new());
+            }
+            let held: Vec<_> = equal.iter().copied().filter(|&(c, _)| self.values[c].get().is_some()).collect();
+            return self.lookup_all(&held);
+        }
+        if equal.is_empty() {
+            return Some((0..self.len()).collect());
+        }
         let cols: Vec<usize> = equal.iter().map(|e| e.0).collect();
         let (on, order) = self.order(&cols);
         let by: Vec<(&[i64], i64)> = on[..cols.len()].iter().map(|&c| (self.col(c), equal.iter().find(|e| e.0 == c).map_or(0, |e| e.1))).collect();
@@ -3264,14 +3400,17 @@ impl crate::code_rule_dsl::facts::vtab::Source for Stored {
     /// (`sorted_rows`), or builds its own over a filtered view.
     fn indexed(&self, _: usize) -> bool { true }
     fn lookup(&self, c: usize, values: &[i64]) -> Option<Vec<usize>> {
+        if self.values[c].get().is_none() {
+            return Some(if values.contains(&0) { (0..self.len()).collect() } else { Vec::new() });
+        }
         let mut out: Vec<usize> = values.iter().flat_map(|&v| self.rows_of(c, v).iter().map(|&r| r as usize)).collect();
         out.sort_unstable();
         Some(out)
     }
     /// A column held nowhere (no rule names it, `columns_source`) reads as 0.
     fn value(&self, row: usize, c: usize) -> i64 { self.col(c).get(row).copied().unwrap_or(0) }
-    fn sorted_rows(&self, c: usize, v: i64) -> Option<&[u32]> { Some(self.rows_of(c, v)) }
-    fn sorts_rows(&self, _: usize) -> bool { true }
+    fn sorted_rows(&self, c: usize, v: i64) -> Option<&[u32]> { self.values[c].get().map(|_| self.rows_of(c, v)) }
+    fn sorts_rows(&self, c: usize) -> bool { self.values[c].get().is_some() }
 }
 /// A relation held in memory as columns (`None`: a column no rule reads, which reads as 0), read in place: a
 /// probe on a column is a slice of its sorted index, built on first use.
@@ -4361,6 +4500,21 @@ mod posted_tests {
         let mut want = crate::code_rule_dsl::facts::vtab::syntax::measured(&Unknown(plain));
         want.push(("x".to_owned(), 60, 60, 60, 60));
         assert_eq!(held.statistics().expect("held rows keep statistics"), want);
+    }
+
+    #[test]
+    fn omitted_columns_obey_zero_semantics_in_indexed_probes() {
+        for values in [vec![3], vec![3, 1, 3], vec![]] {
+            let source = columns_source(vec!["key".into(), "omitted".into()], vec![Some(values), None]);
+            for equal in [vec![], vec![(1, 0)], vec![(1, 7)], vec![(0, 3), (1, 0)], vec![(0, 3), (1, 7)]] {
+                let want: Vec<usize> = source.filter_eq(&equal).into_iter().map(|r| r as usize).collect();
+                assert_eq!(source.lookup_all(&equal), Some(want), "{equal:?}");
+            }
+            assert_eq!(source.lookup(1, &[0]), Some((0..source.len()).collect()));
+            assert_eq!(source.lookup(1, &[7]), Some(Vec::new()));
+            assert!(!source.sorts_rows(1));
+            assert_eq!(source.sorted_rows(1, 0), None);
+        }
     }
 
     /// A source with no statistics of its own, so `measured` measures it.

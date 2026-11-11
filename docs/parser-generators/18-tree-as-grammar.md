@@ -66,6 +66,25 @@ tree json {
   states to 18. Tier 2's words do not change (they were merged already, `merge_words`); the
   machine, and every table made from it, is smaller.
 
+- **Remembered words.** `.rr`'s five aggregate words (`min`, `max`, `sum`, `mean`, `join`)
+  were written out once each, in seven places, and differed only in their own kind. Now they
+  are one choice, `remember aggregate_word`: the token it takes is its level's word, and
+  `as aggregate_word` (a wrap's or a relabel's moved node, a reading's `K as C`) names that
+  token's kind. Tier 2's `REMEMBER K` sets the level's word; a call keeps its caller's beside
+  its return and gives it back there, so a nested level starts with its caller's. A rule that
+  takes a remembered word stays inlined (a call would give the word back as it ends).
+  `.rr`: 284 states to 252, 2,881 arms to 2,396.
+
+- **Flags.** An aggregate's value may hold no named argument (a `:` after a word there ends
+  the value), down through every call inside it. `.rr` said so with a copy of the term rules,
+  `_nn`. Now it is a flag: `flag no_named`; `with no_named R` and `without no_named R` call the
+  nested rule `R` with it set or clear; `unless no_named A` is `A` only where it is clear.
+  A called level runs with its caller's flags, but where `with` or `without` sets one, and the
+  caller's are its own again where the call returns (tier 2 keeps them beside the return, with
+  the level's word). Tier 2's `FLAG` sets, clears or tests one. A guarded arm whose flag is set
+  is not there: the state ends, or refuses. Where the arm's own call set the flag, the guard
+  is settled when the grammar compiles. `.rr`: 252 states to 234, 2,396 arms to 2,225.
+
 - **Shared arms.** Tier 2's code also has one copy of each arm body. An arm is a run of
   plain words (its span, keyword check and acts) ending in a `GOTO`. Runs with the same words
   are one body, lowered once. Each place enters it with the index of its own target, and the

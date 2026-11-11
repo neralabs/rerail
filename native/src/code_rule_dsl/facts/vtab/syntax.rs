@@ -80,6 +80,9 @@ pub(crate) struct Projection {
     /// Source/line spans whose complete text a rule reads, traced through copied relation columns.
     /// None is the unprojected test/export interface; AST subtree text keeps its independent bound.
     text_spans: Option<BTreeSet<crate::code_rule_dsl::logic::front::SpanIn>>,
+    /// The node kinds whose text a rule reads (`text_kind_demand`): their nodes' `text` is made at any length. Any
+    /// other node's is made up to `core_rr::TEXT_INLINE` bytes, unless it is token-like.
+    long_text: BTreeSet<String>,
     /// The grammars whose guests keep their partial tree when they do not parse (`.on guest_error partial`,
     /// decision 0055 §6); `"*"` is every grammar. Any other broken guest is withheld.
     pub(crate) partial: BTreeSet<String>,
@@ -87,7 +90,7 @@ pub(crate) struct Projection {
 
 impl Projection {
     pub(crate) fn core() -> Self {
-        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), ast_patterns: Vec::new(), text_spans: None, partial: BTreeSet::new() }
+        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), ast_patterns: Vec::new(), text_spans: None, long_text: BTreeSet::new(), partial: BTreeSet::new() }
     }
     fn wants(&self, rel: &str) -> bool {
         self.reads.as_ref().is_none_or(|r| r.contains(rel))
@@ -106,7 +109,14 @@ impl Projection {
             [Value::Str(k), Value::Str(v)] if v == "partial" => k.strip_prefix("errors").map(|g| g.strip_prefix(':').unwrap_or("*").to_owned()),
             _ => None,
         });
-        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), ast_patterns: program.ast_patterns.iter().cloned().collect(), text_spans: Some(span_text_demand(program)), partial: partial.collect() }
+        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), ast_patterns: program.ast_patterns.iter().cloned().collect(), text_spans: Some(span_text_demand(program)), long_text: BTreeSet::new(), partial: partial.collect() }
+    }
+
+    /// This projection, with `text` made at any length for the node kinds whose text the program's rules read
+    /// ([`text_kind_demand`]; `matchers` are the program's `ast` relations, by relation, as `matchers::lower` gives them).
+    pub(crate) fn with_long_text(mut self, program: &crate::code_rule_dsl::logic::front::Program, matchers: &[(String, String, Vec<String>)]) -> Self {
+        self.long_text = text_kind_demand(program, matchers);
+        self
     }
 
     fn wants_span_text(&self, within: crate::code_rule_dsl::logic::front::SpanIn) -> bool {
@@ -116,6 +126,47 @@ impl Projection {
             |spans| spans.contains(&within),
         )
     }
+}
+
+/// The node kinds whose text a rule reads: a node variable `v` of a positive `text(v, …)` whose kind the same body
+/// fixes, by `kind(v, "K")` or as the root of a matcher's atom (`rr_ast_*(v, …)`, the kind its rule names at the top).
+/// `text` holds a long node's text only for these (`core_rr::TEXT_INLINE`): without it, `text(w, t)` over a
+/// decorated class longer than the bound had no row, and a rule testing that text missed the class. A node whose kind
+/// the body does not fix keeps the bound.
+fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::Program, matchers: &[(String, String, Vec<String>)]) -> BTreeSet<String> {
+    use crate::code_rule_dsl::logic::front::{Literal, Term};
+    // A kind as the program holds it (`python:call`) or as a grammar names it (`call`).
+    let bare = |k: &str| k.rsplit(':').next().unwrap_or(k).to_owned();
+    // A matcher's root kind: its rule's own `kind`, or one of its top-level `all`'s.
+    let root_kind = |text: &str| -> Option<String> {
+        let rule = serde_json::from_str::<serde_json::Value>(text).ok()?.get("rule")?.clone();
+        if let Some(k) = rule.get("kind").and_then(|k| k.as_str()) {
+            return Some(k.to_owned());
+        }
+        rule.get("all")?.as_array()?.iter().find_map(|r| r.get("kind").and_then(|k| k.as_str()).map(str::to_owned))
+    };
+    let roots: HashMap<&str, Option<String>> = matchers.iter().map(|(rel, text, _)| (rel.as_str(), root_kind(text))).collect();
+    let mut kinds = BTreeSet::new();
+    for rule in &program.rules {
+        let atoms: Vec<_> = rule.body.iter().filter_map(Literal::atom).filter(|a| !a.neg).collect();
+        for text in atoms.iter().filter(|a| a.rel == "text") {
+            let Some(Term::Var(v)) = text.args.first() else { continue };
+            for a in &atoms {
+                match (a.rel.as_str(), a.args.as_slice()) {
+                    ("kind", [Term::Var(n), Term::Str(k)]) if n == v => {
+                        kinds.insert(bare(k));
+                    }
+                    (rel, [Term::Var(n), ..]) if n == v => {
+                        if let Some(Some(k)) = roots.get(rel) {
+                            kinds.insert(bare(k));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    kinds
 }
 
 /// Plan-time provenance, not a per-file scan. Only copying a span (including variable equality)
@@ -945,6 +996,7 @@ impl Batch {
             name: !projection.wants("name"),
             literal: !wants_any(&["str", "strprefix", "value", "static_value", "value_type", "text"]),
         };
+        c.long_text = projection.long_text.clone();
         let wants_text = core && projection.wants("text");
         let wants_source_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::SpanIn::Source);
         let wants_line_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::SpanIn::Line);
@@ -1870,6 +1922,7 @@ fn matched(
     tapes: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
     matchers: &Matchers,
     binding: crate::code_rule_dsl::typing::file_local::Binding,
+    atoms: &crate::content_store::atoms::Atoms,
 ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
     use crate::code_rule_dsl::logic::profile;
     let _span = profile::span(|| "ast matchers on the transducer".into());
@@ -1878,15 +1931,25 @@ fn matched(
     // Each tape's document in the batch; the tapes outside it take no part.
     let at: Vec<Option<&Projected>> = tapes.iter().map(|(facts, _, _)| batch.docs.iter().find(|p| Arc::ptr_eq(&p.facts, facts))).collect();
     let held: Vec<usize> = (0..tapes.len()).filter(|&i| at[i].is_some()).collect();
+    // A matcher runs where its gates hold and W admits the file: its `syntax` (valid or invalid) and text literals.
+    let errors: Vec<crate::code_rule_dsl::soundness::SyntaxErrors> = held.iter().map(|&i| crate::code_rule_dsl::soundness::SyntaxErrors::of_doc(&tapes[i].1)).collect();
     let active: Vec<Vec<bool>> = matchers
         .list
         .iter()
-        .map(|m| held.iter().map(|&i| m.gates.iter().all(|g| g.holds(&tapes[i].2, tapes[i].0.source.as_str()))).collect())
+        .map(|m| {
+            held.iter()
+                .zip(&errors)
+                .map(|(&i, errors)| {
+                    let source = tapes[i].0.source.as_str();
+                    m.gates.iter().all(|g| g.holds(&tapes[i].2, source)) && m.captor.grammar.admits_source(source, errors, &mut rustc_hash::FxHashMap::default())
+                })
+                .collect()
+        })
         .collect();
     let docs: Vec<crate::code_rule_dsl::tape::TapeDoc> = held.iter().map(|&i| tapes[i].1.clone()).collect();
     let nodes: u64 = docs.iter().map(|d| d.transducer_len() as u64).sum();
-    let found = if docs.is_empty() || active.iter().all(|a| !a.iter().any(|&on| on)) {
-        vec![vec![BTreeSet::new(); docs.len()]; matchers.len()]
+    let (found, limited) = if docs.is_empty() || active.iter().all(|a| !a.iter().any(|&on| on)) {
+        (vec![vec![BTreeSet::new(); docs.len()]; matchers.len()], Vec::new())
     } else {
         let program = MatcherWave { wave: Arc::clone(wave), tapes: docs, active, gpu: cfg!(target_os = "macos") && metal };
         let kernel = rerail_accel::Kernel::Program(rerail_accel::kernel::ProgramKernel(Arc::new(program)));
@@ -1902,16 +1965,37 @@ fn matched(
             profile::device("ast matcher wave", run.command_buffers as u64, run.device, wall, nodes);
         }
         profile::decision("ast matcher wave lane", || (if run.metal { "metal" } else { "cpu" }).to_owned());
-        found
+        if !run.limited.is_empty() {
+            profile::decision("ast matcher roots over the work limit (confirmed by W)", || format!("{} matcher-files", run.limited.len()));
+        }
+        (found, run.limited)
     };
     profile::work(profile::Unit::Node, nodes);
     let mut out = Vec::new();
-    for (m, found) in matchers.list.iter().zip(found) {
+    for (c, (m, found)) in matchers.list.iter().zip(found).enumerate() {
         let columns = crate::code_rule_dsl::logic::plan::corpus::ast_columns(&m.rel);
         let mut r = Relation::new(columns);
         let mut rows = 0u64;
-        if m.captures.is_empty() {
-            for (&i, found) in held.iter().zip(found) {
+        // A tape where this matcher's program outran the work limit gave every candidate root: W confirms them there.
+        let over: Vec<usize> = limited.iter().filter(|&&(at, _)| at == c).map(|&(_, t)| t).collect();
+        if m.captures.is_empty() && !m.captor.verify && !over.is_empty() {
+            let _confirm = profile::span(|| "ast roots over the work limit, confirmed (W's matcher at each root)".into());
+            let held_over: Vec<usize> = over.iter().map(|&t| held[t]).collect();
+            let found_over: Vec<BTreeSet<u32>> = over.iter().map(|&t| found[t].clone()).collect();
+            let (found_rows, budget) = captured_rows(m, &held_over, &found_over, &at, tapes, atoms)?;
+            if budget > 0 {
+                profile::decision("ast captures over a file's visit budget (no rows)", || format!("{}: {budget} roots", m.rel));
+            }
+            for row in found_rows {
+                r.push(&row);
+                rows += 1;
+            }
+        }
+        if m.captures.is_empty() && !m.captor.verify {
+            for (t, (&i, found)) in held.iter().zip(found).enumerate() {
+                if over.contains(&t) {
+                    continue;
+                }
                 let p = at[i].expect("held");
                 for core in found {
                     let local = p.local.get(core as usize).copied().unwrap_or(NONE);
@@ -1922,10 +2006,18 @@ fn matched(
                 }
             }
         } else {
-            let _captures = profile::span(|| "ast captures (W's matcher at each root)".into());
-            let (found_rows, limited) = captured_rows(m, &held, &found, &at, tapes);
+            // Captures, or a relaxed matcher's roots to confirm (decision 0107): W's matcher at each root.
+            let _captures = profile::span(|| "ast captures and confirmations (W's matcher at each root)".into());
+            let roots: usize = found.iter().map(BTreeSet::len).sum();
+            let (found_rows, limited) = captured_rows(m, &held, &found, &at, tapes, atoms)?;
             if limited > 0 {
                 profile::decision("ast captures over a file's visit budget (no rows)", || format!("{}: {limited} roots", m.rel));
+            }
+            // A relaxed matcher's cost (decision 0107 §3): the roots W confirmed on the host, and the rows it kept.
+            if m.captor.verify {
+                crate::code_rule_dsl::prof::count("ast.relaxed_roots", roots);
+                crate::code_rule_dsl::prof::count("ast.relaxed_kept", found_rows.len());
+                profile::decision("relaxed matchers: roots W confirmed, rows kept", || format!("{}: {roots} roots, {} kept", m.rel, found_rows.len()));
             }
             for row in found_rows {
                 r.push(&row);
@@ -1948,19 +2040,23 @@ fn captured_rows(
     found: &[BTreeSet<u32>],
     at: &[Option<&Projected>],
     tapes: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
-) -> (Vec<Vec<i64>>, usize) {
+    atoms: &crate::content_store::atoms::Atoms,
+) -> StoreResult<(Vec<Vec<i64>>, usize)> {
+    use crate::code_rule_dsl::waves::findings::Capture;
     use rayon::prelude::*;
-    let per: Vec<(Vec<Vec<i64>>, usize)> = held
+    let per: Vec<StoreResult<(Vec<Vec<i64>>, usize)>> = held
         .par_iter()
         .zip(found.par_iter())
         .map(|(&i, roots)| {
             let mut rows = Vec::new();
             let mut limited = 0;
             if roots.is_empty() {
-                return (rows, limited);
+                return Ok((rows, limited));
             }
             let p = at[i].expect("held");
             let tape = &tapes[i].1;
+            // W's matcher reads the file's path (`filePath`, which a relaxed matcher leaves to it).
+            let _file = crate::code_rule_dsl::matcher::FileScopeSlot::install(Vec::new(), None, !tape.syntax_error_ranges().is_empty()).path(&tapes[i].2);
             let root = ast_grep_core::AstGrep::doc(tape.clone());
             let work = m.captor.limits.visits_for(tape.transducer_len());
             let global = |core: u32| -> Option<i64> {
@@ -1978,8 +2074,12 @@ fn captured_rows(
                     }
                 };
                 let mut product: Vec<Vec<i64>> = vec![vec![n_global]];
-                for nodes in names {
-                    let nodes: Vec<i64> = nodes.into_iter().filter_map(global).collect();
+                for capture in names {
+                    // A transform's text is a symbol, the store's atom, as the program's constants are.
+                    let nodes: Vec<i64> = match capture {
+                        Capture::Nodes(nodes) => nodes.into_iter().filter_map(global).collect(),
+                        Capture::Text(text) => vec![i64::from(atoms.intern(&text)?)],
+                    };
                     product = product.into_iter().flat_map(|row| nodes.iter().map(move |&x| {
                         let mut row = row.clone();
                         row.push(x);
@@ -1988,11 +2088,12 @@ fn captured_rows(
                 }
                 rows.extend(product);
             }
-            (rows, limited)
+            Ok((rows, limited))
         })
         .collect();
+    let per = per.into_iter().collect::<StoreResult<Vec<_>>>()?;
     let limited = per.iter().map(|(_, l)| l).sum();
-    (per.into_iter().flat_map(|(rows, _)| rows).collect(), limited)
+    Ok((per.into_iter().flat_map(|(rows, _)| rows).collect(), limited))
 }
 
 /// [`with_nearest`], with each of `matchers`' relations over the documents' tapes (decision 0106).
@@ -2017,7 +2118,7 @@ pub(crate) fn with_matchers(
     drop(built);
     let mut out: Vec<(String, Arc<dyn Source>)> = relations.into_iter().map(|(name, r)| (name.to_owned(), Arc::new(r) as Arc<dyn Source>)).collect();
     if !matchers.is_empty() {
-        out.extend(matched(&batch, &tapes, matchers, binding)?);
+        out.extend(matched(&batch, &tapes, matchers, binding, &store.atoms_handle())?);
     }
     let rows_named: BTreeSet<String> = out.iter().map(|(n, _)| n.clone()).collect();
     // The text tests' relations (decision 0037): the batch's strings that pass each, each string tested once a run.

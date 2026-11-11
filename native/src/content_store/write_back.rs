@@ -15,16 +15,29 @@
 //! - **Durable at the end.** `written` waits for the queue and gives the first error a job met; a
 //!   handle's drop waits too, so no queued write is lost when the process ends.
 //!
-//! A job that fails leaves the store as a cache that lacks that write: the next run misses and
-//! recomputes, as when the write never happened. Its error is reported at `written`.
+//! A job that finds the store busy (another process's writer held it past the job's own write
+//! deadlines, `connection::retry_busy`) is run again whole, after a backoff that starts at
+//! [`JOB_BACKOFF_FIRST`] and doubles to [`JOB_BACKOFF_MAX`], until [`JOB_DEADLINE`]: a job is a
+//! cache's writes (each an upsert), so running it again writes the same. A job that fails
+//! otherwise, or stays busy past the deadline, leaves the store as a cache that lacks that write:
+//! the next run misses and recomputes, as when the write never happened. Its error is reported at
+//! `written`.
 use super::{ContentStore, StoreError, StoreResult};
 use std::any::Any;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
+use std::time::{Duration, Instant};
 
 /// The most bytes queued and unwritten: within the 1 GB budget, a few chunks' memo entries.
 const CAP_BYTES: usize = 192 << 20;
+
+/// The first wait before a busy job runs again: a writer that held the store is often done at once.
+pub const JOB_BACKOFF_FIRST: Duration = Duration::from_micros(50);
+/// The largest wait between a busy job's runs.
+pub const JOB_BACKOFF_MAX: Duration = Duration::from_millis(500);
+/// How long a busy job is run again before it is given up (the run's end waits for it meanwhile).
+pub const JOB_DEADLINE: Duration = Duration::from_secs(120);
 
 /// What a job writes, named so a read of it can find the job (a digest of the table and its key).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -43,8 +56,37 @@ impl Key {
     }
 }
 
-/// A queued write: run on the writer's handle, its own transactions.
-pub type Job = Box<dyn FnOnce(&ContentStore) -> StoreResult<()> + Send>;
+/// A queued write: run on the writer's handle, its own transactions. Run again whole if it finds
+/// the store busy (`run_job`), so it writes what it holds without consuming it.
+pub type Job = Box<dyn FnMut(&ContentStore) -> StoreResult<()> + Send>;
+
+/// Runs `job` until it does not find the store busy, waiting a jittered backoff between runs from
+/// [`JOB_BACKOFF_FIRST`], doubled each time up to [`JOB_BACKOFF_MAX`]; `Busy` once `deadline` has
+/// passed. Returns the outcome and the runs that found the store busy.
+fn run_job(mut job: impl FnMut() -> StoreResult<()>, deadline: Duration) -> (StoreResult<()>, usize) {
+    let started = Instant::now();
+    let mut backoff = JOB_BACKOFF_FIRST;
+    let mut busy = 0;
+    loop {
+        match job() {
+            Err(StoreError::Busy) => {
+                busy += 1;
+                let Some(remaining) = deadline.checked_sub(started.elapsed()).filter(|r| !r.is_zero()) else {
+                    return (Err(StoreError::Busy), busy);
+                };
+                std::thread::sleep(super::connection::jittered(backoff).min(remaining));
+                backoff = (backoff * 2).min(JOB_BACKOFF_MAX);
+            }
+            outcome => return (outcome, busy),
+        }
+    }
+}
+
+/// `job` on `store`, run again while it finds the store busy (`run_job`), its error named by `what`.
+fn retried(store: &ContentStore, what: &str, job: &mut Job) -> StoreResult<()> {
+    let (outcome, busy) = run_job(|| job(store), JOB_DEADLINE);
+    outcome.map_err(|e| StoreError::Invalid(format!("{what}: {e}{}", if busy > 0 { format!(" ({busy} runs found the store busy)") } else { String::new() })))
+}
 
 type Held = Arc<dyn Any + Send + Sync>;
 
@@ -154,13 +196,14 @@ impl ContentStore {
     /// read of it gets meanwhile (`None`: a read waits for the job). The writer's own handle (in a
     /// job) writes at once.
     pub fn write_back(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job) {
+        let mut job = job;
         let Some(w) = self.writer() else {
-            if let Err(e) = job(self) {
-                eprintln!("rerail: {what}: the write failed: {e}");
+            if let Err(e) = retried(self, what, &mut job) {
+                eprintln!("rerail: the write failed: {e}");
             }
             return;
         };
-        let job: Job = Box::new(move |store| job(store).map_err(|e| StoreError::Invalid(format!("{what}: {e}"))));
+        let mut job: Job = Box::new(move |store| retried(store, what, &mut job));
         {
             let mut s = w.shared.state.lock().expect("the writer's state");
             // Back-pressure: past the cap, wait for the writer (never for an empty queue).
@@ -189,7 +232,7 @@ impl ContentStore {
         }
         let mut lane = w.lane.lock().expect("the writer");
         let lane = lane.get_or_insert_with(|| self.start_writer(w));
-        if let Err(mpsc::SendError((job, bytes, keys, _))) = lane.tx.send((job, bytes, keys, holder)) {
+        if let Err(mpsc::SendError((mut job, bytes, keys, _))) = lane.tx.send((job, bytes, keys, holder)) {
             // The writer is gone (it panicked): written here, in order, as the writer would have.
             let outcome = job(self);
             finish(&w.shared, bytes, &keys, outcome, 0.0);
@@ -205,7 +248,7 @@ impl ContentStore {
             .spawn(move || {
                 // What this thread sends to SQLite no wave waits for.
                 super::hazards::behind_the_run();
-                for (job, bytes, keys, holder) in rx {
+                for (mut job, bytes, keys, holder) in rx {
                     *store.holder.lock() = holder;
                     let before = thread_cpu();
                     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
@@ -320,6 +363,38 @@ fn thread_cpu() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A job that finds the store busy is run again at once, then after waits that double: three busy runs, then
+    /// written, cost well under a millisecond's backoff each to start.
+    #[test]
+    fn a_busy_job_is_run_again_after_a_fast_backoff() {
+        let mut runs = 0;
+        let started = Instant::now();
+        let (outcome, busy) = run_job(
+            || {
+                runs += 1;
+                if runs <= 3 { Err(StoreError::Busy) } else { Ok(()) }
+            },
+            JOB_DEADLINE,
+        );
+        assert!(outcome.is_ok());
+        assert_eq!((runs, busy), (4, 3));
+        // 50 + 100 + 200 µs of backoff at most (jittered to half or more), and a slow machine's scheduling.
+        assert!(started.elapsed() < Duration::from_millis(250), "{:?}", started.elapsed());
+    }
+
+    /// A job busy past its deadline is given up, busy; any other error is not run again.
+    #[test]
+    fn a_job_busy_past_its_deadline_or_failing_otherwise_is_given_up() {
+        let mut runs = 0;
+        let (outcome, busy) = run_job(|| { runs += 1; Err(StoreError::Busy) }, Duration::from_millis(20));
+        assert!(matches!(outcome, Err(StoreError::Busy)));
+        assert!(busy == runs && runs > 1, "{runs} runs");
+        let mut runs = 0;
+        let (outcome, busy) = run_job(|| { runs += 1; Err(StoreError::Invalid("no".into())) }, JOB_DEADLINE);
+        assert!(matches!(outcome, Err(StoreError::Invalid(_))));
+        assert_eq!((runs, busy), (1, 0));
+    }
 
     fn store(name: &str) -> (PathBuf, ContentStore) {
         let dir = std::env::temp_dir().join(format!("rerail-write-back-{name}-{}", std::process::id()));

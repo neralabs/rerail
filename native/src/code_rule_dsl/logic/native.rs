@@ -43,7 +43,7 @@ pub(in crate::code_rule_dsl) mod component {
     #[cfg(target_os = "macos")]
     pub(in crate::code_rule_dsl) use super::setfix::{DeviceReport, device_report};
     pub(in crate::code_rule_dsl) use super::setfix::probed;
-    pub(in crate::code_rule_dsl) use super::setfix::{InRel, add, cat_symbols, adopt, adopted, close, carry_sorted, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, hold_as, hold_empty, live, materialize, open_spec, pending, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, run, step_counts, unindex, hold_rows, kept_rows, table_source, tables_built, output_rows};
+    pub(in crate::code_rule_dsl) use super::setfix::{InRel, add, cat_symbols, adopt, adopted, close, carry_sorted, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, hold_as, hold_empty, live, materialize, open_spec, pending, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, run, step_counts, unindex, hold_rows, kept_rows, table_source, tables_built, output_rows, source_rows, finding_rows};
 }
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
@@ -133,6 +133,25 @@ impl Lattice for Min {
     fn top(&self) -> i64 { -TOP }
     fn finite(&self) -> bool { false }
     fn widen(&self, old: i64, new: i64) -> i64 { if new < old { -TOP } else { new } }
+}
+
+/// `shortlex_min<symbol>`: the shortest symbol, then the least by its UTF-8 bytes (`core.rr`), over a run's atoms.
+/// Shortlex is a well-order, so every chain of ever-smaller values is finite. A value the atoms do not hold (`TOP`)
+/// absorbs. The run declares it over its store's atoms (`declare`), as its symbols are those atoms.
+pub(in crate::code_rule_dsl) struct ShortlexMin(pub(in crate::code_rule_dsl) Arc<crate::content_store::atoms::Atoms>);
+impl Lattice for ShortlexMin {
+    fn lub(&self, a: i64, b: i64) -> i64 {
+        if a == TOP || b == TOP {
+            return TOP;
+        }
+        let key = |v: i64| u32::try_from(v).ok().and_then(|atom| self.0.with_str(atom, |s| (s.chars().count(), s.as_bytes().to_vec())));
+        match (key(a), key(b)) {
+            (Some(x), Some(y)) => if y < x { b } else { a },
+            _ => TOP,
+        }
+    }
+    fn top(&self) -> i64 { TOP }
+    fn finite(&self) -> bool { true }
 }
 
 /// Declared lattices by name: the built-ins, and those the logic declares (`declare`), such as the typing's

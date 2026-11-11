@@ -1,6 +1,7 @@
 # 0105: The file system's journal says what changed; the observer trusts the rest
 
-Status: built (2026-11-10), macOS only. Elsewhere every root falls back to stat mode.
+Status: built (2026-11-10). macOS: FSEvents. Elsewhere: Watchman when it is installed, else
+stat mode.
 
 ## Intro
 
@@ -78,11 +79,16 @@ The findings are identical to the baseline (`n_loaded.csv`).
 
 ## Open
 
-- Linux (inotify or fanotify do not keep a history; Watchman or a persistent watcher would be
-  needed) and Windows (USN journal).
-- Other stat sources not yet on the journal:
-  - `World::allowed` canonicalizes each request;
-  - the K3 replay's stats;
-  - `git status` in Git work trees.
-- A run whose edit makes the cone rerun as whole strata still costs ~30 s CPU. The stats are no
-  longer the cost there (0104 step 4, the cone by delta).
+- Built since: Watchman (`RERAIL_JOURNAL=watchman`, or found on `PATH` off macOS). Its clock is
+  the cursor, so a cursor is opaque text kept per root. A fresh Watchman instance has no history
+  and is `Lost`. Watchman's history lasts only while its daemon runs; inotify and fanotify keep
+  none, so without Watchman Linux is in stat mode. Windows (USN journal) is not built.
+- Built since: a root is trusted only inside a run (`begin` to `flush`). A read outside every
+  run checks by `stat`, because nothing marks when the files may have changed.
+- Built since: canonical paths (`Observer::canonical`, kept as `canonical:<path>` records) answer
+  `World::allowed` and the whole-run cutoff's checks with no `realpath` (comment edit: 475 → 1).
+  Git's file list is kept with the journal's cursor taken before the status; a later run reads
+  the status again only when a named path could change the list (a new or removed file, a
+  directory, `HEAD`, the index, refs, config, info or an ignore file).
+- A run whose edit makes the cone rerun as whole strata cost ~20 s CPU; three plans were the
+  cost, and it is now 2.4 s (decision 0108).

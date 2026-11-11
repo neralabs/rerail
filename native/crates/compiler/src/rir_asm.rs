@@ -57,6 +57,8 @@ pub const OPCODES: &[(u8, &str)] = &[
     (RETAG, "RETAG"),
     (MERGE, "MERGE"),
     (WRAP, "WRAP"),
+    (REMEMBER, "REMEMBER"),
+    (FLAG, "FLAG"),
 ];
 
 /// How an opcode's operand prints.
@@ -82,7 +84,7 @@ pub fn operand(opcode: u8, mode: u8) -> Operand {
         FORK | GOTO | PUSH => Operand::Target,
         WORD_IS => Operand::String,
         SWITCH => Operand::Switch,
-        OPEN | LEAF | NODE_SUPER | RETAG | MERGE | WRAP => Operand::Kind,
+        OPEN | LEAF | NODE_SUPER | RETAG | MERGE | WRAP | REMEMBER => Operand::Kind,
         NODE_FIELD => Operand::Field,
         CAPTURE | EMIT => Operand::Label,
         TEXT => Operand::Predicate,
