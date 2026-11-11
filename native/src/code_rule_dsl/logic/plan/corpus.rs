@@ -5824,6 +5824,10 @@ fn run_observed(
                         let name = format!("{rel}__old");
                         let next = match kept {
                             Some(p) => p.after(old, new, *width),
+                            // Held on unchanged (a quiet stratum's, decision 0101 §1): nothing to count yet. Next run
+                            // finds what was measured of it by the same relation, or binds it lazily, and it is
+                            // counted once it changes (O125 step 1: 238 counts instead of 521).
+                            None if std::ptr::eq(Arc::as_ptr(old), Arc::as_ptr(new)) => None,
                             None if new.delta_since(old).is_some() => new.live_rows().map(|live| {
                                 let _c = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel}"));
                                 let names: Vec<String> = (0..*width).map(|c| super::sql_col(&name, c)).collect();
