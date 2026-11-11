@@ -21,15 +21,21 @@ use indexmap::IndexSet;
 use serde_json::Value as Json;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use std::path::Path;
 
 const ORACLES: &str = crate::code_rule_dsl::fixtures_dir!();
 
+/// The oracle file at `path` (`/`-separated) below the Forte fixtures. On Windows the fixtures
+/// folder is the verbatim path `build.rs` canonicalized (`\\?\C:\...`), where `/` separates no
+/// names, so `Path::join` adds each name with the platform's separator.
 pub(super) fn read_oracle(path: &str) -> Json {
-    read_json(&format!("{ORACLES}/blade/blade/forte/{path}"))
+    read_json(Path::new(ORACLES).join("blade/blade/forte").join(path))
 }
 
-pub(super) fn read_json(path: &str) -> Json {
-    let text = std::fs::read_to_string(path).unwrap_or_else(|error| panic!("{path}: {error}"));
+pub(super) fn read_json(path: impl AsRef<Path>) -> Json {
+    let path = path.as_ref();
+    let text =
+        std::fs::read_to_string(path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
     serde_json::from_str(&text).expect("oracle JSON")
 }
 
