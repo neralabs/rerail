@@ -118,9 +118,18 @@ def install(backend,module,detectors=False):
         return [dict(category=p['category'],file_path=path.as_posix(),line_number=r['line'],column=p['column'],code_snippet=p['snippet'],suggestion=p['suggestion']) for r in ordered(rows) for p in [r['parameters']]]
     class Collector(module.AstEventCollector):
         def __init__(self,file_path,base_dir):self.file_path=file_path;self.base_dir=base_dir;self.source='';self.lines=[];self.issues=[]
-        def start_file(self,_path,source,_context):self.source=source;self.lines=source.splitlines()
+        def start_file(self,_path,source,_context):
+            self.source=source;self.lines=source.splitlines();self.issues.extend(scan(backend,'check_file_content_for_patterns',module,dict(file_path=self.file_path,base_dir=self.base_dir,content=source)))
+        def _check_function_signature(self,node):
+            rows=native('_tsp_signature_callback',[],dict(tspNodeName=node.name,tspNodeLine=str(node.lineno),tspNodeColumn=str(node.col_offset),tspNodeEnd=str(node.end_lineno),tspHelperLines=self.lines,filePath=self.file_path.as_posix(),basePath=self.base_dir.as_posix(),**allow_options(module)))
+            if any(r['code']!='TSP_CALLBACK' for r in rows):raise ValueError('Unexpected type-safety signature callback')
+            for r in rows:
+                p=r['parameters'];self.issues.append(module.TypeSafetyIssue(categories[p['category']],self.file_path,p['line_number'],p['column'],p['snippet'],p['suggestion']))
+        def on_FunctionDef(self,node,_context):self._check_function_signature(node)
+        def on_AsyncFunctionDef(self,node,_context):self._check_function_signature(node)
         def finish_file(self):
-            rows=collected(self.file_path,self.source,self.base_dir);self.issues=issues(rows,self.file_path);return facts(rows,self.file_path)
+            unique=scan(backend,'_dedupe_issues',module,dict(issues=self.issues))
+            return [dict(category=v.category.name,file_path=v.file_path.as_posix(),line_number=v.line_number,column=v.column,code_snippet=v.code_snippet,suggestion=v.suggestion) for v in unique]
     backend.replace(module,'TypeSafetyPatternsCollector',Collector)
     backend.replace(module,'type_safety_patterns_fact_extractors',lambda root:{module.TYPE_SAFETY_PATTERNS_EXTRACTOR.extractor_id:lambda path,source:Collector(path,root)})
     def extract(path,source,root):

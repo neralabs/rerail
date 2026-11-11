@@ -2,7 +2,7 @@
 import ast
 from dataclasses import asdict
 import json
-from data_layer_rr_text import module,character_class
+from data_layer_rr_text import module,character_class,classes
 from data_layer_rr_dynamic_cli import literal
 
 
@@ -22,4 +22,14 @@ def suffix(source):
     text=''.join('tsp_config('+json.dumps(k)+','+json.dumps(v)+').\n' for k,v in config.items())
     text+=''.join(f'tsp_category_order({json.dumps(c.name)},{i}).\n' for i,c in enumerate(owner.IssueCategory))
     text+=''.join('tsp_prepare_gate() :- option("tspCallSource",s),contains('+json.dumps(trigger)+',s).\n' for trigger in owner.SIGNATURE_SOURCE_TRIGGERS)
+    from data_layer_rr_types import regex_search
+    import re
+    collector=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='TypeSafetyPatternsCollector')
+    helper=next(n for n in collector.body if isinstance(n,ast.FunctionDef) and n.name=='_check_function_signature')
+    _,space,_=classes();text+='tsp_config("helper_trim",'+json.dumps(r'\A'+space+'+|'+space+r'+\z')+').\n'
+    for branch in ast.walk(helper):
+        if not isinstance(branch,ast.If):continue
+        name=ast.literal_eval(branch.test.comparators[0]);call=branch.body[0].value
+        category=call.args[1].attr;pattern=ast.literal_eval(call.args[2]);suggestion=ast.literal_eval(call.args[3]);first=any(k.arg=='use_first_ten_lines' and ast.literal_eval(k.value) for k in call.keywords)
+        text+='tsp_helper_spec('+','.join([json.dumps(name),json.dumps(category),json.dumps(regex_search(re.compile(pattern))),json.dumps(suggestion),str(int(first))])+').\n'
     return text+'#include "data-layer/type-safety-api.rr"\n#include "data-layer/type-safety-cli.rr"\n'

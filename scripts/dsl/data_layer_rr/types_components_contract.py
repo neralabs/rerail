@@ -16,6 +16,7 @@ def cases(_module):
     for name,source in [('positive',BAD),('clean','pass\n'),('async','async def where(expression: str):\n pass\n'),('nested','def order_by(column: str):\n def select(columns: str):\n  pass\n'),('unicode','def ｏｒｄｅｒ＿ｂｙ(column: str):\n pass\n')]:rows.append(dict(kind='state',id='state-'+name,source=source))
     for kind in ['start','callback']:
         for name,source in [('order',BAD),('where','def where(expression: str):\n pass\n'),('select','def select(columns: str):\n pass\n'),('async','async def group_by(columns: str):\n pass\n'),('clean','def other():\n pass\n')]:rows.append(dict(kind=kind,id=kind+'-'+name,source=source))
+    rows.extend([dict(kind='dedupe',id='dedupe-boolean-integer',lines=[True,1,False,0,2,True]),dict(kind='dedupe',id='dedupe-unbounded',lines=[2**100,2**100,2**100+1,-2**100,-2**100])])
     for name,paths in [('order',['z.py','a/z.py','a-.py','a.py']),('duplicates',['a.py','a.py']),('missing',['missing.py']),('scope',['tests/a.py','test/a.py','a.py','.py','a.pyi']),('binary',['a.py'])]:rows.append(dict(kind='batch',id='batch-'+name,paths=paths,binary=name=='binary'))
     hit=dict(category='STR_UNION_EXPRESSION',file_path='a.py',line_number=3,column=2,code_snippet='snippet',suggestion='suggestion')
     for i,number in enumerate([1,True,False,-1,2**100,None,2.5,'3']):rows.append(dict(kind='project',id='project-'+str(i),fact=dict(hit,line_number=number,column=number)))
@@ -38,6 +39,7 @@ def exercise(module,case,scratch):
         family=module.TYPE_SAFETY_PATTERNS_EXTRACTOR.extractor_id
         if case['kind']=='metadata':
             plugin=module.type_safety_patterns_plugin(root);value={f.name:getattr(plugin,f.name) for f in fields(plugin) if f.name!='reporter'};value.update(registry=list(module.type_safety_patterns_fact_extractors(root)),categories=[(c.name,c.value) for c in module.IssueCategory],allowlist=module.ALLOWLIST,triggers=module.PATTERN_SOURCE_TRIGGERS,signatureTriggers=module.SIGNATURE_SOURCE_TRIGGERS)
+            value['patterns']=[(n,getattr(module,n).pattern,getattr(module,n).flags) for n in ['STR_EXPR_PATTERN','STR_FIELD_PATTERN','EXPR_ANY_ANY_PATTERN','DEPRECATED_OP_PATTERN','DEPRECATED_FILTER_METHOD_PATTERN']]
         elif case['kind']=='extract':
             path=root/'impl/a.py'
             bundle=module._rerail_types_extract(path,case['source'],root) if hasattr(module,'_rerail_types_extract') else materialize_source_facts(path=path,source=case['source'],specs=(module.TYPE_SAFETY_PATTERNS_EXTRACTOR,),extractors=module.type_safety_patterns_fact_extractors(root))
@@ -62,6 +64,7 @@ def exercise(module,case,scratch):
             values=module._issues_for_files(root,tuple(root/path for path in case['paths']));groups={}
             for issue in values:groups.setdefault(issue.file_path,[]).append(issue)
             value=[issue for path in sorted(groups) for issue in groups[path]]
+        elif case['kind']=='dedupe':value=module._dedupe_issues([module.TypeSafetyIssue(module.IssueCategory.STR_IN_WHERE,Path('a.py'),n,0,'snippet-'+str(i),'suggestion') for i,n in enumerate(case['lines'])])
         elif case['kind']=='project':
             fact=case['fact'];value=module._issue_to_fact(module.TypeSafetyIssue(module.IssueCategory[fact['category']],Path(fact['file_path']),fact['line_number'],fact['column'],fact['code_snippet'],fact['suggestion']))
         elif case['kind']=='load':value=module._issue_from_fact(case['fact'])

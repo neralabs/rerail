@@ -16,6 +16,24 @@ tsp_prepare_previous(i) :- option_item("tspPaths",i,p),option_item("tspPaths",j,
 .violation TspRead(at:span,ordinal:number) code "TSP_READ" "type-safety source read"
 TspRead(@place("",0),i) :- option("entryPoint","_tsp_prepare"),tsp_prepare_gate(),option_item("tspNames",i,n),suffix(".py",n),n!=".py",option_item("tspExists",i,"1"),!tsp_prepare_test(i),!tsp_prepare_previous(i).
 
+// Supplied AST callbacks carry their complete signature window as one demand.
+// Production inference uses tsp_issue over the native AST and does not call these.
+.decl tsp_helper_spec(name:symbol,category:symbol,pattern:symbol,suggestion:symbol,first_ten:number)
+.decl tsp_helper_target(line:number,column:number,end_line:number)
+tsp_helper_target(to_number(l),to_number(c),to_number(e)) :- option("tspNodeLine",l),option("tspNodeColumn",c),option("tspNodeEnd",e),e!="None",e!="0".
+tsp_helper_target(to_number(l),to_number(c),to_number(l)+10) :- option("tspNodeLine",l),option("tspNodeColumn",c),option("tspNodeEnd",e),(e="None";e="0").
+.decl tsp_helper_line(line:number,value:symbol)
+tsp_helper_line(i+1,v) :- option_item("tspHelperLines",i,v).
+.decl tsp_helper_terminator(line:number)
+tsp_helper_terminator(k) :- tsp_helper_target(l,_,_),tsp_helper_line(k,s),k>=l,k<=l+10,(contains("):",s);contains(") ->",s)).
+.decl tsp_helper_after(line:number)
+tsp_helper_after(k) :- tsp_helper_line(k,_),tsp_helper_terminator(t),t<k.
+.decl tsp_helper_window(first_ten:number,value:symbol)
+tsp_helper_window(0,t) :- tsp_helper_target(l,_,end),t=join s by k sep "\n":{tsp_helper_line(k,s),k>=l,k<=end}.
+tsp_helper_window(1,t) :- tsp_helper_target(l,_,_),t=join s by k sep "\n":{tsp_helper_line(k,s),k>=l,k<=l+10,!tsp_helper_after(k)}.
+.violation TspCallback(at:span,category:symbol,line_number:number,column:number,snippet:symbol,suggestion:symbol) code "TSP_CALLBACK" "type-safety signature callback"
+TspCallback(@place("",0),c,l,col,@replace_all(s,trim,""),m) :- option("entryPoint","_tsp_signature_callback"),option("tspNodeName",name),tsp_helper_spec(name,c,pattern,m,ten),tsp_helper_target(l,col,_),tsp_helper_window(ten,t),match(pattern,t),tsp_helper_line(l,s),tsp_normalized(p),!tsp_allowed(c,p),tsp_config("helper_trim",trim).
+
 tsp_text_mode(d) :- option("entryPoint","_tsp_collect"),doc(d,_,_),!syntax_error(d,_,_).
 tsp_signature_mode(d) :- option("entryPoint","_tsp_collect"),doc(d,_,_).
 tsp_signature_gate(d) :- option("entryPoint","_tsp_collect"),doc(d,_,_).

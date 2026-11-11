@@ -28,6 +28,7 @@ def cases(_module):
         rows.append(dict(kind='scan',id=entry+'-binary',entry=entry,binary='ff',content=BAD))
     for i,(path,root) in enumerate([('/project/a.py','/'),('//server/a.py','//'),('a/../b.py','a'),('a.py','.'),('/project/a.py','//'),('//server/a.py','/'),('a.py','a.py')]):rows.append(dict(kind='normalize',id='normalize-'+str(i),path=path,root=root))
     rows.extend([dict(kind='scan',id='content-trigger-reads-clean-disk',entry='check_function_signature_content',disk='pass\n',content=BAD),dict(kind='scan',id='content-clean-gates-positive-disk',entry='check_function_signature_content',disk=BAD,content='pass\n'),dict(kind='scan',id='mutable-allowlist',entry='check_file_for_patterns',disk=BAD,override=True)])
+    rows.append(dict(kind='override',id='comparison-allowlist-is-ignored',entry='check_file_for_patterns',disk='x = dict(_lt=1)\n',override=True,overrideCategory='DEPRECATED_COMPARISON_OP'))
     return rows
 
 
@@ -39,7 +40,7 @@ def exercise(module,case,scratch):
         if case['kind']=='normalize':value=module.normalize_path(Path(case['path']),Path(case['root']))
         else:
             original=module.ALLOWLIST
-            if case.get('override'):module.ALLOWLIST={module.IssueCategory.STR_UNION_EXPRESSION:{'impl/a.py'}}
+            if case.get('override'):module.ALLOWLIST={module.IssueCategory[case.get('overrideCategory','STR_UNION_EXPRESSION')]:{'impl/a.py'}}
             try:
                 args=[path,root]
                 if 'content' in case['entry']:args.append(case['content'])
