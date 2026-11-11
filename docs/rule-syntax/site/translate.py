@@ -1220,13 +1220,13 @@ _READS = ("text(", "value(", "line(", "end_line(", "col(", "@doc(")
 
 
 def bind_read_nodes(lits):
-    """text(X, t) tests a bound node; it never enumerates nodes (decision 0109). A metavariable the body only
-    reads (its text, value, line or document) and binds nowhere is bound first by node(_, X, _, _, _)."""
-    body = _strip_strings_keep(", ".join(lits))      # a pattern's `$X` binds X: ticks are not masked
-    top = [_mask_ticks(_strip_strings_keep(l)) for l in lits if not l.startswith(("(", "!")) and " : {" not in l]
+    """text(X, t) tests a bound node; it never enumerates nodes (decision 0109). A metavariable the body's own
+    positive literals only read (its text, value, line or document; a use under `!`, in a disjunction or in an
+    aggregate binds nothing) is bound first by node(_, X, _, _, _)."""
+    top = [_strip_strings_keep(l) for l in lits if not l.startswith(("(", "!")) and " : {" not in l]
     add = []
-    for x in sorted(set(re.findall(r"(?<![\w$@])([A-Z][A-Z0-9_]*)\b", " ".join(top)))):
-        uses = re.findall(r"(@?\w*\()?(?<!\w)\$*" + x + r"\b(?!\s*\()", body)
+    for x in sorted(set(re.findall(r"(?<![\w$@])([A-Z][A-Z0-9_]*)\b", " ".join(_mask_ticks(t) for t in top)))):
+        uses = [u for t in top for u in re.findall(r"(@?\w*\()?(?<!\w)\$*" + x + r"\b(?!\s*\()", t)]
         if uses and all(u in _READS for u in uses) and \
                 any(re.search(r"(?<![\w$@])(?:text|value)\(" + x + r"\b", t) for t in top):
             add.append(f"node(_, {x}, _, _, _)")
@@ -2002,6 +2002,16 @@ def translate(doc):
             # a transform's result is a string, not a node: its text is itself
             pat = re.compile(r"(?<![\w$@])(?:text|value)\((" + "|".join(sorted(prog.symbolic)) + r"), (\w+)\)")
             lits = [pat.sub(r"\2 = \1", l) for l in lits]
+            # and the text variable is that string itself: `t = YT, t < t2` reads `YT < t2` (an equality inside
+            # a disjunction with YT bound outside it would leave t ungrounded)
+            body = ", ".join(lits)
+            for t, x in set(re.findall(r"(?<![\w$@])([a-z]\w*) = (" + "|".join(sorted(prog.symbolic)) + r")\b", body)):
+                if len(re.findall(r"(?<![\w$@])" + t + r" = ", body)) != 1:
+                    continue
+                eq = r"(?<![\w$@])" + t + r" = " + x + r"\b"
+                drop = lambda l: re.sub(eq, "", re.sub(eq + r",\s*", "", re.sub(r",\s*" + eq, "", l)))
+                lits = [re.sub(r"(?<![\w$@])" + t + r"\b", x, drop(l)) for l in lits]
+                lits = [l for l in lits if l.strip()]
         lits = bind_read_nodes(list(lits))
         text = wrap(h, lits, edits=edits)
         inputs = getattr(share_metavariables, "inputs", {}).get(h.split("(")[0], ())
@@ -2080,7 +2090,7 @@ def translate(doc):
     for name, (decl, note, rules) in prog.lib.items():
         # relations a term's lowering shares (main_terms.py): plain Datalog over the tape, no metavariables
         out += ["", *note, decl]
-        out += [wrap(h, lits) for h, lits in rules]
+        out += [wrap(h, bind_read_nodes(list(lits))) for h, lits in rules]
     if helper_rules:
         out.append("")
         for r in helper_rules:
