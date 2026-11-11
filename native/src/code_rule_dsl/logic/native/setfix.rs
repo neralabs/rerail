@@ -3359,13 +3359,14 @@ fn view(conn: &Connection, table: &str, cols: &str) -> Option<View> {
     } else {
         // The columns read and those filtered.
         let filtered = filters.into_iter().flat_map(|f| f.split(" AND ")).filter_map(|f| f.split_once(" = ").map(|(c, _)| c));
-        let need: Vec<&str> = cols.split(',').chain(filtered).collect();
+        let need: Vec<&str> = cols.split(',').filter(|c| c.trim() != "1").chain(filtered).collect();
         stored_table(conn, schema, name, &need)?
     };
     let src=src.frozen().unwrap_or(src);
     let names = src.columns();
     let column = |c: &str| names.iter().position(|n| n == c.trim());
-    let cols: Vec<usize> = cols.split(',').map(column).collect::<Option<_>>()?;
+    // `SELECT 1`: whether rows are there (a gate's `done_N(0)`), no columns read.
+    let cols: Vec<usize> = if cols.trim() == "1" { Vec::new() } else { cols.split(',').map(column).collect::<Option<_>>()? };
     let mut eqs = Vec::new();
     for f in filters.map(|f| f.split(" AND ").collect::<Vec<_>>()).unwrap_or_default() {
         let (c, v) = f.split_once(" = ")?;

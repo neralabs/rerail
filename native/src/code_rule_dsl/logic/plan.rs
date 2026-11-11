@@ -5880,6 +5880,15 @@ pub(in crate::code_rule_dsl) fn run_atoms_native_answering<'a>(
     run_native_inputs(lowered, db, inputs, Hooks { answer: Some(answer), strata, ..Default::default() })
 }
 
+/// Readies the run's connection for native runs before its first wave (decision 0104): the engine's relations and
+/// the store's symbols registered (which reads the store's identity), its settings deferred. Once per connection.
+pub(in crate::code_rule_dsl) fn ready_native(db: &Connection) -> Result<()> {
+    temp_in_memory(db)?;
+    connection::run(db,1,||super::native::register(db))?;
+    connection::run(db,2,||super::native::register_symbols(db))?;
+    Ok(())
+}
+
 fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs, hooks: Hooks<'_>) -> Result<Outcome> {
     temp_in_memory(db)?;
     connection::run(db,1,||super::native::register(db))?;
@@ -6013,7 +6022,8 @@ fn temp_in_memory(db: &Connection) -> Result<()> {
     if TEMP_LEFT.lock().expect("temp_left").get(&at).is_some_and(|l| l.configured) {
         return Ok(());
     }
-    db.execute_batch("PRAGMA temp_store = MEMORY;")?;
+    // Set when SQL first runs on the connection (`vtab::setup_now`): a run all native runs no statement.
+    crate::code_rule_dsl::facts::vtab::defer_setup(db, "PRAGMA temp_store = MEMORY;");
     TEMP_LEFT.lock().expect("temp_left").entry(at).or_default().configured = true;
     Ok(())
 }

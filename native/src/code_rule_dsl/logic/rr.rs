@@ -35,6 +35,7 @@ pub(in crate::code_rule_dsl) use super::front::Error;
 use super::front::Program;
 #[cfg(test)]
 pub(in crate::code_rule_dsl) use lower::drop_unread_core;
+pub(in crate::code_rule_dsl) use aggregate_demand::retype_helpers;
 pub(in crate::code_rule_dsl) use lower::is_core;
 pub(in crate::code_rule_dsl) use lower::WORLD;
 pub(in crate::code_rule_dsl) use print::print;

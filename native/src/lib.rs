@@ -77,7 +77,9 @@ fn install_store_functions() {
         sql_in_wave: code_rule_dsl::sql_hazards::sql_in_wave,
         wait_in_wave: code_rule_dsl::sql_hazards::wait_in_wave,
         behind_the_run: code_rule_dsl::sql_hazards::behind_the_run,
+        statement: code_rule_dsl::sql_hazards::strict_statement,
     });
+    code_rule_dsl::sql_hazards::strict_on_every_connection();
 }
 
 /// Windows has no jemalloc hook (below): the store's functions alone, as the library loads.

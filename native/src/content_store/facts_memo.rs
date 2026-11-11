@@ -239,6 +239,27 @@ impl ContentStore {
         Ok(out)
     }
 
+    /// Every path-dependent result of `source` under `fact_schema` and `plan`, by path, decoded: one statement, for a
+    /// run that reads all a source's entries before its first wave (decision 0104). A frame that does not decode is
+    /// left out.
+    pub fn facts_results_of(&self, source: SourceId, fact_schema: u32, plan: [u8; 32]) -> StoreResult<Vec<(String, Vec<u8>)>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut statement = connection.prepare_cached(
+            "SELECT path, codec_id, raw_length, frame FROM facts_results WHERE source_id=?1 AND fact_schema=?2 AND plan_digest=?3 AND path<>?4",
+        )?;
+        let rows = statement.query_map(params![source.0, i64::from(fact_schema), &plan[..], CONTENT_PURE], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, Vec<u8>>(3)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (path, codec, raw_length, frame) = row?;
+            if let Ok(entry) = decode(codec, raw_length, &frame) {
+                out.push((path, entry));
+            }
+        }
+        Ok(out)
+    }
+
     /// Every memo row of `key`'s content, content-pure and at `key.path`, for `key.fact_schema`.
     pub fn facts_memo(&self, key: FactsMemoKey<'_>) -> StoreResult<FactsMemo> {
         let connection = self

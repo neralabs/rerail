@@ -521,11 +521,11 @@ fn dfa_plan() -> FactsPlanSet {
 /// process reads a group's DFA instead of determinizing it. An entry is a tag (1: a DFA follows; 0: the group does
 /// not determinize within the limit) and the DFA's bytes.
 /// Its second field lists the sources of every group read or stored, for the run's manifest: no other root holds them.
-pub(super) struct StoredDfas<'a>(pub(super) &'a ContentStore, pub(super) std::sync::Mutex<Vec<SourceId>>);
+pub(super) struct StoredDfas<'a>(pub(super) &'a ContentStore, pub(super) std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>);
 
 impl crate::code_rule_dsl::text::vocabulary::DfaCache for StoredDfas<'_> {
     fn get(&self, key: &str) -> Option<Option<Vec<u8>>> {
-        let source = self.0.held_source_by_hash(HashKey::sha256(key.as_bytes())).ok()??;
+        let source = super::memo::stored_source(self.0, key).ok()??;
         self.1.lock().expect("the groups' sources").push(source);
         let memo = self.0.facts_memo(FactsMemoKey { source, fact_schema: DFAS, path: DFA_PATH }).ok()?;
         match memo.results.get(&dfa_plan().plans[0])?.entry.split_first() {
@@ -536,14 +536,24 @@ impl crate::code_rule_dsl::text::vocabulary::DfaCache for StoredDfas<'_> {
     }
 
     fn put(&self, key: &str, dfa: Option<&[u8]>) {
-        // A group not kept is compiled again by the next process: nothing to report.
-        let Ok(source) = super::memo::source(self.0, key) else { return };
-        self.1.lock().expect("the groups' sources").push(source);
         let mut entry = vec![u8::from(dfa.is_some())];
         entry.extend_from_slice(dfa.unwrap_or_default());
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, entry.len() as u64);
-        let set = dfa_plan();
-        let _ = self.0.put_facts_memo(FactsMemoKey { source, fact_schema: DFAS, path: DFA_PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry }], &[]);
+        // Stored by the store's writer, behind the run (decision 0104); its source reaches the manifest, queued after.
+        // A group not kept is compiled again by the next process.
+        let (key, sources) = (key.to_owned(), std::sync::Arc::clone(&self.1));
+        self.0.write_back(
+            "a group of automata",
+            entry.len() + key.len(),
+            Vec::new(),
+            Box::new(move |store| {
+                let source = super::memo::source(store, &key)?;
+                let set = dfa_plan();
+                store.put_facts_memo(FactsMemoKey { source, fact_schema: DFAS, path: DFA_PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry: entry.clone() }], &[])?;
+                sources.lock().expect("the groups' sources").push(source);
+                Ok(())
+            }),
+        );
     }
 }
 

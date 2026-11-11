@@ -276,3 +276,65 @@ pub(super) fn optimize(program: &mut Program) {
 
 #[cfg(test)]
 mod tests;
+
+/// Whether `rel` is a helper the lowering makes (`rr_ctx…`, `rr_agg…`, and their demand `rr_demand_agg_…`), under
+/// any program's prefix.
+fn helper(rel: &str) -> bool {
+    rel.contains("rr_ctx") || rel.contains("rr_agg")
+}
+
+/// The helpers' columns typed again once the library's declarations are known (the combined program).
+///
+/// A program is lowered without the library: a helper column bound only by a library relation (`kind(n, …)`,
+/// `child(p, n, _)`) finds no declaration then, and is a symbol by default. It holds nodes, which the library says;
+/// and a column read through it (a demand's, `rr_demand_agg_…`, copied from the aggregate's) is then a symbol beside
+/// the node the rule's own atoms make it, which no native plan compares. A column a symbol column binds stays one.
+pub(in crate::code_rule_dsl) fn retype_helpers(program: &mut Program) {
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let helpers: Vec<String> = program.decls.keys().filter(|r| helper(r)).cloned().collect();
+        for rel in helpers {
+            let width = program.decls[&rel].len();
+            for i in 0..width {
+                if program.decls[&rel][i].1 != "sym" {
+                    continue;
+                }
+                let (mut found, mut symbol) = (None::<String>, false);
+                for rule in program.rules.iter().filter(|r| r.head.rel == rel.as_str()) {
+                    let Some(Term::Var(v)) = rule.head.args.get(i) else {
+                        symbol = true;
+                        continue;
+                    };
+                    for literal in &rule.body {
+                        match literal {
+                            Literal::Atom(a) if !a.neg => {
+                                for (j, t) in a.args.iter().enumerate() {
+                                    if !matches!(t, Term::Var(x) if x == v) {
+                                        continue;
+                                    }
+                                    let ty = if front::is_axis(&a.rel) {
+                                        Some("node".to_owned())
+                                    } else {
+                                        program.decls.get(a.rel.as_ref() as &str).and_then(|c| c.get(j)).map(|(_, t)| t.clone())
+                                    };
+                                    match ty.as_deref() {
+                                        Some("sym") if !helper(&a.rel) => symbol = true,
+                                        Some("sym") | None => {}
+                                        Some(t) => found = Some(t.to_owned()),
+                                    }
+                                }
+                            }
+                            Literal::Nearest { n, a, .. } if n == v || a == v => found = Some("node".to_owned()),
+                            _ => {}
+                        }
+                    }
+                }
+                if let (Some(ty), false) = (found, symbol) {
+                    program.decls.get_mut(&rel).expect("a helper")[i].1 = ty;
+                    changed = true;
+                }
+            }
+        }
+    }
+}

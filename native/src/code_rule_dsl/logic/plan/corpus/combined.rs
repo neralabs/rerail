@@ -18,7 +18,7 @@
 use crate::code_rule_dsl::logic::front::{Program, Value};
 use crate::code_rule_dsl::logic::program_facts::{self, Facts};
 use crate::code_rule_dsl::logic::rr::{self, LibraryFile};
-use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, SourceId, StoreResult};
+use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, StoreResult};
 use sha2::{Digest as _, Sha256};
 use std::path::PathBuf;
 
@@ -119,9 +119,8 @@ pub(super) fn queued(key: &[u8; 32]) -> crate::content_store::write_back::Key {
 
 /// The source and plan the entry of texts `key` lives under, when the store keeps it: for the run's manifest. A
 /// queued write of it first.
-pub(super) fn named(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<(SourceId, [u8; 32])>> {
-    store.settle(&queued(key));
-    Ok(store.held_source_by_hash(HashKey::sha256(source_text(key).as_bytes()))?.map(|source| (source, plan().plans[0])))
+pub(super) fn named(key: &[u8; 32]) -> (String, [u8; 32]) {
+    (source_text(key), plan().plans[0])
 }
 
 #[cfg(test)]
@@ -142,7 +141,9 @@ mod tests {
         assert!(remember(&store, &key, &read, &program).unwrap());
         let back = lookup(&store, &key).unwrap().expect("kept");
         assert_eq!(format!("{back:?}"), format!("{program:?}"));
-        assert!(named(&store, &key).unwrap().is_some());
+        // The source the manifest names is the store's.
+        let (text, _) = named(&key);
+        assert!(store.sources_by_hashes(&[HashKey::sha256(text.as_bytes())]).unwrap()[0].is_some());
         // Another key finds nothing.
         assert!(lookup(&store, &[8u8; 32]).unwrap().is_none());
         // A file appearing where an include found none combines again.

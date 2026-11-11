@@ -180,6 +180,39 @@ pub(super) fn source(store: &ContentStore, text: &str) -> StoreResult<SourceId> 
     }
 }
 
+/// The source of `text` when the store holds it: one read, and its pin (O95) queued on the store's writer (decision
+/// 0104). `None`: not stored yet; `source`, run on the writer, stores it.
+pub(super) fn stored_source(store: &ContentStore, text: &str) -> StoreResult<Option<SourceId>> {
+    off();
+    let found = store.sources_by_hashes(&[HashKey::sha256(text.as_bytes())])?.pop().flatten();
+    if let Some(id) = found {
+        store.write_back("a source's pin", 0, Vec::new(), Box::new(move |s| s.pin_held_sources(&[id])));
+    }
+    Ok(found)
+}
+
+/// The source of `text` for the run's manifest (`late`, which the manifest reads as the writer runs it), all of it
+/// on the store's writer, behind the run (decision 0104): the source the store holds then, pinned, or, where `store`,
+/// one it stores. Queued after a write that stores it (FIFO), it finds that one.
+pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, late: &std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>) {
+    let late = std::sync::Arc::clone(late);
+    cache.write_back(
+        "a source the manifest names",
+        text.len(),
+        Vec::new(),
+        Box::new(move |s| {
+            let hash = HashKey::sha256(text.as_bytes());
+            let found = match s.held_source_by_hash(hash)? {
+                Some(id) => Some(id),
+                None if store => Some(s.put_source_hashed(text.as_bytes(), hash, &[])?),
+                None => None,
+            };
+            late.lock().expect("the late sources").extend(found);
+            Ok(())
+        }),
+    );
+}
+
 /// How many runs of a plan may leave an entry unread before it is forgotten (decision 0108 §4): the plan's runs are
 /// every root's, so worktrees that take turns keep theirs.
 const MEMO_RUNS: i64 = 32;

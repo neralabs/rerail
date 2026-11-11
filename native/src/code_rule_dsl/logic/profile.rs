@@ -388,7 +388,7 @@ struct Thread {
     port: u32,
     counters: memory::Counters,
     opens: Vec<Open>,
-    /// The statement SQLite is running for it, and since when (`statement`).
+    /// The statement SQLite is running for it, and since when (`strict_statement`).
     statement: Option<(String, std::time::Instant)>,
 }
 
@@ -568,11 +568,94 @@ thread_local! {
 pub(in crate::code_rule_dsl) struct Waves(bool);
 
 pub(in crate::code_rule_dsl) fn waves() -> Waves {
-    let on = on();
-    if on {
-        WAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    WAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    Waves(true)
+}
+
+/// Whether a run's waves are under way (`waves`): what is not read before the first wave is not read from SQLite.
+pub(in crate::code_rule_dsl) fn inside_waves() -> bool {
+    WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0
+}
+
+
+/// `RERAIL_SQL_STRICT=1`, the benchmark's mode: SQL only where decision 0104 puts it. A run reads what it needs
+/// before its first wave (each run of the process, outside every wave), every wave is given what it reads in memory, and what the run keeps is written behind it by
+/// the store's writer. Any other statement, on any connection of the process, ends it at once (`strict_statement`), naming
+/// the statement, its thread and span, and where it was sent from; so does a wave's wait for the writer.
+pub(crate) fn strict() -> bool {
+    static STRICT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *STRICT.get_or_init(|| std::env::var("RERAIL_SQL_STRICT").is_ok_and(|v| !matches!(v.as_str(), "" | "0" | "off")))
+}
+
+/// Whether the store's connections trace their statements: for the profile, or the strict mode.
+pub(crate) fn tracing() -> bool {
+    on() || strict()
+}
+
+/// Whether `text` only reads: a query, a pragma, or a read transaction's bounds.
+fn reads_only(text: &str) -> bool {
+    let t = text.trim_start().to_ascii_uppercase();
+    let word = t.split(|c: char| !c.is_ascii_alphabetic()).next().unwrap_or("");
+    match word {
+        "SELECT" | "WITH" | "PRAGMA" | "EXPLAIN" | "VALUES" | "COMMIT" | "END" | "ROLLBACK" | "RELEASE" | "SAVEPOINT" => true,
+        "BEGIN" => !t.contains("IMMEDIATE") && !t.contains("EXCLUSIVE"),
+        _ => false,
     }
-    Waves(on)
+}
+
+/// A statement about to run on connection `conn` (`run`, `store`, or `sqlite`: any other). In the strict mode
+/// (`strict`), the process ends unless it is the store writer's, or a read before the process's first wave.
+pub(crate) fn strict_statement(conn: &'static str, text: &str) {
+    if !strict() || BEHIND.with(std::cell::Cell::get) {
+        return;
+    }
+    // A run reads before its first wave; a process's runs (phase 0's include graphs, then the run) each do.
+    let inside = WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0;
+    if !inside && reads_only(text) {
+        return;
+    }
+    let when = if inside { "inside the waves" } else { "a write outside the waves, not the store writer's" };
+    violation(when, &format!("{conn}: {}", text.split_whitespace().collect::<Vec<_>>().join(" ")));
+}
+
+/// Ends the process for the strict mode: what ran where, and the stack that sent it. An abort, not a panic: it is
+/// raised inside SQLite's callback, which cannot unwind.
+fn violation(when: &str, what: &str) -> ! {
+    let thread = std::thread::current().name().unwrap_or("unnamed").to_owned();
+    let mut what = what.to_owned();
+    if what.len() > 600 {
+        what.truncate(what.floor_char_boundary(600));
+        what.push('…');
+    }
+    eprintln!(
+        "rerail: RERAIL_SQL_STRICT: SQL {when} (decision 0104: one read before the first wave, writes behind the run)\n  {what}\n  thread {thread}, span {}\n{}",
+        current(),
+        std::backtrace::Backtrace::force_capture()
+    );
+    std::process::abort();
+}
+
+/// In the strict mode, every SQLite connection the process opens checks its statements (`strict_statement`): one that
+/// sets a trace of its own (the store's, the run's) checks them there.
+pub(crate) fn strict_on_every_connection() {
+    use rusqlite::ffi;
+    unsafe extern "C" fn trace(event: u32, _: *mut std::ffi::c_void, p: *mut std::ffi::c_void, _: *mut std::ffi::c_void) -> std::ffi::c_int {
+        if event == ffi::SQLITE_TRACE_STMT as u32 {
+            // SAFETY: for SQLITE_TRACE_STMT, P is the statement.
+            let text = unsafe { std::ffi::CStr::from_ptr(ffi::sqlite3_sql(p.cast::<ffi::sqlite3_stmt>())) }.to_string_lossy();
+            strict_statement("sqlite", &text);
+        }
+        0
+    }
+    unsafe extern "C" fn opened(db: *mut ffi::sqlite3, _: *mut *mut std::ffi::c_char, _: *const ffi::sqlite3_api_routines) -> std::ffi::c_int {
+        // SAFETY: SQLite calls this with a connection it has just opened.
+        unsafe { ffi::sqlite3_trace_v2(db, ffi::SQLITE_TRACE_STMT as u32, Some(trace), std::ptr::null_mut()) };
+        ffi::SQLITE_OK
+    }
+    if strict() {
+        // SAFETY: registers a function with the signature SQLite calls; it outlives every connection.
+        unsafe { ffi::sqlite3_auto_extension(Some(opened)) };
+    }
 }
 
 impl Drop for Waves {
@@ -590,6 +673,14 @@ pub(crate) fn behind_the_run() {
 
 fn in_waves() -> bool {
     on() && WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0 && !BEHIND.with(std::cell::Cell::get)
+}
+
+/// In the strict mode a wave's wait for the writer ends the process, as its SQL would (`strict_statement`); the run's last
+/// wait, for every queued write, is the end of the run.
+fn strict_wait(what: &str) {
+    if strict() && !BEHIND.with(std::cell::Cell::get) && WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+        violation("inside the waves", &format!("a wait for the store's writer: {what}"));
+    }
 }
 
 /// Why a statement inside the waves forces a wait on SQLite, by where it ran and what it does.
@@ -639,6 +730,7 @@ pub(in crate::code_rule_dsl) fn sql_waits() -> Vec<(String, String, u64, u64)> {
 /// A wave's thread waited `wall` seconds for SQLite's side of the store (`what`: a queued write it reads, the queue's
 /// back-pressure): a hazard like a statement.
 pub(crate) fn wait_in_wave(what: &str, wall: f64) {
+    strict_wait(what);
     if !in_waves() {
         return;
     }
