@@ -6,7 +6,8 @@ DAG = {
     'rerail-rr-syntax': [], 'rerail-store': [],
     # the profiler records .rr programs' projections (analysis_report::projection)
     'rerail-prof': ['rerail-rr-syntax'],
-    'rerail-lang': ['rerail-prof', 'rerail-rr-syntax'],
+    # tapes are keyed by the store's identities (tape::tape_identity)
+    'rerail-lang': ['rerail-prof', 'rerail-rr-syntax', 'rerail-store'],
     'rerail-facts': ['rerail-lang', 'rerail-store'],
     'rerail-rr': ['rerail-facts', 'rerail-rr-syntax'],
     'rerail-logic': ['rerail-rr', 'rerail-facts'],

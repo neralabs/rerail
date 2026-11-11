@@ -597,7 +597,7 @@ pub(crate) enum Semantic {
 /// The suppressions a family honours (the registry's `suppressions`), one kind per linter
 /// (`suppress`'s table). PHP honours three linters' (a PHP project may run any of them); Blade
 /// templates none: no linter reads a template's `{{-- --}}` comments for directives.
-pub(crate) use crate::code_rule_dsl::suppress::Suppression;
+pub(crate) use crate::code_rule_dsl::suppress::kinds::Suppression;
 
 /// The ECMAScript source form that structural `when` gates and scope construction read.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
