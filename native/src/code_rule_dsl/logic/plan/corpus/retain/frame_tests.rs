@@ -80,7 +80,7 @@ fn k4_clean_outputs_are_admitted_together_without_rerunning_their_producers() {
     profile::reset(); profile::set(true);
     let wave=profile::waves();
     let span=profile::span(||"bulk output admission".into());
-    let mut kept=Retained::from_frames(&store,SPACE,KEY,&prog).unwrap();
+    let mut kept=Retained::from_frames(&store,SPACE,KEY,&prog,&HashMap::new()).unwrap();
     assert!(prog.outputs.iter().all(|r|kept.holds(r,&prog)),"raw output facts are sufficient to keep a derivation");
     let cut=Cut{clean:prog.outputs.iter().cloned().collect(),strata:(0,130),changed:vec![]};
     assert_eq!(kept.load(&store,&cut,&prog).unwrap(),Some((130,390)));
@@ -102,19 +102,19 @@ fn k4_retains_consumers_of_literal_facts_and_invalidates_them_when_the_literal_c
     let store=ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
     let text=".decl literal(x:number)\nliteral(1).\n.decl result(x:number)\nresult(x) :- literal(x), x > 0.\n.output result\n";
     let prog=rr::parse(text).unwrap();
-    let empty=Retained::from_frames(&store,SPACE,KEY,&prog).unwrap();
+    let empty=Retained::from_frames(&store,SPACE,KEY,&prog,&HashMap::new()).unwrap();
     let initial=cut(Some(&empty),KEY,&prog,&HashMap::new()).unwrap();
     let computed=Retained{key:KEY,rels:HashMap::from([("result".into(),Kept{
         rel:InRel::flat(&[vec![1]],vec![b'i']),width:1,output:None,
     })]),..Default::default()};
     assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&prog,&initial,&[],&HashMap::new()).unwrap(),1);
-    let restored=Retained::from_frames(&store,SPACE,KEY,&prog).unwrap();
+    let restored=Retained::from_frames(&store,SPACE,KEY,&prog,&HashMap::new()).unwrap();
     assert_eq!(cut(Some(&restored),KEY,&prog,&HashMap::new()).unwrap().strata,(0,1));
     let changed=rr::parse(&text.replace("literal(1).","literal(2).")).unwrap();
-    let restored=Retained::from_frames(&store,SPACE,KEY,&changed).unwrap();
+    let restored=Retained::from_frames(&store,SPACE,KEY,&changed,&HashMap::new()).unwrap();
     assert_eq!(cut(Some(&restored),KEY,&changed,&HashMap::new()).unwrap().strata,(1,1),"literal rows participate in the relation's identity");
     let external=rr::parse(&format!("{text}\n.input literal\n")).unwrap();
-    let empty=Retained::from_frames(&store,[52;32],KEY,&external).unwrap();
+    let empty=Retained::from_frames(&store,[52;32],KEY,&external,&HashMap::new()).unwrap();
     let initial=cut(Some(&empty),KEY,&external,&HashMap::new()).unwrap();
     assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&external,&initial,&[],&HashMap::new()).unwrap(),0,
         "a relation with literal rows AND external inputs still needs a runtime dependency digest");
