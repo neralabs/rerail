@@ -41,11 +41,7 @@ pub(in crate::code_rule_dsl) struct SpanPrefilter {
 }
 
 /// Where a batch's span programs ran (`ends_launch`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) enum RanOn {
-    Metal,
-    Cpu,
-}
+pub(in crate::code_rule_dsl) use crate::code_rule_dsl::facts::span_prefilter::RanOn;
 
 /// A batch of span programs as a launch of the executor (decision 0100 §13), the same structure as every other
 /// dispatch: priced by its bytes and operations, placed on the cores or the GPU, claimed by whichever lane reaches it,
@@ -167,19 +163,9 @@ impl SpanPrefilter {
     }
 
     /// Whether a match can end in `(a, b]`, a span's exclusive end, given `ends`.
+    #[cfg(test)]
     pub(in crate::code_rule_dsl) fn any_in(ends: &[u64], a: usize, b: usize) -> bool {
-        // Bits a..b (a match ending at e is bit e - 1).
-        let (mut i, end) = (a, b);
-        while i < end {
-            let (w, bit) = (i / 64, i % 64);
-            let take = (64 - bit).min(end - i);
-            let mask = if take == 64 { u64::MAX } else { ((1u64 << take) - 1) << bit };
-            if ends.get(w).is_some_and(|x| x & mask != 0) {
-                return true;
-            }
-            i += take;
-        }
-        false
+        crate::code_rule_dsl::facts::span_prefilter::any_in(ends, a, b)
     }
 
     #[cfg(test)]
@@ -454,6 +440,31 @@ impl Builder {
             }
         })
     }
+}
+
+
+impl crate::code_rule_dsl::facts::span_prefilter::SpanEnds for SpanPrefilter {
+    fn ends(&self, bytes: &[u8]) -> Vec<u64> {
+        SpanPrefilter::ends(self, bytes)
+    }
+    fn into_any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync> {
+        self
+    }
+}
+
+/// The facts' span prefilter compiler (`facts::span_prefilter::Compile`).
+pub(in crate::code_rule_dsl) fn compile_span(re: &str, lines: bool) -> Option<std::sync::Arc<dyn crate::code_rule_dsl::facts::span_prefilter::SpanEnds>> {
+    SpanPrefilter::compile(re, lines).map(|p| std::sync::Arc::new(p) as std::sync::Arc<dyn crate::code_rule_dsl::facts::span_prefilter::SpanEnds>)
+}
+
+/// The facts' span prefilter launcher (`facts::span_prefilter::Launch`): this module's prefilters, as `compile_span`
+/// made them.
+pub(in crate::code_rule_dsl) fn launch_spans(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<dyn crate::code_rule_dsl::facts::span_prefilter::SpanEnds>], sources: &[std::sync::Arc<String>], files: &[(usize, usize)], device: bool) -> Result<(Vec<Vec<u64>>, RanOn), String> {
+    let filters = filters
+        .iter()
+        .map(|f| std::sync::Arc::clone(f).into_any().downcast::<SpanPrefilter>().map_err(|_| "span prefilter: not a block program's".to_owned()))
+        .collect::<Result<Vec<_>, _>>()?;
+    ends_launch(ex, &filters, sources, files, device)
 }
 
 #[cfg(test)]

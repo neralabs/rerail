@@ -315,7 +315,9 @@ def rebase(dep, crate_dir):
 
 
 def direct(c):
-    return [d for d in DAG.get(c, []) if d != c]
+    """The crates c's manifest names: every crate it sees (a facade re-exports from any of them, not only its
+    direct parents)."""
+    return sorted(d for d in ALLOW.get(c, set()) if d != c)
 
 
 def manifest(c, engine):

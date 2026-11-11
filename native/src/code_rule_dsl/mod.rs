@@ -513,6 +513,8 @@ pub(crate) fn install_languages() {
     });
     // The candidate compiler's audit of a compiled rule.
     let _ = rule_api::FRONTIER_AUDIT.set(|rule| prefilter::candidate_frontier_audit(rule).into());
+    // What compiles and launches a span pattern's prefilter (the transducer's block programs).
+    facts::span_prefilter::install_span_prefilter(transducer::packed::regex_block::compile_span, transducer::packed::regex_block::launch_spans);
     // What compiles a program's `ast` matchers into the transducer wave facts runs (decision 0106).
     facts::vtab::syntax::install_ast_compiler(&facts::vtab::syntax::ast_wave::Compiler);
     // The literal grammars `parse` applies, in the order messages list them (`literal::LiteralGrammar`).

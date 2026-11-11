@@ -187,7 +187,6 @@ module_path	rerail-lang
 embed	rerail-lang
 
 # Whole-file remaps found by moves.py / split.py (no item moves)
-transducer::packed::regex_block	rerail-facts
 demand::driver::catalog	rerail-w
 
 # logic/rr.rs (the module root, which reads phase0) is logic's; its children are the lowering
