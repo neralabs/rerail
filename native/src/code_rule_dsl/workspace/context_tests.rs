@@ -3813,7 +3813,7 @@ fn stateless_regex_clauses_report_snapshot_matches() {
 fn undecodable_tapes_leave_the_search_index_backlog_without_pinning_its_cursor() {
     use super::persisted::grammar_version;
     use super::storage::index_stored_tapes;
-    use crate::code_rule_dsl::transducer::{POSITIONAL_INDEX_VERSION, kind_index_token};
+    use crate::code_rule_dsl::search_index::{POSITIONAL_INDEX_VERSION, kind_index_token};
     use crate::content_store::{SearchKindLookup, StoredKindPresence};
     use std::sync::atomic::AtomicBool;
     let _slot = WORKSPACE_TEST_SLOT.lock();

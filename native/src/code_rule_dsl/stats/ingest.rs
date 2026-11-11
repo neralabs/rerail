@@ -20,7 +20,8 @@
 //! fingerprint in `stat_meta` (the counts change in the transaction that changes the rows, so they
 //! cannot describe other rows).
 
-use crate::code_rule_dsl::prefilter::{LANG_STRIDE, kind_code};
+use crate::code_rule_dsl::facts::core::KIND_STRIDE as LANG_STRIDE;
+use crate::code_rule_dsl::search_index::kind_code;
 use crate::code_rule_dsl::tape::TapeDoc;
 use rusqlite::{Connection, Result, params};
 use std::collections::BTreeMap;

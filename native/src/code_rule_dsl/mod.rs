@@ -68,6 +68,7 @@ mod query;
 // Admission reads these once the batch budget is wired; until then only tests call it.
 #[allow(dead_code)]
 mod resolution;
+mod search_index;
 mod residency;
 // P's paths for P's relational stage, under test (open item O18): P's workspace code reads it here.
 use residency::admission::relational;

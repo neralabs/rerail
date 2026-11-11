@@ -362,10 +362,10 @@ pub(super) fn restore_persisted_file(
             let kinds = matcher.anchors.root_kinds()?;
             Some(crate::content_store::SearchKindLookup {
                 tape_id,
-                index_version: crate::code_rule_dsl::transducer::POSITIONAL_INDEX_VERSION,
+                index_version: crate::code_rule_dsl::search_index::POSITIONAL_INDEX_VERSION,
                 kind_tokens: kinds
                     .iter()
-                    .map(|&kind| crate::code_rule_dsl::transducer::kind_index_token(matcher.language, kind))
+                    .map(|&kind| crate::code_rule_dsl::search_index::kind_index_token(matcher.language, kind))
                     .collect::<Option<_>>()?,
             })
         })

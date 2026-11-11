@@ -269,3 +269,4 @@ matcher::format_args::python	rerail-lang-python
 matcher::format_args::printf	rerail-lang-php
 matcher::format_args::scanf	rerail-lang-php
 compile::resolve::php	rerail-lang-php
+search_index	rerail-facts

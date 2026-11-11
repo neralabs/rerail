@@ -192,14 +192,14 @@ pub(super) fn index_stored_tapes(
             && store
                 .put_unavailable_search_indexes(
                     &undecodable,
-                    crate::code_rule_dsl::transducer::POSITIONAL_INDEX_VERSION,
+                    crate::code_rule_dsl::search_index::POSITIONAL_INDEX_VERSION,
                 )
                 .is_err()
         {
             return;
         }
         if !tapes.is_empty()
-            && crate::code_rule_dsl::transducer::persist_search_index_batch(
+            && crate::code_rule_dsl::search_index::persist_search_index_batch(
                 store, &tapes, &documents,
             )
             .is_err()

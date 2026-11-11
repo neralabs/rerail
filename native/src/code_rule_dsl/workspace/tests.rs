@@ -840,8 +840,8 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
     let lookups = [stored.tape.unwrap(), irrelevant_tape].map(|tape_id| {
         crate::content_store::SearchKindLookup {
             tape_id,
-            index_version: crate::code_rule_dsl::transducer::POSITIONAL_INDEX_VERSION,
-            kind_tokens: vec![crate::code_rule_dsl::transducer::kind_index_token(
+            index_version: crate::code_rule_dsl::search_index::POSITIONAL_INDEX_VERSION,
+            kind_tokens: vec![crate::code_rule_dsl::search_index::kind_index_token(
                 crate::code_rule_dsl::language::GrammarDialect::Python,
                 call,
             )
