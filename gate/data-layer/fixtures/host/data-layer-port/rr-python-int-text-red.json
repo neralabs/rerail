@@ -1,0 +1,7 @@
+{
+  "error": "rerail-engine: building SQL for rr_place_Canonical(0, 0, $id, @python_int_text($raw)): no SQL for @python_int_text($raw)\n",
+  "engineSha256": "f5e7abbacdd014c52f5a62cccab974fd370616a1471a04248f016a8f9fd7559d",
+  "fixtureSha256": "1f411b70f254d455e466f2cd33e5ccbc72a2eeac34cc463a9a1f48162183d47d",
+  "sourceCommit": "403d8b99014b7e606ed327802e85f1509e064de7",
+  "motivatingLinter": "https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_generated_index_sources.py#L183"
+}

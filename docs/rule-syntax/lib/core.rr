@@ -456,6 +456,9 @@
 // max_digits counts digits, excluding separators; zero disables the limit.
 // Invalid text, bounds, or a negative limit gives no value. Huge integers need no allocation.
 .functor python_int_clamped(s: symbol, lower: number, upper: number, max_digits: number): number
+// The same decimal syntax, as canonical unbounded decimal text. Invalid input or
+// more than Python's default 4300 digits gives no value. Reuses the JSON integer decoder.
+.functor python_int_text(s: symbol): symbol
 // Exact signed ASCII decimal arithmetic. Invalid text gives no value; results are canonical decimal text.
 .functor decimal_cmp(a: symbol, b: symbol): number       // -1, 0, or 1
 .functor decimal_sub(a: symbol, b: symbol): symbol

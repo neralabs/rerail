@@ -115,6 +115,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     // Soufflé's `to_number`: a decimal integer's value; no value for other text.
     ("to_number", &[Text], Number),
     ("python_int_clamped", &[Text, Number, Number, Number], Number),
+    ("python_int_text", &[Text], Text),
     ("python_number_key", &[Text], Text),
     ("python_bytes_key", &[Text], Text),
     ("decimal_cmp", &[Text, Text], Number),
@@ -313,6 +314,7 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "git_tracked" => return super::git::git_tracked(t(0)),
         "to_number" => return t(0).trim().parse::<i64>().map_or(Value::Null, Value::Integer),
         "python_int_clamped" => return super::python_integer::clamped(t(0), numbers[0], numbers[1], numbers[2]).map_or(Value::Null, Value::Integer),
+        "python_int_text" => super::python_integer::canonical(t(0)).ok(),
         "decimal_cmp" => return decimal(t(0)).zip(decimal(t(1))).map_or(Value::Null, |(a,b)| Value::Integer(a.cmp(&b) as i64)),
         "decimal_sub" => decimal(t(0)).zip(decimal(t(1))).map(|(a,b)| (a-b).to_string()),
         "decimal_sum" => decimal_sum(t(0)),

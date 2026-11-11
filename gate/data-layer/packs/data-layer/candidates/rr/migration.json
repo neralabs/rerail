@@ -505,7 +505,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/core.rr",
-      "sha256": "24acea2b32811cf40cf244eb29d25abfabb7349bb21091518eeba726fde10609",
+      "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112",
       "importedSha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
       "repairs": [
         {
@@ -669,6 +669,11 @@
           "before": "8b721fa30989334342de5980b3746d240547c78345d1845cdad0b8816d6e42b9",
           "after": "eda14556d8eeba09166ce5f9f8a9efb0db73090a2c87e6d8c02aa88687c7db5d",
           "reason": "Expose demanded typed file read errors and preserve inventory error precedence."
+        },
+        {
+          "before": "24acea2b32811cf40cf244eb29d25abfabb7349bb21091518eeba726fde10609",
+          "after": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112",
+          "reason": "Expose the existing Python decimal decoder as an exact text functor"
         }
       ],
       "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
@@ -5052,7 +5057,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/functions.rs",
-        "sha256": "803af080e836675bad38f4658d076921f85a8f97fe5766a45fa43d11c5d48c24"
+        "sha256": "56a930de8ca6f6c43ec38d98297528d49dc2541facd8d9d58460f7cb0e6b87b2"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/python_integer.rs",
@@ -5239,18 +5244,6 @@
       "wallSeconds": 105.85,
       "userCpuSeconds": 617.05,
       "systemCpuSeconds": 11.15
-    },
-    "adoptionAudit": {
-      "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "fcce32b26cf5e561ded72575ed6d327394f822fe",
-      "engineCommit": "b9aee60a0b56c64ab6bee150f4b53848a8d68b2a",
-      "sourceTrees": {
-        "native": "50bff15b8b58c3893aad15875484846643562b61",
-        "accel": "c0a9697122e57c9e213919c4e9b9686dd17a1b07",
-        "tools/bitlex": "3699290356d32d790f91b76c5df41186268ada69",
-        "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
-        "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
-      }
     }
   },
   "engineSourceSnapshots": [

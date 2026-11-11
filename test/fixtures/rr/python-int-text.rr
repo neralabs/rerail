@@ -1,0 +1,8 @@
+.policy "python-int-text-regression" revision 1
+.language python
+.decl sample(id: symbol, input: symbol)
+sample("unicode","١_٢").
+sample("large","1267650600228229401496703205376").
+sample("invalid","1__2").
+.violation Canonical(at: span, id: symbol, value: symbol) "{value}"
+Canonical(@place("",0),id,@python_int_text(raw)) :- sample(id,raw).
