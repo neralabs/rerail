@@ -279,6 +279,33 @@ The held fields cost at calls: each call stores all ten and loads them after.
 The lean parser stores only what its callee reads or changes.
 That is the next step: a call's arguments and results, or only the fields it touches.
 
+## Built: calls as the lean parser makes them
+
+- **`ctx` is the state's address,** every rule function's first argument,
+  kept by the allocator in a callee-saved register, as `&mut self` is.
+  No pinned register, so no move each block.
+- **Four fields are passed and given back** (`HELD_IN_RULES`):
+  the token's code, start and end, and the stream's end.
+  Four fit the argument registers after `ctx` and the entry.
+  Ten went through the stack and a return area: 706 KB of code, 525M instructions.
+- **The rest of the state is in memory,** read and written where used (`Cut::reload`).
+  So is each `ctx` field: none lives across the function and spills.
+- **A call's result is 0 or 1** for a return (`cbz`, a compare with 1), as a `Result` is.
+  The run's end comes back with its top bit flipped.
+  Before, each call compared with `1 << 62`: a `mov`, a `movk` and two compares.
+- **A refusal's place is set in a cold block,** not on the hot path before each guard.
+
+| | Held across calls | Passed in registers |
+|---|---|---|
+| Machine instructions | 135,201 | 159,283 |
+| `mov` | 19,768 | 21,568 |
+| Tier 2, instructions | 497.5M | 441.0M |
+| Tier 2, cycles | 104.9M | 87.6M |
+
+What is left at a call: the four passed fields spill between blocks
+(21,725 stack accesses), as rule functions are large.
+And the level's word and flags are stored around every call, though few rules use them.
+
 ## The order
 
 1. One symbol a token: rows and keywords in the record, one switch a state.
