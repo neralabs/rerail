@@ -12,6 +12,7 @@ pub(crate) mod python_ast;
 pub(crate) mod rust;
 pub(crate) mod sql;
 pub(crate) mod structure;
+pub(crate) mod types;
 pub(crate) mod python_structure;
 pub(crate) mod text_regex;
 
@@ -418,7 +419,7 @@ pub(crate) enum Value {
     /// A PHP string: bytes.
     PhpStr(Vec<u8>),
     /// A PHP array whose keys and values are all known: an ordered map, in insertion order.
-    PhpArray(Vec<(php::Key, Value)>),
+    PhpArray(Vec<(types::Key, Value)>),
     Container {
         kind: ContainerKind,
         len: Option<usize>,
@@ -428,12 +429,12 @@ pub(crate) enum Value {
     /// A Rust integer, with its type where a suffix or a declaration gives it.
     RustInt {
         value: BigInt,
-        ty: Option<rust::IntTy>,
+        ty: Option<types::IntTy>,
     },
     /// A Rust float, with its type where a suffix or a declaration gives it.
     RustFloat {
         value: f64,
-        ty: Option<rust::FloatTy>,
+        ty: Option<types::FloatTy>,
     },
     /// A Rust `char`.
     Char(char),

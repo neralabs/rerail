@@ -1,6 +1,7 @@
 //! Moved from `arguments.rs` by the crate split (tools/cratify/moves.tsv).
 
 use super::*;
+use crate::code_rule_dsl::matcher::arguments::lang_php::PhpArguments as _;
 
 /// Named arguments that bind any parameter; Ruff's syntactic reading.
 impl ArgumentRules for Php {
