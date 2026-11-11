@@ -3588,3 +3588,66 @@ The receipt is `rr-type-safety-events-red-finalfcce.json.gz`.
 Type safety remains a draft. The inventory remains sixteen admissions, eighty-three drafts, and one absent translation.
 Remaining acceptance includes collector event repairs, both API replays, all original positives, persistent updates, removal controls, and strict admission tests.
 The remote Final branch remains `fcce32b26`. The retained native binary is unchanged.
+
+### 2026-11-11 — Type-safety collector events and scope repairs
+
+The collector adapter now preserves findings at `start_file` and dispatches function callbacks through native signature-window relations.
+All fifteen initial event and state contracts pass after the repair.
+Production still uses batched native AST relations. The callback adapter transfers explicit framework events during compatibility testing.
+
+Additional source recordings expose two helper differences.
+Comparison operators ignore allowlist entries. Deduplication treats boolean line values as their integer equivalents.
+Both repairs pass through snapshot and workspace execution. The edge red receipt retains the failing results before these repairs.
+
+A supplied-fact test exposes a field-name collision. A foreign `line` field interferes with the linter's actual `line_number` field.
+That collision produces four findings from one supplied fact. The adapter now ignores the foreign field in typed line lookup.
+Strict loading also ignores that field and still requires `line_number`.
+
+A symlink test exposes a separate alias-scope defect.
+The native matcher shares an AST between an allowlisted file and an unallowlisted alias.
+Its document-only issue key loses the owner path and reports the alias's finding against both files.
+Issue matching now retains the owner path through regex detection, signature detection, and deduplication.
+Both source-recorded probes pass after the repair. The scope red receipt retains the failures, consumed programs, and adapter bytes.
+
+The expanded recordings contain 99 public cases, 95 component cases, fifteen production cases, and 27 CLI cases.
+They also retain all 61 earlier batch-two inputs: 51 original recordings and ten probes.
+The final coherent replay is still running when this entry is written.
+Earlier original-suite runs passed 193 assertions and all 31 positive observations through each API.
+Those earlier runs use previous policy revisions and cannot certify the final policy.
+
+A repeated original-suite run reaches the 110-second command cap while sibling worktrees compile.
+Final execution uses sixteen original-suite shards and at most four concurrent commands.
+Older reports are moved aside before the run. A timed-out run cannot reuse a stale successful JSON report.
+No command receives a longer timeout.
+
+The new progress validator identifies 23 assertions over native configuration, five passive DTO storage assertions, and three host protocol assertions.
+All 31 original assertions execute. They are distinct from assertions that invoke native inference during the test itself.
+The validator rejects hidden passive cases, missing native configuration, source CLI fallback, omitted positives, and mixed policy revisions.
+Progress evidence cannot grant full admission.
+
+### 2026-11-11 — Type-safety coherent acceptance checkpoint
+
+All 104 bounded acceptance shards pass on the same policy and native engine revision.
+Each API passes all 193 original assertions and all 31 finding-positive observations.
+Each API also passes 99 public cases, 95 component cases, fifteen production cases, 27 CLI cases, and 61 historical inputs.
+The checkpoint retains 1,558 native executions and complete source, program, and adapter snapshots.
+The progress receipt is `rr-type-safety-progress-finalfcce.json.gz`.
+
+The original suite contains 23 assertions over native configuration and five assertions over passive dataclass storage.
+Three additional assertions cover module documentation, adapter callability, and native-configured argparse help.
+These 31 assertions execute with their unchanged identities. They remain separate from assertions that invoke inference inside the test.
+Five recorded missing-file and decoding cases have no legacy normalized input body.
+Their complete source and native results are both empty lists. The validator checks those complete values and their recorded I/O reason.
+No original assertion is excluded or delegated to a source linter callback.
+
+All 46 behavior-removal controls pass before complete admission.
+Two persistent-update runs expose a fixture deletion defect on the case-insensitive filesystem.
+The fixture contains both `a.py` and `a.PY`, which identify the same physical file.
+Cleanup removes that file twice and fails before the final empty-repository assertion.
+Four regression tests cover case aliases, explicit parent directories, hardlinks, and unchanged-file timestamps.
+The fixture updater now records physical identities and deletes each removed alias once.
+It also defers removal of explicit parent entries until their own update step.
+The repaired update sequences are rerunning when this entry is written.
+
+The coherent checkpoint still cannot grant full admission. Complete update evidence and admission tests remain required.
+No engine source changes, engine build, full-repository cold run, or new Linear ticket are part of this work.

@@ -84,6 +84,9 @@ tsp_api_duplicate(d) :- doc(d,buffer,_),option_item("apiBuffers",i,buffer),optio
 .decl tsp_path(d: number, path: symbol, name: symbol)
 tsp_path(d, p, n) :- tsp_api_path(d, p, n).
 tsp_path(d, p, n) :- doc(d, p, _), file_name(d, n), !tsp_api_path(d, _, _).
+.decl tsp_owned(d: number, owner: symbol, path: symbol)
+tsp_owned(d,buffer,p) :- doc(d,buffer,_),option_item("apiBuffers",i,buffer),option_item("apiSourcePaths",i,p).
+tsp_owned(d,p,p) :- doc(d,p,_),!tsp_api_path(d,_,_).
 .decl tsp_signature_mode(d: number)
 tsp_signature_mode(d) :- tsp_policy_doc(d), !option("entryPoint", _).
 tsp_signature_mode(d) :- tsp_fact_file(d), option("entryPoint", e),
@@ -97,7 +100,7 @@ tsp_signature_gate(d) :- tsp_policy_doc(d),!option("entryPoint",_).
     for trigger in original.SIGNATURE_SOURCE_TRIGGERS:
         text += f'tsp_signature_gate(d) :- doc(d, _, _), option("callSource", t), contains({q(trigger)}, t).\n'
     text += r'''
-.decl tsp_issue(d: number, l: number, c: symbol, column: number, ordinal: number, suggestion: symbol, snippet: symbol)
+.decl tsp_issue(d: number, owner: symbol, l: number, c: symbol, column: number, ordinal: number, suggestion: symbol, snippet: symbol)
 '''
     patterns = [
         ('STR_EXPR_PATTERN', 'STR_UNION_EXPRESSION', "Remove 'str' from union; use Expression or Field only"),
@@ -107,7 +110,8 @@ tsp_signature_gate(d) :- tsp_policy_doc(d),!option("entryPoint",_).
         ('DEPRECATED_FILTER_METHOD_PATTERN', 'DEPRECATED_FILTER_METHOD', 'Use .filter(field(Model.col) > value) or .filter(IN(field(Model.col), values))')]
     for ordinal, (name, category, suggestion) in enumerate(patterns):
         rx = q(regex_search(getattr(original, name)))
-        text += f'tsp_issue(d, l, {q(category)}, 0, {ordinal}, {q(suggestion)}, @replace_all(t, {q(trim)}, "")) :- tsp_text_mode(d), tsp_pattern_trigger(d), split_line(d, l, t), tsp_path(d, p, _), !tsp_allowed({q(category)}, p), match({rx}, t).\n'
+        allow = '' if category == 'DEPRECATED_COMPARISON_OP' else f'!tsp_allowed({q(category)}, p), '
+        text += f'tsp_issue(d, owner, l, {q(category)}, 0, {ordinal}, {q(suggestion)}, @replace_all(t, {q(trim)}, "")) :- tsp_text_mode(d), tsp_pattern_trigger(d), split_line(d, l, t), tsp_owned(d, owner, p), {allow}match({rx}, t).\n'
         text += f'.violation TspPattern{ordinal}(at: span) code "TSP_PATTERN" "pattern"\nTspPattern{ordinal}(@place("input.py", 1)) :- option("entryPoint", "pattern_search"), option("patternOrdinal", "{ordinal}"), option("patternText", t), match({rx}, t).\n'
     text += r'''
 // The scanner reads splitlines(), rather than the function node's source span.
@@ -134,18 +138,18 @@ tsp_window(f, t) :- tsp_function(f, d, l, "order_by", _),
         ('where', r'expression\s*:\s*str\b|:\s*str\s*\|', 'where should accept Expression or Field, not str'),
         ('select', r'\*columns\s*:\s*str\b|columns\s*:\s*str\b|:\s*str\s*\|', 'select should accept Expression or Field, not str'),
         ('group_by', r'\*columns\s*:\s*str\b|columns\s*:\s*str\b|:\s*str\s*\|', 'group_by should accept Expression or Field, not str')]
-    text += '.decl tsp_signature_match(f: node, c: symbol, suggestion: symbol)\n'
+    text += '.decl tsp_signature_match(f: node, owner: symbol, c: symbol, suggestion: symbol)\n'
     for name, pattern, suggestion in signature_patterns:
         category = 'STR_IN_' + name.upper()
-        text += f'tsp_signature_match(f, {q(category)}, {q(suggestion)}) :- tsp_function(f, d, _, {q(name)}, _), tsp_path(d, p, _), !tsp_allowed({q(category)}, p), tsp_window(f, t), match({q(regex_search(re.compile(pattern)))}, t).\n'
-    text += f'tsp_issue(d, l, c, column, 5 + i, suggestion, @replace_all(t, {q(trim)}, "")) :- tsp_signature_match(f, c, suggestion), tsp_function(f, d, l, _, _), visit_index(f, i), col(f, column), split_line(d, l, t), !tsp_earlier_signature(f, c).\n'
+        text += f'tsp_signature_match(f, owner, {q(category)}, {q(suggestion)}) :- tsp_function(f, d, _, {q(name)}, _), tsp_owned(d, owner, p), !tsp_allowed({q(category)}, p), tsp_window(f, t), match({q(regex_search(re.compile(pattern)))}, t).\n'
+    text += f'tsp_issue(d, owner, l, c, column, 5 + i, suggestion, @replace_all(t, {q(trim)}, "")) :- tsp_signature_match(f, owner, c, suggestion), tsp_function(f, d, l, _, _), visit_index(f, i), col(f, column), split_line(d, l, t), !tsp_earlier_signature(f, owner, c).\n'
     text += r'''
-.decl tsp_earlier_signature(f: node, c: symbol)
-tsp_earlier_signature(f, c) :- tsp_signature_match(f, c, _), tsp_signature_match(g, c, _),
+.decl tsp_earlier_signature(f: node, owner: symbol, c: symbol)
+tsp_earlier_signature(f, owner, c) :- tsp_signature_match(f, owner, c, _), tsp_signature_match(g, owner, c, _),
     docof(f, d), docof(g, d), line(f, l), line(g, l), earlier(g, f).
 .violation TypeSafety(at: span, category: symbol, column: number, ordinal: number, suggestion: symbol, snippet: symbol, label: symbol) code "TSP001"
     "{label}: {suggestion}"
-TypeSafety(@place(p, l), c, column, ordinal, suggestion, snippet, label) :- tsp_issue(d, l, c, column, ordinal, suggestion, snippet), doc(d, p, _), tsp_category(c, label).
+TypeSafety(@place(p, l), c, column, ordinal, suggestion, snippet, label) :- tsp_issue(d, p, l, c, column, ordinal, suggestion, snippet), doc(d, p, _), tsp_category(c, label).
 .violation TspAllowed(at: span) code "TSP_ALLOWED" "allowlisted"
 TspAllowed(@place("input.py", 1)) :- option("entryPoint", "is_allowlisted"), option("category", c), tsp_normalized(p), tsp_allowed(c, p).
 .decl tsp_normalized(p: symbol)
@@ -171,8 +175,12 @@ tsp_excluded(d) :- tsp_path(d, path, name), tsp_excluded_part(p), p != name,
 .violation TspDedupe(at: span, ordinal: number) code "TSP_DEDUPE" "first issue"
 TspDedupe(@place("input.py", 1), i) :- option("entryPoint", "_dedupe_issues"), option_item("issuePaths", i, _), !tsp_duplicate(i).
 .decl tsp_duplicate(i: number)
-tsp_duplicate(i) :- option_item("issuePaths", i, p), option_item("issueLines", i, l), option_item("issueCategories", i, c),
-    option_item("issuePaths", j, p), option_item("issueLines", j, l), option_item("issueCategories", j, c), j < i.
+.decl tsp_issue_line(i: number, value: symbol)
+tsp_issue_line(i,v) :- option_item("issueLines",i,v),v!="true",v!="false".
+tsp_issue_line(i,"1") :- option_item("issueLines",i,"true").
+tsp_issue_line(i,"0") :- option_item("issueLines",i,"false").
+tsp_duplicate(i) :- option_item("issuePaths", i, p), tsp_issue_line(i, l), option_item("issueCategories", i, c),
+    option_item("issuePaths", j, p), tsp_issue_line(j, l), option_item("issueCategories", j, c), j < i.
 '''
     from data_layer_rr_types_api import suffix
     from data_layer_rr_production import production

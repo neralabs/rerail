@@ -3,8 +3,8 @@
 #include "project.rr"
 .decl tsp_category_order(category:symbol,ordinal:number)
 .decl tsp_event_order(d:number,line:number,ordinal:number,phase:number,first:number,second:number)
-tsp_event_order(d,l,i,0,l,i) :- tsp_issue(d,l,_,_,i,_,_),i<5.
-tsp_event_order(d,l,i,1,i,0) :- tsp_issue(d,l,_,_,i,_,_),i>=5.
+tsp_event_order(d,l,i,0,l,i) :- tsp_issue(d,_,l,_,_,i,_,_),i<5.
+tsp_event_order(d,l,i,1,i,0) :- tsp_issue(d,_,l,_,_,i,_,_),i>=5.
 .violation TspConfiguration(at:span,key:symbol,value:symbol) code "TSP_CONFIG" "type-safety configuration"
 TspConfiguration(@place("",0),k,v) :- option("entryPoint","_tsp_configuration"),tsp_config(k,v).
 .decl tsp_prepare_gate()
@@ -51,7 +51,7 @@ pp_config("findingSeverity","hard-fail").
 .decl tsf_member(b:number,r:number,f:number,key:symbol)
 .input tsf_member(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/key",projection="python-str")
 sfe_member(b,r,f,"line") :- tsf_member(b,r,f,"line_number").
-sfe_member(b,r,f,k) :- tsf_member(b,r,f,k),k!="line_number".
+sfe_member(b,r,f,k) :- tsf_member(b,r,f,k),k!="line_number",k!="line".
 .input sfe_value(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/encoded",projection="python-value-str")
 .input sfe_tag(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/encoded/0",projection="python-str")
 .input sfe_scalar(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/encoded/1",projection="python-str")

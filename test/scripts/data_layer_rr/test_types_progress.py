@@ -24,7 +24,7 @@ class Progress(unittest.TestCase):
         self.assertFalse(summary['admitted'])
         self.assertEqual(summary['originalCasesPerAPI'],193)
         self.assertEqual(summary['originalPositiveObservationsPerAPI'],31)
-        self.assertEqual(summary['casesPerAPI'],dict(public=99,components=91,production=14,cli=27))
+        self.assertEqual(summary['casesPerAPI'],dict(public=99,components=95,production=15,cli=27,legacy=61))
         self.assertEqual(summary['originalConfigurationOrPassiveCasesPerAPI'],31)
 
     def test_omitted_positive(self):
@@ -50,6 +50,12 @@ class Progress(unittest.TestCase):
 
     def test_different_engine(self):
         value=copy.deepcopy(self.value);value['reports']['production']['snapshot'][0]['engineSha256']='different';self.rejected(value)
+
+    def test_different_original_policy(self):
+        value=copy.deepcopy(self.value);value['originals']['snapshot'][0]['policySha256']['type_safety_patterns']='different';self.rejected(value)
+
+    def test_source_cli_fallback(self):
+        value=copy.deepcopy(self.value);value['originals']['workspace'][0]['hostProtocolCalls']=[dict(entry='cli_main')];self.rejected(value)
 
     def test_premature_admission(self):
         value=copy.deepcopy(self.value);value['admitted']=True;self.rejected(value)
