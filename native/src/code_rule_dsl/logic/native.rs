@@ -21,7 +21,7 @@
 mod setfix;
 #[cfg(test)]
 pub(crate) use setfix::DERIVATIONS;
-pub(in crate::code_rule_dsl) use setfix::forget_scope;
+pub(in crate::code_rule_dsl) use setfix::{forget_engine, forget_scope};
 pub(in crate::code_rule_dsl) mod aggregation;
 /// `dfs_first` and `dfs_first_memo` (`core.rr`): a relation the evaluator makes from its inputs' rows.
 pub(in crate::code_rule_dsl) mod dfs_first;

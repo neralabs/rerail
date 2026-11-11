@@ -668,7 +668,10 @@ impl Layer {
                 let commented = index.directives().map(|(line, _)| line).collect::<Vec<_>>();
                 for (line, tests) in index.directives() {
                     insert("bandit", &[d, line as i64, 0])?;
-                    for test in tests.iter().filter_map(|test| index_of(&self.codes, test)) {
+                    // A test no clause's code names still names one: the comment is no blanket `# nosec`
+                    // (`# nosec B607` keeps B602's violation, as in Bandit). It is a `k` no `nosec(c, k)` holds.
+                    let named: BTreeSet<i64> = tests.iter().map(|test| index_of(&self.codes, test).unwrap_or(i64::MAX)).collect();
+                    for test in named {
                         insert("bandit", &[d, line as i64, test])?;
                     }
                 }

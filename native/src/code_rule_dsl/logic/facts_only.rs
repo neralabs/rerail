@@ -199,6 +199,10 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "GROWTH"),
     ("code_rule_dsl/logic/native/setfix.rs", "PROBES"),
+    // A live connection's file and symbol table, by its handle (dropped as it closes, `forget_scope`): state of the
+    // connections, not a result kept.
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
     ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
     ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),

@@ -756,21 +756,31 @@ pub(crate) fn scope(conn: &Connection) -> usize {
 
 /// Drops what the connection at `at` left: its components and derived relations (`scope`).
 pub(crate) fn forget_scope(at: usize) {
-    crate::code_rule_dsl::logic::plan::forget_connection(at);
     if let Ok(mut s) = SCOPE_SYMS.lock() {
         s.remove(&at);
     }
     if let Ok(mut p) = SCOPE_PATHS.lock() {
         p.remove(&at);
     }
+    crate::code_rule_dsl::logic::plan::forget_connection(at);
+    forget_engine(at);
+}
+
+/// Drops the engine's relations and components a run left on the connection at `at` (when it closes, or when the
+/// next run reuses it, `vtab::reuse`). They are freed on a thread of their own: no run's work.
+pub(crate) fn forget_engine(at: usize) {
+    let mut gone: (Vec<Arc<Mutex<Component>>>, Vec<Arc<InRel>>) = Default::default();
     if let Ok(mut c) = COMPONENTS.lock() {
-        c.retain(|((s, _), _)| *s != at);
+        c.retain(|((s, _), comp)| *s != at || { gone.0.push(Arc::clone(comp)); false });
     }
     if let Ok(mut d) = DERIVED.lock() {
-        d.retain(|(s, _), _| *s != at);
+        d.retain(|(s, _), rel| *s != at || { gone.1.push(Arc::clone(rel)); false });
     }
     if let Ok(mut a) = ADOPTED.lock() {
         a.retain(|(s, _)| *s != at);
+    }
+    if !gone.0.is_empty() || !gone.1.is_empty() {
+        let _ = std::thread::Builder::new().name("rerail-free".into()).spawn(move || drop(gone));
     }
 }
 static COMPONENTS: Mutex<Vec<((usize, String), Arc<Mutex<Component>>)>> = Mutex::new(Vec::new());

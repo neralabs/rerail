@@ -52,6 +52,7 @@ mod constants;
 pub(in crate::code_rule_dsl) mod inputs;
 pub(in crate::code_rule_dsl) use inputs::parameters as input_parameters;
 mod world;
+pub(in crate::code_rule_dsl) mod connections;
 mod reuse;
 pub(in crate::code_rule_dsl) mod phase0;
 mod cross_memo;
@@ -1377,8 +1378,7 @@ pub(in crate::code_rule_dsl) static SESSION_TESTS: std::sync::Mutex<()> = std::s
 /// The store the corpus runner keeps tapes in: `RERAIL_TAPE_CACHE`, else one in the temporary
 /// directory; `RERAIL_TAPE_CACHE=off` keeps none.
 pub(in crate::code_rule_dsl) fn tape_cache() -> std::result::Result<Option<ContentStore>, crate::content_store::StoreError> {
-    // A session opens it at every step: its schema is checked at the process's first open (`open_again`).
-    tape_cache_path().map(|path| ContentStore::open_again(&path)).transpose()
+    tape_cache_path().map(|path| ContentStore::open(&path)).transpose()
 }
 
 /// Runs `f` with phase 0's observer (`content_store::observe`), kept beside the tape cache (`<tape cache>.files`), or
@@ -1878,6 +1878,11 @@ fn run_observed(
     // A long-lived process (the browser's engine, `session`) keeps its store, its last program compiled and each
     // file's file-local rows from run to run: an edit evaluates the files it changed and the cross-file part.
     let session = held.as_mut().filter(|_| t.is_none() && !prog.decls.contains_key("declared_ret"));
+    // The run's connections, set up by their owner and passed through (`connections`): a session's are kept from run
+    // to run, readied here, before the scratch files are made again; a run of its own opens its own. (A run that
+    // fails leaves its session new ones to open.)
+    let handed = connections::Handed::take(session.as_ref().map(|s| Arc::clone(&s.connections)))?;
+    let own_kept = session.as_ref().map(|s| Arc::clone(&s.own));
     let (path, cross_path) = match &session {
         Some(s) => (s.path.clone(), out.join("cross.sqlite")),
         None => (out.join("store.sqlite"), out.join("cross.sqlite")),
@@ -1894,7 +1899,7 @@ fn run_observed(
     // atoms. Without the store, or reproducing T, the atoms are the run's own; in a session, the session's store's.
     // Without the `tape-cache` feature (the browser build) there is no store to keep: `tapes` is `None` where the
     // compiler can see it, so the memo, the run record and their zstd frames are not linked.
-    let tapes = if cfg!(feature = "tape-cache") { tape_cache().map_err(|e| Error::Plan(e.to_string()))? } else { None };
+    let tapes = if cfg!(feature = "tape-cache") { handed.tapes().map_err(|e| Error::Plan(e.to_string()))? } else { &None };
     // Hold before any source/stat lookup, through parsing, memo publication and the run manifest. This shared lock is
     // the run's one hold on collection (O108): every collector takes it exclusively first (`try_collect`), and a run
     // that dies releases it with its process.
@@ -1915,7 +1920,7 @@ fn run_observed(
     };
     // `shortlex_min<>` orders the run's symbols by their text: the store's atoms (decision 0108).
     crate::code_rule_dsl::logic::native::declare("shortlex_min", Arc::new(crate::code_rule_dsl::logic::native::ShortlexMin(store.atoms_handle())));
-    let db = Connection::open(&path)?;
+    let db = handed.run(&path)?;
     // The run's databases are scratch, made again by every run (removed above): a commit need not reach the disk. Set
     // when SQL first runs on it (`vtab::setup_now`).
     crate::code_rule_dsl::facts::vtab::defer_setup(&db, "PRAGMA synchronous=OFF;");
@@ -2474,7 +2479,7 @@ fn run_observed(
     // and the table's name) are another run's rows. Without this a second run read the first's cross-file tables:
     // a cone's loaded documents, there at the first run's end, counted as the workspace's.
     crate::code_rule_dsl::logic::native::forget_inputs(&db);
-    crate::code_rule_dsl::facts::vtab::defer_setup(&db, &format!("{attach_x} PRAGMA x.journal_mode = OFF; PRAGMA x.synchronous = OFF; PRAGMA temp_store = MEMORY;"));
+    crate::code_rule_dsl::facts::vtab::defer_setup_undone(&db, &format!("{attach_x} PRAGMA x.journal_mode = OFF; PRAGMA x.synchronous = OFF; PRAGMA temp_store = MEMORY;"), "DETACH x;");
     // Each base relation the cross-file part reads is kept in memory, across the chunks, as the columns its rules
     // name (and those decoding a finding's location reads); the others are never read. (Was: written to `x` and
     // read back, 0.75 s on Python.)
@@ -3599,7 +3604,7 @@ fn run_observed(
                         // Under its mix, its types, and as the program's last measured mix (a hit's fallbacks).
                         let types = mix.split('/').next().unwrap_or_default();
                         for key in [mix.clone(), format!("types/{types}"), "any".to_owned()] {
-                            record_own_counts(store, &memo_program, &key, chunk_nodes_built, &measured, &late_sources);
+                            record_own_counts(store, own_kept.as_ref(), &memo_program, &key, chunk_nodes_built, &measured, &late_sources);
                         }
                     }
                     measured
@@ -4118,6 +4123,7 @@ fn run_observed(
         // answers is clean while what it reads and its answers are as they were (K3).
         // The job's own handle on the store: it shares the store's writer.
         let cone_store: Option<std::path::PathBuf> = durable.is_some().then(|| store.database_path().to_path_buf());
+        let (cone_slot, cone_kept_conns) = handed.cone();
         let cone_space = kept_strata::part_space(root, "cone");
         let decls = load.decls.clone();
         // The cone as rounds of its stratified program, maintained by delta (decision 0108): with a store to keep
@@ -4156,14 +4162,12 @@ fn run_observed(
         // Beside the main thread, which answers its requests: a job of the pool's that takes turns with this one.
         let modes = modes.to_owned();
         let cone = crate::threads::beside("the cone of requests", move || -> Result<(Vec<(String, Vec<Vec<i64>>)>, Option<(usize, usize)>, usize)> {
-            let db2 = Connection::open(&db_path)?;
+            let db2 = connections::Cone::take_db(&cone_slot, &db_path)?;
             let statements = Statements::on_as(&db2, ".cone");
             statements.enter("cone");
             // When SQL first runs on it (`vtab::setup_now`), as the run's.
-            crate::code_rule_dsl::facts::vtab::defer_setup(&db2, &format!("PRAGMA synchronous=OFF; ATTACH '{}' AS x;", x_path.to_string_lossy().replace('\'', "''")));
+            crate::code_rule_dsl::facts::vtab::defer_setup_undone(&db2, &format!("PRAGMA synchronous=OFF; ATTACH '{}' AS x;", x_path.to_string_lossy().replace('\'', "''")), "DETACH x;");
             super::docs_by_shift(&db2);
-            crate::code_rule_dsl::logic::native::register(&db2)?;
-            crate::code_rule_dsl::logic::native::register_symbols(&db2)?;
             let modules = Modules::default();
             let mut load_stats = load_stats;
             let mut bind = |rel: &str, source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>| -> Result<()> {
@@ -4188,7 +4192,7 @@ fn run_observed(
                 cone_inputs.push((rel.clone(), Arc::clone(&empty)));
                 bind(rel, empty)?;
             }
-            let cone_handle = cone_store.map(|p| ContentStore::open(&p)).transpose().map_err(|e| Error::Plan(e.to_string()))?;
+            let cone_handle = cone_store.as_deref().map(|p| connections::Cone::take_store(&cone_slot, p)).transpose().map_err(|e| Error::Plan(e.to_string()))?;
             let mut cone_kept = cone_handle.as_ref().map(|s| kept_strata::Kept::new(s, cone_space, &cone_inputs));
             let mut answer = |rel: &str, rows: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
                 ask_tx.send((rel.to_owned(), rows.to_vec())).map_err(|_| Error::Plan("the request channel closed".to_owned()))?;
@@ -4300,12 +4304,13 @@ fn run_observed(
                 }
             }
             drop(statements);
-            close_beside(db2);
+            drop(modules);
+            connections::Cone::finish(&cone_slot, cone_kept_conns, &db_path, db2, cone_store.zip(cone_handle));
             Ok((out, cone_strata, 0))
         });
         // The answers turn request atoms back into text, warm runs included (nothing else registers them then).
         crate::code_rule_dsl::logic::native::register_symbols(&db)?;
-        let text = |atom: i64| -> Result<String> { Ok(crate::code_rule_dsl::logic::native::symbol_text(&db, atom)?) };
+        let text = |atom: i64| -> Result<String> { Ok(crate::code_rule_dsl::logic::native::sym_text_of(&db, atom)?) };
         let atoms = |texts: &[&str]| -> Result<Vec<i64>> { Ok(crate::code_rule_dsl::logic::native::intern_batch(&db, texts.iter().copied())?) };
         let mut pauses = 0;
         let mut answer_one = |rel: &str, rows: &[Vec<i64>], process: &mut dyn FnMut(Chunk) -> Result<()>| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
@@ -5044,8 +5049,8 @@ fn run_observed(
                         let (loaded, p) = kept_strata::load(store, root, ckey, &cross.program, &cross_inputs, &digests)?;
                         (cell, kept_frames) = (loaded, Some(p));
                     }
-                    // The root's one space: a program's inputs are its own frames (`retain::input_ident`), its derived
-                    // relations are named by identity, shared with any program that derives them alike (decision 0103).
+                    // The phase's space (`kept_strata::space`): a relation two programs of one phase derive alike (its
+                    // rules' identity) is one frame, kept once; phase 1's inputs and the pack's are in spaces apart.
                     let frames_space = kept_strata::space(root);
                     if cell.is_none() && from_frames.is_some() {
                         let _s = span("the kept part, from the frames");
@@ -5989,7 +5994,7 @@ fn run_observed(
         consulted.extend(crate::code_rule_dsl::logic::strings::git::consulted(root));
     }
     let report = Report { phases, phase_instructions, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default() };
-    close_beside(db);
+    handed.succeeded();
     Ok(report)
 }
 
@@ -6729,32 +6734,33 @@ fn own_name(program: &[u8; 32], mix: &str) -> String {
     format!("own-counts/{}/{mix}", memo::plan_digest(program).iter().map(|b| format!("{b:02x}")).collect::<String>())
 }
 
-/// The tree counts this process stored or read, by store and name (`own_name`), with their stored source once it is
-/// known: a session reads them from memory, as the store's writer writes them behind it (decision 0102).
-type OwnKept = HashMap<(std::path::PathBuf, String), (usize, Own, Option<crate::content_store::SourceId>)>;
-static OWN_KEPT: std::sync::LazyLock<parking_lot::Mutex<OwnKept>> = std::sync::LazyLock::new(Default::default);
+/// The tree counts a session's runs stored or read (`Session::own`), by name (`own_name`), with their stored source
+/// once it is known: its runs read them from memory, as the store's writer writes them behind them (decision 0102).
+pub(in crate::code_rule_dsl) type OwnKept = Arc<parking_lot::Mutex<HashMap<String, (usize, Own, Option<crate::content_store::SourceId>)>>>;
 /// The tree counts kept at most (each a few kilobytes).
 const OWN_KEPT_MAX: usize = 4096;
 
 /// A chunk mix's measured tree counts and the nodes they were measured over, stored by an earlier run (or this
 /// process's, from memory). Its source is named in the run's manifest (`held`), so collection keeps it (decision
 /// 0053); one still queued is named by its write (`record_own_counts`).
-fn own_counts(store: &ContentStore, program: &[u8; 32], mix: &str, held: &mut Vec<crate::content_store::SourceId>) -> Option<(usize, Own)> {
-    let key = (store.database_path().to_path_buf(), own_name(program, mix));
-    if let Some((nodes, own, source)) = OWN_KEPT.lock().get(&key) {
-        held.extend(*source);
-        return Some((*nodes, own.clone()));
+fn own_counts(store: &ContentStore, kept: Option<&OwnKept>, program: &[u8; 32], mix: &str, held: &mut Vec<crate::content_store::SourceId>) -> Option<(usize, Own)> {
+    let key = own_name(program, mix);
+    if let Some((nodes, own, source)) = kept.and_then(|k| k.lock().get(&key).cloned()) {
+        held.extend(source);
+        return Some((nodes, own));
     }
-    let digest = store.binding(&key.1).ok()??;
+    let digest = store.binding(&key).ok()??;
     let source = store.source_by_hash(crate::content_store::HashKey::from_sha256_digest(digest)).ok()??;
     let (nodes, own) = Own::decode(&store.get_source(source).ok()?)?;
     held.push(source);
-    keep_own(key, nodes, own.clone(), Some(source));
+    if let Some(kept) = kept {
+        keep_own(kept, key, nodes, own.clone(), Some(source));
+    }
     Some((nodes, own))
 }
 
-fn keep_own(key: (std::path::PathBuf, String), nodes: usize, own: Own, source: Option<crate::content_store::SourceId>) {
-    let mut kept = OWN_KEPT.lock();
+fn keep_own(kept: &OwnKept, key: String, nodes: usize, own: Own, source: Option<crate::content_store::SourceId>) {
+    let mut kept = kept.lock();
     if kept.len() >= OWN_KEPT_MAX && !kept.contains_key(&key) {
         kept.clear();
     }
@@ -6764,9 +6770,12 @@ fn keep_own(key: (std::path::PathBuf, String), nodes: usize, own: Own, source: O
 /// Stores a chunk mix's measured tree counts, for a later run whose files of that mix are all read from the memo:
 /// kept in memory now, written behind the run (decision 0102). The write names its source in the run's manifest
 /// (`late`, read by the manifest's job, queued after this one).
-fn record_own_counts(store: &ContentStore, program: &[u8; 32], mix: &str, nodes: usize, own: &Own, late: &Late) {
-    let key = (store.database_path().to_path_buf(), own_name(program, mix));
-    keep_own(key.clone(), nodes, own.clone(), None);
+fn record_own_counts(store: &ContentStore, kept: Option<&OwnKept>, program: &[u8; 32], mix: &str, nodes: usize, own: &Own, late: &Late) {
+    let key = own_name(program, mix);
+    if let Some(kept) = kept {
+        keep_own(kept, key.clone(), nodes, own.clone(), None);
+    }
+    let kept = kept.cloned();
     let bytes = own.encode(nodes);
     let producer = memo::plan_digest(program);
     let late = Arc::clone(late);
@@ -6779,10 +6788,12 @@ fn record_own_counts(store: &ContentStore, program: &[u8; 32], mix: &str, nodes:
             let source = store.put_source(&bytes, &[])?;
             late.lock().expect("the late sources").push(source);
             let digest: [u8; 32] = sha2::Sha256::digest(&bytes).into();
-            let record = crate::content_store::DerivationRecord { output: key.1.clone(), producer, inputs: Vec::new(), digest, status: 0, cost: 0 };
+            let record = crate::content_store::DerivationRecord { output: key.clone(), producer, inputs: Vec::new(), digest, status: 0, cost: 0 };
             store.record_derivations(&[record])?;
-            if let Some(kept) = OWN_KEPT.lock().get_mut(&key) {
-                kept.2 = Some(source);
+            if let Some(kept) = &kept
+                && let Some(entry) = kept.lock().get_mut(&key)
+            {
+                entry.2 = Some(source);
             }
             Ok(())
         }),
