@@ -1375,7 +1375,7 @@ The phase-level requirement remains open until that stronger fixture passes.
 
 ### Integration status and the next planner step
 
-The integration tip remains `1419d4263`. Fetching found no newer remote tip.
+At the first check, the integration tip was `1419d4263`. Fetching found no newer remote tip.
 Merge `bd695d685`, compatibility fixes `e78060842`, and bulk admission `4b4388d9f` are published on `jeremy/async-family-integration-comparison`.
 
 The external-containment experiment passes both focused planner tests and O125 step 07 output parity.
@@ -1408,3 +1408,24 @@ The test source remains in the artifact directory; it is not installed as a fail
 Native profile counters have limits: the alternate whole plan omits per-step counters, and replanning can combine earlier counts under the final order.
 Use isolated fixed-order probes to establish amplification, and treat aggregate replay work as diagnostic evidence with these limits.
 During the build, removal of obsolete object files freed 7.85 GiB from this task's cache. Active objects and artifact binaries were retained.
+
+### Integration advanced during the review
+
+The local integration branch then advanced to `6a3d27178`, including the phase-space fix in `61b35a068`.
+Merge `6ad135dd5` includes both commits.
+The merge keeps retryable write inputs borrowed and preserves the publication test's explicit run token.
+Our bounded frame admission remains intact.
+
+The phase-space fix separates `cross/<phase>` from the analysis's `cross` space.
+Previously, phase 1 and the analysis could overwrite each other's `doc` frame with different rows.
+This is a concrete retention cause, distinct from a change in compiled identities.
+The updated cross-process fixture loads the P3 program through the existing program loader.
+The merge build and retention checks are pending at this entry.
+
+The rejected planner experiment's largest cold regression is `retval`: recorded work rises from 12,070 to 494,532.
+The original plan selects return statements first and reaches 1,985 results without a large intermediate.
+The candidate selects 2,181 function definitions, expands to 160,836 enclosed nodes, then filters for return statements.
+The containment estimate reads the binding column's unconditioned distinct count, despite its kind filter.
+That estimate discounts probes whose filtered values can all hit the target relation.
+The next experiment must bound distinct counts by the filtered binding population before extending containment pricing.
+Both `retval` and `ifn` must pass, along with cold and incremental replay work and output parity.
