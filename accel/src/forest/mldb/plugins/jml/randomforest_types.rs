@@ -96,23 +96,41 @@ impl Feature {
     }
 }
 
-/// How a split is scored (lower is better), from its sides' weights.
-#[repr(u32)]
+/// How a split is scored (lower is better), from its sides' weights, and which splits may be made at all. The
+/// device reads the same word (`TreeTrainingInfo::split_criterion`): the score's kind in the low 8 bits, the
+/// fewest rows a side may have above them.
+#[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SplitCriterion {
+pub struct SplitCriterion(pub u32);
+
+#[allow(non_upper_case_globals)]
+impl SplitCriterion {
     /// upstream's: `2 (sqrt(f0 t0) + sqrt(f1 t1))` over the sides' false and true weights, for classification.
-    #[default]
-    Sqrt = 0,
+    pub const Sqrt: SplitCriterion = SplitCriterion(0);
     /// The rows' squared error about their side's mean target: `sum over sides of f t / (f + t)`, in the
     /// accumulators' fixed point and exact (the sum of `w t^2` is the same for every split, and leaves out). For
-    /// regression; the Gini impurity for classification.
-    Variance = 1,
-}
+    /// regression; the Gini impurity for classification. A split must lower the node's own error (exactly).
+    pub const Variance: SplitCriterion = SplitCriterion(1);
 
-impl SplitCriterion {
-    /// The criterion for a feature space's label: the variance for a real label, else upstream's.
+    /// The criterion for a feature space's label (the variance for a real label, else upstream's), with its
+    /// fewest rows a leaf may have (`DatasetFeatureSpace::min_leaf_examples`).
     pub fn of(fs: &DatasetFeatureSpace) -> SplitCriterion {
-        if fs.label_info == crate::forest::dataset_feature_space::FeatureType::Real { SplitCriterion::Variance } else { SplitCriterion::Sqrt }
+        let kind = if fs.label_info == crate::forest::dataset_feature_space::FeatureType::Real { SplitCriterion::Variance } else { SplitCriterion::Sqrt };
+        kind.with_min_leaf(fs.min_leaf_examples)
+    }
+
+    /// The score's kind (`Sqrt` or `Variance`).
+    pub fn kind(self) -> SplitCriterion {
+        SplitCriterion(self.0 & 0xff)
+    }
+
+    /// The fewest rows a split's side may have (at least 1).
+    pub fn min_leaf(self) -> u32 {
+        (self.0 >> 8).max(1)
+    }
+
+    pub fn with_min_leaf(self, m: u32) -> SplitCriterion {
+        SplitCriterion((self.0 & 0xff) | (m.min(0xff_ffff) << 8))
     }
 }
 

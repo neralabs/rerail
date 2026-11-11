@@ -556,10 +556,21 @@ UKL_FUNCTION(v1,int64_t,varianceFixed)(W w)
 UKL_FUNCTION(v1,float,scoreSplit)(W wFalse, W wTrue, uint32_t criterion);
 
 #if 1
+// criterion: the score's kind (SPLIT_CRITERION_*) in the low 8 bits, the fewest rows a side may have above them.
+// Infinite (no split) for a side with fewer rows, or for the variance when the split does not lower the node's own
+// error (the host's `score_split`).
 UKL_FUNCTION(v1,float,scoreSplit)(W wFalse, W wTrue, uint32_t criterion)
 {
-    if (criterion == SPLIT_CRITERION_VARIANCE)
-        return (float)(varianceFixed(wFalse) + varianceFixed(wTrue)) * HL_2_VAL;
+    int32_t minLeaf = max((int32_t)(criterion >> 8), 1);
+    if (wFalse.count < minLeaf || wTrue.count < minLeaf)
+        return INFINITY;
+    if ((criterion & 0xff) == SPLIT_CRITERION_VARIANCE) {
+        int64_t q = varianceFixed(wFalse) + varianceFixed(wTrue);
+        W wAll = { { wFalse.vals[0] + wTrue.vals[0], wFalse.vals[1] + wTrue.vals[1] }, wFalse.count + wTrue.count };
+        if (q >= varianceFixed(wAll))
+            return INFINITY;
+        return (float)q * HL_2_VAL;
+    }
     float arg1 = decodeWf(wFalse.vals[0]) * decodeWf(wFalse.vals[1]);
     float arg2 = decodeWf(wTrue.vals[0])  * decodeWf(wTrue.vals[1]);
     float sr1 = sqrt3(arg1);

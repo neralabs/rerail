@@ -453,7 +453,7 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
             num_rows: o.num_rows,
             feature_sampling: feature_sampling as u16,
             feature_vector_sampling: feature_vector_sampling as u16,
-            split_criterion: SplitCriterion::of(o.fs) as u32,
+            split_criterion: SplitCriterion::of(o.fs).0,
         };
         data.tree_depth_info0.num_active_partitions = 1;
 
@@ -1066,7 +1066,7 @@ pub(crate) mod tests {
             numbers.push(numbers.last().unwrap() + f.buckets.num_buckets as u32);
         }
         let nab = *numbers.last().unwrap();
-        let tti = [TreeTrainingInfo { num_rows: nr, max_depth: max_depth as u16, num_active_features: nf as u16, num_features: nf as u16, max_num_active_partitions: mpc as u16, num_active_buckets: nab, max_num_finished_partitions: u32::MAX, split_criterion: SplitCriterion::of(&d.fs) as u32, ..Default::default() }];
+        let tti = [TreeTrainingInfo { num_rows: nr, max_depth: max_depth as u16, num_active_features: nf as u16, num_features: nf as u16, max_num_active_partitions: mpc as u16, num_active_buckets: nab, max_num_finished_partitions: u32::MAX, split_criterion: SplitCriterion::of(&d.fs).0, ..Default::default() }];
         let mut tdi = [TreeDepthInfo { num_active_partitions: 1, ..Default::default() }];
         let mut buckets = vec![W::default(); mpc * nab as usize];
         let mut w_all = vec![W::default(); mpc];
@@ -1222,6 +1222,26 @@ pub(crate) mod tests {
         [d, cart]
     }
 
+    /// `d` with leaves of at least `m` rows.
+    pub(crate) fn with_min_leaf(d: &PartitionData, m: u32) -> PartitionData {
+        let mut d = d.clone();
+        d.fs = Arc::new(DatasetFeatureSpace { min_leaf_examples: m, ..(*d.fs).clone() });
+        d
+    }
+
+    /// The nodes of a tree.
+    pub(crate) fn node_count(t: &Tree) -> usize {
+        let mut n = 0;
+        let mut stack = vec![t.root];
+        while let Some(p) = stack.pop() {
+            if let Some(node) = t.node(p) {
+                n += 1;
+                stack.extend([node.child_true, node.child_false]);
+            }
+        }
+        n
+    }
+
     /// The nodes whose split is a categorical subset of more than one bucket (CART's).
     pub(crate) fn subset_splits(t: &Tree) -> usize {
         let mut n = 0;
@@ -1261,9 +1281,12 @@ pub(crate) mod tests {
         }
         let sets = [(as_regression(&dataset(2000)), vec![1, 3, 6]), (as_regression(&deep_dataset(20000)), vec![10])];
         for (d0, depths) in sets {
-            for d in with_both_categorical_splits(d0) {
+            let mut variants: Vec<PartitionData> = with_both_categorical_splits(d0).into();
+            variants.push(with_min_leaf(&variants[0], 5));
+            for d in variants {
+                let min_leaf = d.fs.min_leaf_examples;
                 let cart = d.features.iter().any(|f| f.subsets);
-                let kind = if cart { "subsets" } else { "one vs rest" };
+                let kind = format!("{}, min leaf {min_leaf}", if cart { "subsets" } else { "one vs rest" });
                 for &max_depth in &depths {
                     let device = train_with(&d, max_depth, "device");
                     assert!(device.node(device.root).is_some(), "a root split");
@@ -1272,6 +1295,12 @@ pub(crate) mod tests {
                     }
                     if max_depth <= 6 {
                         same(&device, &train_on_host(&d, max_depth), &d.fs, &format!("{kind}: host schedule, max depth {max_depth}"));
+                    }
+                    if min_leaf > 1 {
+                        let unlimited = train_with(&with_min_leaf(&d, 1), max_depth, "device");
+                        if max_depth >= 10 {
+                            assert!(node_count(&device) < node_count(&unlimited), "min leaf {min_leaf}, max depth {max_depth}: {} nodes, {} without", node_count(&device), node_count(&unlimited));
+                        }
                     }
                     same(&device, &train_with(&d, max_depth, "cpu"), &d.fs, &format!("{kind}: cpu, max depth {max_depth}"));
                     same(&device, &train_with(&d, max_depth, "recursive"), &d.fs, &format!("{kind}: recursive, max depth {max_depth}"));

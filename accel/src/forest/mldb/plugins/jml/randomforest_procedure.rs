@@ -58,11 +58,14 @@ pub struct RandomForestProcedureConfig {
     /// A categorical feature's splits: CART's best subset (rerail's extension) when set, else upstream's best
     /// bucket against the rest.
     pub categorical_subsets: bool,
+    /// The fewest rows a leaf may have (rerail's addition; upstream's is 1). Without it a regression tree, whose
+    /// nodes are never pure, splits down to single rows.
+    pub min_leaf_examples: u32,
 }
 
 impl Default for RandomForestProcedureConfig {
     fn default() -> Self {
-        RandomForestProcedureConfig { feature_vector_samplings: 5, feature_vector_sampling_prop: 0.3, feature_samplings: 20, feature_sampling_prop: 0.3, max_depth: 20, sample_feature_vectors: true, training_scheme: TrainingScheme::Partitioned, categorical_subsets: false }
+        RandomForestProcedureConfig { feature_vector_samplings: 5, feature_vector_sampling_prop: 0.3, feature_samplings: 20, feature_sampling_prop: 0.3, max_depth: 20, sample_feature_vectors: true, training_scheme: TrainingScheme::Partitioned, categorical_subsets: false, min_leaf_examples: 1 }
     }
 }
 
@@ -300,6 +303,9 @@ pub fn train_forest(all_data: &PartitionData, config: &RandomForestProcedureConf
             let debug_name = format!("bag {b}");
             let (mut data, samplings) = bag(all_data, b, config).map_err(|e| format!("error training {debug_name}: {e}"))?;
             data.set_categorical_subsets(config.categorical_subsets);
+            if config.min_leaf_examples > 1 {
+                data.fs = Arc::new(DatasetFeatureSpace { min_leaf_examples: config.min_leaf_examples, ..(*data.fs).clone() });
+            }
             let trees = data.train_multiple_samplings(b as i32, &debug_name, config.max_depth, &samplings, config.training_scheme).map_err(|e| format!("error training {debug_name}: {e}"))?;
             if trees.len() != samplings.len() {
                 return Err(format!("{debug_name}: {} trees for {} samplings", trees.len(), samplings.len()));

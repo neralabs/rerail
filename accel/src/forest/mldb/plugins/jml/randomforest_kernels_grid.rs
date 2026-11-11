@@ -379,7 +379,7 @@ mod tests {
         let active: Vec<u32> = (0..nf as u32).collect();
         let ordinal = vec![1u32, crate::forest::randomforest_types::FEATURE_KIND_SUBSETS, 1];
         let max_parts = 8usize;
-        let tti = [TreeTrainingInfo { num_rows: nr, max_depth: 4, num_active_features: nf as u16, num_features: nf as u16, max_num_active_partitions: max_parts as u16, num_active_buckets: total, max_num_finished_partitions: u32::MAX, split_criterion: if regression { SplitCriterion::Variance } else { SplitCriterion::Sqrt } as u32, ..Default::default() }];
+        let tti = [TreeTrainingInfo { num_rows: nr, max_depth: 4, num_active_features: nf as u16, num_features: nf as u16, max_num_active_partitions: max_parts as u16, num_active_buckets: total, max_num_finished_partitions: u32::MAX, split_criterion: if regression { SplitCriterion::Variance } else { SplitCriterion::Sqrt }.0, ..Default::default() }];
         let mut tdi = [TreeDepthInfo::default()];
         let (d_bucket_data, d_offsets, d_numbers, d_entry_bits, d_active, d_ordinal) = (buf(&all_bucket_data), buf(&offsets), buf(&numbers), buf(&entry_bits), buf(&active), buf(&ordinal));
         let d_tti = buf(&tti);
