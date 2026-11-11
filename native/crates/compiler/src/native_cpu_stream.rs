@@ -404,6 +404,54 @@ fn dispatch(f: &mut FunctionBuilder<'_>, x: Value, runs: &[(u32, Block)]) {
     dispatch(f, x, &runs[mid..]);
 }
 
+/// `dispatch` weighted by a profile: a run with half the weight or more is tested first (one
+/// range compare), else the runs split at their weighted middle. `ends` are the runs' ends
+/// (the next run's first byte; the last's, past every byte).
+fn dispatch_weighted(f: &mut FunctionBuilder<'_>, x: Value, runs: &[(u32, u32, Block, u64)]) {
+    if runs.len() == 1 {
+        f.ins().jump(runs[0].2, &[]);
+        return;
+    }
+    let total: u64 = runs.iter().map(|r| r.3).sum();
+    let (top, &(lo, hi, b, w)) = runs.iter().enumerate().max_by_key(|(i, r)| (r.3, std::cmp::Reverse(*i))).expect("runs");
+    if total > 0 && 2 * w >= total {
+        // In the run: lo <= x < hi, as one unsigned compare of x - lo.
+        let rest = f.create_block();
+        let inside = if top == 0 {
+            f.ins().icmp_imm(IntCC::UnsignedLessThan, x, i64::from(hi))
+        } else if top == runs.len() - 1 {
+            f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, x, i64::from(lo))
+        } else {
+            let d = f.ins().iadd_imm(x, -i64::from(lo));
+            f.ins().icmp_imm(IntCC::UnsignedLessThan, d, i64::from(hi - lo))
+        };
+        f.ins().brif(inside, b, &[], rest, &[]);
+        f.switch_to_block(rest);
+        // Without the run: x is in no byte of it, so its neighbours' ranges may cover it.
+        let others: Vec<_> = runs.iter().enumerate().filter(|&(i, _)| i != top).map(|(_, r)| *r).collect();
+        dispatch_weighted(f, x, &others);
+        return;
+    }
+    // The split nearest the weighted middle (by count when the profile saw none).
+    let weight = |r: &(u32, u32, Block, u64)| if total > 0 { r.3 } else { 1 };
+    let all: u64 = runs.iter().map(weight).sum();
+    let (mut left, mut mid, mut best) = (0u64, 1usize, u64::MAX);
+    for (i, r) in runs.iter().enumerate().take(runs.len() - 1) {
+        left += weight(r);
+        let gap = left.abs_diff(all - left);
+        if gap < best {
+            (best, mid) = (gap, i + 1);
+        }
+    }
+    let (low, high) = (f.create_block(), f.create_block());
+    let below = f.ins().icmp_imm(IntCC::UnsignedLessThan, x, i64::from(runs[mid].0));
+    f.ins().brif(below, low, &[], high, &[]);
+    f.switch_to_block(low);
+    dispatch_weighted(f, x, &runs[..mid]);
+    f.switch_to_block(high);
+    dispatch_weighted(f, x, &runs[mid..]);
+}
+
 /// A mask tier 1 wrote (`block::BlockProgram::masks`): its first word, the bytes from one word
 /// to the next, and its number of words.
 #[derive(Clone, Copy)]
@@ -1018,8 +1066,16 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     let clustered = cut.count > 1;
     // In clusters, the state's address is in the pinned register (x21 on aarch64): never
     // allocated, so never spilled, as the one function's stack frame is never moved.
-    let flags: &[(&str, &str)] = if clustered { &[("enable_pinned_reg", "true")] } else { &[] };
-    let builder = JITBuilder::with_flags(flags, default_libcall_names()).map_err(|_| Error::BackendFailure)?;
+    // `Cut::speed`: Cranelift's optimizer (`opt_level = speed`: value numbering, dead code,
+    // redundant loads, invariants out of loops); by default it is off (`none`).
+    let mut flags: Vec<(&str, &str)> = Vec::new();
+    if clustered {
+        flags.push(("enable_pinned_reg", "true"));
+    }
+    if cut.speed {
+        flags.push(("opt_level", "speed"));
+    }
+    let builder = JITBuilder::with_flags(&flags, default_libcall_names()).map_err(|_| Error::BackendFailure)?;
     let mut module = JITModule::new(builder);
     let pointer = module.target_config().pointer_type();
     let mut signature = module.make_signature();
@@ -1031,6 +1087,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         let mut c = module.make_signature();
         c.call_conv = cranelift_codegen::isa::CallConv::Tail;
         c.params.extend([AbiParam::new(pointer), AbiParam::new(types::I64)]);
+        // `Cut::pass`: those fields as arguments, in registers (the tail convention's x4 to x7).
+        c.params.extend(cut.pass.iter().map(|_| AbiParam::new(types::I64)));
         c.returns.push(AbiParam::new(types::I64));
         c
     } else {
@@ -1150,7 +1208,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
 
         f.switch_to_block(entry);
         let ctx = f.block_params(entry)[0];
-        let ro = MemFlags::trusted().with_readonly();
+        // `can_move`: a pure value to the optimizer, removed where unused (`Cut::speed`).
+        let ro = MemFlags::trusted().with_readonly().with_can_move();
         let load = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, ro, ctx, at);
         let bytes = load(&mut f, BYTES);
         let len = load(&mut f, LEN);
@@ -1225,8 +1284,13 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         if clustered {
             for (k, v) in vars.iter().enumerate() {
                 if let Some(v) = *v {
-                    let p = pinned(&mut f);
-                    let x = f.ins().load(types::I64, MemFlags::trusted(), p, STATE + 8 * k as i32);
+                    let x = match cut.pass.iter().position(|&q| q as usize == k) {
+                        Some(j) => f.block_params(entry)[2 + j],
+                        None => {
+                            let p = pinned(&mut f);
+                            f.ins().load(types::I64, MemFlags::trusted(), p, STATE + 8 * k as i32)
+                        }
+                    };
                     f.def_var(v, x);
                 }
             }
@@ -1449,8 +1513,44 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     let b = f.ins().uload8(types::I64, flags, addr, 0);
                     // A refusing target refuses at this word.
                     let no = f.create_block();
-                    let t = runs(s, &|t| if t == REFUSE { no } else { word(t) });
-                    dispatch(&mut f, b, &t);
+                    match cut.pick {
+                        crate::native_cpu_clusters::Pick::Tree => {
+                            let t = runs(s, &|t| if t == REFUSE { no } else { word(t) });
+                            dispatch(&mut f, b, &t);
+                        }
+                        crate::native_cpu_clusters::Pick::Weighted => {
+                            // Each run's weight: its target's share of this word's profile, split
+                            // among the target's runs.
+                            let mut first: Vec<(u32, u16)> = Vec::new();
+                            for (x, &t) in s.targets.iter().enumerate() {
+                                if first.last().is_none_or(|&(_, l)| l != t) {
+                                    first.push((x as u32, t));
+                                }
+                            }
+                            let per: std::collections::HashMap<u16, u64> = first.iter().fold(Default::default(), |mut m, &(_, t)| {
+                                *m.entry(t).or_default() += 1;
+                                m
+                            });
+                            let t: Vec<(u32, u32, Block, u64)> = first
+                                .iter()
+                                .enumerate()
+                                .map(|(i, &(lo, t))| {
+                                    let hi = first.get(i + 1).map_or(s.targets.len() as u32, |r| r.0);
+                                    let w = if t == REFUSE { 0 } else { cut.pick_traffic.get(&(pc as u32, u32::from(t))).copied().unwrap_or(0) / per[&t] };
+                                    (lo, hi, if t == REFUSE { no } else { word(t) }, w)
+                                })
+                                .collect();
+                            dispatch_weighted(&mut f, b, &t);
+                        }
+                        crate::native_cpu_clusters::Pick::Table => {
+                            // One indirect branch on the byte.
+                            let i = f.ins().ireduce(types::I32, b);
+                            let calls: Vec<_> = s.targets.iter().map(|&t| f.func.dfg.block_call(if t == REFUSE { no } else { word(t) }, &[])).collect();
+                            let default = f.func.dfg.block_call(no, &[]);
+                            let jt = f.create_jump_table(cranelift_codegen::ir::JumpTableData::new(default, &calls));
+                            f.ins().br_table(i, jt);
+                        }
+                    }
                     f.switch_to_block(no);
                     let at = f.ins().iconst(types::I64, pc as i64 + 1);
                     f.ins().jump(refuse, &[BlockArg::from(at)]);
@@ -1477,6 +1577,32 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     // The next of the mask's bits after the last one taken: the bits of word
                     // `lw` not yet taken (`taken`), then a word (64 bytes) at a time.
                     let (w, bits, start, limit) = (mget(&mut f, Mem::Lw), mget(&mut f, Mem::Taken), mget(&mut f, Mem::Start), mget(&mut f, Mem::Limit));
+                    if cut.inline_span {
+                        // `Cut::inline_span`: a bit left in word `lw` is the token's end, found
+                        // here (straight-line); only a search past it calls the helper.
+                        let here = f.create_block();
+                        let search = f.create_block();
+                        f.ins().brif(bits, here, &[], search, &[]);
+                        f.switch_to_block(here);
+                        let tz = f.ins().ctz(bits);
+                        let at = f.ins().ishl_imm(w, 6);
+                        let l = f.ins().iadd(at, tz);
+                        let less = f.ins().iadd_imm(bits, -1);
+                        let rest = f.ins().band(bits, less);
+                        let before = f.ins().icmp(IntCC::UnsignedLessThan, l, start);
+                        let e = f.ins().iadd_imm(l, 1);
+                        let past = f.ins().icmp(IntCC::UnsignedGreaterThan, e, limit);
+                        let bad = f.ins().bor(before, past);
+                        let bad = f.ins().uextend(types::I64, bad);
+                        mset(&mut f, Mem::End, e);
+                        mset(&mut f, Mem::Taken, rest);
+                        guard(&mut f, bad, pc);
+                        let one = f.ins().iconst(types::I64, 1);
+                        mset(&mut f, Mem::Need, one);
+                        f.ins().jump(fall, &[]);
+                        f.set_cold_block(search);
+                        f.switch_to_block(search);
+                    }
                     if span_fn.is_none() {
                         span_fn = Some(outline(&mut module, "tempo_stream_last", 7, 4, |f, p, heads| span_last(f, p, heads))?);
                     }
@@ -2184,19 +2310,21 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                 let b = if g < n_words { wb[g].expect("a place named") } else { entries[g - n_words] };
                 f.switch_to_block(b);
                 for (k, v) in vars.iter().enumerate() {
-                    if let Some(v) = *v {
+                    if let Some(v) = v.filter(|_| !cut.pass.contains(&(k as u32))) {
                         let x = f.use_var(v);
                         let p = pinned(&mut f);
                         f.ins().store(MemFlags::trusted(), x, p, STATE + 8 * k as i32);
                     }
                 }
+                let passed: Vec<Value> = cut.pass.iter().map(|&k| f.use_var(vars[k as usize].expect("a passed field is held"))).collect();
                 let fref = *refs.entry(d).or_insert_with(|| {
                     let name = f.func.declare_imported_user_function(UserExternalName::new(0, cids[d].as_u32()));
                     let signature = f.import_signature(csig.clone());
                     f.import_function(ExtFuncData { name: ExternalName::user(name), signature, colocated: true })
                 });
                 let iv = f.ins().iconst(types::I64, i as i64);
-                f.ins().return_call(fref, &[ctx, iv]);
+                let args: Vec<Value> = [ctx, iv].into_iter().chain(passed).collect();
+                f.ins().return_call(fref, &args);
                 exits.insert(b, g);
                 tails += 1;
             }
@@ -2283,7 +2411,10 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
             f.ins().set_pinned_reg(ctx);
             // The first word is its cluster's first entry (`join_clusters`).
             let first = f.ins().iconst(types::I64, 0);
-            let r = call_own(&mut f, cids[cut.of[0] as usize], &csig, &[ctx, first]);
+            // The passed fields' first values, as the state's in `ctx`.
+            let passed: Vec<Value> = cut.pass.iter().map(|&k| if k == Mem::Need as u32 { one } else if k == Mem::Lw as u32 { before_first } else { zero }).collect();
+            let args: Vec<Value> = [ctx, first].into_iter().chain(passed).collect();
+            let r = call_own(&mut f, cids[cut.of[0] as usize], &csig, &args);
             f.ins().set_pinned_reg(kept);
             f.ins().return_(&[r[0]]);
             f.seal_all_blocks();

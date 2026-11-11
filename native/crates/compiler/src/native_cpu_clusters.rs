@@ -27,12 +27,34 @@ pub struct Cut {
     /// Each word loads the `ctx` fields it reads where it runs, instead of every field living
     /// from the function's entry (`native_cpu_stream::ctx_reads`).
     pub reload: bool,
+    /// `SPAN`'s common case inline: the token's end in the mask's current word, found in the
+    /// word itself; the helper only searches past it.
+    pub inline_span: bool,
+    /// The held fields (`held`, at most four) passed from cluster to cluster as the tail
+    /// call's arguments, in registers, instead of through `ctx`.
+    pub pass: Vec<u32>,
+    /// Cranelift's optimizer on (`opt_level = speed`).
+    pub speed: bool,
+    /// How a switch picks its arm, and the profile it is weighted by (`traffic`).
+    pub pick: Pick,
+    pub pick_traffic: HashMap<(u32, u32), u64>,
+}
+
+/// How a switch on a byte picks its arm.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pick {
+    /// A balanced search over the byte's runs.
+    Tree,
+    /// A search weighted by the profile: the hottest run first when it has half the weight.
+    Weighted,
+    /// One indirect branch through a table of the 256 bytes.
+    Table,
 }
 
 impl Cut {
     /// Every word in one function: tier 2 as it was before clusters.
     pub fn one(words: usize) -> Self {
-        Self { of: vec![0; words], count: 1, held: Vec::new(), reload: false }
+        Self { of: vec![0; words], count: 1, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: Pick::Tree, pick_traffic: HashMap::new() }
     }
 }
 
@@ -162,7 +184,7 @@ pub fn by_traffic(native: &Structure, traffic: &HashMap<(u32, u32), u64>, cap: u
             bin_of.get(&r).copied().unwrap_or(0)
         })
         .collect();
-    Cut { of, count: (bins.len() as u32).max(1), held: Vec::new(), reload: false }
+    Cut { of, count: (bins.len() as u32).max(1), held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: Pick::Tree, pick_traffic: HashMap::new() }
 }
 
 /// The share of `traffic`'s steps that leave their cluster, of all its steps between two words.
@@ -181,4 +203,45 @@ pub fn crossings(native: &Structure, cut: &Cut, traffic: &HashMap<(u32, u32), u6
         }
     }
     if all == 0 { 0.0 } else { out as f64 / all as f64 }
+}
+
+/// One function a token state (docs/parser-generators/28-tier-2-in-clusters.md): each `TOKEN`
+/// word and the words it reaches before the next `TOKEN`. A word two states reach is the
+/// first's (in order of place); words no state reaches are the first state's.
+pub fn by_states(native: &Structure) -> Cut {
+    use crate::native_ir::StructuralOperation as Op;
+    let n = native.structural.len();
+    if n == 0 {
+        return Cut::one(0);
+    }
+    let (at, skipped) = lowered_at(native);
+    let pushes = crate::native_cpu_stream::push_targets(native);
+    let mut of: Vec<Option<u32>> = vec![None; n];
+    let mut count = 0u32;
+    for s in (0..n).filter(|&pc| !skipped[pc] && matches!(native.structural[pc].operation, Op::Token { .. })) {
+        let c = count;
+        count += 1;
+        let mut work = vec![s];
+        while let Some(pc) = work.pop() {
+            if of[pc].is_some() {
+                continue;
+            }
+            of[pc] = Some(c);
+            let mut next = crate::native_cpu_stream::successors(native, &pushes, pc);
+            if matches!(native.structural[pc].operation, Op::Token { .. }) {
+                next.push(pc + 1);
+            }
+            for t in next {
+                if t < n && !skipped[t] {
+                    let t = at[t];
+                    if of[t].is_none() && !matches!(native.structural[t].operation, Op::Token { .. }) {
+                        work.push(t);
+                    }
+                }
+            }
+        }
+    }
+    let count = count.max(1);
+    let of: Vec<u32> = (0..n).map(|pc| of[at[pc]].unwrap_or(0)).collect();
+    Cut { of, count, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: Pick::Tree, pick_traffic: HashMap::new() }
 }

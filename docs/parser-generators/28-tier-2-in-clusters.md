@@ -252,9 +252,91 @@ state between words, and the branches.
   choices. A cut that keeps each switch's hot arms together already helped; ordering the arms
   by the profile would help more.
 
+## The product's cut
+
+`.rr`'s parser is now compiled with tier 2 in clusters by default. The cut is at 2,500 words,
+from the profile of 12 sample documents the parser ships with (`rr_parser/samples`, 84 KB):
+copies of the repository's `.rr` files, from all its folders. They are named `.rr.sample`, so
+nothing that walks the repository for `.rr` files counts them twice.
+
+## A cut around the token's loops
+
+The section above ends with a shape that should pay: the state's hot fields in registers along
+each token's loop, with no calls on that loop, and the switches' arms ordered by the profile.
+These are built (as `Cut` options) and measured here.
+
+### What was built
+
+- **A function a state** (`by_states`). Each `TOKEN` word and the words it reaches before the
+  next `TOKEN` is one function: 227 functions, crossing at each change of state.
+- **Fields as arguments** (`Cut::pass`). The tail calls pass four of the state's fields (next,
+  start, end, need) as arguments. Cranelift's `tail` convention has six registers for
+  arguments (x2 to x7); `ctx` and the entry's index take two.
+- **No call on the token's path** (`Cut::inline_span`). `SPAN` found the token's end by calling
+  a helper, about once a token. Its common case, a bit left in the mask's current word, is now
+  one `ctz` in line. The helper searches past that word only.
+- **The arms by the profile** (`Cut::pick`). A switch on a byte was a balanced search over its
+  runs of bytes. Two other ways:
+  - **weighted**: a run with half the profile's weight is tested first, with one compare;
+    otherwise the split is at the weighted middle;
+  - **a table**: one indirect branch over the 256 bytes.
+- **Cranelift's optimizer** (`Cut::speed`, `opt_level = speed`). Every JIT in the compiler runs
+  Cranelift at its default, `opt_level = none`: no dead code removed, no values numbered, no
+  redundant loads removed. A load is pure to the optimizer only when it is read-only and
+  `can_move`. `ctx`'s fields are now loaded so, and the unused ones go.
+
+### The numbers
+
+Over the corpus, the best of 5 to 7 rounds, load 10 to 50 (the one function moves from 40.6
+to 43.7 ms with the load):
+
+| form | functions | stack loads and stores | tier 2 |
+|---|---|---|---|
+| one function | 1 | 42.7K | 40.6 ms |
+| one function, optimized | 1 | 38.2K | **37.2 ms** |
+| cap 2,500 (the product's) | 4 | 16.7K | 37.7 ms |
+| cap 2,500, optimized | 4 | 11.9K | 38.9 ms |
+| cap 2,500, the token's state held, `ctx` at each word, `SPAN` in line, optimized | 4 | 31.1K | 38.4 ms |
+| a function a state, optimized, `ctx` at each word, `SPAN` in line | 227 | 1.6K | 77.0 ms |
+| the same, four fields passed as arguments | 227 | 14.4K | 79.4 ms |
+| one function, arms weighted | 1 | 41.6K | 40.9 ms |
+| one function, arms by a table | 1 | 46.8K | 72.1 ms |
+
+- **A function a state has almost no spills, and runs twice as long.** 17.6% of the steps
+  cross, 3.2M crossings over the corpus, at about 12 ns each: about 50 cycles.
+- **What a crossing costs in Cranelift.** Each state function:
+  - has a frame and signs its return address;
+  - saves and restores nine callee-saved registers;
+  - picks its entry by an indirect branch when it has more than one (120 of the 229).
+
+  None of this is the state's work. With no calls but tail calls, nothing needs saving: a
+  chain of tail calls never returns to the function that saved the registers. Cranelift's
+  aarch64 ABI saves x19 to x28 in every function's prologue, whatever the convention.
+- **Inlining `SPAN`'s common case** gains 1 to 3 ms, within the load's noise.
+- **Weighting the arms changes nothing.** The arms' order was not what mispredicts. **A table
+  mispredicts far more**: 1.8 times slower.
+- **The optimizer gains 9% on the one function** (40.6 to 37.2 ms), and as much as the cut at
+  2,500 words. On the clusters it gains nothing, measured so far.
+
+### What it says
+
+- **The shape needs crossings of a few cycles.** At 2 crossings a token and a token's 100
+  cycles, the registers save a few cycles a step. A crossing has to cost less than that.
+  That means:
+  - functions without a frame or callee-saved registers;
+  - one entry each, so a crossing is a direct branch.
+
+  Cranelift offers neither for tail calls. Without them, the state's registers are lost to
+  the crossings.
+- **Within one function, the allocator spills the held state** wherever values meet, so
+  holding it gains nothing either.
+- **What is left to try:**
+  - a convention for tail-call chains with no callee-saved registers (in Cranelift's aarch64
+    ABI);
+  - an entry function per place a state is entered at;
+  - the optimizer on tier 1, which also runs at `opt_level = none`.
+
 ## Not measured yet
 
-- **A profile for the product's path.** The grammar's compile needs sample documents: the
-  ladder's, or a few the grammar ships with.
 - **Cheaper crossings.** With `ctx` at each word, an entry loads nothing but the state.
 - **The cut by grammar levels**, and a grammar much larger than `.rr`.

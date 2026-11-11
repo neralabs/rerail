@@ -777,6 +777,9 @@ pub mod tests {
         // By the traffic, and by the program alone (no profile: its own edges, in order of place).
         let none = std::collections::HashMap::new();
         let mut shapes: Vec<(String, Cut)> = std::iter::once(("one".to_owned(), Cut::one(native.structural.len()))).chain(caps.iter().map(|&cap| (format!("cap {cap}"), by_traffic(&native, &traffic, cap)))).collect();
+        if std::env::var_os("RR_STATES").is_some() {
+            shapes.push(("states".to_owned(), rerail_compiler::native_cpu_clusters::by_states(&native)));
+        }
         if std::env::var_os("RR_STATIC").is_some() {
             shapes.extend(caps.iter().map(|&cap| (format!("static {cap}"), by_traffic(&native, &none, cap))));
         }
@@ -793,7 +796,30 @@ pub mod tests {
                 let at_word = std::env::var_os("RR_RELOAD").is_some().then(|| (format!("{name}+ctx"), Cut { reload: true, ..cut.clone() }));
                 std::iter::once((name, cut)).chain(at_word)
             })
-            .filter(|(name, _)| only.as_ref().is_none_or(|o| o == name))
+            // `Cut::inline_span`: `SPAN`'s common case inline, no call.
+            .flat_map(|(name, cut)| {
+                let inline = std::env::var_os("RR_SPAN").is_some().then(|| (format!("{name}+span"), Cut { inline_span: true, ..cut.clone() }));
+                std::iter::once((name, cut)).chain(inline)
+            })
+            // `Cut::pass`: next, start, end and need as the tail calls' arguments, where held.
+            .flat_map(|(name, cut)| {
+                let pass = vec![10, 13, 14, 21];
+                let passed = (std::env::var_os("RR_PASS").is_some() && pass.iter().all(|k| cut.held.contains(k))).then(|| (format!("{name}+pass"), Cut { pass, ..cut.clone() }));
+                std::iter::once((name, cut)).chain(passed)
+            })
+            // `Cut::speed`: Cranelift's optimizer on.
+            .flat_map(|(name, cut)| {
+                let fast = std::env::var_os("RR_SPEED").is_some().then(|| (format!("{name}+opt"), Cut { speed: true, ..cut.clone() }));
+                std::iter::once((name, cut)).chain(fast)
+            })
+            // `Cut::arms`: the switches weighted by the profile, or by a table.
+            .flat_map(|(name, cut)| {
+                let weighted = (name.clone(), Cut { pick: rerail_compiler::native_cpu_clusters::Pick::Weighted, pick_traffic: traffic.clone(), ..cut.clone() });
+                let table = (name.clone(), Cut { pick: rerail_compiler::native_cpu_clusters::Pick::Table, ..cut.clone() });
+                let more = std::env::var_os("RR_ARMS").is_some();
+                std::iter::once((name.clone(), cut)).chain(more.then(|| (format!("{}+weighted", weighted.0), weighted.1))).chain(more.then(|| (format!("{}+table", table.0), table.1)))
+            })
+            .filter(|(name, _)| only.as_ref().is_none_or(|o| o.split(',').any(|o| o == name)))
             .collect();
         // Tier 1's buffers, a batch a file, made once.
         let one = &c.parser;
