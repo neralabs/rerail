@@ -29,11 +29,13 @@
 
 pub(crate) mod adapter;
 
+#[cfg(test)]
 use crate::code_rule_dsl::tree::Tree;
 use rerail_rr_syntax::tape as rr_tree;
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::semver::Range;
 use ast_grep_core::{
+    AstGrep,
     language::Language,
     matcher::{Pattern, PatternBuilder, PatternError},
     tree_sitter::{StrDoc, TSLanguage},
@@ -672,6 +674,25 @@ pub(crate) trait LanguageBase: Send + Sync {
 /// `family`'s base, where its pack is registered (a family left out of the build has none).
 pub(crate) fn registered_base(family: Family) -> Option<&'static dyn LanguageBase> {
     BASES[family as usize].get().copied()
+}
+
+/// What tree-sitter parses for a file of `dialect`: its family's `Adapter::parse_input`.
+pub(crate) fn parse_input(dialect: GrammarDialect, source: &str) -> Cow<'_, str> {
+    base(Family::of(dialect)).parse_input(source)
+}
+
+/// `dialect`'s ast-grep tree of `parse_input`, reading `source`'s text.
+pub(crate) fn ast_grep(dialect: GrammarDialect, source: &str) -> AstGrep<StrDoc<GrammarDialect>> {
+    match parse_input(dialect, source) {
+        Cow::Borrowed(_) => dialect.ast_grep(source),
+        Cow::Owned(input) => {
+            let mut doc = StrDoc::new(&input, dialect);
+            // The input has `source`'s length and character boundaries, so every node's range
+            // reads `source`.
+            doc.src = source.to_owned();
+            AstGrep::doc(doc)
+        }
+    }
 }
 
 /// Whether `kind` is a comment kind of any registered family (`LanguageBase::comment_kinds`).

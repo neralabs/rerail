@@ -56,9 +56,7 @@ use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::{file_index};
 use crate::code_rule_dsl::model::{ViolationSpec, python_module_path_on_disk};
 use crate::code_rule_dsl::suppress::{Suppress, root};
-use ast_grep_core::tree_sitter::StrDoc;
-use ast_grep_core::{AstGrep, Doc, Node};
-use ast_grep_language::LanguageExt;
+use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
 use std::ops::Range;
 use std::path::Path;
@@ -230,24 +228,7 @@ pub(crate) fn has_import_targets(dialect: GrammarDialect) -> bool {
     super::base(Family::of(dialect)).import_targets()
 }
 
-/// What tree-sitter parses for a file of `dialect`: its family's `Adapter::parse_input`.
-pub(crate) fn parse_input(dialect: GrammarDialect, source: &str) -> Cow<'_, str> {
-    super::base(Family::of(dialect)).parse_input(source)
-}
-
-/// `dialect`'s ast-grep tree of `parse_input`, reading `source`'s text.
-pub(crate) fn ast_grep(dialect: GrammarDialect, source: &str) -> AstGrep<StrDoc<GrammarDialect>> {
-    match parse_input(dialect, source) {
-        Cow::Borrowed(_) => dialect.ast_grep(source),
-        Cow::Owned(input) => {
-            let mut doc = StrDoc::new(&input, dialect);
-            // The input has `source`'s length and character boundaries, so every node's range
-            // reads `source`.
-            doc.src = source.to_owned();
-            AstGrep::doc(doc)
-        }
-    }
-}
+pub(crate) use super::{ast_grep, parse_input};
 
 /// Whether files of the dialect labelled `label` read their nearest `package.json`
 /// (`Adapter::PACKAGE_MANIFESTS`); `false` for a label no dialect has.
