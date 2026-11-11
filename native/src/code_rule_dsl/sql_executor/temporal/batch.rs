@@ -6,8 +6,12 @@ use crate::code_rule_dsl::facts::vtab::Modules;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
 
 mod compile;
+mod folds;
 mod incremental;
+mod runtime;
+mod scalars;
 mod state;
+pub(in crate::code_rule_dsl::sql_executor) use runtime::Runtime;
 
 use state::{Arena, Wave};
 
@@ -18,6 +22,8 @@ const CHANGES: &str = "__rr_batch_changes";
 const REUSE: &str = "__rr_batch_reuse";
 const NEXT: &str = "__rr_batch_next";
 const COLLECT: &str = "__rr_batch_collect";
+const PRIOR: &str = "__rr_batch_prior";
+const FOLD_CHANGES: &str = "__rr_batch_fold_changes";
 
 pub(super) fn wide(trace_width: usize) -> bool {
     trace_width > 32
@@ -64,6 +70,7 @@ struct Plan {
     reuse_id: usize,
     fact_probe_anchors: usize,
     changes: Vec<(incremental::Input, incremental::VersionKind)>,
+    fold_branches: Vec<Option<usize>>,
 }
 
 impl History {
@@ -76,6 +83,13 @@ impl History {
             "affected_heads":explain["affected_heads"],
             "version_difference_nodes":explain["version_difference_nodes"],
             "rule_decisions":explain["latest_rule_decisions"],
+            "reused_folds":explain["reused_folds"],
+            "signed_folds":explain["signed_folds"],
+            "signed_scalar_results":explain["signed_scalar_results"],
+            "fold_affected_keys":explain["fold_affected_keys"],
+            "fold_decisions":explain["fold_decisions"],
+            "preparation_cpu_ns":explain["preparation_cpu_ns"],
+            "automatic_reprepares":explain["automatic_reprepares"],
         })
     }
     pub fn planning_strategy(&self) -> planning::Strategy {
@@ -153,7 +167,13 @@ impl History {
             limit,
             external,
         )));
-        let modules = Modules::default();
+        let guard = {
+            let mut runtime = w.pool.batch_runtime.lock();
+            if runtime.is_none() {
+                *runtime = Some(Runtime::new(w.db)?);
+            }
+            runtime.as_ref().unwrap().enter(arena.clone())?
+        };
         let _context = w.profile_scope(|| {
             json!({
                 "stage":"SQL wave batch",
@@ -162,69 +182,36 @@ impl History {
                 "sqlBytes":self.plan.sql.len(),
             })
         });
-        let execution = (|| {
-            for (name, estimate) in [
-                (ROWS, 4096),
-                (FRONTIER, 16),
-                (CANDIDATES, 128),
-                (CHANGES, 16),
-            ] {
-                modules
-                    .bind(
-                        w.db,
-                        name,
-                        Arc::new(super::cold_loop::rows::Rows(
-                            arena.clone(),
-                            self.plan.width,
-                            Some(estimate),
-                        )),
-                    )
-                    .map_err(error)?;
-            }
-            let next = arena.clone();
-            w.db.create_scalar_function(NEXT, 1, FunctionFlags::SQLITE_UTF8, move |c| {
-                next.lock().next(c.get(0)?)
-            })
-            .map_err(error)?;
-            let reuse = arena.clone();
-            w.db.create_scalar_function(REUSE, 1, FunctionFlags::SQLITE_UTF8, move |c| {
-                reuse.lock().reuse(c.get(0)?)
-            })
-            .map_err(error)?;
-            w.db.create_aggregate_function(
-                COLLECT,
-                -1,
-                FunctionFlags::SQLITE_UTF8,
-                Collect(arena.clone()),
-            )
-            .map_err(error)?;
-            crate::code_rule_dsl::logic::lanes::sql_executor().local(
-                rerail_accel::Lane::Sql,
-                "SQL wave batch",
-                0.0,
-                || {
-                    let mut statement = w.db.prepare(&self.plan.sql).map_err(error)?;
-                    let _: i64 = statement.query_row([], |row| row.get(0)).map_err(error)?;
-                    Ok::<_, napi::Error>(statement.get_status(rusqlite::StatementStatus::VmStep))
-                },
-            )
-        })();
+        let preparation_cpu = crate::code_rule_dsl::sql_profile::thread_cpu_ns();
+        let mut preparation_ns = None;
+        let mut reprepares = 0;
+        let execution = crate::code_rule_dsl::logic::lanes::sql_executor().local(
+            rerail_accel::Lane::Sql,
+            "SQL wave batch",
+            0.0,
+            || {
+                let mut statement = w.db.prepare_cached(&self.plan.sql).map_err(error)?;
+                preparation_ns = preparation_cpu
+                    .zip(crate::code_rule_dsl::sql_profile::thread_cpu_ns())
+                    .map(|(start, end)| end.saturating_sub(start) as u64);
+                let before = statement.get_status(rusqlite::StatementStatus::VmStep);
+                let reprepare_before = statement.get_status(rusqlite::StatementStatus::RePrepare);
+                let _: i64 = statement.query_row([], |row| row.get(0)).map_err(error)?;
+                reprepares = statement
+                    .get_status(rusqlite::StatementStatus::RePrepare)
+                    .saturating_sub(reprepare_before);
+                Ok::<_, napi::Error>(
+                    statement
+                        .get_status(rusqlite::StatementStatus::VmStep)
+                        .saturating_sub(before),
+                )
+            },
+        );
         if let Some(profiler) = w.profiler {
             profiler.explain_pending(w.db);
         }
-        let cleanup = [
-            modules.unregister(w.db, ROWS),
-            modules.unregister(w.db, FRONTIER),
-            modules.unregister(w.db, CANDIDATES),
-            modules.unregister(w.db, CHANGES),
-            w.db.remove_function(NEXT, 1),
-            w.db.remove_function(REUSE, 1),
-            w.db.remove_function(COLLECT, -1),
-        ];
+        drop(guard);
         let vm_steps = execution?;
-        for result in cleanup {
-            result.map_err(error)?;
-        }
         let mut arena = arena.lock();
         if let Some(failure) = arena.failure.take() {
             return Err(error(failure));
@@ -260,10 +247,22 @@ impl History {
             "fact_probe_anchors":self.plan.fact_probe_anchors,
             "sql_bytes":self.plan.sql.len(),
             "vm_steps":vm_steps,
+            "preparation_cpu_ns":preparation_ns,
+            "automatic_reprepares":reprepares,
+            "runtime_registration":"Connection lifetime with cleared operation bindings",
             "reused_rule_results":arena.reused,
             "evaluated_rule_results":arena.evaluated,
             "signed_rule_results":arena.reconciled,
             "affected_heads":arena.affected_heads,
+            "reused_folds":arena.reused_folds,
+            "signed_folds":arena.signed_folds,
+            "signed_scalar_results":arena.signed_scalars,
+            "fold_affected_keys":arena.fold_keys,
+            "fold_decisions":arena.fold_decisions,
+            "fold_analysis":self.plan.outputs.iter().map(|out|json!({
+                "relation":out.name,"key_columns":out.spec.keys,
+                "analysis":crate::code_rule_dsl::logic::analysis::deltas::reconcile_fold(true,true),
+            })).collect::<Vec<_>>(),
             "version_difference_nodes":arena.version_nodes,
             "latest_rule_decisions":arena.decisions,
             "signed_projection_analysis":self.plan.rules.iter().enumerate().map(|(id,rule)|
@@ -280,13 +279,14 @@ fn sql_error(message: impl ToString) -> rusqlite::Error {
     rusqlite::Error::UserFunctionError(message.to_string().into())
 }
 
-struct Collect(Arc<parking_lot::Mutex<Arena>>);
+struct Collect(runtime::Active);
 #[derive(Default)]
 struct ResultRows {
     state: i64,
     stage: usize,
     rows: Vec<Vec<Option<i64>>>,
     keys: Vec<Vec<Option<i64>>>,
+    counts: Vec<Vec<Option<i64>>>,
 }
 
 impl Aggregate<ResultRows, i64> for Collect {
@@ -305,6 +305,7 @@ impl Aggregate<ResultRows, i64> for Collect {
             match tag {
                 1 => out.rows.push(row),
                 2 => out.keys.push(row),
+                3 => out.counts.push(row),
                 _ => return Err(sql_error("invalid signed projection row tag")),
             }
         }
@@ -313,8 +314,9 @@ impl Aggregate<ResultRows, i64> for Collect {
     fn finalize(&self, _: &mut Context<'_>, out: Option<ResultRows>) -> rusqlite::Result<i64> {
         let out = out.ok_or_else(|| sql_error("missing SQL wave sentinel"))?;
         self.0
+            .arena()?
             .lock()
-            .accept(out.state, out.stage, out.rows, out.keys)
+            .accept(out.state, out.stage, out.rows, out.keys, out.counts)
     }
 }
 

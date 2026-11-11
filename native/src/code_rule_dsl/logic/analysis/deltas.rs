@@ -1,6 +1,27 @@
 //! Coverage of positive join changes, independent of storage and execution.
 use super::Decision;
 
+pub(in crate::code_rule_dsl) fn reconcile_groups(
+    total: bool,
+    correlations_exposed: bool,
+    complete_inputs: bool,
+) -> Decision {
+    Decision::new(
+        total && correlations_exposed && complete_inputs,
+        "Complete head keys select scalar groups from changed positive witnesses. SQL recomputes nullable and negative results",
+    )
+}
+
+pub(in crate::code_rule_dsl) fn reconcile_fold(
+    complete_producers: bool,
+    pure_merge: bool,
+) -> Decision {
+    Decision::new(
+        complete_producers && pure_merge,
+        "Producer candidates, preceding rows, and widening counters determine each fold. Their signed differences cover every affected key",
+    )
+}
+
 /// Every changed witness of a positive rule contains a changed input row.
 /// Recheck affected heads against the current inputs to preserve alternative supports.
 pub(in crate::code_rule_dsl) fn reconcile_projection(

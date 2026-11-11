@@ -44,7 +44,16 @@ A SQL union at this boundary can materialize the inputs and lose those access pa
 SQL then checks each affected key for a surviving witness in the current inputs.
 Native storage patches the prior candidate root with those SQL results.
 This preserves multiple witnesses for one head and supports self-joins.
-Scalar, negative, CTE, and opaque queries keep their full SQL branches in the same wave batch.
+Correlated scalar and negative rules can use the same batch when their head exposes every correlation key.
+SQL finds affected groups from changes to the outer context and the scalar inputs.
+It then removes prior heads for those keys and recomputes the complete current group.
+This covers counts, nullable minima and maxima, and positive or negative existence tests.
+Global, nested, ordered, and effectful scalar cases retain their full evaluation.
+An eligible correlated scalar can also use an outer input from a positive CTE.
+
+Positive acyclic CTE projections expand under set semantics before signed lowering.
+Aliases and declared output columns retain their original meaning.
+Recursive, multi-arm, aggregate, and effectful CTEs keep their SQL kernels.
 Lookup-generated sources also keep their full branch because their implicit inputs need a complete change journal.
 
 Each candidate has a submission count or bound, estimated CPU and wall time, and a peak memory estimate.
@@ -108,15 +117,15 @@ The ledger enforces the budget for the single SQL batch statement.
 Each gate reports its input statistics, cost comparison, eligibility proof, and selected branch.
 Batch totals report signed evaluations, full evaluations, reused results, affected heads, and native difference work.
 Completed operation reports carry these gate statistics to the background writer.
-Observation version 2 distinguishes this kernel from the earlier full-wave batch measurements.
+Observation version 3 distinguishes fold, scalar, and preparation changes from the earlier batch measurements.
 
 ## Implementation order
 
 1. Add exact statistics for composite join keys and probes on the changed keys.
-2. Extend signed batching to additional query shapes.
+2. Extend grouped maintenance to nested scalars and additional CTE shapes.
 3. Use learned forecasts to compare complete candidate schedules and reserve credits before dispatch.
 4. Add preparation, worker CPU, and native root construction to the cost model.
-5. Reduce the remaining full candidate folds and repeated statement preparation.
+5. Reduce cold preparation costs and the full kernels for unsupported query shapes.
 6. Measure complete sessions for each replay size.
 
 Current statistics include input cardinalities, inserted and deleted row counts, distinct values for indexed leading columns, and probe estimates.
@@ -164,5 +173,62 @@ The CPython comparison now checks this regression.
 
 The final debug checks passed 203 SQL executor tests, six admission tests, and two shared delta-proof tests.
 The CPython comparison passed separately for both programs.
-Remaining costs include full candidate folds, scalar and CTE branches, and repeated statement preparation.
+These measurements precede the fold, scalar, and preparation changes described below.
 Learned forecasts remain advisory.
+
+## Fold and preparation changes
+
+Warm folds use the retained candidates from every producer, the preceding published rows, and the widening counters.
+Equal inputs reuse the prior fold and its frontier.
+Changed inputs supply signed roots to SQL, which selects the affected keys.
+The original SQL merge and widening expressions run on those keys.
+Native storage patches the prior output and constructs its frontier from immutable differences.
+This preserves duplicate producer support, lattice values, and widening counts.
+Cold folds and folds without a retained trajectory use their full evaluation.
+
+The connection keeps the batch virtual tables and callbacks registered.
+Each operation supplies its arena through a guard that clears the binding on success or failure.
+The schemas have a fixed width, and the statement uses the connection's prepared statement cache.
+The reset path keeps the runtime and removes every active operation binding.
+Schema changes can still trigger SQLite's automatic reprepare.
+
+Explain and background reports include the reused and signed fold counts, affected keys, scalar evaluations, preparation CPU, and automatic reprepares.
+The fold and scalar reconciliation proofs live in the shared analysis module.
+The CTE normalization lives in the shared logical planner.
+The debug checks cover grouped counts, nullable minima, negative existence, positive CTEs, widening counters, rollback, retry, and warm cache reuse.
+
+The expanded debug fixture includes 1,024 groups, duplicate witnesses, overlapping producers, a self-join, recursive counts, negative existence, and nullable minima.
+For one small edit, the optimized execution used 93,849 VM steps.
+The full execution used 3,243,184 VM steps.
+Both used eight submissions within the same cap of 100.
+The full control disables signed rule reconciliation, fold reuse, and signed fold reconciliation.
+Both paths retain the connection runtime and prepared statement cache.
+This comparison therefore measures evaluation changes rather than the separate benefit of statement caching.
+
+The cache check applies three consecutive updates with stable schemas and requires zero automatic reprepares on the final update.
+Preparation CPU measures explicit preparation or cache lookup.
+An automatic reprepare occurs during statement execution, so its CPU remains part of execution CPU.
+The runtime releases its operation binding after failed execution, and a later retry uses the same connection.
+
+The updated debug suite passed 205 SQL executor tests, six admission tests, two shared delta-proof tests, and one shared CTE planner test.
+Six SQL executor tests remain ignored in the normal suite.
+The CPython comparison runs separately.
+
+The updated CPython replay passed for both programs, including the identical edit and restoration of the original file.
+The first edit produced these debug measurements with two configured workers:
+
+| Program | Full VM steps | Optimized VM steps | Full owner CPU | Optimized owner CPU |
+|---|---:|---:|---:|---:|
+| Workload | 24,865,636 | 14,462,198 | 5.51 s | 2.32 s |
+| Call analysis | 81,036,688 | 66,412,409 | 11.91 s | 8.25 s |
+
+VM work fell 41.8 percent for workload and 18.0 percent for call analysis.
+Each edit used three submissions. The identical edit used zero submissions and zero VM steps.
+Both sessions stayed within 100 submissions, including result checks.
+The checks compared all program inputs and derived relations at every checkpoint.
+Owner CPU values come from one debug run on a shared machine and exclude worker CPU.
+These results establish correctness and execution headroom for these sessions.
+They do not establish performance acceptance for the complete product.
+
+Remaining costs include cold preparation, schema-triggered automatic reprepares, global or nested scalar evaluation, and unsupported CTE kernels.
+Composite statistics and learned ranking of complete schedules remain separate planner work.

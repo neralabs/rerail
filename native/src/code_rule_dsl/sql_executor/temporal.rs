@@ -4,6 +4,7 @@ use super::maintenance::{Delta, Work};
 use super::*;
 use crate::code_rule_dsl::logic::native::aggregation::{Grouping, Reduction};
 mod batch;
+pub(super) use batch::Runtime as BatchRuntime;
 mod compose;
 mod cold_loop;
 mod batches;

@@ -66,7 +66,10 @@ fn projection_program() -> String {
          total(n) :- n=count : {item(_,_)}.\n\
          total(n) :- total(n), n=count : {item(_,_)}.\n\
          .decl paired(g:number)\npaired(g) :- item(g,_),item(g,_).\n\
-         .output item,total,paired\n",
+         .decl per_group(g:number,n:number)\nper_group(g,n) :- enabled(g), n=count : {item(g,_)}.\n\
+         .decl absent(g:number)\nabsent(g) :- enabled(g), !item(g,_).\n\
+         .decl lowest(g:number,v:number)\nlowest(g,v) :- enabled(g), v=min x : {seed(g,_,x)}.\n\
+         .output item,total,paired,per_group,absent,lowest\n",
     );
     program
 }
@@ -112,10 +115,10 @@ fn signed_batches_preserve_duplicate_supports_simultaneous_edits_and_rollback() 
         incremental::FORCE_FULL.set(false);
         expected.unwrap();
         e.apply_changes(edit.to_string(), Some(32)).unwrap();
-        for relation in ["item", "total", "paired"] {
+        for relation in ["item", "total", "paired", "per_group", "absent", "lowest"] {
             let sql = format!("SELECT * FROM {relation} ORDER BY 1,2");
             // The scalar relation has one column.
-            let sql = if relation != "item" {
+            let sql = if !matches!(relation, "item" | "per_group" | "lowest") {
                 format!("SELECT * FROM {relation} ORDER BY 1")
             } else {
                 sql
@@ -367,4 +370,168 @@ fn signed_feedback_child() {
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
+}
+
+#[test]
+fn sparse_folds_scalars_and_cached_statements_replay_with_stable_schemas() {
+    let (_dir, mut e) = projected_fixture(512);
+    e.set_limits("{}".into()).unwrap();
+    for (insert, delete) in [
+        (vec![7, 2, 41], vec![7, 0, 40]),
+        (vec![7, 3, 42], vec![7, 2, 41]),
+        (vec![7, 4, 43], vec![7, 3, 42]),
+    ] {
+        e.apply_changes(
+            json!([{"name":"seed","insert":[insert],"delete":[delete]}]).to_string(),
+            Some(32),
+        )
+        .unwrap();
+    }
+    let explain = e.executions[0].temporal[&0]
+        .batch
+        .as_ref()
+        .unwrap()
+        .explain();
+    let history = e.executions[0].temporal[&0].batch.as_ref().unwrap();
+    assert!(
+        history
+            .plan
+            .rules
+            .iter()
+            .filter(|r| matches!(
+                history.plan.outputs[r.relation].name.as_str(),
+                "per_group" | "lowest"
+            ))
+            .all(|r| r.incremental.as_ref().is_some_and(|i| i.scalar))
+    );
+    assert!(explain["signed_folds"].as_u64().unwrap() > 0, "{explain}");
+    assert!(explain["reused_folds"].as_u64().unwrap() > 0, "{explain}");
+    assert!(
+        explain["signed_scalar_results"].as_u64().unwrap() > 0,
+        "{explain}"
+    );
+    assert_eq!(explain["automatic_reprepares"], 0, "{explain}");
+    assert_eq!(
+        rows(&mut e, "SELECT * FROM per_group WHERE c0=7"),
+        json!([[7, 2]])
+    );
+}
+
+#[test]
+fn positive_cte_candidates_keep_signed_reconciliation() {
+    use crate::code_rule_dsl::logic::sql::{
+        select::{Cte, FromItem, Select},
+        sql_ast::SqlExpression as E,
+    };
+    let (_dir, mut e) = projected_fixture(128);
+    e.set_limits("{}".into()).unwrap();
+    let mut trace = e.executions[0].temporal[&0].clone();
+    let steps = Arc::make_mut(&mut trace.steps);
+    let mut constant = true;
+    for (step, query) in steps {
+        if !matches!(step.output.as_str(), "item" | "per_group") {
+            continue;
+        }
+        let Some(q) = query else { continue };
+        if step.output == "per_group" {
+            let mut source = q.body.from[0].clone();
+            source.alias = "owner_source".into();
+            q.ctes.push(Cte {
+                name: "owners".into(),
+                columns: Some(vec!["c0".into()]),
+                arms: vec![Select {
+                    distinct: true,
+                    columns: vec![(
+                        E::Qualified {
+                            alias: source.alias.clone(),
+                            column: "c0".into(),
+                        },
+                        Some("c0".into()),
+                    )],
+                    from: vec![source],
+                    predicates: Vec::new(),
+                }],
+                distinct: false,
+                materialized: true,
+            });
+            q.body.from[0].relation = Rel::Cte("owners".into());
+            continue;
+        }
+        let mut body = q.body.clone();
+        if constant {
+            body.from.clear();
+            body.predicates.clear();
+            for (column, (expr, _)) in body.columns.iter_mut().enumerate() {
+                *expr =
+                    E::Value(
+                        crate::code_rule_dsl::logic::sql::sql_ast::SqlValue::Integer(
+                            if column == 0 { 0 } else { 40 },
+                        ),
+                    );
+            }
+            constant = false;
+        }
+        let width = body.columns.len();
+        *q = Query {
+            ctes: vec![Cte {
+                name: "projected_witnesses".into(),
+                columns: Some((0..width).map(|c| format!("c{c}")).collect()),
+                arms: vec![body],
+                distinct: false,
+                materialized: true,
+            }],
+            body: Select {
+                distinct: true,
+                columns: (0..width)
+                    .map(|c| {
+                        (
+                            E::Qualified {
+                                alias: "w".into(),
+                                column: format!("c{c}"),
+                            },
+                            Some(format!("c{c}")),
+                        )
+                    })
+                    .collect(),
+                from: vec![FromItem::cross(Rel::Cte("projected_witnesses".into()), "w")],
+                predicates: Vec::new(),
+            },
+        };
+    }
+    let mut history = History::prepare(&trace, &e.db).unwrap().unwrap();
+    let mut work = Work::new(&e.db, &e.scratch);
+    work.versions = Some(&e.versions);
+    history
+        .replay(&mut work, &BTreeMap::new(), 32, false)
+        .unwrap();
+    work.cleanup().unwrap();
+    e.scratch = work.pool;
+    e.executions[0].temporal.get_mut(&0).unwrap().batch = Some(history);
+    e.apply_changes(
+        json!([{"name":"seed","delete":[[7,0,40],[7,1,40]],"insert":[[7,2,41]]}]).to_string(),
+        Some(32),
+    )
+    .unwrap();
+    assert_eq!(
+        rows(&mut e, "SELECT * FROM per_group WHERE c0=7"),
+        json!([[7, 1]])
+    );
+    assert_eq!(
+        rows(&mut e, "SELECT * FROM item WHERE c0=7"),
+        json!([[7, 41]])
+    );
+    let explain = e.executions[0].temporal[&0]
+        .batch
+        .as_ref()
+        .unwrap()
+        .explain();
+    assert!(
+        explain["signed_rule_results"].as_u64().unwrap() > 0,
+        "{explain}"
+    );
+    assert!(
+        explain["signed_projection_analysis"]
+            .to_string()
+            .contains("expanded under set semantics")
+    );
 }

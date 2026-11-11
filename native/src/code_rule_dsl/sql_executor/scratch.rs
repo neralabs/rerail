@@ -3,6 +3,7 @@ use super::*;
 
 #[derive(Clone, Default)]
 pub(super) struct Pool {
+    pub batch_runtime: Arc<parking_lot::Mutex<Option<temporal::BatchRuntime>>>,
     pub worker_accounting: Option<Arc<work_graph::Accounting>>,
     pub worker_plan:Arc<parking_lot::Mutex<Option<Value>>>,
     tables: BTreeMap<(String, bool, bool), Vec<String>>,

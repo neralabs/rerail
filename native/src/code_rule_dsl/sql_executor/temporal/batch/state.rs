@@ -21,7 +21,7 @@ impl Roots {
 pub(super) struct Wave {
     pub roots: Vec<Roots>,
     pub outputs: BTreeSet<usize>,
-    candidates: Vec<Option<versions::Version>>,
+    pub(super) candidates: Vec<Option<versions::Version>>,
 }
 
 pub(super) struct Arena {
@@ -35,8 +35,8 @@ pub(super) struct Arena {
     schedule: Vec<usize>,
     cursor: usize,
     pub(super) initial: Vec<Roots>,
-    next_roots: Vec<Roots>,
-    candidates: Vec<Option<versions::Version>>,
+    pub(super) next_roots: Vec<Roots>,
+    pub(super) candidates: Vec<Option<versions::Version>>,
     pub waves: Vec<Wave>,
     pub evaluated: usize,
     pub reused: usize,
@@ -48,6 +48,12 @@ pub(super) struct Arena {
     selection: Option<(i64, usize)>,
     pub reconciled: usize,
     pub affected_heads: usize,
+    pub(super) fold_differences: BTreeMap<usize, super::folds::Changes>,
+    pub(super) reused_folds: usize,
+    pub(super) signed_folds: usize,
+    pub(super) signed_scalars: usize,
+    pub(super) fold_keys: usize,
+    pub(super) fold_decisions: BTreeMap<usize, Value>,
     pub(super) signed_reuses: BTreeSet<usize>,
 }
 
@@ -88,6 +94,12 @@ impl Arena {
             selection: None,
             reconciled: 0,
             affected_heads: 0,
+            fold_differences: BTreeMap::new(),
+            reused_folds: 0,
+            signed_folds: 0,
+            signed_scalars: 0,
+            fold_keys: 0,
+            fold_decisions: BTreeMap::new(),
             signed_reuses: BTreeSet::new(),
         };
         arena.begin();
@@ -151,7 +163,7 @@ impl Arena {
             .then_some(prior)
     }
 
-    fn check_handle(&self, handle: i64) -> rusqlite::Result<()> {
+    pub(super) fn check_handle(&self, handle: i64) -> rusqlite::Result<()> {
         if self.handle == handle {
             Ok(())
         } else {
@@ -184,7 +196,10 @@ impl Arena {
                 return Ok(choice as i64);
             }
         }
-        let choice = if self.prior(stage).is_some() {
+        let choice = if stage >= self.plan.rules.len() {
+            self.fold_stage(stage - self.plan.rules.len())?
+                .unwrap_or(stage)
+        } else if self.prior(stage).is_some() {
             self.plan.reuse_id
         } else {
             self.incremental_stage(stage)?.unwrap_or(stage)
@@ -196,6 +211,9 @@ impl Arena {
     pub fn reuse(&mut self, handle: i64) -> rusqlite::Result<i64> {
         self.check_handle(handle)?;
         let stage = self.schedule[self.cursor];
+        if stage >= self.plan.rules.len() {
+            return self.reuse_fold(stage - self.plan.rules.len());
+        }
         let prior = self
             .prior(stage)
             .or_else(|| {
@@ -217,6 +235,7 @@ impl Arena {
         stage: usize,
         mut rows: Vec<Vec<Option<i64>>>,
         keys: Vec<Vec<Option<i64>>>,
+        counts: Vec<Vec<Option<i64>>>,
     ) -> rusqlite::Result<i64> {
         self.check_handle(handle)?;
         if self.schedule.get(self.cursor) != Some(&stage) {
@@ -228,6 +247,9 @@ impl Arena {
                 .as_ref()
                 .is_some_and(|r| self.selection == Some((handle, r.expression)));
             let candidate = if incremental {
+                if rule.incremental.as_ref().unwrap().scalar {
+                    self.signed_scalars += 1;
+                }
                 self.affected_heads += keys.len();
                 self.reconciled += 1;
                 self.previous_candidate(stage)
@@ -236,13 +258,17 @@ impl Arena {
                     .map_err(|err| sql_error(format!("signed rule {stage}: {err}")))?
             } else {
                 self.evaluated += 1;
-                rule.candidate
-                    .loaded(rows, true, false)
+                self.previous_candidate(stage)
+                    .unwrap_or(&rule.candidate)
+                    .loaded(rows, true, true)
                     .map_err(sql_error)?
             };
             self.candidates[stage] = Some(candidate);
         } else {
             let id = stage - self.plan.rules.len();
+            if self.selection == self.plan.fold_branches[id].map(|branch| (handle, branch)) {
+                return self.accept_fold(id, rows, keys, counts);
+            }
             let spec = &self.plan.outputs[id].spec;
             let v = &mut self.next_roots[id];
             if spec.widening() && !rows.is_empty() {
@@ -273,7 +299,7 @@ impl Arena {
         self.advance()
     }
 
-    fn advance(&mut self) -> rusqlite::Result<i64> {
+    pub(super) fn advance(&mut self) -> rusqlite::Result<i64> {
         self.handle += 1;
         self.cursor += 1;
         if self.cursor < self.schedule.len() {
@@ -305,19 +331,14 @@ impl Arena {
             })
             .collect();
         let roots = std::mem::replace(&mut self.next_roots, next);
-        let mut candidates =
-            std::mem::replace(&mut self.candidates, vec![None; self.plan.rules.len()]);
-        for (candidate, rule) in candidates.iter_mut().zip(&self.plan.rules) {
-            if !rule.reusable {
-                *candidate = None;
-            }
-        }
+        let candidates = std::mem::replace(&mut self.candidates, vec![None; self.plan.rules.len()]);
         self.waves.push(Wave {
             roots,
             outputs,
             candidates,
         });
         self.differences.clear();
+        self.fold_differences.clear();
         self.signed_reuses.clear();
         self.begin();
         Ok(self.handle)

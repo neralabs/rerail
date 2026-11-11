@@ -6,7 +6,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 
-const VERSION: i64 = 2;
+const VERSION: i64 = 3;
 const PROFILE: &str = if cfg!(debug_assertions) {
     "debug"
 } else {

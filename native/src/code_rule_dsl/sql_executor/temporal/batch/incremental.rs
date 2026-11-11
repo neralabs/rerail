@@ -20,6 +20,7 @@ pub(super) enum VersionKind {
 pub(super) struct Rule {
     pub expression: usize,
     pub inputs: Vec<Input>,
+    pub scalar: bool,
 }
 
 struct Atom {
@@ -92,57 +93,127 @@ fn change_slot(
 
 pub(super) fn compile(
     original: &Query,
-    current: &Query,
+    _current: &Query,
     trace: &Trace,
     db: &rusqlite::Connection,
     positions: &BTreeMap<&str, usize>,
     changes: &mut Vec<(Input, VersionKind)>,
     id: usize,
 ) -> (Decision, Option<(Rule, String)>) {
-    let mut positive = original.ctes.is_empty() && !original.body.from.is_empty();
-    let mut complete_dependencies = true;
-    for expr in original
-        .body
-        .columns
-        .iter()
-        .map(|(e, _)| e)
-        .chain(&original.body.predicates)
-        .chain(original.body.from.iter().flat_map(|f| match &f.join {
-            select::Join::Cross => &[][..],
-            select::Join::On(on) => on.as_slice(),
-        }))
-    {
-        expr.visit(&mut |e| match e {
-            E::Call {
-                name: "tape_nearest",
-                ..
-            } => complete_dependencies = false,
-            E::Exists { .. } | E::Scalar(_) => positive = false,
-            E::Call { name, arguments }
-                if matches!(*name, "count" | "sum" | "avg" | "total")
-                    || matches!(*name, "min" | "max") && arguments.len() == 1 =>
-            {
-                positive = false
-            }
-            _ => {}
-        });
-    }
-    let total = plan::acyclic::total(&original.body);
-    let proof = deltas::reconcile_projection(total, positive, complete_dependencies);
-    // Bound expression size before generating a branch for every join atom.
-    if !proof.proven || original.body.from.len() > 8 {
+    let inlined_ctes = original.ctes.len();
+    let Some(normalized) = plan::acyclic::queries::expand(original) else {
         return (
-            if proof.proven {
-                Decision::new(
-                    false,
-                    "Signed projection exceeds the eight-input SQL expansion bound",
-                )
-            } else {
-                proof
-            },
+            Decision::new(
+                false,
+                "Recursive, aggregate, or effectful CTE keeps its SQL kernel",
+            ),
             None,
         );
+    };
+    let original = &normalized;
+    let mut current = original.clone();
+    bind(&mut current, trace, positions);
+    let current = &current;
+    if let Some(mut compiled) =
+        super::scalars::compile(original, current, trace, db, positions, changes, id)
+    {
+        if inlined_ctes > 0 && compiled.0.proven {
+            compiled
+                .0
+                .reason
+                .push_str(". Positive acyclic CTEs are expanded under set semantics");
+        }
+        return compiled;
     }
+    let positive =
+        !original.body.from.is_empty() && plan::acyclic::queries::positive(&original.body);
+    let total = plan::acyclic::total(&original.body);
+    let mut proof = deltas::reconcile_projection(total, positive, true);
+    if !proof.proven || original.body.from.len() > 8 {
+        if proof.proven {
+            proof = Decision::new(
+                false,
+                "Signed projection exceeds the eight-input SQL expansion bound",
+            );
+        }
+        return (proof, None);
+    }
+    if inlined_ctes > 0 {
+        proof
+            .reason
+            .push_str(". Positive acyclic CTE projections are expanded under set semantics");
+    }
+    let Some((inputs, affected)) = affected(original, current, trace, db, positions, changes)
+    else {
+        return (deltas::reconcile_projection(total, positive, false), None);
+    };
+    let width = original.body.columns.len();
+    let fields = names("", width);
+    let supported = maintenance::targeted(current.clone(), "__rr_affected").render();
+    let present = (0..width)
+        .map(|c| format!("c{c} IS NOT NULL"))
+        .collect::<Vec<_>>()
+        .join(" AND ");
+    let sentinel = (0..width)
+        .map(|c| format!("NULL AS c{c}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "(WITH __rr_affected({fields}) AS MATERIALIZED ({}) \
+         SELECT {COLLECT}({},{id},rr_present,{fields}) FROM (\
+           SELECT 0 AS rr_present,{sentinel} \
+           UNION ALL SELECT 2,{fields} FROM __rr_affected WHERE {present} \
+           UNION ALL SELECT 1,{fields} FROM ({supported}) WHERE {present}))",
+        affected.join(" UNION "),
+        compile::PARENT,
+    );
+    (
+        proof,
+        Some((
+            Rule {
+                expression: 0,
+                inputs,
+                scalar: false,
+            },
+            sql,
+        )),
+    )
+}
+
+fn bind(query: &mut Query, trace: &Trace, positions: &BTreeMap<&str, usize>) {
+    for block in query
+        .ctes
+        .iter_mut()
+        .flat_map(|c| &mut c.arms)
+        .chain([&mut query.body])
+    {
+        block.relations_mut(&mut |relation| {
+            let Some(name) = relation.program_relation() else {
+                return;
+            };
+            let Some(&id) = positions.get(name) else {
+                return;
+            };
+            let slot = id * 3 + usize::from(matches!(relation, Rel::Derived { delta: true, .. }));
+            *relation = Rel::Bound {
+                rel: name.into(),
+                table: compile::source(
+                    if slot % 3 == 1 { FRONTIER } else { ROWS },
+                    slot,
+                    trace.relations[name].width,
+                ),
+            };
+        });
+    }
+}
+pub(super) fn affected(
+    original: &Query,
+    current: &Query,
+    trace: &Trace,
+    db: &rusqlite::Connection,
+    positions: &BTreeMap<&str, usize>,
+    changes: &mut Vec<(Input, VersionKind)>,
+) -> Option<(Vec<Input>, Vec<String>)> {
     let base = trace.relations.len() * 3 + trace.steps.len();
     let mut current = current.clone();
     current.body.from.sort_by_key(|item| {
@@ -209,7 +280,7 @@ pub(super) fn compile(
         })
         .collect::<Option<Vec<_>>>();
     let Some(atoms) = atoms else {
-        return (deltas::reconcile_projection(total, positive, false), None);
+        return None;
     };
     // Both queries use the original atom order. Anchoring can then move a pivot
     // without changing which columns its signed input supplies.
@@ -223,37 +294,8 @@ pub(super) fn compile(
         query.body.distinct = true;
         affected.push(query.render());
     }
-    let width = original.body.columns.len();
-    let fields = names("", width);
-    let supported = maintenance::targeted(current.clone(), "__rr_affected").render();
-    let present = (0..width)
-        .map(|c| format!("c{c} IS NOT NULL"))
-        .collect::<Vec<_>>()
-        .join(" AND ");
-    let sentinel = (0..width)
-        .map(|c| format!("NULL AS c{c}"))
-        .collect::<Vec<_>>()
-        .join(",");
-    let sql = format!(
-        "(WITH __rr_affected({fields}) AS MATERIALIZED ({}) \
-         SELECT {COLLECT}({},{id},rr_present,{fields}) FROM (\
-           SELECT 0 AS rr_present,{sentinel} \
-           UNION ALL SELECT 2,{fields} FROM __rr_affected WHERE {present} \
-           UNION ALL SELECT 1,{fields} FROM ({supported}) WHERE {present}))",
-        affected.join(" UNION "),
-        compile::PARENT,
-    );
     let inputs = atoms.into_iter().map(|a| a.input).collect();
-    (
-        proof,
-        Some((
-            Rule {
-                expression: 0,
-                inputs,
-            },
-            sql,
-        )),
-    )
+    Some((inputs, affected))
 }
 
 pub(super) struct External {
@@ -388,7 +430,7 @@ impl Arena {
 #[cfg(test)]
 thread_local! {pub(super) static FORCE_FULL:std::cell::Cell<bool>=const{std::cell::Cell::new(false)};}
 
-fn force_full() -> bool {
+pub(super) fn force_full() -> bool {
     #[cfg(test)]
     {
         FORCE_FULL.get()

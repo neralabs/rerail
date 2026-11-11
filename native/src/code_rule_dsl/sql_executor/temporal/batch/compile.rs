@@ -3,7 +3,7 @@ use super::*;
 
 pub(super) const PARENT: &str = "__rr_parent.state";
 
-fn source(table: &str, slot: usize, width: usize) -> String {
+pub(super) fn source(table: &str, slot: usize, width: usize) -> String {
     format!(
         "(SELECT {} FROM {table} WHERE rr_state={PARENT} AND rr_slot={slot})",
         names("", width)
@@ -57,6 +57,7 @@ pub(super) fn plan(trace: &Trace, db: &rusqlite::Connection) -> Result<Option<Pl
     let mut expressions = vec![];
     let mut incremental_expressions = vec![];
     let mut changes = vec![];
+    let mut fold_expressions = Vec::new();
     let mut fact_probe_anchors = 0;
     for (id, (step, checked)) in trace.steps.iter().enumerate() {
         let relation = positions[step.output.as_str()];
@@ -217,6 +218,32 @@ pub(super) fn plan(trace: &Trace, db: &rusqlite::Connection) -> Result<Option<Pl
         let candidates = input.join(" UNION ");
         let previous = source(ROWS, id * 3, spec.width);
         let (query, output_width) = fold(spec, &candidates, &previous, id);
+        let restricted = rules
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.relation == id)
+            .map(|(r, _)| {
+                let input = source(CANDIDATES, positions.len() * 3 + r, spec.width);
+                let equality = if spec.keys == 0 {
+                    "1".into()
+                } else {
+                    same("c", "k", spec.keys)
+                };
+                format!("SELECT c.* FROM __rr_fold_keys k CROSS JOIN {input} c WHERE {equality}")
+            })
+            .collect::<Vec<_>>();
+        let restricted = if restricted.is_empty() {
+            candidates.clone()
+        } else {
+            restricted.join(" UNION ")
+        };
+        fold_expressions.push(folds::compile(
+            spec,
+            &restricted,
+            &previous,
+            id,
+            rules.len() + id,
+        ));
         expressions.push(evaluate(rules.len() + id, output_width, &query, false));
         let readers = trace
             .steps
@@ -252,6 +279,16 @@ pub(super) fn plan(trace: &Trace, db: &rusqlite::Connection) -> Result<Option<Pl
         rules[id].incremental.as_mut().unwrap().expression = expressions.len();
         expressions.push(sql);
     }
+    let mut fold_branches = Vec::new();
+    for sql in fold_expressions {
+        if sql_bytes.saturating_add(sql.len()) > 1_900_000 {
+            fold_branches.push(None);
+        } else {
+            sql_bytes += sql.len();
+            fold_branches.push(Some(expressions.len()));
+            expressions.push(sql);
+        }
+    }
     let branches = expressions
         .iter()
         .enumerate()
@@ -283,6 +320,7 @@ pub(super) fn plan(trace: &Trace, db: &rusqlite::Connection) -> Result<Option<Pl
         reuse_id,
         fact_probe_anchors,
         changes,
+        fold_branches,
     }))
 }
 
@@ -366,7 +404,12 @@ fn bound_fact_anchor(
     })
 }
 
-fn fold(spec: &Relation, candidates: &str, previous: &str, id: usize) -> (String, usize) {
+pub(super) fn fold(
+    spec: &Relation,
+    candidates: &str,
+    previous: &str,
+    id: usize,
+) -> (String, usize) {
     if !spec.lattice {
         let same = same("p", "c", spec.width);
         return (

@@ -7,6 +7,8 @@ use super::super::sql::{
 use crate::code_rule_dsl::waves::schedule;
 use std::collections::{BTreeMap, BTreeSet};
 
+pub(in crate::code_rule_dsl) mod queries;
+
 pub(in crate::code_rule_dsl) fn total(block: &Select) -> bool {
     effect_safe(block, false)
 }
