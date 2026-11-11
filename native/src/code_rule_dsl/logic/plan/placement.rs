@@ -70,10 +70,11 @@ impl Form {
 
 /// The forms the Metal backend runs (`setfix::device`, `metal_join`): joins of atoms by their keys (or whole),
 /// negated atoms and atoms that bind nothing (anti- and semi-joins by the same keys), and comparisons, `in` and
-/// document tests as row programs, and recursion: a recursive stratum's rounds to its fixpoint on the device
-/// (`device::fixpoint`; one that keeps levels is refused at open, named). A stratum that needs any other form stays on
-/// the CPU, named in the profile.
-const DEVICE_FORMS: &[Form] = &[Form::Join, Form::Negation, Form::Comparison, Form::Recursion];
+/// document tests as row programs, recursion (a recursive stratum's rounds to its fixpoint on the device,
+/// `device::fixpoint`; one that keeps levels is refused at open, named), and aggregates (count, sum, min, max folded
+/// per binding over the relation's sort by the keys). A stratum that needs any other form stays on the CPU, named in
+/// the profile.
+const DEVICE_FORMS: &[Form] = &[Form::Join, Form::Negation, Form::Comparison, Form::Recursion, Form::Aggregate];
 
 /// A join step as the planner estimates it: the bindings it reads, the rows of the relation it reads, the rows it
 /// makes, its key columns, and whether it reads a range inside a document (`Mode::Range`).

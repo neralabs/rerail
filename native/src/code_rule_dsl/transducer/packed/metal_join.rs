@@ -58,6 +58,12 @@ pub(in crate::code_rule_dsl) const JOIN: u32 = 0;
 pub(in crate::code_rule_dsl) const SEMI: u32 = 1;
 pub(in crate::code_rule_dsl) const ANTI: u32 = 2;
 pub(in crate::code_rule_dsl) const FILTER: u32 = 3;
+/// An aggregate over the rows that match each binding's keys (`Stage::agg`): one row out per binding with a value.
+pub(in crate::code_rule_dsl) const AGG: u32 = 4;
+pub(in crate::code_rule_dsl) const AGG_COUNT: u32 = 0;
+pub(in crate::code_rule_dsl) const AGG_SUM: u32 = 1;
+pub(in crate::code_rule_dsl) const AGG_MIN: u32 = 2;
+pub(in crate::code_rule_dsl) const AGG_MAX: u32 = 3;
 
 /// A program column's or a bind's source: a candidate's column, or the binding's slot.
 pub(in crate::code_rule_dsl) const RIGHT: u32 = 0;
@@ -136,7 +142,9 @@ pub(in crate::code_rule_dsl) struct Stage {
     pub(in crate::code_rule_dsl) outputs: [u32; MAX_OUTPUTS],
     pub(in crate::code_rule_dsl) noutputs: u32,
     pub(in crate::code_rule_dsl) ncols: u32,
-    pub(in crate::code_rule_dsl) pad: [u32; 2],
+    /// An aggregate stage's fold (mode `AGG`): `[kind | bind << 8, column]` (`AGG_*`; the column `NONE` for none).
+    /// Its value's slot is `bind_slot[0]`; its counter word is set when a sum passes 64 bits.
+    pub(in crate::code_rule_dsl) agg: [u32; 2],
     /// The arithmetic binds: `[operation, first operand, second operand, sources]` (`ARITH_*`).
     pub(in crate::code_rule_dsl) arith: [[u32; 4]; MAX_ARITH],
 }
@@ -174,7 +182,7 @@ struct Stage {
     uint par_kind[16]; uint par_slot[16]; uint par_doc[16];
     uint bind_slot[16]; uint bind_kind[16]; uint bind_idx[16];
     uint passed[16]; uint outputs[16];
-    uint noutputs; uint ncols; uint pad[2];
+    uint noutputs; uint ncols; uint agg[2];
     uint4 arith[8];
 };
 
@@ -302,6 +310,34 @@ static inline bool matches(constant Stage& s, device const long* R, uint r, thre
     return true;
 }
 
+// An aggregate's value over the binding's matching rows (mode 4, `Stage::agg`): 0 with `v`, 1 when it has none (a min
+// or max of no rows, or a tested value that differs), 2 when a sum passes 64 bits.
+static inline uint aggregate(constant Stage& s, device const long* L, uint t, device const long* R, device const uint* perm,
+                             uint lo, uint hi, thread const long* kv, thread long& v) {
+    bool keyed = s.nkeys > 0;
+    uint kind = s.agg[0] & 0xff;
+    long cnt = 0, sum = 0, mn = 0, mx = 0;
+    bool any = false, over = false;
+    for (uint q = lo; q < hi; q++) {
+        uint r = keyed ? perm[q] : q;
+        if (!matches(s, R, r, kv)) continue;
+        cnt++;
+        if (s.agg[1] == NONE) continue;
+        long x = R[ulong(s.agg[1]) * s.nr + r];
+        long y = as_type<long>(as_type<ulong>(sum) + as_type<ulong>(x));
+        if ((sum < 0) == (x < 0) && (y < 0) != (sum < 0)) over = true;
+        sum = y;
+        if (!any || x < mn) mn = x;
+        if (!any || x > mx) mx = x;
+        any = true;
+    }
+    if (kind == 1 && over) return 2;
+    if ((kind == 2 || kind == 3) && !any) return 1;
+    v = kind == 0 ? cnt : (kind == 1 ? sum : (kind == 2 ? mn : mx));
+    if (((s.agg[0] >> 8) & 1) == 0 && L[ulong(s.bind_slot[0]) * s.cap_in + t] != v) return 1;
+    return 0;
+}
+
 kernel void stage_count(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]], device const uint* perm [[buffer(2)]],
                         device const uint* starts [[buffer(3)]], device const uint* rkeys [[buffer(4)]], device const uint* nruns [[buffer(5)]],
                         device const uint* totals [[buffer(6)]], device atomic_uint* counters [[buffer(7)]], device uint* counts [[buffer(8)]],
@@ -312,6 +348,13 @@ kernel void stage_count(device const long* L [[buffer(0)]], device const long* R
     long kv[8];
     uint lo, hi;
     candidates(s, L, t, starts, rkeys, nruns, kv, lo, hi);
+    if (s.mode == 4) {
+        long v = 0;
+        uint st = aggregate(s, L, t, R, perm, lo, hi, kv, v);
+        if (st == 2 && s.counter != NONE) atomic_store_explicit(&counters[s.counter], 1u, memory_order_relaxed);
+        counts[t] = uint(st == 0);
+        return;
+    }
     bool keyed = s.mode != 3 && s.nkeys > 0;
     bool exists = s.mode == 1 || s.mode == 2;
     uint c = 0, p0 = 0;
@@ -359,6 +402,15 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
     if (at >= s.cap_out) return;
     long kv[8];
     uint lo, hi;
+    if (s.mode == 4) {
+        if (offsets[t + 1] <= at) return;
+        candidates(s, L, t, starts, rkeys, nruns, kv, lo, hi);
+        long v = 0;
+        aggregate(s, L, t, R, perm, lo, hi, kv, v);
+        write_row(s, L, t, R, 0, O, at);
+        if ((s.agg[0] >> 8) & 1) O[ulong(s.bind_slot[0]) * s.cap_out + at] = v;
+        return;
+    }
     if (s.mode == 1 || s.mode == 2) {
         // The count pass decided: a row out is the binding as it is.
         if (offsets[t + 1] > at) write_row(s, L, t, R, 0, O, at);

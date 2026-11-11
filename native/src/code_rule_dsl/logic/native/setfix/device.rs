@@ -15,7 +15,7 @@
 //! - `let` and `docof` that bind a slot: a map, in place;
 //! - a head of slots and constants.
 //!
-//! It does not take aggregates, string joins, text tests, computed text (`cat`, functions), component relations
+//! It does not take string joins, text tests, computed text (`cat`, text functions), gates or requests: the forms
 //! (recursion), gates or requests: the forms `DEVICE_FORMS` lacks.
 //!
 //! **One submission per stratum.** Every seed join of the stratum is encoded into one `metal_join::Batch`, and the
@@ -268,6 +268,56 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
                 };
                 stages.push(PStage { first: i, span, kind, desc: d, npassed });
                 i += span;
+            }
+            Step::Scalar { src, keys, tests, col, kind, out, bind, .. } => {
+                // An aggregate: each binding's matching rows folded where they lie, in the relation's sort by the
+                // keys (one row out per binding with a value). A sum past 64 bits is refused at run time.
+                use crate::code_rule_dsl::logic::analysis::scalars::Kind as K;
+                let fold = match kind {
+                    K::Count => mj::AGG_COUNT,
+                    K::Sum => mj::AGG_SUM,
+                    K::Min => mj::AGG_MIN,
+                    K::Max => mj::AGG_MAX,
+                    #[allow(unreachable_patterns)]
+                    _ => return Err("an aggregate the device does not fold".into()),
+                };
+                if keys.len() > mj::MAX_KEYS || tests.len() > mj::MAX_TESTS {
+                    return Err("an aggregate with more keys or tests than a stage holds".into());
+                }
+                let mut d = mj::Stage { mode: mj::AGG, ..mj::Stage::default() };
+                for (k, &(c, key)) in keys.iter().enumerate() {
+                    d.key_rcol[k] = c as u32;
+                    match key {
+                        Key::Slot(s) => { d.key_kind[k] = mj::SLOT; d.key_slot[k] = s as u32; }
+                        Key::Const(v) => { d.key_kind[k] = mj::CONST; d.key_const[k] = v; }
+                    }
+                }
+                d.nkeys = keys.len() as u32;
+                for (k, &(a, b)) in tests.iter().enumerate() {
+                    d.test_a[k] = a as u32;
+                    d.test_b[k] = b as u32;
+                }
+                d.ntests = tests.len() as u32;
+                d.agg = [fold | (u32::from(*bind) << 8), col.map_or(mj::NONE, |c| c as u32)];
+                d.bind_slot[0] = *out as u32;
+                if *bind {
+                    if *out >= bound.len() {
+                        bound.resize(*out + 1, false);
+                    }
+                    bound[*out] = true;
+                }
+                let cols = keys.iter().map(|&(c, _)| c).collect();
+                let kind = match src {
+                    Src::In(rel, _) => {
+                        readable(rel, keys.len())?;
+                        Kind::Atom { rel: rel.clone(), cols }
+                    }
+                    Src::Delta(r) => Kind::Own { rel: *r, delta: true, cols },
+                    Src::Full(r) => Kind::Own { rel: *r, delta: false, cols },
+                    Src::FullMulti(..) => return Err("an aggregate over the component's own relation by several indexes".into()),
+                };
+                stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
+                i += 1;
             }
             Step::Let { .. } | Step::DocOf { bind: true, .. } => {
                 // Consecutive binds of slots: one map, each bind reading the slots as the ones before it left them.
@@ -573,7 +623,11 @@ impl<'p> Run<'p> {
                     slot += 1;
                 }
             }
-            if s.npassed > 0 {
+            if s.desc.mode == mj::AGG {
+                // Its word: set when a sum passed 64 bits.
+                counter.push(Some(ncounters));
+                ncounters += 1;
+            } else if s.npassed > 0 {
                 counter.push(Some(ncounters));
                 ncounters += 1 + s.npassed;
             } else {
@@ -646,7 +700,7 @@ impl<'p> Run<'p> {
                     }
                     let out = mj::Table::new(self.plan.nslots, cap).map_err(|e| format!("{e:?}: a binding table of {cap} rows, {} slots", self.plan.nslots))?;
                     if let Some(c) = self.counter[k] {
-                        for w in c..c + 1 + s.npassed {
+                        for w in c..c + 1 + if s.desc.mode == mj::AGG { 0 } else { s.npassed } {
                             self.counters.set(w, 0);
                         }
                     }
@@ -663,6 +717,12 @@ impl<'p> Run<'p> {
         batch.dedup(table, &self.uniq_cols, last, self.totals.len - 1, &self.totals, &uniq).map_err(|e| format!("{e:?}"))?;
         self.uniq = Some(uniq);
         Ok(())
+    }
+
+    /// Why its rows are not the CPU's, once it ran: an aggregate's sum past 64 bits (the CPU's fold holds 128).
+    fn failed(&self) -> Option<String> {
+        self.plan.stages.iter().zip(&self.counter).any(|(s, c)| s.desc.mode == mj::AGG && c.is_some_and(|c| self.counters.get(c) != 0))
+            .then(|| "an aggregate's sum past 64 bits".to_owned())
     }
 
     /// The device bytes of its tables.
@@ -762,6 +822,9 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &mut [Fresh]
             }
         }
         if again.is_empty() {
+            if let Some(why) = runs.iter().find_map(Run::failed) {
+                return Err(why);
+            }
             break;
         }
         rep.reruns += again.len() as u32;
@@ -892,6 +955,9 @@ fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, rep: &mut Re
             }
         }
         if again.is_empty() {
+            if let Some(why) = runs.iter().flatten().find_map(Run::failed) {
+                return Err(why);
+            }
             break;
         }
         rep.reruns += again.len() as u32;
@@ -1079,6 +1145,7 @@ fn counted(r: &Run<'_>, plan: &Plan, j: &JoinRule, rep: &mut Report) {
         rep.bindings += if i != o { n_out } else { 0 };
         let vals: Vec<u64> = match (&s.kind, r.counter[k]) {
             (Kind::Pass | Kind::Map, _) => vec![n_in; s.span],
+            _ if s.desc.mode == mj::AGG => vec![n_out],
             (Kind::Atom { .. } | Kind::Own { .. }, Some(c)) => (0..=s.npassed).map(|m| u64::from(r.counters.get(c + m))).collect(),
             (Kind::Filter, Some(c)) => (1..=s.npassed).map(|m| u64::from(r.counters.get(c + m))).collect(),
             _ => vec![n_out],
@@ -1150,6 +1217,16 @@ mod tests {
             format!("pos {a} v0 v1\nfunc rr_add v2 v0 v1\nfunc rr_sub v3 v1 i:3\nfunc rr_div v4 v2 v3\nlt v4 v0\nhead v0 v4"),
             // h0(x, w) :- a(x, y), w = x * x % 7, max and min: the product overflows past the first document.
             format!("pos {a} v0 v1\nfunc rr_mul v2 v0 v0\nfunc mod v3 v2 i:7\nfunc rr_max v4 v3 v1\nfunc rr_min v5 v4 i:100\nhead v0 v5"),
+            // Aggregates. h0(x, n) :- c(x), n = count : { a(x, _) }.
+            format!("pos {c} v0\ncount {a} v0 _ v1\nhead v0 v1"),
+            // h0(x, s) :- c(x), s = sum y : { a(x, y) }.
+            format!("pos {c} v0\nsum {a} v0 _ 1 v1\nhead v0 v1"),
+            // h0(z, m) :- b(y, z), m = min x : { a(x, y) }: by another key; a key with no rows has no minimum.
+            format!("pos {b} v0 v1\nmin {a} _ v0 0 v2\nhead v1 v2"),
+            // h0(x, y) :- a(x, y), y = max y2 : { a(x, y2) }: the value tested, not bound.
+            format!("pos {a} v0 v1\nmax {a} v0 _ 1 v1\nhead v0 v1"),
+            // h0(x, n) :- c(x), n = count : { b(_, _) }: no keys, the whole relation.
+            format!("pos {c} v0\ncount {b} _ _ v1\nhead v0 v1"),
         ];
         let mut got = Vec::new();
         for device in [false, true] {

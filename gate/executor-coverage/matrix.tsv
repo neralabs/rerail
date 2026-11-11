@@ -179,16 +179,16 @@ text test match: a constant pattern	native	no text test	p(a) :- s(a), match("a",
 text test match: negated	native	no text test	p(a) :- s(a), !match("a", a).
 text test match: a set of patterns	native	no text test	p(a) :- s(a), (match("a", a) ; match("B", a)).
 text test match: a bound pattern	native	no text test	p(a, b) :- s(a), t(b), match(b, a).
-aggregate count	native	no aggregate	p(a, c) :- s(a), c = count : { p(a, _) }.
-aggregate sum	native	no aggregate	p(a, c) :- s(a), c = sum v : { p(a, v) }.
-aggregate min	native	no aggregate	p(a, c) :- t(a), c = min v : { p(a, v) }.
-aggregate max	native	no aggregate	p(a, c) :- t(a), c = max v : { p(a, v) }.
+aggregate count	native	device	p(a, c) :- s(a), c = count : { p(a, _) }.
+aggregate sum	native	device	p(a, c) :- s(a), c = sum v : { p(a, v) }.
+aggregate min	native	device	p(a, c) :- t(a), c = min v : { p(a, v) }.
+aggregate max	native	device	p(a, c) :- t(a), c = max v : { p(a, v) }.
 aggregate product	sqlite: aggregate product (the native engine declined: rule #0000: $c = product $v : { p($a, $v) } has no native step)	not native	p(a, c) :- s(a), c = product v : { p(a, v) }.
 aggregate join	native	no string join	p(a, c) :- t(a), c = join b by b sep ", " : { q(a, b) }.
 membership of a constant set	native	no text test	p(a) :- s(a), (a = "alpha" ; a = "x_1").
 lattice relation (shortest)	sqlite: a lattice relation (the native engine declined: a lattice relation: the native set engine holds sets only)	not native	p(x, 0) :- n(x), x = 1. p(y, d + 1) :- p(x, d), e(x, y).
 aggregate count = 0 (a negation)	native	device	p(a) :- s(a), count : { p(a, _) } = 0.
-aggregate over two atoms' bag	native	no aggregate	p(a, c) :- t(a), c = count : { q(a, _) }.
+aggregate over two atoms' bag	native	device	p(a, c) :- t(a), c = count : { q(a, _) }.
 join	native	device	p(x, y) :- e(x, y), n(y).
 join of three	native	device	p(x, z) :- e(x, y), e(y, z), n(z).
 negation	native	device	p(x) :- n(x), !m(x).
