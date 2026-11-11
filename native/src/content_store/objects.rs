@@ -11,7 +11,6 @@ use super::{
 use rusqlite::Connection;
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::collections::{BTreeSet, HashMap};
-use std::io::Cursor;
 use std::sync::Arc;
 
 /// A stored tape's frames as residency admits them (PIAT §20.3): the tape's and its source's zstd
@@ -1258,7 +1257,8 @@ pub struct TapeFrame {
 impl TapeFrame {
     /// The tape's bytes.
     pub fn bytes(&self) -> StoreResult<Vec<u8>> {
-        let bytes = zstd::stream::decode_all(Cursor::new(&self.frame[..]))?;
+        // The frame may name a language's dictionary (RER-131's `compression`), which `decompress` reads.
+        let bytes = super::compression::decompress(&self.frame, usize::try_from(self.raw_length).unwrap_or(0))?;
         if usize::try_from(self.raw_length).ok() != Some(bytes.len()) {
             return Err(StoreError::Corrupt("tape length does not match metadata".to_owned()));
         }

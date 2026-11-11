@@ -1786,7 +1786,8 @@ fn filtered_binding_domains_do_not_underprice_expansion_from_function_scopes() {
     model.stats.kfreq.insert("1".into(),2063);
     model.stats.kfreq.insert("2".into(),2181);
     model.stats.dfreq.insert(("child".into(),2),HashMap::from([(Constant::Int(0),60_000)]));
-    let rule = &p.rules[0];
+    // The stated rule (the parse may give others first).
+    let rule = p.rules.iter().find(|r| r.head.rel == "result").expect("the result rule");
     let functions = rule.body[3].atom().unwrap();
     assert_eq!(model.binding_domains(&p,functions)[0],Some(2181.0));
     let ((order,work,_),_)=model.plan_rule_explained(&p,&rule.head,&rule.body,None).unwrap();

@@ -171,6 +171,11 @@ impl Lowerer {
                 self.docof_of_locs = true;
             }
             self.prog.decls.insert(rel.clone(), cols.clone());
+            // Its tape columns stay tapes (the engine's `sym`): a printed program declares them `tape` again.
+            let tapes = super::super::tape_type::tape_columns(&rel);
+            if !tapes.is_empty() {
+                self.prog.tapes.entry(rel.clone()).or_default().extend(tapes);
+            }
             if !self.prog.inputs.contains(&rel) {
                 self.prog.inputs.push(rel);
             }

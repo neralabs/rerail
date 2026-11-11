@@ -2480,7 +2480,7 @@ lines(i) :- file_line("setup.cfg", i, _).
 "#;
     let once = parse(text).unwrap();
     let printed = print(&once).unwrap();
-    let twice = parse(&printed).unwrap();
+    let twice = parse(&printed).unwrap_or_else(|e| panic!("{e:?} reading back:\n{printed}"));
     assert!(difference(&once, &twice).is_none(), "{:?}", difference(&once, &twice));
     assert_eq!(print(&twice).unwrap(), printed);
     for demand in ["rr_embed_req", "rr_parse_req", "rr_splice_req", "rr_file_req"] {

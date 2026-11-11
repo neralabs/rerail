@@ -791,7 +791,7 @@ impl CoreRows {
     /// `ast_match(p, n, g, c)`: AST pattern `p` (``n ~ `p` ``, `rr::lower`) matches node `n`, and its metavariable
     /// `g` captured node `c`; capture "" is `n` itself. ast-grep matches each pattern over the document's tree once;
     /// a match is the projected node of its kind and byte range (the outermost, when nodes share both).
-    pub(super) fn patterns(&mut self, p: &Projected, dialect: &Dialect, lang: crate::code_rule_dsl::language::GrammarDialect, patterns: &[(&str, ast_grep_core::matcher::Pattern)], string: &mut dyn FnMut(&str) -> usize) {
+    pub(super) fn patterns(&mut self, p: &Projected, tape: Option<&crate::code_rule_dsl::tape::TapeDoc>, dialect: &Dialect, lang: crate::code_rule_dsl::language::GrammarDialect, patterns: &[(&str, ast_grep_core::matcher::Pattern)], string: &mut dyn FnMut(&str) -> usize) {
         if patterns.is_empty() {
             return;
         }
@@ -801,7 +801,16 @@ impl CoreRows {
             let id = p.core[local as usize];
             at.entry((f.start[id as usize], f.end[id as usize], dialect.name(f, id))).or_insert(local);
         }
-        let tree = crate::code_rule_dsl::language::adapter::ast_grep(lang, &f.source);
+        // A pattern is a tape, its implied tokens left out (RER-131's `tape::pattern_doc`): it is matched over the
+        // document's tape, kept for it or encoded here from tree-sitter's parse, not over tree-sitter's tree.
+        let tape = match tape {
+            Some(t) => t.clone(),
+            None => match crate::code_rule_dsl::tape::pattern_doc(lang, &f.source) {
+                Ok((t, _)) => t,
+                Err(_) => return,
+            },
+        };
+        let tree = ast_grep_core::AstGrep::doc(tape);
         let node_of = |n: &ast_grep_core::Node<'_, _>| {
             let r = n.range();
             at.get(&(r.start as u32, r.end as u32, &*n.kind())).map(|&local| p.global(local))
