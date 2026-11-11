@@ -42,9 +42,16 @@ struct Lang {
 }
 
 impl Lang {
-    fn of(lang: GrammarDialect) -> Option<Self> {
-        let grammar = TokenGrammar::of_dialect(lang)?;
-        Some(Self { dialect: lang, implied: grammar.implied_tokens(), parents: grammar.parents(), tokens: grammar.token_texts() })
+    /// Built once per dialect, like its `TokenGrammar` (every rule compiled reads it).
+    fn of(lang: GrammarDialect) -> Option<&'static Self> {
+        static BY_DIALECT: [std::sync::OnceLock<Option<Lang>>; 256] = [const { std::sync::OnceLock::new() }; 256];
+        BY_DIALECT
+            .get(lang as usize)?
+            .get_or_init(|| {
+                let grammar = TokenGrammar::of_dialect(lang)?;
+                Some(Self { dialect: lang, implied: grammar.implied_tokens(), parents: grammar.parents(), tokens: grammar.token_texts() })
+            })
+            .as_ref()
     }
 
     /// The parents among `parents` (all kinds where `None`) where a token `regex` matches is
@@ -292,7 +299,7 @@ pub(in crate::code_rule_dsl) const UNANSWERED: [&str; 4] = ["root", "below", "ga
 /// Every token test of a policy document, by its language, a test reached in several contexts
 /// once, in its worst category.
 pub(in crate::code_rule_dsl) fn tests(document: &Value) -> Vec<(String, Test)> {
-    let mut langs: BTreeMap<String, Option<Lang>> = BTreeMap::new();
+    let mut langs: BTreeMap<String, Option<&'static Lang>> = BTreeMap::new();
     let clauses = document.get("clauses").and_then(Value::as_array).cloned().unwrap_or_default();
     let mut utils = Map::new();
     for clause in &clauses {
@@ -306,7 +313,7 @@ pub(in crate::code_rule_dsl) fn tests(document: &Value) -> Vec<(String, Test)> {
     for (at, clause) in clauses.iter().enumerate() {
         let Some(ast) = clause.pointer("/forbid/ast").and_then(Value::as_object) else { continue };
         let Some(language) = ast.get("language").and_then(Value::as_str) else { continue };
-        let Some(lang) = langs.entry(language.to_owned()).or_insert_with(|| dialect_by_label(language).and_then(Lang::of)).as_ref() else { continue };
+        let Some(lang) = *langs.entry(language.to_owned()).or_insert_with(|| dialect_by_label(language).and_then(Lang::of)) else { continue };
         let mut walk = Walk { lang, utils: &utils, tests: BTreeSet::new(), active: Vec::new(), seen: BTreeSet::new(), lowered: BTreeSet::new() };
         let base = format!("clauses/{at}");
         if let Some(rule) = ast.get("rule") {
