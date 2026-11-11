@@ -2323,8 +2323,10 @@ mod tests {
             "#,
         )
         .unwrap();
+        // The `.rr` reader reads `count : {…} = 0` as the negation already (`none`'s rule): only `> 0` is left.
+        assert!(prog.rules.iter().any(|r| r.head.rel == "none" && !r.to_string().contains("count")));
         let report = simplify(&mut prog);
-        assert_eq!(report.existence, 2);
+        assert_eq!(report.existence, 1);
         let text: Vec<String> = prog.rules.iter().map(|r| r.to_string()).collect();
         assert!(text.iter().any(|r| r.starts_with("none(") && r.contains("!pair($n") && !r.contains("count")), "{text:?}");
         assert!(text.iter().any(|r| r.starts_with("some(") && r.contains(", pair($n") && !r.contains("count")), "{text:?}");
