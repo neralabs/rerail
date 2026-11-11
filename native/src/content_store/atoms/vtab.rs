@@ -1,6 +1,7 @@
-//! `atoms(atom, value)`: the arena as an eponymous virtual table (decision 0049 §3), so the SQL
-//! that joins atoms keeps its text. `atom = ?` is an array lookup, `value = ?` a hash probe, and a
-//! range on `value` (the vocabulary's prefix ranges) a binary search of the ids sorted by string.
+//! `atoms(atom, value)`: the atoms as an eponymous virtual table (decision 0049 §3), so the SQL
+//! that joins atoms keeps its text. `atom = ?` and `value = ?` are the atoms' lookups, which read
+//! only the segment they need (decision 0111 §3); a range on `value` (the vocabulary's prefix
+//! ranges) or a scan reads every segment, then binary-searches the ids sorted by string.
 //! Pending atoms are visible: SQL never needs a flush first.
 use super::{Atoms, Sym};
 use rusqlite::{
@@ -217,25 +218,27 @@ unsafe impl VTabCursor for Cursor {
 
 impl Cursor {
     fn scan(&self) -> Result<Rows> {
-        self.atoms.catch_up().map_err(error)?;
+        self.atoms.read_all().map_err(error)?;
         Ok(Rows::Span(self.atoms.len()))
     }
 
     /// The atoms whose strings lie between `lower` and `upper` (both inclusive here: SQLite
     /// rechecks strictness), in string order.
     fn range(&self, lower: Option<&[u8]>, upper: Option<&[u8]>) -> Result<Vec<Sym>> {
-        self.atoms.catch_up().map_err(error)?;
+        self.atoms.read_all().map_err(error)?;
         let mut sorted = self.atoms.sorted.lock();
         let state = self.atoms.state.read();
+        // Every atom is held (`read_all`).
+        let held = |atom: Sym| state.atoms.str(atom).expect("every atom held").as_bytes();
         let covered = sorted.len();
         if covered < state.atoms.len() {
             let mut new: Vec<Sym> = (covered as Sym..state.atoms.len() as Sym).collect();
-            new.sort_unstable_by(|&a, &b| state.atoms.str(a).as_bytes().cmp(state.atoms.str(b).as_bytes()));
+            new.sort_unstable_by(|&a, &b| held(a).cmp(held(b)));
             let old = std::mem::take(&mut *sorted);
             sorted.reserve(old.len() + new.len());
             let (mut i, mut j) = (0, 0);
             while i < old.len() && j < new.len() {
-                if state.atoms.str(old[i]).as_bytes() <= state.atoms.str(new[j]).as_bytes() {
+                if held(old[i]) <= held(new[j]) {
                     sorted.push(old[i]);
                     i += 1;
                 } else {
@@ -246,7 +249,7 @@ impl Cursor {
             sorted.extend_from_slice(&old[i..]);
             sorted.extend_from_slice(&new[j..]);
         }
-        let key = |atom: &Sym| state.atoms.str(*atom).as_bytes();
+        let key = |atom: &Sym| held(*atom);
         let start = lower.map_or(0, |lower| sorted.partition_point(|atom| key(atom) < lower));
         let end = upper.map_or(sorted.len(), |upper| sorted.partition_point(|atom| key(atom) <= upper));
         Ok(sorted[start..end.max(start)].to_vec())
