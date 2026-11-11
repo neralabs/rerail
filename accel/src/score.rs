@@ -354,6 +354,8 @@ pub struct Sample {
     pub ok: bool,
     /// The cores' slowdown under the machine's load when it ended ([`crate::exec::cores_slowdown`]).
     pub load: f64,
+    /// The executor's pool threads ([`crate::exec::threads`]).
+    pub threads: u32,
 }
 
 static KEEP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -557,6 +559,7 @@ impl Scoreboard {
                 cold,
                 ok,
                 load: crate::exec::cores_slowdown(),
+                threads: crate::exec::threads() as u32,
             };
             let mut held = SAMPLES.lock().unwrap_or_else(|p| p.into_inner());
             if held.len() < HELD {

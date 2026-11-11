@@ -19,7 +19,7 @@
 use super::memo;
 use crate::content_store::ContentStore;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 pub(in crate::code_rule_dsl) struct Session {
     /// The store's file, which each run's SQL connection opens (its atoms are the store's).
@@ -40,6 +40,10 @@ pub(in crate::code_rule_dsl) struct Session {
     pub(super) stats: Mutex<std::collections::HashMap<[u8; 32], super::keptstats::Keeper>>,
     /// Which session this is: its runs' kept plans and derived values are taken back only by its own runs.
     generation: u64,
+    /// Its runs' connections and stores, kept from run to run (`connections`): an edit's run opens none.
+    pub(super) connections: Arc<parking_lot::Mutex<super::connections::Connections>>,
+    /// Its runs' chunk mixes' tree counts (`own_counts`), read from memory as they are written behind the runs.
+    pub(super) own: super::OwnKept,
 }
 
 
@@ -69,6 +73,8 @@ pub(in crate::code_rule_dsl) fn start(dir: &Path) -> std::result::Result<(), Str
         written: Mutex::new(Default::default()),
         stats: Mutex::new(Default::default()),
         generation: GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        connections: Arc::new(parking_lot::Mutex::new(super::connections::Connections::kept())),
+        own: Default::default(),
         #[cfg(test)]
         thread: std::thread::current().id(),
     });
@@ -466,23 +472,32 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
         cross_file_aggregate();
     }
 
-    /// Decision 0090 §4: every maintained stratum whose inputs changed derived again instead (no θ, no floor). Its
-    /// relations and their deltas are what the strata above read, maintained or not, so the findings stay a full
-    /// run's: over recursion, counting's supports and aggregates.
+    /// Decision 0090 §4: every maintained stratum whose inputs changed derived again instead (no θ, no floor, no
+    /// pricing). Its relations and their deltas are what the strata above read, maintained or not, so the findings
+    /// stay a full run's: over recursion, counting's supports and aggregates.
     #[test]
     fn a_session_derives_again_the_strata_its_deltas_outgrow() {
+        derive_again_with(&[("RERAIL_AGAIN_THETA", "0"), ("RERAIL_AGAIN_MIN", "0"), ("RERAIL_AGAIN_PRICED", "off")]);
+    }
+
+    /// §4 with its pricing: past θ (here every stratum whose inputs changed), each stratum takes the form priced
+    /// cheaper, so some are maintained and some derived again in one run; the findings stay a full run's.
+    #[test]
+    fn a_session_derives_again_only_the_strata_priced_cheaper_so() {
+        derive_again_with(&[("RERAIL_AGAIN_THETA", "0"), ("RERAIL_AGAIN_MIN", "0")]);
+    }
+
+    fn derive_again_with(vars: &[(&str, &str)]) {
         let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         unsafe {
-            std::env::set_var("RERAIL_AGAIN_THETA", "0");
-            std::env::set_var("RERAIL_AGAIN_MIN", "0");
+            vars.iter().for_each(|(k, v)| std::env::set_var(k, v));
         }
         let run = std::panic::catch_unwind(|| {
             recursive_cross_file_stratum();
             cross_file_aggregate();
         });
         unsafe {
-            std::env::remove_var("RERAIL_AGAIN_THETA");
-            std::env::remove_var("RERAIL_AGAIN_MIN");
+            vars.iter().for_each(|(k, _)| std::env::remove_var(k));
         }
         if let Err(e) = run {
             std::panic::resume_unwind(e);

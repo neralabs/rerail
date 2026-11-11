@@ -23,6 +23,8 @@ use std::path::{Path, PathBuf};
 const FACT_STORE: &[&str] = &[
     "atoms",
     "atom_segment",
+    "atom_key",
+    "atom_key_end",
     "strings",
     "hashes",
     "paths",
@@ -87,6 +89,8 @@ const SCRATCH: &[&str] = &[
 ];
 /// Caches between runs not yet facts: (table, the 0104 step that moves it).
 const NOT_YET_TABLES: &[(&str, &str)] = &[
+    // The cost model fitted from `samples`, per machine (planning's placement).
+    ("models", "6"),
     ("constant_rows", "1"),
     ("run_record", "1"),
     ("observed", "1"),
@@ -149,16 +153,21 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("local_check_results", "8"),
     ("context_check_results", "8"),
 ];
-/// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised.
-const NOT_YET_TABLES_PIN: usize = 61;
+/// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised. Raised once, 61 to 62, by the merge of
+/// the cost classifier's per-machine `models` (2026-11-10), which a move to facts has yet to take.
+const NOT_YET_TABLES_PIN: usize = 62;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
 const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/costs.rs", "FITTED"),
     ("code_rule_dsl/logic/costs.rs", "WRITER"),
+    ("code_rule_dsl/logic/costs.rs", "MODEL_STATE"),
     // Which connections hold tables or views a run left in SQL: state of the connections, not a result kept.
     ("code_rule_dsl/logic/plan.rs", "TEMP_LEFT"),
+    // Each live connection's path and symbols, by its scope; dropped when it closes (`setfix::forget_scope`).
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     ("code_rule_dsl/logic/lanes.rs", "ALL"),
     ("code_rule_dsl/logic/lanes.rs", "CPU"),
     ("code_rule_dsl/logic/lanes.rs", "BATCHES"),
@@ -183,10 +192,20 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "LOADS"),
     ("code_rule_dsl/logic/native/setfix.rs", "STORED"),
     ("code_rule_dsl/logic/native/setfix.rs", "SYMS"),
+    // Each live connection's path and symbols, dropped at its close (`forget_scope`): state of the connections.
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "GROWTH"),
     ("code_rule_dsl/logic/native/setfix.rs", "PROBES"),
+    // A live connection's file and symbol table, by its handle (dropped as it closes, `forget_scope`): state of the
+    // connections, not a result kept.
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
+    // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
     ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
     ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),
+    // A test process's own tape cache path (`corpus::test_tape_cache`): where the store is, not a result kept.
+    ("code_rule_dsl/logic/plan/corpus.rs", "PATH"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT"),
     ("code_rule_dsl/logic/native/setfix/level.rs", "PENDING"),
@@ -206,6 +225,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "FACTS_DIR"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HANDED_DOWN"),
+    // Phase 1's exports while the run that ran it is under way: the run's own facts, gone when it ends.
+    ("code_rule_dsl/logic/plan/corpus/phases.rs", "PHASE_ONE"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "RUNNING"),
     ("code_rule_dsl/logic/plan/sketch.rs", "FILE"),
     ("code_rule_dsl/logic/profile.rs", "DIR"),

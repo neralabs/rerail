@@ -61,6 +61,30 @@ dl_qualname(f, q) :- dl_qual(f, q, _).
 // @qualdepth: the function frames on the frame's chain, its own included.
 .decl dl_qualdepth(f: node, d: number)
 dl_qualdepth(f, d) :- dl_qual(f, _, d).
+// prelude's `path_module`: the document's module from its path alone, as the rules' SQL computes it.
+.decl path_module(d: number, m: symbol)
+path_module(d, m) :- doc(d, p, _), s = @rx_replace(p, "/__init__[.]py$|[.]py$", ""), m = @sql_replace(s, "/", ".").
+// `module_of`: W's `file.module` (`python_module_path`). The packages are the directories holding an `__init__.py`
+// ("" for the root's). From a file's directory, climbing while each directory is a package, the highest reached is
+// the package root; the module is the path below the root's parent, the file by its stem, with dots. Outside a
+// package, or where the climb reaches the root's own package, it is the stem.
+.decl dl_package(x: symbol)
+dl_package(x) :- doc(_, p, _), @rx(p, "(^|/)__init__[.]py$") = 1, x = @rx_replace(p, "/?__init__[.]py$", "").
+.decl dl_package_root(x: symbol, r: symbol)
+dl_package_root(x, x) :- dl_package(x), x != "", y = @rx_replace(x, "(^|/)[^/]*$", ""), !dl_package(y).
+dl_package_root(x, r) :- dl_package(x), x != "", y = @rx_replace(x, "(^|/)[^/]*$", ""), y != "", dl_package(y),
+    dl_package_root(y, r).
+.decl dl_rooted(x: symbol)
+dl_rooted(x) :- dl_package_root(x, _).
+.decl dl_module_file(d: number, p: symbol, x: symbol)
+dl_module_file(d, p, x) :- doc(d, p, _), @rx(p, "[.]pyi?$") = 1, x = @rx_replace(p, "(^|/)[^/]*$", "").
+.decl dl_module_path(d: number, q: symbol)
+dl_module_path(d, q) :- dl_module_file(d, p, x), dl_package_root(x, r), @rx_replace(r, "(^|/)[^/]*$", "") = "", q = p.
+dl_module_path(d, q) :- dl_module_file(d, p, x), dl_package_root(x, r), b = @rx_replace(r, "(^|/)[^/]*$", ""), b != "",
+    q = @sql_substr(p, @sql_length(b) + 2, @sql_length(p)).
+dl_module_path(d, q) :- dl_module_file(d, p, x), !dl_rooted(x), q = @rx_replace(p, "^.*/", "").
+.decl module_of(d: number, m: symbol)
+module_of(d, m) :- dl_module_path(d, q), m = @sql_replace(@rx_replace(q, "(.)[.][^./]*$", "$1"), "/", ".").
 """
 
 def call_end(t, i):
@@ -98,7 +122,7 @@ def args_of(inner):
 SQL = {("substr", 3): "sql_substr", ("substr", 2): "sql_substr2", ("substr_bytes", 3): "sql_substr_bytes", ("instr", 2): "sql_instr", ("length", 1): "sql_length",
        ("trim", 1): "sql_trim", ("trim", 2): "sql_trim2", ("ltrim", 1): "sql_ltrim", ("ltrim", 2): "sql_ltrim2",
        ("upper", 1): "sql_upper", ("lower", 1): "sql_lower", ("replace", 3): "sql_replace", ("like", 2): "sql_like",
-       ("cast_int", 1): "sql_cast_int"}
+       ("cast_int", 1): "sql_cast_int", ("char", 1): "sql_char"}
 
 def rewrite_calls(t):
     """Renames and nests calls, innermost first."""

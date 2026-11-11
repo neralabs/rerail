@@ -569,7 +569,7 @@ named(n, x) :- def(n, x), x = "g".
     let out = dir.join("out");
     let report = crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     assert_eq!(report.memo, (0, 0), "the run memoises every file");
-    let store = std::env::var("RERAIL_TAPE_CACHE").map_or_else(|_| std::env::temp_dir().join("rerail-tape-cache.sqlite"), std::path::PathBuf::from);
+    let store = crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().expect("the tape cache");
     let mut executor = CodeRuleSqlExecutor::new(store.to_string_lossy().into_owned()).unwrap();
     let bound: Value = serde_json::from_str(&executor.bind_corpus(dir.to_string_lossy().into_owned(), None).unwrap()).unwrap();
     // `def` is handed on as rows; `named`, a file-local output, as its rendered lines. `dup` reads
@@ -595,31 +595,27 @@ named(n, x) :- def(n, x), x = "g".
     // A frame that does not decode fails the statement that needs it, naming the file; a lookup
     // into another document does not decode it, so it still answers.
     let a_node = rows(&executor, "SELECT min(n) FROM def JOIN corpus_document d ON d.doc = n >> 32 WHERE sym_text(d.path) LIKE '%a.py'")[0][0]["integer"].as_str().unwrap().to_owned();
-    // Only this run's entry: its path, the root's plan, and b.py's content (unique to this run).
-    let b = rows(&executor, "SELECT sym_text(path) FROM corpus_document WHERE sym_text(path) LIKE '%b.py'")[0][0].as_str().unwrap().to_owned();
-    let root = std::fs::canonicalize(&dir).unwrap().to_string_lossy().into_owned();
-    let plan = "(SELECT m.plan_digest FROM corpus_manifests m JOIN corpus_roots r USING (root_id) WHERE r.path = ?2 ORDER BY m.last_run DESC LIMIT 1)";
-    // The newest source at that path under the plan: this run's content.
-    let entry = format!("path = ?1 AND plan_digest = {plan} AND source_id = (SELECT max(source_id) FROM facts_results WHERE path = ?1 AND plan_digest = {plan})");
-    let corrupt = |delta: i64| {
-        executor
-            .connection()
-            .execute(&format!("UPDATE facts_results SET raw_length = raw_length + {delta} WHERE {entry}"), rusqlite::params![&b, &root])
-            .unwrap()
+    // Only this run's entries: b.py's frames in the per-file memo (decision 0108), its content's digest among each
+    // frame's reads (a frame per program that read it).
+    let b = {
+        use sha2::Digest as _;
+        let digest: [u8; 32] = sha2::Sha256::digest(std::fs::read(dir.join("b.py")).unwrap()).into();
+        let mut first = vec![6, 0, 0, 0];
+        first.extend(b"sha256");
+        first.extend(&digest[..8]);
+        first
     };
-    let changed = corrupt(1);
-    assert_eq!(changed, 1);
+    // Through a connection of its own: the executor's refuses a commit while atoms it holds are pending (0049).
+    let path = executor.connection().path().expect("a store on disk").to_owned();
+    let changed = rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute("UPDATE frames SET rows = rows - 1 WHERE rel = 'local' AND instr(reads, ?1) > 0", rusqlite::params![&b])
+        .unwrap();
+    assert!(changed >= 1);
     executor.bind_corpus(dir.to_string_lossy().into_owned(), Some(vec!["def".into()])).unwrap();
     assert_eq!(rows(&executor, &format!("SELECT count(*) FROM def WHERE n = {a_node}")), json!([[1]]));
     let err = executor.query("SELECT count(*) FROM def".into(), None, None).unwrap_err().to_string();
     assert!(err.contains("b.py") && err.contains("does not decode"), "{err}");
-    // The store is shared with other tests: put the entry back.
-    let corrupt = |delta: i64| {
-        executor
-            .connection()
-            .execute(&format!("UPDATE facts_results SET raw_length = raw_length + {delta} WHERE {entry}"), rusqlite::params![&b, &root])
-            .unwrap()
-    };
-    assert_eq!(corrupt(-1), 1);
+    // No other test reads b.py's content, which is this run's own: its frames are left as they are.
     let _ = std::fs::remove_dir_all(&dir);
 }

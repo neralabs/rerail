@@ -44,6 +44,9 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("lower", &[Text], Text),
     // `.rr`'s `cat(a, b, …)`, two at a time: the native engine's concatenation (SQL concatenates with `||`).
     ("str_concat", &[Text, Text], Text),
+    // `str_concat` run backwards: the text between a prefix and a suffix, none when the text has not both
+    // (`simplify::concat_inverses`: `$v = cat($a, $x, $b)` with `$v` bound binds `$x`).
+    ("str_between", &[Text, Text, Text], Text),
     // -1, 0 or 1 as `a` sorts before, with or after `b` (by bytes): the order of two symbols (`plan::lower`).
     ("str_cmp", &[Text, Text], Number),
     // Soufflé's `to_number`: a decimal integer's value; no value for other text.
@@ -88,6 +91,8 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("sql_replace", &[Text, Text, Text], Text),
     ("sql_like", &[Text, Text], Number),
     ("sql_cast_int", &[Text], Number),
+    // `char(n)`: the character of code point n (the data-layer keys' `char(0)` separator).
+    ("sql_char", &[Number], Text),
     // The data-layer programs' regex functions, as W's SQL has them (`residency::admission::relational`): Rust's
     // regex; `rx_extract`'s group, NULL without a match; `rx_replace` every match.
     ("rx_extract", &[Text, Text, Number], Text),
@@ -219,6 +224,7 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "qname" => Some(format!("{}#{}", t(0), t(1))),
         "pkg_up" => Some(pkg_up(t(0), numbers[0])),
         "head" => Some(t(0).split('.').next().unwrap_or("").to_owned()),
+        "str_between" => t(0).strip_prefix(t(1)).and_then(|rest| rest.strip_suffix(t(2))).map(str::to_owned),
         "dir" => Some(t(0).rsplit_once('/').map_or("", |(d, _)| d).to_owned()),
         "join" => Some(join(t(0), t(1))),
         "glob_sub" => Some(glob_sub(t(0), t(1), t(2))),
@@ -255,6 +261,7 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "sql_replace" => Some(if t(1).is_empty() { t(0).to_owned() } else { t(0).replace(t(1), t(2)) }),
         "sql_like" => return Value::Integer(i64::from(sql_like(t(1), t(0)))),
         "sql_cast_int" => return Value::Integer(sql_cast_int(t(0))),
+        "sql_char" => Some(u32::try_from(numbers[0]).ok().and_then(char::from_u32).unwrap_or('\u{FFFD}').to_string()),
         "rx_extract" => {
             let group = usize::try_from(numbers[0]).ok();
             return with_regex(t(1), |re| group.and_then(|g| re.captures(t(0))?.get(g).map(|m| Value::Text(m.as_str().to_owned())))).flatten().unwrap_or(Value::Null);

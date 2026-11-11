@@ -292,4 +292,7 @@ fn sqlite_functions_as_sqlite_has_them() {
     for s in ["12", " -7x", "+3", "abc", "", "4.5"] {
         assert_eq!(eval("sql_cast_int", &[s], &[]), sql("SELECT CAST(?1 AS INTEGER)", &[&s]), "cast({s:?})");
     }
+    for n in [0i64, 46, 0xe9, 0x1F600] {
+        assert_eq!(eval("sql_char", &[], &[n]), sql("SELECT char(?1)", &[&n]), "char({n})");
+    }
 }

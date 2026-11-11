@@ -261,6 +261,9 @@ fn check_rr_finds_problems() {
     let ungrounded = statements(".decl a(x: number)\n.decl b(x: number)\nb(x) :- !a(x).\nb(y) :- a(x), match(\"(?<y>.*)\", x).\n");
     let bad = check::grounded(&ungrounded, &BTreeSet::new());
     assert_eq!(bad, vec![(3, vec!["x".to_owned()])]);
+    // `m = @dot(q, x)` splits a bound `m` at each dot, binding both parts; an unbound `m` is named.
+    let split = statements(".decl a(m: symbol)\n.decl b(q: symbol)\nb(q) :- a(m), m = @dot(q, x).\nb(q) :- m = @dot(q, x), a(m).\nb(q) :- a(q), m = @dot(q, x).\n");
+    assert_eq!(check::grounded(&split, &BTreeSet::new()), vec![(5, vec!["m".to_owned()])]);
     let cyclic = statements(".decl a(x: number)\n.decl b(x: number)\na(x) :- b(x), !a(x).\nb(x) :- a(x).\n");
     let refs: Vec<&syntax::Statement> = cyclic.iter().collect();
     assert_eq!(check::strata(&refs).len(), 1);
@@ -401,7 +404,15 @@ fn a_set_of_tests_on_a_span_tests_its_text() {
     assert!(!rule.contains("contains($sp") && !rule.contains("@contains($sp"), "{rule}");
 }
 
-/// What is not lowered yet says so by name.
+/// A negated match with named groups binds nothing, so it lowers with its groups non-capturing (it was the last
+/// construct refused as not lowered yet).
+#[test]
+fn negated_named_groups_lower() {
+    let src = ".decl a(x: symbol)\na(x) :- a(x), a(y), !match(\"(?<z>.*)\", y).";
+    parse(src).expect("a negated match with named groups lowers");
+}
+
+/// A negated match's named groups are plain groups.
 #[test]
 fn a_negated_match_reads_its_named_groups_as_groups() {
     // A negated match binds nothing, so its named groups are plain groups: `!match("(?<z>.*)", y)` is
@@ -802,7 +813,9 @@ fn programs_are_kept_by_the_hashes_of_what_they_read() {
     assert!(files.iter().filter_map(LibraryFile::fact).all(|f| f.starts_with("library_file(") && f.contains("\"sha256:")));
     let (again, files_again) = read_file(&main).unwrap();
     assert_eq!((format!("{first:?}"), &files), (format!("{again:?}"), &files_again), "unchanged files: the same program");
+    // The edit comes in a later run: a run reads its files as they were when it first looked (decision 0105).
     std::fs::write(&helper, ".decl h(x: number)\nh(2).\n").unwrap();
+    crate::code_rule_dsl::logic::plan::corpus::observe(|o| o.flush());
     let (edited, edited_files) = read_file(&main).unwrap();
     assert_ne!(format!("{first:?}"), format!("{edited:?}"), "an edited include is read again");
     assert_ne!(files, edited_files);
@@ -1630,7 +1643,9 @@ Subtree(n) :- kind(n, "module"), text(n, _).
         .map(|row| (row["line"].as_i64().unwrap(), row["parameters"]["body"].as_str().unwrap())).collect();
     lines.sort();
     assert_eq!(lines, [(1, source.split('\n').next().unwrap()), (2, "pass")]);
-    assert!(!rows.iter().any(|row| row["code"] == "TREE"), "a requested source span must not enable all large AST texts");
+    // Decision 0108: a kind the rule reads by `kind` has its text at any length (the module's here, named by
+    // `Subtree`); the source span and the lines are exact either way.
+    assert_eq!(rows.iter().filter(|row| row["code"] == "TREE").count(), 1, "the module, a kind the rule reads, has its whole text");
 }
 
 /// Decision 0055's guests: a run of `rule` over `files`, each output's sorted rows.

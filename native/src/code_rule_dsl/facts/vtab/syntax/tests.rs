@@ -502,32 +502,50 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     };
     // Nested kinds: the root's, and two from inside the documents.
     let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
-    let member = |r: usize| set.contains(&kind(r));
+    // Each row's place and membership read once: the brute force below is quadratic in the rows.
+    let place: Vec<(u32, usize, usize)> = (0..nodes).map(at).collect();
+    let member: Vec<bool> = (0..nodes).map(|r| set.contains(&kind(r))).collect();
     let below = |n: usize, a: usize| {
-        let ((dn, ln, _), (da, la, za)) = (at(n), at(a));
+        let ((dn, ln, _), (da, la, za)) = (place[n], place[a]);
         dn == da && la < ln && ln <= la + za
+    };
+    // Each axis's pairs by brute force, once: a node's nearest member ancestor is its deepest (the latest in
+    // preorder of the ancestors).
+    let expected_of = |axis: within::Axis| -> BTreeSet<(i64, i64)> {
+        let mut expected = BTreeSet::new();
+        for n in 0..nodes {
+            let mut nearest: Option<usize> = None;
+            for a in 0..nodes {
+                if !below(n, a) {
+                    continue;
+                }
+                match axis {
+                    within::Axis::Inside if member[a] => {
+                        expected.insert((id(n), id(a)));
+                    }
+                    within::Axis::Has if member[n] => {
+                        expected.insert((id(n), id(a)));
+                    }
+                    within::Axis::Nearest if member[a] && nearest.is_none_or(|b| place[b].1 < place[a].1) => nearest = Some(a),
+                    _ => {}
+                }
+            }
+            if let Some(a) = nearest {
+                expected.insert((id(n), id(a)));
+            }
+        }
+        expected
     };
     use crate::code_rule_dsl::typing::file_local::Binding;
     // Each axis made per looked-up node, and with the batch's solve chosen (decision 0105) on the CPU and on Metal.
     let ways = [(Binding::Cpu, false), (Binding::Cpu, true), (Binding::Metal, true)];
-    for (axis, (binding, solve)) in [within::Axis::Nearest, within::Axis::Inside, within::Axis::Has].into_iter().flat_map(|a| ways.map(|w| (a, w))) {
+    let axes = [within::Axis::Nearest, within::Axis::Inside, within::Axis::Has];
+    let expected_by: Vec<BTreeSet<(i64, i64)>> = axes.iter().map(|&a| expected_of(a)).collect();
+    for ((axis, expected), (binding, solve)) in axes.into_iter().zip(&expected_by).flat_map(|a| ways.map(|w| (a, w))) {
+        let expected = expected.clone();
         let source = within::Within::axis(Arc::clone(&batch), axis, &set, binding);
         if solve {
             source.expect_lookups(0, 1e12);
-        }
-        let mut expected = BTreeSet::new();
-        for n in 0..nodes {
-            for a in 0..nodes {
-                let holds = below(n, a)
-                    && match axis {
-                        within::Axis::Inside => member(a),
-                        within::Axis::Has => member(n),
-                        within::Axis::Nearest => member(a) && !(0..nodes).any(|c| c != a && member(c) && below(n, c) && below(c, a)),
-                    };
-                if holds {
-                    expected.insert((id(n), id(a)));
-                }
-            }
         }
         assert!(!expected.is_empty());
         let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (source.value(r, 0), source.value(r, 1))).collect() };
@@ -933,7 +951,29 @@ fn long_text_twins_where_no_body_fixes_the_kind() {
     ] {
         let mut program = crate::code_rule_dsl::logic::rr::parse(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
         assert_eq!(long_text_twins(&mut program, &[]), twins, "{body}");
-        assert!(text_kind_demand(&program, &[]).1.is_empty(), "{body}: every text is read");
+        assert!(text_kind_demand(&program, &[]).any.is_empty(), "{body}: every text is read");
         assert_eq!(long_text_twins(&mut program, &[]), 0, "{body}: twinned once");
+    }
+}
+
+/// The nodes given `text` are the ones the rules read (decision 0110): a fixed kind, a node's field, or a matcher
+/// capture's kind or field; a node nothing narrows widens it to every node. An `inside`'s `field` is the inner
+/// node's place, not the capture's.
+#[test]
+fn text_only_for_the_nodes_read() {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
+    let fun = |rule: &str| format!(r#"{{"language": "python", "syntax": "valid", "rule": {rule}}}"#);
+    let some = |kinds: &[&str], fields: &[&str]| Some(TextNodes { kinds: kinds.iter().map(|k| k.to_string()).collect(), fields: fields.iter().map(|k| k.to_string()).collect() });
+    for (body, read) in [
+        ("out(t) :- kind(n, \"call\"), text(n, t).".to_owned(), some(&["call"], &[])),
+        ("out(t) :- field(_, \"name\", n), text(n, t).".to_owned(), some(&[], &["name"])),
+        ("out(t) :- node(_, n, _, _, _), text(n, t).".to_owned(), None),
+        (format!("out(t) :- ast(d, f, {}, NAME: n), text(n, t).", fun(r#"{"all": [{"kind": "function_definition"}, {"has": {"pattern": "$NAME", "field": "name"}}]}"#)), some(&[], &["name"])),
+        (format!("out(t) :- ast(d, f, {}, N: n), text(n, t).", fun(r#"{"all": [{"kind": "call"}, {"has": {"all": [{"kind": "identifier"}, {"pattern": "$N"}]}}]}"#)), some(&["identifier"], &[])),
+        (format!("out(t) :- ast(d, f, {}, N: n), text(n, t).", fun(r#"{"all": [{"kind": "call"}, {"inside": {"pattern": "$N", "field": "body"}}]}"#)), None),
+    ] {
+        let mut program = crate::code_rule_dsl::logic::rr::parse(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
+        let matchers = crate::code_rule_dsl::logic::plan::corpus::matchers::lower(&mut program);
+        assert_eq!(text_kind_demand(&program, &matchers).read, read, "{body}");
     }
 }

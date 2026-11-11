@@ -487,19 +487,26 @@ mod tests {
             let key = format!("stats.arenas.{arena}.pdirty\0");
             unsafe { raw::read::<usize>(key.as_bytes()) }.unwrap()
         };
+        // Its pages kept dirty until purged: no decay by time (the default purges after 10 s, which a loaded run's
+        // pause can reach).
+        unsafe { raw::write::<isize>(format!("arena.{arena}.dirty_decay_ms\0").as_bytes(), -1) }.unwrap();
         let flags = MALLOCX_ARENA(arena as usize) | MALLOCX_TCACHE_NONE;
         let size = 4 << 20;
-        unsafe {
-            let block = mallocx(size, flags).cast::<u8>();
-            assert!(!block.is_null());
-            std::ptr::write_bytes(block, 1, size);
-            dallocx(block.cast(), flags);
-        }
-        assert!(
-            dirty() > 0,
-            "the freed block's pages are dirty until purged"
-        );
-        super::purge_allocator_pages();
-        assert_eq!(dirty(), 0);
+        // Other tests' runs purge every arena when they end (`purge_allocator_pages`): one of them can purge this
+        // arena between the free and its count. A few tries: one free seen dirty, then purged, is what is asked.
+        let seen = (0..20).any(|_| {
+            unsafe {
+                let block = mallocx(size, flags).cast::<u8>();
+                assert!(!block.is_null());
+                std::ptr::write_bytes(block, 1, size);
+                dallocx(block.cast(), flags);
+            }
+            if dirty() == 0 {
+                return false;
+            }
+            super::purge_allocator_pages();
+            dirty() == 0
+        });
+        assert!(seen, "a freed block's pages are dirty until purged, and none after");
     }
 }

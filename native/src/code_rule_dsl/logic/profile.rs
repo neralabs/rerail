@@ -274,13 +274,15 @@ struct Stratum {
     loops: u64,
 }
 
-/// One planned step: the literal, how it is read, from what, and the rows the planner expects after it.
+/// One planned step: the literal, how it is read, from what, and the rows the planner expects after it; for a join,
+/// the joins it passed over there, each with the rows a binding it was priced at (why this one was taken).
 #[derive(Clone, Debug)]
 pub(in crate::code_rule_dsl) struct StepPlan {
     pub(in crate::code_rule_dsl) literal: String,
     pub(in crate::code_rule_dsl) access: String,
     pub(in crate::code_rule_dsl) source: String,
     pub(in crate::code_rule_dsl) rows: f64,
+    pub(in crate::code_rule_dsl) passed: Vec<(String, f64)>,
 }
 
 /// A rule's plan as the planner chose it: estimated work and rows, and its search (subsets kept, candidates priced).
@@ -583,6 +585,13 @@ pub(crate) fn sql_in_wave(conn: &'static str, text: &str, ns: u64) {
     let e = state.hazards.entry((class, path, format!("{conn}: {text}"))).or_default();
     e.0 += 1;
     e.1 += ns;
+}
+
+/// SQL waits attributed to their connection and span, including the content store's separate connection.
+/// Each row is (span, connection and SQL text, executions, nanoseconds).
+pub(in crate::code_rule_dsl) fn sql_waits() -> Vec<(String, String, u64, u64)> {
+    STATE.lock().unwrap().hazards.iter().map(|((_, path, text), (runs, ns))|
+        (path.clone(), text.clone(), *runs, *ns)).collect()
 }
 
 /// A wave's thread waited `wall` seconds for SQLite's side of the store (`what`: a queued write it reads, the queue's
@@ -1193,6 +1202,9 @@ fn explain(r: &mut String, state: &State) {
                     String::new()
                 };
                 let _ = writeln!(r, "       {:>2}. {:<44} {:<30} {:<20} est {:>11}  {actual}", i + 1, short(&st.literal, 44), short(&st.access, 30), short(&st.source, 20), rows(st.rows));
+                for (lit, per) in &st.passed {
+                    let _ = writeln!(r, "           passed over {:<44} {per:.1} rows a binding", short(lit, 44));
+                }
             }
         }
     }
@@ -1662,15 +1674,26 @@ mod tests {
     fn the_memory_sampler_charges_a_rise_to_the_span_open_on_its_thread() {
         let _serial = one_run();
         set(true);
+        // The high-water mark is the process's: other tests in this process may have left it so high that the probe
+        // cannot raise it. Then only the span's own allocation can be seen.
+        let (now, mark) = memory::footprint();
+        let can_rise = mark == 0 || now + (256 << 20) > mark + (32 << 20);
         {
             let _s = span(|| "sampler probe: a big allocation".into());
-            // Touched pages, held for several sampling periods, well above anything before it in this test process.
+            // Touched pages, held for several sampling periods.
             let big = std::hint::black_box(vec![7u8; 256 << 20]);
             std::thread::sleep(std::time::Duration::from_millis(120));
             drop(big);
         }
         let s = memory::SAMPLED.lock().unwrap();
         assert!(s.every_ms > 0);
+        if !can_rise {
+            drop(s);
+            let own = spans().into_iter().find(|(p, _)| p.ends_with("sampler probe: a big allocation")).map(|(_, t)| t.alloc);
+            set(false);
+            assert!(own.is_some_and(|a| a >= 256 << 20) || cfg!(any(windows, target_family = "wasm")), "the probe's own allocation: {own:?}");
+            return;
+        }
         let charged: Vec<&String> = s.rise.iter().filter(|(p, (r, _))| p.ends_with("sampler probe: a big allocation") && *r > 0).map(|(p, _)| p).collect();
         assert!(!charged.is_empty(), "the rise is charged to the open span: {:?}", s.rise.keys().collect::<Vec<_>>());
         drop(s);
@@ -1733,8 +1756,8 @@ mod tests {
             subsets: 4,
             candidates: 6,
             steps: vec![
-                StepPlan { literal: "a($x)".into(), access: "scan".into(), source: "input".into(), rows: 5.0 },
-                StepPlan { literal: "b($x)".into(), access: "lookup on (c0)".into(), source: "derived".into(), rows: 2.0 },
+                StepPlan { literal: "a($x)".into(), access: "scan".into(), source: "input".into(), rows: 5.0, passed: Vec::new() },
+                StepPlan { literal: "b($x)".into(), access: "lookup on (c0)".into(), source: "derived".into(), rows: 2.0, passed: vec![("c($x)".into(), 7.0)] },
             ],
         };
         planned("xstratum", "seed xrule", Some(3), &plan, 0.01, 0, Some(&[(1, 5), (5, 2)]), None);
@@ -1774,6 +1797,7 @@ mod tests {
         assert!(!report.contains("xbefore") && !report.contains("xafter") && !report.contains("xbehind"), "{report}");
         assert!(report.contains("xsql: aggregate join (string concatenation)"), "{report}");
         assert!(report.contains("rule #0003 (seed xrule)") && report.contains("loops=2 replans=1"));
+        assert!(report.contains("passed over c($x)") && report.contains("7.0 rows a binding"), "the joins a step passed over: {report}");
         // Actual rows add over the loops.
         assert!(report.contains("actual 9 -> 3"), "{report}");
         assert!(report.contains("xkernel  (xspan)"));

@@ -16,6 +16,7 @@
 //! counts every job. Every lane's output is the reference's, exactly: the tests compare them.
 
 pub mod col;
+pub mod cost_model;
 pub mod cpu;
 pub mod exec;
 pub mod kernel;
@@ -29,9 +30,6 @@ pub mod sme;
 
 #[cfg(all(feature = "gpu", target_os = "macos"))]
 pub mod gpu;
-
-#[cfg(all(feature = "gpu", target_os = "macos"))]
-pub mod forest;
 
 #[cfg(all(feature = "ane", target_os = "macos"))]
 pub mod ane;

@@ -222,13 +222,15 @@
 .decl embed_value(d: number, at: node, grammar: symbol, role: symbol, text: symbol)
 // ---- the environment and the files beyond the corpus (t21) ----
 // env(k, v): the run's settings (`rerail.env` at the corpus root, `--env k=v`). dir_entry(dir, name, is_dir) and
-// file_line(path, i, text) (from 1): the entries of a directory and the lines of a file, read only for a dir or path
-// a rule binds, under the corpus root or a directory a setting names. load(path, module, grammar): a rule asks for
+// file_line(path, i, text) (from 1): the entries of a directory and the lines of a file, and file_digest(path, c):
+// its content's SHA-256 (hex), read only for a dir or path a rule binds, under the corpus root or a directory a
+// setting names. load(path, module, grammar): a rule asks for
 // the file as a document, named as `module` (its resolution's answer); loaded(path, module, grammar): the documents
 // loaded, by canonical path. A loaded document is evaluated like any other; its rows are not the run's findings.
 .decl env(key: symbol, value: symbol)
 .decl dir_entry(dir: symbol, name: symbol, is_dir: number)
 .decl file_line(path: symbol, i: number, text: symbol)
+.decl file_digest(path: symbol, c: symbol)
 .decl load(path: symbol, module: symbol, grammar: symbol)
 .decl loaded(path: symbol, module: symbol, grammar: symbol)
 // spread(n) for `*args` in `f(*args)` and `...xs` in `[...xs]`: positions after a spread are not fixed, so

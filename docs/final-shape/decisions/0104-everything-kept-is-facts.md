@@ -125,8 +125,19 @@ The run's phases:
 | 2 | runs the typing to its fixed point |
 | 3 | the analysis |
 
-Then the findings are written. Phase 3 takes its documents from phase 1: it does not list or
-parse a file itself.
+Then the findings are written. Every later phase takes its documents from phase 1: it does
+not list, load or parse a file itself.
+
+A library's tape is the same two rules. Its key names the file an import resolves to, by
+its content (`file_digest(path, c)`, the file's SHA-256, read through the observer):
+
+```text
+// The key: the file module q resolves to, by its content.
+library_key(q, f, c, "tape-1") :- py_resolves(q, f, _), file_digest(f, c).
+// The result: the tape of the document its load gave.
+library_tape(q, t) :- library_key(q, _, _, _), loaded(f, q, "python"), doc(d, f, q), tape_of(d, t).
+.cache library_tape by library_key
+```
 
 What `parse_of` answers, and what the file-local part reads of it, are a document's facts. They
 are stored where a document's facts are stored, as every relation is, and read with them.
@@ -188,8 +199,35 @@ entry, not a parse or a build. Asking only for the keys that changed needs the c
 maintained from its delta, not kept as a whole stratum.
 
 A run inside another (phase 0's, phase 1's, the constants') leaves the store's collection to
-the outer run. After an edit, the outer run's own collection, run at its end, is still
-counted among the hazards when a pass is due.
+the outer run. The collection's thread works behind the run, as the writer does: the waves
+read nothing it writes, and its statements are not among the hazards.
+
+**The imports, in phase 1.** Phase 1 holds the import fixpoint (`python/modules.rr`). It
+loads the run's own files under their modules, and states them as the workspace's
+(`py_own`): an import of one loads nothing. A library an import resolves to is loaded inside
+the fixed point, and its imports are resolved in turn. The phase ends when the import
+frontier is closed. It runs first, before the phases a program reads. Its result is held
+for the run (`PhaseOne`):
+
+- every run inside the run, a phase's included, takes its documents from it;
+- a program that reads `sources__library(path, module, grammar, content)` (the structure
+  phase, `struct.rr`) takes those library documents as its own loaded documents, named by
+  their modules. It makes no request and loads nothing;
+- a whole-run record holds what phase 1 consulted: the directories it listed, the files it
+  read, the libraries it loaded and the paths it found missing. A change to any of them
+  runs the program again.
+
+A rule of a file's own part that joins an earlier phase's rows puts all of those rows under
+every file's memo key. Phase 1 takes a file's module from a derived relation
+(`doc_module`), so its per-file part joins no observer row.
+
+On the slice (no typeshed, so no library), the findings are the same with phase 1 on and
+off, cold, warm, after an edit and on a fresh cache. Cold, CPU is 33.1 s with phase 1 and
+28.7 s without (user + sys, at a load of 60 to 75). Phase 1's own run is 1.35 s of it. Each
+file's facts are built twice, once in each phase (977 builds, not 486), for 0.2 s. Holding
+phase 1's built documents for the later phases would keep about 16 MB per 500 files for the
+run. After an edit, phase 1 costs 0.46 s of 16.2 s: it asks for all 486 files again, each
+answered by its memo entry.
 
 Two source statements are left among the hazards. The planning choices and the measured
 constants are kept under a small text stored as a source. They are step 3's.
@@ -264,7 +302,7 @@ Each cache is listed with its step in `facts_only.rs`.
 |---|---|---|---|
 | 1 | the run's constants, the whole-run cutoff, the observer's record, the derivation tables (7 tables, 2 maps) | the observer's base facts and rules over them | final-rerail-shape-rr-align, which owns it |
 | 2 | rule files and programs: parsed files, libraries, phase 0's graph, the combined and prepared programs, the planning choices (7 maps) | phase 0's facts. A rule file is loaded on a `load` request. The combined program, the prepared program and the choices are answers keyed by the program's facts (0074) and the build | this branch |
-| 3 | a document's facts: the per-file memo, manifests, the cross-file memo, the first slice's kept matches, guest parses, the session's held rows (21 tables, 2 maps) | a document's facts in its phase's space, keyed by its content facts and the program's facts | this branch |
+| 3 | a document's facts: the per-file memo, manifests, the cross-file memo, the first slice's kept matches, guest parses, the session's held rows (21 tables, 2 maps) | a document's facts in its phase's space, keyed by its content facts and the program's facts | this branch. The per-file memo is done: frames in its plan's space, keyed by content and path (0108; t32 5.1–5.2 measured) |
 | 4 | the kept strata (2 tables, 1 map) | the cross program's own relations, kept and maintained from the delta of its input facts | final-rerail-shape-rr-align: the 2 tables are moved to the store's frames (notes/t33, K1); K4 is built (fe23a4986): a new process loads the session's retained state from the frames, maintains it from the delta of its inputs, and writes back what changed. The cone of requests still reruns as whole strata |
 | 5 | the phase store (5 tables) | a phase's exports as its space's facts | the typing branch (investigate-bend-vs-datalog), as its plan already says |
 | 6 | planning: kept plans, derived values, observed steps, the tables a chunk builds ahead, compiled plans, the statistics (14 tables, 7 maps) | planner facts. Statistics are maintained aggregates over the base facts. A plan is an answer keyed by its rule's facts and the statistics it read | this branch |

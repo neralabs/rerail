@@ -3444,3 +3444,76 @@ CPU (49.9 user + 5.7 sys), 56 s wall, load 15–20.
 element. Not yet traced (parser or tape); the `values` fixture uses `[0, *range(4)]`.
 
 **Closure:** `[*x]` and `(*x,)` keep their `list_splat` node, with a test.
+
+## O-factorize-nothing. The factorized-store test's program hands no export on as its parts
+
+**Seen (2026-11-10).** `an_export_handed_on_as_its_parts_finds_the_same_and_a_changed_choice_misses_the_memo`
+fails on every run. With factorizing on, `factorize_exports` hands on no part (`factorized 0`). The run's
+file-local part then has the same plan as the run with `factorize: off`, so it finds that run's two memo entries.
+This does not depend on how the memo is stored: the memo misses only when the program differs. In the lowered
+program, `uses` is not file-local, because it reads `within`, which the split no longer counts as file-local.
+No rule reads `encl` any more. `bound` and `defined` are refused because no rule of theirs factors
+(`plan 0 of 1`). The test is ignored with this item.
+
+**Closure:** find which change made `within` (and so `uses`) cross-file, and whether that change is right.
+Then give the test a program whose export factorizes, or restore the split, and stop ignoring the test.
+
+## O-suite-five. Five engine tests fail in files the merges of 2026-11-10 did not touch
+
+**Seen (2026-11-10).** These five tests fail in the full engine suite after the merge of
+`More-ergonomic-rule-syntax` at 96d4720ab, and fail on their own too:
+
+| Test | Failure |
+|---|---|
+| `logic::simplify::tests::an_existence_count_is_a_negation` | one existence count rewritten, not two |
+| `sql_executor::tests::scaling::walks_with_negative_and_aggregate_seed_and_output_match_fresh_runs` | refreshed strata: 0, not 2 |
+| `sql_executor::tests::recovery::original_cpython_programs_use_private_projections_and_bounded_join_work` | 1755 against 1841 |
+| `transducer::packed::backend_parity_tests::the_verifier_and_the_metal_interpreter_share_one_opcode_set` | tier 2's words lack 83 |
+| `transducer::packed::compile_matcher_tests::the_gate_catches_a_widened_walk` | only 2 widened clauses differ |
+
+Neither the merge nor this branch's memo and frames work changes these tests' files or what they run. Five other
+failures in that run need the pack fixtures, which come from S3 (`fixtures:pull`) and are not in this worktree:
+`python_shortcuts_change_no_pack_result_f811`, `…_f821`, `…_f841`, `reproduces_sqlfluff_rf01_and_al05` and
+`vue::view::tests::corpus`.
+
+**Closure:** each of the five passes on the hub, or its owner fixes it or ignores it with a reason.
+
+**Closed (2026-11-10).** After the merge of `More-ergonomic-rule-syntax` at b9e20bfe9, the full suite gave 3,064
+passed and 6 failed. Four of the five pass now. The fifth, `the_gate_catches_a_widened_walk`, failed in the suite
+and passes on its own, so the suite's load made it fail. The pack fixtures came from `236fc98d2~1` with
+`git archive`, outside the index. With them, the other five failures pass.
+
+## O148. Measured key domains price joins apart from T
+
+Commit 2ab61d7b4 ("Plan delta joins from measured key domains before expansion") changes the estimate on purpose:
+a binding's distinct values are capped by the rows its constant filters leave, and containment applies to every
+relation, not only to the component being solved. That moves T's recorded plans under T's numbering:
+
+```text
+// workload plan 16: estimated work 417 (T) → 412 (port)
+bound_in($f, $x)  kind($f, "function_definition")  []  412
+// calls plan 54: a different anchor
+classmeth($f)  builtin_ref($e, "classmethod")   (T: dexpr($f, $e))
+```
+
+About 20 lines of `workload`, `workload_demand` and `calls` differ. `keeps`'s copy-pricing test flips with the same
+estimate: the copy is now priced above the reader, so it is no longer inlined.
+
+The three tests are ignored with this item: `t_programs_plan_and_run_like_t`,
+`t_programs_over_atoms_plan_and_run_like_t` and `observed_selectivities_price_a_copy_that_never_ran`.
+
+**Closure:** decide whether the port keeps T's estimates where T's plans are the test (and the new estimate only
+where T has no plan), or takes the new estimate and records new goldens. Then stop ignoring the tests.
+
+## O-wave-b602-nosec. The wave misses B602 on a line whose `# nosec` names another code
+
+**Seen (2026-11-10).** `the_findings_are_ws_violations` had not run on any worktree for a while: the bandit and
+ruff fixtures were missing since the pack test data moved to S3. With them restored (from `236fc98d2~1`, checked
+against each tool's `test-data.lock` by files and bytes), the wave finds 16 keys and W finds 17. The one only W
+finds is `bandit-b602-subprocess-popen-with-shell-equals-true` on `f006.py` line 10,
+`subprocess.Popen('/bin/ls *', shell=True) # type: ... # nosec B607 # noqa: E501 ; pylint: disable=line-too-long`.
+Bandit's `nosec B607` suppresses only B607, so B602 stands. The same run lowers 13 more clauses than the last
+blessed `wave.rir` (B403–B413 imports and five ruff rules), and 140 families changed. Not yet traced: whether the
+wave drops B602 for the comment, or the clause's lowering misses this call. The test is ignored with this item.
+
+**Closure:** the wave reports B602 on that line, or the difference is shown to be W's, and the test runs again.

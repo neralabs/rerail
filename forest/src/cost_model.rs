@@ -1,0 +1,496 @@
+//! The learned cost model (decision 0100 §14): what a job costs, its wall and its host CPU seconds, from the jobs
+//! the executor ran. Two regression forests over the same features, one for ln(wall) and one for ln(CPU), trained
+//! from the samples the executor keeps (`CostSample`) and asked a batch of jobs at once (`CostModel::predict`).
+//!
+//! **Features.** A job's lane and launch names (both categorical), its launches, units, whether it was cold, the
+//! cores' slowdown under the machine's load, and the pool's threads.
+//!
+//! **What it knows.** A prediction is given only for a (lane, names) the model trained on at least
+//! `CostConfig::min_samples` warm, successful samples of; for anything else it gives `None`, and the caller keeps
+//! its priors.
+//!
+//! **Where it predicts.** A batch of up to `CostConfig::host_batch` jobs is walked on the host (`FlatForest::
+//! predict_row`), where a device call's round trip would cost more than the walk; a larger one on the device, its
+//! values bucketized there (`DeviceForest::predict_values`), both forests in one dispatch.
+//!
+//! **Plain data.** A model is its bucket rules, its two flat forests and their target scales, and what it knows:
+//! `to_bytes` and `from_bytes` keep it across runs, and the device's copy is made when first needed.
+
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
+
+use crate::bucket::CellValue;
+use crate::dataset_feature_space::{ColumnData, DatasetFeatureSpace, FeatureType};
+use crate::memory_region::Pod;
+use crate::randomforest_predict::{BucketRules, BucketizerColumn, DeviceBucketizer, DeviceForest, FlatForest, PredictNode};
+use crate::randomforest_procedure::{train_regression_forest, RandomForestProcedureConfig, TargetScale};
+
+/// A finished job, as the model trains on it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CostSample {
+    pub lane: String,
+    /// Its launches' names, comma-joined in order (one name for a job of one kind of launch).
+    pub forms: String,
+    pub launches: u32,
+    pub units: f64,
+    pub cold: bool,
+    pub ok: bool,
+    /// The cores' slowdown under the machine's load.
+    pub load: f64,
+    pub threads: u32,
+    /// What it cost: wall seconds, and its thread's CPU seconds.
+    pub wall: f64,
+    pub cpu: f64,
+}
+
+/// A job to price.
+#[derive(Clone, Copy, Debug)]
+pub struct CostQuery<'a> {
+    pub lane: &'a str,
+    pub forms: &'a str,
+    pub launches: u32,
+    pub units: f64,
+    pub cold: bool,
+    pub load: f64,
+    pub threads: u32,
+}
+
+/// A job's predicted cost, in seconds.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CostPrediction {
+    pub wall: f64,
+    pub cpu: f64,
+}
+
+/// How a model is trained and asked.
+#[derive(Clone, Debug)]
+pub struct CostConfig {
+    pub forest: RandomForestProcedureConfig,
+    /// The warm, successful samples a (lane, names) needs before the model prices it.
+    pub min_samples: u32,
+    /// The largest batch predicted on the host.
+    pub host_batch: usize,
+}
+
+impl Default for CostConfig {
+    /// A row sample per tree (100 trees, each its own bag and every feature), at least 5 samples a leaf, depth 20:
+    /// on the engine's samples this was the forest's best (decision 0100 §14's comparison), at about 1.4–2× the
+    /// training of upstream's 5 bags of 20 trees. Two threads, at the background quality of service, so that
+    /// training yields to the engine.
+    fn default() -> Self {
+        CostConfig {
+            forest: RandomForestProcedureConfig {
+                feature_vector_samplings: 100,
+                feature_samplings: 1,
+                feature_sampling_prop: 1.0,
+                min_leaf_examples: 5,
+                max_threads: 2,
+                background: true,
+                ..Default::default()
+            },
+            min_samples: 8,
+            host_batch: 4,
+        }
+    }
+}
+
+/// The features, in the feature space's column order.
+pub const FEATURES: [&str; 7] = ["lane", "forms", "launches", "units", "cold", "load", "threads"];
+
+/// The smallest seconds a target is taken as (a job measured as no time at all): its log is finite.
+const MIN_SECONDS: f64 = 1e-7;
+
+/// A trained cost model.
+pub struct CostModel {
+    pub rules: BucketRules,
+    pub wall: FlatForest,
+    pub cpu: FlatForest,
+    pub wall_scale: TargetScale,
+    pub cpu_scale: TargetScale,
+    /// The warm, successful samples of each (lane, names) it trained on.
+    pub known: HashMap<(String, String), u32>,
+    pub min_samples: u32,
+    pub host_batch: usize,
+    /// The samples it trained on.
+    pub trained_on: usize,
+    device: OnceLock<Option<Arc<(DeviceForest, DeviceBucketizer)>>>,
+}
+
+impl std::fmt::Debug for CostModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CostModel {{ trained on {}, {} known, {} + {} nodes }}", self.trained_on, self.known.len(), self.wall.nodes.len(), self.cpu.nodes.len())
+    }
+}
+
+impl CostModel {
+    /// Trains on the successful samples (cold ones too: coldness is a feature).
+    pub fn train(samples: &[CostSample], config: &CostConfig) -> Result<CostModel, String> {
+        let used: Vec<&CostSample> = samples.iter().filter(|s| s.ok && s.wall.is_finite() && s.cpu.is_finite() && s.units.is_finite()).collect();
+        if used.is_empty() {
+            return Err("no successful samples to train on".into());
+        }
+        let columns = cells(used.iter().map(|s| query_of(s)));
+        let named: Vec<(String, Vec<CellValue>)> = FEATURES.iter().map(|n| n.to_string()).zip(columns).collect();
+        let fs = Arc::new(DatasetFeatureSpace::from_columns(&named, FeatureType::Real)?);
+        let ln = |v: f64| v.max(MIN_SECONDS).ln() as f32;
+        let wall_targets: Vec<f32> = used.iter().map(|s| ln(s.wall)).collect();
+        let cpu_targets: Vec<f32> = used.iter().map(|s| ln(s.cpu)).collect();
+        let wall = train_regression_forest(fs.clone(), &wall_targets, None, None, &config.forest)?;
+        let cpu = train_regression_forest(fs.clone(), &cpu_targets, None, None, &config.forest)?;
+        let mut known: HashMap<(String, String), u32> = HashMap::new();
+        for s in used.iter().filter(|s| !s.cold) {
+            *known.entry((s.lane.clone(), s.forms.clone())).or_default() += 1;
+        }
+        Ok(CostModel {
+            rules: BucketRules::new(&fs)?,
+            wall_scale: wall.target_scale.ok_or("no target scale")?,
+            cpu_scale: cpu.target_scale.ok_or("no target scale")?,
+            wall: FlatForest::new(&wall)?,
+            cpu: FlatForest::new(&cpu)?,
+            known,
+            min_samples: config.min_samples,
+            host_batch: config.host_batch,
+            trained_on: used.len(),
+            device: OnceLock::new(),
+        })
+    }
+
+    /// Whether the model prices a job of these names on this lane.
+    pub fn knows(&self, lane: &str, forms: &str) -> bool {
+        self.known.get(&(lane.to_owned(), forms.to_owned())).is_some_and(|&n| n >= self.min_samples)
+    }
+
+    /// Each job's predicted cost, `None` for a job the model does not know (`knows`).
+    pub fn predict(&self, queries: &[CostQuery]) -> Result<Vec<Option<CostPrediction>>, String> {
+        let asked: Vec<usize> = (0..queries.len()).filter(|&i| self.knows(queries[i].lane, queries[i].forms)).collect();
+        let mut out = vec![None; queries.len()];
+        if asked.is_empty() {
+            return Ok(out);
+        }
+        let device = if asked.len() > self.host_batch { self.device() } else { None };
+        let raw: Vec<([f32; 2], [f32; 2])> = match device {
+            Some(d) => {
+                let (forests, bucketizer) = &*d;
+                let columns = typed(asked.iter().map(|&i| queries[i]));
+                let p = forests.predict_values(bucketizer, &columns)?;
+                p.chunks(2).map(|c| (c[0], c[1])).collect()
+            }
+            None => asked.iter().map(|&i| {
+                let b = self.buckets(&queries[i]);
+                Ok((self.wall.predict_row(&b)?, self.cpu.predict_row(&b)?))
+            }).collect::<Result<_, String>>()?,
+        };
+        for (&i, (w, c)) in asked.iter().zip(raw) {
+            out[i] = Some(CostPrediction { wall: self.wall_scale.from_unit(w[1]).exp(), cpu: self.cpu_scale.from_unit(c[1]).exp() });
+        }
+        Ok(out)
+    }
+
+    /// The query's bucket in each feature (the host's bucketizing, as the device's).
+    fn buckets(&self, q: &CostQuery) -> [u32; 7] {
+        let r = &self.rules;
+        [
+            r.bucket_of_name(0, Some(q.lane)),
+            r.bucket_of_name(1, Some(q.forms)),
+            r.bucket_of_number(2, q.launches as f64),
+            r.bucket_of_number(3, q.units),
+            r.bucket_of_number(4, q.cold as u8 as f64),
+            r.bucket_of_number(5, q.load),
+            r.bucket_of_number(6, q.threads as f64),
+        ]
+    }
+
+    /// The device's copy (both forests resident together, and the bucket rules), made once; `None` without a device.
+    fn device(&self) -> Option<Arc<(DeviceForest, DeviceBucketizer)>> {
+        self.device
+            .get_or_init(|| {
+                let forests = DeviceForest::new_many(&[&self.wall, &self.cpu]).ok()?;
+                let bucketizer = DeviceBucketizer::from_rules(&self.rules).ok()?;
+                Some(Arc::new((forests, bucketizer)))
+            })
+            .clone()
+    }
+
+    /// The model as bytes (`from_bytes` reads them back).
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut w = Writer(Vec::new());
+        w.bytes(MAGIC);
+        w.u32(FORMAT);
+        w.u32(self.rules.columns.len() as u32);
+        for c in &self.rules.columns {
+            for v in [c.bits, c.split_start, c.num_splits, c.numeric_offset, c.null_bucket, c.unseen, c.strings.len() as u32] {
+                w.u32(v);
+            }
+            let mut strings: Vec<(&String, &u32)> = c.strings.iter().collect();
+            strings.sort();
+            for (s, &b) in strings {
+                w.str(s);
+                w.u32(b);
+            }
+        }
+        w.pods(&self.rules.split_keys);
+        for (f, scale) in [(&self.wall, &self.wall_scale), (&self.cpu, &self.cpu_scale)] {
+            w.pods(&f.nodes);
+            w.pods(&f.roots);
+            w.pods(&f.weights);
+            w.pods(&f.leaf_preds);
+            w.pods(&f.subsets);
+            w.u32(f.max_depth);
+            w.u32(f.num_features as u32);
+            w.pods(&f.feature_bits);
+            w.pods(&[scale.lo, scale.hi]);
+        }
+        let mut known: Vec<(&(String, String), &u32)> = self.known.iter().collect();
+        known.sort();
+        w.u32(known.len() as u32);
+        for ((lane, forms), &n) in known {
+            w.str(lane);
+            w.str(forms);
+            w.u32(n);
+        }
+        w.u32(self.min_samples);
+        w.u32(self.host_batch as u32);
+        w.u64(self.trained_on as u64);
+        w.0
+    }
+
+    /// A model from `to_bytes`'s bytes.
+    pub fn from_bytes(bytes: &[u8]) -> Result<CostModel, String> {
+        let mut r = Reader(bytes);
+        if r.take(MAGIC.len())? != MAGIC {
+            return Err("not a cost model".into());
+        }
+        let format = r.u32()?;
+        if format != FORMAT {
+            return Err(format!("cost model format {format}, not {FORMAT}"));
+        }
+        let mut rules = BucketRules::default();
+        for _ in 0..r.u32()? {
+            let mut c = BucketizerColumn { bits: r.u32()?, split_start: r.u32()?, num_splits: r.u32()?, numeric_offset: r.u32()?, null_bucket: r.u32()?, unseen: r.u32()?, strings: HashMap::new() };
+            for _ in 0..r.u32()? {
+                let s = r.str()?;
+                c.strings.insert(s, r.u32()?);
+            }
+            rules.columns.push(c);
+        }
+        rules.split_keys = r.pods()?;
+        let mut forest = || -> Result<(FlatForest, TargetScale), String> {
+            let f = FlatForest { nodes: r.pods::<PredictNode>()?, roots: r.pods()?, weights: r.pods()?, leaf_preds: r.pods()?, subsets: r.pods()?, max_depth: r.u32()?, num_features: r.u32()? as usize, feature_bits: r.pods()? };
+            let s: Vec<f64> = r.pods()?;
+            if s.len() != 2 {
+                return Err("a target scale of the wrong length".into());
+            }
+            Ok((f, TargetScale { lo: s[0], hi: s[1] }))
+        };
+        let (wall, wall_scale) = forest()?;
+        let (cpu, cpu_scale) = forest()?;
+        let mut known = HashMap::new();
+        for _ in 0..r.u32()? {
+            let (lane, forms) = (r.str()?, r.str()?);
+            known.insert((lane, forms), r.u32()?);
+        }
+        let (min_samples, host_batch, trained_on) = (r.u32()?, r.u32()? as usize, r.u64()? as usize);
+        if !r.0.is_empty() {
+            return Err(format!("{} bytes past the cost model", r.0.len()));
+        }
+        // A forest must walk within its arrays: checked here, so a damaged model is refused, not walked.
+        for f in [&wall, &cpu] {
+            check(f, &rules)?;
+        }
+        Ok(CostModel { rules, wall, cpu, wall_scale, cpu_scale, known, min_samples, host_batch, trained_on, device: OnceLock::new() })
+    }
+}
+
+/// Every index a forest's walk follows is within its arrays, and its features within the rules.
+fn check(f: &FlatForest, rules: &BucketRules) -> Result<(), String> {
+    let leaves = f.leaf_preds.len() / 2;
+    let child = |c: i32| if c >= 0 { (c as usize) < f.nodes.len() } else { ((-(c + 1)) as usize) < leaves };
+    let ok = f.roots.iter().all(|&r| child(r))
+        && f.roots.len() == f.weights.len()
+        && f.num_features == rules.columns.len()
+        && f.nodes.iter().all(|n| child(n.child_true) && child(n.child_false) && (n.feature as usize) < f.num_features && (n.ordinal != 2 || (n.split_bucket as usize + 1) * 16 <= f.subsets.len()))
+        && rules.columns.iter().all(|c| (c.split_start + c.num_splits) as usize <= rules.split_keys.len());
+    if ok { Ok(()) } else { Err("a damaged cost model".into()) }
+}
+
+const MAGIC: &[u8] = b"rerail-cost-model";
+const FORMAT: u32 = 1;
+
+struct Writer(Vec<u8>);
+
+impl Writer {
+    fn bytes(&mut self, b: &[u8]) {
+        self.0.extend_from_slice(b);
+    }
+    fn u32(&mut self, v: u32) {
+        self.bytes(&v.to_le_bytes());
+    }
+    fn u64(&mut self, v: u64) {
+        self.bytes(&v.to_le_bytes());
+    }
+    fn str(&mut self, s: &str) {
+        self.u32(s.len() as u32);
+        self.bytes(s.as_bytes());
+    }
+    fn pods<T: Pod>(&mut self, v: &[T]) {
+        self.u64(v.len() as u64);
+        self.bytes(unsafe { std::slice::from_raw_parts(v.as_ptr().cast::<u8>(), std::mem::size_of_val(v)) });
+    }
+}
+
+struct Reader<'a>(&'a [u8]);
+
+impl<'a> Reader<'a> {
+    fn take(&mut self, n: usize) -> Result<&'a [u8], String> {
+        if self.0.len() < n {
+            return Err("a cost model cut short".into());
+        }
+        let (a, b) = self.0.split_at(n);
+        self.0 = b;
+        Ok(a)
+    }
+    fn u32(&mut self) -> Result<u32, String> {
+        Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
+    }
+    fn u64(&mut self) -> Result<u64, String> {
+        Ok(u64::from_le_bytes(self.take(8)?.try_into().unwrap()))
+    }
+    fn str(&mut self) -> Result<String, String> {
+        let n = self.u32()? as usize;
+        String::from_utf8(self.take(n)?.to_vec()).map_err(|e| e.to_string())
+    }
+    fn pods<T: Pod + Default + Clone>(&mut self) -> Result<Vec<T>, String> {
+        let n = self.u64()? as usize;
+        let size = std::mem::size_of::<T>();
+        let bytes = self.take(n.checked_mul(size).ok_or("a cost model's length overflows")?)?;
+        let mut v = vec![T::default(); n];
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), v.as_mut_ptr().cast::<u8>(), bytes.len()) };
+        Ok(v)
+    }
+}
+
+/// A sample's job, as a query.
+fn query_of(s: &CostSample) -> CostQuery<'_> {
+    CostQuery { lane: &s.lane, forms: &s.forms, launches: s.launches, units: s.units, cold: s.cold, load: s.load, threads: s.threads }
+}
+
+/// The jobs as the feature space's columns of cells (training).
+fn cells<'a>(qs: impl Iterator<Item = CostQuery<'a>>) -> Vec<Vec<CellValue>> {
+    let mut c: Vec<Vec<CellValue>> = vec![Vec::new(); FEATURES.len()];
+    for q in qs {
+        c[0].push(CellValue::String(q.lane.to_owned()));
+        c[1].push(CellValue::String(q.forms.to_owned()));
+        c[2].push(CellValue::Integer(q.launches as i64));
+        c[3].push(CellValue::Float(q.units));
+        c[4].push(CellValue::Integer(q.cold as i64));
+        c[5].push(CellValue::Float(q.load));
+        c[6].push(CellValue::Integer(q.threads as i64));
+    }
+    c
+}
+
+/// The jobs as typed columns (the device's prediction): the names coded per batch.
+fn typed<'a>(qs: impl Iterator<Item = CostQuery<'a>>) -> Vec<ColumnData> {
+    let qs: Vec<CostQuery> = qs.collect();
+    let coded = |get: &dyn Fn(&CostQuery<'a>) -> &'a str| {
+        let mut names: Vec<String> = Vec::new();
+        let mut index: HashMap<&str, u32> = HashMap::new();
+        let codes = qs.iter().map(|q| {
+            let n = get(q);
+            *index.entry(n).or_insert_with(|| {
+                names.push(n.to_owned());
+                names.len() as u32 - 1
+            })
+        }).collect();
+        ColumnData::Categorical { codes, names }
+    };
+    vec![
+        coded(&|q| q.lane),
+        coded(&|q| q.forms),
+        ColumnData::Numeric(qs.iter().map(|q| q.launches as f64).collect()),
+        ColumnData::Numeric(qs.iter().map(|q| q.units).collect()),
+        ColumnData::Numeric(qs.iter().map(|q| q.cold as u8 as f64).collect()),
+        ColumnData::Numeric(qs.iter().map(|q| q.load).collect()),
+        ColumnData::Numeric(qs.iter().map(|q| q.threads as f64).collect()),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Jobs whose cost follows their lane, names and units, with noise.
+    fn samples(n: usize) -> Vec<CostSample> {
+        let lanes = ["cpu", "gpu", "sme"];
+        let forms = ["closure", "histogram", "bit product", "count table"];
+        (0..n).map(|i| {
+            let (l, f) = (i % 3, (i / 3) % 4);
+            let units = 10f64.powi((i % 7) as i32 + 2);
+            let rate = [5e-10, 2e-11, 8e-11][l] * (1.0 + f as f64);
+            let noise = 1.0 + ((i * 7919) % 13) as f64 * 0.01;
+            let wall = (2e-5 + rate * units) * noise;
+            CostSample { lane: lanes[l].into(), forms: forms[f].into(), launches: 1, units, cold: i % 29 == 0, ok: true, load: 1.0 + (i % 5) as f64 * 0.2, threads: 18, wall, cpu: wall * if l == 0 { 1.0 } else { 0.3 } }
+        }).collect()
+    }
+
+    fn query(s: &CostSample) -> CostQuery<'_> {
+        query_of(s)
+    }
+
+    /// Batch prediction on the host and on the device, CPU and wall a call, at each batch size: where the host's
+    /// walk stops paying (`CostConfig::host_batch`).
+    #[test]
+    #[ignore = "benchmark: --ignored --nocapture"]
+    fn host_or_device_by_batch() {
+        if crate::gpu::shared::get().is_none() {
+            return;
+        }
+        let model = CostModel::train(&samples(12000), &CostConfig::default()).unwrap();
+        let test = samples(12000);
+        for b in [1usize, 4, 16, 64, 256, 1024] {
+            let qs: Vec<CostQuery> = test[..b].iter().map(query).collect();
+            for (what, hb) in [("host", usize::MAX), ("device", 0)] {
+                let m = CostModel { host_batch: hb, ..CostModel::from_bytes(&model.to_bytes()).unwrap() };
+                m.predict(&qs).unwrap();
+                let reps = 50;
+                let (w, c) = (std::time::Instant::now(), crate::process_cpu());
+                for _ in 0..reps {
+                    m.predict(&qs).unwrap();
+                }
+                eprintln!("BATCH {b:5} {what:6}: {:8.1} us wall {:8.1} us CPU a call", w.elapsed().as_secs_f64() / reps as f64 * 1e6, (crate::process_cpu() - c) / reps as f64 * 1e6);
+            }
+        }
+        eprintln!("{model:?}");
+    }
+
+    /// The model learns the costs (within a few percent on samples like those it trained on), the host's and the
+    /// device's predictions agree, an unknown job is not priced, and the bytes give the same model back.
+    #[test]
+    fn learns_costs_predicts_on_both_and_round_trips() {
+        if crate::gpu::shared::get().is_none() {
+            return;
+        }
+        let train = samples(3000);
+        let test: Vec<CostSample> = samples(3300)[3000..].iter().filter(|s| !s.cold).cloned().collect();
+        let config = CostConfig { forest: RandomForestProcedureConfig { feature_vector_samplings: 20, ..CostConfig::default().forest }, ..Default::default() };
+        let model = CostModel::train(&train, &config).unwrap();
+        let qs: Vec<CostQuery> = test.iter().map(query).collect();
+        let on_host = CostModel { host_batch: usize::MAX, ..CostModel::from_bytes(&model.to_bytes()).unwrap() }.predict(&qs).unwrap();
+        let on_device = CostModel { host_batch: 0, ..CostModel::from_bytes(&model.to_bytes()).unwrap() }.predict(&qs).unwrap();
+        let mut worst: f64 = 0.0;
+        for ((s, h), d) in test.iter().zip(&on_host).zip(&on_device) {
+            let (h, d) = (h.unwrap(), d.unwrap());
+            assert!((h.wall / d.wall - 1.0).abs() < 1e-4 && (h.cpu / d.cpu - 1.0).abs() < 1e-4, "{h:?} {d:?}");
+            worst = worst.max((h.wall / s.wall).ln().abs());
+        }
+        assert!(worst < 0.25, "worst log error {worst}");
+        let unknown = CostQuery { lane: "ane", ..qs[0] };
+        assert_eq!(model.predict(&[unknown, qs[0]]).unwrap()[0], None);
+        let back = CostModel::from_bytes(&model.to_bytes()).unwrap();
+        assert_eq!((back.rules == model.rules, back.wall == model.wall, back.cpu == model.cpu, back.known == model.known), (true, true, true, true));
+        assert_eq!(back.to_bytes(), model.to_bytes());
+        let mut damaged = model.to_bytes();
+        damaged.truncate(damaged.len() - 3);
+        assert!(CostModel::from_bytes(&damaged).is_err());
+    }
+}

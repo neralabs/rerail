@@ -130,48 +130,55 @@ impl ContentStore {
 
     /// The stored frames of `rels` in `space`, partition `part`, without their rows.
     pub fn frames(&self, space: &[u8; 32], rels: &[Rel], part: i64) -> StoreResult<HashMap<Rel, Stored>> {
-        Ok(self.read_frames(space, rels, part, false)?.into_iter().map(|(r, f)| (r, f.stored.clone())).collect())
+        let keys: Vec<_> = rels.iter().cloned().map(|r| (r, part)).collect();
+        Ok(self.read_frame_parts(space, &keys, false)?.into_iter().map(|((r, _), f)| (r, f.stored.clone())).collect())
     }
 
     /// Admit requested relations before their consumers run. No consumer needs another store read.
     pub fn admit_frames(&self, space: &[u8; 32], rels: &[Rel], part: i64) -> StoreResult<HashMap<Rel, Arc<Admitted>>> {
-        self.read_frames(space, rels, part, true)
+        let keys: Vec<_> = rels.iter().cloned().map(|r| (r, part)).collect();
+        Ok(self.admit_frame_parts(space, &keys)?.into_iter().map(|((r, _), f)| (r, f)).collect())
     }
 
-    fn read_frames(&self, space: &[u8; 32], rels: &[Rel], part: i64, payload: bool) -> StoreResult<HashMap<Rel, Arc<Admitted>>> {
+    /// Admit a demand set across relation partitions. Granules share the same full-key probes as whole relations.
+    pub fn admit_frame_parts(&self, space: &[u8; 32], keys: &[(Rel, i64)]) -> StoreResult<HashMap<(Rel, i64), Arc<Admitted>>> {
+        self.read_frame_parts(space, keys, true)
+    }
+
+    fn read_frame_parts(&self, space: &[u8; 32], keys: &[(Rel, i64)], payload: bool) -> StoreResult<HashMap<(Rel, i64), Arc<Admitted>>> {
         let mut out = HashMap::new();
         let mut missing = std::collections::BTreeSet::new();
-        for rel in rels {
+        for (rel, part) in keys {
             // Pin pending values before SQLite can catch up and release the writer's copy.
             // Some(None) is a queued deletion, not a reason to read an older durable row.
-            if let Some(pending) = self.pending::<Option<Arc<Admitted>>>(&frame_key(space, rel, part)) {
-                if let Some(frame) = pending.as_ref() { out.insert(rel.clone(), Arc::clone(frame)); }
+            if let Some(pending) = self.pending::<Option<Arc<Admitted>>>(&frame_key(space, rel, *part)) {
+                if let Some(frame) = pending.as_ref() { out.insert((rel.clone(), *part), Arc::clone(frame)); }
             } else {
-                missing.insert(rel.clone());
+                missing.insert((rel.clone(), *part));
             }
         }
         if missing.is_empty() || !self.frames_table()? { return Ok(out); }
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let missing: Vec<_> = missing.into_iter().collect();
         for batch in missing.chunks(READ_BATCH) {
-            let values = (0..batch.len()).map(|i| format!("(?{}, ?{})", 3 + 2*i, 4 + 2*i)).collect::<Vec<_>>().join(",");
+            let values = (0..batch.len()).map(|i| format!("(?{}, ?{}, ?{})", 2 + 3*i, 3 + 3*i, 4 + 3*i)).collect::<Vec<_>>().join(",");
             let columns = if payload { ", f.rows, f.types, f.data" } else { "" };
             // Keep demand rows outside full-key probes; a space-first scan multiplies retained rows by demands.
-            let sql = format!("WITH demanded(rel, ident) AS (VALUES {values}) \
-                SELECT f.rel, f.ident, f.digest, f.reads{columns} FROM demanded d \
-                CROSS JOIN frames f ON f.space = ?1 AND f.part = ?2 AND f.rel = d.rel AND f.ident = d.ident");
-            let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into(), part.into()];
-            for rel in batch { args.extend([rel.name.clone().into(), rel.ident.to_vec().into()]); }
+            let sql = format!("WITH demanded(rel, ident, part) AS (VALUES {values}) \
+                SELECT f.rel, f.ident, f.part, f.digest, f.reads{columns} FROM demanded d \
+                CROSS JOIN frames f ON f.space = ?1 AND f.rel = d.rel AND f.ident = d.ident AND f.part = d.part");
+            let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into()];
+            for (rel, part) in batch { args.extend([rel.name.clone().into(), rel.ident.to_vec().into(), (*part).into()]); }
             let mut st = connection.prepare_cached(&sql)?;
             let frames = st.query_map(rusqlite::params_from_iter(args), |row| {
                 let ident: Vec<u8> = row.get(1)?;
                 let ident: [u8; 32] = ident.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
-                Ok((Rel { name: row.get(0)?, ident }, Arc::new(Admitted {
-                    stored: Stored { digest: row.get::<_, i64>(2)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(3)?) },
-                    data: if payload { Data::Encoded { n: row.get::<_, i64>(4)? as usize, types: row.get(5)?, bytes: row.get(6)? } } else { Data::Metadata },
+                Ok(((Rel { name: row.get(0)?, ident }, row.get(2)?), Arc::new(Admitted {
+                    stored: Stored { digest: row.get::<_, i64>(3)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(4)?) },
+                    data: if payload { Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes: row.get(7)? } } else { Data::Metadata },
                 })))
             })?;
-            for frame in frames { let (rel, frame) = frame?; out.insert(rel, frame); }
+            for frame in frames { let (key, frame) = frame?; out.insert(key, frame); }
         }
         Ok(out)
     }
@@ -179,6 +186,65 @@ impl ContentStore {
     /// The rows of `rel`'s frame `part` in `space`.
     pub fn frame_rows(&self, space: &[u8; 32], rel: &Rel, part: i64) -> StoreResult<Option<Rows>> {
         self.admit_frames(space, std::slice::from_ref(rel), part)?.get(rel).map(|f| f.rows()).transpose()
+    }
+
+    /// The frames of `rel` in `space` at each of `parts`, admitted (`admit_frame_parts`). A part with no frame is absent.
+    pub fn admit_parts_of(&self, space: &[u8; 32], rel: &Rel, parts: &[i64]) -> StoreResult<HashMap<i64, Arc<Admitted>>> {
+        let keys: Vec<(Rel, i64)> = parts.iter().map(|p| (rel.clone(), *p)).collect();
+        Ok(self.admit_frame_parts(space, &keys)?.into_iter().map(|((_, p), f)| (p, f)).collect())
+    }
+
+    /// Every stored frame of `rel` in `space`, by part, admitted (queued writes are not among them).
+    pub fn admit_all_parts(&self, space: &[u8; 32], rel: &Rel) -> StoreResult<Vec<(i64, Arc<Admitted>)>> {
+        if !self.frames_table()? {
+            return Ok(Vec::new());
+        }
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut st = connection.prepare_cached(
+            "SELECT part, digest, reads, rows, types, data FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 ORDER BY part",
+        )?;
+        let rows = st.query_map(params![&space[..], rel.name, &rel.ident[..]], admitted_part)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Run `token`'s use of `parts` of `rel` in `space`, queued behind the run: the space counts the run once, the
+    /// parts are marked as used by it, and the parts of `rel` no run used in the last `keep` runs of the space are
+    /// forgotten (an incremental store returns its dead rows).
+    pub fn queue_frame_parts_used(&self, space: [u8; 32], rel: Rel, parts: Vec<i64>, token: u64, keep: i64) {
+        let bytes = parts.len() * 8;
+        self.write_back("the frames' parts used", bytes, Vec::new(), Box::new(move |store| store.use_frame_parts(&space, &rel, &parts, token, keep)));
+    }
+
+    /// `queue_frame_parts_used`, now.
+    pub fn use_frame_parts(&self, space: &[u8; 32], rel: &Rel, parts: &[i64], token: u64, keep: i64) -> StoreResult<()> {
+        self.immediate_transaction_once(|t| {
+            t.execute_batch(SCHEMA)?;
+            let run = count_run(t, space, token)?;
+            for batch in parts.chunks(READ_BATCH * 4) {
+                let values = (0..batch.len()).map(|i| format!("(?{})", 5 + i)).collect::<Vec<_>>().join(",");
+                let sql = format!(
+                    "WITH demanded(part) AS (VALUES {values}) UPDATE frames SET used = ?4 \
+                     WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part IN (SELECT part FROM demanded)"
+                );
+                let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into(), rel.name.clone().into(), rel.ident.to_vec().into(), run.into()];
+                args.extend(batch.iter().map(|p| rusqlite::types::Value::from(*p)));
+                t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
+            }
+            t.execute("DELETE FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND used <= ?4", params![&space[..], rel.name, &rel.ident[..], run - keep])?;
+            Ok(())
+        })
+    }
+
+    /// Forgets every frame of `space` and its count of runs: the space of a program no run will run again.
+    pub fn drop_frame_space(&self, space: &[u8; 32]) -> StoreResult<usize> {
+        if !self.frames_table()? {
+            return Ok(0);
+        }
+        self.immediate_transaction_once(|t| {
+            let n = t.execute("DELETE FROM frames WHERE space = ?1", [&space[..]])?;
+            t.execute("DELETE FROM frame_spaces WHERE space = ?1", [&space[..]])?;
+            Ok(n)
+        })
     }
 
     /// `keep_frames`, queued behind the run (decision 0102): encoded and written by the store's writer.
@@ -209,17 +275,14 @@ impl ContentStore {
         let blocks: Vec<Vec<u8>> = puts.iter().map(|p| super::cross_rows::encode(p.rows.types.len(), &p.rows.rows)).collect();
         self.immediate_transaction_once(|t| {
             t.execute_batch(SCHEMA)?;
-            t.execute("INSERT INTO frame_spaces(space, runs) VALUES (?1, 0) ON CONFLICT(space) DO NOTHING", [&space[..]])?;
-            let mut run: i64 = t.query_row("SELECT runs FROM frame_spaces WHERE space = ?1", [&space[..]], |r| r.get(0))?;
             // A run's first program counts it: what it writes and marks is of the new run.
-            if let Some((_, token)) = used {
-                let mut counted = counted().lock().expect("the spaces' counted runs");
-                if token == 0 || counted.get(space) != Some(&token) {
-                    t.execute("UPDATE frame_spaces SET runs = runs + 1 WHERE space = ?1", [&space[..]])?;
-                    run += 1;
-                    counted.insert(*space, token);
+            let run = match used {
+                Some((_, token)) => count_run(t, space, token)?,
+                None => {
+                    t.execute("INSERT INTO frame_spaces(space, runs) VALUES (?1, 0) ON CONFLICT(space) DO NOTHING", [&space[..]])?;
+                    t.query_row("SELECT runs FROM frame_spaces WHERE space = ?1", [&space[..]], |r| r.get(0))?
                 }
-            }
+            };
             // Nine bound values per frame, plus shared space and run, stay below 999 parameters.
             // Each statement publishes a bounded batch. No frame launches its own SQL execution.
             for batch in puts.iter().zip(&blocks).collect::<Vec<_>>().chunks(96) {
@@ -270,6 +333,36 @@ fn encode_reads(reads: &[(String, u64)]) -> Vec<u8> {
         out.extend(digest.to_le_bytes());
     }
     out
+}
+
+/// The space of the per-file memo of plan `plan` (decision 0108): one space per file-local program.
+pub fn local_space(plan: &[u8; 32]) -> [u8; 32] {
+    use sha2::{Digest as _, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"rerail.space/v1\0local\0");
+    h.update(plan);
+    h.finalize().into()
+}
+
+/// The run of `space` that run `token` is: counted once per token (`0`: a run of its own, counted each time).
+fn count_run(t: &rusqlite::Transaction<'_>, space: &[u8; 32], token: u64) -> rusqlite::Result<i64> {
+    t.execute("INSERT INTO frame_spaces(space, runs) VALUES (?1, 0) ON CONFLICT(space) DO NOTHING", [&space[..]])?;
+    let run: i64 = t.query_row("SELECT runs FROM frame_spaces WHERE space = ?1", [&space[..]], |r| r.get(0))?;
+    let mut counted = counted().lock().expect("the spaces' counted runs");
+    if token == 0 || counted.get(space) != Some(&token) {
+        t.execute("UPDATE frame_spaces SET runs = runs + 1 WHERE space = ?1", [&space[..]])?;
+        counted.insert(*space, token);
+        return Ok(run + 1);
+    }
+    Ok(run)
+}
+
+/// A frame read by part: `(part, digest, reads, rows, types, data)`.
+fn admitted_part(row: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, Arc<Admitted>)> {
+    Ok((row.get(0)?, Arc::new(Admitted {
+        stored: Stored { digest: row.get::<_, i64>(1)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(2)?) },
+        data: Data::Encoded { n: row.get::<_, i64>(3)? as usize, types: row.get(4)?, bytes: row.get(5)? },
+    })))
 }
 
 fn decode_reads(mut bytes: &[u8]) -> Vec<(String, u64)> {
@@ -323,7 +416,7 @@ mod tests {
         unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),
             rusqlite::ffi::SQLITE_TRACE_STMT | rusqlite::ffi::SQLITE_TRACE_PROFILE, Some(trace), (&counters as *const [AtomicUsize;2]).cast_mut().cast()); }
         let refs: Vec<_> = changed.iter().collect();
-        let result = store.keep_frame_refs(&[1;32], &refs, &gone, Some((&used[..], 0)));
+        let result = store.keep_frame_refs(&[1;32], &refs, &gone, Some((&used, 1)));
         unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),0,None,std::ptr::null_mut()); }
         result.unwrap();
         eprintln!("frame publication total: {} statements, {} VM",counters[0].load(Ordering::Relaxed),counters[1].load(Ordering::Relaxed));
@@ -357,6 +450,41 @@ mod tests {
         for p in puts.iter().step_by(64) { assert_eq!(got[&p.rel].rows().unwrap(), p.rows); }
         assert!(work.load(Ordering::Relaxed) < 100_000,
             "128 demands must use full-key probes, not scan 8192 stored frames: {} VM instructions", work.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn mixed_partition_admission_uses_bounded_full_key_probes() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
+        let puts: Vec<_> = (0..8192).map(|i| Put {
+            rel: rel(&format!("r{}", i % 32), 1), part: i / 32,
+            digest: i as u64, reads: vec![], rows: Rows {types:vec![b'i'],n:1,rows:vec![i]}
+        }).collect();
+        store.keep_frames(&[1;32], &puts, &[], None).unwrap();
+        let mut keys: Vec<_> = puts.iter().step_by(31).map(|p|(p.rel.clone(),p.part)).collect();
+        let unique = keys.len();
+        keys.extend(keys.clone());
+        keys.push((rel("r0", 2), 0)); // Same name, different identity: absent.
+        let counters = [AtomicUsize::new(0), AtomicUsize::new(0)];
+        unsafe extern "C" fn trace(_:u32,state:*mut std::ffi::c_void,statement:*mut std::ffi::c_void,_:*mut std::ffi::c_void)->i32 {
+            let c=unsafe {&*state.cast::<[AtomicUsize;2]>()};
+            c[0].fetch_add(1,Ordering::Relaxed);
+            let vm=unsafe {rusqlite::ffi::sqlite3_stmt_status(statement.cast(),rusqlite::ffi::SQLITE_STMTSTATUS_VM_STEP,1)};
+            c[1].fetch_add(vm as usize,Ordering::Relaxed);0
+        }
+        unsafe {rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),rusqlite::ffi::SQLITE_TRACE_PROFILE,
+            Some(trace),(&counters as *const [AtomicUsize;2]).cast_mut().cast());}
+        let got=store.admit_frame_parts(&[1;32],&keys);
+        unsafe {rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),0,None,std::ptr::null_mut());}
+        let got=got.unwrap();
+        assert_eq!(got.len(),unique);
+        for p in puts.iter().step_by(31) {assert_eq!(got[&(p.rel.clone(),p.part)].rows().unwrap(),p.rows);}
+        assert!(store.admit_frame_parts(&[2;32],&keys).unwrap().is_empty());
+        let sql=counters[0].load(Ordering::Relaxed);let vm=counters[1].load(Ordering::Relaxed);
+        eprintln!("{unique} mixed-part demands: {sql} SQL, {vm} VM instructions");
+        assert!(sql<=4,"one schema check and three batches, not one read per part: {sql}");
+        assert!(vm<100_000,"demands must probe full keys, not scan 8192 frames: {vm}");
     }
 
     #[test]
