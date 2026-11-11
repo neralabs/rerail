@@ -1635,24 +1635,12 @@ pub struct HostLink {
 /// from its first leaf to its last. A node's span may run past those leaves: a root's holds the
 /// white space after its last statement, and a statement ending in a `;` its embedder wrote over
 /// no bytes holds the white space before it, which stands for nothing of the node's.
-///
-/// A named-only tape leaves out the tokens its grammar implies (`tokens::TokenGrammar::stored_children`: PHP's
-/// `$` of a variable, the parentheses of its arguments): a node's text its stored children do not cover holds
-/// them, so each run of that text that is not white space is one of its leaves too.
 fn node_extents(doc: &TapeDoc, segments: &SegmentMap) -> Vec<(u32, u32)> {
     let nodes = &doc.data[..];
-    let text = doc.source.as_bytes();
     const NONE_YET: (u32, u32) = (u32::MAX, 0);
     let join = |into: &mut (u32, u32), (start, end): (u32, u32)| {
         *into = (into.0.min(start), into.1.max(end));
     };
-    // Each node's stored children's spans, in order (preorder lists a node's children in order).
-    let mut covered: Vec<Vec<(u32, u32)>> = vec![Vec::new(); nodes.len()];
-    for rec in nodes {
-        if rec.parent != NONE {
-            covered[rec.parent as usize].push((rec.start, rec.end));
-        }
-    }
     // Per node: the extent of its leaves standing for bytes, and of all its leaves.
     let mut standing = vec![NONE_YET; nodes.len()];
     let mut all = vec![NONE_YET; nodes.len()];
@@ -1662,31 +1650,6 @@ fn node_extents(doc: &TapeDoc, segments: &SegmentMap) -> Vec<(u32, u32)> {
             all[index] = (rec.start, rec.end);
             if segments.stands_for(rec.start as usize..rec.end as usize) {
                 standing[index] = (rec.start, rec.end);
-            }
-        } else {
-            // the left-out tokens: the runs of the node's own text outside its stored children
-            let mut leaf = |run: (u32, u32)| {
-                join(&mut all[index], run);
-                if segments.stands_for(run.0 as usize..run.1 as usize) {
-                    join(&mut standing[index], run);
-                }
-            };
-            let mut at = rec.start;
-            for &(start, end) in covered[index].iter().chain(std::iter::once(&(rec.end, rec.end))) {
-                let mut i = at.min(start);
-                while i < start {
-                    while i < start && text.get(i as usize).is_some_and(u8::is_ascii_whitespace) {
-                        i += 1;
-                    }
-                    let run = i;
-                    while i < start && text.get(i as usize).is_some_and(|b| !b.is_ascii_whitespace()) {
-                        i += 1;
-                    }
-                    if run < i {
-                        leaf((run, i));
-                    }
-                }
-                at = at.max(end);
             }
         }
         if rec.parent != NONE {
