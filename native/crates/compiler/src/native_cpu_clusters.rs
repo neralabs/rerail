@@ -20,12 +20,19 @@ use std::collections::HashMap;
 pub struct Cut {
     pub of: Vec<u32>,
     pub count: u32,
+    /// The state's fields (`native_cpu_stream`'s `Mem`, by index) each function holds in
+    /// registers: loaded where it is entered, stored where it calls another cluster. Empty: the
+    /// whole state in memory.
+    pub held: Vec<u32>,
+    /// Each word loads the `ctx` fields it reads where it runs, instead of every field living
+    /// from the function's entry (`native_cpu_stream::ctx_reads`).
+    pub reload: bool,
 }
 
 impl Cut {
     /// Every word in one function: tier 2 as it was before clusters.
     pub fn one(words: usize) -> Self {
-        Self { of: vec![0; words], count: 1 }
+        Self { of: vec![0; words], count: 1, held: Vec::new(), reload: false }
     }
 }
 
@@ -155,7 +162,7 @@ pub fn by_traffic(native: &Structure, traffic: &HashMap<(u32, u32), u64>, cap: u
             bin_of.get(&r).copied().unwrap_or(0)
         })
         .collect();
-    Cut { of, count: (bins.len() as u32).max(1) }
+    Cut { of, count: (bins.len() as u32).max(1), held: Vec::new(), reload: false }
 }
 
 /// The share of `traffic`'s steps that leave their cluster, of all its steps between two words.

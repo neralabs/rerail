@@ -723,9 +723,23 @@ pub mod tests {
         let caps: Vec<usize> = std::env::var("RR_CAPS").ok().map(|v| v.split(',').filter_map(|x| x.parse().ok()).collect()).unwrap_or_else(|| vec![600, 1200, 2500]);
         // By the traffic, and by the program alone (no profile: its own edges, in order of place).
         let none = std::collections::HashMap::new();
-        let cuts: Vec<(String, Cut)> = std::iter::once(("one function".to_owned(), Cut::one(native.structural.len())))
-            .chain(caps.iter().map(|&cap| (format!("cap {cap}"), by_traffic(&native, &traffic, cap))))
-            .chain(caps.iter().map(|&cap| (format!("static {cap}"), by_traffic(&native, &none, cap))))
+        let mut shapes: Vec<(String, Cut)> = std::iter::once(("one".to_owned(), Cut::one(native.structural.len()))).chain(caps.iter().map(|&cap| (format!("cap {cap}"), by_traffic(&native, &traffic, cap)))).collect();
+        if std::env::var_os("RR_STATIC").is_some() {
+            shapes.extend(caps.iter().map(|&cap| (format!("static {cap}"), by_traffic(&native, &none, cap))));
+        }
+        // The state's fields held in registers (`Cut::held`, by `Mem`'s order): none; the
+        // token's (next, start, end, limit, last end, at end, need, live); those and the
+        // tree's and the mask's (taken, lw, nodes, open, ret, pending); every field.
+        let sets: [(&str, Vec<u32>); 4] = [("memory", vec![]), ("token", vec![10, 13, 14, 15, 16, 17, 21, 22]), ("tree", vec![10, 13, 14, 15, 16, 17, 21, 22, 11, 12, 18, 19, 20, 1]), ("all", (0..23).collect())];
+        let wanted: Vec<String> = std::env::var("RR_HELD").map(|v| v.split(',').map(str::to_owned).collect()).unwrap_or_else(|_| sets.iter().map(|s| s.0.to_owned()).collect());
+        let cuts: Vec<(String, Cut)> = shapes
+            .iter()
+            .flat_map(|(name, cut)| sets.iter().filter(|s| wanted.iter().any(|w| w == s.0)).map(move |(h, held)| (format!("{name}/{h}"), Cut { held: held.clone(), ..cut.clone() })))
+            // `Cut::reload`: each word loads the `ctx` fields it reads.
+            .flat_map(|(name, cut)| {
+                let at_word = std::env::var_os("RR_RELOAD").is_some().then(|| (format!("{name}+ctx"), Cut { reload: true, ..cut.clone() }));
+                std::iter::once((name, cut)).chain(at_word)
+            })
             .collect();
         // Tier 1's buffers, a batch a file, made once.
         let one = &c.parser;
@@ -749,10 +763,14 @@ pub mod tests {
         for (name, cut) in &cuts {
             let _ = cranelift_codegen::timing::take_current();
             // Tier 2's compile alone (tier 1's is the same for every form).
-            let t = thread_cpu();
+            // Its CPU over every thread (the process's: run alone), and its wall time.
+            let _ = rerail_compiler::native_cpu_codegen::parallel_pass_times();
+            let (t, w) = (cpu(), std::time::Instant::now());
             let tier2 = rerail_compiler::native_cpu_stream::compile_cut(&native, cut).unwrap_or_else(|e| panic!("{name}: {e:?}"));
-            let compile = thread_cpu() - t;
-            let timing = cranelift_codegen::timing::take_current().to_string();
+            let (compile, compile_wall) = (cpu() - t, w.elapsed());
+            let mut times = cranelift_codegen::timing::take_current();
+            times.add(&rerail_compiler::native_cpu_codegen::parallel_pass_times());
+            let timing = times.to_string();
             let p = Parser { tier1: rerail_compiler::native_cpu_block::compile(&native.block_programs[0]).expect("tier 1"), tier2 };
             if std::env::var_os("RR_TIMING").is_some() {
                 eprintln!("{name}:\n{timing}");
@@ -772,7 +790,7 @@ pub mod tests {
                 assert!(got == want[k], "{name}: file {k} differs from the one function's");
             }
             eprintln!(
-                "{name:>12}: {:>3} functions, {:>4} tail calls, {:.3} of the sample's steps cross ({:.4} of the corpus's); compile {compile:.2?} CPU (register allocation {regalloc} s); {code} instructions, {} stack loads/stores, {state} of them the state's",
+                "{name:>16}: {:>3} functions, {:>4} tail calls, {:.3} of the sample's steps cross ({:.4} of the corpus's); compile {compile:.2?} CPU, {compile_wall:.2?} wall (register allocation {regalloc} s CPU); {code} instructions, {} stack loads/stores, {state} of them the state's",
                 p.tier2.clusters, p.tier2.crossings, crossings(&native, cut, &traffic), crossings(&native, cut, &whole), stack
             );
             made.push((name, p));
@@ -792,7 +810,7 @@ pub mod tests {
             }
         }
         for ((name, _), t) in made.iter().zip(&best) {
-            eprintln!("{name:>12}: tier 2 {t:.1?} CPU over the corpus (the best of {rounds})");
+            eprintln!("{name:>16}: tier 2 {t:.1?} CPU over the corpus (the best of {rounds})");
         }
         eprintln!("load: {}", String::from_utf8_lossy(&std::process::Command::new("uptime").output().map(|o| o.stdout).unwrap_or_default()).trim());
     }

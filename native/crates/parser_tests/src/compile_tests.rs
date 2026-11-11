@@ -1224,12 +1224,18 @@ fn json_in_clusters_equals_one_function() {
     let n = native.structural.len();
     let cuts = [
         ("by traffic, at most 40 words", native_cpu_clusters::by_traffic(&native, &traffic, 40)),
-        ("a word a cluster", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32 }),
+        ("a word a cluster", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32, held: Vec::new(), reload: false }),
+        // The state in registers: every field, in clusters and in the one function.
+        ("by traffic, the state in registers", native_cpu_clusters::Cut { held: (0..23).collect(), ..native_cpu_clusters::by_traffic(&native, &traffic, 40) }),
+        ("a word a cluster, the state in registers", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32, held: (0..23).collect(), reload: true }),
+        ("one function, the state in registers", native_cpu_clusters::Cut { held: (0..23).collect(), ..native_cpu_clusters::Cut::one(n) }),
+        ("one function, ctx at each word", native_cpu_clusters::Cut { reload: true, ..native_cpu_clusters::Cut::one(n) }),
+        ("by traffic, ctx at each word", native_cpu_clusters::Cut { reload: true, ..native_cpu_clusters::by_traffic(&native, &traffic, 40) }),
     ];
     for (name, cut) in cuts {
         let tier2 = native_cpu_stream::compile_cut(&native, &cut).unwrap_or_else(|e| panic!("{name}: {e:?}"));
         eprintln!("{name}: {} clusters, {} tail calls; {:.3} of the steps cross", tier2.clusters, tier2.crossings, native_cpu_clusters::crossings(&native, &cut, &traffic));
-        assert!(tier2.clusters > 1 && tier2.crossings > 0, "{name}: in clusters");
+        assert!(cut.count == 1 || (tier2.clusters > 1 && tier2.crossings > 0), "{name}: in clusters");
         for f in &files {
             let t1 = tier1.extract(f);
             assert_eq!(tier2.run(f, &t1).map_err(|r| r.pc), one.run(f, &t1).map_err(|r| r.pc), "{name}: {}", String::from_utf8_lossy(f));
