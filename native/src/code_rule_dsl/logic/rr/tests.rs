@@ -377,6 +377,28 @@ fn a_context_leaves_out_the_clause_head() {
     assert!(ctx.iter().all(|r| !r.contains("cb(")), "{ctx:?}");
 }
 
+/// A context keeps a group of literals that ties two asked variables, even where other groups bind each:
+/// pyi047's `unread_comp_var`, asked for c, v and x, binds c by `in_stub(a), within(c, a)` and v, x by `kind(v, …),
+/// text(v, x)`. Only `child(c, fc, _), field(fc, "left", t), (v = t ; within(v, t))` ties c to v. Left out, the
+/// context is every node of a stub file times every identifier (122 M rows on the ruff fixtures).
+#[test]
+fn a_context_keeps_the_group_tying_its_variables() {
+    let p = parse(concat!(
+        ".decl within(n: node, a: node)\n.decl kind(n: node, k: symbol)\n.decl text(n: node, x: symbol)\n",
+        ".decl child(p: node, c: node, i: number)\n.decl field(p: node, f: symbol, c: node)\n.decl in_stub(n: node)\n",
+        ".input within, kind, text, child, field, in_stub\n",
+        ".decl unread(a: node, v: node, x: symbol)\n.output unread\n",
+        "unread(a, v, x) :- in_stub(a), within(c, a), child(c, fc, _), kind(fc, \"for_in_clause\"),\n",
+        "    field(fc, \"left\", t), (v = t ; within(v, t)), kind(v, \"identifier\"), text(v, x),\n",
+        "    count : { within(r, c), kind(r, \"identifier\"), text(r, x), r != v } = 0.\n",
+    ))
+    .unwrap();
+    let ctx: Vec<String> = p.rules.iter().filter(|r| r.head.rel.starts_with("rr_ctx")).map(|r| r.to_string()).collect();
+    assert!(!ctx.is_empty(), "{:#?}", p.rules.iter().map(|r| r.to_string()).collect::<Vec<_>>());
+    // Every rule of the context reaches v from c through the comprehension's target t.
+    assert!(ctx.iter().all(|r| r.contains("child($c, $fc") && r.contains("field($fc, \"left\", $t)")), "{ctx:#?}");
+}
+
 /// A helper's context (here the demand of strings `parsed` parses) keeps only the literals tied to its variables:
 /// `root(a)`, tied to `s` only through a disjunction the context leaves out, would test that some root exists in any document (`ann_root(_)`), making
 /// every row depend on every file.
