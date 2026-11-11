@@ -561,6 +561,11 @@ the file, and a hook or the status line runs such steps itself. A step an older 
 floor. It waits for the new version's daemon or a command that writes; until then a hook or the status line says to
 run `rerail daemon start`.
 
+Moving each audit's rule provenance to one shared copy sets no floor, so coding agents on different Rerail versions
+keep sharing the file. An older Rerail reads an empty rule provenance for each audit a newer one wrote or moved, in
+its `audits_list`, its support bundle and what its remote sink sends. Its dashboard and steering never read the
+provenance, and work as before.
+
 An update that finds nothing newer, or fails, keeps the copy from the last version change. One that changes the
 version but cannot take a copy removes the old one, which no longer holds the database before the now-active version.
 
