@@ -277,3 +277,4 @@ matcher::arguments_sql	rerail-lang-sql
 functors	rerail-engine
 stats::identity	rerail-facts
 waves::schedule::batches	rerail-transducer
+waves::relational	rerail-w
