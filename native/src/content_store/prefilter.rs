@@ -28,7 +28,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// 3: term postings carry their node count, which the planner statistics sum. 4: kind sizes and
 /// edges (`kind_size`, `edge_freq`). 5: terms are atoms. 6: kind postings are container segments
 /// (`postings::segment_positions`, decision 0045).
-pub const PREFILTER_VERSION: i64 = 6;
+pub const PREFILTER_VERSION: i64 = 8;
 /// Unclean leaves per kind, store-wide, kept as terms.
 pub const RESIDUE_CAP: usize = 4096;
 /// A node of the kind has a named descendant: its text is not a leaf term.
@@ -155,6 +155,17 @@ impl ContentStore {
         })();
         cache(1_024)?;
         value
+    }
+
+    /// Sets the progress handler of this thread's store connection, which `candidate_transaction` runs on
+    /// (`None`: removes it). The anchor lab counts a candidate statement's VM steps with it.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn candidate_progress<F>(&self, steps: i32, handler: Option<F>) -> StoreResult<()>
+    where
+        F: FnMut() -> bool + Send + 'static,
+    {
+        self.connection.lock().expect("content store mutex poisoned").progress_handler(steps, handler)?;
+        Ok(())
     }
 
     /// Copies the prefilter rows of `tapes`, the store-wide counts and the regex vocabulary into a

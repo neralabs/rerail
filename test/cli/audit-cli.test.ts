@@ -14,6 +14,7 @@ import {
   defaultRerailDatabasePath,
 } from "../../src/engine/index.js";
 import {
+  DAEMON_KEEPS_RUNNING,
   RerailRuntime,
   type RerailRuntimeOptions,
   isRerailStarted,
@@ -36,6 +37,11 @@ const NO_PRINT = codeRuleSchema.parse({
     forbid: { regex: { pattern: "\\bprint\\(", source: "file.content" } },
   }],
 });
+
+/** The capability the test daemon requires; its `fetch`es carry it, as `rerail scan` and the dashboard do. */
+const ACCESS = "test-access-capability";
+const fetch = (input: string | URL, init: RequestInit & { headers?: Record<string, string> } = {}): Promise<Response> =>
+  globalThis.fetch(input, { ...init, headers: { "x-rerail-access": ACCESS, ...init.headers } });
 
 const fixtures: Array<{ root: string; runtime: RerailRuntime; daemon: RerailDaemon }> = [];
 afterEach(async () => {
@@ -68,7 +74,7 @@ async function fixture(createAuditor?: RerailRuntimeOptions["createAuditor"]) {
   await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "omp", sessionId: "s1", cwd: root } });
   const daemon = await RerailDaemon.start({
     version: "test", databasePath: database, workspaceRoot: root, port: 0,
-    stateFile: join(home, "daemon.json"), kernelSocketPath: join(root, "engine.sock"),
+    stateFile: join(home, "daemon.json"), kernelSocketPath: join(root, "engine.sock"), accessToken: ACCESS,
   });
   fixtures.push({ root, runtime, daemon });
   return { root, home, database, daemon, runtime, repositoryKey };
@@ -125,6 +131,7 @@ describe("rerail scan and settings CLI", () => {
     expect(notices.at(-1)).toBe([
       `○ Rerail is stopped in ${name}. No rules run here, and nothing is logged.`,
       "  Start it again with /rerail-start.",
+      `  ${DAEMON_KEEPS_RUNNING}`,
       "",
       "  Rerail steered this session on one rule, test:no-print.",
       "  To turn off only that rule, say “turn that rule off”.",
@@ -336,11 +343,16 @@ describe("rerail scan and settings CLI", () => {
         forbid: { ast: { language: "python", rule: { pattern: "print($$$ARGS)" } } },
       }],
     });
-    const { root, home, daemon } = await fixture(options => new NativeCodeRuleEnforcer(testCodeRuleCatalog([NO_PRINT, PRINT_CALL]), options));
+    const { root, home, daemon, runtime } = await fixture(options => new NativeCodeRuleEnforcer(testCodeRuleCatalog([NO_PRINT, PRINT_CALL]), options));
+    // The agent writes and commits them with a command: what is stamped while its call runs is the session's own.
+    await runtime.ingest({
+      kind: "call", eventId: "write-broken", sessionId: "s1", toolCallId: "write-broken", toolName: "bash", input: { command: "./write-broken.sh" },
+    });
     await Promise.all(Array.from({ length: 25 }, (_, index) =>
       writeFile(join(root, `api/broken-${String(index).padStart(2, "0")}.py`), "value = 1\ndef (\n")));
     execFileSync("git", ["add", "api"], { cwd: root });
     execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-m", "broken"], { cwd: root });
+    await runtime.ingest({ kind: "result", eventId: "write-broken-result", sessionId: "s1", toolCallId: "write-broken", toolName: "bash", output: "" });
     // The session audits the 25 edits on its own; the scan must come after them to be the session's latest audit.
     await vi.waitFor(async () => {
       const { audits } = await (await fetch(new URL("/api/audits?sessionId=s1", daemon.url))).json();

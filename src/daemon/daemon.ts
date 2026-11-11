@@ -8,11 +8,12 @@ import { basename, dirname, extname, join, normalize, resolve, sep } from "node:
 import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { bundledModelPath, PACKAGE_ROOT } from "../engine/package-root.js";
+import { PACKAGE_ROOT } from "../engine/package-root.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
 import { DAEMON_ACCESS_TOKEN_FILE, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
 import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.js";
 import { chooseEngineSocketPath, startEngineService, type EngineService } from "../runtime/engine-service.js";
+import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { getRequestListener } from "@hono/node-server";
 import { Hono } from "hono";
@@ -255,6 +256,139 @@ async function closeHttpServer(server: DaemonServer): Promise<void> {
   await closed.promise;
 }
 
+/** The hosts the daemon binds and answers to, and whether it is reachable off loopback. */
+function daemonHosts(options: RerailDaemonOptions): { bindHost: string; publicHosts: ReturnType<typeof publicHostSet>; remote: boolean } {
+  const bindHost = options.host ?? DEFAULT_DAEMON_HOST;
+  const loopbackBind = LOOPBACK_BIND_HOSTS.includes(bindHost.toLowerCase());
+  // A daemon bound off loopback (`--allow-remote`) is dialled by its own literal address, e.g. a
+  // `http://0.0.0.0:4737/` state URL. An IP literal cannot arrive by DNS rebinding —
+  // that attack's `Host` is a DNS name — so the bound address is as safe to answer as loopback.
+  const publicHosts = publicHostSet([
+    ...(options.publicHosts ?? []),
+    ...(loopbackBind ? [] : [bindHost.includes(":") ? `[${bindHost}]` : bindHost]),
+  ]);
+  return { bindHost, publicHosts, remote: !loopbackBind || (options.publicHosts ?? []).length > 0 };
+}
+
+/**
+ * Every request carries the daemon's access capability: `Host`/`Origin` are only what a client claims, and on
+ * loopback another user of the machine, or a sandboxed process allowed localhost, reaches the socket as the person
+ * would. A loopback daemon keeps its capability in the home across restarts, so a browser that holds it keeps
+ * working; one reachable off loopback (`--allow-remote`, or a `--public-host` a reverse proxy forwards) mints a new
+ * one on every start.
+ */
+async function daemonAccessToken(options: RerailDaemonOptions, remote: boolean): Promise<string> {
+  return options.accessToken
+    ?? (remote || options.accessTokenFile === undefined ? newAccessToken() : await persistentAccessToken(options.accessTokenFile));
+}
+
+function daemonUi(options: RerailDaemonOptions): { uiRoot: string | undefined; ui: DaemonState["ui"] } {
+  const uiRoot = options.uiRoot === undefined ? undefined : realpathSync(options.uiRoot);
+  return { uiRoot, ui: uiRoot === undefined || options.dev === true ? "dev" : "bundled" };
+}
+
+/** What the HTTP app serves. `health` asks the daemon the app ends up behind. */
+function daemonApp({ stores, options, publicHosts, accessToken, nativeToken, sessions, workspaceRoot, uiRoot, health }: {
+  stores: DatabaseApiStores; options: RerailDaemonOptions; publicHosts: ReturnType<typeof publicHostSet>; accessToken: string; nativeToken: string;
+  sessions: NativeSessionServer; workspaceRoot: string; uiRoot: string | undefined; health: () => ReturnType<RerailDaemon["health"]>;
+}): Hono {
+  const mcp = createRerailMcpHandler(stores, operations, { version: options.version, publicHosts });
+  const app = new Hono();
+  app.use("*", hostAllowlist(publicHosts));
+  app.use("*", accessCapability(accessToken));
+  app.use("/api/*", requestBodyLimit(API_BODY_LIMIT_BYTES));
+  app.use("/mcp", requestBodyLimit(API_BODY_LIMIT_BYTES));
+  app.use("/native/*", requestBodyLimit(NATIVE_BODY_LIMIT_BYTES));
+  app.get("/healthz", context => context.json(health()));
+
+  app.post("/native/session", async (context) => {
+    // Browsers always send Origin, and Rerail processes always send JSON with the private capability.
+    if (context.req.header("origin") !== undefined) return context.json({ error: "native-origin-forbidden" }, 403);
+    if (context.req.header("content-type") !== "application/json") return context.json({ error: "native-content-type-required" }, 415);
+    if (!sameSecret(context.req.header("authorization"), `Bearer ${nativeToken}`)) {
+      return context.json({ error: "native-authorization-invalid" }, 403);
+    }
+    let body: unknown;
+    try {
+      body = await context.req.json();
+    } catch {
+      return context.json({ error: "native-request-invalid" }, 400);
+    }
+    if (body === null || typeof body !== "object" || Array.isArray(body)
+      || !("workspaceRoot" in body) || typeof body.workspaceRoot !== "string") {
+      return context.json({ error: "native-request-invalid" }, 400);
+    }
+    if (resolve(body.workspaceRoot) !== workspaceRoot) return context.json({ error: "native-workspace-mismatch" }, 403);
+    try {
+      return context.json(await sessions.handle(body));
+    } catch (error) {
+      return context.json({
+        error: "native-request-invalid",
+        message: error instanceof Error ? error.message : String(error),
+      }, 400);
+    }
+  });
+  app.route("/", createRerailApi(stores, operations, { version: options.version, publicHosts }));
+  app.all("/mcp", (context) => mcp(context.req.raw));
+  app.all("/api/*", (context) => context.json({ error: "not-found" }, 404));
+  app.all("*", (context) => {
+    if (context.req.method !== "GET" && context.req.method !== "HEAD") {
+      return context.json({ error: "method-not-allowed" }, 405);
+    }
+    if (uiRoot === undefined) return context.json({ error: "not-found" }, 404);
+    return serveStatic(context.req.path, context.req.method === "HEAD", uiRoot, context.req.header("if-none-match"));
+  });
+  // A client hears that something failed, never why: an error's text can name paths, rule text or SQL. The daemon
+  // log (`daemon.log` in the Rerail home, which only this user can read) keeps the whole error. An `HTTPException`
+  // is the framework's own answer to a malformed request (a body that is not JSON) and goes out as it is.
+  app.onError((error, context) => {
+    if (error instanceof HTTPException) return error.getResponse();
+    process.stderr.write(`rerail daemon: ${context.req.method} ${context.req.path} failed: ${error.stack ?? error.message}\n`);
+    return context.json({ error: "internal", message: INTERNAL_ERROR_MESSAGE }, 500);
+  });
+  return app;
+}
+
+function createDaemonServer(options: RerailDaemonOptions, app: Hono): DaemonServer {
+  const listener = getRequestListener(app.fetch);
+  const handle: RequestListener = (request, response) => void listener(request, response);
+  return options.tls === undefined
+    ? createServer(HTTP_TIMEOUTS, handle)
+    : createHttpsServer({ ...HTTP_TIMEOUTS, cert: options.tls.cert, key: options.tls.key }, handle);
+}
+
+/** What a start has running so far, for a failed one to close. */
+interface StartedServices {
+  engineService?: EngineService;
+  nativeServer?: NativeSessionServer;
+  server?: DaemonServer;
+}
+
+/**
+ * Every one of them, whatever another does: a socket left bound makes every later start fail (EADDRINUSE); the
+ * database last, once nothing uses it. The start's own error is the one thrown; a close that failed too is written to
+ * stderr, so a later EADDRINUSE has its cause on record.
+ */
+async function closeAfterFailedStart({ engineService, nativeServer, server }: StartedServices, stores: DatabaseApiStores): Promise<void> {
+  const failed = (what: string, reason: unknown): void => {
+    process.stderr.write(`rerail daemon: could not close ${what} after a failed start: ${reason instanceof Error ? reason.message : String(reason)}\n`);
+  };
+  const closing: [string, () => unknown][] = [
+    ["the HTTP server", () => (server?.listening === true ? closeHttpServer(server) : undefined)],
+    ["the native session server", () => nativeServer?.close()],
+    ["the engine service", () => engineService?.close()],
+  ];
+  const settled = await Promise.allSettled(closing.map(async ([, close]) => await close()));
+  settled.forEach((outcome, index) => {
+    if (outcome.status === "rejected") failed(closing[index]![0], outcome.reason);
+  });
+  try {
+    stores.close();
+  } catch (reason) {
+    failed("the database", reason);
+  }
+}
+
 export class RerailDaemon {
   readonly host: string;
   readonly port: number;
@@ -317,25 +451,9 @@ export class RerailDaemon {
   static async start(options: RerailDaemonOptions): Promise<RerailDaemon> {
     // Before anything is opened or bound: a file that holds no certificate is the start's whole failure.
     const tlsFingerprint256 = options.tls === undefined ? undefined : certificateFingerprint(options.tls.cert);
-    const bindHost = options.host ?? DEFAULT_DAEMON_HOST;
-    const loopbackBind = LOOPBACK_BIND_HOSTS.includes(bindHost.toLowerCase());
-    // A daemon bound off loopback (`--allow-remote`) is dialled by its own literal address, e.g. a
-    // `http://0.0.0.0:4737/` state URL. An IP literal cannot arrive by DNS rebinding —
-    // that attack's `Host` is a DNS name — so the bound address is as safe to answer as loopback.
-    const publicHosts = publicHostSet([
-      ...(options.publicHosts ?? []),
-      ...(loopbackBind ? [] : [bindHost.includes(":") ? `[${bindHost}]` : bindHost]),
-    ]);
-    // Every request carries the daemon's access capability: `Host`/`Origin` are only what a client claims, and on
-    // loopback another user of the machine, or a sandboxed process allowed localhost, reaches the socket as the person
-    // would. A loopback daemon keeps its capability in the home across restarts, so a browser that holds it keeps
-    // working; one reachable off loopback (`--allow-remote`, or a `--public-host` a reverse proxy forwards) mints a new
-    // one on every start.
-    const remote = !loopbackBind || (options.publicHosts ?? []).length > 0;
-    const accessToken = options.accessToken
-      ?? (remote || options.accessTokenFile === undefined ? newAccessToken() : await persistentAccessToken(options.accessTokenFile));
-    const uiRoot = options.uiRoot === undefined ? undefined : realpathSync(options.uiRoot);
-    const ui: DaemonState["ui"] = uiRoot === undefined || options.dev === true ? "dev" : "bundled";
+    const { bindHost, publicHosts, remote } = daemonHosts(options);
+    const accessToken = await daemonAccessToken(options, remote);
+    const { uiRoot, ui } = daemonUi(options);
     const native = readNativeStatus(options.nativeHealth ?? loadNativeHealth);
     const databasePath = resolve(options.databasePath ?? defaultRerailDatabasePath());
     // Anyone on the machine can make `rerail-<uid>` in a shared temp directory first, so a refused one falls back to a
@@ -345,8 +463,8 @@ export class RerailDaemon {
     const kernelSocketPath = options.kernelSocketPath
       ?? await chooseEngineSocketPath([defaultSocketPath, join(dirname(databasePath), "run", basename(defaultSocketPath))]);
     const workspaceRoot = resolve(options.workspaceRoot ?? process.cwd());
-    const storageRoot = join(workspaceRoot, ".rerail", "sessions");
-    const modelPath = bundledModelPath();
+    // The paths of a session whose host sends none.
+    const { storageRoot, modelPath } = resolveSessionPaths(workspaceRoot);
     let daemon: RerailDaemon | undefined;
     // Open the database before binding anything: a refused open (a file this build cannot read, say) must leave no
     // engine socket behind, or every later start fails with EADDRINUSE.
@@ -355,11 +473,9 @@ export class RerailDaemon {
       origin: () => new URL(daemon!.url).origin,
       ...(options.codingAgents === undefined ? {} : { codingAgents: options.codingAgents }),
     });
-    let engineService: EngineService | undefined;
-    let nativeServer: NativeSessionServer | undefined;
-    let server: DaemonServer | undefined;
+    const started: StartedServices = {};
     try {
-      engineService = await startEngineService({
+      const engineService = await startEngineService({
         socketPath: kernelSocketPath,
         storageRoot,
         modelPath,
@@ -367,103 +483,35 @@ export class RerailDaemon {
         workspaceRoot,
         accessToken,
       });
+      started.engineService = engineService;
       const nativeToken = randomBytes(32).toString("hex");
       const sessions = new NativeSessionServer({ workspaceRoot, modelPath, databasePath });
-      nativeServer = sessions;
-      const mcp = createRerailMcpHandler(stores, operations, { version: options.version, publicHosts });
-      const app = new Hono();
-      app.use("*", hostAllowlist(publicHosts));
-      app.use("*", accessCapability(accessToken));
-      app.use("/api/*", requestBodyLimit(API_BODY_LIMIT_BYTES));
-      app.use("/mcp", requestBodyLimit(API_BODY_LIMIT_BYTES));
-      app.use("/native/*", requestBodyLimit(NATIVE_BODY_LIMIT_BYTES));
-      app.get("/healthz", context => context.json(daemon!.health()));
-
-      app.post("/native/session", async (context) => {
-        // Browsers always send Origin, and Rerail processes always send JSON with the private capability.
-        if (context.req.header("origin") !== undefined) return context.json({ error: "native-origin-forbidden" }, 403);
-        if (context.req.header("content-type") !== "application/json") return context.json({ error: "native-content-type-required" }, 415);
-        if (!sameSecret(context.req.header("authorization"), `Bearer ${nativeToken}`)) {
-          return context.json({ error: "native-authorization-invalid" }, 403);
-        }
-        let body: unknown;
-        try {
-          body = await context.req.json();
-        } catch {
-          return context.json({ error: "native-request-invalid" }, 400);
-        }
-        if (body === null || typeof body !== "object" || Array.isArray(body)
-          || !("workspaceRoot" in body) || typeof body.workspaceRoot !== "string") {
-          return context.json({ error: "native-request-invalid" }, 400);
-        }
-        if (resolve(body.workspaceRoot) !== workspaceRoot) return context.json({ error: "native-workspace-mismatch" }, 403);
-        try {
-          return context.json(await sessions.handle(body));
-        } catch (error) {
-          return context.json({
-            error: "native-request-invalid",
-            message: error instanceof Error ? error.message : String(error),
-          }, 400);
-        }
-      });
-      app.route("/", createRerailApi(stores, operations, { version: options.version, publicHosts }));
-      app.all("/mcp", (context) => mcp(context.req.raw));
-      app.all("/api/*", (context) => context.json({ error: "not-found" }, 404));
-      app.all("*", (context) => {
-        if (context.req.method !== "GET" && context.req.method !== "HEAD") {
-          return context.json({ error: "method-not-allowed" }, 405);
-        }
-        if (uiRoot === undefined) return context.json({ error: "not-found" }, 404);
-        return serveStatic(context.req.path, context.req.method === "HEAD", uiRoot, context.req.header("if-none-match"));
-      });
-      // A client hears that something failed, never why: an error's text can name paths, rule text or SQL. The daemon
-      // log (`daemon.log` in the Rerail home, which only this user can read) keeps the whole error. An `HTTPException`
-      // is the framework's own answer to a malformed request (a body that is not JSON) and goes out as it is.
-      app.onError((error, context) => {
-        if (error instanceof HTTPException) return error.getResponse();
-        process.stderr.write(`rerail daemon: ${context.req.method} ${context.req.path} failed: ${error.stack ?? error.message}\n`);
-        return context.json({ error: "internal", message: INTERNAL_ERROR_MESSAGE }, 500);
-      });
-      const listener = getRequestListener(app.fetch);
-      const handle: RequestListener = (request, response) => void listener(request, response);
-      server = options.tls === undefined
-        ? createServer(HTTP_TIMEOUTS, handle)
-        : createHttpsServer({ ...HTTP_TIMEOUTS, cert: options.tls.cert, key: options.tls.key }, handle);
+      started.nativeServer = sessions;
+      const app = daemonApp({ stores, options, publicHosts, accessToken, nativeToken, sessions, workspaceRoot, uiRoot, health: () => daemon!.health() });
+      const server = createDaemonServer(options, app);
+      started.server = server;
       const remembered = options.portFile === undefined ? undefined : await readRememberedPort(options.portFile);
       await listenPreferred(server, options.port, remembered, bindHost);
       daemon = new RerailDaemon({
         server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot,
         nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256,
       });
-      if (options.stateFile !== undefined) await writePrivateFile(options.stateFile, `${JSON.stringify(daemon.state(), null, 2)}\n`);
-      // Internal testing: the remote sink sends nothing until a remote is added (`rerail remote add`).
-      if (options.remoteSink !== false) daemon.#remoteSink = startRemoteSink({ home: dirname(databasePath), ...(options.remoteSink ?? {}) });
-      // A start that asked for any free port (`0`) takes a throwaway one; it does not replace the port links point at.
-      if (options.portFile !== undefined && options.port !== 0 && daemon.port !== remembered) await rememberPort(options.portFile, daemon.port);
+      await daemon.#announce(remembered);
       return daemon;
     } catch (error) {
-      // Every one of them, whatever another does: a socket left bound makes every later start fail (EADDRINUSE); the
-      // database last, once nothing uses it. The start's own error is the one thrown; a close that failed too is
-      // written to stderr, so a later EADDRINUSE has its cause on record.
-      const failed = (what: string, reason: unknown): void => {
-        process.stderr.write(`rerail daemon: could not close ${what} after a failed start: ${reason instanceof Error ? reason.message : String(reason)}\n`);
-      };
-      const closing: [string, () => unknown][] = [
-        ["the HTTP server", () => (server?.listening === true ? closeHttpServer(server) : undefined)],
-        ["the native session server", () => nativeServer?.close()],
-        ["the engine service", () => engineService?.close()],
-      ];
-      const settled = await Promise.allSettled(closing.map(async ([, close]) => await close()));
-      settled.forEach((outcome, index) => {
-        if (outcome.status === "rejected") failed(closing[index]![0], outcome.reason);
-      });
-      try {
-        stores.close();
-      } catch (reason) {
-        failed("the database", reason);
-      }
+      await closeAfterFailedStart(started, stores);
       throw error;
     }
+  }
+
+  /** What a started daemon leaves behind for others: its state file, its remote sink and the port links point at. */
+  async #announce(remembered: number | undefined): Promise<void> {
+    const options = this.#options;
+    if (options.stateFile !== undefined) await writePrivateFile(options.stateFile, `${JSON.stringify(this.state(), null, 2)}\n`);
+    // Internal testing: the remote sink sends nothing until a remote is added (`rerail remote add`).
+    if (options.remoteSink !== false) this.#remoteSink = startRemoteSink({ home: dirname(this.#databasePath), ...(options.remoteSink ?? {}) });
+    // A start that asked for any free port (`0`) takes a throwaway one; it does not replace the port links point at.
+    if (options.portFile !== undefined && options.port !== 0 && this.port !== remembered) await rememberPort(options.portFile, this.port);
   }
 
   state(): DaemonState {

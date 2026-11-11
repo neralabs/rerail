@@ -5,6 +5,7 @@
  */
 import { h, setContent, icon } from "../dom.js";
 import { data, ui, repoName } from "../state.js";
+import { failed } from "../format.js";
 import { loadRecommendations } from "../poll.js";
 import { invalidate, toast } from "../shell.js";
 import { CREATE_COMMAND } from "../render/rules.js";
@@ -37,19 +38,18 @@ function placesToStart(suggestions) {
 }
 
 export function render(root) {
-  const repo = repoName() || "this repo";
   const suggestions = createSuggestions(data.recommendations, data.attachedPacks, data.packs);
-  setContent(root, JSON.stringify(["create", repo, suggestions]), () => h("div.cpage.pbody", null,
+  setContent(root, JSON.stringify(["create", suggestions]), () => h("div.cpage.pbody", null,
     h("h1", null, "Create a rule"),
-    h("p.pintro", null, "Rules are written with your coding agent, in your own words. Open a session in ", h("span.mono", null, repo), ", a new one or one already running, and type:"),
+    h("p.pintro", null, "Rules are written with your coding agent. Open a session in this repo and type:"),
     commandBlock(CREATE_COMMAND),
-    h("p.pintro", null, "Your coding agent asks a few questions: what the rule should look for, where in the repo it applies, and what should happen when it finds a violation, log it or steer the agent. Then it writes the rule and tells you its id."),
-    h("p.pintro", null, "The new rule appears under Created by you, on by default, and its violations show in History."),
+    h("p.pintro", null, "Your coding agent writes a rule from your words, suggests rules from this repo’s sessions and standards, or fixes one of yours that misfires. Each is tested on this repo and read back before it’s added."),
+    h("p.pintro", null, "It lands under Created by you, switched on, and its violations show in History."),
     placesToStart(suggestions)));
 }
 
 /** Read the recommendations once per repository, for Places to start. */
 export function enter() {
   if (ui.scope === null || data.recommendations !== null) return;
-  loadRecommendations().then(invalidate, error => toast(`Could not read the repo: ${error.message}`));
+  loadRecommendations().then(invalidate, error => toast(failed(`Couldn’t read ${repoName() || "this repo"} to suggest rule packs`, error)));
 }

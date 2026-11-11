@@ -83,7 +83,7 @@ fn split(path: &Path) -> Result<((String, CompiledCodeRuleDsl), Vec<(String, Str
     // Matchers that do not lower are left out of the wave by `policies::lower`; name them here.
     for clause in &compiled.inner.clauses {
         let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind else { continue };
-        for grammar in matchers {
+        for grammar in matchers.iter() {
             let why = match gated_match_tree(grammar).map(|(tree, _)| tree) {
                 Err(error) => Some(format!("match_tree: {error:?}")),
                 Ok(tree) => LoweredMatcher::lower(&tree).err().map(|error| format!("lower: {error:?}")),

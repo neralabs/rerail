@@ -347,6 +347,7 @@ best(n, @dot("a", x)) :- name(n, x).
         r.body.iter().filter_map(|l| if let Literal::Agg { atom, .. } = l { Some(format!("{atom}")) } else { None }).collect()
     };
     assert_eq!(helper("kinds"), vec!["rr_agg1(_, $n)".to_owned()]);
+    assert_eq!(p.decls["rr_agg1"].len(), 2);
     let first = helper("first");
     assert_eq!(first.len(), 2);
     assert!(first[0].contains("$j") && first[0].contains("$n") && !first[0].contains("$x"), "{first:?}");
@@ -420,6 +421,27 @@ fn a_negated_match_reads_its_named_groups_as_groups() {
     let p = parse(".decl a(x: symbol)\na(x) :- a(x), a(y), !match(\"(?<z>.*)\", y).").unwrap();
     let text = format!("{p:?}");
     assert!(text.contains("(?:.*)") && !text.contains("(?<z>"), "{text}");
+}
+
+/// What is not lowered yet says so by name. A `must` head needs its relation declared `must, may`; a `.violation`
+/// at a span or loc whose values can be spans the engine does not make lowers (such a row has no `docof`, and so no
+/// finding).
+#[test]
+fn unlowered_constructs_are_named() {
+    for (src, what) in [
+        (".decl a(x: number)\na(x) :- a(y), x = mean z : { a(z) }.", "mean"),
+    ] {
+        let e = parse(src).unwrap_err().to_string();
+        assert!(e.contains("not lowered yet") && e.contains(what), "{src}: {e}");
+    }
+    let e = parse(".decl a(x: number)\nmust a(1) :- a(2).").unwrap_err().to_string();
+    assert!(e.contains("`must` head a") && e.contains("not declared `must, may`"), "{e}");
+    for src in [
+        ".decl t(s: symbol)\n.input t\n.violation v(at: span) \"m\"\nv(m) :- t(s), match(\"(?<m>x+)\", s).",
+        ".decl first_token(n: node, t: span)\n.input first_token\n.violation v(at: loc) \"m\"\nv(t) :- first_token(_, t).",
+    ] {
+        parse(src).unwrap_or_else(|e| panic!("{src}: {e}"));
+    }
 }
 
 /// `.violation` rows become the engine's findings; fixes are left out; arithmetic and Soufflé's string
@@ -772,6 +794,32 @@ fn rr_programs_print_as_themselves() {
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
+/// A regex test prints back as written: `match("X", s)` lowers to the engine's search of `^(?:X)$` and prints as
+/// `match("X", s)` again, never under a leading `(?s)` that would give X's own `.` newlines; a search built another
+/// way prints with the flag on its dots only.
+#[test]
+fn regex_tests_print_back_exactly() {
+    let src = r#"
+.decl t(s: symbol)
+.input t
+.decl a(s: symbol)
+a(s) :- t(s), match("WHEN.*BEGIN", s).
+.decl b(s: symbol)
+b(s) :- t(s), !match("(?i)x(y)", s).
+.output a, b
+"#;
+    let prog = parse(src).unwrap();
+    let text = print(&prog).unwrap();
+    assert!(text.contains(r#"match("WHEN.*BEGIN", s)"#), "{text}");
+    assert!(text.contains(r#"!match("(?i)x(y)", s)"#), "{text}");
+    assert!(!text.contains("(?s)"), "{text}");
+    assert_eq!(difference(&prog, &parse(&text).unwrap()), None);
+    assert_eq!(super::print::search("rx", "a.b"), "(?s:.*)(?:a.b)(?s:.*)");
+    assert_eq!(super::print::search("irx", "a"), "(?i:(?s:.*)(?:a)(?s:.*))");
+    assert_eq!(super::print::search("rx", "^(?:a)|(?:b)$"), "(?s:.*)(?:^(?:a)|(?:b)$)(?s:.*)");
+    assert_eq!(super::print::search("rx", r"^(?:a\)[)]b)$"), r"a\)[)]b");
+}
+
 /// Writes each authored program's `.rr` beside it (run once per change of an `.rdl`).
 #[test]
 #[ignore = "writes files: the .rr translations of the authored .rdl programs"]
@@ -782,16 +830,274 @@ fn write_rr_translations() {
 }
 
 /// Which hand-written data-layer rules lower to the engine today, and what stops the others (a report).
+/// `RERAIL_RR_REPORT_EXTRA=<dir>[:<dir>…]` reports the `.rr` files under those directories too (another branch's
+/// packs, say), with `#include` still read from this library.
 #[test]
 #[ignore = "a report: what the hand-written rules need from the lowering"]
 fn hand_written_rules_lowering_report() {
     let mut out = Vec::new();
     files(&rule_syntax().join("data-layer"), "rr", &mut out);
     files(&library(), "rr", &mut out);
+    for dir in std::env::var("RERAIL_RR_REPORT_EXTRA").iter().flat_map(|dirs| dirs.split(':')).filter(|d| !d.is_empty()) {
+        files(Path::new(dir), "rr", &mut out);
+    }
     for f in out {
         let result = parse_file(&f);
         println!("{}: {}", short(&f), result.map_or_else(|e| e.to_string(), |p| format!("lowers: {} rules", p.rules.len())));
     }
+}
+
+// ---- aggregates ----
+
+/// `sum` and `join` over one atom read it in place: the body's own variables are `_`, and join's keys are variables
+/// of the atom. A value or key that is an expression, or an atom that repeats a body variable, is a helper relation
+/// (sum's keeps every variable, a multiset), with the computed value typed by what computes it. Without `sep`, join
+/// joins the texts as they are.
+#[test]
+fn sum_and_join_lower() {
+    let p = parse(concat!(
+        ".decl arg(c: node, t: symbol, i: number)\n.input arg\n",
+        ".decl s(c: node, n: number)\ns(c, n) :- arg(c, _, _), n = sum i : { arg(c, t, i) }.\n",
+        ".decl j(c: node, x: symbol)\nj(c, x) :- arg(c, _, _), x = join t by i sep \", \" : { arg(c, t, i) }.\n",
+        ".decl k(c: node, x: symbol)\nk(c, x) :- arg(c, _, _), x = join t by (n, i) sep \"\" : { arg(c, t, i), n = 0 - i }.\n",
+        ".decl g(c: node, n: number)\ng(c, n) :- arg(c, _, _), n = sum strlen(t) - 1 : { arg(c, t, _) }.\n",
+        ".decl r(c: node, n: number)\nr(c, n) :- arg(c, _, _), n = count : { arg(c, t, t) }.\n",
+    ))
+    .unwrap();
+    let agg = |rel: &str| {
+        let r = p.rules.iter().find(|r| r.head.rel == rel).unwrap();
+        r.body.iter().find_map(|l| if let Literal::Agg { op, over, atom, .. } = l { Some((op.clone(), over.clone(), atom.clone())) } else { None }).unwrap()
+    };
+    let (op, over, atom) = agg("s");
+    assert_eq!((op, over.as_deref(), atom.to_string()), (front::AggOp::Sum, Some("i"), "arg($c, _, $i)".to_owned()));
+    let (op, over, atom) = agg("j");
+    assert_eq!((op, over.as_deref(), atom.to_string()), (front::AggOp::Join { by: vec!["i".to_owned()], sep: ", ".to_owned() }, Some("t"), "arg($c, $t, $i)".to_owned()));
+    // Keys (n, i): the helper's columns in order c, i, n, t.
+    let (op, _, atom) = agg("k");
+    assert_eq!(op, front::AggOp::Join { by: vec!["n".to_owned(), "i".to_owned()], sep: String::new() });
+    let types: Vec<&str> = p.decls[atom.rel.as_str()].iter().map(|(_, t)| t.as_str()).collect();
+    assert_eq!(types, ["node", "int", "int", "sym"], "{atom}");
+    let (op, over, atom) = agg("g");
+    let over = over.unwrap();
+    assert!(op == front::AggOp::Sum && over.starts_with("rr_val"), "{over}");
+    let cols = &p.decls[atom.rel.as_str()];
+    assert_eq!(cols.len(), 3, "c, t and the value: {cols:?}");
+    assert!(cols.contains(&(over.clone(), "int".to_owned())), "{cols:?}");
+    let (_, _, atom) = agg("r");
+    assert_ne!(atom.rel, "arg", "arg(c, t, t) tests t = t: a helper relation");
+    let e = ".decl a(x: number)\na(x) :- a(y), x = sum z sep \",\" : { a(z) }.";
+    assert!(matches!(parse(e), Err(front::Error::Syntax(_))), "{e}");
+    let p = parse(".decl b(z: symbol)\n.input b\n.decl a(x: symbol)\na(x) :- x = join z : { b(z) }.\n").unwrap();
+    let r = p.rules.iter().find(|r| r.head.rel == "a").unwrap();
+    assert!(r.body.iter().any(|l| matches!(l, Literal::Agg { op: front::AggOp::Join { by, sep }, .. } if by.is_empty() && sep.is_empty())), "{r}");
+}
+
+/// An aggregate inside a term, in a head or a comparison, is an aggregate of its own whose value the term uses.
+#[test]
+fn aggregates_inside_terms_lower() {
+    let p = parse(concat!(
+        ".decl d(f: node, n: node)\n.input d\n",
+        ".decl cc(f: node, k: number)\ncc(f, 1 + count : { d(f, n) }) :- d(f, _).\n",
+        ".decl two(f: node, k: number)\ntwo(f, k) :- d(f, _), k = count : { d(f, n) } + count : { d(n, f) }, k > 1.\n",
+    ))
+    .unwrap();
+    let cc = p.rules.iter().find(|r| r.head.rel == "cc").unwrap();
+    let Some(Literal::Agg { var, op: front::AggOp::Count, .. }) = cc.body.iter().find(|l| matches!(l, Literal::Agg { .. })) else { panic!("{cc}") };
+    assert_eq!(cc.head.args[1], Term::Call("add".to_owned(), vec![Term::Int(1), Term::Var(var.clone())]), "{cc}");
+    let two = p.rules.iter().find(|r| r.head.rel == "two").unwrap();
+    assert_eq!(two.body.iter().filter(|l| matches!(l, Literal::Agg { .. })).count(), 2, "{two}");
+}
+
+/// The aggregates print as `.rr` that reads back as the same program.
+#[test]
+fn aggregates_print_as_themselves() {
+    let b = parse(concat!(
+        ".decl arg(c: node, t: symbol, i: number)\n.input arg\n",
+        ".decl j(c: node, x: symbol, y: symbol, n: number, m: number)\n",
+        "j(c, x, y, n, 2 * count : { arg(c, _, _) }) :- arg(c, _, _), x = join t by i sep \"\\\", \" : { arg(c, t, i) },\n",
+        "    y = join t by (k, i) sep \"\" : { arg(c, t, i), k = strlen(t) }, n = sum strlen(t) : { arg(c, t, _) }, m = sum i : { arg(c, _, i) }.\n",
+        ".output j\n",
+    ))
+    .unwrap();
+    let c = parse(&print(&b).unwrap()).unwrap_or_else(|e| panic!("{e}\n{}", print(&b).unwrap()));
+    assert_eq!(difference(&b, &c), None, "{}", print(&b).unwrap());
+}
+
+// ---- functions ----
+
+/// Soufflé's `cat` of any arity is `concat` folded from the left; `max`, `min`, `to_number` and `%` (`mod`) are the
+/// engine's functions of those names; each prints and reads back as itself. Floats are floats' keys (`float_key`):
+/// `to_float` and a decimal number lower; `cat` of one stays refused by name.
+#[test]
+fn souffle_functions_lower() {
+    let p = parse(concat!(
+        ".decl t(s: symbol, n: number)\n.input t\n",
+        ".decl a(s: symbol, n: number)\n",
+        "a(cat(s, \"-\", s, \".\"), max(n, 0) + min(n, 9) % 4) :- t(s, _), t(_, n).\n",
+        "a(@lower(s), to_number(s)) :- t(s, _).\n",
+    ))
+    .unwrap();
+    let heads: Vec<String> = p.rules.iter().filter(|r| r.head.rel == "a").map(|r| r.head.to_string()).collect();
+    assert_eq!(
+        heads,
+        [
+            "a(@concat(@concat(@concat($s, \"-\"), $s), \".\"), @add(@max($n, 0), @mod(@min($n, 9), 4)))",
+            "a(@lower($s), @to_number($s))",
+        ]
+    );
+    let back = parse(&print(&p).unwrap()).unwrap();
+    assert_eq!(difference(&p, &back), None);
+    let (src, what) = (".decl a(x: symbol)\na(x) :- a(y), x = cat(y).", "cat/1");
+    let e = parse(src).unwrap_err().to_string();
+    assert!(e.contains("not lowered yet") && e.contains(what), "{src}: {e}");
+    // Floats lower; `y + 1.5` over `a` itself would be an unbounded value cycle (`front::cycles`), so `y` is `t`'s.
+    for src in [".decl a(x: number)\na(x) :- a(y), x = to_float(\"1\").", ".decl t(y: number)\n.decl a(x: number)\na(x) :- t(y), x = y + 1.5."] {
+        parse(src).unwrap_or_else(|e| panic!("{src}: {e}"));
+    }
+}
+
+// ---- violations ----
+
+/// A `.violation`'s constant code is the finding's code; its `suppress` and `fix` lines are settings of the
+/// findings layer; a `loc` column gives each row its finding: a node or span at its `docof` document and line, a
+/// `@place` value at its path and line, and a head `V(@place(p, l), …)` through V's place relation; and the program
+/// prints as itself.
+#[test]
+fn violations_at_places_and_their_lines_lower() {
+    let p = parse(concat!(
+        ".policy \"p\" revision 1\n",
+        ".decl doc(d: number, path: symbol, module: symbol)\n.decl node(d: number, n: node, kind: symbol, start: number, end: number)\n",
+        ".decl line(n: node, l: number)\n.input doc, node, line\n",
+        ".violation V(at: loc, x: symbol) code \"@scope/a-b\" \"{x}\"\n",
+        "    suppress eslint \"@scope/a-b\", \"a-b\" over {x}\n",
+        "    suppress oxlint \"a-b\"\n",
+        "    fix safe drop \"Remove it\"\n",
+        "V(n, \"call\") :- node(_, n, \"call\", _, _).\n",
+        "V(@place(p, 0), p) :- doc(_, p, _).\n",
+        ".decl spot(at: loc)\nspot(@place(\"a.json\", 3)) :- doc(_, _, _).\n",
+        ".violation W(at: span) \"w\"\nW(s) :- spot(s).\n",
+    ))
+    .unwrap();
+    let settings: Vec<(&str, &str)> = p.settings.iter().map(|(k, t)| (k.as_str(), t.as_str())).collect();
+    assert_eq!(settings, [("policy", "\"p\" revision 1"), ("suppress", "V eslint \"@scope/a-b\", \"a-b\" over {x}"), ("suppress", "V oxlint \"a-b\""), ("fix", "V safe drop \"Remove it\"")]);
+    let rules = |rel: &str| p.rules.iter().filter(|r| r.head.rel == "violation" && r.head.args[1] == s(rel)).map(ToString::to_string).collect::<Vec<_>>();
+    assert_eq!(
+        rules("V"),
+        [
+            "violation(\"p\", \"V\", \"@scope/a-b\", $rr_p, $rr_l) :- V($rr_v0, _), docof($rr_v0, $rr_d), doc($rr_d, $rr_p, _), line($rr_v0, $rr_l)",
+            "violation(\"p\", \"V\", \"@scope/a-b\", @place_path($rr_v0), @place_line($rr_v0)) :- V($rr_v0, _), $rr_v0 < -1",
+            "violation(\"p\", \"V\", \"@scope/a-b\", $rr_p, $rr_l) :- rr_place_V($rr_p, $rr_l, _)",
+        ]
+    );
+    // A span column: its rows' documents, and the `@place` values a rule made.
+    assert_eq!(
+        rules("W"),
+        [
+            "violation(\"p\", \"W\", \"W\", $rr_p, $rr_l) :- W($rr_v0), docof($rr_v0, $rr_d), doc($rr_d, $rr_p, _), line($rr_v0, $rr_l)",
+            "violation(\"p\", \"W\", \"W\", @place_path($rr_v0), @place_line($rr_v0)) :- W($rr_v0), $rr_v0 < -1",
+        ]
+    );
+    let printed = print(&p).unwrap();
+    let again = parse(&printed).unwrap();
+    assert_eq!(difference(&p, &again), None, "{printed}");
+    assert_eq!(p.settings, again.settings);
+}
+
+// ---- tree axes and node sets ----
+
+/// `has(a, n, set)` is the descendant axis, the set tested on n; a set of nodes is read as climbs up the tree
+/// (`node_axis`), not a kind set; the forms print as themselves.
+#[test]
+fn axes_lower_and_print_as_themselves() {
+    let p = parse(
+        r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl docof(n: node, d: number)
+.decl next_sibling(a: node, b: node)
+.input node, child, docof, next_sibling
+.decl fn(kind: symbol)
+fn("function_definition").
+.decl blk(n: node)
+blk(n) :- node(_, n, "block", _, _), child(n, _, 0).
+.decl r(a: node, n: node)
+r(a, n) :- has(a, n, fn).
+r(a, n) :- node(_, a, _, _, _), !has(a, _, fn), nearest(n, a, blk).
+r(a, n) :- node(_, a, _, _, _), node(_, n, _, _, _), !nearest(n, a, fn), !within_stop(n, a, blk), !earlier(a, n), precedes_stop(a, n, blk), next_sibling(a, n).
+.decl s(q: symbol)
+s(q) :- s(x), split_dot(x, q, _), !split_dot(x, q, "y").
+"#,
+    )
+    .unwrap();
+    let rules: Vec<&front::Rule> = p.rules.iter().filter(|r| r.head.rel == "r").collect();
+    let v = |s: &str| Term::Var(s.to_owned());
+    assert_eq!(rules[0].body, [Literal::Atom(front::Atom { rel: "rr_has_fn".to_owned().into(), args: vec![v("n"), v("a")], neg: false, gated: false })]);
+    assert!(!p.kindsets.contains_key("blk") && p.kindsets.contains_key("fn"));
+    // The nearest block: a climb from n that stops at the first member of blk, which is a.
+    assert!(rules[1].body.iter().any(|l| matches!(l, Literal::Atom(x) if x.rel.starts_with("rr_up") && x.args == [v("n"), v("a")])), "{}", rules[1]);
+    assert!(rules[1].body.iter().any(|l| l.to_string() == "blk($a)"), "{}", rules[1]);
+    // `next_sibling` is core.rr's, written out over `child` in the rule (`rr::lower::core`): no relation of the program.
+    assert!(!p.rules.iter().any(|r| r.head.rel == "next_sibling") && !p.inputs.contains(&"next_sibling".to_owned()));
+    let again = parse(&print(&p).unwrap()).unwrap();
+    assert_eq!(difference(&p, &again), None);
+}
+
+/// What the axes still refuse says so by name; core.rr's `within`, `earlier` and `precedes_stop` negate with a node
+/// unnamed, through their relations: n has no ancestor, n has nothing after it, n has no later sibling before a stop.
+#[test]
+fn axes_refuse_by_name() {
+    let decls = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl tape(n: number, par: number, size: number, depth: number)\n.input node, tape\n.decl a(n: node, m: node)\n.decl q(s: symbol)\n.decl fn(kind: symbol)\nfn(\"f\").\n";
+    for (body, what) in [
+        ("a(n, n) :- a(n, _), !within_stop(n, _, fn).", "`!within_stop` with its ancestor unnamed"),
+        ("q(s) :- q(s), !split_dot(s, _, \"x\").", "`!split_dot` with a column unnamed"),
+    ] {
+        let e = parse(&format!("{decls}{body}")).unwrap_err().to_string();
+        assert!(e.contains("not lowered yet") && e.contains(what), "{body}: {e}");
+    }
+    for body in ["a(n, n) :- a(n, _), !within(n, _).", "a(n, n) :- a(n, _), !earlier(n, _).", "a(n, n) :- a(n, _), !precedes_stop(n, _, fn)."] {
+        parse(&format!("{decls}{body}")).unwrap_or_else(|e| panic!("{body}: {e}"));
+    }
+}
+
+// ---- recursion ----
+
+/// A negated conjunction is a helper relation of the variables it shares with the rule, negated; `!(a ; b)` is one
+/// such helper per alternative; a shared variable the conjunction only tests is bound in the helper by the rule's
+/// other literals; a conjunction sharing none has one constant column. Printed, the program reads back as itself.
+#[test]
+fn negated_conjunctions_lower_to_helpers() {
+    let p = parse(concat!(
+        ".decl e(x: number)\n.decl f(x: number, y: number)\n.decl g(y: number)\n.decl o(k: symbol, v: symbol)\n.input e, f, g, o\n",
+        ".decl a(x: number)\na(x) :- e(x), !(f(x, y), g(y)).\n",
+        ".decl b(x: number)\nb(x) :- e(x), !(f(x, _) ; g(x)).\n",
+        ".decl c(x: number)\nc(x) :- e(x), !(x > 2, o(\"k\", \"on\")).\n",
+        ".decl d(x: number)\nd(x) :- e(x), !(o(\"k\", \"on\"), g(_)).\n",
+    ))
+    .unwrap();
+    let rules = |rel: &str| -> Vec<&front::Rule> { p.rules.iter().filter(|r| r.head.rel == rel).collect() };
+    // The rule's negated helpers, and each helper's rules as text with its name as `H`.
+    let helpers = |rel: &str| -> Vec<(String, Vec<String>)> {
+        let [rule] = rules(rel)[..] else { panic!("{rel}: one rule") };
+        rule.body
+            .iter()
+            .filter_map(|l| match l {
+                Literal::Atom(a) if a.neg => Some((
+                    a.to_string().replace(&*a.rel, "H"),
+                    rules(&a.rel).iter().map(|r| r.to_string().replace(&*a.rel, "H")).collect(),
+                )),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(helpers("a"), [("!H($x)".to_owned(), vec!["H($x) :- f($x, $y), g($y)".to_owned()])]);
+    assert_eq!(helpers("b"), [("!H($x)".to_owned(), vec!["H($x) :- f($x, _)".to_owned()]), ("!H($x)".to_owned(), vec!["H($x) :- g($x)".to_owned()])]);
+    let c = helpers("c");
+    assert_eq!(c.len(), 1);
+    let [body] = &c[0].1[..] else { panic!("{c:?}") };
+    assert!(body.starts_with("H($x) :- rr_ctx") && body.ends_with("($x), $x > 2, o(\"k\", \"on\")"), "{body}");
+    assert_eq!(helpers("d"), [("!H(0)".to_owned(), vec!["H(0) :- o(\"k\", \"on\"), g(_)".to_owned()])]);
+    let printed = print(&p).and_then(|text| parse(&text)).unwrap();
+    assert_eq!(difference(&p, &printed), None);
 }
 
 /// Decision 0044 §4: a program is a derivation of the library files it read. Reading it again
@@ -2174,7 +2480,7 @@ lines(i) :- file_line("setup.cfg", i, _).
 "#;
     let once = parse(text).unwrap();
     let printed = print(&once).unwrap();
-    let twice = parse(&printed).unwrap();
+    let twice = parse(&printed).unwrap_or_else(|e| panic!("{e:?} reading back:\n{printed}"));
     assert!(difference(&once, &twice).is_none(), "{:?}", difference(&once, &twice));
     assert_eq!(print(&twice).unwrap(), printed);
     for demand in ["rr_embed_req", "rr_parse_req", "rr_splice_req", "rr_file_req"] {

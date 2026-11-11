@@ -16,6 +16,7 @@
 //! returned: open, though that usually calls it); one a later unconditional binding of its scope
 //! replaces is `SHADOWED` (the name, read once the scope ran, is no longer it).
 
+use crate::code_rule_dsl::tree::Tree;
 use super::names::Name;
 use crate::code_rule_dsl::identifier::{python_identifier, python_name};
 use crate::code_rule_dsl::language::Family;
@@ -901,8 +902,7 @@ impl<'t> Extractor<'t> {
                 .filter(|child| child.kind() == "decorator")
             {
                 let Some(expression) = decorator
-                    .children()
-                    .find(|child| child.is_named() && child.kind() != "comment")
+                    .first_code()
                 else {
                     continue;
                 };
@@ -993,8 +993,7 @@ impl<'t> Extractor<'t> {
             .filter(|child| child.kind() == "decorator")
             .any(|decorator| {
                 let Some(expression) = decorator
-                    .children()
-                    .find(|child| child.is_named() && child.kind() != "comment")
+                    .first_code()
                 else {
                     return true;
                 };
@@ -1051,8 +1050,7 @@ impl<'t> Extractor<'t> {
             return;
         };
         for argument in arguments
-            .children()
-            .filter(|child| child.is_named() && child.kind() != "comment")
+            .named_code()
         {
             let (expression, kind) = match argument.kind().as_ref() {
                 "keyword_argument" => match (argument.field("name"), argument.field("value")) {
@@ -1952,8 +1950,7 @@ fn returns_its_argument<'r, D: Doc>(function: &Node<'r, D>) -> bool {
         return false;
     };
     let named = |node: &Node<'r, D>| -> Vec<Node<'r, D>> {
-        node.children()
-            .filter(|child| child.is_named() && child.kind() != "comment")
+        node.named_code()
             .collect::<Vec<_>>()
     };
     if named(&body)
@@ -2005,8 +2002,7 @@ fn unparenthesized<'r, D: Doc>(node: &Node<'r, D>) -> Node<'r, D> {
     let mut node = node.clone();
     while node.kind() == "parenthesized_expression" {
         let mut inner = node
-            .children()
-            .filter(|child| child.is_named() && child.kind() != "comment");
+            .named_code();
         let (Some(expression), None) = (inner.next(), inner.next()) else {
             break;
         };
@@ -2064,7 +2060,7 @@ fn receiver_parameter<D: Doc>(function: &Node<'_, D>) -> Option<(String, bool)> 
 /// A function's first parameter, where it is a plain or typed name.
 fn first_parameter<D: Doc>(function: &Node<'_, D>) -> Option<String> {
     let parameters = function.field("parameters")?;
-    let first = parameters.children().find(|child| child.is_named())?;
+    let first = parameters.first_named()?;
     let name = match first.kind().as_ref() {
         "identifier" => first,
         "typed_parameter" => first.children().find(|c| c.kind() == "identifier")?,

@@ -3,8 +3,8 @@ use crate::code_rule_dsl::language::adapter::{
     Adapter, ValueFeature, ValueRules, gate, with_adapter,
 };
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
-use crate::code_rule_dsl::matcher::Semantic;
 use crate::code_rule_dsl::matcher::{AstMatcher, Bound, Reading, ValueTest};
+use crate::code_rule_dsl::matcher::{Semantic, SemanticText};
 use crate::code_rule_dsl::model::Limits;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::value::Value;
@@ -26,7 +26,11 @@ const VALUE_KEYS: &[&str] = &[
     "le",
     "truthy",
     "follow",
+    "name",
 ];
+
+/// The keys beside `name: true`: the predicates a name, a string, takes.
+const NAME_KEYS: &[&str] = &["eq", "startsWith", "regex", "name"];
 
 /// Prefixes one `startsWith` may list.
 const MAX_PREFIXES: usize = 1024;
@@ -69,7 +73,19 @@ pub(super) fn validate_value(value: &Json, path: &str, limits: &Limits) -> Resul
     {
         return Err(invalid(format!("{path}/follow must be true or false")));
     }
-    if test.keys().all(|key| key == "follow") {
+    if let Some(name) = test.get("name") {
+        if !name.is_boolean() {
+            return Err(invalid(format!("{path}/name must be true or false")));
+        }
+        if name == &Json::Bool(true)
+            && let Some(key) = test.keys().find(|key| !NAME_KEYS.contains(&key.as_str()))
+        {
+            return Err(invalid(format!(
+                "{path}/{key}: `name: true` reads a name, a string, which only eq, startsWith and regex test"
+            )));
+        }
+    }
+    if test.keys().all(|key| key == "follow" || key == "name") {
         return Err(invalid(format!(
             "{path} must hold a predicate: eq, type, constant, startsWith, regex, bitsAny, gt, ge, lt, le or truthy"
         )));
@@ -170,6 +186,13 @@ pub(super) fn compile_value_with(
 
 /// `compile_value_with` for a grammar whose family's adapter is `A`.
 fn compile_value_in<A: Adapter>(value: &Json, path: &str, reading: Reading) -> Result<AstMatcher> {
+    let name = value.get("name").and_then(Json::as_bool) == Some(true);
+    if name {
+        gate(
+            &format!("{path}/name"),
+            <A::Value as ValueRules>::feature(ValueFeature::Compare(SemanticText::Name, "name")),
+        )?;
+    }
     let types = value
         .get("type")
         .map(|types| strings(types, &format!("{path}/type")))
@@ -216,6 +239,7 @@ fn compile_value_in<A: Adapter>(value: &Json, path: &str, reading: Reading) -> R
         bits_any: value.get("bitsAny").and_then(Json::as_u64),
         bounds,
         truthy: value.get("truthy").and_then(Json::as_bool),
+        name,
     }))))
 }
 

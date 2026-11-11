@@ -13,7 +13,6 @@
 use super::{CODEC_ZSTD, ContentStore, StoreError, StoreResult, compress};
 use rusqlite::OptionalExtension;
 use sha2::{Digest as _, Sha256};
-use std::io::Cursor;
 
 /// Files per page (Tempo's segment bound).
 pub const TREE_PAGE_FILES: usize = 64;
@@ -150,7 +149,7 @@ impl ContentStore {
             if index != expected as i64 || page_count != count || page_digest != digest || codec != CODEC_ZSTD {
                 return Err(StoreError::Corrupt("tree pages disagree".to_owned()));
             }
-            let bytes = zstd::stream::decode_all(Cursor::new(frame))?;
+            let bytes = super::decompress(&frame, 0)?;
             if bytes.len() != usize::try_from(raw_length).unwrap_or(usize::MAX) {
                 return Err(StoreError::Corrupt("tree page length mismatch".to_owned()));
             }

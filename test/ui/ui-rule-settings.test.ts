@@ -178,7 +178,7 @@ describe("the page's rule setting writes", () => {
     await saving;
 
     expect(stored("eslint:no-var").enabled).toBe(true);
-    expect(toast).toHaveBeenCalledWith(expect.stringMatching(/^Could not save: PUT \/api\/repository\/settings answered 503/u));
+    expect(toast).toHaveBeenCalledWith(expect.stringMatching(/^Couldn’t save\. PUT \/api\/repository\/settings answered 503/u));
   });
 
   // Review finding F6: a write the daemon never answers fails after a while, so later clicks for the repository go out.
@@ -193,7 +193,7 @@ describe("the page's rule setting writes", () => {
 
     await vi.advanceTimersByTimeAsync(1);
     await hung;
-    expect(toast).toHaveBeenCalledWith("Could not save: the daemon did not answer within 30 s");
+    expect(toast).toHaveBeenCalledWith("Couldn’t save. The daemon did not answer within 30 s.");
     expect(stored("eslint:no-var").folderStates.map(state => state.suppressions)).toEqual(["honour", "honour"]);
     await vi.advanceTimersByTimeAsync(0);
     expect(writes()).toHaveLength(2);

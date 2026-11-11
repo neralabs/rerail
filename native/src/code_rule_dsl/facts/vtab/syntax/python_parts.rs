@@ -17,7 +17,7 @@ pub(super) fn with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, 
     let input = FileInput::new("a.py".into(), "python".into(), Arc::new(source), None, None, "core").unwrap();
     let Built::Facts(facts) = core::build(&input).unwrap() else { panic!("literal test failed to parse") };
     let dialect = Dialect::new(crate::code_rule_dsl::facts::core::facts_tag(&facts)).unwrap();
-    let p = Projected::new(0, Arc::new(facts), &dialect, super::Shape::Core, false, None);
+    let p = Projected::new(0, Arc::new(facts), Some(&dialect), super::Shape::Core, false, None);
     let local = p.core.iter().position(|&id| matches!(dialect.name(&p.facts, id), "string" | "concatenated_string")).unwrap() as u32;
     from_tape(&p, &dialect, local, false).into_iter().map(|(v, at, spec, offset)| {
         // `at` is a node id: its low bits are a local id only under preorder ids.
@@ -116,7 +116,7 @@ impl Constants<'_> {
         let p = self.p;
         let f = &p.facts;
         let children = f.children(id);
-        if children.iter().any(|&c| self.kind(c) == "=") {
+        if f.tokens(id).iter().any(|t| self.dialect.atom_name(t.kind) == "=") {
             let end = children.iter().copied().find(|&c| matches!(self.kind(c), "type_conversion" | "format_specifier"))
                 .map_or(f.end[id as usize] - 1, |c| f.start[c as usize]);
             // A debug label is source text, not a string-literal body: escapes stay literal.

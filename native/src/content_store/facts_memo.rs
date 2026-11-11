@@ -29,7 +29,6 @@ use super::{
 use rusqlite::{Connection, OptionalExtension, params, types::Value};
 use sha2::{Digest as _, Sha256};
 use std::collections::{HashMap, HashSet};
-use std::io::Cursor;
 use std::sync::Arc;
 
 const OBJECT_SOURCE: i64 = 2;
@@ -625,13 +624,10 @@ pub struct FactsFrame {
 impl FactsFrame {
     /// The first `n` bytes of the entry, decompressing no more of the frame than they need.
     pub fn head(&self, n: usize) -> StoreResult<Vec<u8>> {
-        use std::io::Read as _;
         if self.codec != CODEC_ZSTD {
             return Err(StoreError::Corrupt(format!("unsupported facts memo codec {}", self.codec)));
         }
-        let mut out = vec![0; n];
-        zstd::stream::read::Decoder::new(Cursor::new(&self.frame[..]))?.read_exact(&mut out)?;
-        Ok(out)
+        Ok(super::decompress_head(&self.frame, n)?)
     }
     /// The whole entry.
     pub fn bytes(&self) -> StoreResult<Vec<u8>> {
@@ -649,7 +645,7 @@ fn decode(codec: i64, raw_length: i64, frame: &[u8]) -> StoreResult<Vec<u8>> {
     if codec != CODEC_ZSTD {
         return Err(StoreError::Corrupt(format!("unsupported facts memo codec {codec}")));
     }
-    let bytes = zstd::stream::decode_all(Cursor::new(frame))?;
+    let bytes = super::decompress(&frame, 0)?;
     if bytes.len() != usize::try_from(raw_length).unwrap_or(usize::MAX) {
         return Err(StoreError::Corrupt(
             "facts memo length does not match metadata".to_owned(),

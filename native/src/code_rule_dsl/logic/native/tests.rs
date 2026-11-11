@@ -34,6 +34,53 @@ fn computed_sql_inputs_do_not_reenter_a_held_symbol_lock() {
     receive.recv_timeout(std::time::Duration::from_secs(5)).expect("computed SQL input did not finish; see the worker panic or timeout");
 }
 
+/// A run's symbols are its store's atoms. A run, then the store deleted and created again at its path with other
+/// atoms (by another process: a copy of a store made elsewhere), then a run again: the second run reads the new
+/// store's symbols, not those this process held for the old one.
+#[test]
+fn a_store_created_again_at_its_path_gives_a_run_its_symbols() {
+    use crate::content_store::ContentStore;
+    let (path, elsewhere) = (crate::code_rule_dsl::prefilter::tests::temp(), crate::code_rule_dsl::prefilter::tests::temp());
+    // A run interns its symbols (catching up with the store's atoms), then reads them.
+    let run = |sql: &[&str]| -> Vec<String> {
+        let store = ContentStore::open(&path).unwrap();
+        let db = Connection::open(&path).unwrap();
+        super::register_symbols(&db).unwrap();
+        let out = sql.iter().map(|sql| db.query_row(sql, [], |r| r.get(0)).unwrap()).collect();
+        drop(db);
+        store.flush_atoms().unwrap();
+        out
+    };
+    assert_eq!(run(&["SELECT CAST(sym_atom('first') AS TEXT)"]), ["1"]);
+    {
+        let other = ContentStore::open(&elsewhere).unwrap();
+        assert_eq!(other.intern_atoms(&["second", "first"]).unwrap(), [1, 2]);
+    }
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
+    Connection::open(&elsewhere).unwrap().execute("VACUUM INTO ?1", [path.to_str().unwrap()]).unwrap();
+    assert_eq!(run(&["SELECT CAST(sym_atom('first') AS TEXT)", "SELECT sym_text(1)"]), ["2", "second"]);
+}
+
+/// A run in a process that never held a store's atoms reads them: `sym_text` and `sym_cat` of atoms the store holds,
+/// before the run interns anything.
+#[test]
+fn a_fresh_arena_reads_the_stores_atoms() {
+    use crate::content_store::ContentStore;
+    let (path, elsewhere) = (crate::code_rule_dsl::prefilter::tests::temp(), crate::code_rule_dsl::prefilter::tests::temp());
+    {
+        let other = ContentStore::open(&elsewhere).unwrap();
+        assert_eq!(other.intern_atoms(&["a", "b"]).unwrap(), [1, 2]);
+    }
+    // A copy at a path this process never opened: its arena starts empty.
+    Connection::open(&elsewhere).unwrap().execute("VACUUM INTO ?1", [path.to_str().unwrap()]).unwrap();
+    let db = Connection::open(&path).unwrap();
+    super::register_symbols(&db).unwrap();
+    let text: String = db.query_row("SELECT sym_text(2) || ',' || sym_text(sym_cat(1, 2))", [], |r| r.get(0)).unwrap();
+    assert_eq!(text, "b,a.b");
+}
+
 fn pairs(db: &Connection, sql: &str) -> Vec<(i64, i64)> {
     let mut statement = db.prepare(sql).unwrap();
     statement.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().collect::<rusqlite::Result<_>>().unwrap()
@@ -484,7 +531,10 @@ fn shortlex_min_orders_symbols_by_length_then_bytes() {
     use super::Lattice;
     let dir = std::env::temp_dir().join(format!("rerail-shortlex-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let atoms = crate::content_store::atoms::Atoms::fresh(&dir.join("atoms.sqlite"));
+    let _ = std::fs::remove_file(dir.join("atoms.sqlite"));
+    // A store's atoms (RER-131: an arena belongs to a store of one identity).
+    let store = crate::content_store::ContentStore::open(&dir.join("atoms.sqlite")).unwrap();
+    let atoms = store.atoms_handle();
     let s = atoms.intern_all(&["b.c", "zz", "ab", "é"]).unwrap();
     let (bc, zz, ab, e) = (i64::from(s[0]), i64::from(s[1]), i64::from(s[2]), i64::from(s[3]));
     let l = super::ShortlexMin(atoms);
@@ -495,5 +545,8 @@ fn shortlex_min_orders_symbols_by_length_then_bytes() {
     assert_eq!(l.lub(ab, TOP), TOP);
     assert_eq!(l.lub(ab, i64::from(u32::MAX)), TOP, "an atom not held");
     assert!(l.finite());
+    // The store closes (and flushes its atoms) before its folder goes.
+    drop(l);
+    drop(store);
     std::fs::remove_dir_all(&dir).unwrap();
 }

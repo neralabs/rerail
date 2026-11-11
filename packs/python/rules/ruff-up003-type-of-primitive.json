@@ -1,0 +1,354 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up003-type-of-primitive",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use the builtin type name directly instead of calling type() on a literal; the type of a literal is known in advance.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "type-callee": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "type"
+                  ],
+                  "import": [
+                    "builtins.type"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "type-callee"
+                }
+              }
+            ]
+          },
+          "primitive-literal": {
+            "any": [
+              {
+                "kind": "string",
+                "not": {
+                  "regex": "^[A-Za-z]*[fFtT]"
+                }
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "regex": "^[A-Za-z]*[fFtT]"
+                  }
+                }
+              },
+              {
+                "kind": "integer"
+              },
+              {
+                "kind": "float"
+              },
+              {
+                "kind": "true"
+              },
+              {
+                "kind": "false"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "primitive-literal"
+                }
+              }
+            ]
+          },
+          "positional": {
+            "not": {
+              "any": [
+                {
+                  "kind": "keyword_argument"
+                },
+                {
+                  "kind": "dictionary_splat"
+                },
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                },
+                {
+                  "regex": "^[(),]$"
+                }
+              ]
+            }
+          },
+          "sole-primitive-argument": {
+            "matches": "primitive-literal",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "argument_list",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "type-callee"
+                }
+              }
+            },
+            "not": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "end",
+                    "matches": "positional"
+                  }
+                },
+                {
+                  "precedes": {
+                    "stopBy": "end",
+                    "matches": "positional"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "type-of-str",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "arguments",
+              "kind": "argument_list",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "sole-primitive-argument",
+                "value": {
+                  "type": "str"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP003",
+        "message": "Replace this `type(...)` call with `str`; the type of a literal is known in advance.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP003"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "type-of-bytes",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "arguments",
+              "kind": "argument_list",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "sole-primitive-argument",
+                "value": {
+                  "type": "bytes"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP003",
+        "message": "Replace this `type(...)` call with `bytes`; the type of a literal is known in advance.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP003"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "type-of-int",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "arguments",
+              "kind": "argument_list",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "sole-primitive-argument",
+                "value": {
+                  "type": "int"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP003",
+        "message": "Replace this `type(...)` call with `int`; the type of a literal is known in advance.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP003"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "type-of-float",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "arguments",
+              "kind": "argument_list",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "sole-primitive-argument",
+                "value": {
+                  "type": "float"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP003",
+        "message": "Replace this `type(...)` call with `float`; the type of a literal is known in advance.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP003"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "type-of-complex",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "arguments",
+              "kind": "argument_list",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "sole-primitive-argument",
+                "value": {
+                  "type": "complex"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP003",
+        "message": "Replace this `type(...)` call with `complex`; the type of a literal is known in advance.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP003"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "type-of-bool",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "arguments",
+              "kind": "argument_list",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "sole-primitive-argument",
+                "value": {
+                  "type": "bool"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP003",
+        "message": "Replace this `type(...)` call with `bool`; the type of a literal is known in advance.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP003"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

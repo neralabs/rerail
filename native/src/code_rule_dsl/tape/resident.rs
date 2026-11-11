@@ -5,8 +5,9 @@
 
 use super::*;
 
-/// The header's bytes: magic, language, widths, version, source length and digest, five lengths.
-const HEADER: usize = 8 + 1 + 3 + 4 + 8 + 32 + 5 * 8;
+/// The header's bytes: magic, language, widths, version, source length, five lengths. (v12 dropped
+/// the source's digest: the store pairs a tape with its source.)
+const HEADER: usize = HEADER_BYTES;
 /// `HEADER`, for a reader that decodes the header alone first.
 pub(in crate::code_rule_dsl) const HEADER_LEN: usize = HEADER;
 
@@ -15,10 +16,10 @@ pub(in crate::code_rule_dsl) fn header_counts(header: &[u8]) -> Result<(usize, u
     if header.len() < HEADER || &header[..8] != TAPE_MAGIC {
         return Err("wrong tape image magic".into());
     }
-    if u32::from_le_bytes(header[12..16].try_into().expect("four bytes")) != TAPE_FORMAT_VERSION {
+    if u32::from_le_bytes(header[header::VERSION..header::VERSION + 4].try_into().expect("four bytes")) != TAPE_FORMAT_VERSION {
         return Err("unsupported tape image version".into());
     }
-    Ok((u64_at(header, 56)?, u64_at(header, 64)?))
+    Ok((u64_at(header, header::NODES)?, u64_at(header, header::CODES)?))
 }
 const _: () = assert!(HEADER == HEADER_BYTES && HEADER % COLUMN_ALIGN == 0);
 
@@ -40,7 +41,6 @@ pub(in crate::code_rule_dsl) struct Layout {
     aliases: usize,
     alias_count: usize,
     pub(in crate::code_rule_dsl) source_len: usize,
-    pub(in crate::code_rule_dsl) source_digest: [u8; 32],
 }
 
 /// A code as the device reads it: 24 bytes, fixed. `flags` are `TapeDoc::transducer_flags`' bits
@@ -68,17 +68,16 @@ pub(in crate::code_rule_dsl) fn layout(bytes: &[u8]) -> Result<Layout, String> {
     if bytes.len() < HEADER || &bytes[..8] != TAPE_MAGIC {
         return Err("wrong tape image magic".into());
     }
-    let widths = [bytes[9], bytes[10], bytes[11]];
+    let widths = [bytes[header::WIDTHS], bytes[header::WIDTHS + 1], bytes[header::WIDTHS + 2]];
     if !matches!(widths[0], 2 | 4) || !matches!(widths[1], 2 | 4) || !matches!(widths[2] & !TAIL_FROM_START, 2 | 4) {
         return Err("noncanonical tape image header".into());
     }
-    if u32::from_le_bytes(bytes[12..16].try_into().expect("four bytes")) != TAPE_FORMAT_VERSION {
+    if u32::from_le_bytes(bytes[header::VERSION..header::VERSION + 4].try_into().expect("four bytes")) != TAPE_FORMAT_VERSION {
         return Err("unsupported tape image version".into());
     }
-    let source_len = u64_at(bytes, 16)?;
-    let source_digest: [u8; 32] = bytes[24..56].try_into().expect("digest width");
+    let source_len = u64_at(bytes, header::SOURCE_LEN)?;
     let [nodes, code_count, code_bytes, alias_count, alias_bytes] =
-        [0, 1, 2, 3, 4].map(|at| u64_at(bytes, 56 + 8 * at));
+        [0, 1, 2, 3, 4].map(|at| u64_at(bytes, header::NODES + 8 * at));
     let (nodes, code_count, code_bytes, alias_count, alias_bytes) = (nodes?, code_count?, code_bytes?, alias_count?, alias_bytes?);
     if nodes == 0 || nodes > u32::MAX as usize || code_count == 0 || code_count > usize::from(u16::MAX) + 1 {
         return Err("invalid tape image table lengths".into());
@@ -114,7 +113,6 @@ pub(in crate::code_rule_dsl) fn layout(bytes: &[u8]) -> Result<Layout, String> {
         aliases: at + code_bytes,
         alias_count,
         source_len,
-        source_digest,
     })
 }
 
@@ -225,7 +223,7 @@ mod tests {
             let native = ast_grep_core::tree_sitter::StrDoc::new(source, lang);
             let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary;
             let tape = TapeDoc::restore(Arc::new(source.to_owned()), Arc::clone(&grammar), &image, &|| false).unwrap();
-            let bytes = image.to_bytes().unwrap();
+            let bytes = tape.resident_parts().unwrap().0;
             let layout = layout(&bytes).unwrap();
             for column in [layout.code, layout.size, layout.base, layout.off, layout.tail] {
                 assert_eq!(column % COLUMN_ALIGN, 0, "{lang:?}: columns are aligned");

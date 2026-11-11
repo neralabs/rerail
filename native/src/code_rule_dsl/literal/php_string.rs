@@ -4,6 +4,7 @@
 //! (tree-sitter-php's `string_content` byte for byte, an `escape_sequence` to the whole escape); a
 //! heredoc or nowdoc, whose indentation PHP strips, maps every node to the whole literal.
 
+use crate::code_rule_dsl::tree::Tree;
 use super::HostMap;
 use super::offsets::{Decoded, Span};
 use crate::code_rule_dsl::value::{Context, MAX_STRING_BYTES, Value, php};
@@ -59,7 +60,7 @@ fn spans<D: Doc>(node: &Node<'_, D>, text: &str, double: bool) -> Option<Decoded
     // The source range of every decoded byte.
     let mut bytes: Vec<u8> = Vec::with_capacity(text.len());
     let mut sources: Vec<Range<usize>> = Vec::with_capacity(text.len());
-    for piece in node.children().filter(|child| child.is_named()) {
+    for piece in node.named() {
         let raw = piece.text();
         let range = piece.range();
         let decoded = match piece.kind().as_ref() {

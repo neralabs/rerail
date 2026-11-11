@@ -111,9 +111,9 @@ fn shared_scratch_flushes_atoms_to_their_owning_store() {
     let owner = path("owner");
     let scratch_path = path("scratch");
     let store = ContentStore::open(&owner).unwrap();
-    let scratch = rusqlite::Connection::open(&scratch_path).unwrap();
+    let mut scratch = rusqlite::Connection::open(&scratch_path).unwrap();
     store.share_atoms_with(&scratch_path);
-    let arena = super::Atoms::install(&scratch).unwrap();
+    let arena = super::Atoms::install(&mut scratch).unwrap();
     assert!(std::sync::Arc::ptr_eq(&arena, &store.atoms));
     let ids = store.intern_atoms(&["borrowed"]).unwrap();
     arena.flush(&scratch).unwrap();
@@ -128,14 +128,41 @@ fn shared_scratch_flushes_atoms_to_their_owning_store() {
 fn shared_scratch_writes_do_not_use_the_owner_commit_guard() {
     let store = ContentStore::open(&path("owner-guard")).unwrap();
     let scratch_path = path("scratch-guard");
-    let scratch = rusqlite::Connection::open(&scratch_path).unwrap();
+    let mut scratch = rusqlite::Connection::open(&scratch_path).unwrap();
     store.share_atoms_with(&scratch_path);
-    let arena = super::Atoms::install(&scratch).unwrap();
+    let arena = super::Atoms::install(&mut scratch).unwrap();
     store.intern_atoms(&["pending"]).unwrap();
     scratch.execute_batch("CREATE TABLE work(x INTEGER); INSERT INTO work VALUES (1);").unwrap();
     assert!(arena.pending(), "scratch SQL does not commit the durable store");
     arena.flush(&scratch).unwrap();
     assert!(!arena.pending());
+}
+
+/// A store deleted and created again at its path, here by another process (a copy of a store made elsewhere), has
+/// atoms of its own: this process, still holding the old store's, neither reads nor writes the new one with them.
+#[test]
+fn a_store_created_again_at_its_path_has_its_own_atoms() {
+    let (at, elsewhere) = (path("recreated"), path("recreated-elsewhere"));
+    let old = ContentStore::open(&at).unwrap();
+    assert_eq!(old.intern_atoms(&["old"]).unwrap(), [1]);
+    old.flush_atoms().unwrap();
+    {
+        let other = ContentStore::open(&elsewhere).unwrap();
+        assert_eq!(other.intern_atoms(&["new", "old"]).unwrap(), [1, 2]);
+    }
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(super::suffixed(&at, suffix));
+    }
+    rusqlite::Connection::open(&elsewhere).unwrap().execute("VACUUM INTO ?1", [at.to_str().unwrap()]).unwrap();
+    let store = ContentStore::open(&at).unwrap();
+    assert!(!std::sync::Arc::ptr_eq(&store.atoms, &old.atoms));
+    assert_eq!(store.atom_value(1).unwrap().as_deref(), Some("new"));
+    assert_eq!(store.atom("old").unwrap(), Some(2));
+    assert_eq!(store.intern_atoms(&["next"]).unwrap(), [3]);
+    // Closing writes `next` to the new store, on this thread's connection to it rather than the old one's.
+    drop(store);
+    assert_eq!(segments(&at), [(0, 1), (1, 2), (3, 1)]);
+    drop(old);
 }
 
 const CHILD: &str = "RERAIL_ATOMS_CHILD";

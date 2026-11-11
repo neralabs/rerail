@@ -710,11 +710,11 @@ mod tests {
             witnesses: vec![Witness {
                 sql_violation: None,
                 path: "pkg/a.py".to_owned(),
-                span: crate::code_rule_dsl::violations::Span {
+                span: Some(crate::code_rule_dsl::violations::Span {
                     start_byte: 0,
                     end_byte: 5,
                     ..Default::default()
-                },
+                }),
                 captures: {
                     let mut captures = crate::code_rule_dsl::violations::Captures::default();
                     captures.set_projection(Some(json!({ "package": "pkg" })));

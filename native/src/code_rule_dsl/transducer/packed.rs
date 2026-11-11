@@ -1348,6 +1348,12 @@ impl PackedPattern {
         matches!(self, Self::Terminal { named: false, .. })
     }
 
+    /// The end-of-children goal (`PatternNode::children_end`, RER-131): it matches no node, so a
+    /// token or a comment is skipped and a named node refused, and it holds where the candidates end.
+    fn is_children_end(&self) -> bool {
+        matches!(self, Self::Terminal { kind, .. } if *kind == ast_grep_core::matcher::kind_utils::CHILDREN_END)
+    }
+
     fn exact(tape: &TapeDoc, left: u32, right: u32) -> bool {
         if left == right {
             return true;
@@ -1483,7 +1489,11 @@ impl PackedPattern {
         bindings: &mut PatternBindings,
     ) -> bool {
         if candidates.is_empty() {
-            return false;
+            // A node with no children (its tokens all implied, RER-131): ellipses bind nothing.
+            return goals.iter().all(|goal| match goal {
+                Self::Ellipsis(name) => name.as_ref().is_none_or(|name| Self::bind_multi(bindings, name, Vec::new(), tape)),
+                goal => goal.is_children_end(),
+            });
         }
         let (mut goal, mut candidate) = (0_usize, 0_usize);
         while goal < goals.len() {
@@ -1548,7 +1558,7 @@ impl PackedPattern {
                 let Some(&node) = candidates.get(candidate) else {
                     return goals[goal..]
                         .iter()
-                        .all(|goal| matches!(goal, Self::Ellipsis(_)));
+                        .all(|goal| matches!(goal, Self::Ellipsis(_)) || goal.is_children_end());
                 };
                 match goals[goal].one(node, tape, bindings, false) {
                     PatternVerdict::Matched => break,
@@ -2086,7 +2096,7 @@ impl Program {
                 }
             }
         }
-        format!("{:x}", digest.finalize())
+        crate::lower_hex(&digest.finalize())
     }
 
     pub(in crate::code_rule_dsl) fn leading_kinds(&self) -> Option<BTreeSet<u16>> {
@@ -4254,7 +4264,7 @@ pub(super) fn execute_production_corpus_pages(
     }
 }
 
-pub(in crate::code_rule_dsl) const POSITIONAL_INDEX_VERSION: i64 = 3;
+pub(in crate::code_rule_dsl) const POSITIONAL_INDEX_VERSION: i64 = 5;
 const VALUE_INDEX_LIMIT: usize = 96;
 
 pub(in crate::code_rule_dsl) fn execute_many(
@@ -6537,7 +6547,7 @@ mod tests {
             digest.update((range.start as u64).to_le_bytes());
             digest.update((range.end as u64).to_le_bytes());
         }
-        format!("{:x}", digest.finalize())
+        crate::lower_hex(&digest.finalize())
     }
 
     fn median(mut values: Vec<Duration>) -> Duration {

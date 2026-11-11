@@ -3,7 +3,7 @@
 // Predicate (owned by ../fixtures.mjs, `fixtureLayout(repo).unmapped`): every directory
 // `fixtures/<family>/<feature>/` has `<feature>` equal to an engine module (a top-level `<name>.rs` or
 // `<name>/` under native/src/code_rule_dsl/, excluding mod.rs and test_support.rs) or to a documented
-// non-engine group (`NON_ENGINE_GROUPS`: `upstream`, the pack recording layout, and `licenses`).
+// non-engine group (`NON_ENGINE_GROUPS`: `upstream`, the pack test-data layout, and `licenses`).
 // Exemption `non-engine-families`: the `host` and `packs` families hold host-adapter and pack-validator
 // inputs; their children are areas, not engine features.
 

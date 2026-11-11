@@ -1,0 +1,17 @@
+{
+  "pack": "complexity",
+  "family": ["python", "ecma", "php", "blade", "rust", "vue"],
+  "capabilities": ["syntax"],
+  "tools": [
+    { "name": "lizard", "version": "1.24.0" }
+  ],
+  "rules": [
+    {"id": "complexity-cyclomatic-python", "upstream": {"tool": "lizard", "rule": "CYCLOMATIC_COMPLEXITY"}, "policy": "rules/complexity-cyclomatic-python.json", "capabilities": ["syntax"], "match": "line", "fixtures": ["python/**"], "lints": [".py"]},
+    {"id": "complexity-cyclomatic-typescript", "upstream": {"tool": "lizard", "rule": "CYCLOMATIC_COMPLEXITY"}, "policy": "rules/complexity-cyclomatic-typescript.json", "capabilities": ["syntax"], "match": "line", "fixtures": ["typescript/**"], "lints": [".ts", ".tsx"]},
+    {"id": "complexity-cyclomatic-javascript", "upstream": {"tool": "lizard", "rule": "CYCLOMATIC_COMPLEXITY"}, "policy": "rules/complexity-cyclomatic-javascript.json", "capabilities": ["syntax"], "match": "line", "fixtures": ["javascript/**"], "lints": [".js", ".jsx", ".mjs", ".cjs"]},
+    {"id": "complexity-cyclomatic-php", "upstream": {"tool": "lizard", "rule": "CYCLOMATIC_COMPLEXITY"}, "policy": "rules/complexity-cyclomatic-php.json", "capabilities": ["syntax"], "match": "line", "fixtures": ["php/**"], "lints": [".php"]},
+    {"id": "complexity-cyclomatic-blade", "upstream": {"tool": "lizard", "rule": "CYCLOMATIC_COMPLEXITY"}, "policy": "rules/complexity-cyclomatic-blade.json", "capabilities": ["syntax"], "match": "line", "fixtures": ["blade/**"], "lints": [".blade.php"]},
+    {"id": "complexity-cyclomatic-rust", "upstream": {"tool": "lizard", "rule": "CYCLOMATIC_COMPLEXITY"}, "policy": "rules/complexity-cyclomatic-rust.json", "capabilities": ["syntax"], "match": "line", "fixtures": ["rust/**"], "lints": [".rs"]},
+    {"id": "complexity-cyclomatic-vue", "upstream": {"tool": "lizard", "rule": "CYCLOMATIC_COMPLEXITY"}, "policy": "rules/complexity-cyclomatic-vue.json", "capabilities": ["syntax"], "match": "line", "fixtures": ["vue/**"], "lints": [".vue"]}
+  ]
+}

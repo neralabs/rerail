@@ -34,6 +34,8 @@ const FACT_STORE: &[&str] = &[
     "file_documents",
     "object_pins",
     "store_state",
+    // The store's identity (RER-131): its atoms and connections belong to this store only.
+    "store_identity",
     "push_pending",
     "rows",
     "git_alias",
@@ -215,6 +217,17 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan.rs", "LOG"),
     ("code_rule_dsl/logic/plan.rs", "PATH"),
     ("code_rule_dsl/logic/plan.rs", "SETTING"),
+    // The `re_match` functions' compiled patterns (RER-131): the program's own text compiled once, not a result kept.
+    ("code_rule_dsl/logic/plan.rs", "REGEXES"),
+    // core.rr's declarations (RER-131), read once from the engine's own library text: not a result kept.
+    ("code_rule_dsl/logic/rr/lower/core.rs", "DECLS"),
+    // This thread's zstd contexts by dictionary (RER-131): open things, not results.
+    ("content_store/compression.rs", "DECODERS"),
+    ("content_store/compression.rs", "DICT_ENCODERS"),
+    // The language tags the store's dictionaries are chosen by (RER-131): set once as the library loads.
+    ("content_store/compression.rs", "LANGUAGE_TAGS"),
+    // The store handles open in this process, by path (RER-131): a registry of open things.
+    ("content_store/connection.rs", "HANDLES"),
     ("code_rule_dsl/logic/plan/choices.rs", "DURABLE"),
     ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),
     // The build's Python grammar, and what follows from it and a matcher's text alone (its single-field answers, its
@@ -287,7 +300,8 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/logic/plan/keeps.rs", "OBSERVED", "6"),
     ("code_rule_dsl/logic/native/setfix/table.rs", "PAID", "6"),
     ("code_rule_dsl/logic/strings.rs", "MATCHERS", "7"),
-    ("code_rule_dsl/logic/strings.rs", "GROUPS", "7"),
+    // RER-131's compiled group patterns, where `GROUPS` was.
+    ("code_rule_dsl/logic/strings.rs", "GROUP_REGEXES", "7"),
     ("code_rule_dsl/logic/strings/functions.rs", "CACHE", "7"),
     ("code_rule_dsl/text.rs", "LOWERED", "7"),
     ("code_rule_dsl/text.rs", "NAMES", "7"),

@@ -1,12 +1,28 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl bootstrap_sql_arg0(c: node, x: node)
+.decl bootstrap_sql_ast(n: node, e: node)
+.decl bootstrap_sql_call(c: node, kind: symbol, callee: symbol)
+.decl bootstrap_sql_doc(d: number, p: symbol)
+.decl bootstrap_sql_first(c: node, i: number)
+.decl bootstrap_sql_iter(f: node, v: node)
+.decl bootstrap_sql_positional(c: node, x: node, i: number)
+.decl bootstrap_sql_receiver(c: node, r: node)
+.decl bootstrap_sql_slot(n: node)
+.decl child(p: node, c: node, i: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
-.input doc, node, line, syntax_error
-.decl never(n: node)
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl never(n: node)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl out_scope(d: number)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, line, syntax_error, field, child, text, cpython_syntax_error
+.output violation
 in_scope(d) :- doc(d, p, _), glob("l3200_metadata/bootstrap_state.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
@@ -18,5 +34,25 @@ out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
+tape_syntax_error(d) :- syntax_error(d).
 violation("data-layer-bootstrap-lazy-sql", "source-syntax", "NATIVE-SYNTAX", p, l) :- node(_, n, "module", _, _), node(v1, n, _, _, _), doc(v1, v2, _), never(_), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-.output violation
+bootstrap_sql_slot(f) :- node(_, c, "call", _, _), field(c, "function", f).
+bootstrap_sql_slot(o) :- node(_, a, "attribute", _, _), field(a, "object", o).
+bootstrap_sql_slot(v) :- node(_, s, "for_statement", _, _), field(s, "right", v).
+bootstrap_sql_slot(x) :- bootstrap_sql_arg0(_, x).
+bootstrap_sql_slot(x) :- bootstrap_sql_slot(p), node(_, p, "parenthesized_expression", _, _), child(p, x, _), !node(_, x, "comment", _, _).
+bootstrap_sql_ast(n, n) :- bootstrap_sql_slot(n), !node(_, n, "parenthesized_expression", _, _).
+bootstrap_sql_ast(n, e) :- bootstrap_sql_slot(n), node(_, n, "parenthesized_expression", _, _), child(n, x, _), !node(_, x, "comment", _, _), bootstrap_sql_ast(x, e).
+bootstrap_sql_call(c, "Name", s) :- node(_, c, "call", _, _), field(c, "function", f0), bootstrap_sql_ast(f0, f), node(_, f, "identifier", _, _), text(f, s).
+bootstrap_sql_call(c, "Attribute", s) :- node(_, c, "call", _, _), field(c, "function", f0), bootstrap_sql_ast(f0, f), node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, s).
+bootstrap_sql_receiver(c, r) :- node(_, c, "call", _, _), field(c, "function", f0), bootstrap_sql_ast(f0, f), node(_, f, "attribute", _, _), field(f, "object", o0), bootstrap_sql_ast(o0, r).
+bootstrap_sql_positional(c, x, i) :- node(_, c, "call", _, _), field(c, "arguments", al), node(_, al, "argument_list", _, _), child(al, x, i), !node(_, x, "keyword_argument", _, _), !node(_, x, "dictionary_splat", _, _), !node(_, x, "comment", _, _).
+bootstrap_sql_first(c, i) :- bootstrap_sql_positional(c, _, _), i = min j : { bootstrap_sql_positional(c, _, j) }.
+bootstrap_sql_arg0(c, x) :- bootstrap_sql_first(c, i), bootstrap_sql_positional(c, x, i).
+bootstrap_sql_iter(f, v) :- node(_, f, "for_statement", _, _), field(f, "right", v0), bootstrap_sql_ast(v0, v).
+bootstrap_sql_iter(f, v) :- bootstrap_sql_iter(f, c), bootstrap_sql_call(c, "Name", s), (s = "list" ; s = "tuple" ; s = "set" ; s = "sorted"), bootstrap_sql_arg0(c, a0), bootstrap_sql_ast(a0, v).
+bootstrap_sql_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), !cpython_syntax_error(d, _, _), contains("bootstrap", p).
+violation("data-layer-bootstrap-lazy-sql", "bootstrap-sql", "BLB-001", p, l) :- bootstrap_sql_call(n, "Attribute", "execute_lazy"), bootstrap_sql_receiver(n, r), bootstrap_sql_call(r, "Attribute", "query_lazy"), node(d, n, _, _, _), bootstrap_sql_doc(d, p), line(n, l).
+violation("data-layer-bootstrap-lazy-sql", "bootstrap-sql", "BLB-004", p, l) :- bootstrap_sql_call(n, _, s), (s = "physical_table_exists_many" ; s = "physical_table_exists_many_async" ; s = "table_exists_many" ; s = "table_exists_many_async" ; s = "table_exists_many_for_schema_batch" ; s = "table_exists_many_for_schema_batch_async"), node(d, n, _, _, _), bootstrap_sql_doc(d, p), line(n, l).
+violation("data-layer-bootstrap-lazy-sql", "bootstrap-sql", "BLB-003", p, l) :- bootstrap_sql_call(n, "Attribute", s), (s = "model_dump" ; s = "model_copy"), node(d, n, _, _, _), bootstrap_sql_doc(d, p), line(n, l).
+violation("data-layer-bootstrap-lazy-sql", "bootstrap-sql", "BLB-002", p, l) :- bootstrap_sql_iter(n, v), node(_, v, "identifier", _, _), text(v, s), (s = "existing_rows" ; s = "generation_rows" ; s = "manifest_rows" ; s = "rows" ; s = "schema_state_rows" ; s = "system_session_rows"), node(d, n, _, _, _), bootstrap_sql_doc(d, p), line(n, l).

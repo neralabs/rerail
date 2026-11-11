@@ -17,6 +17,9 @@ pub(crate) enum ValueFeature<'a> {
     Type(&'a str),
     /// A semantic `compare` text mode, and its name as the rule writes it.
     Compare(SemanticText, &'a str),
+    /// `transform`'s `toPrecision`: a number laid out as ECMAScript's
+    /// `Number.prototype.toPrecision` lays it out.
+    ToPrecision,
 }
 
 /// A family's values.
@@ -117,6 +120,16 @@ const TYPESCRIPT_TYPES: &[&str] = &[
 ];
 /// PHP `get_debug_type` names Rerail can establish for constant expressions.
 const PHP_TYPES: &[&str] = &["int", "float", "string", "bool", "null", "array"];
+
+/// `toPrecision` refused for `language`, whose numbers are not laid out as ECMAScript's.
+fn no_to_precision(language: &str) -> Result<(), Refusal> {
+    Err(Refusal::Refused(
+        format!(
+            "`toPrecision` lays a number out as ECMAScript's Number.prototype.toPrecision; {language} numbers have no such layout"
+        )
+        .into(),
+    ))
+}
 
 /// Whether `name` is one of `known`, the type names of `language`.
 fn type_name(name: &str, known: &[&str], language: &str) -> Result<(), Refusal> {
@@ -255,6 +268,7 @@ impl ValueRules for Python {
     fn feature(feature: ValueFeature<'_>) -> Result<(), Refusal> {
         match feature {
             ValueFeature::Type(name) => type_name(name, PYTHON_TYPES, "Python"),
+            ValueFeature::ToPrecision => no_to_precision("Python"),
             ValueFeature::Compare(text, name) => match text {
                 SemanticText::Key | SemanticText::Member => Err(Refusal::Refused(
                     format!("`{name}` reads JavaScript and PHP property names; Python has none")
@@ -403,6 +417,7 @@ impl ValueRules for Ecma {
     fn feature(feature: ValueFeature<'_>) -> Result<(), Refusal> {
         match feature {
             ValueFeature::Type(name) => type_name(name, TYPESCRIPT_TYPES, "TypeScript"),
+            ValueFeature::ToPrecision => Ok(()),
             ValueFeature::Compare(SemanticText::Structure(_), _) => Err(Refusal::Refused(
                 "the structural modes compare Python and PHP syntax; use tokens for TypeScript"
                     .into(),
@@ -535,6 +550,7 @@ impl ValueRules for Php {
     fn feature(feature: ValueFeature<'_>) -> Result<(), Refusal> {
         match feature {
             ValueFeature::Type(name) => type_name(name, PHP_TYPES, "PHP"),
+            ValueFeature::ToPrecision => no_to_precision("PHP"),
             ValueFeature::Compare(SemanticText::Structure(Equality::Parts), _) => Err(Refusal::Refused(
                 "`structure-parts` compares Python's implicitly concatenated string parts; PHP has no implicit string concatenation"
                     .into(),

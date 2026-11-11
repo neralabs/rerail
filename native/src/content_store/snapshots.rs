@@ -1,5 +1,6 @@
 //! Git tree and snapshot storage.
 
+use super::compression::{compress_source, compress_tape, file_tag};
 use super::objects::{compress_documents, put_source_tx, put_tape_tx, validate_tape_payload};
 #[cfg(any(test, feature = "test-hooks"))]
 use super::rows::intern_string;
@@ -9,7 +10,7 @@ use super::rows::{
 use super::{
     ContentStore, GitTree, HASH_SHA256, HashKey, MAX_PUBLICATION_BATCH, OperationDeadline,
     STRING_PATH_COMPONENT, SnapshotFilePublication, SnapshotId, SourceId, StoreError, StoreResult,
-    StoredFile, TapeId, WorkspaceId, WorkspaceRegistration, compress,
+    StoredFile, TapeId, WorkspaceId, WorkspaceRegistration,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -394,10 +395,10 @@ impl ContentStore {
         for publication in publications {
             validate_relative_path(publication.path)?;
             validate_tape_payload(publication.tape)?;
-            let source_frame = compress(publication.source, self.compression_level)?;
+            let source_frame = compress_source(publication.source, self.compression_level, file_tag(publication.path, publication.tape.map(|tape| tape.bytes)))?;
             let tape_frame = publication
                 .tape
-                .map(|payload| compress(payload.bytes, self.compression_level))
+                .map(|payload| compress_tape(payload.bytes, self.compression_level))
                 .transpose()?;
             let document_frames = publication
                 .tape

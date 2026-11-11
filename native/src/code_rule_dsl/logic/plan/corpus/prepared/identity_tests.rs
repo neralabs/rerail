@@ -59,7 +59,7 @@ fn prepared_identity_child() {
             "inputFiles":["a.py","b.py"], "env":[format!("python.typeshed={}", root.join("typeshed").display())]
         })).unwrap();
     let mut programs = BTreeMap::new();
-    for (key, all) in super::super::prepared_cache().lock().unwrap().iter() {
+    super::super::with_prepared(|kept| for (key, all) in kept.iter() {
         for p in all {
             let (sccs, _) = front::strata(&p.split.cross).unwrap();
             let by = plan::rules_by_stratum(&p.split.cross, &sccs);
@@ -70,7 +70,7 @@ fn prepared_identity_child() {
                 "local":format!("{:?}",p.split.local), "cross":format!("{:?}",p.split.cross),
                 "identities":identities}));
         }
-    }
+    });
     let phases: Vec<_> = report.phase_runs.iter().map(|p| serde_json::json!({"name":p.name,
         "prepared":p.report.prepared,"kept":p.report.cross_kept,"maintained":p.report.cross_maintained,"memo":p.report.memo,"chunks":p.report.chunks,"strata":p.report.cross_strata})).collect();
     let result = serde_json::json!({"programs":programs,"outputs":std::fs::read_to_string(out.join("hit.csv")).unwrap(),

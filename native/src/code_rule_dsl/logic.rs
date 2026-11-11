@@ -2,6 +2,7 @@
 //! facts and Datalog over them, planned from statistics and lowered to SQL or transducer groups.
 //! `sql` is the typed SQL its plans emit.
 
+pub(in crate::code_rule_dsl) mod crypto;
 pub(in crate::code_rule_dsl) mod derived;
 #[cfg(test)]
 mod facts_only;

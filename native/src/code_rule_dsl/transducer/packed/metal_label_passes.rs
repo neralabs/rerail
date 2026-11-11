@@ -707,7 +707,7 @@ const TAPE_VIEW: &str = concat!("#include <metal_stdlib>\nusing namespace metal;
 const SOURCE: &str = concat!("#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape.metal"), include_str!("metal_label_passes.metal"));
 /// Where a label kernel binds the batch's four slabs (`Slabs`): past every other buffer.
 const SLAB_SLOT: u64 = 27;
-const KERNELS: [&str; 11] = [
+const KERNELS: [&str; 12] = [
     "label_sink",
     "label_settle",
     "label_round",
@@ -719,9 +719,12 @@ const KERNELS: [&str; 11] = [
     "label_group_32",
     "root_records_8",
     "root_records_32",
+    "label_group_64",
 ];
-/// The fused group kernels in `KERNELS` (`Runner::group`): 8 and 32 frames a walk.
-const GROUP_KERNELS: [usize; 2] = [7, 8];
+/// The fused group kernels in `KERNELS` (`Runner::group`): 8, 32 and 64 frames a walk.
+const GROUP_KERNELS: [usize; 3] = [7, 8, 11];
+/// The frames of each fused group kernel (`GROUP_KERNELS`).
+const GROUP_FRAMES: [usize; 3] = [8, 32, 64];
 /// A group dispatch's threads per file.
 const GROUP_WIDTH: u64 = 64;
 
@@ -964,7 +967,7 @@ struct Runner<'a> {
     stacks: Option<MappedBuffer>,
     /// The deep fused groups' stacks, one buffer for all of them: the groups run one after
     /// another in the command buffer (five of 33 MB each on S7 before, list step 13).
-    group_stacks: [Option<MappedBuffer>; 2],
+    group_stacks: [Option<MappedBuffer>; 3],
     encoded: bool,
     outcome: Outcome,
     /// The plan's root walks, encoded after its passes (`records`).
@@ -1091,6 +1094,10 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
         Ok(rounds)
     };
     let mut wanted = expected.clone();
+    if std::env::var_os("RERAIL_LAUNCHES").is_some() {
+        let levels = plan.steps.iter().map(|(_, levels)| levels.len()).sum::<usize>();
+        eprintln!("PLAN steps {} levels {levels} fixed {fixed} groups {groups} per group {per_group:?} expected {expected:?} files {}", plan.steps.len(), files.len());
+    }
     let mut rounds = plan_rounds(0, &wanted)?;
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let (mut retries, mut used, mut buffers) = (0, 0, 0);
@@ -1247,7 +1254,7 @@ fn encode(
         segments: Segments::default(),
         segs: None,
         stacks: kept.as_mut().and_then(|kept| kept.stacks.as_ref().map(|stacks| MappedBuffer::wrap(stacks.buffer.clone()))),
-        group_stacks: [None, None],
+        group_stacks: [None, None, None],
         encoded: false,
         outcome: Outcome {
             words,
@@ -2173,12 +2180,15 @@ impl Runner<'_> {
     }
 
     /// A recursive group's rounds to its fixpoint as one dispatch (`label_group_*`, decision 0024
-    /// §3), where every pass is a micro walk of at most 32 frames, a complement, a count or empty:
+    /// §3), where every pass is a micro walk of at most 64 frames, a complement, a count or empty:
     /// each level's walks, words, starts and text rows concatenated, its settles after them.
     /// `false` where the group is not such (it runs as rounds of levels).
     fn group(&mut self, levels: &[Vec<Pass<'_>>]) -> Result<bool, Error> {
         let unfused = |why: &str| {
             crate::code_rule_dsl::prof::count_named(format!("gpu.unfused.{why}"), 1);
+            if std::env::var_os("RERAIL_LAUNCHES").is_some() {
+                eprintln!("UNFUSED {why}: {} levels", levels.len());
+            }
             Ok(false)
         };
         if !self.micro {
@@ -2205,7 +2215,10 @@ impl Runner<'_> {
             }
             let (pass_start, op_start) = (records.len() as u32, ops.len() as u32);
             if let Some(walks) = walks {
-                if walks.fused.iter().any(|(_, depth)| depth.is_none_or(|depth| depth > 32)) {
+                if walks.fused.iter().any(|(_, depth)| depth.is_none_or(|depth| depth > GROUP_FRAMES[2])) {
+                    if std::env::var_os("RERAIL_LAUNCHES").is_some() {
+                        eprintln!("DEEP depths {:?}", walks.fused.iter().map(|(_, depth)| *depth).collect::<Vec<_>>());
+                    }
                     return unfused("deep");
                 }
                 deepest = deepest.max(walks.fused.iter().filter_map(|(_, depth)| *depth).max().unwrap_or(0));
@@ -2253,12 +2266,13 @@ impl Runner<'_> {
             group_levels,
             ops,
         ];
-        let pipeline = GROUP_KERNELS[usize::from(deepest > 8)];
-        // The kernel's stacks in device memory, one per thread launched (8 or 32 frames).
+        // The fewest frames that hold its deepest walk; the kernel's stacks in device memory, one per
+        // thread launched.
+        let depth = GROUP_FRAMES.iter().position(|&frames| deepest <= frames).expect("checked above");
+        let pipeline = GROUP_KERNELS[depth];
         let mut buffers = buffers.to_vec();
-        let depth = usize::from(deepest > 8);
         if self.group_stacks[depth].is_none() {
-            let words = GROUP_STACK_WORDS / if depth == 0 { 4 } else { 1 };
+            let words = GROUP_STACK_WORDS / 32 * GROUP_FRAMES[depth];
             self.group_stacks[depth] = Some(MappedBuffer::untouched::<u32>(self.device, self.files.len().max(1) * GROUP_WIDTH as usize * words)?);
         }
         buffers.push(self.group_stacks[depth].as_ref().expect("group stacks").buffer.clone());

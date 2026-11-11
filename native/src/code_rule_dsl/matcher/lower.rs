@@ -550,7 +550,12 @@ impl Lowering {
                 self.facts += 1;
                 return Ok(MatchTree::Fact(Arc::new(Fact { producer: AstMatcher::Semantic(producer), slots: Vec::new(), name, key, kinds: None })));
             }
+            // A gap to a capture (`to: capture.L`) reads a binding another leaf makes: the fact's
+            // producer runs with no captures, so the gap would never hold.
+            Semantic::Layout(layout) if layout.reads().next().is_some() => return Err(Unsupported("layout reads a capture")),
             Semantic::Value(_) | Semantic::Layout(_) | Semantic::Arguments(_) => false,
+            // A token the grammar implies is in a gap or not: never unknown (t31).
+            Semantic::Gap(_) => true,
             Semantic::Binding(test) => {
                 if test.occurrence.is_some() {
                     return Err(Unsupported("resolves.binding occurrence"));
@@ -615,8 +620,10 @@ fn semantic_name(semantic: &super::Semantic) -> &'static str {
         Semantic::Capture(_) => "capture",
         Semantic::FormatArgs(_) => "formatArgs",
         Semantic::Layout(_) => "layout",
+        Semantic::Gap(_) => "gap",
         Semantic::FilePath(_) => "file path",
         Semantic::Calls(_) => "calls",
+        Semantic::ImportTarget(_) => "importTarget",
     }
 }
 

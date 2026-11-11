@@ -23,7 +23,7 @@ use crate::code_rule_dsl::facts::core::{Facts, NONE, kind_atom};
 use crate::code_rule_dsl::language::KindCatalog;
 
 /// The rows' version: a change to what they hold changes the families' producer (`families::py_producer`).
-pub(crate) const VERSION: u32 = 1;
+pub(crate) const VERSION: u32 = 3;
 
 /// `py_exec_context.kind`'s names, by `ContextKind` order.
 pub(crate) const CONTEXTS: [&str; 5] = ["module", "sync_function", "async_function", "class", "lambda"];
@@ -104,7 +104,10 @@ impl Grammar {
         self.tag
     }
     fn role(&self, f: &Facts, id: u32) -> Role {
-        self.roles.get(usize::from(crate::code_rule_dsl::facts::core::kind_code(f.kind[id as usize]))).copied().unwrap_or(Role::Other)
+        self.atom_role(f.kind[id as usize])
+    }
+    fn atom_role(&self, atom: u32) -> Role {
+        self.roles.get(usize::from(crate::code_rule_dsl::facts::core::kind_code(atom))).copied().unwrap_or(Role::Other)
     }
 }
 
@@ -152,7 +155,7 @@ fn context(g: &Grammar, f: &Facts, call: u32) -> (u32, u32) {
                     let kind = match role {
                         Role::Class => 3,
                         Role::Lambda => 4,
-                        _ if f.children(owner).iter().any(|&c| g.role(f, c) == Role::Async) => 2,
+                        _ if f.tokens(owner).iter().any(|t| g.atom_role(t.kind) == Role::Async) => 2,
                         _ => 1,
                     };
                     return (owner, kind);

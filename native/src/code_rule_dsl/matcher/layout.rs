@@ -26,7 +26,8 @@ impl LineCount {
 /// The node a gap runs to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Neighbour {
-    /// The nearest token (a leaf of the tree, anonymous ones included).
+    /// The nearest token: a leaf of the tree, anonymous ones included, or a token the grammar
+    /// implies, which a tape does not store (see [`token`]).
     Token,
     /// The nearest named sibling.
     Sibling,
@@ -184,7 +185,7 @@ impl Gap {
         let lines = file.lines();
         let range = file.node(node);
         let neighbour = match &self.to {
-            Neighbour::Token => token(node, side, self.comments)?.map(|token| file.node(&token)),
+            Neighbour::Token => token(node, side, self.comments, file)?,
             Neighbour::Sibling => {
                 sibling(node, side, self.comments).map(|sibling| file.node(&sibling))
             }
@@ -230,7 +231,9 @@ impl Gap {
 }
 
 /// The lines strictly between `gap`'s first and last lines that no token or comment inside the
-/// gap touches, walking from the node toward its neighbour; `None` when the budget ran out.
+/// gap touches, walking from the node toward its neighbour; `None` when the budget ran out. A line
+/// between two stored leaves is blank when its text is all space: an implied token there is the
+/// only text a tape does not store (see [`token`]).
 fn blank_lines<D: Doc>(
     node: &Node<'_, D>,
     side: Side,
@@ -238,12 +241,18 @@ fn blank_lines<D: Doc>(
     file: &InFile<'_>,
 ) -> Option<usize> {
     let lines = file.lines();
-    let (first, last) = (lines.line(gap.start), lines.line(gap.end));
+    let source = file.source();
+    // The lines strictly inside `stretch` (between two leaves) whose text is all space.
+    let blank_in = |stretch: Range<usize>| {
+        let (first, last) = (lines.line(stretch.start), lines.line(stretch.end));
+        (first + 1..last).filter(|&line| source.get(lines.start(line)..lines.end(line)).is_some_and(|text| text.chars().all(is_space))).count()
+    };
     let mut blank = 0;
-    // The line the walk last left: the node's first (before) or last (after).
+    // Where the walk last left: the node's start (before) or end (after), then each leaf's far
+    // edge.
     let mut at = match side {
-        Side::Before => last,
-        Side::After => first,
+        Side::Before => gap.end,
+        Side::After => gap.start,
     };
     let mut current = node.clone();
     loop {
@@ -261,19 +270,44 @@ fn blank_lines<D: Doc>(
         if !inside {
             break;
         }
-        let (near, far) = match side {
-            Side::Before => (lines.line(token.end), lines.line(token.start)),
-            Side::After => (lines.line(token.start), lines.line(token.end)),
+        blank += blank_in(match side {
+            Side::Before => token.end..at,
+            Side::After => at..token.start,
+        });
+        at = match side {
+            Side::Before => token.start,
+            Side::After => token.end,
         };
-        blank += near.abs_diff(at).saturating_sub(1);
-        at = far;
         current = next;
     }
-    let end = match side {
-        Side::Before => first,
-        Side::After => last,
-    };
-    Some(blank + end.abs_diff(at).saturating_sub(1))
+    Some(blank + blank_in(match side {
+        Side::Before => gap.start..at,
+        Side::After => at..gap.end,
+    }))
+}
+
+/// Space between tokens: what the grammars' extras pass over (Unicode white space, and the
+/// byte-order mark and zero-width characters tree-sitter-python's extras name).
+fn is_space(c: char) -> bool {
+    c.is_whitespace() || matches!(c, '\u{feff}' | '\u{2060}' | '\u{200b}')
+}
+
+/// The token in `stretch` nearest the node: `stretch` runs between the node and the next stored
+/// leaf on `side`, so any text in it that is not space is a token the grammar implies and the tape
+/// leaves out (comments and extras are stored). Its first byte (after) or its last (before):
+/// what the gap's lines are counted to. The read is that bounded window, nothing more (t31).
+fn implied_in(source: &str, stretch: Range<usize>, side: Side) -> Option<Range<usize>> {
+    let text = source.get(stretch.clone())?;
+    match side {
+        Side::After => {
+            let at = stretch.start + (text.len() - text.trim_start_matches(is_space).len());
+            (at < stretch.end).then(|| at..at + 1)
+        }
+        Side::Before => {
+            let at = stretch.start + text.trim_end_matches(is_space).len();
+            (at > stretch.start).then(|| at - 1..at)
+        }
+    }
 }
 
 /// Whether a node is a comment, which a token or sibling walk passes over unless asked not to.
@@ -281,24 +315,44 @@ fn is_comment<D: Doc>(node: &Node<'_, D>) -> bool {
     super::util::is_comment_kind(&node.kind())
 }
 
-/// The nearest token on `side` of the node that has a width, comments included or passed over;
-/// `None` when the budget ran out.
+/// The span of the nearest token on `side` of the node that has a width, comments included or
+/// passed over; `None` when the budget ran out. Between the node and each stored leaf the walk
+/// meets, a token the grammar implies may sit ([`implied_in`]); the nearest of those, or of the
+/// leaves, is the neighbour. Past the document's last leaf, its root's edge bounds the window.
 fn token<'t, D: Doc>(
     node: &Node<'t, D>,
     side: Side,
     comments: bool,
-) -> Option<Option<Node<'t, D>>> {
+    file: &InFile<'_>,
+) -> Option<Option<Range<usize>>> {
+    let source = file.source();
     let mut current = node.clone();
+    let mut near = file.node(node);
     loop {
         if !spend_util_step() {
             return None;
         }
-        let Some(next) = leaf(&current, side) else {
+        let next = leaf(&current, side);
+        let far = match &next {
+            Some(leaf) => file.node(leaf),
+            None => file.node(&node.ancestors().last().unwrap_or_else(|| node.clone())),
+        };
+        let stretch = match (side, next.is_some()) {
+            (Side::After, true) => near.end..far.start,
+            (Side::After, false) => near.end..far.end,
+            (Side::Before, true) => far.end..near.start,
+            (Side::Before, false) => far.start..near.start,
+        };
+        if let Some(implied) = implied_in(source, stretch, side) {
+            return Some(Some(implied));
+        }
+        let Some(next) = next else {
             return Some(None);
         };
         if comments || !is_comment(&next) {
-            return Some(Some(next));
+            return Some(Some(far));
         }
+        near = far;
         current = next;
     }
 }

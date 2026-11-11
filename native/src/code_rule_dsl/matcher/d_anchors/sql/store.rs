@@ -56,7 +56,7 @@ impl Store {
         Ok(store)
     }
     pub fn open(path: &Path) -> Result<Self> {
-        let db = crate::code_rule_dsl::waves::relational::database::Database::from_connection(
+        let mut db = crate::code_rule_dsl::waves::relational::database::Database::from_connection(
             Connection::open(path)?,
         )?;
         #[cfg(feature = "code-rule-profile")]
@@ -77,7 +77,7 @@ impl Store {
         db.execute_batch(include_str!("vocabulary.sql"))?;
         let readers = super::functions::install(&db)?;
         let values = parking_lot::Mutex::new(super::values::Counts::load(&db)?);
-        db.progress_handler(
+        db.connection_mut().progress_handler(
             16_384,
             Some(|| {
                 #[cfg(feature = "code-rule-profile")]

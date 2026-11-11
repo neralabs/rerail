@@ -78,7 +78,7 @@ it("keeps repository gates complete across applies and restores only eligible ev
   p.clauses[0]!.relational.query = "SELECT __path path,__start start_byte,__end end_byte,(SELECT count(DISTINCT __path) FROM nodes) AS files FROM nodes WHERE kind='module'";
   const ws = new native.CodeRuleDslWorkspace();
   try {
-    await ws.enableStorageAsync(root, join(root, "results.sqlite")); ws.setDocumentResidencyLimit(0); ws.addCodeRule(compile(p));
+    await ws.enableStorageAsync(root, join(root, "results.sqlite"), { files: [], folders: [] }); ws.setDocumentResidencyLimit(0); ws.addCodeRule(compile(p));
     const apply = async (revision: number, path: string, source: string) => {
       const changed = JSON.parse(await ws.applyAsync(JSON.stringify({ revision, files: [{ path, language: "python", source }], removed: [] }))).evaluation;
       expect(changed.failures).toEqual([]);

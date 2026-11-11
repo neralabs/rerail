@@ -27,6 +27,7 @@ use ast_grep_core::source::{Content, Doc, Edit, SgNode};
 use ast_grep_core::tree_sitter::StrDoc;
 use offsets::Decoded;
 pub(crate) use python_fstring::parse as parse_python_fstring;
+pub(crate) use python_fstring::{pieces as fstring_pieces, template as fstring_template};
 use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::Arc;
@@ -521,6 +522,56 @@ impl SubTree {
     pub(crate) fn value(&self, node_id: usize) -> Option<&Value> {
         self.values.get(self.index_of(node_id)?)?.as_ref()
     }
+
+    /// The root's value.
+    pub(crate) fn root_value(&self) -> Option<&Value> {
+        self.values.first()?.as_ref()
+    }
+
+    /// The root's children in order, each its kind's name and its value.
+    pub(crate) fn root_children(
+        &self,
+    ) -> impl Iterator<Item = (&'static str, Option<&Value>)> + '_ {
+        let grammar = self.lang.0;
+        let mut at = self.nodes.first().map_or(NONE, |root| root.first);
+        std::iter::from_fn(move || {
+            let i = (at != NONE).then_some(at as usize)?;
+            at = self.nodes[i].next;
+            Some((
+                grammar.kind_name(self.nodes[i].kind),
+                self.values[i].as_ref(),
+            ))
+        })
+    }
+
+    /// Every node in preorder (the tree's own order: a parent before its children, siblings in order), each with its
+    /// parent's index (`None` at the root) and its range in `text()` (the offset left out).
+    pub(crate) fn preorder(&self) -> impl Iterator<Item = PreNode> + '_ {
+        self.nodes.iter().map(|rec| PreNode {
+            kind: rec.kind,
+            field: rec.field,
+            parent: (rec.parent != NONE).then_some(rec.parent),
+            start: rec.start,
+            end: rec.end,
+            named: rec.named,
+            extra: rec.extra,
+            error: rec.error,
+        })
+    }
+}
+
+/// One node of a `SubTree` (`SubTree::preorder`): its grammar kind and field ids (tree-sitter's, for an annotation:
+/// ERROR is `annotation::ERROR_KIND`), its parent's index, its range in the tree's text and its flags.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PreNode {
+    pub(crate) kind: u16,
+    pub(crate) field: u16,
+    pub(crate) parent: Option<u32>,
+    pub(crate) start: u32,
+    pub(crate) end: u32,
+    pub(crate) named: bool,
+    pub(crate) extra: bool,
+    pub(crate) error: bool,
 }
 
 /// A sub-tree's text. Node ranges are offsets into it plus `offset`, which an annotation's tree
@@ -568,8 +619,9 @@ impl Language for SubLang {
             .flatten()
     }
     fn build_pattern(&self, builder: &PatternBuilder) -> Result<Pattern, PatternError> {
-        // Patterns are Python's, and only annotations hold Python.
-        builder.build(|src| StrDoc::try_new(src, GrammarDialect::Python))
+        // Patterns are Python's, and only annotations hold Python: written as its trees are,
+        // with no token the grammar implies (RER-131).
+        ast_grep_core::Language::build_pattern(&GrammarDialect::Python, builder)
     }
 }
 

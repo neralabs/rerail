@@ -29,10 +29,11 @@
 
 pub(crate) mod adapter;
 
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::blade::forte::tree::{self as blade_tree, BladeLang};
 use crate::code_rule_dsl::logic::rr::tape as rr_tree;
 use crate::code_rule_dsl::module_path::ModulePath;
-use crate::code_rule_dsl::package_manifest::{DEFAULT_NODE_RANGE, Manifest};
+use crate::code_rule_dsl::package_manifest::{Manifest, node_range_is_subset_of};
 use crate::code_rule_dsl::semver::Range;
 use ast_grep_core::{
     language::Language,
@@ -73,11 +74,17 @@ impl Language for GrammarDialect {
     }
 
     /// Blade's patterns are Forte trees (`blade::forte::tree`), whose kinds are numbered as Blade's
-    /// tapes number them; every other dialect's are tree-sitter trees.
+    /// tapes number them; every other dialect's are tapes of tree-sitter trees, written as documents
+    /// are: no token the grammar implies (`tape::pattern_doc`, RER-131).
     fn build_pattern(&self, builder: &PatternBuilder) -> Result<Pattern, PatternError> {
         match self {
             Self::Blade => BladeLang.build_pattern(builder),
-            _ => builder.build(|source| StrDoc::try_new(source, *self)),
+            _ => {
+                let (doc, shape) = crate::code_rule_dsl::tape::pattern_doc(*self, builder.source()).map_err(PatternError::Parse)?;
+                let ends = |node: usize| shape.ends.get(node).copied().unwrap_or(false);
+                let single = |node: usize| shape.single.get(node).copied().unwrap_or(false);
+                builder.build_doc(doc, &ast_grep_core::matcher::PatternShape { ends: Some(&ends), single: Some(&single) })
+            }
         }
     }
 }
@@ -589,6 +596,15 @@ impl SourceType {
     pub(crate) fn of_file(label: &str, path: &str, package: Option<PackageType>) -> Option<Self> {
         adapter::source_type(label, path, package)
     }
+
+    /// The module system a file has by its extension and its nearest `package.json`'s `type`
+    /// alone (`languageOptions.moduleSystem: "package-type"`), as eslint-plugin-n's configs give
+    /// each file one: `.mjs` and `.mts` modules, `.cjs` and `.cts` CommonJS, any other file a
+    /// module only where `type` is `module`, CommonJS where it is anything else and where there
+    /// is no manifest. No syntax is read.
+    pub(crate) fn by_package_type(path: &str, package: Option<PackageType>) -> Self {
+        adapter::Ecma::source_type_by_package_type(path, package)
+    }
 }
 
 /// The `type` of an ECMA file's nearest `package.json` (its `package`'s `type`).
@@ -894,31 +910,44 @@ pub(crate) fn jsx_runtime_in_source<D: ast_grep_core::Doc>(
 }
 
 /// An ECMA query's `file.package`: conditions on the file's nearest `package.json`. `bin`,
-/// `dependsOn` and `path` need one, so a file without one fails them, `bin: false` included;
-/// `nodeVersion` reads eslint-plugin-n's default range there.
+/// `dependsOn`, `path`, `private` and `published` need one, so a file without one fails them,
+/// `bin: false`, `private: false` and `published: false` included; `nodeVersion` reads
+/// eslint-plugin-n's default range there.
 #[derive(Debug)]
 pub(crate) struct PackageCondition {
     /// Whether the file is one of the manifest's `bin` targets (`Manifest::is_bin`).
     pub(crate) bin: Option<bool>,
-    /// The range the file's configured Node range must be a subset of.
-    pub(crate) node_version: Option<Range>,
+    /// The range the file's configured Node range must, or must not, be a subset of.
+    pub(crate) node_version: Option<NodeVersionCondition>,
     /// Names one of which the manifest must list as a dependency of any kind.
     pub(crate) depends_on: Option<Vec<String>>,
     /// Over the file's path relative to the manifest's folder.
     pub(crate) path: Option<TextCondition>,
     /// Whether the file is in its Next app's server module graph (`Manifest::in_server_graph`).
     pub(crate) server_graph: Option<bool>,
+    /// Whether the manifest's `private` is `true` (`Manifest::is_private`).
+    pub(crate) private: Option<bool>,
+    /// Whether npm publishes the file (`Manifest::publishes`).
+    pub(crate) published: Option<bool>,
+}
+
+/// `nodeVersion`: the file's configured Node range is (`subsetOf`) or is not (`notSubsetOf`) a
+/// subset of `range`, node-semver's `subset`.
+#[derive(Debug)]
+pub(crate) struct NodeVersionCondition {
+    pub(crate) range: Range,
+    pub(crate) subset: bool,
 }
 
 impl PackageCondition {
     fn holds(&self, path: &str, manifest: Option<&Manifest>) -> bool {
         self.bin
             .is_none_or(|bin| manifest.is_some_and(|manifest| manifest.is_bin(path) == bin))
-            && self.node_version.as_ref().is_none_or(|range| {
+            && self.node_version.as_ref().is_none_or(|condition| {
                 manifest.map_or_else(
-                    || DEFAULT_NODE_RANGE.is_subset_of(range),
-                    |manifest| manifest.node_range_is_subset_of(range),
-                )
+                    || node_range_is_subset_of(None, &condition.range),
+                    |manifest| manifest.node_range_is_subset_of(&condition.range),
+                ) == condition.subset
             })
             && self
                 .depends_on
@@ -931,6 +960,12 @@ impl PackageCondition {
             })
             && self.server_graph.is_none_or(|member| {
                 manifest.and_then(|manifest| manifest.in_server_graph(path)) == Some(member)
+            })
+            && self.private.is_none_or(|private| {
+                manifest.is_some_and(|manifest| manifest.is_private() == private)
+            })
+            && self.published.is_none_or(|published| {
+                manifest.and_then(|manifest| manifest.publishes(path)) == Some(published)
             })
     }
 }
@@ -956,6 +991,9 @@ pub(crate) struct FileCondition {
     /// TypeScript: the JSX runtimes the file's may be one of. Its text can decide it, so it is
     /// checked once the file is read (`run_clause`), not by `holds`.
     pub(crate) jsx_runtime: Option<Vec<JsxRuntime>>,
+    /// Whether the file's text opens with a byte order mark (U+FEFF), which every grammar reads as
+    /// whitespace before the program, so no node's text holds it.
+    pub(crate) byte_order_mark: Option<bool>,
 }
 
 /// A text condition: `regex` (unanchored, as ast-grep's) must match, `notRegex` must not.
@@ -976,14 +1014,15 @@ impl TextCondition {
 }
 
 impl FileCondition {
-    /// Whether a file at `path` with this module path and nearest `package.json` satisfies the
-    /// condition, `jsx_runtime` aside. A module path's text condition needs a module path
-    /// (`package` one in a package), `notRegex` too.
+    /// Whether a file at `path` with this module path, nearest `package.json` and text (`source`)
+    /// satisfies the condition, `jsx_runtime` aside. A module path's text condition needs a module
+    /// path (`package` one in a package), `notRegex` too.
     pub(crate) fn holds(
         &self,
         path: &str,
         module: Option<&ModulePath>,
         manifest: Option<&Manifest>,
+        source: &str,
     ) -> bool {
         self.path
             .as_ref()
@@ -1008,6 +1047,9 @@ impl FileCondition {
                 .manifest
                 .as_ref()
                 .is_none_or(|condition| condition.holds(path, manifest))
+            && self
+                .byte_order_mark
+                .is_none_or(|mark| source.starts_with('\u{feff}') == mark)
     }
 }
 
@@ -1363,8 +1405,7 @@ mod tests {
             .dfs()
             .filter(|node| node.kind() == "string")
             .map(|node| {
-                node.children()
-                    .filter(|child| child.is_named())
+                node.named()
                     .map(|child| format!("{}:{}", child.kind(), child.text()))
                     .collect::<Vec<_>>()
                     .join(" ")
@@ -1443,8 +1484,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("{dialect:?}: {source} has parameters"));
             let function = parameters.parent().expect("parameters have a parent");
             let parameter = parameters
-                .children()
-                .find(|child| child.is_named())
+                .first_named()
                 .unwrap_or_else(|| panic!("{dialect:?}: {source} has a parameter"));
             let pattern = parameter
                 .field("pattern")
@@ -1690,8 +1730,7 @@ mod tests {
             .dfs()
             .filter(|node| node.kind() == "string")
             .map(|node| {
-                node.children()
-                    .filter(|child| child.is_named())
+                node.named()
                     .map(|child| format!("{}:{}", child.kind(), child.text()))
                     .collect::<Vec<_>>()
                     .join(" ")
@@ -1808,6 +1847,59 @@ mod tests {
                 "using_declaration:using s = f();",
             ]
         );
+    }
+
+    /// `static`, `get` and `set` before a name on the next line are the method's own tokens, as
+    /// ECMAScript and TypeScript read a class member: `static get⏎a(){}` is a static getter `a`
+    /// (Patch 16 in `grammars/tree-sitter-javascript/PATCHES.md`, Patch 28 in
+    /// `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn a_name_after_a_line_break_follows_static_get_and_set() {
+        let source = "class A { static set a(foo){} b(){} static get \n a(){}\n}\n\
+                      class B { static\nget\nb(){} get\nc(){} static get = 1; static get\n= 2; static async\n d(){} }\n";
+        for dialect in [
+            GrammarDialect::JavaScript,
+            GrammarDialect::TypeScript,
+            GrammarDialect::Tsx,
+        ] {
+            let root = dialect.ast_grep(source);
+            assert!(!root.root().get_inner_node().has_error(), "{dialect:?}");
+            let members = root
+                .root()
+                .dfs()
+                .filter(|node| node.kind().ends_with("_definition"))
+                .map(|node| {
+                    let tokens = node
+                        .children()
+                        .filter(|child| !child.is_named())
+                        .map(|child| child.kind().into_owned())
+                        .filter(|kind| matches!(kind.as_str(), "static" | "get" | "set" | "async"))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let name = node
+                        .field("name")
+                        .or_else(|| node.field("property"))
+                        .expect("a member has a name");
+                    format!("{}:{tokens}:{}", node.kind(), name.text())
+                })
+                .map(|member| member.replace("public_field_definition", "field_definition"))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                members,
+                [
+                    "method_definition:static set:a",
+                    "method_definition::b",
+                    "method_definition:static get:a",
+                    "method_definition:static get:b",
+                    "method_definition:get:c",
+                    "field_definition:static:get",
+                    "field_definition:static:get",
+                    "field_definition:static:async",
+                    "method_definition::d",
+                ],
+                "{dialect:?}"
+            );
+        }
     }
 
     /// A destructuring assignment's target may be parenthesized, comments and all (Patch 6 in
@@ -2956,11 +3048,64 @@ mod tests {
                 .and_then(|module| module.field("body"))
                 .expect("the module has a body");
             let statements = body
-                .children()
-                .filter(|node| node.is_named())
+                .named()
                 .map(|node| node.kind().into_owned())
                 .collect::<Vec<_>>();
             assert_eq!(statements, ["expression_statement", "statement_block"]);
+        }
+    }
+
+    /// A tagged template may take type arguments, as TypeScript reads it: a `call_expression` with
+    /// `type_arguments` and a `template_string` as its `arguments`, whether the type is a name or an
+    /// object type with optional or `;`-separated members, and `a < b > \`c\`` is one too (Patch 27 in
+    /// `grammars/tree-sitter-typescript/PATCHES.md`). A tagged template without type arguments and
+    /// `new A<T>` keep their readings.
+    #[test]
+    fn a_typescript_tagged_template_takes_type_arguments() {
+        for root in typescript_and_tsx(
+            "const A = styled.div<{ open?: boolean; size: number }>`\n  top: ${({ open }) => (open ? 0 : 1)}px;\n`;\n\
+             const B = styled(C)<{ x: boolean }>`top: 0;`;\nconst D = f<T>`x`;\nx = a < b > `c`;\n\
+             const E = css`top: 0;`;\nconst F = new G<T>;\n",
+        ) {
+            assert!(!root.root().get_inner_node().has_error());
+            let tagged = root
+                .root()
+                .dfs()
+                .filter(|node| {
+                    node.kind() == "call_expression"
+                        && node
+                            .field("arguments")
+                            .is_some_and(|arguments| arguments.kind() == "template_string")
+                })
+                .map(|node| {
+                    let function = node.field("function").expect("a call has a function");
+                    let type_arguments = node
+                        .field("type_arguments")
+                        .map(|types| types.text().into_owned());
+                    format!("{}{}", function.text(), type_arguments.unwrap_or_default())
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                tagged,
+                [
+                    "styled.div<{ open?: boolean; size: number }>",
+                    "styled(C)<{ x: boolean }>",
+                    "f<T>",
+                    "a< b >",
+                    "css"
+                ]
+            );
+            assert!(
+                root.root()
+                    .dfs()
+                    .any(|node| node.kind() == "new_expression")
+            );
+            assert!(
+                !root
+                    .root()
+                    .dfs()
+                    .any(|node| node.kind() == "binary_expression")
+            );
         }
     }
 }

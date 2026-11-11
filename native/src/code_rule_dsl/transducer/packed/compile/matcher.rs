@@ -2550,15 +2550,18 @@ impl<'a> Builder<'a> {
         let program = Builder::new(self.labels).roots(tree)?.in_set_mode();
         self.labels.defs[usize::from(label - LABEL_BASE)] = Label::Roots(program, Domain::of(tree));
         // Only the labels that read the utility's, directly or through each other, are evaluated
-        // round after round; the others are passes of their own ahead of the group.
-        let members = self.labels.steps.drain(start..).flatten().collect::<Vec<_>>();
+        // round after round; the others are passes of their own ahead of the group. A recursive
+        // utility inside this one is a step that is a group already: it stays one, or joins this
+        // group whole, so its labels still settle round after round (split into steps of one,
+        // each ran once and the inner recursion stopped at its first level).
+        let steps = self.labels.steps.drain(start..).collect::<Vec<_>>();
         let mut group = Vec::new();
-        for member in members {
-            let reads = self.labels.reads(member);
-            if reads.iter().any(|read| *read == label || group.contains(read)) {
-                group.push(member);
+        for step in steps {
+            let reads = step.iter().any(|&member| self.labels.reads(member).iter().any(|read| *read == label || group.contains(read)));
+            if reads {
+                group.extend(step);
             } else {
-                self.labels.steps.push(vec![member]);
+                self.labels.steps.push(step);
             }
         }
         group.push(label);

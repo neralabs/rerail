@@ -18,7 +18,7 @@ use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, FileInput, Query
 use crate::code_rule_dsl::placement::placement_identity;
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::profile;
-use crate::code_rule_dsl::soundness::UNREAD;
+use crate::code_rule_dsl::soundness::{SYNTAX_ERRORS, UNREAD};
 use crate::code_rule_dsl::violations::{Captures, Span, Witness};
 use crate::code_rule_dsl::{language, tape};
 use crate::content_store::{
@@ -83,8 +83,9 @@ pub(super) fn restore_complete_results(
 }
 
 /// The stored per-file result encoding. A stored result of any other version is a cache miss.
-/// A marked witness (`Witness::ignored`) carries `"ignored": true`; another omits the key.
-const LOCAL_RESULT_VERSION: u64 = 3;
+/// A marked witness (`Witness::ignored`) carries `"ignored": true`; another omits the key. A
+/// witness without a span (`Witness::span`) omits `span`.
+const LOCAL_RESULT_VERSION: u64 = 4;
 
 /// A stored local result as `encode_local_result` writes it, borrowing its witnesses. Fields are
 /// in key order, as a JSON object of the same keys serializes.
@@ -104,7 +105,8 @@ struct WitnessEncoding<'a> {
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     ignored: bool,
     message: &'a Option<String>,
-    span: &'a Span,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    span: Option<&'a Span>,
 }
 
 fn serialize_witnesses<S: serde::Serializer>(
@@ -116,7 +118,7 @@ fn serialize_witnesses<S: serde::Serializer>(
         fix: &witness.fix,
         ignored: witness.ignored,
         message: &witness.message,
-        span: &witness.span,
+        span: witness.span.as_ref(),
     }))
 }
 
@@ -149,7 +151,7 @@ fn persisted_failure(code: &str, message: &str) -> Option<LocalFailure> {
         "file match budget exceeded",
         "file line index could not be built",
         "file grammar cannot be taped",
-        "file has syntax errors",
+        SYNTAX_ERRORS,
         UNREAD,
         "file parsing time budget exceeded",
         "file tape encoding failed",
@@ -202,7 +204,10 @@ pub(super) fn decode_local_result(
             Some(Witness {
                 sql_violation: None,
                 path: path.to_owned(),
-                span: Span::deserialize(witness.get("span")?).ok()?,
+                span: match witness.get("span") {
+                    None => None,
+                    Some(span) => Some(Span::deserialize(span).ok()?),
+                },
                 captures: Captures::from_value(witness.get("captures")?)?,
                 message: witness
                     .get("message")

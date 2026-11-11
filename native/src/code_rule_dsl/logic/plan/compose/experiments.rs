@@ -109,11 +109,15 @@ fn query(db: &Connection, sql: &str) -> Result<(Vec<Vec<SqlValue>>, Json)> {
     }
     let width = stmt.column_count();
     let ops = Arc::new(AtomicUsize::new(0));
-    let counter = ops.clone();
-    db.progress_handler(
-        10_000,
-        Some(move || counter.fetch_add(1, Ordering::Relaxed) > 2_000),
-    )?;
+    // rusqlite 0.41's `progress_handler` takes the connection mutably (the statement holds it shared): SQLite's own,
+    // set here and taken away after the query, while `ops` lives.
+    unsafe extern "C" fn tick(ops: *mut std::ffi::c_void) -> std::ffi::c_int {
+        // SAFETY: `ops` is the `AtomicUsize` below, alive until the handler is taken away.
+        std::ffi::c_int::from(unsafe { (*(ops as *const AtomicUsize)).fetch_add(1, Ordering::Relaxed) } > 2_000)
+    }
+    // SAFETY: the handle is the open connection's; the handler is removed before `ops` drops.
+    let handle = unsafe { db.handle() };
+    unsafe { rusqlite::ffi::sqlite3_progress_handler(handle, 10_000, Some(tick), Arc::as_ptr(&ops) as *mut std::ffi::c_void) };
     let start = Instant::now();
     let c = cpu();
     let rows = (|| -> rusqlite::Result<Vec<Vec<SqlValue>>> {
@@ -130,7 +134,7 @@ fn query(db: &Connection, sql: &str) -> Result<(Vec<Vec<SqlValue>>, Json)> {
     })();
     let spent = cpu() - c;
     let wall = start.elapsed().as_secs_f64();
-    db.progress_handler(0, None::<fn() -> bool>)?;
+    unsafe { rusqlite::ffi::sqlite3_progress_handler(handle, 0, None, std::ptr::null_mut()) };
     let work: BTreeMap<_, _> = vtab::counters(db)
         .into_iter()
         .filter_map(|(name, now)| {

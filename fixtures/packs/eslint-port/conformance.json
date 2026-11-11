@@ -5,7 +5,6 @@
     "syntax",
     "suppression"
   ],
-  "corpora": [],
   "tools": [
     {
       "name": "eslint",

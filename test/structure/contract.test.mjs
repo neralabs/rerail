@@ -15,6 +15,7 @@ function validPack(id, overrides = {}) {
     [`packs/${id}/pack.json`]: JSON.stringify({
       format: "rerail.rule-pack/v1",
       id,
+      name: "PHP",
       rules: [{ id: `${id}:a`, document: "rules/a.json" }],
     }),
     [`packs/${id}/package.json`]: JSON.stringify({
@@ -22,13 +23,27 @@ function validPack(id, overrides = {}) {
       license: "Apache-2.0",
       files: ["pack.json", "rules", "LICENSE", "NOTICE", "README.md"],
     }),
-    [`packs/${id}/README.md`]: "",
+    [`packs/${id}/README.md`]: "# Rerail rule pack: PHP\n\nBody.\n",
     [`packs/${id}/LICENSE`]: "",
     [`packs/${id}/NOTICE`]: "",
     [`packs/${id}/rules/a.json`]: rule(`${id}:a`),
+    "docs/rule-packs.md": "| Pack | Category |\n|---|---|\n| PHP | language |\n",
     ...overrides,
   };
 }
+
+/** The pack named `name`, its README and the docs table following it, so only what a test overrides disagrees. */
+function packNamed(name, overrides = {}) {
+  const files = validPack("php", {
+    "packs/php/README.md": `# Rerail rule pack: ${name}\n`,
+    "docs/rule-packs.md": `| Pack | Category |\n|---|---|\n| ${name} | language |\n`,
+    ...overrides,
+  });
+  files["packs/php/pack.json"] = JSON.stringify({ ...JSON.parse(files["packs/php/pack.json"]), name });
+  return files;
+}
+
+const messages = (files) => packFormat(memoryRepo(files)).findings.map((item) => `${item.path}: ${item.message}`);
 
 describe("#8 pack format", () => {
   it("passes a complete pack", () => {
@@ -59,6 +74,51 @@ describe("#8 pack format", () => {
       "format must be rerail.rule-pack/v1",
       'id must be the directory name "php"',
     ]);
+  });
+
+  it("refuses a name holding brackets or digits", () => {
+    expect(messages(packNamed("PHP (strict)"))).toEqual([
+      'packs/php/pack.json: name "PHP (strict)" has brackets or digits: a name says what the pack is about, and limits and versions go in covers',
+    ]);
+    expect(messages(packNamed("Complexity limit 6"))).toEqual([
+      'packs/php/pack.json: name "Complexity limit 6" has brackets or digits: a name says what the pack is about, and limits and versions go in covers',
+    ]);
+    for (const name of ["PHP [strict]", "PHP {strict}"]) {
+      expect(messages(packNamed(name))).toEqual([
+        `packs/php/pack.json: name "${name}" has brackets or digits: a name says what the pack is about, and limits and versions go in covers`,
+      ]);
+    }
+  });
+
+  it("refuses a name holding a tool the pack ports, whatever its case", () => {
+    const conformance = JSON.stringify({ tools: [{ name: "phpstan" }, { name: "psalm" }] });
+    expect(messages(packNamed("PHP and PHPStan", { "packs/php/conformance.json": conformance }))).toEqual([
+      'packs/php/pack.json: name "PHP and PHPStan" names the tool phpstan: tools go in covers',
+    ]);
+    expect(messages(packNamed("PHP", { "packs/php/conformance.json": conformance }))).toEqual([]);
+  });
+
+  it("requires the README heading, and the candidates README's, to carry the name", () => {
+    expect(messages(validPack("php", { "packs/php/README.md": "# PHP opt-in rule pack\n" }))).toEqual([
+      'packs/php/README.md: first line must be "# Rerail rule pack: PHP"',
+    ]);
+    expect(messages(validPack("php", { "packs/php/candidates/README.md": "# Candidates\n" }))).toEqual([
+      'packs/php/candidates/README.md: first line must be "# Rerail rule pack: PHP, candidates"',
+    ]);
+    expect(messages(validPack("php", { "packs/php/candidates/README.md": "# Rerail rule pack: PHP, candidates\n" }))).toEqual([]);
+  });
+
+  it("requires a published pack's row in the docs table, by its exact name", () => {
+    expect(messages(validPack("php", { "docs/rule-packs.md": "| Pack |\n| PHP (old) | language |\n" }))).toEqual([
+      'docs/rule-packs.md: no table row names the pack "PHP"',
+    ]);
+    expect(messages(validPack("php", { "docs/rule-packs.md": "| Pack |\n| PHP | language |\n" }))).toEqual([]);
+  });
+
+  it("does not ask a private pack for a docs row", () => {
+    const files = validPack("php", { "docs/rule-packs.md": "| Pack | Category |\n" });
+    files["packs/php/package.json"] = JSON.stringify({ ...JSON.parse(files["packs/php/package.json"]), private: true });
+    expect(messages(files)).toEqual([]);
   });
 });
 

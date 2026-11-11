@@ -35,11 +35,19 @@ pub(in crate::code_rule_dsl) fn on() -> bool {
     std::env::var_os("RERAIL_SPIKE_RECURSIVE").is_some()
 }
 
+#[cfg(unix)]
 fn cpu() -> f64 {
     let mut now = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     // SAFETY: `now` is a valid timespec for the call to fill.
     unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut now) };
     now.tv_sec as f64 + now.tv_nsec as f64 * 1e-9
+}
+
+/// Elsewhere (Windows, the browser build): the thread's user and system CPU as the corpus runner reads them.
+#[cfg(not(unix))]
+fn cpu() -> f64 {
+    let (user, sys) = super::thread_usage();
+    user + sys
 }
 
 type Rows = Vec<Vec<i64>>;

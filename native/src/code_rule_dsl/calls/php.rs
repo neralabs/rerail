@@ -27,6 +27,7 @@
 //! Other dynamic callees (`$f()` of a parameter, `$o->$m()`, `new $class`) are unknown. `f(...)`
 //! makes a callable and calls nothing.
 
+use crate::code_rule_dsl::tree::Tree;
 use super::names::Name;
 use super::summary::{CLASS, Def, OPEN, Summary};
 use crate::code_rule_dsl::language::Family;
@@ -258,8 +259,7 @@ impl<'r, D: Doc> Reader<'_, 'r, D> {
             })?,
         };
         let expression = argument
-            .children()
-            .filter(|child| child.is_named() && !child.kind().ends_with("comment"))
+            .named_code()
             .last()?;
         if expression.kind() == "variadic_unpacking"
             || argument
@@ -328,8 +328,7 @@ impl<'r, D: Doc> Reader<'_, 'r, D> {
         };
         let value = |element: &Node<'r, D>| {
             let mut named = element
-                .children()
-                .filter(|child| child.is_named() && !child.kind().ends_with("comment"));
+                .named_code();
             match (named.next(), named.next()) {
                 (Some(value), None) => Some(unparenthesized(&value)),
                 _ => None,
@@ -363,8 +362,7 @@ impl<'r, D: Doc> Reader<'_, 'r, D> {
     /// `X::class`: the class `X` names.
     fn class_constant(&self, access: &Node<'r, D>) -> Class {
         let mut named = access
-            .children()
-            .filter(|child| child.is_named() && !child.kind().ends_with("comment"));
+            .named_code();
         let (Some(scope), Some(constant), None) = (named.next(), named.next(), named.next()) else {
             return Class::Open;
         };
@@ -416,8 +414,7 @@ impl<'r, D: Doc> Reader<'_, 'r, D> {
     /// The class a `new` expression instantiates.
     fn created(&self, creation: &Node<'r, D>) -> Class {
         let Some(class) = creation
-            .children()
-            .find(|child| child.is_named() && !child.kind().ends_with("comment"))
+            .first_code()
         else {
             return Class::Open;
         };
@@ -684,8 +681,7 @@ fn unparenthesized<'r, D: Doc>(node: &Node<'r, D>) -> Node<'r, D> {
     let mut node = node.clone();
     while node.kind() == "parenthesized_expression" {
         let mut inner = node
-            .children()
-            .filter(|child| child.is_named() && !child.kind().ends_with("comment"));
+            .named_code();
         let (Some(expression), None) = (inner.next(), inner.next()) else {
             break;
         };
@@ -1108,14 +1104,13 @@ fn supers<D: Doc>(extractor: &mut Extractor, node: &Node<'_, D>, class: &str, na
         };
         for clause in list.children() {
             let parts = clause
-                .children()
-                .filter(|child| child.is_named() && !child.kind().ends_with("comment"))
+                .named_code()
                 .collect::<Vec<_>>();
             // `T::m`: the trait and the method.
             let method_of = |part: &Node<'_, D>| -> Option<(Option<String>, String)> {
                 match part.kind().as_ref() {
                     "class_constant_access_expression" => {
-                        let mut named = part.children().filter(|child| child.is_named());
+                        let mut named = part.named();
                         let (trait_name, method) = (named.next()?, named.next()?);
                         Some((resolved(&trait_name), method.text().to_ascii_lowercase()))
                     }

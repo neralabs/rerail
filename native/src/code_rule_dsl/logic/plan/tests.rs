@@ -531,8 +531,8 @@ fn product_programs_derive_t_outputs() {
          INSERT INTO stat_col VALUES ('parsed', 's', 0, 0, 0, 0), ('parsed', 'grammar', 0, 0, 0, 0), ('parsed', 'root', 0, 0, 0, 0);
          CREATE TABLE host_node(n INTEGER, h INTEGER); INSERT INTO stat_meta VALUES ('rows.host_node', 0);
          INSERT INTO stat_col VALUES ('host_node', 'n', 0, 0, 0, 0), ('host_node', 'h', 0, 0, 0, 0);
-         CREATE TABLE value(n INTEGER, s TEXT); INSERT INTO stat_meta VALUES ('rows.value', 0);
-         INSERT INTO stat_col VALUES ('value', 'n', 0, 0, 0, 0), ('value', 's', 0, 0, 0, 0);
+         CREATE TABLE value(n INTEGER, v TEXT); INSERT INTO stat_meta VALUES ('rows.value', 0);
+         INSERT INTO stat_col VALUES ('value', 'n', 0, 0, 0, 0), ('value', 'v', 0, 0, 0, 0);
          CREATE TABLE str(n INTEGER, s TEXT); INSERT INTO stat_meta VALUES ('rows.str', 0);
          INSERT INTO stat_col VALUES ('str', 'n', 0, 0, 0, 0), ('str', 's', 0, 0, 0, 0);
          CREATE TABLE name(n INTEGER, s TEXT); INSERT INTO stat_meta VALUES ('rows.name', 0);
@@ -677,6 +677,59 @@ fn typed_corpus_reads_declarations_and_dependency_summaries() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+const CORPUS_STORE_CHILD: &str = "RERAIL_CORPUS_STORE_CHILD";
+
+/// The child of `a_second_corpus_run_deletes_and_creates_its_store_again`, run without the tape cache: each run's
+/// store is its own `store.sqlite`, which the next run deletes and creates again. Once a run is over nothing in the
+/// process holds the store open, and the second run's symbols are its own store's.
+#[test]
+#[ignore = "a child process of the corpus store test"]
+fn corpus_store_child() {
+    let Some(dir) = std::env::var_os(CORPUS_STORE_CHILD).map(std::path::PathBuf::from) else { return };
+    assert_eq!(std::env::var("RERAIL_TAPE_CACHE").as_deref(), Ok("off"));
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.input node, text
+.decl name(s: symbol)
+name(s) :- node(_, n, "identifier", _, _), text(n, s).
+.output name
+"#;
+    let out = dir.join("out");
+    let store = out.join("store.sqlite");
+    for (i, [a, b]) in [["alpha", "beta"], ["gamma", "delta"]].into_iter().enumerate() {
+        let root = dir.join(format!("corpus-{i}"));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), format!("{a} = {b}\n")).unwrap();
+        super::corpus::run(program, &root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let mut names = [a, b];
+        names.sort_unstable();
+        assert_eq!(std::fs::read_to_string(out.join("name.csv")).unwrap(), format!("{}\n{}\n", names[0], names[1]));
+        #[cfg(target_os = "linux")]
+        {
+            let open: Vec<std::path::PathBuf> = std::fs::read_dir("/proc/self/fd").unwrap().filter_map(|fd| std::fs::read_link(fd.ok()?.path()).ok()).collect();
+            let held: Vec<_> = open.iter().filter(|file| file.to_string_lossy().starts_with(&*store.to_string_lossy())).collect();
+            assert!(held.is_empty(), "run {i} left its store open: {held:?}");
+        }
+    }
+    std::fs::write(dir.join("done"), "").unwrap();
+}
+
+/// A process runs the corpus twice over its own store (`corpus_store_child`).
+#[test]
+fn a_second_corpus_run_deletes_and_creates_its_store_again() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("restore");
+    std::fs::create_dir_all(&dir).unwrap();
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--ignored", "--exact", "code_rule_dsl::logic::plan::tests::corpus_store_child", "--nocapture", "--test-threads=1"])
+        .env(CORPUS_STORE_CHILD, &dir)
+        .env("RERAIL_TAPE_CACHE", "off")
+        .status()
+        .unwrap();
+    assert!(status.success() && dir.join("done").exists(), "the child failed: {status}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Step 30's primitives through the corpus runner: `line(n, l)`, and literal tests on names and paths (`glob`,
 /// `prefix`, `suffix`) in place of regexes.
 #[test]
@@ -797,6 +850,791 @@ fn("function_definition").
         println!("  {name:<16} {:.2} s CPU  rss {rss:.0} MB  {statements} statements", user + sys);
     }
     let _ = std::fs::remove_dir_all(&out);
+}
+
+// ---- aggregates ----
+
+/// `join`, `sum` and aggregates inside terms, run over a corpus: join orders by its keys (numbers by value, symbols
+/// by code point, a tuple key by its parts in turn), ties by the value, and gives "" of nothing; sum adds every row
+/// of its body (two arguments of one length both count) and gives 0 of nothing.
+#[test]
+fn join_sum_and_aggregates_in_terms_run() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("aggregates");
+    std::fs::create_dir_all(&dir).unwrap();
+    // Identifiers, whose `text` is their name: `é` sorts after `z` by code point, and `B` before both.
+    let m = (0..=10).map(|i| format!("a{i}")).collect::<Vec<_>>().join(", ");
+    std::fs::write(dir.join("a.py"), format!("f(bb, a, cc)\ng()\nh(é, z, B)\nm({m})\n")).unwrap();
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl child(p: node, c: node, i: number)
+.input node, field, text, child
+.decl callee(c: node, s: symbol)
+callee(c, s) :- node(_, c, "call", _, _), field(c, "function", x), text(x, s).
+.decl arg(c: node, t: symbol, i: number)
+arg(c, t, i) :- node(_, c, "call", _, _), field(c, "arguments", a), child(a, s, i), text(s, t).
+.decl in_order(f: symbol, j: symbol)
+in_order(f, j) :- callee(c, f), j = join t by i sep ", " : { arg(c, t, i) }.
+.decl call_end(f: symbol, j: symbol)
+call_end(f, j) :- callee(c, f), node(_, c, "call", _, e), j = to_string(e).
+.decl call_end_joined(f: symbol, j: symbol)
+call_end_joined(f, j) :- callee(c, f), j = join e by s sep "," : { node(_, c, "call", s, e) }.
+.decl by_text(f: symbol, j: symbol)
+by_text(f, j) :- callee(c, f), j = join t sep "|" : { arg(c, t, _) }.
+.decl reversed(f: symbol, j: symbol)
+reversed(f, j) :- callee(c, f), j = join t by k sep "" : { arg(c, t, i), k = 0 - i }.
+.decl numbers(f: symbol, j: symbol)
+numbers(f, j) :- callee(c, f), j = join i sep "+" : { arg(c, _, i) }.
+.decl tuple(f: symbol, j: symbol)
+tuple(f, j) :- callee(c, f), j = join t by (n, k) sep "," : { arg(c, t, i), n = strlen(t), k = 0 - i }.
+.decl total(f: symbol, s: number, w: number, g: number)
+total(f, s, w, g) :- callee(c, f), s = sum i : { arg(c, _, i) }, w = sum n : { arg(c, t, _), n = strlen(t) },
+    g = sum strlen(t) - 1 : { arg(c, t, _) }.
+.decl ccn(f: symbol, k: number)
+ccn(f, 10 * count : { arg(c, _, _) } + sum i : { arg(c, _, i) }) :- callee(c, f).
+.decl more(f: symbol)
+more(f) :- callee(c, f), 1 + count : { arg(c, _, _) } > 3.
+.output in_order, call_end, call_end_joined, by_text, reversed, numbers, tuple, total, ccn, more
+"#;
+    let out = dir.join("out");
+    super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let a = |order: &mut dyn Iterator<Item = i32>, sep: &str| order.map(|i| format!("a{i}")).collect::<Vec<_>>().join(sep);
+    let mut text_order: Vec<String> = (0..=10).map(|i| format!("a{i}")).collect();
+    text_order.sort();
+    assert_eq!(read("in_order"), format!("f\tbb, a, cc\ng\t\nh\té, z, B\nm\t{}\n", a(&mut (0..=10), ", ")));
+    // An input read without its constant column (`kind`), which comes before x and k.
+    assert_eq!(read("call_end_joined"), read("call_end"));
+    assert_eq!(read("by_text"), format!("f\ta|bb|cc\ng\t\nh\tB|z|é\nm\t{}\n", text_order.join("|")));
+    assert_eq!(read("reversed"), format!("f\tccabb\ng\t\nh\tBzé\nm\t{}\n", a(&mut (0..=10).rev(), "")));
+    let numbers = (0..=10).map(|i| i.to_string()).collect::<Vec<_>>().join("+");
+    assert_eq!(read("numbers"), format!("f\t0+1+2\ng\t\nh\t0+1+2\nm\t{numbers}\n"));
+    // By length, then by position from the end: a (1), cc (2, -2), bb (2, 0); a9 … a0 (2), a10 (3).
+    assert_eq!(read("tuple"), format!("f\ta,cc,bb\ng\t\nh\tB,z,é\nm\t{},a10\n", a(&mut (0..=9).rev(), ",")));
+    // bb and cc have one length: both count in w.
+    assert_eq!(read("total"), "f\t3\t5\t2\ng\t0\t0\t0\nh\t3\t3\t0\nm\t55\t23\t12\n");
+    assert_eq!(read("ccn"), "f\t33\ng\t0\nh\t33\nm\t165\n");
+    assert_eq!(read("more"), "f\nh\nm\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---- functions ----
+
+/// Runs `program` over one Python file, pure SQL (`""`) and on the native set engine (`"program"`): the outputs
+/// `rels`, which both must give alike, and how many components the native run solved natively.
+fn run_both(name: &str, program: &str, rels: &[&str]) -> (BTreeMap<String, String>, usize) {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+    let mut got = Vec::new();
+    let mut native = 0;
+    for modes in ["", "program"] {
+        let out = dir.join(format!("out-{}", if modes.is_empty() { "sql" } else { modes }));
+        let r = super::corpus::run(program, &dir, None, &out, modes, crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{modes:?}: {e}"));
+        native = r.native;
+        got.push(rels.iter().map(|rel| (rel.to_string(), std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap())).collect::<BTreeMap<_, _>>());
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(got[0], got[1], "SQL and native");
+    (got.remove(0), native)
+}
+
+/// Soufflé's `to_number` (decimal, `0x`, `0b`, C's leading space and trailing text; no value where Soufflé stops
+/// with an error), `max`, `min`, `%` (C's sign; no value for `% 0`), `cat` of any arity, and `@lower` as
+/// JavaScript's `toLowerCase` (Unicode, final sigma). A function with no value gives no row, also through a binding
+/// read only by a negation.
+#[test]
+fn souffle_functions_run() {
+    let program = r#"
+.decl s(t: symbol)
+s("12"). s(" -7px"). s("0x1F"). s("-0b101"). s("abc"). s(""). s("99999999999999999999").
+.decl num(t: symbol, n: number)
+num(t, to_number(t)) :- s(t).
+.decl small(n: number)
+small(1). small(12).
+.decl unlisted(t: symbol)
+unlisted(t) :- s(t), k = to_number(t), !small(k).
+.decl pair(a: number, b: number)
+pair(7, 3). pair(-7, 3). pair(3, 0).
+.decl ar(a: number, b: number, hi: number, lo: number)
+ar(a, b, max(a, b), min(a, b)) :- pair(a, b).
+.decl md(a: number, b: number, m: number)
+md(a, b, m) :- pair(a, b), m = a % b.
+.decl w(a: symbol, b: symbol)
+w("x", "y"). w("ÀÉ İ", "ΑΣ").
+.decl c(s: symbol)
+c(cat(a, "-", b, "-", a)) :- w(a, b).
+.decl low(s: symbol)
+low(@lower(cat(a, " ", b))) :- w(a, b).
+.output num, unlisted, ar, md, c, low
+"#;
+    let (got, _) = run_both("functions", program, &["num", "unlisted", "ar", "md", "c", "low"]);
+    assert_eq!(got["num"], " -7px\t-7\n-0b101\t-5\n0x1F\t31\n12\t12\n");
+    assert_eq!(got["unlisted"], " -7px\n-0b101\n0x1F\n");
+    assert_eq!(got["ar"], "-7\t3\t3\t-7\n3\t0\t3\t0\n7\t3\t7\t3\n");
+    assert_eq!(got["md"], "-7\t3\t-1\n7\t3\t1\n");
+    assert_eq!(got["c"], "x-y-x\nÀÉ İ-ΑΣ-ÀÉ İ\n");
+    assert_eq!(got["low"], "x y\nàé i\u{307} ας\n");
+}
+
+/// `@dot("", b)` is `b` (`core.rr`), built and split: a split of a bound whole gives `""` and the whole, and each
+/// cut at a "." with a part before it; with a bound part, the other. Recursive (the native set engine) and not.
+#[test]
+fn dot_of_the_empty_name_is_the_name() {
+    let program = r#"
+.decl part(s: symbol)
+part(""). part("a"). part("b.c").
+.decl joined(m: symbol, x: symbol, q: symbol)
+joined(m, x, @dot(m, x)) :- part(m), part(x).
+.decl whole(q: symbol)
+whole("a.b.c"). whole("x"). whole(".y").
+.decl split(q: symbol, m: symbol, x: symbol)
+split(q, m, x) :- whole(q), q = @dot(m, x).
+.decl after(q: symbol, m: symbol, x: symbol)
+after(q, m, x) :- whole(q), part(m), q = @dot(m, x).
+.decl tail(x: symbol)
+tail("b.c"). tail("x"). tail("y").
+.decl before(q: symbol, m: symbol, x: symbol)
+before(q, m, x) :- whole(q), tail(x), q = @dot(m, x).
+.decl pre(q: symbol)
+pre(q) :- whole(q).
+pre(m) :- pre(q), q = @dot(m, x), x != "".
+.output joined, split, after, before, pre
+"#;
+    let (got, native) = run_both("dot", program, &["joined", "split", "after", "before", "pre"]);
+    assert!(native > 0, "the native set engine solved a component");
+    assert_eq!(got["joined"], "\t\t\n\ta\ta\n\tb.c\tb.c\na\t\ta.\na\ta\ta.a\na\tb.c\ta.b.c\nb.c\t\tb.c.\nb.c\ta\tb.c.a\nb.c\tb.c\tb.c.b.c\n");
+    assert_eq!(got["split"], ".y\t\t.y\na.b.c\t\ta.b.c\na.b.c\ta\tb.c\na.b.c\ta.b\tc\nx\t\tx\n");
+    assert_eq!(got["after"], ".y\t\t.y\na.b.c\t\ta.b.c\na.b.c\ta\tb.c\nx\t\tx\n");
+    assert_eq!(got["before"], "a.b.c\ta\tb.c\nx\t\tx\n");
+    assert_eq!(got["pre"], "\n.y\na\na.b\na.b.c\nx\n");
+}
+
+// ---- violations ----
+
+/// A `.violation` at a `loc` (`core.rr`): a node's finding is at its document's path and line; a `@place(path,
+/// line)`'s at that path and line, line 0 for the file itself and a path that need not exist; a place passed through
+/// another relation keeps its path and line.
+#[test]
+fn violations_at_places_are_found_at_their_path_and_line() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("places");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "f()\n\ng()\n").unwrap();
+    let program = r#"
+.policy "t:places" revision 1
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl line(n: node, l: number)
+.input node, doc, line
+.violation LONG(at: loc, what: symbol) code "FILE_LENGTH" "{what}"
+    suppress ruff "E501"
+LONG(n, "call") :- node(_, n, "call", _, _).
+LONG(@place(p, 0), "file") :- doc(_, p, _).
+LONG(@place("missing.json", 3), "missing") :- doc(_, _, _).
+.decl spot(d: number, at: loc)
+spot(d, @place(p, 7)) :- doc(d, p, _).
+.violation PIN(at: span) "pin"
+PIN(s) :- spot(_, s).
+"#;
+    let out = dir.join("out");
+    super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    assert_eq!(
+        read("violation"),
+        "t:places\tLONG\tFILE_LENGTH\ta.py\t0\nt:places\tLONG\tFILE_LENGTH\ta.py\t1\nt:places\tLONG\tFILE_LENGTH\ta.py\t3\nt:places\tLONG\tFILE_LENGTH\tmissing.json\t3\nt:places\tPIN\tPIN\ta.py\t7\n"
+    );
+    // The violation's own rows show a place as one.
+    assert_eq!(read("PIN"), "@place(\"a.py\", 7)\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---- tree axes and node sets ----
+
+/// The axes over a set of nodes (`fnode`) or of kinds rules derive (`fk`), read as rules; `!nearest` with the
+/// ancestor named, `!within_stop`, `!earlier` and `!split_dot`; `precedes_stop` and `next_sibling` over `child`.
+#[test]
+fn axes_read_node_sets_and_negate() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("node-sets");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "def a():\n    pass\ndef b():\n    def inner():\n        g()\n    f()\ndef skip():\n    def deep():\n        k()\nh()\nx = 1\n").unwrap();
+    std::fs::write(dir.join("b.py"), "z()\n").unwrap();
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl child(p: node, c: node, i: number)
+.decl next_sibling(a: node, b: node)
+.decl docof(n: node, d: number)
+.input node, field, text, child, next_sibling, docof
+.decl fn(kind: symbol)
+fn("function_definition").
+.decl fname(f: node, s: symbol)
+fname(f, s) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s).
+.decl stmt_call(e: node, c: symbol)
+stmt_call(e, c) :- node(_, e, "expression_statement", _, _), child(e, x, 0), field(x, "function", y), text(y, c).
+.decl label(n: node, s: symbol)
+label(n, s) :- fname(n, s).
+label(n, s) :- stmt_call(n, s).
+.decl top_fn(f: node, s: symbol)
+top_fn(f, s) :- fname(f, s), !nearest(f, _, fn).
+// A set of nodes: the functions but inner; and a set of kinds that a rule derives.
+.decl fnode(n: node)
+fnode(n) :- fname(n, x), x != "inner".
+.decl fk(k: symbol)
+fk(k) :- node(_, f, k, _, _), field(f, "name", _).
+.decl skipnode(n: node)
+skipnode(n) :- fname(n, "skip").
+.decl near_d(c: symbol, f: symbol)
+near_d(c, f) :- stmt_call(e, c), nearest(e, a, fnode), fname(a, f).
+.decl in_d(c: symbol, f: symbol)
+in_d(c, f) :- stmt_call(e, c), inside(e, a, fnode), fname(a, f).
+.decl any_d(c: symbol)
+any_d(c) :- stmt_call(e, c), inside(e, _, fnode).
+.decl top_d(c: symbol)
+top_d(c) :- stmt_call(e, c), !nearest(e, _, fnode).
+.decl has_d(f: symbol, g: symbol)
+has_d(f, g) :- fname(a, f), has(a, n, fnode), fname(n, g).
+.decl hasany_d(f: symbol)
+hasany_d(f) :- fname(a, f), has(a, _, fnode).
+.decl nohas_d(f: symbol)
+nohas_d(f) :- fname(a, f), !has(a, _, fnode).
+.decl near_k(c: symbol, f: symbol)
+near_k(c, f) :- stmt_call(e, c), nearest(e, a, fk), fname(a, f).
+.decl has_k(f: symbol)
+has_k(f) :- fname(a, f), has(a, _, fk).
+.decl has_s(f: symbol, g: symbol)
+has_s(f, g) :- fname(a, f), has(a, n, fn), fname(n, g).
+.decl stmts_in(f: symbol, c: symbol)
+stmts_in(f, c) :- top_fn(a, f), has(a, n, "expression_statement"), stmt_call(n, c).
+.decl not_near_b(c: symbol)
+not_near_b(c) :- stmt_call(e, c), top_fn(a, "b"), !nearest(e, a, fn).
+.decl not_near_b_d(c: symbol)
+not_near_b_d(c) :- stmt_call(e, c), top_fn(a, "b"), !nearest(e, a, fnode).
+.decl not_own_b(c: symbol)
+not_own_b(c) :- stmt_call(e, c), top_fn(a, "b"), !within_stop(e, a, fn).
+.decl not_own_b_d(c: symbol)
+not_own_b_d(c) :- stmt_call(e, c), top_fn(a, "b"), !within_stop(e, a, fnode).
+.decl after_a(s: symbol)
+after_a(s) :- top_fn(m, "a"), precedes_stop(m, n, fn), label(n, s).
+.decl after_a_skip(s: symbol)
+after_a_skip(s) :- top_fn(m, "a"), precedes_stop(m, n, skipnode), label(n, s).
+.decl after_b(s: symbol)
+after_b(s) :- top_fn(m, "b"), precedes_stop(m, n, "expression_statement"), label(n, s).
+.decl not_after_a(s: symbol)
+not_after_a(s) :- top_fn(m, "a"), label(n, s), !precedes_stop(m, n, fn).
+.decl nxt(x: symbol, y: symbol)
+nxt(x, y) :- next_sibling(m, n), label(m, x), label(n, y).
+.decl not_before(x: symbol, y: symbol)
+not_before(x, y) :- stmt_call(m, x), stmt_call(n, y), !earlier(m, n).
+.decl q(s: symbol)
+q("os.path"). q("os.path.join").
+.decl parts(m: symbol, x: symbol)
+parts(m, x) :- q(s), split_dot(s, m, x).
+.decl in_os(x: symbol)
+in_os(x) :- q(s), split_dot(s, "os", x).
+.decl of_join(m: symbol)
+of_join(m) :- q(s), split_dot(s, m, "join").
+.decl not_split(s: symbol)
+not_split(s) :- q(s), !split_dot(s, "os", "path").
+.decl not_split2(s: symbol)
+not_split2(s) :- q(s), !split_dot(s, "os", "path.join").
+.output near_d, in_d, any_d, top_d, has_d, hasany_d, nohas_d, near_k, has_k, has_s, stmts_in, not_near_b, not_near_b_d
+.output not_own_b, not_own_b_d, after_a, after_a_skip, after_b, not_after_a, nxt, not_before, parts, in_os, of_join, not_split, not_split2
+"#;
+    let out = dir.join("out");
+    super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let expected = [
+        // g's nearest function is inner, which fnode leaves out.
+        ("near_d", "f\tb\ng\tb\nk\tdeep\n"),
+        ("in_d", "f\tb\ng\tb\nk\tdeep\nk\tskip\n"),
+        ("any_d", "f\ng\nk\n"),
+        ("top_d", "h\nz\n"),
+        // `has` tests the set on the node below: b has only inner below it.
+        ("has_d", "skip\tdeep\n"),
+        ("hasany_d", "skip\n"),
+        ("nohas_d", "a\nb\ndeep\ninner\n"),
+        ("near_k", "f\tb\ng\tinner\nk\tdeep\n"),
+        ("has_k", "b\nskip\n"),
+        ("has_s", "b\tinner\nskip\tdeep\n"),
+        ("stmts_in", "b\tf\nb\tg\nskip\tk\n"),
+        ("not_near_b", "g\nh\nk\nz\n"),
+        ("not_near_b_d", "h\nk\nz\n"),
+        ("not_own_b", "g\nh\nk\nz\n"),
+        ("not_own_b_d", "h\nk\nz\n"),
+        ("after_a", "b\n"),
+        ("after_a_skip", "b\nskip\n"),
+        ("after_b", "h\nskip\n"),
+        ("not_after_a", "a\ndeep\nf\ng\nh\ninner\nk\nskip\nz\n"),
+        ("nxt", "a\tb\nb\tskip\ninner\tf\nskip\th\n"),
+        ("not_before", "f\tf\nf\tg\nf\tz\ng\tg\ng\tz\nh\tf\nh\tg\nh\th\nh\tk\nh\tz\nk\tf\nk\tg\nk\tk\nk\tz\nz\tf\nz\tg\nz\th\nz\tk\nz\tz\n"),
+        ("parts", "os\tpath\nos.path\tjoin\n"),
+        ("in_os", "path\n"),
+        ("of_join", "os.path\n"),
+        ("not_split", "os.path.join\n"),
+        ("not_split2", "os.path\nos.path.join\n"),
+    ];
+    let wrong: Vec<String> = expected.iter().filter(|(rel, rows)| read(rel) != *rows).map(|(rel, rows)| format!("{rel}: {:?}, expected {rows:?}", read(rel))).collect();
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An aggregate whose body is one built-in the lowering writes out (`within`, `earlier`) counts its rows: the
+/// built-in is no relation the aggregate could read in place.
+#[test]
+fn aggregates_over_one_built_in_count_its_rows() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("agg-builtin");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "def f():\n    g(1)\n    h()\ndef e():\n    pass\n").unwrap();
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl docof(n: node, d: number)
+.decl child(p: node, c: node, i: number)
+.input node, field, text, docof, child
+.decl fname(f: node, s: symbol)
+fname(f, s) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s).
+.decl below(s: symbol, k: number)
+below(s, k) :- fname(f, s), k = count : { within(n, f) }.
+.decl after(s: symbol, k: number)
+after(s, k) :- fname(f, s), k = count : { earlier(f, n) }.
+.output below, after
+"#;
+    let out = dir.join("out");
+    super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let rows = |rel: &str| read(rel).lines().map(|l| l.split('\t').map(str::to_owned).collect::<Vec<_>>()).collect::<Vec<_>>();
+    let count = |rel: &str, s: &str| rows(rel).iter().find(|r| r[0] == s).map(|r| r[1].parse::<u32>().unwrap());
+    // f's subtree has more nodes than e's, and e comes after f, so fewer nodes follow it.
+    assert!(count("below", "f").unwrap() > count("below", "e").unwrap(), "{}", read("below"));
+    assert!(count("after", "f").unwrap() > count("after", "e").unwrap(), "{}", read("after"));
+    assert!(count("below", "e").unwrap() > 0, "{}", read("below"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---- recursion ----
+
+/// Recursion that makes values bounded by the data runs to its fixpoint: a count along a call's arguments in
+/// child order, their text joined in that order, a counter below a bound, and a text cut shorter at each step;
+/// and negated conjunctions run as their helper relations, with a variable shared, a shared one only tested, an
+/// alternative each, and none.
+#[test]
+fn bounded_value_recursion_and_negated_conjunctions_run() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("recursion");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "f(x, y, z)\nw = os.path.join\n").unwrap();
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.input node, child, text
+.decl arg_at(c: node, a: node, k: number)
+arg_at(c, a, 0) :- node(_, c, "argument_list", _, _), child(c, a, 0).
+arg_at(c, b, k + 1) :- arg_at(c, a, k), child(c, a, i), child(c, b, i + 1).
+.decl arg_pos(s: symbol, k: number)
+arg_pos(s, k) :- arg_at(_, a, k), text(a, s).
+.decl pos(s: symbol, k: number)
+pos(s, k) :- arg_pos(s, k).
+.decl joined(c: node, i: number, v: symbol)
+joined(c, 0, "") :- node(_, c, "argument_list", _, _).
+joined(c, i + 1, cat(v, w)) :- joined(c, i, v), child(c, a, i), text(a, w).
+.decl whole(v: symbol)
+whole(v) :- joined(c, i, v), !child(c, _, i).
+.decl up(x: number)
+up(1).
+up(x + 1) :- up(x), x < 4.
+.decl dotted(s: symbol)
+dotted("os.path.join").
+.decl rest(s: symbol, i: number)
+rest(t, 0) :- dotted(t).
+rest(s, i + 1) :- rest(t, i), match("[^.]*\\.(?<s>.*)", t).
+.decl first(s: symbol)
+first(s) :- arg_pos(s, _), !(arg_pos(s, k), k > 0).
+.decl mid(s: symbol)
+mid(s) :- arg_pos(s, k), !(k = 0 ; k = 2).
+.decl none(s: symbol)
+none(s) :- arg_pos(s, 0), !(arg_pos(_, 5), text(_, _)).
+.decl gone(s: symbol)
+gone(s) :- arg_pos(s, 0), !(arg_pos(_, 2)).
+.output pos, whole, up, rest, first, mid, none, gone
+"#;
+    let out = dir.join("out");
+    super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    assert_eq!(read("pos"), "x\t0\ny\t1\nz\t2\n");
+    assert_eq!(read("whole"), "xyz\n");
+    assert_eq!(read("up"), "1\n2\n3\n4\n");
+    assert_eq!(read("rest"), "join\t2\nos.path.join\t0\npath.join\t1\n");
+    assert_eq!(read("first"), "x\n");
+    assert_eq!(read("mid"), "y\n");
+    assert_eq!(read("none"), "x\n");
+    assert_eq!(read("gone"), "");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A negated conjunction is correlated on a rule variable its aggregate reads, or that a built-in in it only tests
+/// (`split_dot`); and a regex group of a string the regex does not match is no value, so a negation over it gives
+/// no row, on both the SQL and the native paths.
+#[test]
+fn negations_over_aggregates_built_ins_and_missing_groups() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("negations");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "f(1, 2, 3)\ng(1)\nos.path.join\nos.sep\n").unwrap();
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.decl name(n: node, s: symbol)
+.input node, field, child, text, name
+.decl callee(c: node, f: symbol)
+callee(c, f) :- node(_, c, "call", _, _), field(c, "function", x), text(x, f).
+.decl arg(c: node, a: node)
+arg(c, a) :- callee(c, _), field(c, "arguments", l), child(l, a, _).
+// Calls with at most two arguments.
+.decl short(f: symbol)
+short(f) :- callee(c, f), !(count : { arg(c, _) } > 2).
+.decl attr(q: symbol)
+attr(q) :- node(_, n, "attribute", _, _), name(n, q).
+.decl keyword(x: symbol)
+keyword("sep").
+// Dotted names whose last segment is no keyword.
+.decl plain(q: symbol)
+plain(q) :- attr(q), !(split_dot(q, m, x), keyword(x)).
+// Names with no `.`-separated tail that is a keyword; `g` has no tail, so it is kept.
+.decl untailed(s: symbol)
+untailed(s) :- callee(_, s), match("(?<t>[a-z]+)\\.(?<u>[a-z]+)", s), !keyword(u).
+.decl tailless(s: symbol)
+tailless(s) :- callee(_, s), !keyword(@rx_group(s, "^(?:[a-z]+\\.(?<u>[a-z]+))$", "u")).
+.output short, plain, untailed, tailless
+"#;
+    for modes in ["", "program"] {
+        let out = dir.join(format!("out{modes}"));
+        super::corpus::run(program, &dir, None, &out, modes, crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+        assert_eq!(read("short"), "g\n", "{modes}");
+        assert_eq!(read("plain"), "os.path\nos.path.join\n", "{modes}");
+        assert_eq!(read("untailed"), "", "{modes}");
+        assert_eq!(read("tailless"), "", "{modes}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `program` over `files` (path, source) by the corpus runner; each of `outputs` as written.
+fn corpus_outputs(name: &str, files: &[(&str, &str)], program: &str, outputs: &[&str]) -> Vec<String> {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    for (path, source) in files {
+        let p = dir.join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, source).unwrap();
+    }
+    let out = dir.join("out");
+    super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let got = outputs.iter().map(|rel| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default()).collect();
+    let _ = std::fs::remove_dir_all(&dir);
+    got
+}
+
+/// A relation given both facts and rules holds both: its facts are not lost to its rules' rows.
+#[test]
+fn a_relation_of_facts_and_rules_keeps_its_facts() {
+    let program = r#"
+.decl str(n: node, s: symbol)
+.decl text(n: node, s: symbol)
+.input str, text
+.decl other(x: symbol)
+other("SyncX").
+.decl pat(x: symbol)
+pat("Sequence").
+pat(x) :- other(x).
+.decl hit(s: symbol)
+hit(c) :- str(_, c), pat(x), word(x, c).
+.decl pair(y: symbol, x: symbol)
+pair("legacy", "a").
+pair(y, y) :- text(_, y), prefix("le", y).
+.decl joined(y: symbol, x: symbol)
+joined(y, x) :- pair(y, x), text(_, y).
+.output hit, joined
+"#;
+    let got = corpus_outputs("facts-and-rules", &[("a.py", "def f(a: \"Sequence\", b: \"SyncX\"):\n    legacy = lemon\n")], program, &["hit", "joined"]);
+    assert_eq!(got[0], "Sequence\nSyncX\n");
+    assert_eq!(got[1], "legacy\ta\nlegacy\tlegacy\nlemon\tlemon\n");
+}
+
+/// `max t : { r(d, x, t, _, _) }` groups by the variables bound outside it (`d`, `x`), not by the wildcards.
+#[test]
+fn an_aggregate_groups_by_its_bound_variables_not_its_wildcards() {
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.input node
+.decl def(d: number, x: symbol, t: number, k: symbol, l: number)
+def(d, "f", s, "function", 1) :- node(d, _, "function_definition", s, _).
+def(d, "f", s, "assign", 2) :- node(d, _, "assignment", s, _).
+.decl last(x: symbol, s: number, k: symbol)
+last(x, s, k) :- def(d, x, s, k, _), s = max t : { def(d, x, t, _, _) }.
+.decl first(x: symbol, s: number, k: symbol)
+first(x, s, k) :- def(d, x, s, k, _), s = min t : { def(d, x, t, _, _) }.
+.output last, first
+"#;
+    let got = corpus_outputs("aggregate-wildcards", &[("a.py", "def f():\n    pass\nf = 1\n")], program, &["last", "first"]);
+    assert_eq!(got[0], "f\t18\tassign\n");
+    assert_eq!(got[1], "f\t0\tfunction\n");
+}
+
+/// A variable named `top` is a variable where an atom binds it, not the lattice's top: `child(p, top, _)` joins as
+/// `child(p, c, _)` does.
+#[test]
+fn a_variable_named_top_is_a_variable_where_an_atom_binds_it() {
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.input node, child
+.decl lists(n: node)
+lists(n) :- node(_, n, "argument_list", _, _).
+.decl via(p: node, c: node)
+via(p, c) :- lists(p), child(p, c, _).
+.decl direct(p: node, c: node)
+direct(p, top) :- node(_, p, "argument_list", _, _), child(p, top, _).
+.decl kids(p: node, c: node)
+kids(p, c) :- child(p, c, _).
+.decl grand(a: node, c: node)
+grand(a, c) :- kids(a, b), kids(b, c).
+.decl chained(a: node, c: node)
+chained(a, top) :- child(a, b, _), child(b, top, _).
+.output via, direct, grand, chained
+"#;
+    let got = corpus_outputs("child-chain", &[("a.py", "class Base(SqlRenderable):\n    pass\n")], program, &["via", "direct", "grand", "chained"]);
+    assert!(!got[0].is_empty(), "{got:?}");
+    assert_eq!(got[1], got[0]);
+    assert!(!got[2].is_empty(), "{got:?}");
+    assert_eq!(got[3], got[2]);
+}
+
+/// `s` as a `.rr` string literal (`rr::syntax`'s escapes: `\"`, `\\`, `\n`, `\t`, `\r`, `\u{…}`).
+fn rr_str(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            c if (c as u32) < 0x20 || c == '\u{7f}' => out.push_str(&format!("\\u{{{:x}}}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out + "\""
+}
+
+/// W's value of `sql`, a scalar query, in the SQLite its relational stages run (with its `rx_*` functions), over a
+/// table `t(n, value)` of `rows`, `n` their positions from 1.
+fn w_value(rows: &[&str], sql: &str, params: &[&str]) -> String {
+    let db = Connection::open_in_memory().unwrap();
+    crate::code_rule_dsl::waves::relational::install_regex_functions(&db).unwrap();
+    db.execute_batch("CREATE TABLE t(n INTEGER PRIMARY KEY, value TEXT)").unwrap();
+    for r in rows {
+        db.execute("INSERT INTO t(value) VALUES (?1)", [r]).unwrap();
+    }
+    db.query_row(sql, rusqlite::params_from_iter(params), |r| r.get::<_, rusqlite::types::Value>(0))
+        .map(|v| match v {
+            rusqlite::types::Value::Text(s) => s,
+            rusqlite::types::Value::Integer(i) => i.to_string(),
+            other => panic!("{other:?}"),
+        })
+        .unwrap()
+}
+
+/// `rels` of `src` by plain SQL over text symbols (`run_sql`) and by the corpus runner over atoms (`plan::lower`, its
+/// `sym_text`/`sym_atom`), as the runner writes them (tab-separated rows).
+fn on_both_paths(name: &str, src: &str, rels: &[&str]) -> [Vec<String>; 2] {
+    let text = run_sql(&parse(src).unwrap_or_else(|e| panic!("{e}")), &facts()).unwrap_or_else(|e| panic!("{e}"));
+    let text = rels.iter().map(|r| text.outputs.get(*r).map(|rows| rows.iter().map(|row| row.clone() + "\n").collect()).unwrap_or_default()).collect();
+    [text, corpus_outputs(name, &[("a.py", "x = 1\n")], src, rels)]
+}
+
+/// `join` and `@json_str` rebuild the messages W's signed-list stages sign (`data-layer-post-op-side-effects`'s
+/// `'{"allowlist":'||json_group_array(value ORDER BY value)||…`): quotes, backslashes, control characters, non-ASCII
+/// (kept, as `json_group_array` keeps it) and astral characters; duplicates kept by a key that tells them apart
+/// (`by (v, n)`), none ("[]"). `join` orders numbers by value and symbols by code point.
+#[test]
+fn join_and_json_str_rebuild_ws_signed_messages() {
+    let entries = ["b", "a\"q", "back\\slash", "tab\tnl\nret\r", "\u{1}\u{1f}\u{7f}", "é ü 中", "😀", "Z", "", "\u{2028}", "a"];
+    let registry = ["b", "a", "b", "é"];
+    let w = |rows: &[&str], linter: &str| {
+        let sql = format!("SELECT '{{\"allowlist\":'||coalesce((SELECT json_group_array(value) FROM (SELECT value FROM t ORDER BY value)),'[]')||',\"linter\":\"{linter}\",\"version\":1}}'");
+        w_value(rows, &sql, &[])
+    };
+    let facts = |rel: &str, rows: &[&str]| rows.iter().enumerate().map(|(i, e)| format!("{rel}({}, {}).\n", i + 1, rr_str(e))).collect::<String>();
+    let src = format!(
+        r#".decl entry(n: number, e: symbol)
+{}.decl reg(n: number, v: symbol)
+{}.decl none(n: number, v: symbol)
+none(n, v) :- reg(n, v), n < 0.
+.decl unit(x: number)
+unit(0).
+.decl msg(l: symbol, m: symbol)
+msg("surface", cat("{{\"allowlist\":[", cat(b, "],\"linter\":\"post_op_surface\",\"version\":1}}"))) :- unit(0),
+    b = join q by e sep "," : {{ entry(_, e), q = @json_str(e) }}.
+msg("runtime", cat("{{\"allowlist\":[", cat(b, "],\"linter\":\"post_op_runtime_allowlist\",\"version\":1}}"))) :- unit(0),
+    b = join q by (v, n) sep "," : {{ reg(n, v), q = @json_str(v) }}.
+msg("none", cat("{{\"allowlist\":[", cat(b, "],\"linter\":\"none\",\"version\":1}}"))) :- unit(0),
+    b = join q by v sep "," : {{ none(_, v), q = @json_str(v) }}.
+.decl w(l: symbol, m: symbol)
+w("surface", {}).
+w("runtime", {}).
+w("none", {}).
+.decl same(l: symbol)
+same(l) :- msg(l, m), w(l, m).
+.decl num(k: number, x: symbol)
+num(10, "ten"). num(9, "nine"). num(100, "hundred"). num(9, "neuf").
+.decl by_number(s: symbol)
+by_number(s) :- unit(0), s = join x by k sep " " : {{ num(k, x) }}.
+.output same, msg, by_number
+"#,
+        facts("entry", &entries),
+        facts("reg", &registry),
+        rr_str(&w(&entries, "post_op_surface")),
+        rr_str(&w(&registry, "post_op_runtime_allowlist")),
+        rr_str(&w(&[], "none")),
+    );
+    for (path, got) in ["sql", "atoms"].iter().zip(on_both_paths("join-json", &src, &["same", "msg", "by_number"])) {
+        assert_eq!(got[0], "none\nruntime\nsurface\n", "{path}: {}", got[1]);
+        assert_eq!(got[2], "neuf nine ten hundred\n", "{path}");
+    }
+}
+
+/// `@ed25519_ok` is W's `verify_ed25519`: RFC 8032's first vector verifies, a changed message or a malformed key or
+/// signature does not, never an error (integrated-compatibility.test.ts, "verifies detached signatures without
+/// treating malformed signatures as runtime failures"); and post-op-side-effects' reproducer gives 0.
+#[test]
+fn ed25519_ok_is_ws_verify_ed25519() {
+    use base64::Engine as _;
+    let key = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+    let sig = "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b";
+    let sig: Vec<u8> = (0..sig.len()).step_by(2).map(|i| u8::from_str_radix(&sig[i..i + 2], 16).unwrap()).collect();
+    let sig = base64::engine::general_purpose::STANDARD.encode(sig);
+    let src = format!(
+        r#".decl unit(x: number)
+unit(0).
+.decl ok(c: symbol, v: number)
+ok("rfc", v) :- unit(0), v = @ed25519_ok("{key}", "", "{sig}").
+ok("changed", v) :- unit(0), v = @ed25519_ok("{key}", "changed", "{sig}").
+ok("invalid", v) :- unit(0), v = @ed25519_ok("invalid", "", "invalid").
+ok("unpadded", v) :- unit(0), v = @ed25519_ok("{key}", "", "{}").
+.decl repro(v: number)
+repro(v) :- m = join q by e sep "," : {{ e = "a", q = @json_str(e) }},
+    v = @ed25519_ok("7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6", cat("[", cat(m, "]")), "AAAA").
+.output ok, repro
+"#,
+        sig.trim_end_matches('='),
+    );
+    for (path, got) in ["sql", "atoms"].iter().zip(on_both_paths("ed25519", &src, &["ok", "repro"])) {
+        assert_eq!(got[0], "changed\t0\ninvalid\t0\nrfc\t1\nunpadded\t0\n", "{path}");
+        assert_eq!(got[1], "0\n", "{path}");
+    }
+}
+
+/// `@rx_replace(s, re, by)` is W's SQL `rx_replace`: every match replaced, `$1`, `$name`, `${name}` and `$$` as the
+/// `regex` crate reads them (`$1x` is the group named `1x`, absent: empty), empty matches included.
+#[test]
+fn rx_replace_is_ws_rx_replace() {
+    let cases = [
+        ("a  b\tc\n", r"\s+", ""),
+        ("x=1, y=2", r"(?P<k>\w)=(\d)", "$2$k"),
+        ("abc", "b", "$$"),
+        ("aaa", "a*", "-"),
+        ("pkg.mod.name", r"(?:\.[^.]+){1}$", ""),
+        ("cost 5", r"(\d)", "${1}0"),
+        ("a1b", r"(\d)", "$1x"),
+        ("AB+/=c-d", "[^A-Za-z0-9+/=]", ""),
+        ("é中😀", ".", "<$0>"),
+    ];
+    let mut src = String::from(".decl replacing(i: number, s: symbol, re: symbol, by: symbol)\n.decl w(i: number, v: symbol)\n");
+    for (i, (s, re, by)) in cases.iter().enumerate() {
+        let w = w_value(&[], "SELECT rx_replace(?1, ?2, ?3)", &[*s, *re, *by]);
+        src += &format!("replacing({i}, {}, {}, {}).\nw({i}, {}).\n", rr_str(s), rr_str(re), rr_str(by), rr_str(&w));
+    }
+    src += ".decl got(i: number, v: symbol)\ngot(i, @rx_replace(s, re, by)) :- replacing(i, s, re, by).\n";
+    src += ".decl differs(i: number)\ndiffers(i) :- got(i, v), !w(i, v).\ndiffers(i) :- w(i, v), !got(i, v).\n";
+    src += ".decl cases(k: number)\ncases(k) :- replacing(0, _, _, _), k = count : { got(_, _) }.\n.output differs, cases\n";
+    for (path, got) in ["sql", "atoms"].iter().zip(on_both_paths("rx-replace", &src, &["differs", "cases"])) {
+        assert_eq!(got[0], "", "{path}");
+        assert_eq!(got[1], format!("{}\n", cases.len()), "{path}");
+    }
+}
+
+/// `@nfkc(s)` is CPython's identifier normalization (PEP 3131): CPython 3.13.18's `unicodedata.normalize("NFKC", s)`,
+/// which is also the `Name` id `ast.parse` gives each of these (but `x²`, no identifier): ligatures, letterlike and
+/// mathematical letters, full- and half-width forms, a decomposed accent composed, titlecase digraphs, the Angstrom and
+/// micro signs, a long s with a dot below; ASCII unchanged.
+#[test]
+fn nfkc_is_cpythons_identifier_normalization() {
+    let cases = [
+        ("\u{fb01}le", "file"),
+        ("\u{210c}ello", "Hello"),
+        ("x\u{b2}", "x2"),
+        ("\u{ff21}b", "Ab"),
+        ("\u{ff76}", "\u{30ab}"),
+        ("e\u{301}t\u{e9}", "\u{e9}t\u{e9}"),
+        ("ascii", "ascii"),
+        ("\u{1c5}x", "D\u{17e}x"),
+        ("\u{fb03}", "ffi"),
+        ("\u{212b}", "\u{c5}"),
+        ("\u{1d431}y", "xy"),
+        ("\u{b5}s", "\u{3bc}s"),
+        ("\u{1e9b}\u{323}", "\u{1e69}"),
+    ];
+    let mut src = String::from(".decl written(i: number, s: symbol)\n.decl cpython(i: number, v: symbol)\n");
+    for (i, (s, v)) in cases.iter().enumerate() {
+        src += &format!("written({i}, {}).\ncpython({i}, {}).\n", rr_str(s), rr_str(v));
+    }
+    src += ".decl got(i: number, v: symbol)\ngot(i, @nfkc(s)) :- written(i, s).\n";
+    src += ".decl differs(i: number)\ndiffers(i) :- got(i, v), !cpython(i, v).\ndiffers(i) :- cpython(i, v), !got(i, v).\n";
+    src += ".decl cases(k: number)\ncases(k) :- written(0, _), k = count : { got(_, _) }.\n.output differs, cases\n";
+    for (path, got) in ["sql", "atoms"].iter().zip(on_both_paths("nfkc", &src, &["differs", "cases"])) {
+        assert_eq!(got[0], "", "{path}");
+        assert_eq!(got[1], format!("{}\n", cases.len()), "{path}");
+    }
+}
+
+/// `sum x : { … }` is SQL's sum over the body's rows (rows that differ elsewhere count twice), grouped by the
+/// rule's variables, 0 over none (Soufflé's), as W's `coalesce(sum(x), 0)`.
+#[test]
+fn sum_adds_the_bodys_rows() {
+    let w = |rows: &[&str]| w_value(rows, "SELECT coalesce(sum(CAST(value AS INTEGER)), 0) FROM t", &[]);
+    let src = format!(
+        r#".decl r(g: symbol, k: number, x: number)
+r("a", 1, 5). r("a", 2, 5). r("a", 3, 7). r("b", 1, -2).
+.decl g(g: symbol)
+g("a"). g("b"). g("c").
+.decl total(g: symbol, s: number)
+total(g, s) :- g(g), s = sum x : {{ r(g, _, x) }}.
+.decl w(g: symbol, s: number)
+w("a", {}). w("b", {}). w("c", {}).
+.decl differs(g: symbol)
+differs(g) :- total(g, s), !w(g, s).
+differs(g) :- w(g, s), !total(g, s).
+.decl doubled(s: number)
+doubled(s) :- g("a"), s = sum y : {{ r("a", k, x), y = x * 2, k > 1 }}.
+.decl shown(g: symbol, s: number)
+shown(g, s) :- total(g, s).
+.output shown, differs, doubled
+"#,
+        w(&["5", "5", "7"]),
+        w(&["-2"]),
+        w(&[]),
+    );
+    // `shown`, not `total`: the corpus runner writes an empty file for an output another rule reads (`total` read
+    // by `differs` came out empty whatever derived it, `total(g, s) :- w(g, s)` too).
+    for (path, got) in ["sql", "atoms"].iter().zip(on_both_paths("sum", &src, &["shown", "differs", "doubled"])) {
+        assert_eq!(got[0], "a\t17\nb\t-2\nc\t0\n", "{path}: {got:?}");
+        assert_eq!(got[1], "", "{path}");
+        assert_eq!(got[2], "24\n", "{path}");
+    }
 }
 
 /// A demanded symbol with many captures must not submit one SQLite statement per match.
@@ -948,7 +1786,8 @@ fn filtered_binding_domains_do_not_underprice_expansion_from_function_scopes() {
     model.stats.kfreq.insert("1".into(),2063);
     model.stats.kfreq.insert("2".into(),2181);
     model.stats.dfreq.insert(("child".into(),2),HashMap::from([(Constant::Int(0),60_000)]));
-    let rule = &p.rules[0];
+    // The stated rule (the parse may give others first).
+    let rule = p.rules.iter().find(|r| r.head.rel == "result").expect("the result rule");
     let functions = rule.body[3].atom().unwrap();
     assert_eq!(model.binding_domains(&p,functions)[0],Some(2181.0));
     let ((order,work,_),_)=model.plan_rule_explained(&p,&rule.head,&rule.body,None).unwrap();
@@ -1198,4 +2037,13 @@ fn statistics_versions_accumulate_drift_and_publish_changed_keys() {
     watch.delta(0,0);
     model.stats.card.insert("a".into(),1000.0); watch.record(0,0,&model,"a");
     assert!(!watch.take(0)); watch.delta(0,1); assert!(watch.take(0));
+}
+
+#[test]
+fn a_plan_priced_on_an_empty_relation_is_not_kept_once_it_fills() {
+    // Within the drift, both ways; an empty relation against one row is not (a cross product after it was free).
+    assert!(near(&[1.0, 10.0], &[1.5, 19.0]));
+    assert!(near(&[0.0, 10.0], &[0.0, 10.0]));
+    assert!(!near(&[0.0, 10.0], &[1.0, 10.0]), "empty, then one row");
+    assert!(!near(&[1.0], &[0.0]), "one row, then empty");
 }

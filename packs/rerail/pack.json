@@ -1,0 +1,562 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "rerail",
+  "name": "Rerail repository",
+  "category": "repository",
+  "covers": "Steers work in the Rerail repository toward the architecture and conventions it has written down and broken before.",
+  "reason": "holds Rerail rule packs under packs/",
+  "match": {
+    "any": [
+      {
+        "files": [
+          "packs/*/pack.json"
+        ],
+        "label": "packs/*/pack.json files"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "rerail-conformance-boundary",
+      "document": "rules/rerail-conformance-boundary.json",
+      "title": "Run programs in conformance through its runner, and keep authoring code out of it",
+      "group": "Layering",
+      "examples": {
+        "caught": {
+          "path": "conformance/port-readiness/cache.ts",
+          "text": "import { execFileSync } from \"node:child_process\";\n\nexport function tracked(root: string, pathspec: string): string[] {\n  return execFileSync(\"git\", [\"ls-files\", \"-z\", \"--\", pathspec], { cwd: root, encoding: \"utf8\" }).split(\"\\0\").filter(Boolean);\n}\n"
+        },
+        "passes": {
+          "path": "conformance/languages/checks/ungated.ts",
+          "text": "import { runChecked, type CommandRunner } from \"../../process.js\";\n\nexport async function isCommit(runner: CommandRunner, root: string, base: string): Promise<boolean> {\n  return (await runChecked(runner, [\"git\", \"cat-file\", \"-t\", base], { cwd: root })).trim() === \"commit\";\n}\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-conformance-pinned-data",
+      "document": "rules/rerail-conformance-pinned-data.json",
+      "title": "Read only pinned data in conformance, with no network calls or downloads",
+      "group": "Layering",
+      "examples": {
+        "caught": {
+          "path": "conformance/port-readiness/corpus.ts",
+          "text": "export async function download(cell: { url: string }): Promise<Buffer> {\n  const response = await fetch(cell.url);\n  return Buffer.from(await response.arrayBuffer());\n}\n"
+        },
+        "passes": {
+          "path": "conformance/languages/runner.ts",
+          "text": "import { samplesTree } from \"../../scripts/s3/pack-fixtures.mjs\";\n\nexport const samples = (root: string, pack: string, tool: string) => samplesTree({ root, pack, tool });\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-host-sdk-imports",
+      "document": "rules/rerail-host-sdk-imports.json",
+      "title": "Import a coding agent's SDK only in src/hosts",
+      "group": "Layering",
+      "examples": {
+        "caught": {
+          "path": "src/harness/native-semantic-tools.ts",
+          "text": "import type { ExtensionAPI as OmpExtensionAPI } from \"@oh-my-pi/pi-coding-agent\";\nimport type { ExtensionAPI as PiExtensionAPI } from \"@earendil-works/pi-coding-agent\";\nimport { Type } from \"typebox\";\n"
+        },
+        "passes": {
+          "path": "src/presentation/omp-presentation.ts",
+          "text": "/** What the footer needs from an OMP or Pi extension context. */\nexport interface PresentationContext {\n  cwd: string;\n  hasUI?: boolean;\n  sessionManager: { getSessionId(): string };\n}\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-language-branching",
+      "document": "rules/rerail-language-branching.json",
+      "title": "Branch on a language or family only in an Engine Adapter",
+      "group": "Layering",
+      "examples": {
+        "caught": {
+          "path": "native/src/code_rule_dsl/tape.rs",
+          "text": "impl FileImage {\n    pub(super) fn parse(\n        grammar: &Grammar,\n        source: &str,\n        budget: &impl Fn() -> bool,\n    ) -> Option<Result<FileImage, String>> {\n        if grammar.lang == GrammarDialect::Blade {\n            return Some(Self::encode_template(grammar, source, budget));\n        }\n        None\n    }\n}\n"
+        },
+        "passes": {
+          "path": "native/src/code_rule_dsl/tape.rs",
+          "text": "impl FileImage {\n    pub(super) fn parse(grammar: &Grammar, source: &str) -> Option<Result<FileImage, String>> {\n        with_adapter!(Family::of(grammar.lang), A => A::parse(grammar, source))\n    }\n}\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-command-sigil",
+      "document": "rules/rerail-command-sigil.json",
+      "title": "Take the command sigil from the adapter capabilities",
+      "group": "Ownership",
+      "examples": {
+        "caught": {
+          "path": "src/harness/setup-screens.ts",
+          "text": "export function renderNotNow(lane: SetupLane): string {\n  const start = lane === \"terminal\" ? \"rerail start\" : \"/rerail-start\";\n  return `Start Rerail in this repo whenever you’re ready with ${start}.`;\n}\n"
+        },
+        "passes": {
+          "path": "src/harness/rerail-summary.ts",
+          "text": "const notOnLines = ({ repositoryName, sigil }: RerailSummaryInput): string[] =>\n  [`○ Rerail is not on in ${repositoryName}.`, `  Start it with ${sigil}rerail-start.`];\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-fixed-value-lists",
+      "document": "rules/rerail-fixed-value-lists.json",
+      "title": "Take fixed value lists from their constants",
+      "group": "Ownership",
+      "examples": {
+        "caught": {
+          "path": "src/runtime/event-protocol.ts",
+          "text": "  host: z.enum([\"omp\", \"pi\", \"claude-code\", \"codex\", \"cursor\"]),\n"
+        },
+        "passes": {
+          "path": "src/api/operations.ts",
+          "text": "  host: z.enum(RERAIL_HOSTS),\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-git-no-lazy-fetch",
+      "document": "rules/rerail-git-no-lazy-fetch.json",
+      "title": "Start Git only through the engine's Git module, with lazy fetch off",
+      "group": "Ownership",
+      "examples": {
+        "caught": {
+          "path": "src/engine/git.ts",
+          "text": "import { spawn } from \"node:child_process\";\n\nexport function catFile(cwd: string) {\n  return spawn(gitExecutable(), [...SAFE_CONFIG, \"-C\", cwd, \"cat-file\", \"--batch\"], {\n    env: { ...process.env, GIT_OPTIONAL_LOCKS: \"0\" },\n    stdio: [\"pipe\", \"pipe\", \"ignore\"],\n  });\n}\n"
+        },
+        "passes": {
+          "path": "src/engine/git.ts",
+          "text": "import { spawn } from \"node:child_process\";\n\nexport function catFile(cwd: string) {\n  return spawn(gitExecutable(), [...SAFE_CONFIG, \"-C\", cwd, \"cat-file\", \"--batch\"], {\n    env: { ...process.env, GIT_OPTIONAL_LOCKS: \"0\", GIT_NO_LAZY_FETCH: \"1\", GIT_TERMINAL_PROMPT: \"0\" },\n    stdio: [\"pipe\", \"pipe\", \"ignore\"],\n  });\n}\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-home-file-names",
+      "document": "rules/rerail-home-file-names.json",
+      "title": "Build lists of the Rerail home's files from their writers' constants",
+      "group": "Ownership",
+      "examples": {
+        "caught": {
+          "path": "src/cli/setup-cli.ts",
+          "text": "const RERAIL_HOME_ENTRY =\n  /^(?:(?:coding-agents|consent|daemon|daemon-port|launcher-path|update-state)\\.json|daemon\\.log.*|(?:harness|rerail)\\.sqlite.*|(?:start|update)\\.lock|bin|current|versions|packs)$/u;\n"
+        },
+        "passes": {
+          "path": "src/cli/setup-cli.ts",
+          "text": "import { RERAIL_DATABASE_FILE } from \"../engine/storage/database.js\";\nimport { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE } from \"../runtime/daemon-control.js\";\n\nconst RERAIL_HOME_FILES: ReadonlySet<string> = new Set([DAEMON_STATE_FILE, DAEMON_LOG_FILE, DAEMON_ACCESS_TOKEN_FILE, RERAIL_DATABASE_FILE]);\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-home-file-paths",
+      "document": "rules/rerail-home-file-paths.json",
+      "title": "Take the Rerail home's install paths from the updater",
+      "group": "Ownership",
+      "examples": {
+        "caught": {
+          "path": "src/setup/coding-agents.ts",
+          "text": "export function registrationRoot(rerailHome: string, packageRoot: string): string {\n  const current = join(rerailHome, \"current\");\n  return existsSync(join(current, \"package.json\")) ? current : packageRoot;\n}\n"
+        },
+        "passes": {
+          "path": "src/cli/setup-cli.ts",
+          "text": "const { launcherPath } = context.updater;\nif (!existsSync(launcherPath)) return undefined;\nconst binDir = dirname(launcherPath);\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-no-code-execution",
+      "document": "rules/rerail-no-code-execution.json",
+      "title": "Read pack matches and repository config as data, and install packs without scripts",
+      "group": "Ownership",
+      "examples": {
+        "caught": {
+          "path": "src/setup/rule-pack-store.ts",
+          "text": "await npm([\"uninstall\", \"--prefix\", prefix, \"--no-audit\", \"--no-fund\", ...ids.map(rulePackPackageName)]);\n"
+        },
+        "passes": {
+          "path": "src/setup/rule-pack-store.ts",
+          "text": "await npm([\"uninstall\", \"--prefix\", prefix, \"--ignore-scripts\", \"--no-audit\", \"--no-fund\", \"--\", ...ids.map(rulePackPackageName)]);\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-no-message-classification",
+      "document": "rules/rerail-no-message-classification.json",
+      "title": "Classify failures by code, never by their message text",
+      "group": "Ownership",
+      "examples": {
+        "caught": {
+          "path": "src/engine/audit/audit.ts",
+          "text": "export function isSourceGap(failure: AuditFailure): boolean {\n  return failure.code === \"source-incomplete\" && failure.message.startsWith(\"file has syntax errors\");\n}\n"
+        },
+        "passes": {
+          "path": "src/engine/audit/audit.ts",
+          "text": "export function isSourceGap(failure: AuditFailure): boolean {\n  return failure.blind === \"syntax\" || failure.code === \"source-partial\";\n}\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-pack-package-names",
+      "document": "rules/rerail-pack-package-names.json",
+      "title": "Build pack npm names with the catalog's naming helpers",
+      "group": "Ownership",
+      "examples": {
+        "caught": {
+          "path": "src/setup/rule-pack-store.ts",
+          "text": "const dir = join(into, \"node_modules\", \"@neralabs\", `rerail-pack-${id}`);\n"
+        },
+        "passes": {
+          "path": "src/setup/rule-pack-store.ts",
+          "text": "const dir = join(into, \"node_modules\", rulePackPackageName(id));\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-session-paths",
+      "document": "rules/rerail-session-paths.json",
+      "title": "Resolve a session's storage root and model path with the session-paths helpers",
+      "group": "Ownership",
+      "examples": {
+        "caught": {
+          "path": "src/daemon/daemon.ts",
+          "text": "const storageRoot = join(workspaceRoot, \".rerail\", \"sessions\");\n"
+        },
+        "passes": {
+          "path": "src/daemon/daemon.ts",
+          "text": "import { resolveSessionPaths } from \"../runtime/session-paths.js\";\n\nexport function sessionPaths(workspaceRoot: string) {\n  const { storageRoot, modelPath } = resolveSessionPaths(workspaceRoot);\n  return { storageRoot, modelPath };\n}\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-start-state",
+      "document": "rules/rerail-start-state.json",
+      "title": "Turn a checkout's status into a start state only in the repository start module",
+      "group": "Ownership",
+      "examples": {
+        "caught": {
+          "path": "src/harness/hook-host.ts",
+          "text": "export async function hookRerailStarted(host: RerailHost, workspace: string, databasePath?: string): Promise<boolean> {\n  const answered = await readRepositoryState(workspace, host);\n  if (answered !== null) return answered !== \"stopped\";\n  return isRerailStarted(workspace, databasePath);\n}\n"
+        },
+        "passes": {
+          "path": "src/api/repository-summary.ts",
+          "text": "import { stateOf } from \"../runtime/repository-start.js\";\n\nexport const summaryState = (repository: RepositoryListing) =>\n  stateOf({ started: repository.started, setUp: repository.configuredAt !== null, startedBy: \"repository\" });\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-table-probes-in-storage",
+      "document": "rules/rerail-table-probes-in-storage.json",
+      "title": "Keep table and column probes of Rerail's database in storage",
+      "group": "Ownership",
+      "examples": {
+        "caught": {
+          "path": "src/engine/audit/audit-store.ts",
+          "text": "function holdsUnlistedTable(database: RerailDatabase): boolean {\n  return database.$client\n    .prepare(\"SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audit_unlisted_failures'\")\n    .get() !== undefined;\n}\n"
+        },
+        "passes": {
+          "path": "src/engine/catalog/setup-review.ts",
+          "text": "import { tableExists } from \"../storage/database.js\";\nimport { setupReviews } from \"../storage/schema.js\";\n\nexport function setupReviewKept(db: Reader): boolean {\n  return tableExists(db, setupReviews);\n}\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-walk-limits",
+      "document": "rules/rerail-walk-limits.json",
+      "title": "Take repository walk folders and limits from the enforcer",
+      "group": "Ownership",
+      "examples": {
+        "caught": {
+          "path": "src/cli/rule-draft.ts",
+          "text": "/** The same bounds a repository scan walks with. */\nconst REPOSITORY_MAX_FILES = 100_000;\nconst REPOSITORY_MAX_FILE_BYTES = 32_000_000;\n"
+        },
+        "passes": {
+          "path": "src/engine/catalog/rule-pack-matcher.ts",
+          "text": "import { IGNORED_DIRECTORIES } from \"../code-rule/code-rule-enforcer.js\";\n\nif (entry.isDirectory() && !IGNORED_DIRECTORIES.has(entry.name)) pending.push(path);\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-fixtures-root",
+      "document": "rules/rerail-fixtures-root.json",
+      "title": "Reach the fixtures directory from Rust through fixtures_dir!() and oracle!()",
+      "group": "Repository layout",
+      "examples": {
+        "caught": {
+          "path": "native/src/code_rule_dsl/scope/rust/tests.rs",
+          "text": "fn source(path: &str) -> &'static str {\n    match path {\n        \"closures.rs\" => include_str!(\"../../../../../fixtures/rust/scope/crate/src/closures.rs\"),\n        other => panic!(\"unknown fixture {other}\"),\n    }\n}\n"
+        },
+        "passes": {
+          "path": "native/src/code_rule_dsl/scope/rust/tests.rs",
+          "text": "use crate::code_rule_dsl::oracle;\n\nfn source(path: &str) -> &'static str {\n    match path {\n        \"closures.rs\" => oracle!(\"rust/scope/crate/src/closures.rs\"),\n        other => panic!(\"unknown fixture {other}\"),\n    }\n}\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-generator-placement",
+      "document": "rules/rerail-generator-placement.json",
+      "title": "Keep generators of committed files in scripts/generate",
+      "group": "Repository layout",
+      "examples": {
+        "caught": {
+          "path": "packs/next/candidates/build-rules.mjs",
+          "text": "import { writeFileSync } from \"node:fs\";\n\nwriteFileSync(new URL(\"../rules/next-no-img-element.json\", import.meta.url), `${JSON.stringify(rule, null, 2)}\\n`);\n"
+        },
+        "passes": {
+          "path": "packs/react/candidates/specs.mjs",
+          "text": "import { readFileSync } from \"node:fs\";\n\nexport const SPECS = JSON.parse(readFileSync(new URL(\"./specs.json\", import.meta.url), \"utf8\"));\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-pack-rule-test-placement",
+      "document": "rules/rerail-pack-rule-test-placement.json",
+      "title": "Keep tests of single pack rules in the pack-rules test folder",
+      "group": "Repository layout",
+      "examples": {
+        "caught": {
+          "path": "test/engine/code-rule/python-bandit-b604-shell-keyword.test.ts",
+          "text": "import { readFile } from \"node:fs/promises\";\nimport { repositoryPath } from \"../../support/oracles.js\";\n\nconst RULE_ID = \"bandit-b604-any-other-function-with-shell-equals-true\";\nconst rule = await readFile(repositoryPath(\"packs\", \"python\", \"candidates\", \"rules\", `${RULE_ID}.json`), \"utf8\");\n"
+        },
+        "passes": {
+          "path": "test/engine/code-rule/complexity-rules.test.ts",
+          "text": "import { loadPackRuleDocuments } from \"../../../src/engine/catalog/rule-documents.js\";\nimport { repositoryPath } from \"../../support/oracles.js\";\n\nconst documents = loadPackRuleDocuments([repositoryPath(\"packs\", \"complexity\")]).filter(document => document.rule.id.startsWith(\"complexity-\"));\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-rule-documents-in-packs",
+      "document": "rules/rerail-rule-documents-in-packs.json",
+      "title": "Add rule documents only inside a pack",
+      "group": "Repository layout",
+      "examples": {
+        "caught": {
+          "path": "packs/pack-message-tool-names.draft.json",
+          "text": "{\n  \"kind\": \"code\",\n  \"rule\": {\n    \"format\": \"rerail.policy/v1\",\n    \"id\": \"local:pack-message-tool-names\",\n    \"revision\": 1,\n    \"mode\": \"steer\",\n    \"clauses\": []\n  },\n  \"cases\": { \"caught\": [], \"passed\": [] }\n}\n"
+        },
+        "passes": {
+          "path": "fixtures/host/task-completion/workflow-check-unfinished-task.cases.json",
+          "text": "{\n  \"caught\": [\n    { \"source\": \"assistant-text\", \"boundary\": \"turn\", \"text\": \"Not yet done from the spec.\" }\n  ],\n  \"passed\": []\n}\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-pack-data-helper-copies",
+      "document": "rules/rerail-pack-data-helper-copies.json",
+      "title": "Import the shared pack-data helpers in upstream generators",
+      "group": "Release and pack data",
+      "examples": {
+        "caught": {
+          "path": "packs/javascript/upstream/generate.mjs",
+          "text": "function codePointColumn(lines, line, column) {\n  return [...lines[line - 1].slice(0, column - 1)].length + 1;\n}\n"
+        },
+        "passes": {
+          "path": "packs/javascript/upstream/eslint-plugin-unicorn/generate.mjs",
+          "text": "import { codePointColumn, withUpstreamTestCwd } from \"../../../../scripts/pack-data/eslint-expected.mjs\";\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-pack-data-runtime-names",
+      "document": "rules/rerail-pack-data-runtime-names.json",
+      "title": "Take pack-data runtime names from gates.yaml",
+      "group": "Release and pack data",
+      "examples": {
+        "caught": {
+          "path": "scripts/pack-data/recipes/complexity.ts",
+          "text": "const lizard = join((await uvRuntime(`lizard-${version}`, runtimeCache, runner)).directory, \".venv\", \"bin\", \"lizard\");"
+        },
+        "passes": {
+          "path": "scripts/pack-data/recipes/javascript.ts",
+          "text": "const { upstream } = readGatesManifest(root, pack, tool);\nconst tools = await npmRuntime(upstream.runtime, runtimeCache, runner);"
+        }
+      }
+    },
+    {
+      "id": "rerail-pack-data-through-publish",
+      "document": "rules/rerail-pack-data-through-publish.json",
+      "title": "Publish pack data through the publish workflow",
+      "group": "Release and pack data",
+      "examples": {
+        "caught": {
+          "text": "npm run fixtures:push -- --pack react --tool eslint-plugin-react"
+        },
+        "passes": {
+          "text": "npm run fixtures:stage -- --pack react --tool eslint-plugin-react --all"
+        }
+      }
+    },
+    {
+      "id": "rerail-provenance-writers",
+      "document": "rules/rerail-provenance-writers.json",
+      "title": "Write licence and provenance records only through their shared writers",
+      "group": "Release and pack data",
+      "examples": {
+        "caught": {
+          "path": "packs/vue/upstream/eslint-plugin-vue/generate.mjs",
+          "text": "function writeLicense(checkout, kept) {\n  const dir = join(HERE, \"../../licenses/eslint-plugin-vue\");\n  copyFileSync(join(checkout, \"LICENSE\"), join(dir, \"LICENSE\"));\n  writeFileSync(join(dir, \"UPSTREAM.md\"), table(kept));\n}\n"
+        },
+        "passes": {
+          "path": "packs/vue/upstream/eslint-plugin-vue/generate.mjs",
+          "text": "function writeLicenseAndProvenance(checkout, kept) {\n  const dir = join(HERE, \"../../licenses/eslint-plugin-vue\");\n  copyFileSync(join(checkout, \"LICENSE\"), join(dir, \"LICENSE\"));\n  writeProvenance({ pack: \"vue\", tool: \"eslint-plugin-vue\", entries: entriesOf(kept), commits: { \"eslint-plugin-vue\": UPSTREAM_COMMIT } });\n}\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-workflow-script-facts",
+      "document": "rules/rerail-workflow-script-facts.json",
+      "title": "Take workflow entry paths, shipped paths and tool-pack lists from their owners",
+      "group": "Release and pack data",
+      "examples": {
+        "caught": {
+          "path": ".github/workflows/upstream-bump.yml",
+          "text": "      - name: Set up the pinned PHP and Composer\n        if: matrix.pack == 'php' || matrix.pack == 'blade'\n        uses: ./.github/actions/php\n"
+        },
+        "passes": {
+          "path": ".github/workflows/upstream-bump.yml",
+          "text": "    strategy:\n      matrix:\n        include: ${{ fromJSON(needs.scope.outputs.tool-packs) }}\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-workflow-shared-conditions",
+      "document": "rules/rerail-workflow-shared-conditions.json",
+      "title": "Decide a workflow's release pull request skip once",
+      "group": "Release and pack data",
+      "examples": {
+        "caught": {
+          "path": ".github/workflows/ci.yml",
+          "text": "  rust:\n    if: github.head_ref != 'changeset-release/main'\n  build:\n    if: github.head_ref != 'changeset-release/main'\n"
+        },
+        "passes": {
+          "path": ".github/workflows/ci.yml",
+          "text": "  changes:\n    outputs:\n      release-pr: ${{ github.head_ref == 'changeset-release/main' }}\n  build:\n    needs: changes\n    if: needs.changes.outputs.release-pr != 'true'\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-ui-api-precedence",
+      "document": "rules/rerail-ui-api-precedence.json",
+      "title": "Show the API's setting deciders instead of ranking them in the dashboard",
+      "group": "Dashboard",
+      "examples": {
+        "caught": {
+          "path": "ui/settings-writes.js",
+          "text": "const decider = (owner, target) => state => (owner === \"checkout\"\n  ? { by: \"checkout\", checkoutPath: data.checkout?.checkoutPath, folder: state.folder, target }\n  : { by: \"repository\", folder: state.folder, target });\n"
+        },
+        "passes": {
+          "path": "ui/poll.js",
+          "text": "const folderState = entry => ({\n  folder: entry.folder, on: entry.on, mode: entry.mode, suppressions: entry.suppressions, suppressionsSource: entry.suppressionsSource,\n  source: entry.source,\n});\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-ui-color-tokens",
+      "document": "rules/rerail-ui-color-tokens.json",
+      "title": "Take dashboard colours from Nera's design tokens",
+      "group": "Dashboard",
+      "examples": {
+        "caught": {
+          "path": "ui/css/base.css",
+          "text": ":root {\n  --steered: #D4700A;\n  --steered-subtle: rgba(212,112,10,.08);\n}\n"
+        },
+        "passes": {
+          "path": "ui/css/base.css",
+          "text": ":root {\n  --steer-fg: var(--warning-foreground);\n  --steer-bg: color-mix(in srgb, var(--warning) 10%, transparent);\n}\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-ui-pure-modules",
+      "document": "rules/rerail-ui-pure-modules.json",
+      "title": "Keep the dashboard's pure modules free of network, storage and DOM work",
+      "group": "Dashboard",
+      "examples": {
+        "caught": {
+          "path": "ui/repo-rules.js",
+          "text": "import { get } from \"./api.js\";\nimport { toStoredRules } from \"./poll.js\";\n"
+        },
+        "passes": {
+          "path": "ui/repo-rules.js",
+          "text": "import { isRunning } from \"./derive.js\";\nimport { fmt, plural } from \"./format.js\";\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-grammar-node-kinds",
+      "document": "rules/rerail-grammar-node-kinds.json",
+      "title": "Name grammar node kinds on the family's adapter, not in shared engine code",
+      "group": "Native engine",
+      "examples": {
+        "caught": {
+          "path": "native/src/code_rule_dsl/suppress/rerail.rs",
+          "text": "fn leading<D: Doc>(node: &Node<'_, D>, source: &str) -> Option<Node<'_, D>> {\n    (node.kind() == \"block\")\n        .then(|| node.children().find(|child| is_code(child, source)))\n        .flatten()\n}\n"
+        },
+        "passes": {
+          "path": "native/src/code_rule_dsl/suppress/rerail.rs",
+          "text": "fn leading<D: Doc>(node: &Node<'_, D>, kinds: Kinds) -> bool {\n    kinds.bodies.contains(&node.kind().as_ref())\n}\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-language-facts-from-registry",
+      "document": "rules/rerail-language-facts-from-registry.json",
+      "title": "Take language facts from the language registry",
+      "group": "Native engine",
+      "examples": {
+        "caught": {
+          "path": "native/src/git_workspace.rs",
+          "text": "/// The extensions of the files the host evaluates (`SOURCE_LANGUAGES` in\n/// code-rule-languages.ts): dialect sources and the text files regex clauses read.\nconst SOURCE_SUFFIXES: &[&str] = &[\n    \"bash\", \"cjs\", \"css\", \"cts\", \"html\", \"js\", \"json\", \"jsx\", \"md\", \"mdx\", \"mjs\", \"mts\", \"php\",\n    \"py\", \"pyi\", \"rs\", \"rst\", \"scss\", \"sh\", \"sql\", \"toml\", \"ts\", \"tsx\", \"txt\", \"yaml\", \"yml\",\n    \"zsh\",\n];\n"
+        },
+        "passes": {
+          "path": "native/src/git_workspace.rs",
+          "text": "/// The names of the files the host evaluates by their whole name (`SOURCE_NAMES` in\n/// code-rule-languages.ts): the package ignore files `file.package.published` reads.\nconst SOURCE_NAMES: &[&str] = &[\".npmignore\", \".gitignore\"];\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-origin-ranges",
+      "document": "rules/rerail-origin-ranges.json",
+      "title": "Map byte ranges across documents only through Origin",
+      "group": "Native engine",
+      "examples": {
+        "caught": {
+          "path": "native/src/code_rule_dsl/vue/view.rs",
+          "text": "impl View {\n    fn file_range(&self, node: &Node<'_, StrDoc<Vue>>) -> Range<usize> {\n        return self.segments.host_span(node.byte_range());\n    }\n}\n"
+        },
+        "passes": {
+          "path": "native/src/code_rule_dsl/matcher/format_args.rs",
+          "text": "fn exports(tree: &SubTree, found: &Found, out: &mut Vec<Range<usize>>) {\n    if let Some(range) = tree.of_node(found.node_id(), found.range()) {\n        out.push(range);\n    }\n}\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-store-reads-in-documents",
+      "document": "rules/rerail-store-reads-in-documents.json",
+      "title": "Read stored source and tape only through workspace/documents.rs",
+      "group": "Native engine",
+      "examples": {
+        "caught": {
+          "path": "native/src/code_rule_dsl/facts/families.rs",
+          "text": "    let bytes = store.get_source(source)?;\n"
+        },
+        "passes": {
+          "path": "native/src/code_rule_dsl/workspace/evaluate.rs",
+          "text": "                let document = documents::load(&storage, &version)?;\n                let unanswered = !file.candidates.regex.is_empty();\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-walk-limits-native",
+      "document": "rules/rerail-walk-limits-native.json",
+      "title": "Pass Rust repository walks the host's folders and limits",
+      "group": "Native engine",
+      "examples": {
+        "caught": {
+          "path": "native/src/code_rule_dsl/module_graph.rs",
+          "text": "/// the host's audit bound (`AUDIT_MAX_FILES`).\nconst MAX_GRAPH_ENTRIES: usize = 100_000;\n"
+        },
+        "passes": {
+          "path": "native/src/code_rule_dsl/module_graph.rs",
+          "text": "fn skipped_folder(name: &str, options: &RepositoryIndexOptions) -> bool {\n    name.starts_with('.') || options.ignored_directories.iter().any(|skip| skip == name)\n}\n"
+        }
+      }
+    }
+  ]
+}

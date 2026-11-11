@@ -28,7 +28,7 @@ fn measure(mode: &str, trial: usize) -> Value {
     let db = Connection::open(directory.path().join("index.sqlite")).unwrap();
     crate::session::configure(&db).unwrap();
     let declaration =
-        include_str!("../../../../native/src/code_rule_dsl/matcher/anchors/sql/schema.sql");
+        include_str!("../../../../native/src/code_rule_dsl/matcher/p_anchors/sql/schema.sql");
     for sql in declaration.split(';').take(2) {
         db.execute_batch(sql).unwrap();
     }

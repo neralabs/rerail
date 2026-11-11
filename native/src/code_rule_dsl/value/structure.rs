@@ -12,6 +12,7 @@
 //! - `Parts` is `ComparableLiteral` (SIM116): a string or bytes literal compares its implicitly
 //!   concatenated parts one by one (`"a" "b" != "ab" ""`); anything else structurally.
 
+use crate::code_rule_dsl::tree::Tree;
 use super::Context;
 use super::python::{Piece, Prefix, decode_body, prefix};
 use crate::code_rule_dsl::identifier::python_name;
@@ -188,7 +189,7 @@ fn plain_node<D: Doc>(
         _ => {}
     }
     if !node.is_named() {
-        if !punctuation(&kind) {
+        if !crate::code_rule_dsl::tree::is_punctuation(&kind) {
             out.push(Tok::Token(kind.into_owned()));
         }
         return Some(());
@@ -215,10 +216,6 @@ fn plain_node<D: Doc>(
     Some(())
 }
 
-/// Tokens the tree's shape already records: separators and brackets.
-fn punctuation(kind: &str) -> bool {
-    matches!(kind, "," | ";" | "(" | ")" | "[" | "]" | "{" | "}" | ":")
-}
 
 fn sequence<D: Doc>(
     kind: &str,
@@ -241,7 +238,7 @@ fn boolean<D: Doc>(
     context: &mut Context<'_>,
     out: &mut Vec<Tok>,
 ) -> Option<()> {
-    let operator = node.field("operator")?.kind().into_owned();
+    let operator = node.operator()?;
     let mut operands = Vec::new();
     let mut current = node.clone();
     loop {
@@ -249,7 +246,7 @@ fn boolean<D: Doc>(
         operands.push(right);
         let same = left.kind() == "boolean_operator"
             && left
-                .field("operator")
+                .operator_token()
                 .is_some_and(|op| op.kind() == operator.as_str());
         if same {
             current = left;
@@ -621,14 +618,14 @@ fn folded<D: Doc>(node: &Node<'_, D>) -> Option<(Real, Real)> {
         },
         "unary_operator" => {
             let (real, imag) = folded(&node.field("argument")?)?;
-            match node.field("operator")?.kind().as_ref() {
+            match node.operator_token()?.kind().as_ref() {
                 "+" => Some((real, imag)),
                 "-" => Some((real.negate(), imag.negate())),
                 _ => None,
             }
         }
         "binary_operator" => {
-            let operator = node.field("operator")?.kind().into_owned();
+            let operator = node.operator()?;
             if !matches!(operator.as_ref(), "+" | "-") {
                 return None;
             }

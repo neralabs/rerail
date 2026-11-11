@@ -31,7 +31,7 @@
 //!                                              passed join done as its delta (`-`: one row, 0); comma lists
 //! Rels are numbered in order. A pattern token is `_`, `v<slot>` (binds the slot, or tests it if already bound),
 //! `i:<int>` or `x:<hex symbol>`. The edge table's columns are the key slots, then the ecols slots. A head token is
-//! `v<slot>`, `i:<int>`, `x:<hex>` or `cat:<slot>:<slot>` (the symbols joined by ".").
+//! `v<slot>`, `i:<int>`, `x:<hex>` or `cat:<slot>:<slot>` (`@dot` of the symbols: joined by ".", `""` first gives the second).
 //! `set_fixpoint_run(name[, max_waves])` returns "new_rows waves visits probe_runs probe_skips solve_ms total_ms
 //! per_probe done": per_probe is a comma-separated "ms:rows" for each probe line in spec order, and done is 1 at the
 //! fixpoint (new rows are written then), 0 when max_waves stopped it. `set_fixpoint_stats(name)` and
@@ -99,14 +99,26 @@ impl Interner {
             }
         }
     }
+    /// The atom of `s` in this process's arena (`symbols` read the database's atoms into it).
     fn get(&self, s: &str) -> Option<i64> { self.atoms.get(s).map(i64::from) }
-    fn name(&self, v: i64) -> String { self.atoms.with_str(v as crate::content_store::atoms::Sym, str::to_owned).unwrap_or_default() }
-    fn len(&self) -> usize { self.atoms.len() }
+    /// Atom `v`'s text, reading the database's atoms written since `symbols` when `v` is past the arena; "" if there
+    /// is no such atom or they could not be read (a join step has no error to return: it matches as it did before).
+    fn name(&self, v: i64) -> String {
+        let Ok(atom) = crate::content_store::atoms::Sym::try_from(v) else { return String::new() };
+        self.atoms.with_str(atom, str::to_owned).or_else(|| self.atoms.value(atom).ok().flatten()).unwrap_or_default()
+    }
+    /// Whether `v` is an atom of the database, read as `name` reads it.
+    fn known(&self, v: i64) -> Result<bool> {
+        let Ok(atom) = crate::content_store::atoms::Sym::try_from(v) else { return Ok(false) };
+        Ok(self.atoms.with_str(atom, |_| ()).is_some() || self.atoms.value(atom).map_err(|e| err(e.to_string()))?.is_some())
+    }
     /// The first interning that failed since the last check.
     fn check(&mut self) -> Result<()> {
         match self.failed.take() { Some(e) => Err(err(e)), None => Ok(()) }
     }
 }
+/// The process's symbols of each database, kept from run to run with their arena: a run need not read a large
+/// store's atoms again. They hold no file open: the store's last handle closes them (`ContentStore`'s drop).
 static SYMS: LazyLock<Mutex<HashMap<String, Arc<RwLock<Interner>>>>> = LazyLock::new(Default::default);
 /// The symbols of `conn`'s database: the process's arena of it.
 fn symbols(conn: &Connection) -> Result<Arc<RwLock<Interner>>> {
@@ -137,10 +149,12 @@ fn symbols_by_path(conn: &Connection) -> Result<Arc<RwLock<Interner>>> {
     let key = conn_path(conn).to_string();
     let mut syms = SYMS.lock().unwrap();
     let atoms = crate::content_store::atoms::Atoms::for_connection(conn);
-    // A database created again at the same path has new atoms (`Atoms::fresh`).
+    // A store created again at the same path has new atoms (`Atoms::for_database`, checked by `Atoms::attach`).
     if let Some(s) = syms.get(&key) && Arc::ptr_eq(&s.read().unwrap().atoms, &atoms) {
         return Ok(Arc::clone(s));
     }
+    // An arena made after the store was written holds none of its atoms yet: the run's SQL and joins read them.
+    atoms.read_stored().map_err(|e| err(e.to_string()))?;
     let s = Arc::new(RwLock::new(Interner { atoms, buf: String::new(), failed: None }));
     syms.insert(key, Arc::clone(&s));
     Ok(s)
@@ -160,25 +174,25 @@ pub(in crate::code_rule_dsl) fn intern_batch<'a>(conn: &Connection, texts: impl 
 pub fn sym_text_of(conn: &Connection, a: i64) -> Result<String> {
     let syms = symbols(conn)?;
     let s = syms.read().unwrap();
-    if a < 0 || a as usize >= s.len() {
+    if !s.known(a)? {
         return Err(err(format!("no symbol {a}")));
     }
     Ok(s.name(a))
 }
 
-/// `sym_text(a)`, `sym_atom(text)` and `sym_cat(a, b)` (`a.b`) over `conn`'s symbols: the planner's SQL holds symbols
+/// `sym_text(a)`, `sym_atom(text)` and `sym_cat(a, b)` (`@dot`: `a.b`, `"" . b` is `b`) over `conn`'s symbols: the planner's SQL holds symbols
 /// as atoms (decision 0009), and these are the only places it reads or makes their text. NULL gives NULL. Also
-/// registers `atoms` and the store's commit hook on `conn` (decision 0049).
+/// registers `atoms` on `conn` (decision 0049; its opener registered the store's commit hook, `Atoms::install`).
 pub fn register_symbols(conn: &Connection) -> Result<()> {
     use rusqlite::functions::FunctionFlags;
-    crate::content_store::atoms::Atoms::install(conn)?;
+    crate::content_store::atoms::Atoms::attach(conn)?;
     let det = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
     let syms = symbols(conn)?;
     let s = Arc::clone(&syms);
     conn.create_scalar_function(c"sym_text", 1, det, move |ctx| {
         let Some(a) = ctx.get::<Option<i64>>(0)? else { return Ok(None) };
         let s = s.read().unwrap();
-        if a < 0 || a as usize >= s.len() {
+        if !s.known(a)? {
             return Err(err(format!("no symbol {a}")));
         }
         Ok(Some(s.name(a)))
@@ -194,8 +208,10 @@ pub fn register_symbols(conn: &Connection) -> Result<()> {
     conn.create_scalar_function(c"sym_cat", 2, det, move |ctx| {
         let (Some(a), Some(b)) = (ctx.get::<Option<i64>>(0)?, ctx.get::<Option<i64>>(1)?) else { return Ok(None) };
         let mut s = syms.write().unwrap();
-        if a.min(b) < 0 || a.max(b) as usize >= s.len() {
-            return Err(err(format!("no symbol {}", if a < 0 || a as usize >= s.len() { a } else { b })));
+        for v in [a, b] {
+            if !s.known(v)? {
+                return Err(err(format!("no symbol {v}")));
+            }
         }
         let id = cat(&mut s, a, b);
         s.check()?;
@@ -208,7 +224,7 @@ pub fn register_symbols(conn: &Connection) -> Result<()> {
 pub(in crate::code_rule_dsl) fn symbol_text(conn: &Connection, atom: i64) -> Result<String> {
     let symbols=symbols(conn)?;
     let s=symbols.read().unwrap();
-    if atom<0 || atom as usize>=s.len(){return Err(err(format!("no symbol {atom}")))}
+    if !s.known(atom)? {return Err(err(format!("no symbol {atom}")))}
     Ok(s.name(atom).to_owned())
 }
 
@@ -493,6 +509,32 @@ impl Rel {
         self.pending.insert_unique(hash_vals(row.iter().copied()), id, |&i| hash_vals(data[i as usize * k..][..k].iter().copied()));
         true
     }
+    /// A wave's derived rows added as the next wave's, each once, unless held: checked as one sorted batch
+    /// (`Fresh::settle`), so the dedup test reads each of the first order's runs once, in order, not row by row
+    /// (decision 0112). `pend`: the rows stay in no order past this wave's end (a gate's relation, its delta set
+    /// later), so they are also put in `pending` for the dedup tests until then. Whether any was new.
+    fn push_fresh(&mut self, mut f: Fresh, pend: bool) -> bool {
+        f.settle(self);
+        let (k, m) = (self.k, f.n);
+        if m == 0 {
+            return false;
+        }
+        let from = self.n;
+        self.data.extend_from_slice(&f.data[..m * k]);
+        for _ in 0..m {
+            if self.leveled && self.level.len() == self.n {
+                self.level.push(self.lbase + self.wave + 1);
+            }
+            self.n += 1;
+        }
+        if pend {
+            let data = &self.data;
+            for id in from..self.n {
+                self.pending.insert_unique(hash_vals(data[id * k..][..k].iter().copied()), id as u32, |&i| hash_vals(data[i as usize * k..][..k].iter().copied()));
+            }
+        }
+        true
+    }
     /// Rows `indexed..n` counted in the sketches; `pending` emptied (they are in the orders now).
     fn indexed_to_n(&mut self) {
         for id in self.indexed..self.n {
@@ -576,16 +618,71 @@ impl Cands<'_> {
     }
 }
 
-/// New tuples of one relation found in a wave, flat; duplicates are dropped when they are pushed. `emitted`: every
-/// row a rule derived this wave, new or not (`RERAIL_SPIKE_DERIVATIONS`: the derivations a counting scheme would
-/// count).
+/// The tuples of one relation derived in a wave, flat, not yet checked against it (decision 0112: the dedup test a
+/// batch at a time). Rows `..settled` are distinct, not held by the relation, and sorted by its first order; the rest
+/// are as derived. `emitted`: every row a rule derived this wave, new or not (`RERAIL_SPIKE_DERIVATIONS`: the
+/// derivations a counting scheme would count).
 #[derive(Clone, Default)]
-struct Fresh { data: Vec<i64>, n: usize, emitted: u64 }
+struct Fresh { data: Vec<i64>, n: usize, emitted: u64, settled: usize }
+
+/// Rows a wave's derived tuples hold before they are checked against their relation (`Fresh::offer`): a wave that
+/// derives many rows already held keeps at most about this many more.
+const FRESH_BATCH: usize = 1 << 16;
 
 /// `RERAIL_SPIKE_DERIVATIONS`: rows derived (new or already held) and rows held new, by relation, over the process.
 pub(crate) static DERIVATIONS: std::sync::Mutex<std::collections::BTreeMap<String, (u64, u64)>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
 impl Fresh {
     fn add(&mut self, row: &[i64]) { self.data.extend_from_slice(row); self.n += 1; }
+    /// A row a rule derived for `rel`: kept unchecked, the rows past `settled` checked a batch at a time.
+    #[inline]
+    fn offer(&mut self, row: &[i64], rel: &Rel) {
+        self.add(row);
+        if self.n - self.settled >= FRESH_BATCH.max(self.settled) {
+            self.settle(rel);
+        }
+    }
+    /// Drops the rows `rel` holds and the repeats: the rest, distinct, sorted by `rel`'s first order (so a wave's rows
+    /// are checked against it as one sorted batch, each run searched once in order, not row by row).
+    fn settle(&mut self, rel: &Rel) {
+        let (k, n, settled) = (rel.k, self.n, self.settled);
+        if settled == n {
+            return;
+        }
+        let cols = &rel.idx[0].cols;
+        let data = &self.data;
+        let cmp = |a: u32, b: u32| -> std::cmp::Ordering {
+            let (ra, rb) = (&data[a as usize * k..][..k], &data[b as usize * k..][..k]);
+            cols.iter().map(|&c| ra[c].cmp(&rb[c])).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal)
+        };
+        let mut order: Vec<u32> = (settled as u32..n as u32).collect();
+        order.sort_unstable_by(|&a, &b| cmp(a, b));
+        order.dedup_by(|a, b| cmp(*a, *b).is_eq());
+        // The new rows' check: rows pushed since the last wave (in no order yet), then the first order.
+        let mut held = vec![false; order.len()];
+        if rel.indexed < rel.n {
+            for (h, &q) in held.iter_mut().zip(&order) {
+                *h = rel.contains(&data[q as usize * k..][..k]);
+            }
+        }
+        rel.idx[0].held_sorted(&rel.data, k, data, &order, |id| !rel.dead(id), &mut held);
+        // Merged with the settled rows (sorted, distinct, not held), less those the new rows repeat.
+        let mut out: Vec<i64> = Vec::with_capacity((settled + order.len()) * k);
+        let (mut s, mut kept) = (0, 0);
+        for (&q, h) in order.iter().zip(held) {
+            while s < settled && cmp(s as u32, q).is_lt() {
+                out.extend_from_slice(&data[s * k..][..k]);
+                (s, kept) = (s + 1, kept + 1);
+            }
+            if !h && !(s < settled && cmp(s as u32, q).is_eq()) {
+                out.extend_from_slice(&data[q as usize * k..][..k]);
+                kept += 1;
+            }
+        }
+        out.extend_from_slice(&data[s * k..settled * k]);
+        self.n = kept + settled - s;
+        self.settled = self.n;
+        self.data = out;
+    }
 }
 struct EdgeRule { head: usize, src: usize, key: Vec<usize>, ecols: Vec<usize>, pat: Vec<Pat>, out: Vec<Term>,
                   edges: HashMap<Vec<i64>, Vec<Vec<i64>>>, has_edge: bool, nslots: usize }
@@ -1224,11 +1321,13 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
             for vals in got {
                 visits += 1;
                 row.clear();
+                // A function with no value (`rx_group` with no match) gives no row, as the SQL strata's inserts.
+                if vals.iter().any(|v| matches!(v, Value::Null)) { continue; }
                 for (v, &ty) in vals.iter().zip(&types) {
                     row.push(read_value(ValueRef::from(v), ty, &mut syms).map_err(|e| err(format!("{}: {e}", store.rels[head].table)))?);
                 }
                 fresh[head].emitted += 1;
-                if !store.rels[head].contains(&row) { fresh[head].add(&row); }
+                fresh[head].offer(&row, &store.rels[head]);
             }
         }
         // The seed joins on the device, in one batch, when the stratum was placed there (decision 0095, step 4).
@@ -1350,7 +1449,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
                         Term::Cat(a, b) => cat(syms, slots[*a], slots[*b]),
                     }));
                     fresh[rule.head].emitted += 1;
-                    if !store.rels[rule.head].contains(&row) { fresh[rule.head].add(&row); }
+                    fresh[rule.head].offer(&row, &store.rels[rule.head]);
                 };
                 if !rule.has_edge { emit(&slots, store, &mut syms, &mut fresh); continue; }
                 key.clear();
@@ -1370,13 +1469,13 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
         let counting = std::env::var_os("RERAIL_SPIKE_DERIVATIONS").is_some();
         for (r, f) in fresh.into_iter().enumerate() {
             let rel = &mut store.rels[r];
-            let (lo, k) = (rel.n, rel.k);
-            rel.reserve(f.n);
-            for i in 0..f.n { any |= rel.push(&f.data[i * k..][..k]); }
-            if counting && f.emitted > 0 {
+            let lo = rel.n;
+            let emitted = f.emitted;
+            any |= rel.push_fresh(f, gates_done.contains(&r));
+            if counting && emitted > 0 {
                 let mut all = DERIVATIONS.lock().unwrap();
                 let e = all.entry(rel.table.clone()).or_default();
-                e.0 += f.emitted;
+                e.0 += emitted;
                 e.1 += (rel.n - lo) as u64;
             }
             lo_of[r] = lo;
@@ -1815,7 +1914,7 @@ unsafe impl VTabCursor for RelCursor {
         let s = self.store.read().unwrap();
         let r = &s.rels[self.rel];
         let v = r.row(self.ids[self.pos] as usize)[i as usize];
-        ctx.set_result(&v)
+        ctx.set_result(v)
     }
     fn rowid(&self) -> Result<i64> { Ok(self.ids[self.pos] as i64) }
 }
@@ -1827,8 +1926,8 @@ unsafe impl VTabCursor for RelCursor {
 //   pos <src> <tok..>      a positive atom; <src> is `d<rel>` (delta), `c<rel>` (full), or `t:<hex table>:<hex
 //                          columns>:<types>`, an input relation (a facts table, a view or a lower stratum's table)
 //   neg <src> <tok..>      a negated atom (every variable bound)
-//   cat <tok> <tok> <tok>  first = second "." third, binding the first or testing it; with the first bound and a part
-//                          unbound, splitting the first at each "." (binding the unbound parts, testing a bound one)
+//   cat <tok> <tok> <tok>  first = `@dot(second, third)`, binding the first or testing it; with the first bound and a
+//                          part unbound, splitting the first (binding the unbound parts, testing a bound one)
 //   eq <tok> <tok>, ne <tok> <tok> equal (binding the first if unbound) or not
 //   lt <tok> <tok>, le <tok> <tok> integer order, both bound
 //   count <src> <tok..> <tok>      the atom's matching tuples (its variables bound), binding or testing the last
@@ -1867,11 +1966,18 @@ fn thread_cpu() -> f64 {
 }
 
 /// This thread's CPU seconds.
-#[cfg(not(target_family = "wasm"))]
+#[cfg(unix)]
 fn thread_cpu() -> f64 {
     let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
     t.tv_sec as f64 + t.tv_nsec as f64 / 1e9
+}
+
+/// This thread's CPU seconds (user + kernel).
+#[cfg(windows)]
+fn thread_cpu() -> f64 {
+    let (user, kernel) = crate::code_rule_dsl::prof::windows_cpu(true);
+    (user + kernel).as_secs_f64()
 }
 
 /// CPU seconds and rows of input loads and index builds: [base facts (construction), lower strata's tables].
@@ -2090,7 +2196,7 @@ pub fn output_rows(conn: &Connection, table: &str, text: &[bool]) -> Result<Opti
         let mut vals = Vec::with_capacity(row.len());
         for (c, &v) in row.iter().enumerate() {
             vals.push(if text.get(c).copied().unwrap_or(false) {
-                if v < 0 || v as usize >= syms.len() {
+                if !syms.known(v)? {
                     return Err(err(format!("{table}: no symbol {v}")));
                 }
                 Value::Text(syms.name(v))
@@ -2115,7 +2221,7 @@ pub fn source_rows(conn: &Connection, src: &dyn crate::code_rule_dsl::facts::vta
         for c in 0..k {
             let v = src.value(row, c);
             vals.push(if text.get(c).copied().unwrap_or(false) {
-                if v < 0 || v as usize >= syms.len() {
+                if !syms.known(v)? {
                     return Err(err(format!("no symbol {v}")));
                 }
                 Value::Text(syms.name(v))
@@ -2138,7 +2244,7 @@ pub fn finding_rows(conn: &Connection) -> Result<Option<Vec<(String, String, i64
     let (Some(nn), Some(nd), Some(ns), Some(dd), Some(dp)) = (col(node.as_ref(), "n"), col(node.as_ref(), "d"), col(node.as_ref(), "start"), col(doc.as_ref(), "d"), col(doc.as_ref(), "path")) else { return Ok(None) };
     let syms = symbols(conn)?;
     let syms = syms.read().unwrap();
-    let name = |v: i64| if v < 0 || v as usize >= syms.len() { Err(err(format!("finding: no symbol {v}"))) } else { Ok(syms.name(v)) };
+    let name = |v: i64| if !syms.known(v)? { Err(err(format!("finding: no symbol {v}"))) } else { Ok(syms.name(v)) };
     let mut out = Vec::with_capacity(rel.rows());
     for id in 0..rel.len() {
         if is_dead(&rel.dead, id as u32) {
@@ -2883,7 +2989,7 @@ unsafe impl VTabCursor for DerivedCursor {
     fn eof(&self) -> bool { self.rel.as_ref().is_none_or(|r| self.id >= r.len()) }
     fn column(&self, ctx: &mut VContext, i: c_int) -> Result<()> {
         let rel = self.rel.as_ref().expect("a filtered cursor");
-        match rel.row(self.id).get(i as usize) { Some(v) => ctx.set_result(v), None => ctx.set_result(&rusqlite::types::Null) }
+        match rel.row(self.id).get(i as usize) { Some(v) => ctx.set_result(v), None => ctx.set_result(rusqlite::types::Null) }
     }
     fn rowid(&self) -> Result<i64> { Ok(self.id as i64) }
 }
@@ -3772,7 +3878,7 @@ const CARRY_AT: usize = 32_768;
 
 /// The table `schema.name` read once into memory, every column (`None`: not a table of integers).
 pub fn table_source(conn: &Connection, schema: &str, name: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
-    let columns: Vec<String> = conn.prepare(&format!("SELECT * FROM {schema}.{}", crate::code_rule_dsl::logic::sql::ident(name))).ok()?.column_names().into_iter().map(str::to_owned).collect();
+    let columns: Vec<String> = conn.prepare(&format!("SELECT * FROM {schema}.{}", crate::code_rule_dsl::logic::sql::ident(name))).ok()?.column_names().map(str::to_owned).collect();
     let need: Vec<&str> = columns.iter().map(String::as_str).collect();
     stored_table(conn, schema, name, &need)
 }
@@ -3787,7 +3893,7 @@ fn stored_table(conn: &Connection, schema: &str, name: &str, need: &[&str]) -> O
         Some(t) => t?,
         None => {
             // The columns' names, from the statement (prepared, not run).
-            let columns: Vec<String> = conn.prepare(&format!("SELECT * FROM {schema}.{}", crate::code_rule_dsl::logic::sql::ident(name))).ok()?.column_names().into_iter().map(str::to_owned).collect();
+            let columns: Vec<String> = conn.prepare(&format!("SELECT * FROM {schema}.{}", crate::code_rule_dsl::logic::sql::ident(name))).ok()?.column_names().map(str::to_owned).collect();
             let k = columns.len();
             let t = Arc::new(Stored::new(columns, (0..k).map(|_| std::sync::OnceLock::new()).collect()));
             STORED.lock().unwrap().insert(key.clone(), Some(t.clone()));
@@ -3813,7 +3919,8 @@ enum Step {
     /// the atom, first seen here).
     Atom { src: Src, neg: bool, keys: Vec<(usize, Key)>, binds: Vec<(usize, usize)>, tests: Vec<(usize, usize)> },
     Cat { out: usize, a: Key, b: Key, bind: bool },
-    /// `whole` split at each "." into `a` and `b`; `Some` slots bind, `None` parts (`ka`/`kb`) are tested.
+    /// `whole` split as `@dot` makes it into `a` and `b` (`""` and the whole, or at each "." with a part before it);
+    /// `Some` slots bind, `None` parts (`ka`/`kb`) are tested.
     Split { whole: Key, a: Option<usize>, b: Option<usize>, ka: Key, kb: Key },
     Eq { a: Key, b: Key },
     Lt { a: Key, b: Key, or_eq: bool },
@@ -4154,7 +4261,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             cx.n += 1;
             if let Some(c) = &mut cx.collect { c.extend_from_slice(&cx.row); return; }
             cx.fresh[cx.head].emitted += 1;
-            if !store.rels[cx.head].contains(&cx.row) { cx.fresh[cx.head].add(&cx.row); }
+            cx.fresh[cx.head].offer(&cx.row, &store.rels[cx.head]);
             return;
         };
         /// The candidates: an input's index on exactly the key columns, a component relation's composite index, or
@@ -4331,7 +4438,8 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     let row = rows.row(id);
                     if keys.iter().all(|&(c, k)| row.at(c) == val(slots, k)) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) {
                         let value = if x.1 { syms.name(row.at(x.0)).to_string() } else { row.at(x.0).to_string() };
-                        got.push((by.iter().map(|&(c, sym)| sortable(row.at(c), sym)).collect(), value));
+                        // Then by x itself: a number by its value, not its digits.
+                        got.push((by.iter().chain([x]).map(|&(c, sym)| sortable(row.at(c), sym)).collect(), value));
                     }
                     false
                 });
@@ -4353,15 +4461,10 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 go(cx, i + 1, slots);
             }
             Step::Split { whole, a, b, ka, kb } => {
+                // As `cat` makes it: `"" . w`, or at each "." with a part before it.
                 let w = cx.syms.name(val(slots, *whole)).to_owned();
-                // `@dot("", w)` is `w`: with "" given for the first part, the second is the whole.
-                if a.is_none() && cx.syms.name(val(slots, *ka)).is_empty() {
-                    match b { Some(s) => slots[*s] = val(slots, *whole), None => if val(slots, *kb) != val(slots, *whole) { return } }
-                    go(cx, i + 1, slots);
-                    return;
-                }
-                for (p, _) in w.match_indices('.') {
-                    let (x, y) = (&w[..p], &w[p + 1..]);
+                for p in std::iter::once(None).chain(w.match_indices('.').filter(|(p, _)| *p > 0).map(|(p, _)| Some(p))) {
+                    let (x, y) = p.map_or(("", w.as_str()), |p| (&w[..p], &w[p + 1..]));
                     match a { Some(s) => slots[*s] = cx.syms.id(x), None => if cx.syms.name(val(slots, *ka)) != x { continue } }
                     match b { Some(s) => slots[*s] = cx.syms.id(y), None => if cx.syms.name(val(slots, *kb)) != y { continue } }
                     go(cx, i + 1, slots);
@@ -4500,6 +4603,51 @@ mod posted_tests {
             assert!(ix.shares(kept), "the maintained relation's order {:?} is a copy", ix.cols);
         }
         assert!(based.contains(&[3, 3, 93]) && !based.contains(&[3, 3, 94]));
+    }
+
+    /// The dedup test a wave at a time (decision 0112): a wave's derived rows, in any order, repeated, and some
+    /// held already (one of them dead), become the wave's new rows once each, whether they are checked at the wave's
+    /// end or in batches as they come (`FRESH_BATCH`); the relation holds what a set of its rows would.
+    #[test]
+    fn a_waves_rows_are_checked_once_as_a_sorted_batch() {
+        let mut x: u64 = 11;
+        let mut next = |m: u64| {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((x >> 33) % m) as i64
+        };
+        let mut rel = Rel::new("t", b"iii");
+        rel.want(&[2]);
+        let mut set: std::collections::BTreeSet<Vec<i64>> = Default::default();
+        for w in 0..5 {
+            let mut f = Fresh::default();
+            // Few values a column: many repeats in the wave and many rows held from earlier waves.
+            let rows = if w == 3 { 3 * FRESH_BATCH } else { 5000 };
+            let mut new = std::collections::BTreeSet::new();
+            for _ in 0..rows {
+                let row = vec![next(40), next(30), next(20)];
+                f.offer(&row, &rel);
+                if !set.contains(&row) {
+                    new.insert(row);
+                }
+            }
+            assert!(w != 3 || f.n < rows, "a large wave is checked in batches as it comes");
+            let lo = rel.n;
+            assert_eq!(rel.push_fresh(f, false), !new.is_empty());
+            let hi = rel.n;
+            assert_eq!(hi - lo, new.len(), "wave {w}: each new row once");
+            rel.set_delta(lo, hi);
+            set.extend(new);
+            if w == 1 {
+                // A row deleted in place is new again when derived again.
+                let id = (0..rel.n as u32).find(|&id| !rel.dead(id)).expect("a row");
+                assert!(kill(&mut rel.dead, id));
+                rel.ndead += 1;
+                set.remove(rel.row(id as usize));
+            }
+        }
+        let live: std::collections::BTreeSet<Vec<i64>> = (0..rel.n).filter(|&id| !rel.dead(id as u32)).map(|id| rel.row(id).to_vec()).collect();
+        assert_eq!(live, set);
+        assert_eq!((0..rel.n).filter(|&id| !rel.dead(id as u32)).count(), set.len(), "no live row twice");
     }
 
     /// A column's sorted index is the same whichever way it is built (in order, few values, many): its rows sorted

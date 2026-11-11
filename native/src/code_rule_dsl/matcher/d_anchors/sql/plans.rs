@@ -15,7 +15,7 @@ pub(in crate::code_rule_dsl) fn plans<'a>(
     fn query(q: &Query, out: &mut BTreeMap<u32, Vec<Arc<AnchorPlan>>>, seen: &mut HashSet<usize>) {
         match q {
             Query::Ast { matchers, .. } => {
-                for matcher in matchers {
+                for matcher in matchers.iter() {
                     if seen.insert(Arc::as_ptr(&matcher.anchors) as usize) {
                         let lang =
                             u32::from(language::tape_tag(matcher.language).expect("tape language"));
@@ -29,7 +29,7 @@ pub(in crate::code_rule_dsl) fn plans<'a>(
                 query(select, out, seen);
                 query(exists, out, seen);
             }
-            Query::Regex { .. } => {}
+            Query::Regex { .. } | Query::File => {}
         }
     }
     let mut out = BTreeMap::new();
@@ -88,7 +88,7 @@ pub(in crate::code_rule_dsl) fn for_file(
                 query(exists, leaves);
                 query(select, leaves);
             }
-            Query::Regex { .. } => {}
+            Query::Regex { .. } | Query::File => {}
         }
     }
     fn relation<'a>(
@@ -153,7 +153,7 @@ pub(super) fn origins<'a>(
     ) {
         match q {
             Query::Ast { matchers, .. } => {
-                for matcher in matchers {
+                for matcher in matchers.iter() {
                     out.entry(Arc::as_ptr(&matcher.anchors) as usize)
                         .or_default()
                         .insert(origin.into());
@@ -163,7 +163,7 @@ pub(super) fn origins<'a>(
                 query(select, origin, out);
                 query(exists, origin, out);
             }
-            Query::Regex { .. } => {}
+            Query::Regex { .. } | Query::File => {}
         }
     }
     let mut out = std::collections::HashMap::new();

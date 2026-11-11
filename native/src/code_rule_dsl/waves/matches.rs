@@ -555,7 +555,7 @@ pub(in crate::code_rule_dsl) fn documents(graph: &(impl Graph + ?Sized), scope: 
             return Err(StoreError::Invalid(format!("stale core facts for {core}")));
         }
         let key = graph.store().atom(&path_name(scope, path))?.ok_or_else(|| StoreError::Corrupt(format!("{path} has no atom")))?;
-        out.push(Document { key, path: path.clone(), core, digest, facts: Arc::new(facts), guest: None, module: None, tape: None });
+        out.push(Document { key, path: path.clone(), core, digest, facts: Arc::new(facts), tape: None, guest: None, module: None });
     }
     Ok(out)
 }
@@ -610,6 +610,7 @@ mod tests;
 /// is the dialect the store's tag names. Leases are not kept: the label run takes its own.
 fn prepare(store: &ContentStore, docs: &[crate::code_rule_dsl::tape::TapeDoc]) -> StoreResult<()> {
     use crate::code_rule_dsl::{language, residency::slabs, tape::Grammar};
+    // The stored bytes are read in place.
     let digests = docs.iter().map(|doc| doc.resident_key().map_err(StoreError::Invalid)).collect::<StoreResult<Vec<_>>>()?;
     let grammar = |id: i64| Grammar::new(u8::try_from(id).ok().and_then(language::from_tape_tag).ok_or("unknown grammar")?);
     slabs::admit(store, &digests, &grammar).map(drop).map_err(invalid)

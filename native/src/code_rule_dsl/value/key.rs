@@ -1,6 +1,7 @@
 //! ECMAScript's conversions between numbers and strings, exactly: `Number::toString`,
 //! StringToNumber, StringToBigInt, ToInt32 and ToUint32; and ESLint's static property names.
 
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::language::Family;
 
 use super::ecma::{cooked, number, operand, ops, string_node};
@@ -501,8 +502,7 @@ mod tests {
                     .find(|node| node.kind() == "arguments")
                     .expect("the call's arguments");
                 let [a, b] = arguments
-                    .children()
-                    .filter(|child| child.is_named())
+                    .named()
                     .collect::<Vec<_>>()
                     .try_into()
                     .unwrap_or_else(|_| panic!("{language:?} {source:?} has two arguments"));
@@ -532,8 +532,7 @@ mod tests {
             .find(|node| node.kind() == "arguments")
             .expect("the call's arguments");
         let [left, right] = arguments
-            .children()
-            .filter(|child| child.is_named())
+            .named()
             .collect::<Vec<_>>()
             .try_into()
             .unwrap_or_else(|_| panic!("two bigint arguments"));

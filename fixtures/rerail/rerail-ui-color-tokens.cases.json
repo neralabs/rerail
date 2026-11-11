@@ -1,0 +1,138 @@
+{
+  "caught": [
+    {
+      "path": "ui/css/base.css",
+      "content": ":root {\n  --canvas-glow: #F1EDF4;\n  --canvas: radial-gradient(farthest-corner at 100% 100%, var(--canvas-glow) 0%, var(--background) 40%);\n  --switch-thumb: var(--card);\n  --steered: #D4700A;\n  --logged: #A88400;\n  --steered-subtle: rgba(212,112,10,.08);\n  --logged-subtle: rgba(168,132,0,.08);\n  --inset: #F1F2F8;\n  --box: #FAFAFE;\n  --nested: #FAFAFE;\n  --resume-bg: #F1F2F8;\n  --sheet-bg: var(--card);\n  --pill: 999px;\n}\n"
+    },
+    {
+      "path": "ui/css/overview.css",
+      "content": "@media (prefers-color-scheme: dark) {\n  :root:not([data-theme=\"light\"]) {\n    --steered-subtle: rgba(251,146,60,.11);\n    --logged-subtle: rgba(242,201,76,.1);\n  }\n}\n"
+    },
+    {
+      "path": "ui/css/no-repo.css",
+      "content": ":root {\n  --header-primary: #434E96;\n  --canvas-glow: #F1EDF4;\n}\n"
+    },
+    {
+      "path": "ui/css/missing.css",
+      "content": ".dark {\n  --switch-thumb: var(--foreground);\n  --header-primary: var(--brand-foreground);\n}\n"
+    },
+    {
+      "path": "ui/css/sheet.css",
+      "content": ":root {\n  --sheet-float: -24px 0 48px color-mix(in srgb, black 28%, transparent);\n}\n"
+    },
+    {
+      "path": "ui/css/sessions.css",
+      "content": ".rail .tick{position:absolute;left:8px;background:#D4700A;border:2px solid var(--card)}\n"
+    },
+    {
+      "path": "ui/css/packs.css",
+      "content": ".chip{color:white;border:1px solid Gray}\n"
+    },
+    {
+      "path": "ui/css/history.css",
+      "content": ".corr[data-outcome=\"steered\"]{background:oklch(0.72 0.17 55 / .1)}\n.corr.hit{outline-color:color(display-p3 1 0.5 0)}\n.bound{color:hsl(30 90% 44%)}\n"
+    },
+    {
+      "path": "ui/css/create.css",
+      "content": ".pick{background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle fill='%23646076' r='4'/%3E%3C/svg%3E\")}\n"
+    },
+    {
+      "path": "ui/css/settings.css",
+      "content": ".settings{display:grid;gap:32px;--measure:560px;--ring:var(--brand)}\n"
+    },
+    {
+      "path": "ui/render/timeline.js",
+      "content": "export function markTick(tick) {\n  tick.style.background = \"orange\";\n}\n"
+    },
+    {
+      "path": "ui/views/overview.js",
+      "content": "export const outcomeDot = (n) => `<span class=\"dot\" style=\"color:#D4700A\">${n}</span>`;\n"
+    },
+    {
+      "path": "ui/frame/topbar.js",
+      "content": "export function tint(bar) {\n  document.documentElement.style.setProperty(\"--brand\", \"var(--info)\");\n}\n"
+    },
+    {
+      "path": "ui/render/range.js",
+      "content": "export function paint(ctx) {\n  ctx.fillStyle = 'rebeccapurple';\n}\n"
+    },
+    {
+      "path": "ui/index.html",
+      "content": "<svg class=\"ico\" viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path fill=\"#4D5FDA\" d=\"M1 1h14v14H1z\"/></svg>\n"
+    },
+    {
+      "path": "ui/dom.js",
+      "content": "export function dot(svg) {\n  svg.setAttribute(\"fill\", \"white\");\n  return h('circle', { r: 4, fill: 'white' });\n}\n"
+    },
+    {
+      "path": "ui/render/rules.js",
+      "content": "export const OUTCOMES = [{ label: 'Steer', color: 'orange' }];\nexport const paintRow = (el) => Object.assign(el.style, {\n  backgroundColor: 'white',\n});\n"
+    },
+    {
+      "path": "ui/css/settings-effects.css",
+      "content": ".corr[data-outcome=\"steered\"] {\n  --card-shadow: 0 6px 16px -4px rgb(212 112 10 / .3);\n}\n"
+    },
+    {
+      "path": "ui/css/missing-url.css",
+      "content": ".x{background:url(https://x.test/a.png) #D4700A}\n/* steer */ .corr{background:#D4700A}\n* { outline-color: #D4700A; }\n"
+    },
+    {
+      "path": "ui/frame/sidenav.js",
+      "content": "export const icon = '<svg viewBox=\"0 0 16 16\"><path stroke=\"black\" d=\"M1 1h14\"/></svg>';\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "ui/css/pack.css",
+      "content": ".rail .tick{position:absolute;left:8px;width:12px;height:12px;border-radius:50%;background:var(--steer-fg);border:2px solid var(--card);box-shadow:0 0 0 1px var(--steer-fg);cursor:pointer;transform:translateY(-6px)}\n.corr[data-outcome=\"logged\"]{background:var(--log-bg)}\n.corr[data-outcome=\"steered\"]{background:var(--steer-bg)}\n.msgrow .who{font-size:12px;font-weight:600;color:var(--muted-foreground);line-height:22px;white-space:nowrap}\n.bound::after{content:\"\";flex:1;height:1px;background:var(--border)}\n"
+    },
+    {
+      "path": "ui/css/not-set-up.css",
+      "content": ":root {\n  --header: color-mix(in srgb, var(--sidebar-primary) 75%, var(--brand));\n  --canvas: radial-gradient(125% 115% at 100% 100%, color-mix(in srgb, var(--accent) 45%, var(--background)) 0%, color-mix(in srgb, var(--accent) 26%, var(--background)) 45%, var(--background) 100%);\n  --steer-fg: var(--warning-foreground);\n  --steer-bg: color-mix(in srgb, var(--warning) 10%, transparent);\n  --card-shadow: 0 6px 16px -4px color-mix(in srgb, var(--brand) 30%, transparent);\n  --lift: 0 1px 2px rgb(0 0 0 / .1);\n  --scrim: rgb(10 10 14 / .38);\n  --overlay-shadow: -24px 0 48px rgb(0 0 0 / .28);\n}\n:root[data-theme=\"dark\"] {\n  --card-shadow: 0 6px 16px -4px rgb(0 0 0 / .55);\n  --panel-shadow: -6px 0 16px -4px rgb(0 0 0 / .55);\n  --bar-shadow: 0 8px 20px -12px rgb(0 0 0 / .6);\n}\n"
+    },
+    {
+      "path": "ui/routes.js",
+      "content": "export const ROUTES = ['#overview', '#created', '#packs', '#history', '#settings', '#rule/' + id];\nexport const back = () => { location.hash = '#sessions?filter=violations'; };\n"
+    },
+    {
+      "path": "ui/css/no-repo-near.css",
+      "content": "#sidenav{background:var(--sidebar)}\n#content{color:var(--foreground)}\n#panel{border-left:1px solid var(--border)}\n"
+    },
+    {
+      "path": "ui/shell.js",
+      "content": "export function measure(bar, menu) {\n  document.documentElement.style.setProperty(\"--tb\", `${bar.offsetHeight}px`);\n  menu.style.left = '0px';\n  menu.style.display = 'none';\n}\n"
+    },
+    {
+      "path": "ui/views/packs.js",
+      "content": "export const check = '<svg viewBox=\"0 0 256 256\" fill=\"currentColor\" stroke=\"none\"><path d=\"M216,36H40A20\"/></svg>';\n"
+    },
+    {
+      "path": "ui/css/sheet-near.css",
+      "content": ".panel{background:var(--card);color:var(--foreground);box-shadow:var(--shadow-sm)}\n.toast .tx:hover{background:color-mix(in srgb,var(--background) 18%,transparent)}\n"
+    },
+    {
+      "path": "ui/css/base-near.css",
+      "content": ":root {\n  --brand-border: color-mix(in srgb, var(--brand) 45%, transparent);\n  --card-shadow: 0 6px 16px -4px color-mix(in srgb, var(--brand) 30%, transparent);\n  --sheet-inset: var(--background);\n}\n/* --lift, the only black or white alphas, as named effects; titles in indigo. */\n"
+    },
+    {
+      "path": "ui/css/overview-near.css",
+      "content": "@media (min-width:1100px) { :root { --lift:0 1px 2px rgb(0 0 0 / .1); --scrim:rgb(10 10 14 / .38) } }\n:root[data-theme=\"dark\"]{--card-shadow:0 6px 16px -4px rgb(0 0 0 / .55)}\n/* The sheet floats under 1100px (#196). */\n.toast{z-index:3} // fixed in #209\n"
+    },
+    {
+      "path": "ui/css/history-near.css",
+      "content": ":root {\n  --brand-half: rgb(from var(--brand) r g b / .5);\n  --tilt: tan(12deg);\n}\n@media (forced-colors: active) { .sw{outline:2px solid Highlight} }\n"
+    },
+    {
+      "path": "ui/render/panel.js",
+      "content": "/**\n * Opens the sheet; see #209 for why the scrim stays.\n */\nexport const lab = (r) => r.title;\nexport const head = (r) => lab(r.title);\n"
+    },
+    {
+      "path": "ui/css/sheet-effects.css",
+      "content": ":root{--card-shadow:0 6px 16px -4px rgb(0 0 0/.55);--lift:0 1px 2px rgba(0,0,0,.1)}\n:root {\n  --scrim: color-mix(in srgb, black 38%, transparent);\n}\n/*\n * Was #D4700A; see #209 and #353.\n */\n"
+    },
+    {
+      "path": "ui/tokens.generated.css",
+      "content": ":root {\n  --background: #F8F9FF;\n  --header-primary: var(--foreground);\n}\n"
+    }
+  ]
+}

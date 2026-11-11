@@ -227,7 +227,7 @@ Run the focused Rust tracer tests:
 
 ```sh
 cargo test --manifest-path scripts/profiling/reachability/Cargo.toml \
-  --no-default-features --locked code_rule_dsl::tests
+  --no-default-features --locked code_rule_dsl::sql::tests
 ```
 
 The SQLite profiling lab imports the production tracer source directly.
