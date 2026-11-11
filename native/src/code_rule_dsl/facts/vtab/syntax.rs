@@ -360,9 +360,10 @@ pub(crate) struct Document {
 }
 
 /// The relations read off a document's tape, for which a batch's documents keep their tapes (`Document::tape`): W's
-/// values (`Extra`), its f-string trees (`fstring`) and the string annotations (`annotation`).
-pub(crate) const TAPED: [&str; 7] =
-    ["value", "static_value", "value_type_of", "value_type", fstring::RELATIONS[0], fstring::RELATIONS[1], annotation::RELATION];
+/// values (`Extra`), its f-string trees (`fstring`), the string annotations (`annotation`) and the AST patterns'
+/// matches (`ast_match`).
+pub(crate) const TAPED: [&str; 8] =
+    ["value", "static_value", "value_type_of", "value_type", fstring::RELATIONS[0], fstring::RELATIONS[1], annotation::RELATION, "ast_match"];
 
 /// A comment's text without its marker (core.rr's `comment`): `#`, `--`, `//` (and a doc comment's `/` or `!`),
 /// `/*` to `*/` (and a doc comment's `*` or `!`) or `<!--` to `-->` taken off, then the whitespace around the rest.
@@ -1758,6 +1759,7 @@ impl Batch {
             if core && !projection.ast_patterns.is_empty() && guest.is_none() && !withheld
                 && let Some(dialect) = dialect
                 && let Some(lang) = crate::code_rule_dsl::language::from_tape_tag(tag)
+                && let Some((tape, _)) = &d.tape
             {
                 let compiled = ast_patterns.entry(tag).or_insert_with(|| {
                     projection
@@ -1766,7 +1768,7 @@ impl Batch {
                         .filter_map(|t| crate::code_rule_dsl::language::rule_pattern(crate::code_rule_dsl::language::PatternSource::Plain(t), lang).ok().map(|p| (t.as_str(), p)))
                         .collect()
                 });
-                c.patterns(&p, dialect, lang, compiled, &mut string);
+                c.patterns(&p, dialect, tape, compiled, &mut string);
             }
             if core && guest.is_none() && let Some(x) = &p.extra {
                 lines_of.insert(d.key, Arc::clone(&x.lines));

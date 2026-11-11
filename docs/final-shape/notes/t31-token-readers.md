@@ -159,7 +159,13 @@ Found while checking those fixes:
 - `token_text` of a leaf (`1`, `x`) was empty, so no-self-compare took any two leaves for equal.
 - Value cycles the engine refuses, rewritten as one step: `stored` reads the literal's digits by string
   operations (not `sci`), `unescape` and `natural_key` decode pieces split by `match_all` and joined by ordinal.
-  Rust's `hex_place` and Python's `b005_char` are still cycles.
+  Rust's `hex_place` reads a table of powers of 16, and Python's `b005_char` numbers characters by `match_all`.
+- Pattern literals (``n ~ `…` ``) matched nothing: patterns are tapes with no implied token (`tape::pattern_doc`),
+  and `ast_match` ran them over tree-sitter's full tree. They run over the document's tape now (`ast_match` is in
+  `TAPED`).
+- Rules that read a kind or a span as text, refused at plan time: Rust's `lit_body` and `raw_str` matched groups on
+  the node (spans) and compared them with `""`; `prefix("jsx_", k)` and `lit_val(n, k, k) :- kind(n, k)` read a
+  kind as text. They match the node's text, list the JSX kinds, and name each keyword's kind.
 
 ## Python checks: the slice runs half the pack
 
