@@ -127,6 +127,8 @@ struct Emit<'a> {
     arms: &'a [ArmRow],
     rows: &'a [Row],
     marks: &'a [Mark],
+    /// The mask of any mark at a token (`MARK m=64`), when there are marks.
+    any_mark: Option<u16>,
     /// The rows each state can meet (`bitlex_compile::row_modes`).
     meets: &'a [Vec<bool>],
     /// A first lowering, to find the rows `ROW` tests: their masks are not given yet.
@@ -595,6 +597,22 @@ impl Emit<'_> {
         Ok(pc)
     }
 
+    /// A state's mark tests (`state`): each a `MARK` and its arm's jump, or a refusal.
+    fn mark_tests_here(&mut self, tests: &[(usize, Option<usize>)], mark_arms: &mut Vec<(u16, usize)>) {
+        for &(k, arm) in tests {
+            let m = &self.marks[k];
+            // Its order, and 32 when the end has it.
+            self.push("MARK", k as u8 | if m.end { 32 } else { 0 }, Arg::Num(m.mask));
+            match arm {
+                Some(a) => {
+                    mark_arms.push((self.pc(), a));
+                    self.push("GOTO", 0, Arg::Pc(0));
+                }
+                None => self.push("STOP", 0, Arg::None),
+            }
+        }
+    }
+
     /// The marks state `s` tests after its `TOKEN`, in order (`state`): each it takes, and each
     /// not hidden or that its level refuses.
     fn mark_tests(&self, s: usize) -> Vec<usize> {
@@ -635,23 +653,30 @@ impl Emit<'_> {
         }
         self.push("TOKEN", 0, Arg::Num(STARTS));
         // The marks, in order: each the state takes, a test and a jump to its arm; each not
-        // hidden that it does not take, and each its level refuses, a test that refuses.
+        // hidden that it does not take, and each its level refuses, a test that refuses. Where
+        // no mark holds at the token, none of them is taken: one test of any mark first
+        // (`MARK m=64`), and the marks' tests after the state's arms, which go back to its
+        // switch.
+        let tests: Vec<(usize, Option<usize>)> = (0..self.marks.len())
+            .filter_map(|k| {
+                let m = &self.marks[k];
+                let arm = mine.iter().copied().find(|&a| self.arms[a].token == m.kind);
+                (arm.is_some() || !m.hidden || st.refuses.contains(&m.kind)).then_some((k, arm))
+            })
+            .collect();
         let mut mark_arms = Vec::new();
-        for (k, m) in self.marks.iter().enumerate() {
-            let arm = mine.iter().copied().find(|&a| self.arms[a].token == m.kind);
-            if arm.is_none() && m.hidden && !st.refuses.contains(&m.kind) {
-                continue;
+        let guard = match self.any_mark {
+            Some(any) if !tests.is_empty() => {
+                self.push("MARK", 64, Arg::Num(any));
+                let jump = self.pc();
+                self.push("GOTO", 0, Arg::Pc(0));
+                Some(jump)
             }
-            // Its order, and 32 when the end has it.
-            self.push("MARK", k as u8 | if m.end { 32 } else { 0 }, Arg::Num(m.mask));
-            match arm {
-                Some(a) => {
-                    mark_arms.push((self.pc(), a));
-                    self.push("GOTO", 0, Arg::Pc(0));
-                }
-                None => self.push("STOP", 0, Arg::None),
+            _ => {
+                self.mark_tests_here(&tests, &mut mark_arms);
+                None
             }
-        }
+        };
         let t = self.switches.len();
         self.switches.push(ByteSwitch::refusing(0));
         self.switch_at[s] = self.pc();
@@ -741,6 +766,11 @@ impl Emit<'_> {
             let pc = self.by_words(t, b, cs)?;
             self.switches[t].targets[usize::from(b)] = pc;
         }
+        if let Some(jump) = guard {
+            self.words[usize::from(jump)].2 = Arg::Pc(self.pc());
+            self.mark_tests_here(&tests, &mut mark_arms);
+            self.push("GOTO", 0, Arg::Pc(self.switch_at[s]));
+        }
         // The marks' arms: their acts, no bytes taken (the next state switches on this token).
         for (jump, a) in mark_arms {
             let to = self.body(a);
@@ -763,7 +793,7 @@ pub const LASTS: u16 = 0;
 ///
 /// `rules`: a function a rule (`grammar::build_shaped`). The words are laid out rule by rule,
 /// each rule's first place in `Lowered::rules`, and words are shared within a rule only.
-pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark], meets: &[Vec<bool>], empties: u16, whole: bool, survey: bool, rules: bool) -> Result<Lowered, String> {
+pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark], any_mark: Option<u16>, meets: &[Vec<bool>], empties: u16, whole: bool, survey: bool, rules: bool) -> Result<Lowered, String> {
     let mut e = Emit {
         rule_of: Vec::new(),
         rule: 0,
@@ -772,6 +802,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         arms,
         rows,
         marks,
+        any_mark,
         meets,
         survey,
         tested: Default::default(),

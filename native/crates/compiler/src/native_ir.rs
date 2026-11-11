@@ -126,6 +126,9 @@ pub enum StructuralOperation {
     /// Mark `order` (its bit in mask `mask` at the token's start; at the stream's end, `end`),
     /// if not yet taken nor passed: take it and run the next word; else skip that word.
     Mark { mask: u16, order: u8, end: bool },
+    /// Any mark at the token, or the stream's end (`MARK m=64`): the next word runs, else it is
+    /// skipped.
+    AnyMark { mask: u16 },
     /// The token starts at a bit of mask `mask`: run the next word; else skip it.
     Row { mask: u16 },
     /// A node becomes a `kind`: the innermost open node, or another (`On`).
@@ -207,6 +210,7 @@ impl StructuralOperation {
             Self::Leaf { kind, deferred, extra } => (LEAF, if extra { 2 } else { u8::from(deferred) }, kind),
             Self::Settle { kind } => (LEAF, 3, kind),
             Self::Mark { mask, order, end } => (MARK, order | if end { 32 } else { 0 }, mask),
+            Self::AnyMark { mask } => (MARK, 64, mask),
             Self::Row { mask } => (ROW, 0, mask),
             Self::Retag { kind, on } => (RETAG, on as u8, kind),
             Self::Reread { reading } => (RETAG, 3, reading),
@@ -440,6 +444,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             CLOSE => StructuralOperation::Close { this: mode != 0 },
             LEAF if mode == 3 => StructuralOperation::Settle { kind: operand },
             LEAF => StructuralOperation::Leaf { kind: operand, deferred: mode == 1, extra: mode == 2 },
+            MARK if mode == 64 => StructuralOperation::AnyMark { mask: operand },
             MARK => StructuralOperation::Mark { mask: operand, order: mode % 32, end: mode & 32 != 0 },
             ROW => StructuralOperation::Row { mask: operand },
             RETAG if mode == 3 => StructuralOperation::Reread { reading: operand },

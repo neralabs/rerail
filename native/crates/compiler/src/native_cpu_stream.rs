@@ -212,7 +212,7 @@ pub(crate) fn successors(native: &Structure, pushes: &[u16], pc: usize) -> Vec<u
             out
         }
         Op::Return { again } => pushes.iter().map(|&p| usize::from(p) + usize::from(again)).collect(),
-        Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } | Op::Flag { op: FlagOp::Test, .. } => vec![pc + 1, pc + 2],
+        Op::Word { test: true, .. } | Op::Mark { .. } | Op::AnyMark { .. } | Op::Row { .. } | Op::Flag { op: FlagOp::Test, .. } => vec![pc + 1, pc + 2],
         _ => vec![pc + 1],
     }
     .into_iter()
@@ -505,6 +505,10 @@ fn mask_word(f: &mut FunctionBuilder<'_>, first: Value, stride: Value, w: Value)
     let at = f.ins().iadd(first, off);
     f.ins().load(types::I64, MemFlags::trusted().with_readonly(), at, 0)
 }
+
+/// A place past every word's: a switch's kind that it switches on by word, `BY_WORD` and the
+/// kind (below `REFUSE`).
+const BY_WORD: u16 = 0xfe00;
 
 /// A switch's runs: each maximal range of bytes with one target, as (first byte, block).
 fn runs(s: &ByteSwitch, word: &dyn Fn(u16) -> Block) -> Vec<(u32, Block)> {
@@ -1041,6 +1045,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         let n = r.kinds.iter().copied().max().map_or(0, |m| usize::from(m) + 1);
         (0..n).map(|k| r.kinds.iter().position(|&x| usize::from(x) == k).unwrap_or(0) as u8).collect()
     });
+    // Any mark's mask (`MARK m=64`): its output, read at each `TOKEN`.
+    let any_mark: Option<usize> = words.iter().find_map(|w| if let Op::AnyMark { mask } = w.operation { native.block_programs.first().and_then(|b| b.masks.get(usize::from(mask)).copied()) } else { None });
     // Each word's kind: its first byte's.
     let word_kinds: Vec<u8> = starts.and(native.block_programs.first().and_then(|b| b.records.as_ref())).map_or_else(Vec::new, |r| r.words.iter().map(|w| r.kinds[usize::from(w[0])]).collect());
 
@@ -1476,8 +1482,6 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     f.ins().brif(need, take, &[], fall, &[]);
                     f.switch_to_block(take);
                     mset(&mut f, Mem::Need, zero);
-                    let all = f.ins().iconst(types::I64, -1);
-                    mset(&mut f, Mem::Live, all);
                     let at_end = mget(&mut f, Mem::AtEnd);
                     guard(&mut f, at_end, pc);
                     let (next, end) = (mget(&mut f, Mem::Next), mget(&mut f, Mem::End));
@@ -1508,6 +1512,26 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     mset(&mut f, Mem::Limit, rec_end);
                     mset(&mut f, Mem::Taken, code);
                     mset(&mut f, Mem::AtEnd, at_end);
+                    // The marks live at this token: every one; with any mark's mask
+                    // (`MARK m=64`), none where no mark holds and the stream goes on, so a
+                    // state's marks fail at their first test, with no load.
+                    let all = f.ins().iconst(types::I64, -1);
+                    let live = match any_mark {
+                        Some(output) => {
+                            let w = f.ins().ushr_imm(start, 6);
+                            let off = f.ins().imul_imm(output_stride, output as i64);
+                            let base = f.ins().iadd(outputs_p, off);
+                            let word = mask_word(&mut f, base, lasts_stride, w);
+                            let sh = f.ins().band_imm(start, 63);
+                            let bit = f.ins().ushr(word, sh);
+                            let bit = f.ins().band_imm(bit, 1);
+                            let held = f.ins().bor(bit, at_end);
+                            let none = f.ins().iconst(types::I64, 0);
+                            f.ins().select(held, all, none)
+                        }
+                        None => all,
+                    };
+                    mset(&mut f, Mem::Live, live);
                     f.ins().jump(fall, &[]);
                 }
                 Op::Switch { table } => {
@@ -1525,32 +1549,38 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     f.switch_to_block(taking);
                     // On the first byte, with records: the record's kind (`records`), the
                     // switch's targets by kind (its least byte's), a compare tree as on bytes.
-                    // A switch that names words switches on the token's symbol: its kind, or 256
-                    // and its word's index for a word; a word it does not name goes as its kind.
+                    // A switch that names words: a kind whose words it names goes to a block of
+                    // its own (a place past every word's, `BY_WORD` and the kind), which takes
+                    // a token that is no word to the kind's target, else switches on the word.
+                    // A word's kind is its first byte's, so a token of the kind is one of its
+                    // words or none. Tokens that are no keyword pay one test, as a parser's
+                    // keywords are its identifiers' case.
+                    let mut by_word: Vec<(usize, u16)> = Vec::new();
                     let by_kind = kind_reps.as_ref().filter(|_| s.offset == 0).map(|reps| {
-                        let n = if s.words.is_empty() { 256 } else { 256 + word_kinds.len() };
-                        let mut t = vec![REFUSE; n];
+                        let mut t = vec![REFUSE; 256];
                         for (k, &b) in reps.iter().enumerate() {
                             t[k] = s.targets[usize::from(b)];
                         }
-                        for (w, &k) in word_kinds.iter().enumerate().take(n - 256) {
-                            t[256 + w] = s.word(w as u16).unwrap_or(t[usize::from(k)]);
+                        for k in 0..reps.len() {
+                            if s.words.iter().any(|&(w, _)| word_kinds.get(usize::from(w)).is_some_and(|&x| usize::from(x) == k)) {
+                                by_word.push((k, t[k]));
+                                t[k] = BY_WORD + k as u16;
+                            }
                         }
                         ByteSwitch { targets: t, ..s.clone() }
                     });
                     let s = by_kind.as_ref().unwrap_or(s);
+                    let kind_blocks: Vec<Block> = by_word.iter().map(|_| f.create_block()).collect();
+                    let plain_of = |t: u16| by_word.iter().find(|&&(k, _)| BY_WORD + k as u16 == t).map(|&(_, p)| p);
+                    let word = |t: u16| -> Block {
+                        match by_word.iter().position(|&(k, _)| t != REFUSE && BY_WORD + k as u16 == t) {
+                            Some(i) => kind_blocks[i],
+                            None => word(t),
+                        }
+                    };
                     let b = if by_kind.is_some() {
                         let code = mget(&mut f, Mem::Taken);
-                        let kind = f.ins().band_imm(code, 0xff);
-                        if s.targets.len() > 256 {
-                            // The word's index plus one, past the kind's bits: plus 255 is 256 and
-                            // the index.
-                            let w = f.ins().ushr_imm(code, i64::from(crate::records::KIND_BITS));
-                            let sym = f.ins().iadd_imm(w, 255);
-                            f.ins().select(w, sym, kind)
-                        } else {
-                            kind
-                        }
+                        f.ins().band_imm(code, 0xff)
                     } else {
                         let (start, limit) = (mget(&mut f, Mem::Start), mget(&mut f, Mem::Limit));
                         let at = f.ins().iadd_imm(start, i64::from(s.offset));
@@ -1584,7 +1614,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                                 .enumerate()
                                 .map(|(i, &(lo, t))| {
                                     let hi = first.get(i + 1).map_or(s.targets.len() as u32, |r| r.0);
-                                    let w = if t == REFUSE { 0 } else { cut.pick_traffic.get(&(pc as u32, u32::from(t))).copied().unwrap_or(0) / per[&t] };
+                                    // A kind's block by word: its target's traffic as the kind's.
+                                    let traffic = plain_of(t).unwrap_or(t);
+                                    let w = if t == REFUSE { 0 } else { cut.pick_traffic.get(&(pc as u32, u32::from(traffic))).copied().unwrap_or(0) / per[&t] };
                                     (lo, hi, if t == REFUSE { no } else { word(t) }, w)
                                 })
                                 .collect();
@@ -1598,6 +1630,22 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                             let jt = f.create_jump_table(cranelift_codegen::ir::JumpTableData::new(default, &calls));
                             f.ins().br_table(i, jt);
                         }
+                    }
+                    // Each kind's block by word: its words' index plus one (0: no word), a tree
+                    // over them; a word the switch does not name, and no word, the kind's target.
+                    for (&(k, plain), &blk) in by_word.iter().zip(&kind_blocks) {
+                        f.switch_to_block(blk);
+                        let code = mget(&mut f, Mem::Taken);
+                        let w = f.ins().ushr_imm(code, i64::from(crate::records::KIND_BITS));
+                        let mut t = vec![plain; word_kinds.len() + 1];
+                        for &(x, to) in &s.words {
+                            if word_kinds.get(usize::from(x)).is_some_and(|&y| usize::from(y) == k) {
+                                t[usize::from(x) + 1] = to;
+                            }
+                        }
+                        let sw = ByteSwitch { targets: t, ..ByteSwitch::refusing(0) };
+                        let r = runs(&sw, &|t| if t == REFUSE { no } else { word(t) });
+                        dispatch(&mut f, w, &r);
                     }
                     f.switch_to_block(no);
                     let at = f.ins().iconst(types::I64, pc as i64 + 1);
@@ -1673,6 +1721,16 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     let rest = f.ins().band_imm(live, !((2i64 << order) - 1));
                     mset(&mut f, Mem::Live, rest);
                     f.ins().jump(fall, &[]);
+                }
+                Op::AnyMark { mask } => {
+                    // Any mark at the token's start: one load; at the stream's end, the marks'
+                    // tests run.
+                    let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(mask)).copied()).ok_or(Error::UnsupportedBackend)?;
+                    // `TOKEN` read the mask (`any_mark`): the marks are live where it holds.
+                    let _ = output;
+                    let skip = goto(pc + 2);
+                    let live = mget(&mut f, Mem::Live);
+                    f.ins().brif(live, fall, &[], skip, &[]);
                 }
                 Op::Row { mask } => {
                     // The row's start bit at the token's start: one load.
@@ -2599,7 +2657,8 @@ fn check_across(lowered: &[Lowered]) -> Result<(), Error> {
 /// many and are cold (`cold_op`: they load every field).
 fn ctx_reads(op: &Op, wrapping: bool) -> Vec<i32> {
     let mut r: Vec<i32> = match op {
-        Op::Token { .. } => vec![STARTS, NSTARTS, LASTS, CODES, ROOM_NODES, ROOM_SUPERS, ROOM_PUSHES],
+        // With any mark's mask, `TOKEN` reads it (an output).
+        Op::Token { .. } => vec![STARTS, NSTARTS, LASTS, CODES, ROOM_NODES, ROOM_SUPERS, ROOM_PUSHES, OUTPUTS, OUTPUT_STRIDE, LASTS_STRIDE],
         Op::Switch { .. } => vec![BYTES],
         Op::Mark { .. } | Op::Row { .. } => vec![OUTPUTS, OUTPUT_STRIDE, LASTS_STRIDE],
         Op::Open { .. } => vec![KIND, FIELD, START, OPEN],

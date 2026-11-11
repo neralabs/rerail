@@ -1724,19 +1724,34 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         mark_masks.push(low.and(gs, any)?);
         marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end });
     }
+    // Any mark at a token: the marks' masks joined, after them. Marks hold at few tokens (0.8%
+    // of the tests of `.rr`'s corpus), so a state tests this once and its marks only where it
+    // holds (`MARK m=64`).
+    let any_mark = match mark_masks.split_first() {
+        Some((&first, rest)) => {
+            let mut any = first;
+            for &m in rest {
+                any = low.or(any, m)?;
+            }
+            mark_masks.push(any);
+            Some(marks.len() as u16)
+        }
+        None => None,
+    };
+    let row_masks = mark_masks.len() as u16;
     // The rows each state can meet, by the modes its tokens are read in (`row_modes`): tier 2
     // tells apart by their start masks (`ROW`) only the rows a state can meet that begin
     // with one byte. A first lowering finds them; their masks follow the marks'.
     let meets = row_modes(low, &token_rows, &rows, &states, &arms, &mark_kinds)?;
     // The totals are one flag (`BlockRun::totals`), tested once: `EMPTY 0`.
     let empties = 1;
-    let tested = bitlex_tier2::lower(&states, &arms, &rows, &marks, &meets, empties, whole, true, by_rules)?.tested;
+    let tested = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, whole, true, by_rules)?.tested;
     for (j, &r) in tested.iter().enumerate() {
-        rows[r].mask = Some(marks.len() as u16 + j as u16);
+        rows[r].mask = Some(row_masks + j as u16);
         mark_masks.push(token_rows[r].1);
     }
     // The words, once the fallback's totals are known: each must be zero.
-    let mut lowered = bitlex_tier2::lower(&states, &arms, &rows, &marks, &meets, empties, whole, false, by_rules)?;
+    let mut lowered = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, whole, false, by_rules)?;
     // The extras' kinds: the node table flags their nodes (comments).
     readings.extras = low.extra.iter().map(|k| id(k)).collect::<Result<_, _>>()?;
     crate::rir_text::reading_rows(&mut lowered.text, &readings);

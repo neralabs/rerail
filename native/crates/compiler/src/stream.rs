@@ -44,7 +44,7 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         // `m=3`: a token the grammar implies, no node.
         LEAF => mode <= 3 && operand != REMEMBERED,
         // Mark `m % 32` (its order), its bit in mask `operand`; `m & 32`: the file's end has it.
-        MARK => mode < 64 && usize::from(operand) < masks,
+        MARK => (mode < 64 || mode == 64) && usize::from(operand) < masks,
         ROW => mode == 0 && usize::from(operand) < masks,
         // `m=1`: the node a wrap moved; `m=2`: the node made last at this level (`relabel`);
         // `m=3` (a field): the node that one, a wrap, holds first. `RETAG m=3`: that node and
@@ -350,6 +350,13 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     // A test: the next word is the keyword's way; a token that is not the word skips it.
                     (1, false) => pc += 1,
                     _ => return refuse(pc - 1, "not the keyword"),
+                }
+            }
+            // Any mark (`m=64`): where one holds at the token, or at the stream's end, the next
+            // word runs (the state's marks' tests); else it is skipped.
+            MARK if mode == 64 => {
+                if !(at_end || mask_bit(operand, start)) {
+                    pc += 1;
                 }
             }
             MARK => {

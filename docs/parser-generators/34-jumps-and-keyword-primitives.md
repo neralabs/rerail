@@ -239,9 +239,41 @@ The run barely changes, as the keyword tests cost 6 instructions a token.
 The code is a tenth smaller, and a third of the words are gone.
 Both shapes still give the engine's tape on every corpus file they take.
 
+## Built: one test of any mark a token
+
+Over the corpus, a mark holds at 21,082 of the 2,624,017 mark tests (0.8%).
+So a state tests all its marks only where one holds.
+
+- **Tier 1** writes one more mask: the marks' masks joined.
+- **The state** tests it first (`MARK m=64`).
+  Where no mark holds and the stream goes on, it goes to its switch.
+  Else it runs its marks' tests, placed after its arms, which go back to the switch.
+- **Cranelift** reads the mask once a token, at `TOKEN`,
+  and sets the marks live at the token: all of them, or none.
+  The test is then a register's: 3 instructions, no load.
+  A state is entered 1.64 times a token (a call's return switches on the token again),
+  so reading the mask at each test was 15 instructions, 24.6 a token.
+
+A record's bit would be cheaper still, but every record pass would write it:
+the interpreter's, Cranelift's and Metal's.
+At 3 instructions a test it is not worth that yet.
+
+| | Before | After |
+|---|---|---|
+| Marks, instructions a token | 43 | 7.1 |
+| `TOKEN`, instructions a token | 61 | 73 |
+| Tier 2, instructions | 481.3M | 467.8M |
+| Words | 8,860 | 9,826 |
+
+The switch on a kind whose keywords it names now tests the word only in that kind's own block.
+A token that is no keyword pays one test.
+The tree over the kind and every word together cost 6 instructions a switch more.
+Cranelift's own code did as well, so the run is the same (468.0M); the code is smaller.
+
 ## The order
 
 1. One symbol a token: rows and keywords in the record, one switch a state.
-2. Marks in the record.
+   Built for keywords; rows stay `ROW` tests, which are cold.
+2. Marks in the record. Built as one test a token, from a mask.
 3. A cheaper `TOKEN`, and the hot state in registers.
 4. Tier 1's primitives: the picked hash, then nibble fingerprints.
