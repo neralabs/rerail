@@ -50,9 +50,10 @@ fn every_grammar_builds() {
 #[test]
 fn the_tape_stores_the_tokens_the_grammar_does_not_imply() {
     let py = GrammarDialect::Python;
-    // A call's punctuation and a statement's keyword: implied.
+    // A call's punctuation and a statement's keyword: implied. `def` is not left out: `async def`
+    // holds it beside a choice, so it is kept in every gap (`tokens::kept`).
     assert_eq!(stored_tokens(py, "f(a, b)\n"), Vec::<String>::new());
-    assert_eq!(stored_tokens(py, "def f():\n    return 1\n"), Vec::<String>::new());
+    assert_eq!(stored_tokens(py, "def f():\n    return 1\n"), ["def"]);
     // A trailing comma: the call's shortest end is `)` alone, so both are stored.
     assert_eq!(stored_tokens(py, "f(a, b,)\n"), [",", ")"]);
     // An operator: as short as every other.
@@ -60,9 +61,15 @@ fn the_tape_stores_the_tokens_the_grammar_does_not_imply() {
     assert_eq!(stored_tokens(py, "a < b\n"), ["<"]);
     // `async`: optional.
     assert_eq!(stored_tokens(py, "async def f():\n    pass\n"), ["async", "def"]);
+    // A keyword-argument's `=`: implied in every gap it stands in, so never stored.
+    assert_eq!(stored_tokens(py, "f(a=1)\n"), Vec::<String>::new());
+    // A slice's `:` is no delimiter: kept where its gap is implied too.
+    assert_eq!(stored_tokens(py, "x[a:b]\n"), [":"]);
     // `else` and `except` follow from their clauses' kinds.
     assert_eq!(stored_tokens(py, "if a:\n    b\nelse:\n    c\n"), Vec::<String>::new());
-    assert_eq!(stored_tokens(py, "try:\n    a\nexcept:\n    b\n"), Vec::<String>::new());
+    // A bare `except`: its keyword and `:` stand beside a choice in some gap (`except E:`, `except
+    // E as e:`), so they are kept in every gap.
+    assert_eq!(stored_tokens(py, "try:\n    a\nexcept:\n    b\n"), ["except", ":"]);
     let js = GrammarDialect::JavaScript;
     // An array's separators are implied; a hole is not.
     assert_eq!(stored_tokens(js, "x = [1, 2];\n").iter().filter(|t| *t == ",").count(), 0);
