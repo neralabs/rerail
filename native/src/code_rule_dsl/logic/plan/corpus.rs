@@ -3094,7 +3094,6 @@ fn run_observed(
                 let values: usize = hits.iter().map(|(_, e, _)| e.rows.values().map(|(_, v)| v.len()).sum::<usize>()).sum();
                 format!("{} entries replayed, {:.1} MB of values", hits.len(), values as f64 * 8.0 / 1e6)
             });
-            db.execute_batch("BEGIN")?;
             // The planner's tree counts for the files read from the memo (decision 0063): a chunk mix's measured
             // counts, scaled by the hits' nodes, as an evaluated chunk's are. Without them a run read whole from the
             // memo plans its cross-file part with no kinds (every `kind(n, "identifier")` looks empty), and a
@@ -3199,7 +3198,6 @@ fn run_observed(
                     totals.add_rows(&rel, inserted, rows.as_ref(), &types);
                 }
             }
-            db.execute_batch("COMMIT")?;
         }
         if sources.is_empty() {
             phase("local", statements.count());
