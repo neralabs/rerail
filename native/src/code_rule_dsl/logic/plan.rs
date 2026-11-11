@@ -6369,6 +6369,9 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 if prog.inputs.contains(rel) || rows.is_empty() || !prog.rules.iter().any(|r| r.body.iter().filter_map(|l| l.atom()).any(|a| a.rel == *rel)) {
                     continue;
                 }
+                // A relation no rule derives is held in the engine with no table (decision 0104): the answers are
+                // written to SQL, so it is made there first, and read from there.
+                run.materialize(std::slice::from_ref(rel))?;
                 let width = prog.decls[rel].len();
                 let marks = vec!["?"; width].join(", ");
                 let mut insert = db.prepare(&format!("INSERT OR IGNORE INTO {} VALUES ({marks})", crate::code_rule_dsl::logic::sql::ident(rel)))?;
