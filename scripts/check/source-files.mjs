@@ -1,5 +1,6 @@
-// What the checks that read source with the TypeScript parser share: which files are code, how one is parsed, the line
-// a node starts on, and the files of a folder Git would commit.
+// What the checks that read source with the TypeScript parser share: which files are code, how one is parsed, the walk
+// over every node, the line a node starts on, the name a specifier imports or exports, and the files of a folder Git
+// would commit.
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -16,10 +17,22 @@ export function parseSource(path, text) {
   return ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, /\.[cm]?js$/u.test(path) ? ts.ScriptKind.JS : ts.ScriptKind.TS);
 }
 
+/** Calls `visit` with `root` and every node below it, each before its children, in source order. */
+export function eachNode(root, visit) {
+  const walk = (node) => {
+    visit(node);
+    ts.forEachChild(node, walk);
+  };
+  walk(root);
+}
+
 /** The 1-based line `node` starts on in `source`. */
 export function lineOf(source, node) {
   return source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
 }
+
+/** The name an import or export specifier takes before any `as`: `a` in both `{ a }` and `{ a as b }`. */
+export const originalName = specifier => (specifier.propertyName ?? specifier.name).text;
 
 /**
  * Every code file under `folder` in the repository at `root`, as `{ path, text }` with a repository-relative path:

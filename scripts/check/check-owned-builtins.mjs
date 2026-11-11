@@ -33,7 +33,7 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
-import { CODE, codeFiles, FS_MODULES as FS, lineOf, parseSource } from "./source-files.mjs";
+import { CODE, codeFiles, eachNode, FS_MODULES as FS, lineOf, originalName, parseSource } from "./source-files.mjs";
 
 /** An absolute POSIX path, a drive-letter path or a UNC path. */
 const ABSOLUTE = /^(?:\/|[A-Za-z]:[\\/]|\\\\)/u;
@@ -119,22 +119,35 @@ function exposes(rule, reach) {
   return rule.names.some(name => startsWith(name, path));
 }
 
+/** The member `key` of what `reach` is. */
+const within = (reach, key) => ({ module: reach.module, path: [...reach.path, key] });
+
 const keyText = (name) => (ts.isIdentifier(name) || ts.isStringLiteralLike(name) ? name.text : undefined);
 
-/** Whether an import or export declaration brings in values, not only types. */
+/** The names in the `{ ... }` of an import or export that are not marked `type`. */
+const valueElements = elements => elements.filter(element => !element.isTypeOnly);
+
+/** Whether the `{ ... }` of an import or export brings in values: `{}` loads the module, and so does a value name. */
+const namesLoadValues = elements => elements.length === 0 || valueElements(elements).length > 0;
+
+/** Whether an import clause brings in values: a bare import (no clause), a default or namespace import, or `{ ... }`. */
+function importLoadsValues(clause) {
+  if (clause?.isTypeOnly === true) return false;
+  const bindings = clause?.namedBindings;
+  return bindings === undefined || ts.isNamespaceImport(bindings) || clause.name !== undefined
+    || namesLoadValues(bindings.elements);
+}
+
+/** Whether an export declaration hands on values: `*`, `* as m` or `{ ... }`, unless it is `export type`. */
+function exportLoadsValues(node) {
+  const clause = node.exportClause;
+  return !node.isTypeOnly && (clause === undefined || ts.isNamespaceExport(clause) || namesLoadValues(clause.elements));
+}
+
+/** Whether an import, export or `import = require` declaration brings in values, not only types. */
 function loadsValues(node) {
-  if (ts.isExportDeclaration(node)) {
-    if (node.isTypeOnly) return false;
-    const clause = node.exportClause;
-    return clause === undefined || ts.isNamespaceExport(clause) || clause.elements.length === 0 || clause.elements.some(element => !element.isTypeOnly);
-  }
-  const clause = node.importClause;
-  if (clause === undefined) return true;
-  if (clause.isTypeOnly) return false;
-  if (clause.name !== undefined) return true;
-  const bindings = clause.namedBindings;
-  if (bindings === undefined || ts.isNamespaceImport(bindings)) return true;
-  return bindings.elements.length === 0 || bindings.elements.some(element => !element.isTypeOnly);
+  if (ts.isImportEqualsDeclaration(node)) return !node.isTypeOnly;
+  return ts.isExportDeclaration(node) ? exportLoadsValues(node) : importLoadsValues(node.importClause);
 }
 
 /** The module an import, export or `import = require` declaration names, when it is one of `modules`. */
@@ -144,6 +157,72 @@ function declaredModule(node, modules) {
     : node.moduleSpecifier;
   return specifier !== undefined && ts.isStringLiteralLike(specifier) && modules.has(specifier.text) ? specifier.text : undefined;
 }
+
+const isImport = node => ts.isImportDeclaration(node) || ts.isImportEqualsDeclaration(node);
+
+/** The names an import clause binds, each with its path in the module: `default`, the module itself or an export's name. */
+function clauseBindings(clause) {
+  const bindings = clause.namedBindings;
+  const named = bindings === undefined ? []
+    : ts.isNamespaceImport(bindings) ? [[bindings.name, []]]
+    : valueElements(bindings.elements).map(element => [element.name, [originalName(element)]]);
+  return clause.name === undefined ? named : [[clause.name, ["default"]], ...named];
+}
+
+/** The names an import or `import = require` binds, each with its path in the module; none for `import type`. */
+function importBindings(node) {
+  if (ts.isImportEqualsDeclaration(node)) return node.isTypeOnly ? [] : [[node.name, []]];
+  return node.importClause?.isTypeOnly === false ? clauseBindings(node.importClause) : [];
+}
+
+/** The property an object pattern's element reads: `a` in `{ a }`, `{ a: b }`, `{ "a": b }` and `{ ["a"]: b }`. */
+function elementKey(element) {
+  const name = element.propertyName ?? element.name;
+  return keyText(ts.isComputedPropertyName(name) ? name.expression : name);
+}
+
+/** The paths an `export ... from` clause hands on: the module itself for `*` and `* as m`, else each value name. */
+function reexportedPaths(clause) {
+  if (clause === undefined || ts.isNamespaceExport(clause)) return [[]];
+  return valueElements(clause.elements).map(element => [originalName(element)]);
+}
+
+/** Whether a call starts a program it names by a literal that is not an absolute path: `spawn("git", ...)`. */
+function startsBareProgram(call) {
+  const [command] = call.arguments;
+  return ts.isIdentifier(call.expression) && STARTERS.has(call.expression.text)
+    && command !== undefined && ts.isStringLiteralLike(command) && !ABSOLUTE.test(command.text);
+}
+
+const isArgument = node => ts.isCallExpression(node.parent) && node.parent.arguments.includes(node);
+
+const exported = node => node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword) === true;
+
+/** The expressions that evaluate to their operand: `(m)`, `await m`, `m!`, `m as T`, `m satisfies T` and `<T>m`. */
+const WRAPPERS = new Set([
+  ts.SyntaxKind.ParenthesizedExpression,
+  ts.SyntaxKind.AwaitExpression,
+  ts.SyntaxKind.NonNullExpression,
+  ts.SyntaxKind.AsExpression,
+  ts.SyntaxKind.SatisfiesExpression,
+  ts.SyntaxKind.TypeAssertionExpression,
+]);
+
+/** The checks {@link Walk#check} runs at a node of each kind, by method name, in this order. */
+const CHECKS = new Map([
+  [ts.SyntaxKind.ImportDeclaration, ["checkBindings", "checkLoad"]],
+  [ts.SyntaxKind.ImportEqualsDeclaration, ["checkBindings", "checkLoad"]],
+  [ts.SyntaxKind.VariableDeclaration, ["checkBindings"]],
+  [ts.SyntaxKind.ExportDeclaration, ["checkLoad"]],
+  [ts.SyntaxKind.StringLiteral, ["checkLoadingArgument"]],
+  [ts.SyntaxKind.NoSubstitutionTemplateLiteral, ["checkLoadingArgument"]],
+  [ts.SyntaxKind.PropertyAccessExpression, ["checkMember"]],
+  [ts.SyntaxKind.ElementAccessExpression, ["checkMember"]],
+  [ts.SyntaxKind.ExportSpecifier, ["checkLocalExport"]],
+  [ts.SyntaxKind.ExportAssignment, ["checkExportAssignment"]],
+  [ts.SyntaxKind.VariableStatement, ["checkExportedVariables"]],
+  [ts.SyntaxKind.CallExpression, ["checkProgram"]],
+]);
 
 /** A file's walk: what each local name reaches inside a watched module, and every finding. */
 class Walk {
@@ -157,49 +236,53 @@ class Walk {
     this.found = new Map();
   }
 
-  line(node) {
-    return lineOf(this.source, node);
+  report(at, rule, message = rule.message, id = rule.id) {
+    const line = lineOf(this.source, at);
+    this.found.set(`${line}:${id}`, { line, rule: id, message });
   }
 
-  report(at, rule, message = rule.message, id = rule.id) {
-    const line = this.line(at);
-    this.found.set(`${line}:${id}`, { line, rule: id, message });
+  /** Reports at `at` each rule with names that `test` (`reaches` or `exposes`) finds `reach` breaks, if there is one. */
+  reportNamed(test, reach, at) {
+    if (reach === undefined) return;
+    for (const rule of this.rules) if (rule.names !== undefined && test(rule, reach)) this.report(at, rule);
+  }
+
+  /** A value load of `module` breaks every rule that owns the whole module. */
+  reportLoad(node, module) {
+    for (const rule of this.rules) if (rule.names === undefined && reaches(rule, { module, path: [] })) this.report(node, rule);
+  }
+
+  /** Whether `node` is a string naming a watched module. */
+  namesModule(node) {
+    return ts.isStringLiteralLike(node) && this.modules.has(node.text);
   }
 
   /** What `node` evaluates to inside a watched module, if the walk can tell. */
   resolve(node) {
-    if (ts.isIdentifier(node)) return this.bindings.get(node.text);
-    if (ts.isParenthesizedExpression(node) || ts.isAwaitExpression(node) || ts.isNonNullExpression(node)
-      || ts.isAsExpression(node) || ts.isSatisfiesExpression(node) || ts.isTypeAssertionExpression(node)) return this.resolve(node.expression);
-    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
-      const key = ts.isPropertyAccessExpression(node) ? node.name.text : keyText(node.argumentExpression);
-      const base = key === undefined ? undefined : this.resolve(node.expression);
-      return base === undefined ? undefined : { module: base.module, path: [...base.path, key] };
+    switch (node.kind) {
+      case ts.SyntaxKind.Identifier: return this.bindings.get(node.text);
+      case ts.SyntaxKind.PropertyAccessExpression: return this.member(node.expression, node.name.text);
+      case ts.SyntaxKind.ElementAccessExpression: return this.member(node.expression, keyText(node.argumentExpression));
+      case ts.SyntaxKind.CallExpression: return this.loaded(node);
+      default: return WRAPPERS.has(node.kind) ? this.resolve(node.expression) : undefined;
     }
-    if (ts.isCallExpression(node)) {
-      const loaded = node.arguments.find(argument => ts.isStringLiteralLike(argument) && this.modules.has(argument.text));
-      return loaded === undefined ? undefined : { module: loaded.text, path: [] };
-    }
-    return undefined;
   }
 
-  /** Each name a binding pattern binds, with what it reaches; `visit` also sees every property a pattern reads on the way. */
-  bindPattern(name, reach, visit) {
-    visit(name, reach);
-    if (ts.isIdentifier(name)) {
-      if (!this.bindings.has(name.text)) this.bindings.set(name.text, reach);
-      return;
-    }
-    if (!ts.isObjectBindingPattern(name)) return;
-    for (const element of name.elements) {
-      if (element.dotDotDotToken !== undefined) {
-        this.bindPattern(element.name, reach, visit);
-        continue;
-      }
-      const key = element.propertyName === undefined ? keyText(element.name)
-        : ts.isComputedPropertyName(element.propertyName) ? keyText(element.propertyName.expression) : keyText(element.propertyName);
-      if (key !== undefined) this.bindPattern(element.name, { module: reach.module, path: [...reach.path, key] }, visit);
-    }
+  /** The member `key` of what `base` evaluates to, when that is inside a watched module and the key is known. */
+  member(base, key) {
+    const reach = key === undefined ? undefined : this.resolve(base);
+    return reach === undefined ? undefined : within(reach, key);
+  }
+
+  /** The watched module a call loads by naming it as an argument (`require`, `import()`, `process.getBuiltinModule`). */
+  loaded(call) {
+    const named = call.arguments.find(argument => this.namesModule(argument));
+    return named === undefined ? undefined : { module: named.text, path: [] };
+  }
+
+  /** What a variable's value reaches inside a watched module, if it has one the walk can tell. */
+  valueOf(declaration) {
+    return declaration.initializer === undefined ? undefined : this.resolve(declaration.initializer);
   }
 
   /**
@@ -211,101 +294,113 @@ class Walk {
     const ignore = () => {};
     for (let size = -1; size !== this.bindings.size;) {
       size = this.bindings.size;
-      const visit = (node) => {
-        this.bindDeclaration(node, ignore);
-        ts.forEachChild(node, visit);
-      };
-      visit(this.source);
+      eachNode(this.source, node => this.bindDeclaration(node, ignore));
     }
   }
 
   /** Binds what an import, `import = require` or variable declaration names, calling `seen` with each binding. */
   bindDeclaration(node, seen) {
-    if (ts.isImportDeclaration(node) && node.importClause !== undefined && !node.importClause.isTypeOnly) {
-      const module = declaredModule(node, this.modules);
-      if (module === undefined) return;
-      const { name, namedBindings } = node.importClause;
-      if (name !== undefined) this.bindPattern(name, { module, path: ["default"] }, seen);
-      if (namedBindings !== undefined && ts.isNamespaceImport(namedBindings)) this.bindPattern(namedBindings.name, { module, path: [] }, seen);
-      if (namedBindings !== undefined && ts.isNamedImports(namedBindings)) {
-        for (const element of namedBindings.elements) {
-          const key = keyText(element.propertyName ?? element.name);
-          if (!element.isTypeOnly && key !== undefined) this.bindPattern(element.name, { module, path: [key] }, seen);
-        }
-      }
-    } else if (ts.isImportEqualsDeclaration(node) && !node.isTypeOnly) {
-      const module = declaredModule(node, this.modules);
-      if (module !== undefined) this.bindPattern(node.name, { module, path: [] }, seen);
-    } else if (ts.isVariableDeclaration(node) && node.initializer !== undefined) {
-      const reach = this.resolve(node.initializer);
-      if (reach !== undefined) this.bindPattern(node.name, reach, seen);
+    for (const [name, reach] of this.declared(node)) this.bindPattern(name, reach, seen);
+  }
+
+  /** Each name an import, `import = require` or variable binds to a watched module, with what it reaches there. */
+  declared(node) {
+    if (ts.isVariableDeclaration(node)) return this.initialized(node);
+    const module = isImport(node) ? declaredModule(node, this.modules) : undefined;
+    return module === undefined ? [] : importBindings(node).map(([name, path]) => [name, { module, path }]);
+  }
+
+  /** A variable whose value reaches into a watched module (`const m = require("node:fs")`, `const { a } = m`). */
+  initialized(declaration) {
+    const reach = this.valueOf(declaration);
+    return reach === undefined ? [] : [[declaration.name, reach]];
+  }
+
+  /** Each name a binding pattern binds, with what it reaches; `visit` also sees every property a pattern reads on the way. */
+  bindPattern(name, reach, visit) {
+    visit(name, reach);
+    if (ts.isIdentifier(name)) this.bindName(name.text, reach);
+    else if (ts.isObjectBindingPattern(name)) {
+      for (const element of name.elements) this.bindElement(element, reach, visit);
     }
   }
 
-  /** Reports every finding in the file, after {@link bind}. */
+  /** Binds `name` to `reach`, unless an earlier binding holds the name. */
+  bindName(name, reach) {
+    if (!this.bindings.has(name)) this.bindings.set(name, reach);
+  }
+
+  /** One element of an object pattern: a rest element (`...n`) holds the whole object, any other the member it reads. */
+  bindElement(element, reach, visit) {
+    if (element.dotDotDotToken !== undefined) {
+      this.bindPattern(element.name, reach, visit);
+      return;
+    }
+    const key = elementKey(element);
+    if (key !== undefined) this.bindPattern(element.name, within(reach, key), visit);
+  }
+
+  /** Reports every finding in the file, after {@link bind}: each node gets the checks {@link CHECKS} lists for its kind. */
   check() {
-    const visit = (node) => {
-      this.checkNode(node);
-      ts.forEachChild(node, visit);
-    };
-    visit(this.source);
+    eachNode(this.source, (node) => {
+      for (const name of CHECKS.get(node.kind) ?? []) this[name](node);
+    });
   }
 
-  checkNode(node) {
-    const each = (test, reach, at) => {
-      for (const rule of this.rules) if (rule.names !== undefined && test(rule, reach)) this.report(at, rule);
-    };
-    this.bindDeclaration(node, (_, reach) => each(reaches, reach, node));
-    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node) || ts.isImportEqualsDeclaration(node)) {
-      const module = declaredModule(node, this.modules);
-      const loads = module !== undefined && (ts.isImportEqualsDeclaration(node) ? !node.isTypeOnly : loadsValues(node));
-      if (loads) this.reportLoad(node, module);
-      if (loads && ts.isExportDeclaration(node)) this.checkReexport(node, module);
-    }
-    if (ts.isStringLiteralLike(node) && this.modules.has(node.text) && ts.isCallExpression(node.parent) && node.parent.arguments.includes(node)) {
-      this.reportLoad(ts.findAncestor(node, ancestor => ts.isStatement(ancestor)) ?? node, node.text);
-    }
-    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
-      const reach = this.resolve(node);
-      if (reach !== undefined) each(reaches, reach, node);
-    }
-    // A name handed on from this module: `export { fs }`, `export default fs`, `export const p = fs.promises`.
-    if (ts.isExportSpecifier(node) && !node.isTypeOnly && node.parent.parent.moduleSpecifier === undefined) {
-      const reach = this.bindings.get((node.propertyName ?? node.name).text);
-      if (reach !== undefined) each(exposes, reach, node);
-    }
-    if (ts.isExportAssignment(node)) {
-      const reach = this.resolve(node.expression);
-      if (reach !== undefined) each(exposes, reach, node);
-    }
-    if (ts.isVariableStatement(node) && node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword)) {
-      for (const declaration of node.declarationList.declarations) {
-        const reach = declaration.initializer === undefined ? undefined : this.resolve(declaration.initializer);
-        if (reach !== undefined) each(exposes, reach, declaration);
-      }
-    }
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && STARTERS.has(node.expression.text)) this.checkProgram(node);
+  /** An import or variable that binds an owned name: `import { rename } from "node:fs"`, `const { rename } = fs`. */
+  checkBindings(node) {
+    this.bindDeclaration(node, (_, reach) => this.reportNamed(reaches, reach, node));
   }
 
-  /** A value load of `module` breaks every rule that owns the whole module. */
-  reportLoad(node, module) {
-    for (const rule of this.rules) if (rule.names === undefined && reaches(rule, { module, path: [] })) this.report(node, rule);
+  /** An import, export or `import = require` that loads a watched module as a value, and what an export hands on. */
+  checkLoad(node) {
+    const module = declaredModule(node, this.modules);
+    if (module === undefined || !loadsValues(node)) return;
+    this.reportLoad(node, module);
+    if (ts.isExportDeclaration(node)) this.checkReexport(node, module);
   }
 
   /** `export ... from` a watched module hands on each name it re-exports, and `*` hands on all of them. */
   checkReexport(node, module) {
-    const clause = node.exportClause;
-    const paths = clause === undefined || ts.isNamespaceExport(clause) ? [[]]
-      : clause.elements.filter(element => !element.isTypeOnly).map(element => [keyText(element.propertyName ?? element.name)]);
-    for (const path of paths) {
-      for (const rule of this.rules) if (rule.names !== undefined && exposes(rule, { module, path })) this.report(node, rule);
+    for (const path of reexportedPaths(node.exportClause)) this.reportNamed(exposes, { module, path }, node);
+  }
+
+  /** A watched module named as an argument of any call loads it, reported at the statement the call is in. */
+  checkLoadingArgument(node) {
+    if (!this.namesModule(node) || !isArgument(node)) return;
+    this.reportLoad(ts.findAncestor(node, ts.isStatement) ?? node, node.text);
+  }
+
+  /** A member read of an owned name: `fs.rename`, `fs["rename"]`, `fs.promises.rename`. */
+  checkMember(node) {
+    this.reportNamed(reaches, this.resolve(node), node);
+  }
+
+  /** A name handed on from this module: `export { fs }`. */
+  checkLocalExport(node) {
+    if (node.isTypeOnly || node.parent.parent.moduleSpecifier !== undefined) return;
+    this.reportNamed(exposes, this.bindings.get(originalName(node)), node);
+  }
+
+  /** A value handed on as this module's default: `export default fs`. */
+  checkExportAssignment(node) {
+    this.reportNamed(exposes, this.resolve(node.expression), node);
+  }
+
+  /** An exported variable that holds a name: `export const p = fs.promises`. */
+  checkExportedVariables(node) {
+    if (!exported(node)) return;
+    for (const declaration of node.declarationList.declarations) {
+      this.reportNamed(exposes, this.valueOf(declaration), declaration);
     }
   }
 
+  /** A call that names its program without a folder, reported as program-path under each rule with `programPath`. */
   checkProgram(call) {
-    const [command] = call.arguments;
-    if (command === undefined || !ts.isStringLiteralLike(command) || ABSOLUTE.test(command.text)) return;
-    for (const rule of this.rules) if (rule.programPath === true) this.report(call, rule, PROGRAM_PATH_MESSAGE, "program-path");
+    if (!startsBareProgram(call)) return;
+    for (const rule of this.rules) {
+      if (rule.programPath === true) this.report(call, rule, PROGRAM_PATH_MESSAGE, "program-path");
+    }
   }
 }
 

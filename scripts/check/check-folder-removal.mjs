@@ -17,7 +17,7 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
-import { CODE, codeFiles, FS_MODULES, lineOf, parseSource } from "./source-files.mjs";
+import { CODE, codeFiles, eachNode, FS_MODULES, lineOf, originalName, parseSource } from "./source-files.mjs";
 
 export const HELPER = "test/support/platform/remove-folder.ts";
 /** Files left to remove folders themselves, each with the reason. */
@@ -35,22 +35,19 @@ function namedElements(clause) {
   return bindings !== undefined && ts.isNamedImports(bindings) ? bindings.elements : [];
 }
 
-/** The name an import element takes from its module: `rm` in both `{ rm }` and `{ rm as remove }`. */
-const importedName = element => (element.propertyName ?? element.name).text;
-
 /** The names a declaration binds to a whole fs module (`* as fs`, a default import, `{ promises }`). */
 function moduleBindings(clause) {
   const bindings = clause.namedBindings;
   const namespace = bindings !== undefined && ts.isNamespaceImport(bindings) ? [bindings.name] : [];
-  const promises = namedElements(clause).filter(element => importedName(element) === "promises").map(element => element.name);
+  const promises = namedElements(clause).filter(element => originalName(element) === "promises").map(element => element.name);
   return [clause.name, ...namespace, ...promises].filter(name => name !== undefined).map(name => name.text);
 }
 
 /** Each local name an fs import binds to a removal (`rm`, `rmSync as remove`), with the removal it is. */
 function removalBindings(clause) {
   return namedElements(clause)
-    .filter(element => !element.isTypeOnly && REMOVALS.has(importedName(element)))
-    .map(element => [element.name.text, importedName(element)]);
+    .filter(element => !element.isTypeOnly && REMOVALS.has(originalName(element)))
+    .map(element => [element.name.text, originalName(element)]);
 }
 
 /** The text of an options property's name, when it is a plain name or a string. */
@@ -117,12 +114,10 @@ function directRemovals(path, text) {
   const source = parseSource(path, text);
   const { namespaces, bound, rimraf } = fsImports(source);
   const lines = rimraf.map(statement => lineOf(source, statement));
-  const visit = (node) => {
+  eachNode(source, (node) => {
     const removal = ts.isCallExpression(node) ? calledRemoval(node.expression, bound, namespaces) : undefined;
     if (removal !== undefined && removesFolder(removal, node.arguments)) lines.push(lineOf(source, node));
-    ts.forEachChild(node, visit);
-  };
-  visit(source);
+  });
   return lines;
 }
 
