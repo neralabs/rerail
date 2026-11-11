@@ -10,6 +10,88 @@ use crate::code_rule_dsl::logic::front::{Atom, Literal, Program, Term};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
+/// tree-sitter-python's grammar (`grammar.json`), parsed once.
+fn python_grammar() -> Option<&'static serde_json::Value> {
+    static GRAMMAR: std::sync::LazyLock<Option<serde_json::Value>> = std::sync::LazyLock::new(|| serde_json::from_str(include_str!("../../../../../grammars/tree-sitter-python/src/grammar.json")).ok());
+    GRAMMAR.as_ref()
+}
+
+/// The named kinds a grammar expression's own nodes can be: its symbols, a hidden, inlined or supertype rule read
+/// through, named aliases. `inside`: every named node under it as well, not only its own.
+fn named_kinds(grammar: &serde_json::Value, e: &serde_json::Value, inside: bool, through: &mut BTreeSet<String>, out: &mut BTreeSet<String>) {
+    let names = |key: &str| grammar[key].as_array().into_iter().flatten().any(|v| v.as_str() == e["name"].as_str());
+    match e["type"].as_str() {
+        Some("SYMBOL") => {
+            let Some(n) = e["name"].as_str() else { return };
+            if n.starts_with('_') || names("inline") || names("supertypes") {
+                if through.insert(n.to_owned()) && let Some(rule) = grammar["rules"].get(n) {
+                    named_kinds(grammar, rule, inside, through, out);
+                }
+            } else {
+                out.insert(n.to_owned());
+                if inside && through.insert(n.to_owned()) && let Some(rule) = grammar["rules"].get(n) {
+                    named_kinds(grammar, rule, inside, through, out);
+                }
+            }
+        }
+        Some("ALIAS") => {
+            if e["named"] == true && let Some(v) = e["value"].as_str() {
+                out.insert(v.to_owned());
+            }
+            if inside {
+                named_kinds(grammar, &e["content"], inside, through, out);
+            }
+        }
+        _ => {
+            if let Some(c) = e.get("content") {
+                named_kinds(grammar, c, inside, through, out);
+            }
+            for m in e["members"].as_array().into_iter().flatten() {
+                named_kinds(grammar, m, inside, through, out);
+            }
+        }
+    }
+}
+
+/// The kinds a node in field `field` can be, by tree-sitter-python's grammar, whatever its parent: every rule's
+/// `field`'s content's own named nodes. `None` without the grammar, or for a field it does not name.
+pub(in crate::code_rule_dsl) fn field_kinds(field: &str) -> Option<BTreeSet<String>> {
+    static KEPT: std::sync::LazyLock<Mutex<HashMap<String, Option<BTreeSet<String>>>>> = std::sync::LazyLock::new(Default::default);
+    if let Some(k) = KEPT.lock().unwrap_or_else(|p| p.into_inner()).get(field) {
+        return k.clone();
+    }
+    let grammar = python_grammar()?;
+    fn fields(grammar: &serde_json::Value, e: &serde_json::Value, field: &str, found: &mut bool, out: &mut BTreeSet<String>) {
+        if e["type"] == "FIELD" && e["name"] == field {
+            *found = true;
+            named_kinds(grammar, &e["content"], false, &mut BTreeSet::new(), out);
+        }
+        if let Some(c) = e.get("content") {
+            fields(grammar, c, field, found, out);
+        }
+        for m in e["members"].as_array().into_iter().flatten() {
+            fields(grammar, m, field, found, out);
+        }
+    }
+    let (mut found, mut out) = (false, BTreeSet::new());
+    for (_, rule) in grammar["rules"].as_object().into_iter().flatten() {
+        fields(grammar, rule, field, &mut found, &mut out);
+    }
+    let kinds = found.then_some(out);
+    KEPT.lock().unwrap_or_else(|p| p.into_inner()).insert(field.to_owned(), kinds.clone());
+    kinds
+}
+
+/// Whether a node of kind `kind` has no named node under it, by tree-sitter-python's grammar (a token, an external,
+/// a rule of anonymous tokens only): its text is a token's. `false` without the grammar.
+pub(in crate::code_rule_dsl) fn leaf_kind(kind: &str) -> bool {
+    let Some(grammar) = python_grammar() else { return false };
+    let Some(rule) = grammar["rules"].get(kind) else { return true };
+    let mut out = BTreeSet::new();
+    named_kinds(grammar, rule, false, &mut BTreeSet::new(), &mut out);
+    out.is_empty()
+}
+
 /// Whether a node of kind `kind` holds at most one node in field `field`, by tree-sitter-python's grammar: the field
 /// once in the kind's rule (its hidden and inlined rules read through), under no repeat. A kind some rule aliases a
 /// node to, or a rule that reads itself, is taken to hold several (so its parts stay joins).
@@ -353,6 +435,16 @@ b(c, f) :- kind(c, "call"), field(c, "function", f), kind(f, "attribute").
         )
         .unwrap();
         assert!(captor.verify);
+    }
+
+    /// A field's kinds and a kind's leafhood from the grammar: what a long-text twin is made for.
+    #[test]
+    fn field_kinds_and_leaves_from_the_grammar() {
+        assert_eq!(field_kinds("attribute"), Some(BTreeSet::from(["identifier".to_owned()])));
+        assert!(field_kinds("function").is_some_and(|k| k.contains("call") && k.contains("attribute")));
+        assert_eq!(field_kinds("no_such_field"), None);
+        assert!(leaf_kind("identifier") && leaf_kind("integer"));
+        assert!(!leaf_kind("call") && !leaf_kind("decorated_definition"));
     }
 
     /// A field's multiplicity from the grammar: `import os, sys` holds two names, a subscript several indexes.

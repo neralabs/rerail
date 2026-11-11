@@ -53,7 +53,7 @@ mod world;
 mod reuse;
 pub(in crate::code_rule_dsl) mod phase0;
 mod cross_memo;
-mod matchers;
+pub(in crate::code_rule_dsl) mod matchers;
 /// The prefix of an `ast` matcher's relation (decision 0106).
 pub(in crate::code_rule_dsl) const AST_MATCHES: &str = matchers::PREFIX;
 pub(in crate::code_rule_dsl) use matchers::columns as ast_columns;
@@ -1939,6 +1939,14 @@ fn run_observed(
                 }
             }
             let matchers = matchers::lower(&mut prog);
+            // Long text where no body fixes the node's kind: twin rules read it for the nodes they bind (decision 0109).
+            if prog.decls.contains_key("text") {
+                crate::code_rule_dsl::logic::strings::node_subject_tests(&mut prog);
+                let twins = syntax::long_text_twins(&mut prog, &matchers);
+                if twins > 0 {
+                    crate::code_rule_dsl::logic::profile::decision("long text twins (decision 0109)", || format!("{twins} rules read text past the inline bound for the nodes they bind"));
+                }
+            }
             // Text tests over text relations become relations the batches fill from their vocabulary (decision 0037).
             let vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut prog).map_err(Error::Plan)?;
             let lowering = crate::code_rule_dsl::logic::profile::span(|| "lower the program".into());
