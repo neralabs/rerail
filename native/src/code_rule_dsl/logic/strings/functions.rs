@@ -75,6 +75,8 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("sql_instr", &[Text, Text], Number),
     ("sql_substr", &[Text, Number, Number], Text),
     ("sql_substr2", &[Text, Number], Text),
+    // `substr(CAST(x AS BLOB), y, z)`: bytes, not characters (a node's bytes between two offsets).
+    ("sql_substr_bytes", &[Text, Number, Number], Text),
     ("sql_length", &[Text], Number),
     ("sql_trim", &[Text], Text),
     ("sql_trim2", &[Text, Text], Text),
@@ -91,6 +93,9 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("rx_extract", &[Text, Text, Number], Text),
     ("rx_replace", &[Text, Text, Text], Text),
     ("rr_to_string", &[Number], Text),
+    // A node's text past `text`'s inline bound (`facts::vtab::syntax::long_node_text`): none for a shorter one, which
+    // `text` holds. The long-text twin of a rule reading `text(v, t)` reads it (`syntax::long_text_twins`).
+    ("rr_node_text", &[Number], Text),
     // `.rr`'s `substr(s, i, n)`: n characters from the i-th, counted from 0, as SQL's `substr(s, i + 1, n)` gives
     // them (`substr`).
     ("rr_substr", &[Text, Number, Number], Text),
@@ -238,6 +243,8 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "sql_instr" => return Value::Integer(t(0).find(t(1)).map_or(0, |at| t(0)[..at].chars().count() as i64 + 1)),
         "sql_substr" => Some(sql_substr(t(0), numbers[0], Some(numbers[1]))),
         "sql_substr2" => Some(sql_substr(t(0), numbers[0], None)),
+        // SQLite's substr of an empty blob is NULL.
+        "sql_substr_bytes" => (!t(0).is_empty()).then(|| sql_substr_bytes(t(0), numbers[0], numbers[1])),
         "sql_trim" => Some(t(0).trim_matches(' ').to_owned()),
         "sql_trim2" => Some(t(0).trim_matches(|c| t(1).contains(c)).to_owned()),
         "sql_ltrim" => Some(t(0).trim_start_matches(' ').to_owned()),
@@ -254,6 +261,7 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         }
         "rx_replace" => with_regex(t(1), |re| re.replace_all(t(0), t(2)).into_owned()),
         "rr_to_string" => Some(numbers[0].to_string()),
+        "rr_node_text" => crate::code_rule_dsl::facts::vtab::syntax::long_node_text(numbers[0]),
         "rr_substr" => Some(substr(t(0), numbers[0], numbers[1])),
         "mod" => return numbers[0].checked_rem(numbers[1]).map_or(Value::Null, Value::Integer),
         "to_float" => return t(0).trim().parse::<f64>().ok().filter(|f| !f.is_nan()).map_or(Value::Null, |f| Value::Integer(float_key(f))),
@@ -289,7 +297,20 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
 /// negative; `y` 0 takes one character fewer; a negative `z` takes the characters before `y`.
 pub(in crate::code_rule_dsl) fn sql_substr(x: &str, y: i64, z: Option<i64>) -> String {
     let chars: Vec<char> = x.chars().collect();
-    let len = chars.len() as i64;
+    let (start, end) = substr_range(chars.len(), y, z);
+    chars[start..end].iter().collect()
+}
+
+/// SQLite's `substr(CAST(x AS BLOB), y, z)` read back as text: `sql_substr` over bytes (a cut inside a character
+/// reads as U+FFFD, where SQLite would keep the bytes).
+fn sql_substr_bytes(x: &str, y: i64, z: i64) -> String {
+    let (start, end) = substr_range(x.len(), y, Some(z));
+    String::from_utf8_lossy(&x.as_bytes()[start..end]).into_owned()
+}
+
+/// `substr`'s range of `len` items, as SQLite's `substrFunc` computes it.
+fn substr_range(len: usize, y: i64, z: Option<i64>) -> (usize, usize) {
+    let len = len as i64;
     let (mut p1, mut p2) = (y, z.unwrap_or(i64::MAX / 2));
     let negative = p2 < 0;
     if negative {
@@ -318,7 +339,7 @@ pub(in crate::code_rule_dsl) fn sql_substr(x: &str, y: i64, z: Option<i64>) -> S
     }
     let start = p1.clamp(0, len) as usize;
     let end = p1.saturating_add(p2).clamp(0, len) as usize;
-    chars[start..end.max(start)].iter().collect()
+    (start, end.max(start))
 }
 
 /// SQLite's `x LIKE pattern` (`like(pattern, x)`): `%` any run, `_` one character, ASCII letters in either case.
