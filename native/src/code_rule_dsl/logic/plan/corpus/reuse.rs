@@ -59,6 +59,11 @@ fn with_settings(programs: &[&str], root: &Path, options: &serde_json::Value) ->
 /// The library files the programs include, each with its digest now: the record's `rule` entries.
 fn rule_files(programs: &[String]) -> Result<Vec<(String, String, String)>> {
     let mut out = Vec::new();
+    // Phase 1's program (`sources.rr`), which every run's documents come from: its includes are core's, as the
+    // programs' are.
+    let sources = super::phases::sources_path();
+    let digest = observe(|o| o.digest(&sources)).map(|d| crate::content_store::observe::hex(&d)).unwrap_or_default();
+    out.push(("rule".to_owned(), sources.to_string_lossy().into_owned(), digest));
     for p in programs {
         for path in crate::code_rule_dsl::logic::rr::included_files(p)? {
             let digest = observe(|o| o.digest(&path)).map(|d| crate::content_store::observe::hex(&d)).unwrap_or_default();
@@ -148,8 +153,9 @@ pub(super) fn reused(programs: &[&str], root: &Path, out: &Path, modes: &str, ty
 /// Keeps the record of a run that ended: what it consulted (and the library files its text includes), and its
 /// outputs.
 pub(super) fn record(programs: &[&str], root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, report: &Report) -> Result<()> {
-    // A phase's program and exports are its own record's (`phases`), not this one's: such a run is not kept.
-    if report.consulted.is_empty() || !report.phase_runs.is_empty() {
+    // A phase's program and exports are its own record's (`phases`), not this one's: such a run is not kept. Phase 1's
+    // inputs are the run's documents, which the record names, and its program is among its rule files.
+    if report.consulted.is_empty() || report.phase_runs.iter().any(|r| r.name != "sources") {
         return Ok(());
     }
     let texts = with_settings(programs, root, options)?;

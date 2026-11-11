@@ -224,7 +224,7 @@ pub fn operation_waited() -> Option<Duration> {
 
 /// `backoff` jittered to between half and all of it, so writers that found the same writer
 /// holding the store do not retry in step.
-fn jittered(backoff: Duration) -> Duration {
+pub(super) fn jittered(backoff: Duration) -> Duration {
     let half = backoff / 2;
     let span = u64::try_from((backoff - half).as_nanos())
         .unwrap_or(u64::MAX)

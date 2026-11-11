@@ -111,6 +111,23 @@ pub fn template(name: &str) -> Option<GridComputeKernelTemplate> {
             r.set_grid_expression("[numPartitionsAtOnce,ceilDiv(numActiveBuckets,gridBlockSize)]", "[1,gridBlockSize]");
             r.set_compute_function("randomforest_kernels", "clearBucketsKernel");
         }
+        "predictForest" => {
+            r.add_dimension("r", "numRows");
+            r.add_parameter("numRows", "r", "u32")
+                .add_parameter("numTrees", "r", "u32")
+                .add_parameter("maxDepth", "r", "u32")
+                .add_parameter("bucketData", "r", "u32[bucketDataLength]")
+                .add_parameter("bucketDataOffsets", "r", "u32[nf + 1]")
+                .add_parameter("bucketEntryBits", "r", "u32[nf]")
+                .add_parameter("nodes", "r", "PredictNode[numNodes]")
+                .add_parameter("treeRoots", "r", "i32[numTrees]")
+                .add_parameter("treeWeights", "r", "f32[numTrees]")
+                .add_parameter("leafPreds", "r", "f32[numLeafPreds]")
+                .add_parameter("predictionsOut", "w", "f32[numRows * 2]");
+            r.add_tuneable("threadsPerBlock", MAX_WORK_GROUP_SIZE);
+            r.set_grid_expression("[ceilDiv(numRows,threadsPerBlock)]", "[threadsPerBlock]").allow_grid_padding();
+            r.set_compute_function("randomforest_kernels", "predictForestKernel");
+        }
         "updatePartitionNumbers" => {
             r.add_dimension("r", "numRows");
             r.add_parameter("treeTrainingInfo", "r", "TreeTrainingInfo[1]")
@@ -179,7 +196,7 @@ pub fn template(name: &str) -> Option<GridComputeKernelTemplate> {
 }
 
 /// The registered grid kernels, in the order a tree's training runs them.
-pub const GRID_KERNELS: [&str; 9] = ["decodeRows", "testFeature", "getPartitionSplits", "bestPartitionSplit", "assignPartitionNumbers", "clearBuckets", "updatePartitionNumbers", "updateBuckets", "fixupBuckets"];
+pub const GRID_KERNELS: [&str; 10] = ["decodeRows", "testFeature", "getPartitionSplits", "bestPartitionSplit", "assignPartitionNumbers", "clearBuckets", "updatePartitionNumbers", "updateBuckets", "fixupBuckets", "predictForest"];
 
 /// Grid kernel `name`, specialized against its Metal function (once).
 pub fn kernel(name: &str) -> Result<&'static GridComputeKernelSpecialization, String> {
@@ -298,7 +315,7 @@ mod tests {
         let active: Vec<u32> = (0..nf as u32).collect();
         let ordinal = vec![1u32, 0, 1];
         let max_parts = 8usize;
-        let tti = [TreeTrainingInfo { num_rows: nr, max_depth: 4, num_active_features: nf as u16, num_features: nf as u16, max_num_active_partitions: max_parts as u16, num_active_buckets: total, ..Default::default() }];
+        let tti = [TreeTrainingInfo { num_rows: nr, max_depth: 4, num_active_features: nf as u16, num_features: nf as u16, max_num_active_partitions: max_parts as u16, num_active_buckets: total, max_num_finished_partitions: u32::MAX, ..Default::default() }];
         let mut tdi = [TreeDepthInfo::default()];
         let (d_bucket_data, d_offsets, d_numbers, d_entry_bits, d_active, d_ordinal) = (buf(&all_bucket_data), buf(&offsets), buf(&numbers), buf(&entry_bits), buf(&active), buf(&ordinal));
         let d_tti = buf(&tti);
