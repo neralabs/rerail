@@ -35,7 +35,17 @@ The planner compares sparse phases, sparse SQL batches, and full-wave SQL batche
 A sparse SQL batch combines compatible signed transitions in one statement.
 It preserves the cursors and immutable versions that each transition reads.
 If the changed work approaches the cost to read the full input, a full-wave batch uses the existing whole-query kernels.
-The current implementation has sparse phases and full-wave batches. Sparse SQL batching remains the next kernel.
+The wave batch now has a signed branch for total positive joins with up to eight inputs.
+SQL finds affected projected keys from inserted and deleted witnesses.
+For each pivot input, the other inputs include the current rows and deleted rows.
+This superset covers witnesses that disappear through simultaneous deletions.
+An indexed virtual table probes both sources through their existing access paths.
+A SQL union at this boundary can materialize the inputs and lose those access paths.
+SQL then checks each affected key for a surviving witness in the current inputs.
+Native storage patches the prior candidate root with those SQL results.
+This preserves multiple witnesses for one head and supports self-joins.
+Scalar, negative, CTE, and opaque queries keep their full SQL branches in the same wave batch.
+Lookup-generated sources also keep their full branch because their implicit inputs need a complete change journal.
 
 Each candidate has a submission count or bound, estimated CPU and wall time, and a peak memory estimate.
 The CPU estimate includes SQL preparation, join and aggregation work, transfer of result rows, and construction of native roots.
@@ -88,19 +98,71 @@ Failed operations stay in the database and do not supply successful cost estimat
 `explain().sql_planning` shows the input features, selected strategy, prior forecasts, actual measurements, and writer counters.
 An alternative forecast can show the cost of a different retained strategy for a similar input.
 The current retained history determines whether a different strategy is available at a warm gate.
-The forecasts are advisory. The current placement rules select the strategy and the ledger enforces the budget.
+Learned forecasts remain advisory.
+The signed branch uses a shared cost comparison for input sizes, changes, and indexed probe estimates.
+It compares estimated sparse probe work against a scan, with headroom for support checks.
+The batch caches each derived difference against the exact pair of preceding-wave roots.
+External input statistics and signed journals stay fixed throughout the operation.
+The ledger enforces the budget for the single SQL batch statement.
+
+Each gate reports its input statistics, cost comparison, eligibility proof, and selected branch.
+Batch totals report signed evaluations, full evaluations, reused results, affected heads, and native difference work.
+Completed operation reports carry these gate statistics to the background writer.
+Observation version 2 distinguishes this kernel from the earlier full-wave batch measurements.
 
 ## Implementation order
 
-1. Add versioned key and probe statistics from immutable roots and their deltas.
-2. Add sparse SQL batches for compatible signed transitions.
-3. Compare the three candidates at each gate and reserve credits before dispatch.
+1. Add exact statistics for composite join keys and probes on the changed keys.
+2. Extend signed batching to additional query shapes.
+3. Use learned forecasts to compare complete candidate schedules and reserve credits before dispatch.
 4. Add preparation, worker CPU, and native root construction to the cost model.
-5. Check output parity and the complete submission budget for cold and warm sessions.
-6. Measure the forecasts and actual costs for each replay size.
+5. Reduce the remaining full candidate folds and repeated statement preparation.
+6. Measure complete sessions for each replay size.
+
+Current statistics include input cardinalities, inserted and deleted row counts, distinct values for indexed leading columns, and probe estimates.
+A derived statistic uses the same immutable roots as its signed difference.
+An external statistic uses the source bound for the current operation.
+The planner obtains these statistics without a full planning scan.
 
 The replay matrix includes an unchanged run, a one-file edit, and a wide edit.
 It covers explicit facts, snapshots, and file changes.
 Capped runs include binding, query verification, and cleanup.
 Capped and uncapped runs must return the same rows at every checkpoint.
 One-file runs must measure CPU and VM work as well as submissions to detect a return to full scans.
+
+## Signed batch checks
+
+The debug comparison uses 1,024 groups, overlapping rule producers, duplicate witnesses, a derived self-join, and a recursive count.
+The signed branch used 1,322,529 VM steps for a small edit.
+The full branch used 3,036,650 VM steps.
+This is a 56.4 percent reduction.
+Both branches used six submissions for the edit and stayed within the session cap of 100.
+
+The checks cover simultaneous insertions and deletions, duplicate projected keys, surviving alternative supports, failed execution, and a successful retry.
+A separate process checks that the background writer stores the signed strategy and its gate statistics without a flush.
+The shared projection proof also checks 4,096 combinations of old and new input sets.
+
+The CPython comparison uses the repository's workload and call-analysis programs.
+It checks program inputs and derived results after a file edit, an identical edit, and restoration of the original source.
+Both sessions stay within 100 submissions, including verification reads.
+Each file edit uses three submissions. The identical edit uses zero.
+
+| First file edit in debug | Full VM steps | Signed VM steps | Full owner CPU | Signed owner CPU |
+|---|---:|---:|---:|---:|
+| Workload | 24,865,627 | 18,384,924 | 4.72 s | 2.81 s |
+| Call analysis | 81,036,654 | 69,775,184 | 10.80 s | 8.45 s |
+
+These CPU values come from one debug comparison with two configured workers.
+The full control uses the same batch planner and disables signed reconciliation.
+The comparison checks output parity and rejects an increase in VM work.
+
+An earlier implementation used SQL unions for the current rows and deleted rows.
+On the workload edit, that implementation used 133 million VM steps.
+The full control used 25 million.
+The indexed virtual-table view removed that materialization cost.
+The CPython comparison now checks this regression.
+
+The final debug checks passed 203 SQL executor tests, six admission tests, and two shared delta-proof tests.
+The CPython comparison passed separately for both programs.
+Remaining costs include full candidate folds, scalar and CTE branches, and repeated statement preparation.
+Learned forecasts remain advisory.

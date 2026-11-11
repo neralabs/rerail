@@ -1,7 +1,7 @@
 //! Lower the emitted rule gates and lattice folds to SQLite expressions.
 use super::*;
 
-const PARENT: &str = "__rr_parent.state";
+pub(super) const PARENT: &str = "__rr_parent.state";
 
 fn source(table: &str, slot: usize, width: usize) -> String {
     format!(
@@ -55,13 +55,15 @@ pub(super) fn plan(trace: &Trace, db: &rusqlite::Connection) -> Result<Option<Pl
     let strata = trace.steps.iter().map(|(s, _)| s.stratum).collect();
     let mut rules = vec![];
     let mut expressions = vec![];
+    let mut incremental_expressions = vec![];
+    let mut changes = vec![];
     let mut fact_probe_anchors = 0;
     for (id, (step, checked)) in trace.steps.iter().enumerate() {
         let relation = positions[step.output.as_str()];
         let spec = &trace.relations[&step.output];
         let mut reads = BTreeSet::new();
         let mut external = BTreeSet::new();
-        let (query, reusable) = if let Some(original) = checked {
+        let (query, reusable, incremental_analysis, incremental) = if let Some(original) = checked {
             let mut query = original.clone();
             let derived = query
                 .body
@@ -128,7 +130,9 @@ pub(super) fn plan(trace: &Trace, db: &rusqlite::Connection) -> Result<Option<Pl
                     .ctes
                     .iter()
                     .all(|c| c.arms.iter().all(plan::acyclic::total));
-            (query.render(), reusable)
+            let (analysis, incremental) =
+                incremental::compile(original, &query, trace, db, &positions, &mut changes, id);
+            (query.render(), reusable, analysis, incremental)
         } else {
             let prefix = format!("INSERT OR IGNORE INTO new_{} ", step.output);
             let Some(select) = step.sql.strip_prefix(&prefix) else {
@@ -153,8 +157,20 @@ pub(super) fn plan(trace: &Trace, db: &rusqlite::Connection) -> Result<Option<Pl
             } else if !trace.emitted.constant_rows.contains_key(&step.output) {
                 return Ok(None);
             }
-            (select.to_owned(), true)
+            (
+                select.to_owned(),
+                true,
+                crate::code_rule_dsl::logic::analysis::Decision::new(
+                    false,
+                    "Constant or opaque producer keeps its full SQL branch",
+                ),
+                None,
+            )
         };
+        let incremental = incremental.map(|(rule, sql)| {
+            incremental_expressions.push((id, sql));
+            rule
+        });
         expressions.push(evaluate(id, spec.width, &query, true));
         rules.push(Rule {
             relation,
@@ -162,6 +178,8 @@ pub(super) fn plan(trace: &Trace, db: &rusqlite::Connection) -> Result<Option<Pl
             external,
             reusable,
             candidate: empty(spec.width, spec.width, &[]),
+            incremental,
+            incremental_analysis,
         });
     }
     let mut outputs = vec![];
@@ -220,6 +238,20 @@ pub(super) fn plan(trace: &Trace, db: &rusqlite::Connection) -> Result<Option<Pl
     }
     let reuse_id = expressions.len();
     expressions.push(format!("{REUSE}({PARENT})"));
+    let mut sql_bytes = expressions.iter().map(String::len).sum::<usize>();
+    for (id, sql) in incremental_expressions {
+        if sql_bytes.saturating_add(sql.len()) > 1_800_000 {
+            rules[id].incremental = None;
+            rules[id].incremental_analysis = crate::code_rule_dsl::logic::analysis::Decision::new(
+                false,
+                "Signed branch exceeds the batch SQL preparation bound",
+            );
+            continue;
+        }
+        sql_bytes += sql.len();
+        rules[id].incremental.as_mut().unwrap().expression = expressions.len();
+        expressions.push(sql);
+    }
     let branches = expressions
         .iter()
         .enumerate()
@@ -229,6 +261,15 @@ pub(super) fn plan(trace: &Trace, db: &rusqlite::Connection) -> Result<Option<Pl
     let sql = format!(
         "WITH RECURSIVE __rr_states(state) AS (VALUES(0) UNION ALL SELECT CASE {NEXT}({PARENT}) {branches} END FROM __rr_states __rr_parent WHERE {NEXT}({PARENT})>=0) SELECT count(*) FROM __rr_states"
     );
+    let width = changes
+        .iter()
+        .filter_map(|(input, _)| {
+            let incremental::Input::External(name) = input else {
+                return None;
+            };
+            crate::code_rule_dsl::facts::vtab::bound_source(db, name).map(|s| s.columns().len())
+        })
+        .fold(width, usize::max);
     if sql.len() > 2_000_000 {
         return Ok(None);
     }
@@ -241,6 +282,7 @@ pub(super) fn plan(trace: &Trace, db: &rusqlite::Connection) -> Result<Option<Pl
         sql,
         reuse_id,
         fact_probe_anchors,
+        changes,
     }))
 }
 

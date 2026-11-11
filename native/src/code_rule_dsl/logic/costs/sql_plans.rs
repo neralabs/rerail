@@ -6,7 +6,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 
-const VERSION: i64 = 1;
+const VERSION: i64 = 2;
 const PROFILE: &str = if cfg!(debug_assertions) {
     "debug"
 } else {
@@ -45,6 +45,7 @@ pub enum Strategy {
     SparseRetained,
     SparseRetainedAfterBatchAttempt,
     FullWaveBatch,
+    SignedWaveBatch,
     GroupedMaintenance,
     ColdSchedule,
     ColdScheduleAfterRetainedAttempt,
@@ -114,6 +115,8 @@ pub struct Stage {
     pub forecast: Estimate,
     pub alternate_forecast: Option<Alternative>,
     pub metrics: Metrics,
+    #[serde(default)]
+    pub gate_statistics: Vec<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

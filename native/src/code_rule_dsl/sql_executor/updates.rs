@@ -202,6 +202,10 @@ impl CodeRuleSqlExecutor {
                 }
                 let result = maintenance::maintain(&mut work, run, &mut deltas, limit);
                 if let (Some(planning), Some(evaluation)) = (&mut self.planning, evaluation) {
+                    let mut evaluation = evaluation;
+                    if result.is_ok() {
+                        evaluation.capture(run);
+                    }
                     planning.record(evaluation);
                 }
                 let mut report = result?;

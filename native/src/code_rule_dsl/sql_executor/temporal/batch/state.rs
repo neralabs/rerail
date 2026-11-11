@@ -9,7 +9,7 @@ pub(super) struct Roots {
     pub counts: versions::Version,
 }
 impl Roots {
-    fn read(&self, column: usize) -> &versions::Version {
+    pub(super) fn read(&self, column: usize) -> &versions::Version {
         match column {
             0 => &self.rows,
             1 => &self.frontier,
@@ -25,8 +25,8 @@ pub(super) struct Wave {
 }
 
 pub(super) struct Arena {
-    plan: Arc<Plan>,
-    history: Arc<Vec<Wave>>,
+    pub(super) plan: Arc<Plan>,
+    pub(super) history: Arc<Vec<Wave>>,
     changed: BTreeSet<String>,
     limit: u32,
     handle: i64,
@@ -34,13 +34,21 @@ pub(super) struct Arena {
     active: Vec<usize>,
     schedule: Vec<usize>,
     cursor: usize,
-    initial: Vec<Roots>,
+    pub(super) initial: Vec<Roots>,
     next_roots: Vec<Roots>,
     candidates: Vec<Option<versions::Version>>,
     pub waves: Vec<Wave>,
     pub evaluated: usize,
     pub reused: usize,
     pub failure: Option<String>,
+    pub(super) external: BTreeMap<String, incremental::External>,
+    pub(super) differences: BTreeMap<usize, incremental::Differences>,
+    pub(super) version_nodes: usize,
+    pub(super) decisions: BTreeMap<usize, Value>,
+    selection: Option<(i64, usize)>,
+    pub reconciled: usize,
+    pub affected_heads: usize,
+    pub(super) signed_reuses: BTreeSet<usize>,
 }
 
 impl Arena {
@@ -49,6 +57,7 @@ impl Arena {
         history: Arc<Vec<Wave>>,
         changed: BTreeSet<String>,
         limit: u32,
+        external: BTreeMap<String, incremental::External>,
     ) -> Self {
         let initial = plan
             .outputs
@@ -72,6 +81,14 @@ impl Arena {
             evaluated: 0,
             reused: 0,
             failure: None,
+            external,
+            differences: BTreeMap::new(),
+            version_nodes: 0,
+            decisions: BTreeMap::new(),
+            selection: None,
+            reconciled: 0,
+            affected_heads: 0,
+            signed_reuses: BTreeSet::new(),
         };
         arena.begin();
         arena
@@ -107,7 +124,7 @@ impl Arena {
         self.cursor = 0;
     }
 
-    fn current(&self) -> &[Roots] {
+    pub(super) fn current(&self) -> &[Roots] {
         self.waves.last().map_or(&self.initial, |w| &w.roots)
     }
 
@@ -142,7 +159,15 @@ impl Arena {
         }
     }
 
-    pub fn next(&self, handle: i64) -> rusqlite::Result<i64> {
+    pub(super) fn previous_candidate(&self, id: usize) -> Option<&versions::Version> {
+        self.history
+            .get(self.waves.len())?
+            .candidates
+            .get(id)?
+            .as_ref()
+    }
+
+    pub fn next(&mut self, handle: i64) -> rusqlite::Result<i64> {
         self.check_handle(handle)?;
         if self.pending.is_empty() {
             return Ok(-1);
@@ -154,11 +179,18 @@ impl Arena {
             .schedule
             .get(self.cursor)
             .ok_or_else(|| sql_error("SQL wave strata have no ready rule"))?;
-        Ok(if self.prior(stage).is_some() {
+        if let Some((prior, choice)) = self.selection {
+            if prior == handle {
+                return Ok(choice as i64);
+            }
+        }
+        let choice = if self.prior(stage).is_some() {
             self.plan.reuse_id
         } else {
-            stage
-        } as i64)
+            self.incremental_stage(stage)?.unwrap_or(stage)
+        };
+        self.selection = Some((handle, choice));
+        Ok(choice as i64)
     }
 
     pub fn reuse(&mut self, handle: i64) -> rusqlite::Result<i64> {
@@ -166,6 +198,12 @@ impl Arena {
         let stage = self.schedule[self.cursor];
         let prior = self
             .prior(stage)
+            .or_else(|| {
+                self.signed_reuses
+                    .contains(&stage)
+                    .then(|| self.previous_candidate(stage))
+                    .flatten()
+            })
             .ok_or_else(|| sql_error("SQL wave reuse proof changed"))?
             .clone();
         self.candidates[stage] = Some(prior);
@@ -178,18 +216,31 @@ impl Arena {
         handle: i64,
         stage: usize,
         mut rows: Vec<Vec<Option<i64>>>,
+        keys: Vec<Vec<Option<i64>>>,
     ) -> rusqlite::Result<i64> {
         self.check_handle(handle)?;
         if self.schedule.get(self.cursor) != Some(&stage) {
             return Err(sql_error("SQL wave result arrived out of order"));
         }
         if let Some(rule) = self.plan.rules.get(stage) {
-            self.candidates[stage] = Some(
+            let incremental = rule
+                .incremental
+                .as_ref()
+                .is_some_and(|r| self.selection == Some((handle, r.expression)));
+            let candidate = if incremental {
+                self.affected_heads += keys.len();
+                self.reconciled += 1;
+                self.previous_candidate(stage)
+                    .ok_or_else(|| sql_error("missing signed projection history"))?
+                    .patched_rows(keys, rows, true)
+                    .map_err(|err| sql_error(format!("signed rule {stage}: {err}")))?
+            } else {
+                self.evaluated += 1;
                 rule.candidate
                     .loaded(rows, true, false)
-                    .map_err(sql_error)?,
-            );
-            self.evaluated += 1;
+                    .map_err(sql_error)?
+            };
+            self.candidates[stage] = Some(candidate);
         } else {
             let id = stage - self.plan.rules.len();
             let spec = &self.plan.outputs[id].spec;
@@ -266,12 +317,45 @@ impl Arena {
             outputs,
             candidates,
         });
+        self.differences.clear();
+        self.signed_reuses.clear();
         self.begin();
         Ok(self.handle)
     }
 }
 
 impl rows::Roots for Arena {
+    fn sources_at(
+        &mut self,
+        handle: i64,
+        slot: usize,
+    ) -> rusqlite::Result<Option<(usize, Vec<Arc<dyn Source>>)>> {
+        self.check_handle(handle)?;
+        let base = self.plan.outputs.len() * 3 + self.plan.rules.len();
+        let Some(extra) = slot.checked_sub(base) else {
+            return Ok(None);
+        };
+        let Some((input, incremental::VersionKind::Superset)) =
+            self.plan.changes.get(extra).cloned()
+        else {
+            return Ok(None);
+        };
+        let (current, removed): (Arc<dyn Source>, versions::Version) = match input {
+            incremental::Input::Derived(slot) => {
+                let current = self.current()[slot / 3].read(slot % 3).clone();
+                let minus = self.differences(slot)?.minus.clone();
+                (Arc::new(current), minus)
+            }
+            incremental::Input::External(name) => {
+                let input = &self.external[&name];
+                (input.source.clone(), input.minus.clone())
+            }
+        };
+        Ok(Some((
+            current.columns().len(),
+            vec![current, Arc::new(removed)],
+        )))
+    }
     fn root_at(&mut self, handle: i64, slot: usize) -> rusqlite::Result<versions::Version> {
         self.check_handle(handle)?;
         let count = self.plan.outputs.len() * 3;
@@ -279,10 +363,43 @@ impl rows::Roots for Arena {
             Ok(self.current()[slot / 3].read(slot % 3).clone())
         } else {
             let id = slot - count;
-            Ok(self.candidates[id]
-                .as_ref()
-                .unwrap_or(&self.plan.rules[id].candidate)
-                .clone())
+            if let Some(rule) = self.plan.rules.get(id) {
+                return Ok(self.candidates[id]
+                    .as_ref()
+                    .unwrap_or(&rule.candidate)
+                    .clone());
+            }
+            let (input, kind) = self
+                .plan
+                .changes
+                .get(id - self.plan.rules.len())
+                .cloned()
+                .ok_or_else(|| sql_error("invalid signed batch slot"))?;
+            let negative = match kind {
+                incremental::VersionKind::Added => false,
+                incremental::VersionKind::Removed => true,
+                incremental::VersionKind::Superset => {
+                    return Err(sql_error("superset requires source access"));
+                }
+            };
+            match input {
+                incremental::Input::Derived(slot) => {
+                    let difference = self.differences(slot)?;
+                    Ok(if negative {
+                        difference.minus.clone()
+                    } else {
+                        difference.plus.clone()
+                    })
+                }
+                incremental::Input::External(name) => {
+                    let difference = &self.external[&name];
+                    Ok(if negative {
+                        difference.minus.clone()
+                    } else {
+                        difference.plus.clone()
+                    })
+                }
+            }
         }
     }
     fn failure(&mut self) -> &mut Option<String> {

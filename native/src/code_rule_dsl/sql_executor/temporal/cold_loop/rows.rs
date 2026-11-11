@@ -5,6 +5,13 @@ use crate::code_rule_dsl::facts::vtab::{ReadRow, RowCells};
 pub(in crate::code_rule_dsl::sql_executor::temporal) trait Roots:
     Send
 {
+    fn sources_at(
+        &mut self,
+        _state: i64,
+        _slot: usize,
+    ) -> rusqlite::Result<Option<(usize, Vec<Arc<dyn Source>>)>> {
+        Ok(None)
+    }
     fn root_at(&mut self, state: i64, slot: usize) -> rusqlite::Result<versions::Version>;
     fn failure(&mut self) -> &mut Option<String>;
 }
@@ -26,6 +33,68 @@ struct Cells {
     slot: i64,
     width: usize,
     row: Arc<dyn RowCells>,
+}
+struct SourceCells {
+    source: Arc<dyn Source>,
+    row: usize,
+}
+impl RowCells for SourceCells {
+    fn cell(&self, column: usize) -> SqlValue {
+        self.source.cell(self.row, column)
+    }
+}
+
+fn source_rows(source: Arc<dyn Source>, equal: &[(usize, i64)]) -> Vec<ReadRow> {
+    if let Some(rows) = source.direct_all(equal) {
+        return rows;
+    }
+    let selected = source.lookup_all(equal).or_else(|| {
+        equal
+            .iter()
+            .filter(|(c, _)| source.indexed(*c))
+            .min_by_key(|(c, _)| source.estimated_matches(*c, false))
+            .and_then(|&(c, v)| source.lookup(c, &[v]))
+    });
+    if let Some(selected) = selected {
+        return selected
+            .into_iter()
+            .filter(|&row| equal.iter().all(|&(c, v)| source.value(row, c) == v))
+            .map(|row| ReadRow {
+                id: source.row_id(row),
+                cells: source
+                    .row_cells(row)
+                    .map(|(_, cells)| cells)
+                    .unwrap_or_else(|| {
+                        Arc::new(SourceCells {
+                            source: source.clone(),
+                            row,
+                        })
+                    }),
+            })
+            .collect();
+    }
+    if let Some(mut stream) = source.row_stream(0..source.len(), false) {
+        let mut rows = Vec::new();
+        while let Some(row) = stream.next() {
+            if equal
+                .iter()
+                .all(|&(c, v)| row.cells.cell(c) == SqlValue::Integer(v))
+            {
+                rows.push(row);
+            }
+        }
+        return rows;
+    }
+    (0..source.len())
+        .filter(|&row| equal.iter().all(|&(c, v)| source.value(row, c) == v))
+        .map(|row| ReadRow {
+            id: source.row_id(row),
+            cells: Arc::new(SourceCells {
+                source: source.clone(),
+                row,
+            }),
+        })
+        .collect()
 }
 impl RowCells for Cells {
     fn cell(&self, c: usize) -> SqlValue {
@@ -91,41 +160,55 @@ impl<A: Roots + 'static> Source for Rows<A> {
                     .ok_or_else(|| sql_error("version rows require state and slot constraints"))
             };
             let (state, slot) = (get(0)?, get(1)?);
-            let root = {
-                let mut arena = self.0.lock();
-                arena.root_at(
-                    state,
-                    usize::try_from(slot).map_err(|_| sql_error("invalid version slot"))?,
-                )?
-            };
+            let slot_index =
+                usize::try_from(slot).map_err(|_| sql_error("invalid version slot"))?;
+            let sources = self.0.lock().sources_at(state, slot_index)?;
             let constraints = equal
                 .iter()
                 .filter_map(|&(c, v)| c.checked_sub(2).map(|c| (c, v)))
                 .collect::<Vec<_>>();
-            let mut rows = if let Some(rows) = root.direct_all(&constraints) {
-                rows
-            } else if let Some(indices) = root.lookup_all(&constraints) {
-                indices
-                    .into_iter()
-                    .map(|index| {
-                        let (id, cells) = root.row_cells(index).unwrap();
-                        ReadRow { id, cells }
-                    })
-                    .collect()
-            } else {
-                let mut stream = root.row_stream(0..root.len(), false).unwrap();
-                let mut rows = vec![];
-                while let Some(row) = stream.next() {
-                    if constraints
-                        .iter()
-                        .all(|&(c, v)| row.cells.cell(c) == SqlValue::Integer(v))
-                    {
-                        rows.push(row);
+            let (mut rows, width) = if let Some((width, sources)) = sources {
+                let mut rows = Vec::new();
+                for source in sources {
+                    rows.extend(source_rows(source.clone(), &constraints));
+                    if let Some(failure) = source.failure() {
+                        return Err(sql_error(failure));
                     }
                 }
-                rows
+                (rows, width)
+            } else {
+                let root = {
+                    let mut arena = self.0.lock();
+                    arena.root_at(
+                        state,
+                        usize::try_from(slot).map_err(|_| sql_error("invalid version slot"))?,
+                    )?
+                };
+                let rows = if let Some(rows) = root.direct_all(&constraints) {
+                    rows
+                } else if let Some(indices) = root.lookup_all(&constraints) {
+                    indices
+                        .into_iter()
+                        .map(|index| {
+                            let (id, cells) = root.row_cells(index).unwrap();
+                            ReadRow { id, cells }
+                        })
+                        .collect()
+                } else {
+                    let mut stream = root.row_stream(0..root.len(), false).unwrap();
+                    let mut rows = vec![];
+                    while let Some(row) = stream.next() {
+                        if constraints
+                            .iter()
+                            .all(|&(c, v)| row.cells.cell(c) == SqlValue::Integer(v))
+                        {
+                            rows.push(row);
+                        }
+                    }
+                    rows
+                };
+                (rows, root.arity())
             };
-            let width = root.arity();
             for row in &mut rows {
                 row.cells = Arc::new(Cells {
                     state,

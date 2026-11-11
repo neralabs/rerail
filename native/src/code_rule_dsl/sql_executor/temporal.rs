@@ -186,9 +186,12 @@ mod replay_tests {
 }
 
 impl Trace {
+    pub fn planning_statistics(&self) -> Option<Value> {
+        self.batch.as_ref().map(batch::History::planning_statistics)
+    }
     pub fn planning_strategy(&self) -> planning::Strategy {
-        if self.batch.is_some() {
-            planning::Strategy::FullWaveBatch
+        if let Some(batch) = &self.batch {
+            batch.planning_strategy()
         } else {
             planning::Strategy::SparseRetained
         }

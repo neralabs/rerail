@@ -58,6 +58,7 @@ pub(super) struct Evaluation {
     inputs: Inputs,
     selection: Option<Selection>,
     meter: Meter,
+    gate_statistics: Vec<Value>,
 }
 
 struct Selection {
@@ -133,6 +134,7 @@ impl Operation {
             inputs,
             selection: None,
             meter: Meter::start(&self.ledger),
+            gate_statistics: Vec::new(),
         })
     }
 
@@ -144,6 +146,7 @@ impl Operation {
                 forecast: selection.forecast,
                 alternate_forecast: selection.alternate_forecast,
                 metrics: eval.meter.finish(&self.ledger),
+                gate_statistics: eval.gate_statistics,
             });
         }
     }
@@ -165,10 +168,18 @@ impl Operation {
 }
 
 impl Evaluation {
+    pub fn capture(&mut self, run: &session::Execution) {
+        self.gate_statistics = run
+            .temporal
+            .values()
+            .filter_map(temporal::Trace::planning_statistics)
+            .collect();
+    }
     pub fn choose(&mut self, strategy: Strategy, compare_retained: bool) {
         let alternate = match strategy {
             Strategy::SparseRetained if compare_retained => Some(Strategy::FullWaveBatch),
             Strategy::FullWaveBatch if compare_retained => Some(Strategy::SparseRetained),
+            Strategy::SignedWaveBatch if compare_retained => Some(Strategy::FullWaveBatch),
             _ => None,
         };
         self.selection = Some(Selection {

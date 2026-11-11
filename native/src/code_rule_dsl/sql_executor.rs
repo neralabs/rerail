@@ -937,6 +937,10 @@ impl CodeRuleSqlExecutor {
             Ok((waves, execution, work.pool, preparation))
         })();
         if let (Some(planning), Some(evaluation)) = (&mut self.planning, evaluation) {
+            let mut evaluation = evaluation;
+            if let Ok((_, run, _, _)) = &result {
+                evaluation.capture(run);
+            }
             planning.record(evaluation);
         }
         if let Some(budget) = budget {

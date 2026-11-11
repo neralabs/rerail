@@ -6,6 +6,7 @@ use crate::code_rule_dsl::facts::vtab::Modules;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
 
 mod compile;
+mod incremental;
 mod state;
 
 use state::{Arena, Wave};
@@ -13,6 +14,7 @@ use state::{Arena, Wave};
 const ROWS: &str = "__rr_batch_rows";
 const FRONTIER: &str = "__rr_batch_frontier";
 const CANDIDATES: &str = "__rr_batch_candidates";
+const CHANGES: &str = "__rr_batch_changes";
 const REUSE: &str = "__rr_batch_reuse";
 const NEXT: &str = "__rr_batch_next";
 const COLLECT: &str = "__rr_batch_collect";
@@ -43,6 +45,8 @@ struct Rule {
     external: BTreeSet<String>,
     reusable: bool,
     candidate: versions::Version,
+    incremental: Option<incremental::Rule>,
+    incremental_analysis: crate::code_rule_dsl::logic::analysis::Decision,
 }
 struct Output {
     name: String,
@@ -59,9 +63,28 @@ struct Plan {
     sql: String,
     reuse_id: usize,
     fact_probe_anchors: usize,
+    changes: Vec<(incremental::Input, incremental::VersionKind)>,
 }
 
 impl History {
+    pub fn planning_statistics(&self) -> Value {
+        let explain = &self.explanation;
+        json!({
+            "signed_rule_results":explain["signed_rule_results"],
+            "full_rule_results":explain["evaluated_rule_results"],
+            "reused_rule_results":explain["reused_rule_results"],
+            "affected_heads":explain["affected_heads"],
+            "version_difference_nodes":explain["version_difference_nodes"],
+            "rule_decisions":explain["latest_rule_decisions"],
+        })
+    }
+    pub fn planning_strategy(&self) -> planning::Strategy {
+        if self.plan.rules.iter().any(|r| r.incremental.is_some()) {
+            planning::Strategy::SignedWaveBatch
+        } else {
+            planning::Strategy::FullWaveBatch
+        }
+    }
     pub fn explain(&self) -> &Value {
         &self.explanation
     }
@@ -118,6 +141,7 @@ impl History {
         limit: u32,
         preparing: bool,
     ) -> Result<u32> {
+        let external = incremental::external(w, &self.plan, changes)?;
         let arena = Arc::new(parking_lot::Mutex::new(Arena::new(
             self.plan.clone(),
             self.waves.clone(),
@@ -127,6 +151,7 @@ impl History {
                 .map(|(n, _)| n.clone())
                 .collect(),
             limit,
+            external,
         )));
         let modules = Modules::default();
         let _context = w.profile_scope(|| {
@@ -138,7 +163,12 @@ impl History {
             })
         });
         let execution = (|| {
-            for (name, estimate) in [(ROWS, 4096), (FRONTIER, 16), (CANDIDATES, 128)] {
+            for (name, estimate) in [
+                (ROWS, 4096),
+                (FRONTIER, 16),
+                (CANDIDATES, 128),
+                (CHANGES, 16),
+            ] {
                 modules
                     .bind(
                         w.db,
@@ -186,6 +216,7 @@ impl History {
             modules.unregister(w.db, ROWS),
             modules.unregister(w.db, FRONTIER),
             modules.unregister(w.db, CANDIDATES),
+            modules.unregister(w.db, CHANGES),
             w.db.remove_function(NEXT, 1),
             w.db.remove_function(REUSE, 1),
             w.db.remove_function(COLLECT, -1),
@@ -231,8 +262,15 @@ impl History {
             "vm_steps":vm_steps,
             "reused_rule_results":arena.reused,
             "evaluated_rule_results":arena.evaluated,
+            "signed_rule_results":arena.reconciled,
+            "affected_heads":arena.affected_heads,
+            "version_difference_nodes":arena.version_nodes,
+            "latest_rule_decisions":arena.decisions,
+            "signed_projection_analysis":self.plan.rules.iter().enumerate().map(|(id,rule)|
+                json!({"rule":id,"analysis":rule.incremental_analysis})).collect::<Vec<_>>(),
             "reuse_proof":"Equal preceding-wave roots and unchanged external inputs",
         });
+        w.version_nodes += arena.version_nodes;
         self.waves = Arc::new(std::mem::take(&mut arena.waves));
         Ok(waves)
     }
@@ -248,6 +286,7 @@ struct ResultRows {
     state: i64,
     stage: usize,
     rows: Vec<Vec<Option<i64>>>,
+    keys: Vec<Vec<Option<i64>>>,
 }
 
 impl Aggregate<ResultRows, i64> for Collect {
@@ -258,18 +297,24 @@ impl Aggregate<ResultRows, i64> for Collect {
         out.state = c.get(0)?;
         out.stage =
             usize::try_from(c.get::<i64>(1)?).map_err(|_| sql_error("invalid SQL wave stage"))?;
-        if c.get::<bool>(2)? {
-            out.rows.push(
-                (3..c.len())
-                    .map(|i| c.get(i))
-                    .collect::<rusqlite::Result<_>>()?,
-            );
+        let tag = c.get::<i64>(2)?;
+        if tag != 0 {
+            let row = (3..c.len())
+                .map(|i| c.get(i))
+                .collect::<rusqlite::Result<_>>()?;
+            match tag {
+                1 => out.rows.push(row),
+                2 => out.keys.push(row),
+                _ => return Err(sql_error("invalid signed projection row tag")),
+            }
         }
         Ok(())
     }
     fn finalize(&self, _: &mut Context<'_>, out: Option<ResultRows>) -> rusqlite::Result<i64> {
         let out = out.ok_or_else(|| sql_error("missing SQL wave sentinel"))?;
-        self.0.lock().accept(out.state, out.stage, out.rows)
+        self.0
+            .lock()
+            .accept(out.state, out.stage, out.rows, out.keys)
     }
 }
 

@@ -120,6 +120,10 @@ fn key(values: impl IntoIterator<Item = Option<i64>>) -> Key {
     tree::key(values.into_iter().collect())
 }
 impl Version {
+    pub fn distinct_values(&self, column: usize) -> Option<usize> {
+        (column < self.distinct.len() && (column == 0 || self.secondary[column]))
+            .then(|| self.distinct[column])
+    }
     pub fn arity(&self) -> usize {
         self.schema.columns.len()
     }

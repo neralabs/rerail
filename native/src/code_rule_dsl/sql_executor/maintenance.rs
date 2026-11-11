@@ -303,7 +303,7 @@ pub(super) fn anchor(q: &mut Query, at: usize) {
     }
     q.body.from = ordered;
 }
-fn targeted(mut q: Query, table: &str) -> Query {
+pub(super) fn targeted(mut q: Query, table: &str) -> Query {
     let alias = "rr_update_target";
     for (i, (expr, _)) in q.body.columns.clone().iter().enumerate() {
         q.body.predicates.push(E::Binary {
