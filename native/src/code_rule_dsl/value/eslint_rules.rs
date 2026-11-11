@@ -2,8 +2,8 @@
 //! where ESLint 10.11.0 itself reports them on the fixtures in `fixtures/ecma/value/eslint`
 //! (`fixtures/ecma/value/generate_eslint.mjs`).
 
-use crate::code_rule_dsl::oracle;
-use crate::code_rule_dsl::test_support::*;
+// cratify: a re-export of rerail-engine's, which its facades of this module make
+// cratify: a re-export of rerail-engine's, which its facades of this module make
 use serde_json::{Value, json};
 
 const ORACLE: &str = oracle!("ecma/value/eslint.expected.json");

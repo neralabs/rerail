@@ -13,4 +13,4 @@ pub(super) fn error(source: &str) -> Result<Option<(u32, String)>, String> {
         .map_err(|r| format!("{}: {}", r.class, r.message))
 }
 
-pub(super) use super::core_rr::failure;
+pub use super::core_rr::failure;

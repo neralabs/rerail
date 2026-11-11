@@ -630,4 +630,4 @@ fn simple_interpolation<D: Doc>(
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

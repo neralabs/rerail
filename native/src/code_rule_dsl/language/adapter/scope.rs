@@ -9,21 +9,18 @@ use crate::code_rule_dsl::scope::options::{
 };
 use crate::code_rule_dsl::scope::flow::Defined;
 use crate::code_rule_dsl::scope::usage::{Steps, Usage};
-use crate::code_rule_dsl::scope::{
-    Access, Binding, BuildError, Builder, Directives, Form, Lookup, Reading, Reference, ScopeKind,
-    ScopeTable, ecma, php, python,
-};
+use crate::code_rule_dsl::scope::{Access, Binding, BuildError, Builder, Directives, Form, Lookup, Reading, Reference, ScopeKind, ScopeTable};
 use crate::code_rule_dsl::value::NodeRef;
 use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
 use std::sync::Arc;
-pub(in crate::code_rule_dsl) mod lang_python;
-pub(in crate::code_rule_dsl) mod lang_ecma;
-pub(in crate::code_rule_dsl) mod lang_php;
+// cratify: `lang_python` is rerail-lang-python's (it mounts it)
+// cratify: `lang_ecma` is rerail-lang-ecma's (it mounts it)
+// cratify: `lang_php` is rerail-lang-php's (it mounts it)
 
 /// A `resolves` or `binds` option some family has no counterpart for.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum ScopeFeature {
+pub enum ScopeFeature {
     /// `resolves.this`: JavaScript's global `this`.
     This,
     /// `resolves.sloppyFunctions`.
@@ -63,10 +60,10 @@ pub(crate) enum ScopeFeature {
 }
 
 /// A family's scope semantics.
-pub(crate) trait ScopeRules {
+pub trait ScopeRules {
     /// Whether the family builds scope tables: its languages' registry capability,
     /// which the adapter kit checks.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     const SUPPORTED: bool;
     /// Whether a read's binding is the one the file's flow reaches it with (PHP's `scope/php.rs`)
     /// rather than a lexical scope's. The family's `resolves` reads the file's names
@@ -168,7 +165,7 @@ pub(crate) trait ScopeRules {
     /// default version; `None` for a family they do not configure.
     fn ruff_options(python: Option<&Arc<PythonOptions>>) -> Option<Arc<PythonOptions>>;
     /// `ScopeTable::unbound_locally`.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn unbound_locally(
         table: &ScopeTable,
         reference: &Reference,
@@ -225,12 +222,12 @@ pub(crate) trait ScopeRules {
 }
 
 /// The refusal reporting `message`.
-fn refused(message: impl Into<Cow<'static, str>>) -> Result<(), Refusal> {
+pub fn refused(message: impl Into<Cow<'static, str>>) -> Result<(), Refusal> {
     Err(Refusal::Refused(message.into()))
 }
 
 /// The forms Python and TypeScript bind names in.
-const LEXICAL_FORMS: &[(&str, Form)] = &[
+pub const LEXICAL_FORMS: &[(&str, Form)] = &[
     ("assignment", Form::Assignment),
     ("annotated", Form::Annotated),
     ("annotation", Form::Annotation),
@@ -254,7 +251,7 @@ const LEXICAL_FORMS: &[(&str, Form)] = &[
 ];
 
 #[cfg(test)]
-pub(super) mod kit {
+pub mod kit {
     use super::{Adapter, ScopeFeature, ScopeRules};
     use crate::code_rule_dsl::language::adapter::Refusal;
     use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
@@ -266,26 +263,26 @@ pub(super) mod kit {
     use std::sync::Arc;
 
     /// What one family's scope rules answer.
-    pub(crate) struct Expect {
-        pub(crate) flow: bool,
+    pub struct Expect {
+        pub flow: bool,
         /// The ESLint `ecmaVersion` and source type (`None`: each file's), and the Ruff version
         /// (its minor), the family's default settings declare its globals by.
-        pub(crate) declared: (Option<(u16, Option<SourceType>)>, Option<u8>),
+        pub declared: (Option<(u16, Option<SourceType>)>, Option<u8>),
         /// Files, a name each reads last that no binding resolves, and whether that read is
         /// unresolved under the default settings.
-        pub(crate) unresolved: &'static [(&'static str, &'static str, bool)],
-        pub(crate) stubs: bool,
-        pub(crate) redefines_shadowed: bool,
-        pub(crate) reference_kinds: &'static [&'static str],
-        pub(crate) name_kinds: &'static [&'static str],
+        pub unresolved: &'static [(&'static str, &'static str, bool)],
+        pub stubs: bool,
+        pub redefines_shadowed: bool,
+        pub reference_kinds: &'static [&'static str],
+        pub name_kinds: &'static [&'static str],
         /// A file, a name it reads last, and the form of the binding that read resolves to.
-        pub(crate) resolves: (&'static str, &'static str, Option<Form>),
+        pub resolves: (&'static str, &'static str, Option<Form>),
         /// Features the family refuses, with their messages.
-        pub(crate) refuses: &'static [(ScopeFeature, &'static str)],
+        pub refuses: &'static [(ScopeFeature, &'static str)],
         /// Features the family reads.
-        pub(crate) reads: &'static [ScopeFeature],
+        pub reads: &'static [ScopeFeature],
         /// The module of `dir/mod<suffix>` outside any package.
-        pub(crate) unpackaged: Option<&'static str>,
+        pub unpackaged: Option<&'static str>,
     }
 
     /// The document a file of `source` in `dialect` holds that its family's scope reads (the
@@ -308,7 +305,7 @@ pub(super) mod kit {
     }
 
     /// `A`'s scope rules against `expect`, its files in `dialect` with `suffix`.
-    pub(crate) fn kit<A: Adapter>(dialect: GrammarDialect, suffix: &str, expect: &Expect) {
+    pub fn kit<A: Adapter>(dialect: GrammarDialect, suffix: &str, expect: &Expect) {
         assert_eq!(<A::Scope as ScopeRules>::FLOW, expect.flow);
         let eslint = <A::Scope as ScopeRules>::eslint_options(None);
         let ruff = <A::Scope as ScopeRules>::ruff_options(None);

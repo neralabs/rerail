@@ -502,7 +502,7 @@ fn var_type(prog: &Program, body: &[&Literal], var: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     /// A split whose kept atoms only the demanded read joins is refused: its `pre_<i>` would be their cross product.
     #[test]
     fn kept_atoms_that_only_the_cut_joins_are_disconnected() {

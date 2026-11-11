@@ -9,7 +9,7 @@ use sha2::{Digest as _, Sha256};
 
 /// Where a literal or an automaton must match in the text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(in crate::code_rule_dsl) enum Anchor {
+pub enum Anchor {
     /// The whole text.
     Whole,
     /// A prefix of it.
@@ -32,7 +32,7 @@ impl Anchor {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) enum Plan {
+pub enum Plan {
     /// Every text.
     Always,
     /// No text.
@@ -85,7 +85,7 @@ impl Plan {
 
 /// A plan as a test of one string at a time: a vocabulary term, a node's text, a Datalog value.
 /// `None` from `is_match` where a backtracking pattern could not decide (its limits).
-pub(in crate::code_rule_dsl) enum Compiled {
+pub enum Compiled {
     Always,
     Never,
     Whole(std::collections::HashSet<Vec<u8>>),
@@ -124,7 +124,7 @@ impl Compiled {
         }
     }
 
-    pub(in crate::code_rule_dsl) fn is_match(&self, text: &[u8]) -> Option<bool> {
+    pub fn is_match(&self, text: &[u8]) -> Option<bool> {
         use aho_corasick::{Anchored, Input};
         Some(match self {
             Self::Always => true,

@@ -594,7 +594,7 @@ fn pascal(name: &str) -> String {
         .collect()
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn render(entries: &[Entry], test_planned: &[String]) -> String {
     render_built(entries, test_planned, &[])
 }

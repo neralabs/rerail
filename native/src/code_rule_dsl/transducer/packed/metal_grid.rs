@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BinaryHeap, HashMap};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
-pub(super) const METAL_GRID_FORMAT_VERSION: u32 = 1;
+pub const METAL_GRID_FORMAT_VERSION: u32 = 1;
 pub(super) const METAL_GRID_BLOCK_WIDTH: u32 = 256;
 const EXECUTION_ROUTE_COUNT: usize = 11;
 
@@ -100,7 +100,7 @@ pub struct GridProgramShape {
     pub dispatch_signature: u32,
 }
 
-pub(super) fn compile_program_shapes(programs: &[Program]) -> Vec<GridProgramShape> {
+pub fn compile_program_shapes(programs: &[Program]) -> Vec<GridProgramShape> {
     let mut signatures = BTreeMap::<Vec<u32>, u32>::new();
     let entries = compile_entry_shapes(programs);
     programs
@@ -229,14 +229,14 @@ pub(super) fn compile_program_shapes(programs: &[Program]) -> Vec<GridProgramSha
         .collect()
 }
 
-pub(super) struct MetalGridInput {
+pub struct MetalGridInput {
     pub packed: Arc<PackedBatch>,
     pub grid: MetalExecutionGrid,
     pub children: super::metal_child_index::ChildIndex,
 }
 
 impl MetalGridInput {
-    pub(super) fn program_shapes(
+    pub fn program_shapes(
         &self,
         programs: &[Program],
     ) -> Result<Vec<GridProgramShape>, Error> {
@@ -247,7 +247,7 @@ impl MetalGridInput {
         Ok(input_shapes(programs, &self.children))
     }
     #[cfg(target_os = "macos")]
-    pub(super) fn build_streamed_with_upload(
+    pub fn build_streamed_with_upload(
         programs: &[Program],
         files: &[crate::code_rule_dsl::tape::TapeSource],
         anchors: &[Vec<Arc<[u32]>>],
@@ -265,7 +265,7 @@ impl MetalGridInput {
         })
     }
 
-    pub(super) fn build(
+    pub fn build(
         programs: &[Program],
         files: &[TapeDoc],
         anchors: &[Vec<Vec<u32>>],
@@ -283,7 +283,7 @@ impl MetalGridInput {
         })
     }
     #[cfg(target_os = "macos")]
-    pub(super) fn build_shared(
+    pub fn build_shared(
         programs: &[Program],
         files: &[TapeDoc],
         anchors: &[Vec<Arc<[u32]>>],
@@ -318,7 +318,7 @@ fn input_shapes(
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(super) struct MetalExecutionGrid {
+pub struct MetalExecutionGrid {
     pub header: MetalGridHeader,
     pub roots: Vec<RootRecord>,
     pub selectors: Vec<RootSelector>,
@@ -724,7 +724,7 @@ fn merge_root_slices(lists: &[&[u32]]) -> Vec<u32> {
     merged
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn merge_roots(lists: &[Vec<u32>]) -> Vec<u32> {
     merge_root_slices(&lists.iter().map(Vec::as_slice).collect::<Vec<_>>())
 }
@@ -944,7 +944,7 @@ const _: [(); 8] = [(); std::mem::size_of::<ExecutionRange>()];
 const _: [(); 24] = [(); std::mem::size_of::<ExecutionBlock>()];
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

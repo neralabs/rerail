@@ -21,7 +21,7 @@
 
 use crate::code_rule_dsl::tree::Tree;
 use super::php_names::{self, PhpNames, Resolved};
-pub(crate) use super::flow::{Defined, Modify, Quiet, Read, Reach};
+pub use super::flow::{Defined, Modify, Quiet, Read, Reach};
 use super::{Binding, BuildError, Builder, Form, NodeRef, ScopeKind, Site, VALUE};
 use crate::code_rule_dsl::value::{Context as Decoding, php as php_value};
 use ast_grep_core::{Doc, Node};
@@ -29,9 +29,9 @@ use foldhash::{HashMap, HashMapExt};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-mod blade;
+pub mod blade;
 #[path = "php/by_reference.generated.rs"]
-mod by_reference;
+pub mod by_reference;
 
 
 
@@ -2543,7 +2543,7 @@ impl Visitor<'_, '_> {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
 
 #[cfg(test)]
-mod flow_tests;
+pub mod flow_tests;

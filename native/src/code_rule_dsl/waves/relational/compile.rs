@@ -9,7 +9,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, atomic::AtomicUsize};
 #[path = "compile/inference.rs"]
-mod inference;
+pub mod inference;
 
 fn names(value: &Value, path: &str) -> Result<Vec<String>> {
     let array = value

@@ -26,7 +26,7 @@ pub struct Phpcs {
 }
 
 /// PHP_CodeSniffer's `phpcs:` annotations.
-pub(crate) struct Suppressions;
+pub struct Suppressions;
 
 impl super::SuppressionKind for Suppressions {
     const KEY: &'static str = "phpcs";
@@ -182,7 +182,7 @@ impl PhpcsIndex {
     }
 
     /// Whether the file holds no annotation either version would apply.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn is_empty(&self) -> bool {
         !self.four.file
             && !self.three.file
@@ -906,7 +906,7 @@ fn doc_pieces<'s>(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::{PhpcsIndex, PhpcsVersion, before_on_line};
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::lines::{LineTable, Terminators};

@@ -107,7 +107,7 @@ fn literal_prefixes(hir: &Hir) -> Option<Vec<String>> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::TextProbe;
     use regex::Regex;
 

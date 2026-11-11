@@ -12,7 +12,7 @@ use metal::{CommandQueueRef, Device};
 
 #[cfg(all(test, feature = "metal-tests"))]
 #[path = "metal_typed_batch_tests.rs"]
-mod batch_tests;
+pub mod batch_tests;
 
 pub(super) fn needed(resident: &ResidentInput) -> bool {
     resident.input.grid.evaluation_spans.iter().any(|span| {

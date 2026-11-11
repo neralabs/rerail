@@ -45,7 +45,7 @@ pub(in crate::code_rule_dsl) fn rows<'s>(re: &Regex, groups: &[String], s: &'s s
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

@@ -230,7 +230,7 @@ pub(in crate::code_rule_dsl) fn split(prog: &Program) -> Option<Loading> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /// `!seen(x)` inside a component that loads waits for its key's gate; the rule asking about it is its prefix.

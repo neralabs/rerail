@@ -20,7 +20,7 @@ use crate::code_rule_dsl::language::adapter::syntax::SyntaxRules;
 use crate::code_rule_dsl::language::adapter::value::ValueRules;
 
 /// A language family's rules, as the core asks them.
-pub(crate) trait LanguagePack: Send + Sync {
+pub trait LanguagePack: Send + Sync {
     // Adapter
     fn family(&self) -> crate::code_rule_dsl::language::Family;
     fn label(&self) -> &'static str;
@@ -85,7 +85,7 @@ pub(crate) trait LanguagePack: Send + Sync {
     fn scope_unresolved(&self, table: &crate::code_rule_dsl::scope::ScopeTable, reference: &crate::code_rule_dsl::scope::Reference, name: &str, mode: crate::code_rule_dsl::matcher::Unresolved, python: &crate::code_rule_dsl::scope::options::PythonOptions, options: Option<&crate::code_rule_dsl::scope::options::LanguageOptions>, directives: Option<&crate::code_rule_dsl::scope::Directives>) -> bool;
     fn scope_eslint_options(&self, options: Option<&std::sync::Arc<crate::code_rule_dsl::scope::options::LanguageOptions>>) -> Option<std::sync::Arc<crate::code_rule_dsl::scope::options::LanguageOptions>>;
     fn scope_ruff_options(&self, python: Option<&std::sync::Arc<crate::code_rule_dsl::scope::options::PythonOptions>>) -> Option<std::sync::Arc<crate::code_rule_dsl::scope::options::PythonOptions>>;
-    # [cfg (test)]
+    # [cfg (any(test, feature = "test-hooks"))]
     fn scope_unbound_locally(&self, table: &crate::code_rule_dsl::scope::ScopeTable, reference: &crate::code_rule_dsl::scope::Reference, name: &str, builtin: bool) -> bool;
     fn scope_usage_tape(&self, table: &crate::code_rule_dsl::scope::ScopeTable, root: &ast_grep_core::Node<'_, crate::code_rule_dsl::tape::TapeDoc>, steps: &mut crate::code_rule_dsl::scope::usage::Steps<'_>) -> Result<crate::code_rule_dsl::scope::usage::Usage, crate::code_rule_dsl::scope::BuildError>;
     fn scope_usage_sub(&self, table: &crate::code_rule_dsl::scope::ScopeTable, root: &ast_grep_core::Node<'_, crate::code_rule_dsl::literal::SubDoc>, steps: &mut crate::code_rule_dsl::scope::usage::Steps<'_>) -> Result<crate::code_rule_dsl::scope::usage::Usage, crate::code_rule_dsl::scope::BuildError>;
@@ -179,10 +179,10 @@ pub(crate) trait LanguagePack: Send + Sync {
 }
 
 /// An adapter's rules as a LanguagePack: each method the static one.
-pub(crate) struct Pack<A>(std::marker::PhantomData<fn() -> A>);
+pub struct Pack<A>(std::marker::PhantomData<fn() -> A>);
 
 impl<A> Pack<A> {
-    pub(crate) const NEW: Self = Pack(std::marker::PhantomData);
+    pub const NEW: Self = Pack(std::marker::PhantomData);
 }
 
 impl<A: Adapter + SyntaxRules> LanguagePack for Pack<A> {
@@ -372,7 +372,7 @@ impl<A: Adapter + SyntaxRules> LanguagePack for Pack<A> {
     fn scope_ruff_options(&self, python: Option<&std::sync::Arc<crate::code_rule_dsl::scope::options::PythonOptions>>) -> Option<std::sync::Arc<crate::code_rule_dsl::scope::options::PythonOptions>> {
         <<A as Adapter>::Scope as ScopeRules>::ruff_options(python)
     }
-    # [cfg (test)]
+    # [cfg (any(test, feature = "test-hooks"))]
     fn scope_unbound_locally(&self, table: &crate::code_rule_dsl::scope::ScopeTable, reference: &crate::code_rule_dsl::scope::Reference, name: &str, builtin: bool) -> bool {
         <<A as Adapter>::Scope as ScopeRules>::unbound_locally(table, reference, name, builtin)
     }
@@ -801,7 +801,7 @@ pub(crate) fn value_decode<D: Doc>(pack: &dyn LanguagePack, node: &ast_grep_core
 }
 
 /// `ValueRules::structure` of `pack`, for `D`.
-pub(crate) fn value_structure<D: Doc>(pack: &dyn LanguagePack, node: &ast_grep_core::Node<'_, D>, equality: crate::code_rule_dsl::value::structure::Equality, context: &mut crate::code_rule_dsl::value::Context<'_>) -> Option<Vec<crate::code_rule_dsl::value::structure::Tok>> {
+pub fn value_structure<D: Doc>(pack: &dyn LanguagePack, node: &ast_grep_core::Node<'_, D>, equality: crate::code_rule_dsl::value::structure::Equality, context: &mut crate::code_rule_dsl::value::Context<'_>) -> Option<Vec<crate::code_rule_dsl::value::structure::Tok>> {
     if TypeId::of::<D>() == TypeId::of::<crate::code_rule_dsl::tape::TapeDoc>() {
         return unsafe { pack.value_structure_tape(same(node), equality, context) };
     }
@@ -918,7 +918,7 @@ pub(crate) fn calls_tables(pack: &dyn LanguagePack, table: impl FnOnce () -> Opt
 }
 
 /// `CallRules::callee_at` of `pack`, for `D`.
-pub(crate) fn calls_callee_at<'t, D: Doc>(pack: &dyn LanguagePack, node: &ast_grep_core::Node<'t, D>, summary: &crate::code_rule_dsl::calls::summary::Summary, tables: impl FnOnce () -> Option<crate::code_rule_dsl::calls::FileTables>) -> Option<Option<crate::code_rule_dsl::calls::summary::Callee>> {
+pub fn calls_callee_at<'t, D: Doc>(pack: &dyn LanguagePack, node: &ast_grep_core::Node<'t, D>, summary: &crate::code_rule_dsl::calls::summary::Summary, tables: impl FnOnce () -> Option<crate::code_rule_dsl::calls::FileTables>) -> Option<Option<crate::code_rule_dsl::calls::summary::Callee>> {
     if TypeId::of::<D>() == TypeId::of::<crate::code_rule_dsl::tape::TapeDoc>() {
         return unsafe { pack.calls_callee_at_tape(same(node), summary, Box::new(tables)) };
     }
@@ -940,12 +940,12 @@ static PACKS: [OnceLock<&'static dyn LanguagePack>; Family::ALL.len()] = [const 
 
 /// Registers `family`'s pack; the first registration holds. The engine registers every pack its build has as it
 /// loads (`crate::install_languages`).
-pub(crate) fn register(family: Family, pack: &'static dyn LanguagePack) {
+pub fn register(family: Family, pack: &'static dyn LanguagePack) {
     let _ = PACKS[family as usize].set(pack);
 }
 
 /// `family`'s pack. Every family the build has is registered as the engine loads: none is a build without that
 /// language's crate, which no file of the family reaches.
-pub(crate) fn pack(family: Family) -> &'static dyn LanguagePack {
+pub fn pack(family: Family) -> &'static dyn LanguagePack {
     PACKS[family as usize].get().copied().unwrap_or_else(|| panic!("no language pack registered for {family:?}"))
 }

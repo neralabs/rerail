@@ -257,7 +257,7 @@ pub(super) static SENT: AtomicU64 = AtomicU64::new(0);
 pub(super) static USED: AtomicU64 = AtomicU64::new(0);
 
 /// Checks a qualifying spec's shape the first two steps need (for a test).
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn qualifying(j: &super::JoinRule) -> bool {
     qualifies(j).is_some()
 }

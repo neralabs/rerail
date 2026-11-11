@@ -181,7 +181,7 @@ pub(super) fn record(programs: &[&str], root: &Path, out: &Path, modes: &str, ty
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use crate::code_rule_dsl::typing::file_local::Binding;
 
     /// An unchanged run is kept; a document's edit, a new document, the root's settings (read by `env`) and the text

@@ -12,7 +12,7 @@ use crate::code_rule_dsl::tape::{TapeDoc, TapeSource};
 
 /// Which of the device's program engines runs a batch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) enum Engine {
+pub enum Engine {
     /// One interpreter kernel for every program.
     Interpreter,
     /// The batch's programs compiled (cached by their words).
@@ -20,7 +20,7 @@ pub(in crate::code_rule_dsl) enum Engine {
 }
 
 /// What the transducer runs on a device.
-pub(in crate::code_rule_dsl) trait MatcherDevice: Send + Sync {
+pub trait MatcherDevice: Send + Sync {
     /// The batch's programs on `engine`, from `anchors` (per file, per program), at most `result_limits` results each.
     fn execute_packed(&self, engine: Engine, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>], result_limits: Option<&[u32]>) -> Result<PackedExecution, Error>;
     /// The batch's outcomes on `backend` (one of the device's: `MetalInterpreter`, `MetalJit` or `Metal`).
@@ -60,12 +60,12 @@ pub(in crate::code_rule_dsl) trait MatcherDevice: Send + Sync {
 static MATCHER: OnceLock<&'static dyn MatcherDevice> = OnceLock::new();
 
 /// Registers the transducer's device; the first registration holds.
-pub(in crate::code_rule_dsl) fn register(device: &'static dyn MatcherDevice) {
+pub fn register(device: &'static dyn MatcherDevice) {
     let _ = MATCHER.set(device);
 }
 
 /// The registered device, if any.
-pub(in crate::code_rule_dsl) fn matcher() -> Option<&'static dyn MatcherDevice> {
+pub fn matcher() -> Option<&'static dyn MatcherDevice> {
     MATCHER.get().copied()
 }
 
@@ -75,36 +75,36 @@ pub(in crate::code_rule_dsl) fn required() -> Result<&'static dyn MatcherDevice,
 }
 
 /// Root programs and, per program, per file, their starts (an anchor a task).
-pub(in crate::code_rule_dsl) struct RootJobs<'a> {
-    pub(in crate::code_rule_dsl) programs: Vec<&'a Program>,
-    pub(in crate::code_rule_dsl) starts: Vec<Vec<Vec<u32>>>,
+pub struct RootJobs<'a> {
+    pub programs: Vec<&'a Program>,
+    pub starts: Vec<Vec<Vec<u32>>>,
 }
 
 /// Per root program: per file its (task, record)s in task then walk order, or `None` where the
 /// program did not run on the device (not a micro walk of at most 32 frames, a walk that
 /// overflowed, or records past the buffer); the host walks those.
-pub(in crate::code_rule_dsl) type RootsFound = Vec<Option<Vec<Vec<(u32, crate::code_rule_dsl::transducer::packed::RootRecord)>>>>;
+pub type RootsFound = Vec<Option<Vec<Vec<(u32, crate::code_rule_dsl::transducer::packed::RootRecord)>>>>;
 
 #[derive(Debug, Default)]
-pub(in crate::code_rule_dsl) struct Outcome {
+pub struct Outcome {
     /// Every label's words after the passes.
-    pub(in crate::code_rule_dsl) labels: Vec<u32>,
-    pub(in crate::code_rule_dsl) words: usize,
-    pub(in crate::code_rule_dsl) command_buffers: usize,
-    pub(in crate::code_rule_dsl) dispatches: usize,
+    pub labels: Vec<u32>,
+    pub words: usize,
+    pub command_buffers: usize,
+    pub dispatches: usize,
     /// Why the host waited before the end: workspace growth, a recursive group that needed more
     /// rounds than were encoded (the whole clause again), the upload budget.
-    pub(in crate::code_rule_dsl) waits: [usize; 3],
+    pub waits: [usize; 3],
     /// Rounds encoded per recursive group.
-    pub(in crate::code_rule_dsl) rounds: usize,
+    pub rounds: usize,
     /// Whether a task outgrew `NARROW`'s states, so the batch ran again with `WIDE`'s.
-    pub(in crate::code_rule_dsl) widened: bool,
+    pub widened: bool,
     /// Whether a micro walk outgrew its frames, so every program ran on the interpreter.
-    pub(in crate::code_rule_dsl) interpreted: bool,
+    pub interpreted: bool,
     /// The plan's root records (`Plan::roots`); empty without roots.
-    pub(in crate::code_rule_dsl) records: RootsFound,
+    pub records: RootsFound,
     /// The command buffers' seconds on the GPU (`GPUStartTime` to `GPUEndTime`), summed.
-    pub(in crate::code_rule_dsl) device: f64,
+    pub device: f64,
 }
 
-pub(in crate::code_rule_dsl) type PageConsumer<'a> = dyn FnMut(PackedExecution, usize) -> Result<(), Error> + 'a;
+pub type PageConsumer<'a> = dyn FnMut(PackedExecution, usize) -> Result<(), Error> + 'a;

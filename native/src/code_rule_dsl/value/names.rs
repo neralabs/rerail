@@ -99,14 +99,14 @@ fn parse(bytes: &[u8]) -> Result<Table<'_>, String> {
 static TABLE: LazyLock<Result<Table<'static>, String>> = LazyLock::new(|| parse(TABLE_BYTES));
 
 /// The Unicode version the table was generated from.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) fn unicode_version() -> &'static str {
     TABLE.as_ref().expect("names table").version
 }
 
 /// The character `\N{name}` names, or `None` where CPython raises a SyntaxError. A malformed table
 /// answers `None` for every name it would hold, and marks the thread (`take_unavailable`).
-pub(crate) fn lookup(name: &str) -> Option<char> {
+pub fn lookup(name: &str) -> Option<char> {
     lookup_in(&TABLE, name)
 }
 
@@ -232,7 +232,7 @@ fn stored(table: &Table, name: &[u8]) -> Option<char> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

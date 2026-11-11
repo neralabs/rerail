@@ -14,7 +14,7 @@
 //! sweeps follow the recursion's direction rather than one tree edge per round.
 
 #[path = "metal_label_patterns.rs"]
-mod patterns;
+pub mod patterns;
 
 use super::super::PackedPattern;
 use super::super::metal_batch_abi::MetalSupertype;
@@ -25,7 +25,7 @@ use metal::{Buffer, CommandBuffer};
 use std::collections::HashMap;
 use crate::code_rule_dsl::residency::slabs::ResidentParts as _;
 use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE;
-pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::device::{Outcome, RootJobs, RootsFound};
+pub use crate::code_rule_dsl::transducer::packed::device::{Outcome, RootJobs, RootsFound};
 
 /// A pass writes the label `target` (an index, not a class); labels it reads are its classes.
 pub(in crate::code_rule_dsl) enum Pass<'a> {
@@ -942,16 +942,16 @@ struct Runner<'a> {
     roots: Option<RootsEncoded>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Tests: the passes run on the interpreter, as a run whose walks outgrew their frames does.
-    pub(in crate::code_rule_dsl) static INTERPRET_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub static INTERPRET_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 fn interpret_only() -> bool {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     return INTERPRET_ONLY.get();
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-hooks")))]
     false
 }
 

@@ -24,7 +24,7 @@ use ast_grep_core::matcher::Matcher;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) use super::relational_ir::SqlOperation as SqlShape;
 pub(super) use super::relational_ir::TerminalKind;
 
@@ -54,12 +54,12 @@ impl TerminalPlan {
         self.kind
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn language(&self) -> &'static str {
         label(self.language).expect("a compiled matcher has a registered dialect")
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn program_digest(&self) -> String {
         self.program.canonical_digest(self.language(), b"")
     }
@@ -149,11 +149,11 @@ pub(super) struct SqlCatalogPlan {
     clause_outputs: Vec<OutputPlan>,
     clause_logical_plans: Vec<super::plan::ClauseLogicalPlan>,
     utility_call_counts: BTreeMap<UtilityDefinitionId, usize>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     authored_fixture_sql: Option<String>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     all_execution_sql: std::sync::OnceLock<String>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     all_relational_sql: std::sync::OnceLock<String>,
 }
 
@@ -532,7 +532,7 @@ impl SqlCatalogPlan {
         self.render_clauses_plan(ordinals, true, true)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn shape(&self) -> &[SqlShape] {
         self.clause_irs
             .first()
@@ -590,7 +590,7 @@ impl SqlCatalogPlan {
         Ok(())
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn structural_sql(&self) -> &str {
         self.all_relational_sql.get_or_init(|| {
             let ordinals = (0..self.clause_irs.len()).collect::<Vec<_>>();
@@ -599,7 +599,7 @@ impl SqlCatalogPlan {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn execution_sql(&self) -> &str {
         self.all_execution_sql.get_or_init(|| {
             if let Some(authored) = &self.authored_fixture_sql {
@@ -625,7 +625,7 @@ impl SqlCatalogPlan {
         &self.clause_logical_plans
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn clause_terminal_ids(&self) -> &[Vec<usize>] {
         &self.clause_terminal_ids
     }
@@ -803,7 +803,7 @@ fn utility_references(matcher: &AstMatcher, references: &mut Vec<UtilRef>) {
         | AstMatcher::Compare(_)
         | AstMatcher::Semantic(_)
         | AstMatcher::Never => {}
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => {}
     }
 }
@@ -1829,7 +1829,7 @@ impl Builder {
             AstMatcher::Semantic(semantic) => {
                 self.lower_semantic(semantic, language, at, terminals, ir);
             }
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             AstMatcher::TestUnknown(_) => self
                 .unsupported
                 .push(format!("{at}: test-only unknown operation")),
@@ -3345,7 +3345,7 @@ impl Builder {
         id
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn template_is_var(
         template: Option<&crate::code_rule_dsl::model::Template>,
         name: &str,
@@ -3359,7 +3359,7 @@ impl Builder {
         )
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn template_is_text_var(
         template: Option<&crate::code_rule_dsl::model::Template>,
         text: &str,
@@ -3375,7 +3375,7 @@ impl Builder {
         )
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn template_is_text_var_text(
         template: Option<&crate::code_rule_dsl::model::Template>,
         before: &str,
@@ -3392,7 +3392,7 @@ impl Builder {
         )
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn authored_fixture_shape(&self) -> Option<super::compact_output_sql::Shape> {
         use super::compact_output_sql::Shape;
 
@@ -3614,7 +3614,7 @@ impl Builder {
                 )
             })
             .collect();
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         let authored_fixture_sql = self.authored_fixture_shape().map(|shape| {
             let output = &self.clause_outputs[0];
             super::compact_output_sql::render(
@@ -3633,11 +3633,11 @@ impl Builder {
             clause_outputs: self.clause_outputs,
             clause_logical_plans,
             utility_call_counts: self.utility_call_counts,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             authored_fixture_sql,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             all_execution_sql: std::sync::OnceLock::new(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             all_relational_sql: std::sync::OnceLock::new(),
         })
     }

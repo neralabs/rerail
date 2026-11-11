@@ -24,7 +24,7 @@ use std::sync::Arc;
 /// `embedded`: a rule over the program a file embeds through `via`, compiled for each dialect the
 /// program may be written in.
 #[derive(Clone)]
-pub(crate) struct EmbeddedTest {
+pub struct EmbeddedTest {
     pub(crate) via: Via,
     pub(crate) rules: Vec<(GrammarDialect, AstMatcher)>,
     /// The captures the rule binds, which the host's environment receives.
@@ -225,4 +225,4 @@ pub(super) fn document_host<D: Doc>(
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

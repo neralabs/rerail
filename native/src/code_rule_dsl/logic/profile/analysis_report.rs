@@ -105,7 +105,7 @@ fn input(state: &State) -> Input {
     i
 }
 
-pub(super) fn report(state: &State) -> (String, serde_json::Value) {
+pub fn report(state: &State) -> (String, serde_json::Value) {
     let i = input(state);
     let findings = analysis::analyze(&i);
     let text = analysis::render(&findings);
@@ -166,7 +166,7 @@ pub(super) fn projection(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn production_adapter_emits_ranked_findings_and_json() {

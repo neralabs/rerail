@@ -6,7 +6,7 @@
 //! one wait per call, whatever the depth. The CPU's one pass in preorder (`typing::file_local`)
 //! is the reference.
 use super::*;
-pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::device::nearest::{Buffers, Solved};
+pub use crate::code_rule_dsl::logic::device::nearest::{Buffers, Solved};
 
 const SOURCE: &str = include_str!("metal_nearest.metal");
 /// No ancestor.

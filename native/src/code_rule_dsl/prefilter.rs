@@ -39,7 +39,7 @@ mod values;
 pub(crate) use crate::code_rule_dsl::facts::core::KIND_STRIDE as LANG_STRIDE;
 
 pub(crate) use super::search_index::kind_code;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use super::search_index::kind_token;
 
 
@@ -98,7 +98,7 @@ pub(in crate::code_rule_dsl) fn publish(store: &ContentStore, tapes: &[TapeId], 
 /// The candidates of `plans`, all of language `lang` (a tape tag), over `tapes`: per plan, its
 /// (tape, preorder) rows in order. Tapes of another language or without prefilter rows have none.
 /// A superset of each plan's roots (`lower.rs`); the matcher confirms them.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
 pub(in crate::code_rule_dsl) fn select(
     store: &ContentStore,
     lang: u32,

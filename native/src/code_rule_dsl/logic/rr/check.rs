@@ -252,7 +252,7 @@ pub(super) fn unbound(heads: &[Head], body: &[Lit], edits: &[Term], given: &BTre
 }
 
 /// The relations a file's `fix` lines and `.edit` declarations name.
-pub(super) fn fix_relations(statements: &[Statement]) -> BTreeSet<String> {
+pub fn fix_relations(statements: &[Statement]) -> BTreeSet<String> {
     statements
         .iter()
         .flat_map(|(item, _)| match item {
@@ -264,7 +264,7 @@ pub(super) fn fix_relations(statements: &[Statement]) -> BTreeSet<String> {
 }
 
 /// Ungrounded rules of one file: (line, unbound variables).
-pub(super) fn grounded(statements: &[Statement], given: &BTreeSet<String>) -> Vec<(usize, Vec<String>)> {
+pub fn grounded(statements: &[Statement], given: &BTreeSet<String>) -> Vec<(usize, Vec<String>)> {
     let mut given = given.clone();
     given.extend(fix_relations(statements));
     statements
@@ -280,7 +280,7 @@ pub(super) fn grounded(statements: &[Statement], given: &BTreeSet<String>) -> Ve
 }
 
 /// Declarations made more than once in a program, or of a built-in constraint: (relation, files) per problem.
-pub(super) fn declarations(files: &[(String, Vec<Statement>)]) -> Vec<String> {
+pub fn declarations(files: &[(String, Vec<Statement>)]) -> Vec<String> {
     let mut decls = BTreeMap::<String, Vec<String>>::new();
     for (file, statements) in files {
         for (item, _) in statements {
@@ -400,7 +400,7 @@ fn tarjan(nodes: &BTreeSet<String>, graph: &BTreeMap<String, BTreeSet<String>>) 
 }
 
 /// Stratification problems of one program (every statement of its files): "h depends on d" per problem.
-pub(super) fn strata(statements: &[&Statement]) -> Vec<String> {
+pub fn strata(statements: &[&Statement]) -> Vec<String> {
     let mut ordered = BTreeMap::new();
     let mut rules = Vec::new();
     for (item, line) in statements {

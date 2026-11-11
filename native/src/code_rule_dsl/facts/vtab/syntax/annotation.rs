@@ -168,7 +168,7 @@ impl Annotations {
 }
 
 /// Python's string annotations as a batch's producer (`syntax::Producer`).
-pub(crate) struct Producer;
+pub struct Producer;
 
 impl super::Producer for Producer {
     fn dialect(&self) -> crate::code_rule_dsl::language::GrammarDialect {

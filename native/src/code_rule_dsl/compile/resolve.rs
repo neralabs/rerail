@@ -540,7 +540,7 @@ fn gate_lexical_keys(pack: &dyn language_pack::LanguagePack, value: &Value, path
 }
 
 /// What `resolves.unresolved` asks for, gated on the family `S` reads.
-fn gated_unresolved(pack: &dyn language_pack::LanguagePack, value: &Value, path: &str) -> Result<Option<Unresolved>> {
+pub fn gated_unresolved(pack: &dyn language_pack::LanguagePack, value: &Value, path: &str) -> Result<Option<Unresolved>> {
     let unresolved = match value.get("unresolved") {
         Some(Value::Bool(true)) => Some(Unresolved::Unbound),
         Some(_) => Some(Unresolved::Star),
@@ -556,7 +556,7 @@ fn gated_unresolved(pack: &dyn language_pack::LanguagePack, value: &Value, path:
 }
 
 /// Gates each key of `features` that `value` holds on its feature, in order.
-fn gate_present_keys(
+pub fn gate_present_keys(
     pack: &dyn language_pack::LanguagePack, value: &Value,
     path: &str,
     features: &[(&str, ScopeFeature)],
@@ -712,7 +712,7 @@ fn dotted_import_refusal(name: &str) -> Option<String> {
 }
 
 /// The names `{path}/{key}` lists; none when `listed` is absent.
-fn listed_names<'a>(
+pub fn listed_names<'a>(
     listed: Option<&'a Value>,
     path: &str,
     key: &str,
@@ -821,13 +821,13 @@ fn lexical_reference_kinds(
 }
 
 /// PHP's superglobals, by the names `resolves.global` lists them (without `$`).
-const PHP_SUPERGLOBALS: &[&str] = &[
+pub const PHP_SUPERGLOBALS: &[&str] = &[
     "GLOBALS", "_SERVER", "_GET", "_POST", "_FILES", "_COOKIE", "_SESSION", "_REQUEST", "_ENV",
 ];
 
 /// The `resolves` keys a family whose reads follow the file's flow checks, in order, each the
 /// feature it asks for.
-const FLOW_RESOLVES_FEATURES: &[(&str, ScopeFeature)] = &[
+pub const FLOW_RESOLVES_FEATURES: &[(&str, ScopeFeature)] = &[
     ("this", ScopeFeature::This),
     ("sloppyFunctions", ScopeFeature::SloppyFunctions),
     ("directives", ScopeFeature::GlobalComments),
@@ -845,10 +845,10 @@ pub(crate) type FlowResolves =
 static FLOW_RESOLVES: std::sync::OnceLock<FlowResolves> = std::sync::OnceLock::new();
 
 /// Registers what compiles a flow family's `resolves` (once, at load).
-pub(crate) fn install_flow_resolves(compile: FlowResolves) {
+pub fn install_flow_resolves(compile: FlowResolves) {
     let _ = FLOW_RESOLVES.set(compile);
 }
 
-pub(crate) mod php;
+// cratify: `php` is rerail-lang-php's (it mounts it)
 #[cfg(test)]
-mod tests;
+pub mod tests;

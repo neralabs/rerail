@@ -1,6 +1,6 @@
 //! `parse: annotation`: string type definitions as the scope table classifies and reads them.
 
-use crate::code_rule_dsl::test_support::*;
+// cratify: a re-export of rerail-engine's, which its facades of this module make
 use serde_json::{Value, json};
 
 fn compiled(rule: Value, anchor: &str) -> crate::code_rule_dsl::CompiledCodeRuleDsl {

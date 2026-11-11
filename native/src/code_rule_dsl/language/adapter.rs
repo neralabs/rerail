@@ -7,48 +7,39 @@
 //! Rust names only as `<A as Adapter>::Value`; a function generic over `A: Adapter`, called
 //! there, names them `A::Value`.
 
-mod arguments;
-mod calls;
-mod format_args;
-#[cfg(test)]
-mod kit;
-pub(in crate::code_rule_dsl) mod json;
-pub(in crate::code_rule_dsl) mod rr;
-pub(in crate::code_rule_dsl) mod rust;
-mod scope;
-pub(in crate::code_rule_dsl) mod sql;
-mod syntax;
+pub mod arguments;
+pub mod calls;
+pub mod format_args;
+// cratify: `kit` is rerail-engine's (it mounts it)
+// cratify: `json` is rerail-lang-json's (it mounts it)
+pub mod rr;
+// cratify: `rust` is rerail-lang-rust's (it mounts it)
+pub mod scope;
+// cratify: `sql` is rerail-lang-sql's (it mounts it)
+pub mod syntax;
 // The language pack interface the core asks (generated from the traits above: tools/cratify/packgen.py).
-pub(crate) mod pack;
-mod value;
-pub(in crate::code_rule_dsl) mod vue;
+pub mod pack;
+pub mod value;
+// cratify: `vue` is rerail-lang-ecma's (it mounts it)
 
-pub(crate) use arguments::{ArgumentFeature, ArgumentRules};
-pub(crate) use calls::{CallFeature, CallRules};
-pub(crate) use format_args::{FormatArgFeature, FormatArgRules};
+pub use arguments::{ArgumentFeature, ArgumentRules};
+pub use calls::{CallFeature, CallRules};
+pub use format_args::{FormatArgFeature, FormatArgRules};
 // Read through `with_adapter!` (tests) only, whose arm for a family left out of the build is `unreachable!`.
-#[cfg(test)]
-#[cfg_attr(not(feature = "lang-json"), allow(unused_imports))]
-pub(crate) use json::Json;
+// cratify: a re-export of rerail-lang-json's, which its facades of this module make
 // Read through `with_adapter!` (tests) only, whose arm for a family left out of the build is `unreachable!`.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[cfg_attr(not(feature = "lang-rr"), allow(unused_imports))]
-pub(crate) use rr::Rr;
+pub use rr::Rr;
 // Read through `with_adapter!` (tests) only, whose arm for a family left out of the build is `unreachable!`.
-#[cfg(test)]
-#[cfg_attr(not(feature = "lang-rust"), allow(unused_imports))]
-pub(crate) use rust::Rust;
-pub(crate) use scope::{ScopeFeature, ScopeRules};
+// cratify: a re-export of rerail-lang-rust's, which its facades of this module make
+pub use scope::{ScopeFeature, ScopeRules};
 // Read through `with_adapter!` (tests) only, whose arm for a family left out of the build is `unreachable!`.
-#[cfg(test)]
-#[cfg_attr(not(feature = "lang-sql"), allow(unused_imports))]
-pub(crate) use sql::Sql;
-pub(crate) use syntax::{QueryWhen, SyntaxFeature, SyntaxRules};
-pub(crate) use value::{ValueFeature, ValueRules};
+// cratify: a re-export of rerail-lang-sql's, which its facades of this module make
+pub use syntax::{QueryWhen, SyntaxFeature, SyntaxRules};
+pub use value::{ValueFeature, ValueRules};
 // Read through `with_adapter!` (tests) only, whose arm for a family left out of the build is `unreachable!`.
-#[cfg(test)]
-#[cfg_attr(not(feature = "lang-vue"), allow(unused_imports))]
-pub(crate) use vue::Vue;
+// cratify: a re-export of rerail-lang-ecma's, which its facades of this module make
 
 use super::{
     Family, GrammarDialect, PackageType, SourceType, is_declaration_file, language_not_supported,
@@ -64,26 +55,22 @@ use std::borrow::Cow;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::LazyLock;
-pub(in crate::code_rule_dsl) mod python;
-#[cfg(test)]
-pub(in crate::code_rule_dsl) use python::{Python};
-pub(in crate::code_rule_dsl) mod ecma;
-#[cfg(test)]
-pub(in crate::code_rule_dsl) use ecma::{Ecma};
-pub(in crate::code_rule_dsl) mod php;
-#[cfg(test)]
-pub(in crate::code_rule_dsl) use php::{Php};
-pub(in crate::code_rule_dsl) mod blade;
-#[cfg(test)]
-pub(in crate::code_rule_dsl) use blade::{Blade};
+// cratify: `python` is rerail-lang-python's (it mounts it)
+// cratify: a re-export of rerail-lang-python's, which its facades of this module make
+// cratify: `ecma` is rerail-lang-ecma's (it mounts it)
+// cratify: a re-export of rerail-lang-ecma's, which its facades of this module make
+// cratify: `php` is rerail-lang-php's (it mounts it)
+// cratify: a re-export of rerail-lang-php's, which its facades of this module make
+// cratify: `blade` is rerail-lang-php's (it mounts it)
+// cratify: a re-export of rerail-lang-php's, which its facades of this module make
 
 /// The adapter of a capability a family does not read (registry `refused` or `not-supported-yet`).
-pub(crate) struct Refused;
+pub struct Refused;
 
 /// A registry family's semantics.
-pub(crate) trait Adapter: 'static {
+pub trait Adapter: 'static {
     /// The family dispatch names it by; the adapter kit checks the two agree.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     const FAMILY: Family;
     /// The family's name in diagnostics.
     const LABEL: &'static str;
@@ -169,7 +156,7 @@ pub(crate) trait Adapter: 'static {
 
 /// The module a host sends for the file at `file` whose dialect's label is `label`: its
 /// family's `Adapter::module_path`; `None` for a label no dialect has.
-pub(crate) fn module_path(label: &str, file: &Path) -> Option<serde_json::Value> {
+pub fn module_path(label: &str, file: &Path) -> Option<serde_json::Value> {
     let dialect = super::dialect_by_label(label)?;
     super::base(Family::of(dialect)).module_path(file)
 }
@@ -220,31 +207,31 @@ static PAREN_KINDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
 /// Whether `kind` is a comment that a token or sibling walk passes over, in any family's grammar
 /// (`Adapter::WALK_COMMENT_KINDS`). The matchers that walk (`compare`, `layout`) hold no family, and
 /// a kind's name means a comment in every grammar that has it.
-pub(crate) fn is_comment_kind(kind: &str) -> bool {
+pub fn is_comment_kind(kind: &str) -> bool {
     WALK_COMMENT_KINDS.contains(&kind)
 }
 
 /// Whether `kind` is a parenthesized expression in any family's grammar
 /// (`ScopeRules::PAREN_KINDS`), for the matchers that hold no family.
-pub(crate) fn is_paren_kind(kind: &str) -> bool {
+pub fn is_paren_kind(kind: &str) -> bool {
     PAREN_KINDS.contains(&kind)
 }
 
 /// Whether a file of `dialect` is parsed by Forte: its family's `Adapter::PARSED_BY_FORTE`.
-pub(crate) fn parsed_by_forte(dialect: GrammarDialect) -> bool {
+pub fn parsed_by_forte(dialect: GrammarDialect) -> bool {
     super::base(Family::of(dialect)).parsed_by_forte()
 }
 
 /// Whether an ast query in `dialect` may use `importTarget`: its family's `Adapter::IMPORT_TARGETS`.
-pub(crate) fn has_import_targets(dialect: GrammarDialect) -> bool {
+pub fn has_import_targets(dialect: GrammarDialect) -> bool {
     super::base(Family::of(dialect)).import_targets()
 }
 
-pub(crate) use super::{ast_grep, parse_input};
+pub use super::{ast_grep, parse_input};
 
 /// Whether files of the dialect labelled `label` read their nearest `package.json`
 /// (`Adapter::PACKAGE_MANIFESTS`); `false` for a label no dialect has.
-pub(crate) fn package_manifests(label: &str) -> bool {
+pub fn package_manifests(label: &str) -> bool {
     super::dialect_by_label(label)
         .is_some_and(|dialect| super::base(Family::of(dialect)).package_manifests())
 }
@@ -257,7 +244,7 @@ pub(crate) fn strips_bom(label: &str) -> bool {
 }
 
 /// Why a family refuses a DSL feature, with the message the refusal reports.
-pub(crate) enum Refusal {
+pub enum Refusal {
     /// The family has no such thing: the rule is invalid.
     Refused(Cow<'static, str>),
     /// Planned: the rule is `language-not-supported`, kept but inactive.

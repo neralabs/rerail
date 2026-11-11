@@ -40,7 +40,7 @@ pub(super) fn demand(
 }
 
 /// What reads a canonical AST stage's roots: registered by the language whose AST it is (once, at load).
-pub(in crate::code_rule_dsl) trait AstProducer: Send + Sync {
+pub trait AstProducer: Send + Sync {
     /// The fields a stage may ask of a root.
     fn fields(&self) -> &'static [&'static str];
     /// The stages' outputs, one per pending demand.
@@ -53,14 +53,14 @@ pub(in crate::code_rule_dsl) trait AstProducer: Send + Sync {
 }
 
 /// A canonical AST stage's output, published as its relation.
-pub(in crate::code_rule_dsl) trait PublishedAst: Send {
+pub trait PublishedAst: Send {
     fn publish(self: Box<Self>, paths: Vec<String>, db: &Connection, name: &str, work: Arc<AtomicUsize>) -> Result<()>;
 }
 
 static PRODUCER: std::sync::OnceLock<&'static dyn AstProducer> = std::sync::OnceLock::new();
 
 /// Registers the canonical AST producer (once, at load).
-pub(in crate::code_rule_dsl) fn install_ast_producer(producer: &'static dyn AstProducer) {
+pub fn install_ast_producer(producer: &'static dyn AstProducer) {
     let _ = PRODUCER.set(producer);
 }
 

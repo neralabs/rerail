@@ -7,7 +7,7 @@ pub(super) struct Pool {
     next: usize,
 }
 
-pub(super) struct Work<'a> {
+pub struct Work<'a> {
     pub db: &'a rusqlite::Connection,
     pub versions: Option<&'a versions::Store>,
     pub profiler: Option<&'a super::super::sql_profile::Profiler>,

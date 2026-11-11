@@ -5,7 +5,7 @@
 
 /// Which of Ruff's equalities a comparison applies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum Equality {
+pub enum Equality {
     Plain,
     Hash,
     Parts,
@@ -13,7 +13,7 @@ pub(crate) enum Equality {
 
 /// One token of a node's structure.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Tok {
+pub enum Tok {
     Open(String),
     Close,
     /// A named leaf (an identifier, NFKC-normalized as Ruff's AST holds it; a keyword argument's
@@ -39,13 +39,13 @@ pub(crate) enum Tok {
 
 /// A real part of a folded number: an integer when the value is one below 2**64, else its bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Real {
+pub enum Real {
     Integer(i128),
     Float(u64),
 }
 
 impl Real {
-    pub(crate) fn from_float(value: f64) -> Self {
+    pub fn from_float(value: f64) -> Self {
         const BOUND: f64 = 18_446_744_073_709_551_616.0;
         if value.is_finite() && value.abs() < BOUND {
             let integer = value as i128;
@@ -56,14 +56,14 @@ impl Real {
         Self::Float(value.to_bits())
     }
 
-    pub(crate) fn into_float(self) -> Self {
+    pub fn into_float(self) -> Self {
         match self {
             Self::Integer(integer) => Self::from_float(integer as f64),
             Self::Float(_) => self,
         }
     }
 
-    pub(crate) fn negate(self) -> Self {
+    pub fn negate(self) -> Self {
         match self {
             Self::Integer(integer) => Self::Integer(-integer),
             Self::Float(bits) => Self::Float(bits ^ (1 << 63)),

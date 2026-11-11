@@ -23,7 +23,7 @@ struct Cursor {
     plus: versions::Version,
     minus: versions::Version,
 }
-pub(in crate::code_rule_dsl::sql_executor) struct Transition {
+pub struct Transition {
     owner: String,
     scope: usize,
     signature: Arc<str>,
@@ -223,7 +223,7 @@ fn signature(r: &Reducer) -> String {
     )
 }
 
-pub(in crate::code_rule_dsl::sql_executor) struct Initial {
+pub struct Initial {
     owner: String,
     scope: usize,
     signature: Arc<str>,

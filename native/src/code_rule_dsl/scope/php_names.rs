@@ -163,7 +163,7 @@ impl PhpNames {
             .map(|(kind, name)| (*kind, &**name))
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn imports(&self) -> impl Iterator<Item = (Range<usize>, NameKind, &str)> {
         self.imports
             .iter()
@@ -356,7 +356,7 @@ impl PhpNames {
         found
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn references(&self) -> impl Iterator<Item = (Range<usize>, &Reference)> {
         self.references
             .iter()
@@ -994,7 +994,7 @@ fn parse<D: Doc>(node: &Node<'_, D>) -> Option<(Form, Vec<String>)> {
 }
 
 /// A PHP label (`identifier::php_label`).
-pub(crate) use crate::code_rule_dsl::identifier::php_label as is_label;
+pub use crate::code_rule_dsl::identifier::php_label as is_label;
 
 /// A namespace name's segments joined by `\`, without whitespace or comments between them.
 fn segments_text<D: Doc>(node: &Node<'_, D>) -> String {
@@ -1093,4 +1093,4 @@ fn builtin_constant(name: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

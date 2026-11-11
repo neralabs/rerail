@@ -4,18 +4,16 @@ use super::Refusal;
 use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::matcher::SemanticText;
 use crate::code_rule_dsl::value::structure::{Equality, Tok};
-use crate::code_rule_dsl::value::{
-    self, BigInt, Context, Ordered, TypeNames, Value, key, php_compare, php_structure,
-};
+use crate::code_rule_dsl::value::{self, BigInt, Context, Ordered, TypeNames, Value};
 use ast_grep_core::{Doc, Node};
 use std::cmp::Ordering;
-pub(in crate::code_rule_dsl) mod lang_python;
-pub(in crate::code_rule_dsl) mod lang_ecma;
-pub(in crate::code_rule_dsl) mod lang_php;
+// cratify: `lang_python` is rerail-lang-python's (it mounts it)
+// cratify: `lang_ecma` is rerail-lang-ecma's (it mounts it)
+// cratify: `lang_php` is rerail-lang-php's (it mounts it)
 
 /// A DSL option of `value` or `compare` a family may refuse.
 #[derive(Clone, Copy)]
-pub(crate) enum ValueFeature<'a> {
+pub enum ValueFeature<'a> {
     /// A `value` `type` name.
     Type(&'a str),
     /// A semantic `compare` text mode, and its name as the rule writes it.
@@ -26,10 +24,10 @@ pub(crate) enum ValueFeature<'a> {
 }
 
 /// A family's values.
-pub(crate) trait ValueRules {
+pub trait ValueRules {
     /// Whether the family decodes values: its languages' registry capability,
     /// which the adapter kit checks.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     const SUPPORTED: bool;
     /// The family whose value semantics a reading's values follow (`Reading::lang`): its own,
     /// or the one its documents embed (Blade's are PHP's). A new family's is `Self::FAMILY`'s
@@ -114,13 +112,13 @@ pub(crate) trait ValueRules {
 }
 
 /// Type names `type` accepts: Python's `type(v).__name__`.
-const PYTHON_TYPES: &[&str] = &[
+pub const PYTHON_TYPES: &[&str] = &[
     "int", "float", "complex", "str", "bytes", "bool", "NoneType", "ellipsis", "tuple", "list",
     "set", "dict",
 ];
 /// Type names `type` accepts: TypeScript's `typeof` with `null` and `array` told apart from
 /// `object`, and `regexp` within it.
-const TYPESCRIPT_TYPES: &[&str] = &[
+pub const TYPESCRIPT_TYPES: &[&str] = &[
     "string",
     "number",
     "bigint",
@@ -132,10 +130,10 @@ const TYPESCRIPT_TYPES: &[&str] = &[
     "regexp",
 ];
 /// PHP `get_debug_type` names Rerail can establish for constant expressions.
-const PHP_TYPES: &[&str] = &["int", "float", "string", "bool", "null", "array"];
+pub const PHP_TYPES: &[&str] = &["int", "float", "string", "bool", "null", "array"];
 
 /// `toPrecision` refused for `language`, whose numbers are not laid out as ECMAScript's.
-fn no_to_precision(language: &str) -> Result<(), Refusal> {
+pub fn no_to_precision(language: &str) -> Result<(), Refusal> {
     Err(Refusal::Refused(
         format!(
             "`toPrecision` lays a number out as ECMAScript's Number.prototype.toPrecision; {language} numbers have no such layout"
@@ -145,7 +143,7 @@ fn no_to_precision(language: &str) -> Result<(), Refusal> {
 }
 
 /// Whether `name` is one of `known`, the type names of `language`.
-fn type_name(name: &str, known: &[&str], language: &str) -> Result<(), Refusal> {
+pub fn type_name(name: &str, known: &[&str], language: &str) -> Result<(), Refusal> {
     if known.contains(&name) {
         return Ok(());
     }
@@ -159,7 +157,7 @@ fn type_name(name: &str, known: &[&str], language: &str) -> Result<(), Refusal> 
 }
 
 #[cfg(test)]
-pub(super) mod kit {
+pub mod kit {
     use super::super::{Adapter, Refusal};
     use super::{ValueFeature, ValueRules};
     use crate::code_rule_dsl::language::Family;
@@ -170,24 +168,24 @@ pub(super) mod kit {
     use ast_grep_core::AstGrep;
 
     /// What one family's values are.
-    pub(in super::super) struct Expect {
-        pub(in super::super) lang: Family,
+    pub struct Expect {
+        pub lang: Family,
         /// The rule values of the JSON string `é` and the JSON numbers `16` and `2^64 - 1`.
-        pub(in super::super) string: Value,
-        pub(in super::super) numbers: [Value; 2],
+        pub string: Value,
+        pub numbers: [Value; 2],
         /// A source, the kind of the first node of that kind in its document, and that node's
         /// value.
-        pub(in super::super) decoded: (&'static str, &'static str, Value),
-        pub(in super::super) name_kinds: &'static [&'static str],
+        pub decoded: (&'static str, &'static str, Value),
+        pub name_kinds: &'static [&'static str],
         /// The verdict on the type name `str`, `Err` with its refusal's message.
-        pub(in super::super) str_type: Result<(), &'static str>,
+        pub str_type: Result<(), &'static str>,
         /// The verdict on `compare`'s `structure-parts`.
-        pub(in super::super) structure_parts: Result<(), &'static str>,
+        pub structure_parts: Result<(), &'static str>,
         /// A source and whether its document's root is spelled.
-        pub(in super::super) spelled: (&'static str, bool),
+        pub spelled: (&'static str, bool),
         /// A source, the kind of the first node of that kind in its document, and its name
         /// (`None`: `name` is refused).
-        pub(in super::super) name: Option<(&'static str, &'static str, &'static str)>,
+        pub name: Option<(&'static str, &'static str, &'static str)>,
     }
 
     /// The message of a refusal, which `value` and `compare` only make `Refused`.
@@ -214,7 +212,7 @@ pub(super) mod kit {
 
     /// Checks `A`'s values against `expect`, over the documents its semantics read of each source
     /// (`tape`).
-    pub(in super::super) fn check<A: Adapter>(
+    pub fn check<A: Adapter>(
         expect: &Expect,
         tape: impl Fn(&str) -> AstGrep<TapeDoc>,
     ) {

@@ -121,7 +121,7 @@ fn guards(
     (keys.is_subset(&bound) && !out.is_empty()).then_some(out)
 }
 
-pub(super) fn optimize(program: &mut Program) {
+pub fn optimize(program: &mut Program) {
     let names: BTreeSet<_> = program
         .rules
         .iter()
@@ -274,8 +274,7 @@ pub(super) fn optimize(program: &mut Program) {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-logic's (it mounts it)
 
 /// Whether `rel` is a helper the lowering makes (`rr_ctx…`, `rr_agg…`, and their demand `rr_demand_agg_…`), under
 /// any program's prefix.
@@ -289,7 +288,7 @@ fn helper(rel: &str) -> bool {
 /// `child(p, n, _)`) finds no declaration then, and is a symbol by default. It holds nodes, which the library says;
 /// and a column read through it (a demand's, `rr_demand_agg_…`, copied from the aggregate's) is then a symbol beside
 /// the node the rule's own atoms make it, which no native plan compares. A column a symbol column binds stays one.
-pub(in crate::code_rule_dsl) fn retype_helpers(program: &mut Program) {
+pub fn retype_helpers(program: &mut Program) {
     let mut changed = true;
     while changed {
         changed = false;

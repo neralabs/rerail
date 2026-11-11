@@ -9,7 +9,7 @@ use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// The text modes that read what the captures mean rather than their text.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum SemanticText {
+pub enum SemanticText {
     /// The captured expressions' values, in the language's sense: Python `==` and order, or
     /// JavaScript `Object.is` and its relational operators' order (IsLessThan, converting
     /// primitives: `null <= 0`, `'1' < 2`). Strings compare under the collation.

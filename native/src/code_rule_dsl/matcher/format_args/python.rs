@@ -585,7 +585,7 @@ fn binary(operator: &str, left: Type, right: Type) -> Type {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_core::tree_sitter::LanguageExt;
@@ -645,9 +645,9 @@ pub struct Python {
 }
 
 /// `str.format`'s preparer.
-pub(crate) const BRACE: Python = Python { brace: true };
+pub const BRACE: Python = Python { brace: true };
 /// `%`'s preparer.
-pub(crate) const PERCENT: Python = Python { brace: false };
+pub const PERCENT: Python = Python { brace: false };
 
 impl super::FormatPreparer for Python {
     fn prepare_tape<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, crate::code_rule_dsl::tape::TapeDoc>) -> Prepared<'t, crate::code_rule_dsl::tape::TapeDoc> {

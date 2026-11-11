@@ -25,7 +25,7 @@ use napi::Result;
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::AtomicBool;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, LazyLock};
 use crate::code_rule_dsl::language::adapter::pack as language_pack;
@@ -381,7 +381,7 @@ impl CallsState {
                     .iter()
                     .map(|(path, summary)| (Arc::from(path.as_str()), Arc::clone(summary)))
                     .collect();
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-hooks"))]
                 GRAPHS_LINKED.with(|count| count.set(count.get() + 1));
                 self.view = Some(Arc::new(CallsView::build_modes(
                     self.terms.questions(),
@@ -476,8 +476,8 @@ impl CallsState {
 
     /// Every consumer file's stamp and silent terms under the current graph, and under one
     /// linked afresh from the same summaries and seeds.
-    #[cfg(test)]
-    pub(super) fn stamps_against_fresh_link(&self) -> [BTreeMap<String, Stamped>; 2] {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn stamps_against_fresh_link(&self) -> [BTreeMap<String, Stamped>; 2] {
         let fresh = CallsView::build_modes(
             self.terms.questions(),
             self.summaries
@@ -657,14 +657,14 @@ pub(super) fn summary_publication(file: &FileState) -> Result<Option<LocalResult
 }
 
 /// Summaries extracted (not restored from the store), in any workspace of the process.
-#[cfg(test)]
-pub(super) static SUMMARIES_EXTRACTED: std::sync::atomic::AtomicUsize =
+#[cfg(any(test, feature = "test-hooks"))]
+pub static SUMMARIES_EXTRACTED: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Call graphs linked from every summary (not updated in place) on this thread.
-    pub(super) static GRAPHS_LINKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub static GRAPHS_LINKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The key consumer results are stored under: the file context and the stamp they were
@@ -807,7 +807,7 @@ pub(super) fn summarize_file(
         Arc::new(summary)
     };
     file.crossfile.summary = Some((file.source_revision, summary));
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     SUMMARIES_EXTRACTED.fetch_add(1, Ordering::Relaxed);
     Ok(())
 }

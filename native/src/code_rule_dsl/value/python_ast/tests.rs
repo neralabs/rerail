@@ -33,7 +33,7 @@ fn syntax_error_facts_are_batched_and_do_not_walk_invalid_modules() {
     };
     assert!(batch(&[invalid]).is_err());
 }
-use crate::code_rule_dsl::{language::GrammarDialect, oracle};
+use crate::code_rule_dsl::{language::GrammarDialect};
 use ast_grep_core::{Doc, Node, tree_sitter::LanguageExt};
 use serde_json::Value;
 

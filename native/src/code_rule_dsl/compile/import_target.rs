@@ -118,7 +118,7 @@ pub(super) fn compile_import_target(
 }
 
 /// ECMAScript's `importTarget` term (`matcher::term`).
-pub(crate) const TERM: TermCompiler = TermCompiler {
+pub const TERM: TermCompiler = TermCompiler {
     key: "importTarget",
     validate: validate_import_target,
     compile: compile_import_target,

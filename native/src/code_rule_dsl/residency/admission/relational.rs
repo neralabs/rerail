@@ -10,30 +10,30 @@ use napi::Result;
 use rusqlite::Connection;
 use rusqlite::functions::FunctionFlags;
 use rusqlite::hooks::Authorization;
-mod authorizer;
-pub(in crate::code_rule_dsl) mod compile;
-mod pool;
-mod storage;
+pub mod authorizer;
+pub mod compile;
+pub mod pool;
+pub mod storage;
 
-mod admission;
-mod anchors;
-mod batch;
-pub(in crate::code_rule_dsl) mod database;
+pub mod admission;
+pub mod anchors;
+pub mod batch;
+pub mod database;
 use database::Database;
-pub(in crate::code_rule_dsl) mod deferred;
-mod forest;
-mod inputs;
-mod insert;
-pub(in crate::code_rule_dsl) mod producer;
-pub(in crate::code_rule_dsl) mod python_ast;
-pub(in crate::code_rule_dsl) mod ast_stage;
-mod reachability;
-mod ordered_first;
-pub(in crate::code_rule_dsl) mod schema;
-mod source;
-pub(in crate::code_rule_dsl) mod syntax;
-mod table;
-pub(in crate::code_rule_dsl) use reachability::Reachability;
+pub mod deferred;
+pub mod forest;
+pub mod inputs;
+pub mod insert;
+pub mod producer;
+// cratify: `python_ast` is rerail-lang-python's (it mounts it)
+pub mod ast_stage;
+pub mod reachability;
+pub mod ordered_first;
+pub mod schema;
+pub mod source;
+pub mod syntax;
+pub mod table;
+pub use reachability::Reachability;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{
@@ -79,7 +79,7 @@ pub struct Plan {
     pub(in crate::code_rule_dsl) per_file: bool,
     pub(in crate::code_rule_dsl) references: Option<References>,
     pub(in crate::code_rule_dsl) locations: BTreeSet<String>,
-    pub(in crate::code_rule_dsl) inputs: Vec<(String, FactQuery)>,
+    pub inputs: Vec<(String, FactQuery)>,
     pub(in crate::code_rule_dsl) stages: Vec<Stage>,
     pub(in crate::code_rule_dsl) query: String,
     pub(in crate::code_rule_dsl) key: Vec<String>,
@@ -101,7 +101,7 @@ pub(in crate::code_rule_dsl) fn identifier(value: &str) -> bool {
 fn quote(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
 }
-fn sql_error(error: rusqlite::Error) -> napi::Error {
+pub fn sql_error(error: rusqlite::Error) -> napi::Error {
     invalid(format!("relational query: {error}"))
 }
 
@@ -261,7 +261,7 @@ pub(in crate::code_rule_dsl) fn inspect_fields(
     result
 }
 
-pub(in crate::code_rule_dsl) fn create_input(
+pub fn create_input(
     db: &Database,
     name: &str,
     fields: &[String],
@@ -443,19 +443,19 @@ fn read_value(value: rusqlite::types::ValueRef<'_>) -> Result<Value> {
     })
 }
 
-pub(in crate::code_rule_dsl) struct Job<'a> {
+pub struct Job<'a> {
     pub code_rule: &'a CompiledCodeRule,
     pub clause: &'a CompiledClause,
     pub inputs: Inputs,
     pub budget: crate::code_rule_dsl::budget::Context,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) enum Preparation {
+pub enum Preparation {
     Gate,
     Body,
 }
 
-pub(in crate::code_rule_dsl) struct Inputs {
+pub struct Inputs {
     pub gate: Option<Rows>,
     pub rows: Option<Vec<Rows>>,
     pub facts: syntax::Files,

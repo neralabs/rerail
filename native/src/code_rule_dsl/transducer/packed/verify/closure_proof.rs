@@ -11,7 +11,7 @@ pub struct Region<'a> {
     pub guards: &'a [u32],
 }
 
-pub(super) fn regions(program: &Program) -> Result<Vec<Region<'_>>, Error> {
+pub fn regions(program: &Program) -> Result<Vec<Region<'_>>, Error> {
     // Malformed instructions or query regions are producer errors, not a reason
     // to fall through to general execution. Ordinary programs remain ineligible.
     program.validate()?;

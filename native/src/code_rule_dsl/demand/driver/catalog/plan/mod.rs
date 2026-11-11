@@ -1,23 +1,23 @@
-mod execution;
-mod grouping;
-mod identity;
-mod physical;
-mod render;
-mod scope;
-#[cfg(test)]
-mod semantics;
-#[cfg(test)]
-mod utility;
+pub mod execution;
+pub mod grouping;
+pub mod identity;
+pub mod physical;
+pub mod render;
+pub mod scope;
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod semantics;
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod utility;
 
-pub(super) use execution::{ClauseLogicalPlan, exact_scope_groups};
-pub(super) use identity::{UtilityDefinitionId, utility_definition_id};
-pub(super) use physical::{FactFamilyContract, StatementRelations};
-#[cfg(test)]
-pub(super) use render::legacy_test_scan_sql;
-pub(super) use render::{ClauseMergeAst, TypedBoundaryAst, workspace_execution_sql};
+pub use execution::{ClauseLogicalPlan, exact_scope_groups};
+pub use identity::{UtilityDefinitionId, utility_definition_id};
+pub use physical::{FactFamilyContract, StatementRelations};
+#[cfg(any(test, feature = "test-hooks"))]
+pub use render::legacy_test_scan_sql;
+pub use render::{ClauseMergeAst, TypedBoundaryAst, workspace_execution_sql};
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::identity::{RelationId, ScopeRecipeId};
     use super::render::SqlAstNodeKind;
 
@@ -86,7 +86,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod scope_tests {
+pub mod scope_tests {
     use super::identity::{DocumentId, ScopeRecipeId, SnapshotId};
     use super::scope::{
         CandidateRoot, CandidateScope, CompletionStatus, DocumentCompletion, ScopeError,
@@ -211,7 +211,7 @@ mod scope_tests {
 }
 
 #[cfg(test)]
-mod grouping_tests {
+pub mod grouping_tests {
     use super::grouping::{ClauseScope, FailureIsolationMode, group_exact_scopes};
     use super::identity::{
         ClausePlanId, DocumentId, DocumentMapGenerationId, EffectProfileId, ScopeRecipeId,
@@ -307,7 +307,7 @@ mod grouping_tests {
 }
 
 #[cfg(test)]
-mod utility_tests {
+pub mod utility_tests {
     use super::identity::{
         DocumentId, ExclusionId, FrameId, LanguageContractId, RelationId, SemanticContextId,
     };
@@ -388,7 +388,7 @@ mod utility_tests {
 }
 
 #[cfg(test)]
-mod semantics_tests {
+pub mod semantics_tests {
     use super::identity::LogicalFillId;
     use super::semantics::{
         DeclarativeContract, DslBehavior, EffectFailure, EffectLedger, EffectSummary,

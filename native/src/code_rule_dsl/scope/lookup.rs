@@ -5,14 +5,14 @@ use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Readings of a reference's binding that some Ruff checks use instead of `resolve_name`.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) struct Lookup {
+pub struct Lookup {
     /// Ruff's `lookup_symbol`: in a scope that declares the name `global`, the read stops at that
     /// scope's `global` binding, which carries no value, instead of continuing in the module.
     /// PHP's reads always stop there.
-    pub(crate) stop_at_global: bool,
+    pub stop_at_global: bool,
     /// Ruff's `only_binding`: the binding shadows no earlier binding of its name in its scope.
     /// TypeScript and PHP: the name has that one declaration (binding) in its scope.
-    pub(crate) only: bool,
+    pub only: bool,
 }
 
 impl ScopeTable {
@@ -32,7 +32,7 @@ impl ScopeTable {
     /// Python: the binding `ScopeTable::binding_by` reads, as its scope and its index among that
     /// scope's bindings of the name. A deletion, Ruff's `global` placeholder and a binding that
     /// fails `only` give none.
-    pub(crate) fn python_index_by(
+    pub fn python_index_by(
         &self,
         reference: &Reference,
         name: &str,

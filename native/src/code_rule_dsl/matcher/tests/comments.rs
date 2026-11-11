@@ -2,9 +2,7 @@
 //! `kind` and `regex`, and a comment is a sibling of the code around it, never a child of the
 //! declaration it documents.
 
-use crate::code_rule_dsl::test_support::{
-    CAPABILITIES, clause_document, compile_document_with, evaluate_file, matched_texts, violation,
-};
+// cratify: a re-export of rerail-engine's, which its facades of this module make
 use serde_json::{Value, json};
 
 /// The texts a rule of `language` matches in one file the kernel reads as `label`.

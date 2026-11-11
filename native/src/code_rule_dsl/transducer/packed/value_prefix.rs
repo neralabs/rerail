@@ -123,7 +123,7 @@ fn lua(batch: &PackedBatch, value: ValueRecord) -> Result<[u32; 9], Error> {
     Ok([0; 9])
 }
 
-pub(super) fn build(batch: &PackedBatch) -> Result<Vec<[u32; 9]>, Error> {
+pub fn build(batch: &PackedBatch) -> Result<Vec<[u32; 9]>, Error> {
     batch
         .values
         .iter()
@@ -137,7 +137,7 @@ pub(super) fn build(batch: &PackedBatch) -> Result<Vec<[u32; 9]>, Error> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::transducer::packed::{
         LuaPattern, MAX_STEPS_PER_PATH, TextPredicate,

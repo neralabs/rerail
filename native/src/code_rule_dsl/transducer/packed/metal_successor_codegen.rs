@@ -3,7 +3,7 @@ use super::metal_grid_plan::ResidentInput;
 use super::metal_initial_prefix::incoming_counts;
 use super::*;
 
-pub(super) use super::metal_initial_prefix::PREFIX_EDITS;
+pub use super::metal_initial_prefix::PREFIX_EDITS;
 // Scalar state, logical input identity, and offsets into the signature's edits.
 pub(super) const STEP_HEADER_WORDS: usize = 16;
 

@@ -8,7 +8,7 @@
 //! The CPU's `lattice_fixpoint` is the reference: a monotone system over a finite lattice has one
 //! least fixpoint, whatever order its cells are evaluated in.
 use super::*;
-pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::device::lattice::{Solved, System};
+pub use crate::code_rule_dsl::logic::device::lattice::{Solved, System};
 
 const SOURCE: &str = include_str!("metal_lattice.metal");
 /// The absent value (`logic::native::BOT`).

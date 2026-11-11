@@ -379,7 +379,7 @@ pub(crate) fn collect_arguments<'t>(calls: &[(u32, Node<'t, TapeDoc>)]) -> Argum
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::super::python_structure;
     use super::*;
     use crate::code_rule_dsl::{

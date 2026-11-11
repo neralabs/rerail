@@ -23,12 +23,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE as LABEL_BASE;
 
 // The label passes on Metal (`rerail-device-metal`), behind `transducer::packed::device`.
-#[cfg(target_os = "macos")]
-pub(in crate::code_rule_dsl) mod matcher_metal;
+// cratify: `matcher_metal` is rerail-device-metal's (it mounts it)
 
 /// A lowered clause: label passes, in order, then the root program.
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct LoweredMatcher {
+pub struct LoweredMatcher {
     pub labels: Labels,
     pub program: Program,
     pub domain: Domain,
@@ -138,7 +137,7 @@ pub enum Tally {
 /// Where a clause's passes run. On Metal every pass is a kernel in one command buffer
 /// (`roots_metal`); pattern leaves are matched on the host first, as `demand`'s pattern producers.
 #[derive(Clone, Copy, Debug)]
-pub(in crate::code_rule_dsl) enum Backend {
+pub enum Backend {
     Cpu,
     /// The device's label passes (`transducer::packed::device`), where one is registered.
     MetalInterpreter,
@@ -339,7 +338,7 @@ impl Labels {
 }
 
 impl LoweredMatcher {
-    pub(in crate::code_rule_dsl) fn lower(tree: &MatchTree) -> Result<Self, Error> {
+    pub fn lower(tree: &MatchTree) -> Result<Self, Error> {
         let mut labels = Labels::default();
         // Set mode (list step 14): the clause's matches are its roots, read as keys (the wave's
         // `match(c, d, n)` and spans), so the root program stops at its first emit per start.
@@ -355,18 +354,18 @@ impl LoweredMatcher {
     }
 
     /// How many label passes run before the root program.
-    pub(in crate::code_rule_dsl) fn passes(&self) -> usize {
+    pub fn passes(&self) -> usize {
         self.labels.defs.len()
     }
 
     /// The nodes of `tape` the clause's matcher matches at, in preorder.
-    pub(in crate::code_rule_dsl) fn roots(&self, tape: &TapeDoc) -> Result<BTreeSet<u32>, Error> {
+    pub fn roots(&self, tape: &TapeDoc) -> Result<BTreeSet<u32>, Error> {
         let mut roots = self.roots_batch(Backend::Cpu, std::slice::from_ref(tape))?;
         Ok(roots.pop().expect("one tape"))
     }
 
     /// The nodes of each tape the clause's matcher matches at: each pass runs once over the batch.
-    pub(in crate::code_rule_dsl) fn roots_batch(
+    pub fn roots_batch(
         &self,
         backend: Backend,
         tapes: &[TapeDoc],
@@ -432,8 +431,8 @@ impl LoweredMatcher {
 
     /// Probe: per recursive group of programs, the forward sweeps (each node in preorder, its
     /// results marked at once) that settle it from the other labels' final sets.
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn sweeps_needed(&self, tapes: &[TapeDoc]) -> Result<Vec<usize>, Error> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn sweeps_needed(&self, tapes: &[TapeDoc]) -> Result<Vec<usize>, Error> {
         let mut sets = empty_sets(tapes, self.labels.defs.len());
         self.label(tapes, &mut sets)?;
         let mut needed = Vec::new();
@@ -644,20 +643,20 @@ impl LoweredMatcher {
 /// How a wave's batch ran ([`LoweredWave::roots_batch`]): on Metal or the CPU, its command buffers and their seconds on
 /// the GPU; and the (clause, tape) pairs whose roots outran the interpreter's work limit.
 #[derive(Clone, Debug, Default)]
-pub(in crate::code_rule_dsl) struct WaveRun {
-    pub(in crate::code_rule_dsl) metal: bool,
-    pub(in crate::code_rule_dsl) command_buffers: usize,
-    pub(in crate::code_rule_dsl) device: f64,
+pub struct WaveRun {
+    pub metal: bool,
+    pub command_buffers: usize,
+    pub device: f64,
     /// A clause's roots on a tape where its program outran the work limit: there, its found roots are every
     /// candidate (its domain, past its entry), which the caller confirms with W's matcher.
-    pub(in crate::code_rule_dsl) limited: Vec<(usize, usize)>,
+    pub limited: Vec<(usize, usize)>,
 }
 
 /// A wave's lowered clauses evaluated together (06 S4): each clause's labels shifted past the
 /// clauses' before it, so one set of label bitsets per tape holds them all and every pass and
 /// root program reads its own. The roots then run as one batch of programs (`demand(batch)`'s
 /// packed producers), or, on Metal, every clause's passes and roots in one command buffer.
-pub(in crate::code_rule_dsl) struct LoweredWave {
+pub struct LoweredWave {
     pub clauses: Vec<LoweredMatcher>,
     pub labels: usize,
     /// Per clause, the earlier clauses whose labels it reads (the combined graph), transitively:
@@ -674,7 +673,7 @@ impl LoweredWave {
     /// recursive group equal to an earlier one (its members' keys, members named by position) is
     /// that group, so a recursive utility shared by clauses runs its rounds once. Each clause's kept labels take the next
     /// ids, so its labels stay one range and the wave's bitsets hold each distinct label once.
-    pub(in crate::code_rule_dsl) fn new(clauses: &[&LoweredMatcher]) -> Result<Self, Error> {
+    pub fn new(clauses: &[&LoweredMatcher]) -> Result<Self, Error> {
         let limit = usize::from(u16::MAX - LABEL_BASE);
         let mut next = 0_usize;
         let mut seen = HashMap::<String, u16>::new();
@@ -813,7 +812,7 @@ impl LoweredWave {
     /// its labels by id (each `Label::key`, which names what it reads), the evaluation steps and
     /// each clause's root program and domain. The interpreter and the compiled programs bind this
     /// one plan (`compilation::resolve_plan`); equal waves have equal identities, however lowered.
-    pub(in crate::code_rule_dsl) fn identity(&self) -> super::compilation::PlanId {
+    pub fn identity(&self) -> super::compilation::PlanId {
         use sha2::{Digest as _, Sha256};
         let mut digest = Sha256::new();
         digest.update(b"rerail-wave-plan-v1\0");
@@ -837,7 +836,7 @@ impl LoweredWave {
     /// digest; with `fused`, also the plan's passes by step and level with the packs they fuse
     /// into, and each pack's group (its members' dispatch, emit table and fused program).
     /// `names` are the clauses' names, in order; `grammar` names the kinds and fields.
-    pub(in crate::code_rule_dsl) fn dump(&self, names: &[String], grammar: Option<&super::rir::Names>, fused_section: bool) -> Result<String, Error> {
+    pub fn dump(&self, names: &[String], grammar: Option<&super::rir::Names>, fused_section: bool) -> Result<String, Error> {
         use std::fmt::Write as _;
         let hex = |bytes: &[u8]| bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
         let domain = |domain: &Domain| match domain {
@@ -952,13 +951,13 @@ impl LoweredWave {
     }
 
     /// How many label passes the wave runs before its roots.
-    pub(in crate::code_rule_dsl) fn passes(&self) -> usize {
+    pub fn passes(&self) -> usize {
         self.labels
     }
 
     /// The count programs among `label_programs`, by address.
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn count_programs(&self) -> BTreeSet<*const Program> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn count_programs(&self) -> BTreeSet<*const Program> {
         self.clauses
             .iter()
             .flat_map(|clause| clause.labels.defs.iter())
@@ -970,8 +969,8 @@ impl LoweredWave {
     }
 
     /// Every clause's label and count programs, with what each marks (`Emit`).
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn label_programs(&self) -> Vec<(&Program, Emit)> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn label_programs(&self) -> Vec<(&Program, Emit)> {
         self.clauses
             .iter()
             .flat_map(|clause| clause.labels.defs.iter())
@@ -986,7 +985,7 @@ impl LoweredWave {
     }
 
     /// Every program the wave walks: each clause's own labels' and its root program.
-    pub(in crate::code_rule_dsl) fn walked_programs(&self) -> Vec<&Program> {
+    pub fn walked_programs(&self) -> Vec<&Program> {
         self.clauses
             .iter()
             .flat_map(|clause| clause.labels.defs.iter().filter_map(Label::program).chain(std::iter::once(&clause.program)))
@@ -994,7 +993,7 @@ impl LoweredWave {
     }
 
     /// Each clause's root program, in clause order.
-    pub(in crate::code_rule_dsl) fn programs(&self) -> Vec<Program> {
+    pub fn programs(&self) -> Vec<Program> {
         self.clauses.iter().map(|clause| clause.program.clone()).collect()
     }
 
@@ -1007,7 +1006,7 @@ impl LoweredWave {
     /// `active` (per clause, per tape) is where a clause's root program will start: a clause's
     /// labels are its own and read only by its walks, so they are computed only on those tapes
     /// (empty elsewhere).
-    pub(in crate::code_rule_dsl) fn labelled(&self, tapes: &[TapeDoc], active: &[Vec<bool>]) -> Result<Vec<TapeDoc>, Error> {
+    pub fn labelled(&self, tapes: &[TapeDoc], active: &[Vec<bool>]) -> Result<Vec<TapeDoc>, Error> {
         Ok(self.labelled_sets(tapes, active)?.into_iter().map(|(view, _)| view).collect())
     }
 
@@ -1018,7 +1017,7 @@ impl LoweredWave {
     /// `active` (per clause, per tape) is where a clause runs: a tape its gates exclude has no matches. A clause whose
     /// program outruns the work limit on a tape gives every candidate root there, listed in [`WaveRun::limited`], so
     /// one large file does not fail the wave: the caller confirms those roots with W's matcher.
-    pub(in crate::code_rule_dsl) fn roots_batch(&self, backend: Backend, tapes: &[TapeDoc], active: &[Vec<bool>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, WaveRun), Error> {
+    pub fn roots_batch(&self, backend: Backend, tapes: &[TapeDoc], active: &[Vec<bool>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, WaveRun), Error> {
         if let Backend::MetalInterpreter = backend
             && super::device::matcher().is_some()
         {
@@ -1133,7 +1132,7 @@ impl LoweredWave {
     }
 
     /// Whether clause `clause`'s root program starts at `node` of `tape`: its root's kinds.
-    pub(in crate::code_rule_dsl) fn starts(&self, clause: usize, tape: &TapeDoc, node: u32) -> bool {
+    pub fn starts(&self, clause: usize, tape: &TapeDoc, node: u32) -> bool {
         match &self.clauses[clause].domain {
             Domain::All | Domain::Label(_) => true,
             Domain::Kinds(kinds) => kinds.binary_search(&tape.transducer_kind(node)).is_ok(),
@@ -1240,21 +1239,21 @@ fn run(
 /// the batch: `UnsupportedBackend` where no device is registered.
 impl LoweredMatcher {
     /// The batch's roots with every pass on the device in one command buffer, pattern leaves included.
-    pub(in crate::code_rule_dsl) fn roots_metal(&self, tapes: &[TapeDoc]) -> Result<(Vec<BTreeSet<u32>>, super::device::Outcome), Error> {
+    pub fn roots_metal(&self, tapes: &[TapeDoc]) -> Result<(Vec<BTreeSet<u32>>, super::device::Outcome), Error> {
         super::device::required()?.matcher_roots(self, tapes)
     }
 }
 
 impl LoweredWave {
     /// Starts compiling the device's label passes' pipelines, so a wave's first labels need not wait for them.
-    pub(in crate::code_rule_dsl) fn warm_metal() {
+    pub fn warm_metal() {
         if let Some(device) = super::device::matcher() {
             device.warm_labels();
         }
     }
 
     /// Every clause's labels over the batch on the device, as views of its tapes the root programs read.
-    pub(in crate::code_rule_dsl) fn labelled_metal(&self, tapes: &[TapeDoc], active: &[Vec<bool>], roots: Option<&super::device::RootJobs<'_>>) -> Result<(Vec<TapeDoc>, super::device::Outcome), Error> {
+    pub fn labelled_metal(&self, tapes: &[TapeDoc], active: &[Vec<bool>], roots: Option<&super::device::RootJobs<'_>>) -> Result<(Vec<TapeDoc>, super::device::Outcome), Error> {
         super::device::required()?.wave_labelled(self, tapes, active, roots)
     }
 
@@ -2467,10 +2466,10 @@ impl<'a> Builder<'a> {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl LoweredMatcher {
     /// The root program and each label's program, by label kind (the packs' census, decision 0028).
-    pub(in crate::code_rule_dsl) fn census(&self) -> Vec<(&'static str, &Program)> {
+    pub fn census(&self) -> Vec<(&'static str, &Program)> {
         let mut programs = vec![("root", &self.program)];
         for label in &self.labels.defs {
             match label {

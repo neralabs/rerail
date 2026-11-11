@@ -17,15 +17,15 @@ use super::{
 
 /// The most emits (so members) a fused program has: a set-mode walk tracks each label's first emit
 /// in one word (`set_mode::Reach`; the device walk's fired mask is a `uint`).
-pub(in crate::code_rule_dsl) const MEMBERS: usize = 32;
+pub const MEMBERS: usize = 32;
 
 /// A fused program.
-pub(in crate::code_rule_dsl) struct Fused {
-    pub(in crate::code_rule_dsl) program: Program,
+pub struct Fused {
+    pub program: Program,
     /// By the fused program's emit label: the member and the member's own label.
-    pub(in crate::code_rule_dsl) emits: Vec<(usize, u16)>,
+    pub emits: Vec<(usize, u16)>,
     /// Per member, where its capture labels start among the fused program's.
-    pub(in crate::code_rule_dsl) captures: Vec<u16>,
+    pub captures: Vec<u16>,
     /// How many leading words the members share (the trie's shared path).
     pub(in crate::code_rule_dsl) prefix: usize,
     /// Per member, where its branch starts in the fused program (the dispatch past the prefix).
@@ -36,7 +36,7 @@ impl Fused {
     /// `members` as one program, or None where one is not a micro walk, they are fewer than two or
     /// more than `MEMBERS`, or the result would not fit a program. In set mode where every member
     /// is (a member's first emit per start is all its consumer reads).
-    pub(in crate::code_rule_dsl) fn of(members: &[&Program]) -> Option<Self> {
+    pub fn of(members: &[&Program]) -> Option<Self> {
         if members.len() < 2 || members.len() > MEMBERS {
             return None;
         }
@@ -139,7 +139,7 @@ impl Fused {
 
 /// A program's entry test, its first word where that tests its start's kind or supertype: the
 /// programs a consumer fuses share one (they start at the same nodes, and share that word).
-pub(in crate::code_rule_dsl) fn entry_key(program: &Program) -> Option<u32> {
+pub fn entry_key(program: &Program) -> Option<u32> {
     let first = *program.words.first()?;
     matches!(split(first).0, KIND | SUPERTYPE).then_some(first)
 }
@@ -173,7 +173,7 @@ fn shared_prefix(members: &[&Program]) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::super::Micro;
     use super::*;
 

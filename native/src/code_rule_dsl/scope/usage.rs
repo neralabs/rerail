@@ -3,9 +3,9 @@
 //! no-unused-vars (`typescript`). Built once per table, on first use by a `binds` test or a usage
 //! filter, and charged to each clause that reads it (`maxVisitedNodes`).
 
-mod ecma;
-mod php;
-mod rust;
+// cratify: `ecma` is rerail-lang-ecma's (it mounts it)
+// cratify: `php` is rerail-lang-php's (it mounts it)
+// cratify: `rust` is rerail-lang-rust's (it mounts it)
 
 use super::{
     Binding, BuildError, DEADLINE_INTERVAL, Form, ImportKind, NodeRef, ScopeKind, ScopeTable,
@@ -21,7 +21,7 @@ use crate::code_rule_dsl::language::adapter::pack as language_pack;
 /// The forms whose usedness Ruff's `locals()`-aware checks read (F841's `Assignment`,
 /// `NamedExprAssignment` and `WithItemVar`; the unused-argument rules' `Argument`): in a function
 /// that calls `locals()`, any of them may be read unseen.
-const LOCALS_FORMS: &[Form] = &[
+pub const LOCALS_FORMS: &[Form] = &[
     Form::Assignment,
     Form::Annotated,
     Form::Augmented,
@@ -34,66 +34,66 @@ const LOCALS_FORMS: &[Form] = &[
 
 /// What the usage index knows about one binding. `None` is unknown.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) struct Facts {
+pub struct Facts {
     /// Reads that resolve to the binding itself: loads, `del`, `nonlocal`, `__all__` entries.
-    pub(crate) reads: u32,
+    pub reads: u32,
     /// Those of them made from another scope.
-    pub(crate) nested: u32,
+    pub nested: u32,
     /// Some read resolves to the binding, or to the same-scope binding it shadows while it
     /// inherits that one's reads (Ruff copies them, except from a deletion or an unbound
     /// exception name).
-    pub(crate) used: Option<bool>,
+    pub used: Option<bool>,
     /// Some such read is made from another scope.
-    pub(crate) nested_use: Option<bool>,
+    pub nested_use: Option<bool>,
     /// Python: an explicit re-export (`import a as a`), or a module binding a static `__all__`
     /// names. TypeScript: a definition stands in an `export` statement.
-    pub(crate) exported: Option<bool>,
+    pub exported: Option<bool>,
     /// Some reference resolves to it, writes included (TypeScript: eslint-scope's `references`,
     /// the writes a definition's initializer and defaults make included); nothing inherited.
-    pub(crate) referenced: Option<bool>,
+    pub referenced: Option<bool>,
     /// TypeScript: where ESLint reports the variable, by byte range: its last write from its own
     /// function scope, else its first definition's name.
-    pub(crate) anchor: Option<(u32, u32)>,
+    pub anchor: Option<(u32, u32)>,
     /// TypeScript: how many references eslint-scope gives the variable (reads, writes, and the
     /// writes at its definitions).
-    pub(crate) references: u32,
+    pub references: u32,
 }
 
 /// A binding of the table: its scope, name and index among that scope's bindings of the name.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct BindingId<'t> {
-    pub(crate) scope: u32,
-    pub(crate) name: &'t str,
-    pub(crate) index: usize,
+pub struct BindingId<'t> {
+    pub scope: u32,
+    pub name: &'t str,
+    pub index: usize,
 }
 
 /// A private name of one class body, ESLint 10.11.0's no-unused-private-class-members member: the
 /// declarations of the name (a getter and a setter are one member) and what the body's references
 /// to it do. No scope table holds it.
 #[derive(Debug, Default)]
-pub(crate) struct PrivateMember {
-    pub(crate) declarations: Vec<PrivateDeclaration>,
+pub struct PrivateMember {
+    pub declarations: Vec<PrivateDeclaration>,
     /// Some reference in the body reads it: any reference of an accessor; of a field or method,
     /// one that is not only written (`this.#a = 1`, a statement-level `this.#a += 1` or
     /// `this.#a++`, a `for ... in/of` head or a destructuring target).
-    pub(crate) used: bool,
+    pub used: bool,
     /// Some reference in the body names it.
-    pub(crate) referenced: bool,
+    pub referenced: bool,
     /// Its declaration names and references, in document order.
-    pub(crate) occurrences: Vec<NodeRef>,
+    pub occurrences: Vec<NodeRef>,
 }
 
 /// One declaration of a private name: a field, method or accessor of the class body.
 #[derive(Debug)]
-pub(crate) struct PrivateDeclaration {
-    pub(crate) name: NodeRef,
-    pub(crate) form: super::Form,
+pub struct PrivateDeclaration {
+    pub name: NodeRef,
+    pub form: super::Form,
     /// The field or method definition.
-    pub(crate) site: NodeRef,
+    pub site: NodeRef,
     /// A field's initializer.
-    pub(crate) value: Option<NodeRef>,
+    pub value: Option<NodeRef>,
     /// A field's type, without its `:`.
-    pub(crate) annotation: Option<NodeRef>,
+    pub annotation: Option<NodeRef>,
 }
 
 /// A binding's name node, for finding the binding from the node.
@@ -106,28 +106,28 @@ pub struct NameSite {
     index: usize,
 }
 
-pub(crate) struct Usage {
+pub struct Usage {
     /// Per scope, per name, aligned with the scope's bindings of the name.
-    facts: Vec<HashMap<Box<str>, Vec<Facts>>>,
+    pub facts: Vec<HashMap<Box<str>, Vec<Facts>>>,
     /// Sorted by start byte.
-    sites: Vec<NameSite>,
+    pub sites: Vec<NameSite>,
     /// The string entries of the module's `__all__` definitions and the names they export, by
     /// start byte.
-    exports: Vec<(u32, u32, Box<str>)>,
+    pub exports: Vec<(u32, u32, Box<str>)>,
     /// TypeScript: the names `/* exported */` comments list.
-    pub(crate) comment_exports: BTreeSet<Box<str>>,
+    pub comment_exports: BTreeSet<Box<str>>,
     /// TypeScript and PHP: each variable's definition names and references, in document order.
-    occurrences: HashMap<(u32, Box<str>), Vec<NodeRef>>,
+    pub occurrences: HashMap<(u32, Box<str>), Vec<NodeRef>>,
     /// TypeScript: the private names of every class body.
-    privates: Vec<PrivateMember>,
+    pub privates: Vec<PrivateMember>,
     /// Each private declaration's name node, with its member and index, by start byte.
-    private_names: Vec<(NodeRef, u32, u32)>,
+    pub private_names: Vec<(NodeRef, u32, u32)>,
     /// The start of each reference that is its function's first read of the binding a later
     /// binding of the function shadows (Ruff's F823), sorted, and whether that binding is the
     /// builtin of the name, which holds only where the target version has one.
-    before_local: Vec<(usize, bool)>,
+    pub before_local: Vec<(usize, bool)>,
     /// Steps the build took: what a clause pays for the index.
-    pub(crate) cost: usize,
+    pub cost: usize,
 }
 
 impl Usage {
@@ -155,7 +155,7 @@ impl Usage {
             cost: steps.cost,
         })
     }
-    pub(crate) fn facts(&self, id: BindingId<'_>) -> Facts {
+    pub fn facts(&self, id: BindingId<'_>) -> Facts {
         self.facts[id.scope as usize]
             .get(id.name)
             .and_then(|facts| facts.get(id.index))
@@ -164,7 +164,7 @@ impl Usage {
     }
 
     /// TypeScript and PHP: the definition names and references of `id`'s variable.
-    pub(crate) fn occurrences(&self, id: BindingId<'_>) -> &[NodeRef] {
+    pub fn occurrences(&self, id: BindingId<'_>) -> &[NodeRef] {
         self.occurrences
             .get(&(id.scope, Box::from(id.name)))
             .map_or(&[], Vec::as_slice)
@@ -227,7 +227,7 @@ impl Usage {
     }
 
     /// Builds the index of a table, whose file's root is `root`, in at most `cap` steps.
-    pub(crate) fn build<D: Doc>(
+    pub fn build<D: Doc>(
         table: &ScopeTable,
         root: &Node<'_, D>,
         cap: usize,
@@ -244,7 +244,7 @@ impl Usage {
 }
 
 /// What a function's own binding of a name shadows in an enclosing scope (`shadowed_by_local`).
-enum Shadowed {
+pub enum Shadowed {
     /// An enclosing function's or the module's binding, by scope and index.
     Binding((u32, usize)),
     /// No binding: the name's builtin, if the target version has one.
@@ -252,7 +252,7 @@ enum Shadowed {
 }
 
 /// Every binding's name node, sorted by position.
-fn name_sites(table: &ScopeTable, steps: &mut Steps<'_>) -> Result<Vec<NameSite>, BuildError> {
+pub fn name_sites(table: &ScopeTable, steps: &mut Steps<'_>) -> Result<Vec<NameSite>, BuildError> {
     let mut sites = Vec::new();
     for (scope_index, scope) in table.scopes.iter().enumerate() {
         for (name, bindings) in &scope.bindings {
@@ -276,7 +276,7 @@ fn name_sites(table: &ScopeTable, steps: &mut Steps<'_>) -> Result<Vec<NameSite>
 }
 
 /// `true` is known; `false` is unknown where something may read the name unseen.
-fn known(value: bool, unknown: bool) -> Option<bool> {
+pub fn known(value: bool, unknown: bool) -> Option<bool> {
     (value || !unknown).then_some(value)
 }
 
@@ -284,21 +284,21 @@ fn known(value: bool, unknown: bool) -> Option<bool> {
 /// copies them unless that one is a deletion or an `except` name its handler has unbound. A
 /// nested function's `nonlocal` bindings, which Ruff keeps in the nested scope, inherit only from
 /// each other.
-fn inherits(previous: &Binding, binding: &Binding) -> bool {
+pub fn inherits(previous: &Binding, binding: &Binding) -> bool {
     previous.deferred == binding.deferred
         && !previous.is_deletion()
         && previous.until.is_none_or(|until| binding.offset < until)
 }
 
 /// The steps an index's build spends, against its cap and the evaluation deadline.
-pub(crate) struct Steps<'d> {
-    cost: usize,
-    cap: usize,
-    deadline: &'d dyn Fn() -> bool,
+pub struct Steps<'d> {
+    pub cost: usize,
+    pub cap: usize,
+    pub deadline: &'d dyn Fn() -> bool,
 }
 
 impl Steps<'_> {
-    fn take(&mut self) -> Result<(), BuildError> {
+    pub fn take(&mut self) -> Result<(), BuildError> {
         self.cost += 1;
         if self.cost > self.cap {
             return Err(BuildError::Budget);
@@ -365,7 +365,7 @@ impl ScopeTable {
 
     /// Whether a function or lambda body lies between `inner` and its ancestor `outer`: Ruff visits
     /// what `inner` reads after `outer`'s whole body.
-    fn crosses_function(&self, inner: u32, outer: u32) -> bool {
+    pub fn crosses_function(&self, inner: u32, outer: u32) -> bool {
         let mut current = Some(inner);
         while let Some(index) = current.filter(|index| *index != outer) {
             let scope = &self.scopes[index as usize];
@@ -384,7 +384,7 @@ impl ScopeTable {
     /// that it shadows (Ruff's `shadowed_binding`, which `global`, `nonlocal` and `del` bindings
     /// never have), or with none such the builtin, which Ruff materializes in the module scope
     /// before it adds any binding of a builtin's name.
-    fn shadowed_by_local(&self, reference: &super::Reference, name: &str) -> Option<Shadowed> {
+    pub fn shadowed_by_local(&self, reference: &super::Reference, name: &str) -> Option<Shadowed> {
         if reference.access != super::Access::Load
             || reference.type_scope
             || self.forward_module(reference, name).is_some()
@@ -440,7 +440,7 @@ impl ScopeTable {
     /// The bindings a Python reference reads: the one it resolves to and, for a read through a
     /// `global` declaration, that declaration too (Ruff marks both used).
     /// A load also reads each bare annotation its walk meets (Ruff's `resolve_load` marks them).
-    pub(crate) fn reads(&self, reference: &super::Reference, name: &str) -> Vec<(u32, usize)> {
+    pub fn reads(&self, reference: &super::Reference, name: &str) -> Vec<(u32, usize)> {
         if reference.access == super::Access::Del {
             return self
                 .resolve_python_index(reference, name)
@@ -460,7 +460,7 @@ impl ScopeTable {
 
     /// Ruff's `resolve_submodule`: a read of `pa` bound by `import pyarrow as pa` also uses the
     /// latest `import pyarrow.csv` of the same scope.
-    fn submodule_alias<'t>(
+    pub fn submodule_alias<'t>(
         &'t self,
         reference: &super::Reference,
         name: &str,
@@ -497,7 +497,7 @@ impl ScopeTable {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::lang_python::{Exports, dunder_all};
     use super::*;
     use crate::code_rule_dsl::scope::ANNOTATION_RANGE;
@@ -609,16 +609,16 @@ mod tests {
 }
 
 // TypeScript's and JavaScript's usage index (moved from `usage.rs` by the crate split). (`lang_ecma`, its crate's).
-pub(crate) mod lang_ecma;
+// cratify: `lang_ecma` is rerail-lang-ecma's (it mounts it)
 
 // Rust's usage index (moved from `usage.rs` by the crate split). (`lang_rust`, its crate's).
-pub(crate) mod lang_rust;
+// cratify: `lang_rust` is rerail-lang-rust's (it mounts it)
 
 // PHP's usage index (moved from `usage.rs` by the crate split). (`lang_php`, its crate's).
-pub(crate) mod lang_php;
+// cratify: `lang_php` is rerail-lang-php's (it mounts it)
 
 // SQL's usage index (moved from `usage.rs` by the crate split). (`lang_sql`, its crate's).
-pub(crate) mod lang_sql;
+// cratify: `lang_sql` is rerail-lang-sql's (it mounts it)
 
 // Python's usage index (moved from `usage.rs` by the crate split). (`lang_python`, its crate's).
-pub(crate) mod lang_python;
+// cratify: `lang_python` is rerail-lang-python's (it mounts it)

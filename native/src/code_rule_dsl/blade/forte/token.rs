@@ -89,13 +89,13 @@ pub(crate) enum State {
     Comment = 13,
     BladeComment = 14,
     /// No error the port logs carries it; the oracle's records name it.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     PhpTag = 17,
 }
 
 impl State {
     /// Every state, for reading a name back.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) const ALL: [State; 15] = [
         State::Data,
         State::TagName,
@@ -115,7 +115,7 @@ impl State {
     ];
 
     /// The case name (`State::label`).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn name(self) -> &'static str {
         use State::*;
         match self {
@@ -152,7 +152,7 @@ pub(crate) enum ErrorReason {
 
 impl ErrorReason {
     /// Every reason, for reading a name back.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) const ALL: [ErrorReason; 4] = [
         ErrorReason::UnexpectedEof,
         ErrorReason::UnclosedComment,
@@ -161,7 +161,7 @@ impl ErrorReason {
     ];
 
     /// The case name (`ErrorReason::label`, and `Diagnostic::$code`).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn name(self) -> &'static str {
         use ErrorReason::*;
         match self {

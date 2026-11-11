@@ -34,14 +34,14 @@ pub(crate) const NEXT: &str = "next";
 
 /// A package with more source files than this on disk gets no server graph: neither membership
 /// holds for its files.
-const MAX_GRAPH_FILES: usize = 20_000;
+pub const MAX_GRAPH_FILES: usize = 20_000;
 /// A package whose sources read on disk total more bytes than this gets no server graph, as past
 /// `MAX_GRAPH_FILES`: the host's audit budget (`AUDIT_MAX_SOURCE_BYTES`).
-const MAX_GRAPH_BYTES: u64 = 512 * 1024 * 1024;
+pub const MAX_GRAPH_BYTES: u64 = 512 * 1024 * 1024;
 /// A package whose disk walk lists more entries than this (files and folders, those it skips
 /// included) gets no server graph, as past `MAX_GRAPH_FILES`: the host's audit bound
 /// (`AUDIT_MAX_FILES`).
-const MAX_GRAPH_ENTRIES: usize = 100_000;
+pub const MAX_GRAPH_ENTRIES: usize = 100_000;
 /// The folders a server graph does not read, beside hidden ones: the host's
 /// `IGNORED_DIRECTORIES` (code-rule-enforcer.ts), which its repository walk skips.
 const IGNORED_DIRECTORIES: [&str; 14] = [
@@ -61,17 +61,17 @@ const IGNORED_DIRECTORIES: [&str; 14] = [
     "vendor",
 ];
 /// A source larger than this is not read for imports; it imports nothing.
-const MAX_SOURCE_BYTES: u64 = 1024 * 1024;
+pub const MAX_SOURCE_BYTES: u64 = 1024 * 1024;
 /// How many `extends` a configuration chain follows.
-const MAX_EXTENDS: usize = 8;
+pub const MAX_EXTENDS: usize = 8;
 /// How many entries of one configuration's `extends` array are followed, the first ones; later
 /// ones are not read.
 const MAX_EXTENDS_ENTRIES: usize = 16;
 /// How many `paths` patterns a configuration maps, the first by pattern text (the order
 /// `serde_json` keeps an object's keys in); later ones map nothing.
-const MAX_PATHS_PATTERNS: usize = 64;
+pub const MAX_PATHS_PATTERNS: usize = 64;
 /// How many targets of one `paths` pattern are tried; later ones are not.
-const MAX_PATHS_TARGETS: usize = 16;
+pub const MAX_PATHS_TARGETS: usize = 16;
 /// The extensions an import resolves to, in Next's (webpack's) order.
 const EXTENSIONS: [&str; 8] = [".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs", ".mts", ".cts"];
 
@@ -87,20 +87,20 @@ static SERVER_ENTRY: LazyLock<Regex> = LazyLock::new(|| {
 /// and the specifiers it imports, each once, in source order.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Summary {
-    client: bool,
-    specifiers: Vec<String>,
+    pub client: bool,
+    pub specifiers: Vec<String>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// ECMA sources `summarize` parsed on this thread.
-    pub(crate) static SUMMARIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub static SUMMARIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The summary of the ECMA source at `path`; `None` for a path of no ECMA dialect.
-pub(crate) fn summarize(path: &str, source: &str) -> Option<Summary> {
+pub fn summarize(path: &str, source: &str) -> Option<Summary> {
     let dialect = dialect_by_label(ecma_label(path)?)?;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     SUMMARIES.set(SUMMARIES.get() + 1);
     let tree = dialect.ast_grep(source);
     Some(summary_of(&tree.root()))
@@ -194,7 +194,7 @@ fn literal<D: Doc>(string: &Node<'_, D>) -> Option<String> {
 /// A package's TypeScript or JavaScript project configuration, as far as the engine reads it:
 /// `compilerOptions.baseUrl`, `paths` and `jsxImportSource`.
 #[derive(Debug, Default, PartialEq, Eq)]
-pub(crate) struct Config {
+pub struct Config {
     /// The resolved `baseUrl`, workspace-relative.
     base_url: Option<String>,
     /// `paths` patterns: the text before and after the `*` (`None` for an exact pattern), and
@@ -203,14 +203,14 @@ pub(crate) struct Config {
     /// The package the JSX transform imports its runtime from.
     jsx_import_source: Option<String>,
     /// The configuration files read, the package's own first, then its `extends` bases.
-    files: Vec<String>,
+    pub files: Vec<String>,
 }
 
 impl Config {
     /// The configuration of the package in `folder`: its `tsconfig.json`, else its
     /// `jsconfig.json`, as `read` gives a workspace-relative file's text. A configuration over
     /// 1 MiB is absent, whichever path reads it, so the same file is chosen everywhere.
-    pub(crate) fn read(folder: &str, read: &dyn Fn(&str) -> Option<String>) -> Self {
+    pub fn read(folder: &str, read: &dyn Fn(&str) -> Option<String>) -> Self {
         let read = |path: &str| read(path).filter(|text| text.len() as u64 <= MAX_SOURCE_BYTES);
         let mut config = Self::default();
         let mut paths_dir = None;
@@ -317,18 +317,18 @@ impl Config {
     }
 
     /// `compilerOptions.jsxImportSource`, over the `extends` chain.
-    pub(crate) fn jsx_import_source(&self) -> Option<&str> {
+    pub fn jsx_import_source(&self) -> Option<&str> {
         self.jsx_import_source.as_deref()
     }
 
     /// The configuration files read (workspace-relative): the package's own, then its bases.
-    pub(crate) fn files(&self) -> &[String] {
+    pub fn files(&self) -> &[String] {
         &self.files
     }
 
     /// The candidate paths (before extension probing) a non-relative specifier maps to: the
     /// `paths` pattern that matches (an exact one, else the longest prefix), then `baseUrl`.
-    fn candidates(&self, specifier: &str) -> Vec<String> {
+    pub fn candidates(&self, specifier: &str) -> Vec<String> {
         let exact = self
             .paths
             .iter()
@@ -612,7 +612,7 @@ const SETTLED_AFTER: Duration = Duration::from_secs(2);
 /// entries, or it holds more than `MAX_GRAPH_FILES` sources or `MAX_GRAPH_BYTES` of them. The
 /// failure is not cached, so the next call reads it again. The walk is not cancellable; it lists
 /// and inspects at most `MAX_GRAPH_ENTRIES` entries and reads at most `MAX_GRAPH_BYTES`.
-pub(crate) fn on_disk(
+pub fn on_disk(
     root: &Path,
     folder: &str,
     config: &Config,
@@ -741,7 +741,7 @@ pub(crate) fn summarize_bounded(path: &str, source: &str) -> Option<Summary> {
 /// below `root` (`Config::read`): regular files of at most 1 MiB, symlinks followed, whose
 /// canonical path lies below the root's, so a symlink on the way leads nowhere outside the
 /// workspace.
-pub(crate) fn config_on_disk(root: &Path, folder: &str) -> Config {
+pub fn config_on_disk(root: &Path, folder: &str) -> Config {
     let Ok(canonical_root) = root.canonicalize() else {
         return Config::default();
     };
@@ -780,7 +780,7 @@ fn skipped_folder(name: &str) -> bool {
 /// overlay applies), the sources it would read (of at most 1 MiB) total more than `budget`
 /// bytes, or it lists more than `entries` entries (files and folders, skipped ones included),
 /// both of which it counts down.
-fn walk(
+pub fn walk(
     top: &Path,
     directory: &Path,
     sources: &mut Vec<(String, PathBuf, std::fs::Metadata)>,
@@ -863,7 +863,7 @@ fn gone(error: &std::io::Error) -> bool {
 /// set's paths and texts, `summaries` the summaries of them computed already, by path, which it
 /// completes with those of the sources below `folder` (`summarize_bounded`, `from_summaries`);
 /// `None` where the package has no graph.
-pub(crate) fn in_file_set<'s>(
+pub fn in_file_set<'s>(
     folder: &str,
     sources: impl Iterator<Item = (&'s str, &'s str)>,
     summaries: &mut HashMap<String, Option<Summary>>,
@@ -941,10 +941,9 @@ fn relative_to<'p>(folder: &str, path: &'p str) -> Option<&'p str> {
 /// Whether `path` names a TypeScript or JavaScript project configuration a package's `Config`
 /// may read: a `.json` file whose name starts with `tsconfig` or `jsconfig` (`tsconfig.json`,
 /// `tsconfig.base.json`, `jsconfig-shared.json`). Hosts route edits of the same names.
-pub(crate) fn is_module_config(path: &str) -> bool {
+pub fn is_module_config(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
     name.ends_with(".json") && (name.starts_with("tsconfig") || name.starts_with("jsconfig"))
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

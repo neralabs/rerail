@@ -9,7 +9,7 @@ use crate::code_rule_dsl::scope::php_names;
 /// `global`, a superglobal; `unresolved: true`, a read no path defines, as PHPStan's
 /// `variable.undefined` reports it (`scope/php.rs`). `binding` compiles apart
 /// (`compile_binding`). Blade resolves the names and variables of the PHP its template embeds.
-pub(crate) fn compile_php_resolves(
+pub fn compile_php_resolves(
     pack: &dyn language_pack::LanguagePack, value: &Value,
     language: GrammarDialect,
     path: &str,

@@ -132,6 +132,4 @@ pub(super) fn check(statements: &[Statement]) -> Result<(), Error> {
     Ok(())
 }
 
-#[cfg(test)]
-#[path = "tape_type_tests.rs"]
-mod tests;
+// cratify: `tests` is rerail-logic's (it mounts it)

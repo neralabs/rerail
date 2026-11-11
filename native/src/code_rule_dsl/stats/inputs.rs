@@ -12,13 +12,13 @@ use std::sync::Arc;
 struct Key(u32, Required);
 
 #[derive(Clone, Copy)]
-pub(in crate::code_rule_dsl) struct Estimate {
+pub struct Estimate {
     pub rows: u64,
     pub uncovered: u64,
 }
 
 #[derive(Clone, Default)]
-pub(in crate::code_rule_dsl) struct Statistics(Arc<BTreeMap<Key, Estimate>>);
+pub struct Statistics(Arc<BTreeMap<Key, Estimate>>);
 
 fn patterns(plan: &AnchorPlan, seen: &mut HashSet<usize>, visit: &mut impl FnMut(&[Requirement])) {
     match &plan.condition {
@@ -153,5 +153,4 @@ pub(in crate::code_rule_dsl) struct Decision {
     pub uncovered_rows: Option<u64>,
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

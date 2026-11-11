@@ -84,14 +84,14 @@ fn hash(key: &[i64]) -> u64 {
     h.finish()
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Tests: build a step's table at its first probe, whatever its walks cost.
     pub(super) static AT_ONCE: Cell<bool> = const { Cell::new(false) };
 }
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-hooks")))]
 fn at_once() -> bool { false }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn at_once() -> bool { AT_ONCE.with(Cell::get) }
 
 fn off_on() -> bool {

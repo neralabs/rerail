@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 /// The files a workspace holds for resolution.
-pub(crate) trait HeldForResolution: Send + Sync {
+pub trait HeldForResolution: Send + Sync {
     /// Holds the file at `path` with `source`; whether that changes what a resolution reads (disk below `root`
     /// standing for a path not held before).
     fn hold(&mut self, path: &str, source: &Arc<String>, root: Option<&Path>) -> bool;
@@ -20,25 +20,25 @@ pub(crate) trait HeldForResolution: Send + Sync {
 }
 
 /// One apply's (or one snapshot's) view of the files resolutions read.
-pub(crate) trait ResolutionView: Send + Sync {
+pub trait ResolutionView: Send + Sync {
     /// Installs the view for the evaluations on this thread while the guard is held.
     fn install(self: Arc<Self>) -> Box<dyn Any>;
 }
 
 /// A language's resolutions (`install`).
-pub(crate) struct Resolutions {
+pub struct Resolutions {
     /// A workspace's held files, empty.
-    pub(crate) held: fn() -> Box<dyn HeldForResolution>,
+    pub held: fn() -> Box<dyn HeldForResolution>,
     /// What a snapshot's resolutions read: its files, with no disk below them.
-    pub(crate) snapshot: fn(&Snapshot) -> Arc<dyn ResolutionView>,
+    pub snapshot: fn(&Snapshot) -> Arc<dyn ResolutionView>,
     /// Whether a view is installed on this thread (a workspace's, around a snapshot's evaluation inside it).
-    pub(crate) installed: fn() -> bool,
+    pub installed: fn() -> bool,
 }
 
 static RESOLUTIONS: OnceLock<Resolutions> = OnceLock::new();
 
 /// Registers the resolutions (once, at load).
-pub(crate) fn install(resolutions: Resolutions) {
+pub fn install(resolutions: Resolutions) {
     let _ = RESOLUTIONS.set(resolutions);
 }
 

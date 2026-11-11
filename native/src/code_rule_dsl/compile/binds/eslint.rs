@@ -9,8 +9,8 @@
 //! `ESLINT_USAGE_ORACLE_ROOT` points the test at another directory's `eslint-usage.expected.json`
 //! and its sources (the repository-wide rerun).
 
-use crate::code_rule_dsl::oracle;
-use crate::code_rule_dsl::test_support::*;
+// cratify: a re-export of rerail-engine's, which its facades of this module make
+// cratify: a re-export of rerail-engine's, which its facades of this module make
 use serde_json::{Value, json};
 
 /// Every node a name can be: identifiers, type names, enum members and shorthand patterns.

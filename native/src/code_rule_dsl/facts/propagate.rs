@@ -52,4 +52,4 @@ pub(crate) fn propagate(
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

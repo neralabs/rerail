@@ -48,7 +48,7 @@ pub(super) fn glob_literal(s: &str) -> String {
 /// A regex test's `.rr` pattern: `match` is whole-string, the engine's `rx` a search. A `match("X", s)` lowers to
 /// `rx` of `^(?:X)$` and prints back as written; another `rx` is the search `(?s:.*)(?:P)(?s:.*)`, its flag on the
 /// dots only (a leading `(?s)` would give P's own `.` newlines), `irx` that under `(?i:…)`.
-pub(super) fn search(op: &str, p: &str) -> String {
+pub fn search(op: &str, p: &str) -> String {
     match (op, whole(p)) {
         ("rx", Some(x)) => x.to_owned(),
         ("rx", None) => format!("(?s:.*)(?:{p})(?s:.*)"),
@@ -191,7 +191,7 @@ fn native_rule(head: &Atom, native: &Native, prog: &Program) -> Result<String, E
 }
 
 /// The program's `.rr` text.
-pub(in crate::code_rule_dsl) fn print(prog: &Program) -> Result<String, Error> {
+pub fn print(prog: &Program) -> Result<String, Error> {
     // Keep the public schema when printing frontend unit columns back to rule source.
     let mut logical;
     let prog = if prog.nullary.is_empty() { prog } else {

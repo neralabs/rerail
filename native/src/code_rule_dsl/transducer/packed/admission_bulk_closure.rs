@@ -449,7 +449,7 @@ pub(super) fn close(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     // Deliberately serial first-visit oracle. No prefix scan or interval formula

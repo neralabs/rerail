@@ -814,13 +814,13 @@ fn unescape(body: &str, base: usize, decoded: &mut Decoded) -> bool {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
 
 /// The `rustFormat` grammar (`literal::LiteralGrammar`).
 pub(crate) struct RustFormatGrammar;
 
 /// Its handle, which the engine registers (`literal::install`).
-pub(crate) const GRAMMAR: super::Grammar = super::Grammar::new(&RustFormatGrammar);
+pub const GRAMMAR: super::Grammar = super::Grammar::new(&RustFormatGrammar);
 
 impl super::LiteralGrammar for RustFormatGrammar {
     fn name(&self) -> &'static str {

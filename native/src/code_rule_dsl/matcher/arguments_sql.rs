@@ -218,7 +218,7 @@ fn is_named<D: Doc>(call: &Node<'_, D>, name: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_language::LanguageExt;

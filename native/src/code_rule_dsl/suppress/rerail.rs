@@ -44,7 +44,7 @@ struct Cover {
 
 /// A file's `rerail-ignore` directives, as the ranges they cover.
 #[derive(Debug, Default)]
-pub(crate) struct RerailIgnores {
+pub struct RerailIgnores {
     covers: Vec<Cover>,
 }
 
@@ -52,7 +52,7 @@ impl RerailIgnores {
     /// Reads every comment of the file whose own tree `root` is the root of (`source` is its
     /// text), then each embedded program's (`embed`), each by its own family's kinds; every cover
     /// is a range of the file.
-    pub(crate) fn read<D: Doc>(root: &Node<'_, D>, source: &str) -> Self {
+    pub fn read<D: Doc>(root: &Node<'_, D>, source: &str) -> Self {
         let file = InFile::of(root).expect("a file's own tree lies in its file");
         let kinds = Kinds::of(file.dialect());
         let mut ignores = Self::read_tree(root, source, &file, kinds, true);
@@ -108,7 +108,7 @@ impl RerailIgnores {
     }
 
     /// Each directive's covered range and the code rules it names.
-    pub(crate) fn covers(&self) -> impl Iterator<Item = (&Range<usize>, &[String])> {
+    pub fn covers(&self) -> impl Iterator<Item = (&Range<usize>, &[String])> {
         self.covers.iter().map(|cover| (&cover.range, cover.rules.as_slice()))
     }
 
@@ -322,7 +322,7 @@ fn covered<D: Doc>(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::test_support::*;

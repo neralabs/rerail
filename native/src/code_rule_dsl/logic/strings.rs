@@ -38,31 +38,31 @@ use super::front::ast::{Atom, Literal, Program, Term};
 
 /// The tests, by name. `i…`: the same, ignoring case (the text layer's case folding). `rx`: a regex in Rust `regex`
 /// syntax (with backreferences beyond it, as `value.regex`).
-pub(in crate::code_rule_dsl) const TESTS: [&str; 14] =
+pub const TESTS: [&str; 14] =
     ["equals", "prefix", "suffix", "contains", "glob", "word", "rx", "iequals", "iprefix", "isuffix", "icontains", "iglob", "iword", "irx"];
 
-pub(in crate::code_rule_dsl) fn is_test(f: &str) -> bool {
+pub fn is_test(f: &str) -> bool {
     TESTS.contains(&f)
 }
 
 /// A pattern set's term: `{a, b}` parses as `@set(a, b)`.
-pub(in crate::code_rule_dsl) const SET: &str = "set";
+pub const SET: &str = "set";
 
 /// Between a set's patterns in SQL's `str_test`.
-pub(in crate::code_rule_dsl) const SET_SEP: char = '\u{1f}';
+pub const SET_SEP: char = '\u{1f}';
 
 /// The prefix of a test's input relation, `strtest_<k>(s)`.
-pub(in crate::code_rule_dsl) const RELATION: &str = "strtest_";
+pub const RELATION: &str = "strtest_";
 
 /// The prefix of a `match_all` built-in's input relation, `matchall_<k>(sp, m)` (`as_relations`).
-pub(in crate::code_rule_dsl) const MATCHES: &str = "matchall_";
+pub const MATCHES: &str = "matchall_";
 
 /// The prefix of a `match_group` built-in's input relation, `matchgroup_<k>(sp, m, g, gsp)` (`as_relations`).
-pub(in crate::code_rule_dsl) const GROUPS: &str = "matchgroup_";
+pub const GROUPS: &str = "matchgroup_";
 
 /// The relations a text test's string can come from, and their text columns: the batch interns these strings, so a
 /// test over them is answered from the batch's vocabulary (`facts::vtab::syntax`).
-pub(in crate::code_rule_dsl) const TEXT_COLUMNS: [(&str, &[usize]); 31] = [
+pub const TEXT_COLUMNS: [(&str, &[usize]); 31] = [
     ("text", &[1]),
     ("name", &[1]),
     ("str", &[1]),
@@ -98,7 +98,7 @@ pub(in crate::code_rule_dsl) const TEXT_COLUMNS: [(&str, &[usize]); 31] = [
 
 /// One test over a set of patterns, compiled once: each pattern lowered by the text layer to its canonical plan (an
 /// exact set, an affix set, an automaton), equal patterns' plans shared by key.
-pub(in crate::code_rule_dsl) struct Matcher {
+pub struct Matcher {
     pub(in crate::code_rule_dsl) plans: Vec<Arc<Lowered>>,
 }
 
@@ -115,7 +115,7 @@ fn word_regex(phrase: &str) -> Option<String> {
 
 impl Matcher {
     /// `op` (a test's name) over `patterns`. A pattern that does not parse is an error.
-    pub(in crate::code_rule_dsl) fn new(op: &str, patterns: &[String]) -> Result<Self, String> {
+    pub fn new(op: &str, patterns: &[String]) -> Result<Self, String> {
         let fold = op.starts_with('i') && TESTS.contains(&&op[1..]);
         let base = if fold { &op[1..] } else { op };
         let sources: Vec<Source> = match base {
@@ -151,13 +151,13 @@ impl Matcher {
     }
 
     /// A pattern undecided (a backtracking one past its limits) does not match.
-    pub(in crate::code_rule_dsl) fn is_match(&self, s: &str) -> bool {
+    pub fn is_match(&self, s: &str) -> bool {
         self.plans.iter().any(|p| p.compiled().is_match(s.as_bytes()) == Some(true))
     }
 }
 
 /// A test's patterns: one string, or a set `{a, b}`.
-pub(in crate::code_rule_dsl) fn patterns(t: &Term) -> Option<Vec<String>> {
+pub fn patterns(t: &Term) -> Option<Vec<String>> {
     match t {
         Term::Str(s) => Some(vec![s.clone()]),
         Term::Call(f, args) if f == SET => args.iter().map(|a| if let Term::Str(s) = a { Some(s.clone()) } else { None }).collect(),
@@ -168,7 +168,7 @@ pub(in crate::code_rule_dsl) fn patterns(t: &Term) -> Option<Vec<String>> {
 static MATCHERS: LazyLock<Mutex<HashMap<(String, String), Option<Arc<Matcher>>>>> = LazyLock::new(Default::default);
 
 /// Test `op` of `s` against `pattern`, a set's patterns joined by `SET_SEP`. An invalid glob matches nothing.
-pub(in crate::code_rule_dsl) fn test(op: &str, s: &str, pattern: &str) -> bool {
+pub fn test(op: &str, s: &str, pattern: &str) -> bool {
     let m = MATCHERS
         .lock()
         .unwrap()
@@ -189,7 +189,7 @@ pub(in crate::code_rule_dsl) fn group(s: &str, re: &str, name: &str) -> Option<S
 
 /// `str_test(op, s, patterns)`: 1 or 0; and `core.rr`'s text functors (`functions`, `rx_group` among them, and
 /// `functors::register_functors`'s: `rr_join`, `@rx_replace`, `@nfkc`, …). NULL gives NULL.
-pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()> {
+pub fn register(db: &Connection) -> rusqlite::Result<()> {
     use rusqlite::functions::FunctionFlags;
     db.create_scalar_function(c"str_test", 3, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
         let (Some(op), Some(s), Some(p)) = (ctx.get::<Option<String>>(0)?, ctx.get::<Option<String>>(1)?, ctx.get::<Option<String>>(2)?) else {
@@ -208,7 +208,7 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
 static FUNCTORS: std::sync::OnceLock<fn(&Connection) -> rusqlite::Result<()>> = std::sync::OnceLock::new();
 
 /// Registers what adds those functors to a connection (once, at load).
-pub(in crate::code_rule_dsl) fn install_functors(register: fn(&Connection) -> rusqlite::Result<()>) {
+pub fn install_functors(register: fn(&Connection) -> rusqlite::Result<()>) {
     let _ = FUNCTORS.set(register);
 }
 
@@ -231,26 +231,26 @@ struct Compiled {
 /// `matchall_<k>(sp, m)` and their groups in `matchgroup_<k>(sp, m, g, gsp)`; and the interpolation markers the
 /// batches make `fstring_template(n, marker, v)` rows for.
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct Vocabulary {
+pub struct Vocabulary {
     /// Each test's input relation and matcher (`again` keeps them for another run).
-    pub(in crate::code_rule_dsl) tests: Vec<(String, Arc<Matcher>)>,
-    pub(in crate::code_rule_dsl) matches: Vec<Arc<regex::Regex>>,
+    pub tests: Vec<(String, Arc<Matcher>)>,
+    pub matches: Vec<Arc<regex::Regex>>,
     /// The constant markers of the program's `fstring_template` atoms, distinct, in order.
-    pub(in crate::code_rule_dsl) markers: Vec<String>,
+    pub markers: Vec<String>,
     /// Each test's operator and patterns, in `tests`' order: what its matcher is made from (`from_specs`).
-    pub(in crate::code_rule_dsl) specs: Vec<(String, Vec<String>)>,
+    pub specs: Vec<(String, Vec<String>)>,
     /// Every test's plans compiled together, once (decision 0075): shared by `again`, so a program kept for the
     /// process compiles them once, and every batch runs the same searchers.
     compiled: Arc<std::sync::OnceLock<Compiled>>,
     /// Per symbol, the tests it passes (bit k is test k): each string is tested once per run.
     seen: Mutex<HashMap<u32, Box<[u64]>>>,
     /// The strings tested, and the CPU (user + system seconds) testing them took.
-    pub(in crate::code_rule_dsl) tested: Mutex<(usize, f64)>,
+    pub tested: Mutex<(usize, f64)>,
 }
 
 impl Vocabulary {
     /// For each test, the symbols among `strings` (a batch's distinct strings and their symbols) that pass it.
-    pub(in crate::code_rule_dsl) fn rows(&self, strings: &[String], symbols: &[u32]) -> Vec<Vec<i64>> {
+    pub fn rows(&self, strings: &[String], symbols: &[u32]) -> Vec<Vec<i64>> {
         let mut out = vec![Vec::new(); self.tests.len()];
         if self.tests.is_empty() {
             return out;
@@ -361,7 +361,7 @@ fn vocabulary_columns(prog: &Program) -> HashMap<String, HashSet<usize>> {
 
 impl Vocabulary {
     /// The same tests for another run, with nothing tested yet.
-    pub(in crate::code_rule_dsl) fn again(&self) -> Vocabulary {
+    pub fn again(&self) -> Vocabulary {
         Vocabulary {
             tests: self.tests.clone(),
             specs: self.specs.clone(),
@@ -380,7 +380,7 @@ impl Vocabulary {
 
     /// Compiles every test's plans now, its groups of automata read from `cache` or kept in it (decision 0075), and
     /// says what it did; `None` when they were compiled before (in this process).
-    pub(in crate::code_rule_dsl) fn compile(&self, cache: Option<&dyn crate::code_rule_dsl::text::vocabulary::DfaCache>) -> Option<crate::code_rule_dsl::text::vocabulary::Compiling> {
+    pub fn compile(&self, cache: Option<&dyn crate::code_rule_dsl::text::vocabulary::DfaCache>) -> Option<crate::code_rule_dsl::text::vocabulary::Compiling> {
         let mut made = None;
         self.compiled.get_or_init(|| {
             let compiled = self.compile_with(cache);
@@ -392,7 +392,7 @@ impl Vocabulary {
 
     /// The tests `relations` and `specs` name, their matchers made again (a prepared program read from the store,
     /// decision 0073).
-    pub(in crate::code_rule_dsl) fn from_specs(relations: &[String], specs: Vec<(String, Vec<String>)>) -> Result<Vocabulary, String> {
+    pub fn from_specs(relations: &[String], specs: Vec<(String, Vec<String>)>) -> Result<Vocabulary, String> {
         let tests = relations.iter().zip(&specs).map(|(rel, (op, pats))| Ok((rel.clone(), Arc::new(Matcher::new(op, pats)?)))).collect::<Result<_, String>>()?;
         Ok(Vocabulary { tests, specs, ..Vocabulary::default() })
     }
@@ -505,7 +505,7 @@ fn implied_set_tests(prog: &mut Program) {
 /// A text test on a node (`@rx(w, re) = 1` with `w` a node) tests the node's text: `text(w, t), @rx(t, re) = 1`, `t`
 /// fresh. Unrewritten, the test read the node's id as a string and held for no node. A node is a variable a positive
 /// atom binds in a `node` or `loc` column.
-pub(in crate::code_rule_dsl) fn node_subject_tests(prog: &mut Program) {
+pub fn node_subject_tests(prog: &mut Program) {
     let decls = &prog.decls;
     let mut fresh = 0usize;
     for rule in &mut prog.rules {
@@ -555,7 +555,7 @@ pub(in crate::code_rule_dsl) fn node_subject_tests(prog: &mut Program) {
 ///
 /// And collects the markers of `fstring_template(n, "marker", v)` (W's `interpolation`): a constant, since the
 /// batches parse each host once per marker (`facts::vtab::syntax::fstring`).
-pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
+pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
     if prog.decls.contains_key("text") {
         node_subject_tests(prog);
     }
@@ -661,8 +661,7 @@ pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocab
     Ok(Vocabulary { tests, specs, matches, markers, ..Vocabulary::default() })
 }
 
-pub(in crate::code_rule_dsl) mod functions;
-pub(in crate::code_rule_dsl) mod git;
+pub mod functions;
+pub mod git;
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-logic's (it mounts it)

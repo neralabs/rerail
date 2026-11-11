@@ -4,13 +4,13 @@ use super::{Refusal, Refused};
 use crate::code_rule_dsl::matcher::{Arguments, Passed};
 use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
-pub(in crate::code_rule_dsl) mod lang_python;
-pub(in crate::code_rule_dsl) mod lang_ecma;
-pub(in crate::code_rule_dsl) mod lang_php;
+// cratify: `lang_python` is rerail-lang-python's (it mounts it)
+// cratify: `lang_ecma` is rerail-lang-ecma's (it mounts it)
+// cratify: `lang_php` is rerail-lang-php's (it mounts it)
 
 /// An option of `arguments` a family may not read.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum ArgumentFeature {
+pub enum ArgumentFeature {
     /// `/` and `*` in `signature`: Python's positional-only and keyword-only slots.
     SignatureMarkers,
     /// `mode: "syntactic"`: each slot found as Ruff's `find_argument` finds it.
@@ -20,10 +20,10 @@ pub(crate) enum ArgumentFeature {
 }
 
 /// A family's call arguments.
-pub(crate) trait ArgumentRules {
+pub trait ArgumentRules {
     /// Whether the family reads call arguments: its languages' registry capability,
     /// which the adapter kit checks.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     const SUPPORTED: bool;
     /// The kinds of the family's calls.
     const CALL_KINDS: &'static [&'static str];
@@ -35,13 +35,13 @@ pub(crate) trait ArgumentRules {
 }
 
 /// The refusal of `/` and `*` by a family whose parameters have no such kinds (`detail`).
-fn markers(detail: &str) -> Result<(), Refusal> {
+pub fn markers(detail: &str) -> Result<(), Refusal> {
     Err(Refusal::Refused(Cow::Owned(format!(
         "`/` and `*` mark Python's positional-only and keyword-only slots; {detail}"
     ))))
 }
 
-fn refused(message: &'static str) -> Result<(), Refusal> {
+pub fn refused(message: &'static str) -> Result<(), Refusal> {
     Err(Refusal::Refused(Cow::Borrowed(message)))
 }
 
@@ -61,7 +61,7 @@ impl ArgumentRules for Refused {
 
 /// The kit's check of a family's `ArgumentRules`.
 #[cfg(test)]
-pub(super) mod kit {
+pub mod kit {
     use super::super::syntax::kit::refusal;
     use super::{ArgumentFeature, ArgumentRules};
     use crate::code_rule_dsl::language::GrammarDialect;
@@ -72,16 +72,16 @@ pub(super) mod kit {
     use std::collections::BTreeSet;
 
     /// What a family's `ArgumentRules` answer.
-    pub(in super::super) struct Expect {
-        pub(in super::super) call_kinds: &'static [&'static str],
+    pub struct Expect {
+        pub call_kinds: &'static [&'static str],
         /// The refusals of `/` and `*`, `syntactic` and `estree`; `None` where read.
-        pub(in super::super) features: [Option<&'static str>; 3],
+        pub features: [Option<&'static str>; 3],
         /// A document holding a call, and what the call passes for the slots `a` and `b`, read
         /// as the language binds them: an argument's text, `-` absent, `?` unknown.
-        pub(in super::super) passed: (&'static str, [&'static str; 2]),
+        pub passed: (&'static str, [&'static str; 2]),
     }
 
-    pub(in super::super) fn check<A: Adapter>(
+    pub fn check<A: Adapter>(
         expect: &Expect,
         dialect: GrammarDialect,
         tape: impl Fn(&str) -> AstGrep<TapeDoc>,

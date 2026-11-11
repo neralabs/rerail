@@ -15,17 +15,17 @@
 //! the template's length (`Budget`), and nothing recurses deeper than a depth limit, so a
 //! template costs bounded time and stack whatever its bytes.
 
-pub(crate) mod ast;
-pub(crate) mod directives;
-pub(crate) mod lexer;
-pub(crate) mod node;
-pub(crate) mod parser;
-pub(crate) mod scan;
-pub(crate) mod token;
-pub(crate) mod tree;
+pub mod ast;
+pub mod directives;
+pub mod lexer;
+pub mod node;
+pub mod parser;
+pub mod scan;
+pub mod token;
+pub mod tree;
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
 
 use directives::Directives;
 use node::FlatNode;
@@ -93,7 +93,7 @@ impl Budget {
     }
 
     /// Steps left.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn remaining(&self) -> u64 {
         self.remaining
     }

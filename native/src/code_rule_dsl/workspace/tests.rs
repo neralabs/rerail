@@ -22,7 +22,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// failing test cannot fail every test that takes the slot after it.
 pub(super) static WORKSPACE_TEST_SLOT: Mutex<()> = Mutex::new(());
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 /// Build a Git fixture repository. Tests only: production discovery reads Git through gix.
 pub(super) fn git(root: &std::path::Path, arguments: &[&str]) {
     let status = std::process::Command::new("git")

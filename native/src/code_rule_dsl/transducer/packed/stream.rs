@@ -6,4 +6,4 @@
 //! Cranelift lower the same words.
 
 
-pub(in crate::code_rule_dsl) use rerail_compiler::stream::*;
+pub use rerail_compiler::stream::*;

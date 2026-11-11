@@ -12,7 +12,7 @@ pub(crate) struct Metal;
 pub(crate) static METAL: Metal = Metal;
 
 /// Registers Metal as the logic's and the transducer's device.
-pub(crate) fn register() {
+pub fn register() {
     crate::code_rule_dsl::logic::device::register(&METAL);
     crate::code_rule_dsl::transducer::packed::device::register(&METAL);
     crate::code_rule_dsl::prof::register_device_memory(|| (packed::metal_backend::reserved_mb(), packed::metal_backend::driver_mb()));
@@ -66,7 +66,7 @@ impl SolverDevice for Metal {
     }
 }
 
-mod matcher {
+pub mod matcher {
     use std::collections::BTreeSet;
     use std::sync::Arc;
 
@@ -157,13 +157,13 @@ mod matcher {
             Some(run.files.into_iter().map(|mut r| r.outputs.swap_remove(0)).collect())
         }
         fn execution_metrics(&self) -> (usize, usize) {
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             return programs::metrics();
-            #[cfg(not(test))]
+            #[cfg(not(any(test, feature = "test-hooks")))]
             (0, 0)
         }
         fn reset_execution_metrics(&self) {
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             programs::reset_metrics();
         }
     }

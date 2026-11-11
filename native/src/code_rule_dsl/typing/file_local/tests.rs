@@ -77,7 +77,7 @@ fn the_device_finds_the_cpus_nearest() {
 fn t_programs_split_into_file_local_and_cross_file() {
     use crate::code_rule_dsl::logic::rr::parse;
     for name in ["calls.rr", "calls_rust.rr", "workload.rr"] {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/typing/programs").join(name);
+        let path = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/typing/programs").join(name);
         let prog = parse(&crate::code_rule_dsl::logic::settings::program_text(&path).unwrap()).unwrap();
         let local = split(&prog);
         let derived: std::collections::BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();

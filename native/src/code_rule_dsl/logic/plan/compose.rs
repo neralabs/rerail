@@ -8,11 +8,11 @@ thread_local! {static CACHE:RefCell<HashMap<[u8;32],Compiled>>=RefCell::new(Hash
 /// strata natively, with SQL only where SQL reads a relation (decision 0104). Composition retains ordinary facts
 /// for sessions and persistence; it stays opt-in for comparison (async-family-integration).
 pub(super) fn enabled() -> bool {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if experiments::native_only() {
         return false;
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if ASKED.get() {
         return true;
     }
@@ -20,7 +20,7 @@ pub(super) fn enabled() -> bool {
 }
 
 // A test of the composed form asks for it on its own thread (`RERAIL_COMPOSE` would ask for every test's runs).
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {pub(super) static ASKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };}
 
 pub(super) fn clear() {
@@ -371,7 +371,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
     Ok(Compiled {
         sql: {
             let sql = if defs.is_empty() {body} else {format!("WITH RECURSIVE {} {body}", defs.join(",\n"))};
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             let sql = experiments::physical_sql(sql, prog);
             sql
         },
@@ -476,7 +476,7 @@ impl Compiled {
             db.prepare_cached(&self.sql)?;
         }
         let mut query = db.prepare_cached(&self.sql)?;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         query.reset_status(rusqlite::StatementStatus::RePrepare);
         let mut cursor = query.query([])?;
         while let Some(row) = cursor.next()? {
@@ -488,7 +488,7 @@ impl Compiled {
             );
         }
         drop(cursor);
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         super::super::profile::decision("composed automatic reprepare",||query.get_status(rusqlite::StatementStatus::RePrepare).to_string());
         drop(query);
         if let Some(before) = counters {
@@ -505,7 +505,7 @@ impl Compiled {
                 }
             }
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         {
             experiments::replay(self, db, &values)?;
             let work = crate::code_rule_dsl::facts::vtab::lookup_spike::take_work();
@@ -617,11 +617,11 @@ impl Compiled {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
 
-#[cfg(test)]
-pub(super) mod experiments;
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod experiments;
 
-mod stages;
-mod retained;
-pub(super) use retained::run;
+pub mod stages;
+pub mod retained;
+pub use retained::run;

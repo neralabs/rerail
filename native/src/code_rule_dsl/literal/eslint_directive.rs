@@ -282,7 +282,7 @@ pub(crate) fn tree(comment: &str) -> Option<PNode> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /// A parsed directive: its label, value, description, and items with their settings.
@@ -463,7 +463,7 @@ mod tests {
 pub(crate) struct EslintDirectiveGrammar;
 
 /// Its handle, which the engine registers (`literal::install`).
-pub(crate) const GRAMMAR: super::Grammar = super::Grammar::new(&EslintDirectiveGrammar);
+pub const GRAMMAR: super::Grammar = super::Grammar::new(&EslintDirectiveGrammar);
 
 impl super::LiteralGrammar for EslintDirectiveGrammar {
     fn name(&self) -> &'static str {

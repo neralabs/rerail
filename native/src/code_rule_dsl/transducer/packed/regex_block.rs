@@ -41,7 +41,7 @@ pub(in crate::code_rule_dsl) struct SpanPrefilter {
 }
 
 /// Where a batch's span programs ran (`ends_launch`).
-pub(in crate::code_rule_dsl) use crate::code_rule_dsl::facts::span_prefilter::RanOn;
+pub use crate::code_rule_dsl::facts::span_prefilter::RanOn;
 
 /// A batch of span programs as a launch of the executor (decision 0100 §13), the same structure as every other
 /// dispatch: priced by its bytes and operations, placed on the cores or the GPU, claimed by whichever lane reaches it,
@@ -162,12 +162,12 @@ impl SpanPrefilter {
     }
 
     /// Whether a match can end in `(a, b]`, a span's exclusive end, given `ends`.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(in crate::code_rule_dsl) fn any_in(ends: &[u64], a: usize, b: usize) -> bool {
         crate::code_rule_dsl::facts::span_prefilter::any_in(ends, a, b)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn program(&self) -> &BlockProgram {
         &self.program
     }
@@ -467,7 +467,7 @@ pub fn launch_spans(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<dyn c
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /// Every byte after which some substring ending there matches the pattern whole: the exact set Parabix marks.

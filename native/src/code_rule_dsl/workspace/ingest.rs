@@ -14,12 +14,12 @@ use crate::code_rule_dsl::model::{
     ClauseKind, CompiledClause, CompiledCodeRule, FileInput, Query, package_marker_directory,
     python_module_in,
 };
-use crate::code_rule_dsl::module_graph;
-pub(crate) mod ecma;
+// cratify: a re-export of rerail-lang-ecma's, which its facades of this module make
+// cratify: `ecma` is rerail-lang-ecma's (it mounts it)
 
 /// A repository's project context as its index reads it on disk (ECMAScript's `package.json` files below the
 /// workspace's root): the context of each file of a family that reads one, and what a clean tree's files inherit.
-pub(crate) trait RepositoryContext: Send {
+pub trait RepositoryContext: Send {
     /// The context of the repository file at `file` (absolute).
     fn of_file(&mut self, file: &std::path::Path) -> Option<crate::code_rule_dsl::language::FileManifest>;
     /// The context a file directly in `directory` (absolute) inherits.
@@ -32,7 +32,7 @@ pub(crate) type MakeRepositoryContext = fn(std::path::PathBuf, bool) -> Box<dyn 
 static REPOSITORY_CONTEXT: std::sync::OnceLock<MakeRepositoryContext> = std::sync::OnceLock::new();
 
 /// Registers what makes a repository's context (once, at load).
-pub(crate) fn install_repository_context(make: MakeRepositoryContext) {
+pub fn install_repository_context(make: MakeRepositoryContext) {
     let _ = REPOSITORY_CONTEXT.set(make);
 }
 
@@ -62,7 +62,7 @@ pub(crate) type StaleContext = (String, FileInput, Option<crate::code_rule_dsl::
 /// A workspace's project context of a language family's files besides the files themselves (ECMAScript's
 /// manifests, project configurations and server graphs), from which the workspace derives the context of a file
 /// the host sent none for. Registered at load (`install_project`); without one there is none.
-pub(crate) trait ProjectState: Send + Sync {
+pub trait ProjectState: Send + Sync {
     /// The paths of the request's `files` whose context the host left to the workspace.
     fn unhosted(&self, files: &[WireFile]) -> HashSet<String>;
     /// Whether the file at `path` is one the context reads (a manifest, an ignore file).
@@ -117,7 +117,7 @@ impl ProjectState for NoProject {
 static PROJECT: std::sync::OnceLock<fn() -> Box<dyn ProjectState>> = std::sync::OnceLock::new();
 
 /// Registers what makes a workspace's project context (once, at load).
-pub(crate) fn install_project(make: fn() -> Box<dyn ProjectState>) {
+pub fn install_project(make: fn() -> Box<dyn ProjectState>) {
     let _ = PROJECT.set(make);
 }
 
@@ -136,26 +136,26 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::Arc;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::sync::atomic::Ordering;
 
-#[cfg(test)]
-pub(super) static PACKAGE_CONTEXT_PATH_VISITS: std::sync::atomic::AtomicUsize =
+#[cfg(any(test, feature = "test-hooks"))]
+pub static PACKAGE_CONTEXT_PATH_VISITS: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
 const MAX_BINARY_REQUEST_BYTES: usize = 40 * 1024 * 1024;
-pub(super) const BINARY_REQUEST_MAGIC: &[u8; 8] = b"RERAILB1";
+pub const BINARY_REQUEST_MAGIC: &[u8; 8] = b"RERAILB1";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct Request {
-    pub(super) revision: u32,
-    pub(super) files: Vec<WireFile>,
-    pub(super) removed: Vec<String>,
+pub struct Request {
+    pub revision: u32,
+    pub files: Vec<WireFile>,
+    pub removed: Vec<String>,
     #[serde(default)]
-    pub(super) defer_global: bool,
+    pub defer_global: bool,
     #[serde(default)]
-    pub(super) quiet: bool,
+    pub quiet: bool,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -183,7 +183,7 @@ struct BufferFile {
     package: Option<crate::code_rule_dsl::language::FileManifest>,
 }
 
-pub(super) fn decode_buffer_request(buffer: &[u8]) -> Result<Request> {
+pub fn decode_buffer_request(buffer: &[u8]) -> Result<Request> {
     if buffer.len() > MAX_BINARY_REQUEST_BYTES {
         return Err(invalid("workspace buffer exceeds 40 MiB"));
     }
@@ -233,17 +233,17 @@ pub(super) fn decode_buffer_request(buffer: &[u8]) -> Result<Request> {
 }
 
 #[derive(Deserialize)]
-pub(super) struct WireFile {
-    pub(super) path: String,
-    pub(super) language: String,
-    pub(super) source: String,
+pub struct WireFile {
+    pub path: String,
+    pub language: String,
+    pub source: String,
     /// A Python file's module path, dotted or as a list of names (see `FileInput::new`).
     #[serde(default)]
-    pub(super) module: Option<Value>,
+    pub module: Option<Value>,
     /// An ECMA file's nearest `package.json` (see `FileInput::new`); without it the workspace's
     /// `package.json` entries decide (`refresh_manifest_context`).
     #[serde(default, deserialize_with = "crate::code_rule_dsl::language::deserialize_manifest")]
-    pub(super) package: Option<crate::code_rule_dsl::language::FileManifest>,
+    pub package: Option<crate::code_rule_dsl::language::FileManifest>,
 }
 impl WireFile {
     pub(super) fn into_input(self, index: usize) -> Result<FileInput> {
@@ -265,7 +265,7 @@ pub(super) fn is_file_local(clause: &CompiledClause) -> bool {
     )
 }
 
-pub(super) fn make_file(
+pub fn make_file(
     input: FileInput,
     source_revision: u32,
     code_rules: &[Arc<CompiledCodeRule>],
@@ -417,7 +417,7 @@ pub(super) fn reclaim_candidate_sets(candidate_sets: &mut CandidateSets) {
     }
 }
 
-fn path_is_below(path: &str, directory: &str) -> bool {
+pub fn path_is_below(path: &str, directory: &str) -> bool {
     directory.is_empty()
         || path
             .strip_prefix(directory)
@@ -572,7 +572,7 @@ fn refresh_package_context(
             format!("{directory}/")
         };
         for (path, _) in state.files.range(start.clone()..) {
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             PACKAGE_CONTEXT_PATH_VISITS.fetch_add(1, Ordering::Relaxed);
             if !path_is_below(path, directory) {
                 break;
@@ -582,7 +582,7 @@ fn refresh_package_context(
             }
         }
         for (path, _) in state.evicted_inputs.range(start..) {
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             PACKAGE_CONTEXT_PATH_VISITS.fetch_add(1, Ordering::Relaxed);
             if !path_is_below(path, directory) {
                 break;
@@ -661,7 +661,7 @@ fn refresh_package_context(
 /// Applies `request` to `state`: the paths outside it whose module context it refreshed, and
 /// whether the store is busy for this apply: deleting its removals found it busy past the write
 /// deadline, or an earlier apply did and its window is still open (`store_cooling_down`).
-pub(super) fn apply_request(
+pub fn apply_request(
     state: &mut WorkspaceState,
     request: Request,
 ) -> Result<(BTreeSet<String>, bool)> {
@@ -715,7 +715,7 @@ pub(super) fn apply_request(
         }
     }
     // P's anchor corpus (test-only, open items O18 and O20).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     {
         // Remove stale postings before publishing the new logical file versions. A failed
         // preparation leaves a missing index, which authoritative matching can still answer.

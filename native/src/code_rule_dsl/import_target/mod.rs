@@ -9,16 +9,16 @@
 //! Resolution reads the files the evaluation holds and, below the workspace's root, the files on
 //! disk (`fs::View`): a bare specifier resolves only where its package is installed there.
 
-mod builtins;
-mod entrypoints;
-pub(crate) mod fs;
-mod json;
-mod path;
-mod resolver;
-pub(crate) mod term;
-mod tsconfig;
+pub mod builtins;
+pub mod entrypoints;
+pub mod fs;
+pub mod json;
+pub mod path;
+pub mod resolver;
+pub mod term;
+pub mod tsconfig;
 
-pub(crate) use builtins::is_builtin;
+pub use builtins::is_builtin;
 use fs::View;
 use json::Json;
 use parking_lot::Mutex;
@@ -773,6 +773,6 @@ pub(crate) fn current_view() -> Option<Arc<View>> {
     VIEW.with_borrow(Clone::clone)
 }
 
-pub(crate) mod held;
+pub mod held;
 #[cfg(test)]
-mod tests;
+pub mod tests;

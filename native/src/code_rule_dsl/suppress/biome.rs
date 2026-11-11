@@ -48,7 +48,7 @@ use std::ops::Range;
 
 /// Biome's `biome-ignore` comments: the lint rules (`lint/<group>/<rule>`) a comment must
 /// name, or their group, or `lint`.
-pub(crate) struct Suppressions;
+pub struct Suppressions;
 
 impl super::SuppressionKind for Suppressions {
     const KEY: &'static str = "biome";
@@ -74,7 +74,7 @@ pub(super) fn spec(biome: &Value, at: &str) -> napi::Result<Vec<String>> {
 
 #[rustfmt::skip]
 #[path = "biome_registry.generated.rs"]
-mod registry;
+pub mod registry;
 
 /// A suppression's `RuleCategory`: lint rules are the ones a violation names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -600,7 +600,7 @@ fn named<'a>(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_language::LanguageExt;

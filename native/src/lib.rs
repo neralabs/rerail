@@ -18,17 +18,16 @@ mod test_watchdog;
 mod code_rule_dsl;
 /// The engine's tools without Node (`rerail-engine dump` / `asm`).
 pub use code_rule_dsl::tools;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) use code_rule_dsl::prof::purge_allocator_pages;
 pub use rerail_store::content_store;
-pub mod git_ignore;
+pub use rerail_w::git_ignore;
 pub use rerail_store::git_workspace;
 mod main_instance;
 mod model;
-mod panic_boundary;
+pub use rerail_w::panic_boundary;
 pub mod process;
-/// The most threads the process uses (`RERAIL_THREADS`).
-pub mod threads;
+pub use rerail_logic::threads;
 /// The browser's long-lived engine: `rerail_command` and its buffers (wasm/README.md).
 #[cfg(target_family = "wasm")]
 pub mod reactor;

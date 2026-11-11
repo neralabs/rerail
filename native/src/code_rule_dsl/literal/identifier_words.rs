@@ -33,7 +33,7 @@ pub(super) fn parse(text: &str) -> PNode {
 pub(crate) struct IdentifierWordsGrammar;
 
 /// Its handle, which the engine registers (`literal::install`).
-pub(crate) const GRAMMAR: super::Grammar = super::Grammar::new(&IdentifierWordsGrammar);
+pub const GRAMMAR: super::Grammar = super::Grammar::new(&IdentifierWordsGrammar);
 
 impl super::LiteralGrammar for IdentifierWordsGrammar {
     fn name(&self) -> &'static str {

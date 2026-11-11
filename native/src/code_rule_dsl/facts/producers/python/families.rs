@@ -25,7 +25,7 @@ use crate::code_rule_dsl::language::KindCatalog;
 /// The rows' version: a change to what they hold changes the families' producer (`families::py_producer`).
 pub(crate) const VERSION: u32 = 3;
 
-pub(crate) use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS as CONTEXTS;
+pub use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS as CONTEXTS;
 /// `py_call_arg.spread`'s names: none, `*x`, `**x`.
 pub(crate) const SPREADS: [&str; 3] = ["none", "positional", "keywords"];
 
@@ -210,7 +210,7 @@ pub(crate) fn digest(rows: &Rows) -> [u8; 32] {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
 
 /// Extract only calls requested by the consumer; no all-call scan or context calculation.
 pub(crate) fn arguments(g:&Grammar,f:&Facts,calls:&[u32])->Vec<[u32;6]> {
@@ -255,6 +255,6 @@ pub(crate) fn qualification_chain(g:&Grammar,f:&Facts,n:u32)->Option<(String,Vec
     Some((crate::code_rule_dsl::identifier::python_name(f.text(n).into()).into_owned(),tail))
 }
 
-pub(crate) mod candidates;
-#[cfg(test)]
-pub(crate) use candidates as candidate_spike;
+pub mod candidates;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use candidates as candidate_spike;

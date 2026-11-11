@@ -419,7 +419,7 @@ fn fresh_cte(reserved: &mut BTreeSet<String>, prefix: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     fn select(relation: &str, alias: &str, columns: &[&str]) -> Select {
         Select {

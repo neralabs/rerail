@@ -4,7 +4,7 @@ use super::{Refusal, Refused};
 use crate::code_rule_dsl::calls::closure::{Graph, Link};
 use crate::code_rule_dsl::calls::names::Name;
 use crate::code_rule_dsl::calls::summary::{Callee, SHADOWED, Summary};
-use crate::code_rule_dsl::calls::{FileTables, php};
+use crate::code_rule_dsl::calls::{FileTables};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::ScopeTable;
@@ -12,20 +12,20 @@ use ast_grep_core::{Doc, Node};
 use ast_grep_language::LanguageExt;
 use std::borrow::Cow;
 use std::sync::Arc;
-pub(in crate::code_rule_dsl) mod lang_python;
-pub(in crate::code_rule_dsl) mod lang_php;
-pub(in crate::code_rule_dsl) mod lang_blade;
+// cratify: `lang_python` is rerail-lang-python's (it mounts it)
+// cratify: `lang_php` is rerail-lang-php's (it mounts it)
+// cratify: `lang_blade` is rerail-lang-php's (it mounts it)
 
 /// A DSL feature of `calls` a family may refuse.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CallFeature {
+pub enum CallFeature {
     /// The `calls` term itself.
     Calls,
 }
 
 /// A family's calls: what a call is, what it reaches, how a file's calls are summarised, and how
 /// the workspace graph names and links the family's definitions.
-pub(crate) trait CallRules {
+pub trait CallRules {
     /// Whether the family's calls join the call graph: its languages' registry capability,
     /// which the adapter kit checks.
     const SUPPORTED: bool;
@@ -156,7 +156,7 @@ impl CallRules for Refused {
 }
 
 #[cfg(test)]
-pub(super) mod kit {
+pub mod kit {
     use super::{CallFeature, CallRules};
     use crate::code_rule_dsl::calls::names::Name;
     use crate::code_rule_dsl::language::GrammarDialect;
@@ -167,27 +167,27 @@ pub(super) mod kit {
     use std::sync::Arc;
 
     /// What one family's calls answer.
-    pub(crate) struct Calls {
-        pub(crate) call_kinds: &'static [&'static str],
-        pub(crate) function_kinds: &'static [&'static str],
+    pub struct Calls {
+        pub call_kinds: &'static [&'static str],
+        pub function_kinds: &'static [&'static str],
         /// `CallFeature::Calls`'s refusal, if the family refuses it.
-        pub(crate) refusal: Option<&'static str>,
-        pub(crate) seed_language: Option<&'static str>,
-        pub(crate) subclasses: bool,
+        pub refusal: Option<&'static str>,
+        pub seed_language: Option<&'static str>,
+        pub subclasses: bool,
         /// A source in the family's dialect, and the names of the definitions its regions'
         /// summaries record.
-        pub(crate) summary: (&'static str, &'static [&'static str]),
+        pub summary: (&'static str, &'static [&'static str]),
         /// The module an unread file of module `pkg.mod` names.
-        pub(crate) unread: Option<&'static str>,
+        pub unread: Option<&'static str>,
         /// A definition's name and its label.
-        pub(crate) label: (&'static str, &'static str),
+        pub label: (&'static str, &'static str),
         /// Definitions' names and flags, and the keys each is linked by where its spellings are
         /// itself and `alt.f`.
-        pub(crate) keys: &'static [(&'static str, u8, &'static [&'static str])],
+        pub keys: &'static [(&'static str, u8, &'static [&'static str])],
     }
 
     /// Checks `A`'s calls against `expect`, its documents read in `dialect`.
-    pub(crate) fn check<A: Adapter>(expect: &Calls, dialect: GrammarDialect) {
+    pub fn check<A: Adapter>(expect: &Calls, dialect: GrammarDialect) {
         type C<A> = <A as Adapter>::Calls;
         assert_eq!(<C<A> as CallRules>::CALL_KINDS, expect.call_kinds);
         assert_eq!(<C<A> as CallRules>::FUNCTION_KINDS, expect.function_kinds);

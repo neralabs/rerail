@@ -48,7 +48,7 @@ pub(in crate::code_rule_dsl) fn executor() -> &'static Executor {
 
 /// The executor of a binding: every lane under the device binding (`device`), the cores' (and SME's) otherwise. For
 /// a job on another thread than the run's (whose binding is the run's thread's, [`executor`]).
-pub(in crate::code_rule_dsl) fn executor_for(device: bool) -> &'static Executor {
+pub fn executor_for(device: bool) -> &'static Executor {
     if device { &ALL } else { &CPU }
 }
 
@@ -75,7 +75,7 @@ pub(in crate::code_rule_dsl) fn scores() -> Vec<(&'static str, rerail_accel::sco
 ///
 /// Where no caller can wait (a component run through SQL, a lattice fixpoint, a test), the form runs its launches at
 /// once, as a batch of its own. `RERAIL_WAVES=off` does that everywhere, to measure what the waves save.
-pub(in crate::code_rule_dsl) mod wave {
+pub mod wave {
     use rerail_accel::{Batch, Kernel, Launch, Output};
     use std::cell::{Cell, RefCell};
     use std::collections::HashMap;
@@ -92,7 +92,7 @@ pub(in crate::code_rule_dsl) mod wave {
     /// While held, a form's launches may wait for the wave.
     pub(in crate::code_rule_dsl) struct Suspendable(bool);
 
-    pub(in crate::code_rule_dsl) fn suspendable() -> Suspendable {
+    pub fn suspendable() -> Suspendable {
         let on = !std::env::var("RERAIL_WAVES").is_ok_and(|v| v == "off");
         if on {
             SUSPENDABLE.set(SUSPENDABLE.get() + 1);
@@ -130,7 +130,7 @@ pub(in crate::code_rule_dsl) mod wave {
 
     /// Runs every queued launch as one batch (`strata`: how many strata wait on it, for the profile). Returns how
     /// many launches it ran.
-    pub(in crate::code_rule_dsl) fn flush(strata: usize) -> Result<usize, String> {
+    pub fn flush(strata: usize) -> Result<usize, String> {
         let q = QUEUED.with_borrow_mut(std::mem::take);
         if q.is_empty() {
             return Ok(0);
@@ -153,8 +153,8 @@ pub(in crate::code_rule_dsl) mod wave {
     }
 
     /// This thread's waves flushed and the launches they held, so far.
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn flushed() -> (u64, u64) {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn flushed() -> (u64, u64) {
         FLUSHED.get()
     }
 }
@@ -162,7 +162,7 @@ pub(in crate::code_rule_dsl) mod wave {
 /// The acceleration profile (decision 0098 §4): per form, where a launch's time goes from recognizing the form to
 /// consuming its output. Each form's host phases are timed here (`host`), each batch's executor report is added
 /// (`run`), and `report` renders the profile's section. Only under `RERAIL_PROFILE`.
-pub(in crate::code_rule_dsl) mod prof {
+pub mod prof {
     use super::super::profile;
     use rerail_accel::exec::{Done, Report, thread_cpu};
     use rerail_accel::{Batch, Lane};
@@ -260,7 +260,7 @@ pub(in crate::code_rule_dsl) mod prof {
     /// A host phase of `form`, timed until dropped.
     pub struct Host(Option<(&'static str, &'static str, Instant, f64)>);
 
-    pub(in crate::code_rule_dsl) fn host(form: &'static str, phase: &'static str) -> Host {
+    pub fn host(form: &'static str, phase: &'static str) -> Host {
         Host(profile::on().then(|| (form, phase, Instant::now(), thread_cpu())))
     }
 
@@ -282,7 +282,7 @@ pub(in crate::code_rule_dsl) mod prof {
     }
 
     /// Counts `n` events of `what` for `form`.
-    pub(in crate::code_rule_dsl) fn count(form: &'static str, what: &'static str, n: u64) {
+    pub fn count(form: &'static str, what: &'static str, n: u64) {
         if !profile::on() || n == 0 {
             return;
         }
@@ -295,12 +295,12 @@ pub(in crate::code_rule_dsl) mod prof {
     }
 
     /// Runs `batch` on this thread's executor, its report added to `form`'s.
-    pub(in crate::code_rule_dsl) fn run(form: &'static str, batch: Batch) -> Result<(Vec<Done>, Report), String> {
+    pub fn run(form: &'static str, batch: Batch) -> Result<(Vec<Done>, Report), String> {
         run_on(super::executor(), form, batch)
     }
 
     /// [`run`] on `ex` (a job whose binding is not this thread's: [`executor_for`](super::executor_for)).
-    pub(in crate::code_rule_dsl) fn run_on(ex: &rerail_accel::Executor, form: &'static str, batch: Batch) -> Result<(Vec<Done>, Report), String> {
+    pub fn run_on(ex: &rerail_accel::Executor, form: &'static str, batch: Batch) -> Result<(Vec<Done>, Report), String> {
         let n = batch.0.len() as u64;
         let r = ex.run_as(form, batch)?;
         if profile::on() {

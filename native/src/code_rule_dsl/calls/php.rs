@@ -64,7 +64,7 @@ const CLASS_KINDS: [&str; 5] = [
 ];
 
 /// A class-like's parent class: `(class, parent)` (`calls::PARENT`).
-pub(crate) use super::PARENT;
+pub use super::PARENT;
 /// A trait the class-like uses: `(class, trait)`.
 pub(crate) const TRAIT: u8 = 1;
 /// An interface the class-like implements or extends: `(class, interface)`.

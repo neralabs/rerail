@@ -10,7 +10,7 @@ pub(super) struct Delta {
     pub inserted: u64,
     pub deleted: u64,
 }
-pub(super) use super::scratch::Work;
+pub use super::scratch::Work;
 impl Work<'_> {
     pub fn insert(&self, table: &str, query: &str, ignore: bool) -> Result<usize> {
         if let Some(store) = self.versions

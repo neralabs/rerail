@@ -3,12 +3,12 @@ use super::super::logic::sql::select::{Query, Relation as Rel};
 use super::maintenance::{Delta, Work};
 use super::*;
 use crate::code_rule_dsl::logic::native::aggregation::{Grouping, Reduction};
-mod compose;
-mod fold;
-mod frame;
-pub(super) mod initial;
-mod operator;
-mod quiescent;
+pub mod compose;
+pub mod fold;
+pub mod frame;
+pub mod initial;
+pub mod operator;
+pub mod quiescent;
 use frame::Frame;
 const UNSUPPORTED: &str = "unsupported temporal retention: ";
 
@@ -385,7 +385,7 @@ impl Trace {
     }
 }
 
-pub(super) fn prepare(
+pub fn prepare(
     w: &mut Work<'_>,
     store: &versions::Store,
     run: &mut session::Execution,

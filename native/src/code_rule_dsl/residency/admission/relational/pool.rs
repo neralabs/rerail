@@ -90,7 +90,7 @@ impl Drop for Lease {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn a_successful_lease_returns_empty_backing_and_resets_source_and_function_budgets() {

@@ -8,7 +8,7 @@ use serde_json::Value;
 
 /// SQLFluff's `-- noqa` comments, a linter other than Ruff: the references a directive may
 /// name the violation's rule by.
-pub(crate) struct Suppressions;
+pub struct Suppressions;
 
 impl super::SuppressionKind for Suppressions {
     const KEY: &'static str = "sqlfluff";
@@ -350,7 +350,7 @@ fn fnmatchcase(globs: &[Glob], text: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::oracle;
     use serde_json::Value;

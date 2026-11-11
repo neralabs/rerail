@@ -346,7 +346,7 @@ fn jumps_out_of_try_run_its_finally() {
     }
 }
 
-mod code_rules {
+pub mod code_rules {
     use crate::code_rule_dsl::CompiledCodeRuleDsl;
     use crate::code_rule_dsl::test_support::*;
     use napi::Result;

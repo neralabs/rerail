@@ -79,7 +79,7 @@ fn digits(text: &[u16], position: usize, index: &mut usize) -> f64 {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use serde_json::Value as Json;
 
