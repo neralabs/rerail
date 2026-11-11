@@ -91,6 +91,11 @@ def main(edges_json, out, *indexes):
                     w.write(f'{a}\t{b}\t{d[5]}\t{sym.split(" ", 4)[-1]}\t{d[0]}:{d[1] + 1}\t{" ".join(sorted(sites))}\n')
     dump('upward.tsv', up)
     dump('tests.tsv', uptest)
+    with open(os.path.join(out, 'reads.tsv'), 'w') as w:
+        w.write('file\tline\tkind\titem\tread_by\n')
+        for sym, users in sorted(reads.items()):
+            f, l, c, sl, sc, k = defs[sym]
+            w.write(f'{f}\t{l + 1}\t{k}\t{sym.split(" ", 4)[-1]}\t{",".join(sorted(users))}\n')
     widen = []
     for sym, users in reads.items():
         f, l, c, sl, sc, k = defs[sym]

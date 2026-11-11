@@ -47,6 +47,9 @@ p-anchor-corpus = []
 # `METAL_EXECUTION_LOCK`, so these run one at a time and were 82% of the default suite's test
 # time; they run as their own gate: `cargo test --lib --features metal-tests -- transducer::`.
 metal-tests = []
+# The test-only items of the engine's crates (`cfg(any(test, feature = "test-hooks"))`), for the tests of the crates
+# above them; the engine's tests turn it on. Off in every product build.
+test-hooks = []
 [dependencies]
 # `.rr`'s @ed25519_ok (code_rule_dsl/logic/crypto.rs): W's verify_ed25519, with the crates and versions it used.
 base64 = "=0.22.1"

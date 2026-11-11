@@ -183,6 +183,70 @@ fn load(file: &std::path::Path, path: &str, mod_rs: bool, out: &mut Vec<Module>)
     modules(file, &src, &offsets(&src), &parsed.items, path, &dir, &here, out);
 }
 
+/// `test` atoms of cfg predicates: the attributes `#[cfg(..)]` and `#[cfg_attr(<pred>, ..)]` (its predicate only), and
+/// `cfg!(..)`. Each: (start, end) of the ident, the attribute's (or macro's) span, and the mod it gates, if any.
+struct CfgTests<'a> {
+    src: &'a str,
+    lines: Vec<usize>,
+    mods: Vec<(usize, String)>,
+    out: Vec<(usize, usize, usize, usize)>,
+}
+
+impl CfgTests<'_> {
+    fn span(&self, s: proc_macro2::Span) -> (usize, usize) {
+        (byte(self.src, &self.lines, s.start()), byte(self.src, &self.lines, s.end()))
+    }
+
+    fn scan(&mut self, tokens: proc_macro2::TokenStream, whole: (usize, usize), predicate_only: bool) {
+        let mut prev_eq = false;
+        let mut iter = tokens.into_iter().peekable();
+        while let Some(t) = iter.next() {
+            match &t {
+                proc_macro2::TokenTree::Punct(p) if p.as_char() == ',' && predicate_only => return,
+                proc_macro2::TokenTree::Ident(i) if i == "test" && !prev_eq => {
+                    let next_is_eq = matches!(iter.peek(), Some(proc_macro2::TokenTree::Punct(p)) if p.as_char() == '=');
+                    if !next_is_eq {
+                        let (s, e) = self.span(i.span());
+                        self.out.push((s, e, whole.0, whole.1));
+                    }
+                }
+                proc_macro2::TokenTree::Group(g) => self.scan(g.stream(), whole, false),
+                _ => {}
+            }
+            prev_eq = matches!(&t, proc_macro2::TokenTree::Punct(p) if p.as_char() == '=');
+        }
+    }
+}
+
+impl<'ast> syn::visit::Visit<'ast> for CfgTests<'_> {
+    fn visit_attribute(&mut self, a: &'ast syn::Attribute) {
+        let whole = self.span(a.span());
+        if let syn::Meta::List(list) = &a.meta {
+            if list.path.is_ident("cfg") {
+                self.scan(list.tokens.clone(), whole, false);
+            } else if list.path.is_ident("cfg_attr") {
+                self.scan(list.tokens.clone(), whole, true);
+            }
+        }
+    }
+
+    fn visit_macro(&mut self, m: &'ast syn::Macro) {
+        if m.path.is_ident("cfg") {
+            let whole = self.span(m.span());
+            self.scan(m.tokens.clone(), whole, false);
+        }
+        syn::visit::visit_macro(self, m);
+    }
+
+    fn visit_item_mod(&mut self, m: &'ast syn::ItemMod) {
+        for a in &m.attrs {
+            let (s, _) = self.span(a.span());
+            self.mods.push((s, m.ident.to_string()));
+        }
+        syn::visit::visit_item_mod(self, m);
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
@@ -224,8 +288,22 @@ fn main() {
                 );
             }
         }
+        Some("cfgtest") => {
+            // `cratify cfgtest <file>...`: per `test` atom of a cfg predicate: file, start, end, the attribute's start
+            // and end, and `mod <name>` when the attribute gates a module (else `-`).
+            for file in &args[2..] {
+                let src = std::fs::read_to_string(file).expect(file);
+                let f = syn::parse_file(&src).unwrap_or_else(|e| panic!("{file}: {e}"));
+                let mut v = CfgTests { src: &src, lines: offsets(&src), mods: Vec::new(), out: Vec::new() };
+                syn::visit::Visit::visit_file(&mut v, &f);
+                for (s, e, a, b) in &v.out {
+                    let gated = v.mods.iter().find(|(at, _)| at == a).map_or("-".to_owned(), |(_, n)| format!("mod {n}"));
+                    println!("{file}\t{s}\t{e}\t{a}\t{b}\t{gated}");
+                }
+            }
+        }
         _ => {
-            eprintln!("usage: cratify items <file>... | cratify tree <lib.rs>");
+            eprintln!("usage: cratify items <file>... | cratify tree <lib.rs> | cratify cfgtest <file>...");
             std::process::exit(2);
         }
     }

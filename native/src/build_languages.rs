@@ -176,6 +176,43 @@ fn read_directory(
     read
 }
 
+/// The vendored tree-sitter grammars (`native/grammars/`): the engine's build script compiles them (its `GRAMMARS`
+/// lists the same names, and checks it), and every registry is generated against them.
+pub(crate) const VENDORED: &[&str] = &["vue", "python", "sql", "typescript", "tsx", "javascript"];
+
+/// The registry's supported languages this build leaves out: each language `<id>` is built only with its feature
+/// `lang-<id>` (`CARGO_FEATURE_LANG_<ID>` in the build script running this). `languages` is `languages/`.
+pub(crate) fn omitted_languages(languages: &Path) -> Vec<String> {
+    let mut omitted = Vec::new();
+    for entry in std::fs::read_dir(languages).expect("languages/ is readable") {
+        let path = entry.expect("languages/ entry").path();
+        if path.extension().is_none_or(|extension| extension != "json") {
+            continue;
+        }
+        let value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("registry file")).expect("registry JSON");
+        let (Some(id), Some("supported")) = (value["id"].as_str(), value["status"].as_str()) else { continue };
+        let feature = format!("CARGO_FEATURE_LANG_{}", id.to_ascii_uppercase().replace('-', "_"));
+        if std::env::var_os(&feature).is_none() {
+            omitted.push(id.to_owned());
+        }
+    }
+    omitted.sort();
+    omitted
+}
+
+/// The registry generated into `out` for the build script running this, `native` being the `native/` directory
+/// (the engine's, and `rerail-lang`'s, which compiles `code_rule_dsl::language`). Returns each registry file and its
+/// bytes, as [`generate`].
+pub(crate) fn generate_registry(native: &Path, omitted: &[String], out: &Path) -> Vec<(String, Vec<u8>)> {
+    let root = native.parent().expect("repository root");
+    let directory = root.join("languages");
+    let test_directory = native.join("test-languages");
+    println!("cargo:rerun-if-changed={}", directory.display());
+    println!("cargo:rerun-if-changed={}", test_directory.display());
+    generate(&directory, test_directory.is_dir().then_some(test_directory.as_path()), VENDORED, omitted, out)
+}
+
 /// Reads and validates every registry file in `directory`, writes `language_registry.rs` to
 /// `out`, and returns each file read with its bytes (they are part of the engine's identity).
 ///
@@ -598,7 +635,7 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
         );
     }
     out.push_str(
-        "            $(#[cfg(test)] $test,)*\n        }\n\n        impl GrammarDialect {\n",
+        "            $(#[cfg(any(test, feature = \"test-hooks\"))] $test,)*\n        }\n\n        impl GrammarDialect {\n",
     );
     out.push_str("            /// Every dialect, test-only grammars included.\n            const ALL: &'static [Self] = &[\n");
     for dialect in supported.iter().flat_map(|entry| &entry.dialects) {
@@ -608,7 +645,7 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
             dialect.variant.as_deref().expect("validated")
         );
     }
-    out.push_str("                $(#[cfg(test)] Self::$test,)*\n            ];\n\n");
+    out.push_str("                $(#[cfg(any(test, feature = \"test-hooks\"))] Self::$test,)*\n            ];\n\n");
     out.push_str("            /// The ast-grep language whose pattern syntax the dialect's rules use, if any.\n            const fn support(self) -> Option<SupportLang> {\n                match self {\n");
     for dialect in supported.iter().flat_map(|entry| &entry.dialects) {
         let name = dialect.variant.as_deref().expect("validated");
@@ -626,7 +663,7 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
             None => writeln!(out, "                    Self::{name} => None,"),
         };
     }
-    out.push_str("                    $(#[cfg(test)] Self::$test => Some($support),)*\n                }\n            }\n        }\n    };\n}\n\n");
+    out.push_str("                    $(#[cfg(any(test, feature = \"test-hooks\"))] Self::$test => Some($support),)*\n                }\n            }\n        }\n    };\n}\n\n");
     let vias = supported
         .iter()
         .flat_map(|entry| &entry.embeds)
@@ -644,13 +681,13 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
     for via in &unique_vias {
         let _ = writeln!(out, "    {},", pascal(via));
     }
-    out.push_str("    /// Tests' own embedding (`embed::TestScript`), of the test-only grammars `test_embeds` names.\n    #[cfg(test)]\n    TestScript,\n");
+    out.push_str("    /// Tests' own embedding (`embed::TestScript`), of the test-only grammars `test_embeds` names.\n    #[cfg(any(test, feature = \"test-hooks\"))]\n    TestScript,\n");
     out.push_str("}\n\nimpl Via {\n");
     out.push_str("    /// The registry's name of the embedding (`ast.embedded` names it).\n    pub(crate) const fn id(self) -> &'static str {\n        match self {\n");
     for via in &unique_vias {
         let _ = writeln!(out, "            Self::{} => {via:?},", pascal(via));
     }
-    out.push_str("            #[cfg(test)]\n            Self::TestScript => \"test-script\",\n        }\n    }\n}\n\nimpl GrammarDialect {\n");
+    out.push_str("            #[cfg(any(test, feature = \"test-hooks\"))]\n            Self::TestScript => \"test-script\",\n        }\n    }\n}\n\nimpl GrammarDialect {\n");
     out.push_str("    /// The dialects a file of this dialect embeds programs of, each with the `Via` that builds\n    /// them: every dialect of each language its registry entry `embeds`, in registry order.\n");
     out.push_str("    pub(crate) const fn embeds(self) -> &'static [(Via, GrammarDialect)] {\n        match self {\n");
     for entry in &supported {
@@ -681,7 +718,7 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
         }
     }
     out.push_str(
-        "            #[cfg(test)]\n            _ => test_embeds(self),\n        }\n    }\n}\n\n",
+        "            #[cfg(any(test, feature = \"test-hooks\"))]\n            _ => test_embeds(self),\n        }\n    }\n}\n\n",
     );
     out.push_str("/// Evaluates `$body` with `$e` the embedder of `$via` (`embed::<Via>`): one arm per `Via`.\n");
     out.push_str("macro_rules! with_embedder {\n    ($via:expr, $e:ident => $body:expr) => {\n        match $via {\n");
@@ -692,7 +729,7 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
             "            $crate::code_rule_dsl::language::Via::{via} => {{\n                type $e = $crate::code_rule_dsl::embed::{via};\n                $body\n            }}"
         );
     }
-    out.push_str("            #[cfg(test)]\n            $crate::code_rule_dsl::language::Via::TestScript => {\n                type $e = $crate::code_rule_dsl::embed::TestScript;\n                $body\n            }\n");
+    out.push_str("            #[cfg(any(test, feature = \"test-hooks\"))]\n            $crate::code_rule_dsl::language::Via::TestScript => {\n                type $e = $crate::code_rule_dsl::embed::TestScript;\n                $body\n            }\n");
     out.push_str("        }\n    };\n}\n\npub(crate) use with_embedder;\n\n");
 
     out.push_str("const DIALECTS: &[Dialect] = &[\n");
@@ -749,11 +786,11 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
     }
     out.push_str("    }\n    match lang {\n");
     out.push_str(&arms);
-    out.push_str("        #[cfg(test)]\n        _ => None,\n    }\n}\n\n");
+    out.push_str("        #[cfg(any(test, feature = \"test-hooks\"))]\n        _ => None,\n    }\n}\n\n");
     out.push_str("impl GrammarDialect {\n    /// Whether this build parses the dialect: its language's `lang-<id>` feature is on. Files of a dialect\n    /// not built are routed to none, as a planned language's are.\n    pub(crate) const fn built(self) -> bool {\n        match self {\n");
     out.push_str(&built);
     // A test-only dialect is ast-grep's grammar (`support`), always linked: built in every test build.
-    out.push_str("            #[cfg(test)]\n            _ => true,\n        }\n    }\n}\n\n");
+    out.push_str("            #[cfg(any(test, feature = \"test-hooks\"))]\n            _ => true,\n        }\n    }\n}\n\n");
 
     out.push_str(
         "/// A code-rule language the registry marks supported: the `language` of a query, a define\n/// or a transform.\n",
@@ -857,12 +894,12 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
         );
         let _ = writeln!(
             out,
-            "/// Tests also see the languages only tests plan (`native/test-languages/`), so a test of a\n/// planned language never names one the product may flip to supported.\n#[cfg(test)]\npub(crate) const PLANNED_LANGUAGES: &[&str] = &[{}];\n",
+            "/// Tests also see the languages only tests plan (`native/test-languages/`), so a test of a\n/// planned language never names one the product may flip to supported.\n#[cfg(any(test, feature = \"test-hooks\"))]\npub(crate) const PLANNED_LANGUAGES: &[&str] = &[{}];\n",
             with_test.join(", ")
         );
         let _ = writeln!(
             out,
-            "/// The languages only tests plan: `PLANNED_LANGUAGES` less the registry's own.\n#[cfg(test)]\npub(crate) const TEST_PLANNED_LANGUAGES: &[&str] = &[{}];\n",
+            "/// The languages only tests plan: `PLANNED_LANGUAGES` less the registry's own.\n#[cfg(any(test, feature = \"test-hooks\"))]\npub(crate) const TEST_PLANNED_LANGUAGES: &[&str] = &[{}];\n",
             test_planned.join(", ")
         );
     }
@@ -918,7 +955,7 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
         );
     }
     out.push_str(
-        "            #[cfg(test)]\n            _ => TEST_DIALECT_FAMILY,\n        }\n    }\n\n",
+        "            #[cfg(any(test, feature = \"test-hooks\"))]\n            _ => TEST_DIALECT_FAMILY,\n        }\n    }\n\n",
     );
     out.push_str("    /// Whether the family's files carry `suppression`'s comments: its languages' entries list it.\n");
     out.push_str("    pub(crate) const fn honours(self, suppression: Suppression) -> bool {\n");
@@ -1120,9 +1157,9 @@ mod tests {
         .generate();
         // Only the test-only via, which tests embed through (`test_embeds`).
         assert!(generated.contains(
-            "pub(crate) enum Via {\n    /// Tests' own embedding (`embed::TestScript`), of the test-only grammars `test_embeds` names.\n    #[cfg(test)]\n    TestScript,\n}\n"
+            "pub(crate) enum Via {\n    /// Tests' own embedding (`embed::TestScript`), of the test-only grammars `test_embeds` names.\n    #[cfg(any(test, feature = \"test-hooks\"))]\n    TestScript,\n}\n"
         ));
-        assert!(generated.contains("match $via {\n            #[cfg(test)]\n"));
+        assert!(generated.contains("match $via {\n            #[cfg(any(test, feature = \"test-hooks\"))]\n"));
         assert!(!generated.contains("GrammarDialect::Two"));
     }
 
@@ -1208,10 +1245,10 @@ mod tests {
             "#[cfg(not(test))]\npub(crate) const PLANNED_LANGUAGES: &[&str] = &[{planned}];"
         )));
         assert!(tested.contains(&format!(
-            "#[cfg(test)]\npub(crate) const PLANNED_LANGUAGES: &[&str] = &[{tested_planned}];"
+            "#[cfg(any(test, feature = \"test-hooks\"))]\npub(crate) const PLANNED_LANGUAGES: &[&str] = &[{tested_planned}];"
         )));
         assert!(tested.contains(
-            "#[cfg(test)]\npub(crate) const TEST_PLANNED_LANGUAGES: &[&str] = &[\"exemplar\"];"
+            "#[cfg(any(test, feature = \"test-hooks\"))]\npub(crate) const TEST_PLANNED_LANGUAGES: &[&str] = &[\"exemplar\"];"
         ));
     }
 
@@ -1265,7 +1302,7 @@ mod tests {
             "#[cfg(not(test))]\npub(crate) const PLANNED_LANGUAGES: &[&str] = &[\"two\"];"
         ));
         assert!(generated.contains(
-            "#[cfg(test)]\npub(crate) const PLANNED_LANGUAGES: &[&str] = &[\"two\", \"three\"];"
+            "#[cfg(any(test, feature = \"test-hooks\"))]\npub(crate) const PLANNED_LANGUAGES: &[&str] = &[\"two\", \"three\"];"
         ));
         assert!(generated.contains("&[\"three\"];"));
         assert!(!generated.contains("label: \"three\""));
