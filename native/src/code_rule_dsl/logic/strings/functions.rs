@@ -42,6 +42,9 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("git_tracked", &[Text], Number),
     ("json_str", &[Text], Text),
     ("nfkc", &[Text], Text),
+    // JavaScript's `Number.prototype.toPrecision` of a decimal numeral's value (`value::ecma::to_precision`):
+    // "Infinity" past the doubles, none for a non-number or digits outside 1-100 (JavaScript's RangeError).
+    ("to_precision", &[Text, Number], Text),
     // JavaScript's `toLowerCase`: Unicode's default case mapping (SQLite's own `lower` is ASCII only).
     ("lower", &[Text], Text),
     // `.rr`'s `cat(a, b, …)`, two at a time: the native engine's concatenation (SQL concatenates with `||`).
@@ -191,6 +194,14 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         }
         "json_str" => Some(json_str(t(0))),
         "str_concat" => Some(format!("{}{}", t(0), t(1))),
+        // A numeral past the doubles (`2e999`) is Infinity, which toPrecision prints as such.
+        "to_precision" => t(0).trim().parse::<f64>().ok().filter(|f| !f.is_nan() && (1..=100).contains(&numbers[0])).map(|f| {
+            if f.is_infinite() {
+                if f > 0.0 { "Infinity".to_owned() } else { "-Infinity".to_owned() }
+            } else {
+                crate::code_rule_dsl::value::ecma::to_precision(f, numbers[0] as u32)
+            }
+        }),
         "nfkc" => {
             use unicode_normalization::UnicodeNormalization;
             Some(t(0).nfkc().collect())
