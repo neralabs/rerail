@@ -867,7 +867,7 @@ impl Dialect {
         
         let dialect = from_tape_tag(tag).ok_or_else(|| StoreError::Invalid(format!("no dialect has tape tag {tag}")))?;
         let catalog = dialect.kinds();
-        let values = { let pack = language_pack::pack(crate::code_rule_dsl::language::Family::of(dialect)); pack.value_supported() };
+        let values = crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::of(dialect)).reads_values();
         let classes = (0..catalog.kind_count()).map(|k| catalog.kind_name(k as u16).map_or(Class::Other, Class::of)).collect();
         let canonical: Vec<u16> = (0..catalog.kind_count() as u16)
             .map(|k| match catalog.kind_name(k) {
@@ -972,7 +972,6 @@ struct DefIds {
 }
 
 use granules::INDEX_BITS;
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Whether this process numbers nodes per definition: the default; `RERAIL_NODE_IDS=preorder` numbers them in
 /// preorder, to compare.
@@ -1637,7 +1636,7 @@ impl Extra {
         let span = |kind: ExtraSpan, i: usize| extra_span(key, kind, u32::try_from(i).unwrap_or(u32::MAX));
         let source = f.source.as_str();
         if self.comment && let Some(dialect) = dialect {
-            use crate::code_rule_dsl::language::adapter::is_comment_kind;
+            use crate::code_rule_dsl::language::is_comment_kind;
             let mut k = 0;
             for id in 0..f.len() as u32 {
                 // A comment kind's node, not inside another (Rust's doc comment parts are not comments).

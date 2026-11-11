@@ -25,7 +25,7 @@ use super::propagate::propagate;
 use crate::code_rule_dsl::language::{GrammarDialect, dialect_by_label, label_of_path, tape_tag};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::tape::{self, FileImage, TAPE_FORMAT_VERSION, TapeDoc, TapeImage};
-use crate::code_rule_dsl::workspace::grammar_version;
+use crate::code_rule_dsl::build_ids::grammar_version;
 use crate::content_store::prefilter::{PREFILTER_VERSION, TapePrefilter};
 use crate::content_store::{
     ABSENT, Derivation, DerivationInput, DerivationRecord, HashKey, SourceId, StoreError, StoreResult, TapeId,

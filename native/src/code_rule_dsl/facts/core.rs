@@ -217,7 +217,7 @@ pub(crate) fn build_in_wave_with_tape(
 ) -> Result<(Built, Option<TapeDoc>), String> {
     use crate::code_rule_dsl::lines::Terminators;
     use crate::code_rule_dsl::tape::{self, TAPE_FORMAT_VERSION, TapeImage};
-    use crate::code_rule_dsl::workspace::grammar_version;
+    use crate::code_rule_dsl::build_ids::grammar_version;
     use crate::content_store::HashKey;
     use sha2::Digest as _;
     let language = file_language(file).ok_or_else(|| format!("{} has no grammar", file.language()))?;
@@ -300,7 +300,7 @@ pub(crate) fn build_cached_with_tape(
     let _reading = cache.hold_collection().map_err(|e| e.to_string())?;
     use crate::code_rule_dsl::lines::Terminators;
     use crate::code_rule_dsl::tape::{self, TAPE_FORMAT_VERSION, TapeImage};
-    use crate::code_rule_dsl::workspace::grammar_version;
+    use crate::code_rule_dsl::build_ids::grammar_version;
     use crate::content_store::HashKey;
     let language = file_language(file).ok_or_else(|| format!("{} has no grammar", file.language()))?;
     let tag = i64::from(tape_tag(language).ok_or("the dialect has no tape tag")?);

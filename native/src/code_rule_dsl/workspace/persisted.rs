@@ -515,9 +515,7 @@ fn engine_build_id() -> &'static str {
 }
 
 /// The stored tapes' grammar version column: the grammar build identity as a positive integer.
-pub(in crate::code_rule_dsl) fn grammar_version() -> i64 {
-    i64::from_str_radix(&crate::code_rule_dsl::build_ids::grammar()[..15], 16).expect("grammar build identity is hex")
-}
+pub(in crate::code_rule_dsl) use crate::code_rule_dsl::build_ids::grammar_version;
 
 pub(super) fn grammar_set() -> HashKey {
     HashKey::sha256(crate::code_rule_dsl::build_ids::grammar().as_bytes())

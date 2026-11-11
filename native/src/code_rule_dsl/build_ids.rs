@@ -22,3 +22,8 @@ pub(crate) fn engine() -> &'static str {
 pub(crate) fn grammar() -> &'static str {
     GRAMMAR.get().copied().expect("the engine sets its build identity as it loads")
 }
+
+/// The grammars' build identity as a number: its first 15 hex digits.
+pub(crate) fn grammar_version() -> i64 {
+    i64::from_str_radix(&grammar()[..15], 16).expect("grammar build identity is hex")
+}

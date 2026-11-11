@@ -647,6 +647,15 @@ pub(crate) trait LanguageBase: Send + Sync {
     /// The module system of its file at `path` whose nearest manifest has `package` as its type; `None` where
     /// the syntax decides.
     fn source_type(&self, path: &str, package: Option<PackageType>) -> Option<SourceType>;
+    /// The kinds of its comment nodes, as a tree walk meets them.
+    fn comment_kinds(&self) -> &'static [&'static str];
+    /// Whether W reads values of its nodes (`ValueRules::SUPPORTED`).
+    fn reads_values(&self) -> bool;
+}
+
+/// Whether `kind` is a comment kind of any registered family (`LanguageBase::comment_kinds`).
+pub(crate) fn is_comment_kind(kind: &str) -> bool {
+    Family::ALL.iter().filter_map(|&family| BASES[family as usize].get()).any(|base| base.comment_kinds().contains(&kind))
 }
 
 static BASES: [std::sync::OnceLock<&'static dyn LanguageBase>; Family::ALL.len()] =

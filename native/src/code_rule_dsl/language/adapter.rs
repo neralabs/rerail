@@ -288,4 +288,10 @@ impl<A: Adapter> super::LanguageBase for pack::Pack<A> {
     fn source_type(&self, path: &str, package: Option<PackageType>) -> Option<SourceType> {
         A::source_type(path, package)
     }
+    fn comment_kinds(&self) -> &'static [&'static str] {
+        A::WALK_COMMENT_KINDS
+    }
+    fn reads_values(&self) -> bool {
+        <<A as Adapter>::Value as ValueRules>::SUPPORTED
+    }
 }
