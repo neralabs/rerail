@@ -22,13 +22,13 @@
 .decl option_item(name: symbol, i: number, v: symbol)
 .decl option_on(name: symbol)
 .decl out_scope(d: number)
-.decl prev_token(n: node, s: symbol)
 .decl report_when_gt(k: number)
 .decl strprefix(n: node, p: symbol)
 .decl syntax_error(d: number)
 .decl tape_line(d: number, l: number, sp: node)
 .decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl unsafe_alias_edge(f: symbol, t: symbol)
 .decl unsafe_alias_from(a: node, f: symbol)
 .decl unsafe_alias_walk(a: node, n: node)
@@ -108,12 +108,14 @@
 .decl usage_8_hit(d: number, n: node)
 .decl usage_call_slot(n: node)
 .decl usage_comma_kind(k: symbol)
+.decl usage_comma_list(k: symbol)
 .decl usage_import_kind(k: symbol)
+.decl usage_name_before(s: node, n: node)
 .decl usage_prev(n: node, s: symbol)
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, child, text, op, line, value, strprefix, value_type_of, tape_line, end_line, node_text, prev_token
+.input doc, syntax_error, node, field, child, text, op, line, value, strprefix, value_type_of, tape_line, end_line, node_text, token
 .output violation
 esc_forbidden("SqlAdminQuery").
 esc_forbidden("SqlBuiltQuery").
@@ -366,6 +368,22 @@ usage_comma_kind("dotted_name").
 usage_comma_kind("aliased_import").
 usage_comma_kind("generic_type").
 usage_comma_kind("type").
+usage_comma_list("argument_list").
+usage_comma_list("expression_list").
+usage_comma_list("tuple").
+usage_comma_list("list").
+usage_comma_list("set").
+usage_comma_list("pattern_list").
+usage_comma_list("tuple_pattern").
+usage_comma_list("list_pattern").
+usage_comma_list("parameters").
+usage_comma_list("lambda_parameters").
+usage_comma_list("global_statement").
+usage_comma_list("nonlocal_statement").
+usage_comma_list("type_parameter").
+usage_comma_list("assert_statement").
+usage_comma_list("print_statement").
+usage_comma_list("import_statement").
 usage_import_kind("dotted_name").
 usage_import_kind("aliased_import").
 in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
@@ -473,7 +491,12 @@ usage_call_slot(n) :- node(_, p, "call", _, _), field(p, "function", n).
 usage_call_slot(n) :- node(_, a, "attribute", _, _), field(a, "attribute", n), node(_, p, "call", _, _), field(p, "function", a).
 usage_call_slot(n) :- node(_, c, "class_definition", _, _), field(c, "name", n), field(c, "superclasses", al), node(_, al, "argument_list", _, _).
 usage_call_slot(n) :- node(_, f, "function_definition", _, _), field(f, "name", n).
-usage_prev(n, s) :- prev_token(n, s).
+usage_prev(n, "import") :- node(_, s, "import_statement", _, _), child(s, n, 0).
+usage_prev(n, "import") :- node(_, s, k, _, _), (k = "import_from_statement" ; k = "future_import_statement"), field(s, "name", n), !usage_name_before(s, n), !token(s, _, "(", _, _).
+usage_prev(n, ",") :- child(p, n, i), i > 0, j = @sub(i, 1), child(p, m, j), !node(_, m, "comment", _, _), node(_, p, k, _, _), usage_comma_list(k).
+usage_prev(n, ",") :- node(_, s, k, _, _), (k = "import_from_statement" ; k = "future_import_statement"), usage_name_before(s, n).
+usage_prev(n, ",") :- field(p, "subscript", n), node(_, p, "subscript", _, _), node(_, n, _, a, _), field(p, "subscript", m), node(_, m, _, b, _), b < a.
+usage_name_before(s, n) :- field(s, "name", n), node(_, n, _, a, _), field(s, "name", m), node(_, m, _, b, _), b < a.
 usage_0_hit(d, n) :- node(d, n, "identifier", _, _), text(n, s), suffix("SqlAdminQuery", s), usage_call_slot(n).
 usage_0_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "import"), node_text(n, s), prefix("SqlAdminQuery", s).
 usage_0_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("SqlAdminQuery", s).

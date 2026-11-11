@@ -140,7 +140,6 @@ impl GapTest {
     /// The token regexes `rule` passes, where it is made of kinds (which no implied token has)
     /// and tokens (by a bare regex); `None` where it says more.
     fn passes(&self, rule: &AstMatcher, depth: usize) -> Option<Vec<Regex>> {
-        use ast_grep_core::matcher::Matcher;
         if depth > 32 {
             return None;
         }

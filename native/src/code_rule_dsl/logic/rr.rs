@@ -17,6 +17,7 @@ mod lower;
 mod print;
 mod syntax;
 pub(in crate::code_rule_dsl) mod tape;
+mod token_reads;
 mod translate;
 
 #[cfg(test)]
@@ -407,6 +408,7 @@ pub(in crate::code_rule_dsl) fn read_file(path: &Path) -> Result<(Program, Vec<L
     }
     let (statements, files) = program(path)?;
     check_names(&statements, false)?;
+    token_reads::refuse(&statements)?;
     // The relations an included file declares are the library's: canonical, one copy however many policies of a
     // combined run include it (decision 0091). Printed as `.global library …`, so a program's text keeps that.
     let core = library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?;

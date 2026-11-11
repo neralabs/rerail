@@ -147,7 +147,7 @@ annt_sub(e, h, i, a) :- annt_bare(e, m), kind(m, "generic_type"), child(m, h, 0)
 // annt_form(e, f): e's form; annt_part(e, f, a): a is a member that form looks inside.
 .decl annt_form(e: node, f: symbol)
 annt_form(e, f) :- annt_sub(e, h, _, _), annt_typing(h, x), annt_sub_form(x, f).
-annt_form(e, "union") :- annt_bare(e, m), (kind(m, "binary_operator") ; kind(m, "union_type")), op(m, "|").
+annt_form(e, "union") :- annt_bare(e, m), (kind(m, "binary_operator"), op(m, "|") ; kind(m, "union_type")).
 annt_form(e, f) :- annt_bare(e, m), (kind(m, "identifier") ; kind(m, "attribute")), annt_typing(m, x),
     annt_name_form(x, f).
 annt_form(e, "forward") :- annt_bare(e, s), annt_parses(s).
@@ -167,7 +167,7 @@ annt_name_form("Any", "any"). annt_name_form("Optional", "optional0").
 annt_part(e, "union", a) :- annt_sub(e, h, _, a), annt_typing(h, "Union").
 annt_part(e, "optional", a) :- annt_sub(e, h, _, a), annt_typing(h, "Optional").
 annt_part(e, "annotated", a) :- annt_sub(e, h, 0, a), annt_typing(h, "Annotated").
-annt_part(e, "union", a) :- annt_bare(e, m), (kind(m, "binary_operator") ; kind(m, "union_type")), op(m, "|"),
+annt_part(e, "union", a) :- annt_bare(e, m), (kind(m, "binary_operator"), op(m, "|") ; kind(m, "union_type")),
     child(m, a, _).
 annt_part(e, "forward", r) :- annt_bare(e, s), annt_parses(s), annt_quoted(s, r).
 // annt_contains_any(e): Ruff's contains_any: a member is Any, contains it, or is a string that does not parse.

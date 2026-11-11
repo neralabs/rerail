@@ -41,6 +41,7 @@ perf_for(f, t, it) :- kind(f, "for_statement"), field(f, "left", l), unparen(l, 
 // tree has the Name.
 perf_for(f, t, it) :- kind(f, "for_statement"), field(f, "left", l), perf_paren_target(l, t), field(f, "right", r),
     unparen(r, it).
+.stored perf_paren_target "a one-element tuple_pattern's comma is its trailing comma, which the tape stores"
 .decl perf_paren_target(l: node, t: node)
 perf_paren_target(l, t) :- kind(l, "tuple_pattern"), !op(l, ","), child(l, t, _), !kind(t, "comment"),
     count : { child(l, c, _), !kind(c, "comment") } = 1.

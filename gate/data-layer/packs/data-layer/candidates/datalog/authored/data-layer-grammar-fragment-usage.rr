@@ -237,12 +237,14 @@ captured_field(c, x) :- captured_init(c, f), node(_, a, "assignment", _, _), ins
     captured_value_list_kinds(rk), child(rp, v, _), captured_bs(v), captured_index(rp, v, i).
 
 // `compare … text: index`: an element's index, the `,` tokens before it among its parent's children (for the
-// patterns and value lists above only).
+// patterns and value lists above only). The tape stores no separating comma (RER-131): one comes before each
+// element but the first, so the index is the count of the elements before it, comments left out.
 .decl captured_index_list(p: node)
 captured_index_list(p) :- node(_, p, k, _, _), captured_pattern_kinds(k).
 captured_index_list(p) :- node(_, p, k, _, _), captured_value_list_kinds(k).
 .decl captured_index(p: node, c: node, k: number)
-captured_index(p, c, k) :- captured_index_list(p), child(p, c, _), node(_, c, _, s, e), token(p, i, _, s, e), k = count : { token(p, j, ",", _, _), j < i }.
+captured_index(p, c, k) :- captured_index_list(p), child(p, c, _), node(_, c, _, s, _),
+    k = count : { child(p, x, _), node(_, x, _, xs, _), xs < s, !node(_, x, "comment", _, _) }.
 
 // A parameter named p (as the util shapes `$PARAM`), and one with no type or an `Any`/`str` one.
 .decl captured_param_named(q: node, p: symbol)

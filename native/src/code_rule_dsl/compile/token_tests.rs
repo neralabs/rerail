@@ -73,6 +73,17 @@ impl Lang {
     }
 }
 
+/// The (parent kind, token) pairs where `dialect`'s grammar may leave out a token `regex` matches: under `kinds`, or
+/// under any kind where `None`. A `.rr` program's token reads are refused by this (`logic::rr::token_reads`).
+pub(in crate::code_rule_dsl) fn implied(dialect: GrammarDialect, kinds: Option<&BTreeSet<String>>, regex: &regex::Regex) -> BTreeSet<(String, String)> {
+    Lang::of(dialect).map(|lang| lang.implied_in(kinds, regex, None)).unwrap_or_default()
+}
+
+/// The kinds that have one of `kinds` as a named child, in `dialect`'s grammar.
+pub(in crate::code_rule_dsl) fn parents_of(dialect: GrammarDialect, kinds: &BTreeSet<String>) -> BTreeSet<String> {
+    Lang::of(dialect).map(|lang| kinds.iter().flat_map(|kind| lang.parents.get(kind).into_iter().flatten().cloned()).collect()).unwrap_or_default()
+}
+
 /// How the node a sub-rule tests was reached from the node before it.
 #[derive(Clone, Debug)]
 enum Rel {

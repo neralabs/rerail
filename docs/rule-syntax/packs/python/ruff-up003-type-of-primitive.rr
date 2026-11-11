@@ -27,8 +27,10 @@ to_type(c, t) :- !str_shadowed(c, t), glued_after(c) => replace(c, cat(t, " ")).
 .decl str_shadowed(c: node, t: symbol)  // t is bound in c's scope or one around it
 str_shadowed(c, t) :- UP003(c, t), nearest(c, s0, scope), (s = s0 ; has(s, s0, scope)), bound_in(s, t).
 .decl glued_after(c: node)  // the next token starts with a letter, digit or _ and touches the call
-glued_after(c) :- UP003(c, _), token_after(c, k), match("[A-Za-z0-9_].*", k), last_token(c, z), end_line(z, l),
-    line(k, l), col(k, ck), col(z, cz), text(z, zt), ck = cz + strlen(zt).
+// The next token may be one the tape leaves out (`in`, `else`), so the source's next character is read: the
+// line's text after the call, which is on one line (`type("")`).
+glued_after(c) :- UP003(c, _), node(d, c, _, cs, ce), line(c, l), end_line(c, l), col(c, cc), tape_line(d, l, sp),
+    text(sp, t), e = cc + ce - cs, match("[A-Za-z0-9_]", substr(t, e, 1)).
 // primitive(e, t): literal e has builtin type t. Adjacent strings are one literal; an f-string is not one.
 .decl primitive(e: node, t: symbol)
 primitive(e, "str") :- string_form(e, "str"), !fstring(e).
