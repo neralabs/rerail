@@ -55,6 +55,7 @@ pub(in crate::code_rule_dsl) fn matcher(rule: &serde_json::Value, lang: GrammarD
         conflicts: None,
         captures: Default::default(),
         calls: None,
+        instances: None,
         documents: None,
         side: crate::code_rule_dsl::compile::documents::Side::Host,
     };
@@ -199,7 +200,7 @@ fn no_relation_stores_a_row_per_node() {
         nodes += doc.transducer_len();
     }
     for source in ["import os\n\ndef f(a, b=1):\n    \"\"\"Doc.\"\"\"\n    return os.path.join(a, str(b))\n\nclass C:\n    x = [1, 2, 3]\n"] {
-        nodes += put(&store, &source.repeat(50), GrammarDialect::Python).1.transducer_len();
+        nodes += put(&store, &source.repeat(300), GrammarDialect::Python).1.transducer_len();
     }
     assert!(nodes > 50_000, "{nodes}");
     let tables = store

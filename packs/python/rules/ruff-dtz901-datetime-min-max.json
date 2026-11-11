@@ -1,0 +1,168 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-dtz901-datetime-min-max",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Attach a timezone to the minimum and maximum datetime constants; the bare values are naive and fail when ordered against aware datetimes.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "datetime-min-max",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "attribute",
+      "resolves": {
+       "import": [
+        "datetime.datetime.min",
+        "datetime.datetime.max"
+       ]
+      },
+      "has": {
+       "stopBy": "neighbor",
+       "field": "attribute",
+       "pattern": "$M"
+      },
+      "not": {
+       "matches": "safe"
+      }
+     },
+     "utils": {
+      "none-lit": {
+       "any": [
+        {
+         "kind": "none"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "none-lit"
+         }
+        }
+       ]
+      },
+      "safe": {
+       "any": [
+        {
+         "inside": {
+          "stopBy": {
+           "not": {
+            "kind": "parenthesized_expression"
+           }
+          },
+          "kind": "attribute",
+          "has": {
+           "stopBy": "neighbor",
+           "field": "attribute",
+           "regex": "^time$"
+          },
+          "inside": {
+           "stopBy": {
+            "not": {
+             "any": [
+              {
+               "kind": "parenthesized_expression"
+              },
+              {
+               "kind": "argument_list"
+              },
+              {
+               "kind": "keyword_argument"
+              },
+              {
+               "kind": "dictionary_splat"
+              }
+             ]
+            }
+           },
+           "kind": "call"
+          }
+         }
+        },
+        {
+         "inside": {
+          "stopBy": {
+           "not": {
+            "kind": "parenthesized_expression"
+           }
+          },
+          "kind": "attribute",
+          "has": {
+           "stopBy": "neighbor",
+           "field": "attribute",
+           "regex": "^replace$"
+          },
+          "inside": {
+           "stopBy": {
+            "not": {
+             "any": [
+              {
+               "kind": "parenthesized_expression"
+              },
+              {
+               "kind": "argument_list"
+              },
+              {
+               "kind": "keyword_argument"
+              },
+              {
+               "kind": "dictionary_splat"
+              }
+             ]
+            }
+           },
+           "kind": "call",
+           "has": {
+            "stopBy": "neighbor",
+            "kind": "argument_list",
+            "has": {
+             "stopBy": "neighbor",
+             "kind": "keyword_argument",
+             "has": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "regex": "^tzinfo$"
+             },
+             "all": [
+              {
+               "has": {
+                "stopBy": "neighbor",
+                "field": "value",
+                "not": {
+                 "matches": "none-lit"
+                }
+               }
+              }
+             ]
+            }
+           }
+          }
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "DTZ901",
+    "message": "Use `datetime.datetime.$M.replace(tzinfo=...)` so the value is aware; the bare naive value raises TypeError when ordered against aware datetimes. Keep it only when the other values are naive.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "DTZ901"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

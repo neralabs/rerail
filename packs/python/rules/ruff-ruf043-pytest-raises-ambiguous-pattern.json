@@ -1,0 +1,142 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf043-pytest-raises-ambiguous-pattern",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use a raw string or re.escape for the match pattern of pytest.raises; a plain string with regex special characters hides whether a regex or literal text was meant.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "ambiguous-pattern",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "raises": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "raises"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "pytest.raises"
+                    ]
+                  }
+                }
+              ]
+            },
+            "match-slot": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "kind": "keyword_argument",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "regex": "^match$"
+                    },
+                    "not": {
+                      "follows": {
+                        "stopBy": "end",
+                        "kind": "keyword_argument",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "name",
+                          "regex": "^match$"
+                        }
+                      }
+                    },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "argument_list",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "arguments",
+                        "kind": "call",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "function",
+                          "matches": "raises"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "match-slot"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "concatenated_string"
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "string_start",
+                    "regex": "[rRbBfFtT]"
+                  }
+                }
+              },
+              {
+                "value": {
+                  "regex": "^(?:[^\\\\.^$*+?{\\[|()]|\\\\[^AbBdDsSwWzZ])*(?:[.^$*+?{\\[|()]|\\\\[AbBdDsSwWzZ])"
+                }
+              },
+              {
+                "matches": "match-slot"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "RUF043",
+        "anchor": "witness.span",
+        "message": "This `match=` string has regex special characters: make it a raw string (writing doubled backslashes once) if it is a regex, or wrap it in `re.escape(...)` if it is literal text.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF043"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

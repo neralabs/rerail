@@ -206,8 +206,8 @@ unsafe impl VTabCursor for Cursor {
     fn column(&self, ctx: &mut Context, column: c_int) -> Result<()> {
         let atom = self.atom();
         match column {
-            0 => ctx.set_result(&i64::from(atom)),
-            _ => self.atoms.with_str(atom, |value| ctx.set_result(&value)).expect("the cursor's atoms are in the arena"),
+            0 => ctx.set_result(i64::from(atom)),
+            _ => self.atoms.with_str(atom, |value| ctx.set_result(value)).expect("the cursor's atoms are in the arena"),
         }
     }
 

@@ -1,7 +1,8 @@
 //! Whether Git ignores a worktree path, as `git check-ignore` answers it: every `.gitignore` from
 //! the worktree root down to the path, `.git/info/exclude` and `core.excludesFile` (or the XDG
 //! default), with negation and directory patterns; a path the index tracks is never ignored, nor
-//! is a folder that holds a tracked path. Hosts that follow `.gitignore` skip what this ignores.
+//! is a folder that holds a tracked path. Hosts that follow `.gitignore` skip what this ignores,
+//! and can name the pattern that ignored a path, with its file and line (`git check-ignore -v`).
 //!
 //! The index is re-read whenever it changes on disk, so `git add` of an ignored file brings it back;
 //! a `.gitignore` is read when the walk first enters its folder.
@@ -29,11 +30,7 @@ impl GitIgnore {
             .map_err(|error| format!("cannot resolve {}: {error}", root.display()))?;
         let repository = match gix::discover(&root) {
             Ok(repository) => repository,
-            Err(gix::discover::Error::Discover(
-                gix::discover::upwards::Error::NoGitRepository { .. }
-                | gix::discover::upwards::Error::NoGitRepositoryWithinCeiling { .. }
-                | gix::discover::upwards::Error::NoGitRepositoryWithinFs { .. },
-            )) => return Ok(None),
+            Err(error) if crate::git_workspace::is_no_repository(&error) => return Ok(None),
             Err(error) => return Err(format!("cannot discover Git repository: {error}")),
         };
         let Some(worktree) = repository.workdir() else {
@@ -74,18 +71,29 @@ impl GitIgnore {
         relative: &str,
         is_directory: bool,
     ) -> std::result::Result<bool, String> {
+        Ok(self.ignored_by(relative, is_directory)?.is_some())
+    }
+
+    /// The pattern that makes Git ignore `relative` (as for `ignored`), with the file it was read
+    /// from and its line there; `None` when Git does not ignore it. A path under an ignored folder
+    /// names the folder's pattern, as `git check-ignore -v` does.
+    pub fn ignored_by(
+        &mut self,
+        relative: &str,
+        is_directory: bool,
+    ) -> std::result::Result<Option<GitIgnoreMatch>, String> {
         let Some(path) = self.worktree_path(relative) else {
-            return Ok(false);
+            return Ok(None);
         };
         if path.is_empty() {
-            return Ok(false);
+            return Ok(None);
         }
         let index = self
             .repository
             .index_or_empty()
             .map_err(|error| format!("cannot read Git index: {error}"))?;
         if tracked(&index, path.as_bytes().as_bstr(), is_directory) {
-            return Ok(false);
+            return Ok(None);
         }
         let platform = self
             .stack
@@ -95,7 +103,16 @@ impl GitIgnore {
                 &self.repository.objects,
             )
             .map_err(|error| format!("cannot read Git excludes for {path}: {error}"))?;
-        Ok(platform.is_excluded())
+        Ok(platform
+            .matching_exclude_pattern()
+            .filter(|matched| !matched.pattern.is_negative())
+            .map(|matched| GitIgnoreMatch {
+                source: matched
+                    .source
+                    .map(|source| source.to_string_lossy().into_owned()),
+                line: u32::try_from(matched.sequence_number).unwrap_or(u32::MAX),
+                pattern: matched.pattern.to_string(),
+            }))
     }
 
     /// `relative` below the worktree root, lexically normalised; `None` when it leaves the worktree.
@@ -130,6 +147,16 @@ fn tracked(index: &gix::index::State, path: &BStr, is_directory: bool) -> bool {
         .is_some_and(|entries| !entries.is_empty())
 }
 
+/// The pattern that ignores a path: the file Git read it from (absolute; `None` when it came from
+/// no file), its line there, and the pattern as written.
+#[napi(object)]
+#[derive(Debug, PartialEq, Eq)]
+pub struct GitIgnoreMatch {
+    pub source: Option<String>,
+    pub line: u32,
+    pub pattern: String,
+}
+
 /// A Git exclude stack for a host's walk below one root; see the module documentation.
 #[napi]
 pub struct GitIgnoreMatcher {
@@ -140,7 +167,7 @@ pub struct GitIgnoreMatcher {
 impl GitIgnoreMatcher {
     /// Whether Git ignores `relative_path` (to the root the matcher was opened for, `/`-separated);
     /// `is_directory` lets directory-only patterns (`build/`) match.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn ignored(&self, relative_path: String, is_directory: bool) -> Result<bool> {
         let mut inner = self
             .inner
@@ -150,10 +177,27 @@ impl GitIgnoreMatcher {
             .ignored(&relative_path, is_directory)
             .map_err(|message| Error::new(Status::GenericFailure, message))
     }
+
+    /// The pattern that makes Git ignore `relative_path` (as for `ignored`), with its file and
+    /// line; null when Git does not ignore it.
+    #[napi(catch_unwind)]
+    pub fn ignored_by(
+        &self,
+        relative_path: String,
+        is_directory: bool,
+    ) -> Result<Option<GitIgnoreMatch>> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| Error::new(Status::GenericFailure, "Git ignore matcher is poisoned"))?;
+        inner
+            .ignored_by(&relative_path, is_directory)
+            .map_err(|message| Error::new(Status::GenericFailure, message))
+    }
 }
 
 /// The Git exclude stack for paths below `root`; null when `root` is in no Git worktree.
-#[napi]
+#[napi(catch_unwind)]
 pub fn open_git_ignore_matcher(root: String) -> Result<Option<GitIgnoreMatcher>> {
     GitIgnore::open(Path::new(&root))
         .map(|opened| {
@@ -258,6 +302,51 @@ mod tests {
             !ignore.ignored("api/e.py", false).unwrap(),
             "the index is re-read once it changes"
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn names_the_pattern_its_file_and_line() {
+        let root = fixture(
+            "source",
+            &[
+                (".gitignore", "# generated\n*.log\nscratch/\n"),
+                ("api/.gitignore", "e.py\n"),
+                ("api/e.py", ""),
+                ("scratch/evil.ts", ""),
+                ("drop.log", ""),
+                ("local.py", ""),
+            ],
+        );
+        git(&root, &["init", "--initial-branch=main"]);
+        std::fs::write(root.join(".git/info/exclude"), "# local\n\nlocal.py\n").unwrap();
+        let root = root.canonicalize().unwrap();
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        let source = |path: &str| Some(root.join(path).to_string_lossy().into_owned());
+        let matched = |pattern: &str, path: &str, line: u32| GitIgnoreMatch {
+            source: source(path),
+            line,
+            pattern: pattern.to_owned(),
+        };
+
+        assert_eq!(
+            ignore.ignored_by("local.py", false).unwrap(),
+            Some(matched("local.py", ".git/info/exclude", 3))
+        );
+        assert_eq!(
+            ignore.ignored_by("drop.log", false).unwrap(),
+            Some(matched("*.log", ".gitignore", 2))
+        );
+        assert_eq!(
+            ignore.ignored_by("scratch/evil.ts", false).unwrap(),
+            Some(matched("scratch/", ".gitignore", 3)),
+            "a file under an ignored folder names the folder's pattern"
+        );
+        assert_eq!(
+            ignore.ignored_by("api/e.py", false).unwrap(),
+            Some(matched("e.py", "api/.gitignore", 1))
+        );
+        assert_eq!(ignore.ignored_by("api", true).unwrap(), None);
         std::fs::remove_dir_all(root).unwrap();
     }
 

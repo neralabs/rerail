@@ -496,8 +496,9 @@ pub(super) fn execute_batch(
 }
 
 /// Version 3: kind tokens are kind atoms (the prefilter's `kind_token`), as Pulling-it-all-together's
-/// `ftsk` spelled them, so dialects never share a token.
-pub(crate) const POSITIONAL_INDEX_VERSION: i64 = 3;
+/// `ftsk` spelled them, so dialects never share a token. Version 5: the stream is a tape's
+/// records, which hold no implied token (RER-131), so positions renumber.
+pub(crate) const POSITIONAL_INDEX_VERSION: i64 = 5;
 
 /// The token of `lang`'s kind `kind` in the positional kind stream: its atom (`tape tag · 1024 +
 /// kind code`) in the prefilter's spelling. `None` for a dialect without a tape tag.
@@ -1049,7 +1050,7 @@ mod tests {
             digest.update((range.start as u64).to_le_bytes());
             digest.update((range.end as u64).to_le_bytes());
         }
-        format!("{:x}", digest.finalize())
+        crate::lower_hex(&digest.finalize())
     }
 
     fn median(mut values: Vec<Duration>) -> Duration {

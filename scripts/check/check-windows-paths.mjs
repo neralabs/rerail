@@ -14,8 +14,8 @@
 //   trailing    No segment ends with a dot or a space, which Windows drops.
 //   case        No two paths, or directories along them, differ only by case: Windows folds them into one. Compared
 //               upper-cased, as NTFS's upcase table does; each clash is reported once.
-// No exemptions. A fixture that names the recording machine's own directories is a recorder's to refuse
-// (`assertPortableCase` in conformance/recorders/eslint-record.mjs), not this check's: a short leak passes every rule here.
+// No exemptions. A fixture that names the generating machine's own directories is a generator's to refuse
+// (`assertPortableCase` in scripts/pack-data/eslint-expected.mjs), not this check's: a short leak passes every rule here.
 //
 //   node scripts/check/check-windows-paths.mjs   (npm run check:windows-paths; part of npm run check)
 import { execFileSync } from "node:child_process";

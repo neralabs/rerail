@@ -393,14 +393,15 @@ unsafe impl VTabCursor for ResultCursor {
     fn next(&mut self) -> Result<()> { self.pos += 1; self.skip(); Ok(()) }
     fn eof(&self) -> bool { self.pos >= self.end }
     fn column(&self, ctx: &mut VContext, i: c_int) -> Result<()> {
-        if i == 0 { ctx.set_result(&self.vals.0[self.pos]) } else { ctx.set_result(&self.vals.1[self.pos]) }
+        if i == 0 { ctx.set_result(self.vals.0[self.pos]) } else { ctx.set_result(self.vals.1[self.pos]) }
     }
     fn rowid(&self) -> Result<i64> { Ok(self.pos as i64) }
 }
 
-/// Registers the functions and virtual tables on `db`, `atoms` and the store's commit hook among them (decision 0049).
+/// Registers the functions and virtual tables on `db`, `atoms` among them (decision 0049; its opener registered the
+/// store's commit hook, `Atoms::install`).
 pub(in crate::code_rule_dsl) fn register(db: &Connection) -> Result<()> {
-    crate::content_store::atoms::Atoms::install(db)?;
+    crate::content_store::atoms::Atoms::attach(db)?;
     let det = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
     db.create_scalar_function(c"flat_bin", 3, det, |ctx| {
         let o: String = ctx.get(0)?;

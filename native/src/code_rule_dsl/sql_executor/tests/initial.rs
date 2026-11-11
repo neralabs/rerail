@@ -30,7 +30,7 @@ fn retained_initial_execution_preserves_global_gates_frontiers_and_wave_limits()
         "SELECT * FROM __sql_changes_amount ORDER BY c0",
         "SELECT * FROM wave_delta WHERE rows>0 ORDER BY wave,rel",
     ] {
-        assert_eq!(rows(&native, sql), rows(&cold, sql), "{sql}");
+        assert_eq!(rows(&mut native, sql), rows(&mut cold, sql), "{sql}");
     }
     // An inactive earlier frame accumulates this edit before a later batch opens its gate.
     native
@@ -40,15 +40,15 @@ fn retained_initial_execution_preserves_global_gates_frontiers_and_wave_limits()
         .unwrap();
     cold.run(p.into(), "python".into(), None).unwrap();
     assert_eq!(
-        rows(&native, "SELECT * FROM amount ORDER BY c0"),
-        rows(&cold, "SELECT * FROM amount ORDER BY c0")
+        rows(&mut native, "SELECT * FROM amount ORDER BY c0"),
+        rows(&mut cold, "SELECT * FROM amount ORDER BY c0")
     );
     let limit = a["waves"].as_u64().unwrap() as u32 - 1;
     assert!(native.run(p.into(), "python".into(), Some(limit)).is_err());
     assert!(cold.run(p.into(), "python".into(), Some(limit)).is_err());
     assert_eq!(
-        rows(&native, "SELECT * FROM amount ORDER BY c0"),
-        rows(&cold, "SELECT * FROM amount ORDER BY c0")
+        rows(&mut native, "SELECT * FROM amount ORDER BY c0"),
+        rows(&mut cold, "SELECT * FROM amount ORDER BY c0")
     );
     native
         .apply_changes(json!([{"name":"edge","delete":[[1,2]]}]).to_string(), None)
@@ -59,7 +59,7 @@ fn retained_initial_execution_preserves_global_gates_frontiers_and_wave_limits()
     .unwrap();
     cold.run(p.into(), "python".into(), None).unwrap();
     assert_eq!(
-        rows(&native, "SELECT * FROM amount ORDER BY c0"),
-        rows(&cold, "SELECT * FROM amount ORDER BY c0")
+        rows(&mut native, "SELECT * FROM amount ORDER BY c0"),
+        rows(&mut cold, "SELECT * FROM amount ORDER BY c0")
     );
 }

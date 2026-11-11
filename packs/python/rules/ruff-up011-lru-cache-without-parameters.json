@@ -1,0 +1,118 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up011-lru-cache-without-parameters",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Drop the empty parentheses from a functools.lru_cache decorator; it works without them, with a default cache size, since Python 3.8.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "lru-cache-without-parameters",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "lru-cache-ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "functools.lru_cache"
+                ]
+              }
+            }
+          },
+          "rule": {
+            "kind": "decorator",
+            "regex": "(?s)^@.*?(?<PARENS>(?:[\\s)\\\\]|#[^\\n]*\\n)*\\((?:[\\s\\\\]|#[^\\n]*\\n)*\\)(?:(?:[\\s\\\\]|#[^\\n]*\\n)*\\))*)(?:[\\s\\\\]|#[^\\n]*)*$",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "decorated_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "definition",
+                "kind": "function_definition"
+              }
+            },
+            "has": {
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "kind": "call",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "function",
+                "any": [
+                  {
+                    "matches": "lru-cache-ref"
+                  },
+                  {
+                    "kind": "parenthesized_expression",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "lru-cache-ref"
+                    }
+                  }
+                ]
+              },
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "arguments",
+                    "kind": "argument_list",
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "nthChild": {
+                          "position": 1,
+                          "ofRule": {
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "comment"
+                                },
+                                {
+                                  "kind": "line_continuation"
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.PARENS",
+        "code": "UP011",
+        "message": "Remove the empty parentheses after `lru_cache` in this decorator and write it bare; it defaults to the same cache size. Keep the call only if the code must support Python 3.7 or older.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP011"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

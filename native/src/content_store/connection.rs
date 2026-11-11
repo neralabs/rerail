@@ -236,7 +236,8 @@ pub(super) fn jittered(backoff: Duration) -> Duration {
 type SharedConnection = Arc<ParkingMutex<Option<Connection>>>;
 
 thread_local! {
-    static THREAD_CONNECTIONS: RefCell<HashMap<PathBuf, SharedConnection>> =
+    /// By database path: the store's identity (`store_identity`) and the connection to it.
+    static THREAD_CONNECTIONS: RefCell<HashMap<PathBuf, (i64, SharedConnection)>> =
         RefCell::new(HashMap::new());
 }
 
@@ -246,8 +247,18 @@ type ConnectionRegistry = Vec<(PathBuf, std::sync::Weak<ParkingMutex<Option<Conn
 static ALL_CONNECTIONS: std::sync::LazyLock<ParkingMutex<ConnectionRegistry>> =
     std::sync::LazyLock::new(|| ParkingMutex::new(Vec::new()));
 
+/// The store handles open in this process, by database path (`ThreadConnection`).
+static HANDLES: std::sync::LazyLock<ParkingMutex<HashMap<PathBuf, usize>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// A store handle's connections: one per thread, shared by the handles on the store. The last handle on a store
+/// closes every thread's idle connection to it (`close`), so nothing in the process holds the file open once the
+/// store is closed (a run's store is deleted and created again at its path).
 pub(super) struct ThreadConnection {
-    pub(super) database_path: PathBuf,
+    database_path: PathBuf,
+    /// The store's identity when opened: a thread's connection to a store since created again at the path is not
+    /// this store's.
+    identity: i64,
 }
 
 /// A locked thread connection, reopened if an idle release closed it.
@@ -267,20 +278,44 @@ impl std::ops::DerefMut for ConnectionGuard {
 }
 
 impl ThreadConnection {
+    pub(super) fn new(database_path: PathBuf, identity: i64) -> Self {
+        *HANDLES.lock().entry(database_path.clone()).or_default() += 1;
+        Self { database_path, identity }
+    }
+
+    /// The handle closes (`ContentStore::drop`). Returns whether it was the store's last: then every thread's idle
+    /// connection to it is closed.
+    pub(super) fn close(&self) -> bool {
+        let last = {
+            let mut handles = HANDLES.lock();
+            let open = handles.get_mut(&self.database_path).expect("a handle counted when made");
+            *open -= 1;
+            let last = *open == 0;
+            if last {
+                handles.remove(&self.database_path);
+            }
+            last
+        };
+        if last {
+            self.release_all();
+        }
+        last
+    }
+
     pub(super) fn lock(&self) -> Result<ConnectionGuard, String> {
         let connection = THREAD_CONNECTIONS.with(|connections| {
             let mut connections = connections.borrow_mut();
-            Arc::clone(
-                connections
-                    .entry(self.database_path.clone())
-                    .or_insert_with(|| {
-                        let connection = SharedConnection::default();
-                        ALL_CONNECTIONS
-                            .lock()
-                            .push((self.database_path.clone(), Arc::downgrade(&connection)));
-                        connection
-                    }),
-            )
+            match connections.get(&self.database_path) {
+                Some((identity, connection)) if *identity == self.identity => Arc::clone(connection),
+                _ => {
+                    let connection = SharedConnection::default();
+                    ALL_CONNECTIONS
+                        .lock()
+                        .push((self.database_path.clone(), Arc::downgrade(&connection)));
+                    connections.insert(self.database_path.clone(), (self.identity, Arc::clone(&connection)));
+                    connection
+                }
+            }
         });
         let mut guard = connection.lock_arc();
         if guard.is_none() {

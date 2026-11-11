@@ -1,0 +1,31 @@
+// data-layer-async-executor, clause `executor`, by hand.
+// Source: gate/data-layer/packs/data-layer/candidates/rules-ast/data-layer-async-executor.json.
+//
+// An identifier whose text ends in `run_in_executor` that is a call's `function`, the `attribute` of an
+// attribute that is a call's `function`, or a def's `name` (each `inside` with stopBy neighbor and a field: the
+// direct parent, through that field), unless the line it starts on matches `#\s*noqa:\s*async-executor`
+// (`not: {layout: {line: …}}`: W reads the node's first line by Ruff's terminators, \n, \r\n and \r).
+// The line is tape_line(d, l, sp) at the node's line(n, l): the tape's lines, split at \r\n, \r and \n as W's
+// layout splits Python (Ruff's terminators), the line's text without its terminator. Exact.
+
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+.decl executor_name(n: node)
+executor_name(n) :- node(_, n, "identifier", _, _), text(n, s), suffix("run_in_executor", s).
+
+.decl executor_use(n: node)
+executor_use(n) :- executor_name(n), field(c, "function", n), node(_, c, "call", _, _).
+executor_use(n) :- executor_name(n), field(a, "attribute", n), node(_, a, "attribute", _, _), field(c, "function", a),
+    node(_, c, "call", _, _).
+executor_use(n) :- executor_name(n), field(f, "name", n), node(_, f, "function_definition", _, _).
+
+// The node's first line carries the suppression.
+.decl executor_noqa(n: node)
+executor_noqa(n) :- executor_use(n), node(d, n, _, _, _), line(n, l), tape_line(d, l, sp), text(sp, s),
+    match("(?s:.*)(?:#\s*noqa:\s*async-executor)(?s:.*)", s).
+
+violation("data-layer-async-executor", "executor", "run_in_executor", p, l) :- executor_use(n), !executor_noqa(n),
+    node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).

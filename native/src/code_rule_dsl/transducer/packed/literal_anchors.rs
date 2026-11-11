@@ -2,7 +2,7 @@
 //! test-only (open item O21): W's search index keeps kind presence only.
 use super::*;
 
-pub(super) const POSITIONAL_INDEX_VERSION: i64 = 3;
+pub(super) const POSITIONAL_INDEX_VERSION: i64 = 5;
 const VALUE_INDEX_LIMIT: usize = 96;
 
 fn exact_anchor_key(program: &Program) -> Option<(u16, &[u8])> {

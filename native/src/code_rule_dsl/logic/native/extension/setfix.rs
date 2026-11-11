@@ -364,6 +364,8 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
             for vals in got {
                 visits += 1;
                 row.clear();
+                // A function with no value (`rx_group` with no match) gives no row, as the SQL strata's inserts.
+                if vals.iter().any(|v| matches!(v, Value::Null)) { continue; }
                 for (v, &ty) in vals.iter().zip(&types) { row.push(read_value(ValueRef::from(v), ty, &mut syms)?); }
                 if !store.rels[head].contains(&row) { fresh[head].add(&row); }
             }
@@ -650,7 +652,7 @@ unsafe impl VTabCursor for RelCursor {
         let s = self.store.read().unwrap();
         let r = &s.rels[self.rel];
         let v = r.row(self.ids[self.pos] as usize)[i as usize];
-        if r.types[i as usize] == b's' { ctx.set_result(&SYMS.read().unwrap().names[v as usize].as_str()) } else { ctx.set_result(&v) }
+        if r.types[i as usize] == b's' { ctx.set_result(SYMS.read().unwrap().names[v as usize].as_str()) } else { ctx.set_result(v) }
     }
     fn rowid(&self) -> Result<i64> { Ok(self.ids[self.pos] as i64) }
 }

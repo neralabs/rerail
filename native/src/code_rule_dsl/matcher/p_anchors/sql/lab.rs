@@ -64,7 +64,7 @@ fn run(policy: &str) {
     for database in &databases {
         let copy = tempfile::NamedTempFile::new().unwrap();
         std::fs::copy(database, copy.path()).unwrap();
-        let store = Store::open(copy.path()).unwrap();
+        let mut store = Store::open(copy.path()).unwrap();
         // Decoded facts are execution work; a capture holds the original run's.
         store
             .db
@@ -117,6 +117,7 @@ fn run(policy: &str) {
         let observed = Arc::clone(&counter);
         store
             .db
+            .connection_mut()
             .progress_handler(
                 STEP,
                 Some(move || {

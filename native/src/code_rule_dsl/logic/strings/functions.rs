@@ -1,7 +1,10 @@
-//! The `core.rr` functors that compute text from text (`@head`, `@join`, `@replace_all`, …), each a native SQL
-//! function of the same name. A rule's call `@f(a, b)` is lowered to `f(a, b)` in SQL, its symbol arguments
-//! decoded to text and a symbol result encoded back (`plan`'s `text_of` / `symbol_of`). Each function's meaning
-//! is `core.rr`'s comment on it. A NULL argument, or a regex that does not compile, gives NULL (no value).
+//! The `core.rr` functors that compute text from text (`@head`, `@join`, `@replace_all`, …), and Soufflé's
+//! built-in functions beyond SQL's (`to_number`, `max`, `min`, `%`), each a native SQL function of the same name
+//! (`lower`, `max`, `min` and `mod` in place of SQLite's own). A rule's call `@f(a, b)` is lowered to `f(a, b)` in
+//! SQL, its symbol arguments decoded to text and a symbol result encoded back (`plan`'s `text_of` / `symbol_of`).
+//! Each function's meaning is `core.rr`'s comment on it, or Soufflé's. A NULL argument, a regex that does not
+//! compile, or a value Soufflé has none for (`to_number("a")`, `x % 0`) gives NULL: no value, so the rule gives no
+//! row for it.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -33,7 +36,6 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("slice", &[Text, Number, Number], Text),
     ("count_matches", &[Text, Text], Number),
     ("sha256", &[Text], Text),
-    ("ed25519_ok", &[Text, Text, Text], Number),
     // Git objects of the repository holding the run's root (`strings::git`): never stale, so never invalidated.
     ("git_commit", &[Text], Number),
     ("git_has", &[Text, Text], Number),
@@ -49,9 +51,10 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("str_between", &[Text, Text, Text], Text),
     // -1, 0 or 1 as `a` sorts before, with or after `b` (by bytes): the order of two symbols (`plan::lower`).
     ("str_cmp", &[Text, Text], Number),
-    // Soufflé's `to_number`: a decimal integer's value; no value for other text.
+    // Soufflé's `to_number(s)`, `max(a, b)`, `min(a, b)` and `a % b` (`mod`, with no value for a zero divisor).
     ("to_number", &[Text], Number),
-    // Soufflé's `%`, with no value for a zero divisor.
+    ("max", &[Number, Number], Number),
+    ("min", &[Number, Number], Number),
     ("mod", &[Number, Number], Number),
     // Soufflé's floats, as keys that order as the floats do (`float_key`): `to_float`, arithmetic, `to_string`.
     ("to_float", &[Text], Number),
@@ -126,14 +129,9 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
         let arity = i32::try_from(args.len()).expect("few arguments");
         db.create_scalar_function(name, arity, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, move |ctx| Ok(call(name, args, ctx)))?;
     }
-    db.create_aggregate_function("rr_join", -1, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, Join)?;
     db.create_aggregate_function("rr_product", 1, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, Product)?;
     Ok(())
 }
-
-/// `core.rr`'s `join x by k sep s` as the SQL aggregate `rr_join(s, x, k, …)`: the distinct (k…, x) rows ordered by
-/// their keys, then x (numbers by value, text by code point, as Python's `sorted`), their x joined by s.
-struct Join;
 
 /// `product x : {…}` as the SQL aggregate `rr_product(x)`: the product of the integers, saturating at i64's range;
 /// NULL over no rows (the caller's `coalesce` makes that 1), and NULL arguments are skipped as `sum` skips them.
@@ -155,48 +153,6 @@ impl rusqlite::functions::Aggregate<Option<i64>, Option<i64>> for Product {
         Ok(acc.flatten())
     }
 }
-
-/// A `rr_join` row's keys and value, ordered as `rr_join` orders them.
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
-enum Sortable {
-    Number(f64),
-    Text(String),
-}
-
-fn sortable(v: rusqlite::types::ValueRef<'_>) -> Sortable {
-    use rusqlite::types::ValueRef;
-    match v {
-        ValueRef::Integer(i) => Sortable::Number(i as f64),
-        ValueRef::Real(f) => Sortable::Number(f),
-        ValueRef::Text(t) | ValueRef::Blob(t) => Sortable::Text(String::from_utf8_lossy(t).into_owned()),
-        ValueRef::Null => Sortable::Text(String::new()),
-    }
-}
-
-impl rusqlite::functions::Aggregate<(String, Vec<(Vec<Sortable>, String)>), Option<String>> for Join {
-    fn init(&self, ctx: &mut Context<'_>) -> rusqlite::Result<(String, Vec<(Vec<Sortable>, String)>)> {
-        Ok((ctx.get::<String>(0)?, Vec::new()))
-    }
-
-    fn step(&self, ctx: &mut Context<'_>, acc: &mut (String, Vec<(Vec<Sortable>, String)>)) -> rusqlite::Result<()> {
-        let value = match sortable(ctx.get_raw(1)) {
-            Sortable::Number(f) if f.fract() == 0.0 => format!("{}", f as i64),
-            Sortable::Number(f) => f.to_string(),
-            Sortable::Text(t) => t,
-        };
-        let keys = (2..ctx.len()).map(|i| sortable(ctx.get_raw(i))).collect();
-        acc.1.push((keys, value));
-        Ok(())
-    }
-
-    fn finalize(&self, _: &mut Context<'_>, acc: Option<(String, Vec<(Vec<Sortable>, String)>)>) -> rusqlite::Result<Option<String>> {
-        let Some((sep, mut rows)) = acc else { return Ok(Some(String::new())) };
-        rows.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        rows.dedup();
-        Ok(Some(rows.into_iter().map(|(_, v)| v).collect::<Vec<_>>().join(&sep)))
-    }
-}
-
 fn call(name: &str, kinds: &[Kind], ctx: &Context) -> Value {
     let mut text = Vec::new();
     let mut numbers = Vec::new();
@@ -234,11 +190,9 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "slice" => Some(slice(t(0), numbers[0], numbers[1])),
         "rx_group" => super::group(t(0), t(1), t(2)),
         "str_cmp" => return Value::Integer(t(0).cmp(t(1)) as i64),
-        "ed25519_ok" => return Value::Integer(i64::from(super::signatures::verifies(t(0), t(1), t(2)))),
         "git_commit" => return super::git::git_commit(t(0)),
         "git_has" => return super::git::git_has(t(0), t(1)),
         "git_tracked" => return super::git::git_tracked(t(0)),
-        "to_number" => return t(0).trim().parse::<i64>().map_or(Value::Null, Value::Integer),
         "rr_add" => return numbers[0].checked_add(numbers[1]).map_or(Value::Null, Value::Integer),
         "rr_sub" => return numbers[0].checked_sub(numbers[1]).map_or(Value::Null, Value::Integer),
         "rr_mul" => return numbers[0].checked_mul(numbers[1]).map_or(Value::Null, Value::Integer),
@@ -270,7 +224,6 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "rr_to_string" => Some(numbers[0].to_string()),
         "rr_node_text" => crate::code_rule_dsl::facts::vtab::syntax::long_node_text(numbers[0]),
         "rr_substr" => Some(substr(t(0), numbers[0], numbers[1])),
-        "mod" => return numbers[0].checked_rem(numbers[1]).map_or(Value::Null, Value::Integer),
         "to_float" => return t(0).trim().parse::<f64>().ok().filter(|f| !f.is_nan()).map_or(Value::Null, |f| Value::Integer(float_key(f))),
         "float_add" | "float_sub" | "float_mul" | "float_div" => {
             let (a, b) = (float_of(numbers[0]), float_of(numbers[1]));
@@ -284,12 +237,16 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         }
         "float_str" => Some(float_of(numbers[0]).to_string()),
         "count_matches" => return with_regex(t(0), |re| Value::Integer(re.find_iter(t(1)).count() as i64)).unwrap_or(Value::Null),
+        "to_number" => return to_number(t(0)).map_or(Value::Null, Value::Integer),
+        "max" => return Value::Integer(numbers[0].max(numbers[1])),
+        "min" => return Value::Integer(numbers[0].min(numbers[1])),
+        "mod" => return numbers[0].checked_rem(numbers[1]).map_or(Value::Null, Value::Integer),
+        "lower" => Some(t(0).to_lowercase()),
         "sha256" => {
             use sha2::Digest;
             Some(sha2::Sha256::digest(t(0).as_bytes()).iter().map(|b| format!("{b:02x}")).collect())
         }
         "json_str" => Some(json_str(t(0))),
-        "lower" => Some(t(0).to_lowercase()),
         "str_concat" => Some(format!("{}{}", t(0), t(1))),
         "nfkc" => {
             use unicode_normalization::UnicodeNormalization;
@@ -372,6 +329,41 @@ pub(in crate::code_rule_dsl) fn sql_cast_int(x: &str) -> i64 {
     };
     let end = digits.bytes().position(|b| !b.is_ascii_digit()).unwrap_or(digits.len());
     digits[..end].parse::<i64>().map_or(0, |v| sign * v)
+}
+
+/// Soufflé's `to_number(s)`: `0x…` hexadecimal and `0b…` binary (either after a `-`), else decimal; as C's
+/// `strtoll`, leading white space and a sign are read and the text after the number's digits is ignored
+/// (`to_number(" 12px")` = 12). `None` where Soufflé stops with an error: no digits (`"a"`, `""`, `"0b"`) or out of
+/// range.
+pub(in crate::code_rule_dsl) fn to_number(s: &str) -> Option<i64> {
+    if let Some(rest) = s.strip_prefix("-0b") {
+        return strtoll(&format!("-{rest}"), 2);
+    }
+    if let Some(rest) = s.strip_prefix("0b") {
+        return strtoll(rest, 2);
+    }
+    strtoll(s, if s.starts_with("0x") || s.starts_with("-0x") { 16 } else { 10 })
+}
+
+/// C's `strtoll(s, base)` as C++'s `stoll` uses it: `None` where `stoll` throws (no digits, out of range).
+fn strtoll(s: &str, base: u32) -> Option<i64> {
+    let s = s.trim_start_matches([' ', '\t', '\n', '\u{b}', '\u{c}', '\r']);
+    let (neg, s) = match s.as_bytes().first() {
+        Some(b'-') => (true, &s[1..]),
+        Some(b'+') => (false, &s[1..]),
+        _ => (false, s),
+    };
+    // Base 16 reads an optional `0x` when a hex digit follows it (else the `0` alone is the number).
+    let s = match s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        Some(rest) if base == 16 && rest.starts_with(|c: char| c.is_ascii_hexdigit()) => rest,
+        _ => s,
+    };
+    let digits = s.find(|c: char| !c.is_digit(base)).unwrap_or(s.len());
+    if digits == 0 {
+        return None;
+    }
+    let magnitude = i128::from_str_radix(&s[..digits], base).ok()?;
+    i64::try_from(if neg { -magnitude } else { magnitude }).ok()
 }
 
 /// A float as an integer key that orders as the floats do: its bits, with every bit but the sign flipped for a
@@ -543,8 +535,8 @@ pub(in crate::code_rule_dsl) fn convert(s: &str, to: &str, seps: &str) -> String
     }
 }
 
-/// `s` as a JSON string literal, quotes included, as Python's `json.dumps` writes it by default: non-ASCII as
-/// `\uXXXX` (surrogate pairs above U+FFFF).
+/// `s` as a JSON string literal, quotes included, as W's signed-list stages write an element (SQLite's
+/// `json_quote`/`json_group_array`, as `plan`'s SQL gives it): `"`, `\` and controls escaped, non-ASCII kept.
 pub(in crate::code_rule_dsl) fn json_str(s: &str) -> String {
     let mut out = String::from("\"");
     for c in s.chars() {
@@ -556,12 +548,7 @@ pub(in crate::code_rule_dsl) fn json_str(s: &str) -> String {
             '\t' => out.push_str("\\t"),
             '\u{8}' => out.push_str("\\b"),
             '\u{c}' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 || (c as u32) > 0x7e => {
-                let mut units = [0u16; 2];
-                for u in c.encode_utf16(&mut units) {
-                    out.push_str(&format!("\\u{u:04x}"));
-                }
-            }
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
             c => out.push(c),
         }
     }

@@ -1,8 +1,28 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl child(p: node, c: node, i: number)
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
+.decl field(p: node, f: symbol, c: node)
+.decl getattr_three(a: node)
+.decl hasattr_allowed(c: node)
+.decl hasattr_args(c: node, a: node, f: symbol)
+.decl hasattr_call(c: node, a: node, f: symbol)
+.decl hasattr_child_at(a: node, st: number)
+.decl hasattr_extra(a: node, st: number)
+.decl hasattr_named(a: node, k: number)
+.decl hasattr_pos(a: node, x: node, k: number)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
 .decl out_scope(d: number)
+.decl rr_agg1(a: node, st: number, xs: number)
+.decl rr_ctx2(a: node, xs: number)
+.decl tape_line(d: number, l: number, sp: node)
+.decl text(n: node, s: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, field, child, text, line, tape_line, node_text, token
+.output violation
 in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/**/*.py", p).
@@ -110,4 +130,15 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
-.output violation
+hasattr_args(c, a, s) :- node(_, c, "call", _, _), field(c, "function", fn), node_text(fn, s), field(c, "arguments", a), node(_, a, "argument_list", _, _).
+hasattr_extra(a, st) :- hasattr_args(_, a, _), token(a, _, s, st, _), match("(?:#|\\\\)(?s:.*)", s), !hasattr_child_at(a, st).
+hasattr_child_at(a, st) :- hasattr_args(_, a, _), child(a, c, _), node(_, c, _, st, _).
+rr_ctx2(a, xs) :- child(a, x, i), node(_, x, _, xs, _).
+rr_agg1(a, st, xs) :- rr_ctx2(a, xs), hasattr_extra(a, st), st < xs.
+hasattr_pos(a, x, k) :- hasattr_args(_, a, _), child(a, x, i), node(_, x, _, xs, _), e = count : { rr_agg1(a, _, xs) }, k = @add(@add(i, e), 1).
+hasattr_named(a, k) :- hasattr_args(_, a, _), c = count : { child(a, _, _) }, e = count : { hasattr_extra(a, _) }, k = @add(c, e).
+hasattr_call(c, a, s) :- hasattr_args(c, a, s), hasattr_pos(a, x, 2), node(_, x, "string", _, _), node_text(x, t), match("['\"]\\w+_async['\"]", t).
+hasattr_allowed(c) :- hasattr_call(c, _, _), node(d, c, _, _, _), line(c, l), tape_line(d, l, sp), text(sp, s), match("(?s:.*)(?:(?:_has_sql_template_support_async)|(?:_has_sql_template_support\\b)|(?:hasattr\\(txn._conn, ['\\\"]_execute_template_with_params)|(?:hasattr\\(txn, ['\\\"]_conn['\\\"].*hasattr\\(txn._conn)|(?:_select_one_direct_async)|(?:insert_many_raw_async)|(?:upsert_many_raw_async)|(?:upsert_many_async)|(?:update_async)|(?:delete_async)|(?:delete_all_async)|(?:delete_many_async)|(?:getattr\\(scheme, ['\\\"]resolve_context_async)|(?:getattr\\(graph_scheme, ['\\\"]resolve_context_async)|(?:keyset_paginate_async)|(?:_execute_aggregate_async)|(?:_execute_windowed_async)|(?:_execute_grammar_async)|(?:fetchall_raw_async)|(?:_update_fts_polyfill_index_async))(?s:.*)", s).
+violation("data-layer-hasattr-async", "hasattr", "hasattr", p, l) :- hasattr_call(c, _, f), suffix("hasattr", f), !hasattr_allowed(c), node(d, c, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(c, l).
+getattr_three(a) :- hasattr_call(_, a, _), hasattr_pos(a, y, 3), node(_, y, "none", _, _), hasattr_named(a, 3).
+violation("data-layer-hasattr-async", "getattr", "getattr", p, l) :- hasattr_call(c, a, f), suffix("getattr", f), getattr_three(a), !hasattr_allowed(c), node(d, c, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(c, l).

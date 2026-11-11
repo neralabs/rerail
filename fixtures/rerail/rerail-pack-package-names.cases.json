@@ -1,0 +1,54 @@
+{
+  "caught": [
+    {
+      "path": "src/setup/rule-pack-store.ts",
+      "content": "import { join } from \"node:path\";\n\nexport const installedDir = (into: string, id: string) => {\n  return { id, directory: join(into, \"node_modules\", \"@neralabs\", `rerail-pack-${id}`) };\n};\n"
+    },
+    {
+      "path": "src/setup/rule-pack-store-ids.ts",
+      "content": "export const ids = (dependencies: Record<string, unknown>) =>\n  Object.entries(dependencies).flatMap(([name, spec]) => {\n    if (!name.startsWith(\"@neralabs/rerail-pack-\") || typeof spec !== \"string\") return [];\n    const id = name.slice(\"@neralabs/rerail-pack-\".length);\n    return [{ id, spec }];\n  });\n"
+    },
+    {
+      "path": "src/cli/packs-cli.ts",
+      "content": "export const idsOf = (rest: string[]) => rest.map(argument => argument.replace(/^@neralabs\\/rerail-pack-/u, \"\"));\n"
+    },
+    {
+      "path": "src/cli/packs-cli-pattern.ts",
+      "content": "const VERSION_OR_TAG = \"[a-z0-9.-]+\";\nexport const PACK_PACKAGE = new RegExp(String.raw`^@neralabs\\/rerail-pack-[a-z][a-z0-9-]*(?:@${VERSION_OR_TAG})?$`, \"u\");\n"
+    },
+    {
+      "path": "src/engine/catalog/rule-catalog.ts",
+      "content": "import { readdirSync } from \"node:fs\";\n\nexport const packFolders = (scope: string) => readdirSync(scope)\n    .filter(name => name.startsWith('rerail-pack-'));\n"
+    },
+    {
+      "path": "src/setup/third-party.ts",
+      "content": "import { join } from \"node:path\";\nexport const folder = (modules: string, id: string) => join(modules, `rerail-pack-${id}`);\n"
+    },
+    {
+      "path": "src/engine/catalog/pack-type.ts",
+      "content": "export type PackName = `@neralabs/rerail-pack-${string}`;\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "src/setup/rule-pack-store-fixed.ts",
+      "content": "import { packIdOfPackage, rulePackPackageName } from \"../engine/catalog/rule-packs.js\";\nimport { join } from \"node:path\";\n\nexport const dirOf = (prefix: string, id: string) => join(prefix, \"node_modules\", rulePackPackageName(id));\nexport const idOf = (name: string) => packIdOfPackage(name);\n"
+    },
+    {
+      "path": "src/cli/packs-cli-error.ts",
+      "content": "/** Installs `@neralabs/rerail-pack-<id>` packages; see rerail-pack- naming. */\nexport const fail = (argument: string) => {\n  throw new Error(`${argument} is not a rule pack id, a @neralabs/rerail-pack-<id> package, or a folder that exists`);\n};\n"
+    },
+    {
+      "path": "src/api/rule-pack-contracts.ts",
+      "content": "import { z } from \"zod\";\nexport const version = z.string().nullable().describe(\"The installed version of the pack's npm package, @neralabs/rerail-pack-<id>.\");\n"
+    },
+    {
+      "path": "src/engine/catalog/rule-packs.ts",
+      "content": "export const rulePackPackageName = (id: string): string => `@neralabs/rerail-pack-${id}`;\n"
+    },
+    {
+      "path": "src/cli/packs-cli-help.ts",
+      "content": "export const HELP = \"Packs install under node_modules/@neralabs/rerail-pack-*.\";\n"
+    }
+  ]
+}

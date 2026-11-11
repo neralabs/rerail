@@ -1,6 +1,6 @@
 //! The relational query authorizer, shared by compilation and the scoped-reader contract test.
 use rusqlite::{
-    Connection, Result,
+    Result,
     hooks::{AuthAction, Authorization},
 };
 use std::{
@@ -16,7 +16,7 @@ pub(in crate::code_rule_dsl) struct Reads {
     pub source: Arc<AtomicBool>,
     pub recursive: Arc<AtomicBool>,
 }
-pub(in crate::code_rule_dsl) fn install(db: &Connection, tables: &BTreeSet<String>) -> Result<Reads> {
+pub(in crate::code_rule_dsl) fn install(db: &super::Database, tables: &BTreeSet<String>) -> Result<Reads> {
     // Every bound table connected before the authorizer is on (`vtab::resolve_tables`).
     crate::code_rule_dsl::facts::vtab::resolve_tables(db)?;
     let tables = tables.clone();
@@ -28,7 +28,7 @@ pub(in crate::code_rule_dsl) fn install(db: &Connection, tables: &BTreeSet<Strin
     let source_observed = Arc::clone(&source_read);
     let recursive = Arc::new(AtomicBool::new(false));
     let observed_recursive = Arc::clone(&recursive);
-    db.authorizer(Some(
+    db.hooks.authorizer(Some(
         move |context: rusqlite::hooks::AuthContext<'_>| match context.action {
             AuthAction::Select => Authorization::Allow,
             AuthAction::Recursive => {

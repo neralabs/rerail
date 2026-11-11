@@ -82,12 +82,12 @@ describe("Rerail API over HTTP", () => {
   });
 
   /** A completed run with an explicit start time, which is what every range query is bounded by. */
-  function seedAudit(audit: { sessionId?: string; at: number; violations?: CodeRuleViolation[]; audited?: string[] }): string {
+  function seedAudit(audit: { sessionId?: string; at: number; violations?: CodeRuleViolation[]; audited?: string[]; mode?: "steer" | "log" }): string {
     const auditId = auditStore.start({
       sessionId: audit.sessionId ?? SESSION.sessionId,
       workspaceRoot: root,
       scope: "touched-files",
-      mode: "steer",
+      mode: audit.mode ?? "steer",
       revision: 1,
       catalogRevision: null,
       ruleRevisions: (audit.audited ?? []).map(ruleId => ({ ruleId, revision: 1 })),
@@ -192,6 +192,19 @@ describe("Rerail API over HTTP", () => {
       .rules[codeRule.id]!.rerails).toBe(2);
   });
 
+  it("lists a rule taken out of the rules it reports while it has violations in range, marked removed", async () => {
+    // No library rules: the violation's rule is not among the rules reported.
+    seedAudit({ at: 2_000, violations: [flagged] });
+
+    const removed = (await getJson<{ rules: Record<string, Record<string, unknown>> }>("/api/rules/activity?since=1000")).rules[flagged.ruleId];
+    expect(removed).toMatchObject({ measured: true, distinctViolations: 1, removed: true });
+    // Outside the range it has nothing to show, so it is not listed.
+    expect((await getJson<{ rules: Record<string, unknown> }>("/api/rules/activity?since=3000")).rules).not.toHaveProperty([flagged.ruleId]);
+    // Back among the rules reported, it is no longer marked.
+    addLibraryRules();
+    expect((await getJson<{ rules: Record<string, Record<string, unknown>> }>("/api/rules/activity?since=1000")).rules[flagged.ruleId]).not.toHaveProperty("removed");
+  });
+
   it("lists violations newest first, paged, and filtered by rule", async () => {
     const other = { ...flagged, id: "violation-other", ruleId: MOCK_CODE_RULES[1]!.id, path: "web/src/z.ts" };
     seedAudit({ at: 1_000, violations: [flagged] });
@@ -204,6 +217,7 @@ describe("Rerail API over HTTP", () => {
     expect(page.violations[0]).toMatchObject({
       id: flagged.id, ruleId: flagged.ruleId, clauseId: flagged.clauseId, code: flagged.code, mode: "block",
       path: "web/src/x.ts", span: flagged.span, sessionId: SESSION.sessionId, auditId: newest, at: 4_000, host: SESSION.host,
+      logged: false,
     });
     // The last page says so, and still reports how many violations exist.
     expect(await getJson(`/api/violations?since=0&limit=2&cursor=${encodeURIComponent(page.nextCursor!)}`))
@@ -223,13 +237,16 @@ describe("Rerail API over HTTP", () => {
     sessionStore.recordDiscoveryPending(SESSION, "turn");
     sessionStore.recordCodeRulesPending(SESSION, "call");
     sessionStore.recordCodeRulesPending(SESSION, "result");
+    sessionStore.recordIgnoredEdit(SESSION, { path: "scratch/a.ts", source: ".git/info/exclude", line: 1, pattern: "scratch/" });
+    sessionStore.recordIgnoreRulesChanged(SESSION, { path: ".git/info/exclude", via: "observed", ignoresMore: ["scratch/"] });
+    sessionStore.recordIgnoreRulesChanged(SESSION, { path: ".gitignore", via: "tool", ignoresMore: ["out/"] });
     // More than a transcript page of later events: the dashboard opens on those and never loads the gaps.
     for (let index = 0; index < 600; index += 1) {
       sessionStore.append({ sessionId: SESSION.sessionId, eventId: `later-${index}`, kind: "turn-end", observedAt: 10_000 + index, payload: {} });
     }
 
     expect((await getJson<{ gaps: unknown }>(`/api/sessions/${SESSION.sessionId}`)).gaps)
-      .toEqual({ droppedEvents: 9, uncheckedBoundaries: 1, codeRulesPendingBoundaries: 2 });
+      .toEqual({ droppedEvents: 9, uncheckedBoundaries: 1, codeRulesPendingBoundaries: 2, ignoredEdits: 1, ignoreRuleChanges: 2 });
   });
 
   it("lists sessions newest first, a page at a time, with their violation counts", async () => {
@@ -268,6 +285,26 @@ describe("Rerail API over HTTP", () => {
     const row = (sessionId: string) => sessions.find(session => session.sessionId === sessionId);
     expect(row("session-mixed")).toMatchObject({ violationCount: 4, steeredViolations: 3, lastEventAt: 2_020 });
     expect(row("session-quiet")).toMatchObject({ violationCount: 0, steeredViolations: 0, lastEventAt: null });
+  });
+
+  it("counts nothing an audit in Log mode recorded as steered, and marks its violations logged, whatever their rules' modes", async () => {
+    sessionStore.openSession({ ...SESSION, sessionId: "session-log-audit" }, 2_000);
+    const steered = { ...flagged, id: "violation-steered", path: "web/src/z.ts", mode: "steer" as const };
+    seedAudit({ sessionId: "session-log-audit", at: 2_100, mode: "log", violations: [flagged, steered] });
+    seedAudit({ sessionId: "session-log-audit", at: 2_200, violations: [steered] });
+
+    const { sessions } = await getJson<{ sessions: Array<{ sessionId: string; violationCount: number; steeredViolations: number }> }>("/api/sessions");
+    expect(sessions.find(session => session.sessionId === "session-log-audit"))
+      .toMatchObject({ violationCount: 3, steeredViolations: 1 });
+    const { violations } = await getJson<{ violations: Array<{ id: string; at: number; mode: string; logged: boolean }> }>(
+      "/api/violations?since=0&sessionId=session-log-audit",
+    );
+    // `mode` stays the rule's; `logged` says the agent was not told.
+    expect(violations.map(({ id, at, mode, logged }) => ({ id, at, mode, logged }))).toEqual([
+      { id: "violation-steered", at: 2_200, mode: "steer", logged: false },
+      { id: flagged.id, at: 2_100, mode: "block", logged: true },
+      { id: "violation-steered", at: 2_100, mode: "steer", logged: true },
+    ]);
   });
 
   it("clears one repository's history, its aliases and clone ids included, and serves fresh reads after", async () => {

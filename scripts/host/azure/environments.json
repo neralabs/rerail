@@ -1,0 +1,88 @@
+{
+  "node": "24",
+  "environments": [
+    {
+      "id": "ubuntu-24.04-x64",
+      "os": "linux",
+      "image": "Canonical:ubuntu-24_04-lts:server:latest",
+      "size": "Standard_D2s_v5",
+      "expect": "pass"
+    },
+    {
+      "id": "ubuntu-24.04-arm64",
+      "os": "linux",
+      "image": "Canonical:ubuntu-24_04-lts:server-arm64:latest",
+      "size": "Standard_D2ps_v5",
+      "expect": "pass"
+    },
+    {
+      "id": "debian-13-x64",
+      "os": "linux",
+      "image": "Debian:debian-13:13-gen2:latest",
+      "size": "Standard_D2s_v5",
+      "expect": "pass"
+    },
+    {
+      "id": "debian-13-arm64",
+      "os": "linux",
+      "image": "Debian:debian-13:13-arm64:latest",
+      "size": "Standard_D2ps_v5",
+      "expect": "pass"
+    },
+    {
+      "id": "ubuntu-22.04-x64",
+      "os": "linux",
+      "image": "Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:latest",
+      "size": "Standard_D2s_v5",
+      "expect": "pass"
+    },
+    {
+      "id": "debian-12-x64",
+      "os": "linux",
+      "image": "Debian:debian-12:12-gen2:latest",
+      "size": "Standard_D2s_v5",
+      "expect": "pass"
+    },
+    {
+      "id": "rhel-9-x64",
+      "os": "linux",
+      "image": "RedHat:RHEL:9-lvm-gen2:latest",
+      "size": "Standard_D2s_v5",
+      "expect": "pass"
+    },
+    {
+      "id": "windows-11-x64",
+      "os": "windows",
+      "image": "MicrosoftWindowsDesktop:windows-11:win11-25h2-pro:latest",
+      "size": "Standard_D4s_v5",
+      "license": "Windows_Client",
+      "expect": "pass"
+    },
+    {
+      "id": "windows-11-arm64",
+      "os": "windows",
+      "image": "MicrosoftWindowsDesktop:windows11preview-arm64:win11-25h2-pro:latest",
+      "size": "Standard_D4ps_v5",
+      "license": "Windows_Client",
+      "expect": "pass"
+    },
+    {
+      "id": "macos-26-arm64",
+      "os": "macos",
+      "runner": "macos-26",
+      "expect": "pass"
+    },
+    {
+      "id": "macos-15-arm64",
+      "os": "macos",
+      "runner": "macos-15",
+      "expect": "pass"
+    },
+    {
+      "id": "macos-15-x64",
+      "os": "macos",
+      "runner": "macos-15-intel",
+      "expect": "pass"
+    }
+  ]
+}

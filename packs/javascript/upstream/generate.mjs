@@ -1,37 +1,46 @@
 // Records where ESLint 10.11.0 reports the JavaScript pack's ported rules (rerail/packs/javascript/conformance.json),
 // in the format rerail/conformance/languages/pack.ts reads: eslint/fixtures.expected.json (the rules' own RuleTester
 // cases).
-// Run by `npm run fixtures:derive` (a maintainer, the bump workflow, or a pull request's check that a changed
-// test-data.lock reproduces):
+// Run by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release or a re-snapshot):
 //   node generate.mjs --tools <dir> --eslint <checkout>
 // <dir> holds node_modules with exactly eslint@10.11.0, @typescript-eslint/parser@8.70.1 and typescript@6.0.3 (the
-// runtime nera-rule-validation pins for ESLint 10.11.0, validation/upstream/eslint-10.11.0). The checkout is
+// runtime scripts/pack-data/runtimes/eslint-10.11.0 pins for ESLint 10.11.0). The checkout is
 // github.com/eslint/eslint at v10.11.0 (3c0b7c6e1fe2dec778b97a996018126f22d437ae).
 //
 // Each rule's test file is loaded with a stub RuleTester that records its cases instead of linting. Every case's code
 // is written to eslint/fixtures/<rule>/<n>.<ext> and linted with every pack rule on at its default options (the pack's
-// ports are the rules as eslint:recommended turns them on; a case's own rule options are ignored, as the V1 gates'
-// upstream-tests gate ignores them), under ESLint's defaults plus the case's own
+// ports are the rules as eslint:recommended turns them on; a case's own rule options are ignored, as the pack's
+// ports ignore them), under ESLint's defaults plus the case's own
 // language: its ecmaVersion, sourceType and parserOptions (`with`, octal literals and `delete x` only parse as a
 // script), and typescript-eslint's parser where the case names it. The case's globals and settings are left out, as
-// a repository without them would lint the code. So the recording is the linter's answer, not the case's own
+// a repository without them would lint the code. So the expected findings are the linter's answer, not the case's own
 // expectation. A case's extension is its parser's: .ts (.tsx with JSX) for typescript-eslint's parser, .js (.jsx) for
 // espree, or the TypeScript-family extension of its filename. Code that does not parse is left out, and so is code
 // over MAX_CASE_BYTES: ESLint's performance stress cases (prefer-template's 1 MB string literal), which exhaust the
 // engine's per-file AST work budget once every pack rule runs on the file. Each kept file is one analysis unit. Columns are ESLint's, converted from UTF-16 code units to code points, 1-based.
+// `source.units` names each file's origin, the rule whose test file it came from, and the case's own language where it
+// differs from ESLint's defaults for its extension (`languageOptions`, scripts/pack-data/eslint-expected.mjs
+// `unitLanguage`), which the conformance runner evaluates it under. Each such file also gets a rename variant,
+// renamed/<rule>/<n>.<ext> (scripts/pack-data/eslint-expected.mjs `writeRenameVariants`): its identifiers renamed,
+// order-preserving, its literals kept, in the original's language, linted like any file, and marked `renamedFrom` the
+// original.
+// eslint/provenance.json and LICENSES.md (scripts/pack-data/provenance.mjs `writeProvenance`) record each kept file as
+// extracted from its rule's tests/lib/rules/<rule>.js, each rename variant as renamed from its original, and
+// fixtures.expected.json as Rerail's.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire, registerHooks } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { recordingWritten } from "../../../scripts/s3/pack-fixtures.mjs";
+import { codePointColumn, ECMA_EXTENSIONS, isVariantPath, unitLanguage, withOrigins, writeRenameVariants } from "../../../scripts/pack-data/eslint-expected.mjs";
+import { variantEntries, writeProvenance } from "../../../scripts/pack-data/provenance.mjs";
+import { expectedFindingsWritten } from "../../../scripts/s3/pack-fixtures.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACK = JSON.parse(readFileSync(join(HERE, "..", "conformance.json"), "utf8"));
 const TOOL = "eslint";
 const VERSIONS = { eslint: "10.11.0", "@typescript-eslint/parser": "8.70.1", typescript: "6.0.3" };
 const CHECKOUT = { repository: "https://github.com/eslint/eslint", commit: "3c0b7c6e1fe2dec778b97a996018126f22d437ae" };
-const ECMA_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
 const TYPESCRIPT_EXTENSIONS = [".d.ts", ".ts", ".tsx", ".mts", ".cts"];
 /** Larger cases are performance stress tests, not rule behaviour; see the header. */
 const MAX_CASE_BYTES = 64 * 1024;
@@ -76,7 +85,7 @@ function optionsModule(cwd, rules, languages) {
   writeFileSync(
     path,
     `import tsParser from ${from("@typescript-eslint/parser")};
-const { rules, languages } = JSON.parse(process.env.RERAIL_JAVASCRIPT_PACK_RECORDING);
+const { rules, languages } = JSON.parse(process.env.RERAIL_JAVASCRIPT_PACK_EXPECTED);
 export default {
   cwd: ${JSON.stringify(cwd)},
   overrideConfigFile: true,
@@ -95,18 +104,9 @@ export default {
 };
 `,
   );
-  process.env.RERAIL_JAVASCRIPT_PACK_RECORDING = JSON.stringify({ rules, languages });
+  process.env.RERAIL_JAVASCRIPT_PACK_EXPECTED = JSON.stringify({ rules, languages });
   return pathToFileURL(path);
 }
-
-/** ESLint's 1-based UTF-16 column on `line`, as 1-based code points. */
-function codePointColumn(lines, line, column) {
-  const text = lines[line - 1] ?? "";
-  return [...text.slice(0, column - 1)].length + 1;
-}
-
-/** ESLint's line terminators (`\r\n`, `\r`, `\n`, U+2028, U+2029). */
-const splitLines = text => text.split(/\r\n|[\r\n\u2028\u2029]/u);
 
 /** Lints `files` (relative to `cwd`) with `rules` on; returns findings and the files ESLint could not parse. */
 async function lint(cwd, files, rules, languages) {
@@ -116,30 +116,32 @@ async function lint(cwd, files, rules, languages) {
   const wanted = new Set(rules);
   for (const result of await eslint.lintFiles(files)) {
     const path = relative(cwd, result.filePath).split(sep).join("/");
-    if (result.messages.some(message => message.fatal)) {
-      unparsed.push(path);
-      continue;
-    }
-    const reported = result.messages.filter(message => wanted.has(message.ruleId));
-    if (reported.length === 0) continue;
-    // ESLint reads the text without a leading byte order mark; the file's first line, as the runner counts it, has it.
-    const text = readFileSync(result.filePath, "utf8");
-    const bom = text.startsWith("\uFEFF") ? 1 : 0;
-    const lines = splitLines(text.slice(bom));
-    for (const message of reported) {
-      const column = codePointColumn(lines, message.line, message.column) + (message.line === 1 ? bom : 0);
-      findings.push({ rule: message.ruleId, path, line: message.line, column });
-    }
+    if (result.messages.some(message => message.fatal)) unparsed.push(path);
+    else findings.push(...resultFindings(result, path, wanted));
   }
   const order = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
   findings.sort((left, right) => order(left.path, right.path) || left.line - right.line || left.column - right.column || order(left.rule, right.rule));
   return { findings, unparsed: unparsed.sort(order) };
 }
 
+/** The findings of the `wanted` rules in ESLint's `result` for the file at `path`. */
+function resultFindings(result, path, wanted) {
+  const reported = result.messages.filter(message => wanted.has(message.ruleId));
+  if (reported.length === 0) return [];
+  // ESLint reads the text without a leading byte order mark; the file's first line, as the runner counts it, has it.
+  const text = readFileSync(result.filePath, "utf8");
+  const bom = text.startsWith("\uFEFF") ? 1 : 0;
+  const body = text.slice(bom);
+  return reported.map(message => {
+    const column = codePointColumn(body, message.line, message.column) + (message.line === 1 ? bom : 0);
+    return { rule: message.ruleId, path, line: message.line, column };
+  });
+}
+
 function writeJson(path, value) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
-  console.log(recordingWritten(path, value.source.kind));
+  console.log(expectedFindingsWritten(path, value.source.kind));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -285,19 +287,32 @@ function extractFixtures() {
 }
 
 const { fixtures, files, languages, counts } = (installHooks(), extractFixtures());
-const { findings, unparsed } = await lint(fixtures, files, RULES, languages);
-for (const path of unparsed) {
+// Each file is a case of the rule whose test file it came from (`<rule>/<n>.<ext>`); its rename variant joins its
+// language group.
+const origins = new Map(files.map(file => [file, [file.split("/")[0]]]));
+const { variants, skipped: unrenamed } = writeRenameVariants(fixtures, files, origins);
+const variantOf = new Map(variants.map(variant => [variant.of, variant.unit]));
+const variantLanguages = languages.map(({ files: members, languageOptions }) => ({ files: [...members, ...members.flatMap(member => variantOf.get(member) ?? [])], languageOptions }));
+const linted = await lint(fixtures, [...files, ...variants.map(variant => variant.unit)], RULES, variantLanguages);
+const unparsedSet = new Set(linted.unparsed);
+for (const path of linted.unparsed.filter(path => !isVariantPath(path))) {
   rmSync(join(fixtures, path));
   const count = counts[path.split("/")[0]];
   count.unparsed = (count.unparsed ?? 0) + 1;
 }
-const unparsedSet = new Set(unparsed);
 const kept = files.filter(file => !unparsedSet.has(file));
+// Each file's own language, as ESLint linted it, rides along in `source.units` for the conformance runner.
+const fileLanguages = new Map(languages.flatMap(({ files: members, languageOptions }) => members.map(member => [member, unitLanguage(member, languageOptions)])));
+const recorded = withOrigins(fixtures, kept, origins, variants, unparsedSet, linted.findings, fileLanguages);
+const { files: units, units: origin, findings } = recorded;
 writeJson(join(HERE, TOOL, "fixtures.expected.json"), {
   tool: TOOL,
   version: VERSION,
-  source: { kind: "fixtures", origin: `${CHECKOUT.repository}@${CHECKOUT.commit}`, rules: RULES, files: kept },
+  source: { kind: "fixtures", origin: `${CHECKOUT.repository}@${CHECKOUT.commit}`, rules: RULES, files: units, units: origin },
   findings,
 });
-console.log(`${TOOL} fixtures: ${kept.length} files, ${findings.length} findings`);
+// Each kept file is extracted from its rule's test file (`<rule>/<n>.<ext>`); its variant is renamed from it.
+const extracted = new Map(kept.map(file => [`fixtures/${file}`, { source: TOOL, from: `tests/lib/rules/${file.split("/")[0]}.js`, how: "extracted" }]));
+writeProvenance({ pack: PACK.pack, tool: TOOL, entries: new Map([...extracted, ...variantEntries(extracted, recorded)]), commits: { [TOOL]: CHECKOUT.commit } });
+console.log(`${TOOL} fixtures: ${kept.length} files, ${units.length - kept.length} rename variants (${unrenamed.length} units without one), ${findings.length} findings`);
 for (const [rule, count] of Object.entries(counts)) console.log(`  ${rule}: ${JSON.stringify(count)}`);

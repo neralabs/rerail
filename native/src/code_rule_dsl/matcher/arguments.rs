@@ -1,3 +1,4 @@
+use crate::code_rule_dsl::tree::Tree;
 use super::util::UNKNOWN;
 use super::value::spend_step;
 use crate::code_rule_dsl::identifier::python_identifier;
@@ -59,11 +60,6 @@ fn every<'r, D: Doc>(count: usize, make: impl Fn() -> Passed<'r, D>) -> Vec<Pass
     (0..count).map(|_| make()).collect()
 }
 
-fn named_children<'r, D: Doc>(node: &Node<'r, D>) -> Vec<Node<'r, D>> {
-    node.children()
-        .filter(|child| child.is_named() && !child.kind().ends_with("comment"))
-        .collect()
-}
 
 impl Arguments {
     pub(super) fn match_node<'tree, D: Doc>(
@@ -142,7 +138,7 @@ impl Arguments {
         let mut starred = false;
         let mut keywords = Vec::new();
         let mut spread_keywords = false;
-        for argument in named_children(&arguments) {
+        for argument in arguments.named_code().collect::<Vec<_>>() {
             match argument.kind().as_ref() {
                 "keyword_argument" => {
                     if let (Some(name), Some(value)) =
@@ -204,7 +200,7 @@ impl Arguments {
             positional.push(arguments);
         } else {
             let mut starred = false;
-            for argument in named_children(&arguments) {
+            for argument in arguments.named_code().collect::<Vec<_>>() {
                 match argument.kind().as_ref() {
                     "keyword_argument" => {
                         if let (Some(name), Some(value)) =
@@ -264,7 +260,7 @@ impl Arguments {
         // After `...$x`, no slot's position is known, and a slot `$x` may pass by name is
         // unknown whatever else passes it.
         let mut spread = false;
-        for argument in named_children(&arguments) {
+        for argument in arguments.named_code().collect::<Vec<_>>() {
             match argument.kind().as_ref() {
                 "variadic_placeholder" => return None,
                 "argument" => {}
@@ -274,7 +270,7 @@ impl Arguments {
                 return refused();
             }
             let name = argument.field("name");
-            let parts: Vec<_> = named_children(&argument)
+            let parts: Vec<_> = argument.named_code().collect::<Vec<_>>()
                 .into_iter()
                 .filter(|part| {
                     name.as_ref()
@@ -289,7 +285,7 @@ impl Arguments {
                     return refused();
                 }
                 unpacked = true;
-                let Some(inner) = named_children(value).into_iter().next() else {
+                let Some(inner) = value.named_code().collect::<Vec<_>>().into_iter().next() else {
                     return refused();
                 };
                 let mut spend = || spend_step();
@@ -378,7 +374,7 @@ impl Arguments {
         let mut positional = Vec::new();
         let mut named = Vec::new();
         let mut unpacked = false;
-        for argument in named_children(&arguments) {
+        for argument in arguments.named_code().collect::<Vec<_>>() {
             match argument.kind().as_ref() {
                 "variadic_placeholder" => return None,
                 "argument" => {}
@@ -388,7 +384,7 @@ impl Arguments {
                 return refused();
             }
             let name = argument.field("name");
-            let parts: Vec<_> = named_children(&argument)
+            let parts: Vec<_> = argument.named_code().collect::<Vec<_>>()
                 .into_iter()
                 .filter(|part| {
                     name.as_ref()
@@ -428,7 +424,7 @@ impl Arguments {
             return every(self.slots.len(), || Passed::Unknown);
         }
         let mut positions = self.positional();
-        for argument in named_children(&arguments) {
+        for argument in arguments.named_code().collect::<Vec<_>>() {
             if argument.kind() == "spread_element" && !self.estree {
                 for slot in positions.by_ref() {
                     passed[slot] = Passed::Unknown;
@@ -501,8 +497,8 @@ fn pass_by_name<'r, D: Doc>(
 /// The expression inside any parentheses: neither ESTree nor PHP-Parser has a parenthesized
 /// expression, so `super((a))`'s `arguments[0]` is `a`, as `f((a))`'s PHP argument is.
 fn unparenthesized<'r, D: Doc>(mut node: Node<'r, D>) -> Node<'r, D> {
-    while node.kind() == "parenthesized_expression" {
-        match named_children(&node).as_slice() {
+    while super::util::is_paren_kind(&node.kind()) {
+        match node.named_code().collect::<Vec<_>>().as_slice() {
             [inner] => node = inner.clone(),
             _ => break,
         }
@@ -513,12 +509,12 @@ fn unparenthesized<'r, D: Doc>(mut node: Node<'r, D>) -> Node<'r, D> {
 /// The pairs of `**{'a': 1}`: a dict display whose keys are all string literals, without `**`
 /// of its own.
 fn literal_keywords<'r, D: Doc>(splat: &Node<'r, D>) -> Option<Vec<(String, Node<'r, D>)>> {
-    let [dictionary] = named_children(splat).try_into().ok()?;
+    let [dictionary] = splat.named_code().collect::<Vec<_>>().try_into().ok()?;
     if dictionary.kind() != "dictionary" {
         return None;
     }
     let mut pairs = Vec::new();
-    for pair in named_children(&dictionary) {
+    for pair in dictionary.named_code().collect::<Vec<_>>() {
         if pair.kind() != "pair" {
             return None;
         }

@@ -45,6 +45,14 @@ A process holds one mirror per database file, found by canonical path. The store
 symbols both use it, behind one reader–writer lock. An id is given out under the write lock, so no
 two writers can give out the same id. `hold` goes away, and the worker no longer waits for a
 planner run. A failed planner run's symbols stay in the mirror: an unused atom is harmless.
+A store's mirror also carries the store's identity (`store_identity`, random when the store is
+created). Opening a store or a connection to it checks that identity. A store deleted and created
+again at the same path, by any process, gets a mirror of its own instead of inheriting the old
+store's numbering.
+The planner's symbols keep a mirror from run to run, so a run does not read a large store's atoms
+again. The mirror holds no file open after the store's last handle closes. That handle also closes
+its threads' connections, so the file can be deleted and the store created again. A mirror made
+after the store was written reads the stored atoms before the planner's SQL uses them.
 
 The mirror keeps a watermark, `stored`. Ids below it are in the database; ids from it on are
 **pending**.

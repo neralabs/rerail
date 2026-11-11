@@ -1,0 +1,1512 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-no-access-state-in-setstate",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Compute class component state updates from the updater callback's previous-state argument instead of this.state; setState batches updates, so this.state may be stale.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "after-jsdoc": {
+            "follows": {
+              "stopBy": "neighbor",
+              "matches": "jsdoc-component"
+            }
+          },
+          "class-node": {
+            "any": [
+              {
+                "kind": "class_declaration"
+              },
+              {
+                "kind": "class"
+              },
+              {
+                "kind": "abstract_class_declaration"
+              }
+            ]
+          },
+          "component-state": {
+            "matches": "this-state",
+            "all": [
+              {
+                "matches": "in-component"
+              }
+            ]
+          },
+          "component-superclass": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^(?:Pure)?Component$"
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "regex": "^React$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^(?:Pure)?Component$"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "create-class-object": {
+            "kind": "object",
+            "inside": {
+              "kind": "arguments",
+              "inside": {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "regex": "^createReactClass$"
+                    },
+                    {
+                      "kind": "member_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "object",
+                            "kind": "identifier",
+                            "regex": "^React$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "property",
+                            "regex": "^createReactClass$"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "earlier-hit": {
+            "any": [
+              {
+                "matches": "state-owner-hit"
+              },
+              {
+                "matches": "relay-hit"
+              }
+            ]
+          },
+          "es6-component": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "class_declaration"
+                  },
+                  {
+                    "kind": "abstract_class_declaration"
+                  },
+                  {
+                    "kind": "class"
+                  }
+                ],
+                "has": {
+                  "kind": "class_heritage",
+                  "any": [
+                    {
+                      "has": {
+                        "matches": "component-superclass"
+                      }
+                    },
+                    {
+                      "has": {
+                        "kind": "extends_clause",
+                        "has": {
+                          "field": "value",
+                          "matches": "component-superclass"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "class_declaration"
+                  },
+                  {
+                    "kind": "abstract_class_declaration"
+                  }
+                ],
+                "matches": "after-jsdoc"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "class_declaration"
+                  },
+                  {
+                    "kind": "abstract_class_declaration"
+                  },
+                  {
+                    "kind": "class"
+                  }
+                ],
+                "inside": {
+                  "kind": "export_statement",
+                  "matches": "after-jsdoc"
+                }
+              },
+              {
+                "kind": "class",
+                "inside": {
+                  "kind": "variable_declarator",
+                  "field": "value",
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "lexical_declaration"
+                      },
+                      {
+                        "kind": "variable_declaration"
+                      }
+                    ],
+                    "matches": "after-jsdoc"
+                  }
+                }
+              }
+            ]
+          },
+          "in-component": {
+            "any": [
+              {
+                "matches": "in-es6-component"
+              },
+              {
+                "matches": "in-es5-component"
+              }
+            ]
+          },
+          "in-es5-component": {
+            "inside": {
+              "stopBy": "end",
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "function_expression"
+                    },
+                    {
+                      "kind": "arrow_function"
+                    },
+                    {
+                      "kind": "generator_function"
+                    }
+                  ],
+                  "inside": {
+                    "kind": "pair",
+                    "inside": {
+                      "matches": "create-class-object"
+                    }
+                  }
+                },
+                {
+                  "kind": "method_definition",
+                  "inside": {
+                    "matches": "create-class-object"
+                  }
+                }
+              ]
+            }
+          },
+          "in-es6-component": {
+            "inside": {
+              "stopBy": {
+                "matches": "class-node"
+              },
+              "matches": "es6-component"
+            }
+          },
+          "jsdoc-component": {
+            "kind": "comment",
+            "regex": "(?m)^(?:/\\*\\*|[ \\t]*\\*?)[ \\t]*@(?:extends|augments)[ \\t]+React\\.(?:Pure)?Component(?:\\s|\\*/)",
+            "all": [
+              {
+                "regex": "^/\\*\\*[^*]"
+              },
+              {
+                "layout": {
+                  "after": {
+                    "to": "token",
+                    "breaks": {
+                      "max": 1
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "keyed-function": {
+            "any": [
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function"
+              }
+            ],
+            "inside": {
+              "field": "value",
+              "any": [
+                {
+                  "kind": "pair"
+                },
+                {
+                  "kind": "public_field_definition"
+                }
+              ]
+            }
+          },
+          "non-logical-binary": {
+            "kind": "binary_expression",
+            "not": {
+              "has": {
+                "field": "operator",
+                "regex": "^(?:&&|\\|\\||\\?\\?)$"
+              }
+            }
+          },
+          "reaches-state": {
+            "params": [
+              "STATE"
+            ],
+            "rule": {
+              "kind": "call_expression",
+              "pattern": "$CALL",
+              "all": [
+                {
+                  "has": {
+                    "field": "function",
+                    "kind": "identifier",
+                    "pattern": "$CALLEE"
+                  }
+                },
+                {
+                  "matches": "in-component"
+                },
+                {
+                  "any": [
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "follows": {
+                          "stopBy": "end",
+                          "any": [
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "method_definition"
+                                    },
+                                    {
+                                      "kind": "function_expression"
+                                    },
+                                    {
+                                      "kind": "generator_function"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "matches": "earlier-hit"
+                                }
+                              ]
+                            },
+                            {
+                              "has": {
+                                "stopBy": "end",
+                                "all": [
+                                  {
+                                    "any": [
+                                      {
+                                        "kind": "method_definition"
+                                      },
+                                      {
+                                        "kind": "function_expression"
+                                      },
+                                      {
+                                        "kind": "generator_function"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "matches": "earlier-hit"
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "any": [
+                          {
+                            "any": [
+                              {
+                                "kind": "method_definition",
+                                "has": {
+                                  "field": "name",
+                                  "kind": "property_identifier",
+                                  "pattern": "$CALLEE"
+                                }
+                              },
+                              {
+                                "kind": "method_definition",
+                                "has": {
+                                  "field": "name",
+                                  "kind": "private_property_identifier",
+                                  "pattern": "$PRIV"
+                                },
+                                "compare": {
+                                  "left": "PRIV",
+                                  "op": "eq",
+                                  "right": "CALLEE",
+                                  "text": "name"
+                                }
+                              },
+                              {
+                                "kind": "method_definition",
+                                "has": {
+                                  "field": "name",
+                                  "kind": "computed_property_name",
+                                  "has": {
+                                    "kind": "identifier",
+                                    "pattern": "$CALLEE"
+                                  }
+                                }
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "kind": "function_expression"
+                                  },
+                                  {
+                                    "kind": "generator_function"
+                                  }
+                                ],
+                                "inside": {
+                                  "field": "value",
+                                  "any": [
+                                    {
+                                      "kind": "pair",
+                                      "has": {
+                                        "field": "key",
+                                        "any": [
+                                          {
+                                            "kind": "property_identifier",
+                                            "pattern": "$CALLEE"
+                                          },
+                                          {
+                                            "kind": "computed_property_name",
+                                            "has": {
+                                              "kind": "identifier",
+                                              "pattern": "$CALLEE"
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    {
+                                      "kind": "public_field_definition",
+                                      "has": {
+                                        "field": "name",
+                                        "any": [
+                                          {
+                                            "kind": "property_identifier",
+                                            "pattern": "$CALLEE"
+                                          },
+                                          {
+                                            "kind": "private_property_identifier",
+                                            "pattern": "$PRIV",
+                                            "compare": {
+                                              "left": "PRIV",
+                                              "op": "eq",
+                                              "right": "CALLEE",
+                                              "text": "name"
+                                            }
+                                          },
+                                          {
+                                            "kind": "computed_property_name",
+                                            "has": {
+                                              "kind": "identifier",
+                                              "pattern": "$CALLEE"
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            ],
+                            "pattern": "$OWNER",
+                            "has": {
+                              "stopBy": "end",
+                              "matches": "component-state",
+                              "pattern": "$STATE",
+                              "inside": {
+                                "stopBy": {
+                                  "any": [
+                                    {
+                                      "matches": "stopper"
+                                    },
+                                    {
+                                      "matches": "setstate-first-arg"
+                                    }
+                                  ]
+                                },
+                                "pattern": "$OWNERSEEN",
+                                "compare": {
+                                  "left": "OWNERSEEN",
+                                  "op": "eq",
+                                  "right": "OWNER",
+                                  "text": "node"
+                                }
+                              },
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "precedes": {
+                                        "stopBy": "end",
+                                        "any": [
+                                          {
+                                            "pattern": "$SEEN",
+                                            "compare": {
+                                              "left": "SEEN",
+                                              "op": "eq",
+                                              "right": "CALL",
+                                              "text": "node"
+                                            }
+                                          },
+                                          {
+                                            "has": {
+                                              "stopBy": "end",
+                                              "pattern": "$SEEN",
+                                              "compare": {
+                                                "left": "SEEN",
+                                                "op": "eq",
+                                                "right": "CALL",
+                                                "text": "node"
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "stopBy": "end",
+                                        "precedes": {
+                                          "stopBy": "end",
+                                          "any": [
+                                            {
+                                              "pattern": "$SEEN",
+                                              "compare": {
+                                                "left": "SEEN",
+                                                "op": "eq",
+                                                "right": "CALL",
+                                                "text": "node"
+                                              }
+                                            },
+                                            {
+                                              "has": {
+                                                "stopBy": "end",
+                                                "pattern": "$SEEN",
+                                                "compare": {
+                                                  "left": "SEEN",
+                                                  "op": "eq",
+                                                  "right": "CALL",
+                                                  "text": "node"
+                                                }
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "stopBy": "end",
+                                        "pattern": "$SEEN",
+                                        "compare": {
+                                          "left": "SEEN",
+                                          "op": "eq",
+                                          "right": "CALL",
+                                          "text": "node"
+                                        }
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "kind": "method_definition",
+                            "inside": {
+                              "kind": "class_body"
+                            },
+                            "any": [
+                              {
+                                "has": {
+                                  "field": "name",
+                                  "kind": "property_identifier",
+                                  "pattern": "$CALLEE"
+                                }
+                              },
+                              {
+                                "has": {
+                                  "field": "name",
+                                  "kind": "private_property_identifier",
+                                  "pattern": "$PRIV"
+                                },
+                                "compare": {
+                                  "left": "PRIV",
+                                  "op": "eq",
+                                  "right": "CALLEE",
+                                  "text": "name"
+                                }
+                              },
+                              {
+                                "has": {
+                                  "field": "name",
+                                  "kind": "computed_property_name",
+                                  "has": {
+                                    "kind": "identifier",
+                                    "pattern": "$CALLEE"
+                                  }
+                                }
+                              }
+                            ],
+                            "pattern": "$OWNER",
+                            "has": {
+                              "stopBy": "end",
+                              "kind": "call_expression",
+                              "has": {
+                                "field": "function",
+                                "kind": "identifier"
+                              },
+                              "all": [
+                                {
+                                  "inside": {
+                                    "stopBy": {
+                                      "kind": "method_definition",
+                                      "inside": {
+                                        "kind": "class_body"
+                                      }
+                                    },
+                                    "pattern": "$OWNERSEEN",
+                                    "compare": {
+                                      "left": "OWNERSEEN",
+                                      "op": "eq",
+                                      "right": "OWNER",
+                                      "text": "node"
+                                    }
+                                  }
+                                },
+                                {
+                                  "any": [
+                                    {
+                                      "precedes": {
+                                        "stopBy": "end",
+                                        "any": [
+                                          {
+                                            "pattern": "$SEEN",
+                                            "compare": {
+                                              "left": "SEEN",
+                                              "op": "eq",
+                                              "right": "CALL",
+                                              "text": "node"
+                                            }
+                                          },
+                                          {
+                                            "has": {
+                                              "stopBy": "end",
+                                              "pattern": "$SEEN",
+                                              "compare": {
+                                                "left": "SEEN",
+                                                "op": "eq",
+                                                "right": "CALL",
+                                                "text": "node"
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "stopBy": "end",
+                                        "precedes": {
+                                          "stopBy": "end",
+                                          "any": [
+                                            {
+                                              "pattern": "$SEEN",
+                                              "compare": {
+                                                "left": "SEEN",
+                                                "op": "eq",
+                                                "right": "CALL",
+                                                "text": "node"
+                                              }
+                                            },
+                                            {
+                                              "has": {
+                                                "stopBy": "end",
+                                                "pattern": "$SEEN",
+                                                "compare": {
+                                                  "left": "SEEN",
+                                                  "op": "eq",
+                                                  "right": "CALL",
+                                                  "text": "node"
+                                                }
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "stopBy": "end",
+                                        "pattern": "$SEEN",
+                                        "compare": {
+                                          "left": "SEEN",
+                                          "op": "eq",
+                                          "right": "CALL",
+                                          "text": "node"
+                                        }
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "matches": {
+                                    "reaches-state": {
+                                      "STATE": "$STATE"
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "relay-hit": {
+            "kind": "method_definition",
+            "inside": {
+              "kind": "class_body"
+            },
+            "any": [
+              {
+                "has": {
+                  "field": "name",
+                  "kind": "property_identifier",
+                  "pattern": "$CALLEE"
+                }
+              },
+              {
+                "has": {
+                  "field": "name",
+                  "kind": "private_property_identifier",
+                  "pattern": "$PRIV"
+                },
+                "compare": {
+                  "left": "PRIV",
+                  "op": "eq",
+                  "right": "CALLEE",
+                  "text": "name"
+                }
+              },
+              {
+                "has": {
+                  "field": "name",
+                  "kind": "computed_property_name",
+                  "has": {
+                    "kind": "identifier",
+                    "pattern": "$CALLEE"
+                  }
+                }
+              }
+            ],
+            "pattern": "$OWNER",
+            "has": {
+              "stopBy": "end",
+              "kind": "call_expression",
+              "has": {
+                "field": "function",
+                "kind": "identifier"
+              },
+              "all": [
+                {
+                  "inside": {
+                    "stopBy": {
+                      "kind": "method_definition",
+                      "inside": {
+                        "kind": "class_body"
+                      }
+                    },
+                    "pattern": "$OWNERSEEN",
+                    "compare": {
+                      "left": "OWNERSEEN",
+                      "op": "eq",
+                      "right": "OWNER",
+                      "text": "node"
+                    }
+                  }
+                },
+                {
+                  "matches": {
+                    "reaches-state": {
+                      "STATE": "$STATE"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "scope-node": {
+            "any": [
+              {
+                "kind": "program"
+              },
+              {
+                "kind": "statement_block"
+              },
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "function_declaration"
+              },
+              {
+                "kind": "generator_function"
+              },
+              {
+                "kind": "generator_function_declaration"
+              },
+              {
+                "kind": "method_definition"
+              },
+              {
+                "kind": "class"
+              },
+              {
+                "kind": "class_declaration"
+              },
+              {
+                "kind": "abstract_class_declaration"
+              },
+              {
+                "kind": "switch_statement"
+              },
+              {
+                "kind": "catch_clause"
+              },
+              {
+                "kind": "public_field_definition"
+              },
+              {
+                "kind": "class_static_block"
+              },
+              {
+                "kind": "internal_module"
+              },
+              {
+                "kind": "module"
+              },
+              {
+                "kind": "with_statement"
+              },
+              {
+                "kind": "for_statement",
+                "has": {
+                  "field": "initializer",
+                  "kind": "lexical_declaration"
+                }
+              },
+              {
+                "kind": "for_in_statement",
+                "has": {
+                  "field": "kind",
+                  "regex": "^(?:let|const)$"
+                }
+              }
+            ]
+          },
+          "self-or-inside-setstate-first-arg": {
+            "any": [
+              {
+                "matches": "setstate-first-arg"
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "matches": "setstate-first-arg"
+                }
+              }
+            ]
+          },
+          "setstate-call": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "matches": "setstate-callee"
+            }
+          },
+          "setstate-callee": {
+            "any": [
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "this-expr"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^setState$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "setstate-callee"
+                }
+              }
+            ]
+          },
+          "setstate-first-arg": {
+            "not": {
+              "kind": "comment"
+            },
+            "nthChild": {
+              "position": 1,
+              "ofRule": {
+                "not": {
+                  "kind": "comment"
+                }
+              }
+            },
+            "inside": {
+              "kind": "arguments",
+              "inside": {
+                "field": "arguments",
+                "matches": "setstate-call"
+              }
+            }
+          },
+          "state-owner-hit": {
+            "any": [
+              {
+                "kind": "method_definition",
+                "has": {
+                  "field": "name",
+                  "kind": "property_identifier",
+                  "pattern": "$CALLEE"
+                }
+              },
+              {
+                "kind": "method_definition",
+                "has": {
+                  "field": "name",
+                  "kind": "private_property_identifier",
+                  "pattern": "$PRIV"
+                },
+                "compare": {
+                  "left": "PRIV",
+                  "op": "eq",
+                  "right": "CALLEE",
+                  "text": "name"
+                }
+              },
+              {
+                "kind": "method_definition",
+                "has": {
+                  "field": "name",
+                  "kind": "computed_property_name",
+                  "has": {
+                    "kind": "identifier",
+                    "pattern": "$CALLEE"
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "generator_function"
+                  }
+                ],
+                "inside": {
+                  "field": "value",
+                  "any": [
+                    {
+                      "kind": "pair",
+                      "has": {
+                        "field": "key",
+                        "any": [
+                          {
+                            "kind": "property_identifier",
+                            "pattern": "$CALLEE"
+                          },
+                          {
+                            "kind": "computed_property_name",
+                            "has": {
+                              "kind": "identifier",
+                              "pattern": "$CALLEE"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "kind": "public_field_definition",
+                      "has": {
+                        "field": "name",
+                        "any": [
+                          {
+                            "kind": "property_identifier",
+                            "pattern": "$CALLEE"
+                          },
+                          {
+                            "kind": "private_property_identifier",
+                            "pattern": "$PRIV",
+                            "compare": {
+                              "left": "PRIV",
+                              "op": "eq",
+                              "right": "CALLEE",
+                              "text": "name"
+                            }
+                          },
+                          {
+                            "kind": "computed_property_name",
+                            "has": {
+                              "kind": "identifier",
+                              "pattern": "$CALLEE"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "pattern": "$OWNER",
+            "has": {
+              "stopBy": "end",
+              "matches": "component-state",
+              "pattern": "$STATE",
+              "inside": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "matches": "stopper"
+                    },
+                    {
+                      "matches": "setstate-first-arg"
+                    }
+                  ]
+                },
+                "pattern": "$OWNERSEEN",
+                "compare": {
+                  "left": "OWNERSEEN",
+                  "op": "eq",
+                  "right": "OWNER",
+                  "text": "node"
+                }
+              }
+            }
+          },
+          "stopper": {
+            "any": [
+              {
+                "kind": "method_definition"
+              },
+              {
+                "kind": "variable_declarator"
+              },
+              {
+                "matches": "keyed-function"
+              }
+            ]
+          },
+          "this-expr": {
+            "any": [
+              {
+                "kind": "this"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "this-expr"
+                }
+              }
+            ]
+          },
+          "this-state": {
+            "kind": "member_expression",
+            "all": [
+              {
+                "has": {
+                  "field": "object",
+                  "matches": "this-expr"
+                }
+              },
+              {
+                "has": {
+                  "field": "property",
+                  "regex": "^#?state$"
+                }
+              }
+            ]
+          },
+          "usage": {
+            "any": [
+              {
+                "kind": "shorthand_property_identifier"
+              },
+              {
+                "kind": "identifier",
+                "matches": "usage-slot"
+              }
+            ],
+            "inside": {
+              "stopBy": "end",
+              "matches": "setstate-first-arg"
+            }
+          },
+          "usage-slot": {
+            "any": [
+              {
+                "inside": {
+                  "field": "value",
+                  "kind": "pair"
+                }
+              },
+              {
+                "inside": {
+                  "field": "object",
+                  "any": [
+                    {
+                      "kind": "member_expression"
+                    },
+                    {
+                      "kind": "subscript_expression"
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "matches": "non-logical-binary"
+                    }
+                  ],
+                  "matches": "usage-slot"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "direct",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "component-state",
+            "any": [
+              {
+                "matches": "setstate-first-arg"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "matches": "stopper"
+                      },
+                      {
+                        "matches": "setstate-first-arg"
+                      }
+                    ]
+                  },
+                  "matches": "setstate-first-arg"
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-access-state-in-setstate",
+        "message": "Pass setState an updater function and read the previous state from its argument instead of this.state.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-access-state-in-setstate"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "variable",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "component-state",
+            "pattern": "$STATE",
+            "all": [
+              {
+                "inside": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "variable_declarator"
+                      },
+                      {
+                        "matches": "scope-node"
+                      },
+                      {
+                        "matches": "setstate-first-arg"
+                      }
+                    ]
+                  },
+                  "kind": "variable_declarator",
+                  "pattern": "$DECL",
+                  "has": {
+                    "field": "name",
+                    "kind": "identifier",
+                    "pattern": "$DECLNAME"
+                  },
+                  "inside": {
+                    "stopBy": {
+                      "matches": "scope-node"
+                    },
+                    "matches": "scope-node",
+                    "has": {
+                      "stopBy": {
+                        "matches": "scope-node"
+                      },
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "shorthand_property_identifier"
+                        }
+                      ],
+                      "pattern": "$USE",
+                      "all": [
+                        {
+                          "compare": {
+                            "left": "USE",
+                            "op": "eq",
+                            "right": "DECLNAME"
+                          }
+                        },
+                        {
+                          "matches": "usage"
+                        },
+                        {
+                          "inside": {
+                            "stopBy": "end",
+                            "follows": {
+                              "stopBy": "end",
+                              "any": [
+                                {
+                                  "pattern": "$DECLSEEN",
+                                  "compare": {
+                                    "left": "DECLSEEN",
+                                    "op": "eq",
+                                    "right": "DECL",
+                                    "text": "node"
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "stopBy": "end",
+                                    "pattern": "$DECLSEEN",
+                                    "compare": {
+                                      "left": "DECLSEEN",
+                                      "op": "eq",
+                                      "right": "DECL",
+                                      "text": "node"
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.STATE",
+        "code": "react/no-access-state-in-setstate",
+        "message": "This this.state read reaches setState through $DECLNAME; pass setState an updater function and read the previous state from its argument.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-access-state-in-setstate"
+            ]
+          }
+        },
+        "each": "USE"
+      }
+    },
+    {
+      "id": "destructured-state",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "usage",
+            "regex": "^state$",
+            "all": [
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "scope-node"
+                  },
+                  "matches": "scope-node",
+                  "has": {
+                    "stopBy": {
+                      "matches": "scope-node"
+                    },
+                    "kind": "variable_declarator",
+                    "pattern": "$DECL",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "value",
+                          "kind": "this"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "kind": "object_pattern",
+                          "has": {
+                            "any": [
+                              {
+                                "kind": "shorthand_property_identifier_pattern",
+                                "regex": "^state$",
+                                "pattern": "$KEY"
+                              },
+                              {
+                                "kind": "pair_pattern",
+                                "has": {
+                                  "field": "key",
+                                  "regex": "^state$",
+                                  "pattern": "$KEY"
+                                }
+                              },
+                              {
+                                "kind": "object_assignment_pattern",
+                                "has": {
+                                  "field": "left",
+                                  "regex": "^state$",
+                                  "pattern": "$KEY"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "follows": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "pattern": "$DECLSEEN",
+                        "compare": {
+                          "left": "DECLSEEN",
+                          "op": "eq",
+                          "right": "DECL",
+                          "text": "node"
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "end",
+                          "pattern": "$DECLSEEN",
+                          "compare": {
+                            "left": "DECLSEEN",
+                            "op": "eq",
+                            "right": "DECL",
+                            "text": "node"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.KEY",
+        "code": "react/no-access-state-in-setstate",
+        "message": "The state destructured from this here reaches setState; pass setState an updater function and read the previous state from its argument.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-access-state-in-setstate"
+            ]
+          }
+        },
+        "each": "KEY"
+      }
+    },
+    {
+      "id": "method-call",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "kind": "identifier",
+                  "pattern": "$CALLEE"
+                }
+              },
+              {
+                "matches": "self-or-inside-setstate-first-arg"
+              },
+              {
+                "matches": {
+                  "reaches-state": {
+                    "STATE": "$STATE"
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.STATE",
+        "code": "react/no-access-state-in-setstate",
+        "message": "This this.state read reaches a setState call through $CALLEE(); pass setState an updater function and read the previous state from its argument.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-access-state-in-setstate"
+            ]
+          }
+        },
+        "each": "STATE"
+      }
+    }
+  ]
+}

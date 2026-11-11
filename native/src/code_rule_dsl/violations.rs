@@ -155,7 +155,7 @@ fn utility_captures<'a>(
     utils: &'a UtilTable,
     summaries: &mut CaptureSummaries<'a>,
 ) -> BTreeSet<&'a str> {
-    let Some(rule) = utils.rules.get().and_then(|rules| rules.get(index)) else {
+    let Some(rule) = utils.rule(index) else {
         return BTreeSet::new();
     };
     summaries.summarize(index, BTreeSet::new(), |summaries| {
@@ -245,7 +245,7 @@ fn utility_exports<'a>(
     utils: &'a UtilTable,
     summaries: &mut ExportSummaries<'_, 'a>,
 ) -> Exports<'a> {
-    let Some(rule) = utils.rules.get().and_then(|rules| rules.get(index)) else {
+    let Some(rule) = utils.rule(index) else {
         return Exports::default();
     };
     let ExportSummaries {
@@ -354,7 +354,7 @@ fn node_regexes_utility<'a>(
     summaries: &mut UtilitySummary<usize, UtilityRegexes<'a>>,
     regexes: &mut Vec<&'a Regex>,
 ) {
-    let Some(rule) = utils.rules.get().and_then(|rules| rules.get(index)) else {
+    let Some(rule) = utils.rule(index) else {
         return;
     };
     let summary = summaries.summarize(index, UtilityRegexes::default(), |summaries| {
@@ -402,7 +402,7 @@ pub(super) fn bind(
     match query {
         Some(Query::Ast { matchers, .. }) => {
             let mut analysis = CaptureAnalysis::default();
-            for grammar in matchers {
+            for grammar in matchers.iter() {
                 counted.extend(analysis.counts(&grammar.matcher));
                 ast_captures(
                     &grammar.matcher,
@@ -411,7 +411,7 @@ pub(super) fn bind(
                     &mut names,
                 );
             }
-            for grammar in matchers {
+            for grammar in matchers.iter() {
                 let mut regexes = Vec::new();
                 node_regexes(&grammar.matcher, &grammar.utils, &mut regexes);
                 for regex in &regexes {
@@ -436,10 +436,11 @@ pub(super) fn bind(
                 .first()
                 .and_then(|grammar| grammar.transform.as_ref())
                 .filter(|transform| {
-                    transform
-                        .steps
-                        .iter()
-                        .any(|(_, trans)| node_groups.contains(trans.source_name()))
+                    transform.steps.iter().any(|(_, trans)| {
+                        trans
+                            .source_names()
+                            .any(|source| node_groups.contains(source))
+                    })
                 })
                 .cloned();
             names.extend(node_groups.iter().copied());
@@ -448,7 +449,7 @@ pub(super) fn bind(
             regex_group = true;
             names.extend(regex.capture_names().flatten());
         }
-        Some(Query::SelectWhen { .. }) | None => {}
+        Some(Query::SelectWhen { .. } | Query::File) | None => {}
     }
     if let Some(suppress) = &violation.suppress {
         let Some(Query::Ast { matchers, .. }) = query else {
@@ -482,6 +483,20 @@ pub(super) fn bind(
         return Err(invalid(format!(
             "{path}/anchor: require_each, budget, and llm violations support only \"witness.span\"; \
              fact violations carry no source span to anchor within"
+        )));
+    }
+    // A witness standing for the whole file has no source text a capture could lie in.
+    let spanless = match query {
+        Some(Query::Regex {
+            source: RegexSource::Path,
+            ..
+        }) => Some("a file.path regex match"),
+        Some(Query::File) => Some("a file query's witness"),
+        _ => None,
+    };
+    if let (Some(witness), Anchor::Capture(name)) = (spanless, &violation.anchor) {
+        return Err(invalid(format!(
+            "{path}/anchor: `capture.{name}`: {witness} is the whole file, with no source location to anchor within"
         )));
     }
     if let Anchor::Capture(name) = &violation.anchor
@@ -633,6 +648,11 @@ pub(super) fn bind(
                 "{path}/fix: a file.path regex match is not source text a fix can replace"
             )));
         }
+        Some(Query::File) => {
+            return Err(invalid(format!(
+                "{path}/fix: a file query's witness is the whole file, not source text a fix can replace"
+            )));
+        }
         _ => {
             return Err(invalid(format!(
                 "{path}/fix: only forbid clauses over an ast or file.content regex query can suggest a fix"
@@ -673,7 +693,7 @@ fn check_each(
     let mut variables = BTreeMap::new();
     for grammar in matchers {
         collect_variables(&grammar.matcher, &mut variables);
-        for util in grammar.utils.shared_rules() {
+        for util in grammar.utils.shared_rules(&grammar.query_utils) {
             collect_variables(util, &mut variables);
         }
     }
@@ -928,7 +948,9 @@ fn fix_target<'t, D: Doc>(
 #[derive(Clone, PartialEq)]
 pub(crate) struct Witness {
     pub(crate) path: String,
-    pub(crate) span: Span,
+    /// Where in the file's content the witness lies; `None` for one that stands for the whole
+    /// file (a `file` query, a `file.path` regex match), which has no source location.
+    pub(crate) span: Option<Span>,
     pub(crate) captures: Captures,
     /// The violation message with captures interpolated, when it references any.
     pub(crate) message: Option<String>,
@@ -1057,19 +1079,22 @@ impl Serialize for Captures {
 }
 
 /// A regex witness: named groups that matched become captures; the message and fix
-/// substitute their text.
+/// substitute their text. `span` locates a match in the file's content; it gives `None` for a
+/// match in no source text (a `file.path` regex), whose witness then has no span or captures.
 pub(super) fn regex_witness(
     path: &str,
     regex: &Regex,
     found: &regex::Captures<'_>,
     violation: Option<&ViolationSpec>,
-    span: impl Fn(usize, usize) -> Span,
+    span: impl Fn(usize, usize) -> Option<Span>,
 ) -> Witness {
     let whole = found.get(0).expect("group 0 always matches");
     let mut captures = BTreeMap::new();
     for name in regex.capture_names().flatten() {
-        if let Some(group) = found.name(name) {
-            captures.insert(name.to_owned(), vec![span(group.start(), group.end())]);
+        if let Some(group) = found.name(name)
+            && let Some(span) = span(group.start(), group.end())
+        {
+            captures.insert(name.to_owned(), vec![span]);
         }
     }
     let lookup =
@@ -1081,17 +1106,20 @@ pub(super) fn regex_witness(
                 lookup(name, multi).map(|text| Cow::Owned(message_capture(&text).into_owned()))
             })
         });
+    let span = span(whole.start(), whole.end());
     let fix = match violation.and_then(|violation| violation.fix.as_deref()) {
-        Some(FixPlan::Regex(template)) => Some(json!({
-            "span": span(whole.start(), whole.end()),
-            "text": template.render(lookup),
-        })),
+        Some(FixPlan::Regex(template)) => span.map(|span| {
+            json!({
+                "span": span,
+                "text": template.render(lookup),
+            })
+        }),
         _ => None,
     };
     Witness {
         sql_violation: None,
         path: path.to_owned(),
-        span: span(whole.start(), whole.end()),
+        span,
         captures: Captures::from_spans(captures),
         message,
         fix,
@@ -1099,42 +1127,42 @@ pub(super) fn regex_witness(
     }
 }
 
-/// The span a violation reports and whether a capture anchor fell back to the witness span.
-pub(super) fn anchored_span(anchor: &Anchor, witness: &Witness) -> (Span, bool) {
-    let span = witness.span;
+/// The span a violation reports, and whether a capture anchor fell back to the witness span. A
+/// witness without a span reports none, except at `file.start`.
+pub(super) fn anchored_span(anchor: &Anchor, witness: &Witness) -> (Option<Span>, bool) {
     match anchor {
-        Anchor::Span => (span, false),
+        Anchor::Span => (witness.span, false),
         Anchor::Start => (
-            Span {
+            witness.span.map(|span| Span {
                 end_byte: span.start_byte,
                 end_column: span.start_column,
                 end_line: span.start_line,
                 ..span
-            },
+            }),
             false,
         ),
         Anchor::End => (
-            Span {
+            witness.span.map(|span| Span {
                 start_byte: span.end_byte,
                 start_column: span.end_column,
                 start_line: span.end_line,
                 ..span
-            },
+            }),
             false,
         ),
-        Anchor::FileStart => (Span::default(), false),
+        Anchor::FileStart => (Some(Span::default()), false),
         Anchor::Capture(name) => match witness.captures.get(name) {
             Some([first, .., last]) => (
-                Span {
+                Some(Span {
                     end_byte: last.end_byte,
                     end_column: last.end_column,
                     end_line: last.end_line,
                     ..*first
-                },
+                }),
                 false,
             ),
-            Some([only]) => (*only, false),
-            _ => (span, true),
+            Some([only]) => (Some(*only), false),
+            _ => (witness.span, true),
         },
     }
 }
@@ -1662,8 +1690,38 @@ mod tests {
             ),
             (
                 json!({ "regex": { "source": "file.path", "pattern": "(?<X>x)" } }),
-                with_fix("capture.X", "y"),
+                with_fix("witness.span", "y"),
                 "/clauses/0/violation/fix: a file.path regex match is not source text a fix can replace",
+            ),
+            (
+                json!({ "regex": { "source": "file.path", "pattern": "(?<X>x)" } }),
+                violation("capture.X", "m"),
+                "/clauses/0/violation/anchor: `capture.X`: a file.path regex match is the whole file, with no source location to anchor within",
+            ),
+            (
+                json!({ "file": {} }),
+                violation("capture.X", "m"),
+                "/clauses/0/violation/anchor: `capture.X`: a file query's witness is the whole file, with no source location to anchor within",
+            ),
+            (
+                json!({ "file": {} }),
+                with_fix("witness.span", "y"),
+                "/clauses/0/violation/fix: a file query's witness is the whole file, not source text a fix can replace",
+            ),
+            (
+                json!({ "file": {} }),
+                json!({ "anchor": "witness.span", "code": "X", "message": "m", "each": "X" }),
+                "/clauses/0/violation/each: each enumerates the captures of an ast query",
+            ),
+            (
+                json!({ "file": { "pattern": "x" } }),
+                violation("witness.span", "m"),
+                "unknown field `pattern` at /clauses/0/forbid/file",
+            ),
+            (
+                json!({ "file": {}, "regex": { "source": "file.path", "pattern": "x" } }),
+                violation("witness.span", "m"),
+                "/clauses/0/forbid must contain exactly one query source",
             ),
             (
                 pattern(),

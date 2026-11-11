@@ -8,7 +8,6 @@ use super::{
 };
 use rusqlite::{TransactionBehavior, params};
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Cursor;
 #[cfg(any(test, feature = "test-hooks"))]
 use std::sync::atomic::Ordering;
 
@@ -191,7 +190,7 @@ impl ContentStore {
             if codec != CODEC_ZSTD {
                 return Err(StoreError::Corrupt("unsupported object codec".to_owned()));
             }
-            let bytes = zstd::stream::decode_all(Cursor::new(frame))?;
+            let bytes = super::decompress(&frame, 0)?;
             if usize::try_from(length).ok() != Some(bytes.len()) || HashKey::sha256(&bytes) != hash
             {
                 return Err(StoreError::Corrupt(

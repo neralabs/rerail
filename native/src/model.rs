@@ -109,7 +109,7 @@ fn verify_file(
 ) -> std::result::Result<(), ModelFault> {
     let path = root.join(name);
     let bytes = fs::read(&path).map_err(|error| ModelFault::unread(&path, name, &error))?;
-    let actual = format!("{:x}", Sha256::digest(bytes));
+    let actual = crate::lower_hex(&Sha256::digest(bytes));
     if actual != expected {
         return Err(ModelFault {
             problem: "checksum-mismatch",
@@ -184,7 +184,7 @@ mod tests {
             let mut listed = serde_json::Map::new();
             for (name, bytes) in files {
                 fs::write(root.join(name), bytes).unwrap();
-                let sha256 = format!("{:x}", Sha256::digest(bytes));
+                let sha256 = crate::lower_hex(&Sha256::digest(bytes));
                 listed.insert(name.to_owned(), serde_json::json!({ "sha256": sha256 }));
             }
             let manifest = serde_json::json!({

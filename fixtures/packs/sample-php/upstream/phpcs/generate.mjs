@@ -1,4 +1,4 @@
-// Records PHP_CodeSniffer 4.0.4's Generic.PHP.ForbiddenFunctions over the sample pack's fixtures and its `mini` corpus.
+// Records PHP_CodeSniffer 4.0.4's Generic.PHP.ForbiddenFunctions over the sample pack's fixtures.
 // Run by hand: PHPCS=<checkout>/.rerail/tools/php/vendor/bin/phpcs node generate.mjs
 import { execFileSync } from "node:child_process";
 import { readdirSync, writeFileSync } from "node:fs";
@@ -40,15 +40,4 @@ write("fixtures.expected.json", {
   version: VERSION,
   source: { kind: "fixtures", origin: "rerail (authored sample, not copied upstream)", rules: RULES, files: fixtureFiles },
   findings: record(fixtures, fixtureFiles.map(name => join(fixtures, name))),
-});
-
-const corpus = join(here, "..", "..", "corpora", "mini");
-const corpusFiles = readdirSync(join(corpus, "src"))
-  .filter(name => name.endsWith(".php") && !name.endsWith(".blade.php"))
-  .map(name => join(corpus, "src", name));
-write("corpus-mini.expected.json", {
-  tool: "phpcs",
-  version: VERSION,
-  source: { kind: "corpus", name: "mini", repository: "fixtures/packs/sample-php/corpora/mini", commit: "fixture", rules: RULES, skipped: [] },
-  findings: record(corpus, corpusFiles),
 });

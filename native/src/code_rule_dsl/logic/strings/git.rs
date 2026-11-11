@@ -182,6 +182,8 @@ pub(in crate::code_rule_dsl) fn revisions(root: &Path, base: Option<&str>) -> Re
     if let Some(base) = base {
         let other = commit_of(&repo.repo, base)?;
         let merge = repo.repo.merge_base(head, other).map_err(|e| format!("the merge base of HEAD and {base}: {e}"))?;
+        // gix 0.90 answers no common ancestor as none, where 0.84 gave an error.
+        let merge = merge.ok_or_else(|| format!("HEAD and {base} have no merge base"))?;
         rows.push(("base".to_owned(), merge.detach().to_string()));
     }
     Ok((rows, repo.prefix))

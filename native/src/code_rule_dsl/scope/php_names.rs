@@ -18,6 +18,7 @@
 //! expression), as the global name where PHP 8.5.11 defines it (`data/php_builtins.generated.json`), and as
 //! unknown otherwise: another file may declare it.
 
+use crate::code_rule_dsl::tree::Tree;
 use super::{BuildError, NodeRef};
 use crate::code_rule_dsl::value::php_compare::{ImportKind, import_kind};
 use crate::code_rule_dsl::value::{Context, Value, php as php_value};
@@ -119,7 +120,7 @@ impl PhpNames {
             let descend = builder.visit(&node);
             if descend {
                 let start = stack.len();
-                stack.extend(node.children().filter(|child| child.is_named()));
+                stack.extend(node.named());
                 stack[start..].reverse();
             }
         }
@@ -175,8 +176,7 @@ impl PhpNames {
 
     fn class_constant<D: Doc>(&self, access: &Node<'_, D>) -> Option<NodeRef> {
         let mut parts = access
-            .children()
-            .filter(|child| child.is_named() && !child.kind().ends_with("comment"));
+            .named_code();
         let (Some(scope), Some(name), None) = (parts.next(), parts.next(), parts.next()) else {
             return None;
         };
@@ -249,7 +249,7 @@ impl PhpNames {
         let base = class
             .children()
             .find(|child| child.kind() == "base_clause")?;
-        self.class_named(&first_named(&base)?)
+        self.class_named(&base.first_code()?)
     }
 
     /// The constant `name` of `class`: its own declaration, else the one the traits it uses, its
@@ -269,7 +269,7 @@ impl PhpNames {
                         .children()
                         .filter(|child| child.kind() == "const_element")
                     {
-                        if first_named(&element).is_none_or(|own| own.text() != name) {
+                        if element.first_code().is_none_or(|own| own.text() != name) {
                             continue;
                         }
                         let Some(value) = const_value(&element) else {
@@ -507,7 +507,7 @@ impl<'r, D: Doc> Builder<'r, D> {
                     .children()
                     .filter(|child| child.kind() == "const_element")
                 {
-                    if let Some(name) = first_named(&element) {
+                    if let Some(name) = element.first_code() {
                         let key = constant_key(&qualify(&self.namespace, &name.text()));
                         self.declared_constants.insert(key.clone());
                         if let Some(value) = const_value(&element) {
@@ -763,8 +763,7 @@ fn argument_for<'r, D: Doc>(
             Some(label) => label.text() == name,
         })?;
     let expression = argument
-        .children()
-        .filter(|child| child.is_named() && !child.kind().ends_with("comment"))
+        .named_code()
         .last()?;
     if expression.kind() == "variadic_unpacking"
         || argument
@@ -796,8 +795,7 @@ fn is_top_level_statement<D: Doc>(call: &Node<'_, D>) -> bool {
 /// The value a `const_element` gives its name.
 fn const_value<'r, D: Doc>(element: &Node<'r, D>) -> Option<Node<'r, D>> {
     let mut named = element
-        .children()
-        .filter(|child| child.is_named() && !child.kind().ends_with("comment"));
+        .named_code();
     let _name = named.next()?;
     let value = named.next()?;
     named.next().is_none().then_some(value)
@@ -846,7 +844,7 @@ fn position<D: Doc>(node: &Node<'_, D>) -> Option<Option<NameKind>> {
         "named_type" if is_builtin_type(node) => return None,
         "named_type" => NameKind::Class,
         "class_constant_access_expression" => {
-            if !first_named(&parent).is_some_and(|first| first.range() == range) {
+            if !parent.first_code().is_some_and(|first| first.range() == range) {
                 return None;
             }
             NameKind::Class
@@ -860,7 +858,7 @@ fn position<D: Doc>(node: &Node<'_, D>) -> Option<Option<NameKind>> {
         "binary_expression"
             if is("right")
                 && parent
-                    .field("operator")
+                    .operator_token()
                     .is_some_and(|operator| operator.kind().eq_ignore_ascii_case("instanceof")) =>
         {
             NameKind::Class
@@ -886,7 +884,7 @@ fn position<D: Doc>(node: &Node<'_, D>) -> Option<Option<NameKind>> {
         {
             return None;
         }
-        "const_element" if first_named(&parent).is_some_and(|first| first.range() == range) => {
+        "const_element" if parent.first_code().is_some_and(|first| first.range() == range) => {
             return None;
         }
         "subscript_expression" if is_string_part(&parent) && !follows_brace(&parent) => {
@@ -916,7 +914,7 @@ fn is_string_part<D: Doc>(part: &Node<'_, D>) -> bool {
 /// Whether an interpolation is the complex (`{$a[KEY]}`) form, whose key is an expression; in
 /// the simple form (`$a[KEY]`) a bare key is a string.
 fn follows_brace<D: Doc>(part: &Node<'_, D>) -> bool {
-    part.prev().is_some_and(|previous| previous.kind() == "{")
+    part.token_before().is_some_and(|previous| previous.kind() == "{")
 }
 
 fn is_construct<D: Doc>(node: &Node<'_, D>) -> bool {
@@ -954,10 +952,6 @@ fn is_name_kind(kind: &str) -> bool {
     REFERENCE_KINDS.contains(&kind)
 }
 
-fn first_named<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
-    node.children()
-        .find(|child| child.is_named() && !child.kind().ends_with("comment"))
-}
 
 /// A name's form and segments; `None` for a name PHP would not read as one token.
 fn parse<D: Doc>(node: &Node<'_, D>) -> Option<(Form, Vec<String>)> {

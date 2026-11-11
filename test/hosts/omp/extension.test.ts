@@ -17,6 +17,7 @@ import type { CustomMessagePayload, ExtensionAPI, ExtensionContext } from "@oh-m
 import { z } from "zod";
 import {
   RULE_MESSAGE_TYPE,
+  STEER_LINE_MESSAGE_TYPE,
   defaultRerailDatabasePath,
   resetRepositoryHistory,
   steerBlock,
@@ -1115,7 +1116,7 @@ describe("OMP conversation-rules extension", () => {
     });
     const editResult = { type: "tool_result", toolCallId: "call-1", toolName: "edit", input: {}, content: [{ type: "text", text: "Edited a.ts" }], details: { diff: "+x" }, isError: false };
 
-    it("puts an edit's steer after what that call's result says, past OMP's steer queue, and counts it", async () => {
+    it("puts an edit's steer after what that call's result says, past OMP's steer queue, counts it once, and shows the person its line", async () => {
       const harness = await createHarness();
       const daemon = flakyDaemon(harness.context.cwd);
       // A steer that went to OMP's queue would be refused here: nothing ever lands in it.
@@ -1127,7 +1128,16 @@ describe("OMP conversation-rules extension", () => {
       await expect(harness.handlers.get("tool_result")!(editResult, harness.context)).resolves.toEqual({
         content: [{ type: "text", text: "Edited a.ts" }, { type: "text", text: "Rerail found 1 problem in your last edit." }],
       });
-      expect(harness.messages).toEqual([]);
+      // The person's line, linked, as an aside: after the call's results, before the next model call, never interrupting.
+      expect(harness.messages).toEqual([{
+        message: {
+          customType: STEER_LINE_MESSAGE_TYPE,
+          content: "Rerail found 1 problem in your last edit.",
+          display: true,
+          details: { rules: await deliveredRules(harness.context.cwd, "no-any") },
+        },
+        options: { deliverAs: "aside" },
+      }]);
       expect(daemon.requests.filter(request => request.operation === "record-steering-delivery")).toHaveLength(1);
     });
 
@@ -1147,8 +1157,31 @@ describe("OMP conversation-rules extension", () => {
         ],
         isError: true,
       });
-      expect(harness.messages).toEqual([]);
+      const rules = await deliveredRules(harness.context.cwd, "no-any");
+      expect(harness.messages).toEqual([{
+        message: {
+          customType: STEER_LINE_MESSAGE_TYPE,
+          content: "Your edit of a.ts was rolled back. Redo it following the rule.\n\nRerail found 1 problem in your last edit.\n\nSecond rule.",
+          display: true,
+          details: { rules: [...rules, ...rules, ...rules] },
+        },
+        options: { deliverAs: "aside" },
+      }]);
       expect(daemon.requests.filter(request => request.operation === "record-steering-delivery")).toHaveLength(3);
+    });
+
+    it("keeps the person's steer lines out of every model request, and a later steer's message in", async () => {
+      const harness = await createHarness();
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+      const prompt = { role: "user", content: [{ type: "text", text: "Add guest checkout." }], timestamp: 1 };
+      const result = { role: "toolResult", toolCallId: "call-1", toolName: "edit", content: [{ type: "text", text: "Edited a.ts\nRerail found 1 problem." }], isError: false, timestamp: 2 };
+      const line = { role: "custom", customType: STEER_LINE_MESSAGE_TYPE, content: "Rerail found 1 problem.", display: true, details: { rules: [] }, timestamp: 3 };
+      const late = { role: "custom", customType: RULE_MESSAGE_TYPE, content: "Rerail found 1 problem.", display: true, timestamp: 4 };
+
+      await expect(harness.handlers.get("context")!({ type: "context", messages: [prompt, result, line, late] }, harness.context))
+        .resolves.toEqual({ messages: [prompt, result, late] });
+      await expect(harness.handlers.get("context")!({ type: "context", messages: [prompt, result, late] }, harness.context)).resolves.toBeUndefined();
     });
 
     it("sends a steer for a call whose result is not being ingested as a message", async () => {

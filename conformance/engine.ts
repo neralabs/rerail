@@ -16,6 +16,8 @@ export function capabilitiesJson(): string {
 /**
  * `source-partial` says the file has syntax errors and AST witnesses were reported only outside them. That is
  * the engine working as designed, so it is not an engine failure: missed violations inside the error region already
- * show up as FNs. `source-incomplete` (a rule unsound under errors skipped the file) stays an engine failure.
+ * show up as FNs. `source-incomplete` (a rule unsound under errors skipped the file) stays an engine failure, except
+ * where conformance/languages/runner.ts attributes it to T1 (a confirmed syntax error) or, on real-code samples, to a
+ * read in part (`isParseIncomplete`).
  */
 export const INFORMATIONAL_FAILURE_CODES: ReadonlySet<string> = new Set(["source-partial"]);

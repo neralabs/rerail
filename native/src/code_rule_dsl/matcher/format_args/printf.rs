@@ -7,6 +7,7 @@
 //! the unused ones PHPStan counts. A value a numbered placeholder skips (`%2$s` with two values) is
 //! not unused: PHP and PHPStan read the count only.
 
+use crate::code_rule_dsl::tree::Tree;
 use super::{Fields, Prepared, Side, key_of, positional_past};
 use crate::code_rule_dsl::literal::{Grammar, Parsed, SubDoc, SubTree};
 use crate::code_rule_dsl::matcher::parse::{parsed_tree, parsed_value_tree};
@@ -138,14 +139,13 @@ fn array_values<'t, D: Doc>(array: &Node<'t, D>) -> Option<Vec<Node<'t, D>>> {
 /// PHP's parentheses.
 pub(super) fn expression<'t, D: Doc>(mut node: Node<'t, D>) -> Node<'t, D> {
     if node.kind() == "argument"
-        && let Some(value) = node.children().filter(|child| child.is_named()).last()
+        && let Some(value) = node.named().last()
     {
         node = value;
     }
     while node.kind() == "parenthesized_expression" {
         let mut inner = node
-            .children()
-            .filter(|child| child.is_named() && child.kind() != "comment");
+            .named_code();
         let (Some(expression), None) = (inner.next(), inner.next()) else {
             break;
         };
