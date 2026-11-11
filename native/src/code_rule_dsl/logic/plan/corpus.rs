@@ -5406,9 +5406,13 @@ fn run_observed(
                     // `RERAIL_DIFF_INPUTS` leaves every one to the rules.
                     let by_rules_only = std::env::var_os("RERAIL_DIFF_INPUTS").is_some();
                     let changes = match (cell.as_ref(), session.as_ref()) {
-                        (Some(kept), Some(held)) if !by_rules_only => kept
-                            .docs(&memo_program)
-                            .and_then(|was| input_delta::changed(was, &run_docs_held.lock().expect("the run's documents"), &held.memo, &memo_program)),
+                        (Some(kept), Some(held)) if !by_rules_only => {
+                            let was = kept.docs(&memo_program);
+                            if was.is_none() && std::env::var_os("RERAIL_STRATA_LIVE").is_some() {
+                                eprintln!("RERAIL_STRATA_LIVE changed documents: the kept run holds no documents of this program");
+                            }
+                            was.and_then(|was| input_delta::changed(was, &run_docs_held.lock().expect("the run's documents"), &held.memo, &memo_program))
+                        }
                         _ => None,
                     };
                     let (mut from_entries, mut from_entries_rows, mut hashed) = (0usize, 0usize, Vec::<String>::new());
@@ -5431,7 +5435,22 @@ fn run_observed(
                             };
                             // Its rows add up: the old less those gone, with those new, are its rows now.
                             let adds_up = |(gone, plus): &(Vec<Vec<i64>>, Vec<Vec<i64>>)| kept.input_source(rel).is_some_and(|old| old.len() + plus.len() == new.len() + gone.len());
-                            if let Some((gone, plus)) = read.and_then(|(key, cols)| input_delta::delta(changes, &key, &cols)).filter(adds_up) {
+                            let live = std::env::var_os("RERAIL_STRATA_LIVE").is_some();
+                            let read_some = read.is_some();
+                            let delta = read.and_then(|(key, cols)| input_delta::delta(changes, &key, &cols));
+                            if live {
+                                let why = match &delta {
+                                    _ if !read_some => "not a base input or an export".to_owned(),
+                                    None => "a row not its document's alone".to_owned(),
+                                    Some(d) if !adds_up(d) => format!(
+                                        "rows do not add up: old {:?} + new {} != now {} + gone {}",
+                                        kept.input_source(rel).map(|o| o.len()), d.1.len(), new.len(), d.0.len()
+                                    ),
+                                    Some(_) => "from the changed documents' entries".to_owned(),
+                                };
+                                eprintln!("RERAIL_STRATA_LIVE input delta {rel}: {why}");
+                            }
+                            if let Some((gone, plus)) = delta.filter(adds_up) {
                                 from_entries += 1;
                                 from_entries_rows += gone.len() + plus.len();
                                 let width = new.columns().len();
@@ -5443,9 +5462,20 @@ fn run_observed(
                                 return Some((rows_source(&plus, "plus"), rows_source(&gone, "minus")));
                             }
                         }
-                        let old = kept.input_source(rel)?;
+                        let live = std::env::var_os("RERAIL_STRATA_LIVE").is_some();
+                        let Some(old) = kept.input_source(rel) else {
+                            if live {
+                                eprintln!("RERAIL_STRATA_LIVE input delta {rel}: by the rules (no old rows kept)");
+                            }
+                            return None;
+                        };
                         let _s = crate::code_rule_dsl::logic::profile::span(|| "session/input delta by document".into());
-                        let (delta, docs) = retain::document_delta(rel, old.as_ref(), kept.input_docs(rel).map(|d| d.as_ref()), new.as_ref())?;
+                        let Some((delta, docs)) = retain::document_delta(rel, old.as_ref(), kept.input_docs(rel).map(|d| d.as_ref()), new.as_ref()) else {
+                            if live {
+                                eprintln!("RERAIL_STRATA_LIVE input delta {rel}: by the rules (no document delta)");
+                            }
+                            return None;
+                        };
                         input_docs.insert(rel.to_owned(), docs);
                         hashed.push(rel.to_owned());
                         Some(delta)

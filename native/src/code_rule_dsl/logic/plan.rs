@@ -4844,7 +4844,18 @@ impl<'a> Run<'a, '_> {
 
     fn native_stratum(&mut self, scc: &BTreeSet<String>, rules: &[&'a Rule]) -> Result<Native<'a>> {
         let reads = rules.iter().any(|r| !recursive(&r.body, scc).is_empty());
-        self.lent(reads.then(|| scc.clone()), |this, native_rels, numbers| this.native_stratum_(scc, rules, native_rels, numbers))
+        // `RERAIL_STRATA_LIVE`: each native stratum as it starts and ends, so a stalled run names its stratum (the
+        // trace, `RERAIL_STRATA_TRACE`, is written when the loop ends).
+        static LIVE: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_STRATA_LIVE").is_some());
+        let t0 = LIVE.then(|| {
+            eprintln!("RERAIL_STRATA_LIVE start {scc:?} ({} rules)", rules.len());
+            std::time::Instant::now()
+        });
+        let out = self.lent(reads.then(|| scc.clone()), |this, native_rels, numbers| this.native_stratum_(scc, rules, native_rels, numbers));
+        if let Some(t0) = t0 {
+            eprintln!("RERAIL_STRATA_LIVE end {scc:?} {:.3} s", t0.elapsed().as_secs_f64());
+        }
+        out
     }
 
     /// Resumes a stratum that waited on its device wave, after the wave ran: its driver goes on from the run that

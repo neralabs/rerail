@@ -153,7 +153,14 @@ pub(in crate::code_rule_dsl) fn digest(source: &dyn Source) -> u64 {
 pub(in crate::code_rule_dsl) fn document_delta(rel: &str, old: &dyn Source, was: Option<&DocDigests>, new: &dyn Source) -> Option<((Arc<dyn Source>, Arc<dyn Source>), Arc<DocDigests>)> {
     use rustc_hash::FxHashSet;
     let width = new.columns().len();
-    if width == 0 || old.columns() != new.columns() {
+    // The rows are compared by position: both hold the declaration's columns in its order, and a kept part read
+    // back from the store's frames (K4) has no names for them (`c0`, `c1`, ...), where this run's inputs have
+    // the base relation's (`input_columns`). Names that differ refused every syntax input, which went to the diff
+    // rules (`r__minus :- r__old, !r`, every row of `node` read).
+    if width == 0 || old.columns().len() != width {
+        if std::env::var_os("RERAIL_STRATA_LIVE").is_some() {
+            eprintln!("RERAIL_STRATA_LIVE document delta {rel}: columns were {:?}, are {:?}", old.columns(), new.columns());
+        }
         return None;
     }
     let all: Vec<usize> = (0..width).collect();
