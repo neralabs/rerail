@@ -368,6 +368,15 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
                 stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
                 i += 1;
             }
+            Step::Test { op, s, p, want, .. }
+                if literal_test(op).is_some() && (matches!(p, Key::Slot(_)) || [s, p].iter().any(|k| matches!(k, Key::Slot(x) if deferred.contains_key(x)))) =>
+            {
+                // A literal test whose pattern is bound (or a cat's text): the two texts compared on the device a
+                // word at a time, pairwise, as `strings::test` does (a pattern holding the set separator refused).
+                let op = literal_test(op).expect("a literal test") | mj::TEXT_SPLIT;
+                stages.push(textop(i, op, *want, *p, *s, &deferred, &origin)?);
+                i += 1;
+            }
             Step::Test { op, s, matcher, want, .. } => {
                 // A text test with constant patterns, of a slot an input relation's column bound: its verdicts per
                 // distinct symbol of the column, made on the device by the test's automaton (`text::table`).
@@ -443,33 +452,21 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
                     made.push(*out);
                     stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
                 } else if *bind {
-                    if in_head || in_head_cat || !later.iter().all(|s| matches!(s, Step::Eq { .. } | Step::Ne { .. })) {
-                        return Err("a cat's text read past an eq or ne and the head has no device form (the device makes no symbol)".into());
+                    let compares = |s: &&Step| matches!(s, Step::Eq { .. } | Step::Ne { .. }) || matches!(s, Step::Test { op, .. } if literal_test(op).is_some());
+                    if in_head || in_head_cat || !later.iter().all(compares) {
+                        return Err("a cat's text read past an eq, ne, equals, prefix or suffix and the head has no device form (the device makes no symbol)".into());
                     }
                     deferred.insert(*out, (*a, *b, form));
                     stages.push(PStage { first: i, span: 1, kind: Kind::Pass, desc: mj::Stage::default(), npassed: 0 });
                 } else {
-                    let mut d = mj::Stage { mode: mj::CATEQ, ..mj::Stage::default() };
-                    let kind = text_keys(&mut d, &[*a, *b, Key::Slot(*out)], &origin, "cat")?;
-                    d.agg = [1, form];
-                    stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
+                    let mut held = HashMap::new();
+                    held.insert(usize::MAX, (*a, *b, form));
+                    stages.push(textop(i, mj::TEXT_EQ, true, Key::Slot(usize::MAX), Key::Slot(*out), &held, &origin)?);
                 }
                 i += 1;
             }
             Step::Eq { a, b } | Step::Ne { a, b } if [a, b].iter().any(|k| matches!(k, Key::Slot(s) if deferred.contains_key(s))) => {
-                let (held, other) = match (a, b) {
-                    (Key::Slot(s), o) if deferred.contains_key(s) => (*s, *o),
-                    (o, Key::Slot(s)) => (*s, *o),
-                    _ => unreachable!("one side is a held cat"),
-                };
-                if matches!(other, Key::Slot(s) if deferred.contains_key(&s)) {
-                    return Err("an eq of two cats' texts has no device form".into());
-                }
-                let (ca, cb, form) = deferred[&held];
-                let mut d = mj::Stage { mode: mj::CATEQ, ..mj::Stage::default() };
-                let kind = text_keys(&mut d, &[ca, cb, other], &origin, "cat")?;
-                d.agg = [u32::from(matches!(step, Step::Eq { .. })), form];
-                stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
+                stages.push(textop(i, mj::TEXT_EQ, matches!(step, Step::Eq { .. }), *a, *b, &deferred, &origin)?);
                 i += 1;
             }
             Step::Lt { .. } | Step::Eq { .. } | Step::Ne { .. } | Step::Doc { .. } | Step::DocOf { bind: false, .. } | Step::In { .. } => {
@@ -608,6 +605,33 @@ fn mentions(step: &Step, x: usize) -> bool {
         Step::Test { s, p, .. } => k(s) || k(p),
         Step::In { a, .. } => k(a),
     }
+}
+
+/// The literal text tests the device runs of any texts (`mj::TEXTOP`): `equals`, `prefix`, `suffix`.
+fn literal_test(op: &str) -> Option<u32> {
+    match op {
+        "equals" => Some(mj::TEXT_EQ),
+        "prefix" => Some(mj::TEXT_PREFIX),
+        "suffix" => Some(mj::TEXT_SUFFIX),
+        _ => None,
+    }
+}
+
+/// A `TEXTOP` stage: test `op` (`mj::TEXT_*`, with `mj::TEXT_SPLIT` for a text test) of pattern `x` and subject `y`,
+/// each a symbol or a held cat's text (`deferred`).
+fn textop(first: usize, op: u32, want: bool, x: Key, y: Key, deferred: &HashMap<usize, (Key, Key, u32)>, origin: &[Option<(Arc<InRel>, usize)>]) -> Result<PStage, String> {
+    let operand = |k: Key| match k {
+        Key::Slot(s) if deferred.contains_key(&s) => {
+            let (a, b, form) = deferred[&s];
+            (a, b, if form == mj::CAT_PLAIN { mj::OPND_PLAIN } else { mj::OPND_DOT })
+        }
+        k => (k, k, mj::OPND_SYM),
+    };
+    let ((xa, xb, xk), (ya, yb, yk)) = (operand(x), operand(y));
+    let mut d = mj::Stage { mode: mj::TEXTOP, ..mj::Stage::default() };
+    let kind = text_keys(&mut d, &[xa, xb, ya, yb], origin, "a text test")?;
+    d.agg = [u32::from(want) | op << 1, xk | yk << 4];
+    Ok(PStage { first, span: 1, kind, desc: d, npassed: 0 })
 }
 
 /// A text made of two names, unless it is bound already: its slot, the two parts, whether it binds, and its form
@@ -964,7 +988,13 @@ impl<'p> Run<'p> {
                 }
                 Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Text { .. } | Kind::Names { .. } => {
                     match (&s.kind, &self.rels[k]) {
-                        (Kind::Names { cols, consts }, None) => self.rels[k] = Some((texts(cols, consts, rep, names)?.rel(), None)),
+                        (Kind::Names { cols, consts }, None) => {
+                            let t = texts(cols, consts, rep, names)?;
+                            if s.desc.mode == mj::TEXTOP && s.desc.agg[0] & mj::TEXT_SPLIT != 0 && t.sep {
+                                return Err("a text test of a name holding the set separator (a set of patterns) has no device form".into());
+                            }
+                            self.rels[k] = Some((t.rel(), None));
+                        }
                         (Kind::Atom { rel, cols }, None) => self.rels[k] = Some(resident(rel, cols, batch, rep)?),
                         (Kind::Text { rel, col, table, key }, None) => self.rels[k] = Some((verdicts(rel, *col, table, key, batch, rep, names)?, None)),
                         (Kind::Own { rel, delta, cols }, None) => {
@@ -1758,6 +1788,14 @@ mod tests {
             format!("pos {n} v0 v1\nlt v1 i:700\ncat v2 v0 {}\nhead v2 v1", sym("made")),
             format!("pos {m} v0\npos {n} v1 v2\nlt v2 i:25\nhead cat:v0:v1 v2"),
             format!("pos {n} v0 v1\nlt v1 i:300\nfunc str_concat v2 v0 {}\nhead v2 v1", sym("!")),
+            // Bound patterns, pairwise: a relation's names as prefixes, suffixes, equals of another's (an empty one
+            // among them), and a cat's text as the pattern.
+            format!("pos {m} v0\npos {n} v1 v2\ntest prefix v1 v0 1\nhead v1 v2"),
+            format!("pos {m} v0\npos {n} v1 v2\nlt v2 i:400\ntest suffix v1 v0 1\nhead v0 v2"),
+            format!("pos {m} v0\npos {n} v1 v2\nlt v2 i:300\ntest suffix v1 v0 0\nhead v0 v2"),
+            format!("pos {m} v0\npos {n} v1 v2\ntest equals v1 v0 1\nhead v1 v2"),
+            format!("pos {m} v0\npos {n} v1 v2\ncat v3 {} v0\ntest suffix v1 v3 1\nhead v1 v2", sym("")),
+            format!("pos {m} v0\npos {n} v1 v2\nfunc str_concat v3 v0 {}\ntest prefix v1 v3 1\nhead v0 v2", sym("_")),
         ];
         let mut got = Vec::new();
         // The device first: the texts it makes are new symbols.
