@@ -21,7 +21,7 @@
 use super::{Mode, Step};
 use crate::code_rule_dsl::logic::front::{AggOp, Literal, Term};
 use std::cell::Cell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// A relational form a stratum's plans use: what a backend must be able to run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -213,6 +213,18 @@ pub(in crate::code_rule_dsl) struct Shape {
     pub(in crate::code_rule_dsl) steps: usize,
     /// The rows its rules' last steps make (the planner's estimate): what the device reads back.
     pub(in crate::code_rule_dsl) rows: f64,
+    /// For each form the device lacks, the operations that use it (`@sql_instr in a comparison`, `aggregate
+    /// sum`): what the profile's hazards name.
+    pub(in crate::code_rule_dsl) uses: BTreeMap<Form, BTreeSet<String>>,
+}
+
+/// The first call in `t` that is no row code: the operation a computed term needs (`@concat`).
+fn not_row(t: &Term) -> Option<String> {
+    match t {
+        Term::Call(f, args) if !row_term(t) => Some(args.iter().find_map(not_row).unwrap_or_else(|| format!("@{f}"))),
+        Term::Call(_, args) => args.iter().find_map(not_row),
+        _ => None,
+    }
 }
 
 /// Whether a term is row code on the device: a variable, a constant, `@doc(x)` of a variable, a set of constants
@@ -232,49 +244,61 @@ fn row_term(t: &Term) -> bool {
 const DEVICE_ARITHMETIC: [&str; 7] = ["add", "sub", "mul", "div", "mod", "max", "min"];
 
 impl Shape {
+    /// Notes form `f`, and where the device lacks it, the operation that uses it.
+    fn note(&mut self, f: Form, what: impl FnOnce() -> String) {
+        self.forms.insert(f);
+        if !DEVICE_FORMS.contains(&f) {
+            self.uses.entry(f).or_default().insert(what());
+        }
+    }
+
     /// Adds one planned rule: its steps in order, its head's terms and its planned work.
     pub(in crate::code_rule_dsl) fn add(&mut self, order: &[Step], head: &[Term], work: f64, recursive: bool) {
         self.rules += 1;
         self.steps += order.len();
         self.work += work.max(0.0);
         if recursive {
-            self.forms.insert(Form::Recursion);
+            self.note(Form::Recursion, || "recursion".into());
         }
-        if head.iter().any(|t| matches!(t, Term::Call(..)) && !row_term(t)) {
-            self.forms.insert(Form::Computed);
+        if let Some(op) = head.iter().find_map(not_row) {
+            self.note(Form::Computed, || format!("{op} in a head"));
         }
         for step in order {
-            if matches!(step.mode, Some(Mode::Range | Mode::Climb | Mode::Descend)) {
-                self.forms.insert(Form::TreeAxis);
+            if let Some(m @ (Mode::Range | Mode::Climb | Mode::Descend)) = step.mode {
+                self.note(Form::TreeAxis, || format!("a tree axis read as a {}", m.name()));
             }
             match &step.lit {
                 Literal::Atom(a) => {
                     self.forms.insert(if a.neg { Form::Negation } else { Form::Join });
                     if a.rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) {
-                        self.forms.insert(Form::TextTest);
+                        self.note(Form::TextTest, || format!("text test {}", a.rel));
                     }
-                    if a.args.iter().any(|t| matches!(t, Term::Call(..))) {
-                        self.forms.insert(Form::Computed);
+                    if let Some(op) = a.args.iter().find_map(not_row) {
+                        self.note(Form::Computed, || format!("{op} in an atom's argument"));
                     }
                 }
-                Literal::Cmp { l, r, .. } => {
-                    let computed = [l, r].iter().any(|t| !row_term(t));
-                    self.forms.insert(if computed { Form::Computed } else { Form::Comparison });
-                }
+                Literal::Cmp { l, r, .. } => match [l, r].iter().find_map(|t| not_row(t)) {
+                    Some(op) => self.note(Form::Computed, || format!("{op} in a comparison")),
+                    None => self.note(Form::Comparison, String::new),
+                },
                 Literal::Agg { op, atom, .. } => {
-                    self.forms.insert(if matches!(op, AggOp::Join { .. }) { Form::StringJoin } else { Form::Aggregate });
+                    match op {
+                        AggOp::Join { .. } => self.note(Form::StringJoin, || "string join".into()),
+                        op => self.note(Form::Aggregate, || format!("aggregate {}", format!("{op:?}").to_lowercase())),
+                    }
                     if atom.rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) {
-                        self.forms.insert(Form::TextTest);
+                        self.note(Form::TextTest, || format!("text test {} in an aggregate", atom.rel));
                     }
                 }
-                Literal::Nearest { .. } => {
-                    self.forms.insert(Form::Nearest);
-                }
-                Literal::Ast { .. } => {
-                    self.forms.insert(Form::Matcher);
-                }
+                Literal::Nearest { .. } => self.note(Form::Nearest, || "nearest".into()),
+                Literal::Ast { .. } => self.note(Form::Matcher, || "an ast matcher".into()),
             }
         }
+    }
+
+    /// The operations behind the forms the device lacks, each `form: operation`.
+    pub(in crate::code_rule_dsl) fn lacking(&self) -> Vec<String> {
+        self.uses.iter().flat_map(|(f, ops)| ops.iter().map(move |o| format!("{}: {o}", f.name()))).collect()
     }
 }
 
@@ -362,6 +386,18 @@ pub(in crate::code_rule_dsl) fn recorded(prefix: &str) -> Vec<(String, Ran)> {
 /// Keeps a native stratum's placement while recording: `refused`, the device's report's refusal (`Some(None)`: it ran
 /// there).
 pub(in crate::code_rule_dsl) fn record(key: &str, placed: &Placement, refused: Option<Option<String>>) {
+    {
+        use crate::code_rule_dsl::logic::profile;
+        let (ran, device): (&'static str, Vec<String>) = match (placed.gpu, &refused) {
+            (true, Some(None)) => ("Metal", Vec::new()),
+            (true, Some(Some(why))) => ("native CPU", vec![format!("refused at run time: {why}")]),
+            (true, None) => ("native CPU", vec!["placed, no device report".into()]),
+            (false, _) if !placed.lacking.is_empty() => ("native CPU", placed.lacking.clone()),
+            (false, _) if !placed.device => ("native CPU", vec!["the run's binding is the CPU".into()]),
+            (false, _) => ("native CPU", vec!["price: the CPU is cheaper".into()]),
+        };
+        profile::executor(key, ran, None, device);
+    }
     if RECORDING.load(std::sync::atomic::Ordering::Relaxed) == 0 {
         return;
     }
@@ -377,7 +413,9 @@ pub(in crate::code_rule_dsl) fn record(key: &str, placed: &Placement, refused: O
 
 /// Keeps a stratum that fell back to SQLite while recording: the class of literal the native engine had no step
 /// for, and its explanation.
-pub(in crate::code_rule_dsl) fn record_fallback(key: &str, class: &str, why: &str) {
+/// `lacking`: the device's hazards for the stratum besides (`Shape::lacking`).
+pub(in crate::code_rule_dsl) fn record_fallback(key: &str, class: &str, why: &str, lacking: Vec<String>) {
+    crate::code_rule_dsl::logic::profile::executor(key, "SQLite", Some(format!("{class} ({why})")), lacking);
     if RECORDING.load(std::sync::atomic::Ordering::Relaxed) == 0 {
         return;
     }
@@ -405,6 +443,8 @@ pub(in crate::code_rule_dsl) struct Placement {
     pub(in crate::code_rule_dsl) device: bool,
     /// Each join step's prices and form, in the stratum's order: the form each would take on the device.
     pub(in crate::code_rule_dsl) joins: Vec<JoinChoice>,
+    /// The operations behind `missing` (`Shape::lacking`).
+    pub(in crate::code_rule_dsl) lacking: Vec<String>,
 }
 
 impl Placement {
@@ -459,7 +499,7 @@ pub(in crate::code_rule_dsl) fn place(shape: &Shape) -> Placement {
     let device = binding != Binding::Cpu;
     let gpu_cheaper = device_s * MARGIN < CPU_PER_WORK * shape.work;
     let gpu = missing.is_empty() && (binding == Binding::Always || device && gpu_cheaper);
-    Placement { gpu, gpu_cheaper, missing, cpu_s, gpu_s, device, joins }
+    Placement { gpu, gpu_cheaper, missing, cpu_s, gpu_s, device, joins, lacking: shape.lacking() }
 }
 
 #[cfg(test)]

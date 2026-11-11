@@ -7467,7 +7467,17 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             let n=sql_kernel::component(&mut run,scc,&rules,&planned,recursive)?;
             super::profile::stratum(&skey,"SQL wave kernel",||format!("{why}; {n} waves"));
             let class = run.why_class.take().unwrap_or_else(|| if native.contains("program") { "no reason given".into() } else { "the native engine is off".into() });
-            placement::record_fallback(&skey, &class, &why);
+            // The device's hazards too: a stratum the native engine declines is never placed, so its shape is read here.
+            let lacking = if super::profile::on() {
+                let mut shape = placement::Shape::default();
+                for (h, order) in &planned {
+                    shape.add(order, &h.args, 0.0, recursive);
+                }
+                shape.lacking()
+            } else {
+                Vec::new()
+            };
+            placement::record_fallback(&skey, &class, &why, lacking);
             super::profile::fallback(&skey, class);
             if recursive {outcome.iterations.insert(key,n as usize);}
             for (((h,_),rule),(x,took)) in planned.iter().zip(&rules).zip(&explained){

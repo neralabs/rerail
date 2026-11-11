@@ -27,7 +27,7 @@
 //! `write(dir)` writes `profile.txt` (the report: spans by CPU, statements by time with their query plans, native
 //! steps by work, the roofline, and warnings) and the tables `spans.tsv`, `sql.tsv` and `native.tsv`. Off, a span costs one load.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -138,6 +138,16 @@ struct State {
     /// SQL inside the waves (`sql_in_wave`, `wait_in_wave`), by (hazard class, span path, connection and statement):
     /// runs and nanoseconds.
     hazards: BTreeMap<(&'static str, String, String), (u64, u64)>,
+    /// What kept each stratum off the device and off the native engine (`executor`), by stratum.
+    blocked: BTreeMap<String, Blocked>,
+}
+
+/// A stratum's executors: where it ran, the native engine's reason to decline it, what kept it off the device.
+#[derive(Default)]
+struct Blocked {
+    ran: BTreeMap<&'static str, u64>,
+    native: BTreeSet<String>,
+    device: BTreeSet<String>,
 }
 
 /// A stratum's placements, summed over its runs (chunks, guests, the cross-file part).
@@ -1147,6 +1157,69 @@ fn fallbacks(r: &mut String, state: &State) {
     }
 }
 
+/// Where stratum `key` ran (`"Metal"`, `"native CPU"`, `"SQLite"`), the native engine's reason to decline it
+/// (SQLite's strata), and every hazard that kept it off the device: a form it lacks with the operation that needs
+/// it, its refusal at run time, the price, the run's binding (`placement::record`, `record_fallback`).
+pub(in crate::code_rule_dsl) fn executor(key: &str, ran: &'static str, native: Option<String>, device: Vec<String>) {
+    if !on() {
+        return;
+    }
+    let mut state = state();
+    let b = state.blocked.entry(key.to_owned()).or_default();
+    *b.ran.entry(ran).or_default() += 1;
+    b.native.extend(native);
+    b.device.extend(device);
+}
+
+/// Every stratum's executors and hazards: by hazard, costliest first (a stratum counts under each of its hazards),
+/// then the strata. What to build next, on the device and in the native engine, by what it costs.
+fn executors(r: &mut String, state: &State) {
+    let cpu_of = |key: &str| -> f64 {
+        let name = format!("stratum {key}");
+        state.spans.iter().filter(|(p, _)| **p == name || p.ends_with(&format!("/{name}"))).map(|(_, t)| t.total).sum()
+    };
+    let rows: Vec<(f64, &String, &Blocked)> = state.blocked.iter().map(|(k, b)| (cpu_of(k), k, b)).collect();
+    let mut ran: BTreeMap<&str, u64> = BTreeMap::new();
+    for (_, _, b) in &rows {
+        for (e, n) in &b.ran {
+            *ran.entry(e).or_default() += n;
+        }
+    }
+    let _ = writeln!(
+        r,
+        "\n== Executor hazards: what kept each stratum off Metal and off the native engine ({} strata; runs: {})",
+        rows.len(),
+        ran.iter().map(|(e, n)| format!("{n} {e}")).collect::<Vec<_>>().join(", ")
+    );
+    if rows.is_empty() {
+        return;
+    }
+    let mut by: BTreeMap<String, (usize, f64)> = BTreeMap::new();
+    for (cpu, _, b) in &rows {
+        for h in b.native.iter().map(|n| format!("native: {n}")).chain(b.device.iter().map(|d| format!("metal: {d}"))) {
+            let e = by.entry(h).or_default();
+            e.0 += 1;
+            e.1 += cpu;
+        }
+    }
+    let mut by: Vec<_> = by.into_iter().collect();
+    by.sort_by(|a, b| b.1.1.total_cmp(&a.1.1).then(b.1.0.cmp(&a.1.0)));
+    let _ = writeln!(r, "By hazard (every one; a stratum counts under each of its hazards):");
+    let _ = writeln!(r, "{:>9} {:>7}  hazard", "cpu s", "strata");
+    for (h, (n, cpu)) in &by {
+        let _ = writeln!(r, "{cpu:>9.3} {n:>7}  {h}");
+    }
+    let mut rows = rows;
+    rows.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let _ = writeln!(r, "Strata, costliest first (ran: where its runs went):");
+    let _ = writeln!(r, "{:>9}  stratum: ran; hazards", "cpu s");
+    for (cpu, key, b) in rows.iter().take(40) {
+        let ran = b.ran.iter().map(|(e, n)| format!("{e} x{n}")).collect::<Vec<_>>().join(", ");
+        let hazards: Vec<String> = b.native.iter().map(|n| format!("native: {n}")).chain(b.device.iter().map(|d| format!("metal: {d}"))).collect();
+        let _ = writeln!(r, "{cpu:>9.3}  {}: {ran}; {}", short(key, 70), if hazards.is_empty() { "none".into() } else { hazards.join("; ") });
+    }
+}
+
 pub(in crate::code_rule_dsl) fn stratum(key: &str, engine: &str, why: impl FnOnce() -> String) {
     if !on() {
         return;
@@ -1520,6 +1593,7 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
     r.push('\n');
     r.push_str(&analysis_text);
     fallbacks(&mut r, &state);
+    executors(&mut r, &state);
     hazards(&mut r, &state);
     placements(&mut r, &state);
     explain(&mut r, &state);
@@ -1925,6 +1999,9 @@ mod tests {
         // A stratum that fell back to SQLite, and its span.
         stratum("xsql", "SQL wave kernel", || "the native engine declined".into());
         fallback("xsql", "aggregate join (string concatenation)".into());
+        executor("xsql", "SQLite", Some("aggregate join (string concatenation)".into()), vec!["string join: string join".into()]);
+        executor("xstratum", "native CPU", None, vec!["computed term: @sql_instr in a comparison".into()]);
+        executor("xstratum", "Metal", None, Vec::new());
         drop(span(|| "stratum xsql".into()));
         // SQL before the waves is the run's beginning; inside them, from a wave's thread, a hazard; from the store's
         // writer (behind the run), none.
@@ -1948,6 +2025,9 @@ mod tests {
         assert!(report.contains("Stratum xstratum  [engine: native set engine]  (loops=2"), "{report}");
         assert!(report.contains("why: every rule has a native step"));
         assert!(report.contains("== Fell back to SQLite: 1 strata"), "{report}");
+        assert!(report.contains("== Executor hazards: what kept each stratum off Metal and off the native engine (2 strata; runs: 1 Metal, 1 SQLite, 1 native CPU)"), "{report}");
+        assert!(report.contains("native: aggregate join (string concatenation)") && report.contains("metal: computed term: @sql_instr in a comparison"), "{report}");
+        assert!(report.contains("xstratum: Metal x1, native CPU x1; metal: computed term: @sql_instr in a comparison"), "{report}");
         assert!(report.contains("== Forces SQL waits (hazards): 1 statements, 1 runs, 2.0 ms inside the waves"), "{report}");
         assert!(report.contains("a write to the store on a wave's thread") && report.contains("xwave"), "{report}");
         assert!(!report.contains("xbefore") && !report.contains("xafter") && !report.contains("xbehind"), "{report}");
