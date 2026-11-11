@@ -53,7 +53,7 @@ mod world;
 mod reuse;
 pub(in crate::code_rule_dsl) mod phase0;
 mod cross_memo;
-mod matchers;
+pub(in crate::code_rule_dsl) mod matchers;
 /// The prefix of an `ast` matcher's relation (decision 0106).
 pub(in crate::code_rule_dsl) const AST_MATCHES: &str = matchers::PREFIX;
 pub(in crate::code_rule_dsl) use matchers::columns as ast_columns;
@@ -2028,16 +2028,13 @@ fn run_observed(
                 }
             }
             let matchers = matchers::lower(&mut prog);
-            // `RERAIL_DUMP_MATCHERS=<file>`: the rules reading a matcher's relation, and each matcher (a debugging aid).
-            if let Ok(path) = std::env::var("RERAIL_DUMP_MATCHERS") {
-                let mut text = String::new();
-                for rule in prog.rules.iter().filter(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| a.rel.starts_with(matchers::PREFIX)))) {
-                    text.push_str(&format!("{rule}\n"));
+            // Long text where no body fixes the node's kind: twin rules read it for the nodes they bind (decision 0109).
+            if prog.decls.contains_key("text") {
+                crate::code_rule_dsl::logic::strings::node_subject_tests(&mut prog);
+                let twins = syntax::long_text_twins(&mut prog, &matchers);
+                if twins > 0 {
+                    crate::code_rule_dsl::logic::profile::decision("long text twins (decision 0109)", || format!("{twins} rules read text past the inline bound for the nodes they bind"));
                 }
-                for (rel, matcher, captures) in &matchers {
-                    text.push_str(&format!("{rel}\t{captures:?}\t{matcher}\n"));
-                }
-                let _ = std::fs::write(path, text);
             }
             // Text tests over text relations become relations the batches fill from their vocabulary (decision 0037).
             let vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut prog).map_err(Error::Plan)?;
@@ -2104,6 +2101,17 @@ fn run_observed(
         (false, _) => "prepared".to_owned(),
     });
     let Prepared { prog, vocabulary, lowered, sets, matchers, demanded, pushed, factorized, located, merged: (remerged, reshared), mut split, interned: _ } = prepared;
+    // `RERAIL_DUMP_MATCHERS=<file>`: the rules reading a matcher's relation, and each matcher (a debugging aid), from the prepared program, made or kept.
+    if let Ok(path) = std::env::var("RERAIL_DUMP_MATCHERS") {
+        let mut text = String::new();
+        for rule in prog.rules.iter().filter(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| a.rel.starts_with(matchers::PREFIX)))) {
+            text.push_str(&format!("{rule}\n"));
+        }
+        for (rel, matcher, captures) in &matchers {
+            text.push_str(&format!("{rel}\t{captures:?}\t{matcher}\n"));
+        }
+        let _ = std::fs::write(path, text);
+    }
     // A program none of whose rules reads a document runs over none: its file-local rules make only constants (which
     // both parts derive: `file_local::constant_relations`), and the cross-file part reads no base relation but the
     // run's constants (an earlier phase's exports, the options). A later phase reading only an earlier one's exports

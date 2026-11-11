@@ -135,6 +135,8 @@ The Python pack's output is identical after each change.
 
 ## Open items
 
+Decision 0109 closes the first two and moves the rest forward.
+
 - **Long text where the kind is not fixed.** A rule reading `text(v, t)` for a node
   whose kind its body does not fix still sees the 256-byte bound. Decision 0042's
   file scan (§3) for node text would remove it.

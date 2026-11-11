@@ -2023,9 +2023,6 @@ fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<Mode
         if stats.lazy.0.contains_key(rel.as_str()) {
             continue;
         }
-        if !prog.decls.contains_key(rel) {
-            return Err(Error::Statistics(format!("the input {rel} is not declared")));
-        }
         input_stats(&mut stats, &mut ndv, prog, rel)?;
     }
     // Input indexes as column lists, each ending in the rowid column if the table has one (SQLite appends it). The
