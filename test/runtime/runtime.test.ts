@@ -877,7 +877,8 @@ describe("Rerail session restore", () => {
 });
 
 describe("A runtime's closed sessions", () => {
-  // A checkout's runtime lives while any session in it does, and the idle close now ends every killed session there too.
+  // A checkout's runtime lives while any session in it does, and the idle close ends each killed session there too: after
+  // 30 quiet minutes, or after a day when the session still owed its agent a result, a steer or a held finding.
   it("are kept for late receipts only while they are among the last sixteen to close", { timeout: 20_000 }, async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-closed-sessions-")));
     directories.push(root);

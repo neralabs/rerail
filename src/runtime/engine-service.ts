@@ -30,8 +30,8 @@ export interface EngineService {
   /** How many runtimes are open: one per checkout some live session uses. */
   openRuntimes(): number;
   /**
-   * Closes every session that has sent no event for the idle limit and owes its agent nothing; the service also does
-   * this every minute.
+   * Closes every session that has sent no event for the idle limit and owes its agent nothing, and every one quiet for
+   * a day whatever it owes; the service also does this every minute.
    */
   closeIdleSessions(): Promise<void>;
 }
@@ -41,11 +41,21 @@ export interface EngineService {
  * arrive: a coding agent that is killed sends none, and Claude Code gives its SessionEnd hook 1.5 s, which a hook on a
  * busy Windows machine outlasts. A session whose end was lost kept its state (its own copy of its checkout's source
  * walk, its conversation history, its evaluator) until the daemon stopped. A closed session's next event opens it again
- * from its ledger. A session waiting on a tool call, or holding a steer for its agent, stays open: its ledger holds
- * neither. A call that arrives while its rules compile again goes on without code rules; the turn end checks the edit,
- * and its steer arrives at the agent's next tool call, a turn later (`#codeRuleWorkspaceNow` in runtime.ts).
+ * from its ledger. A session waiting on a tool call, or holding a steer for its agent, stays open for up to a day
+ * (`OWING_SESSION_IDLE_MS`): its ledger holds neither. A call that arrives while its rules compile again goes on without
+ * code rules; the turn end checks the edit, and its steer arrives at the agent's next tool call, a turn later
+ * (`#codeRuleWorkspaceNow` in runtime.ts).
  */
 export const IDLE_SESSION_MS = 30 * 60_000;
+/**
+ * How long a session that still owes its agent something (a tool call's result, a steer, a held finding, a scan) may
+ * send no event before the engine service closes it anyway, and what it owed is lost. An agent killed while its session
+ * owed it something, as Claude Code closed at a permission prompt is, sends no end and no result: without a bound its
+ * session kept its source walk, its evaluator and its checkout's runtime until the daemon stopped. The bound is a day,
+ * not `IDLE_SESSION_MS`, because an agent waiting on a person at a permission prompt can be left for hours while they
+ * are away, and closing its session then would drop the check of the call's edit or the steer it holds.
+ */
+const OWING_SESSION_IDLE_MS = 24 * 60 * 60_000;
 /** How often the engine service looks for idle sessions. */
 const IDLE_SWEEP_MS = 60_000;
 
@@ -317,18 +327,22 @@ function releaseSessionRuntime(state: EngineRoutingState, sessionId: string, run
  * Closes, as its end would, each session that has sent no event for `idleMs` (`IDLE_SESSION_MS`), and then retires its
  * runtime as an end does. The check runs again in the session's lane, so an event that came in meanwhile keeps the
  * session open. A session that still owes its agent a tool call's check, a steer or a scan stays open
- * (`RerailRuntime.closeIdleSession`), and so does one whose close fails, which is reported; the next sweep looks again.
+ * (`RerailRuntime.closeIdleSession`) until it has been quiet for `OWING_SESSION_IDLE_MS`, and so does one whose close
+ * fails, which is reported; the next sweep looks again.
  */
 async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now: () => number): Promise<void> {
-  const idle = (lane: string): boolean => {
+  /** How long the session at `lane` has sent nothing; minus infinity once it has closed, so it is never idle. */
+  const quietFor = (lane: string): number => {
     const at = state.lastEventAt.get(lane);
-    return at !== undefined && now() - at >= idleMs;
+    return at === undefined ? Number.NEGATIVE_INFINITY : now() - at;
   };
-  await Promise.all([...state.lastEventAt.keys()].filter(idle).map(async (lane) => {
+  await Promise.all([...state.lastEventAt.keys()].filter(lane => quietFor(lane) >= idleMs).map(async (lane) => {
     const [runtimeKey, sessionId] = JSON.parse(lane) as [string, string];
     const closing = state.lanes.run(lane, async () => {
-      if (!idle(lane)) return false;
-      const closed = await state.runtimes.get(runtimeKey)?.closeIdleSession(sessionId) ?? true;
+      const quiet = quietFor(lane);
+      if (quiet < idleMs) return false;
+      const evenIfOwing = quiet >= OWING_SESSION_IDLE_MS;
+      const closed = await state.runtimes.get(runtimeKey)?.closeIdleSession(sessionId, { evenIfOwing }) ?? true;
       if (closed) state.lastEventAt.delete(lane);
       return closed;
     });

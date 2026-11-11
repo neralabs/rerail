@@ -213,6 +213,22 @@ describe("the engine service's idle close", () => {
     expect(ended("a")).not.toBeNull();
   });
 
+  it("closes a session that waits on a tool call once it has been quiet a day, so an agent killed at a permission prompt does not keep it forever", async () => {
+    const { clock, service, session, send, start, ended } = await idleService();
+    const hour = 60 * 60_000;
+    await start("a");
+    // Claude Code closed while the call waited for the user's permission: its result and its end never come.
+    await send({ kind: "call", eventId: "a:call", sessionId: "a", session: session("a"), toolCallId: "t1", toolName: "Bash", input: { command: "rm -rf build" } });
+    clock.now += 23 * hour;
+    await service.closeIdleSessions();
+    expect(service.openRuntimes()).toBe(1);
+    expect(ended("a")).toBeNull();
+    clock.now += hour;
+    await service.closeIdleSessions();
+    expect(service.openRuntimes()).toBe(0);
+    expect(ended("a")).not.toBeNull();
+  });
+
   it("keeps a session open whose event came in while the sweep waited behind the one before it", async () => {
     const published = Promise.withResolvers<void>();
     const publishing = Promise.withResolvers<void>();
