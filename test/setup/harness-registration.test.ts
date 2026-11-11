@@ -1082,6 +1082,28 @@ describe("Claude Code commands", () => {
     expect(await readdir(dirname(path)).catch(() => [])).toEqual([]);
   });
 
+  it("knows Codex's and Cursor's Windows commands as Rerail's, another install's and one whose path holds a `'`", async () => {
+    const install = await fixture();
+    const { home, root } = install;
+    const quoted = await packageInstall(install, "o'neil");
+    const windows = { home, nodePath: String.raw`C:\Program Files\nodejs\node.exe`, platform: "win32" as const, harnesses: ["codex", "cursor"] as const };
+    const command = join(home, ".cursor", "commands", "rerail.md");
+    const skills = join(home, ".codex", "skills");
+    await registerHarnesses({ ...windows, root: quoted });
+    // PowerShell's literal writes the `'` twice.
+    const cli = shellWord("powershell", win32.join(quoted, "dist", "cli", "cli.js"));
+    expect(cli).toContain("o''neil");
+    expect(await readFile(command, "utf8")).toContain(cli);
+    expect(await readFile(join(skills, "rerail", "SKILL.md"), "utf8")).toContain(cli);
+    // Another install's files are Rerail's: replaced, not backed up.
+    await registerHarnesses({ ...windows, root });
+    expect(await backups(command)).toEqual([]);
+    await registerHarnesses({ ...windows, root: quoted });
+    await unregisterHarnesses({ ...windows, root: quoted });
+    expect(await readdir(dirname(command)).catch(() => [])).toEqual([]);
+    await expect(lstat(skills)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("writes Claude Code's Windows status line for Git Bash, with its node fallback and `%` as it is", async () => {
     const { home, root } = await fixture();
     const nodePath = String.raw`C:\Users\a%b\node.exe`;

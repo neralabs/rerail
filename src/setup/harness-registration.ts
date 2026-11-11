@@ -1607,33 +1607,58 @@ function promptCommandPath(context: Context, harness: PromptCommandHarness, name
   return path;
 }
 
+/** The end of a path to `executable` on `platform`, escaped for a RegExp. */
+function scriptTail(executable: string, platform: NodeJS.Platform): string {
+  const paths = pathsOf(platform);
+  return `${paths.sep}${paths.normalize(executable)}`.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
 /**
  * The paths ending in `executable` that `text` names in POSIX single quotes (`shellWord("posix", …)`), unquoted: the
  * form Claude Code's command files take on Windows. A match ends at `executable` and its closing quote, so an apostrophe
  * in the instructions' prose never pairs with the quote around a path.
  */
 function posixQuotedScripts(text: string, executable: string, platform: NodeJS.Platform): string[] {
-  const paths = pathsOf(platform);
-  const tail = `${paths.sep}${paths.normalize(executable)}`.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  return [...text.matchAll(new RegExp(String.raw`'((?:[^']|'\\'')*${tail})'`, "gu"))]
+  return [...text.matchAll(new RegExp(String.raw`'((?:[^']|'\\'')*${scriptTail(executable, platform)})'`, "gu"))]
     .map(match => match[1]!.replaceAll(String.raw`'\''`, "'"));
+}
+
+/**
+ * The paths ending in `executable` that `text` names as PowerShell literals (`powershellLiteral`), unquoted: the form
+ * Codex's and Cursor's command files take on Windows, each quote in the path written twice. A literal starts a word, so
+ * the quotes of a POSIX-quoted `'` never open one, and it ends at `executable` as in `posixQuotedScripts`.
+ */
+function powershellQuotedScripts(text: string, executable: string, platform: NodeJS.Platform): string[] {
+  const literal = String.raw`(?<![^\s(])'((?:[^'\u2018-\u201B]|(['\u2018-\u201B])\2)*${scriptTail(executable, platform)})'`;
+  return [...text.matchAll(new RegExp(literal, "gu"))].map(match => match[1]!.replace(/(['\u2018-\u201B])\1/gu, "$1"));
+}
+
+/** Whether `text` names `script` as it is, in POSIX single quotes or as a PowerShell literal: each form a file takes. */
+function namesScript(text: string, script: string): boolean {
+  return [script, shellWord("posix", script), powershellLiteral(script)].some(form => text.includes(form));
+}
+
+/** The `words` that are this package's CLI under an install root registration knows (`registeredRoot`). */
+function registeredScripts(words: readonly string[], platform: NodeJS.Platform): Set<string> {
+  return new Set(words.filter(word => pathsOf(platform).isAbsolute(word) && registeredRoot(word, ENTRY_POINTS.cli, platform) !== undefined));
 }
 
 /**
  * Whether a command file or skill runs this installation's CLI or, on registration, that of another install of this
  * package or of one that is gone, recognized as hooks are (`isReplaceableScript`): an earlier version wrote its files
  * under its own install root. A generated file names exactly one `<root>/dist/cli/cli.js` (`ENTRY_POINTS.cli`), as a
- * hook word (`hookWord`) or, in Claude Code's files on Windows, in POSIX single quotes.
+ * hook word (`hookWord`) or, in the command files on Windows, in POSIX single quotes (Claude Code's) or as a PowerShell
+ * literal (Codex's and Cursor's).
  */
 async function runsPackageCli(context: Context, text: string): Promise<boolean> {
-  const own = hookScript(context, ENTRY_POINTS.cli);
-  if (text.includes(own) || text.includes(shellWord("posix", own))) return true;
+  if (namesScript(text, hookScript(context, ENTRY_POINTS.cli))) return true;
   if (context.mode === "unregister") return false;
   const windows = context.platform === "win32";
   const words = shellWords(text, windows).map(word => unquoteShellWord(word, windows));
-  const quoted = windows ? posixQuotedScripts(text, ENTRY_POINTS.cli, context.platform) : [];
-  const scripts = new Set([...words, ...quoted]
-    .filter(word => pathsOf(context.platform).isAbsolute(word) && registeredRoot(word, ENTRY_POINTS.cli, context.platform) !== undefined));
+  const quoted = windows
+    ? [...posixQuotedScripts(text, ENTRY_POINTS.cli, context.platform), ...powershellQuotedScripts(text, ENTRY_POINTS.cli, context.platform)]
+    : [];
+  const scripts = registeredScripts([...words, ...quoted], context.platform);
   const [script] = scripts;
   return scripts.size === 1 && await isReplaceableScript(context, script!, ENTRY_POINTS.cli);
 }
