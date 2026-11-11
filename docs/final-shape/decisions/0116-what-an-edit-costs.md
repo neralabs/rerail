@@ -11,12 +11,14 @@ Why, when the edit adds a few dozen rows?
 **The answer in short.**
 - The edit is seen exactly. Each changed input gains 4 to 59 rows and loses none.
 - Almost none of the time is joins. Over the whole run, the joins take about 0.7 s of CPU, on all threads.
-- The time goes to work done for every stratum of the maintenance program, whether or not a delta reaches it:
-  - The rewrite builds 203,141 rules in 46,494 strata.
-  - 39,640 of those strata read only empty deltas.
-  - The run plans 41,013 rules from scratch, because no plan outlives its process.
-  - It opens most strata, measures their statistics, and reads back the old rows of 9,733 relations (16.8 M rows).
-- The fixed costs of each run are about 3 s more.
+- The time goes to three things:
+  - **Planning, 3.2 s.** 24,872 plan searches for the 3,278 strata that run, because no plan outlives its
+    process.
+  - **The whole maintenance program, about 3 s.** The rewrite builds 203,141 rules in 46,494 strata, though 39,640
+    of those strata read only empty deltas. Those are skipped before any planning or opening, so their cost is the
+    rewrite, the passes over the whole program, the old rows read back, and entering each stratum to skip it.
+  - **Fixed costs of each run, about 3 s.** These are the prepared program, the kept choices, statistics, and the
+    program combined twice.
 - **So the fix is in the shape, not in any one step.** Maintenance should be driven by the deltas that are not
   empty, and what the planner learns should be kept as facts across processes.
 
@@ -90,8 +92,17 @@ every rule that can change: overdelete, survivors, rederive and insert. For this
 | Deltas empty, of all | 39,429 of 40,130 |
 | Strata the run evaluated | 8,313 of 10,355 (cross part) |
 
-The quiet-stratum skip (0101 §1) takes a stratum only once its rules are pruned to none. By then the whole program
-has been built, split into strata (0.44 s), and mostly planned.
+The existing checks skip these strata before planning. A rule that joins an empty relation of a lower stratum is
+pruned ("every rule joins an empty relation": 42,061 strata). A stratum left with only its survivors is quiet (0101
+§1: 8,338). Only 3,278 strata run a component in the cross part, and the 24,872 plan searches are theirs. What the
+empty strata still cost (sampled, unprofiled):
+
+| Cost of the whole program | CPU |
+|---|---|
+| Passes over it in `plan::run`: the choices' key, strata, normalizing, cloning, lowering, first and last reads | about 1.8 s |
+| The rewrite | about 0.5 s |
+| The old rows read back that empty strata do not need | about 0.5 s |
+| Entering each skipped stratum | about 0.3 s |
 
 The deltas are known as the run reaches each stratum. A stratum none of whose inputs' deltas is non-empty needs no
 rules, no plan, no opening and no old rows. Its relations are their old rows.
@@ -164,6 +175,9 @@ Also from this analysis:
 
 ## Proposed, in order
 
+By size on this edit, step 2 (planning, 3.2 s) comes first, then step 1 (about 3 s), then step 4 (about 3 s).
+The steps are numbered as first proposed.
+
 1. **Maintenance driven by the non-empty deltas.**
    - Walk the strata in order, with the set of relations whose delta is not empty.
    - A stratum none of whose reads is in that set is not rewritten, planned, opened or read back: its relations
@@ -171,8 +185,8 @@ Also from this analysis:
    - A stratum that is reached is rewritten for the positions whose delta is not empty, run, and adds its own
      non-empty deltas to the set.
 
-   This replaces the whole-program rewrite (cause 1) and the whole read back (cause 4). On this edit it is about
-   1,700 strata of 46,494.
+   This replaces the whole-program rewrite (cause 1) and the whole read back (cause 4): about 3 s of this edit's
+   20 s.
 2. **Plans kept as facts across processes**, keyed by the rule's shape and the statistics bucket, as `SESSION_PLANS`
    keys them (cause 2). The store's prepared program carries them.
 3. **The input deltas from the changed files' memo entries**, so unchanged files are neither hashed (cause 3) nor
