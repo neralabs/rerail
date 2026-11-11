@@ -26,7 +26,6 @@ use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::budget::MatchBudget;
 use crate::code_rule_dsl::eval::evidence::Side;
 use crate::code_rule_dsl::eval::{evaluation_json, overflow_evaluation};
-use crate::code_rule_dsl::import_target::fs::View;
 use crate::code_rule_dsl::json::{invalid, json_error};
 use crate::code_rule_dsl::language::{self, adapter::package_manifests};
 use crate::code_rule_dsl::model::{
@@ -1015,12 +1014,8 @@ impl WorkspaceApplyTask {
         // below its root as this apply finds it.
         let import_clauses = state.import_clauses.clone();
         let import_generation = state.import_generation;
-        let import_view = (!import_clauses.is_empty()).then(|| {
-            Arc::new(View::new(
-                Arc::clone(&state.import_files),
-                state.import_root.as_deref(),
-            ))
-        });
+        let import_view = (!import_clauses.is_empty())
+            .then(|| state.import_files.view(state.import_root.as_deref()));
         let context = JobContext {
             #[cfg(all(test, feature = "p-anchor-corpus"))]
             anchor_corpus: &anchor_corpus,

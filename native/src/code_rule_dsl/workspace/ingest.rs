@@ -428,7 +428,7 @@ impl WorkspaceState {
             return;
         }
         let root = self.import_root.as_deref();
-        if Arc::make_mut(&mut self.import_files).hold(path, source, root) {
+        if self.import_files.hold(path, source, root) {
             self.import_generation += 1;
         }
     }
@@ -436,7 +436,7 @@ impl WorkspaceState {
     /// Stops holding `path` for import target resolution, as `hold_import_file` holds it.
     fn release_import_file(&mut self, path: &str) {
         let root = self.import_root.as_deref();
-        if Arc::make_mut(&mut self.import_files).release(path, root) {
+        if self.import_files.release(path, root) {
             self.import_generation += 1;
         }
     }

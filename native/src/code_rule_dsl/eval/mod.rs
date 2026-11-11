@@ -3,8 +3,6 @@ mod output;
 mod query;
 
 use super::calls;
-use super::import_target::ViewSlot;
-use super::import_target::fs::{HeldFiles, View};
 use super::json::{invalid, json_error, required_str};
 use super::language::adapter::package_manifests;
 use super::model::{
@@ -193,10 +191,10 @@ pub(super) fn evaluate_clauses(
     #[cfg(all(test, feature = "p-anchor-corpus"))]
     prepare_candidates(code_rule, snapshot);
     // Import targets resolve among the snapshot's files; a workspace's evaluation installed the
-    // view of the files it holds instead (`ViewSlot::install_unless_present`).
+    // view of the files it holds instead (`resolution::install_snapshot_unless_present`).
     let _view = code_rule
         .reads_import_targets()
-        .then(|| ViewSlot::install_unless_present(|| Arc::new(snapshot_view(snapshot))));
+        .then(|| crate::code_rule_dsl::resolution::install_snapshot_unless_present(snapshot));
     let _calls = stateless_calls(code_rule, snapshot, clauses, &mut evaluation.metrics)?;
     let mut relational_jobs = Vec::new();
     for clause in clauses {
@@ -377,15 +375,6 @@ pub(super) fn evaluate_clauses(
         ));
     }
     Ok(evaluation)
-}
-
-/// What a snapshot's import targets resolve among: its files, with no disk below them.
-fn snapshot_view(snapshot: &Snapshot) -> View {
-    let mut held = HeldFiles::default();
-    for file in &snapshot.files {
-        held.hold(&file.path, &file.source, None);
-    }
-    View::new(Arc::new(held), None)
 }
 
 fn merge(evaluation: &mut Evaluation, mut other: Evaluation) {

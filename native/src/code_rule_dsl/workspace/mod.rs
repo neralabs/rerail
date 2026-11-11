@@ -462,7 +462,7 @@ struct WorkspaceState {
     /// Cross-file adapters and their shared derived state.
     crossfile: crossfile::CrossFileScheduler,
     /// The files requests sent, as import target resolution reads them (`import_target::fs`).
-    import_files: Arc<crate::code_rule_dsl::import_target::fs::HeldFiles>,
+    import_files: Box<dyn crate::code_rule_dsl::resolution::HeldForResolution>,
     /// The folder on disk the workspace's paths are relative to (`setRoot`): resolution reads
     /// the files below it the workspace does not hold.
     import_root: Option<std::path::PathBuf>,

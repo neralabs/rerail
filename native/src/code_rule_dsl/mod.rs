@@ -67,6 +67,7 @@ pub(in crate::code_rule_dsl) mod sql_profile;
 mod query;
 // Admission reads these once the batch budget is wired; until then only tests call it.
 #[allow(dead_code)]
+mod resolution;
 mod residency;
 // P's paths for P's relational stage, under test (open item O18): P's workspace code reads it here.
 use residency::admission::relational;
@@ -600,6 +601,8 @@ pub(crate) fn install_languages() {
     matcher::install_number_text(&value::ecma::Numbers);
     // The canonical AST stage's producer (Python's CPython `ast`).
     residency::install_ast_producer(&residency::PythonAst);
+    // What ECMAScript's import targets resolve among (`resolution`).
+    resolution::install(import_target::held::RESOLUTIONS);
     // What compiles a program's `ast` matchers into the transducer wave facts runs (decision 0106).
     facts::vtab::syntax::install_ast_compiler(&facts::vtab::syntax::ast_wave::Compiler);
     // The literal grammars `parse` applies, in the order messages list them (`literal::LiteralGrammar`).

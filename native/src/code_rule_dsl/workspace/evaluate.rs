@@ -18,8 +18,6 @@ use crate::code_rule_dsl::eval::{
     WitnessError, document_matcher, file_language, grammar_matcher, witness_from_match,
     witnesses_from_match,
 };
-use crate::code_rule_dsl::import_target::ViewSlot;
-use crate::code_rule_dsl::import_target::fs::View;
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
@@ -191,8 +189,8 @@ pub(super) struct JobContext<'a> {
     /// P's anchor corpus (the `p-anchor-corpus` path, open item O20).
     #[cfg(all(test, feature = "p-anchor-corpus"))]
     pub(super) anchor_corpus: &'a Arc<crate::code_rule_dsl::matcher::Corpus>,
-    /// What import targets resolve among (`import_target::fs::View`), where a clause reads them.
-    pub(super) import_view: Option<&'a Arc<View>>,
+    /// What import targets resolve among (`resolution::ResolutionView`), where a clause reads them.
+    pub(super) import_view: Option<&'a Arc<dyn crate::code_rule_dsl::resolution::ResolutionView>>,
     /// The clauses that read import targets: their results are never stored.
     pub(super) import_clauses: &'a HashSet<ClauseId>,
 }
@@ -477,7 +475,7 @@ fn evaluate_job(
         )
     });
     let _consumer = CrossFileScheduler::install(crossfile);
-    let _view = ViewSlot::install(context.import_view.cloned());
+    let _view = context.import_view.map(|view| Arc::clone(view).install());
     let mut restored = None;
     let evaluated = evaluate_file(
         file,

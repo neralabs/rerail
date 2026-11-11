@@ -773,5 +773,6 @@ pub(crate) fn current_view() -> Option<Arc<View>> {
     VIEW.with_borrow(Clone::clone)
 }
 
+pub(crate) mod held;
 #[cfg(test)]
 mod tests;
