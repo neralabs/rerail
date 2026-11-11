@@ -894,13 +894,16 @@ impl Retained {
     /// keeps in memory, kept across processes. A derived relation is taken when its frame is current: each relation
     /// it read has the digest it had then, and a derived read is taken too. So the relations taken are the rows one
     /// run left, whichever programs ran in between. Their rows are read when the run needs them (`load`).
-    pub(in crate::code_rule_dsl) fn from_frames(store: &ContentStore, space: [u8; 32], key: [u8; 32], prog: &front::Program) -> Result<Retained> {
+    pub(in crate::code_rule_dsl) fn from_frames(store: &ContentStore, space: [u8; 32], key: [u8; 32], prog: &front::Program, bound: &HashMap<String, u64>) -> Result<Retained> {
         let (sccs, _) = front::strata(prog).map_err(|e| Error::Plan(e.to_string()))?;
         let by_stratum: Vec<Vec<&front::Rule>> = sccs.iter().map(|scc| prog.rules.iter().filter(|r| scc.contains(&r.head.rel)).collect()).collect();
         let idents = crate::code_rule_dsl::logic::plan::identities(prog, &sccs, &by_stratum);
         let derived: BTreeSet<&String> = sccs.iter().flatten().collect();
         let mut names: HashMap<String, FrameRel> = idents.into_iter().map(|(name, ident)| (name.clone(), FrameRel { name, ident })).collect();
-        for rel in prog.inputs.iter().filter(|r| !derived.contains(r)) {
+        // The inputs are what the run binds (`bound`, by their digests): the program's, and an earlier phase's export
+        // as phase 1's `doc` or the types phase's `types__wgen`, which no rule may name (a pattern reads `node`).
+        let read: BTreeSet<String> = prog.inputs.iter().chain(bound.keys()).filter(|r| !derived.contains(r)).cloned().collect();
+        for rel in &read {
             names.insert(rel.clone(), FrameRel { name: rel.clone(), ident: input_ident(rel, prog) });
         }
         let all: Vec<FrameRel> = names.values().cloned().collect();
@@ -908,7 +911,7 @@ impl Retained {
         let mut frames = InFrames { space, names, ..Default::default() };
         let mut input_docs = HashMap::new();
         let mut inputs = HashMap::new();
-        for rel in prog.inputs.iter().filter(|r| !derived.contains(r)) {
+        for rel in &read {
             let Some(at) = stored.get(&frames.names[rel]) else { continue };
             let Some(rows) = store.frame_rows(&space, &frames.names[rel], DOCS_PART).map_err(|e| Error::Plan(e.to_string()))? else { continue };
             let docs: DocDigests = rows.rows.chunks_exact(3).map(|r| (r[0], (r[1] as u64, r[2] as u64))).collect();

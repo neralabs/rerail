@@ -4732,7 +4732,7 @@ fn run_observed(
                     let frames_space = kept_strata::program_space(root, &ckey);
                     if cell.is_none() && from_frames.is_some() {
                         let _s = span("the kept part, from the frames");
-                        cell = Some(retain::Retained::from_frames(store, frames_space, ckey, &cross.program)?);
+                        cell = Some(retain::Retained::from_frames(store, frames_space, ckey, &cross.program, &digests)?);
                     }
                     let cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
                     if kept_frames.is_some() {

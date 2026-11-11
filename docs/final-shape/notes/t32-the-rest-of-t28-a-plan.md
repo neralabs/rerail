@@ -140,8 +140,16 @@ schema moved), 31.7 s, 29.8 s; the second process no longer runs the struct phas
 or the types phase (0 of 110 strata).
 
 The larger corpus (84 files, 6,410 calls agreeing, load about 90): 78.75 s CPU cold (321 s wall), 23.18 s warm, 20.28 s
-the third time (33 s wall). Still open: warm runs find inputs changed every time — `doc, node` (34 of the types
-phase's 110 strata) and `doc, types__wgen` (429 of P3's 481), so the 99-relation stratum costs 3.1 s warm.
+the third time (33 s wall). Warm runs found inputs changed every time — `doc, node` (types phase) and `doc, types__wgen` (P3) — for two
+reasons, both fixed: phase 1's program and the pack's shared one frame space, so an input both read was one frame
+each overwrote (a space per program now), and an input bound from an earlier phase (`doc`, `types__wgen`) or read by
+a pattern (`node`) is in no rule's body nor `prog.inputs`, so it had no frame name (the bound inputs are named now).
+Warm on the 54 files: inputs changed none; 14.5 s CPU.
+
+Still open: with no input changed, the same strata still run (34 of 110, 429 of 481). Outputs run by design (the
+frames hold no output's decoded rows). The rest are derived relations whose frame is not current: a read is an
+`__sup` relation (or one below it, `pbase__sup0`, `doc_tape__sup0`) that has no frame, so the chain above it is
+taken from no frame and derived again.
 
 This is the same for P2, for calls_cx's cross part and for the pack (t31 B4). t31's "column blocks" would be the
 kept relations' encoding, not a format of their own.
