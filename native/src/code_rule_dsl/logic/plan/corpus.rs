@@ -202,6 +202,9 @@ pub(crate) fn usage() -> (f64, f64, f64) {
 pub(crate) struct Report {
     /// (phase, user, sys, peak RSS so far, SQLite statements run).
     pub(crate) phases: Vec<(&'static str, f64, f64, f64, usize)>,
+    /// Per phase, the whole process's retired instructions while it ran (its workers' too; macOS): steadier than CPU
+    /// time on a loaded machine, so a change is attributed to a phase by them.
+    pub(crate) phase_instructions: Vec<(&'static str, u64)>,
     pub(crate) files: usize,
     pub(crate) nodes: usize,
     pub(crate) native: usize,
@@ -1592,10 +1595,18 @@ fn run_observed(
     // When the run began: the first phase counts combining.
     let began = main_usage();
     let mut phases: Vec<(&'static str, f64, f64, f64, usize)> = Vec::new();
+    let mut phase_instructions: Vec<(&'static str, u64)> = Vec::new();
     let mut last = began;
+    let mut last_instructions = crate::code_rule_dsl::tools::process_counters().map_or(0, |c| c.0);
     let mut counted = 0;
     let mut phase = |name: &'static str, statements: usize| {
         let now = main_usage();
+        let instructions = crate::code_rule_dsl::tools::process_counters().map_or(0, |c| c.0);
+        match phase_instructions.iter_mut().find(|p| p.0 == name) {
+            Some(p) => p.1 += instructions - last_instructions,
+            None => phase_instructions.push((name, instructions - last_instructions)),
+        }
+        last_instructions = instructions;
         let n = statements - counted;
         counted = statements;
         match phases.iter_mut().find(|p| p.0 == name) {
@@ -1840,6 +1851,8 @@ fn run_observed(
             &own_store
         }
     };
+    // `shortlex_min<>` orders the run's symbols by their text: the store's atoms (decision 0108).
+    crate::code_rule_dsl::logic::native::declare("shortlex_min", Arc::new(crate::code_rule_dsl::logic::native::ShortlexMin(store.atoms_handle())));
     let db = Connection::open(&path)?;
     // The run's databases are scratch, made again by every run (removed above): a commit need not reach the disk.
     db.execute_batch("PRAGMA synchronous=OFF")?;
@@ -2304,7 +2317,7 @@ fn run_observed(
     });
     // The tree's projection: `core.rr`'s for a program that includes it, T's for one that declares its base relations
     // itself (decision 0046); relations no rule reads are not made.
-    let projection = syntax::Projection::of(&prog, read.clone());
+    let projection = syntax::Projection::of(&prog, read.clone()).with_long_text(&prog, &matchers);
     crate::code_rule_dsl::logic::profile::decision("base relations", || format!("{:?} shape (decision 0046)", projection.shape));
     // A run that reads nothing of its documents builds none: every relation its outputs need, through any rule, is
     // derived, given as facts (an earlier phase's exports, the run's constants) or a native function. A main
@@ -5712,7 +5725,7 @@ fn run_observed(
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the Git index consulted".into());
         consulted.extend(crate::code_rule_dsl::logic::strings::git::consulted(root));
     }
-    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default() })
+    Ok(Report { phases, phase_instructions, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default() })
 }
 
 

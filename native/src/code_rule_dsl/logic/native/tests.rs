@@ -446,3 +446,23 @@ fn a_count_many_bindings_reach_reads_its_count_table() {
     assert!(after.0 > before.0, "a histogram was built");
     super::setfix::count_tables_at_once(false);
 }
+
+/// `shortlex_min` keeps the shorter symbol, then the lesser by bytes; `TOP` and an atom the run does not hold absorb.
+#[test]
+fn shortlex_min_orders_symbols_by_length_then_bytes() {
+    use super::Lattice;
+    let dir = std::env::temp_dir().join(format!("rerail-shortlex-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let atoms = crate::content_store::atoms::Atoms::fresh(&dir.join("atoms.sqlite"));
+    let s = atoms.intern_all(&["b.c", "zz", "ab", "é"]).unwrap();
+    let (bc, zz, ab, e) = (i64::from(s[0]), i64::from(s[1]), i64::from(s[2]), i64::from(s[3]));
+    let l = super::ShortlexMin(atoms);
+    assert_eq!(l.lub(bc, zz), zz, "shorter first");
+    assert_eq!(l.lub(zz, ab), ab, "then by bytes");
+    assert_eq!(l.lub(ab, zz), ab, "either order");
+    assert_eq!(l.lub(e, ab), e, "length in characters: é is one");
+    assert_eq!(l.lub(ab, TOP), TOP);
+    assert_eq!(l.lub(ab, i64::from(u32::MAX)), TOP, "an atom not held");
+    assert!(l.finite());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
