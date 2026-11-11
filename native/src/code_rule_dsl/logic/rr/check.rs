@@ -219,7 +219,9 @@ fn inner_needs(lits: &[Lit], bound: &BTreeSet<String>) -> BTreeSet<String> {
 /// outside (fix relations and edits).
 pub(super) fn unbound(heads: &[Head], body: &[Lit], edits: &[Term], given: &BTreeSet<String>) -> Vec<String> {
     let head_vars: BTreeSet<String> = heads.iter().flat_map(|h| h.args.iter().flat_map(vars_of)).collect();
-    let mut bound = BTreeSet::new();
+    // `top` no literal binds is the lattice's top, not a variable (`lower`'s `top_is_var`): bound from the start, so
+    // `a = top` binds `a`.
+    let mut bound = BTreeSet::from(["top".to_owned()]);
     if heads.first().is_some_and(|h| given.contains(&h.rel)) {
         bound.extend(head_vars.iter().cloned());
     }
@@ -246,8 +248,6 @@ pub(super) fn unbound(heads: &[Head], body: &[Lit], edits: &[Term], given: &BTre
     }
     need.extend(heads.iter().flat_map(|h| h.args.iter().flat_map(|a| term_needs(a, &bound))));
     need.extend(edits.iter().flat_map(vars_of));
-    // `top` no literal binds is the lattice's top, not a variable (`lower`'s `top_is_var`).
-    need.remove("top");
     need.difference(&bound).cloned().collect()
 }
 

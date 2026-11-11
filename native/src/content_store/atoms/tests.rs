@@ -232,3 +232,92 @@ fn a_process_waiting_for_the_lease_gets_it_after_a_flush() {
     assert!(mine > 1, "after the child's atoms");
     assert_eq!(store.atom_value(mine).unwrap().as_deref(), Some("mine"));
 }
+
+/// The database at `path`, copied to a path of its own: opened there, it is a new process's (its atoms are read
+/// from disk, not the ones this process holds for `path`).
+fn elsewhere(path: &std::path::Path, label: &str) -> std::path::PathBuf {
+    rusqlite::Connection::open(path).unwrap().execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
+    let copy = self::path(label);
+    std::fs::copy(path, &copy).unwrap();
+    copy
+}
+
+fn key_rows(path: &std::path::Path) -> (i64, Option<i64>) {
+    let connection = rusqlite::Connection::open(path).unwrap();
+    let rows = connection.query_row("SELECT count(*) FROM atom_key", [], |row| row.get(0)).unwrap();
+    let upto = connection.query_row("SELECT upto FROM atom_key_end", [], |row| row.get(0)).ok();
+    (rows, upto)
+}
+
+/// Decision 0111: a reopened store finds an atom by its key and reads only that atom's segment; new ids continue
+/// after the stored ones.
+#[test]
+fn a_reopened_store_reads_only_the_segments_it_looks_up() {
+    let path = path("keyed");
+    let store = ContentStore::open(&path).unwrap();
+    let first: Vec<String> = (0..1000).map(|i| format!("first-{i}")).collect();
+    store.intern_atoms(&first.iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
+    store.flush_atoms().unwrap();
+    let second: Vec<String> = (0..1000).map(|i| format!("second-{i}")).collect();
+    let ids = store.intern_atoms(&second.iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
+    drop(store);
+    assert_eq!(segments(&path), [(0, 1), (1, 1000), (1001, 1000)]);
+    assert_eq!(key_rows(&path), (2001, Some(2001)), "a key per atom, written with its segment");
+    let store = ContentStore::open(&elsewhere(&path, "keyed-again")).unwrap();
+    assert_eq!(store.atom("second-7").unwrap(), Some(ids[7]));
+    let handle = store.atoms_handle();
+    assert!(handle.state.read().atoms.holds(ids[999]), "the atom's segment is held");
+    assert!(!handle.state.read().atoms.holds(1), "a segment no lookup reached is not read");
+    assert_eq!(store.atom_value(3).unwrap().as_deref(), Some("first-2"));
+    assert_eq!(store.intern_atoms(&["first-5", "third"]).unwrap(), [6, 2001]);
+}
+
+/// A key row whose hash is another string's (a collision, forced here): the lookup compares the strings.
+#[test]
+fn a_hash_collision_finds_the_right_atom() {
+    let path = path("collision");
+    let store = ContentStore::open(&path).unwrap();
+    assert_eq!(store.intern_atoms(&["x", "y"]).unwrap(), [1, 2]);
+    drop(store);
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection.execute("INSERT INTO atom_key(h, id) VALUES (?1, 1)", [super::hash_str("y") as i64]).unwrap();
+    drop(connection);
+    let store = ContentStore::open(&elsewhere(&path, "collision-again")).unwrap();
+    assert_eq!(store.atom("y").unwrap(), Some(2));
+    assert_eq!(store.atom("x").unwrap(), Some(1));
+    assert_eq!(store.intern_atoms(&["y", "z"]).unwrap(), [2, 3]);
+}
+
+/// A store from before the key (its segments alone): keyed once, when an atom is first looked up.
+#[test]
+fn an_older_store_is_keyed_when_first_looked_up() {
+    let path = path("older");
+    let store = ContentStore::open(&path).unwrap();
+    assert_eq!(store.intern_atoms(&["a", "b", "c"]).unwrap(), [1, 2, 3]);
+    drop(store);
+    rusqlite::Connection::open(&path).unwrap().execute_batch("DROP TABLE atom_key; DROP TABLE atom_key_end;").unwrap();
+    let path = elsewhere(&path, "older-again");
+    let store = ContentStore::open(&path).unwrap();
+    assert_eq!(store.atom("b").unwrap(), Some(2));
+    assert_eq!(key_rows(&path), (4, Some(4)));
+    assert_eq!(store.intern_atoms(&["d"]).unwrap(), [4]);
+}
+
+/// Decision 0111's measurement, by hand: `RERAIL_ATOMS_PROBE=<store>` times a process's first lookup, an id's
+/// string and a new atom on that store, reading the atoms alone (no store set-up).
+#[test]
+#[ignore = "a measurement on a store named by RERAIL_ATOMS_PROBE"]
+fn probe_a_store() {
+    let Some(path) = std::env::var_os("RERAIL_ATOMS_PROBE").map(std::path::PathBuf::from) else { return };
+    let atoms = super::Atoms::for_path(&path);
+    let t = std::time::Instant::now();
+    let found = atoms.lookup("node").unwrap();
+    eprintln!("first lookup: {found:?} in {:.3} s; held {:.1} MB", t.elapsed().as_secs_f64(), atoms.bytes() as f64 / 1e6);
+    let t = std::time::Instant::now();
+    let value = atoms.value(4_000_000).unwrap();
+    eprintln!("id 4000000: {:?} in {:.3} s; held {:.1} MB", value.map(|v| v.chars().take(40).collect::<String>()), t.elapsed().as_secs_f64(), atoms.bytes() as f64 / 1e6);
+    let t = std::time::Instant::now();
+    let fresh = format!("probe-{}", std::process::id());
+    let id = atoms.intern(&fresh).unwrap();
+    eprintln!("a new atom: {id} of {} in {:.3} s; held {:.1} MB", atoms.len(), t.elapsed().as_secs_f64(), atoms.bytes() as f64 / 1e6);
+}

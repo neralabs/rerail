@@ -850,9 +850,11 @@ fn read_digest(read: &str, known: &HashMap<String, u64>, derived: &BTreeSet<&Str
         return Some(*d);
     }
     // A relation with literal rows that is also an input is named by its bound rows' digest, never by its literals.
-    if derived.iter().any(|r| r.as_str() == read) || !prog.facts.contains_key(read) || prog.inputs.iter().any(|i| i == read) {
+    if derived.iter().any(|r| r.as_str() == read) || prog.inputs.iter().any(|i| i == read) {
         return None;
     }
+    // Neither derived nor an input, and not bound: its rows are the program's own (its facts, or none, as an
+    // earlier phase's export of no rows), the same whatever the run reads, so its identity names them.
     let id = crate::code_rule_dsl::logic::plan::leaf_identity(prog, read);
     Some(u64::from_le_bytes(id[..8].try_into().expect("eight bytes")))
 }
@@ -874,14 +876,17 @@ fn unkept_digest(rel: &str, reads: &[(String, u64)]) -> u64 {
     h
 }
 
-/// An input's identity: its name and columns. Its rows are what its digest says: two programs whose inputs have
-/// the same rows share the relations derived from them.
-fn input_ident(rel: &str, prog: &front::Program) -> [u8; 32] {
+/// An input's identity: its name, its columns and the program that binds it (`key`). Each program's input is a frame
+/// of its own (phase 1's `doc` and the pack's are not one frame each overwrites with its rows), while a derived
+/// relation is named by its rules and what they read (`plan::identities`), so two programs that derive it from
+/// inputs of the same digests share it (decision 0103).
+fn input_ident(rel: &str, prog: &front::Program, key: &[u8; 32]) -> [u8; 32] {
     use sha2::{Digest as _, Sha256};
     let mut h = Sha256::new();
-    h.update(b"rerail.relation/v1\0input\0");
+    h.update(b"rerail.relation/v2\0input\0");
     h.update(rel.as_bytes());
     h.update(format!("\0{:?}\0", prog.decls.get(rel)).as_bytes());
+    h.update(key);
     h.finalize().into()
 }
 
@@ -938,7 +943,7 @@ impl Retained {
         // as phase 1's `doc` or the types phase's `types__wgen`, which no rule may name (a pattern reads `node`).
         let read: BTreeSet<String> = prog.inputs.iter().chain(bound.keys()).filter(|r| !derived.contains(r)).cloned().collect();
         for rel in &read {
-            names.insert(rel.clone(), FrameRel { name: rel.clone(), ident: input_ident(rel, prog) });
+            names.insert(rel.clone(), FrameRel { name: rel.clone(), ident: input_ident(rel, prog, &key) });
         }
         let all: Vec<FrameRel> = names.values().cloned().collect();
         let stored = store.frames(&space, &all, DOCS_PART).map_err(|e| Error::Plan(e.to_string()))?;
@@ -971,7 +976,9 @@ impl Retained {
             let Ok(rows) = admitted[frame].rows() else { return Ok(Self::empty_frames(key, frames)); };
             if rows.types.len() != 3 || rows.rows.len() != rows.n * 3 { return Ok(Self::empty_frames(key, frames)); }
             let docs: DocDigests = rows.rows.chunks_exact(3).map(|r| (r[0], (r[1] as u64, r[2] as u64))).collect();
-            if docs.len() != rows.n || digest_of_docs(&docs) != at.digest { return Ok(Self::empty_frames(key, frames)); }
+            // A relation of no columns is its count (`write_frames`): one entry, its digest the input's.
+            let counted = prog.decls.get(&frame.name).is_some_and(Vec::is_empty) && rows.n == 1;
+            if docs.len() != rows.n || (!counted && digest_of_docs(&docs) != at.digest) { return Ok(Self::empty_frames(key, frames)); }
             let docs = Arc::new(docs);
             inputs.insert(frame.name.clone(), at.digest);
             input_docs.insert(frame.name.clone(), Arc::clone(&docs));
@@ -1001,6 +1008,14 @@ impl Retained {
                         known.insert(rel.clone(), unkept_digest(rel, &rd));
                     }
                 }
+            }
+        }
+        // An input bound with no frame of this program's (its first run, where another program's relations are
+        // shared, decision 0103) is as a current relation read it: unchanged where one read the digest the run binds.
+        // It has no old rows to maintain from; a relation that read other rows is not current, and runs again.
+        for (rel, d) in bound {
+            if !inputs.contains_key(rel) && frames.derived.values().any(|at| at.reads.iter().any(|(r, x)| r == rel && x == d)) {
+                inputs.insert(rel.clone(), *d);
             }
         }
         Ok(Retained { key, inputs, input_docs, docs: (Default::default(), [0xff; 32]), frames: Some(frames), ..Default::default() })
