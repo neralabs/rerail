@@ -585,6 +585,13 @@ pub(crate) fn sql_in_wave(conn: &'static str, text: &str, ns: u64) {
     e.1 += ns;
 }
 
+/// SQL waits attributed to their connection and span, including the content store's separate connection.
+/// Each row is (span, connection and SQL text, executions, nanoseconds).
+pub(in crate::code_rule_dsl) fn sql_waits() -> Vec<(String, String, u64, u64)> {
+    STATE.lock().unwrap().hazards.iter().map(|((_, path, text), (runs, ns))|
+        (path.clone(), text.clone(), *runs, *ns)).collect()
+}
+
 /// A wave's thread waited `wall` seconds for SQLite's side of the store (`what`: a queued write it reads, the queue's
 /// back-pressure): a hazard like a statement.
 pub(crate) fn wait_in_wave(what: &str, wall: f64) {

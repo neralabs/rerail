@@ -130,48 +130,55 @@ impl ContentStore {
 
     /// The stored frames of `rels` in `space`, partition `part`, without their rows.
     pub fn frames(&self, space: &[u8; 32], rels: &[Rel], part: i64) -> StoreResult<HashMap<Rel, Stored>> {
-        Ok(self.read_frames(space, rels, part, false)?.into_iter().map(|(r, f)| (r, f.stored.clone())).collect())
+        let keys: Vec<_> = rels.iter().cloned().map(|r| (r, part)).collect();
+        Ok(self.read_frame_parts(space, &keys, false)?.into_iter().map(|((r, _), f)| (r, f.stored.clone())).collect())
     }
 
     /// Admit requested relations before their consumers run. No consumer needs another store read.
     pub fn admit_frames(&self, space: &[u8; 32], rels: &[Rel], part: i64) -> StoreResult<HashMap<Rel, Arc<Admitted>>> {
-        self.read_frames(space, rels, part, true)
+        let keys: Vec<_> = rels.iter().cloned().map(|r| (r, part)).collect();
+        Ok(self.admit_frame_parts(space, &keys)?.into_iter().map(|((r, _), f)| (r, f)).collect())
     }
 
-    fn read_frames(&self, space: &[u8; 32], rels: &[Rel], part: i64, payload: bool) -> StoreResult<HashMap<Rel, Arc<Admitted>>> {
+    /// Admit a demand set across relation partitions. Granules share the same full-key probes as whole relations.
+    pub fn admit_frame_parts(&self, space: &[u8; 32], keys: &[(Rel, i64)]) -> StoreResult<HashMap<(Rel, i64), Arc<Admitted>>> {
+        self.read_frame_parts(space, keys, true)
+    }
+
+    fn read_frame_parts(&self, space: &[u8; 32], keys: &[(Rel, i64)], payload: bool) -> StoreResult<HashMap<(Rel, i64), Arc<Admitted>>> {
         let mut out = HashMap::new();
         let mut missing = std::collections::BTreeSet::new();
-        for rel in rels {
+        for (rel, part) in keys {
             // Pin pending values before SQLite can catch up and release the writer's copy.
             // Some(None) is a queued deletion, not a reason to read an older durable row.
-            if let Some(pending) = self.pending::<Option<Arc<Admitted>>>(&frame_key(space, rel, part)) {
-                if let Some(frame) = pending.as_ref() { out.insert(rel.clone(), Arc::clone(frame)); }
+            if let Some(pending) = self.pending::<Option<Arc<Admitted>>>(&frame_key(space, rel, *part)) {
+                if let Some(frame) = pending.as_ref() { out.insert((rel.clone(), *part), Arc::clone(frame)); }
             } else {
-                missing.insert(rel.clone());
+                missing.insert((rel.clone(), *part));
             }
         }
         if missing.is_empty() || !self.frames_table()? { return Ok(out); }
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let missing: Vec<_> = missing.into_iter().collect();
         for batch in missing.chunks(READ_BATCH) {
-            let values = (0..batch.len()).map(|i| format!("(?{}, ?{})", 3 + 2*i, 4 + 2*i)).collect::<Vec<_>>().join(",");
+            let values = (0..batch.len()).map(|i| format!("(?{}, ?{}, ?{})", 2 + 3*i, 3 + 3*i, 4 + 3*i)).collect::<Vec<_>>().join(",");
             let columns = if payload { ", f.rows, f.types, f.data" } else { "" };
             // Keep demand rows outside full-key probes; a space-first scan multiplies retained rows by demands.
-            let sql = format!("WITH demanded(rel, ident) AS (VALUES {values}) \
-                SELECT f.rel, f.ident, f.digest, f.reads{columns} FROM demanded d \
-                CROSS JOIN frames f ON f.space = ?1 AND f.part = ?2 AND f.rel = d.rel AND f.ident = d.ident");
-            let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into(), part.into()];
-            for rel in batch { args.extend([rel.name.clone().into(), rel.ident.to_vec().into()]); }
+            let sql = format!("WITH demanded(rel, ident, part) AS (VALUES {values}) \
+                SELECT f.rel, f.ident, f.part, f.digest, f.reads{columns} FROM demanded d \
+                CROSS JOIN frames f ON f.space = ?1 AND f.rel = d.rel AND f.ident = d.ident AND f.part = d.part");
+            let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into()];
+            for (rel, part) in batch { args.extend([rel.name.clone().into(), rel.ident.to_vec().into(), (*part).into()]); }
             let mut st = connection.prepare_cached(&sql)?;
             let frames = st.query_map(rusqlite::params_from_iter(args), |row| {
                 let ident: Vec<u8> = row.get(1)?;
                 let ident: [u8; 32] = ident.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
-                Ok((Rel { name: row.get(0)?, ident }, Arc::new(Admitted {
-                    stored: Stored { digest: row.get::<_, i64>(2)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(3)?) },
-                    data: if payload { Data::Encoded { n: row.get::<_, i64>(4)? as usize, types: row.get(5)?, bytes: row.get(6)? } } else { Data::Metadata },
+                Ok(((Rel { name: row.get(0)?, ident }, row.get(2)?), Arc::new(Admitted {
+                    stored: Stored { digest: row.get::<_, i64>(3)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(4)?) },
+                    data: if payload { Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes: row.get(7)? } } else { Data::Metadata },
                 })))
             })?;
-            for frame in frames { let (rel, frame) = frame?; out.insert(rel, frame); }
+            for frame in frames { let (key, frame) = frame?; out.insert(key, frame); }
         }
         Ok(out)
     }
@@ -357,6 +364,41 @@ mod tests {
         for p in puts.iter().step_by(64) { assert_eq!(got[&p.rel].rows().unwrap(), p.rows); }
         assert!(work.load(Ordering::Relaxed) < 100_000,
             "128 demands must use full-key probes, not scan 8192 stored frames: {} VM instructions", work.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn mixed_partition_admission_uses_bounded_full_key_probes() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
+        let puts: Vec<_> = (0..8192).map(|i| Put {
+            rel: rel(&format!("r{}", i % 32), 1), part: i / 32,
+            digest: i as u64, reads: vec![], rows: Rows {types:vec![b'i'],n:1,rows:vec![i]}
+        }).collect();
+        store.keep_frames(&[1;32], &puts, &[], None).unwrap();
+        let mut keys: Vec<_> = puts.iter().step_by(31).map(|p|(p.rel.clone(),p.part)).collect();
+        let unique = keys.len();
+        keys.extend(keys.clone());
+        keys.push((rel("r0", 2), 0)); // Same name, different identity: absent.
+        let counters = [AtomicUsize::new(0), AtomicUsize::new(0)];
+        unsafe extern "C" fn trace(_:u32,state:*mut std::ffi::c_void,statement:*mut std::ffi::c_void,_:*mut std::ffi::c_void)->i32 {
+            let c=unsafe {&*state.cast::<[AtomicUsize;2]>()};
+            c[0].fetch_add(1,Ordering::Relaxed);
+            let vm=unsafe {rusqlite::ffi::sqlite3_stmt_status(statement.cast(),rusqlite::ffi::SQLITE_STMTSTATUS_VM_STEP,1)};
+            c[1].fetch_add(vm as usize,Ordering::Relaxed);0
+        }
+        unsafe {rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),rusqlite::ffi::SQLITE_TRACE_PROFILE,
+            Some(trace),(&counters as *const [AtomicUsize;2]).cast_mut().cast());}
+        let got=store.admit_frame_parts(&[1;32],&keys);
+        unsafe {rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),0,None,std::ptr::null_mut());}
+        let got=got.unwrap();
+        assert_eq!(got.len(),unique);
+        for p in puts.iter().step_by(31) {assert_eq!(got[&(p.rel.clone(),p.part)].rows().unwrap(),p.rows);}
+        assert!(store.admit_frame_parts(&[2;32],&keys).unwrap().is_empty());
+        let sql=counters[0].load(Ordering::Relaxed);let vm=counters[1].load(Ordering::Relaxed);
+        eprintln!("{unique} mixed-part demands: {sql} SQL, {vm} VM instructions");
+        assert!(sql<=4,"one schema check and three batches, not one read per part: {sql}");
+        assert!(vm<100_000,"demands must probe full keys, not scan 8192 frames: {vm}");
     }
 
     #[test]

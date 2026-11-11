@@ -1305,3 +1305,70 @@ Core SQL counts remain 8 cold and 20 warm, both below the unchanged ceiling of 1
 These counts exclude storage SQL. The corpus has no findings; the positive fixture supplies the nonempty correctness check.
 These runs qualify the merge. They do not establish a CPU improvement or complete the three outstanding tasks.
 The three-process identity regression and O125 comparison remain pending.
+
+
+## Bulk admission and join-shape investigation after e78060842
+
+The admission baseline fails four regressions: the old loader's statement limit, K4's statement limit, and two replacement checks.
+K4 uses 1,312 storage executions for 131 input headers, 393 granules, and 130 eligible derived frames.
+The gate permits 16 executions. These counts include the real store connection, outside the core SQL ceiling.
+The baseline also accepts a replaced derived frame and a replaced input granule under older metadata.
+The artifact directory `three-fixes-a945682f5` holds these failing runs.
+
+The implementation admits input headers together, selects eligible derived frames, then admits the demanded payloads together.
+The storage API accepts mixed `(relation, identity, partition)` keys in batches of 128.
+Its SQL places demand rows outside full-key index probes, preserving the existing bounded-work shape.
+Both loaders use the same metadata comparison helper.
+K4 also checks restored granule rows against the admitted document digests, because granule headers have no content digest.
+A failed admission clears retained metadata and makes the caller compute a fresh cut before execution.
+Fresh publication must not skip a replacement because obsolete metadata remains in memory.
+
+### O125 reproduction and isolated shapes
+
+The merged code passes O125 step 07 against a fresh run; the old `docof.n` failure is gone.
+This reconstructed replay changes nine files at step 07. It does not reproduce the historical row counts exactly.
+The session still contains the same expensive shape: `fv__ins`, then `pv`, then `icall`, which rejects every result.
+The source rule produces 61,406 intermediate rows; its annotation copies produce 122,812.
+Cold execution also shows substantial amplification. Current profiles, replay provenance, and captures remain under `three-fixes-e78060842`.
+
+The cold capture provides 1,027 `fv` rows, 34,017 `pv` rows, and 450 `icall` rows.
+Its function filter selects 833 `fv` rows. All three isolated joins produce the same empty result.
+On the native engine:
+
+| Order | Intermediate rows after the second step | CPU |
+|---|---:|---:|
+| `fv`, `pv`, `icall` | 479,093 | 12.5 ms |
+| `fv`, `icall`, `pv` | 0 | 0.3 ms |
+| `icall`, `pv`, `fv` | 0 | 0.1 ms |
+
+The independent SQL comparison gives 4,318,500 VM instructions for the first order and 5,800 for the second.
+Starting from `icall`, or materializing demanded keys before their consumer, takes about 2,700 VM instructions.
+These are isolated measurements, not whole-job speedups. SQL timings use five iterations; native timings are single observations.
+The native capture uses opaque integer columns and constants, so it needs no symbol decoding.
+Its original atom vocabulary has non-dense IDs that the general replay helper rejects; the isolated capture documents this limitation.
+
+The planner's containment estimate currently applies only to relations inside the recursive component.
+It excludes an external restrictive relation such as `icall`, even when distinct-value counts are available.
+The next experiment extends this estimate to measured external relations, then checks the actual O125 work and output parity.
+
+
+### Bulk admission results
+
+Both loader fixtures now use 13 storage executions, within their ceiling of 16.
+All seven loader checks pass, including the replaced/deleted snapshot checks.
+All ten storage checks pass. The mixed-partition fixture reads 265 demands in four executions and 7,235 VM instructions.
+Loading-cone parity and the older cross-process maintenance check pass.
+
+On 5,725 files, cold, warm, and profiled warm retain the core counts of 8, 20, and 20.
+The warm profile reduces K4 storage executions from 44 to six.
+All SQL executions inside waves fall from 79 to 41. SQLite still attributes 1.0 ms to them.
+This proves the execution-shape reduction, without a large CPU-saving claim.
+
+The K4 import-cycle check preserves findings after every edit but fails its assertion that a recursive stratum uses maintenance.
+The unchanged `merge-1419d4263/merged-tests` binary fails the same assertion with the same counts.
+This is an existing retention limitation, not a new batching regression; both logs remain in the artifact directory.
+
+The first three-process identity fixture restores every requested program with the same identity and findings.
+Its fresh process prepares nine programs, while later processes need only three; comparing entire cache populations would be an invalid gate.
+That fixture uses `calls.rr` and has no phase runs. The replacement fixture uses `calls_p3.rr` and requires both `struct` and `types`.
+The phase-level requirement remains open until that stronger fixture passes.

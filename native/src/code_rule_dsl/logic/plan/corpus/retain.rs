@@ -28,7 +28,7 @@ use crate::code_rule_dsl::logic::front;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use crate::code_rule_dsl::logic::native::component::InRel;
-use crate::content_store::{ContentStore, FramePut, FrameRel, FrameRows};
+use crate::content_store::{ContentStore, FramePut, FrameRel, FrameRows, FrameStored};
 
 /// A relation as the last run derived it: the engine's relation, and its decoded rows when it is an output.
 #[derive(Clone)]
@@ -835,7 +835,7 @@ pub(in crate::code_rule_dsl) struct InFrames {
     /// Each relation and input of the program, as its frame names it.
     names: HashMap<String, FrameRel>,
     /// Each derived relation stored and current: its digest and the digest each of its reads had.
-    derived: HashMap<String, (u64, Vec<(String, u64)>)>,
+    derived: HashMap<String, FrameStored>,
     /// Each input as stored: its digest, and its rows' digest by document.
     inputs: HashMap<String, (u64, Arc<DocDigests>)>,
 }
@@ -905,31 +905,48 @@ impl Retained {
         }
         let all: Vec<FrameRel> = names.values().cloned().collect();
         let stored = store.frames(&space, &all, DOCS_PART).map_err(|e| Error::Plan(e.to_string()))?;
+        Self::from_frame_snapshot(store, space, key, prog, &sccs, names, stored)
+    }
+
+    fn empty_frames(key: [u8; 32], mut frames: InFrames) -> Self {
+        frames.inputs.clear();
+        frames.derived.clear();
+        Self { key, docs: (Default::default(), [0xff; 32]), frames: Some(frames), ..Default::default() }
+    }
+
+    fn from_frame_snapshot(
+        store: &ContentStore, space: [u8; 32], key: [u8; 32], prog: &front::Program,
+        sccs: &[BTreeSet<String>], names: HashMap<String, FrameRel>, stored: HashMap<FrameRel, FrameStored>,
+    ) -> Result<Self> {
+        let derived: BTreeSet<&String> = sccs.iter().flatten().collect();
         let mut frames = InFrames { space, names, ..Default::default() };
+        let asked: Vec<_> = prog.inputs.iter().filter(|r| !derived.contains(r) && stored.contains_key(&frames.names[*r])).map(|r| frames.names[r].clone()).collect();
+        let admitted = store.admit_frames(&space, &asked, DOCS_PART).map_err(|e| Error::Plan(e.to_string()))?;
+        if !super::kept_strata::admission_matches(&asked, &admitted, |r| stored.get(r)) {
+            return Ok(Self::empty_frames(key, frames));
+        }
         let mut input_docs = HashMap::new();
         let mut inputs = HashMap::new();
-        for rel in prog.inputs.iter().filter(|r| !derived.contains(r)) {
-            let Some(at) = stored.get(&frames.names[rel]) else { continue };
-            let Some(rows) = store.frame_rows(&space, &frames.names[rel], DOCS_PART).map_err(|e| Error::Plan(e.to_string()))? else { continue };
+        for frame in &asked {
+            let at = &stored[frame];
+            let Ok(rows) = admitted[frame].rows() else { return Ok(Self::empty_frames(key, frames)); };
+            if rows.types.len() != 3 || rows.rows.len() != rows.n * 3 { return Ok(Self::empty_frames(key, frames)); }
             let docs: DocDigests = rows.rows.chunks_exact(3).map(|r| (r[0], (r[1] as u64, r[2] as u64))).collect();
-            if digest_of_docs(&docs) != at.digest {
-                continue;
-            }
+            if docs.len() != rows.n || digest_of_docs(&docs) != at.digest { return Ok(Self::empty_frames(key, frames)); }
             let docs = Arc::new(docs);
-            inputs.insert(rel.clone(), at.digest);
-            input_docs.insert(rel.clone(), Arc::clone(&docs));
-            frames.inputs.insert(rel.clone(), (at.digest, docs));
+            inputs.insert(frame.name.clone(), at.digest);
+            input_docs.insert(frame.name.clone(), Arc::clone(&docs));
+            frames.inputs.insert(frame.name.clone(), (at.digest, docs));
         }
         // In stratum order: a relation is current when each of its reads is as it was when it was derived.
-        for scc in &sccs {
+        for scc in sccs {
             let current = scc.iter().all(|rel| {
                 let Some(at) = frames.names.get(rel).and_then(|n| stored.get(n)) else { return false };
-                at.reads.iter().all(|(read, d)| frames.inputs.get(read).map(|(i, _)| i == d).or_else(|| frames.derived.get(read).map(|(x, _)| x == d)).unwrap_or(false))
+                at.reads.iter().all(|(read, d)| frames.inputs.get(read).map(|(i, _)| i == d).or_else(|| frames.derived.get(read).map(|s| s.digest == *d)).unwrap_or(false))
             });
             if current {
                 for rel in scc {
-                    let at = &stored[&frames.names[rel]];
-                    frames.derived.insert(rel.clone(), (at.digest, at.reads.clone()));
+                    frames.derived.insert(rel.clone(), stored[&frames.names[rel]].clone());
                 }
             }
         }
@@ -945,42 +962,66 @@ impl Retained {
     /// Reads from the frames the rows this run reads of what they hold (t33 K4): the clean relations a stratum that
     /// runs reads, the relations of the strata that run (their old rows, to be maintained from), and the old rows of
     /// the inputs that changed. What no stratum that runs reads stays in the store.
-    pub(in crate::code_rule_dsl) fn load(&mut self, store: &ContentStore, cut: &Cut, prog: &front::Program) -> Result<(usize, usize)> {
-        let Some(frames) = self.frames.as_ref() else { return Ok((0, 0)) };
+    pub(in crate::code_rule_dsl) fn load(&mut self, store: &ContentStore, cut: &Cut, prog: &front::Program) -> Result<Option<(usize, usize)>> {
+        let Some(frames) = self.frames.as_ref() else { return Ok(Some((0, 0))) };
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the kept part's rows, from the frames".into());
         let running: Vec<&front::Rule> = prog.rules.iter().filter(|r| !cut.clean.contains(&r.head.rel)).collect();
         let mut wanted: BTreeSet<String> = running.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.clone()).filter(|r| cut.clean.contains(r)).collect();
         wanted.extend(running.iter().map(|r| r.head.rel.clone()));
-        let (mut rels, mut rows) = (0, 0);
         let wanted: Vec<String> = wanted.into_iter().filter(|r| frames.derived.contains_key(r) && !self.rels.contains_key(r)).collect();
         let inputs: Vec<String> = cut.changed.iter().filter(|r| frames.inputs.contains_key(*r) && !self.input_srcs.contains_key(*r)).cloned().collect();
-        for rel in &wanted {
-            let Some(got) = store.frame_rows(&frames.space, &frames.names[rel], DOCS_PART).map_err(|e| Error::Plan(e.to_string()))? else { continue };
-            let width = got.types.len();
-            rels += 1;
-            rows += got.n;
-            self.rels.insert(rel.clone(), Kept { rel: InRel::from_flat(got.rows, got.n, got.types), width, output: None });
-        }
-        for rel in &inputs {
-            let width = prog.decls.get(rel).map_or(0, Vec::len);
-            let mut columns: Vec<Vec<i64>> = vec![Vec::new(); width];
-            let granules: BTreeSet<i64> = frames.inputs[rel].1.keys().map(|d| granule(*d)).collect();
-            for g in granules {
-                let Some(got) = store.frame_rows(&frames.space, &frames.names[rel], g).map_err(|e| Error::Plan(e.to_string()))? else {
-                    return Err(Error::Plan(format!("{rel}: granule {g} of its stored rows is missing")));
-                };
-                for row in got.rows.chunks_exact(width.max(1)).take(got.n) {
-                    for (c, v) in row.iter().enumerate() {
-                        columns[c].push(*v);
+        let derived_keys: Vec<_> = wanted.iter().map(|r| (frames.names[r].clone(), DOCS_PART)).collect();
+        let input_parts: Vec<_> = inputs.iter().map(|r| {
+            let granules: BTreeSet<_> = frames.inputs[r].1.keys().map(|d| granule(*d)).collect();
+            (r, granules.into_iter().map(|g| (frames.names[r].clone(), g)).collect::<Vec<_>>())
+        }).collect();
+        let mut keys = derived_keys.clone();
+        keys.extend(input_parts.iter().flat_map(|(_, k)| k.iter().cloned()));
+        let admitted = store.admit_frame_parts(&frames.space, &keys).map_err(|e| Error::Plan(e.to_string()))?;
+        // Prepare all rows before publishing any of them into the retained part. Failed admission is a cache
+        // miss, and the caller must recompute its cut before maintenance can run.
+        let decoded = (|| -> Option<_> {
+            if !super::kept_strata::admission_matches(&derived_keys, &admitted, |(r, _)| frames.derived.get(&r.name)) { return None; }
+            let mut rels = Vec::new();
+            let mut sources = Vec::new();
+            let mut rows = 0;
+            for (rel, key) in wanted.iter().zip(&derived_keys) {
+                let got = admitted.get(key)?.rows().ok()?;
+                let width = prog.decls.get(rel)?.len();
+                if got.types.len() != width { return None; }
+                rows += got.n;
+                rels.push((rel.clone(), Kept { rel: InRel::from_flat(got.rows, got.n, got.types), width, output: None }));
+            }
+            for (rel, keys) in &input_parts {
+                let width = prog.decls.get(*rel)?.len();
+                let mut columns: Vec<Vec<i64>> = vec![Vec::new(); width];
+                for key in keys {
+                    let got = admitted.get(key)?.rows().ok()?;
+                    if got.types.len() != width || got.rows.len() != got.n * width { return None; }
+                    for row in got.rows.chunks_exact(width.max(1)).take(got.n) {
+                        for (c, v) in row.iter().enumerate() { columns[c].push(*v); }
                     }
                 }
+                let names = (0..width).map(|c| format!("c{c}")).collect();
+                let source = crate::code_rule_dsl::logic::native::component::columns_source(names, columns.into_iter().map(Some).collect());
+                // Granule headers carry no digest. Their rows must match the admitted per-document digests,
+                // including documents removed or replaced between the header and payload reads.
+                if docs_of(source.as_ref()) != *frames.inputs[*rel].1 { return None; }
+                rows += source.len();
+                sources.push(((*rel).clone(), source));
             }
-            rels += 1;
-            rows += columns.first().map_or(0, Vec::len);
-            let names = (0..width).map(|c| format!("c{c}")).collect();
-            self.input_srcs.insert(rel.clone(), crate::code_rule_dsl::logic::native::component::columns_source(names, columns.into_iter().map(Some).collect()));
-        }
-        Ok((rels, rows))
+            Some((rels, sources, rows))
+        })();
+        let Some((rels, sources, rows)) = decoded else {
+            let frames = self.frames.take().expect("admitting frames");
+            *self = Self::empty_frames(self.key, frames);
+            crate::code_rule_dsl::logic::profile::decision("fact admission", || "frames changed during admission; recompute the cut and derive again".into());
+            return Ok(None);
+        };
+        let count = rels.len() + sources.len();
+        self.rels.extend(rels);
+        self.input_srcs.extend(sources);
+        Ok(Some((count, rows)))
     }
 
     /// What the frames held of this part before the run (`from_frames`).
@@ -1040,8 +1081,8 @@ impl Retained {
             for rel in scc {
                 let Some(name) = was.names.get(rel) else { continue };
                 if cut.clean.contains(rel) {
-                    if let Some((d, _)) = was.derived.get(rel) {
-                        now.insert(rel.clone(), *d);
+                    if let Some(stored) = was.derived.get(rel) {
+                        now.insert(rel.clone(), stored.digest);
                     }
                     continue;
                 }
@@ -1051,7 +1092,7 @@ impl Retained {
                 let d = crate::code_rule_dsl::logic::plan::rows_digest(k.width, &rows, n);
                 now.insert(rel.clone(), d);
                 let Some(read_digests) = reads.iter().map(|r| now.get(r).map(|d| (r.clone(), *d))).collect::<Option<Vec<_>>>() else { continue };
-                if was.derived.get(rel).is_some_and(|(x, rs)| *x == d && *rs == read_digests) {
+                if was.derived.get(rel).is_some_and(|s| s.digest == d && s.reads == read_digests) {
                     continue;
                 }
                 written += n;
@@ -1062,3 +1103,6 @@ impl Retained {
         Ok(written)
     }
 }
+
+#[cfg(test)]
+mod frame_tests;
