@@ -3674,3 +3674,17 @@ The native binary and engine source remain unchanged. Compilation time is zero.
 The inventory now records seventeen full admissions, eighty-two drafts, and one absent translation.
 Earlier admissions retain their own recorded engine and adapter versions.
 The next rule is `async_executor`. Its unchanged source suite passes all 117 assertions and records 28 finding-positive observations.
+
+### 2026-11-11 — Executor restart and source CLI contracts
+
+The unchanged executor source suite passes all 117 assertions.
+Its source recording contains 42 detector observations, including 28 finding-positive observations.
+The existing native snapshot adapter also passes all 117 assertions, but still executes the source CLI 86 times.
+Thirty-two cases have no native call. These initial results cannot admit the rule.
+
+New source recordings retain 28 complete CLI contracts.
+They cover strict and allowed groups, default and explicit roots, verbose output, directory expansion, duplicate directories, links, callback inputs, and parser errors.
+The native replay fails because the complete executor adapter does not exist yet.
+The red contract is committed before implementing that adapter.
+The source receipt is `rr-executor-cli-source-finalfcce.json.gz`.
+Executor remains a draft. Full admission remains at seventeen rules.
