@@ -157,7 +157,7 @@ pub(super) fn step_budget_exhausted() -> bool {
 
 /// What an allowance run inside this thread's budget used (`with_allowance`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Allowance {
+pub struct Allowance {
     /// Whether a poll found the allowance exhausted (or the workspace closed, or the clock passed).
     pub(super) exhausted: bool,
     /// The units its polls spent, at most its size.

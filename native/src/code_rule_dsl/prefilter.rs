@@ -23,7 +23,6 @@ mod lab;
 mod lower;
 pub(crate) mod plans;
 /// The store's crate holds it (its vocabulary uses it too).
-pub(crate) use rerail_store::probes;
 #[path = "prefilter/lower/audit.rs"]
 mod audit;
 pub(in crate::code_rule_dsl) use audit::candidate_frontier_audit;

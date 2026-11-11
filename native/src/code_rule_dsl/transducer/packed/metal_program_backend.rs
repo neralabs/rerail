@@ -24,13 +24,13 @@ thread_local! {
 }
 
 #[cfg(test)]
-pub(super) fn reset_metrics() {
+pub(in crate::code_rule_dsl) fn reset_metrics() {
     INVOCATIONS.set(0);
     HOST_EVENTS.set(0);
 }
 
 #[cfg(test)]
-pub(super) fn metrics() -> (usize, usize) {
+pub(in crate::code_rule_dsl) fn metrics() -> (usize, usize) {
     (INVOCATIONS.get(), HOST_EVENTS.get())
 }
 

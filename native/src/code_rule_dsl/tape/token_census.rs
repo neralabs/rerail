@@ -7,15 +7,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// One dialect's automata, as the census asks them.
 pub struct Lang {
-    pub(crate) dialect: GrammarDialect,
-    pub(crate) implied: BTreeMap<String, BTreeSet<(String, String)>>,
-    pub(crate) parents: BTreeMap<String, BTreeSet<String>>,
-    pub(crate) tokens: BTreeSet<String>,
+    pub dialect: GrammarDialect,
+    pub implied: BTreeMap<String, BTreeSet<(String, String)>>,
+    pub parents: BTreeMap<String, BTreeSet<String>>,
+    pub tokens: BTreeSet<String>,
 }
 
 impl Lang {
     /// Built once per dialect, like its `TokenGrammar` (every rule compiled reads it).
-    pub(crate) fn of(lang: GrammarDialect) -> Option<&'static Self> {
+    pub fn of(lang: GrammarDialect) -> Option<&'static Self> {
         static BY_DIALECT: [std::sync::OnceLock<Option<Lang>>; 256] = [const { std::sync::OnceLock::new() }; 256];
         BY_DIALECT
             .get(lang as usize)?
@@ -28,7 +28,7 @@ impl Lang {
 
     /// The parents among `parents` (all kinds where `None`) where a token `regex` matches is
     /// implied, under `field` where one is given: (parent, token) pairs.
-    pub(crate) fn implied_in(&self, parents: Option<&BTreeSet<String>>, regex: &regex::Regex, field: Option<&str>) -> BTreeSet<(String, String)> {
+    pub fn implied_in(&self, parents: Option<&BTreeSet<String>>, regex: &regex::Regex, field: Option<&str>) -> BTreeSet<(String, String)> {
         let mut out = BTreeSet::new();
         let kinds: Box<dyn Iterator<Item = &String>> = match parents {
             Some(parents) => Box::new(parents.iter()),

@@ -2595,7 +2595,7 @@ struct RootPack {
 }
 
 /// An owned connection's demand module and its match registry (`waves::owner::database::ConnectionSetup`).
-impl crate::code_rule_dsl::waves::owner::database::ConnectionSetup for Arc<MatchRegistry> {
+impl crate::code_rule_dsl::facts::connection::ConnectionSetup for Arc<MatchRegistry> {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -2604,7 +2604,7 @@ impl crate::code_rule_dsl::waves::owner::database::ConnectionSetup for Arc<Match
 /// Sets up an owned connection's demand module (`waves::owner::database::install_connection_setup`).
 pub(crate) fn set_up_connection(
     connection: &Connection,
-) -> crate::content_store::StoreResult<Box<dyn crate::code_rule_dsl::waves::owner::database::ConnectionSetup>> {
+) -> crate::content_store::StoreResult<Box<dyn crate::code_rule_dsl::facts::connection::ConnectionSetup>> {
     let registry = Arc::new(MatchRegistry::default());
     register_module(connection, Arc::clone(&registry))?;
     Ok(Box::new(registry))
@@ -2612,7 +2612,7 @@ pub(crate) fn set_up_connection(
 
 /// The match registry of an owned connection set up by `set_up_connection`.
 pub(crate) fn registry_of(
-    attached: Option<&dyn crate::code_rule_dsl::waves::owner::database::ConnectionSetup>,
+    attached: Option<&dyn crate::code_rule_dsl::facts::connection::ConnectionSetup>,
 ) -> crate::content_store::StoreResult<&Arc<MatchRegistry>> {
     attached
         .and_then(|setup| setup.as_any().downcast_ref::<Arc<MatchRegistry>>())

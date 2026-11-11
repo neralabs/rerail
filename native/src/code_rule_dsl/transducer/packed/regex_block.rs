@@ -71,10 +71,9 @@ impl SpanEnds {
 
     #[cfg(target_os = "macos")]
     fn metal(&self) -> Option<(Vec<Vec<u64>>, RanOn)> {
-        use super::metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
         let natives: Vec<&super::native_ir::BlockNative> = self.filters.iter().map(|f| &f.native).collect();
-        let run = run_split(&natives, &self.batch(), LaneWidth::W64, Executor::Generated(ClassStrategy::Lookup), 64).ok()?;
-        Some((run.files.into_iter().map(|mut r| r.outputs.swap_remove(0)).collect(), RanOn::Metal))
+        let ends = super::device::matcher()?.span_ends(&natives, &self.batch())?;
+        Some((ends, RanOn::Metal))
     }
 }
 

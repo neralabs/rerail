@@ -557,7 +557,7 @@ pub(crate) struct PreNode {
 /// A sub-tree's text. Node ranges are offsets into it plus `offset`, which an annotation's tree
 /// sets so its identifiers have ranges no host reference has (see `scope::python`).
 #[derive(Clone)]
-pub(crate) struct SubSource {
+pub struct SubSource {
     text: String,
     offset: usize,
 }
@@ -587,7 +587,7 @@ impl Content for SubSource {
 
 /// The language of a sub-tree: its grammar's kinds; an annotation's are Python's.
 #[derive(Clone, Copy)]
-pub(crate) struct SubLang(Grammar);
+pub struct SubLang(Grammar);
 
 impl Language for SubLang {
     fn kind_to_id(&self, kind: &str) -> u16 {
@@ -641,7 +641,7 @@ impl Doc for SubDoc {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct SubNode<'r> {
+pub struct SubNode<'r> {
     tree: &'r SubTree,
     index: u32,
 }

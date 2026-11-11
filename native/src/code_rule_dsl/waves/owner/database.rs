@@ -208,15 +208,7 @@ impl Deref for Database {
     }
 }
 
-/// What a layer above sets up on each owned connection and keeps with it (the transducer's demand module and its
-/// match registry), registered at load (`install_connection_setup`).
-pub(crate) trait ConnectionSetup {
-    /// The setup as its own type, which only the layer that made it reads.
-    fn as_any(&self) -> &dyn std::any::Any;
-}
-
-/// What sets up an owned connection.
-pub(crate) type SetUp = fn(&rusqlite::Connection) -> StoreResult<Box<dyn ConnectionSetup>>;
+pub(crate) use crate::code_rule_dsl::facts::connection::{ConnectionSetup, SetUp};
 
 static SETUP: std::sync::OnceLock<SetUp> = std::sync::OnceLock::new();
 

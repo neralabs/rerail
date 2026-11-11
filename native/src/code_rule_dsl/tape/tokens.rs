@@ -173,7 +173,7 @@ pub(in crate::code_rule_dsl) struct TokenGrammar {
 /// (empty where the gap is empty, stored, or before a token or an extra), and the word after the
 /// last child. Each token is its text and its field (`""` for none).
 #[derive(Debug, Default)]
-pub(in crate::code_rule_dsl) struct Gaps<'g> {
+pub struct Gaps<'g> {
     pub(in crate::code_rule_dsl) before: Vec<Vec<(&'g str, &'g str)>>,
     pub(in crate::code_rule_dsl) end: Vec<(&'g str, &'g str)>,
 }

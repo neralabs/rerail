@@ -62,12 +62,14 @@ pub(in crate::code_rule_dsl) use device::{RootJobs, RootsFound};
 
 #[cfg(all(test, target_os = "macos"))]
 pub(in crate::code_rule_dsl) fn reset_metal_execution_metrics() {
-    metal_program_backend::reset_metrics();
+    if let Some(device) = device::matcher() {
+        device.reset_execution_metrics();
+    }
 }
 
 #[cfg(all(test, target_os = "macos"))]
 pub(in crate::code_rule_dsl) fn metal_execution_metrics() -> (usize, usize) {
-    metal_program_backend::metrics()
+    device::matcher().map_or((0, 0), |device| device.execution_metrics())
 }
 // The verifier's proofs (05 Phase 4 row 2, from Tempo's transducer, kept under `packed/verify/`
 // and declared here so their `super::` is the program and its opcodes, as in Tempo).

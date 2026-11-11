@@ -151,5 +151,20 @@ mod matcher {
         fn drop_label_pipelines(&self) {
             programs::label_passes::drop_pipelines();
         }
+        fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[crate::code_rule_dsl::transducer::packed::block::BatchFile<'_>]) -> Option<Vec<Vec<u64>>> {
+            use programs::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
+            let run = run_split(natives, batch, LaneWidth::W64, Executor::Generated(ClassStrategy::Lookup), 64).ok()?;
+            Some(run.files.into_iter().map(|mut r| r.outputs.swap_remove(0)).collect())
+        }
+        fn execution_metrics(&self) -> (usize, usize) {
+            #[cfg(test)]
+            return programs::metrics();
+            #[cfg(not(test))]
+            (0, 0)
+        }
+        fn reset_execution_metrics(&self) {
+            #[cfg(test)]
+            programs::reset_metrics();
+        }
     }
 }

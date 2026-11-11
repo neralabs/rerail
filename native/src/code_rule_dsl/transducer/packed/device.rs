@@ -48,6 +48,13 @@ pub(in crate::code_rule_dsl) trait MatcherDevice: Send + Sync {
     fn warm_labels(&self);
     /// Drops the label passes' pipelines (their memory) once the documents they ran over are gone.
     fn drop_label_pipelines(&self);
+    /// Span prefilters' ends (`regex_block`): bit `i` of a file's words, a match can end after its byte `i`. None:
+    /// the device could not run them (the cores do).
+    fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[super::block::BatchFile<'_>]) -> Option<Vec<Vec<u64>>>;
+    /// This thread's program invocations and host events since the last reset (tests count them).
+    fn execution_metrics(&self) -> (usize, usize);
+    /// Resets this thread's `execution_metrics`.
+    fn reset_execution_metrics(&self);
 }
 
 static MATCHER: OnceLock<&'static dyn MatcherDevice> = OnceLock::new();

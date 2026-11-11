@@ -33,7 +33,7 @@ pub(crate) fn is_punctuation(kind: &str) -> bool {
 
 /// An anonymous token the tree stores: a keyword, operator or punctuation of its parent node.
 #[derive(Clone)]
-pub(crate) struct Token<'r, D: Doc> {
+pub struct Token<'r, D: Doc> {
     node: Node<'r, D>,
 }
 

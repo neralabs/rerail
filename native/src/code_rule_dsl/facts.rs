@@ -7,6 +7,7 @@ use crate::content_store::{Binding, ContentStore, Derivation, DerivationRecord, 
 pub(crate) mod core;
 pub(crate) mod nearest;
 pub(crate) mod span_prefilter;
+pub(crate) mod connection;
 pub(crate) mod grammar_shape;
 #[allow(dead_code)]
 pub(crate) mod families;

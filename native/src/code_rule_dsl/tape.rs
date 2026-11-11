@@ -1613,7 +1613,7 @@ enum Guests {
 
 /// A program a file embeds, as a document of its own (`embed`).
 #[derive(Clone)]
-pub(crate) struct Guest {
+pub struct Guest {
     pub(crate) via: Via,
     pub(crate) doc: TapeDoc,
 }
@@ -1621,7 +1621,7 @@ pub(crate) struct Guest {
 /// What a guest document reads of the file it is embedded in: the embedding, the segments that
 /// map its text to the file's bytes, the file's bytes it cannot be read through, and the host
 /// document (which links back to its guests weakly).
-pub(in crate::code_rule_dsl) struct HostLink {
+pub struct HostLink {
     pub(in crate::code_rule_dsl) via: Via,
     pub(in crate::code_rule_dsl) segments: Arc<SegmentMap>,
     pub(in crate::code_rule_dsl) host_errors: Arc<Vec<(u32, u32)>>,

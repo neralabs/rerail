@@ -8,13 +8,13 @@ use std::sync::{Arc, OnceLock};
 
 /// Where a batch of span programs ran.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RanOn {
+pub enum RanOn {
     Metal,
     Cpu,
 }
 
 /// A compiled pattern's prefilter.
-pub(crate) trait SpanEnds: Send + Sync + 'static {
+pub trait SpanEnds: Send + Sync + 'static {
     /// Bit `i` of the words: a match can end after byte `i` of `bytes`.
     fn ends(&self, bytes: &[u8]) -> Vec<u64>;
     /// The prefilter as its own type (the launcher reads it).
@@ -22,25 +22,25 @@ pub(crate) trait SpanEnds: Send + Sync + 'static {
 }
 
 /// Compiles a pattern over sources (`lines` false) or over each line (`lines` true); None: the host's.
-pub(crate) type Compile = fn(&str, bool) -> Option<Arc<dyn SpanEnds>>;
+pub type Compile = fn(&str, bool) -> Option<Arc<dyn SpanEnds>>;
 /// Ends over each of `sources` (`files`: (source, the pattern's index in the prefilters)), placed by price on the
 /// cores or, when `device` and the executor has one, the GPU.
-pub(crate) type Launch = fn(&rerail_accel::Executor, &[Arc<dyn SpanEnds>], &[Arc<String>], &[(usize, usize)], bool) -> Result<(Vec<Vec<u64>>, RanOn), String>;
+pub type Launch = fn(&rerail_accel::Executor, &[Arc<dyn SpanEnds>], &[Arc<String>], &[(usize, usize)], bool) -> Result<(Vec<Vec<u64>>, RanOn), String>;
 
 static SPAN_PREFILTER: OnceLock<(Compile, Launch)> = OnceLock::new();
 
 /// Registers what compiles and launches span prefilters (once, at load).
-pub(crate) fn install_span_prefilter(compile: Compile, launch: Launch) {
+pub fn install_span_prefilter(compile: Compile, launch: Launch) {
     let _ = SPAN_PREFILTER.set((compile, launch));
 }
 
 /// `re`'s prefilter, when one is registered and the pattern compiles.
-pub(crate) fn compile(re: &str, lines: bool) -> Option<Arc<dyn SpanEnds>> {
+pub fn compile(re: &str, lines: bool) -> Option<Arc<dyn SpanEnds>> {
     SPAN_PREFILTER.get().and_then(|(c, _)| c(re, lines))
 }
 
 /// The prefilters' ends over the sources (see `Launch`); none registered, none compiled, so none to launch.
-pub(crate) fn launch(ex: &rerail_accel::Executor, filters: &[Arc<dyn SpanEnds>], sources: &[Arc<String>], files: &[(usize, usize)], device: bool) -> Result<(Vec<Vec<u64>>, RanOn), String> {
+pub fn launch(ex: &rerail_accel::Executor, filters: &[Arc<dyn SpanEnds>], sources: &[Arc<String>], files: &[(usize, usize)], device: bool) -> Result<(Vec<Vec<u64>>, RanOn), String> {
     match SPAN_PREFILTER.get() {
         Some((_, l)) => l(ex, filters, sources, files, device),
         None if files.is_empty() => Ok((Vec::new(), RanOn::Cpu)),
@@ -49,7 +49,7 @@ pub(crate) fn launch(ex: &rerail_accel::Executor, filters: &[Arc<dyn SpanEnds>],
 }
 
 /// Whether a match can end in `(a, b]`, a span's exclusive end, given `ends`.
-pub(crate) fn any_in(ends: &[u64], a: usize, b: usize) -> bool {
+pub fn any_in(ends: &[u64], a: usize, b: usize) -> bool {
     // Bits a..b (a match ending at e is bit e - 1).
     let (mut i, end) = (a, b);
     while i < end {

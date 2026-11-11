@@ -72,25 +72,31 @@ def owners(nodes):
     file's; a module the map does not name is its parent's."""
     M = load_map()
     def mapped(path):
+        """(the crate, the depth of the map's key), or (None, 0)."""
         if path == 'crate':
-            return ENGINE
+            return ENGINE, 0
         s = path[len(DSL):].lstrip(':') or 'dsl_root' if path.startswith(DSL) else path
         segs = s.split('::')
         for k in range(len(segs), 0, -1):
             key = '::'.join(segs[:k])
             if key in M:
-                return M[key]
-        return None
-    def walk(n, parent_owner):
+                return M[key], k
+        return None, 0
+    def walk(n, parent_owner, forced=0):
+        # forced: the depth of the nearest module made Metal's by the macOS rule; below it the map counts only
+        # where it names a deeper module
         if n.inline:
             n.owner = parent_owner
         else:
-            o = mapped(n.path)
+            o, depth = mapped(n.path)
+            if forced and depth <= forced:
+                o = parent_owner
             if 'target_os="macos"' in n.cfg and n.path.startswith(DSL + '::transducer::packed::'):
                 o = 'rerail-device-metal'
+                forced = len(n.path[len(DSL):].lstrip(':').split('::'))
             n.owner = o or parent_owner
         for k in n.children:
-            walk(k, n.owner if n.inline or not k.inline else n.owner)
+            walk(k, n.owner, forced)
     walk(nodes['crate'], ENGINE)
 
 
