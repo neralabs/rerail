@@ -108,3 +108,8 @@ Together 2.5% of the work and 0.3 s. `wbind` was 2.7 M for 23 rows at t27; the c
 (0098) since took that. None is the cost, so none is written as a search: step 2 has nothing to do. The cost is
 elsewhere: `py_try` (4.5 M, the stub search that requests answer), `tv` (1.9 M) and `tbv` (1.0 M, with its copy in
 the annotations, 1.7 M).
+
+`py_try`'s stubs layer joined every entry of every typeshed distribution with every wanted module (1.57 M of its
+2.15 M on the 54-file set, cold, for 44 rows). With the wanted tops (`py_want_top`) and the distributions' directories
+(`py_stub_dir`) as relations of their own, each top is looked up by its name: 77 k and 0.04 s CPU (was 1.31 s), the
+same 4,815 calls agreeing. No search and no demand rule: a rule written so its join is the lookup.
