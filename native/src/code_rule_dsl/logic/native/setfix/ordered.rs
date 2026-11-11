@@ -524,7 +524,7 @@ impl Runs {
     }
 
     #[inline]
-    fn cmp(order: &[usize], rows: &[i64], k: usize, a: u32, b: u32) -> Ordering {
+    pub(super) fn cmp(order: &[usize], rows: &[i64], k: usize, a: u32, b: u32) -> Ordering {
         let (ra, rb) = (&rows[a as usize * k..][..k], &rows[b as usize * k..][..k]);
         order.iter().map(|&c| ra[c].cmp(&rb[c])).find(|o| o.is_ne()).unwrap_or_else(|| a.cmp(&b))
     }
@@ -597,6 +597,163 @@ impl Runs {
     }
 }
 
+/// A value's 16-bit tag: the top bits of its hash (`mix`).
+#[inline]
+pub(super) fn tag(v: i64) -> u16 {
+    (mix(v) >> 48) as u16
+}
+
+/// The first index of `s` where `pred` fails, `pred` holding on a prefix: by doubling steps from the start.
+fn gallop(s: &[u16], pred: impl Fn(u16) -> bool) -> usize {
+    let mut e = 1;
+    while e <= s.len() && pred(s[e - 1]) {
+        e *= 2;
+    }
+    let lo = e / 2;
+    let hi = e.min(s.len());
+    lo + s[lo..hi].partition_point(|&x| pred(x))
+}
+
+/// The range of sorted `tags` equal to `t`, from its interpolated place.
+fn interp_range(tags: &[u16], t: u16) -> (usize, usize) {
+    let n = tags.len();
+    if n == 0 {
+        return (0, 0);
+    }
+    let g = ((t as usize * n) >> 16).min(n - 1);
+    let lo = if tags[g] < t {
+        g + 1 + gallop(&tags[g + 1..], |x| x < t)
+    } else {
+        // Leftwards from g: the first index whose tag is below t, by doubling steps.
+        let mut e = 1;
+        while e <= g && tags[g - e] >= t {
+            e *= 2;
+        }
+        let start = g.saturating_sub(e);
+        start + tags[start..=g].partition_point(|&x| x < t)
+    };
+    (lo, lo + gallop(&tags[lo..], |x| x == t))
+}
+
+/// `Runs` whose ids each carry their row's tag (the leading column's, `tag`), in a parallel array: 2 bytes an id. An
+/// order sorts by the tag first, then by the values, so the rows of a leading value are still together. A merge
+/// compares tags and reads two rows only when the tags are equal; a probe searches its tag in the tags (in cache),
+/// then reads the rows of that tag only.
+pub(super) struct TaggedRuns {
+    pub(super) order: Vec<usize>,
+    pub(super) runs: Vec<(Vec<u32>, Vec<u16>)>,
+    pub(super) merged: usize,
+    /// Rows read by merges' comparisons (the tags tied).
+    pub(super) row_compares: usize,
+    /// Of those, the ties of two different leading values: a collision of the tags (more tag bits would avoid it).
+    pub(super) collisions: usize,
+    fanout: usize,
+}
+
+impl TaggedRuns {
+    pub(super) fn with_fanout(order: Vec<usize>, fanout: usize) -> TaggedRuns {
+        TaggedRuns { order, runs: Vec::new(), merged: 0, row_compares: 0, collisions: 0, fanout: fanout.max(2) }
+    }
+
+    #[inline]
+    fn rows_cmp(order: &[usize], rows: &[i64], k: usize, a: u32, b: u32) -> Ordering {
+        Runs::cmp(order, rows, k, a, b)
+    }
+
+    fn merge2(&mut self, rows: &[i64], k: usize, a: (Vec<u32>, Vec<u16>), b: (Vec<u32>, Vec<u16>)) -> (Vec<u32>, Vec<u16>) {
+        let n = a.0.len() + b.0.len();
+        let (mut ids, mut tags) = (Vec::with_capacity(n), Vec::with_capacity(n));
+        let (mut i, mut j) = (0, 0);
+        while i < a.0.len() && j < b.0.len() {
+            let le = match a.1[i].cmp(&b.1[j]) {
+                Ordering::Less => true,
+                Ordering::Greater => false,
+                Ordering::Equal => {
+                    self.row_compares += 1;
+                    let lead = self.order[0];
+                    self.collisions += usize::from(rows[a.0[i] as usize * k + lead] != rows[b.0[j] as usize * k + lead]);
+                    Self::rows_cmp(&self.order, rows, k, a.0[i], b.0[j]).is_le()
+                }
+            };
+            if le { ids.push(a.0[i]); tags.push(a.1[i]); i += 1 } else { ids.push(b.0[j]); tags.push(b.1[j]); j += 1 }
+        }
+        ids.extend_from_slice(&a.0[i..]);
+        tags.extend_from_slice(&a.1[i..]);
+        ids.extend_from_slice(&b.0[j..]);
+        tags.extend_from_slice(&b.1[j..]);
+        (ids, tags)
+    }
+
+    pub(super) fn add_wave(&mut self, rows: &[i64], k: usize, ids: Vec<u32>) {
+        let t = self.fanout;
+        while self.runs.len() >= t && self.runs[self.runs.len() - t].0.len() <= t * self.runs[self.runs.len() - 1].0.len() {
+            // Merged two at a time, the newest first (fanout 2 is the measured one).
+            let mut parts = self.runs.split_off(self.runs.len() - t);
+            let mut acc = parts.pop().expect("a run");
+            while let Some(p) = parts.pop() {
+                self.merged += p.0.len() + acc.0.len();
+                acc = self.merge2(rows, k, p, acc);
+            }
+            self.runs.push(acc);
+        }
+        if ids.is_empty() {
+            return;
+        }
+        let lead = self.order[0];
+        let mut tagged: Vec<(u16, u32)> = ids.iter().map(|&id| (tag(rows[id as usize * k + lead]), id)).collect();
+        let order = &self.order;
+        tagged.sort_unstable_by(|a, b| a.0.cmp(&b.0).then_with(|| Self::rows_cmp(order, rows, k, a.1, b.1)));
+        self.runs.push((tagged.iter().map(|x| x.1).collect(), tagged.iter().map(|x| x.0).collect()));
+    }
+
+    /// Every run merged into one.
+    pub(super) fn merged_all(&self, rows: &[i64], k: usize) -> TaggedRuns {
+        let mut one = TaggedRuns { order: self.order.clone(), runs: Vec::new(), merged: 0, row_compares: 0, collisions: 0, fanout: self.fanout };
+        let mut acc: Option<(Vec<u32>, Vec<u16>)> = None;
+        for r in &self.runs {
+            acc = Some(match acc.take() { None => r.clone(), Some(a) => one.merge2(rows, k, a, r.clone()) });
+        }
+        one.runs = acc.into_iter().collect();
+        one
+    }
+
+    /// The number of ids holding `key` on the order's first `key.len()` columns, over every run.
+    pub(super) fn count(&self, rows: &[i64], k: usize, key: &[i64]) -> usize {
+        let t = tag(key[0]);
+        let cmp = |id: u32| -> Ordering {
+            let r = &rows[id as usize * k..][..k];
+            self.order.iter().zip(key).map(|(&c, v)| r[c].cmp(v)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
+        };
+        self.runs.iter().map(|(ids, tags)| {
+            let lo = tags.partition_point(|&x| x < t);
+            let hi = lo + tags[lo..].partition_point(|&x| x == t);
+            let run = &ids[lo..hi];
+            let s = run.partition_point(|&id| cmp(id) == Ordering::Less);
+            run[s..].partition_point(|&id| cmp(id) == Ordering::Equal)
+        }).sum()
+    }
+
+    /// `count`, each run's tag range found from where the tag would sit were the tags even (mldb's PathIndex: the
+    /// position is the hash times the length), widened by doubling steps: a short scan, not a search of the run.
+    pub(super) fn count_interp(&self, rows: &[i64], k: usize, key: &[i64]) -> usize {
+        let t = tag(key[0]);
+        let cmp = |id: u32| -> Ordering {
+            let r = &rows[id as usize * k..][..k];
+            self.order.iter().zip(key).map(|(&c, v)| r[c].cmp(v)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
+        };
+        self.runs.iter().map(|(ids, tags)| {
+            let (lo, hi) = interp_range(tags, t);
+            let run = &ids[lo..hi];
+            let s = run.partition_point(|&id| cmp(id) == Ordering::Less);
+            run[s..].partition_point(|&id| cmp(id) == Ordering::Equal)
+        }).sum()
+    }
+
+    pub(super) fn bytes(&self) -> usize {
+        self.runs.iter().map(|r| r.0.capacity() * 4 + r.1.capacity() * 2).sum()
+    }
+}
+
 #[cfg(test)]
 mod grow_tests {
     use super::*;
@@ -613,6 +770,8 @@ mod grow_tests {
             let mut by01 = Growing::new(vec![0, 1], id_bits);
             let mut runs = Runs::new(vec![0, 1, 2]);
             let mut wide = Runs::with_fanout(vec![0, 1, 2], 4);
+            let mut tagged = TaggedRuns::with_fanout(vec![0, 1, 2], 2);
+            let mut lazy = Runs::with_fanout(vec![0, 1, 2], usize::MAX);
             let mut held = 0;
             for wave in (0..2500u32).collect::<Vec<_>>().chunks(97) {
                 set.reserve(&rows, k, wave.len());
@@ -629,6 +788,8 @@ mod grow_tests {
                 }
                 held += fresh.len();
                 wide.add_wave(&rows, k, fresh.clone());
+                tagged.add_wave(&rows, k, fresh.clone());
+                if !fresh.is_empty() { lazy.add_wave(&rows, k, fresh.clone()); }
                 runs.add_wave(&rows, k, fresh);
             }
             assert_eq!(held, 2000, "id bits {id_bits}");
@@ -641,6 +802,14 @@ mod grow_tests {
             assert_eq!(wide.count(&rows, k, &[3, 4]), 28);
             assert_eq!(wide.merged_all(&rows, k).count(&rows, k, &[3]), 200);
             assert!(wide.merged < runs.merged, "{} merged by 4s, {} by 2s", wide.merged, runs.merged);
+            assert_eq!(tagged.count(&rows, k, &[3, 4]), 28);
+            assert_eq!(tagged.count(&rows, k, &[3]), 200);
+            assert_eq!(tagged.count_interp(&rows, k, &[3]), 200);
+            assert_eq!(tagged.count_interp(&rows, k, &[3, 4]), 28);
+            assert_eq!(tagged.count_interp(&rows, k, &[11]), 0);
+            assert_eq!(tagged.merged_all(&rows, k).count(&rows, k, &[5, 5]), 29);
+            assert_eq!(lazy.runs.len(), 21, "one run a wave of new rows, none merged");
+            assert_eq!(lazy.count(&rows, k, &[3, 4]), 28);
             let mut got = 0;
             by01.each(&rows, k, &[3, 4], |id| { assert_eq!(&rows[id as usize * k..][..2], &[3, 4]); got += 1 });
             assert_eq!(got, 28, "id bits {id_bits}");

@@ -57,7 +57,7 @@ pub(in crate::code_rule_dsl) fn schema() -> BTreeMap<String, Vec<(String, String
         ("output", &["p:sym", "k:int", "rel:sym"]),
         ("kindset", &["p:sym", "set:sym"]),
         ("kindset_kind", &["p:sym", "set:sym", "k:int", "kind:sym"]),
-        // `facts`: each relation the program has facts of, so one of no rows reads back as one.
+        // A relation of facts, with or without rows: one with none (a constant folded empty) reads back as present.
         ("fact_rel", &["p:sym", "rel:sym"]),
         ("fact_row", &["p:sym", "rel:sym", "row:int", "width:int"]),
         ("fact", &["p:sym", "rel:sym", "row:int", "i:int", "kind:sym", "n:int", "s:sym"]),
@@ -858,6 +858,20 @@ mod tests {
             assert_eq!(back.doc_scopes, scopes);
             assert_eq!(back.text_globs, prog.text_globs);
         }
+    }
+
+    /// A relation of facts with no rows (a constant folded empty, `constants::fold`) survives its facts: a stored
+    /// program read back is the program written, so its digests (the memo's key, the relations' identities) are the
+    /// same. Without it, the first run after a rebuild and the second keyed the memo apart.
+    #[test]
+    fn an_empty_relation_of_facts_reads_back_as_present() {
+        let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(s: symbol)\n.decl b(s: symbol)\nb(\"x\").\n.output a\n").unwrap();
+        prog.facts.insert("a".to_owned(), Vec::new());
+        let mut facts = super::Facts::new();
+        super::write(&mut facts, "p", &prog);
+        let back = super::program(&facts, "p").unwrap();
+        assert_eq!(back.facts, prog.facts);
+        assert_eq!(super::super::plan::corpus::memo::program_digest(&back), super::super::plan::corpus::memo::program_digest(&prog));
     }
 
     /// A relation the program has facts of but no rows (a constant folded to nothing) reads back as one: a stored

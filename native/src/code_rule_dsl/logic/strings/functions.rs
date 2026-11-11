@@ -44,6 +44,9 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("lower", &[Text], Text),
     // `.rr`'s `cat(a, b, …)`, two at a time: the native engine's concatenation (SQL concatenates with `||`).
     ("str_concat", &[Text, Text], Text),
+    // `str_concat` run backwards: the text between a prefix and a suffix, none when the text has not both
+    // (`simplify::concat_inverses`: `$v = cat($a, $x, $b)` with `$v` bound binds `$x`).
+    ("str_between", &[Text, Text, Text], Text),
     // -1, 0 or 1 as `a` sorts before, with or after `b` (by bytes): the order of two symbols (`plan::lower`).
     ("str_cmp", &[Text, Text], Number),
     // Soufflé's `to_number`: a decimal integer's value; no value for other text.
@@ -70,7 +73,32 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("rr_min", &[Number, Number], Number),
     // Characters, as SQLite's `length` counts a text's.
     ("rr_strlen", &[Text], Number),
+    // SQLite's string functions, as the data-layer programs' SQL stages read them (decision 0107): positions from 1,
+    // characters not bytes; `sql_substr2` is SQLite's `substr(x, y)`, `sql_trim2` its `trim(x, chars)`.
+    ("sql_instr", &[Text, Text], Number),
+    ("sql_substr", &[Text, Number, Number], Text),
+    ("sql_substr2", &[Text, Number], Text),
+    // `substr(CAST(x AS BLOB), y, z)`: bytes, not characters (a node's bytes between two offsets).
+    ("sql_substr_bytes", &[Text, Number, Number], Text),
+    ("sql_length", &[Text], Number),
+    ("sql_trim", &[Text], Text),
+    ("sql_trim2", &[Text, Text], Text),
+    ("sql_ltrim", &[Text], Text),
+    ("sql_ltrim2", &[Text, Text], Text),
+    ("sql_rtrim2", &[Text, Text], Text),
+    ("sql_upper", &[Text], Text),
+    ("sql_lower", &[Text], Text),
+    ("sql_replace", &[Text, Text, Text], Text),
+    ("sql_like", &[Text, Text], Number),
+    ("sql_cast_int", &[Text], Number),
+    // The data-layer programs' regex functions, as W's SQL has them (`residency::admission::relational`): Rust's
+    // regex; `rx_extract`'s group, NULL without a match; `rx_replace` every match.
+    ("rx_extract", &[Text, Text, Number], Text),
+    ("rx_replace", &[Text, Text, Text], Text),
     ("rr_to_string", &[Number], Text),
+    // A node's text past `text`'s inline bound (`facts::vtab::syntax::long_node_text`): none for a shorter one, which
+    // `text` holds. The long-text twin of a rule reading `text(v, t)` reads it (`syntax::long_text_twins`).
+    ("rr_node_text", &[Number], Text),
     // `.rr`'s `substr(s, i, n)`: n characters from the i-th, counted from 0, as SQL's `substr(s, i + 1, n)` gives
     // them (`substr`).
     ("rr_substr", &[Text, Number, Number], Text),
@@ -194,6 +222,7 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "qname" => Some(format!("{}#{}", t(0), t(1))),
         "pkg_up" => Some(pkg_up(t(0), numbers[0])),
         "head" => Some(t(0).split('.').next().unwrap_or("").to_owned()),
+        "str_between" => t(0).strip_prefix(t(1)).and_then(|rest| rest.strip_suffix(t(2))).map(str::to_owned),
         "dir" => Some(t(0).rsplit_once('/').map_or("", |(d, _)| d).to_owned()),
         "join" => Some(join(t(0), t(1))),
         "glob_sub" => Some(glob_sub(t(0), t(1), t(2))),
@@ -214,8 +243,29 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "rr_div" => return numbers[0].checked_div(numbers[1]).map_or(Value::Null, Value::Integer),
         "rr_max" => return Value::Integer(numbers[0].max(numbers[1])),
         "rr_min" => return Value::Integer(numbers[0].min(numbers[1])),
-        "rr_strlen" => return Value::Integer(t(0).chars().count() as i64),
+        "rr_strlen" | "sql_length" => return Value::Integer(t(0).chars().count() as i64),
+        "sql_instr" => return Value::Integer(t(0).find(t(1)).map_or(0, |at| t(0)[..at].chars().count() as i64 + 1)),
+        "sql_substr" => Some(sql_substr(t(0), numbers[0], Some(numbers[1]))),
+        "sql_substr2" => Some(sql_substr(t(0), numbers[0], None)),
+        // SQLite's substr of an empty blob is NULL.
+        "sql_substr_bytes" => (!t(0).is_empty()).then(|| sql_substr_bytes(t(0), numbers[0], numbers[1])),
+        "sql_trim" => Some(t(0).trim_matches(' ').to_owned()),
+        "sql_trim2" => Some(t(0).trim_matches(|c| t(1).contains(c)).to_owned()),
+        "sql_ltrim" => Some(t(0).trim_start_matches(' ').to_owned()),
+        "sql_ltrim2" => Some(t(0).trim_start_matches(|c| t(1).contains(c)).to_owned()),
+        "sql_rtrim2" => Some(t(0).trim_end_matches(|c| t(1).contains(c)).to_owned()),
+        "sql_upper" => Some(t(0).to_ascii_uppercase()),
+        "sql_lower" => Some(t(0).to_ascii_lowercase()),
+        "sql_replace" => Some(if t(1).is_empty() { t(0).to_owned() } else { t(0).replace(t(1), t(2)) }),
+        "sql_like" => return Value::Integer(i64::from(sql_like(t(1), t(0)))),
+        "sql_cast_int" => return Value::Integer(sql_cast_int(t(0))),
+        "rx_extract" => {
+            let group = usize::try_from(numbers[0]).ok();
+            return with_regex(t(1), |re| group.and_then(|g| re.captures(t(0))?.get(g).map(|m| Value::Text(m.as_str().to_owned())))).flatten().unwrap_or(Value::Null);
+        }
+        "rx_replace" => with_regex(t(1), |re| re.replace_all(t(0), t(2)).into_owned()),
         "rr_to_string" => Some(numbers[0].to_string()),
+        "rr_node_text" => crate::code_rule_dsl::facts::vtab::syntax::long_node_text(numbers[0]),
         "rr_substr" => Some(substr(t(0), numbers[0], numbers[1])),
         "mod" => return numbers[0].checked_rem(numbers[1]).map_or(Value::Null, Value::Integer),
         "to_float" => return t(0).trim().parse::<f64>().ok().filter(|f| !f.is_nan()).map_or(Value::Null, |f| Value::Integer(float_key(f))),
@@ -245,6 +295,80 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         _ => None,
     };
     out.map_or(Value::Null, Value::Text)
+}
+
+/// SQLite's `substr(x, y, z)` over characters (`z` none for `substr(x, y)`): `y` from 1, or from the end where
+/// negative; `y` 0 takes one character fewer; a negative `z` takes the characters before `y`.
+pub(in crate::code_rule_dsl) fn sql_substr(x: &str, y: i64, z: Option<i64>) -> String {
+    let chars: Vec<char> = x.chars().collect();
+    let (start, end) = substr_range(chars.len(), y, z);
+    chars[start..end].iter().collect()
+}
+
+/// SQLite's `substr(CAST(x AS BLOB), y, z)` read back as text: `sql_substr` over bytes (a cut inside a character
+/// reads as U+FFFD, where SQLite would keep the bytes).
+fn sql_substr_bytes(x: &str, y: i64, z: i64) -> String {
+    let (start, end) = substr_range(x.len(), y, Some(z));
+    String::from_utf8_lossy(&x.as_bytes()[start..end]).into_owned()
+}
+
+/// `substr`'s range of `len` items, as SQLite's `substrFunc` computes it.
+fn substr_range(len: usize, y: i64, z: Option<i64>) -> (usize, usize) {
+    let len = len as i64;
+    let (mut p1, mut p2) = (y, z.unwrap_or(i64::MAX / 2));
+    let negative = p2 < 0;
+    if negative {
+        p2 = -p2;
+    }
+    if p1 < 0 {
+        p1 += len;
+        if p1 < 0 {
+            p2 += p1;
+            if p2 < 0 {
+                p2 = 0;
+            }
+            p1 = 0;
+        }
+    } else if p1 > 0 {
+        p1 -= 1;
+    } else if p2 > 0 {
+        p2 -= 1;
+    }
+    if negative {
+        p1 -= p2;
+        if p1 < 0 {
+            p2 += p1;
+            p1 = 0;
+        }
+    }
+    let start = p1.clamp(0, len) as usize;
+    let end = p1.saturating_add(p2).clamp(0, len) as usize;
+    (start, end.max(start))
+}
+
+/// SQLite's `x LIKE pattern` (`like(pattern, x)`): `%` any run, `_` one character, ASCII letters in either case.
+pub(in crate::code_rule_dsl) fn sql_like(pattern: &str, x: &str) -> bool {
+    fn at(p: &[char], s: &[char]) -> bool {
+        match p.split_first() {
+            None => s.is_empty(),
+            Some(('%', rest)) => (0..=s.len()).any(|k| at(rest, &s[k..])),
+            Some(('_', rest)) => !s.is_empty() && at(rest, &s[1..]),
+            Some((c, rest)) => s.first().is_some_and(|d| c.eq_ignore_ascii_case(d)) && at(rest, &s[1..]),
+        }
+    }
+    at(&pattern.chars().collect::<Vec<_>>(), &x.chars().collect::<Vec<_>>())
+}
+
+/// SQLite's `CAST(x AS INTEGER)` of text: its leading integer (after spaces, with a sign), 0 where it has none.
+pub(in crate::code_rule_dsl) fn sql_cast_int(x: &str) -> i64 {
+    let t = x.trim_start();
+    let (sign, digits) = match t.as_bytes().first() {
+        Some(b'-') => (-1, &t[1..]),
+        Some(b'+') => (1, &t[1..]),
+        _ => (1, t),
+    };
+    let end = digits.bytes().position(|b| !b.is_ascii_digit()).unwrap_or(digits.len());
+    digits[..end].parse::<i64>().map_or(0, |v| sign * v)
 }
 
 /// A float as an integer key that orders as the floats do: its bits, with every bit but the sign flipped for a

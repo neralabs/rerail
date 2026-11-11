@@ -334,18 +334,104 @@ impl Drop for Modules {
 /// (`logic::native::forget_scope`). A closed connection's address is reused by the next one opened.
 pub(crate) fn connection_scope(db: &Connection) -> usize {
     const KEY: &std::ffi::CStr = c"rerail.connection-scope";
+    // Each close bumps the generation: a thread's last connection with its hook set (`LAST`) is known to have it
+    // until some connection closes (whose address the next one may take), without asking SQLite on every lookup.
+    static CLOSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    thread_local!(static LAST: std::cell::Cell<(usize, u64)> = const { std::cell::Cell::new((0, u64::MAX)) });
     unsafe extern "C" fn closed(at: *mut std::os::raw::c_void) {
+        CLOSES.fetch_add(1, Ordering::AcqRel);
         let at = at as usize;
         BOUND.lock().retain(|(h, _), _| *h != at);
+        VIEWS.lock().retain(|(h, _), _| *h != at);
+        UNRESOLVED.lock().remove(&at);
+        SETUP.lock().remove(&at);
         crate::code_rule_dsl::logic::native::forget_scope(at);
     }
     let handle = unsafe { db.handle() };
+    let closes = CLOSES.load(Ordering::Acquire);
+    if LAST.get() == (handle as usize, closes) {
+        return handle as usize;
+    }
     unsafe {
         if rusqlite::ffi::sqlite3_get_clientdata(handle, KEY.as_ptr()).is_null() {
             rusqlite::ffi::sqlite3_set_clientdata(handle, KEY.as_ptr(), handle.cast(), Some(closed));
         }
     }
+    LAST.set((handle as usize, closes));
     handle as usize
+}
+
+/// A view of one bound input that a run read in place and did not make in SQL (`plan`): the input, the input's columns
+/// it keeps (in the view's order), and its (column, value) filters. A reader after the run reads it from the input.
+#[derive(Clone, Debug)]
+pub(crate) struct UnmadeView {
+    pub base: String,
+    pub cols: Vec<usize>,
+    pub eqs: Vec<(usize, i64)>,
+}
+
+/// Set-up statements a connection runs only once SQL is about to run on it (`defer_setup`, `setup_now`).
+static SETUP: std::sync::LazyLock<parking_lot::Mutex<HashMap<usize, Vec<String>>>> = std::sync::LazyLock::new(Default::default);
+
+/// Defers `sql` (statements, run as one batch) until SQL first runs on `db`'s connection (`setup_now`): a run whose
+/// readers are native runs none of it.
+pub(crate) fn defer_setup(db: &Connection, sql: &str) {
+    SETUP.lock().entry(connection_scope(db)).or_default().push(sql.to_owned());
+}
+
+/// Runs `db`'s deferred set-up (`defer_setup`), once: before a statement that needs it (a table made, a table of
+/// `x` written).
+pub(crate) fn setup_now(db: &Connection) -> Result<()> {
+    let pending = SETUP.lock().remove(&connection_scope(db)).unwrap_or_default();
+    for sql in pending {
+        db.execute_batch(&sql)?;
+    }
+    Ok(())
+}
+
+/// The tables registered on each connection that no statement has resolved yet (`register`).
+static UNRESOLVED: std::sync::LazyLock<parking_lot::Mutex<HashMap<usize, std::collections::BTreeSet<String>>>> = std::sync::LazyLock::new(Default::default);
+
+/// Resolves every table registered on `db` and not yet resolved, by preparing a read of it: an authorizer installed
+/// after this does not see SQLite connect them (an authored query's authorizer refuses what it does not name).
+pub(crate) fn resolve_tables(db: &Connection) -> Result<()> {
+    let names = UNRESOLVED.lock().remove(&connection_scope(db)).unwrap_or_default();
+    for name in names {
+        if BOUND.lock().contains_key(&(connection_scope(db), name.clone())) {
+            db.prepare(&format!("SELECT * FROM {}", quote(&name)))?;
+        }
+    }
+    Ok(())
+}
+
+static VIEWS: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), UnmadeView>>> = std::sync::LazyLock::new(Default::default);
+
+/// Records `view` as the view `name` on `db`'s connection, until the connection closes or `forget_views`.
+pub(crate) fn note_view(db: &Connection, name: &str, view: UnmadeView) {
+    VIEWS.lock().insert((connection_scope(db), name.to_owned()), view);
+}
+
+/// Drops the views noted on `db`'s connection: a run starts with none.
+pub(crate) fn forget_views(db: &Connection) {
+    let at = connection_scope(db);
+    VIEWS.lock().retain(|(h, _), _| *h != at);
+}
+
+/// The rows of the noted view `name` (`note_view`), read from its bound input: each once, as SQL's view gives them
+/// (a set), column by column.
+pub(crate) fn view_columns(db: &Connection, name: &str) -> Option<Vec<Vec<i64>>> {
+    let view = VIEWS.lock().get(&(connection_scope(db), name.to_owned())).cloned()?;
+    let src = bound_source(db, &view.base)?;
+    let mut rows: Vec<Vec<i64>> = src.filter_eq(&view.eqs).into_iter().map(|id| view.cols.iter().map(|&c| src.value(id as usize, c)).collect()).collect();
+    rows.sort_unstable();
+    rows.dedup();
+    let mut columns = vec![Vec::with_capacity(rows.len()); view.cols.len()];
+    for row in rows {
+        for (c, v) in row.into_iter().enumerate() {
+            columns[c].push(v);
+        }
+    }
+    Some(columns)
 }
 
 static BOUND: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), Binding>>> = std::sync::LazyLock::new(Default::default);
@@ -392,8 +478,9 @@ fn register(db: &Connection, name: &str, binding: Binding, restored:bool) -> Res
         let exists=restored&&db.query_row("SELECT EXISTS(SELECT 1 FROM temp.sqlite_schema WHERE name=?1)",[name],|r|r.get::<_,bool>(0))?;
         if !exists {db.execute_batch(&format!("CREATE VIRTUAL TABLE temp.{} USING {}",quote(name),quote(name)))?;}
     }
-    // Resolve xConnect before an authored-query authorizer is installed.
-    db.prepare(&format!("SELECT * FROM {}", quote(name)))?;
+    // xConnect is resolved before an authored-query authorizer is installed (`resolve_tables`), not here: a run whose
+    // readers are native prepares no statement over its tables.
+    UNRESOLVED.lock().entry(connection_scope(db)).or_default().insert(name.to_owned());
     Ok(())
     })();
     if result.is_err() {

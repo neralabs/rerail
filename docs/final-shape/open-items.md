@@ -3477,3 +3477,43 @@ failures in that run need the pack fixtures, which come from S3 (`fixtures:pull`
 `vue::view::tests::corpus`.
 
 **Closure:** each of the five passes on the hub, or its owner fixes it or ignores it with a reason.
+
+**Closed (2026-11-10).** After the merge of `More-ergonomic-rule-syntax` at b9e20bfe9, the full suite gave 3,064
+passed and 6 failed. Four of the five pass now. The fifth, `the_gate_catches_a_widened_walk`, failed in the suite
+and passes on its own, so the suite's load made it fail. The pack fixtures came from `236fc98d2~1` with
+`git archive`, outside the index. With them, the other five failures pass.
+
+## O148. Measured key domains price joins apart from T
+
+Commit 2ab61d7b4 ("Plan delta joins from measured key domains before expansion") changes the estimate on purpose:
+a binding's distinct values are capped by the rows its constant filters leave, and containment applies to every
+relation, not only to the component being solved. That moves T's recorded plans under T's numbering:
+
+```text
+// workload plan 16: estimated work 417 (T) → 412 (port)
+bound_in($f, $x)  kind($f, "function_definition")  []  412
+// calls plan 54: a different anchor
+classmeth($f)  builtin_ref($e, "classmethod")   (T: dexpr($f, $e))
+```
+
+About 20 lines of `workload`, `workload_demand` and `calls` differ. `keeps`'s copy-pricing test flips with the same
+estimate: the copy is now priced above the reader, so it is no longer inlined.
+
+The three tests are ignored with this item: `t_programs_plan_and_run_like_t`,
+`t_programs_over_atoms_plan_and_run_like_t` and `observed_selectivities_price_a_copy_that_never_ran`.
+
+**Closure:** decide whether the port keeps T's estimates where T's plans are the test (and the new estimate only
+where T has no plan), or takes the new estimate and records new goldens. Then stop ignoring the tests.
+
+## O-wave-b602-nosec. The wave misses B602 on a line whose `# nosec` names another code
+
+**Seen (2026-11-10).** `the_findings_are_ws_violations` had not run on any worktree for a while: the bandit and
+ruff fixtures were missing since the pack test data moved to S3. With them restored (from `236fc98d2~1`, checked
+against each tool's `test-data.lock` by files and bytes), the wave finds 16 keys and W finds 17. The one only W
+finds is `bandit-b602-subprocess-popen-with-shell-equals-true` on `f006.py` line 10,
+`subprocess.Popen('/bin/ls *', shell=True) # type: ... # nosec B607 # noqa: E501 ; pylint: disable=line-too-long`.
+Bandit's `nosec B607` suppresses only B607, so B602 stands. The same run lowers 13 more clauses than the last
+blessed `wave.rir` (B403–B413 imports and five ruff rules), and 140 families changed. Not yet traced: whether the
+wave drops B602 for the comment, or the clause's lowering misses this call. The test is ignored with this item.
+
+**Closure:** the wave reports B602 on that line, or the difference is shown to be W's, and the test runs again.

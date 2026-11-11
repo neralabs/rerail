@@ -19,11 +19,11 @@
 use crate::Error;
 
 use crate::native_cpu_shape::Step;
-use crate::native_ir::{On, Structure, StructuralOperation as Op};
-use crate::stream::{ByteSwitch, DEAD, GONE, KEEP, Node, REFUSE, Refused};
+use crate::native_ir::{FlagOp, On, Structure, StructuralOperation as Op};
+use crate::stream::{ByteSwitch, DEAD, GONE, KEEP, Node, REFUSE, REMEMBERED, Refused};
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::{AbiParam, Block, BlockArg, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module, default_libcall_names};
 
@@ -172,6 +172,8 @@ pub struct CompiledStream {
     marks: u64,
     /// The program has `WRAP`: the tape has the frames, chains and preorder columns.
     pub wraps: bool,
+    /// The program has context beside each return (`has_context`): two return slots a call.
+    context: bool,
     pub clif: String,
     pub disassembly: String,
     /// The CLIF blocks of the loops' heads, with their steps (`native_cpu_shape`): the token
@@ -195,7 +197,7 @@ fn successors(native: &Structure, pushes: &[u16], pc: usize) -> Vec<usize> {
             out
         }
         Op::Return { again } => pushes.iter().map(|&p| usize::from(p) + usize::from(again)).collect(),
-        Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } => vec![pc + 1, pc + 2],
+        Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } | Op::Flag { op: FlagOp::Test, .. } => vec![pc + 1, pc + 2],
         _ => vec![pc + 1],
     }
     .into_iter()
@@ -327,8 +329,10 @@ fn push_targets(native: &Structure) -> Vec<u16> {
 }
 
 /// The machine's state, as variables.
-/// Tier 2's state that few words touch, each a slot of the function's stack frame: kept out of
-/// the SSA variables (`Vars`), which every block where paths meet carries.
+/// Tier 2's state, each a slot of the function's stack frame: a word loads what it reads and
+/// stores what it writes. Not SSA variables, which every block where paths meet carries (as
+/// block parameters, moved and spilled at each join): the state in memory is a fifth less code
+/// and no slower (docs/parser-generators/27-tier-2-table-spike.md).
 #[derive(Clone, Copy)]
 enum Mem {
     /// The supertypes written.
@@ -346,29 +350,34 @@ enum Mem {
     Sel,
     /// A shared arm's words' distance from its body's first place's, for a refusal there.
     Shift,
+    /// The level's word (`REMEMBER`) and flags (`FLAG`), kept beside each call's return.
+    Word,
+    Flags,
+    /// The next token's index into the extract.
+    Next,
+    /// The mask's word `lw`'s bits not yet taken; before the first word, `lw` is -1 (no bits).
+    Taken,
+    Lw,
+    /// The token's bytes, and the next token's start (or the file's end).
+    Start,
+    End,
+    Limit,
+    /// The end of the token before.
+    LastEnd,
+    /// 1 at the stream's end.
+    AtEnd,
+    /// The nodes made, the nodes open, the calls made and not returned.
+    Nodes,
+    Open,
+    Ret,
+    /// 1 once the token's bytes are taken (`SPAN`): `TOKEN` then takes the next.
+    Need,
+    /// The marks not yet taken or passed at this token, a bit each.
+    Live,
 }
 
 impl Mem {
-    const COUNT: u32 = 8;
-}
-
-struct Vars {
-    next: Variable,
-    /// The mask's word `lw`'s bits not yet taken; before the first word, `lw` is -1 (no bits).
-    taken: Variable,
-    lw: Variable,
-    start: Variable,
-    end: Variable,
-    limit: Variable,
-    last_end: Variable,
-    at_end: Variable,
-    nodes: Variable,
-    open: Variable,
-    ret: Variable,
-    /// 1 once the token's bytes are taken (`SPAN`): `TOKEN` then takes the next.
-    need: Variable,
-    /// The marks not yet taken or passed at this token, a bit each.
-    live: Variable,
+    const COUNT: u32 = 23;
 }
 
 /// A compare tree over a byte (or a place): runs of one target, split at the middle run.
@@ -818,7 +827,7 @@ pub struct SharedRuns {
 fn plain(op: &Op) -> bool {
     matches!(
         op,
-        Op::Span { .. } | Op::Word { test: false, .. } | Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::NodeField { .. } | Op::NodeSuper { .. } | Op::Retag { .. } | Op::Wrap { .. } | Op::Merge { .. } | Op::Push { .. }
+        Op::Span { .. } | Op::Word { test: false, .. } | Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::NodeField { .. } | Op::NodeSuper { .. } | Op::Retag { .. } | Op::Wrap { .. } | Op::Merge { .. } | Op::Push { .. } | Op::Remember { .. } | Op::Flag { op: FlagOp::Set | FlagOp::Clear, .. }
     )
 }
 
@@ -997,21 +1006,6 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
         // A place past the words refuses, as the interpreter's `STOP`.
         let off_end = f.create_block();
         let word = |t: u16| -> Block { if t == REFUSE { off_end } else { wb.get(usize::from(t)).copied().unwrap_or(off_end) } };
-        let v = Vars {
-            next: f.declare_var(types::I64),
-            taken: f.declare_var(types::I64),
-            lw: f.declare_var(types::I64),
-            start: f.declare_var(types::I64),
-            end: f.declare_var(types::I64),
-            limit: f.declare_var(types::I64),
-            last_end: f.declare_var(types::I64),
-            at_end: f.declare_var(types::I64),
-            nodes: f.declare_var(types::I64),
-            open: f.declare_var(types::I64),
-            ret: f.declare_var(types::I64),
-            need: f.declare_var(types::I64),
-            live: f.declare_var(types::I64),
-        };
         // Where returns chain, each `RETURN` is a loop's head: a turn pops a call.
         let bound = bounds(native);
         let chains = bound.chains;
@@ -1056,9 +1050,6 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
         let wc = |i: usize| w[i];
         let (fbase_c, flast_c, flbase_c, head_c, link_c, place_c) = (0, 1, 2, 3, 4, 5);
         let zero = f.ins().iconst(types::I64, 0);
-        for var in [v.next, v.taken, v.start, v.end, v.limit, v.last_end, v.at_end, v.nodes, v.open, v.ret, v.live] {
-            f.def_var(var, zero);
-        }
         // The state few words touch, in memory (`Mem`): not carried through every block where
         // paths meet, as an SSA variable is.
         let slot = f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * Mem::COUNT, 3));
@@ -1070,9 +1061,9 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
             f.ins().stack_store(zero, slot, 8 * k as i32);
         }
         let one = f.ins().iconst(types::I64, 1);
-        f.def_var(v.need, one);
+        mset(&mut f, Mem::Need, one);
         let before_first = f.ins().iconst(types::I64, -1);
-        f.def_var(v.lw, before_first);
+        mset(&mut f, Mem::Lw, before_first);
         match wb.first() {
             Some(&b) => f.ins().jump(b, &[]),
             None => f.ins().jump(off_end, &[]),
@@ -1085,6 +1076,19 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
             let at = f.ins().iconst(types::I64, pc as i64 + 1);
             f.ins().brif(bad, refuse, &[BlockArg::from(at)], ok, &[]);
             f.switch_to_block(ok);
+        };
+        // A kind as a word names it: its level's word's (`REMEMBERED`, `REMEMBER`), refused where
+        // the level has none; else the kind.
+        let two_slots = has_context(words);
+        let kind_of = |f: &mut FunctionBuilder<'_>, kind: u16, pc: usize| {
+            if kind == REMEMBERED {
+                let w = mget(f, Mem::Word);
+                let none = f.ins().icmp_imm(IntCC::Equal, w, 0);
+                guard(f, none, pc);
+                w
+            } else {
+                f.ins().iconst(types::I64, i64::from(kind))
+            }
         };
         // Column `c`'s slot `i` (u32s).
         let slot = |f: &mut FunctionBuilder<'_>, c: Value, i: Value| {
@@ -1145,8 +1149,8 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     // supertypes and returns: past the tape's room, the run stops for a bigger
                     // tape. Three compares a token, not one a write.
                     let mut over = f.ins().iconst(types::I8, 0);
-                    let open_calls = f.use_var(v.ret);
-                    let counts = [f.use_var(v.nodes), mget(&mut f, Mem::Supers), f.use_var(v.ret)];
+                    let open_calls = mget(&mut f, Mem::Ret);
+                    let counts = [mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Supers), mget(&mut f, Mem::Ret)];
                     for (at, (room, (most, per_call))) in counts.into_iter().zip(rooms.into_iter().zip([(bound.nodes, bound.pop_nodes), (bound.supers, bound.pop_supers), (bound.pushes, 0)])) {
                         let at = if per_call > 0 {
                             let popped = f.ins().imul_imm(open_calls, per_call as i64);
@@ -1164,16 +1168,16 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     f.switch_to_block(fits);
                     // A token whose bytes are not taken yet (after a mark's arm) is kept.
                     let take = f.create_block();
-                    let need = f.use_var(v.need);
+                    let need = mget(&mut f, Mem::Need);
                     f.ins().brif(need, take, &[], fall, &[]);
                     f.switch_to_block(take);
-                    f.def_var(v.need, zero);
+                    mset(&mut f, Mem::Need, zero);
                     let all = f.ins().iconst(types::I64, -1);
-                    f.def_var(v.live, all);
-                    let at_end = f.use_var(v.at_end);
+                    mset(&mut f, Mem::Live, all);
+                    let at_end = mget(&mut f, Mem::AtEnd);
                     guard(&mut f, at_end, pc);
-                    let (next, end) = (f.use_var(v.next), f.use_var(v.end));
-                    f.def_var(v.last_end, end);
+                    let (next, end) = (mget(&mut f, Mem::Next), mget(&mut f, Mem::End));
+                    mset(&mut f, Mem::LastEnd, end);
                     let is_end = f.ins().icmp(IntCC::Equal, next, nstarts);
                     // Two slots past the count are readable: `s` and the next start are loaded
                     // whether or not the stream has them, and chosen with `select`.
@@ -1185,7 +1189,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     let not_end = f.ins().bxor_imm(is_end, 1);
                     let bad = f.ins().band(inside, not_end);
                     guard(&mut f, bad, pc);
-                    let (start, end, limit) = (f.use_var(v.start), f.use_var(v.end), f.use_var(v.limit));
+                    let (start, end, limit) = (mget(&mut f, Mem::Start), mget(&mut f, Mem::End), mget(&mut f, Mem::Limit));
                     let start = f.ins().select(is_end, start, s);
                     let end = f.ins().select(is_end, end, s);
                     let step = f.ins().uextend(types::I64, not_end);
@@ -1198,16 +1202,16 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     let fresh = f.ins().select(has, following, len);
                     let limit = f.ins().select(is_end, limit, fresh);
                     let at_end = f.ins().uextend(types::I64, is_end);
-                    f.def_var(v.start, start);
-                    f.def_var(v.end, end);
-                    f.def_var(v.next, after);
-                    f.def_var(v.limit, limit);
-                    f.def_var(v.at_end, at_end);
+                    mset(&mut f, Mem::Start, start);
+                    mset(&mut f, Mem::End, end);
+                    mset(&mut f, Mem::Next, after);
+                    mset(&mut f, Mem::Limit, limit);
+                    mset(&mut f, Mem::AtEnd, at_end);
                     f.ins().jump(fall, &[]);
                 }
                 Op::Switch { table } => {
                     let s = &native.switches[usize::from(table)];
-                    let at_end = f.use_var(v.at_end);
+                    let at_end = mget(&mut f, Mem::AtEnd);
                     let (ended, taking) = (f.create_block(), f.create_block());
                     f.ins().brif(at_end, ended, &[], taking, &[]);
                     f.switch_to_block(ended);
@@ -1218,7 +1222,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                         f.ins().jump(word(s.end), &[]);
                     }
                     f.switch_to_block(taking);
-                    let (start, limit) = (f.use_var(v.start), f.use_var(v.limit));
+                    let (start, limit) = (mget(&mut f, Mem::Start), mget(&mut f, Mem::Limit));
                     let at = f.ins().iadd_imm(start, i64::from(s.offset));
                     let past = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, at, limit);
                     guard(&mut f, past, pc);
@@ -1233,38 +1237,38 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     f.ins().jump(refuse, &[BlockArg::from(at)]);
                 }
                 Op::Span { last: false, len: n } => {
-                    let start = f.use_var(v.start);
+                    let start = mget(&mut f, Mem::Start);
                     let e = f.ins().iadd_imm(start, i64::from(n));
-                    let limit = f.use_var(v.limit);
+                    let limit = mget(&mut f, Mem::Limit);
                     let past = f.ins().icmp(IntCC::UnsignedGreaterThan, e, limit);
                     guard(&mut f, past, pc);
-                    f.def_var(v.end, e);
+                    mset(&mut f, Mem::End, e);
                     let one = f.ins().iconst(types::I64, 1);
-                    f.def_var(v.need, one);
+                    mset(&mut f, Mem::Need, one);
                     f.ins().jump(fall, &[]);
                 }
                 Op::Span { last: true, .. } => {
                     // Found once per token: a token spanned already (its end past its start: a
                     // level that ended at it left it to its caller) keeps its end.
-                    let (start, end) = (f.use_var(v.start), f.use_var(v.end));
+                    let (start, end) = (mget(&mut f, Mem::Start), mget(&mut f, Mem::End));
                     let known = f.ins().icmp(IntCC::UnsignedGreaterThan, end, start);
                     let find = f.create_block();
                     f.ins().brif(known, fall, &[], find, &[]);
                     f.switch_to_block(find);
                     // The next of the mask's bits after the last one taken: the bits of word
                     // `lw` not yet taken (`taken`), then a word (64 bytes) at a time.
-                    let (w, bits, start, limit) = (f.use_var(v.lw), f.use_var(v.taken), f.use_var(v.start), f.use_var(v.limit));
+                    let (w, bits, start, limit) = (mget(&mut f, Mem::Lw), mget(&mut f, Mem::Taken), mget(&mut f, Mem::Start), mget(&mut f, Mem::Limit));
                     if span_fn.is_none() {
                         span_fn = Some(outline(&mut module, "tempo_stream_last", 7, 4, |f, p, heads| span_last(f, p, heads))?);
                     }
                     let (id, sig, _) = span_fn.as_ref().expect("made");
                     let r = call_own(&mut f, *id, sig, &[lasts_p, lasts_stride, nlasts, w, bits, start, limit]);
-                    f.def_var(v.end, r[0]);
-                    f.def_var(v.lw, r[1]);
-                    f.def_var(v.taken, r[2]);
+                    mset(&mut f, Mem::End, r[0]);
+                    mset(&mut f, Mem::Lw, r[1]);
+                    mset(&mut f, Mem::Taken, r[2]);
                     guard(&mut f, r[3], pc);
                     let one = f.ins().iconst(types::I64, 1);
-                    f.def_var(v.need, one);
+                    mset(&mut f, Mem::Need, one);
                     f.ins().jump(fall, &[]);
                 }
                 Op::Word { string, test } => {
@@ -1272,7 +1276,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     // 8 bytes of the string (64 readable bytes past the file, the token starting
                     // inside it), the last masked to its length. Straight-line: no loop.
                     let text = &native.strings[usize::from(string)];
-                    let (start, end) = (f.use_var(v.start), f.use_var(v.end));
+                    let (start, end) = (mget(&mut f, Mem::Start), mget(&mut f, Mem::End));
                     let n = f.ins().isub(end, start);
                     let mut same = f.ins().icmp_imm(IntCC::Equal, n, text.len() as i64);
                     let addr = f.ins().iadd(bytes, start);
@@ -1299,7 +1303,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     // stream's end, the mark is there when the end has it.
                     let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(mask)).copied()).ok_or(Error::UnsupportedBackend)?;
                     let skip = wb.get(pc + 2).copied().unwrap_or(off_end);
-                    let (at_end, live) = (f.use_var(v.at_end), f.use_var(v.live));
+                    let (at_end, live) = (mget(&mut f, Mem::AtEnd), mget(&mut f, Mem::Live));
                     let lit = f.ins().ushr_imm(live, i64::from(order));
                     let lit = f.ins().band_imm(lit, 1);
                     let (look, ended) = (f.create_block(), f.create_block());
@@ -1315,7 +1319,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                         f.ins().jump(skip, &[]);
                     }
                     f.switch_to_block(look);
-                    let start = f.use_var(v.start);
+                    let start = mget(&mut f, Mem::Start);
                     let w = f.ins().ushr_imm(start, 6);
                     let off = f.ins().imul_imm(output_stride, output as i64);
                     let base = f.ins().iadd(outputs_p, off);
@@ -1326,16 +1330,16 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     f.ins().brif(bit, taken, &[], skip, &[]);
                     f.switch_to_block(taken);
                     // It and the marks before it are done at this token.
-                    let live = f.use_var(v.live);
+                    let live = mget(&mut f, Mem::Live);
                     let rest = f.ins().band_imm(live, !((2i64 << order) - 1));
-                    f.def_var(v.live, rest);
+                    mset(&mut f, Mem::Live, rest);
                     f.ins().jump(fall, &[]);
                 }
                 Op::Row { mask } => {
                     // The row's start bit at the token's start: one load.
                     let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(mask)).copied()).ok_or(Error::UnsupportedBackend)?;
                     let skip = wb.get(pc + 2).copied().unwrap_or(off_end);
-                    let start = f.use_var(v.start);
+                    let start = mget(&mut f, Mem::Start);
                     let w = f.ins().ushr_imm(start, 6);
                     let off = f.ins().imul_imm(output_stride, output as i64);
                     let base = f.ins().iadd(outputs_p, off);
@@ -1347,7 +1351,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                 }
                 Op::Open { kind } => {
                     mset(&mut f, Mem::Pending, zero);
-                    let (nodes, start, open) = (f.use_var(v.nodes), f.use_var(v.start), f.use_var(v.open));
+                    let (nodes, start, open) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Start), mget(&mut f, Mem::Open));
                     let k = f.ins().iconst(types::I64, i64::from(kind));
                     put(&mut f, kind_c, nodes, k);
                     put(&mut f, field_c, nodes, zero);
@@ -1363,25 +1367,25 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     }
                     let open = f.ins().iadd_imm(open, 1);
                     let nodes = f.ins().iadd_imm(nodes, 1);
-                    f.def_var(v.open, open);
-                    f.def_var(v.nodes, nodes);
+                    mset(&mut f, Mem::Open, open);
+                    mset(&mut f, Mem::Nodes, nodes);
                     f.ins().jump(fall, &[]);
                 }
                 Op::Close { this } => {
-                    let open = f.use_var(v.open);
+                    let open = mget(&mut f, Mem::Open);
                     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
                     guard(&mut f, none, pc);
                     let open = f.ins().iadd_imm(open, -1);
-                    f.def_var(v.open, open);
+                    mset(&mut f, Mem::Open, open);
                     let at = {
                         let a = slot(&mut f, open_c, open);
                         f.ins().uload32(flags, a, 0)
                     };
-                    let (nodes, pending) = (f.use_var(v.nodes), mget(&mut f, Mem::Pending));
+                    let (nodes, pending) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Pending));
                     let e = if this {
-                        f.use_var(v.end)
+                        mget(&mut f, Mem::End)
                     } else {
-                        let (keep, last_end) = (mget(&mut f, Mem::Keep), f.use_var(v.last_end));
+                        let (keep, last_end) = (mget(&mut f, Mem::Keep), mget(&mut f, Mem::LastEnd));
                         f.ins().select(pending, keep, last_end)
                     };
                     put(&mut f, end_c, at, e);
@@ -1408,7 +1412,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                 Op::Leaf { kind, deferred, extra } => {
                     let pending = if deferred {
                         // The first pending leaf keeps the end of the token before it.
-                        let (p, keep, last_end) = (mget(&mut f, Mem::Pending), mget(&mut f, Mem::Keep), f.use_var(v.last_end));
+                        let (p, keep, last_end) = (mget(&mut f, Mem::Pending), mget(&mut f, Mem::Keep), mget(&mut f, Mem::LastEnd));
                         let keep = f.ins().select(p, keep, last_end);
                         mset(&mut f, Mem::Keep, keep);
                         f.ins().iadd_imm(p, 1)
@@ -1416,7 +1420,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                         zero
                     };
                     mset(&mut f, Mem::Pending, pending);
-                    let (nodes, start, end) = (f.use_var(v.nodes), f.use_var(v.start), f.use_var(v.end));
+                    let (nodes, start, end) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Start), mget(&mut f, Mem::End));
                     let k = f.ins().iconst(types::I64, i64::from(kind));
                     let one = f.ins().iconst(types::I64, 1);
                     put(&mut f, kind_c, nodes, k);
@@ -1428,18 +1432,46 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                         put(&mut f, wc(head_c), nodes, zero);
                         if !deferred && !extra {
                             // The last node made at the innermost open node's level.
-                            let open = f.use_var(v.open);
+                            let open = mget(&mut f, Mem::Open);
                             let n1 = f.ins().iadd_imm(nodes, 1);
                             put(&mut f, wc(flast_c), open, n1);
                             put(&mut f, wc(flbase_c), open, nodes);
                         }
                     }
                     let nodes = f.ins().iadd_imm(nodes, 1);
-                    f.def_var(v.nodes, nodes);
+                    mset(&mut f, Mem::Nodes, nodes);
                     f.ins().jump(fall, &[]);
                 }
+                Op::Remember { kind } => {
+                    let k = f.ins().iconst(types::I64, i64::from(kind));
+                    mset(&mut f, Mem::Word, k);
+                    f.ins().jump(fall, &[]);
+                }
+                Op::Flag { flag, op } => {
+                    let fl = mget(&mut f, Mem::Flags);
+                    let bit = 1i64 << flag;
+                    match op {
+                        FlagOp::Set => {
+                            let fl = f.ins().bor_imm(fl, bit);
+                            mset(&mut f, Mem::Flags, fl);
+                            f.ins().jump(fall, &[]);
+                        }
+                        FlagOp::Clear => {
+                            let fl = f.ins().band_imm(fl, !bit);
+                            mset(&mut f, Mem::Flags, fl);
+                            f.ins().jump(fall, &[]);
+                        }
+                        // The next word where the flag is set; else the one after.
+                        FlagOp::Test => {
+                            let skip = wb.get(pc + 2).copied().unwrap_or(off_end);
+                            let set = f.ins().band_imm(fl, bit);
+                            f.ins().brif(set, fall, &[], skip, &[]);
+                        }
+                    }
+                }
                 Op::Retag { kind, on: On::Moved } => {
-                    let (m, k) = (mget(&mut f, Mem::Moved), f.ins().iconst(types::I64, i64::from(kind)));
+                    let m = mget(&mut f, Mem::Moved);
+                    let k = kind_of(&mut f, kind, pc);
                     put(&mut f, kind_c, m, k);
                     f.ins().jump(fall, &[]);
                 }
@@ -1447,7 +1479,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     // Around the last node made at the innermost open node's level: its record
                     // at the table's end, linked into the moved node's base's chain; open, its
                     // frame's base that base, the moved node the last made at its level.
-                    let open = f.use_var(v.open);
+                    let open = mget(&mut f, Mem::Open);
                     let (last, base) = {
                         let a = slot(&mut f, wc(flast_c), open);
                         let b = slot(&mut f, wc(flbase_c), open);
@@ -1458,7 +1490,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     let bad = f.ins().bor(none, no_last);
                     guard(&mut f, bad, pc);
                     let r = f.ins().iadd_imm(last, -1);
-                    let (nodes, wraps) = (f.use_var(v.nodes), mget(&mut f, Mem::Wraps));
+                    let (nodes, wraps) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Wraps));
                     let (fld, st) = {
                         let a = slot(&mut f, field_c, r);
                         let b = slot(&mut f, start_c, r);
@@ -1485,15 +1517,15 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     put(&mut f, wc(flbase_c), slot1, base);
                     mset(&mut f, Mem::Moved, r);
                     mset(&mut f, Mem::Pending, zero);
-                    f.def_var(v.open, slot1);
-                    f.def_var(v.nodes, n1);
+                    mset(&mut f, Mem::Open, slot1);
+                    mset(&mut f, Mem::Nodes, n1);
                     let wraps = f.ins().iadd_imm(wraps, 1);
                     mset(&mut f, Mem::Wraps, wraps);
                     f.ins().jump(fall, &[]);
                 }
                 Op::NodeField { field, on: On::Inner } => {
                     // The node the node made last, a wrap, holds first: that frame's last base.
-                    let open = f.use_var(v.open);
+                    let open = mget(&mut f, Mem::Open);
                     let (last, base) = {
                         let a = slot(&mut f, wc(flast_c), open);
                         let b = slot(&mut f, wc(flbase_c), open);
@@ -1525,7 +1557,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                 Op::Retag { kind, on: On::Made } | Op::NodeField { field: kind, on: On::Made } => {
                     // The node made last at the innermost open node's level (`relabel`): its
                     // frame's last, one more than its record (0: none).
-                    let open = f.use_var(v.open);
+                    let open = mget(&mut f, Mem::Open);
                     let last = {
                         let a = slot(&mut f, wc(flast_c), open);
                         f.ins().uload32(flags, a, 0)
@@ -1535,7 +1567,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     let bad = f.ins().bor(none, no_last);
                     guard(&mut f, bad, pc);
                     let r = f.ins().iadd_imm(last, -1);
-                    let x = f.ins().iconst(types::I64, i64::from(kind));
+                    let x = if matches!(w.operation, Op::Retag { .. }) { kind_of(&mut f, kind, pc) } else { f.ins().iconst(types::I64, i64::from(kind)) };
                     let col = if matches!(w.operation, Op::Retag { .. }) { kind_c } else { field_c };
                     put(&mut f, col, r, x);
                     f.ins().jump(fall, &[]);
@@ -1547,7 +1579,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     // records and one over a chain, each step a record (`Step::Node`); a kind
                     // each, by a run of compares.
                     let r = native.readings.maps.get(usize::from(reading)).ok_or(Error::UnsupportedBackend)?;
-                    let open = f.use_var(v.open);
+                    let open = mget(&mut f, Mem::Open);
                     let (last, base) = {
                         let a = slot(&mut f, wc(flast_c), open);
                         let b = slot(&mut f, wc(flbase_c), open);
@@ -1558,7 +1590,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     let bad = f.ins().bor(none, no_last);
                     guard(&mut f, bad, pc);
                     let root = f.ins().iadd_imm(last, -1);
-                    let (nodes, pending) = (f.use_var(v.nodes), mget(&mut f, Mem::Pending));
+                    let (nodes, pending) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Pending));
                     let end = f.ins().isub(nodes, pending);
                     let (scan, chain) = (f.create_block(), f.create_block());
                     f.append_block_param(scan, types::I64);
@@ -1651,7 +1683,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                                 f.ins().jump(next, &[]);
                             }
                             m => {
-                                let m = f.ins().iconst(types::I64, i64::from(m));
+                                let m = kind_of(&mut f, m, pc);
                                 put(&mut f, kind_c, n, m);
                                 f.ins().jump(next, &[]);
                             }
@@ -1670,7 +1702,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                 }
                 Op::Retag { kind, on: On::Here } => {
                     // The innermost open node's kind.
-                    let open = f.use_var(v.open);
+                    let open = mget(&mut f, Mem::Open);
                     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
                     guard(&mut f, none, pc);
                     let top = f.ins().iadd_imm(open, -1);
@@ -1685,7 +1717,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                 Op::Merge { kind, fold: true } => {
                     // The innermost open node holds two leaves and nothing else, no extra
                     // pending: the first becomes one leaf through the second's end.
-                    let (nodes, pending, open) = (f.use_var(v.nodes), mget(&mut f, Mem::Pending), f.use_var(v.open));
+                    let (nodes, pending, open) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Pending), mget(&mut f, Mem::Open));
                     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
                     guard(&mut f, none, pc);
                     let top = f.ins().iadd_imm(open, -1);
@@ -1715,7 +1747,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     let k = f.ins().iconst(types::I64, i64::from(kind));
                     put(&mut f, kind_c, a, k);
                     put(&mut f, end_c, a, end);
-                    f.def_var(v.nodes, b);
+                    mset(&mut f, Mem::Nodes, b);
                     if wrapping {
                         // The first is the last node made at this level now.
                         put(&mut f, wc(flast_c), open, b);
@@ -1726,7 +1758,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                 Op::Merge { kind, fold: false } => {
                     // The grammar's leaf before the pending extras: a leaf, inside the innermost
                     // open node. The extras are its text: dropped.
-                    let (nodes, pending, open) = (f.use_var(v.nodes), mget(&mut f, Mem::Pending), f.use_var(v.open));
+                    let (nodes, pending, open) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Pending), mget(&mut f, Mem::Open));
                     let kept = f.ins().isub(nodes, pending);
                     let none = f.ins().icmp_imm(IntCC::Equal, kept, 0);
                     guard(&mut f, none, pc);
@@ -1748,10 +1780,10 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     let bad = f.ins().band(any, inside);
                     guard(&mut f, bad, pc);
                     let k = f.ins().iconst(types::I64, i64::from(kind));
-                    let end = f.use_var(v.end);
+                    let end = mget(&mut f, Mem::End);
                     put(&mut f, kind_c, leaf, k);
                     put(&mut f, end_c, leaf, end);
-                    f.def_var(v.nodes, kept);
+                    mset(&mut f, Mem::Nodes, kept);
                     mset(&mut f, Mem::Pending, zero);
                     f.ins().jump(fall, &[]);
                 }
@@ -1759,7 +1791,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     let last = if on == On::Moved {
                         mget(&mut f, Mem::Moved)
                     } else {
-                        let nodes = f.use_var(v.nodes);
+                        let nodes = mget(&mut f, Mem::Nodes);
                         f.ins().iadd_imm(nodes, -1)
                     };
                     let x = f.ins().iconst(types::I64, i64::from(field));
@@ -1767,7 +1799,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     f.ins().jump(fall, &[]);
                 }
                 Op::NodeSuper { kind } => {
-                    let (nodes, supers) = (f.use_var(v.nodes), mget(&mut f, Mem::Supers));
+                    let (nodes, supers) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Supers));
                     let last = f.ins().iadd_imm(nodes, -1);
                     let k = f.ins().iconst(types::I64, i64::from(kind));
                     put(&mut f, snode_c, supers, last);
@@ -1777,23 +1809,45 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     f.ins().jump(fall, &[]);
                 }
                 Op::Push { target } => {
-                    let ret = f.use_var(v.ret);
+                    let ret = mget(&mut f, Mem::Ret);
                     let t = f.ins().iconst(types::I64, i64::from(target));
-                    put(&mut f, ret_c, ret, t);
+                    // With context (`REMEMBER`, `FLAG`), two slots a call: its return, then the
+                    // caller's word and flags (`context`).
+                    if two_slots {
+                        let at = f.ins().ishl_imm(ret, 1);
+                        put(&mut f, ret_c, at, t);
+                        let (w, fl) = (mget(&mut f, Mem::Word), mget(&mut f, Mem::Flags));
+                        let fl = f.ins().ishl_imm(fl, 16);
+                        let wf = f.ins().bor(w, fl);
+                        let at = f.ins().iadd_imm(at, 1);
+                        put(&mut f, ret_c, at, wf);
+                    } else {
+                        put(&mut f, ret_c, ret, t);
+                    }
                     let ret = f.ins().iadd_imm(ret, 1);
-                    f.def_var(v.ret, ret);
+                    mset(&mut f, Mem::Ret, ret);
                     f.ins().jump(fall, &[]);
                 }
                 Op::Return { again } => {
                     if chains {
                         heads.push((wb[pc], Step::Return));
                     }
-                    let ret = f.use_var(v.ret);
+                    let ret = mget(&mut f, Mem::Ret);
                     let none = f.ins().icmp_imm(IntCC::Equal, ret, 0);
                     guard(&mut f, none, pc);
                     let ret = f.ins().iadd_imm(ret, -1);
-                    f.def_var(v.ret, ret);
-                    let p = {
+                    mset(&mut f, Mem::Ret, ret);
+                    let p = if two_slots {
+                        // The caller's word and flags back, from beside its return.
+                        let at = f.ins().ishl_imm(ret, 1);
+                        let a = slot(&mut f, ret_c, at);
+                        let wf = f.ins().uload32(flags, a, 4);
+                        let w = f.ins().band_imm(wf, 0xffff);
+                        let fl = f.ins().ushr_imm(wf, 16);
+                        mset(&mut f, Mem::Word, w);
+                        mset(&mut f, Mem::Flags, fl);
+                        f.ins().uload32(flags, a, 0)
+                    } else {
                         let a = slot(&mut f, ret_c, ret);
                         f.ins().uload32(flags, a, 0)
                     };
@@ -1807,10 +1861,10 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                 }
                 Op::Accept => {
                     // No bit of the mask is left after the last one taken.
-                    let (w, bits) = (f.use_var(v.lw), f.use_var(v.taken));
+                    let (w, bits) = (mget(&mut f, Mem::Lw), mget(&mut f, Mem::Taken));
                     let (_, scan) = mask_scan(&mut f, Mask { first: lasts_p, stride: lasts_stride, words: nlasts }, w, bits, refuse, pc, false);
                     heads.push((scan, Step::Block));
-                    let (at_end, open, ret) = (f.use_var(v.at_end), f.use_var(v.open), f.use_var(v.ret));
+                    let (at_end, open, ret) = (mget(&mut f, Mem::AtEnd), mget(&mut f, Mem::Open), mget(&mut f, Mem::Ret));
                     let not_end = f.ins().icmp_imm(IntCC::Equal, at_end, 0);
                     let not_one = f.ins().icmp_imm(IntCC::NotEqual, open, 1);
                     let returns = f.ins().icmp_imm(IntCC::NotEqual, ret, 0);
@@ -1819,7 +1873,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     guard(&mut f, bad, pc);
                     let root = f.ins().uload32(flags, open_c, 0);
                     put(&mut f, end_c, root, len);
-                    let nodes = f.use_var(v.nodes);
+                    let nodes = mget(&mut f, Mem::Nodes);
                     let size = f.ins().isub(nodes, root);
                     put(&mut f, size_c, root, size);
                     if !native.readings.provisional.is_empty() {
@@ -1961,7 +2015,14 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
     let own_calls = calls;
     let marks = words.iter().filter_map(|b| if let Op::Mark { order, .. } = b.operation { Some(u64::from(order) + 1) } else { None }).max().unwrap_or(0);
     let wraps = framed(words);
-    Ok(CompiledStream { _module: module, entry, bounds: bounds(native), starts, lasts, marks, wraps, clif, disassembly, heads, own_calls })
+    let two_slots = has_context(words);
+    Ok(CompiledStream { _module: module, entry, bounds: bounds(native), starts, lasts, marks, wraps, context: two_slots, clif, disassembly, heads, own_calls })
+}
+
+/// Whether the program has context beside each call's return (a level's word, its flags): two
+/// return slots a call.
+fn has_context(words: &[crate::native_ir::StructuralBlock]) -> bool {
+    words.iter().any(|b| matches!(b.operation, Op::Remember { .. } | Op::Flag { .. }))
 }
 
 /// Whether the program keeps a frame per open node: it wraps, or it relabels the node made last
@@ -2040,7 +2101,7 @@ impl CompiledStream {
             super_node: vec![0; supers],
             super_kind: vec![0; supers],
             open: vec![0; nodes],
-            returns: vec![0; pushes],
+            returns: vec![0; if self.context { 2 * pushes } else { pushes }],
             counts: [0; 3],
             frames: std::array::from_fn(|_| vec![0; if self.wraps { nodes + 1 } else { 0 }]),
             chains: std::array::from_fn(|_| vec![0; if self.wraps { nodes } else { 0 }]),
@@ -2117,7 +2178,7 @@ impl CompiledStream {
             totals_mask: tier1.totals_mask,
             room_nodes: tape.kind.len() as u64,
             room_supers: tape.super_node.len() as u64,
-            room_pushes: tape.returns.len() as u64,
+            room_pushes: (tape.returns.len() / if self.context { 2 } else { 1 }) as u64,
         };
         // SAFETY: the caller's contract; the function writes only the tape's buffers.
         unsafe { (self.entry)(&ctx) }

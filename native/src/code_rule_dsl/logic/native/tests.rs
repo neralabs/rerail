@@ -94,6 +94,37 @@ fn set_fixpoint_closes_a_linear_rule_over_its_edges() {
     assert_eq!(closure, expected);
 }
 
+/// A later wave can make the first substantial delta after the seed-statistics checkpoint. A bounded run
+/// must return those statistics before its multi-relation consumer runs with an empty-input estimate.
+#[test]
+fn set_fixpoint_yields_before_late_join_demands_outgrow_the_planning_statistics() {
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    for bounded in [true, false] {
+        let db = connection();
+        db.execute_batch("CREATE TABLE initial(c0); INSERT INTO initial VALUES (1),(2),(3);\n\
+            CREATE TABLE later(c0); CREATE TABLE result(c0);\n\
+            CREATE TABLE allowed(c0); INSERT INTO allowed VALUES (1),(3);").unwrap();
+        let join = format!("pos d1 v0\npos t:b:{}:{}:i v0\nhead v0",hex("allowed"),hex("c0"));
+        let spec = format!("name late\nrel initial i\nrel later i empty\nrel result i empty\n\
+            rule 1 0 - - key ; ecols ; pat v0 ; head v0\njoin 2 1 {}",hex(&join));
+        super::setfix::open(&db,&spec).unwrap();
+        let report = super::setfix::run(&db,"late",if bounded {8} else {0}).unwrap();
+        if bounded {
+            assert_eq!(report.split_whitespace().last(),Some("0"),"return for planning, not the fixpoint: {report}");
+            let stats=super::setfix::stats(&db,"late").unwrap();
+            assert_eq!(stats.lines().nth(1).unwrap().split_whitespace().next(),Some("3"));
+            assert_eq!(stats.lines().nth(2).unwrap().split_whitespace().next(),Some("0"),"the consumer must not run before its demand's statistics are available");
+            let report=super::setfix::run(&db,"late",0).unwrap();
+            assert_eq!(report.split_whitespace().last(),Some("1"));
+        } else {
+            assert_eq!(report.split_whitespace().last(),Some("1"),"unbounded callers need no planning checkpoints");
+        }
+        super::setfix::close(&db,"late").unwrap();
+        let got:Vec<i64>=db.prepare("SELECT c0 FROM result ORDER BY c0").unwrap().query_map([],|r|r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+        assert_eq!(got,[1,3],"pausing must preserve the delta and final rows");
+    }
+}
+
 /// A chain that keeps rising (a counter around a cycle) needs `widen`; with it, the cycle's nodes widen to the
 /// lattice's top after k changes. Min is the same with the order reversed.
 #[test]
@@ -445,4 +476,24 @@ fn a_count_many_bindings_reach_reads_its_count_table() {
     assert!(after.1 > before.1, "counts per row were built");
     assert!(after.0 > before.0, "a histogram was built");
     super::setfix::count_tables_at_once(false);
+}
+
+/// `shortlex_min` keeps the shorter symbol, then the lesser by bytes; `TOP` and an atom the run does not hold absorb.
+#[test]
+fn shortlex_min_orders_symbols_by_length_then_bytes() {
+    use super::Lattice;
+    let dir = std::env::temp_dir().join(format!("rerail-shortlex-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let atoms = crate::content_store::atoms::Atoms::fresh(&dir.join("atoms.sqlite"));
+    let s = atoms.intern_all(&["b.c", "zz", "ab", "é"]).unwrap();
+    let (bc, zz, ab, e) = (i64::from(s[0]), i64::from(s[1]), i64::from(s[2]), i64::from(s[3]));
+    let l = super::ShortlexMin(atoms);
+    assert_eq!(l.lub(bc, zz), zz, "shorter first");
+    assert_eq!(l.lub(zz, ab), ab, "then by bytes");
+    assert_eq!(l.lub(ab, zz), ab, "either order");
+    assert_eq!(l.lub(e, ab), e, "length in characters: é is one");
+    assert_eq!(l.lub(ab, TOP), TOP);
+    assert_eq!(l.lub(ab, i64::from(u32::MAX)), TOP, "an atom not held");
+    assert!(l.finite());
+    std::fs::remove_dir_all(&dir).unwrap();
 }

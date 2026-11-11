@@ -66,7 +66,22 @@ fn groups(re: &str) -> BTreeSet<String> {
 fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>, BTreeSet<String>, bool) {
     let none = BTreeSet::new;
     match l {
-        Lit::Group { neg: true, .. } | Lit::Pattern { neg: true, .. } => {
+        // A negated conjunction's own positive literals bind its local variables (`!(callee(m, c), fname(f, c))`
+        // needs only `c`), as a group's branches do; it binds nothing outside.
+        Lit::Group { alts, neg: true } => {
+            let mut needs = BTreeSet::new();
+            for branch in alts {
+                let mut inner = bound.clone();
+                for lit in branch {
+                    let (b, n, _) = literal(lit, &inner, true);
+                    inner.extend(b);
+                    needs.extend(n.difference(&inner).cloned().collect::<Vec<_>>());
+                }
+            }
+            let ready = force || needs.is_subset(bound);
+            (none(), needs, ready)
+        }
+        Lit::Pattern { neg: true, .. } => {
             let vs = lit_vars(l);
             let ready = force || vs.is_subset(bound);
             (none(), vs, ready)
@@ -101,11 +116,17 @@ fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>,
             (none(), vs, ready)
         }
         Lit::Atom { rel, args, neg: false } if matches!(rel.as_str(), "match" | "match_all") => {
-            let g = match args.first() {
+            let mut g = match args.first() {
                 Some(Term::Str(re)) => groups(re),
                 _ => none(),
             };
-            let subject: BTreeSet<String> = args.iter().skip(1).flat_map(vars_of).collect();
+            // `match_all(re, s, i, a, b)` binds each match's ordinal and offsets too: only the subject is read.
+            let subject: BTreeSet<String> = if rel == "match_all" {
+                g.extend(args.iter().skip(2).flat_map(vars_of));
+                args.iter().skip(1).take(1).flat_map(vars_of).collect()
+            } else {
+                args.iter().skip(1).flat_map(vars_of).collect()
+            };
             let ready = force || subject.is_subset(bound);
             (g, subject, ready)
         }
@@ -185,7 +206,9 @@ fn inner_needs(lits: &[Lit], bound: &BTreeSet<String>) -> BTreeSet<String> {
 /// outside (fix relations and edits).
 pub(super) fn unbound(heads: &[Head], body: &[Lit], edits: &[Term], given: &BTreeSet<String>) -> Vec<String> {
     let head_vars: BTreeSet<String> = heads.iter().flat_map(|h| h.args.iter().flat_map(vars_of)).collect();
-    let mut bound = BTreeSet::new();
+    // `top` no literal binds is the lattice's top, not a variable (`lower`'s `top_is_var`): bound from the start, so
+    // `a = top` binds `a`.
+    let mut bound = BTreeSet::from(["top".to_owned()]);
     if heads.first().is_some_and(|h| given.contains(&h.rel)) {
         bound.extend(head_vars.iter().cloned());
     }

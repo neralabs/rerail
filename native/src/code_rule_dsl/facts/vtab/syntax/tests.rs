@@ -502,32 +502,50 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     };
     // Nested kinds: the root's, and two from inside the documents.
     let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
-    let member = |r: usize| set.contains(&kind(r));
+    // Each row's place and membership read once: the brute force below is quadratic in the rows.
+    let place: Vec<(u32, usize, usize)> = (0..nodes).map(at).collect();
+    let member: Vec<bool> = (0..nodes).map(|r| set.contains(&kind(r))).collect();
     let below = |n: usize, a: usize| {
-        let ((dn, ln, _), (da, la, za)) = (at(n), at(a));
+        let ((dn, ln, _), (da, la, za)) = (place[n], place[a]);
         dn == da && la < ln && ln <= la + za
+    };
+    // Each axis's pairs by brute force, once: a node's nearest member ancestor is its deepest (the latest in
+    // preorder of the ancestors).
+    let expected_of = |axis: within::Axis| -> BTreeSet<(i64, i64)> {
+        let mut expected = BTreeSet::new();
+        for n in 0..nodes {
+            let mut nearest: Option<usize> = None;
+            for a in 0..nodes {
+                if !below(n, a) {
+                    continue;
+                }
+                match axis {
+                    within::Axis::Inside if member[a] => {
+                        expected.insert((id(n), id(a)));
+                    }
+                    within::Axis::Has if member[n] => {
+                        expected.insert((id(n), id(a)));
+                    }
+                    within::Axis::Nearest if member[a] && nearest.is_none_or(|b| place[b].1 < place[a].1) => nearest = Some(a),
+                    _ => {}
+                }
+            }
+            if let Some(a) = nearest {
+                expected.insert((id(n), id(a)));
+            }
+        }
+        expected
     };
     use crate::code_rule_dsl::typing::file_local::Binding;
     // Each axis made per looked-up node, and with the batch's solve chosen (decision 0105) on the CPU and on Metal.
     let ways = [(Binding::Cpu, false), (Binding::Cpu, true), (Binding::Metal, true)];
-    for (axis, (binding, solve)) in [within::Axis::Nearest, within::Axis::Inside, within::Axis::Has].into_iter().flat_map(|a| ways.map(|w| (a, w))) {
+    let axes = [within::Axis::Nearest, within::Axis::Inside, within::Axis::Has];
+    let expected_by: Vec<BTreeSet<(i64, i64)>> = axes.iter().map(|&a| expected_of(a)).collect();
+    for ((axis, expected), (binding, solve)) in axes.into_iter().zip(&expected_by).flat_map(|a| ways.map(|w| (a, w))) {
+        let expected = expected.clone();
         let source = within::Within::axis(Arc::clone(&batch), axis, &set, binding);
         if solve {
             source.expect_lookups(0, 1e12);
-        }
-        let mut expected = BTreeSet::new();
-        for n in 0..nodes {
-            for a in 0..nodes {
-                let holds = below(n, a)
-                    && match axis {
-                        within::Axis::Inside => member(a),
-                        within::Axis::Has => member(n),
-                        within::Axis::Nearest => member(a) && !(0..nodes).any(|c| c != a && member(c) && below(n, c) && below(c, a)),
-                    };
-                if holds {
-                    expected.insert((id(n), id(a)));
-                }
-            }
         }
         assert!(!expected.is_empty());
         let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (source.value(r, 0), source.value(r, 1))).collect() };
@@ -916,4 +934,24 @@ fn cpu_now() -> f64 {
     let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
     t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+}
+
+/// A rule reading the text of a node whose kind no body fixes gets a twin reading `@rr_node_text` (decision 0109);
+/// a fixed kind, a field of leaves only, a short constant, and the twin itself need none. With the twin, no rule
+/// asks for every node's text at any length.
+#[test]
+fn long_text_twins_where_no_body_fixes_the_kind() {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
+    for (body, twins) in [
+        ("out(t) :- node(_, n, _, _, _), text(n, t).", 1),
+        ("out(t) :- node(_, n, _, _, _), text(n, t), field(n, \"object\", o), text(o, t).", 3),
+        ("out(t) :- kind(n, \"call\"), text(n, t).", 0),
+        ("out(t) :- field(_, \"attribute\", n), text(n, t).", 0),
+        ("out(\"doc\") :- node(_, n, _, _, _), text(n, \"doc\").", 0),
+    ] {
+        let mut program = crate::code_rule_dsl::logic::rr::parse(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
+        assert_eq!(long_text_twins(&mut program, &[]), twins, "{body}");
+        assert!(text_kind_demand(&program, &[]).1.is_empty(), "{body}: every text is read");
+        assert_eq!(long_text_twins(&mut program, &[]), 0, "{body}: twinned once");
+    }
 }

@@ -3147,6 +3147,7 @@ dependencies = [
  "metal",
  "objc",
  "rayon",
+ "rerail-forest",
  "sha2 0.10.9",
 ]
 
@@ -3235,6 +3236,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-forest"
+version = "0.1.0"
+dependencies = [
+ "block",
+ "cc",
+ "libc",
+ "metal",
+ "objc",
+ "rayon",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "rerail-metal"
 version = "0.1.0"
 dependencies = [
@@ -3272,10 +3286,12 @@ name = "rerail-rr-parser"
 version = "0.1.0"
 dependencies = [
  "bitlex",
+ "cranelift-codegen",
  "libc",
  "rerail-compiler",
  "rerail-metal",
  "rerail-rr-syntax",
+ "sha2 0.10.9",
 ]
 
 [[package]]

@@ -1057,3 +1057,527 @@ Results, reproduction commands, and limits are recorded in
 `docs/comparisons/native-cold-budget-2026-11-10.md`.
 Artifacts include the before/after profiles, workload runs, validation logs, and source/binary digests
 under `native-budget-1e1ec60a3` in the comparison artifact directory.
+
+
+## 2026-11-10 — Merge the expanded integration hub
+
+The local integration tip `c59e669ec` includes newer committed work than the remote tip `1add64b22`.
+Merged the local tip, including executor matchers, typing phases, maintained cross-process facts,
+sort reuse, planner axis choices, and index experiments.
+
+Resolved conflicts by preserving both the request-cone tests and the new cross-process maintenance test.
+Kept the native demand tests in their separate module, including the lifetime regression.
+The new cross-process fact space uses the existing namespace helper with `cross-maintained`.
+Its hash bytes match integration's helper exactly. Test documents include the new optional tape field.
+The resident demand fix and complete lifetime analysis remain in place.
+
+The next proposed performance task is the maintained join order recorded in decision 0101.
+At O125 step 07, four `ifn__ins` rules take 526 `fv__ins` rows into `pv` through a broad key.
+The `pv` relation has 201,000 rows. A later `icall` filter rejects everything.
+This costs 0.53 million work units, about 8% of that step.
+
+Compare the current order with an early `icall` join and a semijoin over demanded keys.
+Record intermediate rows, probes, CPU, and the complete step result for each shape.
+Use the winning shape to identify the missing planner statistic or restriction.
+Avoid a rule-name-specific order override. Keep rule outputs and maintenance parity as the acceptance checks.
+This evidence comes from integration's typing/edit workload, not the four-rule async timing.
+The async cold profile still places most CPU in parsing and input preparation.
+Further reductions in its SQL instruction count alone do not establish an end-to-end speedup.
+
+A separate follow-up is prepared-program identity across processes (t32 stage 4).
+Integration records phase recomputation in the second process because fresh preparation and restored preparation have different relation identities.
+Check that equivalent prepared programs produce identical identities and reuse the same facts.
+This is distinct from join ordering and from the cost of genuinely parsing cold inputs.
+
+
+### Merge regression: loading answers missing from maintenance inputs
+
+The merged cone-retention test fails after adding `import b`: reused output omits `b.pyi`, while a fresh run includes it.
+The same test passes with cross-process part retention disabled, isolating the interaction.
+Loading answers were bound for execution but absent from `cross_inputs` and its input digests.
+The new retained part therefore had no recorded dependency on those changing rows.
+The fix registers each loading answer as an ordinary cross-file input, replacing an earlier binding if present.
+The existing cone test supplies the failing regression; the new cross-process maintenance test already passes.
+
+
+### Next priority after reviewing the incoming storage path
+
+The new `kept_strata::load` loops over inputs and derived frames, calling `frame_rows` for each.
+That function calls `admit_frames` with one key. A durable miss from the pending writer cache executes a schema check and a payload query.
+The existing `Kept::admit` already admits a set and checks that payload metadata matches the earlier metadata snapshot.
+The new cross-process path does not use that contract.
+
+Integrating that path with bulk fact admission is the first follow-up for this branch.
+Admit the input frames together, determine which derived frames are valid, then admit that demanded set together.
+Check metadata consistency before accepting rows. Consumers then read admitted facts in memory.
+Measure the store connection too: the core-query budget excludes these storage executions.
+After this integration, address the maintained join amplification and prepared-program identity issues described above.
+
+
+### Merge qualification
+
+The fixed merged build passes the cone-retention regression and the new cross-process maintenance test.
+Five native demand tests, two retained-frame tests, and three matcher-lowering tests pass.
+The positive fixture produces all 120 expected findings.
+All thirteen session/cache checks pass in native mode, and all thirteen pass in composed mode.
+
+The 5,725-file native job passes all five conditions against the unchanged 100-execution ceiling.
+Core SQL counts are 19 cold, 31 warm, 31 warm with profiling, 21 after an edit, and 31 after warming the edit.
+Cold local execution still uses zero SQL statements; statistics setup uses seven and cross-file execution uses twelve.
+Whole-process cold CPU is 11.233 s and wall time is 5.405 s in this run.
+The machine load differs from earlier runs, so this is not a controlled timing comparison.
+These counts exclude storage SQL, including the incoming per-frame reads identified above.
+
+Build logs and regression artifacts are under `merge-c59e669ec` in the comparison artifact directory.
+Final test and workload results are in its `fixed` directory.
+
+
+## Integration merge: 010a04276 (2026-11-10)
+
+Merged the local integration hub tip, `010a04276`, into `jeremy/async-family-integration-comparison`.
+The published hub tip was still `1add64b22` when fetched.
+The merge commit is `0d60a443e`.
+The conflicts moved duplicate test blocks. Each test remains present once.
+The loading-answer invalidation fix remains in the cross-file input path.
+Unfinished admission and identity regression tests remain separate from this merge.
+
+The incoming work moves tape and memo reads before execution waves and sends their writes to the background writer.
+It also removes native execution tables that SQL never reads and adds filesystem journal support.
+These changes preserve the direction: ordinary facts in memory, bulk storage admission, and shared maintenance.
+They do not remove the per-relation `frame_rows` calls in `kept_strata::load`.
+
+The first merged test build found four compatibility errors.
+There were duplicate `InRel::types` methods and duplicate `Document::tape` fields.
+A planner test lacked the new `Model::input_set` field.
+The pending-tape read returned the old two-field result instead of the new three-field result.
+The fixes retain one accessor and field, initialize the planner field, and return the requested tape from pending storage.
+
+### Next work, in order
+
+1. Apply bulk admission to the default K4 path, `Retained::from_frames/load`, and the older `kept_strata::load` path.
+   K4 now restores input digests, demanded derived relations, and changed inputs partitioned into granules.
+   Its loops still call `frame_rows` for each relation or granule.
+   Admit the required frame keys together, then check payload metadata against the admission snapshot before accepting rows.
+   Use one admission contract for both paths and remove the older path after parity checks.
+   Count actual store SQL separately from core execution SQL.
+   The unfinished older-path regression uses 257 inputs and 257 derived frames, including one stale frame.
+   It must expand to cover the new default path and mixed frame partitions.
+2. Reproduce the O125 step-07 join amplification on this merged revision.
+   The recorded profile shows 526 delta rows probing a 201,000-row relation before `icall` rejects every result.
+   Compare early `icall` filtering with a demanded-key semijoin, using rows, probes, CPU, and output parity.
+   Fix the planner from those measurements, without a rule-name override.
+3. Compare fresh and restored program identities in separate processes.
+   The integration journal reports one extra phase recomputation in the second process.
+   Existing serialization tests pass, so they do not establish the cause or close this issue.
+   Check both relation identities and actual phase reuse across three processes.
+
+These tasks remain open. Historical timings and statement counts are not measurements of this merged revision.
+Build and test artifacts are under `async-family-comparison/merge-010a04276`.
+
+
+### Merge qualification found an indexed-probe regression
+
+The merged build passed all 13 native session checks and the 15 focused merge checks.
+The 5,725-file workload passed cold, warm, profiled warm, edit, and warmed-edit conditions.
+Core SQL counts were 8, 20, 20, 10, and 20 respectively, below the unchanged ceiling of 100.
+These counts exclude storage SQL.
+
+Five composed session checks aborted in `Stored::lookup_all`.
+An omitted column has no value array, but `Source::value` defines its value as zero.
+The composite lookup indexed that empty array instead of applying the same semantics.
+The fix removes satisfied zero predicates on omitted columns and rejects nonzero predicates before indexing.
+Single-column lookups use the same semantics. Omitted columns advertise no borrowed sorted index.
+The focused regression compares indexed results with a scan for empty, one-row, and multi-row sources.
+The failed composed runs remain in the artifact directory as the baseline for this fix.
+
+
+### The merged warm profile makes the next target concrete
+
+The profiled 5,725-file warm run records 79 SQL executions inside execution waves.
+Of these, 66 read the store and 13 perform other connection operations.
+This is a different scope from the 20 core executions reported by the job budget.
+
+K4 restoration accounts for 44 store executions:
+
+- One metadata batch and seven schema checks, plus six individual input-digest payload reads: 14 executions.
+- Fifteen individual derived-payload reads and fifteen schema checks: 30 executions.
+
+Those fifteen derived relations contain only 22 rows.
+For this workload, three bulk reads with one schema check each give a concrete target of at most six executions.
+Larger admissions must scale by bounded key batches, not by relations or granules.
+The remaining hazards include memo replay and planning-choice lookups.
+The profile reports 0.0 ms for these short statements, so these counts do not establish a CPU saving.
+The evidence is `full-native/warm-profile/profile/profile.txt` in the merge artifact directory.
+
+
+### Final qualification
+
+The fixed binary passes all 13 native and all 13 composed session/cache checks.
+The five composed checks that aborted now pass, as does the focused omitted-column regression.
+The positive fixture still produces all 120 findings.
+The final 5,725-file run passes all five conditions, with core counts of 8, 20, 20, 10, and 20.
+Its warm profile repeats the 79 wave executions and the 44 K4 storage executions.
+SQLite attributes 1.0 ms to the 79 executions in this final run.
+These measurements establish the excessive query count, not a large recoverable CPU cost on this fixture.
+
+The probe-fix build required a retry after an out-of-space failure.
+Only obsolete object files in this task's build cache were removed, freeing 37.8 GiB.
+The source, test logs, and benchmark results remain intact.
+Final artifacts use `final-tests`, `final-native-sessions`, `final-composed-sessions`, and `final-full-native` under the merge artifact directory.
+
+
+## Integration merge: 1419d4263 (2026-11-10)
+
+Merged the committed local integration tip, `1419d4263`, into `jeremy/async-family-integration-comparison`.
+The fetched remote tip was `7110969e6`; the local tip includes it.
+The merge commit is `bd695d685`. The merge had no conflicts.
+The unfinished bulk-admission changes and regression tests remain separate from the merge.
+Their backup is stash commit `330dac216ba3b6f78e096abe64c39f4f9b03b196`.
+
+### Incoming fixes change the remaining work
+
+- `033fed100` fixes the `docof.n` statistics failure that stopped our O125 and identity runs.
+  Matcher lowering now declares `docof` as an input only when no rule derives it.
+- `302b0852a` preserves empty fact relations in stored programs through `fact_rel`.
+  The previous encoding lost these relations and changed the restored program's memo key.
+- Frame collection now counts one outer run per space, instead of one run per program.
+  The previous count could collect the types phase's frames before the cold job ended.
+- `0dbeb76d7` reads native row counts and input projections directly from their sources.
+  Its recorded O125 step-03 count falls from 507 SQL statements to 15.
+  This figure is integration evidence, not a new measurement from this merge.
+
+The identity investigation now needs independent process-level checks of these fixes.
+It does not need another serialization design without evidence of a remaining failure.
+The merged default retention path still calls `frame_rows` separately for relations and input granules.
+
+### Next work
+
+1. Finish bulk admission in `Retained::from_frames/load` and the older `kept_strata::load` path.
+   Admit input digests together, then admit demanded derived rows and changed-input granules through bounded key batches.
+   Check metadata and input digests before accepting rows. Reject replaced payloads and recompute the affected work.
+   The pre-merge regression records 1,312 storage executions for the default-path fixture; its ceiling is 16.
+   Both replacement regressions fail on that baseline.
+   These are storage executions, separate from the core execution ceiling.
+2. Reproduce O125 step 07 on this revision, then compare early `icall` filtering with a demanded-key semijoin.
+   Keep the complete result comparison against a fresh run.
+   Measure intermediate rows, probes, and CPU before changing the planner.
+   The historical 0.53-million-work join remains a hypothesis for this revision until reproduced.
+3. Run three separate processes against one store and compare prepared identities, findings, and phase reuse.
+   Check both the empty-fact fix and the corrected frame-collection lifetime.
+   Make another production change only if these checks find a remaining failure.
+
+Bulk admission closes a concrete execution-shape and consistency defect.
+The previous 5,725-file warm profile attributes only 1.0 ms to all 79 wave SQL executions.
+That fixture does not support a large CPU-saving claim for storage batching.
+The O125 join investigation is the next direct CPU target.
+
+Integration also records a failed demand rewrite: `found` pulled six relations into a larger recursive component.
+Join work increased by 13.5%, while the eager relation itself cost only 279 work units.
+Demand restrictions need a measured expensive producer and an analysis of recursive dependencies.
+Fewer rows or statements at one boundary do not prove less total work.
+
+Build and qualification artifacts are under `async-family-comparison/merge-1419d4263`.
+
+
+### Merge build fixes
+
+The first build failed at two write-back callers after integration changed queued jobs from `FnOnce` to `FnMut`.
+A tape write consumed its optional source recorder. A file-stat write consumed its list of files.
+Both callers now borrow their captured data. The file-stat job constructs owned rows for each attempt.
+These changes preserve the data that a retry needs.
+The original failed build remains in `build.log`; the retry uses `fixed-build.log`.
+
+The engine build passes after those fixes.
+The storage test build found one old publication-test call without the new run token.
+The test now supplies a token. Production publication code already uses the new signature.
+This test-only correction does not change the engine binary under qualification.
+
+
+### Qualification results
+
+All nine frame-storage tests pass, including collection across multiple programs in one run.
+The publication fixture uses 18 statements and 74,776 VM instructions, within its unchanged ceilings.
+Five focused engine checks pass: empty facts, stored preparation, loading-cone retention, cross-process retained facts, and the positive async fixture.
+The positive fixture checks all 120 expected findings.
+
+The 5,725-file job passes cold and warm, with matching findings.
+Core SQL counts remain 8 cold and 20 warm, both below the unchanged ceiling of 100.
+These counts exclude storage SQL. The corpus has no findings; the positive fixture supplies the nonempty correctness check.
+These runs qualify the merge. They do not establish a CPU improvement or complete the three outstanding tasks.
+The three-process identity regression and O125 comparison remain pending.
+
+
+## Bulk admission and join-shape investigation after e78060842
+
+The admission baseline fails four regressions: the old loader's statement limit, K4's statement limit, and two replacement checks.
+K4 uses 1,312 storage executions for 131 input headers, 393 granules, and 130 eligible derived frames.
+The gate permits 16 executions. These counts include the real store connection, outside the core SQL ceiling.
+The baseline also accepts a replaced derived frame and a replaced input granule under older metadata.
+The artifact directory `three-fixes-a945682f5` holds these failing runs.
+
+The implementation admits input headers together, selects eligible derived frames, then admits the demanded payloads together.
+The storage API accepts mixed `(relation, identity, partition)` keys in batches of 128.
+Its SQL places demand rows outside full-key index probes, preserving the existing bounded-work shape.
+Both loaders use the same metadata comparison helper.
+K4 also checks restored granule rows against the admitted document digests, because granule headers have no content digest.
+A failed admission clears retained metadata and makes the caller compute a fresh cut before execution.
+Fresh publication must not skip a replacement because obsolete metadata remains in memory.
+
+### O125 reproduction and isolated shapes
+
+The merged code passes O125 step 07 against a fresh run; the old `docof.n` failure is gone.
+This reconstructed replay changes nine files at step 07. It does not reproduce the historical row counts exactly.
+The session still contains the same expensive shape: `fv__ins`, then `pv`, then `icall`, which rejects every result.
+The source rule produces 61,406 intermediate rows; its annotation copies produce 122,812.
+Cold execution also shows substantial amplification. Current profiles, replay provenance, and captures remain under `three-fixes-e78060842`.
+
+The cold capture provides 1,027 `fv` rows, 34,017 `pv` rows, and 450 `icall` rows.
+Its function filter selects 833 `fv` rows. All three isolated joins produce the same empty result.
+On the native engine:
+
+| Order | Intermediate rows after the second step | CPU |
+|---|---:|---:|
+| `fv`, `pv`, `icall` | 479,093 | 12.5 ms |
+| `fv`, `icall`, `pv` | 0 | 0.3 ms |
+| `icall`, `pv`, `fv` | 0 | 0.1 ms |
+
+The independent SQL comparison gives 4,318,500 VM instructions for the first order and 5,800 for the second.
+Starting from `icall`, or materializing demanded keys before their consumer, takes about 2,700 VM instructions.
+These are isolated measurements, not whole-job speedups. SQL timings use five iterations; native timings are single observations.
+The native capture uses opaque integer columns and constants, so it needs no symbol decoding.
+Its original atom vocabulary has non-dense IDs that the general replay helper rejects; the isolated capture documents this limitation.
+
+The planner's containment estimate currently applies only to relations inside the recursive component.
+It excludes an external restrictive relation such as `icall`, even when distinct-value counts are available.
+The next experiment extends this estimate to measured external relations, then checks the actual O125 work and output parity.
+
+
+### Bulk admission results
+
+Both loader fixtures now use 13 storage executions, within their ceiling of 16.
+All seven loader checks pass, including the replaced/deleted snapshot checks.
+All ten storage checks pass. The mixed-partition fixture reads 265 demands in four executions and 7,235 VM instructions.
+Loading-cone parity and the older cross-process maintenance check pass.
+
+On 5,725 files, cold, warm, and profiled warm retain the core counts of 8, 20, and 20.
+The warm profile reduces K4 storage executions from 44 to six.
+All SQL executions inside waves fall from 79 to 41. SQLite still attributes 1.0 ms to them.
+This proves the execution-shape reduction, without a large CPU-saving claim.
+
+The K4 import-cycle check preserves findings after every edit but fails its assertion that a recursive stratum uses maintenance.
+The unchanged `merge-1419d4263/merged-tests` binary fails the same assertion with the same counts.
+This is an existing retention limitation, not a new batching regression; both logs remain in the artifact directory.
+
+The first three-process identity fixture restores every requested program with the same identity and findings.
+Its fresh process prepares nine programs, while later processes need only three; comparing entire cache populations would be an invalid gate.
+That fixture uses `calls.rr` and has no phase runs. The replacement fixture uses `calls_p3.rr` and requires both `struct` and `types`.
+The phase-level requirement remains open until that stronger fixture passes.
+
+### Integration status and the next planner step
+
+At the first check, the integration tip was `1419d4263`. Fetching found no newer remote tip.
+Merge `bd695d685`, compatibility fixes `e78060842`, and bulk admission `4b4388d9f` are published on `jeremy/async-family-integration-comparison`.
+
+The external-containment experiment passes both focused planner tests and O125 step 07 output parity.
+It does not pass the broader work comparison:
+
+| Run | Baseline recorded work | Candidate recorded work |
+|---|---:|---:|
+| Cold at step 06 | 12,274,368 | 12,753,254 |
+| Step 07 maintenance | 9,634,285 | 9,344,946 |
+| Step 07 fresh | 12,352,934 | 12,832,937 |
+
+The maintenance `ifn` plans decrease from 439,749 to 245,619 recorded work units.
+Their attributed CPU decreases from 12.3 ms to 6.5 ms in these single observations.
+Whole maintenance CPU decreases from 4.4 s to 3.7 s, but this is not a repeated timing result.
+The cold work regression prevents accepting this global estimate change.
+Production retains its previous planner. The experiment patch and immutable binary remain under `three-fixes-e78060842`.
+
+The next planner change must explain which joins regress before extending containment estimates to all external relations.
+Use the captured relations to compare restrictive probes and demanded-key joins, then require both incremental and cold work gates.
+The reusable `scripts/profiling/o125/join_shapes.py` records SQL, query plans, CPU, and VM instructions for four shapes.
+It also adds one matching call and one rejected call, so empty captured results cannot conceal a broken rewrite.
+Its seven-iteration run confirms 4,318,500 versus 5,800 versus 2,700 VM instructions for expansion-first, restriction-first, and call-first shapes.
+The demanded-key shape also uses approximately 2,700 VM instructions.
+
+The stronger cross-process fixture failed before execution: `calls_p3.rr` is a typing program, not a library include.
+The next run must load it through `tools::program_text`, as the existing oracle tests do.
+No phase-retention or identity conclusion follows from that failed fixture setup.
+The test source remains in the artifact directory; it is not installed as a failing repository test.
+
+Native profile counters have limits: the alternate whole plan omits per-step counters, and replanning can combine earlier counts under the final order.
+Use isolated fixed-order probes to establish amplification, and treat aggregate replay work as diagnostic evidence with these limits.
+During the build, removal of obsolete object files freed 7.85 GiB from this task's cache. Active objects and artifact binaries were retained.
+
+### Integration advanced during the review
+
+The local integration branch then advanced to `6a3d27178`, including the phase-space fix in `61b35a068`.
+Merge `6ad135dd5` includes both commits.
+The merge keeps retryable write inputs borrowed and preserves the publication test's explicit run token.
+Our bounded frame admission remains intact.
+
+The phase-space fix separates `cross/<phase>` from the analysis's `cross` space.
+Previously, phase 1 and the analysis could overwrite each other's `doc` frame with different rows.
+This is a concrete retention cause, distinct from a change in compiled identities.
+The updated cross-process fixture loads the P3 program through the existing program loader.
+The merge build and retention checks are pending at this entry.
+
+The rejected planner experiment's largest cold regression is `retval`: recorded work rises from 12,070 to 494,532.
+The original plan selects return statements first and reaches 1,985 results without a large intermediate.
+The candidate selects 2,181 function definitions, expands to 160,836 enclosed nodes, then filters for return statements.
+The containment estimate reads the binding column's unconditioned distinct count, despite its kind filter.
+That estimate discounts probes whose filtered values can all hit the target relation.
+The next experiment must bound distinct counts by the filtered binding population before extending containment pricing.
+Both `retval` and `ifn` must pass, along with cold and incremental replay work and output parity.
+
+### Checks after the phase-space merge
+
+The merged engine builds. All ten admission and retention checks pass, including the previously failing import-cycle maintenance check.
+The growing-index check also passes.
+
+Three independent P3 processes produce identical findings and identical restored programs, splits, and relation identities.
+The later processes restore all three requested preparations from the store.
+Nevertheless, the phase-work gate fails: unchanged `struct` runs 19 of 36 strata, and `types` runs 34 of 110.
+The repeated third process has the same counts.
+
+`Retained::holds` excludes every framed output because frames contain raw facts, not decoded output text.
+This makes output-producing strata run again even when their inputs and stored results are unchanged.
+The candidate admits clean output facts with the other demanded frames, then uses the existing native decoder at the output boundary.
+It preserves the existing `finding` decoding path and applies the same snapshot checks to output admission.
+The new 130-output check requires bounded storage executions; the P3 gate still requires zero unchanged phase strata.
+
+The planner candidate bounds each binding's distinct count by measured rows surviving its constant filters.
+It uses existing kind and value frequencies, and computes these bounds once per plan search.
+It issues no additional SQL and does not recount input rows.
+The regression cases require early restriction of the name demand and prevent expansion from function definitions before selecting return statements.
+Both candidates are under validation; this entry does not claim that either gate passes.
+
+Artifact directory: `three-fixes-e78060842/merge-6a3d` for merge checks and `filtered-domain-output` for the candidates.
+The merge's O125 replay preserves output parity: 3.7 s cold CPU, 4.1 s maintenance CPU, and 3.6 s fresh CPU.
+These single observations are the comparison baseline, not a speedup claim.
+
+### The first candidates did not clear the gates
+
+The filtered-domain candidate preserves O125 parity and avoids the earlier return-value regression.
+Recorded cold work falls from 12,274,367 to 12,166,604. Maintenance work falls from 9,633,667 to 9,168,311.
+However, the targeted insertion probes still perform 184,851 work units; the limit is 2,000.
+This candidate does not resolve the amplified join.
+
+The live plan cache tracks relation sizes but omits distinct counts and fanouts.
+It can retain a bad order when the value distribution changes without a row-count change.
+Maintenance probes also miss the first live-statistics replan because that pass updates only whole plans.
+The next candidate includes distributions in the cache signature and replans nonempty delta probes after the seed wave.
+A regression test changes the value distribution at fixed cardinality and requires the cached order to change.
+
+Raw output reuse reduces restored structural work from 19 strata to 2, and typing work from 34 to 18.
+The zero-recomputation gate still fails. Three real processes retain identical programs, identities, and positive outputs.
+The remaining missing frames consume literal-only facts such as `env` and `gproto`.
+Publication requires runtime digests for these leaves, although their contents already belong to the compiled relation identity.
+The next candidate excludes only immutable literal leaves from runtime dependency checks.
+Inputs, native relations, produced facts, and derived relations still require runtime digests.
+A focused test requires reuse with the same literal, invalidation after a literal change, and refusal without an input digest.
+Both fixes await the pending build and the unchanged workload gates.
+
+### Restored phase work now clears the gate
+
+The three-process preparation test passes with the output and literal fixes.
+Both restored processes keep identical prepared programs, relation identities, and nonempty call results.
+Unchanged `struct` and `types` phases now execute zero strata.
+Previously they executed 19 and 34 strata after the integration merge, then 2 and 18 with output reuse alone.
+All 12 focused frame-admission and maintenance checks pass, including literal invalidation and replacement-payload rejection.
+All three planner regression tests also pass. The real O125 replay remains pending at this entry.
+
+The reusable work gate is `scripts/profiling/o125/gate.py BASELINE_PROFILE CANDIDATE_PROFILE`.
+It rejects the earlier filtered-domain candidate because the targeted insertion work remains above 2,000.
+It also requires both insertion plans, cold and incremental work without regression, and the return-value work counters.
+The replay itself checks output parity. Native step-count omissions remain a limitation; CPU is reported separately.
+
+### Live statistics alone still arrive too late
+
+The live-statistics candidate preserves O125 parity. Targeted insertion work falls from 184,851 to 45,930, so the gate still fails.
+Recorded cold work is 12,033,492; maintenance work is 8,854,687; fresh step-07 work is 12,129,853.
+Return-value work does not regress. Single-run CPU is 4.1 s cold, 4.9 s maintenance, and 3.9 s fresh.
+These CPU measurements do not establish a speedup over the earlier 3.7/4.1/3.6 s baseline.
+
+The wave trace identifies the remaining timing error. Within a four-wave chunk, the source insertion probe consumes deltas of 1, 86, and 29 rows.
+It expands those rows to 15,099 rows before the planner sees the new statistics.
+The annotation copies perform the same work. Later waves use the restrictive order and reject the names before expansion.
+The final profile order therefore describes only part of the accumulated step counts.
+
+The next candidate makes bounded native runs return when a multi-relation delta-only probe's demand grows beyond the planner's drift threshold.
+It reads row and distinct counts already held in indexes. It does not scan inputs or issue SQL for each wave.
+Unbounded callers retain run-to-fixpoint behavior. Whole-plan probes retain their existing scheduling.
+A new native test requires a checkpoint before a late demand reaches its consumer, then verifies resumed and uninterrupted output parity.
+The wave budget is capped because these early returns can create more checkpoints than exponential wave scheduling previously allowed.
+
+The first diagnostic trace stopped when the shared disk filled. The filtered retry completed with parity.
+Only this task's obsolete incremental cache and completed build objects were removed; binaries and measurements remain intact.
+Artifacts are under `live-stats-literal`; the checkpoint build and its gates are pending under `delta-checkpoint`.
+
+### Counts do not describe which keys can match
+
+The checkpoint-only candidate still fails: targeted insertion work is 67,092. O125 output parity holds.
+The estimates now see 87 delta rows, but still price the restrictive input at about 142 rows per binding.
+A small distinct count does not mean that the delta's names occur in the restrictive input.
+Single-run CPU is 3.4 s cold, 3.8 s maintenance, and 3.0 s fresh; a nearby baseline is still needed.
+The native checkpoint test initially used invalid spec syntax (`d:1` instead of `d1`), and failed before execution.
+The fixture is corrected. This setup failure is not evidence for or against checkpoint behavior.
+
+The next candidate uses complete small value sets already held in statistics.
+When the forced first atom and a later positive join have disjoint keys, the join is priced as rejecting the demand.
+This is an estimate only; it does not remove a rule or change evaluation.
+Only the forced first atom supplies this restriction. A future predicate with bound variables is not an already-applied filter.
+A partial constant memo cannot establish absence: its distinct count and summed frequencies must cover the whole input column.
+
+The plan cache key and live signature include this disjointness decision.
+Tests change only key values while keeping counts and fanouts fixed, then require the cached order to change.
+They also cover overlapping values and incomplete versus complete input histograms.
+Bounded runs now expose the first nonempty demand, even when it contains only one row.
+The corrected fixture, replay gate, and full-corpus budget await the `key-domains` build.
+The independently verified retention changes are committed as `c9b9ad7e0`.
+
+### Final qualification: all three targets pass
+
+Artifacts: `/Users/jeremy/orca/artifacts/async-family-comparison/three-fixes-e78060842/key-domains`.
+The corrected checkpoint test, request/resume test, three planner checks, and three-process preparation test pass.
+All 12 frame-admission and maintenance checks also pass with the final binary.
+
+| Recorded native work | Integration baseline | Final candidate |
+| --- | ---: | ---: |
+| Targeted source and annotation insertion probes | 184,851 | 633 |
+| All cold work, step 06 | 12,274,367 | 10,687,926 |
+| All maintenance work, step 07 | 9,633,667 | 8,802,587 |
+| All fresh step-07 work | 12,352,930 | 10,785,403 |
+| Cold return-value work | 12,070 | 12,070 |
+
+The targeted source probe now produces `199 -> 0` rows at `icall`, before reading `pv`.
+Its annotation copies produce `398 -> 0`. Their combined work is 633, below the 2,000 ceiling.
+This is approximately 292 times less recorded work for these probes, not a 292-fold whole-job speedup.
+The EXPLAIN output records eight disjoint-key estimates for the selected rule family.
+The cold `ifn` join work also falls from 1,512,651 to 74,457.
+
+The candidate and integration baseline have identical nonempty step-07 outputs: 4,934,123 bytes.
+SHA-256: `7878676325d3d9558dc6ac393d60b66be0153901e6f3fe714b4b52c9d9bc5714`.
+The replay reports incremental/full parity. Its existing test prints this result rather than asserting it.
+The work gate now requires that report and compares saved outputs with the baseline.
+A negative check with incorrect output and a failed parity report is rejected.
+
+A nearby baseline run measures 2.8 s cold CPU and 3.2 s maintenance CPU.
+The candidate measures 2.5 s and 3.1 s. These single observations support roughly unchanged total CPU, not a large throughput claim.
+In maintenance, attributed join execution falls from 0.766 s to 0.659 s, while replanning adds overhead.
+The nearby fresh/full run has different memo reuse: zero local chunks versus six for the candidate.
+Its 2.1 s versus 2.2 s CPU results are not a controlled fresh/full comparison.
+Native step counters also omit some whole-plan work and can accumulate across changed orders.
+
+The 5,725-file authored async job stays below the 100-execution ceiling:
+
+| Run | Core executions | Job CPU | Job wall |
+| --- | ---: | ---: | ---: |
+| Cold | 8 | 10.954 s | 3.724 s |
+| Warm | 20 | 0.286 s | 0.484 s |
+| Warm, profiled | 20 | 0.307 s | 0.619 s |
+
+These times cover the measured job; process startup is separate. Storage SQL remains outside the core budget.
+This corpus has no findings. The positive preparation fixture and nonempty O125 outputs provide the semantic checks.
+Both restored preparation processes execute zero unchanged `struct` and `types` strata, with stable programs and identities.
+Bulk admission still passes its bounded-query and metadata-consistency checks.

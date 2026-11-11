@@ -78,6 +78,10 @@ pub(in crate::code_rule_dsl) struct Report {
     pub(in crate::code_rule_dsl) projected: Vec<(String, Vec<usize>)>,
     /// Existence counts read as the atom they count (`count : { r(…) } = 0` as `!r(…)`, `> 0` as `r(…)`; decision 0099).
     pub(in crate::code_rule_dsl) existence: usize,
+    /// Concatenations given their inverse, one for each part (`concat_inverses`).
+    pub(in crate::code_rule_dsl) inverses: usize,
+    /// Relations keyed by a function of their columns, made for a join on that function's value (`function_keys`).
+    pub(in crate::code_rule_dsl) keyed_by: Vec<String>,
 }
 
 pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
@@ -95,7 +99,12 @@ pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
     if std::env::var("RERAIL_INLINE_FILTERS").map_or(true, |v| v != "off") {
         report.inlined.extend(inline_filters(prog));
     }
+    // `RERAIL_JOIN_KEYS=off`: no concatenation runs backwards and no relation is keyed by a function, for comparison.
+    let join_keys = std::env::var("RERAIL_JOIN_KEYS").map_or(true, |v| v != "off");
     for rule in &mut prog.rules {
+        if join_keys {
+            report.inverses += concat_inverses(rule);
+        }
         cat_variables(rule);
         report.constants += fold_constants(rule);
         report.within += span_containment(rule);
@@ -107,6 +116,9 @@ pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
     if report.within > 0 && !prog.decls.contains_key(SPAN_WITHIN) {
         prog.decls.insert(SPAN_WITHIN.to_owned(), vec![("inner".to_owned(), "node".to_owned()), ("outer".to_owned(), "node".to_owned())]);
         prog.inputs.push(SPAN_WITHIN.to_owned());
+    }
+    if join_keys {
+        report.keyed_by = function_keys(prog);
     }
     report.existentials = project_existentials(prog);
     report.climbs = climbs_as_axes(prog);
@@ -125,6 +137,16 @@ pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
         if !report.climbs.is_empty() {
             super::profile::decision("recursion along the tree made an axis", || {
                 format!("{} recursive components that step one `child` edge at a time read `within` instead: {}", report.climbs.len(), report.climbs.iter().take(8).cloned().collect::<Vec<_>>().join(", "))
+            });
+        }
+        if report.inverses > 0 || !report.keyed_by.is_empty() {
+            super::profile::decision("join keys from functions", || {
+                format!(
+                    "{} concatenations run backwards from their value (a part the rest leaves one way); {} relations keyed by a function a join compares: {}",
+                    report.inverses,
+                    report.keyed_by.len(),
+                    report.keyed_by.join(", ")
+                )
             });
         }
         if report.existence > 0 {
@@ -421,6 +443,186 @@ fn ground_rules(prog: &mut Program) -> usize {
     }
     prog.rules = kept;
     replaced
+}
+
+/// The parts of a concatenation (`@concat`, `.rr`'s `cat`), in order: variables and constant texts only.
+fn concat_parts(t: &Term) -> Option<Vec<Term>> {
+    match t {
+        Term::Call(f, args) if f == "concat" && args.len() == 2 => {
+            let mut parts = concat_parts(&args[0])?;
+            parts.extend(concat_parts(&args[1])?);
+            Some(parts)
+        }
+        Term::Var(_) | Term::Str(_) => Some(vec![t.clone()]),
+        _ => None,
+    }
+}
+
+/// The concatenation of `parts` (`""` for none).
+fn concat_of(parts: &[Term]) -> Term {
+    let mut it = parts.iter().cloned();
+    match it.next() {
+        None => Term::Str(String::new()),
+        Some(first) => it.fold(first, |acc, p| Term::Call("concat".to_owned(), vec![acc, p])),
+    }
+}
+
+/// `$v = cat($a, $x, $b)` runs backwards: given `$v` and every other part, `$x` is the text between them, and there is
+/// none when `$v` does not start and end with them (concatenation is one-to-one in any one part). So each variable
+/// part, named once there, gets `$x = @str_between($v, cat(before), cat(after))` beside the concatenation. Whichever
+/// the plan binds first, the other is then a test that holds of what it bound: the rule's rows are the same, and a
+/// rule that reaches `$v` first (a delta of the relation giving it) binds the parts from it instead of crossing to
+/// the relation that gives them.
+fn concat_inverses(rule: &mut Rule) -> usize {
+    let mut added: Vec<Literal> = Vec::new();
+    for lit in &rule.body {
+        let Literal::Cmp { l, op: "=", r } = lit else { continue };
+        let (v, made) = match (l, r) {
+            (Term::Var(v), r @ Term::Call(f, _)) | (r @ Term::Call(f, _), Term::Var(v)) if f == "concat" => (v, r),
+            _ => continue,
+        };
+        let Some(parts) = concat_parts(made) else { continue };
+        for (i, part) in parts.iter().enumerate() {
+            let Term::Var(x) = part else { continue };
+            if x == v || parts.iter().filter(|p| *p == part).count() > 1 {
+                continue;
+            }
+            let inverse = Literal::Cmp {
+                l: Term::Var(x.clone()),
+                op: "=",
+                r: Term::Call("str_between".to_owned(), vec![Term::Var(v.clone()), concat_of(&parts[..i]), concat_of(&parts[i + 1..])]),
+            };
+            if !rule.body.contains(&inverse) && !added.contains(&inverse) {
+                added.push(inverse);
+            }
+        }
+    }
+    let n = added.len();
+    rule.body.extend(added);
+    n
+}
+
+/// A join on a function of a relation's columns, `R(…, $q, …), $v = @f($q)` with `$v` read elsewhere in the body, as
+/// a join on a column: `R__f<k>($v, …) :- R(…), $v = @f(…)` holds each row of R with the function's value first, and
+/// the rule reads it in place of R and the comparison. A plan that has `$v` before R's columns then probes the new
+/// relation by `$v`, where it would otherwise cross every row of R with what it has (an index is of columns, not of
+/// functions). The new relation is a relation like any other: kept, maintained and planned as one.
+///
+/// Only for relations without a node column, whose rows are few (a vocabulary, not a document's tree), and for
+/// pure functions of R's columns alone; `@concat` runs backwards instead (`concat_inverses`). One relation for each
+/// R, function and argument shape, shared by every rule that reads it.
+fn function_keys(prog: &mut Program) -> Vec<String> {
+    use super::strings::functions::{Kind, native_call};
+    let mut made: Vec<(String, Term, String)> = Vec::new();
+    let mut new_rules: Vec<Rule> = Vec::new();
+    for ri in 0..prog.rules.len() {
+        loop {
+            let rule = &prog.rules[ri];
+            let mut found: Option<(usize, usize, String, Term, String)> = None;
+            'cmps: for (ci, lit) in rule.body.iter().enumerate() {
+                let Literal::Cmp { l, op: "=", r } = lit else { continue };
+                let (v, call) = match (l, r) {
+                    (Term::Var(v), c @ Term::Call(..)) | (c @ Term::Call(..), Term::Var(v)) => (v, c),
+                    _ => continue,
+                };
+                let Term::Call(f, args) = call else { continue };
+                let Some((_, _, kind)) = native_call(f) else { continue };
+                // A concatenation's inverse binds from a column it already has (`concat_inverses`).
+                if f.starts_with("git_") || f == "str_between" || args.iter().any(|a| !matches!(a, Term::Var(_) | Term::Str(_) | Term::Int(_))) {
+                    continue;
+                }
+                let mut vars = BTreeSet::new();
+                call.vars(&mut vars);
+                if vars.is_empty() || vars.contains(v) {
+                    continue;
+                }
+                // `$v` is a key only where another atom joins on it (or a concatenation's inverse gives it from one):
+                // a value only comparisons read is computed forward, never probed.
+                let read_elsewhere = rule.body.iter().enumerate().any(|(j, other)| {
+                    j != ci && match other {
+                        Literal::Atom(a) => !a.neg && a.args.iter().any(|t| matches!(t, Term::Var(x) if x == v)),
+                        Literal::Cmp { l: Term::Var(x), op: "=", r: Term::Call(g, _) } => x == v && g == "str_between",
+                        _ => false,
+                    }
+                });
+                if !read_elsewhere {
+                    continue;
+                }
+                for (ai, other) in rule.body.iter().enumerate() {
+                    let Literal::Atom(a) = other else { continue };
+                    // The world's relations and the program's inputs are as large as what was read: not copied.
+                    let world = super::rr::WORLD.iter().any(|(r, _)| *r == a.rel) || a.rel == "loaded";
+                    // An atom keyed by this variable already (an earlier pass of the loop) is not keyed again.
+                    let keyed = rule.body.iter().any(|o| matches!(o, Literal::Atom(k) if k.rel.starts_with(&format!("{}__key_", a.rel)) && k.args.first() == Some(&Term::Var(v.clone()))));
+                    if a.neg || a.gated || a.rel.contains("__key_") || world || keyed || prog.inputs.contains(&a.rel) {
+                        continue;
+                    }
+                    let Some(cols) = prog.decls.get(&a.rel) else { continue };
+                    if cols.len() != a.args.len() || cols.iter().any(|(_, t)| t == "node") {
+                        continue;
+                    }
+                    let mut atom_vars = BTreeSet::new();
+                    for t in &a.args {
+                        t.vars(&mut atom_vars);
+                    }
+                    if atom_vars.contains(v) || !vars.is_subset(&atom_vars) {
+                        continue;
+                    }
+                    // The function over R's columns: each variable as the column it is first at.
+                    let col = |x: &str| a.args.iter().position(|t| matches!(t, Term::Var(y) if y == x));
+                    let shape = Term::Call(
+                        f.clone(),
+                        args.iter()
+                            .map(|t| match t {
+                                Term::Var(x) => col(x).map_or_else(|| t.clone(), |i| Term::Var(format!("c{i}"))),
+                                _ => t.clone(),
+                            })
+                            .collect(),
+                    );
+                    let ty = if kind == Kind::Number { "int" } else { "sym" };
+                    found = Some((ci, ai, a.rel.clone(), shape, ty.to_owned()));
+                    break 'cmps;
+                }
+            }
+            let Some((ci, ai, rel, shape, ty)) = found else { break };
+            let name = match made.iter().position(|(r, s, _)| *r == rel && *s == shape) {
+                Some(k) => made[k].2.clone(),
+                None => {
+                    let Term::Call(f, _) = &shape else { unreachable!("a call") };
+                    let name = format!("{rel}__key_{f}{}", made.iter().filter(|(r, _, _)| *r == rel).count());
+                    let cols = prog.decls[&rel].clone();
+                    let mut decl = vec![("k".to_owned(), ty)];
+                    decl.extend(cols.iter().cloned());
+                    prog.decls.insert(name.clone(), decl);
+                    let columns: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("c{i}"))).collect();
+                    let mut head_args = vec![Term::Var("k".to_owned())];
+                    head_args.extend(columns.iter().cloned());
+                    new_rules.push(Rule {
+                        head: Atom { rel: name.clone(), args: head_args, neg: false, gated: false },
+                        body: vec![
+                            Literal::Atom(Atom { rel: rel.clone(), args: columns, neg: false, gated: false }),
+                            Literal::Cmp { l: Term::Var("k".to_owned()), op: "=", r: shape.clone() },
+                        ],
+                    });
+                    made.push((rel, shape, name.clone()));
+                    name
+                }
+            };
+            let rule = &mut prog.rules[ri];
+            let Literal::Cmp { l, r, .. } = &rule.body[ci] else { unreachable!("a comparison") };
+            let v = match (l, r) {
+                (Term::Var(v), _) | (_, Term::Var(v)) => v.clone(),
+                _ => unreachable!("a variable side"),
+            };
+            // The comparison stays: a plan that has R's columns first computes `$v` forward from them, and the keyed
+            // atom is then a test (as a concatenation and its inverse are).
+            let Literal::Atom(a) = &mut rule.body[ai] else { unreachable!("an atom") };
+            a.rel = name;
+            a.args.insert(0, Term::Var(v));
+        }
+    }
+    prog.rules.extend(new_rules);
+    made.into_iter().map(|(_, _, n)| n).collect()
 }
 
 /// `$q = @cat("builtins", $x)` (`split_dot(q, "builtins", x)`) as `$q = @cat($k, $x), $k = "builtins"`: `@cat` runs
@@ -2323,8 +2525,10 @@ mod tests {
             "#,
         )
         .unwrap();
+        // The `.rr` reader reads `count : {…} = 0` as the negation already (`none`'s rule): only `> 0` is left.
+        assert!(prog.rules.iter().any(|r| r.head.rel == "none" && !r.to_string().contains("count")));
         let report = simplify(&mut prog);
-        assert_eq!(report.existence, 2);
+        assert_eq!(report.existence, 1);
         let text: Vec<String> = prog.rules.iter().map(|r| r.to_string()).collect();
         assert!(text.iter().any(|r| r.starts_with("none(") && r.contains("!pair($n") && !r.contains("count")), "{text:?}");
         assert!(text.iter().any(|r| r.starts_with("some(") && r.contains(", pair($n") && !r.contains("count")), "{text:?}");

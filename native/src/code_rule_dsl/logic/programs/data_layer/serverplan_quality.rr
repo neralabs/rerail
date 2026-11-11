@@ -16,8 +16,8 @@
 // binds nothing.
 // strategy-file-size: a `regex` forbid on file.content (not an `ast` matcher), so the generated forbid block is empty;
 // its rule is by hand, the "all" case of its `$option`.
-// missing fact: file_content(d, s), the document's whole source (W's file.content); the module node's text starts at
-// its first token, which shifts the line count by leading blank lines.
+// file_content(d, s): the document's whole source (W's file.content), core's `source` span's text (the module node's
+// text starts at its first token, which would shift the line count by leading blank lines).
 // findings layer (§8): strategy-file-size's anchor is capture.OVERFLOW (the 1501st line), which is no node: here the
 // violation is at the document's module node.
 // findings layer (§8): path/start_byte/end_byte are the node's; detector and identity (n.id, the keyword of a
@@ -38,7 +38,7 @@ cdef("class_definition").
 
 // strategy-file-size (entryPoint "all"): file.content has a 1501st line, in impl/common/l2070_server_plan/strategies/**/*.py.
 .decl file_content(d: number, s: symbol)
-.input file_content
+file_content(d, s) :- source(d, sp), text(sp, s).
 violation("data-layer-serverplan-quality", "strategy-file-size", D, N) :- doc(D, p),
     @rx_matches(p, "^impl/common/l2070_server_plan/strategies/(?:.*/)?[^/]*\\.py$") = 1, file_content(D, s),
     @rx_matches(s, "\\A(?:[^\\n\\r\\v\\f\\x1c-\\x1e\\x85\\u2028\\u2029]*(?:\\r\\n|[\\n\\r\\v\\f\\x1c-\\x1e\\x85\\u2028\\u2029])){1500}(?<OVERFLOW>[^\\n\\r\\v\\f\\x1c-\\x1e\\x85\\u2028\\u2029]+|[\\n\\r\\v\\f\\x1c-\\x1e\\x85\\u2028\\u2029])") = 1,

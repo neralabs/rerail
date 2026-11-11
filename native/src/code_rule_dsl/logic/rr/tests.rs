@@ -401,15 +401,12 @@ fn a_set_of_tests_on_a_span_tests_its_text() {
     assert!(!rule.contains("contains($sp") && !rule.contains("@contains($sp"), "{rule}");
 }
 
-/// What is not lowered yet says so by name.
+/// A negated match with named groups binds nothing, so it lowers with its groups non-capturing (it was the last
+/// construct refused as not lowered yet).
 #[test]
-fn unlowered_constructs_are_named() {
-    for (src, what) in [
-        (".decl a(x: symbol)\na(x) :- a(x), a(y), !match(\"(?<z>.*)\", y).", "named groups"),
-    ] {
-        let e = parse(src).unwrap_err().to_string();
-        assert!(e.contains("not lowered yet") && e.contains(what), "{src}: {e}");
-    }
+fn negated_named_groups_lower() {
+    let src = ".decl a(x: symbol)\na(x) :- a(x), a(y), !match(\"(?<z>.*)\", y).";
+    parse(src).expect("a negated match with named groups lowers");
 }
 
 /// `.violation` rows become the engine's findings; fixes are left out; arithmetic and Soufflé's string
@@ -803,7 +800,9 @@ fn programs_are_kept_by_the_hashes_of_what_they_read() {
     assert!(files.iter().filter_map(LibraryFile::fact).all(|f| f.starts_with("library_file(") && f.contains("\"sha256:")));
     let (again, files_again) = read_file(&main).unwrap();
     assert_eq!((format!("{first:?}"), &files), (format!("{again:?}"), &files_again), "unchanged files: the same program");
+    // The edit comes in a later run: a run reads its files as they were when it first looked (decision 0105).
     std::fs::write(&helper, ".decl h(x: number)\nh(2).\n").unwrap();
+    crate::code_rule_dsl::logic::plan::corpus::observe(|o| o.flush());
     let (edited, edited_files) = read_file(&main).unwrap();
     assert_ne!(format!("{first:?}"), format!("{edited:?}"), "an edited include is read again");
     assert_ne!(files, edited_files);
@@ -1631,7 +1630,9 @@ Subtree(n) :- kind(n, "module"), text(n, _).
         .map(|row| (row["line"].as_i64().unwrap(), row["parameters"]["body"].as_str().unwrap())).collect();
     lines.sort();
     assert_eq!(lines, [(1, source.split('\n').next().unwrap()), (2, "pass")]);
-    assert!(!rows.iter().any(|row| row["code"] == "TREE"), "a requested source span must not enable all large AST texts");
+    // Decision 0108: a kind the rule reads by `kind` has its text at any length (the module's here, named by
+    // `Subtree`); the source span and the lines are exact either way.
+    assert_eq!(rows.iter().filter(|row| row["code"] == "TREE").count(), 1, "the module, a kind the rule reads, has its whole text");
 }
 
 /// Decision 0055's guests: a run of `rule` over `files`, each output's sorted rows.

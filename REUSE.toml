@@ -1123,10 +1123,10 @@ SPDX-License-Identifier = "Apache-2.0"
 # contributors), eslint-plugin-unicorn 76.0.0 (Sindre Sorhus) — each MIT, combined with Rerail's Apache-2.0.
 
 # MLDB (mldbai/mldb, branch opencl-random-forests at e3caed6fa447): the Metal random forest trainer, the UKL kernel
-# shims and the compute-kernel runtime, copied verbatim under accel/src/forest/mldb/ at their upstream paths, then
+# shims and the compute-kernel runtime, copied verbatim under forest/src/mldb/ at their upstream paths, then
 # adapted in place. Upstream's LICENSE is beside them.
 [[annotations]]
-path = "accel/src/forest/mldb/**"
+path = "forest/src/mldb/**"
 precedence = "override"
 SPDX-FileCopyrightText = ["2015-2022 mldb.ai inc.", "2021-2022 Jeremy Barnes", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0"
