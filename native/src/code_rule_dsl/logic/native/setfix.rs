@@ -104,7 +104,31 @@ impl Interner {
 static SYMS: LazyLock<Mutex<HashMap<String, Arc<RwLock<Interner>>>>> = LazyLock::new(Default::default);
 /// The symbols of `conn`'s database: the process's arena of it.
 fn symbols(conn: &Connection) -> Result<Arc<RwLock<Interner>>> {
-    let key = conn.path().unwrap_or_default().to_owned();
+    // A connection's symbols are found once (by its path) and kept for it until it closes (`forget_scope`).
+    let at = scope(conn);
+    if let Some(s) = SCOPE_SYMS.lock().unwrap().get(&at) {
+        return Ok(Arc::clone(s));
+    }
+    let s = symbols_by_path(conn)?;
+    SCOPE_SYMS.lock().unwrap().insert(at, Arc::clone(&s));
+    Ok(s)
+}
+/// The path of `conn`'s main database (`""` in memory), found once per connection and kept until it closes
+/// (`forget_scope`): SQLite's `sqlite3_db_filename` takes the connection's mutex at every call.
+fn conn_path(conn: &Connection) -> Arc<str> {
+    let at = scope(conn);
+    if let Some(p) = SCOPE_PATHS.lock().unwrap().get(&at) {
+        return Arc::clone(p);
+    }
+    let p: Arc<str> = Arc::from(conn.path().unwrap_or_default());
+    SCOPE_PATHS.lock().unwrap().insert(at, Arc::clone(&p));
+    p
+}
+static SCOPE_PATHS: std::sync::LazyLock<Mutex<HashMap<usize, Arc<str>>>> = std::sync::LazyLock::new(Default::default);
+/// Each live connection's symbols (`symbols`), by its scope.
+static SCOPE_SYMS: std::sync::LazyLock<Mutex<HashMap<usize, Arc<RwLock<Interner>>>>> = std::sync::LazyLock::new(Default::default);
+fn symbols_by_path(conn: &Connection) -> Result<Arc<RwLock<Interner>>> {
+    let key = conn_path(conn).to_string();
     let mut syms = SYMS.lock().unwrap();
     let atoms = crate::content_store::atoms::Atoms::for_connection(conn);
     // A database created again at the same path has new atoms (`Atoms::fresh`).
@@ -648,6 +672,12 @@ pub(crate) fn scope(conn: &Connection) -> usize {
 
 /// Drops what the connection at `at` left: its components and derived relations (`scope`).
 pub(crate) fn forget_scope(at: usize) {
+    if let Ok(mut s) = SCOPE_SYMS.lock() {
+        s.remove(&at);
+    }
+    if let Ok(mut p) = SCOPE_PATHS.lock() {
+        p.remove(&at);
+    }
     if let Ok(mut c) = COMPONENTS.lock() {
         c.retain(|((s, _), _)| *s != at);
     }
@@ -1902,7 +1932,7 @@ pub fn unindex(conn: &Connection, tables: &[String]) {
 /// Drops the input relations loaded on `conn`'s database that read any of `tables` (their views and indexes), and
 /// the stored tables of those names: no later stratum reads them.
 pub fn forget_inputs_of(conn: &Connection, tables: &[String]) {
-    let path = conn.path().unwrap_or_default().to_owned();
+    let path = conn_path(conn).to_string();
     let reads = |key: &InputKey| key.sql.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|w| tables.iter().any(|t| t == w));
     if let Some(m) = INPUTS.lock().unwrap().get_mut(&path) { m.retain(|key, _| !reads(key)); }
     STORED.lock().unwrap().retain(|(p, t), _| *p != path || !t.rsplit('.').next().is_some_and(|n| tables.iter().any(|x| x == n)));
@@ -2879,7 +2909,7 @@ static INPUTS: LazyLock<Mutex<HashMap<String, HashMap<InputKey, Arc<InRel>>>>> =
 
 /// Drops the input relations loaded on `conn`'s database: a run starts over the relations bound now.
 pub fn forget_inputs(conn: &Connection) {
-    let path = conn.path().unwrap_or_default().to_owned();
+    let path = conn_path(conn).to_string();
     let changing = CHANGING.lock().unwrap().get(&path).cloned();
     let Some(changing) = changing else {
         INPUTS.lock().unwrap().remove(&path);
@@ -2900,7 +2930,7 @@ static CHANGING: LazyLock<Mutex<HashMap<String, std::collections::BTreeSet<Strin
 /// Runs on `conn` that read the same inputs but for `changing` (the bounded rounds: each round rebinds only its
 /// `__prev` inputs) keep the others loaded; `None` ends it, and the next `forget_inputs` drops everything.
 pub fn keep_inputs(conn: &Connection, changing: Option<std::collections::BTreeSet<String>>) {
-    let path = conn.path().unwrap_or_default().to_owned();
+    let path = conn_path(conn).to_string();
     match changing {
         Some(c) => {
             CHANGING.lock().unwrap().insert(path, c);
@@ -2917,7 +2947,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
 }
 
 fn input_of(conn: &Connection, spec: &InputKey, syms: &mut Interner) -> Result<Arc<InRel>> {
-    let path = conn.path().unwrap_or_default();
+    let path: &str = &conn_path(conn);
     if let Some(r) = INPUTS.lock().unwrap().get(path).and_then(|m| m.get(spec)) { return Ok(r.clone()); }
     let keep = |rel: &Arc<InRel>| { INPUTS.lock().unwrap().entry(path.to_owned()).or_default().insert(spec.clone(), rel.clone()); };
     let _load = crate::code_rule_dsl::logic::profile::span(|| "open: input load".into());
@@ -3515,7 +3545,7 @@ static STORED: LazyLock<Mutex<HashMap<(String, String), Option<Arc<Stored>>>>> =
 /// The stored table `schema.name` with the columns named in `need` loaded (`None`: not one, or not integers).
 fn stored_table(conn: &Connection, schema: &str, name: &str, need: &[&str]) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
     if schema == "temp" || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') { return None; }
-    let key = (conn.path().unwrap_or_default().to_owned(), format!("{schema}.{name}"));
+    let key = (conn_path(conn).to_string(), format!("{schema}.{name}"));
     let t = STORED.lock().unwrap().get(&key).cloned();
     let t = match t {
         Some(t) => t?,

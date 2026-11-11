@@ -331,7 +331,12 @@ impl Drop for Modules {
 /// (`logic::native::forget_scope`). A closed connection's address is reused by the next one opened.
 pub(crate) fn connection_scope(db: &Connection) -> usize {
     const KEY: &std::ffi::CStr = c"rerail.connection-scope";
+    // Each close bumps the generation: a thread's last connection with its hook set (`LAST`) is known to have it
+    // until some connection closes (whose address the next one may take), without asking SQLite on every lookup.
+    static CLOSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    thread_local!(static LAST: std::cell::Cell<(usize, u64)> = const { std::cell::Cell::new((0, u64::MAX)) });
     unsafe extern "C" fn closed(at: *mut std::os::raw::c_void) {
+        CLOSES.fetch_add(1, Ordering::AcqRel);
         let at = at as usize;
         BOUND.lock().retain(|(h, _), _| *h != at);
         VIEWS.lock().retain(|(h, _), _| *h != at);
@@ -340,11 +345,16 @@ pub(crate) fn connection_scope(db: &Connection) -> usize {
         crate::code_rule_dsl::logic::native::forget_scope(at);
     }
     let handle = unsafe { db.handle() };
+    let closes = CLOSES.load(Ordering::Acquire);
+    if LAST.get() == (handle as usize, closes) {
+        return handle as usize;
+    }
     unsafe {
         if rusqlite::ffi::sqlite3_get_clientdata(handle, KEY.as_ptr()).is_null() {
             rusqlite::ffi::sqlite3_set_clientdata(handle, KEY.as_ptr(), handle.cast(), Some(closed));
         }
     }
+    LAST.set((handle as usize, closes));
     handle as usize
 }
 

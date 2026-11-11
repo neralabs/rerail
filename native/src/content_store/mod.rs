@@ -682,18 +682,55 @@ impl ContentStore {
     }
 
     pub fn open(path: &Path) -> StoreResult<Self> {
+        Self::open_checking(path, true)
+    }
+
+    /// `open`, for a process that opens this store again (a session, at every step): its schema is not checked again
+    /// when this process checked this file (its device and inode) already. A change to the schema from outside the
+    /// process meanwhile is not seen; `open` sees it.
+    pub fn open_again(path: &Path) -> StoreResult<Self> {
+        Self::open_checking(path, false)
+    }
+
+    fn open_checking(path: &Path, recheck: bool) -> StoreResult<Self> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
-        let mut connection = Connection::open_with_flags(path, flags)?;
-        // Only creating or migrating the schema takes the write lock (`initialize`).
-        let created = retry_busy(&mut BusyRetries::default(), || {
-            Self::initialize(&mut connection)
-        })?;
-        drop(connection);
+        // A store file this process checked (or made) already, the same file still (its device and inode), is
+        // not opened again to check its schema by `open_again`.
+        static CHECKED: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashSet<(PathBuf, u64, u64)>>> =
+            std::sync::LazyLock::new(Default::default);
+        let identity = |path: &Path| -> Option<(PathBuf, u64, u64)> {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                let m = fs::metadata(path).ok()?;
+                Some((path.to_path_buf(), m.dev(), m.ino()))
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = path;
+                None
+            }
+        };
+        let checked = !recheck && identity(path).is_some_and(|id| CHECKED.lock().contains(&id));
+        let created = if checked {
+            false
+        } else {
+            let mut connection = Connection::open_with_flags(path, flags)?;
+            // Only creating or migrating the schema takes the write lock (`initialize`).
+            let created = retry_busy(&mut BusyRetries::default(), || {
+                Self::initialize(&mut connection)
+            })?;
+            drop(connection);
+            if let Some(id) = identity(path) {
+                CHECKED.lock().insert(id);
+            }
+            created
+        };
         // Compiled Neural Engine models are facts of this store (decision 0098 §3).
         #[cfg(target_os = "macos")]
         rerail_accel::ane::set_store(std::sync::Arc::new(accel_models::StoreModels::new(path)));
