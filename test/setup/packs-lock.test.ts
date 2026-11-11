@@ -62,7 +62,10 @@ describe("withPacksLock", () => {
 describe("pack changes racing for the lock of one killed while it held it", () => {
   it("take it one at a time", async () => {
     const home = temporaryHome();
-    const size = raceSize({ processes: 8, rounds: 4 });
+    // Larger than the other locks' races: the packs lock that judged a dead holder's lock gone ran two changes at once
+    // rarely, and 8 processes for 4 rounds caught it in one Linux run of three. 16 for 16 caught it 5 to 11 times in
+    // each of three, and takes this lock about 20 s on a Windows laptop.
+    const size = raceSize({ processes: 16, rounds: 16 });
 
     const race = await raceForLock({
       take: `import { withPacksLock } from ${JSON.stringify(sourceModule("src/setup/packs-lock.ts"))};
