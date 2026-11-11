@@ -4320,8 +4320,14 @@ fn run_observed(
             let mut loaded_rows = Vec::new();
             // A run of some documents on their own (`phases::maintain`) follows no load: the documents loaded are the
             // last run's, kept.
+            // Taken in an order of the requests themselves, not of their atoms: where the load budget binds, a
+            // top-level module before a submodule, then by module and path (decision 0108).
+            let mut asked_rows: Vec<(String, String, String, &Vec<i64>)> = Vec::new();
             for row in rows.iter().filter(|_| !no_loads) {
-                let (asked, module, grammar) = (text(row[0])?, text(row[1])?, text(row[2])?);
+                asked_rows.push((text(row[0])?, text(row[1])?, text(row[2])?, row));
+            }
+            asked_rows.sort_by(|a, b| (a.1.matches('.').count(), &a.1, &a.0).cmp(&(b.1.matches('.').count(), &b.1, &b.0)));
+            for (asked, module, grammar, row) in asked_rows {
                 // A load asked again (its stratum's requests answered again, t33 K3) is answered alike: the same
                 // document, its rows from the exports, not sent again.
                 if let Some(doc) = world.loaded_as(&asked) {
