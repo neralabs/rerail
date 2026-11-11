@@ -381,7 +381,9 @@ pub(crate) fn connection_scope(db: &Connection) -> usize {
         VIEWS.lock().retain(|(h, _), _| *h != at);
         UNRESOLVED.lock().remove(&at);
         SETUP.lock().remove(&at);
-        crate::code_rule_dsl::logic::native::forget_scope(at);
+        if let Some(forget) = FORGET.get() {
+            (forget.scope)(at);
+        }
     }
     let handle = unsafe { db.handle() };
     let closes = CLOSES.load(Ordering::Acquire);
@@ -487,8 +489,24 @@ pub(crate) fn reuse(db: &Connection) -> Result<()> {
     }
     drop(registered);
     VIEWS.lock().retain(|(h, _), _| *h != at);
-    crate::code_rule_dsl::logic::native::forget_engine(at);
+    if let Some(forget) = FORGET.get() {
+        (forget.engine)(at);
+    }
     Ok(())
+}
+
+/// What the evaluator keeps per connection, dropped with it: `scope` when the connection closes (its symbols,
+/// paths and plans with its relations), `engine` when a run reuses it (its relations and components alone).
+pub(crate) struct Forget {
+    pub(crate) scope: fn(usize),
+    pub(crate) engine: fn(usize),
+}
+
+static FORGET: std::sync::OnceLock<Forget> = std::sync::OnceLock::new();
+
+/// Registers what the evaluator drops with a connection (once, at load).
+pub(crate) fn install_forget(forget: Forget) {
+    let _ = FORGET.set(forget);
 }
 
 /// The tables registered on each connection that no statement has resolved yet (`register`).
