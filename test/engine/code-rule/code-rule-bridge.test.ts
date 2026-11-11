@@ -30,6 +30,8 @@ const discovery = vi.hoisted(() => ({
  * Git command (`failing`) that is made to fail, by an option Git does not know, while it is set.
  */
 const asyncGitCalls = vi.hoisted(() => ({ args: [] as string[][], failing: undefined as string | undefined }));
+/** How many of the next Git reads run, in Git's place, a program that stays until it is ended, as a Git still at work does. */
+const heldGit = vi.hoisted(() => ({ reads: 0 }));
 vi.mock("node:child_process", async importOriginal => {
   const actual = await importOriginal<typeof ChildProcess>();
   const { promisify } = await import("node:util");
@@ -40,6 +42,11 @@ vi.mock("node:child_process", async importOriginal => {
       const forwarded = fails ? [...args, "--no-such-option"] : [...args];
       call[1] = forwarded;
       asyncGitCalls.args.push(forwarded);
+      if (heldGit.reads > 0) {
+        heldGit.reads -= 1;
+        call[0] = process.execPath;
+        call[1] = ["-e", "setTimeout(() => {}, 30_000)", "--", ...forwarded];
+      }
     }
     return (actual.execFile as (...forwarded: unknown[]) => ReturnType<typeof actual.execFile>)(...call);
   };
@@ -112,6 +119,7 @@ afterEach(async () => {
   releases.splice(0).forEach(release => release());
   discovery.reads.clear();
   discovery.directories.clear();
+  heldGit.reads = 0;
   await Promise.all(passes.splice(0));
   await Promise.all(bridges.splice(0).map(bridge => bridge.close()));
   await Promise.all(directories.splice(0).map(async path => await removeFolder(path)));
@@ -884,6 +892,21 @@ describe("CodeRuleBridge", () => {
     expect(runningIn(root)).toEqual([]);
     // One try: on Windows a process still running in the folder keeps it from being removed.
     await removeFolder(root, { retry: false });
+  });
+
+  it("reopens with no Git the earlier session started still running in the folder", async () => {
+    const root = await workspace();
+    git(root, "init", "--quiet");
+    const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))));
+    // The first session's walk reads HEAD first, through a Git that runs until it is ended.
+    heldGit.reads = 1;
+    await bridge.openWorkspace("session-1");
+    const first = runningIn(root);
+    expect(first).not.toEqual([]);
+
+    await bridge.openWorkspace("session-2");
+    // The second session's own Git may still run; none of the first session's does.
+    expect(runningIn(root).filter(entry => first.includes(entry))).toEqual([]);
   });
 
   it("sends a deletion with its preimage instead of an unreadable workspace scan", async () => {
