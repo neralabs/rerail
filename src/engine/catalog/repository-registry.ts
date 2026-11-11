@@ -5,8 +5,8 @@
  */
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, parse, resolve } from "node:path";
-import { and, eq, inArray, ne, sql, type SQL } from "drizzle-orm";
+import { dirname, parse, resolve, sep } from "node:path";
+import { and, eq, getTableColumns, gte, inArray, lt, ne, sql, type Placeholder, type SQL } from "drizzle-orm";
 import { physicalPath, storedPath, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
 import { gitExecutable, GitUnavailableError, runGit } from "../git.js";
@@ -334,15 +334,60 @@ const FOLDER_CASE_FOLDS = process.platform === "win32";
 /**
  * `checkout_path` as the reads of the checkouts at, above or below a folder compare it. On Windows one folder can be
  * recorded under spellings that differ in letter case: a folder outside Git is recorded as it was named (a VS Code
- * session's `c:\work`, a terminal's `C:\work`), a Git checkout as Git names its top level. There these reads match
- * without regard to ASCII letter case, as `withinCheckout` (path.relative) does, through the `checkouts_path_nocase`
- * index; elsewhere byte for byte, through the path key.
+ * session's `c:\work`, a terminal's `C:\work`), a Git checkout as Git names its top level. There these reads take a folder
+ * in any letter case, as `withinCheckout` (path.relative) does: through the `checkouts_path_nocase` index, whose NOCASE
+ * collation folds ASCII letters, and through {@link otherSpellingRanges} for the letters outside ASCII. Elsewhere they
+ * match byte for byte, through the path key.
  */
-export const comparedCheckoutPath: SQL = FOLDER_CASE_FOLDS ? sql`${checkouts.checkoutPath} collate nocase` : sql`${checkouts.checkoutPath}`;
+const comparedCheckoutPath: SQL = FOLDER_CASE_FOLDS ? sql`${checkouts.checkoutPath} collate nocase` : sql`${checkouts.checkoutPath}`;
 
-/** `path` as {@link comparedCheckoutPath} compares it: on Windows with ASCII letters in lower case, as SQLite's NOCASE. */
+/** `path` as these reads compare it: on Windows in lower case, as path.relative compares paths there. */
 function comparedPath(path: string): string {
-  return FOLDER_CASE_FOLDS ? path.replace(/[A-Z]+/gu, letters => letters.toLowerCase()) : path;
+  return FOLDER_CASE_FOLDS ? path.toLowerCase() : path;
+}
+
+/** The other cases of a letter outside ASCII that lower-case as it does ("É" for "é"); NOCASE folds ASCII letters itself. */
+function otherCases(letter: string): string[] {
+  if (letter <= "\u007f") return [];
+  const folded = letter.toLowerCase();
+  return [folded, letter.toUpperCase()].filter(other => other !== letter && [...other].length === 1 && other.toLowerCase() === folded);
+}
+
+/**
+ * On Windows, the ranges of {@link comparedCheckoutPath} that hold the spellings NOCASE does not fold into `paths`, or
+ * into the folders above and below them: those that differ in the case of a letter outside ASCII. One range per such
+ * letter and other case: the paths that start with the path up to that letter followed by its other case. A row of such
+ * a spelling falls in the range of the first such letter it spells otherwise. JSON `[from, to]` pairs, as
+ * {@link IN_OTHER_SPELLING} reads them; undefined when no path holds such a letter, and off Windows, so those paths cost
+ * what they did.
+ */
+function otherSpellingRanges(paths: readonly string[]): string | undefined {
+  if (!FOLDER_CASE_FOLDS) return undefined;
+  const ranges = new Map<string, readonly [string, string]>();
+  for (const path of paths) {
+    let offset = 0;
+    for (const letter of path) {
+      for (const other of otherCases(letter)) {
+        const from = `${path.slice(0, offset)}${other}`;
+        ranges.set(from, [from, `${from}\u{10FFFF}`]);
+      }
+      offset += letter.length;
+    }
+  }
+  return ranges.size === 0 ? undefined : JSON.stringify([...ranges.values()]);
+}
+
+/** {@link otherSpellingRanges}' pairs as a table to read `checkouts` from, joined on {@link IN_OTHER_SPELLING}. */
+function otherSpellings(ranges: string | Placeholder): SQL {
+  return sql`json_each(${ranges}) AS spelling`;
+}
+
+/** A `checkouts` row in one of {@link otherSpellings}' ranges, searched through the `checkouts_path_nocase` index. */
+const IN_OTHER_SPELLING = sql`${comparedCheckoutPath} >= json_extract(spelling.value, '$[0]') AND ${comparedCheckoutPath} < json_extract(spelling.value, '$[1]')`;
+
+/** `rows` without a second row of one path: a row can be read both at the spelling asked and in a range. */
+function uniqueRows<Row extends { readonly checkoutPath: string }>(rows: readonly Row[]): Row[] {
+  return [...new Map(rows.map(row => [row.checkoutPath, row])).values()];
 }
 
 /** The folders that hold `path`, from its parent folder up to the filesystem root. */
@@ -360,12 +405,17 @@ function enclosingFolders(path: string): string[] {
  * The recorded checkouts of the same repository whose folder contains `checkout`, nearest first; never itself. On
  * Windows a row of its own folder under another spelling is one, nearest of all. Only the rows recorded at its folder
  * and the folders above it are read, through an index ({@link comparedCheckoutPath}), so the cost follows its depth and
- * not how many checkouts are recorded.
+ * not how many checkouts are recorded; on Windows, when its path holds a letter outside ASCII, also the rows in
+ * {@link otherSpellingRanges}.
  */
 export function parentCheckouts(db: Reader, checkout: Pick<CheckoutContext, "checkoutPath" | "repositoryKey">): CheckoutRecord[] {
   const folders = [checkout.checkoutPath, ...enclosingFolders(checkout.checkoutPath)];
-  return db.select().from(checkouts).where(inArray(comparedCheckoutPath, folders)).all()
-    .filter(row => row.repositoryKey === checkout.repositoryKey && row.checkoutPath !== checkout.checkoutPath)
+  const compared = new Set(folders.map(comparedPath));
+  const ranges = otherSpellingRanges([checkout.checkoutPath]);
+  const rows = db.select().from(checkouts).where(inArray(comparedCheckoutPath, folders)).all();
+  const others = ranges === undefined ? [] : db.select(getTableColumns(checkouts)).from(otherSpellings(ranges)).innerJoin(checkouts, IN_OTHER_SPELLING).all();
+  return uniqueRows([...rows, ...others])
+    .filter(row => compared.has(comparedPath(row.checkoutPath)) && row.repositoryKey === checkout.repositoryKey && row.checkoutPath !== checkout.checkoutPath)
     .sort((left, right) => right.checkoutPath.length - left.checkoutPath.length);
 }
 
@@ -420,11 +470,15 @@ interface CheckoutFolders {
   readonly compared: readonly string[];
 }
 
-/** The paths one read asks for: the checkouts, each with its folders, and all of them as the statement's parameter. */
+/**
+ * The paths one read asks for: the checkouts, each with its folders, all of them as the statement's parameter, and the
+ * ranges that hold their other spellings ({@link otherSpellingRanges}).
+ */
 interface CheckoutsQuestion {
   readonly asked: readonly string[];
   readonly folders: ReadonlyMap<string, CheckoutFolders>;
   readonly parameter: string;
+  readonly ranges: string | undefined;
 }
 
 /** `last` when it asks the same checkouts; each checkout's folders come from `known`, worked out once per checkout. */
@@ -439,7 +493,8 @@ function checkoutsQuestion(asked: readonly string[], last: CheckoutsQuestion | u
     }
     return [path, own];
   }));
-  return { asked: [...asked], folders, parameter: JSON.stringify([...new Set([...folders.values()].flatMap(own => own.paths))]) };
+  const parameter = JSON.stringify([...new Set([...folders.values()].flatMap(own => own.paths))]);
+  return { asked: [...asked], folders, parameter, ranges: otherSpellingRanges(asked) };
 }
 
 /** The rows by the folder they record, as the statement compared it: on Windows a folder's spellings share one entry. */
@@ -478,28 +533,59 @@ function recordedStatuses(question: CheckoutsQuestion, rows: readonly CheckoutSt
 /**
  * {@link parentCheckouts} and {@link checkoutStatus} of many recorded checkouts in one statement, prepared once for the
  * connection: the rows at each checkout's folder and at the folders above it, with their repository's start state and
- * set-up. A reader that asks after every checkout it knows on every event pays one statement, not five per checkout,
- * and asking the same checkouts as last time works out their folders once. A path with no row of that spelling is left
- * out, as `checkoutStatus` reads a checkout's own row.
+ * set-up. A reader that asks after every checkout it knows on every event pays one statement, not five per checkout
+ * (on Windows two when a path holds a letter outside ASCII: {@link otherSpellingRanges}), and asking the same checkouts
+ * as last time works out their folders once. A path with no row of that spelling is left out, as `checkoutStatus` reads
+ * a checkout's own row.
  */
 export function recordedCheckoutsReader(db: Reader): (checkoutPaths: readonly string[]) => Map<string, RecordedCheckoutStatus> {
-  const query = db.select({
+  const columns = {
     checkoutPath: checkouts.checkoutPath,
     repositoryKey: checkouts.repositoryKey,
     cloneId: checkouts.cloneId,
     started: checkouts.started,
     repositoryStarted: repositories.started,
     configuredAt: repositories.configuredAt,
-  }).from(checkouts)
+  };
+  const atFolders = db.select(columns).from(checkouts)
     .leftJoin(repositories, eq(repositories.repositoryKey, checkouts.repositoryKey))
     .where(sql`${comparedCheckoutPath} IN (SELECT value FROM json_each(${sql.placeholder("paths")}))`)
+    .prepare();
+  const inOtherSpellings = db.select(columns).from(otherSpellings(sql.placeholder("ranges")))
+    .innerJoin(checkouts, IN_OTHER_SPELLING)
+    .leftJoin(repositories, eq(repositories.repositoryKey, checkouts.repositoryKey))
     .prepare();
   const folders = new Map<string, CheckoutFolders>();
   let last: CheckoutsQuestion | undefined;
   return checkoutPaths => {
     const question = checkoutsQuestion(checkoutPaths, last, folders);
     last = question;
-    return recordedStatuses(question, query.all({ paths: question.parameter }));
+    const rows = atFolders.all({ paths: question.parameter });
+    return recordedStatuses(question, question.ranges === undefined ? rows : uniqueRows([...rows, ...inOtherSpellings.all({ ranges: question.ranges })]));
+  };
+}
+
+/**
+ * The recorded checkouts strictly inside a folder (a physical path), at any depth, read by statements prepared once for
+ * the connection. Each path inside it starts with the folder and a separator, so only the rows in that range of an index
+ * are read, not every recorded checkout: the session's ignore rules ask this at every tool call. On Windows the folder
+ * is taken in any letter case ({@link comparedCheckoutPath}): a folder outside Git is recorded as it was named, and a
+ * checkout in it as Git names it.
+ */
+export function recordedCheckoutsWithinReader(db: Reader): (folder: string) => string[] {
+  const below = db.select({ checkoutPath: checkouts.checkoutPath }).from(checkouts)
+    .where(and(gte(comparedCheckoutPath, sql.placeholder("from")), lt(comparedCheckoutPath, sql.placeholder("to"))))
+    .prepare();
+  const inOtherSpellings = db.select({ checkoutPath: checkouts.checkoutPath }).from(otherSpellings(sql.placeholder("ranges")))
+    .innerJoin(checkouts, IN_OTHER_SPELLING)
+    .prepare();
+  return folder => {
+    const from = folder.endsWith(sep) ? folder : `${folder}${sep}`;
+    const to = `${from.slice(0, -1)}${String.fromCharCode(sep.charCodeAt(0) + 1)}`;
+    const ranges = otherSpellingRanges([folder]);
+    const rows = [...below.all({ from, to }), ...(ranges === undefined ? [] : inOtherSpellings.all({ ranges }))];
+    return [...new Set(rows.map(row => row.checkoutPath))]
+      .filter(path => comparedPath(path) !== comparedPath(folder) && withinCheckout(folder, path));
   };
 }
 

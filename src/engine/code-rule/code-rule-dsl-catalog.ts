@@ -5,11 +5,11 @@
  */
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { resolve, sep } from "node:path";
-import { and, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
+import { resolve } from "node:path";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { loadRuleCatalog } from "../catalog/rule-catalog.js";
 import { worktreeRuleCatalog } from "../catalog/worktree-pack.js";
-import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
+import { physicalPath } from "../catalog/checkout-control.js";
 import { CheckoutOwners, type CheckoutOwner } from "../catalog/checkout-owner.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../storage/database.js";
 import { reportQuarantinedRule, type QuarantinedRule } from "../catalog/rule-quarantine.js";
@@ -29,17 +29,17 @@ import {
 } from "../catalog/repository-model.js";
 import { repositoryIdentityLocation, type RepositoryIdentityLocation } from "../catalog/repository-identity.js";
 import {
-  comparedCheckoutPath,
   followsGitignore,
   recordedCheckoutsReader,
   recordedCheckoutsVersion,
+  recordedCheckoutsWithinReader,
   recordStartedWorktree,
   type RecordedCheckoutStatus,
 } from "../catalog/repository-registry.js";
 import { loadCheckoutRuleSet, ruleConfigurationSignature } from "../catalog/rule-configuration.js";
 import { LIBRARY_OWNER, quarantinedLibraryRules } from "../catalog/rule-library.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
-import { checkouts, ruleAttachments, ruleSettings } from "../storage/schema.js";
+import { ruleAttachments, ruleSettings } from "../storage/schema.js";
 import { compareDeterministicStrings, stableJsonText } from "../stable-json.js";
 
 export { bundledCodeRuleDslDirectory };
@@ -332,7 +332,7 @@ export class CheckoutCatalogs {
   readonly #capabilities: CodeRuleCapabilities;
   readonly #entries = new Map<string, CheckoutEntry>();
   readonly #recorded: (checkoutPaths: readonly string[]) => Map<string, RecordedCheckoutStatus>;
-  readonly #recordedWithin: { all(range: { from: string; to: string }): { checkoutPath: string }[] };
+  readonly #recordedWithin: (folder: string) => string[];
 
   /**
    * `options.ruleCatalog` fixes the installed packs; without it each read follows them (`loadRuleCatalog`). Either way a
@@ -344,9 +344,7 @@ export class CheckoutCatalogs {
     this.#ruleCatalog = options.ruleCatalog;
     this.#capabilities = options.capabilities ?? loadCodeRuleCapabilities();
     this.#recorded = recordedCheckoutsReader(this.database);
-    this.#recordedWithin = this.database.select({ checkoutPath: checkouts.checkoutPath }).from(checkouts)
-      .where(and(gte(comparedCheckoutPath, sql.placeholder("from")), lt(comparedCheckoutPath, sql.placeholder("to"))))
-      .prepare();
+    this.#recordedWithin = recordedCheckoutsWithinReader(this.database);
   }
 
   /**
@@ -401,17 +399,12 @@ export class CheckoutCatalogs {
   }
 
   /**
-   * The recorded checkouts strictly inside `root` (physical paths), at any depth. Each path inside it starts with `root`
-   * and a separator, so only the rows in that range of an index are read, not every recorded checkout: the session's
-   * ignore rules ask this at every tool call. On Windows the range takes `root` in any letter case
-   * (`comparedCheckoutPath`): a folder outside Git is recorded as it was named, and a checkout in it as Git names it.
+   * The recorded checkouts strictly inside `root` (physical paths), at any depth, read through the range of an index below
+   * it, not every recorded checkout: the session's ignore rules ask this at every tool call. On Windows `root` is taken in
+   * any letter case ({@link recordedCheckoutsWithinReader}).
    */
   recordedCheckoutsWithin(root: string): string[] {
-    const from = root.endsWith(sep) ? root : `${root}${sep}`;
-    const to = `${from.slice(0, -1)}${String.fromCharCode(sep.charCodeAt(0) + 1)}`;
-    return this.#recordedWithin.all({ from, to })
-      .map(row => row.checkoutPath)
-      .filter(path => path !== root && withinCheckout(root, path));
+    return this.#recordedWithin(root);
   }
 
   /** The compiled code rules of `root`; its `refresh()` re-reads eligibility and configuration. */

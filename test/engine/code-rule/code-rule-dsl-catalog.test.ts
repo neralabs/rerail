@@ -265,6 +265,25 @@ describe("checkout code-rule catalog", () => {
     };
     expect(rowsRead(300)).toBe(rowsRead(10));
   });
+
+  it.runIf(process.platform === "win32")("finds the checkouts inside a folder named with a letter outside ASCII in another case, as Windows names one folder", () => {
+    const base = temporaryRoot();
+    const stored = join(base, "café");
+    const service = join(stored, "packages", "service");
+    execFileSync("git", ["init", "--quiet", service]);
+    const databasePath = join(base, "rerail.sqlite");
+    // Git names the nested checkout as the folder is stored; a session typed with caps lock on names the folder around it.
+    const typed = join(base, "CAFÉ");
+    setUpTestRepository(typed, {}, databasePath);
+    setUpTestRepository(service, {}, databasePath);
+    const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog: loadRuleCatalog() });
+    try {
+      expect(catalogs.recordedCheckoutsWithin(typed)).toEqual([service]);
+      expect(catalogs.recordedCheckoutsWithin(stored)).toEqual([service]);
+    } finally {
+      catalogs.close();
+    }
+  });
 });
 
 /** Records a checkout of `repositoryKey` at each path, as recording each worktree would. */

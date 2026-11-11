@@ -281,6 +281,24 @@ describe("the repository registry", () => {
     expect(recordedCheckoutsReader(database)([vscode.checkoutPath]).get(vscode.checkoutPath)).toMatchObject({ parents: [notes], status: stopped });
   });
 
+  it.runIf(process.platform === "win32")("takes a folder outside Git recorded with a letter outside ASCII in another case for a parent, as Windows names one folder", async () => {
+    const root = await temporary("rerail-registry-spelling-");
+    const database = open(join(root, "rerail.sqlite"));
+    const stored = join(root, "café");
+    mkdirSync(stored);
+    // Typed with caps lock on: Windows folds É into é as it folds C into c.
+    const typed = join(root, "CAFÉ");
+    const capitals = recordCheckout(database, typed);
+    const terminal = recordCheckout(database, stored);
+    expect([capitals.checkoutPath, terminal.checkoutPath]).toEqual([typed, stored]);
+    setCheckoutStarted(database, terminal, false);
+
+    expect(parentCheckouts(database, capitals).map(row => row.checkoutPath)).toEqual([stored]);
+    const stopped = { started: false, setUp: false, startedBy: "parent" };
+    expect(checkoutStatus(database, capitals)).toEqual(stopped);
+    expect(recordedCheckoutsReader(database)([capitals.checkoutPath]).get(capitals.checkoutPath)).toMatchObject({ parents: [stored], status: stopped });
+  });
+
   it("looks a checkout up without writing anything or creating a clone id", async () => {
     const root = await temporary("rerail-registry-lookup-");
     const database = open(join(root, "rerail.sqlite"));
