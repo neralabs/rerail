@@ -864,6 +864,103 @@ fn a_delta_probe_prices_a_lookup_by_the_bindings_it_can_hit() {
     assert_eq!(order[..2], ["pv", "fcall"], "{order:?}");
 }
 
+/// A restrictive relation outside the fixpoint has the same containment property as one inside it.
+/// The delta's name domain is wider than the four names the restrictive input can match.
+#[test]
+fn a_delta_probe_prices_restrictive_external_inputs_by_the_values_they_can_hit() {
+    let p = parse(".decl delta(k:number,a:number,t:number,f:number)\n.decl expand(o:number,t:number,k:number)\n.decl restrict(c:number,o:number,a:number)\n.input restrict\n.decl result(c:number,f:number)\nresult(c,f) :- restrict(c,o,a), expand(o,1,k), delta(k,a,2,f).\n.output result\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived = p.rules.iter().map(|r| r.head.rel.clone()).collect();
+    let mut model = Model {docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv:HashMap::new(),docof:HashMap::new(),view_src:HashMap::new(),inputs,derived};
+    for (rel, rows, ndv, fan) in [
+        ("delta",526.0,vec![526.0,173.0,1.0,526.0],vec![1.0,5.0,526.0,1.0]),
+        ("expand",201_000.0,vec![10000.0,4.0,1878.0],vec![30.0,100000.0,200.0]),
+        ("restrict",450.0,vec![450.0,450.0,4.0],vec![1.0,1.0,140.0]),
+    ] {
+        model.stats.card.insert(rel.into(), rows);
+        for (c,(ndv,fan)) in ndv.into_iter().zip(fan).enumerate() {
+            model.ndv.insert((rel.into(),c),ndv);
+            model.stats.fan.insert((rel.into(),c),fan);
+        }
+    }
+    model.stats.solve(["delta","expand","result"].into_iter().map(str::to_owned).collect());
+    let r=&p.rules[0];
+    let ((order,work,_),_)=model.plan_rule_explained(&p,&r.head,&r.body,Some(2)).unwrap();
+    let order:Vec<_>=order.iter().filter_map(|s|s.lit.atom()).map(|a|a.rel.as_str()).collect();
+    assert_eq!(order, ["delta","restrict","expand"], "restrict the delta before its high-fanout probe: {order:?}, work={work}");
+    assert!(work<10_000.0, "price misses as well as hits: {work}");
+
+    // A cached live plan must notice a new value distribution even when every relation's size is unchanged.
+    let _plans=KeepPlans::start(None);
+    model.ndv.insert(("delta".into(),1),1.0);
+    let ((before,_,_),_)=model.plan_rule_live(&p,&r.head,&r.body,Some(2)).unwrap();
+    let before:Vec<_>=before.iter().filter_map(|s|s.lit.atom()).map(|a|a.rel.as_str()).collect();
+    assert_eq!(before,["delta","expand","restrict"],"the initial narrow-domain estimate makes expansion cheaper");
+    model.ndv.insert(("delta".into(),1),173.0);
+    let ((after,_,_),_)=model.plan_rule_live(&p,&r.head,&r.body,Some(2)).unwrap();
+    let after:Vec<_>=after.iter().filter_map(|s|s.lit.atom()).map(|a|a.rel.as_str()).collect();
+    assert_eq!(after,["delta","restrict","expand"],"a size-only cache must not keep the obsolete order");
+
+    // A tiny delta can have fewer names than the input yet no matching names. Distinct counts alone cannot
+    // detect this. Changing only the values must invalidate the plan even at fixed counts and fanouts.
+    model.ndv.insert(("delta".into(),1),1.0);
+    model.stats.dfreq.insert(("delta".into(),1),HashMap::from([(Constant::Int(10),526)]));
+    model.stats.dfreq.insert(("restrict".into(),2),HashMap::from([(Constant::Int(10),450)]));
+    let ((overlap,_,_),_)=model.plan_rule_live(&p,&r.head,&r.body,Some(2)).unwrap();
+    assert_eq!(overlap.iter().filter_map(|s|s.lit.atom()).map(|a|a.rel.as_str()).collect::<Vec<_>>(),["delta","expand","restrict"]);
+    model.stats.dfreq.insert(("delta".into(),1),HashMap::from([(Constant::Int(11),526)]));
+    assert_eq!(model.delta_misses(&r.body,Some(2)),[0]);
+    let ((disjoint,work,_),_)=model.plan_rule_live(&p,&r.head,&r.body,Some(2)).unwrap();
+    assert_eq!(disjoint.iter().filter_map(|s|s.lit.atom()).map(|a|a.rel.as_str()).collect::<Vec<_>>(),["delta","restrict","expand"]);
+    assert!(work<2000.0,"disjoint key values must avoid expansion: {work}");
+    assert!(model.delta_misses(&r.body,None).is_empty(),"a later predicate is not an already-applied demand");
+
+    // A partial SQL constant memo does not prove absence. Complete native postings do.
+    model.stats.dfreq.remove(&("restrict".into(),2));
+    let col=model.col("restrict",2);
+    model.stats.col.insert(("restrict".into(),col.clone()),[450,2,0,0]);
+    model.stats.memo.insert("restrict".into(),HashMap::from([((col.clone(),Constant::Int(10)),225)]));
+    assert!(model.delta_misses(&r.body,Some(2)).is_empty());
+    model.stats.memo.get_mut("restrict").unwrap().insert((col,Constant::Int(12)),225);
+    assert_eq!(model.delta_misses(&r.body,Some(2)),[0]);
+}
+
+/// O125's retval regression: a kind-filtered node is not a random draw from the complete node domain.
+#[test]
+fn filtered_binding_domains_do_not_underprice_expansion_from_function_scopes() {
+    let p = parse(".decl kind(n:number,k:number)\n.decl scope(n:number,f:number)\n.decl child(p:number,c:number,i:number)\n.input kind\n.input scope\n.input child\n.decl result(f:number,r:number)\nresult(f,r) :- kind(rs,1), child(rs,r,0), scope(rs,f), kind(f,2).\n.output result\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived = p.rules.iter().map(|r| r.head.rel.clone()).collect();
+    let mut model = Model {docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv:HashMap::new(),docof:HashMap::new(),view_src:HashMap::new(),inputs,derived};
+    for (rel, rows, ndv, fan) in [
+        ("kind",300_000.0,vec![300_000.0,100.0],vec![1.0,6000.0]),
+        ("scope",160_836.0,vec![160_836.0,2181.0],vec![1.0,100.0]),
+        ("child",180_000.0,vec![60_000.0,180_000.0,5.0],vec![3.0,1.0,60_000.0]),
+    ] {
+        model.stats.card.insert(rel.into(), rows);
+        for (c,(ndv,fan)) in ndv.into_iter().zip(fan).enumerate() {
+            model.ndv.insert((rel.into(),c),ndv);
+            model.stats.fan.insert((rel.into(),c),fan);
+        }
+    }
+    model.stats.kfreq.insert("1".into(),2063);
+    model.stats.kfreq.insert("2".into(),2181);
+    model.stats.dfreq.insert(("child".into(),2),HashMap::from([(Constant::Int(0),60_000)]));
+    let rule = &p.rules[0];
+    let functions = rule.body[3].atom().unwrap();
+    assert_eq!(model.binding_domains(&p,functions)[0],Some(2181.0));
+    let ((order,work,_),_)=model.plan_rule_explained(&p,&rule.head,&rule.body,None).unwrap();
+    let first=order.iter().find_map(|s|s.lit.atom()).unwrap();
+    assert_eq!(first,&rule.body[0].atom().unwrap().clone(),"return statements must precede scope expansion: {order:?}");
+    assert!(work<20_000.0,"avoid the 160,836-row function-body expansion: {work}");
+
+    // The same bound applies to an ordinary relation with a measured constant frequency.
+    let atom=rule.body[1].atom().unwrap();
+    assert_eq!(model.binding_domains(&p,atom)[1],Some(60_000.0));
+    model.stats.dfreq.clear();
+    assert_eq!(model.binding_domains(&p,atom)[1],Some(180_000.0),"unknown conditional counts must not invent selectivity");
+}
+
 /// An equality of a bound variable with an unbound one, `$s = $a` with `$s` bound, assigns `$a` (decision 0099 item
 /// 4): the second atom is read by it, not crossed with the first and narrowed after (`fl4317_typing_root`: 14 k rows,
 /// then 2.86 M, then 603). The rule runs to the same rows either way round.
