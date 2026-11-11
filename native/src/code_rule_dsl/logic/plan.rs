@@ -3040,8 +3040,9 @@ impl Run<'_, '_> {
     }
 
     /// Whether a maintained stratum is derived again (decision 0090 §4): when its input deltas reach θ of its old
-    /// rows (`RERAIL_AGAIN_THETA`, default 0.25) and are not too few to matter (`RERAIL_AGAIN_MIN` rows, default
-    /// 1,024). `RERAIL_AGAIN=off` maintains every one. Read at each choice, so a test can set them.
+    /// rows (`RERAIL_AGAIN_THETA`, default 0.25), are not too few to matter (`RERAIL_AGAIN_MIN` rows, default
+    /// 1,024), and the form derived again is priced below the maintained one (`again_costs`; `RERAIL_AGAIN_PRICED=off`
+    /// skips it). `RERAIL_AGAIN=off` maintains every one. Read at each choice, so a test can set them.
     /// The deferred deltas (decision 0090 §4) among `wanted`, made now: a stratum that runs reads them.
     fn make_deferred(&mut self, wanted: &[&str], deferred: &mut HashMap<String, (usize, usize, usize)>) -> Result<()> {
         let prog = self.prog;
@@ -3059,7 +3060,7 @@ impl Run<'_, '_> {
     /// Whether a maintained stratum is derived again (decision 0090 §4), and the size taken for its input deltas. A
     /// delta not made yet (`deferred`) is taken at its estimate, the input deltas of the stratum that makes it, at
     /// most that stratum's rows new and old; one made is counted.
-    fn again_wanted(&self, again: &super::front::Again, deferred: &HashMap<String, (usize, usize, usize)>) -> Result<(bool, usize)> {
+    fn again_wanted(&mut self, again: &super::front::Again, deferred: &HashMap<String, (usize, usize, usize)>) -> Result<(bool, usize)> {
         if std::env::var("RERAIL_AGAIN").is_ok_and(|v| v == "off") {
             return Ok((false, 0));
         }
@@ -3074,16 +3075,90 @@ impl Run<'_, '_> {
         let estimated: usize = again.reads.iter().filter_map(|r| deferred.get(r)).map(|d| d.2).sum();
         let delta: usize = again.reads.iter().filter(|r| !deferred.contains_key(*r)).map(|r| rows(r)).sum::<usize>() + estimated;
         let old: usize = again.olds.iter().map(|r| rows(r)).sum();
-        let wanted = delta > 0 && delta >= floor && delta as f64 >= theta * old as f64;
-        if std::env::var_os("RERAIL_AGAIN_WHY").is_some() {
-            eprintln!("RERAIL_AGAIN_WHY {:?}: input deltas {delta} ({estimated} estimated), old rows {old}: {}", again.scc.iter().next(), if wanted { "derived again" } else { "maintained" });
+        let past = delta > 0 && delta >= floor && delta as f64 >= theta * old as f64;
+        // Past θ, the second test of §4: derived again only where that is priced below maintaining. The input
+        // deltas' size alone counts rows no rule reaches, and a deferred delta's estimate is an upper bound: at the
+        // o125 replay's step 07, `attr_open` (41,654 input delta rows, 32,944 of them estimated) cost 31 k units
+        // derived again and 6.6 k maintained, `type_miss` 107 k and 21 k.
+        let why = std::env::var_os("RERAIL_AGAIN_WHY").is_some();
+        let each: Vec<String> = if why { again.reads.iter().map(|r| match deferred.get(r) { Some(d) => format!("{r}~{}", d.2), None => format!("{r}={}", rows(r)) }).collect() } else { Vec::new() };
+        let cap: usize = again.olds.iter().map(|r| rows(r)).sum::<usize>() * 2;
+        // `RERAIL_AGAIN_PRICED=off`: θ alone chooses.
+        let priced = !std::env::var("RERAIL_AGAIN_PRICED").is_ok_and(|v| v == "off");
+        let costs = if past && priced { self.again_costs(again, deferred) } else { None };
+        let wanted = past && costs.is_none_or(|(again_cost, kept)| again_cost < kept);
+        if why {
+            eprintln!(
+                "RERAIL_AGAIN_WHY {:?}: input deltas {delta} ({estimated} estimated), old rows {old}, priced again/maintained {costs:?}: {} [{}]",
+                again.scc.iter().next(),
+                if wanted { "derived again" } else { "maintained" },
+                each.join(" ")
+            );
         }
         if wanted {
-            super::profile::decision("derived again (decision 0090 §4)", || format!("{:?}: input deltas {delta} rows ({estimated} estimated), {old} old rows, θ {theta}", again.scc));
+            super::profile::decision("derived again (decision 0090 §4)", || {
+                format!("{:?}: input deltas {delta} rows ({estimated} estimated), {old} old rows, θ {theta}; priced again/maintained {costs:?}", again.scc)
+            });
+        } else if past {
+            super::profile::decision("maintained past θ (decision 0090 §4)", || format!("{:?}: input deltas {delta} rows, {old} old rows; priced again/maintained {costs:?}", again.scc));
         }
-        // What its own deltas are taken at, when deferred: at most its rows new and old.
-        let cap: usize = again.olds.iter().map(|r| rows(r)).sum::<usize>() * 2;
+        // What its own deltas are taken at, when deferred: at most its rows new and old (`cap`).
         Ok((wanted, delta.min(cap.max(1))))
+    }
+
+    /// §4's prices of a maintained stratum's two forms, in units of the engine's work: derived again, its rules over
+    /// the current inputs and its deltas against its old rows; maintained, the rules that make what it owns. Each rule
+    /// is planned as the run plans it, with the input deltas at their sizes (a deferred one at its estimate), the
+    /// stratum's relations at their old rows, and each piece of the maintained form (`__del`, `__ins`, …) at the rows
+    /// its rules priced before it make. Each stratum a form runs is an engine call besides, priced at what the
+    /// decision measured: 0.4 ms a call, 0.4 µs a unit of work. None where a rule cannot be planned here (the θ test
+    /// alone then chooses).
+    fn again_costs(&mut self, again: &super::front::Again, deferred: &HashMap<String, (usize, usize, usize)>) -> Option<(f64, f64)> {
+        const CALL: f64 = 1_000.0;
+        let prog = self.prog;
+        let _span = super::profile::span(|| "derive again or maintain: priced".into());
+        let held = |db: &Connection, r: &str| super::native::component::held(db, r).map(|h| h.rows());
+        // The sizes the pricing takes, set for it alone and put back after.
+        let mut sizes: Vec<(String, f64)> = Vec::new();
+        for r in &again.reads {
+            if let Some(n) = deferred.get(r).map(|d| d.2).or_else(|| held(self.db, r)) {
+                sizes.push((r.clone(), n as f64));
+            }
+        }
+        for r in &again.scc {
+            if let Some(n) = held(self.db, &format!("{r}__old")) {
+                sizes.push((r.clone(), n as f64));
+            }
+        }
+        let pieces: Vec<&String> = again.owned.iter().filter(|r| !again.scc.contains(*r) && !r.ends_with("__old") && !again.reads.contains(*r)).collect();
+        sizes.extend(pieces.iter().map(|r| ((*r).clone(), 0.0)));
+        let was: Vec<(String, Option<f64>)> = sizes.into_iter().map(|(r, n)| (r.clone(), self.model.stats.card.insert(r, n.max(1.0)))).collect();
+        let mut price = |rules: &[&Rule], grow: bool| -> Option<f64> {
+            let mut total = 0.0;
+            let mut made: BTreeMap<&str, f64> = BTreeMap::new();
+            for r in rules {
+                let (_, w, rows) = self.model.plan_rule(prog, &r.head, &r.body, None).ok()?;
+                total += w;
+                if grow && pieces.iter().any(|p| **p == r.head.rel) {
+                    let n = made.entry(r.head.rel.as_str()).or_insert(0.0);
+                    *n += rows;
+                    self.model.stats.card.insert(r.head.rel.clone(), n.max(1.0));
+                }
+            }
+            let calls = rules.iter().map(|r| r.head.rel.as_str()).collect::<BTreeSet<_>>().len();
+            Some(total + CALL * calls as f64)
+        };
+        let again_rules: Vec<&Rule> = again.rules.iter().chain(&again.deltas).collect();
+        let kept_rules: Vec<&Rule> = prog.rules.iter().filter(|r| again.owned.contains(&r.head.rel)).collect();
+        let again_cost = price(&again_rules, false);
+        let kept = price(&kept_rules, true);
+        for (r, n) in was {
+            match n {
+                Some(n) => self.model.stats.card.insert(r, n),
+                None => self.model.stats.card.remove(&r),
+            };
+        }
+        Some((again_cost?, kept?))
     }
 
     /// The rows `select` added to `head`'s relation (keys changed, for a lattice).
