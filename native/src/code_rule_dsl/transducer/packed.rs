@@ -2053,6 +2053,15 @@ impl Program {
                 for t in s.targets.iter().chain([&s.end]) {
                     digest.update(t.to_le_bytes());
                 }
+                // A switch's words (`ByteSwitch::words`), when it names any.
+                if !s.words.is_empty() {
+                    digest.update(b"words");
+                    digest.update((s.words.len() as u64).to_le_bytes());
+                    for &(w, t) in &s.words {
+                        digest.update(w.to_le_bytes());
+                        digest.update(t.to_le_bytes());
+                    }
+                }
             }
         }
         if !self.readings.is_empty() {

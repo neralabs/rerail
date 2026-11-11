@@ -206,7 +206,7 @@ pub(crate) fn successors(native: &Structure, pushes: &[u16], pc: usize) -> Vec<u
         Op::Goto { target } => vec![usize::from(target)],
         Op::Switch { table } => {
             let s = &native.switches[usize::from(table)];
-            let mut out: Vec<usize> = s.targets.iter().chain([&s.end]).filter(|&&t| t != REFUSE).map(|&t| usize::from(t)).collect();
+            let mut out: Vec<usize> = s.all_targets().filter(|&t| t != REFUSE).map(usize::from).collect();
             out.sort_unstable();
             out.dedup();
             out
@@ -1041,6 +1041,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         let n = r.kinds.iter().copied().max().map_or(0, |m| usize::from(m) + 1);
         (0..n).map(|k| r.kinds.iter().position(|&x| usize::from(x) == k).unwrap_or(0) as u8).collect()
     });
+    // Each word's kind: its first byte's.
+    let word_kinds: Vec<u8> = starts.and(native.block_programs.first().and_then(|b| b.records.as_ref())).map_or_else(Vec::new, |r| r.words.iter().map(|w| r.kinds[usize::from(w[0])]).collect());
 
     let clustered = cut.count > 1 || cut.calls;
     if cut.calls && !cut.pass.is_empty() {
@@ -1523,17 +1525,32 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     f.switch_to_block(taking);
                     // On the first byte, with records: the record's kind (`records`), the
                     // switch's targets by kind (its least byte's), a compare tree as on bytes.
+                    // A switch that names words switches on the token's symbol: its kind, or 256
+                    // and its word's index for a word; a word it does not name goes as its kind.
                     let by_kind = kind_reps.as_ref().filter(|_| s.offset == 0).map(|reps| {
-                        let mut t = vec![REFUSE; 256];
+                        let n = if s.words.is_empty() { 256 } else { 256 + word_kinds.len() };
+                        let mut t = vec![REFUSE; n];
                         for (k, &b) in reps.iter().enumerate() {
                             t[k] = s.targets[usize::from(b)];
+                        }
+                        for (w, &k) in word_kinds.iter().enumerate().take(n - 256) {
+                            t[256 + w] = s.word(w as u16).unwrap_or(t[usize::from(k)]);
                         }
                         ByteSwitch { targets: t, ..s.clone() }
                     });
                     let s = by_kind.as_ref().unwrap_or(s);
                     let b = if by_kind.is_some() {
                         let code = mget(&mut f, Mem::Taken);
-                        f.ins().band_imm(code, 0xff)
+                        let kind = f.ins().band_imm(code, 0xff);
+                        if s.targets.len() > 256 {
+                            // The word's index plus one, past the kind's bits: plus 255 is 256 and
+                            // the index.
+                            let w = f.ins().ushr_imm(code, i64::from(crate::records::KIND_BITS));
+                            let sym = f.ins().iadd_imm(w, 255);
+                            f.ins().select(w, sym, kind)
+                        } else {
+                            kind
+                        }
                     } else {
                         let (start, limit) = (mget(&mut f, Mem::Start), mget(&mut f, Mem::Limit));
                         let at = f.ins().iadd_imm(start, i64::from(s.offset));

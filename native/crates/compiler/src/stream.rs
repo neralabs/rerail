@@ -78,8 +78,18 @@ pub fn validate(program: &Words) -> Result<(), Error> {
         }
     }
     let target = |t: u16| t == REFUSE || usize::from(t) < words.len();
-    if program.switches.iter().any(|s| s.targets.len() != 256 || !s.targets.iter().all(|&t| target(t)) || !target(s.end)) {
+    if program.switches.iter().any(|s| s.targets.len() != 256 || !s.all_targets().all(target)) {
         return Err(Error::InvalidTarget(0));
+    }
+    // A switch's words: on the first byte, with records whose words are the strings; each a
+    // string, in order.
+    let records = program.block_programs.first().and_then(|b| b.records.as_ref());
+    for s in program.switches.iter().filter(|s| !s.words.is_empty()) {
+        let in_order = s.words.windows(2).all(|w| w[0].0 < w[1].0);
+        let named = s.words.iter().all(|&(w, _)| usize::from(w) < program.strings.len());
+        if s.offset != 0 || !in_order || !named || !records.is_some_and(|r| r.words == program.strings) {
+            return Err(Error::InvalidTarget(0));
+        }
     }
     // A switch on the first byte is one on the record's kind (`records`): alike within a kind.
     if let Some(r) = program.block_programs.first().and_then(|b| b.records.as_ref()) {
@@ -130,7 +140,7 @@ pub fn validate(program: &Words) -> Result<(), Error> {
             GOTO => vec![usize::from(operand)],
             SWITCH => {
                 let s = &program.switches[usize::from(operand)];
-                let mut out: Vec<usize> = s.targets.iter().chain([&s.end]).filter(|&&t| t != REFUSE).map(|&t| usize::from(t)).collect();
+                let mut out: Vec<usize> = s.all_targets().filter(|&t| t != REFUSE).map(usize::from).collect();
                 out.sort_unstable();
                 out.dedup();
                 out
@@ -318,8 +328,14 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     s.end
                 } else {
                     let at = start as usize + usize::from(s.offset);
-                    // Zeros past the file, as every executor reads them.
-                    if at >= rec_end as usize { REFUSE } else { s.targets[usize::from(bytes.get(at).copied().unwrap_or(0))] }
+                    // A word the switch names: its target. Else zeros past the file, as every
+                    // executor reads them.
+                    let word = (code >> crate::records::KIND_BITS).checked_sub(1).and_then(|w| s.word(w as u16));
+                    match word {
+                        Some(t) if s.offset == 0 => t,
+                        _ if at >= rec_end as usize => REFUSE,
+                        _ => s.targets[usize::from(bytes.get(at).copied().unwrap_or(0))],
+                    }
                 };
                 if t == REFUSE {
                     return refuse(pc - 1, "no state takes the token");
@@ -645,7 +661,7 @@ pub fn validate_rules(program: &Words) -> Result<(), Error> {
             GOTO => vec![target(operand)],
             SWITCH => {
                 let s = &program.switches[usize::from(operand)];
-                s.targets.iter().chain([&s.end]).filter(|&&t| t != REFUSE).map(|&t| target(t)).collect()
+                s.all_targets().filter(|&t| t != REFUSE).map(target).collect()
             }
             PUSH => {
                 if split(*words.get(pc + 1).ok_or(Error::InvalidTarget(pc))?).0 != GOTO {

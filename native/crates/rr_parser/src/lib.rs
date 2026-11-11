@@ -248,11 +248,18 @@ pub mod tests {
         assert!(c.words.contains("  rule 0 @0000\n"), "the rules are rows of the program's text");
         assert!(c.machine.contains(" call"), "calls take no token");
         // A ratchet, as the machine's (`the_state_machine_shares_its_rules`): lower it as the
-        // compiler improves. Most words are jumps (`GOTO`, a third) and keyword tests (`SPAN`,
-        // `WORD`, one a keyword a state).
+        // compiler improves. Keywords are the switches' targets (`ByteSwitch::words`): 13,119
+        // words before, when each state tested each keyword with a `SPAN`, a `WORD` and jumps.
+        // A third are still jumps (`GOTO`).
+        assert!(c.program.switches.iter().any(|s| !s.words.is_empty()), "the switches name keywords");
+        // Its words in order, by the verifier: out of order, refused.
+        let mut bad = c.program.clone();
+        let named = bad.switches.iter_mut().find(|s| s.words.len() > 1).expect("a switch naming two words");
+        named.words.swap(0, 1);
+        assert!(stream::validate(&bad).is_err(), "a switch's words out of order");
         let states = c.machine.lines().filter(|l| l.starts_with("state ")).count();
         let arms = c.machine.lines().filter(|l| l.starts_with("arm ")).count();
-        assert!(states <= 371 && arms <= 3068 && c.program.words.len() <= 13119, "{states} states, {arms} arms, {} words", c.program.words.len());
+        assert!(states <= 371 && arms <= 3068 && c.program.words.len() <= 8860, "{states} states, {arms} arms, {} words", c.program.words.len());
         let native = native_ir::lower(&c.program, 0, 0).expect("lowers");
         let cut = native_cpu_clusters::by_rules(&native);
         assert_eq!((cut.count as usize, cut.calls), (rules.len(), true), "a function a rule");
@@ -512,7 +519,7 @@ pub mod tests {
                 GOTO => vec![usize::from(x)],
                 SWITCH => {
                     let sw = &program.switches[usize::from(x)];
-                    sw.targets.iter().chain([&sw.end]).filter(|&&t| t != refuse).map(|&t| usize::from(t)).collect()
+                    sw.all_targets().filter(|&t| t != refuse).map(usize::from).collect()
                 }
                 WORD_IS if mode == 1 => vec![pc + 1, pc + 2],
                 o if o == flag && mode == 2 => vec![pc + 1, pc + 2],

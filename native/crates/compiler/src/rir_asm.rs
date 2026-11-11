@@ -373,6 +373,17 @@ fn switch_row(parts: &mut Words, line: &mut Line<'_>) -> Result<(), String> {
     if at + 1 != parts.switches.len() {
         return Err(format!("switch {at}'s bytes before its header"));
     }
+    if line.peek_word().as_deref() == Some("word") {
+        line.next()?;
+        let w: u16 = line.number("s")?;
+        let t = target(line)?;
+        let words = &mut parts.switches[at].words;
+        if words.last().is_some_and(|&(x, _)| x >= w) {
+            return Err(format!("switch {at}'s words out of order at s{w}"));
+        }
+        words.push((w, t));
+        return Ok(());
+    }
     let range = line.word()?;
     let (lo, hi) = range.split_once('-').ok_or_else(|| format!("a byte range is `0xLO-0xHI`, not `{range}`"))?;
     let byte = |x: &str| x.strip_prefix("0x").and_then(|h| u8::from_str_radix(h, 16).ok()).ok_or_else(|| format!("a bad byte `{x}`"));

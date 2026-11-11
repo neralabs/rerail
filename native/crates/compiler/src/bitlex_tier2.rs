@@ -379,6 +379,51 @@ impl Emit<'_> {
     }
 
     /// The target for the candidates of one byte at `depth` of their keywords.
+    /// A state's switch `t` at byte `b`, where one row the state can meet begins with it: each
+    /// keyword an arm takes, a target of the switch's own (`ByteSwitch::words`), which takes the
+    /// token; each keyword of the row's no arm here takes, the state's end (the row reserves it).
+    /// The byte's target is then the row's own arm, with no keyword tested: tier 1's record
+    /// names the word, as a lexer gives a keyword its kind.
+    fn by_words(&mut self, t: usize, b: u8, cands: Vec<Cand>) -> Result<u16, String> {
+        let row = &self.rows[cands[0].row];
+        let (one_byte, takes_last) = (row.one_byte, row.takes_last());
+        let check_refuses = row.check.is_some_and(|first| !has(&first, b));
+        let missing: Vec<Vec<u8>> = row.keywords.iter().map(|(w, _)| w.clone()).filter(|w| w[0] == b && !cands.iter().any(|c| c.word.as_ref() == Some(w))).collect();
+        let plain = cands.iter().find(|c| c.word.is_none()).map(|c| c.arm);
+        for w in missing {
+            let s = self.string(&w);
+            let to = self.default;
+            self.name_word(t, s, to)?;
+        }
+        for c in cands.iter().filter(|c| c.word.is_some()) {
+            let w = c.word.clone().expect("a keyword");
+            let span = if takes_last { Span::Last } else { Span::Len(w.len() as u16) };
+            let s = self.string(&w);
+            let to = self.arm(c.arm, span, Pre::None);
+            self.name_word(t, s, to)?;
+        }
+        // A token that is no keyword here: refused where the row's check does not take the byte
+        // (tier 1 passes such tokens on), else the row's own arm, else the state's end.
+        Ok(match plain {
+            _ if check_refuses => REFUSE,
+            Some(a) => self.arm(a, if one_byte { Span::Len(1) } else { Span::Last }, Pre::None),
+            None => self.default,
+        })
+    }
+
+    /// Switch `t` names word `s` with target `to`, kept in order.
+    fn name_word(&mut self, t: usize, s: u16, to: u16) -> Result<(), String> {
+        let words = &mut self.switches[t].words;
+        match words.binary_search_by_key(&s, |&(x, _)| x) {
+            Ok(i) if words[i].1 != to => Err(format!("word {s} with two targets in one switch")),
+            Ok(_) => Ok(()),
+            Err(i) => {
+                words.insert(i, (s, to));
+                Ok(())
+            }
+        }
+    }
+
     fn target(&mut self, b: u8, depth: usize, cands: Vec<Cand>) -> Result<u16, String> {
         let row = &self.rows[cands[0].row];
         let plain: Vec<&Cand> = cands.iter().filter(|c| c.word.is_none()).collect();
@@ -693,7 +738,7 @@ impl Emit<'_> {
                 self.switches[t].targets[usize::from(b)] = at;
                 continue;
             }
-            let pc = self.target(b, 0, cs)?;
+            let pc = self.by_words(t, b, cs)?;
             self.switches[t].targets[usize::from(b)] = pc;
         }
         // The marks' arms: their acts, no bytes taken (the next state switches on this token).
@@ -767,7 +812,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         let t = e.switches.len();
         e.push("SWITCH", 0, Arg::Table(t as u16));
         let end = e.pc();
-        e.switches.push(ByteSwitch { offset: 0, targets: vec![end; 256], end });
+        e.switches.push(ByteSwitch { offset: 0, targets: vec![end; 256], end, words: Vec::new() });
         for _ in 0..c + u8::from(st.own) {
             e.push("CLOSE", 0, Arg::None);
         }
@@ -799,7 +844,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         placed = order.iter().map(|&pc| match placed[pc] { (op, mode, Arg::Pc(t)) => (op, mode, Arg::Pc(to(t))), w => w }).collect();
         rule_of = order.iter().map(|&pc| rule_of[pc]).collect();
         for sw in &mut e.switches {
-            for t in sw.targets.iter_mut().chain([&mut sw.end]) {
+            for t in sw.targets.iter_mut().chain([&mut sw.end]).chain(sw.words.iter_mut().map(|(_, t)| t)) {
                 *t = to(*t);
             }
         }
@@ -870,7 +915,7 @@ fn ways(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], pc: usize) -
         "SWITCH" => {
             let Arg::Table(t) = arg else { return (vec![], 0) };
             let s = &switches[usize::from(t)];
-            (s.targets.iter().copied().chain([s.end]).collect(), 0)
+            (s.all_targets().collect(), 0)
         }
         // A call's landings: the state (`RETURN m=0`) and the word after it (`m=1`).
         "PUSH" => {
@@ -899,15 +944,16 @@ fn merge_words(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], rules
     let class_of = |class: &[u32], t: u16| if t == REFUSE || usize::from(t) >= n { NONE } else { class[usize::from(t)] };
     // The first partition: operation, mode, operand (a switch's offset too), and the rule.
     let mut class: Vec<u32> = {
-        let mut ids: HashMap<(&str, u8, (u8, u16), u8, u16), u32> = HashMap::new();
+        let mut ids: HashMap<(&str, u8, (u8, u16), u8, u16, Vec<u16>), u32> = HashMap::new();
         words
             .iter()
             .enumerate()
             .map(|(pc, &(op, mode, arg))| {
-                let offset = if let Arg::Table(t) = arg { switches[usize::from(t)].offset } else { 0 };
+                // A switch's offset and the words it names (their targets are its ways).
+                let (offset, named) = if let Arg::Table(t) = arg { (switches[usize::from(t)].offset, switches[usize::from(t)].words.iter().map(|&(w, _)| w).collect()) } else { (0, Vec::new()) };
                 let next = ids.len() as u32;
                 let rule = rules.map_or(0, |r| r[pc]);
-                *ids.entry((op, mode, operand_key(arg), offset, rule)).or_insert(next)
+                *ids.entry((op, mode, operand_key(arg), offset, rule, named)).or_insert(next)
             })
             .collect()
     };
@@ -1013,7 +1059,7 @@ fn merge_words(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], rules
                     ("SWITCH", Arg::Table(t)) => {
                         let at = *tables.entry(t).or_insert_with(|| {
                             let s = &switches[usize::from(t)];
-                            out_switches.push(ByteSwitch { offset: s.offset, targets: s.targets.iter().map(|&x| to(x)).collect(), end: to(s.end) });
+                            out_switches.push(ByteSwitch { offset: s.offset, targets: s.targets.iter().map(|&x| to(x)).collect(), end: to(s.end), words: s.words.iter().map(|&(w, x)| (w, to(x))).collect() });
                             (out_switches.len() - 1) as u16
                         });
                         Arg::Table(at)

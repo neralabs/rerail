@@ -42,6 +42,9 @@ pub fn switch_rows(out: &mut String, at: usize, s: &crate::stream_ir::ByteSwitch
         }
         b = e + 1;
     }
+    for &(w, t) in &s.words {
+        let _ = writeln!(out, "  switch {at} word s{w} {}", switch_target(t));
+    }
 }
 
 /// Tier 2's rules (`Words::rules`): `rule N @P`, each rule's first place.

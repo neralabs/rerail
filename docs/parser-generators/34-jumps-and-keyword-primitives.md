@@ -212,6 +212,33 @@ A jump table on the code was measured and is worse
 | Tier 1: the word code | Multiply, shift, load, compare | A hash the compiler picks, `TBL` in registers | A few instructions a word |
 | Rule bodies: name sets | One compare at a time | `BMOPA`, GPU matrices | For large sets only |
 
+## Built: keywords in the switch
+
+A state's switch now names the keywords it takes (`switch N word sK @P`).
+A token that is one goes to its arm, which takes it.
+A keyword its row reserves goes to the state's end, or refuses.
+Any other token switches on its kind, and the row's own arm tests no keyword.
+In Cranelift, the switch reads the token's symbol:
+its kind, or 256 and the word's index for a word.
+One compare tree takes both.
+
+Where two rows begin with one byte, a token of one row could have the bytes
+of the other's keyword, and only `ROW` tells them apart.
+There the keyword tests stay: 78 `WORD`s.
+
+| | Before | After |
+|---|---|---|
+| Words | 13,119 | 8,860 |
+| `GOTO` | 4,785 | 2,786 |
+| `WORD` | 1,792 | 78 |
+| `SPAN` | 1,888 | 1,342 |
+| Machine code, as emitted | 590,312 bytes | 530,772 bytes |
+| Tier 2, instructions | 484.2M | 481.3M |
+
+The run barely changes, as the keyword tests cost 6 instructions a token.
+The code is a tenth smaller, and a third of the words are gone.
+Both shapes still give the engine's tape on every corpus file they take.
+
 ## The order
 
 1. One symbol a token: rows and keywords in the record, one switch a state.

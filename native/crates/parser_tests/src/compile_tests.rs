@@ -1135,9 +1135,11 @@ fn json_tier2_is_transducer_words() {
     let again = rir::assemble(&text).expect("reassembles");
     assert_eq!((&again.words, &again.block_programs, &again.strings), (&p.words, &p.block_programs, &p.strings), "the words round trip");
     let words: Vec<&str> = text.lines().filter(|l| l.trim_start().starts_with(|c: char| c.is_ascii_digit())).collect();
-    for want in ["TOKEN", "SWITCH", "OPEN", "LEAF", "CLOSE", "PUSH", "RETURN", "ACCEPT", "WORD"] {
+    for want in ["TOKEN", "SWITCH", "OPEN", "LEAF", "CLOSE", "PUSH", "RETURN", "ACCEPT"] {
         assert!(words.iter().any(|l| l.split_whitespace().nth(1) == Some(want)), "no {want}:\n{}", words.join("\n"));
     }
+    // The keywords (`true`, `false`, `null`) are a switch's targets, a row each.
+    assert!(text.lines().any(|l| l.trim_start().starts_with("switch ") && l.contains(" word s")), "no switch names a keyword");
     for banned in ["FORK", "CHILD", "NEXT", "DESCEND", "CAPTURE", "EMIT", "CHECK"] {
         assert!(!words.iter().any(|l| l.split_whitespace().nth(1) == Some(banned)), "{banned}:\n{}", words.join("\n"));
     }
