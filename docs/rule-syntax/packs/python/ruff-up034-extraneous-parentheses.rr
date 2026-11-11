@@ -21,15 +21,12 @@ UP034(n) :- double(m, n), redundant(n), !scanned(m).
 
 // attempt(m, n): bracket node m opens with `(` and its next token opens n: where the scan tries a double.
 // double(m, n): the attempt succeeds: n's `)` is followed by m's `)`.
-// The tape stores neither parenthesis of a pair (RER-131), so they are read from the source: m's text starts
-// with `(`, n is its first child, and only blanks lie between them; n's `)` and m's are its last characters, with
-// only blanks between.
+// The tape leaves parentheses out where the grammar implies them (RER-131), so the source around n says where
+// they stand: before m's first child n, `(` and blanks; after it, blanks and m's `)`.
 .decl attempt(m: node, n: node)
-attempt(m, n) :- bracket(m), prefix("(", m), child(m, n, 0), inner(n), node(_, m, _, ms, _), node(_, n, _, ns, _),
-    text(m, t), match("\\s*", substr(t, 1, ns - ms - 1)).
+attempt(m, n) :- bracket(m), child(m, n, 0), inner(n), structural_before(n, s), match("\\(\\s*", s).
 .decl double(m: node, n: node)
-double(m, n) :- attempt(m, n), node(_, m, _, ms, me), node(_, n, _, _, ne), text(m, t),
-    match("\\s*\\)", substr(t, ne - ms, me - ne)).
+double(m, n) :- attempt(m, n), structural_after(n, s), match("\\s*\\)", s).
 .decl bracket(m: node)  // nodes whose first token may be a `(` of their own
 bracket(m) :- kind(m, k), (k = "argument_list" ; k = "parenthesized_expression" ; k = "tuple" ;
     k = "generator_expression" ; k = "parameters" ; k = "tuple_pattern").

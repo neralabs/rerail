@@ -25,8 +25,9 @@ use tree_sitter::{Language, Node as TsNode, TreeCursor};
 
 /// v9np (decision 0025): structure-only, regular columns, no parent column; 10: supertype
 /// memberships folded into the codes; 14: named-only, the tokens the grammar implies never
-/// written (`tokens::TokenGrammar::stored_children`, RER-131).
-pub(super) const TAPE_FORMAT_VERSION: u32 = 14;
+/// written (`tokens::TokenGrammar::stored_children`, RER-131); 15: a keyword or operator left out
+/// only where its kind always implies it (`tokens::kept`).
+pub(super) const TAPE_FORMAT_VERSION: u32 = 15;
 const TAPE_MAGIC: &[u8; 8] = b"TMPTAP9N";
 /// The image header: magic, language, the three column widths, version, source length and
 /// digest, and five table lengths: nodes, codes, the code table's bytes, aliases, the alias
