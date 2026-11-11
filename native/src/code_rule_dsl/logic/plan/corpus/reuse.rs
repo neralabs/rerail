@@ -154,7 +154,8 @@ pub(super) fn reused(programs: &[&str], root: &Path, out: &Path, modes: &str, ty
 /// outputs.
 pub(super) fn record(programs: &[&str], root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, report: &Report) -> Result<()> {
     // A phase's program and exports are its own record's (`phases`), not this one's: such a run is not kept. Phase 1's
-    // inputs are the run's documents, which the record names, and its program is among its rule files.
+    // program is among the rule files, and what it consulted (the source files, and the directories, files and
+    // library documents its imports read) is the record's too: a run of the same files would load the same.
     if report.consulted.is_empty() || report.phase_runs.iter().any(|r| r.name != "sources") {
         return Ok(());
     }
@@ -162,6 +163,7 @@ pub(super) fn record(programs: &[&str], root: &Path, out: &Path, modes: &str, ty
     let key = key(&texts, root, options, modes, typing);
     let mut consulted = rule_files(&texts)?;
     consulted.extend(report.consulted.iter().cloned());
+    consulted.extend(report.phase_runs.iter().filter(|r| r.name == super::phases::SOURCES).flat_map(|r| r.report.consulted.iter().cloned()));
     let outputs = encode_outputs(&outputs_of(out,report.rows.keys().map(String::as_str)));
     observe(|o| o.put_run_record(&key, &encode_consulted(&consulted), &outputs));
     Ok(())

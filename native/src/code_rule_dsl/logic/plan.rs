@@ -6445,15 +6445,11 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 if prog.inputs.contains(rel) || rows.is_empty() || !prog.rules.iter().any(|r| r.body.iter().filter_map(|l| l.atom()).any(|a| a.rel == *rel)) {
                     continue;
                 }
-                // A relation no rule derives is held in the engine with no table (decision 0104): the answers are
-                // written to SQL, so it is made there first.
-                run.materialize(std::slice::from_ref(rel))?;
-                let width = prog.decls[rel].len();
-                let marks = vec!["?"; width].join(", ");
-                let mut insert = db.prepare(&format!("INSERT OR IGNORE INTO {} VALUES ({marks})", crate::code_rule_dsl::logic::sql::ident(rel)))?;
-                for row in &rows {
-                    insert.execute(rusqlite::params_from_iter(row.iter()))?;
-                }
+                // Held by the native engine, as a component's own answers are (`answer_pending`): a native stratum above
+                // reads it there, and a SQL one has it moved into its table (`Run::materialize`).
+                let types: Vec<u8> = prog_types(prog, rel).iter().map(|t| sym_char(&run.model.inputs, t)).collect::<String>().into_bytes();
+                super::native::component::retain(db, rel, rows, types)?;
+                run.native_rels.insert(rel.clone());
             }
             continue;
         }
