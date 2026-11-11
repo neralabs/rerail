@@ -7,7 +7,7 @@ import { text } from "node:stream/consumers";
 import { promisify } from "node:util";
 import Database from "better-sqlite3";
 import { openRerailDatabase } from "../src/engine/index.js";
-import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../src/runtime/index.js";
+import { RERAIL_EVENT_PROTOCOL_PREFACE, runNpm } from "../src/runtime/index.js";
 import { removeFolder } from "../test/support/platform/remove-folder.js";
 
 /**
@@ -25,9 +25,10 @@ let published: { version: string; packageRoot: string };
 
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "rerail-database-compatibility-"));
-  const version = (await run("npm", ["view", `${PACKAGE}@latest`, "version"])).stdout.trim();
+  // npm as Rerail starts it: on Windows npm is a npm.cmd script, which only a shell runs.
+  const version = (await runNpm(["view", `${PACKAGE}@latest`, "version"])).stdout.trim();
   const prefix = join(root, "published");
-  await run("npm", ["install", "--prefer-offline", "--prefix", prefix, "--no-audit", "--no-fund", `${PACKAGE}@${version}`]);
+  await runNpm(["install", "--prefer-offline", "--prefix", prefix, "--no-audit", "--no-fund", `${PACKAGE}@${version}`]);
   published = { version, packageRoot: join(prefix, "node_modules", ...PACKAGE.split("/")) };
 }, 120_000);
 

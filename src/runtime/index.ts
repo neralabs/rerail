@@ -49,7 +49,7 @@ export {
   SqliteSessionStore,
 } from "./session-store.js";
 export { DAEMON_KEEPS_RUNNING, type RepositorySetupIo, onRuleCount } from "./repository-start.js";
-export { type NpmRunner } from "./npm.js";
+export { type NpmRunner, runNpm } from "./npm.js";
 export {
   addRemote,
   machineId,
