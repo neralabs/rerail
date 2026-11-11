@@ -402,3 +402,42 @@ under about 10% are noise; instructions are steadier.
   size of each export, not its shape (projection, demand from the cross part).
 - Read the observations across runs, from the kept statistics (0096), not only across a run's chunks.
 - Have the converter write `inline` on the helpers it makes.
+
+## Built: each export cut to its readers' demand (2026-11-11)
+
+The next step named above, the size of each export, is built as `typing::file_local::demand_exports`
+(`export_demand.rs`; `RERAIL_EXPORT_DEMAND=off` turns it off for comparison). It runs after the factorized store
+and before `locate`.
+
+An export a cross-file rule reads is handed on cut: `xd_e(x) :- e(x), filters`, a rule for each reading. A
+reading's filters come from the other literals of its rule on a location column of the export:
+
+- **A file-local literal** is read through its distinct keys (`xk_<rel>_<column>(v) :- rel(_, v)`).
+- **A cross-file literal** is read through a file-local superset of its column (`dm_<rel>_<column>`). That is each
+  of its rules, cut to the shortest chain of literals in the location's document from the head to one that cuts (a
+  filter or a constant), recursively.
+
+An export is left whole when a reading has nothing to cut it by, or is negated, in an aggregate or native. A
+superset or a cut that does not split as file-local is left out, and the cut is made again without it.
+
+Three shapes cost far more than they saved, and are what the rules above avoid:
+
+- every same-document literal of a superset's rule, which joins independent groups (475 M rows on one file);
+- the most selective group of them, which still crossed groups meeting at a node;
+- a filter read as its atom (`fz_b(_, p)`, every sibling for every row: 141 GB allocated on 20 files).
+
+Measured cold under strict mode, with the debug-profile build and the writer queue's cap at 4 GB (so the 20-file
+run completes):
+
+| Files | Findings | Instructions | CPU (user + sys) | Peak RSS | Memo's entries | Frames queued |
+|---|---|---|---|---|---|---|
+| 1, cut off | 10 | 358 G | 34.0 s | 1.20 GB | | |
+| 1, cut on | 10, same | 400 G | 41.6 s | 1.28 GB | | |
+| 10, cut off | 25 | 440 G | 52.8 s | 1.48 GB | 40.7 MB | 70.5 MB |
+| 10, cut on | 25, same | 479 G | 54.1 s | 1.47 GB | 23.0 MB | 52.2 MB |
+| 20, cut off | 62 | 867 G | 60.5 s | 4.64 GB | 247.3 MB | 415.6 MB |
+| 20, cut on | 62, same | 1,060 G | 78.6 s | 3.34 GB | 138.3 MB | 304.4 MB |
+
+At 20 files the cut removes 1.3 GB of peak memory and 44% of the memo, for 22% more instructions: the supersets'
+and cuts' strata (5,000 more on 10 files). Open: making those cheaper, for example by cutting only the exports the
+memo finds large, and keeping `base:within` out of the cross part's reads.
