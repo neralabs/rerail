@@ -1,7 +1,7 @@
 //! Decode Python literal runs and retain each constant's source byte start.
 use super::core_rr::py_unescape;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, usize)> {
     use crate::code_rule_dsl::{facts::core::{self, Built}, model::FileInput};
     use std::sync::Arc;
@@ -17,7 +17,7 @@ pub(super) fn with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, 
     let input = FileInput::new("a.py".into(), "python".into(), Arc::new(source), None, None, "core").unwrap();
     let Built::Facts(facts) = core::build(&input).unwrap() else { panic!("literal test failed to parse") };
     let dialect = Dialect::new(crate::code_rule_dsl::facts::core::facts_tag(&facts)).unwrap();
-    let p = Projected::new(0, Arc::new(facts), &dialect, super::Shape::Core, false, None);
+    let p = Projected::new(0, Arc::new(facts), Some(&dialect), super::Shape::Core, false, None);
     let local = p.core.iter().position(|&id| matches!(dialect.name(&p.facts, id), "string" | "concatenated_string")).unwrap() as u32;
     from_tape(&p, &dialect, local, false).into_iter().map(|(v, at, spec, offset)| {
         // `at` is a node id: its low bits are a local id only under preorder ids.
@@ -34,7 +34,7 @@ use super::{Dialect, Projected};
 
 type Piece = (String, i64, u8, usize);
 
-pub(super) fn from_tape(p: &Projected, dialect: &Dialect, local: u32, words: bool) -> Vec<Piece> {
+pub(crate) fn from_tape(p: &Projected, dialect: &Dialect, local: u32, words: bool) -> Vec<Piece> {
     let mut reader = Constants { p, dialect, words, pieces: Vec::new() };
     let id = p.core[local as usize];
     let mut current = None;
@@ -116,7 +116,7 @@ impl Constants<'_> {
         let p = self.p;
         let f = &p.facts;
         let children = f.children(id);
-        if children.iter().any(|&c| self.kind(c) == "=") {
+        if f.tokens(id).iter().any(|t| self.dialect.atom_name(t.kind) == "=") {
             let end = children.iter().copied().find(|&c| matches!(self.kind(c), "type_conversion" | "format_specifier"))
                 .map_or(f.end[id as usize] - 1, |c| f.start[c as usize]);
             // A debug label is source text, not a string-literal body: escapes stay literal.
@@ -141,5 +141,42 @@ impl Constants<'_> {
         }
         self.segment(&mut current, owner, previous, f.end[id as usize], raw, false, 1);
         self.flush(&mut current, false);
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::with_offsets;
+
+    /// Decoded parts and their source byte offsets, relative to the part's literal token.
+    fn str_parts_with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, usize)> {
+        with_offsets(parts)
+    }
+
+    /// `str_part(lit, i, v, at, spec)`: the str constants CPython builds from Python literal `lit` (a `string`, or a
+    /// `concatenated_string`'s parts `parts`, each with its node): plain runs join across adjacent literals; an
+    /// f-string's fields split them; a format spec's literal runs are pieces of their own (`spec` 1). Bytes and
+    /// t-strings give none. Returns (v, at, spec) per piece, in order.
+    fn str_parts<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8)> {
+        with_offsets(parts).into_iter().map(|(v, n, spec, _)| (v, n, spec)).collect()
+    }
+
+    #[test]
+    fn decoded_string_constants_keep_precise_byte_starts() {
+        let parts = str_parts_with_offsets(&[(0, "f\"\"\"json\n{a}\njson\"\"\"")]);
+        assert_eq!(parts.iter().map(|p| p.3).collect::<Vec<_>>(), [4, 12]);
+        let parts = str_parts_with_offsets(&[(0, "f'λ{x}μ'")]);
+        assert_eq!(parts.iter().map(|p| p.3).collect::<Vec<_>>(), [2, 7]);
+        assert_eq!(str_parts_with_offsets(&[(0, "'plain'")])[0].3, 0);
+    }
+
+    #[test]
+    fn str_parts_follow_cpython() {
+        let parts = |lits: &[&str]| str_parts(&lits.iter().enumerate().map(|(i, t)| (i, *t)).collect::<Vec<_>>());
+        assert_eq!(parts(&["'a'", "\"b\\n\""]), [("ab\n".to_owned(), 0, 0)]);
+        assert_eq!(parts(&["f'x{y}z{{'"]), [("x".to_owned(), 0, 0), ("z{".to_owned(), 0, 0)]);
+        assert_eq!(parts(&["f'{x:>{w}d}'"]), [(">".to_owned(), 0, 1), ("d".to_owned(), 0, 1)]);
+        assert_eq!(parts(&["f'{x=}'"]), [("x=".to_owned(), 0, 0)]);
+        assert!(parts(&["b'x'"]).is_empty());
     }
 }

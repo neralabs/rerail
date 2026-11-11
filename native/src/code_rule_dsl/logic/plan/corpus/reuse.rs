@@ -22,7 +22,9 @@ use std::path::Path;
 /// Whether the cutoff applies to a run with these options and typing inputs.
 pub(super) fn wanted(options: &serde_json::Value, typing: &Typing, t_facts: Option<&Path>) -> bool {
     let asked = options.get("reuse").and_then(serde_json::Value::as_bool).unwrap_or(false);
-    asked && t_facts.is_none() && typing.declarations.is_empty() && typing.site.is_none() && typing.summarize.is_none() && super::tape_cache_path().is_some()
+    // A run asked for what only running writes (a profile, a debugging dump) runs: kept outputs carry neither.
+    let side_output = crate::code_rule_dsl::logic::profile::on() || std::env::vars_os().any(|(k, _)| k.to_str().is_some_and(|k| k.starts_with("RERAIL_DUMP_")));
+    asked && !side_output && t_facts.is_none() && typing.declarations.is_empty() && typing.site.is_none() && typing.summarize.is_none() && super::tape_cache_path().is_some()
 }
 
 /// The run's key: everything it is a function of besides what it consults.
@@ -39,11 +41,20 @@ fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &st
     h.update([0]);
     h.update(modes.as_bytes());
     h.update(format!("\0{typing:?}\0").as_bytes());
-    h.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
+    h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     h.update([u8::from(crate::code_rule_dsl::facts::vtab::syntax::definition_ids())]);
-    // What changes the outputs from outside the text: a sample of the corpus, decision 0091's guards.
-    for var in ["RERAIL_SAMPLE_EVERY", "RERAIL_SCOPE_GUARDS", "RERAIL_LIBRARIES", "RERAIL_REQUESTS"] {
-        h.update(std::env::var(var).unwrap_or_default().as_bytes());
+    // What can change the outputs from outside the text: every engine switch (a sample of the corpus, decision 0091's
+    // guards, the matcher and planner switches). Listing only some reused a run made under others: a run with
+    // `RERAIL_AST_PARTS=off` answered with the outputs of one with it on. The cache's own path names the store.
+    let mut switches: Vec<(String, String)> = std::env::vars_os()
+        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.to_string_lossy().into_owned())))
+        .filter(|(k, _)| k.starts_with("RERAIL_") && k != "RERAIL_TAPE_CACHE")
+        .collect();
+    switches.sort();
+    for (k, v) in switches {
+        h.update(k.as_bytes());
+        h.update([0]);
+        h.update(v.as_bytes());
         h.update([0]);
     }
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
@@ -52,8 +63,8 @@ fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &st
 /// The programs with the root's settings (`<root>/rerail.env`, the `env` option), as the run reads them.
 fn with_settings(programs: &[&str], root: &Path, options: &serde_json::Value) -> Result<Vec<String>> {
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
-    let settings = crate::code_rule_dsl::tools::settings(root, &flags).map_err(Error::Plan)?;
-    Ok(programs.iter().map(|p| crate::code_rule_dsl::tools::with_settings(p, &settings)).collect())
+    let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
+    Ok(programs.iter().map(|p| crate::code_rule_dsl::logic::settings::with_settings(p, &settings)).collect())
 }
 
 /// The library files the programs include, each with its digest now: the record's `rule` entries.
@@ -154,7 +165,8 @@ pub(super) fn reused(programs: &[&str], root: &Path, out: &Path, modes: &str, ty
 /// outputs.
 pub(super) fn record(programs: &[&str], root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, report: &Report) -> Result<()> {
     // A phase's program and exports are its own record's (`phases`), not this one's: such a run is not kept. Phase 1's
-    // inputs are the run's documents, which the record names, and its program is among its rule files.
+    // program is among the rule files, and what it consulted (the source files, and the directories, files and
+    // library documents its imports read) is the record's too: a run of the same files would load the same.
     if report.consulted.is_empty() || report.phase_runs.iter().any(|r| r.name != "sources") {
         return Ok(());
     }
@@ -162,13 +174,14 @@ pub(super) fn record(programs: &[&str], root: &Path, out: &Path, modes: &str, ty
     let key = key(&texts, root, options, modes, typing);
     let mut consulted = rule_files(&texts)?;
     consulted.extend(report.consulted.iter().cloned());
+    consulted.extend(report.phase_runs.iter().filter(|r| r.name == super::phases::SOURCES).flat_map(|r| r.report.consulted.iter().cloned()));
     let outputs = encode_outputs(&outputs_of(out,report.rows.keys().map(String::as_str)));
     observe(|o| o.put_run_record(&key, &encode_consulted(&consulted), &outputs));
     Ok(())
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use crate::code_rule_dsl::typing::file_local::Binding;
 
     /// An unchanged run is kept; a document's edit, a new document, the root's settings (read by `env`) and the text

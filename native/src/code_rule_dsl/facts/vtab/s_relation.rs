@@ -113,7 +113,7 @@ unsafe impl VTabCursor for Cursor {
         self.at >= self.rows.len()
     }
     fn column(&self, ctx: &mut Context, col: c_int) -> Result<()> {
-        ctx.set_result(&self.rows.cells[self.at * self.rows.columns.len() + col as usize])
+        ctx.set_result(self.rows.cells[self.at * self.rows.columns.len() + col as usize])
     }
     fn rowid(&self) -> Result<i64> {
         Ok(self.at as i64)

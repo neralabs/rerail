@@ -51,7 +51,7 @@ pub(crate) enum StructureRole {
 
 impl StructureRole {
     /// The case name.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn name(self) -> &'static str {
         match self {
             StructureRole::Opening => "Opening",

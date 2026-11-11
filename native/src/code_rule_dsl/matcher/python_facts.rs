@@ -7,7 +7,7 @@ use crate::code_rule_dsl::{
     identifier::python_identifier,
     language::{
         Family, GrammarDialect,
-        adapter::{Python, ScopeRules},
+        adapter::{python::Python, ScopeRules},
     },
     module_path::ModulePath,
     scope::{
@@ -21,13 +21,13 @@ use std::collections::{BTreeMap, HashSet};
 
 pub(crate) type NodeRange = (usize, usize);
 
-pub(crate) struct Config<'a> {
+pub struct Config<'a> {
     pub module: Option<&'a ModulePath>,
     pub python: &'a PythonOptions,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ProjectionError {
+pub enum ProjectionError {
     NotPython,
     UnsupportedPythonVersion,
     ReadingMismatch,
@@ -35,7 +35,7 @@ pub(crate) enum ProjectionError {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Reason {
+pub enum Reason {
     SyntaxError,
     UnsupportedExpression,
     MissingReference,
@@ -47,7 +47,7 @@ pub(crate) enum Reason {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Fact<T> {
+pub enum Fact<T> {
     Known(T),
     /// A real semantic unknown or an input whose syntax is incomplete.
     Unknown(Reason),
@@ -69,7 +69,7 @@ fn unavailable<T>(reason: Reason) -> Fact<T> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Target {
+pub struct Target {
     pub range: NodeRange,
     pub kind: u16,
 }
@@ -82,7 +82,7 @@ pub(crate) struct BindingId {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct BindingProjection {
+pub struct BindingProjection {
     pub id: BindingId,
     pub form: Form,
     pub site: Option<Target>,
@@ -93,7 +93,7 @@ pub(crate) struct BindingProjection {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Bindings {
+pub struct Bindings {
     pub default: Fact<Option<BindingProjection>>,
     pub stop_at_global: Fact<Option<BindingProjection>>,
 }
@@ -117,7 +117,7 @@ pub(crate) enum QualifiedOrigin {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Qualification {
+pub enum Qualification {
     Qualified {
         name: String,
         origin: QualifiedOrigin,
@@ -134,7 +134,7 @@ pub(crate) enum Qualification {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct NodeFacts {
+pub struct NodeFacts {
     pub node_id: usize,
     pub range: NodeRange,
     pub expression_range: Option<NodeRange>,
@@ -148,14 +148,14 @@ pub(crate) struct NodeFacts {
 }
 
 #[derive(Default, Debug)]
-pub(crate) struct Stats {
+pub struct Stats {
     pub requested: usize,
     pub distinct: usize,
     pub qualified_lookups: usize,
     pub binding_lookups: usize,
 }
 #[derive(Default, Debug)]
-pub(crate) struct Batch {
+pub struct Batch {
     // Distinct node kinds can occupy the same range; retain every requested ID.
     pub by_range: BTreeMap<NodeRange, Vec<NodeFacts>>,
     pub stats: Stats,
@@ -164,7 +164,7 @@ pub(crate) struct Batch {
 /// Project each distinct requested node once. The batch must belong to one file;
 /// parenthesized identifier/attribute expressions are supported. Missing/unsupported
 /// facts distinguish not-applicable, unsupported and semantic unknown states.
-pub(crate) fn project<'t, D: Doc>(
+pub fn project<'t, D: Doc>(
     table: &ScopeTable,
     config: Config<'_>,
     nodes: impl IntoIterator<Item = Node<'t, D>>,
@@ -267,14 +267,14 @@ fn chain<'t, D: Doc>(
 }
 /// Normalized, scope-free shape of an identifier/attribute qualification demand.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct QualificationChain {
+pub struct QualificationChain {
     pub head: String,
     pub attributes: Vec<String>,
 }
 
 /// Parse and normalize once for callers that also need coarse import screening.
 /// This acquires no scopes and evaluates no semantic predicate.
-pub(crate) fn qualification_chain<D: Doc>(node: &Node<'_, D>) -> Fact<QualificationChain> {
+pub fn qualification_chain<D: Doc>(node: &Node<'_, D>) -> Fact<QualificationChain> {
     match chain(node) {
         Ok((_, head, attributes)) => Fact::Known(QualificationChain {
             head: python_identifier(&head).into_owned(),
@@ -462,7 +462,7 @@ fn binding(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::scope::options::DEFAULT_PYTHON_MINOR;
     use ast_grep_language::LanguageExt;

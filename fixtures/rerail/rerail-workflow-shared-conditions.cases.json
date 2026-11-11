@@ -1,0 +1,50 @@
+{
+  "caught": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "content": "  rust:\n    needs: changes\n    if: needs.changes.outputs.rust != 'false' && github.head_ref != 'changeset-release/main'\n    runs-on: ubuntu-latest\n  build:\n    if: github.head_ref != 'changeset-release/main'\n    runs-on: ubuntu-latest\n  real-sessions:\n    if: github.head_ref != 'changeset-release/main'\n    runs-on: ubuntu-latest\n"
+    },
+    {
+      "path": ".github/workflows/ci-starts.yml",
+      "content": "jobs:\n  build:\n    if: ${{ !startsWith(github.event.pull_request.head.ref, 'changeset-release/') }}\n  test:\n    if: ${{ !startsWith(github.event.pull_request.head.ref, 'changeset-release/') }}\n"
+    },
+    {
+      "path": ".github/workflows/S1-startswith-noslash.yml",
+      "content": "jobs:\n  build:\n    if: ${{ !startsWith(github.head_ref, 'changeset-release') }}\n  test:\n    if: ${{ !startsWith(github.head_ref, 'changeset-release') }}\n"
+    },
+    {
+      "path": ".github/workflows/S2-vars-branch.yml",
+      "content": "jobs:\n  build:\n    if: github.head_ref != vars.RELEASE_BRANCH\n  test:\n    if: github.head_ref != vars.RELEASE_BRANCH\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": ".github/workflows/ci-once.yml",
+      "content": "jobs:\n  changes:\n    outputs:\n      release-pr: ${{ github.head_ref == 'changeset-release/main' }}\n  rust:\n    needs: changes\n    if: needs.changes.outputs.release-pr != 'true'\n  build:\n    needs: changes\n    if: needs.changes.outputs.release-pr != 'true'\n"
+    },
+    {
+      "path": ".github/workflows/ci-comment.yml",
+      "content": "# The Release pull request (changeset-release/main, from release-pr.yml) changes only versions.\njobs:\n  build:\n    if: github.head_ref != 'changeset-release/main'\n"
+    },
+    {
+      "path": ".github/workflows/release-packs.yml",
+      "content": "  check:\n    if: github.event_name == 'pull_request' && github.head_ref != 'changeset-release/main' # not changeset-release/main again\n"
+    },
+    {
+      "path": "scripts/release/release-version.mjs",
+      "content": "const a = 'changeset-release/main';\nconst b = 'changeset-release/main';\n"
+    },
+    {
+      "path": ".github/workflows/S3-release-pr-pushes.yml",
+      "content": "      - name: Open or update the Release pull request\n        run: |\n          git push --force origin HEAD:changeset-release/main\n          gh pr create --base main --head changeset-release/main --title \"Release\" \\\n            || gh pr edit changeset-release/main --title \"Release\"\n"
+    },
+    {
+      "path": ".github/workflows/S4-once-two-lines.yml",
+      "content": "jobs:\n  changes:\n    outputs:\n      release-pr: >-\n        ${{ github.head_ref == 'changeset-release/main' ||\n            github.ref == 'refs/heads/changeset-release/main' }}\n  build:\n    needs: changes\n    if: needs.changes.outputs.release-pr != 'true'\n"
+    },
+    {
+      "path": ".github/workflows/S5-once-one-line.yml",
+      "content": "jobs:\n  changes:\n    outputs:\n      release-pr: ${{ github.head_ref == 'changeset-release/main' || github.ref == 'refs/heads/changeset-release/main' }}\n  build:\n    needs: changes\n    if: needs.changes.outputs.release-pr != 'true'\n"
+    }
+  ]
+}

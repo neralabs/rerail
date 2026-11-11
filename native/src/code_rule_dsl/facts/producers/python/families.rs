@@ -23,10 +23,9 @@ use crate::code_rule_dsl::facts::core::{Facts, NONE, kind_atom};
 use crate::code_rule_dsl::language::KindCatalog;
 
 /// The rows' version: a change to what they hold changes the families' producer (`families::py_producer`).
-pub(crate) const VERSION: u32 = 1;
+pub(crate) const VERSION: u32 = 3;
 
-/// `py_exec_context.kind`'s names, by `ContextKind` order.
-pub(crate) const CONTEXTS: [&str; 5] = ["module", "sync_function", "async_function", "class", "lambda"];
+pub use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS as CONTEXTS;
 /// `py_call_arg.spread`'s names: none, `*x`, `**x`.
 pub(crate) const SPREADS: [&str; 3] = ["none", "positional", "keywords"];
 
@@ -104,7 +103,10 @@ impl Grammar {
         self.tag
     }
     fn role(&self, f: &Facts, id: u32) -> Role {
-        self.roles.get(usize::from(crate::code_rule_dsl::facts::core::kind_code(f.kind[id as usize]))).copied().unwrap_or(Role::Other)
+        self.atom_role(f.kind[id as usize])
+    }
+    fn atom_role(&self, atom: u32) -> Role {
+        self.roles.get(usize::from(crate::code_rule_dsl::facts::core::kind_code(atom))).copied().unwrap_or(Role::Other)
     }
 }
 
@@ -152,7 +154,7 @@ fn context(g: &Grammar, f: &Facts, call: u32) -> (u32, u32) {
                     let kind = match role {
                         Role::Class => 3,
                         Role::Lambda => 4,
-                        _ if f.children(owner).iter().any(|&c| g.role(f, c) == Role::Async) => 2,
+                        _ if f.tokens(owner).iter().any(|t| g.atom_role(t.kind) == Role::Async) => 2,
                         _ => 1,
                     };
                     return (owner, kind);
@@ -208,7 +210,7 @@ pub(crate) fn digest(rows: &Rows) -> [u8; 32] {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
 
 /// Extract only calls requested by the consumer; no all-call scan or context calculation.
 pub(crate) fn arguments(g:&Grammar,f:&Facts,calls:&[u32])->Vec<[u32;6]> {
@@ -253,6 +255,6 @@ pub(crate) fn qualification_chain(g:&Grammar,f:&Facts,n:u32)->Option<(String,Vec
     Some((crate::code_rule_dsl::identifier::python_name(f.text(n).into()).into_owned(),tail))
 }
 
-pub(crate) mod candidates;
-#[cfg(test)]
-pub(crate) use candidates as candidate_spike;
+pub mod candidates;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use candidates as candidate_spike;

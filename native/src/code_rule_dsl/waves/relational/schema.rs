@@ -9,9 +9,9 @@ use std::{
     ffi::{CStr, CString, c_int},
 };
 #[path = "schema/cache.rs"]
-pub(crate) mod cache;
+pub mod cache;
 #[path = "schema/inference.rs"]
-pub(crate) mod inference;
+pub mod inference;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct Column {
@@ -26,7 +26,6 @@ pub(crate) fn describe(db: &Connection, name: &str) -> Result<Columns> {
     Ok(db
         .prepare(&format!("SELECT * FROM {}", quote(name)))?
         .columns()
-        .iter()
         .map(|column| Column {
             name: column.name().to_owned(),
             declared_type: column.decl_type().unwrap_or("").to_owned(),
@@ -147,7 +146,7 @@ unsafe impl VTabCursor for Cursor {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use std::sync::{
         Arc,

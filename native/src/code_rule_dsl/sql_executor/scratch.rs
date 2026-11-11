@@ -2,12 +2,12 @@
 use super::*;
 
 #[derive(Clone, Default)]
-pub(super) struct Pool {
+pub struct Pool {
     tables: BTreeMap<(String, bool, bool), Vec<String>>,
     next: usize,
 }
 
-pub(super) struct Work<'a> {
+pub struct Work<'a> {
     pub db: &'a rusqlite::Connection,
     pub versions: Option<&'a versions::Store>,
     pub profiler: Option<&'a super::super::sql_profile::Profiler>,

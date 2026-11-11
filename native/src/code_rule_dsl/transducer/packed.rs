@@ -13,292 +13,216 @@ use std::fmt::Write as _;
 use std::ops::Range;
 use std::sync::Arc;
 
-#[cfg(test)]
-mod admission_spike;
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod admission_spike;
 /// G's literal anchors over its positional search index (O21).
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[allow(dead_code)]
-mod literal_anchors;
-#[cfg(test)]
+pub mod literal_anchors;
+#[cfg(any(test, feature = "test-hooks"))]
 #[allow(unused_imports)]
 use literal_anchors::*;
 /// G's SQL match vtab (O21).
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[allow(dead_code)]
-mod sql_backend;
-mod capture_run;
+pub mod sql_backend;
+pub mod capture_run;
 #[cfg(test)]
-mod capture_run_entry_tests;
-#[cfg(test)]
-mod capture_run_tests;
+pub mod capture_run_entry_tests;
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod capture_run_tests;
 
-#[cfg(target_os = "macos")]
-pub(in crate::code_rule_dsl) mod metal_backend;
-#[cfg(all(test, target_os = "macos"))]
-pub(super) use metal_backend::launch::LaunchScope as MetalTestScope;
-mod metal_batch_abi;
-#[cfg(target_os = "macos")]
-mod metal_parallel;
+// cratify: `metal_backend` is rerail-device-metal's (it mounts it)
+// cratify: a re-export of rerail-device-metal's, which its facades of this module make
+pub mod metal_batch_abi;
+// cratify: `metal_parallel` is rerail-device-metal's (it mounts it)
 // Row programs on Metal: scan, count and scatter over the 16-bit layout (decision 0095).
-#[cfg(target_os = "macos")]
-pub(in crate::code_rule_dsl) mod metal_rows;
+// cratify: `metal_rows` is rerail-device-metal's (it mounts it)
 // Relations sorted by a key on the device, and the joins that probe them (decision 0095).
-#[cfg(target_os = "macos")]
-pub(in crate::code_rule_dsl) mod metal_sort;
+// cratify: `metal_sort` is rerail-device-metal's (it mounts it)
 // A stratum's join plan on the device: binding tables and their stages (decision 0095, step 4).
-#[cfg(target_os = "macos")]
-pub(in crate::code_rule_dsl) mod metal_join;
-#[cfg(target_os = "macos")]
-mod metal_program_backend;
-#[cfg(target_os = "macos")]
-pub(in crate::code_rule_dsl) use metal_program_backend::set_steps;
-#[cfg(target_os = "macos")]
-pub(in crate::code_rule_dsl) use metal_program_backend::lattice as metal_lattice;
-#[cfg(target_os = "macos")]
-pub(in crate::code_rule_dsl) use metal_program_backend::nearest as metal_nearest;
-#[cfg(target_os = "macos")]
-pub(in crate::code_rule_dsl) use metal_program_backend::label_passes::{RootJobs, RootsFound};
-#[cfg(target_os = "macos")]
-pub(in crate::code_rule_dsl) use metal_program_backend::label_passes::drop_pipelines as drop_label_pipelines;
+// cratify: `metal_join` is rerail-device-metal's (it mounts it)
+// cratify: `metal_program_backend` is rerail-device-metal's (it mounts it)
+// cratify: a re-export of rerail-device-metal's, which its facades of this module make
+// cratify: a re-export of rerail-device-metal's, which its facades of this module make
+// cratify: a re-export of rerail-device-metal's, which its facades of this module make
+// The transducer's device interface: Metal registers itself there (`rerail-device-metal`).
+pub mod device;
+pub use device::{RootJobs, RootsFound};
 
-#[cfg(all(test, target_os = "macos"))]
-pub(in crate::code_rule_dsl) fn reset_metal_execution_metrics() {
-    metal_program_backend::reset_metrics();
+#[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+pub fn reset_metal_execution_metrics() {
+    if let Some(device) = device::matcher() {
+        device.reset_execution_metrics();
+    }
 }
 
-#[cfg(all(test, target_os = "macos"))]
-pub(in crate::code_rule_dsl) fn metal_execution_metrics() -> (usize, usize) {
-    metal_program_backend::metrics()
+#[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+pub fn metal_execution_metrics() -> (usize, usize) {
+    device::matcher().map_or((0, 0), |device| device.execution_metrics())
 }
 // The verifier's proofs (05 Phase 4 row 2, from Tempo's transducer, kept under `packed/verify/`
 // and declared here so their `super::` is the program and its opcodes, as in Tempo).
-#[cfg(target_os = "macos")]
-#[path = "packed/verify/bounded_repeat_proof.rs"]
-mod bounded_repeat_proof;
+// cratify: `bounded_repeat_proof` is rerail-device-metal's (it mounts it)
 #[path = "packed/verify/closure_proof.rs"]
-mod closure_proof;
+pub mod closure_proof;
 #[path = "packed/verify/cycle_progress.rs"]
-mod cycle_progress;
+pub mod cycle_progress;
 #[cfg(test)]
 #[path = "packed/verify/cycle_progress_tests.rs"]
-mod cycle_progress_tests;
+pub mod cycle_progress_tests;
 #[path = "packed/verify/execution_shape.rs"]
-mod execution_shape;
+pub mod execution_shape;
 #[path = "packed/verify/greedy_contract.rs"]
-mod greedy_contract;
+pub mod greedy_contract;
 #[cfg(test)]
 #[path = "packed/verify/greedy_contract_tests.rs"]
-mod greedy_contract_tests;
+pub mod greedy_contract_tests;
 #[path = "packed/verify/terminal_repeat_proof.rs"]
-mod terminal_repeat_proof;
+pub mod terminal_repeat_proof;
 #[cfg(test)]
 #[path = "packed/verify/backend_parity_tests.rs"]
-mod backend_parity_tests;
+pub mod backend_parity_tests;
 // The tree-sitter query front end (05 Phase 4 row 4, from Tempo's `scm.rs`).
 #[path = "packed/compile/scm.rs"]
-mod scm;
+pub mod scm;
 // W's composite matcher as label passes and programs (06-first-slice S1).
 #[path = "packed/compile/matcher.rs"]
-#[cfg_attr(not(test), allow(dead_code))]
-mod compile_matcher;
-pub(in crate::code_rule_dsl) use compile_matcher::{Backend as MatcherBackend, LoweredMatcher, LoweredWave, WaveRun};
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+pub mod compile_matcher;
+// cratify: a re-export of rerail-device-metal's, which its facades of this module make
+pub use compile_matcher::{Backend as MatcherBackend, LoweredMatcher, LoweredWave, WaveRun};
 // Label programs as node-set formulas (decision 0036).
 #[path = "packed/compile/sets.rs"]
-mod compile_sets;
+pub mod compile_sets;
 // A label program's walk without the interpreter's machinery (O28).
 #[path = "packed/compile/micro.rs"]
-mod compile_micro;
-pub(in crate::code_rule_dsl) use compile_micro::{Emit, Frames, Micro, RootRecord, steps as micro_steps};
-#[cfg(test)]
-#[path = "packed/compile/matcher_tests.rs"]
-mod compile_matcher_tests;
-#[cfg(target_os = "macos")]
-mod metal_bulk_closure;
-#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
-mod metal_bulk_closure_tests;
-#[cfg(target_os = "macos")]
-mod metal_candidate_batch;
-#[cfg(target_os = "macos")]
-mod metal_capture_arguments;
-#[cfg(target_os = "macos")]
-mod metal_capture_groups;
-#[cfg(target_os = "macos")]
-mod metal_capture_literals;
-#[cfg(target_os = "macos")]
-mod metal_capture_predicates;
-mod metal_child_index;
-#[cfg(target_os = "macos")]
-mod metal_closure_continuation;
-#[cfg(target_os = "macos")]
-mod metal_closure_prepare;
-#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
-mod metal_closure_prepare_tests;
-#[cfg(target_os = "macos")]
-mod metal_constant_output;
-#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
-#[path = "packed/metal_cutover_architecture.rs"]
-mod metal_cutover_architecture;
-#[cfg(target_os = "macos")]
-mod metal_dynamic_execution;
-#[cfg(target_os = "macos")]
-mod metal_failure_records;
-#[cfg(target_os = "macos")]
-mod metal_frame_identity;
-#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
-mod metal_frame_identity_tests;
-#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
-mod metal_frontier_conformance;
-#[cfg(target_os = "macos")]
-mod metal_frontier_reduce;
-#[cfg(target_os = "macos")]
-mod metal_frontier_seed;
-#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
-mod metal_frontier_seed_tests;
-#[cfg(target_os = "macos")]
-mod metal_frontier_validation;
-mod metal_grid;
-#[cfg(target_os = "macos")]
-mod metal_grid_contract;
-#[cfg(target_os = "macos")]
-mod metal_grid_executor;
-#[cfg(target_os = "macos")]
-mod metal_grid_plan;
-#[cfg(target_os = "macos")]
-mod metal_initial_prefix;
-#[cfg(target_os = "macos")]
-mod metal_initial_range_codegen;
-#[cfg(target_os = "macos")]
-mod metal_inline_predicates;
-#[cfg(target_os = "macos")]
-mod metal_named_order;
-#[cfg(target_os = "macos")]
-mod metal_output_contract;
-#[cfg(target_os = "macos")]
-mod metal_output_dispatch;
-#[cfg(target_os = "macos")]
-mod metal_output_mime;
-#[cfg(target_os = "macos")]
-mod metal_output_pages;
-#[cfg(target_os = "macos")]
-mod metal_output_selection;
-#[cfg(target_os = "macos")]
-mod metal_output_strip;
-#[cfg(target_os = "macos")]
-mod metal_position_order;
-#[cfg(target_os = "macos")]
-mod metal_grid_backend;
-#[cfg(target_os = "macos")]
-mod metal_ready_batch;
-#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
-mod metal_ready_batch_tests;
-#[cfg(target_os = "macos")]
-mod metal_ready_proof;
-#[cfg(target_os = "macos")]
-mod metal_regex_code;
-#[cfg(target_os = "macos")]
-mod metal_regex_frontier;
-#[cfg(target_os = "macos")]
-mod metal_register_codegen;
-#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
-mod metal_register_conformance;
-#[cfg(target_os = "macos")]
-mod metal_register_execution;
-#[cfg(target_os = "macos")]
-mod metal_semantic_columns;
-#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
-mod metal_semantic_conformance;
-#[cfg(target_os = "macos")]
-mod metal_state_values;
-#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
-mod metal_state_values_tests;
-#[cfg(target_os = "macos")]
-mod metal_successor;
-#[cfg(target_os = "macos")]
-mod metal_successor_branch_codegen;
-#[cfg(target_os = "macos")]
-mod metal_successor_codegen;
-#[cfg(target_os = "macos")]
-mod metal_successor_prepare;
-#[cfg(target_os = "macos")]
-mod metal_successor_repeat_codegen;
-#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
-mod metal_successor_tests;
-#[cfg(target_os = "macos")]
-mod metal_terminal;
-#[cfg(target_os = "macos")]
-mod metal_terminal_capture_order;
-#[cfg(target_os = "macos")]
-mod metal_terminal_repeat;
-#[cfg(target_os = "macos")]
-mod metal_typed_output;
-#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
-mod metal_unique_child_tests;
-mod compilation;
-pub(in crate::code_rule_dsl) use compilation::PlanId;
-mod native_cpu;
-mod native_cpu_capture;
-mod native_cpu_capture_pair;
+pub mod compile_micro;
+pub use compile_micro::{Emit, Frames, Micro, RootRecord, steps as micro_steps};
+// cratify: `compile_matcher_tests` is rerail-engine's (it mounts it)
+// cratify: `metal_bulk_closure` is rerail-device-metal's (it mounts it)
+// cratify: `metal_bulk_closure_tests` is rerail-device-metal's (it mounts it)
+// cratify: `metal_candidate_batch` is rerail-device-metal's (it mounts it)
+// cratify: `metal_capture_arguments` is rerail-device-metal's (it mounts it)
+// cratify: `metal_capture_groups` is rerail-device-metal's (it mounts it)
+// cratify: `metal_capture_literals` is rerail-device-metal's (it mounts it)
+// cratify: `metal_capture_predicates` is rerail-device-metal's (it mounts it)
+pub mod metal_child_index;
+// cratify: `metal_closure_continuation` is rerail-device-metal's (it mounts it)
+// cratify: `metal_closure_prepare` is rerail-device-metal's (it mounts it)
+// cratify: `metal_closure_prepare_tests` is rerail-device-metal's (it mounts it)
+// cratify: `metal_constant_output` is rerail-device-metal's (it mounts it)
+// cratify: `metal_cutover_architecture` is rerail-device-metal's (it mounts it)
+// cratify: `metal_dynamic_execution` is rerail-device-metal's (it mounts it)
+// cratify: `metal_failure_records` is rerail-device-metal's (it mounts it)
+// cratify: `metal_frame_identity` is rerail-device-metal's (it mounts it)
+// cratify: `metal_frame_identity_tests` is rerail-device-metal's (it mounts it)
+// cratify: `metal_frontier_conformance` is rerail-device-metal's (it mounts it)
+// cratify: `metal_frontier_reduce` is rerail-device-metal's (it mounts it)
+// cratify: `metal_frontier_seed` is rerail-device-metal's (it mounts it)
+// cratify: `metal_frontier_seed_tests` is rerail-device-metal's (it mounts it)
+// cratify: `metal_frontier_validation` is rerail-device-metal's (it mounts it)
+pub mod metal_grid;
+// cratify: `metal_grid_contract` is rerail-device-metal's (it mounts it)
+// cratify: `metal_grid_executor` is rerail-device-metal's (it mounts it)
+// cratify: `metal_grid_plan` is rerail-device-metal's (it mounts it)
+// cratify: `metal_initial_prefix` is rerail-device-metal's (it mounts it)
+// cratify: `metal_initial_range_codegen` is rerail-device-metal's (it mounts it)
+// cratify: `metal_inline_predicates` is rerail-device-metal's (it mounts it)
+// cratify: `metal_named_order` is rerail-device-metal's (it mounts it)
+// cratify: `metal_output_contract` is rerail-device-metal's (it mounts it)
+// cratify: `metal_output_dispatch` is rerail-device-metal's (it mounts it)
+// cratify: `metal_output_mime` is rerail-device-metal's (it mounts it)
+// cratify: `metal_output_pages` is rerail-device-metal's (it mounts it)
+// cratify: `metal_output_selection` is rerail-device-metal's (it mounts it)
+// cratify: `metal_output_strip` is rerail-device-metal's (it mounts it)
+// cratify: `metal_position_order` is rerail-device-metal's (it mounts it)
+// cratify: `metal_grid_backend` is rerail-device-metal's (it mounts it)
+// cratify: `metal_ready_batch` is rerail-device-metal's (it mounts it)
+// cratify: `metal_ready_batch_tests` is rerail-device-metal's (it mounts it)
+// cratify: `metal_ready_proof` is rerail-device-metal's (it mounts it)
+// cratify: `metal_regex_code` is rerail-device-metal's (it mounts it)
+// cratify: `metal_regex_frontier` is rerail-device-metal's (it mounts it)
+// cratify: `metal_register_codegen` is rerail-device-metal's (it mounts it)
+// cratify: `metal_register_conformance` is rerail-device-metal's (it mounts it)
+// cratify: `metal_register_execution` is rerail-device-metal's (it mounts it)
+// cratify: `metal_semantic_columns` is rerail-device-metal's (it mounts it)
+// cratify: `metal_semantic_conformance` is rerail-device-metal's (it mounts it)
+// cratify: `metal_state_values` is rerail-device-metal's (it mounts it)
+// cratify: `metal_state_values_tests` is rerail-device-metal's (it mounts it)
+// cratify: `metal_successor` is rerail-device-metal's (it mounts it)
+// cratify: `metal_successor_branch_codegen` is rerail-device-metal's (it mounts it)
+// cratify: `metal_successor_codegen` is rerail-device-metal's (it mounts it)
+// cratify: `metal_successor_prepare` is rerail-device-metal's (it mounts it)
+// cratify: `metal_successor_repeat_codegen` is rerail-device-metal's (it mounts it)
+// cratify: `metal_successor_tests` is rerail-device-metal's (it mounts it)
+// cratify: `metal_terminal` is rerail-device-metal's (it mounts it)
+// cratify: `metal_terminal_capture_order` is rerail-device-metal's (it mounts it)
+// cratify: `metal_terminal_repeat` is rerail-device-metal's (it mounts it)
+// cratify: `metal_typed_output` is rerail-device-metal's (it mounts it)
+// cratify: `metal_unique_child_tests` is rerail-device-metal's (it mounts it)
+pub mod compilation;
+pub use compilation::PlanId;
+pub mod native_cpu;
+pub mod native_cpu_capture;
+pub mod native_cpu_capture_pair;
 use rerail_compiler::native_cpu_codegen;
-mod native_cpu_lua;
-mod native_cpu_output;
-mod native_cpu_output_sort;
-mod native_cpu_output_transform;
-mod native_cpu_reduction;
-mod native_cpu_regex;
-mod native_cpu_scheduler;
-mod native_cpu_value;
+pub mod native_cpu_lua;
+pub mod native_cpu_output;
+pub mod native_cpu_output_sort;
+pub mod native_cpu_output_transform;
+pub mod native_cpu_reduction;
+pub mod native_cpu_regex;
+pub mod native_cpu_scheduler;
+pub mod native_cpu_value;
 // Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2), the compiler crate's.
 #[allow(unused_imports)]
-pub(in crate::code_rule_dsl) use rerail_compiler::native_cpu_rows;
+pub use rerail_compiler::native_cpu_rows;
 // Rows sorted by a key on the host: the CPU's sort join, and the device's narrow columns (decision 0095).
-pub(in crate::code_rule_dsl) mod rows_sort;
-mod native_ir;
-mod output;
-mod packed_arena;
-mod packed_batch;
-pub(in crate::code_rule_dsl) use packed_batch::PackedExecution;
-#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
-mod metal_value_prefix_tests;
-mod packed_workspace;
-mod scheduler;
-pub(in crate::code_rule_dsl) mod set_mode;
-pub(in crate::code_rule_dsl) mod fusion;
+pub mod rows_sort;
+pub mod native_ir;
+pub mod output;
+pub mod packed_arena;
+pub mod packed_batch;
+pub use packed_batch::PackedExecution;
+// cratify: `metal_value_prefix_tests` is rerail-device-metal's (it mounts it)
+pub mod packed_workspace;
+pub mod scheduler;
+pub mod set_mode;
+pub mod fusion;
 // `rir`, the IR's text form: dumps and the assembler (list step 18).
-pub(in crate::code_rule_dsl) mod rir;
-mod value;
+pub mod rir;
+pub mod value;
 // Block programs: the side program over source bytes (docs/parser-generators/12-what-is-wanted.md).
-pub(in crate::code_rule_dsl) use rerail_compiler::block;
-pub(in crate::code_rule_dsl) mod regex_block;
+pub use rerail_compiler::block;
+pub mod regex_block;
+// cratify: `block_rows_tests` is rerail-device-metal's (it mounts it)
 #[cfg(test)]
-mod block_rows_tests;
-#[cfg(test)]
-mod block_digest_tests;
+pub mod block_digest_tests;
 // The `.rr` parser (`rerail_rr_parser`): the Bitlex grammar compiled, the engine's parser for
 // what it refuses. Nothing in the engine parses with it yet; named here for the engine's callers.
 #[allow(unused_imports)]
-pub(in crate::code_rule_dsl) use rerail_rr_parser as rr_parser;
-/// JSON's parser: the ladder's JSONC grammar, with tree-sitter-json's ids (the tape's parse of a JSON file).
-pub(in crate::code_rule_dsl) mod json_parser;
-pub(in crate::code_rule_dsl) mod stream;
-#[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
-mod regex_relocation_tests;
+pub use rerail_rr_parser as rr_parser;
+// cratify: `json_parser` is rerail-lang-json's (it mounts it)
+pub mod stream;
+// cratify: `regex_relocation_tests` is rerail-device-metal's (it mounts it)
 // Tier 2's monoids, analysis and plan (docs/parser-generators/15, 16, 17).
-mod block_monoid;
-mod block_plan;
+pub mod block_monoid;
+pub mod block_plan;
 #[cfg(test)]
-mod block_plan_tests;
-mod value_packing;
-mod value_prefix;
+pub mod block_plan_tests;
+pub mod value_packing;
+pub mod value_prefix;
 
 // The transducer's word program and its opcodes, the compiler crate's (`rerail_compiler::program`).
 use rerail_compiler::program::*;
-pub(in crate::code_rule_dsl) use rerail_compiler::program::{NAMED, Words, word};
-const MAX_FINITE_JOB_INSTRUCTIONS: usize = 256;
-const MAX_STEPS_PER_PATH: usize = 1 << 20;
-const MAX_WORK_PER_TASK: usize = 1 << 26;
+pub use rerail_compiler::program::{NAMED, Words, word};
+pub const MAX_FINITE_JOB_INSTRUCTIONS: usize = 256;
+pub const MAX_STEPS_PER_PATH: usize = 1 << 20;
+pub const MAX_WORK_PER_TASK: usize = 1 << 26;
 
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) enum TextPredicate {
+pub enum TextPredicate {
     Equal(u16),
     Prefix(u16),
     Regex { source: u16, compiled: Regex },
@@ -306,7 +230,7 @@ pub(in crate::code_rule_dsl) enum TextPredicate {
 }
 
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct LuaPattern {
+pub struct LuaPattern {
     anchored: bool,
     items: Vec<LuaItem>,
     end_anchored: bool,
@@ -440,7 +364,7 @@ impl LuaPattern {
         Ok(LuaMatcher::Set { members, negated })
     }
 
-    fn parse(source: &[u8]) -> Result<Self, ()> {
+    pub fn parse(source: &[u8]) -> Result<Self, ()> {
         let mut at = usize::from(source.first() == Some(&b'^'));
         let anchored = at == 1;
         let mut items = Vec::new();
@@ -734,7 +658,7 @@ impl TextPredicate {
 }
 
 #[derive(Clone, Debug)]
-enum PackedPattern {
+pub enum PackedPattern {
     Terminal {
         text: String,
         named: bool,
@@ -751,11 +675,11 @@ enum PackedPattern {
     },
 }
 
-pub(in crate::code_rule_dsl) struct AstPatternCapture {
-    pub(in crate::code_rule_dsl) label: String,
-    pub(in crate::code_rule_dsl) occurrence: usize,
-    pub(in crate::code_rule_dsl) node: u32,
-    pub(in crate::code_rule_dsl) multi: bool,
+pub struct AstPatternCapture {
+    pub label: String,
+    pub occurrence: usize,
+    pub node: u32,
+    pub multi: bool,
 }
 
 #[derive(Clone, Default)]
@@ -774,17 +698,17 @@ enum PatternVerdict {
 }
 
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Program {
+pub struct Program {
     /// The word program: the words and the tables they index, tier 1's and tier 2's
     /// (`rerail_compiler::program::Words`). The fields below are the matcher's.
     ir: Words,
-    predicates: Vec<TextPredicate>,
-    value_programs: Vec<value::ValueProgram>,
-    capture_predicates: Vec<CapturePredicate>,
-    capture_programs: Vec<value::CaptureProgram>,
-    directives: Vec<Directive>,
-    output_program: output::OutputProgram,
-    ast_pattern: Option<PackedPattern>,
+    pub predicates: Vec<TextPredicate>,
+    pub value_programs: Vec<value::ValueProgram>,
+    pub capture_predicates: Vec<CapturePredicate>,
+    pub capture_programs: Vec<value::CaptureProgram>,
+    pub directives: Vec<Directive>,
+    pub output_program: output::OutputProgram,
+    pub ast_pattern: Option<PackedPattern>,
     /// `canonical_digest("", b"")`, once (`plain_digest`).
     digest: DigestMemo,
 }
@@ -815,7 +739,7 @@ impl Clone for DigestMemo {
 }
 
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) enum Directive {
+pub enum Directive {
     Set {
         key: u16,
         value: Option<u16>,
@@ -847,7 +771,7 @@ pub(in crate::code_rule_dsl) enum Directive {
 }
 
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) enum CapturePredicate {
+pub enum CapturePredicate {
     Equal {
         left: u16,
         right: u16,
@@ -897,29 +821,29 @@ pub(in crate::code_rule_dsl) enum CapturePredicate {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct Capture {
-    pub(in crate::code_rule_dsl) label: u16,
-    pub(in crate::code_rule_dsl) node: u32,
-    pub(in crate::code_rule_dsl) span: Range<usize>,
-    pub(in crate::code_rule_dsl) text: Option<Vec<u8>>,
-    pub(in crate::code_rule_dsl) properties: Vec<(u16, Option<u16>)>,
+pub struct Capture {
+    pub label: u16,
+    pub node: u32,
+    pub span: Range<usize>,
+    pub text: Option<Vec<u8>>,
+    pub properties: Vec<(u16, Option<u16>)>,
 }
 
 type DynamicProperty = (Vec<u8>, Option<Vec<u8>>);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct Output {
-    pub(in crate::code_rule_dsl) task_ordinal: u32,
-    pub(in crate::code_rule_dsl) local_ordinal: u32,
-    pub(in crate::code_rule_dsl) start: u32,
-    pub(in crate::code_rule_dsl) label: u16,
-    pub(in crate::code_rule_dsl) captures: Vec<Capture>,
-    pub(in crate::code_rule_dsl) properties: Vec<(u16, Option<u16>)>,
-    pub(in crate::code_rule_dsl) dynamic_properties: Vec<DynamicProperty>,
+pub struct Output {
+    pub task_ordinal: u32,
+    pub local_ordinal: u32,
+    pub start: u32,
+    pub label: u16,
+    pub captures: Vec<Capture>,
+    pub properties: Vec<(u16, Option<u16>)>,
+    pub dynamic_properties: Vec<DynamicProperty>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) enum ExecutionBackend {
+pub enum ExecutionBackend {
     CpuInterpreter,
     CpuJit,
     /// The CPU JIT's programs once compiled in the background, the interpreter until then
@@ -932,7 +856,7 @@ pub(in crate::code_rule_dsl) enum ExecutionBackend {
     Metal,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn interpreter_reference(
     programs: &[Program],
     file: &TapeDoc,
@@ -943,7 +867,7 @@ pub(super) fn interpreter_reference(
 }
 
 // The transducer's errors, shared with tier 1's crate.
-pub(in crate::code_rule_dsl) use rerail_compiler::Error;
+pub use rerail_compiler::Error;
 
 #[derive(Clone, Copy)]
 struct Path {
@@ -1111,7 +1035,7 @@ enum WorkItem {
 }
 
 impl WorkItem {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn retained_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
     }
@@ -1127,7 +1051,7 @@ enum SiblingRequirement {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
 struct ExecutionStats {
     explored_states: usize,
     max_pending_paths: usize,
@@ -1136,16 +1060,16 @@ struct ExecutionStats {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct CaptureIdentity {
-    label: u16,
-    node: u32,
-    start: usize,
-    end: usize,
+pub struct CaptureIdentity {
+    pub label: u16,
+    pub node: u32,
+    pub start: usize,
+    pub end: usize,
 }
 
 /// Mirrors `ts_query_cursor__compare_nodes`. Distinct zero-width nodes at one point compare equal
 /// for ordering, but remain different identities in capture containment.
-fn compare_capture_nodes(left: CaptureIdentity, right: CaptureIdentity) -> std::cmp::Ordering {
+pub fn compare_capture_nodes(left: CaptureIdentity, right: CaptureIdentity) -> std::cmp::Ordering {
     if left.node == right.node {
         return std::cmp::Ordering::Equal;
     }
@@ -1208,7 +1132,7 @@ impl CaptureAntichain {
     }
 }
 
-fn capture_identity_containment(
+pub fn capture_identity_containment(
     left: &[CaptureIdentity],
     right: &[CaptureIdentity],
 ) -> (bool, bool) {
@@ -1291,9 +1215,9 @@ struct CaptureStateSet {
 
 fn charge_task_work(work: &mut usize) -> Result<(), Error> {
     *work = work.checked_add(1).ok_or(Error::WorkLimit)?;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let limit = capture_run_tests::task_work_limit();
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-hooks")))]
     let limit = MAX_WORK_PER_TASK;
     if *work > limit {
         return Err(Error::WorkLimit);
@@ -1344,8 +1268,14 @@ impl PackedPattern {
         }
     }
 
-    fn is_trivial(&self) -> bool {
+    pub fn is_trivial(&self) -> bool {
         matches!(self, Self::Terminal { named: false, .. })
+    }
+
+    /// The end-of-children goal (`PatternNode::children_end`, RER-131): it matches no node, so a
+    /// token or a comment is skipped and a named node refused, and it holds where the candidates end.
+    pub fn is_children_end(&self) -> bool {
+        matches!(self, Self::Terminal { kind, .. } if *kind == ast_grep_core::matcher::kind_utils::CHILDREN_END)
     }
 
     fn exact(tape: &TapeDoc, left: u32, right: u32) -> bool {
@@ -1483,7 +1413,11 @@ impl PackedPattern {
         bindings: &mut PatternBindings,
     ) -> bool {
         if candidates.is_empty() {
-            return false;
+            // A node with no children (its tokens all implied, RER-131): ellipses bind nothing.
+            return goals.iter().all(|goal| match goal {
+                Self::Ellipsis(name) => name.as_ref().is_none_or(|name| Self::bind_multi(bindings, name, Vec::new(), tape)),
+                goal => goal.is_children_end(),
+            });
         }
         let (mut goal, mut candidate) = (0_usize, 0_usize);
         while goal < goals.len() {
@@ -1548,7 +1482,7 @@ impl PackedPattern {
                 let Some(&node) = candidates.get(candidate) else {
                     return goals[goal..]
                         .iter()
-                        .all(|goal| matches!(goal, Self::Ellipsis(_)));
+                        .all(|goal| matches!(goal, Self::Ellipsis(_)) || goal.is_children_end());
                 };
                 match goals[goal].one(node, tape, bindings, false) {
                     PatternVerdict::Matched => break,
@@ -1580,7 +1514,7 @@ impl PackedPattern {
 }
 
 impl Program {
-    fn sibling_requirement(&self, pc: u16) -> SiblingRequirement {
+    pub fn sibling_requirement(&self, pc: u16) -> SiblingRequirement {
         match self.words.get(usize::from(pc)).map(|word| split(*word).0) {
             Some(NEXT) => SiblingRequirement::Immediate,
             Some(FIRST) => SiblingRequirement::First,
@@ -1620,7 +1554,7 @@ impl Program {
         )
     }
 
-    pub(in crate::code_rule_dsl) fn compile_regex(regex: &Regex) -> Result<Self, Error> {
+    pub fn compile_regex(regex: &Regex) -> Result<Self, Error> {
         Self::new(
             vec![word(TEXT, 0, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 1)],
             vec![
@@ -1637,7 +1571,7 @@ impl Program {
         )
     }
 
-    pub(in crate::code_rule_dsl) fn is_navigation_descriptor(&self) -> bool {
+    pub fn is_navigation_descriptor(&self) -> bool {
         self.words == [word(STOP, 0, 0)]
             && self.strings.is_empty()
             && self.predicates.is_empty()
@@ -1652,7 +1586,7 @@ impl Program {
             && self.ast_pattern.is_none()
     }
 
-    pub(in crate::code_rule_dsl) fn compile_navigation() -> Result<Self, Error> {
+    pub fn compile_navigation() -> Result<Self, Error> {
         Self::new(
             vec![word(STOP, 0, 0)],
             Vec::new(),
@@ -1662,7 +1596,7 @@ impl Program {
         )
     }
 
-    pub(in crate::code_rule_dsl) fn compile_universe() -> Result<Self, Error> {
+    pub fn compile_universe() -> Result<Self, Error> {
         Self::new(
             vec![word(CAPTURE, 0, 0), word(EMIT, 0, 1)],
             vec![b"match".to_vec(), b"universe".to_vec()],
@@ -1672,11 +1606,11 @@ impl Program {
         )
     }
 
-    pub(in crate::code_rule_dsl) fn compile_kind(kind: u16) -> Result<Self, Error> {
+    pub fn compile_kind(kind: u16) -> Result<Self, Error> {
         Self::compile_kind_operation(KIND, kind)
     }
 
-    pub(in crate::code_rule_dsl) fn compile_supertype(kind: u16) -> Result<Self, Error> {
+    pub fn compile_supertype(kind: u16) -> Result<Self, Error> {
         Self::compile_kind_operation(SUPERTYPE, kind)
     }
 
@@ -1727,7 +1661,7 @@ impl Program {
         )
     }
 
-    pub(in crate::code_rule_dsl) fn compile_ast_grep_pattern(pattern: &Pattern) -> Result<Self, Error> {
+    pub fn compile_ast_grep_pattern(pattern: &Pattern) -> Result<Self, Error> {
         if !matches!(pattern.strictness, MatchStrictness::Smart) {
             return Err(Error::UnsupportedPattern);
         }
@@ -1738,11 +1672,11 @@ impl Program {
         Ok(program)
     }
 
-    pub(in crate::code_rule_dsl) fn is_ast_pattern(&self) -> bool {
+    pub fn is_ast_pattern(&self) -> bool {
         self.ast_pattern.is_some()
     }
 
-    pub(in crate::code_rule_dsl) fn execute_ast_pattern(
+    pub fn execute_ast_pattern(
         &self,
         tape: &TapeDoc,
         root: u32,
@@ -1774,7 +1708,7 @@ impl Program {
         Ok(Some(captures))
     }
 
-    pub(in crate::code_rule_dsl) fn new(
+    pub fn new(
         words: Vec<u32>,
         strings: Vec<Vec<u8>>,
         predicates: Vec<TextPredicate>,
@@ -1784,7 +1718,7 @@ impl Program {
         Self::new_with_capture_predicates(words, strings, predicates, Vec::new(), labels, longs)
     }
 
-    pub(in crate::code_rule_dsl) fn new_with_capture_predicates(
+    pub fn new_with_capture_predicates(
         words: Vec<u32>,
         strings: Vec<Vec<u8>>,
         predicates: Vec<TextPredicate>,
@@ -1827,7 +1761,7 @@ impl Program {
         self
     }
 
-    pub(in crate::code_rule_dsl) fn set_mode(&self) -> bool {
+    pub fn set_mode(&self) -> bool {
         self.set_mode
     }
 
@@ -1836,7 +1770,7 @@ impl Program {
         self.digest.0.get_or_init(|| self.canonical_digest("", b""))
     }
 
-    pub(in crate::code_rule_dsl) fn canonical_digest(&self, language: &str, scm_source: &[u8]) -> String {
+    pub fn canonical_digest(&self, language: &str, scm_source: &[u8]) -> String {
         let mut digest = Sha256::new();
         digest.update(b"tempo-program-v7\0");
         digest.update((language.len() as u64).to_le_bytes());
@@ -2086,10 +2020,10 @@ impl Program {
                 }
             }
         }
-        format!("{:x}", digest.finalize())
+        crate::code_rule_dsl::prof::lower_hex(&digest.finalize())
     }
 
-    pub(in crate::code_rule_dsl) fn leading_kinds(&self) -> Option<BTreeSet<u16>> {
+    pub fn leading_kinds(&self) -> Option<BTreeSet<u16>> {
         let mut pending = vec![0_usize];
         let mut visited = BTreeSet::new();
         let mut kinds = BTreeSet::new();
@@ -2121,7 +2055,7 @@ impl Program {
         (!kinds.is_empty()).then_some(kinds)
     }
 
-    pub(in crate::code_rule_dsl) fn label_name(&self, label: u16) -> Option<&str> {
+    pub fn label_name(&self, label: u16) -> Option<&str> {
         rerail_compiler::rir_asm::label_name(self, label)
     }
 
@@ -2146,7 +2080,7 @@ impl Program {
             .any(|word| matches!((word & 0xff) as u8, NEXT | PARENT))
     }
 
-    pub(in crate::code_rule_dsl) fn with_capture_predicates(
+    pub fn with_capture_predicates(
         mut self,
         capture_predicates: Vec<CapturePredicate>,
     ) -> Result<Self, Error> {
@@ -2171,11 +2105,11 @@ impl Program {
         Ok(self)
     }
 
-    pub(in crate::code_rule_dsl) fn block_programs(&self) -> &[block::BlockProgram] {
+    pub fn block_programs(&self) -> &[block::BlockProgram] {
         &self.block_programs
     }
 
-    fn with_directives(mut self, directives: Vec<Directive>) -> Result<Self, Error> {
+    pub fn with_directives(mut self, directives: Vec<Directive>) -> Result<Self, Error> {
         self.output_program = output::OutputProgram::lower(&directives, &self.strings)?;
         self.directives = directives;
         self.digest = DigestMemo::default();
@@ -2183,7 +2117,7 @@ impl Program {
         Ok(self)
     }
 
-    pub(in crate::code_rule_dsl) fn tree_sitter_top_level_patterns(source: &str) -> Result<Vec<String>, Error> {
+    pub fn tree_sitter_top_level_patterns(source: &str) -> Result<Vec<String>, Error> {
         scm::parse(source).map(|patterns| {
             patterns
                 .into_iter()
@@ -2193,7 +2127,7 @@ impl Program {
     }
 
     /// Parses one complete Tree-sitter query pattern and lowers its typed syntax tree to Program.
-    pub(in crate::code_rule_dsl) fn compile_tree_sitter_query_pattern(
+    pub fn compile_tree_sitter_query_pattern(
         source: &str,
         grammar: &tree_sitter::Language,
     ) -> Result<Self, Error> {
@@ -2204,14 +2138,14 @@ impl Program {
         scm::compile(&patterns.remove(0), grammar)
     }
 
-    fn with_tree_sitter_query_semantics(mut self) -> Result<Self, Error> {
+    pub fn with_tree_sitter_query_semantics(mut self) -> Result<Self, Error> {
         self.tree_sitter_query = true;
         self.digest = DigestMemo::default();
         self.validate()?;
         Ok(self)
     }
 
-    fn validate(&self) -> Result<(), Error> {
+    pub fn validate(&self) -> Result<(), Error> {
         if self.words.is_empty()
             || self.words.len() > usize::from(u16::MAX) + 1
             || self.value_programs.len() != self.predicates.len()
@@ -3169,7 +3103,7 @@ impl Program {
         self.execute_roots(tape, 0..tape.transducer_len() as u32)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn execute_with_stats(&self, tape: &TapeDoc) -> Result<(Vec<Output>, ExecutionStats), Error> {
         let mut stats = ExecutionStats::default();
         let output =
@@ -3177,7 +3111,7 @@ impl Program {
         Ok((output, stats))
     }
 
-    pub(in crate::code_rule_dsl) fn execute_roots(
+    pub fn execute_roots(
         &self,
         tape: &TapeDoc,
         roots: impl IntoIterator<Item = u32>,
@@ -3195,8 +3129,8 @@ impl Program {
         self.execute_roots_from_with_work_limit(tape, roots, initial_pc, stats, MAX_STEPS_PER_PATH)
     }
 
-    #[cfg(all(test, target_os = "macos"))]
-    fn execute_terminal_reference_with_work_limit(
+    #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+    pub fn execute_terminal_reference_with_work_limit(
         &self,
         tape: &TapeDoc,
         roots: impl IntoIterator<Item = u32>,
@@ -3213,7 +3147,7 @@ impl Program {
         tape: &TapeDoc,
         roots: impl IntoIterator<Item = u32>,
         initial_pc: u16,
-        #[cfg_attr(not(test), allow(unused_variables, unused_mut))] mut stats: Option<
+        #[cfg_attr(not(any(test, feature = "test-hooks")), allow(unused_variables, unused_mut))] mut stats: Option<
             &mut ExecutionStats,
         >,
         work_limit: usize,
@@ -3310,7 +3244,7 @@ impl Program {
                     continue;
                 }
                 loop {
-                    #[cfg(test)]
+                    #[cfg(any(test, feature = "test-hooks"))]
                     if let Some(stats) = stats.as_deref_mut() {
                         stats.explored_states += 1;
                         stats.max_pending_paths = stats.max_pending_paths.max(pending.len() + 1);
@@ -3424,7 +3358,7 @@ impl Program {
                                             let mut children = tape
                                                 .transducer_children(parent)
                                                 .inspect(|_| {
-                                                    #[cfg(test)]
+                                                    #[cfg(any(test, feature = "test-hooks"))]
                                                     if let Some(stats) = stats.as_deref_mut() {
                                                         stats.sibling_edge_visits += 1;
                                                     }
@@ -3718,7 +3652,7 @@ impl Program {
 
 /// Executes several programs after one tape scan. A leading kind test becomes dispatch data;
 /// every other instruction retains the ordinary transducer semantics.
-pub(in crate::code_rule_dsl) fn execute_batch(
+pub fn execute_batch(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: Option<&[Vec<Vec<u32>>]>,
@@ -3764,13 +3698,13 @@ pub(in crate::code_rule_dsl) fn execute_batch(
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct BatchOutcome {
-    pub(in crate::code_rule_dsl) outputs: Vec<Vec<Vec<Output>>>,
-    pub(in crate::code_rule_dsl) errors: Vec<Vec<Option<Error>>>,
+pub struct BatchOutcome {
+    pub outputs: Vec<Vec<Vec<Output>>>,
+    pub errors: Vec<Vec<Option<Error>>>,
 }
 
 impl BatchOutcome {
-    fn successful(outputs: Vec<Vec<Vec<Output>>>) -> Self {
+    pub fn successful(outputs: Vec<Vec<Vec<Output>>>) -> Self {
         let errors = outputs
             .iter()
             .map(|file| file.iter().map(|_| None).collect())
@@ -3778,7 +3712,7 @@ impl BatchOutcome {
         Self { outputs, errors }
     }
 
-    fn into_result(self) -> Result<Vec<Vec<Vec<Output>>>, Error> {
+    pub fn into_result(self) -> Result<Vec<Vec<Vec<Output>>>, Error> {
         if let Some(error) = self.errors.into_iter().flatten().flatten().next() {
             Err(error)
         } else {
@@ -3787,7 +3721,7 @@ impl BatchOutcome {
     }
 }
 
-fn execute_batch_outcomes(
+pub fn execute_batch_outcomes(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: &[Vec<Vec<u32>>],
@@ -3838,7 +3772,7 @@ fn execute_batch_outcomes(
     Ok(outcome)
 }
 
-pub(in crate::code_rule_dsl) fn execute_with_backend(
+pub fn execute_with_backend(
     backend: ExecutionBackend,
     programs: &[Program],
     files: &[TapeDoc],
@@ -3847,7 +3781,7 @@ pub(in crate::code_rule_dsl) fn execute_with_backend(
     execute_with_backend_outcomes(backend, programs, files, anchors)?.into_result()
 }
 
-pub(in crate::code_rule_dsl) fn packed_workspace_fits(
+pub fn packed_workspace_fits(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: &[Vec<Vec<u32>>],
@@ -3895,7 +3829,7 @@ pub(in crate::code_rule_dsl) fn packed_workspace_bytes(
     batch.workspace_allocation_bytes(totals).ok_or(Error::BackendCapacity)
 }
 
-pub(in crate::code_rule_dsl) fn execute_with_backend_packed_result_limits(
+pub fn execute_with_backend_packed_result_limits(
     backend: ExecutionBackend,
     programs: &[Program],
     files: &[TapeDoc],
@@ -3930,40 +3864,19 @@ pub(in crate::code_rule_dsl) fn execute_planned(
             anchors,
             result_limits,
         ),
-        #[cfg(target_os = "macos")]
         ExecutionBackend::MetalInterpreter => {
-            let engine = metal_program_backend::compile_interpreter()?;
-            metal_program_backend::execute_packed_with_result_limits(
-                &engine,
-                programs,
-                files,
-                anchors,
-                result_limits,
-            )
+            device::required()?.execute_packed(device::Engine::Interpreter, programs, files, anchors, result_limits)
         }
-        #[cfg(target_os = "macos")]
         ExecutionBackend::MetalJit => {
-            let engine = crate::code_rule_dsl::prof::time("roots.jit", || metal_program_backend::compile_jit_cached(programs))?;
-            let _run = crate::code_rule_dsl::prof::Stage::start("roots.metal");
-            metal_program_backend::execute_packed_with_result_limits(
-                &engine,
-                programs,
-                files,
-                anchors,
-                result_limits,
-            )
+            device::required()?.execute_packed(device::Engine::Jit, programs, files, anchors, result_limits)
         }
         ExecutionBackend::Metal | ExecutionBackend::CpuBackground | ExecutionBackend::MetalBackground => {
-            Err(Error::UnsupportedBackend)
-        }
-        #[cfg(not(target_os = "macos"))]
-        ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit => {
             Err(Error::UnsupportedBackend)
         }
     }
 }
 
-fn execute_with_backend_outcomes(
+pub fn execute_with_backend_outcomes(
     backend: ExecutionBackend,
     programs: &[Program],
     files: &[TapeDoc],
@@ -3972,23 +3885,8 @@ fn execute_with_backend_outcomes(
     match compilation::resolve(backend, programs)? {
         ExecutionBackend::CpuInterpreter => execute_batch_outcomes(programs, files, anchors),
         ExecutionBackend::CpuJit => native_cpu::execute_batch_outcomes(programs, files, anchors),
-        #[cfg(target_os = "macos")]
-        ExecutionBackend::MetalInterpreter => {
-            let engine = metal_program_backend::compile_interpreter()?;
-            metal_program_backend::execute_outcomes(&engine, programs, files, anchors)
-        }
-        #[cfg(target_os = "macos")]
-        ExecutionBackend::MetalJit => {
-            let engine = metal_program_backend::compile_jit_cached(programs)?;
-            metal_program_backend::execute_outcomes(&engine, programs, files, anchors)
-        }
-        #[cfg(target_os = "macos")]
-        ExecutionBackend::Metal => {
-            metal_grid_backend::execute_outcomes(programs, files, anchors)
-        }
-        #[cfg(not(target_os = "macos"))]
-        ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::Metal => {
-            Err(Error::UnsupportedBackend)
+        backend @ (ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::Metal) => {
+            device::required()?.execute_outcomes(backend, programs, files, anchors)
         }
         ExecutionBackend::CpuBackground | ExecutionBackend::MetalBackground => Err(Error::UnsupportedBackend),
     }
@@ -4185,30 +4083,24 @@ fn execute_with_backend_bounded_limit(
 }
 
 pub(in crate::code_rule_dsl) fn warm_production_programs(programs: &[Program]) -> Result<(), Error> {
-    #[cfg(target_os = "macos")]
-    {
-        metal_program_backend::compile_jit_cached(programs).map(|_| ())
+    if let Some(device) = device::matcher() {
+        return device.warm(programs);
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        for program in programs {
-            native_cpu::warm_jit(program)?;
-        }
-        Ok(())
+    for program in programs {
+        native_cpu::warm_jit(program)?;
     }
+    Ok(())
 }
 
-pub(super) fn execute_production_corpus(
+pub fn execute_production_corpus(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: &[Vec<Arc<[u32]>>],
     result_limits: &[u32],
 ) -> Result<packed_batch::PackedExecution, Error> {
-    #[cfg(target_os = "macos")]
-    {
-        metal_grid_backend::execute_shared_corpus(programs, files, anchors, result_limits)
+    if let Some(device) = device::matcher() {
+        return device.execute_shared_corpus(programs, files, anchors, result_limits);
     }
-    #[cfg(not(target_os = "macos"))]
     {
         let anchors = anchors
             .iter()
@@ -4224,24 +4116,16 @@ pub(super) fn execute_production_corpus(
     }
 }
 
-pub(super) fn execute_production_corpus_pages(
+pub fn execute_production_corpus_pages(
     programs: &[Program],
     files: &[crate::code_rule_dsl::tape::TapeSource],
     anchors: &[Vec<Arc<[u32]>>],
     result_limits: &[u32],
     consumer: &mut dyn FnMut(PackedExecution, usize) -> Result<(), Error>,
 ) -> Result<(), Error> {
-    #[cfg(target_os = "macos")]
-    {
-        metal_grid_backend::execute_shared_corpus_pages(
-            programs,
-            files,
-            anchors,
-            result_limits,
-            consumer,
-        )
+    if let Some(device) = device::matcher() {
+        return device.execute_shared_corpus_pages(programs, files, anchors, result_limits, consumer);
     }
-    #[cfg(not(target_os = "macos"))]
     {
         let docs = files
             .iter()
@@ -4254,7 +4138,7 @@ pub(super) fn execute_production_corpus_pages(
     }
 }
 
-pub(in crate::code_rule_dsl) const POSITIONAL_INDEX_VERSION: i64 = 3;
+pub(in crate::code_rule_dsl) const POSITIONAL_INDEX_VERSION: i64 = 5;
 const VALUE_INDEX_LIMIT: usize = 96;
 
 pub(in crate::code_rule_dsl) fn execute_many(
@@ -4298,7 +4182,7 @@ pub(in crate::code_rule_dsl) fn execute_many(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[cfg(not(target_os = "macos"))]
@@ -6537,7 +6421,7 @@ mod tests {
             digest.update((range.start as u64).to_le_bytes());
             digest.update((range.end as u64).to_le_bytes());
         }
-        format!("{:x}", digest.finalize())
+        crate::code_rule_dsl::prof::lower_hex(&digest.finalize())
     }
 
     fn median(mut values: Vec<Duration>) -> Duration {

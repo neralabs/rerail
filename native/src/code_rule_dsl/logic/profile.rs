@@ -33,38 +33,38 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
 
-mod analysis;
-mod analysis_report;
-mod kinds;
-mod memory;
-mod roofline;
-mod watch;
-pub(in crate::code_rule_dsl) use roofline::Unit;
-pub use watch::watch;
+pub mod analysis;
+pub mod analysis_report;
+pub mod kinds;
+pub mod memory;
+pub mod roofline;
+// cratify: `watch` is rerail-logic's (it mounts it)
+pub use roofline::Unit;
+// cratify: `report` is rerail-logic's (it mounts it)
 
 static ON: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(std::env::var_os("RERAIL_PROFILE").is_some()));
 
 /// Whether this run is profiled.
-pub(crate) fn on() -> bool {
+pub fn on() -> bool {
     ON.load(Ordering::Relaxed)
 }
 
 /// Turns profiling on or off (a test that profiles without the environment variable).
 #[allow(dead_code)]
-pub(in crate::code_rule_dsl) fn set(on: bool) {
+pub fn set(on: bool) {
     ON.store(on, Ordering::Relaxed);
 }
 
 static DIR: LazyLock<Mutex<Option<std::path::PathBuf>>> = LazyLock::new(|| Mutex::new(std::env::var_os("RERAIL_PROFILE").map(Into::into)));
 
 /// The directory the next report is written to: `RERAIL_PROFILE`'s, unless set (one per rule in a measurement).
-pub(in crate::code_rule_dsl) fn directory() -> Option<std::path::PathBuf> {
+pub fn directory() -> Option<std::path::PathBuf> {
     DIR.lock().unwrap().clone()
 }
 
 /// Sets the directory the next report is written to.
 #[allow(dead_code)]
-pub(in crate::code_rule_dsl) fn set_directory(dir: &Path) {
+pub fn set_directory(dir: &Path) {
     *DIR.lock().unwrap() = Some(dir.to_path_buf());
 }
 
@@ -79,118 +79,118 @@ fn cpu() -> f64 {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let (u, s) = super::plan::corpus::thread_usage();
+        let (u, s) = crate::code_rule_dsl::prof::thread_usage();
         u + s
     }
 }
 
 #[derive(Default, Clone)]
-pub(in crate::code_rule_dsl) struct SpanTotal {
-    pub(in crate::code_rule_dsl) calls: u64,
-    pub(in crate::code_rule_dsl) total: f64,
-    pub(in crate::code_rule_dsl) own: f64,
+pub struct SpanTotal {
+    pub calls: u64,
+    pub total: f64,
+    pub own: f64,
     /// Bytes its thread allocated while it was open, in all and less the spans inside it, and bytes freed
     /// (`memory`): allocated less freed is what it kept.
-    pub(in crate::code_rule_dsl) alloc: u64,
-    pub(in crate::code_rule_dsl) own_alloc: u64,
-    pub(in crate::code_rule_dsl) freed: u64,
+    pub alloc: u64,
+    pub own_alloc: u64,
+    pub freed: u64,
     /// How far the process's footprint high-water mark rose while it was open, in all and less the spans inside it.
-    pub(in crate::code_rule_dsl) rise: u64,
-    pub(in crate::code_rule_dsl) own_rise: u64,
+    pub rise: u64,
+    pub own_rise: u64,
 }
 
 #[derive(Default, Clone)]
-pub(in crate::code_rule_dsl) struct SqlTotal {
-    pub(in crate::code_rule_dsl) runs: u64,
-    pub(in crate::code_rule_dsl) ns: u64,
-    pub(in crate::code_rule_dsl) vm: u64,
-    pub(in crate::code_rule_dsl) scan: u64,
-    pub(in crate::code_rule_dsl) sort: u64,
-    pub(in crate::code_rule_dsl) autoindex: u64,
+pub struct SqlTotal {
+    pub runs: u64,
+    pub ns: u64,
+    pub vm: u64,
+    pub scan: u64,
+    pub sort: u64,
+    pub autoindex: u64,
 }
 
 #[derive(Default)]
-struct State {
-    spans: BTreeMap<String, SpanTotal>,
+pub struct State {
+    pub spans: BTreeMap<String, SpanTotal>,
     /// By (span path, statement text).
-    sql: BTreeMap<(String, String), SqlTotal>,
+    pub sql: BTreeMap<(String, String), SqlTotal>,
     /// By (span path, plan text): per step, rows in and out.
-    native: BTreeMap<(String, String), Vec<(u64, u64)>>,
+    pub native: BTreeMap<(String, String), Vec<(u64, u64)>>,
     /// By (span path, plan text): the CPU seconds its probes ran, as the native engine timed them.
-    native_cpu: BTreeMap<(String, String), f64>,
-    notes: BTreeMap<String, String>,
+    pub native_cpu: BTreeMap<(String, String), f64>,
+    pub notes: BTreeMap<String, String>,
     /// Run-level decisions by (topic, text): how many times made.
-    decisions: BTreeMap<(String, String), u64>,
+    pub decisions: BTreeMap<(String, String), u64>,
     /// Strata in the order first run: key, engine, why, loops.
     strata: Vec<Stratum>,
     /// The strata that ran in SQLite (the SQL wave kernel), by key: the kind of literal the native engine declined.
     fallbacks: BTreeMap<String, String>,
     /// Plans by (stratum, kind, plan text).
-    plans: BTreeMap<(String, String, String), PlanTotal>,
+    pub plans: BTreeMap<(String, String, String), PlanTotal>,
     /// Device kernels by (span path, kernel).
-    devices: BTreeMap<(String, String), DeviceTotal>,
+    pub devices: BTreeMap<(String, String), DeviceTotal>,
     /// Work charged by (span path, unit) (`work`).
-    work: BTreeMap<(String, Unit), u64>,
+    pub work: BTreeMap<(String, Unit), u64>,
     /// Waits by (the waiter's span path, what it waited on, what that was doing when the wait began) (`wait`).
-    waits: BTreeMap<(String, String, String), WaitTotal>,
+    pub waits: BTreeMap<(String, String, String), WaitTotal>,
     /// Where each native stratum ran, by stratum (`placed`, decision 0095).
-    placements: BTreeMap<String, PlacedTotal>,
+    pub placements: BTreeMap<String, PlacedTotal>,
     /// SQL inside the waves (`sql_in_wave`, `wait_in_wave`), by (hazard class, span path, connection and statement):
     /// runs and nanoseconds.
-    hazards: BTreeMap<(&'static str, String, String), (u64, u64)>,
+    pub hazards: BTreeMap<(&'static str, String, String), (u64, u64)>,
 }
 
 /// A stratum's placements, summed over its runs (chunks, guests, the cross-file part).
 #[derive(Default)]
-struct PlacedTotal {
-    runs: u64,
-    on_gpu: u64,
-    gpu_cheaper: u64,
-    device: bool,
-    forms: Vec<&'static str>,
-    missing: Vec<&'static str>,
-    planned_work: f64,
-    work: u64,
-    cpu_estimate: f64,
-    gpu_estimate: f64,
-    cpu: f64,
+pub struct PlacedTotal {
+    pub runs: u64,
+    pub on_gpu: u64,
+    pub gpu_cheaper: u64,
+    pub device: bool,
+    pub forms: Vec<&'static str>,
+    pub missing: Vec<&'static str>,
+    pub planned_work: f64,
+    pub work: u64,
+    pub cpu_estimate: f64,
+    pub gpu_estimate: f64,
+    pub cpu: f64,
     /// Its join steps by the form placement chose (CPU index, GPU sort and probe, GPU tile): how many, their
     /// estimate on the CPU's index, and on the form chosen (of the steps estimated under `JOIN_ESTIMATE_CAP`), and
     /// how many were estimated over it.
-    joins: [(u64, f64, f64, u64); 3],
+    pub joins: [(u64, f64, f64, u64); 3],
     /// Its runs on the device (decision 0095, step 4), summed: rules, stages, submissions, dispatches, the GPU's
     /// time, this thread's CPU encoding, waiting and reading back, uploads, residency hits; and why the device
     /// refused it, when it was placed there and did not run there.
-    gpu: GpuTotal,
-    refused: Option<String>,
+    pub gpu: GpuTotal,
+    pub refused: Option<String>,
 }
 
 #[derive(Default, Clone)]
-struct GpuTotal {
-    runs: u64,
-    rules: u64,
-    stages: u64,
-    submissions: u64,
-    dispatches: u64,
-    reruns: u64,
-    gpu: f64,
-    encode: f64,
-    upload: f64,
-    wait: f64,
-    wait_wall: f64,
-    decode: f64,
-    uploads: u64,
-    upload_bytes: u64,
-    resident: u64,
-    sorts: u64,
-    sort_hits: u64,
-    rows: u64,
-    distinct: u64,
-    bindings: u64,
+pub struct GpuTotal {
+    pub runs: u64,
+    pub rules: u64,
+    pub stages: u64,
+    pub submissions: u64,
+    pub dispatches: u64,
+    pub reruns: u64,
+    pub gpu: f64,
+    pub encode: f64,
+    pub upload: f64,
+    pub wait: f64,
+    pub wait_wall: f64,
+    pub decode: f64,
+    pub uploads: u64,
+    pub upload_bytes: u64,
+    pub resident: u64,
+    pub sorts: u64,
+    pub sort_hits: u64,
+    pub rows: u64,
+    pub distinct: u64,
+    pub bindings: u64,
 }
 
 impl GpuTotal {
-    fn add(&mut self, o: &GpuTotal) {
+    pub fn add(&mut self, o: &GpuTotal) {
         self.runs += o.runs;
         self.rules += o.rules;
         self.stages += o.stages;
@@ -219,27 +219,24 @@ impl GpuTotal {
     }
 }
 
-/// What the device reported for a stratum (`setfix::device`).
-#[cfg(target_os = "macos")]
-pub(in crate::code_rule_dsl) type DeviceReport = crate::code_rule_dsl::logic::native::component::DeviceReport;
-#[cfg(not(target_os = "macos"))]
-pub(in crate::code_rule_dsl) type DeviceReport = ();
+/// What the device reported for a stratum (`logic::device`).
+pub type DeviceReport = Report;
 
 #[derive(Default)]
-struct WaitTotal {
-    count: u64,
+pub struct WaitTotal {
+    pub count: u64,
     /// Wall time blocked, and the waiter's CPU meanwhile (spinning, waking).
-    wall: f64,
-    cpu: f64,
+    pub wall: f64,
+    pub cpu: f64,
 }
 
 /// What a thread is doing, for the threads that wait on it (`wait`): one shared marker, set as it moves between
 /// phases. Cheap to set: a store of a static name.
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct Activity(parking_lot::Mutex<&'static str>);
+pub struct Activity(parking_lot::Mutex<&'static str>);
 
 impl Activity {
-    pub(in crate::code_rule_dsl) fn set(&self, doing: &'static str) {
+    pub fn set(&self, doing: &'static str) {
         *self.0.lock() = doing;
     }
     pub(in crate::code_rule_dsl) fn get(&self) -> &'static str {
@@ -250,7 +247,7 @@ impl Activity {
 /// Runs `blocking` (a receive, a send on a full channel, a join), recorded as a wait of this thread's span on
 /// `awaited`, and on what it was doing when it began (`doing`, an `Activity` of the awaited thread or a fixed name). The wall
 /// time is the wait; the CPU spent meanwhile is reported with it. Not profiling, it only runs `blocking`.
-pub(in crate::code_rule_dsl) fn wait<T>(awaited: &str, doing: &Activity, blocking: impl FnOnce() -> T) -> T {
+pub fn wait<T>(awaited: &str, doing: &Activity, blocking: impl FnOnce() -> T) -> T {
     if !on() {
         return blocking();
     }
@@ -259,7 +256,7 @@ pub(in crate::code_rule_dsl) fn wait<T>(awaited: &str, doing: &Activity, blockin
     let out = blocking();
     let (wall, spent) = (wall0.elapsed().as_secs_f64(), cpu() - cpu0);
     let path = current();
-    let mut state = STATE.lock().unwrap();
+    let mut state = state();
     let w = state.waits.entry((path, awaited.to_owned(), if at.is_empty() { "-".to_owned() } else { at.to_owned() })).or_default();
     w.count += 1;
     w.wall += wall;
@@ -267,60 +264,62 @@ pub(in crate::code_rule_dsl) fn wait<T>(awaited: &str, doing: &Activity, blockin
     out
 }
 
-struct Stratum {
+pub struct Stratum {
     key: String,
     engine: String,
     why: String,
     loops: u64,
 }
 
-/// One planned step: the literal, how it is read, from what, and the rows the planner expects after it.
+/// One planned step: the literal, how it is read, from what, and the rows the planner expects after it; for a join,
+/// the joins it passed over there, each with the rows a binding it was priced at (why this one was taken).
 #[derive(Clone, Debug)]
-pub(in crate::code_rule_dsl) struct StepPlan {
-    pub(in crate::code_rule_dsl) literal: String,
-    pub(in crate::code_rule_dsl) access: String,
-    pub(in crate::code_rule_dsl) source: String,
-    pub(in crate::code_rule_dsl) rows: f64,
+pub struct StepPlan {
+    pub literal: String,
+    pub access: String,
+    pub source: String,
+    pub rows: f64,
+    pub passed: Vec<(String, f64)>,
 }
 
 /// A rule's plan as the planner chose it: estimated work and rows, and its search (subsets kept, candidates priced).
 #[derive(Clone, Debug, Default)]
-pub(in crate::code_rule_dsl) struct RulePlan {
-    pub(in crate::code_rule_dsl) work: f64,
-    pub(in crate::code_rule_dsl) rows: f64,
-    pub(in crate::code_rule_dsl) subsets: u64,
-    pub(in crate::code_rule_dsl) candidates: u64,
-    pub(in crate::code_rule_dsl) steps: Vec<StepPlan>,
+pub struct RulePlan {
+    pub work: f64,
+    pub rows: f64,
+    pub subsets: u64,
+    pub candidates: u64,
+    pub steps: Vec<StepPlan>,
 }
 
 #[derive(Default)]
-struct PlanTotal {
-    rule: Option<usize>,
-    plan: RulePlan,
-    loops: u64,
-    planning: f64,
+pub struct PlanTotal {
+    pub rule: Option<usize>,
+    pub plan: RulePlan,
+    pub loops: u64,
+    pub planning: f64,
     replans: u64,
-    actual: Vec<(u64, u64)>,
-    measured: bool,
+    pub actual: Vec<(u64, u64)>,
+    pub measured: bool,
     produced: Option<u64>,
 }
 
 #[derive(Default)]
-struct DeviceTotal {
-    runs: u64,
-    launches: u64,
-    gpu: f64,
-    wall: f64,
-    cells: u64,
+pub struct DeviceTotal {
+    pub runs: u64,
+    pub launches: u64,
+    pub gpu: f64,
+    pub wall: f64,
+    pub cells: u64,
     /// Where the host's time went, summed (`device_phases`): seconds per `PHASES` entry.
-    phases: [f64; PHASES.len()],
+    pub phases: [f64; PHASES.len()],
     /// Bytes of buffers made for the runs, and of buffers reused.
-    made: u64,
-    reused: u64,
+    pub made: u64,
+    pub reused: u64,
 }
 
 /// A device run's host-side phases, in order (`device_phases`).
-pub(in crate::code_rule_dsl) const PHASES: [&str; 7] = [
+pub const PHASES: [&str; 7] = [
     "buffers made (map, wire, copy)",
     "command queue made",
     "encode",
@@ -332,7 +331,42 @@ pub(in crate::code_rule_dsl) const PHASES: [&str; 7] = [
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
 
-struct Open {
+thread_local! {
+    /// Whether this thread holds the profile's state (`state`).
+    static HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The profile's state, held: the only way to it. Its lock is not reentrant, so a profile call made while this
+/// thread holds it (from a closure run under the lock: a decision's text that splits a program, which opens a span)
+/// would wait on itself forever. Every closure a profile function takes is run before the lock, and a call that would
+/// wait on itself panics here instead, naming the cause.
+pub struct Held(std::sync::MutexGuard<'static, State>);
+
+impl std::ops::Deref for Held {
+    type Target = State;
+    fn deref(&self) -> &State {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Held {
+    fn deref_mut(&mut self) -> &mut State {
+        &mut self.0
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        HELD.with(|h| h.set(false));
+    }
+}
+
+pub fn state() -> Held {
+    assert!(!HELD.with(|h| h.replace(true)), "the profile's state was taken again on a thread holding it: a closure ran under its lock");
+    Held(STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
+}
+
+pub struct Open {
     path: String,
     start: f64,
     children: f64,
@@ -345,13 +379,13 @@ struct Open {
 }
 
 /// A thread's open spans and the SQL statement it runs, where a dump on another thread can read them (`watch`).
-struct Thread {
+pub struct Thread {
     name: String,
     /// Its Mach port (macOS), for its CPU read from another thread; 0 elsewhere.
     port: u32,
     counters: memory::Counters,
     opens: Vec<Open>,
-    /// The statement SQLite is running for it, and since when (`statement`).
+    /// The statement SQLite is running for it, and since when (`strict_statement`).
     statement: Option<(String, std::time::Instant)>,
 }
 
@@ -382,18 +416,18 @@ thread_local! {
 }
 
 /// Records the SQL statement this thread starts (`Some`), or that it ended (`None`), for a dump. Only when profiling.
-pub(in crate::code_rule_dsl) fn statement(text: Option<String>) {
+pub fn statement(text: Option<String>) {
     if on() {
         STACK.with(|s| s.lock().statement = text.map(|t| (t, std::time::Instant::now())));
     }
 }
 
 /// An open span; it closes when dropped.
-pub(crate) struct Span(bool);
+pub struct Span(bool);
 
 /// This thread's innermost open span's path (only when profiling): a worker the thread starts opens its spans under
 /// it (`span_at`), so the worker's work is charged to what started it (a phase's run, say).
-pub(crate) fn here() -> Option<String> {
+pub fn here() -> Option<String> {
     if !on() {
         return None;
     }
@@ -402,7 +436,7 @@ pub(crate) fn here() -> Option<String> {
 
 /// Opens span `name` under `under`, a path another thread's `here` gave: a pool job's span (`crate::threads`), at
 /// that path whichever thread runs it. Without `under`, under this thread's open span, as `span` opens one.
-pub(crate) fn span_at(under: Option<&str>, name: impl FnOnce() -> String) -> Span {
+pub fn span_at(under: Option<&str>, name: impl FnOnce() -> String) -> Span {
     match under {
         Some(p) => open(format!("{p}/{}", name())),
         None => span(name),
@@ -410,7 +444,7 @@ pub(crate) fn span_at(under: Option<&str>, name: impl FnOnce() -> String) -> Spa
 }
 
 /// Opens span `name` (made only when profiling) under this thread's open span.
-pub(in crate::code_rule_dsl) fn span(name: impl FnOnce() -> String) -> Span {
+pub fn span(name: impl FnOnce() -> String) -> Span {
     if !on() {
         return Span(false);
     }
@@ -455,7 +489,7 @@ impl Drop for Span {
                 parent.children_alloc += alloc;
                 parent.children_rise += rise;
             }
-            let mut state = STATE.lock().unwrap();
+            let mut state = state();
             let t = state.spans.entry(open.path).or_default();
             t.calls += 1;
             t.total += total;
@@ -478,13 +512,20 @@ fn open_paths() -> (Vec<String>, usize) {
 /// The process's peaks so far, for a caller to print after a run (the run's report is written before its caller's
 /// own work): the high-water mark of the footprint and of the resident set, and the sampler's peak with what was
 /// open then. Also rewrites `memory.tsv` in the profile directory, so the timeline covers the caller's work too.
-pub(in crate::code_rule_dsl) fn peaks() -> String {
+pub fn peaks() -> String {
     let (now, max) = memory::footprint();
-    let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
-    // SAFETY: fills a `rusage` for this process.
-    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
-    // macOS reports bytes, Linux kilobytes.
-    let rss = if cfg!(target_os = "macos") { usage.ru_maxrss as f64 } else { usage.ru_maxrss as f64 * 1024.0 };
+    // macOS reports bytes, Linux kilobytes; Windows has its peak working set, the browser build no counter.
+    #[cfg(unix)]
+    let rss = {
+        let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
+        // SAFETY: fills a `rusage` for this process.
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+        if cfg!(target_os = "macos") { usage.ru_maxrss as f64 } else { usage.ru_maxrss as f64 * 1024.0 }
+    };
+    #[cfg(windows)]
+    let rss = crate::code_rule_dsl::prof::windows_peak_working_set() as f64;
+    #[cfg(target_family = "wasm")]
+    let rss = 0.0;
     let mut r = format!("process: footprint {} MB now, {} MB at most; resident set {} MB at most\n", memory::mb(now as f64), memory::mb(max as f64), memory::mb(rss));
     memory::sampled_report(&mut r);
     if let Some(dir) = directory() {
@@ -499,9 +540,9 @@ pub(in crate::code_rule_dsl) fn current() -> String {
 }
 
 /// Charges one run of statement `text` to the current span.
-pub(in crate::code_rule_dsl) fn sql(text: String, ns: u64, vm: u64, scan: u64, sort: u64, autoindex: u64) {
+pub fn sql(text: String, ns: u64, vm: u64, scan: u64, sort: u64, autoindex: u64) {
     let path = current();
-    let mut state = STATE.lock().unwrap();
+    let mut state = state();
     let t = state.sql.entry((path, text)).or_default();
     t.runs += 1;
     t.ns += ns;
@@ -521,14 +562,97 @@ thread_local! {
 
 /// Waves are under way until dropped: from a run's first wave (its first chunk) to its last (the cross-file part's
 /// last stratum). SQL before and after is the run's beginning and end, where it may be; inside, it is a hazard.
-pub(in crate::code_rule_dsl) struct Waves(bool);
+pub struct Waves(bool);
 
-pub(in crate::code_rule_dsl) fn waves() -> Waves {
-    let on = on();
-    if on {
-        WAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+pub fn waves() -> Waves {
+    WAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    Waves(true)
+}
+
+/// Whether a run's waves are under way (`waves`): what is not read before the first wave is not read from SQLite.
+pub fn inside_waves() -> bool {
+    WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0
+}
+
+
+/// `RERAIL_SQL_STRICT=1`, the benchmark's mode: SQL only where decision 0104 puts it. A run reads what it needs
+/// before its first wave (each run of the process, outside every wave), every wave is given what it reads in memory, and what the run keeps is written behind it by
+/// the store's writer. Any other statement, on any connection of the process, ends it at once (`strict_statement`), naming
+/// the statement, its thread and span, and where it was sent from; so does a wave's wait for the writer.
+pub fn strict() -> bool {
+    static STRICT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *STRICT.get_or_init(|| std::env::var("RERAIL_SQL_STRICT").is_ok_and(|v| !matches!(v.as_str(), "" | "0" | "off")))
+}
+
+/// Whether the store's connections trace their statements: for the profile, or the strict mode.
+pub fn tracing() -> bool {
+    on() || strict()
+}
+
+/// Whether `text` only reads: a query, a pragma, or a read transaction's bounds.
+fn reads_only(text: &str) -> bool {
+    let t = text.trim_start().to_ascii_uppercase();
+    let word = t.split(|c: char| !c.is_ascii_alphabetic()).next().unwrap_or("");
+    match word {
+        "SELECT" | "WITH" | "PRAGMA" | "EXPLAIN" | "VALUES" | "COMMIT" | "END" | "ROLLBACK" | "RELEASE" | "SAVEPOINT" => true,
+        "BEGIN" => !t.contains("IMMEDIATE") && !t.contains("EXCLUSIVE"),
+        _ => false,
     }
-    Waves(on)
+}
+
+/// A statement about to run on connection `conn` (`run`, `store`, or `sqlite`: any other). In the strict mode
+/// (`strict`), the process ends unless it is the store writer's, or a read before the process's first wave.
+pub fn strict_statement(conn: &'static str, text: &str) {
+    if !strict() || BEHIND.with(std::cell::Cell::get) {
+        return;
+    }
+    // A run reads before its first wave; a process's runs (phase 0's include graphs, then the run) each do.
+    let inside = WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0;
+    if !inside && reads_only(text) {
+        return;
+    }
+    let when = if inside { "inside the waves" } else { "a write outside the waves, not the store writer's" };
+    violation(when, &format!("{conn}: {}", text.split_whitespace().collect::<Vec<_>>().join(" ")));
+}
+
+/// Ends the process for the strict mode: what ran where, and the stack that sent it. An abort, not a panic: it is
+/// raised inside SQLite's callback, which cannot unwind.
+fn violation(when: &str, what: &str) -> ! {
+    let thread = std::thread::current().name().unwrap_or("unnamed").to_owned();
+    let mut what = what.to_owned();
+    if what.len() > 600 {
+        what.truncate(what.floor_char_boundary(600));
+        what.push('…');
+    }
+    eprintln!(
+        "rerail: RERAIL_SQL_STRICT: SQL {when} (decision 0104: one read before the first wave, writes behind the run)\n  {what}\n  thread {thread}, span {}\n{}",
+        current(),
+        std::backtrace::Backtrace::force_capture()
+    );
+    std::process::abort();
+}
+
+/// In the strict mode, every SQLite connection the process opens checks its statements (`strict_statement`): one that
+/// sets a trace of its own (the store's, the run's) checks them there.
+pub fn strict_on_every_connection() {
+    use rusqlite::ffi;
+    unsafe extern "C" fn trace(event: u32, _: *mut std::ffi::c_void, p: *mut std::ffi::c_void, _: *mut std::ffi::c_void) -> std::ffi::c_int {
+        if event == ffi::SQLITE_TRACE_STMT as u32 {
+            // SAFETY: for SQLITE_TRACE_STMT, P is the statement.
+            let text = unsafe { std::ffi::CStr::from_ptr(ffi::sqlite3_sql(p.cast::<ffi::sqlite3_stmt>())) }.to_string_lossy();
+            strict_statement("sqlite", &text);
+        }
+        0
+    }
+    unsafe extern "C" fn opened(db: *mut ffi::sqlite3, _: *mut *mut std::ffi::c_char, _: *const ffi::sqlite3_api_routines) -> std::ffi::c_int {
+        // SAFETY: SQLite calls this with a connection it has just opened.
+        unsafe { ffi::sqlite3_trace_v2(db, ffi::SQLITE_TRACE_STMT as u32, Some(trace), std::ptr::null_mut()) };
+        ffi::SQLITE_OK
+    }
+    if strict() {
+        // SAFETY: registers a function with the signature SQLite calls; it outlives every connection.
+        unsafe { ffi::sqlite3_auto_extension(Some(opened)) };
+    }
 }
 
 impl Drop for Waves {
@@ -540,12 +664,20 @@ impl Drop for Waves {
 }
 
 /// Marks this thread as working behind the run (the store's writer).
-pub(crate) fn behind_the_run() {
+pub fn behind_the_run() {
     BEHIND.with(|b| b.set(true));
 }
 
 fn in_waves() -> bool {
     on() && WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0 && !BEHIND.with(std::cell::Cell::get)
+}
+
+/// In the strict mode a wave's wait for the writer ends the process, as its SQL would (`strict_statement`); the run's last
+/// wait, for every queued write, is the end of the run.
+fn strict_wait(what: &str) {
+    if strict() && !BEHIND.with(std::cell::Cell::get) && WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+        violation("inside the waves", &format!("a wait for the store's writer: {what}"));
+    }
 }
 
 /// Why a statement inside the waves forces a wait on SQLite, by where it ran and what it does.
@@ -573,13 +705,13 @@ fn hazard_class(conn: &str, path: &str, text: &str) -> &'static str {
 
 /// A statement that connection `conn` (`run`: the run's database; `store`: the content store) ran in `ns`
 /// nanoseconds: inside the waves, on a wave's thread, it is a hazard (decision 0104: no wave waits for SQL).
-pub(crate) fn sql_in_wave(conn: &'static str, text: &str, ns: u64) {
+pub fn sql_in_wave(conn: &'static str, text: &str, ns: u64) {
     if !in_waves() {
         return;
     }
     let path = current();
     let class = hazard_class(conn, &path, text);
-    let mut state = STATE.lock().unwrap();
+    let mut state = state();
     let e = state.hazards.entry((class, path, format!("{conn}: {text}"))).or_default();
     e.0 += 1;
     e.1 += ns;
@@ -587,26 +719,27 @@ pub(crate) fn sql_in_wave(conn: &'static str, text: &str, ns: u64) {
 
 /// SQL waits attributed to their connection and span, including the content store's separate connection.
 /// Each row is (span, connection and SQL text, executions, nanoseconds).
-pub(in crate::code_rule_dsl) fn sql_waits() -> Vec<(String, String, u64, u64)> {
-    STATE.lock().unwrap().hazards.iter().map(|((_, path, text), (runs, ns))|
+pub fn sql_waits() -> Vec<(String, String, u64, u64)> {
+    state().hazards.iter().map(|((_, path, text), (runs, ns))|
         (path.clone(), text.clone(), *runs, *ns)).collect()
 }
 
 /// A wave's thread waited `wall` seconds for SQLite's side of the store (`what`: a queued write it reads, the queue's
 /// back-pressure): a hazard like a statement.
-pub(crate) fn wait_in_wave(what: &str, wall: f64) {
+pub fn wait_in_wave(what: &str, wall: f64) {
+    strict_wait(what);
     if !in_waves() {
         return;
     }
     let path = current();
-    let mut state = STATE.lock().unwrap();
+    let mut state = state();
     let e = state.hazards.entry(("a wait for the store's writer", path, format!("store: {what}"))).or_default();
     e.0 += 1;
     e.1 += (wall * 1e9) as u64;
 }
 
 /// The hazards: SQL a wave's thread ran or waited on between the run's first wave and its last.
-fn hazards(r: &mut String, state: &State) {
+pub fn hazards(r: &mut String, state: &State) {
     let (runs, ns): (u64, u64) = state.hazards.values().fold((0, 0), |a, v| (a.0 + v.0, a.1 + v.1));
     let _ = writeln!(
         r,
@@ -646,18 +779,18 @@ fn hazards(r: &mut String, state: &State) {
 }
 
 /// Charges `n` units of `unit` work to the current span (the roofline). Off, it costs one load.
-pub(in crate::code_rule_dsl) fn work(unit: Unit, n: u64) {
+pub fn work(unit: Unit, n: u64) {
     if !on() || n == 0 {
         return;
     }
     let path = current();
-    *STATE.lock().unwrap().work.entry((path, unit)).or_default() += n;
+    *state().work.entry((path, unit)).or_default() += n;
 }
 
 /// Adds a native plan's rows in and out per step, and its probes' CPU seconds, to the current span.
-pub(in crate::code_rule_dsl) fn native(plan: String, steps: &[(u64, u64)], cpu_s: f64) {
+pub fn native(plan: String, steps: &[(u64, u64)], cpu_s: f64) {
     let path = current();
-    let mut state = STATE.lock().unwrap();
+    let mut state = state();
     *state.native_cpu.entry((path.clone(), plan.clone())).or_default() += cpu_s;
     let t = state.native.entry((path, plan)).or_default();
     if t.len() < steps.len() {
@@ -670,23 +803,27 @@ pub(in crate::code_rule_dsl) fn native(plan: String, steps: &[(u64, u64)], cpu_s
 }
 
 /// Keeps `text` under `key` (the first one given).
-pub(in crate::code_rule_dsl) fn note(key: String, text: impl FnOnce() -> String) {
-    let mut state = STATE.lock().unwrap();
-    state.notes.entry(key).or_insert_with(text);
+pub fn note(key: String, text: impl FnOnce() -> String) {
+    if state().notes.contains_key(&key) {
+        return;
+    }
+    // Made without the state's lock: making it may profile too.
+    let text = text();
+    state().notes.entry(key).or_insert(text);
 }
 
 /// A statement's text as the SQL trace keys it: its words, single-spaced.
-pub(in crate::code_rule_dsl) fn normal(sql: &str) -> String {
+pub fn normal(sql: &str) -> String {
     sql.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Notes `statement`'s query plan (`EXPLAIN QUERY PLAN`, once per text) when profiling.
-pub(in crate::code_rule_dsl) fn plan(db: &rusqlite::Connection, statement: &str) {
+pub fn plan(db: &rusqlite::Connection, statement: &str) {
     if !on() {
         return;
     }
     let key = format!("plan:{}", normal(statement));
-    if STATE.lock().unwrap().notes.contains_key(&key) {
+    if state().notes.contains_key(&key) {
         return;
     }
     let text = (|| -> rusqlite::Result<String> {
@@ -707,29 +844,31 @@ pub(in crate::code_rule_dsl) fn plan(db: &rusqlite::Connection, statement: &str)
 }
 
 /// This thread's CPU now (to time a part a span cannot hold).
-pub(in crate::code_rule_dsl) fn now() -> f64 {
+pub fn now() -> f64 {
     cpu()
 }
 
 /// A run-level decision or optimization under `topic` (counted when made again, as per chunk).
-pub(in crate::code_rule_dsl) fn decision(topic: &str, text: impl FnOnce() -> String) {
+pub fn decision(topic: &str, text: impl FnOnce() -> String) {
     if !on() {
         return;
     }
-    *STATE.lock().unwrap().decisions.entry((topic.to_owned(), text())).or_default() += 1;
+    // The text first: making it may profile too (a split's span), and the state's lock is not reentrant.
+    let text = text();
+    *state().decisions.entry((topic.to_owned(), text)).or_default() += 1;
 }
 
 /// The decisions made so far (none when profiling is off): `decisions_since` takes the ones made after.
-pub(in crate::code_rule_dsl) fn decisions() -> BTreeMap<(String, String), u64> {
+pub fn decisions() -> BTreeMap<(String, String), u64> {
     if !on() {
         return BTreeMap::new();
     }
-    STATE.lock().unwrap().decisions.clone()
+    state().decisions.clone()
 }
 
 /// The decisions made since `before` (`decisions`), with how often: what a step decided, for a run that reuses the
 /// step's result to state again (`add_decisions`).
-pub(in crate::code_rule_dsl) fn decisions_since(before: &BTreeMap<(String, String), u64>) -> Vec<((String, String), u64)> {
+pub fn decisions_since(before: &BTreeMap<(String, String), u64>) -> Vec<((String, String), u64)> {
     decisions().into_iter().filter_map(|(k, n)| n.checked_sub(before.get(&k).copied().unwrap_or(0)).filter(|d| *d > 0).map(|d| (k, d))).collect()
 }
 
@@ -738,87 +877,15 @@ pub(in crate::code_rule_dsl) fn add_decisions(made: &[((String, String), u64)]) 
     if !on() {
         return;
     }
-    let mut state = STATE.lock().unwrap();
+    let mut state = state();
     for (k, n) in made {
         *state.decisions.entry(k.clone()).or_default() += n;
     }
 }
 
-/// The engine stratum `key` ran on, and why (the first reason given; one loop per call).
-/// Records where native stratum `key` ran (`plan::placement`), its shape, the work it did and the CPU it took.
-pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logic::plan::placement::Placement, shape: &crate::code_rule_dsl::logic::plan::placement::Shape, work: u64, cpu: f64, device: Option<&DeviceReport>) {
-    if !on() {
-        return;
-    }
-    let mut state = STATE.lock().unwrap();
-    let t = state.placements.entry(key.to_owned()).or_default();
-    t.runs += 1;
-    #[cfg(target_os = "macos")]
-    let ran = match device {
-        Some(d) if d.refused.is_none() => {
-            t.gpu.add(&GpuTotal {
-                runs: 1,
-                rules: u64::from(d.rules),
-                stages: u64::from(d.stages),
-                submissions: u64::from(d.submissions),
-                dispatches: u64::from(d.dispatches),
-                reruns: u64::from(d.reruns),
-                gpu: d.gpu_seconds,
-                encode: d.encode_cpu,
-                upload: d.upload_cpu,
-                wait: d.wait_cpu,
-                wait_wall: d.wait_wall,
-                decode: d.decode_cpu,
-                uploads: u64::from(d.uploads),
-                upload_bytes: d.upload_bytes,
-                resident: u64::from(d.resident_hits),
-                sorts: u64::from(d.sorts),
-                sort_hits: u64::from(d.sort_hits),
-                rows: d.rows,
-                distinct: d.distinct,
-                bindings: d.bindings,
-            });
-            true
-        }
-        Some(d) => {
-            t.refused = d.refused.clone();
-            false
-        }
-        None => false,
-    };
-    #[cfg(not(target_os = "macos"))]
-    let ran = device.is_some() && false;
-    t.on_gpu += u64::from(ran);
-    t.gpu_cheaper += u64::from(p.gpu_cheaper);
-    t.device |= p.device;
-    t.forms = shape.forms.iter().map(|f| f.name()).collect();
-    t.missing = p.missing.iter().map(|f| f.name()).collect();
-    t.planned_work += shape.work;
-    t.work += work;
-    t.cpu_estimate += p.cpu_s;
-    t.gpu_estimate += p.gpu_s;
-    t.cpu += cpu;
-    for c in &p.joins {
-        use crate::code_rule_dsl::logic::plan::placement::JoinForm;
-        let chosen = match c.form {
-            JoinForm::Index => c.index_s,
-            JoinForm::Probe => c.probe_s.unwrap_or(c.index_s),
-            JoinForm::Tile => c.tile_s.unwrap_or(c.index_s),
-        };
-        let e = &mut t.joins[c.form as usize];
-        e.0 += 1;
-        if c.index_s < JOIN_ESTIMATE_CAP {
-            e.1 += c.index_s;
-            e.2 += chosen;
-        } else {
-            e.3 += 1;
-        }
-    }
-}
-
 /// The strata the device ran (decision 0095, step 4): in all, then the costliest; and the strata placed there that it
 /// refused, by reason (no stratum is moved from the device to the CPU without a line here).
-fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
+pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
     let ran: Vec<(&String, &PlacedTotal)> = all.iter().filter(|(_, t)| t.gpu.runs > 0).collect();
     let refused: Vec<(&String, &PlacedTotal)> = all.iter().filter(|(_, t)| t.refused.is_some()).collect();
     if ran.is_empty() && refused.is_empty() {
@@ -867,96 +934,27 @@ fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
 
 /// A join step estimated over this many seconds is a planned estimate gone wrong (a cross product priced at 10^20
 /// rows): counted, not summed.
-const JOIN_ESTIMATE_CAP: f64 = 1e3;
+pub const JOIN_ESTIMATE_CAP: f64 = 1e3;
 
-/// Where the native strata ran (decision 0095): how many on each backend, the strata the GPU would run cheaper and
-/// the forms it lacks for them, by their CPU. What the device must take on next, and what it would save.
-fn placements(r: &mut String, state: &State) {
-    use crate::code_rule_dsl::logic::plan::placement::gpu_price;
-    let all = &state.placements;
-    if all.is_empty() {
-        return;
-    }
-    let runs: u64 = all.values().map(|t| t.runs).sum();
-    let gpu: u64 = all.values().map(|t| t.on_gpu).sum();
-    let cpu: f64 = all.values().map(|t| t.cpu).sum();
-    let device = all.values().any(|t| t.device);
-    let _ = writeln!(
-        r,
-        "\n== Placement (decision 0095): {} strata, {runs} runs; {gpu} runs on the GPU, {} on the CPU ({cpu:.2} s CPU); binding {}",
-        all.len(),
-        runs - gpu,
-        if device { "Metal" } else { "CPU" }
-    );
-    let _ = writeln!(r, "Prices: CPU measured (100 ns a unit of planned work, 0.13 ms a stratum); GPU: each join step on its device form (the relational lab's measures), each stage and submission at the host's measured cost.");
-    device_strata(r, all);
-    // The strata the GPU would run cheaper in at least one run, and did not.
-    let cheaper: Vec<(&String, &PlacedTotal)> = all.iter().filter(|(_, t)| t.gpu_cheaper > t.on_gpu).collect();
-    let cheaper_cpu: f64 = cheaper.iter().map(|(_, t)| t.cpu).sum();
-    // The GPU priced at the work each stratum did, not the work planned: a planned estimate can be far off (a cross
-    // product priced at 10^20 rows that met none).
-    let at_work = |t: &PlacedTotal| gpu_price(t.runs, t.work as f64);
-    let cheaper_gpu: f64 = cheaper.iter().map(|(_, t)| at_work(t)).sum();
-    let _ = writeln!(r, "The GPU would be cheaper for {} strata: {cheaper_cpu:.2} s CPU taken, against {cheaper_gpu:.2} s on the GPU at the work they did.", cheaper.len());
-    // Strata whose planned work is off by 10x or more, either way, by their CPU: the placement read a wrong price, and
-    // the join order likely came from the same estimate.
-    let off = |t: &PlacedTotal| {
-        let (p, w) = (t.planned_work.max(1.0), (t.work as f64).max(1.0));
-        w / p >= 10.0 || p / w >= 10.0
-    };
-    let (under, over) = all.values().filter(|t| off(t)).fold(((0u64, 0.0), (0u64, 0.0)), |(u, o), t| {
-        if (t.work as f64) > t.planned_work { ((u.0 + 1, u.1 + t.cpu), o) } else { (u, (o.0 + 1, o.1 + t.cpu)) }
-    });
-    let _ = writeln!(r, "Planned work off by 10x or more: {} strata under (did more, {:.2} s CPU), {} over (did less, {:.2} s CPU); marked ! below.", under.0, under.1, over.0, over.1);
-    // By the form the GPU lacks: a stratum counts under each form it lacks.
-    let mut by: BTreeMap<&str, (u64, f64)> = BTreeMap::new();
-    for (_, t) in &cheaper {
-        for f in &t.missing {
-            let e = by.entry(f).or_default();
-            e.0 += 1;
-            e.1 += t.cpu;
-        }
-    }
-    let mut by: Vec<_> = by.into_iter().collect();
-    by.sort_by(|a, b| b.1.1.total_cmp(&a.1.1));
-    let _ = writeln!(r, "GPU support missing, by form (a stratum counts under each form it lacks):");
-    let _ = writeln!(r, "{:>9} {:>7}  form", "cpu s", "strata");
-    for (f, (n, c)) in &by {
-        let _ = writeln!(r, "{c:>9.3} {n:>7}  {f}");
-    }
-    // The strata themselves, costliest first.
-    let mut top = cheaper.clone();
-    top.sort_by(|a, b| b.1.cpu.total_cmp(&a.1.cpu));
-    // Each join step on the form its prices chose (the lab's measured device prices): what the device's joins would
-    // take on, in strata the device runs once it has their other forms.
-    let joins: Vec<(u64, f64, f64, u64)> = (0..3).map(|f| all.values().fold((0, 0.0, 0.0, 0), |a, t| (a.0 + t.joins[f].0, a.1 + t.joins[f].1, a.2 + t.joins[f].2, a.3 + t.joins[f].3))).collect();
-    if joins.iter().any(|j| j.0 > 0) {
-        use crate::code_rule_dsl::logic::plan::placement::JoinForm;
-        let _ = writeln!(r, "Join steps by the form their prices choose (estimates; the device's prices measured by the relational lab; steps estimated over {JOIN_ESTIMATE_CAP:.0} s counted, not summed):");
-        let _ = writeln!(r, "{:>9} {:>10} {:>10} {:>9}  form", "steps", "index s", "chosen s", "over cap");
-        for (f, form) in [JoinForm::Index, JoinForm::Probe, JoinForm::Tile].into_iter().enumerate() {
-            let _ = writeln!(r, "{:>9} {:>10.3} {:>10.3} {:>9}  {}", joins[f].0, joins[f].1, joins[f].2, joins[f].3, form.name());
-        }
-    }
-    let _ = writeln!(r, "Costliest strata the GPU would run cheaper:");
-    let _ = writeln!(r, "{:>8} {:>8} {:>12} {:>12} {:>5}  stratum: forms (missing on the GPU)", "cpu s", "gpu s", "planned", "work", "runs");
-    for (key, t) in top.iter().take(20) {
-        let mark = if off(t) { "!" } else { " " };
-        let _ = writeln!(r, "{:>8.3} {:>8.4} {:>12.0} {:>11}{mark} {:>5}  {}: {} (missing {})", t.cpu, at_work(t), t.planned_work, t.work, t.runs, short(key, 60), t.forms.join(", "), t.missing.join(", "));
+/// Records that stratum `key` fell back to SQLite, and the kind of literal the native engine declined (`class`).
+/// A stratum SQLite is about to run inside the waves: under the strict mode, the end of the process, naming it and
+/// what the native engine declined.
+pub fn strict_declined(key: &str, why: &str, class: Option<&str>) {
+    if strict() && inside_waves() {
+        violation("inside the waves: a stratum the native engine declined", &format!("stratum {key}: {why}; {}", class.unwrap_or("no class")));
     }
 }
 
-/// Records that stratum `key` fell back to SQLite, and the kind of literal the native engine declined (`class`).
-pub(in crate::code_rule_dsl) fn fallback(key: &str, class: String) {
+pub fn fallback(key: &str, class: String) {
     if !on() {
         return;
     }
-    STATE.lock().unwrap().fallbacks.insert(key.to_owned(), class);
+    state().fallbacks.insert(key.to_owned(), class);
 }
 
 /// The strata that fell back to SQLite, costliest first, and the same by the kind of literal declined: each one's
 /// CPU (its `stratum …` spans, wherever they ran) and SQLite's VM steps. What the native engine lacks, by its cost.
-fn fallbacks(r: &mut String, state: &State) {
+pub fn fallbacks(r: &mut String, state: &State) {
     let roots: f64 = state.spans.iter().filter(|(p, _)| !p.contains('/')).map(|(_, t)| t.total).sum();
     let mut rows: Vec<(f64, u64, u64, &String, &String)> = state
         .fallbacks
@@ -997,22 +995,30 @@ fn fallbacks(r: &mut String, state: &State) {
     }
 }
 
-pub(in crate::code_rule_dsl) fn stratum(key: &str, engine: &str, why: impl FnOnce() -> String) {
+pub fn stratum(key: &str, engine: &str, why: impl FnOnce() -> String) {
     if !on() {
         return;
     }
-    let mut state = STATE.lock().unwrap();
-    match state.strata.iter_mut().find(|s| s.key == key) {
-        Some(s) if s.engine == engine => s.loops += 1,
-        Some(_) => {
-            // The engine changed between chunks: both are kept.
-            let (k, e, w) = (format!("{key} (chunk with {engine})"), engine.to_owned(), why());
-            match state.strata.iter_mut().find(|s| s.key == k) {
+    // The engine changed between chunks: both are kept, the later under its own key.
+    let other = format!("{key} (chunk with {engine})");
+    let seen = |state: &mut State| -> Option<String> {
+        match state.strata.iter_mut().find(|s| s.key == key) {
+            Some(s) if s.engine == engine => s.loops += 1,
+            Some(_) => match state.strata.iter_mut().find(|s| s.key == other) {
                 Some(s) => s.loops += 1,
-                None => state.strata.push(Stratum { key: k, engine: e, why: w, loops: 1 }),
-            }
+                None => return Some(other.clone()),
+            },
+            None => return Some(key.to_owned()),
         }
-        None => state.strata.push(Stratum { key: key.to_owned(), engine: engine.to_owned(), why: why(), loops: 1 }),
+        None
+    };
+    let Some(new) = seen(&mut state()) else { return };
+    // The reason is made without the state's lock: making it may profile too.
+    let why = why();
+    let mut state = state();
+    match state.strata.iter_mut().find(|s| s.key == new) {
+        Some(s) => s.loops += 1,
+        None => state.strata.push(Stratum { key: new, engine: engine.to_owned(), why, loops: 1 }),
     }
 }
 
@@ -1020,7 +1026,7 @@ pub(in crate::code_rule_dsl) fn stratum(key: &str, engine: &str, why: impl FnOnc
 /// its planning took, how often it was replanned, the actual rows into and out of each step where measured, and the
 /// rows it produced where known. One loop per call; equal plans add up.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::code_rule_dsl) fn planned(
+pub fn planned(
     key: &str,
     kind: &str,
     rule: Option<usize>,
@@ -1034,7 +1040,7 @@ pub(in crate::code_rule_dsl) fn planned(
         return;
     }
     let text = plan.steps.iter().map(|s| s.literal.as_str()).collect::<Vec<_>>().join(" , ");
-    let mut state = STATE.lock().unwrap();
+    let mut state = state();
     let t = state.plans.entry((key.to_owned(), kind.to_owned(), text)).or_default();
     t.rule = rule;
     t.plan = plan.clone();
@@ -1057,12 +1063,12 @@ pub(in crate::code_rule_dsl) fn planned(
 }
 
 /// A device kernel's run in the current span: its launches, GPU seconds, the host's wall seconds waiting, its cells.
-pub(in crate::code_rule_dsl) fn device(kernel: &str, launches: u64, gpu: f64, wall: f64, cells: u64) {
+pub fn device(kernel: &str, launches: u64, gpu: f64, wall: f64, cells: u64) {
     if !on() {
         return;
     }
     let path = current();
-    let mut state = STATE.lock().unwrap();
+    let mut state = state();
     let t = state.devices.entry((path, kernel.to_owned())).or_default();
     t.runs += 1;
     t.launches += launches;
@@ -1073,12 +1079,12 @@ pub(in crate::code_rule_dsl) fn device(kernel: &str, launches: u64, gpu: f64, wa
 
 /// A device run's host-side phases (seconds, in `PHASES` order) and the buffer bytes it made and reused, added to
 /// the current span's entry for `kernel`.
-pub(in crate::code_rule_dsl) fn device_phases(kernel: &str, phases: [f64; PHASES.len()], made: u64, reused: u64) {
+pub fn device_phases(kernel: &str, phases: [f64; PHASES.len()], made: u64, reused: u64) {
     if !on() {
         return;
     }
     let path = current();
-    let mut state = STATE.lock().unwrap();
+    let mut state = state();
     let t = state.devices.entry((path, kernel.to_owned())).or_default();
     for (a, b) in t.phases.iter_mut().zip(phases) {
         *a += b;
@@ -1092,13 +1098,13 @@ pub(in crate::code_rule_dsl) fn device_phases(kernel: &str, phases: [f64; PHASES
 static ONE_RUN: Mutex<()> = Mutex::new(());
 
 /// Holds the profile for one run (`ONE_RUN`).
-pub(in crate::code_rule_dsl) fn one_run() -> std::sync::MutexGuard<'static, ()> {
+pub fn one_run() -> std::sync::MutexGuard<'static, ()> {
     ONE_RUN.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Holds the profile for one run if no run holds it: a run nested in another (phase 0's, inside a run's preparing)
 /// is then the outer run's, and neither resets nor writes the profile.
-pub(in crate::code_rule_dsl) fn one_run_if_free() -> Option<std::sync::MutexGuard<'static, ()>> {
+pub fn one_run_if_free() -> Option<std::sync::MutexGuard<'static, ()>> {
     match ONE_RUN.try_lock() {
         Ok(guard) => Some(guard),
         Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
@@ -1107,24 +1113,24 @@ pub(in crate::code_rule_dsl) fn one_run_if_free() -> Option<std::sync::MutexGuar
 }
 
 /// Forgets everything recorded (a run's start).
-pub(in crate::code_rule_dsl) fn reset() {
-    *STATE.lock().unwrap() = State::default();
+pub fn reset() {
+    *state() = State::default();
 }
 
 /// The statements recorded, by SQLite's time, most first: (span, text, totals).
 pub(in crate::code_rule_dsl) fn statements() -> Vec<(String, String, SqlTotal)> {
-    let state = STATE.lock().unwrap();
+    let state = state();
     let mut all: Vec<_> = state.sql.iter().map(|((p, t), s)| (p.clone(), t.clone(), s.clone())).collect();
     all.sort_by_key(|(_, _, s)| std::cmp::Reverse(s.ns));
     all
 }
 
 /// The spans recorded: path and totals.
-pub(in crate::code_rule_dsl) fn spans() -> BTreeMap<String, SpanTotal> {
-    STATE.lock().unwrap().spans.clone()
+pub fn spans() -> BTreeMap<String, SpanTotal> {
+    state().spans.clone()
 }
 
-fn short(s: &str, n: usize) -> String {
+pub fn short(s: &str, n: usize) -> String {
     if s.chars().count() <= n { s.to_owned() } else { format!("{}…", s.chars().take(n).collect::<String>()) }
 }
 
@@ -1133,7 +1139,7 @@ fn rows(x: f64) -> String {
     if x < 10.0 { format!("{x:.2}") } else { format!("{x:.0}") }
 }
 
-fn rule_name(rule: Option<usize>, kind: &str) -> String {
+pub fn rule_name(rule: Option<usize>, kind: &str) -> String {
     match rule {
         Some(k) => format!("rule #{k:04} ({kind})"),
         None => kind.to_owned(),
@@ -1141,7 +1147,7 @@ fn rule_name(rule: Option<usize>, kind: &str) -> String {
 }
 
 /// The EXPLAIN ANALYZE section: decisions, then each stratum's engine and its plans, steps with estimates and actuals.
-fn explain(r: &mut String, state: &State) {
+pub fn explain(r: &mut String, state: &State) {
     let _ = writeln!(r, "\n== Decisions and optimizations (times made)");
     if state.decisions.is_empty() {
         r.push_str("(none recorded)\n");
@@ -1200,6 +1206,9 @@ fn explain(r: &mut String, state: &State) {
                     String::new()
                 };
                 let _ = writeln!(r, "       {:>2}. {:<44} {:<30} {:<20} est {:>11}  {actual}", i + 1, short(&st.literal, 44), short(&st.access, 30), short(&st.source, 20), rows(st.rows));
+                for (lit, per) in &st.passed {
+                    let _ = writeln!(r, "           passed over {:<44} {per:.1} rows a binding", short(lit, 44));
+                }
             }
         }
     }
@@ -1210,7 +1219,7 @@ fn explain(r: &mut String, state: &State) {
 
 /// The memory section: the process now, the spans by bytes they allocated themselves, and those that raised the
 /// footprint's high-water mark (`memory`).
-fn memory_report(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
+pub fn memory_report(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
     let (now, max) = memory::footprint();
     let (live, resident) = memory::heap();
     let _ = writeln!(
@@ -1264,7 +1273,7 @@ fn thread_cpu(port: u32) -> Option<f64> {
 
 /// Every thread's open spans now, innermost last, with the CPU and bytes each has taken so far, and the SQL
 /// statement running: what a run was doing when it was dumped (`watch`). Open spans are not yet in the totals.
-pub(in crate::code_rule_dsl) fn open_spans() -> String {
+pub fn open_spans() -> String {
     let threads: Vec<_> = THREADS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().filter_map(std::sync::Weak::upgrade).collect();
     let mut r = String::new();
     let _ = writeln!(r, "== Open at the dump: each thread's open spans, outermost first, with CPU and bytes allocated since each opened");
@@ -1296,7 +1305,7 @@ pub(in crate::code_rule_dsl) fn open_spans() -> String {
         }
         if let Some((text, since)) = &t.statement {
             let _ = writeln!(r, "  SQL running for {:.2} s (wall): {}", since.elapsed().as_secs_f64(), short(text, 600));
-            let plan = STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).notes.get(&format!("plan:{}", normal(text))).cloned();
+            let plan = state().notes.get(&format!("plan:{}", normal(text))).cloned();
             for line in plan.iter().flat_map(|p| p.lines()) {
                 let _ = writeln!(r, "      {line}");
             }
@@ -1309,332 +1318,12 @@ pub(in crate::code_rule_dsl) fn open_spans() -> String {
 }
 
 /// Record why expensive input relations are requested, before projection planning.
-pub(in crate::code_rule_dsl) fn projection_plan(prog: &crate::code_rule_dsl::logic::front::Program, reads: &std::collections::BTreeSet<String>) {
+pub fn projection_plan(prog: &crate::code_rule_dsl::logic::front::Program, reads: &std::collections::BTreeSet<String>) {
     if on() { analysis_report::projection(prog, reads); }
 }
 
-/// The report, and the tables, into `dir`. `header`: what was run (lines put first).
-pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Result<()> {
-    std::fs::create_dir_all(dir)?;
-    let state = STATE.lock().unwrap();
-    let mut spans_tsv = String::from("path\tcalls\tcpu_s\town_s\talloc_bytes\town_alloc_bytes\tfreed_bytes\tpeak_rise_bytes\town_peak_rise_bytes\n");
-    for (p, t) in &state.spans {
-        let _ = writeln!(spans_tsv, "{p}\t{}\t{:.4}\t{:.4}\t{}\t{}\t{}\t{}\t{}", t.calls, t.total, t.own, t.alloc, t.own_alloc, t.freed, t.rise, t.own_rise);
-    }
-    std::fs::write(dir.join("spans.tsv"), spans_tsv)?;
-    std::fs::write(dir.join("memory.tsv"), memory::sampled_tsv())?;
-    let mut sql: Vec<_> = state.sql.iter().collect();
-    sql.sort_by_key(|(_, s)| std::cmp::Reverse(s.ns));
-    let mut sql_tsv = String::from("span\truns\tms\tvm_steps\tfullscan_steps\tsorts\tautoindex_rows\tsql\n");
-    for ((p, text), s) in &sql {
-        let _ = writeln!(sql_tsv, "{p}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{text}", s.runs, s.ns as f64 / 1e6, s.vm, s.scan, s.sort, s.autoindex);
-    }
-    std::fs::write(dir.join("sql.tsv"), sql_tsv)?;
-    let work = |steps: &Vec<(u64, u64)>| steps.iter().map(|(a, _)| a).sum::<u64>();
-    let mut native: Vec<_> = state.native.iter().collect();
-    native.sort_by_key(|(_, s)| std::cmp::Reverse(work(s)));
-    let mut native_tsv = String::from("span\twork\tsteps_in_out\tplan\tcpu_s\n");
-    for ((p, plan), steps) in &native {
-        let s: Vec<String> = steps.iter().map(|(a, b)| format!("{a}:{b}")).collect();
-        let cpu = state.native_cpu.get(&(p.clone(), plan.clone())).copied().unwrap_or(0.0);
-        let _ = writeln!(native_tsv, "{p}\t{}\t{}\t{plan}\t{cpu:.4}", work(steps), s.join(","));
-    }
-    std::fs::write(dir.join("native.tsv"), native_tsv)?;
-    let mut placement_tsv = String::from("stratum\truns\ton_gpu\tgpu_cheaper\tplanned_work\twork\tcpu_s\tcpu_estimate_s\tgpu_estimate_s\tforms\tmissing\n");
-    for (key, t) in &state.placements {
-        let _ = writeln!(
-            placement_tsv,
-            "{key}\t{}\t{}\t{}\t{:.0}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}",
-            t.runs, t.on_gpu, t.gpu_cheaper, t.planned_work, t.work, t.cpu, t.cpu_estimate, t.gpu_estimate, t.forms.join(","), t.missing.join(",")
-        );
-    }
-    std::fs::write(dir.join("placement.tsv"), placement_tsv)?;
-
-    // The report.
-    let mut r = String::new();
-    r.push_str(header);
-    let (analysis_text, analysis_json) = analysis_report::report(&state);
-    std::fs::write(dir.join("analysis.txt"), &analysis_text)?;
-    std::fs::write(dir.join("analysis.json"), serde_json::to_vec_pretty(&analysis_json)?)?;
-    r.push('\n');
-    r.push_str(&analysis_text);
-    fallbacks(&mut r, &state);
-    hazards(&mut r, &state);
-    placements(&mut r, &state);
-    explain(&mut r, &state);
-    // A root is a span with no parent recorded: a top span, or one whose parent was still open (a dump).
-    let root = |p: &str| p.rsplit_once('/').is_none_or(|(parent, _)| !state.spans.contains_key(parent));
-    let roots: f64 = state.spans.iter().filter(|(p, _)| root(p)).map(|(_, t)| t.total).sum();
-    let _ = writeln!(r, "\n== Spans: CPU (user + system), summed over calls; own = less the spans inside it ({roots:.2} s in all)");
-    let _ = writeln!(r, "{:>9} {:>9} {:>6} {:>9}  span", "cpu s", "own s", "%", "calls");
-    // A tree: each span under its parent, children by CPU.
-    fn walk(r: &mut String, spans: &BTreeMap<String, SpanTotal>, parent: Option<&str>, depth: usize, all: f64) {
-        let mut kids: Vec<(&String, &SpanTotal)> = spans
-            .iter()
-            .filter(|(p, _)| match parent {
-                None => p.rsplit_once('/').is_none_or(|(parent, _)| !spans.contains_key(parent)),
-                Some(par) => p.strip_prefix(par).and_then(|rest| rest.strip_prefix('/')).is_some_and(|rest| !rest.contains('/')),
-            })
-            .collect();
-        kids.sort_by(|a, b| b.1.total.total_cmp(&a.1.total));
-        for (p, t) in kids {
-            // Spans under 0.1% of the run are left out of the tree (the tables keep them).
-            if t.total < all * 0.001 && depth > 0 {
-                continue;
-            }
-            let name = p.rsplit('/').next().unwrap_or(p);
-            let _ = writeln!(r, "{:>9.3} {:>9.3} {:>5.1}% {:>9}  {}{}", t.total, t.own, 100.0 * t.total / all.max(1e-9), t.calls, "  ".repeat(depth), short(name, 100));
-            walk(r, spans, Some(p), depth + 1, all);
-        }
-    }
-    walk(&mut r, &state.spans, None, 0, roots);
-    let kinds_tsv = kinds::by_kind(&mut r, &state.spans);
-    std::fs::write(dir.join("kinds.tsv"), kinds_tsv)?;
-    kinds::unexplained(&mut r, &state.spans);
-    kinds::searches(&mut r, &state.spans);
-    let heads_tsv = kinds::by_head(&mut r, &native, &state.native_cpu);
-    std::fs::write(dir.join("heads.tsv"), heads_tsv)?;
-    memory_report(&mut r, &state.spans);
-
-    let sql_ns: u64 = sql.iter().map(|(_, s)| s.ns).sum();
-    let sql_vm: u64 = sql.iter().map(|(_, s)| s.vm).sum();
-    let _ = writeln!(
-        r,
-        "\n== SQL statements by SQLite's time ({} distinct, {:.2} s, {sql_vm} VM steps in all); plans for the first 15",
-        sql.len(),
-        sql_ns as f64 / 1e9
-    );
-    let _ = writeln!(r, "{:>9} {:>7} {:>12} {:>11} {:>6} {:>9}  span / statement", "ms", "runs", "vm steps", "full scan", "sorts", "autoidx");
-    for (i, ((p, text), s)) in sql.iter().take(40).enumerate() {
-        let _ = writeln!(r, "{:>9.1} {:>7} {:>12} {:>11} {:>6} {:>9}  {p}", s.ns as f64 / 1e6, s.runs, s.vm, s.scan, s.sort, s.autoindex);
-        let _ = writeln!(r, "{:>58}{}", "", short(text, 400));
-        if i < 15
-            && let Some(plan) = state.notes.get(&format!("plan:{text}"))
-        {
-            for line in plan.lines() {
-                let _ = writeln!(r, "{:>60}{line}", "");
-            }
-        }
-    }
-
-    let _ = writeln!(r, "\n== Native joins by work (rows into every step, summed over chunks), with their probes' CPU; steps in:out");
-    for ((p, plan), steps) in native.iter().take(30) {
-        let s: Vec<String> = steps.iter().map(|(a, b)| format!("{a}:{b}")).collect();
-        let cpu = state.native_cpu.get(&((*p).clone(), (*plan).clone())).copied().unwrap_or(0.0);
-        let _ = writeln!(r, "{:>12}  {cpu:.2} s  {p}\n{:>14}steps {}\n{:>14}{}", work(steps), "", s.join(" "), "", short(plan, 600));
-    }
-
-    // The roofline: SQL's VM steps and the native joins' rows are charged here, the rest by `work`. A native
-    // component's step counts are read after its run, so its rows go to the run's span (`…/engine run (joins)`).
-    {
-        let own: BTreeMap<String, f64> = state.spans.iter().map(|(p, t)| (p.clone(), t.own)).collect();
-        let mut charged = state.work.clone();
-        for ((p, _), s) in &sql {
-            *charged.entry((p.clone(), Unit::VmStep)).or_default() += s.vm;
-        }
-        let mut joins: BTreeMap<String, (u64, u64)> = BTreeMap::new();
-        for ((p, _), steps) in &native {
-            let run = format!("{p}/engine run (joins)");
-            let at = if own.contains_key(&run) { run } else { p.clone() };
-            // A join's work: the rows into each step, and the rows its last step makes.
-            let made = steps.last().map_or(0, |s| s.1);
-            *charged.entry((at.clone(), Unit::JoinRow)).or_default() += work(steps) + made;
-            let j = joins.entry(at).or_default();
-            j.0 += work(steps) + made;
-            j.1 += made;
-        }
-        roofline::report(&mut r, &own, &charged, &joins);
-    }
-
-    let _ = writeln!(r, "\n== Waits: wall time each thread spent blocked, on what, and what that was doing when the wait began");
-    if state.waits.is_empty() {
-        r.push_str("(no waits)\n");
-    } else {
-        let _ = writeln!(r, "{:>9} {:>9} {:>7}  waiter: waited on (which was doing)", "wall s", "cpu s", "waits");
-        let mut waits: Vec<_> = state.waits.iter().collect();
-        waits.sort_by(|a, b| b.1.wall.total_cmp(&a.1.wall));
-        for ((path, on, doing), w) in waits {
-            let _ = writeln!(r, "{:>9.3} {:>9.3} {:>7}  {path}: {on} ({doing})", w.wall, w.cpu, w.count);
-        }
-    }
-
-    r.push_str(&super::lanes::prof::report());
-    let _ = writeln!(r, "\n== Device (Metal): per span and kernel; GPU = command buffers' GPU time, wait = host wall time");
-    if state.devices.is_empty() {
-        r.push_str("(no device work)\n");
-    }
-    for ((p, k), d) in &state.devices {
-        let _ = writeln!(
-            r,
-            "{:>9.3} ms GPU {:>9.3} ms wait {:>5} runs {:>5} launches {:>11} cells  {k}  ({p})",
-            d.gpu * 1e3,
-            d.wall * 1e3,
-            d.runs,
-            d.launches,
-            d.cells
-        );
-        if d.phases.iter().any(|p| *p > 0.0) {
-            for (name, s) in PHASES.iter().zip(d.phases) {
-                let _ = writeln!(r, "{:>14.3} ms  {name}", s * 1e3);
-            }
-            let _ = writeln!(r, "{:>14} MB made, {} MB reused", d.made >> 20, d.reused >> 20);
-        }
-    }
-
-    // The executor's scoreboard (rerail-accel): every job on every lane, its thread CPU and its phases. On a device
-    // lane, `cpu s` is the host CPU the device cost; `wall` phases with no CPU are the device's own timeline.
-    let _ = writeln!(r, "\n== Executor (rerail-accel): jobs per lane, host CPU per phase");
-    let scores = super::lanes::scores();
-    if scores.is_empty() {
-        r.push_str("(no executor)\n");
-    }
-    for (binding, score) in scores {
-        let _ = writeln!(r, "-- {binding}");
-        let _ = writeln!(r, "{score}");
-    }
-
-    // The cost statistics (decision 0100 §14): the store, the samples read, and the rates learned in place of priors.
-    let _ = writeln!(r, "\n== Cost statistics (RERAIL_COSTS)");
-    r.push_str(&super::costs::summary());
-
-    // Waits that ran others' jobs (decision 0100 §12): a thread waiting on the pool runs queued jobs meanwhile, and a
-    // long one makes its own wait end late. Per site: its waits, the jobs they ran, and how late those made them.
-    let (waits, late_by) = rerail_accel::exec::waits();
-    let _ = writeln!(r, "\n== Waits that ran others' jobs (rerail-accel)");
-    if waits.is_empty() {
-        r.push_str("(no waits)\n");
-    } else {
-        let _ = writeln!(
-            r,
-            "{:<40} {:>7} {:>7} {:>7} {:>10} {:>10} {:>10} {:>6} {:>10} {:>10} {:>10}  longest job run",
-            "wait", "waits", "helped", "jobs", "wait ms", "jobs ms", "jobs cpu", "late", "late ms<=", "late max", "late exact"
-        );
-        for (site, w) in &waits {
-            let _ = writeln!(
-                r,
-                "{:<40} {:>7} {:>7} {:>7} {:>10.1} {:>10.1} {:>10.1} {:>6} {:>10.2} {:>10.2} {:>10.2}  {:.2} ms {}",
-                short(site, 40),
-                w.waits,
-                w.helping,
-                w.jobs,
-                w.wall * 1e3,
-                w.jobs_wall * 1e3,
-                w.jobs_cpu * 1e3,
-                w.late,
-                w.late_wall * 1e3,
-                w.late_max * 1e3,
-                w.late_exact * 1e3,
-                w.longest * 1e3,
-                w.longest_job
-            );
-        }
-        // `late ms<=`: a wait that found its work ready right after a job it ran was late by at most that job's
-        // wall; `late exact` where the waited work said when it ended (a batch's launches, a host job).
-        let mut late_by = late_by;
-        late_by.sort_by(|a, b| b.1.late_wall.total_cmp(&a.1.late_wall));
-        let _ = writeln!(r, "jobs that made waits late: {:<34} {:>7} {:>10} {:>10}", "job", "waits", "late ms<=", "late max");
-        for (job, l) in late_by.iter().take(12) {
-            let _ = writeln!(r, "  {:<58} {:>7} {:>10.2} {:>10.2}", short(job, 58), l.waits, l.late_wall * 1e3, l.late_max * 1e3);
-        }
-    }
-
-    // Warnings: the shapes that usually explain a slow rule.
-    let _ = writeln!(r, "\n== Warnings");
-    let mut warned = 0;
-    if !state.hazards.is_empty() {
-        let runs: u64 = state.hazards.values().map(|v| v.0).sum();
-        let _ = writeln!(r, "- {} SQL statements ({runs} runs) force waits inside the waves: see == Forces SQL waits.", state.hazards.len());
-        warned += 1;
-    }
-    for ((p, text), s) in &sql {
-        if s.autoindex > 0 {
-            let _ = writeln!(r, "- automatic index ({} rows) built for a statement in {p}: inspect demand selectivity and join order before adding an index.\n    {}", s.autoindex, short(text, 300));
-            warned += 1;
-        }
-        if s.vm > 0 && s.scan * 2 > s.vm && s.vm > 1_000_000 {
-            let _ = writeln!(r, "- full scans are {:.0}% of {} VM steps in {p}: a join reads a whole table.\n    {}", 100.0 * s.scan as f64 / s.vm as f64, s.vm, short(text, 300));
-            warned += 1;
-        }
-        if s.runs > 1000 && s.ns / s.runs.max(1) < 20_000 {
-            let _ = writeln!(r, "- {} runs of one statement in {p}: per-row or per-chunk statement overhead.\n    {}", s.runs, short(text, 200));
-            warned += 1;
-        }
-    }
-    for ((p, plan), steps) in &native {
-        // Step 0 is the seed (one binding a chunk), so its step is the first atom's scan, not a fan-out.
-        for (i, w) in steps.windows(2).enumerate().skip(1) {
-            if w[1].0 > 0 && w[0].0 > 0 && w[1].0 > 20 * w[0].0 && w[1].0 > 1_000_000 {
-                let _ = writeln!(r, "- native step {} fans out {}x ({} -> {} rows) in {p}:\n    {}", i + 1, w[1].0 / w[0].0, w[0].0, w[1].0, short(plan, 300));
-                warned += 1;
-            }
-        }
-    }
-    // Planning that is a visible share of the run: one warning, its costliest plans named.
-    let mut slow: Vec<(&(String, String, String), &PlanTotal)> = state.plans.iter().filter(|(_, t)| t.planning > 0.01 * roots).collect();
-    slow.sort_by(|a, b| b.1.planning.total_cmp(&a.1.planning));
-    if !slow.is_empty() {
-        let total: f64 = slow.iter().map(|(_, t)| t.planning).sum();
-        let _ = writeln!(
-            r,
-            "- planning takes {total:.2} s CPU ({:.0}% of the run) in {} plans, each over 1% of the run; each is planned again per loop (chunk). A plan reused across chunks or a bounded search would remove it. The costliest:",
-            100.0 * total / roots.max(1e-9),
-            slow.len()
-        );
-        for ((key, kind, _), t) in slow.iter().take(5) {
-            let _ = writeln!(
-                r,
-                "    {} in {key}: {:.2} s over {} loops, {} literals, {} subsets and {} candidates a plan",
-                rule_name(t.rule, kind),
-                t.planning,
-                t.loops,
-                t.plan.steps.len(),
-                t.plan.subsets,
-                t.plan.candidates
-            );
-        }
-        warned += 1;
-    }
-    for ((key, kind, _), t) in &state.plans {
-        for (i, (st, a)) in t.plan.steps.iter().zip(&t.actual).enumerate() {
-            let est = st.rows * t.loops as f64;
-            let got = a.1 as f64;
-            if t.measured && (got > 100.0 * est.max(1.0) && got > 100_000.0) {
-                let _ = writeln!(r, "- {} in {key}: step {} ({}) estimated {est:.0} rows, produced {got:.0}: the estimate is off by over 100x.", rule_name(t.rule, kind), i + 1, st.literal);
-                warned += 1;
-            }
-        }
-    }
-    for ((p, k), d) in &state.devices {
-        // Over a second waiting on the device.
-        if d.wall > 1.0 {
-            let _ = writeln!(
-                r,
-                "- {k} in {p}: {:.2} s of GPU time for {} cells ({:.0} ns a cell); on a shared GPU the time includes other work queued ahead.",
-                d.gpu,
-                d.cells,
-                1e9 * d.gpu / (d.cells.max(1) as f64)
-            );
-            warned += 1;
-        }
-    }
-    for ((topic, text), _) in &state.decisions {
-        if topic == "fallback" {
-            let _ = writeln!(r, "- fallback: {text}");
-            warned += 1;
-        }
-    }
-    if warned == 0 {
-        r.push_str("(none)\n");
-    }
-    let _ = writeln!(r, "\n== Notes");
-    for (k, v) in state.notes.iter().filter(|(k, _)| !k.starts_with("plan:")) {
-        let _ = writeln!(r, "{k}: {}", short(v, 600));
-    }
-    std::fs::write(dir.join("profile.txt"), r)
-}
-
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
 
@@ -1751,8 +1440,8 @@ mod tests {
             subsets: 4,
             candidates: 6,
             steps: vec![
-                StepPlan { literal: "a($x)".into(), access: "scan".into(), source: "input".into(), rows: 5.0 },
-                StepPlan { literal: "b($x)".into(), access: "lookup on (c0)".into(), source: "derived".into(), rows: 2.0 },
+                StepPlan { literal: "a($x)".into(), access: "scan".into(), source: "input".into(), rows: 5.0, passed: Vec::new() },
+                StepPlan { literal: "b($x)".into(), access: "lookup on (c0)".into(), source: "derived".into(), rows: 2.0, passed: vec![("c($x)".into(), 7.0)] },
             ],
         };
         planned("xstratum", "seed xrule", Some(3), &plan, 0.01, 0, Some(&[(1, 5), (5, 2)]), None);
@@ -1781,7 +1470,7 @@ mod tests {
         }
         sql_in_wave("run", "SELECT 1 FROM xafter", 1_000);
         let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("explain");
-        write(&dir, "header\n").unwrap();
+        report::write(&dir, "header\n").unwrap();
         let report = std::fs::read_to_string(dir.join("profile.txt")).unwrap();
         set(false);
         assert!(report.contains("Stratum xstratum  [engine: native set engine]  (loops=2"), "{report}");
@@ -1792,10 +1481,44 @@ mod tests {
         assert!(!report.contains("xbefore") && !report.contains("xafter") && !report.contains("xbehind"), "{report}");
         assert!(report.contains("xsql: aggregate join (string concatenation)"), "{report}");
         assert!(report.contains("rule #0003 (seed xrule)") && report.contains("loops=2 replans=1"));
+        assert!(report.contains("passed over c($x)") && report.contains("7.0 rows a binding"), "the joins a step passed over: {report}");
         // Actual rows add over the loops.
         assert!(report.contains("actual 9 -> 3"), "{report}");
         assert!(report.contains("xkernel  (xspan)"));
         assert!(report.contains("xtopic:\n  - 2 chunks"));
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+/// What a stratum's device run did, for the profile.
+#[derive(Clone, Debug, Default)]
+pub struct Report {
+    pub rules: u32,
+    pub stages: u32,
+    pub submissions: u32,
+    pub dispatches: u32,
+    /// Runs again from an overflowing stage.
+    pub reruns: u32,
+    pub gpu_seconds: f64,
+    /// This thread's CPU: encoding (uploads and sorts' encoding included), waiting, and reading the rows back into
+    /// the store.
+    pub encode_cpu: f64,
+    pub wait_cpu: f64,
+    pub wait_wall: f64,
+    pub decode_cpu: f64,
+    /// Head rows left once made distinct on the device (of `rows`).
+    pub distinct: u64,
+    pub upload_cpu: f64,
+    /// Relations uploaded (and their bytes), found resident; sorts made, found resident.
+    pub uploads: u32,
+    pub upload_bytes: u64,
+    pub resident_hits: u32,
+    pub sorts: u32,
+    pub sort_hits: u32,
+    /// Rows the heads made (before the store's set), and bindings the stages made.
+    pub rows: u64,
+    pub bindings: u64,
+    /// Why the device refused the stratum (at open, or at run time: a table past its budget), which then ran on the
+    /// CPU; `None` when it ran here.
+    pub refused: Option<String>,
 }

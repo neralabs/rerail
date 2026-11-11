@@ -49,7 +49,7 @@ prefixed(f, b, k) :- base(f, b), !generator(f), !op(f, "async"), (b = "Methods",
 .decl allowed(f: node, k: symbol)
 allowed(f, k) :- sort(f, k), option_item("allow", _, k).
 allowed(f, "constructors") :- sort(f, "constructors"), field(f, "parameters", ps), child(ps, p, _),
-    (child(p, m, _), kind(m, "accessibility_modifier") ; op(p, "readonly") ;
+    (child(p, m, _), kind(m, "accessibility_modifier") ; (kind(p, "required_parameter") ; kind(p, "optional_parameter")), op(p, "readonly") ;
     child(p, m, _), kind(m, "override_modifier")).
 allowed(f, "constructors") :- sort(f, "constructors"), child(f, m, _), kind(m, "accessibility_modifier"),
     text(m, a), (a = "private", option_item("allow", _, "private-constructors") ;

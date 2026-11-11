@@ -3,9 +3,9 @@ use super::*;
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Mode { Point, Merge, Gallop, Adaptive }
 #[derive(Default, serde::Serialize)]
-pub(crate) struct Work { pub requests: usize, pub reads: usize, pub output: usize, pub merge: usize, pub gallop: usize, pub point: usize }
+pub struct Work { pub requests: usize, pub reads: usize, pub output: usize, pub merge: usize, pub gallop: usize, pub point: usize }
 thread_local! { static WORK: std::cell::RefCell<Work> = std::cell::RefCell::new(Work::default()); }
-pub(crate) fn take_work() -> Work { WORK.with(|w| std::mem::take(&mut *w.borrow_mut())) }
+pub fn take_work() -> Work { WORK.with(|w| std::mem::take(&mut *w.borrow_mut())) }
 fn mode() -> Option<Mode> {
     static MODE: OnceLock<Option<Mode>> = OnceLock::new();
     *MODE.get_or_init(|| std::env::var("RERAIL_LOOKUP_SPIKE").ok().map(|s| match s.as_str() {
@@ -75,7 +75,7 @@ fn lookup_shape_matrix() {
     use std::{hint::black_box,time::Instant};
     let mut relation=Relation::new(&["key","row"]);
     for i in 0..100_000 {relation.push(&[(i/2)*3,i]);}
-    let cpu=||{let (u,s)=crate::code_rule_dsl::logic::plan::corpus::thread_usage();u+s};
+    let cpu=||{let (u,s)=crate::code_rule_dsl::prof::thread_usage();u+s};
     let build=cpu();relation.index(0);let index_cpu=cpu()-build;
     let cases:Vec<(&str,Vec<i64>)>=vec![
         ("empty",vec![]),("one",vec![321]),("sparse",(0..32).map(|i|i*4500).collect()),

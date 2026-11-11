@@ -5,11 +5,11 @@ use super::super::logic::sql::{
 };
 use super::maintenance::{Delta, Work};
 use super::*;
-mod proof;
-mod seeds;
+pub mod proof;
+pub mod seeds;
 
 #[derive(Clone)]
-pub(super) struct Partitioned {
+pub struct Partitioned {
     columns: BTreeMap<String, usize>,
     rules: Vec<(schedule::Step, Query)>,
     steps: Vec<(schedule::Step, Query)>,
@@ -51,8 +51,7 @@ fn fields(db: &rusqlite::Connection, r: &Rel) -> Result<Vec<String>> {
         .prepare(&format!("SELECT * FROM {} LIMIT 0", r.render()))
         .map_err(error)?
         .column_names()
-        .iter()
-        .map(|c| c.to_string())
+        .map(str::to_owned)
         .collect())
 }
 fn source(table: &str, columns: &[String]) -> Rel {

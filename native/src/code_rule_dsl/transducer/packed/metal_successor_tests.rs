@@ -13,9 +13,9 @@ use crate::code_rule_dsl::language::GrammarDialect as SupportLang;
 use metal::Device;
 
 #[path = "metal_closure_continuation_tests.rs"]
-mod closure_tests;
+pub mod closure_tests;
 #[path = "metal_terminal_tests.rs"]
-mod terminal_tests;
+pub mod terminal_tests;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct State {

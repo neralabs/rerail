@@ -28,6 +28,7 @@
 #include "tsx/eslint-a-functions.rr"
 #include "tsx/eslint-a-expressions.rr"
 #include "tsx/eslint-b-scope.rr"
+#include "layout.rr"
 
 // ---- names ---------------------------------------------------------------------------------------------------------
 // id_value(n, x): an identifier may spell its letters as escapes, and ESTree's `name` is the decoded name, which
@@ -39,13 +40,25 @@ id_value(n, x) :- id_kind(n), text(n, s), contains("\\", s), unescape(s, x), !co
 .decl id_kind(n: node)
 id_kind(n) :- (kind(n, "identifier") ; kind(n, "property_identifier") ; kind(n, "shorthand_property_identifier") ;
     kind(n, "shorthand_property_identifier_pattern") ; kind(n, "private_property_identifier")).
-// unescape(s, t): t is s with its first escapes decoded, one more per step: a\u{62}\u0063 → ab\u0063 → abc.
+// unescape(s, t): t is s with its escapes decoded: a\u{62}\u0063 → abc. s splits into pieces (a run of plain
+// text, one escape, or a lone backslash), each decoded on its own and joined in order; a piece that does not decode
+// keeps its backslash, so id_value has no row. One step, not one escape per round: no value grows by recursion.
 .decl unescape(s: symbol, t: symbol)
-unescape(s, s) :- id_kind(n), text(n, s), contains("\\", s).
-unescape(s, cat(A, cat(c, B))) :- unescape(s, t), match("(?<A>[^\\\\]*)\\\\u(?<H>[0-9a-fA-F]{4})(?<B>.*)", t),
-    hex_char(@lower(H), c).
-unescape(s, cat(A, cat(c, B))) :- unescape(s, t), match("(?<A>[^\\\\]*)\\\\u\\{0*(?<H>[0-9a-fA-F]{1,4})\\}(?<B>.*)", t),
-    h = cat("000", @lower(H)), hex_char(@slice(h, strlen(h) - 4, strlen(h)), c).
+unescape(s, t) :- escaped_id(s), t = join d by o : { unescape_piece(s, o, d) }.
+.decl escaped_id(s: symbol)
+escaped_id(s) :- id_kind(n), text(n, s), contains("\\", s).
+.decl escape_piece(s: symbol, o: number, p: symbol)
+escape_piece(s, o, p) :- escaped_id(s), match_all("(?<p>\\\\u\\{[0-9a-fA-F]+\\}|\\\\u[0-9a-fA-F]{4}|[^\\\\]+|\\\\)", s, o, _, _).
+.decl unescape_piece(s: symbol, o: number, d: symbol)
+unescape_piece(s, o, p) :- escape_piece(s, o, p), !contains("\\", p).
+unescape_piece(s, o, d) :- escape_piece(s, o, p), hex_piece(p, d).
+unescape_piece(s, o, p) :- escape_piece(s, o, p), contains("\\", p), !hex_decodes(p).
+.decl hex_piece(p: symbol, d: symbol)  // \u0061 and \u{61} → a
+hex_piece(p, d) :- escape_piece(_, _, p), match("\\\\u(?<H>[0-9a-fA-F]{4})", p), hex_char(@lower(H), d).
+hex_piece(p, d) :- escape_piece(_, _, p), match("\\\\u\\{0*(?<H>[0-9a-fA-F]{1,4})\\}", p),
+    h = cat("000", @lower(H)), hex_char(@slice(h, strlen(h) - 4, strlen(h)), d).
+.decl hex_decodes(p: symbol)
+hex_decodes(p) :- hex_piece(p, _).
 .decl hex_char(h: symbol, c: symbol)  // four lower-case hex digits and the ASCII identifier character they code
 hex_char("0061", "a"). hex_char("0062", "b"). hex_char("0063", "c"). hex_char("0064", "d"). hex_char("0065", "e").
 hex_char("0066", "f"). hex_char("0067", "g"). hex_char("0068", "h"). hex_char("0069", "i"). hex_char("006a", "j").
@@ -151,8 +164,10 @@ ts_expression("type_assertion").
 // ---- adjacent tokens -----------------------------------------------------------------------------------------------
 // A fix that swaps `Math.pow(a, b)` for `a**b` can glue its first token to the one before: `a+Math.pow(++b, c)`
 // must become `a+ ++b**c`, `typeof Math.pow(a, b)` stays apart anyway. touching(t, n): nothing between them.
-.decl touching(t: span, n: node)
-touching(t, n) :- token_before(n, t), line(t, l), line(n, l), col(t, a), text(t, s), col(n, a + strlen(s)).
+// touching(n, x): the code before n touches it; x is that code (layout.rr's touch_before, for the nodes the
+// including rule puts in layout_at).
+.decl touching(n: node, x: symbol)
+touching(n, x) :- touch_before(n, x).
 // cannot_touch(a, b): ESLint's canTokensBeAdjacent, for the cases that arise: two words (names, keywords,
 // numbers), or `+` / `-` before a token that starts with the same sign.
 .decl cannot_touch(a: symbol, b: symbol)
@@ -172,17 +187,17 @@ cannot_touch(a, b) :- touch_pair(a, b), (suffix("+", a), prefix("+", b) ; suffix
 // the digits do, and two runs compare by length, then digit by digit, which is by value.
 .decl nat_ask(s: symbol)  // filled by the including rule
 .decl natural_key(s: symbol, k: symbol)
-natural_key(s, k) :- nat_step(s, "", k).
-.decl nat_step(s: symbol, rest: symbol, k: symbol)  // k encodes the part of s before rest
-nat_step(s, s, "") :- nat_ask(s).
-nat_step(s, T, cat(k, cat("07", cat(w, R)))) :- nat_step(s, r, k), match("(?<R>[1-9][0-9]*)(?<T>.*)", r),
-    n = cat("0", to_string(strlen(R))), w = @slice(n, strlen(n) - 2, strlen(n)).
-nat_step(s, @slice(r, 1, strlen(r)), cat(k, x)) :- nat_step(s, r, k), r != "", !match("[1-9].*", r),
-    nat_code(@slice(r, 0, 1), x).
-nat_step(s, @slice(r, 1, strlen(r)), cat(k, x)) :- nat_step(s, r, k), r != "", c = @slice(r, 0, 1),
-    nat_control(re, x), match(re, c).
-nat_step(s, @slice(r, 1, strlen(r)), cat(k, cat("9", c))) :- nat_step(s, r, k), r != "", c = @slice(r, 0, 1),
-    !match("[1-9].*", r), !nat_code(c, _), !match("[\\x00-\\x1f\\x7f]", c).
+// The pieces of s, each encoded on its own and joined in order: one step, so no value grows by recursion.
+natural_key(s, k) :- nat_ask(s), k = join x by o : { nat_piece(s, o, x) }.
+// nat_part(s, o, p): piece o of s, a run of digits that starts with 1-9 (leftmost, longest) or one character.
+.decl nat_part(s: symbol, o: number, p: symbol)
+nat_part(s, o, p) :- nat_ask(s), match_all("(?<p>[1-9][0-9]*|(?s:.))", s, o, _, _).
+.decl nat_piece(s: symbol, o: number, x: symbol)
+nat_piece(s, o, cat("07", cat(w, p))) :- nat_part(s, o, p), match("[1-9][0-9]*", p),
+    n = cat("0", to_string(strlen(p))), w = @slice(n, strlen(n) - 2, strlen(n)).
+nat_piece(s, o, x) :- nat_part(s, o, p), nat_code(p, x).
+nat_piece(s, o, x) :- nat_part(s, o, p), nat_control(re, x), match(re, p).
+nat_piece(s, o, cat("9", p)) :- nat_part(s, o, p), !match("[1-9].*", p), !nat_code(p, _), !match("[\\x00-\\x1f\\x7f]", p).
 // nat_control(re, x): the control characters, as a regex for the one character and its code: 0-31 keep their own
 // code (natural-compare maps every code below 45 to itself), DEL (127) becomes 64. `{"\x01a": 1, " b": 2}` sorts
 // \x01a first.

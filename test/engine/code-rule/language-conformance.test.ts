@@ -2,37 +2,49 @@
  * The language-pack conformance runner (docs/design/rerail-language-conformance.md): the sample pack pins its scoring
  * end to end, through the production workspace path. Every pack's own ports are scored by test/engine/catalog/packs.test.ts (check 4).
  */
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadPack, packSchema, type CapabilityExemption, type Divergence } from "../../../conformance/languages/pack.js";
 import { reportFailures, runPack } from "../../../conformance/languages/runner.js";
-import { precisionRecall, scoreSource } from "../../../conformance/languages/score.js";
+import { precisionRecall, scoreSamples, scoreSource } from "../../../conformance/languages/score.js";
 import { fixturesPath } from "../../support/oracles.js";
+import { writeSamplesTree, type HandMadeSample } from "../../support/samples.js";
 
 const SAMPLE = fixturesPath("packs", "sample-php");
 const DATE = "2026-01-01";
+const FIXTURES = { fixtures: true, samples: false, date: DATE } as const;
+const SIZE = "<?php\n\nnamespace Mini;\n\nfinal class Size\n{\n    public function of(array $items): int\n    {\n        return \\sizeof($items);\n    }\n}\n";
+
+/** Scores the sample pack on phpcs samples written to a temporary tree, and the fixtures with `fixtures`. */
+async function withSamples(samples: readonly HandMadeSample[], fixtures: boolean) {
+  const tree = mkdtempSync(join(tmpdir(), "language-conformance-"));
+  try {
+    writeSamplesTree(tree, samples);
+    return await runPack(loadPack(SAMPLE), { fixtures, samples: true, samplesDirectory: tool => (tool === "phpcs" ? tree : undefined), date: DATE });
+  } finally {
+    rmSync(tree, { recursive: true, force: true });
+  }
+}
 
 describe("language conformance runner", () => {
-  it("scores the sample ports against PHP_CodeSniffer's recordings on fixtures and corpus", async () => {
-    const report = await runPack(loadPack(SAMPLE), { fixtures: true, corpora: ["mini"], corpusRoot: join(SAMPLE, "corpora"), date: DATE });
+  it("scores the sample ports against PHP_CodeSniffer's recordings on fixtures, and on a labelled sample", async () => {
+    const report = await withSamples([{ name: "mini", path: "src/Size.php", text: SIZE, expected: { "forbidden-functions": [9], "forbidden-functions-resolved": [9] } }], true);
     expect(report.rules.map(({ rule, source, tp, fp, fn, precision, recall }) => ({ rule, source, tp, fp, fn, precision, recall }))).toEqual([
       // The regex port runs around broken.php's syntax error and finds its sizeof call.
       { rule: "forbidden-functions", source: "fixtures", tp: 6, fp: 0, fn: 0, precision: 1, recall: 1 },
       // Explained misses lower recall: broken.php's call (rerail-unknown) and the namespaced delete (not-comparable).
       { rule: "forbidden-functions-resolved", source: "fixtures", tp: 4, fp: 0, fn: 0, precision: 1, recall: 4 / 6 },
-      { rule: "forbidden-functions", source: "corpus:mini", tp: 1, fp: 0, fn: 0, precision: 1, recall: 1 },
-      { rule: "forbidden-functions-resolved", source: "corpus:mini", tp: 1, fp: 0, fn: 0, precision: 1, recall: 1 },
+      { rule: "forbidden-functions", source: "samples", tp: 1, fp: 0, fn: 0, precision: 1, recall: 1 },
+      { rule: "forbidden-functions-resolved", source: "samples", tp: 1, fp: 0, fn: 0, precision: 1, recall: 1 },
     ]);
-    // The Blade template is routed to Blade, not PHP, and is never evaluated by a PHP pack.
-    expect(report.sources.find(source => source.source === "corpus:mini")?.files).toBe(1);
     expect(report.pass).toBe(true);
   });
 
   it("attributes a clause skipped for the file's syntax errors to T1, not to engine failures", async () => {
     const sample = loadPack(SAMPLE);
-    const report = await runPack(sample, { fixtures: true, corpora: [], date: DATE });
+    const report = await runPack(sample, FIXTURES);
     const broken = { count: 1, files: [{ path: "broken.php", line: 6, column: 1 }] };
     expect(report.sources[0]?.syntaxErrorFiles).toEqual(broken);
     expect(report.rules.map(({ rule, engineFailures, partialFiles, syntaxErrorFiles }) => ({ rule, engineFailures, partialFiles, syntaxErrorFiles }))).toEqual([
@@ -42,66 +54,35 @@ describe("language conformance runner", () => {
       { rule: "forbidden-functions-resolved", engineFailures: 0, partialFiles: 0, syntaxErrorFiles: broken },
     ]);
     // The skipped file's upstream finding is still a miss: without its divergence it fails the fixture tier.
-    const undocumented = await runPack({ ...sample, divergences: sample.divergences.filter(divergence => divergence.path !== "broken.php") }, { fixtures: true, corpora: [], date: DATE });
+    const undocumented = await runPack({ ...sample, divergences: sample.divergences.filter(divergence => divergence.path !== "broken.php") }, FIXTURES);
     expect(reportFailures(undocumented)).toEqual(['forbidden-functions-resolved (fixtures): 1 unexplained FN, first {"path":"broken.php","line":3,"column":6}']);
   });
 
-  it("attributes a file the grammar did not read to T1, with no finding from it", async () => {
-    const corpora = mkdtempSync(join(tmpdir(), "language-conformance-"));
-    try {
-      cpSync(join(SAMPLE, "corpora"), corpora, { recursive: true });
-      // Prose after the first statement: error regions cover 92% of the file, so no AST clause reads it, and the
-      // `sizeof` call on line 2, which upstream does not report either, is not reported.
-      writeFileSync(join(corpora, "mini", "src", "Garbage.php"), `<?php\n$a = sizeof($b);\n${"This is not PHP: it is prose, ) and ( brackets ] everywhere.\n".repeat(6)}`);
-      const report = await runPack(loadPack(SAMPLE), { fixtures: false, corpora: ["mini"], corpusRoot: corpora, date: DATE });
-      const unread = { count: 1, files: [{ path: "src/Garbage.php", line: 3, column: 6 }] };
-      expect(report.rules.map(({ rule, tp, fp, engineFailures, partialFiles, syntaxErrorFiles }) => ({ rule, tp, fp, engineFailures, partialFiles, syntaxErrorFiles }))).toEqual([
-        { rule: "forbidden-functions", tp: 1, fp: 0, engineFailures: 0, partialFiles: 0, syntaxErrorFiles: unread },
-        { rule: "forbidden-functions-resolved", tp: 1, fp: 0, engineFailures: 0, partialFiles: 0, syntaxErrorFiles: unread },
-      ]);
-    } finally {
-      rmSync(corpora, { recursive: true, force: true });
-    }
+  it("judges a sample the grammar did not read: the unread file fails nothing, the label it hides does", async () => {
+    // Prose after the first statement: error regions cover 92% of the file, so no AST clause reads it, and the `sizeof`
+    // call on line 2 is not reported. The unread file is T1's and reported; the label on line 2 it hides is a missed label.
+    const garbage = `<?php\n$a = sizeof($b);\n${"This is not PHP: it is prose, ) and ( brackets ] everywhere.\n".repeat(6)}`;
+    const report = await withSamples([{ name: "garbage", path: "src/Garbage.php", text: garbage, expected: { "forbidden-functions": [2], "forbidden-functions-resolved": [] } }], false);
+    const [path] = report.rules.flatMap(row => row.syntaxErrorFiles.files.map(file => file.path));
+    const unread = { count: 1, files: [{ path, line: 3, column: 6 }] };
+    expect(report.rules.map(({ rule, tp, fp, fn, engineFailures, partialFiles, syntaxErrorFiles }) => ({ rule, tp, fp, fn, engineFailures, partialFiles, syntaxErrorFiles }))).toEqual([
+      { rule: "forbidden-functions", tp: 0, fp: 0, fn: 1, engineFailures: 0, partialFiles: 0, syntaxErrorFiles: unread },
+      { rule: "forbidden-functions-resolved", tp: 0, fp: 0, fn: 0, engineFailures: 0, partialFiles: 0, syntaxErrorFiles: unread },
+    ]);
+    expect(path).toMatch(/\/src\/Garbage\.php$/u);
+    expect(reportFailures(report)).toEqual([`forbidden-functions (samples): 1 missed label(s), first ${JSON.stringify({ path, line: 2 })}`]);
   });
 
   it("fails on a divergence that no longer explains anything", async () => {
     const sample = loadPack(SAMPLE);
     const stale: Divergence = { rule: "forbidden-functions", source: "fixtures", path: "forbidden.php", line: 4, kind: "upstream-wrong", evidence: "documented when Rerail missed this call" };
     const loaded = { ...sample, divergences: [...sample.divergences, stale] };
-    const fixturesOnly = await runPack(loaded, { fixtures: true, corpora: [], date: DATE });
+    const fixturesOnly = await runPack(loaded, FIXTURES);
     expect(fixturesOnly.pass).toBe(false);
     expect(reportFailures(fixturesOnly)).toEqual(["forbidden-functions: stale divergence forbidden.php:4 (upstream-wrong) explains nothing"]);
     // A divergence for every source is judged only once every source has been scored.
     const { source: _fixtures, ...everySource } = stale;
-    expect((await runPack({ ...sample, divergences: [...sample.divergences, everySource] }, { fixtures: true, corpora: [], date: DATE })).staleDivergences).toEqual([]);
-  });
-
-  it("scores no finding, either side's, on corpus lines the tool did not analyse", async () => {
-    const sample = loadPack(SAMPLE);
-    const oracles = mkdtempSync(join(tmpdir(), "language-conformance-"));
-    try {
-      cpSync(sample.oraclesDirectory, oracles, { recursive: true });
-      const path = join(oracles, "phpcs", "corpus-mini.expected.json");
-      const recording = JSON.parse(readFileSync(path, "utf8")) as { source: Record<string, unknown>; findings: unknown[] };
-      // The tool stopped analysing `of()` (lines 7-10), so it is silent on the `sizeof` call Rerail finds on line 9.
-      const silent = (unanalysed: unknown[]) => writeFileSync(path, JSON.stringify({ ...recording, source: { ...recording.source, unanalysed }, findings: [] }));
-      const run = async () => (await runPack({ ...sample, oraclesDirectory: oracles }, { fixtures: false, corpora: ["mini"], corpusRoot: join(SAMPLE, "corpora"), date: DATE })).rules;
-      silent([]);
-      expect((await run()).map(({ rule, tp, fp, unanalysed }) => ({ rule, tp, fp, unanalysed }))).toEqual([
-        { rule: "forbidden-functions", tp: 0, fp: 1, unanalysed: 0 },
-        { rule: "forbidden-functions-resolved", tp: 0, fp: 1, unanalysed: 0 },
-      ]);
-      silent([{ path: "src/Size.php", startLine: 7, endLine: 10 }]);
-      expect((await run()).map(({ rule, tp, fp, fn, unanalysed }) => ({ rule, tp, fp, fn, unanalysed }))).toEqual([
-        { rule: "forbidden-functions", tp: 0, fp: 0, fn: 0, unanalysed: 1 },
-        { rule: "forbidden-functions-resolved", tp: 0, fp: 0, fn: 0, unanalysed: 1 },
-      ]);
-      // A region elsewhere in the file leaves the finding scored.
-      silent([{ path: "src/Size.php", startLine: 1, endLine: 8 }]);
-      expect((await run()).map(({ fp }) => fp)).toEqual([1, 1]);
-    } finally {
-      rmSync(oracles, { recursive: true, force: true });
-    }
+    expect((await runPack({ ...sample, divergences: [...sample.divergences, everySource] }, FIXTURES)).staleDivergences).toEqual([]);
   });
 
   describe("capability exemptions", () => {
@@ -116,14 +97,14 @@ describe("language conformance runner", () => {
       ({ ...loadPack(SAMPLE), pack: packSchema.parse({ ...raw, capabilities, exemptCapabilities: exemptions }) });
 
     it("covers a declared capability no rule exercises", async () => {
-      const report = await runPack(withExemption(["syntax", "scope", "calls"], [exemption("calls")]), { fixtures: true, corpora: [], date: DATE });
+      const report = await runPack(withExemption(["syntax", "scope", "calls"], [exemption("calls")]), FIXTURES);
       expect(report.coverage.uncovered).toEqual([]);
       expect(report.coverage.exempt.map(entry => entry.capability)).toEqual(["calls"]);
       expect(report.pass).toBe(true);
     });
 
     it("is stale once a rule exercises the capability", async () => {
-      const report = await runPack(withExemption(["syntax", "scope"], [exemption("syntax")]), { fixtures: true, corpora: [], date: DATE });
+      const report = await runPack(withExemption(["syntax", "scope"], [exemption("syntax")]), FIXTURES);
       expect(reportFailures(report)).toEqual(["stale exemption: capability syntax is covered by rule(s) forbidden-functions"]);
     });
 
@@ -191,5 +172,52 @@ describe("scoreSource", () => {
       precision: 1,
       recall: 0.5,
     });
+  });
+});
+
+describe("scoreSamples", () => {
+  const divergence = (kind: Divergence["kind"], path: string, line: number): Divergence => ({ rule: "r", source: "samples", path, line, kind, evidence: "checked by hand against the sample" });
+
+  it("catches a label by its line alone; any report on a clean sample is an FP; an unlabelled line of a labelled sample is reviewed", () => {
+    const score = scoreSamples(
+      [
+        { path: "s/a.php", lines: [2, 2, 4] },
+        { path: "s/b.php", lines: [] },
+      ],
+      [
+        { path: "s/a.php", line: 2 },
+        { path: "s/a.php", line: 7 },
+        { path: "s/b.php", line: 1 },
+        { path: "s/b.php", line: 1 },
+      ],
+      [],
+    );
+    expect(score.tp).toBe(2);
+    expect(score.falseNegatives).toEqual([{ path: "s/a.php", line: 4 }]);
+    expect(score.falsePositives).toEqual([
+      { path: "s/b.php", line: 1 },
+      { path: "s/b.php", line: 1 },
+    ]);
+    expect(score.reviewed).toEqual([{ path: "s/a.php", line: 7 }]);
+  });
+
+  it("explains clean-sample findings and missed labels by divergence; rerail-unknown never excuses a finding", () => {
+    const score = scoreSamples(
+      [
+        { path: "s/a.php", lines: [3] },
+        { path: "s/b.php", lines: [] },
+      ],
+      [
+        { path: "s/b.php", line: 1 },
+        { path: "s/b.php", line: 2 },
+      ],
+      [divergence("rerail-unknown", "s/a.php", 3), divergence("upstream-wrong", "s/b.php", 1), divergence("rerail-unknown", "s/b.php", 2)],
+    );
+    expect(score.falseNegatives).toEqual([]);
+    expect(score.falsePositives).toEqual([{ path: "s/b.php", line: 2 }]);
+    expect(score.explained.map(entry => [entry.side, entry.point.path, entry.point.line])).toEqual([
+      ["fn", "s/a.php", 3],
+      ["fp", "s/b.php", 1],
+    ]);
   });
 });

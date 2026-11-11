@@ -85,7 +85,7 @@ pub(super) fn call<'t, D: Doc>(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use crate::code_rule_dsl::test_support::*;
     use serde_json::json;
 

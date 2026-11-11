@@ -9,7 +9,8 @@ import { codeRuleSchema, codeRuleValueSchema } from "../engine/code-rule/code-ru
 import { RULE_SETTING_OWNER_KINDS, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS, RULE_SUPPRESSIONS } from "../engine/catalog/repository-model.js";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 import { conversationRuleSchema } from "../engine/catalog/rule-schema.js";
-import { engineRegexIssues } from "../engine/catalog/rule-regexes.js";
+import { engineRegexIssues, type RegexIssue } from "../engine/catalog/rule-regexes.js";
+import { EngineUnavailableError } from "../engine/code-rule/code-rule-compile.js";
 import { RULE_APPROVAL_SUBJECTS, RULE_KINDS } from "../engine/storage/schema.js";
 
 const START_STATES = ["started", "stopped", "not-set-up"] as const;
@@ -229,7 +230,15 @@ export const libraryUpsertBodySchema = z.object({
     context.addIssue({ code: "custom", path: ["revision"], message: "code rules take their revision from rule.revision" });
   }
   if (value.kind === "conversation" && !("clauses" in value.rule)) {
-    for (const issue of engineRegexIssues(value.rule)) {
+    let issues: RegexIssue[];
+    try {
+      issues = engineRegexIssues(value.rule);
+    } catch (error) {
+      // Without the engine the write itself answers 503 kernel-unavailable, as it does for a code rule.
+      if (error instanceof EngineUnavailableError) return;
+      throw error;
+    }
+    for (const issue of issues) {
       context.addIssue({ code: "custom", path: ["rule", ...issue.path], message: issue.message });
     }
   }

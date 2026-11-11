@@ -1,44 +1,51 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl assignment_alias_scopes(kind: symbol)
+assignment_alias_scopes("function_definition"). assignment_alias_scopes("class_definition").
+.decl import_alias_scopes(kind: symbol)
+import_alias_scopes("function_definition"). import_alias_scopes("class_definition").
+.decl assignment_alias_nested(s: node)
+.decl assignment_alias_private(t: node)
+.decl assignment_alias_source(x: node, s: symbol)
+.decl child(p: node, c: node, i: number)
 .decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl field(p: node, f: symbol, c: node)
-.decl name(n: node, s: symbol)
-.input doc, node, field, name
-.decl k0(kind: symbol)
-k0("class_definition"). k0("function_definition").
+.decl import_alias_gate(d: number)
+.decl import_alias_nested(s: node)
+.decl import_alias_private(a: node)
+.decl import_alias_same(x: node)
+.decl import_alias_statement(d: number, s: node)
 .decl in_scope(d: number)
-.decl m1(n: node)
-.decl m12(n: node)
-.decl m13(n: node)
-.decl m17(n: node)
-.decl m22(n: node)
-.decl m24(n: node)
-.decl m3(n: node)
-.decl m4(n: node)
-.decl m9(n: node)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl option_on(name: symbol)
 .decl out_scope(d: number)
-.decl u19(n: node)
-.decl u20(n: node)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, text, line, node_text
+.output violation
+option_on("sourceGate").
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
-m1(n) :- node(_, n, "import_statement", _, _).
-m1(n) :- node(_, n, "import_from_statement", _, _).
-m3(n) :- node(_, n, "function_definition", _, _).
-m3(n) :- node(_, n, "class_definition", _, _).
-m4(n) :- inside(n, v2, k0), m3(v2).
-m9(n) :- name(n, v8), prefix("_", v8).
-m12(n) :- node(_, n, "function_definition", _, _).
-m12(n) :- node(_, n, "class_definition", _, _).
-m13(n) :- inside(n, v11, k0), m12(v11).
-m17(n) :- name(n, v16), prefix("_", v16).
-m22(n) :- node(_, n, "identifier", _, _).
-m22(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v21), node(_, v21, "identifier", _, _).
-u20(n) :- m22(n).
-m24(n) :- u20(n).
-m24(n) :- node(_, n, "assignment", _, _), field(n, "right", v23), u19(v23).
-u19(n) :- m24(n).
-.output violation
+tape_syntax_error(d) :- syntax_error(d).
+import_alias_statement(d, s) :- node(d, s, "import_statement", _, _).
+import_alias_statement(d, s) :- node(d, s, "import_from_statement", _, _).
+import_alias_nested(s) :- import_alias_statement(_, s), inside(s, a, import_alias_scopes), node(_, a, _, _, _).
+import_alias_same(x) :- node(_, x, "aliased_import", _, _), field(x, "alias", a), text(a, alias), field(x, "name", src), node_text(src, t), re = @concat("(?:[^\\n]*\\.)?", alias), match(re, t).
+import_alias_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains(" as ", s).
+import_alias_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains("=", s).
+import_alias_gate(d) :- !option_on("sourceGate"), node(d, _, "module", _, _).
+import_alias_private(a) :- node(_, a, "identifier", _, _), text(a, s), prefix("_", s).
+violation("data-layer-data-layer-compat-aliases", "import-alias", "DLA001", p, l) :- import_alias_statement(d, s), !import_alias_nested(s), child(s, x, _), node(_, x, "aliased_import", _, _), field(x, "alias", a), node(_, a, "identifier", _, _), !import_alias_private(a), field(x, "name", _), !import_alias_same(x), import_alias_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(x, l).
+assignment_alias_nested(s) :- node(_, s, "assignment", _, _), inside(s, a, assignment_alias_scopes), node(_, a, _, _, _).
+assignment_alias_source(x, s) :- node(_, x, "identifier", _, _), text(x, s).
+assignment_alias_source(x, s) :- node(_, x, "attribute", _, _), field(x, "attribute", y), node(_, y, "identifier", _, _), text(y, s).
+assignment_alias_source(x, s) :- node(_, x, "assignment", _, _), field(x, "right", r), assignment_alias_source(r, s).
+assignment_alias_private(t) :- node(_, t, "identifier", _, _), text(t, s), prefix("_", s).
+violation("data-layer-data-layer-compat-aliases", "assignment-alias", "DLA002", p, l) :- node(d, n, "assignment", _, _), !assignment_alias_nested(n), field(n, "left", t), node(_, t, "identifier", _, _), text(t, target), !assignment_alias_private(t), field(n, "right", r), assignment_alias_source(r, source), target != source, in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).

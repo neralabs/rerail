@@ -197,4 +197,4 @@ pub(super) fn upgrade(db: &Connection) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

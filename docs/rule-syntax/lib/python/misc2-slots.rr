@@ -26,6 +26,7 @@ slots_assigned(c) :- field(c, "body", b), body_stmt(b, st, _), kind(st, "express
     assign_target(a, t0), slots_bare_target(t0, t), text(t, "__slots__").
 // slots_bare_target(t0, t): target t0 is the Name t. tree-sitter reads `(x) = …` as a one-element tuple_pattern
 // with no comma; `(x,) = …` is a real tuple.
+.stored slots_bare_target "a one-element tuple_pattern's comma is its trailing comma, which the tape stores"
 .decl slots_bare_target(t0: node, t: node)
 slots_bare_target(t, t) :- kind(t, "identifier").
 slots_bare_target(t0, t) :- kind(t0, "tuple_pattern"), !op(t0, ","), child(t0, x, 0), !child(t0, _, 1),

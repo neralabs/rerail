@@ -5,7 +5,7 @@ use super::*;
 use metal::{BufferRef, CommandQueueRef, MTLSize};
 
 #[path = "metal_successor_guard_codegen.rs"]
-mod guards;
+pub mod guards;
 
 // Neither bridge is a FrontierRecords value. Only checked conversion can publish it.
 struct CopyBridge {
@@ -487,7 +487,7 @@ pub(super) fn execute(
     Ok(frontier)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn copy_captures_for_test(
     context: Context<'_>,
     fixtures: &[super::CaptureCopyFixture],

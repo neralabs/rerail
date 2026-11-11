@@ -14,7 +14,7 @@ pub(super) fn fixture() -> (tempfile::TempDir, crate::store::Store) {
     let path = dir.path().join("fixture.sqlite");
     let db = Connection::open(&path).unwrap();
     db.execute_batch(include_str!(
-        "../../../../../native/src/code_rule_dsl/matcher/anchors/sql/schema.sql"
+        "../../../../../native/src/code_rule_dsl/matcher/p_anchors/sql/schema.sql"
     ))
     .unwrap();
     db.execute_batch("INSERT INTO lang VALUES(1,'python'); INSERT INTO kind VALUES(1,1,'module',1),(1,2,'function_definition',1),(1,3,'assignment',1),(1,4,'block',1),(1,5,'call',1),(1,6,'attribute',1),(1,7,'identifier',1); INSERT INTO field VALUES(1,0,''),(1,1,'function'),(1,2,'attribute')").unwrap();

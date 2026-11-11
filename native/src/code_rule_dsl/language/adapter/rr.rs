@@ -31,7 +31,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 /// `.rr` rule files.
-pub(crate) struct Rr;
+pub struct Rr;
 
 fn refused(message: impl Into<Cow<'static, str>>) -> Result<(), Refusal> {
     Err(Refusal::Refused(message.into()))
@@ -45,6 +45,11 @@ impl Adapter for Rr {
     const PACKAGE_MANIFESTS: bool = false;
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = false;
+    const STRIPS_BOM: bool = false;
+    /// `.rr` files have no suppression comments, so no `rerail-ignore` directives either.
+    const COMMENT_KINDS: &'static [&'static str] = &[];
+    const PREAMBLE_KINDS: &'static [&'static str] = &[];
+    const BODY_KINDS: &'static [&'static str] = &[];
     type Scope = Self;
     type Value = Self;
     type Arguments = Refused;
@@ -84,6 +89,12 @@ impl ScopeRules for Rr {
     const REDEFINES_SHADOWED: bool = false;
     const REFERENCE_KINDS: &'static [&'static str] = &[];
     const ANNOTATION_STRING_KINDS: &'static [&'static str] = &[];
+    // Main's scope kinds (#462): every dialect's parentheses are `parenthesized_expression`, which `.rr` has too (the
+    // kit's `shared_walks_read_the_kinds_they_named`); it has no dotted names, attributes or `this`.
+    const PAREN_KINDS: &'static [&'static str] = &["parenthesized_expression"];
+    const DOTTED_NAME_KINDS: &'static [&'static str] = &[];
+    const ATTRIBUTE_KINDS: &'static [&'static str] = &[];
+    const THIS_KINDS: &'static [&'static str] = &[];
     const NAME_KINDS: &'static [&'static str] = &[];
     const PRIVATE_NAME_KINDS: &'static [&'static str] = &[];
     const FORMS: &'static [(&'static str, Form)] = &[];
@@ -141,7 +152,7 @@ impl ScopeRules for Rr {
         None
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn unbound_locally(_: &ScopeTable, _: &Reference, _: &str, _: bool) -> bool {
         false
     }

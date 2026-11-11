@@ -2,7 +2,7 @@
 use crate::code_rule_dsl::{json::hex_digest, model::CompiledCodeRule};
 use serde_json::json;
 
-pub(in crate::code_rule_dsl) fn candidate_frontier_audit(
+pub fn candidate_frontier_audit(
     rule: &CompiledCodeRule,
 ) -> serde_json::Value {
     let mut languages = Vec::new();

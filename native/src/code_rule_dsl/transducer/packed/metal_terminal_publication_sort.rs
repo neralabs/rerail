@@ -45,4 +45,4 @@ pub(super) fn encode_tiles(
 
 #[cfg(all(test, feature = "metal-tests"))]
 #[path = "metal_terminal_publication_sort_tests.rs"]
-mod tests;
+pub mod tests;

@@ -1,6 +1,6 @@
 //! `parse: annotation`: string type definitions as the scope table classifies and reads them.
 
-use crate::code_rule_dsl::test_support::*;
+// cratify: a re-export of rerail-engine's, which its facades of this module make
 use serde_json::{Value, json};
 
 fn compiled(rule: Value, anchor: &str) -> crate::code_rule_dsl::CompiledCodeRuleDsl {
@@ -285,6 +285,22 @@ TD = TypedDict(\"TD\", None, legacy=\"Missing\")
     assert_eq!(
         reported_with_python_version("typed_dict.pyi", source, "3.13"),
         Vec::<String>::new()
+    );
+}
+
+/// Outside stubs a table is shared across target versions and reads the default target (3.10),
+/// so a `.py` file pinned to 3.13 still reads the legacy keyword fields Ruff no longer reads
+/// there: a divergence (an undefined name reported that Ruff does not) this pins.
+#[test]
+fn py_files_read_typed_dict_legacy_keyword_strings_at_the_default_target_whatever_the_pin() {
+    let source = "\
+from typing import TypedDict
+TD = TypedDict(\"TD\", None, legacy=\"Missing\")
+";
+    assert_eq!(reported("typed_dict.py", source), ["F821:2:36"]);
+    assert_eq!(
+        reported_with_python_version("typed_dict.py", source, "3.13"),
+        ["F821:2:36"]
     );
 }
 

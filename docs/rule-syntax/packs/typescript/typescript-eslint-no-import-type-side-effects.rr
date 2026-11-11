@@ -27,5 +27,9 @@ specifier(i, s) :- kind(i, "import_statement"), child(i, c, _), kind(c, "import_
 inline_type(s) :- kind(s, "import_specifier"), first_token(s, t), text(t, "type"), field(s, "name", n), t != n.
 
 // Each inline `type` goes, and one is added after `import`.
-hoist_type(i) :- specifier(i, s), first_token(s, t) => delete(t).
-hoist_type(i) :- first_token(i, t) => replace(t, `$t type`).  // `import` is a token: insert_after takes nodes
+hoist_type(i) :- specifier(i, s), spec_type(s, t) => delete(t).
+// `import` is i's first word (its kind implies it; the tape keeps none).
+hoist_type(i) :- specifier(i, _), match("(?s)(?<t>import)\\b.*", i) => replace(t, `$t type`).
+.stored spec_type "an inline `type` is optional, so the tape keeps it as the specifier's first token"
+.decl spec_type(s: node, t: span)
+spec_type(s, t) :- inline_type(s), first_token(s, t).

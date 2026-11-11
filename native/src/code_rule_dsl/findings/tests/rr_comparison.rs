@@ -1,6 +1,6 @@
 //! The authored `.rr` family through the production relational compiler.
 use super::cpu_ns;
-use crate::code_rule_dsl::{logic::{plan::corpus, profile}, tools, typing::file_local::Binding};
+// cratify: a re-export of rerail-engine's, which its facades of this module make
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, path::{Path, PathBuf}, time::Instant};
 
@@ -13,7 +13,7 @@ const RULES: [&str; 4] = [
 ];
 
 fn run(root: &Path, out: &Path) -> (Value, Keys) {
-    let base = std::env::var_os("RERAIL_RR_RULE_DIR").map(PathBuf::from).unwrap_or_else(||Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python"));
+    let base = std::env::var_os("RERAIL_RR_RULE_DIR").map(PathBuf::from).unwrap_or_else(||Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../docs/rule-syntax/packs/python"));
     let began = cpu_ns();
     let wall = Instant::now();
     let programs: Vec<String> = RULES.iter().map(|r| tools::flatten(&base.join(r)).unwrap()).collect();
@@ -117,7 +117,7 @@ fn authored_rr_batched_positive_documents_preserve_all_four_labels() {
 #[test]
 fn async_demand_uses_semantic_batches_without_global_name_derivations() {
     use crate::code_rule_dsl::logic::{front, rr};
-    let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let base = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../docs/rule-syntax/packs/python");
     for rule in RULES {
         let p = rr::parse(&tools::flatten(&base.join(rule)).unwrap()).unwrap();
         let mut facts=std::collections::BTreeMap::new();
@@ -190,7 +190,7 @@ fn complete_async_family_sql_shape_lab() {
 #[test]
 fn candidate_contract_lowers_before_projection_and_roundtrips() {
     use crate::code_rule_dsl::logic::{front,rr,program_facts};
-    let root=Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let root=Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../docs/rule-syntax/packs/python");
     for name in RULES {
         let p=rr::parse(&tools::flatten(&root.join(name)).unwrap()).unwrap();
         assert!(p.natives.values().any(|n|matches!(n,front::Native::PythonCandidates{context,member,..} if context=="async_function"&&member=="open")));

@@ -1,0 +1,82 @@
+{
+  "caught": [
+    {
+      "path": "conformance/port-readiness/corpus.ts",
+      "content": "export async function download(cell: { url: string }): Promise<Buffer> {\n    const response = await fetch(cell.url);\n    if (!response.ok) throw new Error(`download failed: ${response.status}`);\n    return Buffer.from(await response.arrayBuffer());\n}\n"
+    },
+    {
+      "path": "conformance/port-readiness/upstream/bump.ts",
+      "content": "const GITHUB_API = \"https://api.github.com\";\nconst REQUEST_TIMEOUT_MS = 30_000;\nexport async function latest(source: { url: string; accept: string }) {\n  const response = await globalThis.fetch(source.url, { headers: { accept: source.accept }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });\n  return response.json();\n}\nexport { GITHUB_API };\n"
+    },
+    {
+      "path": "conformance/eslint-test-set/cli.ts",
+      "content": "import { execFileSync } from \"node:child_process\";\nconst FIXTURE = { bucket: \"example-fixtures\", key: \"eslint.zip\" };\nexport function download(profile: string[], zip: string): void {\n  execFileSync(\"aws\", [...profile, \"s3\", \"cp\", \"--only-show-errors\", `s3://${FIXTURE.bucket}/${FIXTURE.key}`, zip], { stdio: \"inherit\" });\n}\n"
+    },
+    {
+      "path": "conformance/languages/samples-download.ts",
+      "content": "import { runChecked, type CommandRunner } from \"../process.js\";\nexport async function pull(runner: CommandRunner, url: string, to: string) {\n  await runChecked(runner, [\"curl\", \"-fsSL\", url, \"-o\", to]);\n}\n"
+    },
+    {
+      "path": "conformance/languages/registry.mjs",
+      "content": "import { get } from \"node:https\";\nexport const latest = (name) => new Promise((resolve) => get(`https://registry.npmjs.org/${name}/latest`, resolve));\n"
+    },
+    {
+      "path": "conformance/port-readiness/recording/fetch.ts",
+      "content": "export async function releaseAssets(repository: string, tag: string, token?: string) {\n  const release = await fetch(`https://api.github.com/repos/${repository}/releases/tags/${encodeURIComponent(tag)}`, {\n    headers: token === undefined ? {} : { authorization: `Bearer ${token}` },\n  });\n  return (await release.json()) as { assets?: { name: string; url: string }[] };\n}\n"
+    },
+    {
+      "path": "conformance/port-readiness/upstream/releases.ts",
+      "content": "export async function latestRelease(sources: { fetch: typeof fetch }, url: string) {\n  const response = await sources.fetch(url, { headers: { accept: \"application/json\" } });\n  return response.json();\n}\n"
+    },
+    {
+      "path": "conformance/languages/test-set.ts",
+      "content": "import { runChecked, type CommandRunner } from \"../process.js\";\nexport async function download(runner: CommandRunner, profile: string[], key: string, zip: string) {\n  await runChecked(runner, [\"aws\", ...profile, \"s3\", \"cp\", \"--only-show-errors\", `s3://nera-test-fixtures/${key}`, zip]);\n}\n"
+    },
+    {
+      "path": "conformance/languages/corpus-clone.ts",
+      "content": "import { runChecked, type CommandRunner } from \"../process.js\";\nexport async function clone(runner: CommandRunner, url: string, to: string) {\n  await runChecked(runner, [\"git\", \"clone\", \"--depth=1\", url, to]);\n}\n"
+    },
+    {
+      "path": "conformance/languages/runtime-install.ts",
+      "content": "import type { CommandRunner } from \"../process.js\";\nexport async function install(runner: CommandRunner, directory: string) {\n  await runner.run([\"npm\", \"ci\", \"--ignore-scripts\"], { cwd: directory });\n  await runner.run([\"uv\", \"sync\", \"--frozen\"], { cwd: directory });\n}\n"
+    },
+    {
+      "path": "conformance/languages/upstream-check.ts",
+      "content": "import { request } from \"undici\";\nexport const head = (url: string) => request(url, { method: \"HEAD\" });\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "conformance/languages/runner.ts",
+      "content": "import { samplesTree } from \"../../scripts/s3/pack-fixtures.mjs\";\nimport { RERAIL_ROOT } from \"./paths.js\";\nexport async function samples(pack: string, tool: string) {\n  return await samplesTree({ root: RERAIL_ROOT, pack, tool });\n}\n"
+    },
+    {
+      "path": "conformance/languages/checks/ungated.ts",
+      "content": "import type { CommandRunner } from \"../../process.js\";\nexport async function ensureBase(runner: CommandRunner, root: string, base: string) {\n  const fetched = await runner.run([\"git\", \"fetch\", \"--depth=1\", \"origin\", base], { cwd: root });\n  if (fetched.exitCode !== 0) return { kind: \"error\", message: `the base commit ${base} is not present and git fetch failed` };\n  return { kind: \"ok\" };\n}\n"
+    },
+    {
+      "path": "conformance/languages/manifest.ts",
+      "content": "import { z } from \"zod\";\nconst githubRepository = z.string().regex(/^https:\\/\\/github\\.com\\/[A-Za-z0-9._-]+\\/[A-Za-z0-9._-]+$/u, \"a https://github.com/<owner>/<name> URL\");\n// Never fetch( anything here: the samples come from samples.lock.\nexport { githubRepository };\n"
+    },
+    {
+      "path": "conformance/pack-validation.ts",
+      "content": "export const repository = { type: \"git\", url: \"https://github.com/neralabs/rerail\" };\nconst cache = new Map<string, string>();\nexport const cached = (key: string) => cache.get(key) ?? fetchLocal(key);\nfunction fetchLocal(key: string): string { return key; }\nexport const runtimes = [\"awscli-free\", \"node\"];\n"
+    },
+    {
+      "path": "scripts/upstream/releases.ts",
+      "content": "export async function latest(url: string) {\n  const response = await fetch(url, { headers: { accept: \"application/json\" } });\n  return response.json();\n}\n"
+    },
+    {
+      "path": "conformance/languages/tools.ts",
+      "content": "const homepages = new Map<string, string>();\nhomepages.set(\"gh\", \"cli\");\nexport const known = [\"aws\"];\nexport const label = (tool: string) => homepages.get(tool);\n"
+    },
+    {
+      "path": "conformance/languages/missing.ts",
+      "content": "export function missingArchive(key: string): Error {\n  return new Error(`the samples archive s3://nera-test-fixtures/${key} is not extracted; run npm run fixtures:pull`);\n}\nexport const crateLink = (name: string) => `https://crates.io/crates/${name}`;\nexport const DOWNLOAD_PROGRAMS = [\"curl\", \"wget\", \"aws\"];\n"
+    },
+    {
+      "path": "conformance/languages/goto.ts",
+      "content": "import { gotoLine } from \"./goto-line.js\";\nimport { netTotals } from \"./net-totals.js\";\nexport { gotoLine, netTotals };\n"
+    }
+  ]
+}

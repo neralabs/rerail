@@ -275,7 +275,7 @@ pub(super) fn cover(sets: &[Vec<usize>], k: usize) -> Vec<Vec<usize>> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]
@@ -755,7 +755,7 @@ impl TaggedRuns {
 }
 
 #[cfg(test)]
-mod grow_tests {
+pub mod grow_tests {
     use super::*;
 
     #[test]

@@ -1111,7 +1111,7 @@ fn diff(a: &[String], b: &[String]) -> usize {
 }
 
 fn line(name: &str, st: &St, check: &str) {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     assert!(check.split("diff ").skip(1).all(|n| n.starts_with("0")), "{name}: {check}");
     println!(
         "| {name} | {:.1} | {} | {} | {} | {} | {check} |",
@@ -1542,4 +1542,4 @@ fn gold_rows(dir: &str, name: &str) -> Vec<String> {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

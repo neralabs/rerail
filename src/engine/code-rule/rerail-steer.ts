@@ -1,4 +1,4 @@
-import type { RerailHost, SteerRule } from "../adapter-contract.js";
+import { ADAPTER_CAPABILITIES, type RerailHost, type SteerRule } from "../adapter-contract.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
 
 /**
@@ -206,6 +206,16 @@ export function subagentSteer(content: string, host: RerailHost): string {
     + "keep working on your own task.";
 }
 
+/**
+ * A steer the coding agent reads as a message of its own, not in a tool result, from a host that hands that message to
+ * the model as the user's (Pi): a first line says it is Rerail's, not the user's, and that the agent's task stands, so
+ * the agent handles it and goes back to its work instead of taking it for a new request.
+ */
+export function messageSteer(content: string): string {
+  return "[Automated note from Rerail, not a message from the user. It is advice on your work, not a new task: handle it, "
+    + `then carry on with the user's request where you left off.]\n${content}`;
+}
+
 /** The files Rerail put back when it rolled an edit back: `restored` to their text before it, `deleted` as new files it created. */
 export interface RewoundPaths {
   readonly restored: readonly string[];
@@ -276,7 +286,7 @@ const rulesOn = (count: number): string => `${count} ${count === 1 ? "rule is" :
  * up. The person sees nothing.
  */
 export function sessionStartNote(origin: string | undefined, host: RerailHost, sessionId: string, rules: SessionNoteRules): string {
-  const sigil = host === "codex" ? "$" : "/";
+  const sigil = ADAPTER_CAPABILITIES[host].commandSigil;
   const sessionLink = origin === undefined ? [] : [`This session in the Rerail dashboard: ${sessionPageUrl(origin, host, sessionId)}`];
   if (!rules.setUp) {
     return [

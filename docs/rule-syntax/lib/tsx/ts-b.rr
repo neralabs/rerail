@@ -55,11 +55,15 @@ ts_namespace(m) :- kind(m, "internal_module").
 ts_namespace(m) :- kind(m, "module"), field(m, "name", n), !kind(n, "string").
 .decl ts_module_decl(m: node)
 ts_module_decl(m) :- kind(m, "internal_module") ; kind(m, "module").
-ts_module_decl(a) :- kind(a, "ambient_declaration"), op(a, "global").
+ts_module_decl(a) :- global_block(a).
+// global_block(a): `declare global { }`: an ambient_declaration whose first child is its block (the tape keeps no
+// `global`: the kind and the block imply it).
+.decl global_block(a: node)
+global_block(a) :- kind(a, "ambient_declaration"), child(a, b, 0), kind(b, "statement_block").
 // ts_declared(m): `declare namespace A {}` is an ambient_declaration whose first child is the namespace.
 .decl ts_declared(m: node)
 ts_declared(m) :- kind(a, "ambient_declaration"), child(a, m, 0).
-ts_declared(a) :- kind(a, "ambient_declaration"), op(a, "global").
+ts_declared(a) :- global_block(a).
 // estree_at(m, at): ESTree's declaration node includes `declare`; tree-sitter puts it on the wrapper.
 .decl estree_at(m: node, at: node)
 estree_at(m, a) :- kind(a, "ambient_declaration"), child(a, m, 0).
@@ -72,7 +76,7 @@ ts_declarable(m) :- kind(m, k), (k = "internal_module" ; k = "module" ; k = "cla
     k = "variable_declaration").
 .decl module_body(m: node, b: node)
 module_body(m, b) :- ts_module_decl(m), field(m, "body", b).
-module_body(a, b) :- kind(a, "ambient_declaration"), op(a, "global"), child(a, b, 0), kind(b, "statement_block").
+module_body(a, b) :- global_block(a), child(a, b, 0).
 // module_directive(d): the leading statements of the block that are bare string literals.
 .decl module_directive(d: node)
 module_directive(d) :- module_body(_, b), child(b, d, _), string_stmt(d, _, 1), !module_prologue_ends(b, d).

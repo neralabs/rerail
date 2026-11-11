@@ -45,7 +45,7 @@ thread_local! {
     static STEP_COUNTDOWN: Cell<u32> = const { Cell::new(0) };
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Tests turn off, on their own thread, the shortcuts that only skip work (the anchor-set
     /// shortcuts), to check they change no result.
@@ -53,18 +53,18 @@ thread_local! {
 }
 
 /// Compiles and evaluates on this thread without the work-skipping shortcuts while `off`.
-#[cfg(test)]
-pub(super) fn set_shortcuts_off(off: bool) {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn set_shortcuts_off(off: bool) {
     SHORTCUTS_OFF.set(off);
 }
 
 /// Whether the work-skipping shortcuts run: always, outside tests.
-pub(super) fn shortcuts_on() -> bool {
-    #[cfg(test)]
+pub fn shortcuts_on() -> bool {
+    #[cfg(any(test, feature = "test-hooks"))]
     {
         !SHORTCUTS_OFF.get()
     }
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-hooks")))]
     {
         true
     }
@@ -72,7 +72,7 @@ pub(super) fn shortcuts_on() -> bool {
 
 /// Whether this thread's budget is exhausted (never, without one). Callers that poll in a loop
 /// throttle themselves (every 256 steps); per-matcher-call polling uses `matcher_call_budget_exhausted`.
-pub(super) fn matcher_budget_exhausted() -> bool {
+pub fn matcher_budget_exhausted() -> bool {
     MATCH_BUDGET.with(|budget| {
         budget
             .borrow()
@@ -83,7 +83,7 @@ pub(super) fn matcher_budget_exhausted() -> bool {
 
 /// Whether some poll found this thread's budget exhausted; never polls. What decides, after work
 /// ends, whether it was cut short: work that finished unpolled is complete.
-pub(super) fn matcher_budget_observed() -> bool {
+pub fn matcher_budget_observed() -> bool {
     MATCH_BUDGET.with(|budget| {
         budget
             .borrow()
@@ -95,7 +95,7 @@ pub(super) fn matcher_budget_observed() -> bool {
 /// Error-only diagnostics distinguish the outer clause from a SQL session's allowance (D's).
 #[cfg(feature = "code-rule-profile")]
 #[allow(dead_code)]
-pub(super) fn profile() -> serde_json::Value {
+pub fn profile() -> serde_json::Value {
     MATCH_BUDGET.with_borrow(|budget| {
         let Some(deadline) = budget else {
             return serde_json::Value::Null;
@@ -113,8 +113,8 @@ pub(super) fn profile() -> serde_json::Value {
 
 /// Spends this thread's budget without polling it: what a last step that runs past the budget and
 /// never polls leaves behind.
-#[cfg(test)]
-pub(super) fn pass_deadline_unpolled() {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn pass_deadline_unpolled() {
     MATCH_BUDGET.with(|budget| {
         if let Some(deadline) = budget.borrow_mut().as_mut() {
             deadline.limit = match deadline.limit {
@@ -127,7 +127,7 @@ pub(super) fn pass_deadline_unpolled() {
 
 /// `matcher_budget_exhausted` for matcher entry points: polls every `BUDGET_CHECK_INTERVAL`
 /// calls, so a spent budget is noticed at most that many calls late.
-pub(super) fn matcher_call_budget_exhausted() -> bool {
+pub fn matcher_call_budget_exhausted() -> bool {
     let countdown = BUDGET_COUNTDOWN.get();
     if countdown > 0 {
         BUDGET_COUNTDOWN.set(countdown - 1);
@@ -142,7 +142,7 @@ pub(super) fn matcher_call_budget_exhausted() -> bool {
 
 /// `matcher_budget_exhausted` for one step of a loop: polls every `STEP_CHECK_INTERVAL` steps
 /// counted across calls, so many short loops spend what one long loop of their steps does.
-pub(super) fn step_budget_exhausted() -> bool {
+pub fn step_budget_exhausted() -> bool {
     let countdown = STEP_COUNTDOWN.get();
     if countdown > 0 {
         STEP_COUNTDOWN.set(countdown - 1);
@@ -157,11 +157,11 @@ pub(super) fn step_budget_exhausted() -> bool {
 
 /// What an allowance run inside this thread's budget used (`with_allowance`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Allowance {
+pub struct Allowance {
     /// Whether a poll found the allowance exhausted (or the workspace closed, or the clock passed).
-    pub(super) exhausted: bool,
+    pub exhausted: bool,
     /// The units its polls spent, at most its size.
-    pub(super) spent: u64,
+    pub spent: u64,
 }
 
 /// Runs `run` under an allowance of `units` polls of its own, inside this thread's budget: the
@@ -169,7 +169,7 @@ pub(super) struct Allowance {
 /// deadline still end it. Under a wall-clock budget (the inline fast path) the allowance is that
 /// deadline alone. Returns `run`'s result and what the allowance used. Without a budget, `run`
 /// runs unbounded.
-pub(super) fn with_allowance<T>(units: u64, run: impl FnOnce() -> T) -> (T, Allowance) {
+pub fn with_allowance<T>(units: u64, run: impl FnOnce() -> T) -> (T, Allowance) {
     let Some(outer) = MATCH_BUDGET.with_borrow(Option::clone) else {
         return (
             run(),
@@ -235,7 +235,7 @@ pub(super) struct MatchDeadline {
     /// wall-clock deadline passed (`MatchBudget::interrupted`); shared with them.
     interrupted_seen: Arc<AtomicBool>,
     /// Writes of `spent`, shared by every clone.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     spent_stores: Arc<std::sync::atomic::AtomicUsize>,
 }
 
@@ -248,7 +248,7 @@ impl MatchDeadline {
             spent: Arc::new(AtomicBool::new(false)),
             nested: Arc::default(),
             interrupted_seen: Arc::default(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             spent_stores: Arc::default(),
         }
     }
@@ -272,7 +272,7 @@ impl MatchDeadline {
             self.interrupted_seen.store(true, Ordering::Relaxed);
         }
         self.spent.store(true, Ordering::Relaxed);
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         self.spent_stores.fetch_add(1, Ordering::Relaxed);
         true
     }
@@ -285,7 +285,7 @@ impl MatchDeadline {
 
 /// An evaluation's suspended budget. Resuming restores its exact poll countdowns.
 #[allow(dead_code)]
-pub(super) struct Context {
+pub struct Context {
     deadline: Option<MatchDeadline>,
     matcher: u32,
     steps: u32,
@@ -293,26 +293,26 @@ pub(super) struct Context {
 // P's suspended budgets, for its admission loop (outside the module tree until wired).
 #[allow(dead_code)]
 impl Context {
-    pub(super) fn capture() -> Self {
+    pub fn capture() -> Self {
         Self {
             deadline: MATCH_BUDGET.with_borrow(Clone::clone),
             matcher: BUDGET_COUNTDOWN.get(),
             steps: STEP_COUNTDOWN.get(),
         }
     }
-    pub(super) fn work(closed: &Arc<AtomicBool>, units: u64) -> Self {
+    pub fn work(closed: &Arc<AtomicBool>, units: u64) -> Self {
         Self {
             deadline: Some(MatchDeadline::new(closed, Limit::Work(units))),
             matcher: 0,
             steps: 0,
         }
     }
-    pub(super) fn observed(&self) -> bool {
+    pub fn observed(&self) -> bool {
         self.deadline
             .as_ref()
             .is_some_and(|d| d.observed() || d.nested.load(Ordering::Relaxed))
     }
-    pub(super) fn run<T>(&mut self, run: impl FnOnce() -> T) -> T {
+    pub fn run<T>(&mut self, run: impl FnOnce() -> T) -> T {
         let old = Self::capture();
         MATCH_BUDGET.set(self.deadline.clone());
         BUDGET_COUNTDOWN.set(self.matcher);
@@ -332,17 +332,17 @@ impl Context {
     }
 }
 
-pub(super) struct MatchBudget {
+pub struct MatchBudget {
     deadline: MatchDeadline,
 }
 impl MatchBudget {
     /// A budget of `units` polls: the same work runs out at the same poll, on any machine and load.
-    pub(super) fn work(closed: &Arc<AtomicBool>, units: u64) -> Self {
+    pub fn work(closed: &Arc<AtomicBool>, units: u64) -> Self {
         Self::install(MatchDeadline::new(closed, Limit::Work(units)))
     }
 
     #[allow(dead_code)]
-    pub(super) fn resume(context: Context) -> Self {
+    pub fn resume(context: Context) -> Self {
         let deadline = context.deadline.expect("prepared file budget");
         MATCH_BUDGET.set(Some(deadline.clone()));
         BUDGET_COUNTDOWN.set(context.matcher);
@@ -351,7 +351,7 @@ impl MatchBudget {
     }
 
     /// A wall-clock budget, for a fast path whose miss only falls back.
-    pub(super) fn until(closed: &Arc<AtomicBool>, duration: Duration) -> Self {
+    pub fn until(closed: &Arc<AtomicBool>, duration: Duration) -> Self {
         Self::install(MatchDeadline::new(
             closed,
             Limit::Until(Instant::now() + duration),
@@ -367,13 +367,13 @@ impl MatchBudget {
 
     /// Whether a poll found the budget, or an allowance run inside it, exhausted: an evaluation
     /// that finished without one is complete.
-    pub(super) fn observed(&self) -> bool {
+    pub fn observed(&self) -> bool {
         self.deadline.observed() || self.deadline.nested.load(Ordering::Relaxed)
     }
 
     /// Whether a poll found the workspace closed or the wall-clock deadline passed: what cut the
     /// evaluation short depends on when it ran, not on the file, so it is not the file's verdict.
-    pub(super) fn interrupted(&self) -> bool {
+    pub fn interrupted(&self) -> bool {
         self.deadline.interrupted_seen.load(Ordering::Relaxed)
     }
 
@@ -381,18 +381,18 @@ impl MatchBudget {
     /// index, the call summary), was found spent; an allowance running out inside it is not. How
     /// much shared work an evaluation does depends on what an earlier one stored (a stored tape
     /// skips the parse), so running out of it is not the file's verdict either.
-    pub(super) fn shared_spent(&self) -> bool {
+    pub fn shared_spent(&self) -> bool {
         self.deadline.observed()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     /// Units the polls have spent so far.
-    pub(super) fn spent(&self) -> u64 {
+    pub fn spent(&self) -> u64 {
         self.deadline.work.load(Ordering::Relaxed)
     }
 
-    #[cfg(test)]
-    pub(super) fn expired_for_test() -> Self {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn expired_for_test() -> Self {
         Self::work(&Arc::new(AtomicBool::new(false)), 0)
     }
 }
@@ -403,7 +403,7 @@ impl Drop for MatchBudget {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

@@ -200,7 +200,7 @@ impl KeptStrata for Kept<'_> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::logic::{native, plan, rr};
     use crate::code_rule_dsl::logic::plan::lower;
@@ -364,11 +364,12 @@ pub(in crate::code_rule_dsl) fn part_wanted() -> bool {
 /// Each derived relation of `prog` and the inputs (of `inputs`) it is derived from, through the strata it reads.
 fn cones(prog: &crate::code_rule_dsl::logic::front::Program, sccs: &[std::collections::BTreeSet<String>], inputs: &std::collections::HashSet<&str>) -> HashMap<String, std::collections::BTreeSet<String>> {
     let mut out: HashMap<String, std::collections::BTreeSet<String>> = HashMap::new();
-    for scc in sccs {
+    let by_stratum = crate::code_rule_dsl::logic::front::rules_by_stratum(prog, sccs);
+    for (scc, rules) in sccs.iter().zip(&by_stratum) {
         let mut cone = std::collections::BTreeSet::new();
-        let reads = prog.rules.iter().filter(|r| scc.contains(&r.head.rel)).flat_map(|r| &r.body).filter_map(|l| l.atom().map(|a| a.rel.clone()));
+        let reads = rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom().map(|a| a.rel.to_string()));
         let natives = scc.iter().filter_map(|r| prog.natives.get(r)).flat_map(|n| n.reads().into_iter().map(str::to_owned).collect::<Vec<_>>());
-        let tree = prog.rules.iter().filter(|r| scc.contains(&r.head.rel)).any(|r| r.body.iter().any(|l| matches!(l, crate::code_rule_dsl::logic::front::Literal::Nearest { .. })));
+        let tree = rules.iter().any(|r| r.body.iter().any(|l| matches!(l, crate::code_rule_dsl::logic::front::Literal::Nearest { .. })));
         let tree = tree.then(|| super::retain::TREE.iter().map(|r| (*r).to_owned()).collect::<Vec<_>>()).unwrap_or_default();
         for r in reads.chain(natives).chain(tree) {
             if scc.contains(&r) {
@@ -401,7 +402,7 @@ pub(in crate::code_rule_dsl) fn load(
     // The fact space of the corpus at `root` that a maintained cross-file part is kept in.
     let space = part_space(root, "cross-maintained");
     let (sccs, _) = crate::code_rule_dsl::logic::front::strata(prog).map_err(|e| super::Error::Plan(e.to_string()))?;
-    let by_stratum: Vec<Vec<&crate::code_rule_dsl::logic::front::Rule>> = sccs.iter().map(|scc| prog.rules.iter().filter(|r| scc.contains(&r.head.rel)).collect()).collect();
+    let by_stratum: Vec<Vec<&crate::code_rule_dsl::logic::front::Rule>> = crate::code_rule_dsl::logic::front::rules_by_stratum(prog, &sccs);
     let input_names: std::collections::HashSet<&str> = inputs.iter().map(|(r, _)| r.as_str()).collect();
     let cones = cones(prog, &sccs, &input_names);
     let mut frames: HashMap<String, (FrameRel, Option<FrameStored>)> = crate::code_rule_dsl::logic::plan::identities(prog, &sccs, &by_stratum)

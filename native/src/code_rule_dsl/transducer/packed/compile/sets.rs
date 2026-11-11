@@ -582,7 +582,7 @@ fn ones(words: &[u64]) -> impl Iterator<Item = u32> + '_ {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

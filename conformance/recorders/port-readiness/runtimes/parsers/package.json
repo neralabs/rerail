@@ -1,9 +1,0 @@
-{
-  "name": "nera-rule-discovery-second-opinion-parsers",
-  "private": true,
-  "description": "Independent parsers Gate 5 asks for a second opinion on upstream test files the engine cannot parse: the current TypeScript compiler and Babel's TypeScript parser.",
-  "dependencies": {
-    "@babel/parser": "7.28.5",
-    "typescript": "5.9.3"
-  }
-}

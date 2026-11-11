@@ -2,9 +2,9 @@
 // reach, keyed by symbols. It reads module-level statements, imports, class headers and the definitions in class
 // bodies, and annotations as written; it never reads a function's body.
 //
-// The workspace's files seed it. Each import is resolved by python/modules.rr, and a library module it resolves to
-// is loaded as a document inside this phase's fixed point (decision 0065 §2a): the loaded document's imports are
-// resolved in turn, so the phase ends when the import frontier is closed.
+// Its documents are the workspace's files and the libraries their imports reach, both phase 1's (`sources.rr`): the
+// imports were resolved there, to their fixed point, and the libraries loaded. Reading `sources__library` takes the
+// libraries as this phase's documents; it loads nothing itself.
 //
 // What it hands on (`.export`) names definitions by symbol, never by node: a module by its dotted name, a definition
 // in it by `module.name`, a definition in a class by `module.Class.name`, and the k-th redefinition of a name in one
@@ -20,7 +20,6 @@
 // ```
 
 #include "core.rr"
-#include "python/modules.rr"
 #include "python/conditions.rr"
 
 .phase struct
@@ -197,6 +196,8 @@ tvfn(e) :- kind(e, "attribute"), field(e, "attribute", a), text(a, "TypeVar").
 // module_file(m, p): the file module m was read from, a workspace file or the library file its import resolved to.
 .decl module_file(m: symbol, p: symbol)
 module_file(q, p) :- modnode(d, m), modname(m, q), doc(d, p, _).
+.decl sources__library(p: symbol, m: symbol, g: symbol, c: symbol)
+module_file(q, p) :- sources__library(p, q, _, _).
 // at(s, p, l): where definition s is, path and line: a position, kept out of freshness (`.positions`).
 .decl at(s: symbol, p: symbol, l: number)
 at(q, p, l) :- sym(n, q), docof(n, d), doc(d, p, _), line(n, l).

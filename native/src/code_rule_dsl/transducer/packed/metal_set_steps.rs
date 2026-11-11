@@ -13,7 +13,7 @@ const WIDTH: u64 = 64;
 
 /// A step over slots: a slot is the space's nodes, a bit each.
 #[derive(Clone, Copy, Debug)]
-pub(in crate::code_rule_dsl) enum SetStep {
+pub enum SetStep {
     Clear { out: u32 },
     /// Every node of the space.
     Fill { out: u32 },
@@ -78,7 +78,7 @@ fn insert(bits: &[u64], from: usize, words: &mut [u64]) {
 
 /// Runs `steps` over `slots` slots of the space of `files` ((first node, node count) each) and
 /// `len` nodes, slots `leaves` written first; returns the words of each of `outputs`.
-pub(in crate::code_rule_dsl) fn run(
+pub fn run(
     files: &[(u32, u32)],
     len: u32,
     slots: usize,

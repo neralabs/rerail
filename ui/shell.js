@@ -5,9 +5,11 @@
  * pass and the views (`connectShell`) and starts it (`startRouting`).
  */
 import { h } from "./dom.js";
+import { failed } from "./format.js";
 import { settingWrites } from "./settings-writes.js";
 import { attachmentWrites } from "./attachments.js";
-import { data, ui, panelRuleId, readScope, setScope, repoName } from "./state.js";
+import { data, ui, panelRuleId, readScope, setScope, repoName, packById, packRuleOf, isAttached } from "./state.js";
+import { isWorktreePack } from "./derive.js";
 import { refreshNow, changeScope } from "./poll.js";
 import { bootRoute, parseRoute, repositoryUrl, urlFor } from "./routes.js";
 import { resetPanelScroll } from "./render/panel.js";
@@ -72,12 +74,12 @@ export function hideToast() {
 
 /** Copy `text`; where the clipboard is blocked, select it in `field` (when given) and copy that. */
 export function copyText(text, field, message) {
-  const ok = () => toast(message ?? "Copied. Paste it into a coding agent session.");
+  const ok = () => toast(message ?? "Copied. Paste it into your coding agent.");
   const manual = () => {
     if (field) { field.focus(); field.select(); }
     let done = false;
     try { done = document.execCommand("copy"); } catch { /* clipboard blocked; the field is selected */ }
-    done ? ok() : toast("Select the text and copy it.");
+    done ? ok() : toast(field ? "Couldn’t copy. The text is selected; copy it yourself." : `Couldn’t copy. Copy ${text} yourself.`);
   };
   if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(ok, manual); else manual();
 }
@@ -97,19 +99,23 @@ export function applyTheme(theme) {
   invalidate();
 }
 
-/** A Load more button: run its load, then show what it brought; a failure is a toast, the button stays. */
-export async function loadMore(load) {
-  try { await load(); } catch (error) { toast(`Could not load more: ${error.message}`); }
+/** A Load more button: run its load, then show what it brought; a failure is a toast naming `what`, the button stays. */
+export async function loadMore(load, what) {
+  try { await load(); } catch (error) { toast(failed(`Couldn’t load more ${what}`, error)); }
   invalidate();
 }
 
 /* ---------- writes ---------- */
 
 /**
- * Who a change belongs to: always the repository (Oct 16: no worktree-or-repository choice), also when the URL names
- * a worktree. The writers still take an owner, so a test can write as a worktree.
+ * Who a change belongs to: the repository (Oct 16: no worktree-or-repository choice), also when the URL names a
+ * worktree. A change to the worktree's own rules (`packId` the pack of `.rerail/rules`, which no other checkout has)
+ * belongs to this worktree. The writers still take an owner, so a test can write as a worktree.
  */
-export const changeOwner = () => "repository";
+export const changeOwner = packId => {
+  const pack = packId === undefined ? undefined : packById(packId);
+  return pack !== undefined && isWorktreePack(pack) && data.checkout?.checkoutPath !== undefined ? "checkout" : "repository";
+};
 
 /**
  * The page's writes: a rule's or a pack's settings, written as `changeOwner()` (`settings-writes.js`), and rule
@@ -145,19 +151,22 @@ export function closePanel() {
 /* ---------- navigation ---------- */
 
 /**
- * Show `route` (`routes.js`; `view` set): another view closes the sheet and polls for the new view's data now. The
- * view's `enter(route)` runs when it is entered, and again when the route carries a History rule or a session.
+ * Show `route` (`routes.js`; `view` set): another view closes the sheet and polls for the new view's data now; leaving
+ * the catalog forgets the packs it removed. The view's `enter(route)` runs when it is entered, and again when the
+ * route carries a History rule or chip, or a session.
  */
 export function go(route) {
   const moved = route.view !== ui.view || (route.view === "pack" && route.pack !== ui.pack);
   if (moved) {
     closePanel();
+    if (ui.view === "packs") ui.removedPacks.clear();
     ui.view = route.view;
     ui.pack = route.view === "pack" ? route.pack : null;
     ui.removeAsk = null;
     window.scrollTo(0, 0);
   }
-  if (moved || route.filterRule !== undefined || route.session !== undefined) hooks.enter(route);
+  const carries = route.filterRule !== undefined || route.outcome !== undefined || route.session !== undefined || route.sessionFilter !== undefined;
+  if (moved || carries) hooks.enter(route);
   invalidate();
   if (moved) refreshNow();
 }
@@ -167,10 +176,10 @@ let pendingSession = null;
 /** A `#rule/<id>` link, checked once the first rules list is in. */
 let pendingRule = null;
 
-/** Mirror the page into the URL (`replaceState`): the view, its pack or rule, the open rule sheet and the selected session. */
+/** Mirror the page into the URL (`replaceState`): the view, its pack, rule or chip, the open rule sheet and the selected session. */
 export function syncUrl() {
   if (pendingSession !== null) return; // the deep link is still to be applied; a render must not overwrite it
-  const route = { view: ui.view, pack: ui.pack ?? undefined, filterRule: ui.actRule ?? undefined, rule: panelRuleId() ?? undefined };
+  const route = { view: ui.view, pack: ui.pack ?? undefined, filterRule: ui.actRule ?? undefined, outcome: ui.histOutcome, sessionFilter: ui.sessFilter, rule: panelRuleId() ?? undefined };
   const href = urlFor(location.href, route, ui.view === "sessions" ? ui.selectedSession : null);
   if (href !== location.href) history.replaceState(null, "", href);
 }
@@ -179,6 +188,7 @@ export function syncUrl() {
 function resetRepositoryView() {
   ui.welcomeDismissed = false;
   ui.actRule = null;
+  ui.histOutcome = "all";
   pendingRule = null;
   closePanel();
 }
@@ -198,7 +208,9 @@ export function showRepository(key) {
 function checkRule(id) {
   if (data.rules.has(id)) return;
   if (panelRuleId() === id) closePanel();
-  toast(`The rule ${id} is not in ${repoName() || "this repo"}`);
+  const pack = packRuleOf(id)?.pack;
+  if (pack && !isAttached(pack)) toast(`${pack.name} pack is not added.`, { action: { label: "Open pack", act: "viewpack", id: pack.id } });
+  else toast(`${id} isn’t a rule in ${repoName() || "this repo"}.`);
 }
 
 /** A route's rule link: its sheet, checked against the rules once they are in; a route without one closes a rule sheet. */
@@ -229,16 +241,38 @@ function onPopState() {
   invalidate();
 }
 
-/** After each poll: deep links apply once the first lists are in; then the current view's `afterPoll`. */
+/**
+ * The URL names no repository and Rerail has seen exactly one: show it. A coding agent always opens the dashboard
+ * on a repository; a plain browser or bookmark does not, and with one repository there is nothing to ask. The URL is
+ * replaced, not pushed, so Back leaves the page rather than landing on the bare URL to be picked again; the hash's
+ * view and rule link are kept. `true` when it switched (its poll is on its way).
+ */
+function adoptOnlyRepository() {
+  if (ui.scope !== null || !data.loaded || data.repositories.length !== 1) return false;
+  const url = new URL(repositoryUrl(location.href, data.repositories[0].repositoryKey));
+  if (location.hash !== "") url.hash = location.hash;
+  history.replaceState(null, "", url.href);
+  const route = parseRoute(location.hash);
+  changeScope(readScope(location.search));
+  hooks.enter({ ...route, view: ui.view });
+  applyRule(route);
+  return true;
+}
+
+/** The deep links waiting on the first lists: a rule link is checked, a session link entered; else the view's `afterPoll`. */
+function applyPendingLinks() {
+  if (pendingRule !== null) { const id = pendingRule; pendingRule = null; checkRule(id); }
+  if (pendingSession === null) { hooks.afterPoll(); return; }
+  const session = pendingSession;
+  pendingSession = null;
+  if (ui.view === "sessions") hooks.enter({ view: "sessions", session });
+}
+
+/** After each poll: the only repository is adopted; deep links apply once the first lists are in; then the view's `afterPoll`. */
 export function afterPoll() {
   invalidate();
-  if (!data.loaded || ui.scope === null || data.missing) return;
-  if (pendingRule !== null) { const id = pendingRule; pendingRule = null; checkRule(id); }
-  if (pendingSession !== null) {
-    const session = pendingSession;
-    pendingSession = null;
-    if (ui.view === "sessions") hooks.enter({ view: "sessions", session });
-  } else hooks.afterPoll();
+  if (adoptOnlyRepository() || !data.loaded || ui.scope === null || data.missing) return;
+  applyPendingLinks();
 }
 
 /** Fix the scope and view from the URL before the first render, so a deep link never flashes Overview; then follow it. */

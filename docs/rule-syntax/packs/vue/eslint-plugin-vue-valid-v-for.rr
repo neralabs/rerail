@@ -63,11 +63,14 @@ key_uses(k, a) :- checked(a, e), vdir(e, k, "bind", "key"), tref(_, x, k), vfor_
 slot(a, p, k) :- vfor_alias(a, 0, p), commas(p, k).
 slot(a, p, n + k) :- slot(a, q, n), vfor_pattern(a, l), child(l, q, i), child(l, p, i + 1), commas(p, k).
 .decl commas(p: node, k: number)
-commas(p, k) :- vfor_alias(_, _, p), k = count : { gap(p, t), text(t, ",") }.
-// gap(p, t): token t lies between p and the item before it (or the list's opening bracket).
-.decl gap(p: node, t: span)
-gap(p, t) :- vfor_pattern(_, l), child(l, p, 0), first_token(l, s), token_after(s, t), !first_token(p, t).
-gap(p, t) :- vfor_pattern(_, l), child(l, q, i), child(l, p, i + 1), last_token(q, s), token_after(s, t),
-    !first_token(p, t).
-gap(p, u) :- gap(p, t), token_after(t, u), !first_token(p, u).
+// The commas in the source before p (a single separator the tape leaves out), and the stored ones between p and the
+// item before it (or the list's start): a gap holding a hole is not the implied word, so the tape keeps its commas.
+commas(p, k) :- vfor_alias(_, _, p), item_from(p, l, lo), node(_, p, _, ps, _), structural_before(p, g),
+    x = strlen(g) - strlen(@replace_all(g, ",", "")), y = count : { list_comma(l, s), s >= lo, s < ps }, k = x + y.
+.decl item_from(p: node, l: node, lo: number)
+item_from(p, l, lo) :- vfor_pattern(_, l), child(l, p, 0), node(_, l, _, lo, _).
+item_from(p, l, lo) :- vfor_pattern(_, l), child(l, q, i), child(l, p, i + 1), node(_, q, _, _, lo).
+.stored list_comma "a gap holding a hole is not the implied word, so the tape keeps its commas"
+.decl list_comma(l: node, s: number)
+list_comma(l, s) :- vfor_pattern(_, l), token(l, _, ",", s, _).
 

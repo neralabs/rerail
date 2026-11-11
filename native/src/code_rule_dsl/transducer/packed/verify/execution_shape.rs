@@ -103,7 +103,7 @@ pub(super) struct ProgramRequirements {
 
 /// Prove complete register work, rather than trusting the catalog's coarse class.
 /// Paths contain instruction positions, so shared signatures still load each Program's operands.
-pub(super) fn register_program_paths(program: &Program) -> Option<Vec<Vec<usize>>> {
+pub fn register_program_paths(program: &Program) -> Option<Vec<Vec<usize>>> {
     register_paths_for(&program.words, program.tree_sitter_query, |operand| {
         program
             .value_programs
@@ -143,7 +143,7 @@ pub(super) fn register_paths_for_with_children(
 
 pub(super) const REGISTER_VISIT_LIMIT: usize = 4096;
 
-pub(super) fn register_paths(words: &[u32]) -> Option<Vec<Vec<usize>>> {
+pub fn register_paths(words: &[u32]) -> Option<Vec<Vec<usize>>> {
     register_paths_with_children(words, &|_, _| false)
 }
 
@@ -702,7 +702,7 @@ pub(super) fn program_requirements(program: &Program) -> ProgramRequirements {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::transducer::packed::{
         CHILD, DESCEND, NEXT, PARENT, RESTORE_CURSOR, SAVE_CURSOR, word,

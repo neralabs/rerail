@@ -1,7 +1,7 @@
 //! Bounded SQLite input batches shared by AST evidence and reference edges.
 use super::{invalid, quote, sql_error};
 use napi::Result;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use rusqlite::types::Value;
 use rusqlite::{Connection, params_from_iter};
 use std::sync::{
@@ -215,7 +215,7 @@ fn write_rows<R: IntoIterator<Item = I>, I: rusqlite::ToSql>(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]
@@ -363,7 +363,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod borrowed_tests {
+pub mod borrowed_tests {
     use super::*;
     #[test]
     fn borrowed_unicode_and_null_inputs_survive_chunking_and_source_release() {

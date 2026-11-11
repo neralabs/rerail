@@ -12,6 +12,191 @@
   },
   "clauses": [
     {
+      "id": "superfluous-else-raise-elif",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "analysed-function": {
+              "kind": "function_definition",
+              "all": [
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "class_definition"
+                          }
+                        ]
+                      },
+                      "kind": "yield"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "block",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "return_statement"
+                      },
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "return_statement"
+                              },
+                              {
+                                "kind": "comment"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "none-literal": {
+              "any": [
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "none-literal"
+                  }
+                }
+              ]
+            },
+            "value-return": {
+              "kind": "return_statement",
+              "has": {
+                "stopBy": "neighbor",
+                "regex": "(?s).",
+                "not": {
+                  "any": [
+                    {
+                      "regex": "^return$"
+                    },
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "matches": "none-literal"
+                    }
+                  ]
+                }
+              }
+            },
+            "own-return": {
+              "kind": "return_statement"
+            },
+            "has-result": {
+              "has": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    }
+                  ]
+                },
+                "matches": "value-return"
+              }
+            }
+          },
+          "rule": {
+            "kind": "elif_clause",
+            "not": {
+              "follows": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "kind": "elif_clause"
+                  },
+                  {
+                    "kind": "else_clause"
+                  }
+                ]
+              }
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "if_statement",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "block",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "raise_statement",
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "kind": "return_statement"
+                        },
+                        {
+                          "kind": "continue_statement"
+                        },
+                        {
+                          "kind": "break_statement"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              "inside": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    }
+                  ]
+                },
+                "kind": "function_definition",
+                "all": [
+                  {
+                    "matches": "analysed-function"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RET506",
+        "message": "Unnecessary `elif` after `raise` statement",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RET506"
+            ]
+          }
+        }
+      }
+    },
+    {
       "id": "superfluous-else-raise",
       "forbid": {
         "ast": {
@@ -120,75 +305,64 @@
             }
           },
           "rule": {
-            "regex": "^(?<BRANCH>elif|else)$",
+            "kind": "else_clause",
+            "not": {
+              "follows": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "kind": "elif_clause"
+                  },
+                  {
+                    "kind": "else_clause"
+                  }
+                ]
+              }
+            },
             "inside": {
               "stopBy": "neighbor",
-              "any": [
-                {
-                  "kind": "elif_clause"
-                },
-                {
-                  "kind": "else_clause"
-                }
-              ],
-              "not": {
-                "follows": {
-                  "stopBy": "end",
-                  "any": [
-                    {
-                      "kind": "elif_clause"
-                    },
-                    {
-                      "kind": "else_clause"
+              "kind": "if_statement",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "block",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "raise_statement",
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "kind": "return_statement"
+                        },
+                        {
+                          "kind": "continue_statement"
+                        },
+                        {
+                          "kind": "break_statement"
+                        }
+                      ]
                     }
-                  ]
+                  }
                 }
               },
               "inside": {
-                "stopBy": "neighbor",
-                "kind": "if_statement",
-                "has": {
-                  "stopBy": "neighbor",
-                  "kind": "block",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "kind": "raise_statement",
-                    "not": {
-                      "follows": {
-                        "stopBy": "end",
-                        "any": [
-                          {
-                            "kind": "return_statement"
-                          },
-                          {
-                            "kind": "continue_statement"
-                          },
-                          {
-                            "kind": "break_statement"
-                          }
-                        ]
-                      }
-                    }
-                  }
-                },
-                "inside": {
-                  "stopBy": {
-                    "any": [
-                      {
-                        "kind": "function_definition"
-                      },
-                      {
-                        "kind": "class_definition"
-                      }
-                    ]
-                  },
-                  "kind": "function_definition",
-                  "all": [
+                "stopBy": {
+                  "any": [
                     {
-                      "matches": "analysed-function"
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
                     }
                   ]
-                }
+                },
+                "kind": "function_definition",
+                "all": [
+                  {
+                    "matches": "analysed-function"
+                  }
+                ]
               }
             }
           }
@@ -197,7 +371,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "RET506",
-        "message": "Unnecessary `$BRANCH` after `raise` statement",
+        "message": "Unnecessary `else` after `raise` statement",
         "suppress": {
           "noqa": {
             "codes": [

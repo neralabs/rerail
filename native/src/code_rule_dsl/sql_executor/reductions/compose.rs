@@ -13,7 +13,7 @@ impl Retained {
             .sum::<usize>()
             + 6
     }
-    pub(in crate::code_rule_dsl::sql_executor) fn declare_phase(
+    pub fn declare_phase(
         &self,
         db: &rusqlite::Connection,
         objects: &mut Vec<(String, bool)>,
@@ -85,7 +85,7 @@ impl Retained {
         Ok(())
     }
 
-    pub(in crate::code_rule_dsl::sql_executor) fn append_phase(
+    pub fn append_phase(
         &self,
         w: &mut Work<'_>,
         changes: &BTreeMap<String, Delta>,

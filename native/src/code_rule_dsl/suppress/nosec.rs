@@ -12,6 +12,18 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
+/// Bandit's `# nosec` comments: the test ids a list must name (or name none).
+pub struct Suppressions;
+
+impl super::SuppressionKind for Suppressions {
+    const KEY: &'static str = "nosec";
+    const DETAIL: &'static str = "nosec: nosec comments are Bandit's";
+    type Spec = Vec<String>;
+    fn spec(value: &serde_json::Value, at: &str) -> napi::Result<Vec<String>> {
+        spec(value, at)
+    }
+}
+
 /// `nosec.codes`: the Bandit test ids a `# nosec` list must name (or name none) to suppress the
 /// violation.
 pub(super) fn spec(nosec: &Value, at: &str) -> napi::Result<Vec<String>> {
@@ -152,13 +164,13 @@ pub(crate) fn parse(comment: &str) -> Option<Vec<&'static str>> {
 /// A Python file's comments, by line: Bandit's `nosec_lines` (`None` for a comment that is no
 /// `# nosec`).
 #[derive(Debug, Default)]
-pub(crate) struct NosecIndex {
+pub struct NosecIndex {
     lines: BTreeMap<usize, Option<Vec<&'static str>>>,
 }
 
 impl NosecIndex {
     /// Reads every comment of the file `root` is the root of.
-    pub(crate) fn read<D: Doc>(root: &Node<'_, D>, source: &str, lines: &LineTable) -> Self {
+    pub fn read<D: Doc>(root: &Node<'_, D>, source: &str, lines: &LineTable) -> Self {
         let mut index = Self::default();
         for node in root.dfs() {
             if node.kind() == "comment" {
@@ -172,7 +184,7 @@ impl NosecIndex {
     }
 
     /// Each line holding a `# nosec` comment, with the tests it names (none: every test).
-    pub(crate) fn directives(&self) -> impl Iterator<Item = (usize, &[&'static str])> {
+    pub fn directives(&self) -> impl Iterator<Item = (usize, &[&'static str])> {
         self.lines.iter().filter_map(|(&line, tests)| Some((line, tests.as_deref()?)))
     }
 
@@ -209,7 +221,7 @@ impl NosecIndex {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::lines::Terminators;
 

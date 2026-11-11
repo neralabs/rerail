@@ -64,6 +64,14 @@ A machine-local, stable identity grouping one or more explicit repository identi
 
 A repository has a stable local identity stored in Git's common metadata directory (`rerail-repository-id`). Its linked worktrees are separate checkouts that inherit that identity; clones and forks receive new identities and require explicit project assignment.
 
+## Worktree Rules
+
+The rule documents in one checkout's `.rerail/rules/` folder, read from its working tree as the rule pack `worktree`. Only that checkout's catalog holds them, and they are present for the whole checkout without a rule attachment; no other checkout of the repository runs them.
+
+## Rule Approval
+
+A person's approval of a rule's content on this machine: a rule by its id and document digest, a pack by its package name and the digest of its version. A rule Rerail did not publish (a library rule, a worktree rule, a rule of a third party's or locally installed pack) runs in Log until its content is approved; an edit is new content.
+
 ## Rerail Database
 
 The one user-level SQLite file (`$RERAIL_HOME/rerail.sqlite`, normally `~/.rerail/rerail.sqlite`) holding the rule catalog and every repository's execution history.

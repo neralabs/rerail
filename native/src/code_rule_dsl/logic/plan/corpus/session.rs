@@ -27,7 +27,7 @@ pub(in crate::code_rule_dsl) struct Session {
     pub(super) store: ContentStore,
     /// In a test build, the thread that started the session, the only one whose runs are its: the other tests run
     /// beside it, in the same process, and are no session's.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     thread: std::thread::ThreadId,
     pub(super) memo: memo::Held,
     /// The cross-file part as the last run left it (decision 0077): an edit runs the strata whose inputs changed. One
@@ -57,7 +57,7 @@ pub(super) fn generation() -> Option<u64> {
 static SESSION: Mutex<Option<Session>> = Mutex::new(None);
 
 /// Starts this process's session, its store in `dir`; one already started is kept.
-pub(in crate::code_rule_dsl) fn start(dir: &Path) -> std::result::Result<(), String> {
+pub fn start(dir: &Path) -> std::result::Result<(), String> {
     let mut session = SESSION.lock().map_err(|_| "the session is poisoned".to_owned())?;
     if session.is_some() {
         return Ok(());
@@ -75,15 +75,15 @@ pub(in crate::code_rule_dsl) fn start(dir: &Path) -> std::result::Result<(), Str
         generation: GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         connections: Arc::new(parking_lot::Mutex::new(super::connections::Connections::kept())),
         own: Default::default(),
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         thread: std::thread::current().id(),
     });
     Ok(())
 }
 
 /// Ends this process's session: later runs are a fresh process's.
-#[cfg(test)]
-pub(in crate::code_rule_dsl) fn stop() {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn stop() {
     *SESSION.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
 }
 
@@ -91,7 +91,7 @@ static FULL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(
 
 /// Runs `run` as a full run: as a process without a session would, compiling the program and evaluating every file,
 /// so its profile shows every step (`logic --full`). The session is left as it was.
-pub(in crate::code_rule_dsl) fn full<T>(run: impl FnOnce() -> T) -> T {
+pub fn full<T>(run: impl FnOnce() -> T) -> T {
     struct Reset;
     impl Drop for Reset {
         fn drop(&mut self) {
@@ -110,9 +110,9 @@ pub(super) fn current() -> Held {
         return Held(None, true);
     }
     let held = SESSION.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let skip = held.as_ref().is_some_and(|s| s.thread != std::thread::current().id());
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-hooks")))]
     let skip = false;
     Held(Some(held), skip || FULL.load(std::sync::atomic::Ordering::Relaxed))
 }
@@ -130,15 +130,15 @@ impl Held {
     }
     /// Whether a run on this thread is the session's: always, outside tests.
     fn ours(_session: &Session) -> bool {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         return _session.thread == std::thread::current().id();
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-hooks")))]
         true
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::typing::file_local::Binding;
 
@@ -155,7 +155,7 @@ mod tests {
         std::fs::create_dir_all(&src).unwrap();
         std::fs::write(src.join("a.py"), "import hashlib\nhashlib.md5(b'x')\n").unwrap();
         std::fs::write(src.join("b.py"), "import pickle\npickle.loads(b'x')\n").unwrap();
-        let rule = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/bandit-b301-pickle.rr");
+        let rule = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../docs/rule-syntax/packs/python/bandit-b301-pickle.rr");
         let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
         let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
         let findings = || std::fs::read_to_string(out.join("violation.csv")).unwrap();
@@ -187,7 +187,7 @@ mod tests {
         std::fs::write(src.join("pkg/loader.py"), "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n").unwrap();
         std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
         std::fs::write(src.join("other.py"), "import json\njson.loads('1')\n").unwrap();
-        let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+        let rules = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../docs/rule-syntax/packs/python");
         let programs: Vec<String> = ["bandit-b301-pickle.rr", "bandit-b307-eval.rr"].iter().map(|r| crate::code_rule_dsl::tools::flatten(&rules.join(r)).unwrap()).collect();
         let texts: Vec<&str> = programs.iter().map(String::as_str).collect();
         let run = || super::super::run_all(&texts, &src, &out, "program", Binding::Cpu, 1 << 18).unwrap();
@@ -472,23 +472,32 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
         cross_file_aggregate();
     }
 
-    /// Decision 0090 §4: every maintained stratum whose inputs changed derived again instead (no θ, no floor). Its
-    /// relations and their deltas are what the strata above read, maintained or not, so the findings stay a full
-    /// run's: over recursion, counting's supports and aggregates.
+    /// Decision 0090 §4: every maintained stratum whose inputs changed derived again instead (no θ, no floor, no
+    /// pricing). Its relations and their deltas are what the strata above read, maintained or not, so the findings
+    /// stay a full run's: over recursion, counting's supports and aggregates.
     #[test]
     fn a_session_derives_again_the_strata_its_deltas_outgrow() {
+        derive_again_with(&[("RERAIL_AGAIN_THETA", "0"), ("RERAIL_AGAIN_MIN", "0"), ("RERAIL_AGAIN_PRICED", "off")]);
+    }
+
+    /// §4 with its pricing: past θ (here every stratum whose inputs changed), each stratum takes the form priced
+    /// cheaper, so some are maintained and some derived again in one run; the findings stay a full run's.
+    #[test]
+    fn a_session_derives_again_only_the_strata_priced_cheaper_so() {
+        derive_again_with(&[("RERAIL_AGAIN_THETA", "0"), ("RERAIL_AGAIN_MIN", "0")]);
+    }
+
+    fn derive_again_with(vars: &[(&str, &str)]) {
         let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         unsafe {
-            std::env::set_var("RERAIL_AGAIN_THETA", "0");
-            std::env::set_var("RERAIL_AGAIN_MIN", "0");
+            vars.iter().for_each(|(k, v)| std::env::set_var(k, v));
         }
         let run = std::panic::catch_unwind(|| {
             recursive_cross_file_stratum();
             cross_file_aggregate();
         });
         unsafe {
-            std::env::remove_var("RERAIL_AGAIN_THETA");
-            std::env::remove_var("RERAIL_AGAIN_MIN");
+            vars.iter().for_each(|(k, _)| std::env::remove_var(k));
         }
         if let Err(e) = run {
             std::panic::resume_unwind(e);

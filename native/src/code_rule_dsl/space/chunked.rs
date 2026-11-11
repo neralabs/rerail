@@ -53,7 +53,7 @@ enum View<'a> {
 
 /// A set of a space's nodes, as chunked containers over the space's node numbers.
 #[derive(Clone, Debug, Default)]
-pub(in crate::code_rule_dsl) struct NodeSet {
+pub struct NodeSet {
     directory: Vec<Entry>,
     values: Vec<u16>,
     words: Vec<u64>,
@@ -359,12 +359,12 @@ enum Op {
 }
 
 impl NodeSet {
-    pub(in crate::code_rule_dsl) fn empty(_space: &NodeSpace) -> Self {
+    pub fn empty(_space: &NodeSpace) -> Self {
         Self::default()
     }
 
     /// Every node of the space: one run per chunk.
-    pub(in crate::code_rule_dsl) fn all(space: &NodeSpace) -> Self {
+    pub fn all(space: &NodeSpace) -> Self {
         let mut b = Builder::default();
         b.run(0, space.len());
         b.finish()
@@ -380,7 +380,7 @@ impl NodeSet {
     }
 
     /// File `file`'s positions (ascending), added to the set.
-    #[cfg_attr(not(test), allow(dead_code))] // tests and measurements
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))] // tests and measurements
     pub(in crate::code_rule_dsl) fn insert_file(&mut self, space: &NodeSpace, file: usize, positions: impl IntoIterator<Item = u32>) {
         let base = space.base(file);
         let mut b = Builder::default();
@@ -398,7 +398,7 @@ impl NodeSet {
     }
 
     /// Adds every node of file `file`.
-    #[cfg_attr(not(test), allow(dead_code))] // tests and measurements
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))] // tests and measurements
     pub(in crate::code_rule_dsl) fn fill_file(&mut self, space: &NodeSpace, file: usize) {
         let mut b = Builder::default();
         let range = space.range(file);
@@ -407,14 +407,14 @@ impl NodeSet {
     }
 
     /// The set of `words`, a slot of the space's dense words (Metal's `set_steps`).
-    pub(in crate::code_rule_dsl) fn from_words(_space: &NodeSpace, words: &[u64]) -> Self {
+    pub fn from_words(_space: &NodeSpace, words: &[u64]) -> Self {
         let mut b = Builder::default();
         b.words_at(0, words);
         b.finish()
     }
 
     /// The set as the space's dense words (Metal's `set_steps`).
-    pub(in crate::code_rule_dsl) fn to_words(&self, space: &NodeSpace) -> Vec<u64> {
+    pub fn to_words(&self, space: &NodeSpace) -> Vec<u64> {
         let mut words = vec![0_u64; space.words()];
         for e in &self.directory {
             let at = (e.key as usize) << 10;
@@ -812,22 +812,22 @@ impl NodeSet {
         out
     }
 
-    pub(in crate::code_rule_dsl) fn intersect_with(&mut self, other: &Self) {
+    pub fn intersect_with(&mut self, other: &Self) {
         *self = self.apply(other, Op::And);
     }
 
     /// `self ∩ other` as a new set: an operation writes its result's buffers itself, so its first
     /// operand is not copied first (as `clone` then `intersect_with` would).
-    pub(in crate::code_rule_dsl) fn intersection(&self, other: &Self) -> Self {
+    pub fn intersection(&self, other: &Self) -> Self {
         self.apply(other, Op::And)
     }
 
     /// `self − other` as a new set.
-    pub(in crate::code_rule_dsl) fn difference(&self, other: &Self) -> Self {
+    pub fn difference(&self, other: &Self) -> Self {
         self.apply(other, Op::AndNot)
     }
 
-    pub(in crate::code_rule_dsl) fn union_with(&mut self, other: &Self) {
+    pub fn union_with(&mut self, other: &Self) {
         // Appending later files (the common way sets are built) copies the other's buffers once.
         if self.directory.last().is_none_or(|l| other.directory.first().is_none_or(|f| l.key < f.key)) {
             self.append(other, 0);
@@ -869,13 +869,13 @@ impl NodeSet {
         self.words.extend_from_slice(&other.words[sw as usize..]);
     }
 
-    #[cfg_attr(not(test), allow(dead_code))] // the programs use `difference`
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))] // the programs use `difference`
     pub(in crate::code_rule_dsl) fn difference_with(&mut self, other: &Self) {
         *self = self.apply(other, Op::AndNot);
     }
 
     /// Keeps the set's nodes in files where each of `tests` has a node.
-    pub(in crate::code_rule_dsl) fn within_files(&mut self, space: &NodeSpace, tests: &[&Self]) {
+    pub fn within_files(&mut self, space: &NodeSpace, tests: &[&Self]) {
         let Some((first, rest)) = tests.split_first() else { return };
         // The first test's files, kept where every other test has a node too, as ranges: files
         // next to each other are one range.
@@ -982,7 +982,7 @@ impl NodeSet {
         false
     }
 
-    pub(in crate::code_rule_dsl) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.directory.iter().map(|e| self.view(e).len()).sum()
     }
 
@@ -1007,7 +1007,7 @@ impl NodeSet {
     }
 
     /// The set's nodes of file `file`, as positions in the file, ascending.
-    pub(in crate::code_rule_dsl) fn file_nodes<'a>(&'a self, space: &'a NodeSpace, file: usize) -> impl Iterator<Item = u32> + 'a {
+    pub fn file_nodes<'a>(&'a self, space: &'a NodeSpace, file: usize) -> impl Iterator<Item = u32> + 'a {
         let range = space.range(file);
         let (first, last) = (u64::from(range.start >> 16), u64::from(range.end.saturating_sub(1) >> 16));
         let from = self.directory.partition_point(|e| e.key < first);
@@ -1017,13 +1017,13 @@ impl NodeSet {
     }
 
     /// Bytes held: the directory and the buffers.
-    pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
+    pub fn bytes(&self) -> usize {
         self.directory.len() * std::mem::size_of::<Entry>() + 2 * self.values.len() + 8 * self.words.len()
     }
 
     /// File `file`'s members as a stored segment (0045 §5): the file's own 2^16 slices, per slice
     /// its number (u16), its form (u8), its length (u32) and its container, little-endian.
-    #[cfg_attr(not(test), allow(dead_code))] // tests and measurements
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))] // tests and measurements
     pub(in crate::code_rule_dsl) fn segment(&self, space: &NodeSpace, file: usize) -> Vec<u8> {
         let mut b = Builder::default();
         self.file_nodes(space, file).for_each(|p| b.node(p));
@@ -1031,7 +1031,7 @@ impl NodeSet {
     }
 
     /// The set's chunks as a segment: for a set of one file's positions (a space of one file).
-    pub(in crate::code_rule_dsl) fn encode(&self) -> Vec<u8> {
+    pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::new();
         for e in &self.directory {
             out.extend_from_slice(&(e.key as u16).to_le_bytes());
@@ -1048,7 +1048,7 @@ impl NodeSet {
     }
 
     /// The same members with every chunk a bitmap (to measure what runs cost against words).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(in crate::code_rule_dsl) fn as_bitmaps(&self) -> Self {
         let mut out = Self::default();
         for e in &self.directory {
@@ -1062,7 +1062,7 @@ impl NodeSet {
     }
 
     /// (array, bitmap, runs) chunk counts.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(in crate::code_rule_dsl) fn shape(&self) -> (usize, usize, usize) {
         let mut s = (0, 0, 0);
         for e in &self.directory {
@@ -1076,7 +1076,7 @@ impl NodeSet {
     }
 
     /// Per form: (chunks, containers' elements: values, words or runs).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(in crate::code_rule_dsl) fn census(&self) -> [(usize, usize); 3] {
         let mut s = [(0, 0); 3];
         for e in &self.directory {
@@ -1094,7 +1094,7 @@ impl NodeSet {
 
 /// Builds a set in node order: each chunk's members gather in a bitmap of the chunk, and the chunk
 /// is sealed in the form that suits it (`seal_array`'s rule) when a later chunk starts.
-pub(in crate::code_rule_dsl) struct Builder {
+pub struct Builder {
     set: NodeSet,
     key: Option<u64>,
     /// The open chunk's members while it has only single nodes, few enough to seal as an array
@@ -1147,7 +1147,7 @@ impl Builder {
     }
 
     /// Adds node `node`: in a chunk at or after every chunk added to (any order within one).
-    pub(in crate::code_rule_dsl) fn node(&mut self, node: u32) {
+    pub fn node(&mut self, node: u32) {
         let (k, v) = key(node);
         self.open(k);
         if !self.dense {
@@ -1168,7 +1168,7 @@ impl Builder {
     }
 
     /// Adds nodes `start..end`.
-    pub(in crate::code_rule_dsl) fn run(&mut self, start: u32, end: u32) {
+    pub fn run(&mut self, start: u32, end: u32) {
         let mut s = start;
         while s < end {
             let e = end.min((s | 0xffff) + 1);
@@ -1253,7 +1253,7 @@ impl Builder {
     /// Adds a stored segment (`NodeSet::encode`) of the file at `base`, whose positions are below
     /// `count`: arrays and runs move by `base`, bitmaps are shifted into the space's chunks. The
     /// containers are read in bulk into reused buffers.
-    pub(in crate::code_rule_dsl) fn segment(&mut self, base: u32, mut bytes: &[u8], count: u32) -> Result<(), &'static str> {
+    pub fn segment(&mut self, base: u32, mut bytes: &[u8], count: u32) -> Result<(), &'static str> {
         let invalid = "invalid segment";
         let past = "a position past the file's nodes";
         let mut last: Option<u16> = None;
@@ -1400,7 +1400,7 @@ impl Builder {
         self.hi = 0;
     }
 
-    pub(in crate::code_rule_dsl) fn finish(mut self) -> NodeSet {
+    pub fn finish(mut self) -> NodeSet {
         self.seal();
         self.set
     }
@@ -1426,7 +1426,7 @@ impl View<'_> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use std::collections::BTreeSet;
 

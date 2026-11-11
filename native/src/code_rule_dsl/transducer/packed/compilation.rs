@@ -18,7 +18,7 @@ use std::sync::{LazyLock, Mutex};
 /// runs, whatever binds it. The interpreter and the compiled programs are two bindings of the same
 /// plan, so their requests and their readiness are keyed by it, per binding.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub(in crate::code_rule_dsl) struct PlanId(pub(in crate::code_rule_dsl) [u8; 32]);
+pub struct PlanId(pub(in crate::code_rule_dsl) [u8; 32]);
 
 impl PlanId {
     /// A batch of programs' plan: their digests in order (`Program::plain_digest`, which holds
@@ -114,24 +114,18 @@ pub(super) fn resolve_plan(backend: ExecutionBackend, plan: PlanId, programs: &[
                 ExecutionBackend::CpuInterpreter
             }
         }
-        #[cfg(target_os = "macos")]
         ExecutionBackend::MetalBackground => {
-            use super::metal_program_backend as metal;
-            if ready(Binding::MetalJit, plan) || metal::jit_ready(programs)? {
+            let metal = super::device::required()?;
+            if ready(Binding::MetalJit, plan) || metal.jit_ready(programs)? {
                 ExecutionBackend::MetalJit
             } else {
                 // The fallback runs now, so it is built now (once per process).
-                metal::compile_interpreter_cached()?;
+                metal.compile_interpreter()?;
                 let owned = programs.to_vec();
-                request(Binding::MetalJit, plan, move || {
-                    metal::compile_sweep_cached()?;
-                    metal::compile_jit_cached(&owned).map(|_| ())
-                });
+                request(Binding::MetalJit, plan, move || metal.compile_background(&owned));
                 ExecutionBackend::MetalInterpreter
             }
         }
-        #[cfg(not(target_os = "macos"))]
-        ExecutionBackend::MetalBackground => return Err(Error::UnsupportedBackend),
         other => return Ok(other),
     };
     crate::code_rule_dsl::prof::count(
@@ -145,11 +139,11 @@ pub(super) fn resolve_plan(backend: ExecutionBackend, plan: PlanId, programs: &[
 }
 
 /// Waits for every running compilation (tests: the batch after it runs compiled).
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn settle() {
     rerail_accel::exec::help_until(|| REQUESTS.lock().map_or(true, |requests| requests.running.is_empty()).then_some(()));
 }
 
 #[cfg(test)]
 #[path = "compilation_tests.rs"]
-mod tests;
+pub mod tests;

@@ -10,12 +10,24 @@ use std::ops::Range;
 
 /// `noqa`: Ruff's `# noqa` and file-level `# ruff: noqa` comments.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Noqa {
+pub struct Noqa {
     /// The codes a directive must name (or name none) to suppress the violation.
-    pub(crate) codes: Vec<String>,
+    pub codes: Vec<String>,
     /// `parent: "statement"`: a directive where the enclosing statement starts also suppresses
     /// it (Ruff's `set_parent`).
-    pub(crate) parent: bool,
+    pub parent: bool,
+}
+
+/// Ruff's `# noqa` comments.
+pub struct Suppressions;
+
+impl super::SuppressionKind for Suppressions {
+    const KEY: &'static str = "noqa";
+    const DETAIL: &'static str = "noqa: noqa comments are Ruff's";
+    type Spec = Noqa;
+    fn spec(value: &serde_json::Value, at: &str) -> napi::Result<Noqa> {
+        spec(value, at)
+    }
 }
 
 /// `suppress.noqa`.
@@ -248,7 +260,7 @@ struct DirectiveLine {
 
 /// A Python file's `noqa` comments and line mapping.
 #[derive(Debug, Default)]
-pub(crate) struct NoqaIndex {
+pub struct NoqaIndex {
     /// File-level exemptions: every rule, or these codes (`FileExemption`).
     file_all: bool,
     file_codes: Vec<String>,
@@ -259,7 +271,7 @@ pub(crate) struct NoqaIndex {
 
 /// The statements whose start is a violation's parent offset (Ruff's `set_parent`: an import
 /// statement for F401 and F811, the `__all__` definition for F822).
-pub(crate) const PARENT_KINDS: &[&str] = &[
+pub const PARENT_KINDS: &[&str] = &[
     "import_statement",
     "import_from_statement",
     "future_import_statement",
@@ -268,7 +280,7 @@ pub(crate) const PARENT_KINDS: &[&str] = &[
 
 impl NoqaIndex {
     /// Reads the comments, strings and line continuations of the file `node` belongs to.
-    pub(crate) fn read<D: Doc>(root: &Node<'_, D>, source: &str, lines: &LineTable) -> Self {
+    pub fn read<D: Doc>(root: &Node<'_, D>, source: &str, lines: &LineTable) -> Self {
         let mut index = Self::default();
         let mut mapping = Vec::new();
         let mut continuations = Vec::new();
@@ -367,13 +379,13 @@ impl NoqaIndex {
     }
 
     /// The file exemptions: every rule, and these codes.
-    pub(crate) fn exemptions(&self) -> (bool, &[String]) {
+    pub fn exemptions(&self) -> (bool, &[String]) {
         (self.file_all, &self.file_codes)
     }
 
     /// Each directive's line without its terminator, whether it also holds at the line's end, and
     /// its codes (`None`: every code).
-    pub(crate) fn directives(&self) -> impl Iterator<Item = (Range<usize>, bool, Option<&[String]>)> + '_ {
+    pub fn directives(&self) -> impl Iterator<Item = (Range<usize>, bool, Option<&[String]>)> + '_ {
         self.lines.iter().map(|line| {
             let codes = match &line.directive {
                 Directive::All => None,
@@ -384,7 +396,7 @@ impl NoqaIndex {
     }
 
     /// The ranges an offset inside reads the directive at the range's end of (`resolve`).
-    pub(crate) fn mapping(&self) -> &[Range<usize>] {
+    pub fn mapping(&self) -> &[Range<usize>] {
         &self.mapping
     }
 
@@ -444,7 +456,7 @@ pub(crate) fn parent_statement<D: Doc>(node: &Node<'_, D>, at: usize) -> Option<
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     fn inline(comment: &str) -> Option<Result<Directive, Refused>> {

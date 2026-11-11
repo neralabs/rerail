@@ -20,15 +20,15 @@ struct EsGlobalsFile {
     versions: BTreeMap<String, BTreeMap<String, GlobalSetting>>,
 }
 
-pub(crate) struct EsGlobals {
+pub struct EsGlobals {
     /// ESLint's `LATEST_ECMA_VERSION`, what `"latest"` selects.
-    pub(crate) latest: u16,
+    pub latest: u16,
     commonjs: BTreeMap<String, GlobalSetting>,
     versions: BTreeMap<u16, BTreeMap<String, GlobalSetting>>,
 }
 
 impl EsGlobals {
-    pub(crate) fn get() -> &'static Self {
+    pub fn get() -> &'static Self {
         static TABLE: OnceLock<EsGlobals> = OnceLock::new();
         TABLE.get_or_init(|| {
             let file: EsGlobalsFile =
@@ -111,7 +111,7 @@ pub(crate) fn ts_lib_globals<'a>(libs: impl IntoIterator<Item = &'a str>) -> Has
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum GlobalSetting {
+pub enum GlobalSetting {
     Readonly,
     Writable,
     Off,
@@ -120,12 +120,18 @@ pub(crate) enum GlobalSetting {
 /// Compiled `languageOptions`: the effective configured globals, as ESLint's
 /// `applyLanguageOptions` merges them (ecmaVersion builtins, then CommonJS, then `globals`).
 #[derive(Debug)]
-pub(crate) struct LanguageOptions {
+pub struct LanguageOptions {
     /// The year-based `ecmaVersion` (3 and 5 stay as they are).
-    pub(crate) ecma_version: u16,
+    pub ecma_version: u16,
     /// The query's `sourceType`; `None` leaves it to each file (`SourceType::of_file`), which the
     /// readers below take as `file`.
-    pub(crate) source_type: Option<SourceType>,
+    pub source_type: Option<SourceType>,
+    /// `moduleSystem: "package-type"`: without a `sourceType`, a file's module system is the one
+    /// its extension and its package's `type` give it (`SourceType::by_package_type`), not its own
+    /// (`SourceType::of_file`, Node's syntax detection where `type` is unset, a module without a
+    /// manifest). The readers below take whichever the query reads as `file`
+    /// (`file_source_type_for`).
+    pub(crate) package_type_module_system: bool,
     /// The ecmaVersion builtins and the configured `globals`; CommonJS's are added by
     /// `declares` for a CommonJS file (no builtin shares a name with them).
     pub(crate) globals: HashMap<String, GlobalSetting>,
@@ -148,7 +154,7 @@ pub(crate) struct LanguageOptions {
 pub(crate) const DEFAULT_JSX_PRAGMA: &str = "React";
 
 impl LanguageOptions {
-    pub(crate) fn new(
+    pub fn new(
         ecma_version: u16,
         source_type: Option<SourceType>,
         configured: impl IntoIterator<Item = (String, GlobalSetting)>,
@@ -162,6 +168,7 @@ impl LanguageOptions {
         Self {
             ecma_version,
             source_type,
+            package_type_module_system: false,
             globals,
             global_return: false,
             implied_strict: false,
@@ -200,7 +207,7 @@ impl LanguageOptions {
     /// Whether `name` is a declared global for a reference that reads `spaces`: a lib variable
     /// valid in one of them (typescript-eslint resolves those by namespace, and neither `off`
     /// removes one), or a declared global of any namespace (`declares`).
-    pub(crate) fn declares_in(
+    pub fn declares_in(
         &self,
         name: &str,
         spaces: u8,
@@ -249,7 +256,7 @@ struct PythonBuiltinsFile {
 }
 
 /// The builtins of each `3.N` Ruff targets, keyed by `N`.
-pub(crate) fn python_builtins() -> &'static BTreeMap<u8, BTreeSet<String>> {
+pub fn python_builtins() -> &'static BTreeMap<u8, BTreeSet<String>> {
     static TABLE: OnceLock<BTreeMap<u8, BTreeSet<String>>> = OnceLock::new();
     TABLE.get_or_init(|| {
         let file: PythonBuiltinsFile = serde_json::from_str(PYTHON_BUILTINS_JSON)
@@ -267,13 +274,13 @@ pub(crate) fn python_builtins() -> &'static BTreeMap<u8, BTreeSet<String>> {
 }
 
 /// Ruff's default target version, what a Python `languageOptions` without `pythonVersion` selects.
-pub(crate) const DEFAULT_PYTHON_MINOR: u8 = 10;
+pub const DEFAULT_PYTHON_MINOR: u8 = 10;
 
 /// Ruff's `lint.typing-modules` (modules whose members Ruff reads as `typing`'s) and
 /// `lint.pyflakes.extend-generics` (further generics, whose subscripts' slices are type
 /// definitions), each as its names.
 #[derive(Debug, Default, PartialEq, Eq, Hash)]
-pub(crate) struct PythonTyping {
+pub struct PythonTyping {
     pub(crate) modules: Vec<Vec<Box<str>>>,
     pub(crate) generics: Vec<Vec<Box<str>>>,
 }
@@ -296,7 +303,7 @@ impl PythonTyping {
     }
 
     /// Ruff's `match_typing_qualified_name` past `typing` itself: `member` of a typing module.
-    pub(crate) fn module_member(&self, name: &[String], member: &str) -> bool {
+    pub fn module_member(&self, name: &[String], member: &str) -> bool {
         self.modules.iter().any(|module| {
             name.len() == module.len() + 1
                 && name.last().is_some_and(|last| last == member)
@@ -309,7 +316,7 @@ impl PythonTyping {
 
     /// The last name of `name` when it starts with a typing module's names (Ruff's
     /// `match_annotated_subscript` reads such a member by its last name).
-    pub(crate) fn module_tail<'n>(&self, name: &'n [String]) -> Option<&'n str> {
+    pub fn module_tail<'n>(&self, name: &'n [String]) -> Option<&'n str> {
         self.modules
             .iter()
             .any(|module| {
@@ -324,7 +331,7 @@ impl PythonTyping {
     }
 
     /// Whether `name` is one of the extra generics.
-    pub(crate) fn generic(&self, name: &[String]) -> bool {
+    pub fn generic(&self, name: &[String]) -> bool {
         self.generics.iter().any(|generic| {
             generic.len() == name.len()
                 && generic
@@ -335,7 +342,7 @@ impl PythonTyping {
     }
 
     /// Whether `last` is the last name of an extra generic: a subscript that may be one.
-    pub(crate) fn generic_member(&self, last: &str) -> bool {
+    pub fn generic_member(&self, last: &str) -> bool {
         self.generics
             .iter()
             .any(|generic| generic.last().is_some_and(|name| name.as_ref() == last))
@@ -344,14 +351,14 @@ impl PythonTyping {
 
 /// Compiled Python `languageOptions`: the target version (`3.minor`) and Ruff's typing settings.
 #[derive(Debug)]
-pub(crate) struct PythonOptions {
-    pub(crate) minor: u8,
+pub struct PythonOptions {
+    pub minor: u8,
     /// `None` when neither setting lists a name.
-    pub(crate) typing: Option<&'static PythonTyping>,
+    pub typing: Option<&'static PythonTyping>,
 }
 
 impl PythonOptions {
-    pub(crate) fn new(minor: u8) -> Self {
+    pub fn new(minor: u8) -> Self {
         Self {
             minor,
             typing: None,
@@ -359,7 +366,7 @@ impl PythonOptions {
     }
 
     /// Whether `name` is a builtin or magic global of the target version.
-    pub(crate) fn declares(&self, name: &str) -> bool {
+    pub fn declares(&self, name: &str) -> bool {
         python_builtins()
             .get(&self.minor)
             .is_some_and(|names| names.contains(name))
@@ -367,13 +374,13 @@ impl PythonOptions {
 
     /// Python 3.14 evaluates annotations lazily (PEP 649), so Ruff reads them after the module
     /// as under `from __future__ import annotations`.
-    pub(crate) fn defers_annotations(&self) -> bool {
+    pub fn defers_annotations(&self) -> bool {
         self.minor >= 14
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

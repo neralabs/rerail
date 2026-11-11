@@ -234,11 +234,11 @@ unsafe impl VTabCursor for Cursor {
     }
     fn column(&self, ctx: &mut Context, col: c_int) -> Result<()> {
         match col {
-            0 => ctx.set_result(&self.nodes[self.at]),
-            1 => ctx.set_result(&self.sizes[self.at]),
-            2 => ctx.set_result(&self.fid),
-            3 => ctx.set_result(&self.node),
-            _ => ctx.set_result(&self.axis),
+            0 => ctx.set_result(self.nodes[self.at]),
+            1 => ctx.set_result(self.sizes[self.at]),
+            2 => ctx.set_result(self.fid),
+            3 => ctx.set_result(self.node),
+            _ => ctx.set_result(self.axis),
         }
     }
     fn rowid(&self) -> Result<i64> {

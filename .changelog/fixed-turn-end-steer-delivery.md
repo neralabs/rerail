@@ -1,0 +1,1 @@
+A steer found as a turn ends reaches the agent when you see its line, and counts then. Claude Code gets it as the turn ends and carries on to act on it, not at your next prompt's first tool call; in Codex the line waits for the steer.

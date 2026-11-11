@@ -21,14 +21,14 @@
 use super::bounded_insert::insert;
 use super::postings::{append_delta, pack_edges};
 use super::{ContentStore, MAX_PUBLICATION_BATCH, StoreError, StoreResult, TapeId};
-use rusqlite::{Transaction, params, types::Value};
+use rusqlite::{Connection, params, types::Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The image a tape's rows were built by. 2: ERROR nodes are kind code 0 in both postings.
 /// 3: term postings carry their node count, which the planner statistics sum. 4: kind sizes and
 /// edges (`kind_size`, `edge_freq`). 5: terms are atoms. 6: kind postings are container segments
 /// (`postings::segment_positions`, decision 0045).
-pub const PREFILTER_VERSION: i64 = 6;
+pub const PREFILTER_VERSION: i64 = 8;
 /// Unclean leaves per kind, store-wide, kept as terms.
 pub const RESIDUE_CAP: usize = 4096;
 /// A node of the kind has a named descendant: its text is not a leaf term.
@@ -148,13 +148,24 @@ impl ContentStore {
                 return self.immediate_transaction(|transaction| Ok(operation(transaction)?));
             }
             let mut connection = self.connection.lock().expect("content store mutex poisoned");
-            let transaction = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Deferred)?;
+            let transaction = super::connection::begin(&mut connection, rusqlite::TransactionBehavior::Deferred)?;
             let value = operation(&transaction)?;
             self.commit(transaction)?;
             Ok(value)
         })();
         cache(1_024)?;
         value
+    }
+
+    /// Sets the progress handler of this thread's store connection, which `candidate_transaction` runs on
+    /// (`None`: removes it). The anchor lab counts a candidate statement's VM steps with it.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn candidate_progress<F>(&self, steps: i32, handler: Option<F>) -> StoreResult<()>
+    where
+        F: FnMut() -> bool + Send + 'static,
+    {
+        self.connection.lock().expect("content store mutex poisoned").progress_handler(steps, handler)?;
+        Ok(())
     }
 
     /// Copies the prefilter rows of `tapes`, the store-wide counts and the regex vocabulary into a
@@ -263,7 +274,7 @@ impl Counts {
     }
 
     /// Writes and clears the sums; postings in key order, so consecutive rows share leaves.
-    fn flush(&mut self, transaction: &Transaction<'_>, store: &super::atoms::Atoms) -> StoreResult<()> {
+    fn flush(&mut self, transaction: &Connection, store: &super::atoms::Atoms) -> StoreResult<()> {
         let counts = std::mem::take(self);
         // Each term's atom, from the store's arena (decision 0049): new ones are pending, and the
         // transaction's commit appends them before these rows (`ContentStore::commit`).
@@ -324,7 +335,7 @@ impl Counts {
     }
 }
 
-fn put(transaction: &Transaction<'_>, set: &TapePrefilter, counts: &mut Counts, atoms: &super::atoms::Atoms) -> StoreResult<()> {
+fn put(transaction: &Connection, set: &TapePrefilter, counts: &mut Counts, atoms: &super::atoms::Atoms) -> StoreResult<()> {
     let tape = set.tape_id.row();
     // Publishing again replaces: the cascade and triggers count the old rows down, so the sums
     // so far are written first, as they would have been one tape at a time.

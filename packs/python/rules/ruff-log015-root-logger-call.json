@@ -1,0 +1,92 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-log015-root-logger-call",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Use a logger from logging.getLogger(__name__) instead of the logging module's root logger functions; root logger messages carry no source information.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "root-logger-call",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "call",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "function",
+       "matches": "root-callee"
+      }
+     },
+     "utils": {
+      "root-callee": {
+       "any": [
+        {
+         "kind": "identifier",
+         "resolves": {
+          "import": [
+           "logging.debug",
+           "logging.info",
+           "logging.warn",
+           "logging.warning",
+           "logging.error",
+           "logging.critical",
+           "logging.log",
+           "logging.exception"
+          ]
+         },
+         "pattern": "$M"
+        },
+        {
+         "kind": "attribute",
+         "resolves": {
+          "import": [
+           "logging.debug",
+           "logging.info",
+           "logging.warn",
+           "logging.warning",
+           "logging.error",
+           "logging.critical",
+           "logging.log",
+           "logging.exception"
+          ]
+         },
+         "has": {
+          "stopBy": "neighbor",
+          "field": "attribute",
+          "pattern": "$M"
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "root-callee"
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "LOG015",
+    "message": "Replace this root logger `$M()` call with the same call on a module-level `logger = logging.getLogger(__name__)`; root logger messages carry no source information. Leave it in a one-off script.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "LOG015"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

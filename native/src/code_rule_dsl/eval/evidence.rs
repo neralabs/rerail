@@ -19,8 +19,8 @@ use std::collections::BTreeSet;
 
 /// A producer's witnesses across its domain, and the files whose witnesses are unknown.
 #[derive(Default)]
-pub(crate) struct Rows {
-    pub(crate) witnesses: Vec<Witness>,
+pub struct Rows {
+    pub witnesses: Vec<Witness>,
     /// Files of the domain whose query failed, stopped, or read around syntax errors.
     pub(crate) incomplete: BTreeSet<String>,
 }
@@ -29,7 +29,7 @@ pub(crate) struct Rows {
 /// A suppression comment silences a reported violation where it is reported; it never removes a
 /// fact a violation elsewhere reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Side {
+pub enum Side {
     /// A `require_each`'s subject: each row reports its own violation, which a `rerail-ignore`
     /// over it silences by dropping the row.
     Subject,
@@ -49,7 +49,7 @@ pub(crate) fn producer_violation(
 ) -> ViolationSpec {
     let mut violation = clause.violation.clone();
     // P's relational inputs (test-only, open item O18) keep only their anchor and typed fields.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     {
         violation.input_only = matches!(clause.kind, ClauseKind::Relational(_));
     }
@@ -456,7 +456,7 @@ pub(crate) fn budget(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use crate::code_rule_dsl::{CodeRuleDslRuntime, test_support::CAPABILITIES};
     use serde_json::{Value, json};
 
@@ -710,11 +710,11 @@ mod tests {
             witnesses: vec![Witness {
                 sql_violation: None,
                 path: "pkg/a.py".to_owned(),
-                span: crate::code_rule_dsl::violations::Span {
+                span: Some(crate::code_rule_dsl::violations::Span {
                     start_byte: 0,
                     end_byte: 5,
                     ..Default::default()
-                },
+                }),
                 captures: {
                     let mut captures = crate::code_rule_dsl::violations::Captures::default();
                     captures.set_projection(Some(json!({ "package": "pkg" })));

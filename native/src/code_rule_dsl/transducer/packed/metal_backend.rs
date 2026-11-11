@@ -5,8 +5,8 @@
 use super::{EMIT, Error, KIND, Program, TEXT, TextPredicate, split};
 use crate::code_rule_dsl::tape::TapeDoc;
 #[allow(unused_imports)]
-pub(in crate::code_rule_dsl) use rerail_metal::runtime::*;
-pub(in crate::code_rule_dsl) use rerail_metal::launch;
+pub use rerail_metal::runtime::*;
+pub use rerail_metal::launch;
 use launch::{CheckedComputeEncoder, commit_checked, wait_checked};
 use metal::{CommandQueue, ComputePipelineState, Device, MTLSize};
 use std::collections::BTreeMap;
@@ -347,7 +347,7 @@ impl PreparedAnchorScan {
 }
 
 #[cfg(test)]
-mod launch_tests {
+pub mod launch_tests {
     use super::launch::*;
     use super::*;
 
@@ -396,7 +396,7 @@ mod launch_tests {
     fn production_encoders_cannot_bypass_the_launch_guard() {
         // The engine's Metal files, and every file of the Metal crate (its runtime is the old
         // `metal_backend.rs`, its launch layer `launch.rs`).
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
         let engine = std::fs::read_dir(root.join("src/code_rule_dsl/transducer/packed")).unwrap();
         let crate_files = std::fs::read_dir(root.join("crates/metal/src")).unwrap();
         for (in_crate, entry) in engine.map(|e| (false, e)).chain(crate_files.map(|e| (true, e))) {

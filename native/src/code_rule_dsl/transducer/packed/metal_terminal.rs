@@ -12,7 +12,7 @@ use metal::{CommandBufferRef, CommandQueueRef, Device};
 use std::borrow::Borrow;
 use std::rc::Rc;
 #[path = "metal_terminal_publication_sort.rs"]
-pub(super) mod publication_sort;
+pub mod publication_sort;
 
 pub(super) struct TerminalOutput {
     pub results: MappedBuffer,
@@ -60,7 +60,7 @@ impl PendingTerminal {
 }
 /// Produce structural candidates for the later predicate/transform stage. This
 /// stage never applies predicates, renumbers surviving candidates, or publishes pages.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn encode(
     device: &Device,
     command: &CommandBufferRef,
@@ -183,7 +183,7 @@ pub(super) fn execute_prepared(
 
 /// Borrowed fixtures exercise the same physical stages while retaining caller
 /// ownership. Production transfers its values to execute_prepared instead.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn execute(
     device: &Device,
     queue: &CommandQueueRef,
@@ -256,7 +256,7 @@ fn encode_order(
     })
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn encode_impl(
     device: &Device,
     command: metal::CommandBuffer,
@@ -906,4 +906,4 @@ fn validate_publication(output: &TerminalOutput) -> Result<(), Error> {
 
 #[cfg(all(test, feature = "metal-tests"))]
 #[path = "metal_terminal_anchor_tests.rs"]
-mod anchor_tests;
+pub mod anchor_tests;

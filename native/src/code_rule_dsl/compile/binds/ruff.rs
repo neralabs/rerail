@@ -3,8 +3,8 @@
 //! Where the engine is conservative by design (a read `eval` may make) the port reports less, and
 //! the test lists each such range.
 
-use crate::code_rule_dsl::oracle;
-use crate::code_rule_dsl::test_support::*;
+// cratify: a re-export of rerail-engine's, which its facades of this module make
+// cratify: a re-export of rerail-engine's, which its facades of this module make
 use serde_json::{Value, json};
 
 const ORACLE: &str = oracle!("python/scope/usage.expected.json");
@@ -293,6 +293,15 @@ fn f823_skips_forward_references_the_module_resolves() {
     check("F823_string", f823(), source, &[]);
 }
 
+#[test]
+fn f823_reads_after_an_unpacking_assignment() {
+    // A line that opens with `[` after an unpacking assignment starts a statement of its own, not
+    // a chained target of that assignment (Patch 3 in grammars/tree-sitter-python/PATCHES.md), so
+    // the names the unpacking binds are bound when that line reads them.
+    let source = oracle!("python/scope/usage/F823_unpacking.py");
+    check("F823_unpacking", f823(), source, &[]);
+}
+
 /// F822: a module `__all__` entry that names nothing the module binds; an implicit
 /// concatenation is one entry.
 fn f822() -> Value {
@@ -334,6 +343,27 @@ fn stubs_defer_only_type_definitions_and_class_bases() {
     check("F821_stub_py313.pyi", f821(), source, &[]);
     let source = oracle!("python/scope/usage/F821_stub_py315.pyi");
     check("F821_stub_py315.pyi", f821(), source, &[]);
+}
+
+/// F822 on the `__all__` entries Ruff reads but whose shape tree-sitter writes differently: a
+/// parenthesised string (Ruff's AST has no parentheses) and a bare tuple on the right of `=`,
+/// `+=` or `: T =` (an `expression_list`, Ruff's `Expr::Tuple`).
+#[test]
+fn f822_reads_parenthesised_and_bare_tuple_entries() {
+    let source = "\
+b = c = 1
+__all__: list = ['b', \"c\", ((('a')))]
+__all__ = (\"d\"), \"b\"
+__all__ += \"e\", \"c\"
+";
+    let at = |text: &str| {
+        let start = source.find(text).expect(text) as u64;
+        (start, start + text.len() as u64)
+    };
+    assert_eq!(
+        ranges("F822", f821(), source),
+        [at("'a'"), at("\"d\""), at("\"e\"")]
+    );
 }
 
 #[test]

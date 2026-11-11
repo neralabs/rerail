@@ -43,15 +43,17 @@ num_node(n) :- (kind(n, "integer_literal") ; kind(n, "float_literal")).
 // lit_body(n, radix, b, s): the literal without its prefix, split at its suffix. A suffix is the run of letters
 // after the digits: hex digits include a-f, so a hex suffix starts at `i` or `u`.
 .decl lit_body(n: node, radix: number, b: symbol, s: symbol)
-lit_body(n, 16, B, S) :- num_node(n), match("0x(?<B>[0-9a-fA-F_]*)(?<S>[iu][0-9a-z]*|)", n).
-lit_body(n, 8, B, S)  :- num_node(n), match("0o(?<B>[0-9_]*)(?<S>[a-z][0-9a-z]*|)", n).
-lit_body(n, 2, B, S)  :- num_node(n), match("0b(?<B>[0-9_]*)(?<S>[a-z][0-9a-z]*|)", n).
-lit_body(n, 10, B, S) :- num_node(n), !match("0[xob].*", n),
-    match("(?<B>[0-9][0-9_]*(\\.[0-9_]*)?([eE][+-]?[0-9_]*)?)(?<S>[a-zA-Z][0-9a-zA-Z]*|)", n).
+// The groups are matched in the literal's text, so they are symbols (on the node itself they would be spans).
+lit_body(n, 16, B, S) :- num_node(n), text(n, t), match("0x(?<B>[0-9a-fA-F_]*)(?<S>[iu][0-9a-z]*|)", t).
+lit_body(n, 8, B, S)  :- num_node(n), text(n, t), match("0o(?<B>[0-9_]*)(?<S>[a-z][0-9a-z]*|)", t).
+lit_body(n, 2, B, S)  :- num_node(n), text(n, t), match("0b(?<B>[0-9_]*)(?<S>[a-z][0-9a-z]*|)", t).
+lit_body(n, 10, B, S) :- num_node(n), text(n, t), !match("0[xob].*", t),
+    match("(?<B>[0-9][0-9_]*(\\.[0-9_]*)?([eE][+-]?[0-9_]*)?)(?<S>[a-zA-Z][0-9a-zA-Z]*|)", t).
 // digits(n, radix, d, s): NumericLiteral::new drops one `_` before a suffix: 1_000_i32 has digits 1_000.
 .decl digits(n: node, radix: number, d: symbol, s: symbol)
 digits(n, r, d, s) :- lit_body(n, r, b, s), s != "", suffix("_", b), d = substr(b, 0, strlen(b) - 1).
-digits(n, r, b, s) :- lit_body(n, r, b, s), (s = "" ; !suffix("_", b)).
+digits(n, r, b, "") :- lit_body(n, r, b, "").
+digits(n, r, b, s) :- lit_body(n, r, b, s), !suffix("_", b).
 
 .decl num_float(n: node)
 num_float(n) :- kind(n, "float_literal").
@@ -153,7 +155,10 @@ lit_one(e) :- num_lit(e, _, i, _), !num_float(e), match("[0_]*1_*", i).
 hex_digit(v, i, c) :- hex_place(v, i, p), hex_char((v / p) % 16, c).
 .decl hex_place(v: number, i: number, p: number)   // p = 16^i, for every digit of v
 hex_place(v, 0, 1) :- hex_wanted(v).
-hex_place(v, i + 1, p * 16) :- hex_place(v, i, p), v / p >= 16.
+hex_place(v, i, p) :- hex_wanted(v), hex_pow(i, p), i > 0, v / p >= 1.
+// hex_pow(i, p): p = 16^i, up to the 16 hex digits of a 64-bit number: a table, not a recursion that makes values.
+.decl hex_pow(i: number, p: number)
+hex_pow(0, 1). hex_pow(1, 16). hex_pow(2, 256). hex_pow(3, 4096). hex_pow(4, 65536). hex_pow(5, 1048576). hex_pow(6, 16777216). hex_pow(7, 268435456). hex_pow(8, 4294967296). hex_pow(9, 68719476736). hex_pow(10, 1099511627776). hex_pow(11, 17592186044416). hex_pow(12, 281474976710656). hex_pow(13, 4503599627370496). hex_pow(14, 72057594037927936). hex_pow(15, 1152921504606846976).
 .decl hex_upper(v: number, h: symbol)
 hex_upper(v, h) :- hex_wanted(v), h = join c by k sep "" : { hex_digit(v, i, c), k = 0 - i }.
 .decl hex_char(d: number, c: symbol)
@@ -175,7 +180,7 @@ hex_wanted(v) :- int_lit_value(_, v), lit_repr_threshold(t), v >= t.
 // ---- raw strings ------------------------------------------------------------------------------------------------
 // raw_str(n, k, body): r"…" has k = 0, r##"…"## has k = 2; br and cr are byte and C raw strings.
 .decl raw_str(n: node, hashes: number, body: symbol)
-raw_str(n, strlen(H), B) :- kind(n, "raw_string_literal"), match("[bc]?r(?<H>#*)\"(?<B>[\\s\\S]*)\"#*", n).
+raw_str(n, strlen(H), B) :- kind(n, "raw_string_literal"), text(n, t), match("[bc]?r(?<H>#*)\"(?<B>[\\s\\S]*)\"#*", t).
 // hashes_needed(n, k): RawStrings::check_raw_string walks the contents; a `"` starts a run, each `#` right after it
 // adds one, and the next other character ends it. That character is used up, so in `""#` the second quote
 // starts no run (Clippy's count, kept as is). quote_run(n, k, rest) peels one run at a time.

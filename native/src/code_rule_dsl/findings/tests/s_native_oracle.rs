@@ -6,23 +6,13 @@
 //! Native-only oracle on the reference's existing tapes. Index publication is
 //! construction; candidate selection and matching are execution. Scope/memo slots
 //! span every clause of a file, as in a complete production file evaluation.
-use crate::code_rule_dsl::{
-    CompiledCodeRuleDsl,
-    language::GrammarDialect,
-    matcher::{
+use crate::code_rule_dsl::{language::GrammarDialect, matcher::{
         self, FileGates, FileScopeSlot, Stopped,
         p_anchors::{
             AnchorPlan,
             sql::{Corpus, CorpusSlot, FileAnchorIndex},
         },
-    },
-    model::{Anchor, ClauseKind, FileInput, Query},
-    module_path::ModulePath,
-    origin::InFile,
-    phase_clock,
-    soundness::SyntaxErrors,
-    tape::TapeDoc,
-};
+    }, model::{Anchor, ClauseKind, FileInput, Query}, module_path::ModulePath, origin::InFile, phase_clock, soundness::SyntaxErrors, tape::TapeDoc};
 use ast_grep_core::{AstGrep, Doc};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -187,7 +177,7 @@ impl<'a> Native<'a> {
                         );
                         if !grammar.applies
                             || !grammar.file.as_ref().is_none_or(|condition| {
-                                condition.holds(path, file.module.as_deref(), None)
+                                condition.holds(path, file.module.as_deref(), None, &file.source)
                             })
                             || !gates.admit(grammar)
                             || !grammar.admits_source(
@@ -272,7 +262,7 @@ fn anchor_plans(
         let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind else {
             continue;
         };
-        for grammar in matchers {
+        for grammar in matchers.iter() {
             let key = Arc::as_ptr(&grammar.anchors) as usize;
             if by_matcher.contains_key(&key) {
                 continue;

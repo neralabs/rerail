@@ -20,6 +20,18 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Range;
 
+/// PHPStan's `@phpstan-ignore` comments: the identifiers a local ignore must name.
+pub struct Suppressions;
+
+impl super::SuppressionKind for Suppressions {
+    const KEY: &'static str = "phpstan";
+    const DETAIL: &'static str = "phpstan: @phpstan-ignore comments are PHPStan's";
+    type Spec = Vec<String>;
+    fn spec(value: &serde_json::Value, at: &str) -> napi::Result<Vec<String>> {
+        spec(value, at)
+    }
+}
+
 /// `phpstan.identifiers`: PHPStan diagnostic identifiers a local ignore must name.
 pub(super) fn spec(phpstan: &Value, at: &str) -> napi::Result<Vec<String>> {
     reject_unknown(object(phpstan, at)?, &["identifiers"], at)?;
@@ -155,7 +167,7 @@ impl PhpstanIndex {
     }
 
     /// Whether the file holds no comment PHPStan would apply.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn is_empty(&self) -> bool {
         self.lines.is_empty()
     }
@@ -458,7 +470,7 @@ pub(crate) fn phpstan_identifier(identifier: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::PhpstanIndex;
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::language::adapter::ast_grep;

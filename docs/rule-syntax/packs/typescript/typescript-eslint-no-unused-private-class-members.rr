@@ -36,7 +36,8 @@ member(c, m, k, k, at, st) :- kind(c, ck), class_kind(ck), field(c, "body", b), 
     !ctor(m), member_key(at, k), (is_static(m), st = "static" ; !is_static(m), st = "instance").
 member(c, p, x, x, n, "instance") :- kind(c, ck), class_kind(ck), field(c, "body", b), child(b, m, _), ctor(m),
     fn_param(m, p, _), field(p, "pattern", n), kind(n, "identifier"), text(n, x),
-    (child(p, a, _), kind(a, "accessibility_modifier") ; op(p, "readonly") ; child(p, o, _), kind(o, "override_modifier")).
+    (child(p, a, _), kind(a, "accessibility_modifier") ; ((kind(p, "required_parameter") ; kind(p, "optional_parameter")), op(p, "readonly")) ; child(p, o, _),
+    kind(o, "override_modifier")).
 // member_key(at, k): `x`, `#x`, `"x"`, `1`, `["x"]`, `[`x`]`; other computed keys have none.
 .decl member_key(at: node, k: symbol)
 member_key(at, k) :- (kind(at, "property_identifier") ; kind(at, "private_property_identifier")), text(at, k).

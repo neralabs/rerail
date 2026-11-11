@@ -3,7 +3,6 @@ use super::json::invalid;
 use super::matcher::{GrammarMatcher, Transform};
 use super::module_path::ModulePath;
 use crate::code_rule_dsl::language::{GrammarDialect, PackageType};
-use crate::code_rule_dsl::package_manifest::Manifest;
 use ast_grep_core::replacer::TemplateFix;
 use globset::GlobSet;
 use napi::Result;
@@ -12,6 +11,7 @@ use serde_json::Value;
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// The failure code of an output cap: a clause found more witnesses (or regex matches) than
 /// `maxWitnesses` lets it report. Apart from `budget-exceeded`, which is running out of work: the
@@ -28,37 +28,37 @@ pub(super) const FILE_BUDGET_EXCEEDED: &str = "file-budget-exceeded";
 pub(super) const INPUT_LIMIT: &str = "input-limit";
 
 #[derive(Clone)]
-pub(super) struct Limits {
+pub struct Limits {
     pub(super) max_ast_pattern_bytes: usize,
-    pub(super) max_files: usize,
+    pub max_files: usize,
     pub(super) max_regex_pattern_bytes: usize,
-    pub(super) max_source_bytes: usize,
-    pub(super) max_visited_nodes: usize,
+    pub max_source_bytes: usize,
+    pub max_visited_nodes: usize,
     /// `maxVisitsPerNode` (optional, 0 without it): in the indexed workspace a file's node and
     /// utility visits are allowed this many per node of the file when that is more than
     /// `max_visited_nodes`, so a rule that reads each node a bounded number of times finishes on
     /// a file of any size (`visits_for`).
     pub(super) max_visits_per_node: usize,
-    pub(super) max_witnesses: usize,
+    pub max_witnesses: usize,
 }
 
 impl Limits {
     /// The node and utility visits a file of `nodes` nodes allows: `max_visited_nodes`, or
     /// `max_visits_per_node` per node where that is more.
-    pub(super) fn visits_for(&self, nodes: usize) -> usize {
+    pub fn visits_for(&self, nodes: usize) -> usize {
         self.max_visited_nodes
             .max(nodes.saturating_mul(self.max_visits_per_node))
     }
 }
 
 #[derive(Clone)]
-pub(super) struct Capabilities {
+pub struct Capabilities {
     pub(super) raw: Value,
-    pub(super) limits: Limits,
+    pub limits: Limits,
 }
 
 #[derive(Clone)]
-pub(super) struct CodeRuleScope {
+pub struct CodeRuleScope {
     pub(super) include: GlobSet,
     pub(super) exclude: GlobSet,
     /// Where a workspace places its resident copy of the code rule, per folder of the checkout;
@@ -69,7 +69,7 @@ pub(super) struct CodeRuleScope {
 impl CodeRuleScope {
     /// Whether the code rule evaluates `path`: its globs select it and, when placed, the deepest
     /// placement folder holding it runs the code rule there.
-    pub(super) fn matches(&self, path: &str) -> bool {
+    pub fn matches(&self, path: &str) -> bool {
         self.include.is_match(path)
             && !self.exclude.is_match(path)
             && self.placement.as_deref().is_none_or(|placement| {
@@ -85,7 +85,7 @@ impl CodeRuleScope {
     /// Whether a linter's suppression comment at `path` silences the code rule's violations there:
     /// what the placement entry deciding `path` says, and `true` when the code rule is not placed
     /// or no entry contains `path`.
-    pub(super) fn honours_suppressions_at(&self, path: &str) -> bool {
+    pub fn honours_suppressions_at(&self, path: &str) -> bool {
         self.placement
             .as_deref()
             .and_then(|placement| placed(placement, path))
@@ -127,46 +127,46 @@ fn folder_contains(folder: &str, path: &str) -> bool {
 }
 
 #[derive(Clone)]
-pub(super) struct ViolationSpec {
+pub struct ViolationSpec {
     /// SQL inputs retain only their anchor and typed fields, without diagnostic payloads.
     pub(super) input_only: bool,
-    pub(super) code: String,
-    pub(super) message: String,
-    pub(super) anchor: Anchor,
+    pub code: String,
+    pub message: String,
+    pub anchor: Anchor,
     /// The message's `$NAME` references; `None` when it is literal text.
-    pub(super) message_template: Option<Template>,
-    pub(super) fix: Option<Arc<FixPlan>>,
+    pub message_template: Option<Template>,
+    pub fix: Option<Arc<FixPlan>>,
     /// The source fix template for relational output rendering.
-    pub(super) fix_template: Option<Template>,
+    pub fix_template: Option<Template>,
     /// Per dialect, the rule's regexes with named groups that test the witness node itself.
-    pub(super) node_regexes: Vec<(GrammarDialect, Vec<Regex>)>,
+    pub node_regexes: Vec<(GrammarDialect, Vec<Regex>)>,
     /// `each`: an ast query's capture, one violation per distinct binding of it at a root.
-    pub(super) each: Option<String>,
+    pub each: Option<String>,
     /// `fix.range`: the capture whose range the fix replaces, inside the witness; `None` replaces
     /// the witness.
-    pub(super) fix_range: Option<String>,
+    pub fix_range: Option<String>,
     /// `suppress`: the other linter's suppression comments this violation honours.
-    pub(super) suppress: Option<super::suppress::Suppress>,
+    pub suppress: Option<super::suppress::Suppress>,
     /// The code rule id a `rerail-ignore` comment names to silence this violation's witnesses,
     /// whatever `suppress` and the `suppressions` setting; `None` where the witnesses report
     /// nothing (an `exists` leaf, a `calls` seed, a `require_each`'s evidence): a comment silences
     /// a reported violation, never removes a fact another file's violation reads.
-    pub(super) ignored_by: Option<Arc<str>>,
+    pub ignored_by: Option<Arc<str>>,
     /// A covered witness is kept and marked (`Witness::ignored`) rather than dropped: a `budget`'s
     /// rows, counted whatever the comments, whose violation a comment silences only at the row
     /// it is reported at.
-    pub(super) ignore_marks: bool,
+    pub ignore_marks: bool,
     /// The query's `transform` where one of its sources is a regex group of the witness, computed
     /// again with each witness's groups.
-    pub(super) group_transform: Option<Arc<Transform>>,
+    pub group_transform: Option<Arc<Transform>>,
     /// A cross-file relation's projection: each witness carries these fields
     /// (`Witness::captures["$project"]`), read by the clause that joins or counts the relation.
-    pub(super) project: Vec<Projection>,
+    pub project: Vec<Projection>,
 }
 
 /// Where a violation's `span` points. The violation id always derives from the witness span.
 #[derive(Clone, Debug, PartialEq)]
-pub(super) enum Anchor {
+pub enum Anchor {
     /// The whole witness: the matched node or regex match.
     Span,
     /// Zero width at the witness start.
@@ -215,7 +215,7 @@ enum Segment {
 
 /// A message or fix split into literal text and metavariable references.
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct Template {
+pub struct Template {
     segments: Vec<Segment>,
     /// Whether a reference is braced (`${NAME}`), which ast-grep's own templates do not read.
     braced: bool,
@@ -235,7 +235,7 @@ impl Template {
     /// A violation message: as `parse`, except that `\$` is a literal `$` (the backslash dropped),
     /// unless it starts `${NAME}` (a backslash before the variable), and a name starting with a
     /// digit, which no pattern or regex group can bind, stays literal text.
-    pub(super) fn parse_message(template: &str) -> Self {
+    pub fn parse_message(template: &str) -> Self {
         Self::split(template, true)
     }
 
@@ -336,8 +336,8 @@ impl Template {
         self.vars().next().is_none()
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(in crate::code_rule_dsl) fn parts(&self) -> impl Iterator<Item = TemplatePart<'_>> {
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    pub fn parts(&self) -> impl Iterator<Item = TemplatePart<'_>> {
         self.segments.iter().map(|segment| match segment {
             Segment::Text(text) => TemplatePart::Text(text),
             Segment::Var { name, multi } => TemplatePart::Var {
@@ -374,8 +374,8 @@ impl Template {
 
 /// `${NAME}` or `$$${NAME}` at the start of `source`: the name, whether it is a multi-capture, and
 /// the length read.
-#[cfg_attr(not(test), allow(dead_code))]
-pub(in crate::code_rule_dsl) enum TemplatePart<'a> {
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+pub enum TemplatePart<'a> {
     Text(&'a str),
     Var { name: &'a str, multi: bool },
 }
@@ -426,7 +426,7 @@ fn split_meta_var(source: &str) -> Option<(String, bool, usize)> {
 
 /// A clause's suggested fix, compiled once. A fix replaces the witness span (as ast-grep's
 /// replacement replaces the matched node) whatever the violation's anchor.
-pub(super) enum FixPlan {
+pub enum FixPlan {
     /// ast-grep `TemplateFix` per grammar dialect the rule compiled for, and the literal texts a
     /// braced template moved into transform variables (`Template::upstream`).
     Ast(Vec<(GrammarDialect, TemplateFix)>, Vec<(String, String)>),
@@ -436,15 +436,15 @@ pub(super) enum FixPlan {
 
 /// One projected field of a cross-file relation row.
 #[derive(Clone)]
-pub(super) struct Projection {
-    pub(super) field: String,
-    pub(super) source: ProjectionSource,
+pub struct Projection {
+    pub field: String,
+    pub source: ProjectionSource,
     /// First regex match's selected group, or null when the source/group does not match.
-    pub(super) extract: Option<(Regex, usize)>,
+    pub extract: Option<(Regex, usize)>,
 }
 
 #[derive(Clone)]
-pub(super) enum ProjectionSource {
+pub enum ProjectionSource {
     /// A capture's text (a multi-node capture's nodes joined as in the source).
     Capture(String),
     /// A capture's source byte offset, for identity and partition keys.
@@ -466,22 +466,22 @@ pub(super) enum ProjectionSource {
 }
 
 #[derive(Clone)]
-pub(super) struct FactQuery {
+pub struct FactQuery {
     pub(super) alias: String,
     pub(super) predicate: Option<Value>,
     /// Rows projected from an AST query's matches in every file of the code rule's scope.
-    pub(super) ast: Arc<AstRelation>,
+    pub ast: Arc<AstRelation>,
     /// Consumer columns are independent of the shared matcher and file domain.
-    pub(super) project: Arc<[Projection]>,
+    pub project: Arc<[Projection]>,
     pub(super) closure: Vec<NameClosure>,
     pub(super) each: Option<String>,
-    pub(super) anchor: Anchor,
+    pub anchor: Anchor,
 }
 
 impl FactQuery {
     // Read by P's relational compiler (test-only, open item O18).
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn retain_projected_fields(&mut self, fields: Option<&BTreeSet<String>>) {
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    pub fn retain_projected_fields(&mut self, fields: Option<&BTreeSet<String>>) {
         let needed = |p: &Projection| fields.is_some_and(|f| f.contains(&p.field));
         if self.project.iter().any(|p| !needed(p)) {
             self.project = self.project.iter().filter(|p| needed(p)).cloned().collect();
@@ -503,38 +503,38 @@ pub(super) struct NameClosure {
 }
 
 #[derive(Clone)]
-pub(super) struct AstRelation {
+pub struct AstRelation {
     /// A `Query::Ast`.
-    pub(super) query: Query,
+    pub query: Query,
     /// The files the relation reads, within the code rule's scope; `None` reads all of it.
     pub(super) domain: Option<CodeRuleScope>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(super) enum RegexSource {
+pub enum RegexSource {
     Content,
     Path,
 }
 
 /// Optional filters over matched text and independent source lines.
 #[derive(Clone, Default)]
-pub(super) struct RegexOptions {
-    pub(super) include: Vec<Regex>,
-    pub(super) exclude: Vec<Regex>,
-    pub(super) content_include: Vec<Regex>,
-    pub(super) content_exclude: Vec<Regex>,
-    pub(super) lines: Option<RegexLines>,
-    pub(super) paths: Option<CodeRuleScope>,
+pub struct RegexOptions {
+    pub include: Vec<Regex>,
+    pub exclude: Vec<Regex>,
+    pub content_include: Vec<Regex>,
+    pub content_exclude: Vec<Regex>,
+    pub lines: Option<RegexLines>,
+    pub paths: Option<CodeRuleScope>,
 }
 
 #[derive(Clone)]
-pub(super) struct RegexLines {
-    pub(super) include: Vec<Regex>,
-    pub(super) exclude: Vec<Regex>,
-    pub(super) first: bool,
-    pub(super) lf_only: bool,
-    pub(super) state: Option<RegexLineState>,
-    pub(super) indentation: Option<RegexIndentation>,
+pub struct RegexLines {
+    pub include: Vec<Regex>,
+    pub exclude: Vec<Regex>,
+    pub first: bool,
+    pub lf_only: bool,
+    pub state: Option<RegexLineState>,
+    pub indentation: Option<RegexIndentation>,
 }
 
 #[derive(Clone)]
@@ -563,7 +563,7 @@ pub(super) struct RegexIndentation {
 }
 
 #[derive(Clone)]
-pub(super) enum Query {
+pub enum Query {
     Regex {
         regex: Regex,
         source: RegexSource,
@@ -571,7 +571,9 @@ pub(super) enum Query {
     },
     Ast {
         /// One compiled matcher per grammar the rule language spans; a file uses the grammar its label selects.
-        matchers: Vec<GrammarMatcher>,
+        /// Shared: a workspace copies a code rule's clauses into the synthetic clauses it adds, and the
+        /// matchers never change once compiled.
+        matchers: Arc<[GrammarMatcher]>,
         /// The `calls` terms of the rule and its utilities, each once: their seeds run per file,
         /// their closure is read at call nodes.
         calls: Vec<Arc<CallsTerm>>,
@@ -580,11 +582,14 @@ pub(super) enum Query {
         select: Box<Query>,
         exists: Box<Query>,
     },
+    /// `{ "file": {} }`: one witness per file in the code rule's scope, without a source location;
+    /// it reads neither the file's content nor its path.
+    File,
 }
 
 impl Query {
     /// The `calls` terms the query's rules hold.
-    pub(super) fn calls(&self) -> Vec<Arc<CallsTerm>> {
+    pub fn calls(&self) -> Vec<Arc<CallsTerm>> {
         match self {
             Query::Ast { calls, .. } => calls.clone(),
             Query::SelectWhen { select, exists } => {
@@ -592,7 +597,7 @@ impl Query {
                 terms.extend(exists.calls());
                 terms
             }
-            Query::Regex { .. } => Vec::new(),
+            Query::Regex { .. } | Query::File => Vec::new(),
         }
     }
 
@@ -610,24 +615,46 @@ impl Query {
             Query::SelectWhen { select, exists } => {
                 select.reads_server_graph() || exists.reads_server_graph()
             }
-            Query::Regex { .. } => false,
+            Query::Regex { .. } | Query::File => false,
+        }
+    }
+
+    /// Whether an AST query here reads `importTarget`, whose answer depends on files besides the
+    /// one matched (`import_target::fs::View`).
+    pub(super) fn reads_import_targets(&self) -> bool {
+        match self {
+            Query::Ast { matchers, .. } => matchers.iter().any(|matcher| matcher.import_target),
+            Query::SelectWhen { select, exists } => {
+                select.reads_import_targets() || exists.reads_import_targets()
+            }
+            Query::Regex { .. } | Query::File => false,
+        }
+    }
+
+    /// Whether a leaf here reads a file as text (a regex over either source) or stands for the
+    /// file itself (`file`): such a query reads files no code-rule language lists.
+    pub(super) fn reads_text(&self) -> bool {
+        match self {
+            Query::Regex { .. } | Query::File => true,
+            Query::Ast { .. } => false,
+            Query::SelectWhen { select, exists } => select.reads_text() || exists.reads_text(),
         }
     }
 }
 
 /// A `calls` term: its inner rule as a seed query over definitions, and what chains pass through.
 #[derive(Clone)]
-pub(super) struct CallsTerm {
+pub struct CallsTerm {
     /// Identifies the term's semantics: equal keys have equal seeds.
-    pub(super) key: Arc<str>,
+    pub key: Arc<str>,
     /// Identifies its seed query: terms differing only in `through` share it.
     pub(super) seed_key: Arc<str>,
-    pub(super) through: Mode,
+    pub through: Mode,
     /// Which definitions the seed query's witnesses stand for.
     pub(super) seed_scope: SeedScope,
     /// `{ all: [{ kind: function_definition }, <inner rule>] }` with the query's utilities: its
     /// witnesses are the definitions that match.
-    pub(super) seed: Query,
+    pub seed: Query,
 }
 
 /// Every workspace's `calls` terms, by key.
@@ -667,7 +694,7 @@ impl Terms {
 }
 
 #[derive(Clone)]
-pub(super) enum ClauseKind {
+pub enum ClauseKind {
     Forbid(Query),
     RequireEach {
         subject: FactQuery,
@@ -689,7 +716,7 @@ pub(super) enum ClauseKind {
 impl ClauseKind {
     /// The query whose `calls` terms the clause holds (P's; a relational clause's reference query
     /// is P's test-only stage, O18).
-    pub(super) fn calls_query(&self) -> Option<&Query> {
+    pub fn calls_query(&self) -> Option<&Query> {
         match self {
             Self::Forbid(query) => Some(query),
             Self::Relational(plan) => plan.references.as_ref().map(|reference| &reference.query),
@@ -699,21 +726,21 @@ impl ClauseKind {
 }
 
 #[derive(Clone)]
-pub(super) struct CompiledClause {
-    pub(super) id: String,
-    pub(super) violation: ViolationSpec,
-    pub(super) kind: ClauseKind,
+pub struct CompiledClause {
+    pub id: String,
+    pub violation: ViolationSpec,
+    pub kind: ClauseKind,
     pub(super) synthetic: bool,
     /// A synthetic leaf under a `select_when`'s `exists` side: one witness answers it, so a file's
     /// evaluation stops at its first witness.
     pub(super) decision: bool,
     /// D's plan for a relational clause, compiled by D's compiler beside P's (test-only, O19).
-    #[cfg(test)]
-    pub(super) data_layer: Option<std::sync::Arc<crate::code_rule_dsl::waves::relational::Plan>>,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub data_layer: Option<std::sync::Arc<crate::code_rule_dsl::waves::relational::Plan>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) enum RuleMode {
+pub enum RuleMode {
     Log,
     Steer,
     Block,
@@ -729,7 +756,7 @@ impl RuleMode {
         }
     }
 
-    pub(super) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Log => "log",
             Self::Steer => "steer",
@@ -739,22 +766,22 @@ impl RuleMode {
 }
 
 #[derive(Clone)]
-pub(super) struct CompiledCodeRule {
-    pub(super) id: String,
+pub struct CompiledCodeRule {
+    pub id: String,
     /// Report the rule's combined findings only when their count exceeds this ceiling.
-    pub(super) report_count_gt: Option<usize>,
-    pub(super) rule_mode: RuleMode,
-    pub(super) canonical: String,
-    pub(super) digest: String,
-    pub(super) required_capabilities: String,
-    pub(super) scope: CodeRuleScope,
-    pub(super) clauses: Vec<CompiledClause>,
-    pub(super) capabilities: Capabilities,
+    pub report_count_gt: Option<usize>,
+    pub rule_mode: RuleMode,
+    pub canonical: String,
+    pub digest: String,
+    pub required_capabilities: String,
+    pub scope: CodeRuleScope,
+    pub clauses: Vec<CompiledClause>,
+    pub capabilities: Capabilities,
 }
 
 impl CompiledCodeRule {
     /// Whether any clause reads `file.package.serverGraph` (`Query::reads_server_graph`).
-    pub(super) fn reads_server_graph(&self) -> bool {
+    pub fn reads_server_graph(&self) -> bool {
         self.clauses.iter().any(|clause| match &clause.kind {
             ClauseKind::Forbid(query) => query.reads_server_graph(),
             ClauseKind::RequireEach { subject, evidence } => {
@@ -768,17 +795,64 @@ impl CompiledCodeRule {
                 .any(|(_, input)| input.ast.query.reads_server_graph()),
         })
     }
+
+    /// Whether any clause reads `importTarget` (`Query::reads_import_targets`).
+    pub(super) fn reads_import_targets(&self) -> bool {
+        self.clauses.iter().any(|clause| match &clause.kind {
+            ClauseKind::Forbid(query) => query.reads_import_targets(),
+            ClauseKind::RequireEach { subject, evidence } => {
+                subject.ast.query.reads_import_targets()
+                    || evidence.ast.query.reads_import_targets()
+            }
+            ClauseKind::Budget { query, .. } => query.ast.query.reads_import_targets(),
+            ClauseKind::Llm => false,
+            ClauseKind::Relational(plan) => plan
+                .inputs
+                .iter()
+                .any(|(_, input)| input.ast.query.reads_import_targets()),
+        })
+    }
+
+    /// Whether any clause reads text (`Query::reads_text`): files no code-rule language lists are
+    /// read, as text, for such a code rule alone.
+    pub(super) fn reads_text(&self) -> bool {
+        self.clauses.iter().any(|clause| match &clause.kind {
+            ClauseKind::Forbid(query) => query.reads_text(),
+            ClauseKind::RequireEach { subject, evidence } => {
+                subject.ast.query.reads_text() || evidence.ast.query.reads_text()
+            }
+            ClauseKind::Budget { query, .. } => query.ast.query.reads_text(),
+            ClauseKind::Llm => false,
+            ClauseKind::Relational(plan) => plan
+                .inputs
+                .iter()
+                .any(|(_, input)| input.ast.query.reads_text()),
+        })
+    }
 }
 
 #[derive(Clone)]
-pub(super) struct FileInput {
-    pub(super) path: String,
-    pub(super) language: String,
-    pub(super) source: Arc<String>,
+pub struct FileInput {
+    pub path: String,
+    pub language: String,
+    pub source: Arc<String>,
     /// A Python file's module path: the host's (`module`), else the file's stem.
-    pub(super) module: Option<Arc<ModulePath>>,
+    pub module: Option<Arc<ModulePath>>,
     /// An ECMA file's nearest `package.json` (`package`); `None` without one.
-    pub(super) package: Option<Arc<Manifest>>,
+    pub package: Option<crate::code_rule_dsl::language::FileManifest>,
+}
+
+/// A request file as facts read it.
+impl crate::code_rule_dsl::facts::core::SourceFile for FileInput {
+    fn language(&self) -> &str {
+        &self.language
+    }
+    fn source(&self) -> &Arc<String> {
+        &self.source
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 impl FileInput {
@@ -788,12 +862,12 @@ impl FileInput {
     /// that holds package markers derives it first (`python_module_in`). `package` is the ECMA
     /// file's nearest `package.json` (`Manifest::from_wire`, `Manifests`); without it the file
     /// has none.
-    pub(super) fn new(
+    pub fn new(
         path: String,
         language: String,
         source: Arc<String>,
         module: Option<&Value>,
-        package: Option<Arc<Manifest>>,
+        package: Option<crate::code_rule_dsl::language::FileManifest>,
         at: &str,
     ) -> Result<Self> {
         let module = match module {
@@ -803,8 +877,8 @@ impl FileInput {
                 ))
             })?),
             None => crate::code_rule_dsl::language::dialect_by_label(&language).and_then(|dialect| {
-                use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
-                with_adapter!(crate::code_rule_dsl::language::Family::of(dialect), A => <<A as Adapter>::Scope as ScopeRules>::unpackaged_module(&path))
+                
+                { let pack = language_pack::pack(crate::code_rule_dsl::language::Family::of(dialect)); pack.scope_unpackaged_module(&path) }
             }),
         };
         Ok(Self {
@@ -818,7 +892,7 @@ impl FileInput {
 
     /// The `type` of the file's nearest `package.json`, which decides a `.js` file's module system.
     pub(super) fn package_type(&self) -> Option<PackageType> {
-        self.package.as_deref().map(Manifest::package_type)
+        self.package.as_deref().map(|package| package.package_type())
     }
 }
 
@@ -876,13 +950,13 @@ pub(crate) fn python_module_path(
 }
 
 /// `python_module_path` over the files on disk.
-pub(crate) fn python_module_path_on_disk(file: &std::path::Path) -> Option<Value> {
+pub fn python_module_path_on_disk(file: &std::path::Path) -> Option<Value> {
     python_module_path(file, |directory| directory.join("__init__.py").exists())
 }
 
 /// The directory a file set's path marks as a Python package (`pkg` for `pkg/__init__.py`, `""`
 /// for a root `__init__.py`), if any.
-pub(crate) fn package_marker_directory(path: &str) -> Option<&str> {
+pub fn package_marker_directory(path: &str) -> Option<&str> {
     path.strip_suffix("/__init__.py")
         .or_else(|| (path == "__init__.py").then_some(""))
 }
@@ -890,21 +964,21 @@ pub(crate) fn package_marker_directory(path: &str) -> Option<&str> {
 /// `python_module_path` of a relative `path` in a file set (a workspace, a repository snapshot)
 /// whose package markers `is_package` reads: the module a host walking the same files on disk
 /// would send.
-pub(crate) fn python_module_in(path: &str, is_package: impl Fn(&str) -> bool) -> Option<Value> {
+pub fn python_module_in(path: &str, is_package: impl Fn(&str) -> bool) -> Option<Value> {
     python_module_path(std::path::Path::new(path), |directory| {
         is_package(directory.to_string_lossy().as_ref())
     })
 }
 
 #[derive(Clone)]
-pub(super) struct Snapshot {
-    pub(super) revision: u32,
-    pub(super) files: Vec<FileInput>,
+pub struct Snapshot {
+    pub revision: u32,
+    pub files: Vec<FileInput>,
 }
 
 #[derive(Clone, Default)]
 
-pub(super) struct Metrics {
+pub struct Metrics {
     pub(super) files: usize,
     pub(super) visited_nodes: usize,
     pub(super) witnesses: usize,
@@ -1003,9 +1077,9 @@ impl Metrics {
 }
 
 #[derive(Clone, Default)]
-pub(super) struct Evaluation {
-    pub(super) violations: Vec<Value>,
-    pub(super) failures: Vec<Value>,
+pub struct Evaluation {
+    pub violations: Vec<Value>,
+    pub failures: Vec<Value>,
     pub(super) metrics: Metrics,
     /// The clauses the result covers, as (rule id, clause id): the rule id is given where the
     /// result spans several code rules, as its failures give it. Each has a `coverage` entry.

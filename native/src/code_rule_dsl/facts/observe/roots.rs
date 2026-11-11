@@ -30,14 +30,14 @@ fn store_source(store: &ContentStore, blob: HashKey, bytes: &[u8]) -> StoreResul
 /// clean checkout's snapshot is its `HEAD` tree), stores them and the sources of its files with a
 /// language, and returns the root tree's id. `.git` and symbolic links are left out, and so are
 /// empty directories, as Git leaves them out.
-pub(crate) fn directory_root(store: &ContentStore, root: &Path) -> StoreResult<HashKey> {
+pub fn directory_root(store: &ContentStore, root: &Path) -> StoreResult<HashKey> {
     buffered_root(store, root, &std::collections::BTreeMap::new())
 }
 
 /// `directory_root` with editor buffers over it (the buffers observer, O2): each buffer's bytes
 /// stand for the file at its path (relative, `/`-separated), on disk or not yet, in place of what
 /// is on disk.
-pub(crate) fn buffered_root(store: &ContentStore, root: &Path, buffers: &std::collections::BTreeMap<String, Vec<u8>>) -> StoreResult<HashKey> {
+pub fn buffered_root(store: &ContentStore, root: &Path, buffers: &std::collections::BTreeMap<String, Vec<u8>>) -> StoreResult<HashKey> {
     let mut trees = Vec::new();
     let id = directory_tree(store, Some(root), "", buffers, &mut trees)?.unwrap_or(git_hash(gix::objs::Kind::Tree, b"")?);
     if trees.is_empty() {
@@ -138,7 +138,7 @@ fn executable(_: &Path) -> StoreResult<bool> {
 /// The `HEAD` tree of the Git checkout containing `root` (W's discovery), stored with the
 /// committed sources of its files with a language, as Git holds them; worktree edits are not
 /// part of `HEAD` (a directory snapshot observes them).
-pub(crate) fn git_root(store: &ContentStore, root: &Path) -> StoreResult<HashKey> {
+pub fn git_root(store: &ContentStore, root: &Path) -> StoreResult<HashKey> {
     let workspace = git_workspace::discover(root).map_err(|error| StoreError::Invalid(format!("{error:?}")))?;
     store.put_git_trees_bulk(&workspace.trees)?;
     let repository = gix::open(&workspace.worktree_root)
@@ -153,7 +153,7 @@ pub(crate) fn git_root(store: &ContentStore, root: &Path) -> StoreResult<HashKey
         let blob = repository
             .find_object(id)
             .map_err(|error| StoreError::Invalid(format!("cannot read a committed blob: {error}")))?;
-        store.put_source(&blob.data, &[file.blob])?;
+        store.put_source_at(&blob.data, &[file.blob], &file.path)?;
     }
     Ok(workspace.root_tree)
 }

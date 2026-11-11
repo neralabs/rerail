@@ -18,32 +18,31 @@
 //! Not kept: T's `tape_load`/`tape_nearest` and per-kind seeds (`<p>_kseed`), which read a per-run copy of one
 //! tree. Ancestor climbs and other file-local work run in the transducer (Phase 4 item f), whose facts arrive here
 //! as seed rows.
-mod setfix;
-#[cfg(test)]
-pub(crate) use setfix::DERIVATIONS;
-pub(in crate::code_rule_dsl) use setfix::{forget_engine, forget_scope};
-pub(in crate::code_rule_dsl) mod aggregation;
+pub mod setfix;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use setfix::DERIVATIONS;
+pub use setfix::{forget_engine, forget_scope};
+pub mod aggregation;
 /// `dfs_first` and `dfs_first_memo` (`core.rr`): a relation the evaluator makes from its inputs' rows.
-pub(in crate::code_rule_dsl) mod dfs_first;
+pub mod dfs_first;
 /// `components` (`core.rr`, decision 0063): each document's import component and its Merkle key.
-pub(in crate::code_rule_dsl) mod components;
-pub(in crate::code_rule_dsl) mod match_all;
+pub mod components;
+pub mod match_all;
 /// T's loadable extension as copied (8934168d `lib.rs`); this module is its adaptation (O19).
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[allow(dead_code)]
-pub(in crate::code_rule_dsl) mod extension;
-pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, intern_batch, keep_inputs, register_symbols, sym_text_of};
+pub mod extension;
+pub use setfix::{flush_symbols, forget_inputs, intern_batch, keep_inputs, register_symbols, sym_text_of};
 /// A connection's identity for the state a run leaves with it (`setfix::scope`).
-pub(in crate::code_rule_dsl) use setfix::scope as setfix_scope;
-pub(in crate::code_rule_dsl) use setfix::symbol_text;
+pub use setfix::scope as setfix_scope;
+pub use setfix::symbol_text;
 /// The set engine's component calls, made in process by the planner (no SQL statement each).
-pub(in crate::code_rule_dsl) mod component {
-    pub(in crate::code_rule_dsl) use super::setfix::lab;
-    pub(in crate::code_rule_dsl) use super::setfix::spec;
-    #[cfg(target_os = "macos")]
-    pub(in crate::code_rule_dsl) use super::setfix::{DeviceReport, device_report};
-    pub(in crate::code_rule_dsl) use super::setfix::probed;
-    pub(in crate::code_rule_dsl) use super::setfix::{InRel, add, cat_symbols, adopt, adopted, close, carry_sorted, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, hold_as, hold_empty, live, materialize, open_spec, pending, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, run, step_counts, unindex, hold_rows, kept_rows, table_source, tables_built, output_rows, source_rows, finding_rows};
+pub mod component {
+    pub use super::setfix::lab;
+    pub use super::setfix::spec;
+    pub use super::setfix::{DeviceReport, device_report};
+    pub use super::setfix::probed;
+    pub use super::setfix::{InRel, add, cat_symbols, prime, adopt, adopted, close, carry_sorted, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, hold_as, hold_empty, live, materialize, open_spec, pending, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, run, step_counts, unindex, hold_rows, kept_rows, table_source, tables_built, output_rows, source_rows, finding_rows};
 }
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
@@ -75,7 +74,7 @@ fn join(a: i64, b: i64) -> i64 { Flat.join(a, b) }
 
 /// A lattice over `i64` values (integers or atoms) under which `lattice_fixpoint` runs (§12 `.decl … merge @join
 /// widen k`). `BOT` is the absent value: `join` and `transfer` see it only through the provided methods.
-pub(in crate::code_rule_dsl) trait Lattice: Send + Sync {
+pub trait Lattice: Send + Sync {
     /// Known algebra for composition. Registered callbacks are opaque by default.
     fn reduction(&self) -> aggregation::Reduction { aggregation::Reduction::Opaque }
     /// The least upper bound of two present values.
@@ -138,7 +137,7 @@ impl Lattice for Min {
 /// `shortlex_min<symbol>`: the shortest symbol, then the least by its UTF-8 bytes (`core.rr`), over a run's atoms.
 /// Shortlex is a well-order, so every chain of ever-smaller values is finite. A value the atoms do not hold (`TOP`)
 /// absorbs. The run declares it over its store's atoms (`declare`), as its symbols are those atoms.
-pub(in crate::code_rule_dsl) struct ShortlexMin(pub(in crate::code_rule_dsl) Arc<crate::content_store::atoms::Atoms>);
+pub struct ShortlexMin(pub Arc<crate::content_store::atoms::Atoms>);
 impl Lattice for ShortlexMin {
     fn lub(&self, a: i64, b: i64) -> i64 {
         if a == TOP || b == TOP {
@@ -161,7 +160,7 @@ static LATTICES: LazyLock<Mutex<Vec<(String, Arc<dyn Lattice>)>>> = LazyLock::ne
 });
 
 /// Declares `lattice` under `name`, replacing an earlier declaration.
-pub(in crate::code_rule_dsl) fn declare(name: &str, lattice: Arc<dyn Lattice>) {
+pub fn declare(name: &str, lattice: Arc<dyn Lattice>) {
     let mut lattices = LATTICES.lock().unwrap();
     lattices.retain(|(n, _)| n != name);
     lattices.push((name.to_owned(), lattice));
@@ -255,12 +254,11 @@ fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>, lat: &dyn 
         x
     };
     // The device work queue (one persistent dispatch, a cell an item) where it solves the same system.
-    #[cfg(target_os = "macos")]
-    if binding == Binding::Metal && flat && widen.is_none() && !absorb {
+    if let Some(dev) = crate::code_rule_dsl::logic::device::solver().filter(|_| binding == Binding::Metal && flat && widen.is_none() && !absorb) {
         let copies = copies.iter().map(|&(a, b)| (a as u32, b as u32)).collect::<Vec<_>>();
         let bins = bins.iter().map(|&(c, o, l, r)| (c as u32, o, l as u32, r as u32)).collect::<Vec<_>>();
-        let system = crate::code_rule_dsl::transducer::packed::metal_lattice::System { seeds: &seed, copies: &copies, bins: &bins };
-        let solved = crate::code_rule_dsl::transducer::packed::metal_lattice::solve(&system)
+        let system = crate::code_rule_dsl::logic::device::lattice::System { seeds: &seed, copies: &copies, bins: &bins };
+        let solved = dev.lattice(&system)
             .map_err(|error| user_err(format!("lattice_fixpoint on Metal: {error:?}")))?;
         crate::code_rule_dsl::prof::count("lattice.device_retries", solved.retries as usize);
         crate::code_rule_dsl::logic::profile::device("lattice_fixpoint (work queue)", solved.launches as u64, solved.gpu, solved.wall, n as u64);
@@ -393,14 +391,15 @@ unsafe impl VTabCursor for ResultCursor {
     fn next(&mut self) -> Result<()> { self.pos += 1; self.skip(); Ok(()) }
     fn eof(&self) -> bool { self.pos >= self.end }
     fn column(&self, ctx: &mut VContext, i: c_int) -> Result<()> {
-        if i == 0 { ctx.set_result(&self.vals.0[self.pos]) } else { ctx.set_result(&self.vals.1[self.pos]) }
+        if i == 0 { ctx.set_result(self.vals.0[self.pos]) } else { ctx.set_result(self.vals.1[self.pos]) }
     }
     fn rowid(&self) -> Result<i64> { Ok(self.pos as i64) }
 }
 
-/// Registers the functions and virtual tables on `db`, `atoms` and the store's commit hook among them (decision 0049).
-pub(in crate::code_rule_dsl) fn register(db: &Connection) -> Result<()> {
-    crate::content_store::atoms::Atoms::install(db)?;
+/// Registers the functions and virtual tables on `db`, `atoms` among them (decision 0049; its opener registered the
+/// store's commit hook, `Atoms::install`).
+pub fn register(db: &Connection) -> Result<()> {
+    crate::content_store::atoms::Atoms::attach(db)?;
     let det = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
     db.create_scalar_function(c"flat_bin", 3, det, |ctx| {
         let o: String = ctx.get(0)?;
@@ -475,5 +474,4 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

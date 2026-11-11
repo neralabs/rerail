@@ -5,7 +5,7 @@ use crate::code_rule_dsl::{
     violations::Span,
 };
 use ast_grep_core::source::SgNode;
-mod packed;
+pub mod packed;
 use packed::{Columns, Fields, Postings};
 use rusqlite::{Connection, types::Value, vtab::Context};
 use std::{
@@ -45,7 +45,7 @@ pub(in crate::code_rule_dsl) struct Spec {
     pub owners: BTreeMap<String, Owner>,
 }
 
-pub(in crate::code_rule_dsl) trait Source: Send + Sync {
+pub trait Source: Send + Sync {
     fn columns(&self) -> Vec<String>;
     fn column_types(&self) -> Vec<String>;
     fn len(&self) -> usize;
@@ -101,7 +101,7 @@ pub(in crate::code_rule_dsl) trait Source: Send + Sync {
     fn charge(&self, count: usize) -> rusqlite::Result<()>;
 }
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct Counters {
+pub struct Counters {
     pub scans: AtomicU64,
     pub batches: AtomicU64,
     pub candidates: AtomicU64,
@@ -113,7 +113,7 @@ struct OwnerIndex {
     distinct: usize,
 }
 type Selections = parking_lot::Mutex<HashMap<(Vec<String>, bool), Arc<Selection>>>;
-pub(in crate::code_rule_dsl) struct Facts {
+pub struct Facts {
     doc: TapeDoc,
     lines: Arc<LineTable>,
     rows: Vec<u32>,
@@ -294,24 +294,16 @@ impl Facts {
         cache.insert(key, Arc::clone(&index));
         Ok(index)
     }
-    pub(super) fn python_ast_source(&self) -> String {
+    pub fn ast_source(&self) -> String {
         String::from_utf8(self.doc.transducer_source().to_vec()).expect("UTF-8 source")
     }
-    pub(super) fn python_ast_request(
-        &self,
-        id: u32,
-        fields: Vec<String>,
-    ) -> Result<crate::code_rule_dsl::value::python_ast::Request> {
+    /// A canonical AST root's span and kind.
+    pub fn ast_root(&self, id: u32) -> Result<(usize, usize, String)> {
         if self.positions.get(id as usize).is_none_or(Option::is_none) {
             return Err(invalid("invalid Python AST root"));
         }
         let span = self.packed.span(id);
-        Ok(crate::code_rule_dsl::value::python_ast::Request {
-            start: span.start,
-            end: span.end,
-            kind: self.packed.kind(id).into(),
-            fields,
-        })
+        Ok((span.start, span.end, self.packed.kind(id).into()))
     }
     pub(in crate::code_rule_dsl) fn subtree_ends(&self) -> &[u32] {
         &self.packed.subtree_end
@@ -630,16 +622,16 @@ impl Source for Nodes {
         let span = self.facts.packed.span(id);
         match &self.columns[c].1 {
             Column::Path => ctx.set_result(&self.path),
-            Column::Id => ctx.set_result(&i64::from(id)),
+            Column::Id => ctx.set_result(i64::from(id)),
             Column::SubtreeEnd => {
-                ctx.set_result(&i64::from(self.facts.packed.subtree_end[id as usize]))
+                ctx.set_result(i64::from(self.facts.packed.subtree_end[id as usize]))
             }
-            Column::Start => ctx.set_result(&(span.start as i64)),
-            Column::End => ctx.set_result(&(span.end as i64)),
-            Column::Parent => ctx.set_result(&self.facts.packed.parent(id).map(i64::from)),
-            Column::Kind => ctx.set_result(&self.facts.packed.kind(id)),
-            Column::Line => ctx.set_result(&(self.facts.lines.line(span.start) as i64)),
-            Column::Text => ctx.set_result(&if self
+            Column::Start => ctx.set_result(span.start as i64),
+            Column::End => ctx.set_result(span.end as i64),
+            Column::Parent => ctx.set_result(self.facts.packed.parent(id).map(i64::from)),
+            Column::Kind => ctx.set_result(self.facts.packed.kind(id)),
+            Column::Line => ctx.set_result(self.facts.lines.line(span.start) as i64),
+            Column::Text => ctx.set_result(if self
                 .empty_text_kinds
                 .iter()
                 .any(|k| k == self.facts.packed.kind(id))
@@ -651,36 +643,36 @@ impl Source for Nodes {
                     .map_err(|e| rusqlite::Error::UserFunctionError(e.reason.into()))?;
                 text
             }),
-            Column::Ordinal => ctx.set_result(&(ordinal as i64)),
+            Column::Ordinal => ctx.set_result(ordinal as i64),
             Column::Owner(o) => {
-                ctx.set_result(&(o.values[row] != packed::NONE).then_some(i64::from(o.values[row])))
+                ctx.set_result((o.values[row] != packed::NONE).then_some(i64::from(o.values[row])))
             }
             Column::ParentStart | Column::ParentEnd | Column::ParentKind => {
                 let parent = self.facts.packed.parent(id);
                 match self.columns[c].1 {
                     Column::ParentStart => {
-                        ctx.set_result(&parent.map(|p| self.facts.packed.span(p).start as i64))
+                        ctx.set_result(parent.map(|p| self.facts.packed.span(p).start as i64))
                     }
                     Column::ParentEnd => {
-                        ctx.set_result(&parent.map(|p| self.facts.packed.span(p).end as i64))
+                        ctx.set_result(parent.map(|p| self.facts.packed.span(p).end as i64))
                     }
-                    _ => ctx.set_result(&parent.map(|p| self.facts.packed.kind(p).to_owned())),
+                    _ => ctx.set_result(parent.map(|p| self.facts.packed.kind(p).to_owned())),
                 }
             }
             Column::Field(field, part) => {
                 let value = self.facts.fields.get(id, *field);
                 match part {
-                    0 => ctx.set_result(&value.map(i64::from)),
-                    1 => ctx.set_result(&value.map(|n| self.facts.packed.span(n).start as i64)),
-                    2 => ctx.set_result(&value.map(|n| self.facts.packed.span(n).end as i64)),
-                    3 => ctx.set_result(&value.map(|n| self.facts.packed.kind(n).to_owned())),
+                    0 => ctx.set_result(value.map(i64::from)),
+                    1 => ctx.set_result(value.map(|n| self.facts.packed.span(n).start as i64)),
+                    2 => ctx.set_result(value.map(|n| self.facts.packed.span(n).end as i64)),
+                    3 => ctx.set_result(value.map(|n| self.facts.packed.kind(n).to_owned())),
                     _ => {
                         let text = value.map(|n| doc.transducer_text_str(n));
                         if let Some(text) = text {
                             source::charge(&self.meter.work, text.len().div_ceil(256))
                                 .map_err(|e| rusqlite::Error::UserFunctionError(e.reason.into()))?;
                         }
-                        ctx.set_result(&text)
+                        ctx.set_result(text)
                     }
                 }
             }
@@ -1165,7 +1157,7 @@ pub(in crate::code_rule_dsl) fn demand(
 }
 
 #[cfg(test)]
-mod scoped_index_tests {
+pub mod scoped_index_tests {
     use super::*;
     use std::sync::atomic::Ordering;
     #[test]

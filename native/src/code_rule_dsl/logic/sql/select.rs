@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// What a FROM item reads.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub(in crate::code_rule_dsl) enum Relation {
+pub enum Relation {
     /// A base relation of the program's facts, in schema `schema` (T's attached file `f.`, or the bound
     /// vtabs `main.`).
     Input { schema: String, rel: String },
@@ -33,8 +33,8 @@ pub(in crate::code_rule_dsl) enum Relation {
 /// Where a batch input is read: `columns` of `table`, each as `c{i}` (`positional`) or under its own name,
 /// and where `batched` only the rows of the chunk's batch (`batch = :batch`).
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub(in crate::code_rule_dsl) struct Source {
-    pub(in crate::code_rule_dsl) table: String,
+pub struct Source {
+    pub table: String,
     pub(in crate::code_rule_dsl) columns: Vec<String>,
     pub(in crate::code_rule_dsl) positional: bool,
     pub(in crate::code_rule_dsl) batched: bool,
@@ -42,21 +42,21 @@ pub(in crate::code_rule_dsl) struct Source {
 
 impl Source {
     /// `columns` of `table`, read as `c0`, `c1`, ….
-    pub(in crate::code_rule_dsl) fn positional(table: &str, columns: &[&str]) -> Self {
+    pub fn positional(table: &str, columns: &[&str]) -> Self {
         Self { table: table.to_owned(), columns: columns.iter().map(|c| (*c).to_owned()).collect(), positional: true, batched: false }
     }
 
     /// `columns` of `table` under their own names.
-    pub(in crate::code_rule_dsl) fn named(table: &str, columns: &[&str]) -> Self {
+    pub fn named(table: &str, columns: &[&str]) -> Self {
         Self { positional: false, ..Self::positional(table, columns) }
     }
 
     /// Only the rows of the chunk's batch.
-    pub(in crate::code_rule_dsl) fn batched(self) -> Self {
+    pub fn batched(self) -> Self {
         Self { batched: true, ..self }
     }
 
-    pub(in crate::code_rule_dsl) fn render(&self) -> String {
+    pub fn render(&self) -> String {
         let columns = self
             .columns
             .iter()
@@ -87,88 +87,18 @@ impl Source {
     }
 }
 
-/// The columns of the planner's base relations (T's input schema). Others are `c0`, `c1`, ….
-pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
-    Some(match rel {
-        "node" => &["d", "n", "kind", "start", "end_"],
-        "line" => &["n", "l"],
-        "doc" => &["d", "path", "module"],
-        "child" => &["p", "c", "idx"],
-        "field" => &["p", "f", "c"],
-        "text" | "name" | "str" | "strprefix" | "value" => &["n", "s"],
-        "intval" => &["n", "v"],
-        "op_at" => &["n", "i", "s"],
-        "op" | "op_t" | "comment" | "static_value" => &["n", "s"],
-        // `core.rr`'s (`facts::vtab::syntax`, decision 0046).
-        "syntax_error" => &["d", "l", "msg"],
-        "value_type" => &["v", "t"],
-        "spread" => &["n"],
-        "next_sibling" => &["a", "b"],
-        "visit_index" => &["n", "i"],
-        "node_order" => &["n", "k"],
-        "ast_depth" => &["n", "k"],
-        "line_count" => &["d", "k"],
-        "end_line" => &["n", "l"],
-        "col" => &["n", "c"],
-        "docof" => &["n", "d"],
-        "source" => &["d", "sp"],
-        "src_line" => &["d", "l", "sp"],
-        "split_line" | "lf_line" => &["d", "l", "t"],
-        "str_part" => &["lit", "i", "v", "at", "spec"],
-        "str_part_word" => &["lit", "i", "w", "at", "spec"],
-        "str_part_start" => &["lit", "i", "l", "c"],
-        "first_token" | "last_token" => &["n", "t"],
-        "token_before" | "token_after" => &["x", "t"],
-        "tree_digest" | "def_digest" => &["n", "s"],
-        "rx_span" => &["p", "c", "j", "g", "m"],
-        "ast_match" => &["p", "n", "g", "c"],
-        // Decision 0055's (`facts::vtab::syntax::guests`).
-        "guest" => &["g", "host", "at", "grammar"],
-        "doc_role" => &["d", "r"],
-        "doc_root" => &["d", "n"],
-        "tape_of" => &["d", "t"],
-        "parsed" => &["s", "grammar", "root"],
-        "sub_tape" => &["at", "grammar", "t"],
-        "host_node" => &["n", "h"],
-        // Decision 0058's tape operations.
-        "parse_of" => &["x", "g", "t"],
-        "unparse_of" => &["t", "x"],
-        "splice_of" => &["t", "n", "t2", "t3"],
-        // The repository inputs (`facts::repository`).
-        "option" => &["name", "v"],
-        "option_item" => &["name", "i", "v"],
-        "file" => &["path"],
-        "package" => &["dir", "name"],
-        "package_field" => &["dir", "key", "v"],
-        "package_for" => &["path", "dir"],
-        "pkg" => &["d", "p"],
-        "path_part" | "file_name" => &["d", "s"],
-        "tape" => &["n", "par", "size", "depth"],
-        "core_node" => &["d", "t", "n"],
-        // Containment read off the tree (`facts::vtab::syntax::within`, decision 0050).
-        "within" => &["n", "a"],
-        "span_within" => &["inner", "outer"],
-        // The transducer's `nearest` rows, and the tree axes' (`facts::vtab::syntax::with_nearest`).
-        rel if crate::code_rule_dsl::logic::front::is_transduced(rel) => &["n", "a"],
-        rel if rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) => &["s"],
-        // An `ast` matcher's matched nodes (decision 0106).
-        rel if rel.starts_with(crate::code_rule_dsl::logic::plan::corpus::AST_MATCHES) => crate::code_rule_dsl::logic::plan::corpus::ast_columns(rel),
-        // The `py.*` families (`facts::vtab::syntax::PY`).
-        rel if rel.starts_with("py_") => crate::code_rule_dsl::facts::vtab::syntax::PY.iter().position(|&p| p == rel).map(|i| crate::code_rule_dsl::facts::vtab::syntax::PY_COLUMNS[i])?,
-        _ => return None,
-    })
-}
+pub use crate::code_rule_dsl::facts::core::input_columns;
 
 impl Relation {
     /// The relation the program names, if it is one (`Input`, `Derived`, `Batch`, `Bound`).
-    pub(in crate::code_rule_dsl) fn program_relation(&self) -> Option<&str> {
+    pub fn program_relation(&self) -> Option<&str> {
         match self {
             Self::Input { rel, .. } | Self::Derived { rel, .. } | Self::Batch { rel, .. } | Self::Bound { rel, .. } => Some(rel),
             _ => None,
         }
     }
 
-    pub(in crate::code_rule_dsl) fn render(&self) -> String {
+    pub fn render(&self) -> String {
         match self {
             Self::Input { schema, rel } => format!("{schema}{}", super::ident(rel)),
             Self::Derived { rel, delta: false } => super::ident(rel).into_owned(),
@@ -186,53 +116,53 @@ impl Relation {
 /// How a FROM item after the first is joined: `CROSS JOIN` keeps the planner's order (its conditions are in
 /// the WHERE clause); `JOIN … ON` leaves the order to SQLite.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) enum Join {
+pub enum Join {
     Cross,
     On(Vec<SqlExpression>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct FromItem {
-    pub(in crate::code_rule_dsl) relation: Relation,
-    pub(in crate::code_rule_dsl) alias: String,
-    pub(in crate::code_rule_dsl) join: Join,
+pub struct FromItem {
+    pub relation: Relation,
+    pub alias: String,
+    pub join: Join,
 }
 
 /// One SELECT block.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct Select {
-    pub(in crate::code_rule_dsl) distinct: bool,
-    pub(in crate::code_rule_dsl) columns: Vec<(SqlExpression, Option<String>)>,
-    pub(in crate::code_rule_dsl) from: Vec<FromItem>,
-    pub(in crate::code_rule_dsl) predicates: Vec<SqlExpression>,
+pub struct Select {
+    pub distinct: bool,
+    pub columns: Vec<(SqlExpression, Option<String>)>,
+    pub from: Vec<FromItem>,
+    pub predicates: Vec<SqlExpression>,
 }
 
 /// A CTE: its arms are joined by `UNION ALL` (or `UNION` where `distinct`); a later arm may read the CTE
 /// itself (a recursive walk). `materialized` fences it (`AS MATERIALIZED`): evaluated once, not inlined.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct Cte {
-    pub(in crate::code_rule_dsl) name: String,
-    pub(in crate::code_rule_dsl) columns: Option<Vec<String>>,
-    pub(in crate::code_rule_dsl) arms: Vec<Select>,
-    pub(in crate::code_rule_dsl) distinct: bool,
+pub struct Cte {
+    pub name: String,
+    pub columns: Option<Vec<String>>,
+    pub arms: Vec<Select>,
+    pub distinct: bool,
     pub(in crate::code_rule_dsl) materialized: bool,
 }
 
 impl Cte {
     /// A walk's CTE: its arms under `UNION ALL`, inlined.
-    pub(in crate::code_rule_dsl) fn walk(name: impl Into<String>, columns: Option<Vec<String>>, arms: Vec<Select>) -> Self {
+    pub fn walk(name: impl Into<String>, columns: Option<Vec<String>>, arms: Vec<Select>) -> Self {
         Self { name: name.into(), columns, arms, distinct: false, materialized: false }
     }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct Query {
-    pub(in crate::code_rule_dsl) ctes: Vec<Cte>,
-    pub(in crate::code_rule_dsl) body: Select,
+pub struct Query {
+    pub ctes: Vec<Cte>,
+    pub body: Select,
 }
 
 impl FromItem {
-    pub(in crate::code_rule_dsl) fn cross(relation: Relation, alias: impl Into<String>) -> Self {
+    pub fn cross(relation: Relation, alias: impl Into<String>) -> Self {
         Self { relation, alias: alias.into(), join: Join::Cross }
     }
 }
@@ -287,7 +217,7 @@ impl Select {
     }
 
     /// Each FROM item's relation, in subqueries too.
-    pub(in crate::code_rule_dsl) fn relations_mut(&mut self, f: &mut dyn FnMut(&mut Relation)) {
+    pub fn relations_mut(&mut self, f: &mut dyn FnMut(&mut Relation)) {
         for item in &mut self.from {
             f(&mut item.relation);
         }
@@ -323,7 +253,7 @@ fn conjunction(predicates: &[SqlExpression]) -> String {
 }
 
 impl Query {
-    pub(in crate::code_rule_dsl) fn render(&self) -> String {
+    pub fn render(&self) -> String {
         if self.ctes.is_empty() {
             return self.body.render();
         }
@@ -341,7 +271,7 @@ impl Query {
     }
 
     /// The program relations the statement reads, sorted.
-    pub(in crate::code_rule_dsl) fn reads(&self) -> BTreeSet<&Relation> {
+    pub fn reads(&self) -> BTreeSet<&Relation> {
         let mut reads = BTreeSet::new();
         fn select<'a>(block: &'a Select, reads: &mut BTreeSet<&'a Relation>) {
             reads.extend(block.from.iter().map(|item| &item.relation).filter(|relation| relation.program_relation().is_some()));
@@ -464,7 +394,7 @@ fn check_select(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::logic::sql::sql_ast::{SqlBinaryOperator, SqlValue};
 

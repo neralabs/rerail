@@ -25,13 +25,13 @@ use metal::{CommandBufferRef, Device};
 use std::rc::Rc;
 
 #[path = "metal_successor_view.rs"]
-mod successor_view;
+pub mod successor_view;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {static FORCE_SUCCESSOR_VIEWS:std::cell::Cell<bool>=const{std::cell::Cell::new(false)};}
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) struct ViewConformanceScope(bool);
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl ViewConformanceScope {
     pub(super) fn enter() -> Self {
         Self(FORCE_SUCCESSOR_VIEWS.with(|flag| flag.replace(true)))
@@ -40,7 +40,7 @@ impl ViewConformanceScope {
         FORCE_SUCCESSOR_VIEWS.with(|flag| flag.get())
     }
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl Drop for ViewConformanceScope {
     fn drop(&mut self) {
         FORCE_SUCCESSOR_VIEWS.with(|flag| flag.set(self.0));
@@ -67,22 +67,22 @@ fn use_successor_views(device: &Device, bound: &Capacity) -> Result<bool, Error>
     {
         return Ok(true);
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     {
         Ok(FORCE_SUCCESSOR_VIEWS.with(|flag| flag.get()))
     }
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-hooks")))]
     {
         Ok(false)
     }
 }
 
-#[cfg(all(test, feature = "metal-tests"))]
+#[cfg(all(any(test, feature = "test-hooks"), feature = "metal-tests"))]
 #[path = "metal_dynamic_execution_tests.rs"]
-mod tests;
+pub mod tests;
 
 #[path = "metal_initial_range.rs"]
-mod initial_range;
+pub mod initial_range;
 
 pub(super) struct DynamicFrontier<const FIELDS: usize = POSITIONED_COLUMNS> {
     states: FrontierRecords<FIELDS>,
@@ -238,12 +238,12 @@ pub(super) struct PendingStart {
     seeds: CountedSeeds,
     roots: MappedBuffer,
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) struct InitialExecution {
     frontier: DynamicFrontier<INITIAL_COLUMNS>,
     prepared: Option<(PreparedSuccessors<INITIAL_COLUMNS>, Capacity)>,
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl InitialExecution {
     fn positioned(
         self,
@@ -348,7 +348,7 @@ impl PendingStart {
             data,
         })
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn finish(
         self,
         device: &Device,
@@ -438,7 +438,7 @@ fn advance<const FIELDS: usize>(
     preparation: PreparedSuccessors<FIELDS>,
     bound: &Capacity,
 ) -> Result<DynamicFrontier, Error> {
-    #[cfg(all(test, feature = "metal-tests"))]
+    #[cfg(all(any(test, feature = "test-hooks"), feature = "metal-tests"))]
     if std::env::var_os("TEMPO_METAL_PROFILE_EXPANSION").is_some() {
         tests::profile_expansion(device, queue, &input, &preparation)?;
     }
@@ -858,14 +858,14 @@ fn finish_frontier(
     })
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) struct ViewTestInput {
     pub private_frames: bool,
     pub states: PositionedFrontier,
     pub values: StateValues,
     pub control: ControlValues,
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn execute_view_for_test(
     device: &Device,
     queue: &metal::CommandQueueRef,
@@ -923,12 +923,12 @@ pub(super) fn execute_view_for_test(
     })
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) struct CaptureCopyFixture {
     pub saved: Vec<[u32; 4]>,
     pub added: Vec<[u32; 4]>,
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn copy_captures_for_test(
     device: &Device,
     queue: &metal::CommandQueueRef,

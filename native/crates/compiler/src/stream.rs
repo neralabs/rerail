@@ -225,6 +225,12 @@ fn next_bit(words: &[u64], from: usize) -> Option<u32> {
 /// the totals. It executes the words only; the tables it reads
 /// are the program's switches, strings and checks.
 pub fn run(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun) -> Result<Vec<Node>, Refused> {
+    run_seen(program, bytes, tier1, &mut |_| {})
+}
+
+/// `run`, with `seen` told the place of each word it runs, in order: the words' profile (which
+/// states follow which, how often), for laying out the generated code.
+pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, seen: &mut dyn FnMut(usize)) -> Result<Vec<Node>, Refused> {
     let words = &program.words;
     let stream = |op: u8, m: u8| words.iter().map(|&w| split(w)).find(|&(o, mm, _)| o == op && mm == m).map(|(_, _, x)| usize::from(x));
     let none: Vec<u32> = Vec::new();
@@ -273,6 +279,7 @@ pub fn run(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun) -> Res
     let mut flags: u16 = 0;
     let refuse = |pc: usize, why: &'static str| Err(Refused { pc, why });
     loop {
+        seen(pc);
         let (opcode, mode, operand) = split(words[pc]);
         pc += 1;
         match opcode {

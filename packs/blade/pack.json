@@ -3,7 +3,7 @@
   "id": "blade",
   "name": "Blade",
   "category": "language",
-  "covers": "10 Bladestan, tlint and stillat/blade-parser rules ported to Rerail, 8 of them on and 2 off until turned on, each scored against the tool's own recorded findings on its test fixtures.",
+  "covers": "Bladestan, tlint and blade-parser rules for clean, correct Laravel Blade templates.",
   "reason": "matches Blade templates",
   "match": {
     "any": [
@@ -29,22 +29,6 @@
       "title": "Bladestan identical.alwaysTrue: Strict comparison always true",
       "group": "Bladestan",
       "on": false
-    },
-    {
-      "id": "tlint-no-json-directive",
-      "document": "rules/tlint-no-json-directive.json",
-      "title": "tlint NoJsonDirective: No @json directive",
-      "group": "tlint",
-      "examples": {
-        "caught": {
-          "path": "resources/views/profile.blade.php",
-          "text": "<script>\n    const user = @json($user);\n</script>\n"
-        },
-        "passes": {
-          "path": "resources/views/profile.blade.php",
-          "text": "<script>\n    const user = {{ Js::from($user) }};\n</script>\n"
-        }
-      }
     },
     {
       "id": "tlint-no-dump-directives",
@@ -96,6 +80,12 @@
       "id": "blade-parser-component-shorthand-variable-parameter",
       "document": "rules/blade-parser-component-shorthand-variable-parameter.json",
       "title": "blade-parser ComponentShorthandVariableParameterValidator: Malformed component shorthand attribute",
+      "group": "blade-parser"
+    },
+    {
+      "id": "blade-parser-duplicate-condition-expressions",
+      "document": "rules/blade-parser-duplicate-condition-expressions.json",
+      "title": "blade-parser DuplicateConditionExpressionsValidator: Duplicate @elseif condition",
       "group": "blade-parser"
     }
   ]

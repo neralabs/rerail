@@ -10,7 +10,7 @@ use super::{
 };
 #[cfg(any(test, feature = "test-hooks"))]
 use rusqlite::OptionalExtension;
-use rusqlite::{Transaction, TransactionBehavior, params};
+use rusqlite::{Connection, TransactionBehavior, params};
 use std::collections::HashMap;
 
 impl WorkspaceRegistration<'_> {
@@ -27,7 +27,7 @@ impl WorkspaceRegistration<'_> {
     /// snapshot no workspace references is collectable. The lease ends at `lease_until`.
     pub(super) fn register(
         &self,
-        transaction: &Transaction<'_>,
+        transaction: &Connection,
         snapshot_id: SnapshotId,
         lease_until: i64,
     ) -> StoreResult<WorkspaceId> {
@@ -95,7 +95,7 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let path_id = intern_path(&transaction, path)?;
         transaction.execute(
             "INSERT INTO workspace_overlay(workspace_id,path_id,state_id,source_id,tape_id) VALUES (?1,?2,?3,?4,?5)\
@@ -198,7 +198,7 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let path_id = transaction
             .query_row(
                 "SELECT p.path_id FROM paths p JOIN strings s ON s.string_id=p.string_id \
@@ -327,7 +327,7 @@ impl ContentStore {
         let encoded = serde_json::to_string(&input).map_err(|error| {
             StoreError::Invalid(format!("workspace leases cannot be encoded: {error}"))
         })?;
-        let renew = |transaction: &Transaction<'_>| {
+        let renew = |transaction: &Connection| {
             transaction
                 .prepare_cached(
                     "WITH input AS (SELECT CAST(json_extract(value,'$[0]') AS INTEGER) workspace_id, \
@@ -364,7 +364,7 @@ impl ContentStore {
 fn overlay_removal(
     workspace_id: WorkspaceId,
     paths: &[String],
-) -> StoreResult<Option<impl Fn(&Transaction<'_>) -> StoreResult<()>>> {
+) -> StoreResult<Option<impl Fn(&Connection) -> StoreResult<()>>> {
     if paths.is_empty() {
         return Ok(None);
     }
@@ -378,7 +378,7 @@ fn overlay_removal(
             .collect::<Vec<_>>(),
     )
     .map_err(|error| StoreError::Invalid(error.to_string()))?;
-    Ok(Some(move |transaction: &Transaction<'_>| {
+    Ok(Some(move |transaction: &Connection| {
         transaction.execute(
             "DELETE FROM workspace_overlay WHERE workspace_id=?1 AND path_id IN (\
              SELECT p.path_id FROM json_each(?2) i \

@@ -15,7 +15,7 @@ use crate::content_store::{Derivation, DerivationRecord, StoreError, StoreResult
 /// Counts of one propagation. `rerun - changed` re-runs produced what they produced before: the
 /// work spurious invalidation costs (C19).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct Work {
+pub struct Work {
     pub waves: u32,
     pub rerun: u64,
     pub changed: u64,
@@ -52,4 +52,4 @@ pub(crate) fn propagate(
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

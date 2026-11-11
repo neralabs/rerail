@@ -354,6 +354,8 @@ pub struct Sample {
     pub ok: bool,
     /// The cores' slowdown under the machine's load when it ended ([`crate::exec::cores_slowdown`]).
     pub load: f64,
+    /// The executor's pool threads ([`crate::exec::threads`]).
+    pub threads: u32,
 }
 
 static KEEP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -557,6 +559,7 @@ impl Scoreboard {
                 cold,
                 ok,
                 load: crate::exec::cores_slowdown(),
+                threads: crate::exec::threads() as u32,
             };
             let mut held = SAMPLES.lock().unwrap_or_else(|p| p.into_inner());
             if held.len() < HELD {
@@ -656,6 +659,11 @@ impl Scoreboard {
             p.cpu += cpu;
             p.wall += wall;
         });
+    }
+
+    /// `f` of `lane`'s unit now (its jobs queued and running), read under the board's lock.
+    pub fn with_units<R>(&self, lane: Lane, f: impl FnOnce(&Unit) -> R) -> R {
+        self.with(|s| f(&s.units[lane.index()]))
     }
 
     /// The estimated seconds not yet done, per lane.

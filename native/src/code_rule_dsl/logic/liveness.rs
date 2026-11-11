@@ -35,10 +35,10 @@ use std::collections::BTreeSet;
 use super::front::{AggOp, Atom, Literal, Program, Rule, Term};
 
 /// The counts' relation: `liveof_count(rel, what, n)`.
-pub(in crate::code_rule_dsl) const COUNTS: &str = "liveof_count";
+pub const COUNTS: &str = "liveof_count";
 
 /// What `COUNTS` counts, in the order the report prints it.
-pub(in crate::code_rule_dsl) const MEASURES: [&str; 6] = ["rows", "live", "keys", "live keys", "library", "library live"];
+pub const MEASURES: [&str; 6] = ["rows", "live", "keys", "live keys", "library", "library live"];
 
 /// `rel`'s liveness relation, under a prefix no program uses: a program may name its own relations `live_…`
 /// (calls_cx has `live_def`).
@@ -47,12 +47,12 @@ pub(in crate::code_rule_dsl) fn live(rel: &str) -> String {
 }
 
 fn atom(rel: String, args: Vec<Term>) -> Atom {
-    Atom { rel, args, neg: false, gated: false }
+    Atom { rel: rel.into(), args, neg: false, gated: false }
 }
 
 /// The backward rules and the counts for `prog` (its rules, declarations and outputs, as `rr::parse` gives them): a
 /// program of their own, to print after `prog`'s text, which declares what they read.
-pub(in crate::code_rule_dsl) fn program(prog: &Program) -> Program {
+pub fn program(prog: &Program) -> Program {
     // A program naming a relation as these do would read the liveness rules' rows as its own.
     if let Some(r) = prog.decls.keys().find(|r| r.starts_with(&live(""))) {
         panic!("{r}: the liveness rules' prefix is taken");
@@ -76,10 +76,10 @@ pub(in crate::code_rule_dsl) fn program(prog: &Program) -> Program {
             continue;
         }
         // Every derived relation is counted, read or not: a relation nothing reads is all dead rows.
-        targets.insert(h.clone());
+        targets.insert(h.to_string());
         // The head as a read of its liveness: a computed argument is a variable the body computes again.
         let mut computed = Vec::new();
-        let lattice_keys = prog.lattice.get(h).map(|l| l.keys);
+        let lattice_keys = prog.lattice.get(h.as_str()).map(|l| l.keys);
         let head_args: Vec<Term> = rule
             .head
             .args
@@ -107,7 +107,7 @@ pub(in crate::code_rule_dsl) fn program(prog: &Program) -> Program {
                 continue;
             }
             let args: Vec<Term> = read.args.iter().map(|t| if matches!(t, Term::Wild) { Term::Var(var()) } else { t.clone() }).collect();
-            let positive = Literal::Atom(atom(read.rel.clone(), args.clone()));
+            let positive = Literal::Atom(atom(read.rel.to_string(), args.clone()));
             let mut body = Vec::with_capacity(rule.body.len() + 2);
             if !negated {
                 body.push(live_head.clone());
@@ -126,7 +126,7 @@ pub(in crate::code_rule_dsl) fn program(prog: &Program) -> Program {
                 body.extend(computed.iter().cloned());
             }
             out.rules.push(Rule { head: atom(live(&read.rel), args), body });
-            targets.insert(read.rel.clone());
+            targets.insert(read.rel.to_string());
         }
     }
     let count = |n: &str, rel: &str, what: &str, of: Atom| Rule {
@@ -176,7 +176,7 @@ pub(in crate::code_rule_dsl) fn program(prog: &Program) -> Program {
 }
 
 /// `COUNTS`' rows (`liveof_count.csv`), by relation: each measure's count, absent where the relation had no row.
-pub(in crate::code_rule_dsl) fn read_counts(csv: &str) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> {
+pub fn read_counts(csv: &str) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> {
     let mut out: std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> = Default::default();
     for line in csv.lines() {
         let mut f = line.split('\t');
@@ -188,7 +188,7 @@ pub(in crate::code_rule_dsl) fn read_counts(csv: &str) -> std::collections::BTre
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     /// On a small program: an output's rows are live; a row no output reads is dead; a row that blocks a
     /// negation is live; a read inside a count makes its group live.
     #[test]

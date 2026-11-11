@@ -1,0 +1,163 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-host-sdk-imports",
+  "revision": 1,
+  "mode": "log",
+  "description": "Import coding-agent SDKs and Pi's tool schema library only under src/hosts; shared layers describe the host surface they need with their own types.",
+  "scope": {
+    "include": [
+      "src/**/*.ts",
+      "src/**/*.mts",
+      "src/**/*.cts",
+      "src/**/*.js",
+      "src/**/*.mjs",
+      "src/**/*.cjs"
+    ],
+    "exclude": [
+      "src/hosts/**",
+      "**/*.test.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "agent-sdk-import",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "import_statement",
+                "has": {
+                  "kind": "string",
+                  "regex": "^[\"'`](?:(?:@oh-my-pi|@earendil-works)/[^\"'`\\s]+|@mariozechner/pi-[^\"'`\\s]+|@anthropic-ai/claude-(?:agent-sdk|code)(?:/[^\"'`\\s]*)?|@openai/codex(?:-sdk)?(?:/[^\"'`\\s]*)?|@cursor/sdk(?:/[^\"'`\\s]*)?)[\"'`]$",
+                  "field": "source"
+                }
+              },
+              {
+                "kind": "export_statement",
+                "has": {
+                  "kind": "string",
+                  "regex": "^[\"'`](?:(?:@oh-my-pi|@earendil-works)/[^\"'`\\s]+|@mariozechner/pi-[^\"'`\\s]+|@anthropic-ai/claude-(?:agent-sdk|code)(?:/[^\"'`\\s]*)?|@openai/codex(?:-sdk)?(?:/[^\"'`\\s]*)?|@cursor/sdk(?:/[^\"'`\\s]*)?)[\"'`]$",
+                  "field": "source"
+                }
+              },
+              {
+                "kind": "import_require_clause",
+                "has": {
+                  "kind": "string",
+                  "regex": "^[\"'`](?:(?:@oh-my-pi|@earendil-works)/[^\"'`\\s]+|@mariozechner/pi-[^\"'`\\s]+|@anthropic-ai/claude-(?:agent-sdk|code)(?:/[^\"'`\\s]*)?|@openai/codex(?:-sdk)?(?:/[^\"'`\\s]*)?|@cursor/sdk(?:/[^\"'`\\s]*)?)[\"'`]$",
+                  "field": "source"
+                }
+              },
+              {
+                "kind": "module",
+                "has": {
+                  "kind": "string",
+                  "regex": "^[\"'`](?:(?:@oh-my-pi|@earendil-works)/[^\"'`\\s]+|@mariozechner/pi-[^\"'`\\s]+|@anthropic-ai/claude-(?:agent-sdk|code)(?:/[^\"'`\\s]*)?|@openai/codex(?:-sdk)?(?:/[^\"'`\\s]*)?|@cursor/sdk(?:/[^\"'`\\s]*)?)[\"'`]$",
+                  "field": "name"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "regex": "^(?:require|import|createRequire\\s*\\([^)]*\\))\\s*\\(",
+                "has": {
+                  "kind": "arguments",
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "string",
+                        "regex": "^[\"'`](?:(?:@oh-my-pi|@earendil-works)/[^\"'`\\s]+|@mariozechner/pi-[^\"'`\\s]+|@anthropic-ai/claude-(?:agent-sdk|code)(?:/[^\"'`\\s]*)?|@openai/codex(?:-sdk)?(?:/[^\"'`\\s]*)?|@cursor/sdk(?:/[^\"'`\\s]*)?)[\"'`]$"
+                      },
+                      {
+                        "kind": "template_string",
+                        "regex": "^[\"'`](?:(?:@oh-my-pi|@earendil-works)/[^\"'`\\s]+|@mariozechner/pi-[^\"'`\\s]+|@anthropic-ai/claude-(?:agent-sdk|code)(?:/[^\"'`\\s]*)?|@openai/codex(?:-sdk)?(?:/[^\"'`\\s]*)?|@cursor/sdk(?:/[^\"'`\\s]*)?)[\"'`]$"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "kind": "comment",
+                "regex": "^///\\s*<reference\\s+(?:types|path)\\s*=\\s*[\"'](?:(?:@oh-my-pi|@earendil-works)/[^\"'`\\s]+|@mariozechner/pi-[^\"'`\\s]+|@anthropic-ai/claude-(?:agent-sdk|code)(?:/[^\"'`\\s]*)?|@openai/codex(?:-sdk)?(?:/[^\"'`\\s]*)?|@cursor/sdk(?:/[^\"'`\\s]*)?)[\"']"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "AGENT_SDK_OUTSIDE_HOST",
+        "anchor": "witness.span",
+        "message": "Keep this agent's SDK in src/hosts/<host>/: move host-only code there, or type what shared code needs as a local interface, as src/harness/host-commands.ts does."
+      }
+    },
+    {
+      "id": "tool-schema-import",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "import_statement",
+                "has": {
+                  "kind": "string",
+                  "regex": "^[\"'`](?:typebox|@sinclair/typebox)(?:/[^\"'`\\s]*)?[\"'`]$",
+                  "field": "source"
+                }
+              },
+              {
+                "kind": "export_statement",
+                "has": {
+                  "kind": "string",
+                  "regex": "^[\"'`](?:typebox|@sinclair/typebox)(?:/[^\"'`\\s]*)?[\"'`]$",
+                  "field": "source"
+                }
+              },
+              {
+                "kind": "import_require_clause",
+                "has": {
+                  "kind": "string",
+                  "regex": "^[\"'`](?:typebox|@sinclair/typebox)(?:/[^\"'`\\s]*)?[\"'`]$",
+                  "field": "source"
+                }
+              },
+              {
+                "kind": "module",
+                "has": {
+                  "kind": "string",
+                  "regex": "^[\"'`](?:typebox|@sinclair/typebox)(?:/[^\"'`\\s]*)?[\"'`]$",
+                  "field": "name"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "regex": "^(?:require|import|createRequire\\s*\\([^)]*\\))\\s*\\(",
+                "has": {
+                  "kind": "arguments",
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "string",
+                        "regex": "^[\"'`](?:typebox|@sinclair/typebox)(?:/[^\"'`\\s]*)?[\"'`]$"
+                      },
+                      {
+                        "kind": "template_string",
+                        "regex": "^[\"'`](?:typebox|@sinclair/typebox)(?:/[^\"'`\\s]*)?[\"'`]$"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PI_TOOL_SCHEMA_OUTSIDE_HOST",
+        "anchor": "witness.span",
+        "message": "Typebox schemas are Pi's tool parameters: register this tool from src/hosts/pi/. Shared code outside the hosts describes data with zod."
+      }
+    }
+  ]
+}

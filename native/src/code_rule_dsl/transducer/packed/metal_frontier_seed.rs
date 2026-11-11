@@ -296,7 +296,7 @@ pub(super) fn blocks(plan: &ExecutionPlan) -> Result<Vec<u32>, Error> {
     Ok(blocks)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn encode<const FIELDS: usize>(
     device: &Device,
     command: &CommandBufferRef,

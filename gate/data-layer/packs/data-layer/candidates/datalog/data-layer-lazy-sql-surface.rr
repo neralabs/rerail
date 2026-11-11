@@ -1,8 +1,78 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl lazy_sql_class_kind(kind: symbol)
+lazy_sql_class_kind("class_definition").
+.decl lazy_sql_fn_kind(kind: symbol)
+lazy_sql_fn_kind("function_definition").
+.decl lazy_sql_region_kind(kind: symbol)
+lazy_sql_region_kind("with_statement").
+.decl child(p: node, c: node, i: number)
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl lazy_sql_allowed(p: symbol)
+.decl lazy_sql_attr(a: node, attr: symbol, object: node)
+.decl lazy_sql_authority_value(v: node)
+.decl lazy_sql_bad(n: node, rendered: symbol)
+.decl lazy_sql_bounded(c: node)
+.decl lazy_sql_call(c: node, callee: symbol, receiver: node)
+.decl lazy_sql_ctx_attr(s: symbol)
+.decl lazy_sql_file(d: number)
+.decl lazy_sql_grammar_terminal(s: symbol)
+.decl lazy_sql_head(root: node, n: node)
+.decl lazy_sql_head_kind(kind: symbol)
+.decl lazy_sql_peel(root: node, n: node)
+.decl lazy_sql_peel_root(r: node)
+.decl lazy_sql_peeled(root: node, n: node, kind: symbol)
+.decl lazy_sql_plan_execute(c: node, callee: symbol)
+.decl lazy_sql_plan_name(s: symbol)
+.decl lazy_sql_qualified_value(v: node)
+.decl lazy_sql_region(w: node)
+.decl lazy_sql_root(r: node)
+.decl lazy_sql_subscript(g: node, name: symbol, argument: node)
+.decl lazy_sql_subscript_kind(g: node)
+.decl lazy_sql_terminal(root: node, name: symbol)
+.decl lazy_sql_union(n: node)
+.decl lazy_sql_wrapper_kind(kind: symbol)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl op(n: node, s: symbol)
 .decl out_scope(d: number)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, text, op, line, node_text
+.output violation
+lazy_sql_allowed("impl/common/l2070_server_plan/base_server_plan.py").
+lazy_sql_allowed("impl/common/l2070_server_plan/plan_helpers.py").
+lazy_sql_allowed("impl/common/l5150_fts_polyfill/searcher/sql_helpers.py").
+lazy_sql_allowed("impl/common/l5200_sql_query/_read_ops.py").
+lazy_sql_allowed("impl/common/l5200_sql_query/_write_ops.py").
+lazy_sql_allowed("impl/doltdb/query.py").
+lazy_sql_allowed("l2050_transaction/legacy_wrappers.py").
+lazy_sql_allowed("l2050_transaction/single_intent_execution.py").
+lazy_sql_allowed("l2070_batching/plan_flush_operation.py").
+lazy_sql_allowed("l7000_versioned_schema/versioned_connection.py").
+lazy_sql_allowed("l7800_versioned_merge/merge.py").
+lazy_sql_allowed("l9750_graphql/executor.py").
+lazy_sql_allowed("l9900_auto_api/sparql_router.py").
+lazy_sql_ctx_attr("branch_id").
+lazy_sql_ctx_attr("materialized_pipeline").
+lazy_sql_ctx_attr("sql_connection").
+lazy_sql_ctx_attr("txn").
+lazy_sql_grammar_terminal("_grammar_effect_lazy").
+lazy_sql_grammar_terminal("_grammar_row_lazy").
+lazy_sql_grammar_terminal("_grammar_rows_lazy").
+lazy_sql_grammar_terminal("_grammar_value_lazy").
+lazy_sql_head_kind("call").
+lazy_sql_head_kind("attribute").
+lazy_sql_head_kind("identifier").
+lazy_sql_head_kind("as_pattern").
+lazy_sql_head_kind("parenthesized_expression").
+lazy_sql_wrapper_kind("type").
+lazy_sql_wrapper_kind("type_parameter").
+lazy_sql_wrapper_kind("parenthesized_expression").
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
@@ -18,4 +88,43 @@ out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
-.output violation
+tape_syntax_error(d) :- syntax_error(d).
+lazy_sql_file(d) :- node(d, m, "module", _, _), node_text(m, s), (contains("LazyResult", s) ; contains("SyncSqlConnection", s) ; contains("compile", s) ; contains("execute", s) ; contains("explicit_execution_authority", s) ; contains("grammar_lazy", s) ; contains("legacy_async", s) ; contains("legacy_sync", s)), doc(d, p, _), !match("(.*/)?(tests|conform)(/.*)?", p), !tape_syntax_error(d), in_scope(d), !out_scope(d).
+lazy_sql_attr(a, s, o) :- node(_, a, "attribute", _, _), field(a, "attribute", i), text(i, s), field(a, "object", o).
+lazy_sql_call(c, s, r) :- node(_, c, "call", _, _), field(c, "function", f), lazy_sql_attr(f, s, r).
+lazy_sql_root(r) :- lazy_sql_call(_, s, r), (s = "execute" ; s = "execute_async").
+lazy_sql_root(v) :- node(_, i, "with_item", _, _), child(i, v, _).
+lazy_sql_head(r, r) :- lazy_sql_root(r), node(_, r, k, _, _), lazy_sql_head_kind(k).
+lazy_sql_head(r, c) :- lazy_sql_head(r, n), node(_, n, "as_pattern", _, _), child(n, c, 0).
+lazy_sql_head(r, c) :- lazy_sql_head(r, n), node(_, n, "parenthesized_expression", _, _), child(n, c, 0).
+lazy_sql_head(r, c) :- lazy_sql_head(r, n), node(_, n, "call", _, _), field(n, "function", c).
+lazy_sql_terminal(r, s) :- lazy_sql_head(r, n), lazy_sql_attr(n, s, _).
+lazy_sql_terminal(r, s) :- lazy_sql_head(r, n), node(_, n, "identifier", _, _), text(n, s).
+lazy_sql_authority_value(v) :- node(_, w, "with_statement", _, _), child(w, k, _), node(_, k, "with_clause", _, _), child(k, i, _), node(_, i, "with_item", _, _), child(i, v, _), lazy_sql_terminal(v, "explicit_execution_authority").
+lazy_sql_qualified_value(v) :- lazy_sql_authority_value(v), node(d, v, _, vs, ve), node(d, a, "attribute", s, e), s >= vs, e <= ve.
+lazy_sql_region(w) :- node(_, w, "with_statement", _, _), child(w, k, _), node(_, k, "with_clause", _, _), child(k, i, _), node(_, i, "with_item", _, _), child(i, v, _), lazy_sql_authority_value(v), !lazy_sql_qualified_value(v).
+lazy_sql_peel_root(c) :- node(_, g, "generic_type", _, _), child(g, c, _).
+lazy_sql_peel_root(c) :- node(_, g, "subscript", _, _), child(g, c, _).
+lazy_sql_peel_root(c) :- node(_, n, "union_type", _, _), child(n, c, _).
+lazy_sql_peel_root(c) :- node(_, n, "binary_operator", _, _), child(n, c, _).
+lazy_sql_peel(r, r) :- lazy_sql_peel_root(r).
+lazy_sql_peel(r, c) :- lazy_sql_peel(r, n), node(_, n, k, _, _), lazy_sql_wrapper_kind(k), child(n, c, 0), !child(n, _, 1).
+lazy_sql_peeled(r, n, k) :- lazy_sql_peel(r, n), node(_, n, k, _, _), !lazy_sql_wrapper_kind(k).
+lazy_sql_subscript(g, s, p) :- lazy_sql_subscript_kind(g), child(g, h0, 0), lazy_sql_peeled(h0, h, "identifier"), text(h, s), child(g, a0, 1), !child(g, _, 2), lazy_sql_peeled(a0, p, _).
+lazy_sql_subscript_kind(g) :- node(_, g, "generic_type", _, _).
+lazy_sql_subscript_kind(g) :- node(_, g, "subscript", _, _).
+lazy_sql_bad(n, s) :- node(_, n, "identifier", _, _), text(n, s), (s = "object" ; s = "DatabaseRow").
+lazy_sql_bad(n, s) :- node(_, n, "none", _, _), node_text(n, s).
+lazy_sql_bad(g, "list[DatabaseRow]") :- lazy_sql_subscript(g, "list", p), node(_, p, "identifier", _, _), text(p, "DatabaseRow").
+lazy_sql_bad(n, "DatabaseRow | None") :- lazy_sql_union(n), child(n, l, 0), lazy_sql_peeled(l, lp, "identifier"), text(lp, "DatabaseRow"), child(n, r, 1), lazy_sql_peeled(r, _, "none").
+lazy_sql_union(n) :- node(_, n, "union_type", _, _).
+lazy_sql_union(n) :- node(_, n, "binary_operator", _, _), op(n, "|").
+violation("data-layer-lazy-sql-surface", "sql-surface", code, p, l) :- lazy_sql_call(c, s, _), lazy_sql_grammar_terminal(s), code = @concat("connection grammar lazy terminal call: ", s), node(d, c, _, _, _), lazy_sql_file(d), doc(d, p, _), line(c, l).
+lazy_sql_plan_name(s) :- lazy_sql_terminal(_, s), match(".*[pP][lL][aA][nN]_*", s).
+lazy_sql_plan_name(s) :- lazy_sql_terminal(_, s), match("_*[pP][lL][aA][nN]_[eE][xX][eE][cC][uU][tT][oO][rR]_*", s).
+lazy_sql_plan_execute(c, s) :- lazy_sql_call(c, s, r), (s = "execute" ; s = "execute_async"), lazy_sql_terminal(r, t), lazy_sql_plan_name(t).
+lazy_sql_bounded(c) :- lazy_sql_plan_execute(c, _), inside(c, w, lazy_sql_region_kind), lazy_sql_region(w).
+violation("data-layer-lazy-sql-surface", "sql-surface", code, p, l) :- lazy_sql_plan_execute(c, s), !lazy_sql_bounded(c), code = @concat(@concat("ServerPlan ", s), "() outside execution boundary"), node(d, c, _, _, _), lazy_sql_file(d), doc(d, p, _), !lazy_sql_allowed(p), line(c, l).
+violation("data-layer-lazy-sql-surface", "sql-surface", code, p, l) :- lazy_sql_attr(a, s, o), lazy_sql_ctx_attr(s), node(_, o, "identifier", _, _), text(o, "ctx"), nearest(a, f, lazy_sql_fn_kind), field(f, "name", i), text(i, "compile"), code = @concat("step compile() reads ctx.", s), node(d, a, _, _, _), lazy_sql_file(d), doc(d, p, _), line(a, l).
+violation("data-layer-lazy-sql-surface", "sql-surface", code, p, l) :- node(d, f, "function_definition", _, _), field(f, "name", i), text(i, s), lazy_sql_grammar_terminal(s), nearest(f, k, lazy_sql_class_kind), field(k, "name", j), text(j, "SyncSqlConnection"), code = @concat("SyncSqlConnection defines forbidden grammar terminal: ", s), lazy_sql_file(d), doc(d, p, _), line(f, l).
+violation("data-layer-lazy-sql-surface", "sql-surface", code, p, l) :- lazy_sql_subscript(g, "LazyResult", x), lazy_sql_bad(x, r), code = @concat(@concat("untyped LazyResult[", r), "]"), node(d, g, _, _, _), lazy_sql_file(d), doc(d, p, _), match("(impl/common/l2070_server_plan/|impl/common/l2200_sql_dialect/|impl/sqlite/|impl/postgres/|impl/mariadb/|impl/doltdb/|l7000_versioned_schema/|l7200_versioned_transactions/|l7800_versioned_merge/|l9750_graphql/|l9900_auto_api/).*", p), line(g, l).

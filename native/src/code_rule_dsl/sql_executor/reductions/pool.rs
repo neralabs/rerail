@@ -2,7 +2,7 @@
 use super::*;
 use crate::code_rule_dsl::logic::analysis::{bags, scalars};
 #[derive(Clone, Default)]
-pub(in crate::code_rule_dsl::sql_executor) struct Plans {
+pub struct Plans {
     pub states: BTreeMap<String, Retained>,
     pub storage: Vec<Report>,
 }

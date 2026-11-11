@@ -20,13 +20,14 @@
 //! fingerprint in `stat_meta` (the counts change in the transaction that changes the rows, so they
 //! cannot describe other rows).
 
-use crate::code_rule_dsl::prefilter::{LANG_STRIDE, kind_code};
+use crate::code_rule_dsl::facts::core::KIND_STRIDE as LANG_STRIDE;
+use crate::code_rule_dsl::search_index::kind_code;
 use crate::code_rule_dsl::tape::TapeDoc;
 use rusqlite::{Connection, Result, params};
 use std::collections::BTreeMap;
 
 /// One tape's kind sizes and direct edges, accumulated node by node.
-pub(in crate::code_rule_dsl) struct TapeStatistics {
+pub struct TapeStatistics {
     lang: u32,
     /// Per kind code, the sum of its nodes' descendant counts.
     pub sizes: Vec<u64>,
@@ -35,12 +36,12 @@ pub(in crate::code_rule_dsl) struct TapeStatistics {
 }
 
 impl TapeStatistics {
-    pub(in crate::code_rule_dsl) fn new(lang: u32) -> Self {
+    pub fn new(lang: u32) -> Self {
         Self { lang, sizes: vec![0; LANG_STRIDE as usize], edges: BTreeMap::new() }
     }
 
     /// Adds node `pre`, of kind code `kind`.
-    pub(in crate::code_rule_dsl) fn node(&mut self, doc: &TapeDoc, pre: u32, kind: u16) {
+    pub fn node(&mut self, doc: &TapeDoc, pre: u32, kind: u16) {
         self.sizes[usize::from(kind)] += u64::from(doc.transducer_descendants(pre).len() as u32);
         if let Some(parent) = doc.transducer_parent(pre) {
             let atom = |code: u16| self.lang * LANG_STRIDE + u32::from(code);
@@ -49,14 +50,14 @@ impl TapeStatistics {
         }
     }
 
-    pub(in crate::code_rule_dsl) fn edges(&self) -> Vec<(u32, u32, u16, u32)> {
+    pub fn edges(&self) -> Vec<(u32, u32, u16, u32)> {
         self.edges.iter().map(|(&(parent, child, field), &n)| (parent, child, field, n)).collect()
     }
 }
 
 /// A fact relation stored as a SQL table: its document column, its document-local columns (node
 /// ids and offsets, which mean something only within their document) and its value columns.
-pub(in crate::code_rule_dsl) struct FactTable<'a> {
+pub struct FactTable<'a> {
     pub name: &'a str,
     pub doc: &'a str,
     pub local: &'a [&'a str],
@@ -66,7 +67,7 @@ pub(in crate::code_rule_dsl) struct FactTable<'a> {
 /// Adds (`sign` = 1) or removes (`sign` = -1) the contribution of documents `docs` to the column
 /// statistics of `tables`, computed from their rows, which must be present. T's `merge`, minus kinds
 /// and edges, which come from tapes.
-pub(in crate::code_rule_dsl) fn merge_facts(db: &Connection, tables: &[FactTable<'_>], docs: &[i64], sign: i64) -> Result<()> {
+pub fn merge_facts(db: &Connection, tables: &[FactTable<'_>], docs: &[i64], sign: i64) -> Result<()> {
     db.execute_batch("DROP TABLE IF EXISTS temp.fact_batch; CREATE TEMP TABLE fact_batch(d INTEGER PRIMARY KEY)")?;
     {
         let mut insert = db.prepare("INSERT OR IGNORE INTO temp.fact_batch VALUES (?1)")?;
@@ -150,5 +151,4 @@ fn add_col(db: &Connection, tbl: &str, col: &str, rows: i64, ndv: i64, sq: i64, 
     Ok(())
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

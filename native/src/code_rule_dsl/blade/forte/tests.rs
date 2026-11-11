@@ -16,7 +16,7 @@ use super::directives::{ArgumentRequirement, Directives, DiscoveredDirective, Ta
 use super::node::{DirectiveInfo, FlatNode, NodeKind, StructureRole};
 use super::token::{ErrorReason, LexerError, State, Token, TokenType};
 use super::{Budget, DepthLimits, ParseError, Parsed};
-use crate::code_rule_dsl::test_support::php_lossy;
+// cratify: a re-export of rerail-engine's, which its facades of this module make
 use indexmap::IndexSet;
 use serde_json::Value as Json;
 use std::collections::BTreeMap;

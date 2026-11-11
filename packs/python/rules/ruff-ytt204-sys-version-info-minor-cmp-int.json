@@ -1,0 +1,222 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ytt204-sys-version-info-minor-cmp-int",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Compare sys.version_info to a version tuple instead of testing its minor attribute alone; a minor-only check misjudges a new major version.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "sys-version-info-minor-cmp-int",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "int-literal": {
+              "any": [
+                {
+                  "kind": "integer",
+                  "value": {
+                    "type": "int"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "int-literal"
+                  }
+                }
+              ]
+            },
+            "sys-version-info": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "sys.version_info"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "sys-version-info"
+                  }
+                }
+              ]
+            },
+            "ordered-int-compare": {
+              "kind": "comparison_operator",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^(?:<|<=|>|>=)$"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "nthChild": {
+                      "position": 2,
+                      "ofRule": {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "kind": "line_continuation"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "matches": "int-literal"
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "nthChild": {
+                        "position": 3,
+                        "ofRule": {
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "kind": "line_continuation"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "left-operand": {
+              "any": [
+                {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "ordered-int-compare"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "left-operand"
+                  }
+                }
+              ]
+            },
+            "target": {
+              "kind": "attribute",
+              "all": [
+                {
+                  "matches": "left-operand"
+                },
+                {
+                  "has": {
+                    "field": "object",
+                    "matches": "sys-version-info"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "attribute",
+                    "regex": "^minor$"
+                  }
+                }
+              ]
+            },
+            "in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "target",
+                      "capture": "C"
+                    },
+                    {
+                      "matches": "in-string"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "target",
+                "pattern": "$C"
+              },
+              {
+                "matches": "in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "code": "YTT204",
+        "message": "Compare `sys.version_info` to a tuple with the major and minor version, like `sys.version_info >= (3, 9)`, rather than testing `sys.version_info.minor` alone, which misjudges a new major version.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "YTT204"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

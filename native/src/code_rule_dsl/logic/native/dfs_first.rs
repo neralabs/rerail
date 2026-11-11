@@ -370,7 +370,7 @@ pub(in crate::code_rule_dsl) fn dfs_first(edges: &[(i64, i64, i64)], targets: &[
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /// The Data-layer branch's `ordered_first.rs` `Graph::first`, as the spike ports it line for line (edge mode):

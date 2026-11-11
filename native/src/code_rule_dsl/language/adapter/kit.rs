@@ -4,11 +4,163 @@
 
 use super::value::kit as value_kit;
 use super::{
-    Adapter, ArgumentRules, Blade, CallRules, Ecma, FormatArgRules, Php, Python, Rust, ScopeRules,
-    Sql, ValueRules, Vue, with_adapter,
+    Adapter, ArgumentRules, CallRules, FormatArgRules, ScopeRules, ValueRules, has_import_targets, is_comment_kind,
+    is_paren_kind, parsed_by_forte,
 };
+use super::{blade::Blade, ecma::Ecma, php::Php, python::Python, rust::Rust, sql::Sql, vue::Vue};
+
+// `with_adapter!` (generated from the registry, `build_languages.rs`): every family's adapter by its module.
+include!(concat!(env!("OUT_DIR"), "/with_adapter.rs"));
+
+/// The scope concern's part of the kit: a family's scope rules against expected literals.
+mod scope_kit {
+    use crate::code_rule_dsl::language::adapter::{Adapter, ScopeFeature, ScopeRules};
+    use crate::code_rule_dsl::language::adapter::Refusal;
+    use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
+    use crate::code_rule_dsl::matcher::Unresolved;
+    use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
+    use crate::code_rule_dsl::scope::{Form, ScopeTable};
+    use crate::code_rule_dsl::tape::TapeDoc;
+    use ast_grep_core::{AstGrep, Doc};
+    use std::sync::Arc;
+
+    /// What one family's scope rules answer.
+    pub(crate) struct Expect {
+        pub(crate) flow: bool,
+        /// The ESLint `ecmaVersion` and source type (`None`: each file's), and the Ruff version
+        /// (its minor), the family's default settings declare its globals by.
+        pub(crate) declared: (Option<(u16, Option<SourceType>)>, Option<u8>),
+        /// Files, a name each reads last that no binding resolves, and whether that read is
+        /// unresolved under the default settings.
+        pub(crate) unresolved: &'static [(&'static str, &'static str, bool)],
+        pub(crate) stubs: bool,
+        pub(crate) redefines_shadowed: bool,
+        pub(crate) reference_kinds: &'static [&'static str],
+        pub(crate) name_kinds: &'static [&'static str],
+        /// A file, a name it reads last, and the form of the binding that read resolves to.
+        pub(crate) resolves: (&'static str, &'static str, Option<Form>),
+        /// Features the family refuses, with their messages.
+        pub(crate) refuses: &'static [(ScopeFeature, &'static str)],
+        /// Features the family reads.
+        pub(crate) reads: &'static [ScopeFeature],
+        /// The module of `dir/mod<suffix>` outside any package.
+        pub(crate) unpackaged: Option<&'static str>,
+    }
+
+    /// The document a file of `source` in `dialect` holds that its family's scope reads (the
+    /// program an embedding file embeds), with its dialect and the range of the last `name` in its
+    /// text.
+    fn read(
+        source: &str,
+        dialect: GrammarDialect,
+        name: &str,
+    ) -> (AstGrep<TapeDoc>, GrammarDialect, std::ops::Range<usize>) {
+        let doc = super::semantic(source, dialect);
+        let read = *doc.root().get_doc().get_lang();
+        let start = doc
+            .root()
+            .get_doc()
+            .get_source()
+            .rfind(name)
+            .expect("the name is read");
+        (doc, read, start..start + name.len())
+    }
+
+    /// `A`'s scope rules against `expect`, its files in `dialect` with `suffix`.
+    pub(crate) fn kit<A: Adapter>(dialect: GrammarDialect, suffix: &str, expect: &Expect) {
+        assert_eq!(<A::Scope as ScopeRules>::FLOW, expect.flow);
+        let eslint = <A::Scope as ScopeRules>::eslint_options(None);
+        let ruff = <A::Scope as ScopeRules>::ruff_options(None);
+        assert_eq!(
+            (
+                eslint
+                    .as_deref()
+                    .map(|options| (options.ecma_version, options.source_type)),
+                ruff.as_deref().map(|python| python.minor)
+            ),
+            expect.declared
+        );
+        let options = Arc::new(LanguageOptions::new(5, Some(SourceType::Script), []));
+        assert_eq!(
+            <A::Scope as ScopeRules>::eslint_options(Some(&options))
+                .is_some_and(|kept| Arc::ptr_eq(&kept, &options)),
+            eslint.is_some()
+        );
+        let python = Arc::new(PythonOptions::new(12));
+        assert_eq!(
+            <A::Scope as ScopeRules>::ruff_options(Some(&python))
+                .is_some_and(|kept| Arc::ptr_eq(&kept, &python)),
+            ruff.is_some()
+        );
+        let builtins = PythonOptions::new(ruff.as_deref().map_or(0, |python| python.minor));
+        for (source, name, unresolved) in expect.unresolved {
+            let (doc, read, range) = read(source, dialect, name);
+            let table =
+                ScopeTable::build(doc.root(), read, usize::MAX, &|| false).expect("table builds");
+            let reference = table.reference(&range).expect("a reference");
+            assert!(<A::Scope as ScopeRules>::resolve(&table, reference, name).is_none());
+            assert_eq!(
+                <A::Scope as ScopeRules>::unresolved(
+                    &table,
+                    reference,
+                    name,
+                    Unresolved::Unbound,
+                    &builtins,
+                    eslint.as_deref(),
+                    None
+                ),
+                *unresolved,
+                "{source:?}"
+            );
+        }
+        assert_eq!(<A::Scope as ScopeRules>::STUBS, expect.stubs);
+        assert_eq!(
+            <A::Scope as ScopeRules>::REDEFINES_SHADOWED,
+            expect.redefines_shadowed
+        );
+        assert_eq!(
+            <A::Scope as ScopeRules>::REFERENCE_KINDS,
+            expect.reference_kinds
+        );
+        assert_eq!(<A::Scope as ScopeRules>::NAME_KINDS, expect.name_kinds);
+        let (source, name, form) = expect.resolves;
+        let (doc, read, range) = read(source, dialect, name);
+        let table =
+            ScopeTable::build(doc.root(), read, usize::MAX, &|| false).expect("table builds");
+        let reference = table.reference(&range).expect("a reference");
+        assert_eq!(
+            <A::Scope as ScopeRules>::resolve(&table, reference, name)
+                .map(|binding| binding.site.form),
+            form,
+            "{source:?}"
+        );
+        for (feature, message) in expect.refuses {
+            match <A::Scope as ScopeRules>::feature(*feature) {
+                Err(Refusal::Refused(refusal)) => assert_eq!(refusal, *message, "{feature:?}"),
+                _ => panic!("{feature:?} is refused"),
+            }
+        }
+        for feature in expect.reads {
+            assert!(
+                <A::Scope as ScopeRules>::feature(*feature).is_ok(),
+                "{feature:?}"
+            );
+        }
+        for key in <A::Scope as ScopeRules>::REFUSED_FILTERS {
+            assert!(
+                <A::Scope as ScopeRules>::feature(ScopeFeature::Filter(key)).is_err(),
+                "{key}"
+            );
+        }
+        assert_eq!(
+            <A::Scope as ScopeRules>::unpackaged_module(&format!("dir/mod{suffix}"))
+                .map(|module| module.text()),
+            expect.unpackaged.map(str::to_owned)
+        );
+    }
+}
 use crate::code_rule_dsl::language::{
-    CodeRuleLanguage, Family, GrammarDialect, Semantic, SourceType, Support,
+    CodeRuleLanguage, Family, GrammarDialect, Semantic, SourceType, Support, kind_ids,
 };
 use crate::code_rule_dsl::lines::Terminators;
 use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
@@ -53,7 +205,7 @@ struct Expect {
     arguments: super::arguments::kit::Expect,
     format_args: super::format_args::kit::Expect,
     syntax: super::syntax::kit::Expect,
-    scope: super::scope::kit::Expect,
+    scope: scope_kit::Expect,
 }
 
 /// The tape of a file of `source` in `dialect`, as files are read: Blade's from its Forte tree,
@@ -98,8 +250,9 @@ impl Drop for Package {
 }
 
 /// Runs the generic suite over family `A` against `expect`: its identity (`family`, `label`,
-/// `terminators`), name normalisation, the regions of each document, module paths, and each
-/// concern's own kit. A new family adds one `#[test]` function calling `kit::<Family>(&Expect { .. })`.
+/// `terminators`), name normalisation, the regions of each document, module paths, the node kinds
+/// `rerail-ignore` is read by, and each concern's own kit. A new family adds one `#[test]` function
+/// calling `kit::<Family>(&Expect { .. })`.
 fn kit<A: Adapter>(expect: &Expect) {
     assert_eq!(A::FAMILY, expect.family);
     assert_eq!(with_adapter!(expect.family, B => B::LABEL), expect.label);
@@ -143,6 +296,17 @@ fn kit<A: Adapter>(expect: &Expect) {
         (A::PACKAGE_MANIFESTS, A::JSX_RUNTIMES),
         expect.package_manifests
     );
+    // A kind one of the family's grammars lacks (a typo, a renamed node) would leave its
+    // directives silently unread there: every registry dialect of the family has each kind.
+    let dialects = CodeRuleLanguage::ALL
+        .into_iter()
+        .filter(|language| language.family() == A::FAMILY)
+        .flat_map(|language| language.dialects().iter().copied());
+    for dialect in dialects {
+        for kind in [A::COMMENT_KINDS, A::PREAMBLE_KINDS, A::BODY_KINDS].concat() {
+            assert_ne!(dialect.kind_id(kind), 0, "{kind} in {dialect:?}");
+        }
+    }
     value_kit::check::<A>(&expect.value, |s| semantic(s, expect.dialect));
     super::calls::kit::check::<A>(&expect.calls, expect.dialect);
     super::arguments::kit::check::<A>(&expect.arguments, expect.semantic, |s| {
@@ -150,7 +314,7 @@ fn kit<A: Adapter>(expect: &Expect) {
     });
     super::format_args::kit::check::<A>(&expect.format_args);
     with_adapter!(expect.family, B => super::syntax::kit::check::<B>(&expect.syntax));
-    super::scope::kit::kit::<A>(expect.dialect, expect.module.0, &expect.scope);
+    scope_kit::kit::<A>(expect.dialect, expect.module.0, &expect.scope);
 }
 
 #[test]
@@ -237,7 +401,7 @@ fn python() {
                 Some("`rustFormat` parses Rust strings"),
             ],
         },
-        scope: super::scope::kit::Expect {
+        scope: scope_kit::Expect {
             flow: false,
             declared: (None, Some(10)),
             unresolved: &[
@@ -360,7 +524,7 @@ fn ecma() {
                 Some("`rustFormat` parses Rust strings"),
             ],
         },
-        scope: super::scope::kit::Expect {
+        scope: scope_kit::Expect {
             flow: false,
             declared: (Some((2026, None)), None),
             unresolved: &[
@@ -523,7 +687,7 @@ fn php() {
                 Some("`rustFormat` parses Rust strings"),
             ],
         },
-        scope: super::scope::kit::Expect {
+        scope: scope_kit::Expect {
             flow: true,
             declared: (None, None),
             unresolved: &[],
@@ -689,7 +853,7 @@ fn blade() {
                 ),
             ],
         },
-        scope: super::scope::kit::Expect {
+        scope: scope_kit::Expect {
             flow: true,
             declared: (None, None),
             unresolved: &[],
@@ -840,7 +1004,7 @@ fn vue() {
                 ),
             ],
         },
-        scope: super::scope::kit::Expect {
+        scope: scope_kit::Expect {
             flow: false,
             declared: (Some((2026, None)), None),
             unresolved: &[
@@ -968,7 +1132,7 @@ fn sql() {
                 Some("`rustFormat` parses Rust strings"),
             ],
         },
-        scope: super::scope::kit::Expect {
+        scope: scope_kit::Expect {
             flow: false,
             declared: (None, None),
             unresolved: &[
@@ -1110,7 +1274,7 @@ fn rust() {
                 None,
             ],
         },
-        scope: super::scope::kit::Expect {
+        scope: scope_kit::Expect {
             flow: false,
             declared: (None, None),
             unresolved: &[
@@ -1189,6 +1353,66 @@ fn adapters_read_the_capabilities_the_registry_supports() {
                 with_adapter!(language.family(), A => reads::<A>(semantic)),
                 "{} {semantic:?}",
                 language.name()
+            );
+        }
+    }
+}
+
+/// The scope kinds, and the kinds the shared walks pass over, are the ones the shared code named
+/// before they moved here, in every registry dialect.
+#[test]
+fn shared_walks_read_the_kinds_they_named() {
+    fn scope_kinds<S: ScopeRules>(dialect: GrammarDialect) {
+        let ids = |names: &[&str]| kind_ids(dialect, names);
+        assert_eq!(
+            ids(S::PAREN_KINDS),
+            ids(&["parenthesized_expression"]),
+            "{dialect:?}"
+        );
+        if S::FLOW {
+            return;
+        }
+        assert_eq!(
+            ids(S::DOTTED_NAME_KINDS),
+            ids(&["dotted_name"]),
+            "{dialect:?}"
+        );
+        assert_eq!(ids(S::THIS_KINDS), ids(&["this"]), "{dialect:?}");
+        let attribute = if S::IMPORT_PATHS {
+            ids(&["scoped_identifier", "scoped_type_identifier"])
+        } else {
+            ids(&["attribute"])
+        };
+        assert_eq!(ids(S::ATTRIBUTE_KINDS), attribute, "{dialect:?}");
+    }
+    for language in CodeRuleLanguage::ALL {
+        for dialect in language.dialects().iter().copied() {
+            with_adapter!(language.family(), A => scope_kinds::<<A as Adapter>::Scope>(dialect));
+            for name in (0..dialect.kind_count() as u16).filter_map(|id| dialect.kind_name(id)) {
+                assert_eq!(
+                    is_comment_kind(name),
+                    matches!(
+                        name,
+                        "comment" | "html_comment" | "line_comment" | "block_comment"
+                    ),
+                    "{name} in {dialect:?}"
+                );
+                assert_eq!(is_paren_kind(name), name == "parenthesized_expression");
+            }
+        }
+    }
+}
+
+/// A file is parsed by Forte, and may ask for import targets, in the families that did before
+/// these moved onto the adapter.
+#[test]
+fn family_choices_stay_with_their_families() {
+    for language in CodeRuleLanguage::ALL {
+        for dialect in language.dialects().iter().copied() {
+            assert_eq!(parsed_by_forte(dialect), dialect == GrammarDialect::Blade);
+            assert_eq!(
+                has_import_targets(dialect),
+                Family::of(dialect) == Family::Ecma
             );
         }
     }

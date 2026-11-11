@@ -12,7 +12,7 @@
 //   it; here the whole file does. Function bodies, which Ruff visits after the module, agree either way.
 //     import pandas as pd            seen_module(d, "pandas")
 //     from datetime import date      seen_module(d, "datetime")
-#include "python/imports.rr"
+#include "python/names.rr"    // and through it python/imports, which reads names's relations
 
 .decl seen_ask(m: symbol)
 .decl seen_module(d: number, m: symbol)

@@ -4,7 +4,6 @@
 //! calls `xFilter` with the batch token. The first call executes the packed backend and stores its
 //! normalized relation. No host callback or semantic matcher can be registered here.
 
-use super::super::language::adapter::{Adapter, ValueRules, with_adapter};
 use super::super::language::Family;
 use super::super::transducer::packed::{
     Error as PackedError, ExecutionBackend, PlanId, Program, execute_planned,
@@ -29,8 +28,9 @@ use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const MODULE_NAME: &CStr = c"rerail_matches";
 const BATCH_COLUMN: c_int = 0;
 const USE_BATCH: c_int = 1;
@@ -148,10 +148,7 @@ fn terminal_structure_key(tape: &TapeDoc, node: u32) -> String {
         if family == Family::Ecma {
             return None;
         }
-        let tokens = with_adapter!(
-            family,
-            A => <<A as Adapter>::Value as ValueRules>::structure(&node, Equality::Plain, &mut context)
-        );
+        let tokens = { let pack = language_pack::pack(family); language_pack::value_structure(pack, &node, Equality::Plain, &mut context) };
         (!context.exhausted()).then_some(tokens).flatten().map(|tokens| structure_digest(&format!("{tokens:?}")))
     })();
     serde_json::json!({
@@ -161,7 +158,7 @@ fn terminal_structure_key(tape: &TapeDoc, node: u32) -> String {
     .to_string()
 }
 
-pub(in crate::code_rule_dsl) struct PackedDemand {
+pub struct PackedDemand {
     backend: ExecutionBackend,
     programs: Vec<Program>,
     producer_kinds: Vec<ProducerKind>,
@@ -288,7 +285,7 @@ fn stable_partition_ranges(file_count: usize, fits: impl Fn(&Range<usize>) -> bo
 }
 
 impl PackedDemand {
-    pub(in crate::code_rule_dsl) fn new(
+    pub fn new(
         backend: ExecutionBackend,
         programs: Vec<Program>,
         files: Vec<TapeDoc>,
@@ -640,7 +637,7 @@ impl PackedDemand {
 
     /// The roots' match records walked elsewhere (per program, per file, `None` where not).
     /// The demand as plan `plan`'s (the wave's identity, `LoweredWave::identity`).
-    pub(in crate::code_rule_dsl) fn with_plan(mut self, plan: PlanId) -> Self {
+    pub fn with_plan(mut self, plan: PlanId) -> Self {
         self.plan = Some(plan);
         self
     }
@@ -653,7 +650,7 @@ impl PackedDemand {
         }
     }
 
-    pub(in crate::code_rule_dsl) fn with_records(
+    pub fn with_records(
         mut self,
         records: Vec<Option<Vec<Vec<(u32, super::super::transducer::packed::RootRecord)>>>>,
     ) -> Result<Self, PackedError> {
@@ -664,7 +661,7 @@ impl PackedDemand {
         Ok(self)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(in crate::code_rule_dsl) fn with_failure_injection(
         mut self,
         producer: usize,
@@ -1138,14 +1135,11 @@ impl PackedDemand {
                                                         if family == Family::Ecma {
                                                             return None;
                                                         }
-                                                        let tokens = with_adapter!(
-                                                            family,
-                                                            A => <<A as Adapter>::Value as ValueRules>::structure(
+                                                        let tokens = { let pack = language_pack::pack(family); language_pack::value_structure(pack, 
                                                                 &node,
                                                                 Equality::Plain,
                                                                 &mut context,
-                                                            )
-                                                        );
+                                                            ) };
                                                         (!context.exhausted())
                                                             .then_some(tokens)
                                                             .flatten()
@@ -1389,7 +1383,7 @@ impl PackedDemand {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i64)]
-pub(in crate::code_rule_dsl) enum RowKind {
+pub enum RowKind {
     BatchStatus = 1,
     ProducerStatus = 2,
     TerminalMatch = 3,
@@ -1439,7 +1433,7 @@ struct CaptureData {
     end_byte: usize,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::code_rule_dsl) struct TestProducerStatusRow {
     pub(in crate::code_rule_dsl) producer: i64,
@@ -1460,7 +1454,7 @@ fn structure_digest(key: &str) -> String {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct PackedRow {
+pub struct PackedRow {
     batch: i64,
     row_kind: RowKind,
     producer_id: Option<i64>,
@@ -1630,18 +1624,18 @@ impl PackedRow {
         row
     }
 
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) const fn row_kind(&self) -> RowKind {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub const fn row_kind(&self) -> RowKind {
         self.row_kind
     }
 
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn is_complete(&self) -> bool {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn is_complete(&self) -> bool {
         self.complete != 0
     }
 
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn error_code(&self) -> Option<&str> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn error_code(&self) -> Option<&str> {
         self.error_code.as_deref()
     }
 
@@ -1753,7 +1747,7 @@ impl MatchBatch {
 }
 
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct MatchRegistry {
+pub struct MatchRegistry {
     next: AtomicI64,
     batches: Mutex<HashMap<i64, Arc<MatchBatch>>>,
 }
@@ -1777,7 +1771,7 @@ impl MatchRegistry {
         token
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(in crate::code_rule_dsl) fn query_producer_status_rows(
         &self,
         token: i64,
@@ -1803,7 +1797,7 @@ impl MatchRegistry {
             .collect()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(in crate::code_rule_dsl) fn query_execution_counters(
         &self,
         token: i64,
@@ -1853,7 +1847,7 @@ impl MatchRegistry {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const ALL_COLUMNS: [c_int; 35] = [
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
     26, 27, 28, 29, 30, 31, 32, 33, 34,
@@ -1883,7 +1877,7 @@ struct RelationModule {
     ordering: &'static [c_int],
 }
 
-pub(in crate::code_rule_dsl) fn register_module(
+pub fn register_module(
     connection: &Connection,
     registry: Arc<MatchRegistry>,
 ) -> SqlResult<()> {
@@ -1898,7 +1892,7 @@ pub(in crate::code_rule_dsl) fn register_module(
     let register = |name, module: RelationModule| {
         connection.create_module(name, &MODULE, Some(Arc::new(module)))
     };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     register(
         MODULE_NAME,
         RelationModule {
@@ -2239,50 +2233,50 @@ unsafe impl VTabCursor for MatchCursor<'_> {
                 ))
             })?;
         match column {
-            0 => context.set_result(&row.batch),
-            1 => context.set_result(&(row.row_kind as i64)),
-            2 => context.set_result(&row.producer_id),
-            3 => context.set_result(&row.file_index),
-            4 => context.set_result(&row.task_index),
-            5 => context.set_result(&row.match_index),
-            6 => context.set_result(&row.capture_index),
-            7 => context.set_result(&row.capture_occurrence),
-            8 => context.set_result(&row.capture_sequence_start),
-            9 => context.set_result(&row.capture_sequence_count),
-            10 => context.set_result(&row.node),
-            11 => context.set_result(&row.related_node),
-            12 => context.set_result(&row.axis_kind),
-            13 => context.set_result(&row.axis_order),
-            14 => context.set_result(&row.fact_kind),
-            15 => context.set_result(&row.document_id),
-            16 => context.set_result(&row.mapped_document_id),
-            17 => context.set_result(&row.start_ordinal),
-            18 => context.set_result(&row.output_label.as_deref()),
+            0 => context.set_result(row.batch),
+            1 => context.set_result(row.row_kind as i64),
+            2 => context.set_result(row.producer_id),
+            3 => context.set_result(row.file_index),
+            4 => context.set_result(row.task_index),
+            5 => context.set_result(row.match_index),
+            6 => context.set_result(row.capture_index),
+            7 => context.set_result(row.capture_occurrence),
+            8 => context.set_result(row.capture_sequence_start),
+            9 => context.set_result(row.capture_sequence_count),
+            10 => context.set_result(row.node),
+            11 => context.set_result(row.related_node),
+            12 => context.set_result(row.axis_kind),
+            13 => context.set_result(row.axis_order),
+            14 => context.set_result(row.fact_kind),
+            15 => context.set_result(row.document_id),
+            16 => context.set_result(row.mapped_document_id),
+            17 => context.set_result(row.start_ordinal),
+            18 => context.set_result(row.output_label.as_deref()),
             19 => match (row.derived, &self.derive) {
-                (Some(label), Some(derive)) => context.set_result(&derive.label(row, label)),
-                _ => context.set_result(&row.capture_label.as_deref()),
+                (Some(label), Some(derive)) => context.set_result(derive.label(row, label)),
+                _ => context.set_result(row.capture_label.as_deref()),
             },
-            20 => context.set_result(&row.text_value.as_deref()),
-            21 => context.set_result(&row.start_byte),
-            22 => context.set_result(&row.end_byte),
-            23 => context.set_result(&row.verdict),
-            24 => context.set_result(&row.complete),
-            25 => context.set_result(&row.work_used),
-            26 => context.set_result(&row.error_code.as_deref()),
-            27 => context.set_result(&row.field_id),
-            28 => context.set_result(&row.related_named),
+            20 => context.set_result(row.text_value.as_deref()),
+            21 => context.set_result(row.start_byte),
+            22 => context.set_result(row.end_byte),
+            23 => context.set_result(row.verdict),
+            24 => context.set_result(row.complete),
+            25 => context.set_result(row.work_used),
+            26 => context.set_result(row.error_code.as_deref()),
+            27 => context.set_result(row.field_id),
+            28 => context.set_result(row.related_named),
             29 => match (row.derived, &self.derive) {
-                (Some(_), Some(derive)) => context.set_result(&derive.text(row)),
-                _ => context.set_result(&row.source_text.as_deref()),
+                (Some(_), Some(derive)) => context.set_result(derive.text(row)),
+                _ => context.set_result(row.source_text.as_deref()),
             },
             30 => match (row.derived, &self.derive) {
-                (Some(_), Some(derive)) => context.set_result(&derive.key(row).as_deref()),
-                _ => context.set_result(&row.structural_key.as_deref()),
+                (Some(_), Some(derive)) => context.set_result(derive.key(row).as_deref()),
+                _ => context.set_result(row.structural_key.as_deref()),
             },
-            31 => context.set_result(&row.named_leaf),
-            32 => context.set_result(&row.capture_kind),
-            33 => context.set_result(&row.capture_named),
-            34 => context.set_result(&row.equality_occurrence),
+            31 => context.set_result(row.named_leaf),
+            32 => context.set_result(row.capture_kind),
+            33 => context.set_result(row.capture_named),
+            34 => context.set_result(row.equality_occurrence),
             _ => Err(rusqlite::Error::InvalidColumnIndex(column as usize)),
         }
     }
@@ -2293,7 +2287,7 @@ unsafe impl VTabCursor for MatchCursor<'_> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::{
         HardPartition, MatchRegistry, PackedDemand, register_module,
         stable_partition_ranges,
@@ -2598,4 +2592,32 @@ struct RootPack {
     members: Vec<usize>,
     fused: super::super::transducer::packed::fusion::Fused,
     walk: super::super::transducer::packed::Micro,
+}
+
+/// An owned connection's demand module and its match registry (`waves::owner::database::ConnectionSetup`).
+struct ConnectionRegistry(Arc<MatchRegistry>);
+
+impl crate::code_rule_dsl::facts::connection::ConnectionSetup for ConnectionRegistry {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// Sets up an owned connection's demand module (`waves::owner::database::install_connection_setup`).
+pub fn set_up_connection(
+    connection: &Connection,
+) -> crate::content_store::StoreResult<Box<dyn crate::code_rule_dsl::facts::connection::ConnectionSetup>> {
+    let registry = Arc::new(MatchRegistry::default());
+    register_module(connection, Arc::clone(&registry))?;
+    Ok(Box::new(ConnectionRegistry(registry)))
+}
+
+/// The match registry of an owned connection set up by `set_up_connection`.
+pub fn registry_of(
+    attached: Option<&dyn crate::code_rule_dsl::facts::connection::ConnectionSetup>,
+) -> crate::content_store::StoreResult<&Arc<MatchRegistry>> {
+    attached
+        .and_then(|setup| setup.as_any().downcast_ref::<ConnectionRegistry>())
+        .map(|setup| &setup.0)
+        .ok_or_else(|| crate::content_store::StoreError::Invalid("the connection has no demand module".to_owned()))
 }

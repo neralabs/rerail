@@ -1,5 +1,6 @@
 //! Rust literal values as rustc evaluates them.
 
+use crate::code_rule_dsl::tree::Tree;
 use super::Context;
 use crate::code_rule_dsl::scope::rust::resolve_index;
 use crate::code_rule_dsl::scope::{Form, ScopeTable};
@@ -8,74 +9,7 @@ use num_bigint::BigInt;
 use num_traits::{FromPrimitive, Num, ToPrimitive, Zero};
 use std::cell::Cell;
 
-/// A Rust integer type (suffix or annotation).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum IntTy {
-    I8,
-    I16,
-    I32,
-    I64,
-    I128,
-    Isize,
-    U8,
-    U16,
-    U32,
-    U64,
-    U128,
-    Usize,
-}
-impl IntTy {
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Self::I8 => "i8",
-            Self::I16 => "i16",
-            Self::I32 => "i32",
-            Self::I64 => "i64",
-            Self::I128 => "i128",
-            Self::Isize => "isize",
-            Self::U8 => "u8",
-            Self::U16 => "u16",
-            Self::U32 => "u32",
-            Self::U64 => "u64",
-            Self::U128 => "u128",
-            Self::Usize => "usize",
-        }
-    }
-    fn limits(self) -> (BigInt, BigInt) {
-        let bits = match self {
-            Self::I8 | Self::U8 => 8,
-            Self::I16 | Self::U16 => 16,
-            Self::I32 | Self::U32 => 32,
-            Self::I64 | Self::U64 => 64,
-            Self::I128 | Self::U128 => 128,
-            Self::Isize | Self::Usize => 64,
-        };
-        let one = BigInt::from(1u8);
-        if self.name().starts_with('i') || self == Self::Isize {
-            (
-                -(one.clone() << (bits - 1usize)),
-                (one << (bits - 1usize)) - 1,
-            )
-        } else {
-            (BigInt::from(0), (one << bits) - 1)
-        }
-    }
-}
-
-/// A Rust float type.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FloatTy {
-    F32,
-    F64,
-}
-impl FloatTy {
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Self::F32 => "f32",
-            Self::F64 => "f64",
-        }
-    }
-}
+pub use super::types::{FloatTy, IntTy};
 
 /// A Rust literal value.
 #[derive(Clone, Debug, PartialEq)]
@@ -511,7 +445,7 @@ fn reader<D: Doc>(expr: Expr) -> Reader<D> {
         Expr::Name => |node, reading, context, _| {
             follow_const(node, reading, context).unwrap_or(RustValue::Unknown)
         },
-        Expr::Parens => |node, reading, context, hint| match first_named(node) {
+        Expr::Parens => |node, reading, context, hint| match node.first_named() {
             Some(inner) => eval(&inner, reading, context, hint),
             None => RustValue::Unknown,
         },
@@ -524,24 +458,17 @@ fn reader<D: Doc>(expr: Expr) -> Reader<D> {
     }
 }
 
-fn first_named<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
-    node.children().find(|n| n.is_named())
-}
 
-fn last_named<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
-    node.children().filter(|n| n.is_named()).last()
-}
 
 /// The operators `unary` and `binary` read, by their text; any other is `?`, which neither reads.
-fn operator<D: Doc>(node: &Node<'_, D>) -> &'static str {
+fn operator(text: &str) -> &'static str {
     const OPERATORS: &[&str] = &[
         "-", "+", "!", "*", "/", "%", "&", "|", "^", "<<", ">>", "&&", "||", "==", "!=", "<", "<=",
         ">", ">=",
     ];
-    let text = node.text();
     OPERATORS
         .iter()
-        .find(|op| **op == text.as_ref())
+        .find(|op| **op == text)
         .copied()
         .unwrap_or("?")
 }
@@ -551,11 +478,12 @@ fn unary_parts<'r, D: Doc>(
     node: &Node<'r, D>,
     hint: Option<Hint>,
 ) -> Option<(&'static str, Node<'r, D>, Option<Hint>)> {
-    let op = node.field("operator").or_else(|| node.children().next())?;
+    // tree-sitter-rust's unary operator has no field: it is the first token.
+    let op = node.operator_token().or_else(|| node.first_token())?;
     let arg = node
         .field("argument")
-        .or_else(|| node.children().find(|n| n.is_named()))?;
-    let op = operator(&op);
+        .or_else(|| node.first_named())?;
+    let op = operator(&op.text());
     let operand_hint = hint.filter(|_| matches!(op, "-" | "+" | "!"));
     Some((op, arg, operand_hint))
 }
@@ -609,10 +537,10 @@ struct BinaryParts<'r, D: Doc> {
 fn binary_parts<'r, D: Doc>(node: &Node<'r, D>, hint: Option<Hint>) -> Option<BinaryParts<'r, D>> {
     let (left, op, right) = (
         node.field("left")?,
-        node.field("operator")?,
+        node.operator_token()?,
         node.field("right")?,
     );
-    let op = operator(&op);
+    let op = operator(&op.text());
     let arithmetic = matches!(op, "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^");
     let (left_hint, right_hint) = match op {
         _ if arithmetic => (hint, hint),
@@ -675,7 +603,7 @@ fn eval_right<D: Doc>(
 
 /// A cast's operand and the text of its type.
 fn cast_parts<'r, D: Doc>(node: &Node<'r, D>) -> Option<(Node<'r, D>, String)> {
-    let mut named = node.children().filter(|n| n.is_named());
+    let mut named = node.named();
     let value = node.field("value").or_else(|| named.next())?;
     let ty = node.field("type").or_else(|| named.next())?;
     Some((value, ty.text().into_owned()))
@@ -739,7 +667,7 @@ fn block_value<'r, D: Doc>(node: &Node<'r, D>, reading: Reading<'_>) -> Option<N
     if rejected {
         return None;
     }
-    last_named(node)
+    node.last_named()
 }
 
 /// The numeric type `eval` gives `node` without a hint, read from its syntax alone: a suffix, a
@@ -758,13 +686,13 @@ fn static_type<D: Doc>(
     let ty = match expr_of(node) {
         Expr::Number => typed(&literal(node)),
         Expr::Name => const_item(node, reading).and_then(|(_, declared)| declared.hint()),
-        Expr::Parens => first_named(node).and_then(|inner| static_type(&inner, reading, context)),
+        Expr::Parens => node.first_named().and_then(|inner| static_type(&inner, reading, context)),
         Expr::Unary => static_unary(node, reading, context),
         Expr::Binary => static_binary(node, reading, context),
         Expr::Cast => cast_parts(node).and_then(|(_, ty)| cast_type(&ty)),
         Expr::If => static_if(node, reading, context),
         Expr::Block | Expr::Else => {
-            last_named(node).and_then(|last| static_type(&last, reading, context))
+            node.last_named().and_then(|last| static_type(&last, reading, context))
         }
         Expr::Literal | Expr::Other => None,
     };
@@ -1273,4 +1201,4 @@ fn wrap_int(value: BigInt, ty: IntTy) -> BigInt {
     value
 }
 #[cfg(test)]
-mod tests;
+pub mod tests;

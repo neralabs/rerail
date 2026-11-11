@@ -1429,3 +1429,332 @@ The containment estimate reads the binding column's unconditioned distinct count
 That estimate discounts probes whose filtered values can all hit the target relation.
 The next experiment must bound distinct counts by the filtered binding population before extending containment pricing.
 Both `retval` and `ifn` must pass, along with cold and incremental replay work and output parity.
+
+### Checks after the phase-space merge
+
+The merged engine builds. All ten admission and retention checks pass, including the previously failing import-cycle maintenance check.
+The growing-index check also passes.
+
+Three independent P3 processes produce identical findings and identical restored programs, splits, and relation identities.
+The later processes restore all three requested preparations from the store.
+Nevertheless, the phase-work gate fails: unchanged `struct` runs 19 of 36 strata, and `types` runs 34 of 110.
+The repeated third process has the same counts.
+
+`Retained::holds` excludes every framed output because frames contain raw facts, not decoded output text.
+This makes output-producing strata run again even when their inputs and stored results are unchanged.
+The candidate admits clean output facts with the other demanded frames, then uses the existing native decoder at the output boundary.
+It preserves the existing `finding` decoding path and applies the same snapshot checks to output admission.
+The new 130-output check requires bounded storage executions; the P3 gate still requires zero unchanged phase strata.
+
+The planner candidate bounds each binding's distinct count by measured rows surviving its constant filters.
+It uses existing kind and value frequencies, and computes these bounds once per plan search.
+It issues no additional SQL and does not recount input rows.
+The regression cases require early restriction of the name demand and prevent expansion from function definitions before selecting return statements.
+Both candidates are under validation; this entry does not claim that either gate passes.
+
+Artifact directory: `three-fixes-e78060842/merge-6a3d` for merge checks and `filtered-domain-output` for the candidates.
+The merge's O125 replay preserves output parity: 3.7 s cold CPU, 4.1 s maintenance CPU, and 3.6 s fresh CPU.
+These single observations are the comparison baseline, not a speedup claim.
+
+### The first candidates did not clear the gates
+
+The filtered-domain candidate preserves O125 parity and avoids the earlier return-value regression.
+Recorded cold work falls from 12,274,367 to 12,166,604. Maintenance work falls from 9,633,667 to 9,168,311.
+However, the targeted insertion probes still perform 184,851 work units; the limit is 2,000.
+This candidate does not resolve the amplified join.
+
+The live plan cache tracks relation sizes but omits distinct counts and fanouts.
+It can retain a bad order when the value distribution changes without a row-count change.
+Maintenance probes also miss the first live-statistics replan because that pass updates only whole plans.
+The next candidate includes distributions in the cache signature and replans nonempty delta probes after the seed wave.
+A regression test changes the value distribution at fixed cardinality and requires the cached order to change.
+
+Raw output reuse reduces restored structural work from 19 strata to 2, and typing work from 34 to 18.
+The zero-recomputation gate still fails. Three real processes retain identical programs, identities, and positive outputs.
+The remaining missing frames consume literal-only facts such as `env` and `gproto`.
+Publication requires runtime digests for these leaves, although their contents already belong to the compiled relation identity.
+The next candidate excludes only immutable literal leaves from runtime dependency checks.
+Inputs, native relations, produced facts, and derived relations still require runtime digests.
+A focused test requires reuse with the same literal, invalidation after a literal change, and refusal without an input digest.
+Both fixes await the pending build and the unchanged workload gates.
+
+### Restored phase work now clears the gate
+
+The three-process preparation test passes with the output and literal fixes.
+Both restored processes keep identical prepared programs, relation identities, and nonempty call results.
+Unchanged `struct` and `types` phases now execute zero strata.
+Previously they executed 19 and 34 strata after the integration merge, then 2 and 18 with output reuse alone.
+All 12 focused frame-admission and maintenance checks pass, including literal invalidation and replacement-payload rejection.
+All three planner regression tests also pass. The real O125 replay remains pending at this entry.
+
+The reusable work gate is `scripts/profiling/o125/gate.py BASELINE_PROFILE CANDIDATE_PROFILE`.
+It rejects the earlier filtered-domain candidate because the targeted insertion work remains above 2,000.
+It also requires both insertion plans, cold and incremental work without regression, and the return-value work counters.
+The replay itself checks output parity. Native step-count omissions remain a limitation; CPU is reported separately.
+
+### Live statistics alone still arrive too late
+
+The live-statistics candidate preserves O125 parity. Targeted insertion work falls from 184,851 to 45,930, so the gate still fails.
+Recorded cold work is 12,033,492; maintenance work is 8,854,687; fresh step-07 work is 12,129,853.
+Return-value work does not regress. Single-run CPU is 4.1 s cold, 4.9 s maintenance, and 3.9 s fresh.
+These CPU measurements do not establish a speedup over the earlier 3.7/4.1/3.6 s baseline.
+
+The wave trace identifies the remaining timing error. Within a four-wave chunk, the source insertion probe consumes deltas of 1, 86, and 29 rows.
+It expands those rows to 15,099 rows before the planner sees the new statistics.
+The annotation copies perform the same work. Later waves use the restrictive order and reject the names before expansion.
+The final profile order therefore describes only part of the accumulated step counts.
+
+The next candidate makes bounded native runs return when a multi-relation delta-only probe's demand grows beyond the planner's drift threshold.
+It reads row and distinct counts already held in indexes. It does not scan inputs or issue SQL for each wave.
+Unbounded callers retain run-to-fixpoint behavior. Whole-plan probes retain their existing scheduling.
+A new native test requires a checkpoint before a late demand reaches its consumer, then verifies resumed and uninterrupted output parity.
+The wave budget is capped because these early returns can create more checkpoints than exponential wave scheduling previously allowed.
+
+The first diagnostic trace stopped when the shared disk filled. The filtered retry completed with parity.
+Only this task's obsolete incremental cache and completed build objects were removed; binaries and measurements remain intact.
+Artifacts are under `live-stats-literal`; the checkpoint build and its gates are pending under `delta-checkpoint`.
+
+### Counts do not describe which keys can match
+
+The checkpoint-only candidate still fails: targeted insertion work is 67,092. O125 output parity holds.
+The estimates now see 87 delta rows, but still price the restrictive input at about 142 rows per binding.
+A small distinct count does not mean that the delta's names occur in the restrictive input.
+Single-run CPU is 3.4 s cold, 3.8 s maintenance, and 3.0 s fresh; a nearby baseline is still needed.
+The native checkpoint test initially used invalid spec syntax (`d:1` instead of `d1`), and failed before execution.
+The fixture is corrected. This setup failure is not evidence for or against checkpoint behavior.
+
+The next candidate uses complete small value sets already held in statistics.
+When the forced first atom and a later positive join have disjoint keys, the join is priced as rejecting the demand.
+This is an estimate only; it does not remove a rule or change evaluation.
+Only the forced first atom supplies this restriction. A future predicate with bound variables is not an already-applied filter.
+A partial constant memo cannot establish absence: its distinct count and summed frequencies must cover the whole input column.
+
+The plan cache key and live signature include this disjointness decision.
+Tests change only key values while keeping counts and fanouts fixed, then require the cached order to change.
+They also cover overlapping values and incomplete versus complete input histograms.
+Bounded runs now expose the first nonempty demand, even when it contains only one row.
+The corrected fixture, replay gate, and full-corpus budget await the `key-domains` build.
+The independently verified retention changes are committed as `c9b9ad7e0`.
+
+### Final qualification: all three targets pass
+
+Artifacts: `/Users/jeremy/orca/artifacts/async-family-comparison/three-fixes-e78060842/key-domains`.
+The corrected checkpoint test, request/resume test, three planner checks, and three-process preparation test pass.
+All 12 frame-admission and maintenance checks also pass with the final binary.
+
+| Recorded native work | Integration baseline | Final candidate |
+| --- | ---: | ---: |
+| Targeted source and annotation insertion probes | 184,851 | 633 |
+| All cold work, step 06 | 12,274,367 | 10,687,926 |
+| All maintenance work, step 07 | 9,633,667 | 8,802,587 |
+| All fresh step-07 work | 12,352,930 | 10,785,403 |
+| Cold return-value work | 12,070 | 12,070 |
+
+The targeted source probe now produces `199 -> 0` rows at `icall`, before reading `pv`.
+Its annotation copies produce `398 -> 0`. Their combined work is 633, below the 2,000 ceiling.
+This is approximately 292 times less recorded work for these probes, not a 292-fold whole-job speedup.
+The EXPLAIN output records eight disjoint-key estimates for the selected rule family.
+The cold `ifn` join work also falls from 1,512,651 to 74,457.
+
+The candidate and integration baseline have identical nonempty step-07 outputs: 4,934,123 bytes.
+SHA-256: `7878676325d3d9558dc6ac393d60b66be0153901e6f3fe714b4b52c9d9bc5714`.
+The replay reports incremental/full parity. Its existing test prints this result rather than asserting it.
+The work gate now requires that report and compares saved outputs with the baseline.
+A negative check with incorrect output and a failed parity report is rejected.
+
+A nearby baseline run measures 2.8 s cold CPU and 3.2 s maintenance CPU.
+The candidate measures 2.5 s and 3.1 s. These single observations support roughly unchanged total CPU, not a large throughput claim.
+In maintenance, attributed join execution falls from 0.766 s to 0.659 s, while replanning adds overhead.
+The nearby fresh/full run has different memo reuse: zero local chunks versus six for the candidate.
+Its 2.1 s versus 2.2 s CPU results are not a controlled fresh/full comparison.
+Native step counters also omit some whole-plan work and can accumulate across changed orders.
+
+The 5,725-file authored async job stays below the 100-execution ceiling:
+
+| Run | Core executions | Job CPU | Job wall |
+| --- | ---: | ---: | ---: |
+| Cold | 8 | 10.954 s | 3.724 s |
+| Warm | 20 | 0.286 s | 0.484 s |
+| Warm, profiled | 20 | 0.307 s | 0.619 s |
+
+These times cover the measured job; process startup is separate. Storage SQL remains outside the core budget.
+This corpus has no findings. The positive preparation fixture and nonempty O125 outputs provide the semantic checks.
+Both restored preparation processes execute zero unchanged `struct` and `types` strata, with stable programs and identities.
+Bulk admission still passes its bounded-query and metadata-consistency checks.
+
+### Affected joins, changed-scope demands, and warm memo projection
+
+The next three changes start from `6f63c7af9`. The baseline remains the pinned
+O125 step 07 replay and the 5,725-file authored async workload. Artifacts are in
+`/Users/jeremy/orca/artifacts/async-family-comparison/next-three-6f63c7af9`.
+
+The baseline trace confirms the late restriction. The `miss__sup0__ins` seed reads
+71,976 walk rows, checks bindings, and finally produces zero rows at `kind__plus`.
+Both walk maintenance probes also start from walk. Their delta identity was
+incorrectly treated as a requirement for the physical first join. The native
+executor already supports indexed delta reads at later positions.
+
+Implementation under qualification:
+
+- Track row-count and column-distribution versions for each component relation.
+  Map those slots to dependent probes once. Defer dirty plans with empty deltas.
+  Reuse unchanged signatures without rebuilding their keys or distributions.
+- Permit connected, fixed changed-input demands before recursive delta reads.
+  Preserve the delta source and its wave bounds. Seed-plan caches must also notice
+  changes in constant frequencies. Measured postings apply to retained relations.
+- Project local memo entries to consumer relations. Consumers without base reads
+  or nearest-scope operations do not need tree distributions. Include that demand
+  in the memo identity and omit those distributions when writing narrow frames.
+  Preserve output lines and node counts. Keep full statistics for tree consumers.
+- Add stored per-file statistics directly to totals. Remove the earlier chunk
+  estimate from replay: the old path added that estimate and then the file counts.
+
+Qualification must preserve the 633-work insertion result and exact nonempty O125
+outputs. It must measure planning CPU, late-restriction work, and warm lookup/replay
+CPU separately. Tests cover dependency invalidation, empty deltas, constant changes,
+changed-scope ordering, projected frame decoding, and projection identity.
+
+The first qualification failed the work gate. It kept 633 insertion work and output
+parity, but total maintenance work rose from 8.80 million to 10.70 million. The late
+walk restrictions did not move. Warm replay fell from 114.7 to 41.3 ms in this nearby
+pair, but the projection still retained unused tree distributions.
+
+The trace exposed two additional pricing errors. A delta plan used the full
+relation cardinality. That made scanning a fixed changed-input demand look cheap
+on every wave, even when the actual delta had few rows. Also, distinct changed
+scope keys were priced with row-weighted fanout. That overprices their indexed
+probes into a skewed walk relation. The next pass separates delta cardinality,
+prices distinct demand keys by mean postings, and uses the existing drift threshold
+when publishing changed statistics to dependent plans. Raw versions still advance.
+Key-domain changes publish immediately. The memo demand now checks actual rule
+reads; the split's base list can retain entries that later lowering does not use.
+
+A further cause of the changed-kind estimate was found in projection planning.
+`constants_tested` only collected direct tests. A test on a projected kind relation
+did not request the corresponding input-column count. `view_stats` then copied
+cardinality and fanout but dropped constant counts. The fix propagates constant
+demands through projection aliases. It carries exact counts back through unfiltered
+projections that retain a measured key. Filtered or deduplicating projections do
+not claim those marginal counts are exact.
+
+The memo projection decision now occurs after base-column projection planning.
+It uses the retained base rows and nearest-scope operations of the actual consumer.
+The local frame key includes this projection. The cross-file semantic key does not
+need to change merely because a local frame stores fewer unused statistics.
+
+The second replay reduced recorded maintenance work to 8,233,380 and preserved
+633 insertion work. The late changed-kind seed fell from 167,356 work to 1.
+Planning CPU still failed: 11,705 searches consumed about 215 ms. Two changes in
+the spike caused excessive invalidation. New observed-fanout thresholds forced
+cache eviction, and delta cardinality was classified as a distribution change.
+The next pass restores the previous observation policy. It treats delta size as
+cardinality, reprices cheap orders, and searches when a retained changed-input
+scan is no longer suitable for the smaller delta.
+
+A profile limitation matters here: the final displayed probe order can be the
+small-delta order, while its earlier large plan started from changed scopes.
+Also, existing native work counters omit whole-plan execution. The gate therefore
+checks EXPLAIN evidence for both source and annotation large plans, the recorded
+work ceilings, and exact output parity. Whole-job and per-probe CPU remain necessary
+checks; recorded work alone is not a complete execution-work measurement.
+
+
+### Qualification of the three changes
+
+The final optimized test binary is retained at
+`next-three-6f63c7af9/final/tests` under the artifact root above. Its build log is
+`build-5.log`. The failed intermediate candidates remain available for comparison.
+The final drivers, environments, outputs, and profiles are beside that binary.
+
+The O125 work and parity gate passes against `three-fixes-e78060842/key-domains/o125/profile`.
+The saved nonempty output is unchanged: 4,934,123 bytes, SHA-256
+`7878676325d3d9558dc6ac393d60b66be0153901e6f3fe714b4b52c9d9bc5714`.
+The replay also reports incremental/full parity. These are the recorded work results:
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| Targeted source and annotation insertion probes | 633 | 633 |
+| Empty changed-kind seed | 167,356 | 1 |
+| Source changed-scope walk probe | 107,909 | 6,397 |
+| Annotation changed-scope walk probe | 107,909 | 6,397 |
+| Each removed-scope walk seed | 106,329 | 2,714 |
+| Cold recorded native work | 10,687,926 | 10,675,973 |
+| Maintenance recorded native work | 8,802,587 | 7,946,476 |
+| Full recomputation recorded native work | 10,785,403 | 10,779,000 |
+
+The gate now limits the empty-kind seed to 1, each changed-scope probe to 6,400,
+and each removed-scope seed to 2,800. It retains the 633 insertion ceiling.
+EXPLAIN confirms that both large walk plans start from changed scopes.
+A later small walk delta can become the cheaper driver. The planner checks that
+condition before reusing an order; it does not force changed-scope scans forever.
+The displayed final order can therefore differ from the first large plan.
+
+Per-probe CPU includes whole-plan execution, unlike the work counters.
+Source and annotation changed-scope probes take 0.6 and 0.5 ms in this run.
+The final nearby baseline takes 18.6 and 17.8 ms. The two removed-scope seeds
+take 0.4 and 0.5 ms, compared with 17.0 and 17.1 ms. The empty-kind seed is below
+the profile's 0.1 ms display precision. Its gate checks work, not rounded time.
+
+Replanning takes 129.7 ms, compared with 297.9 ms in the initial nearby baseline.
+It makes 15,411 parent calls instead of 29,157. This moves toward the target,
+but **does not establish the requested 40–50 ms result**. The remaining breakdown
+is 71.4 ms in 5,547 searches, 23.5 ms in 5,983 repricings, and about 31 ms in
+parent planning spans. Timing varies with other work on this machine. Earlier
+quiet runs measured 140.8 ms before these changes; that is not a paired comparison.
+
+The 5,725-file async workload produces these final results:
+
+| Run | Core SQL executions | Job CPU | Job wall |
+| --- | ---: | ---: | ---: |
+| Cold | 8 | 16.815 s | 13.187 s |
+| Warm | 20 | 0.157 s | 0.623 s |
+| Warm, profiled | 20 | 0.192 s | 0.863 s |
+
+Warm memo replay takes 1.2 ms; lookup takes 12.0 ms. The profile identifies six
+demanded relations and no demanded tree distributions. Replayed values fall from
+about 71 MB to under 0.1 MB. Stored frames now omit those unused values, so lookup
+also benefits. A wider consumer has a different local memo identity and cannot
+accept a narrow frame. Output lines remain in both held and decoded frames.
+Core counts exclude storage SQL, as in the previous qualification.
+
+Fourteen focused tests pass before the two retention tests. The first retention
+attempt aborts in `content_store/journal.rs`'s FSEvents callback with an invalid
+mutex. That file is unchanged by this work. Both retention tests pass on retry.
+The failed log is retained; this remains a journal callback lifetime concern,
+not evidence that the first test run passed. The retry validates positive findings,
+recursive edits, and retained outputs. The async corpus itself has no findings.
+
+Reproduce the work gate from this checkout with:
+
+```sh
+nice -n 19 python3 scripts/profiling/o125/gate.py \
+  /Users/jeremy/orca/artifacts/async-family-comparison/three-fixes-e78060842/key-domains/o125/profile \
+  /Users/jeremy/orca/artifacts/async-family-comparison/next-three-6f63c7af9/final/o125/profile
+```
+
+The `final/focused.py`, `final/retention.py`, `final/o125.py`, and `final/async.py`
+artifact drivers record the binary, environment, filters, and full workload paths.
+All builds and tests run at nice level 19. The Python gate uses the original
+nonempty full-recomputation baseline: a nearby timing replay restored its full
+phase from cache and cannot serve as that phase's work-counter baseline.
+
+The baseline repeated immediately after qualification takes 209.5 ms in replanning,
+with the same 29,157 parent calls. The final result is 38% lower in CPU and 47%
+lower in calls. Maintenance job CPU falls from 4.5 to 4.2 seconds; its cross-file
+part falls from 3.4 to 3.1 seconds. This comparison uses `baseline-paired` and
+`final/o125`; the raw measurements are in `final/paired-maintenance.json`.
+A nearby unprofiled warm baseline takes 497 ms CPU, compared with 157 ms after
+(68% lower). The baseline artifact is `async-baseline-paired`.
+
+The same nearby warm profile measures replay at 108.7 ms before and 1.2 ms after;
+lookup falls from 56.6 to 12.0 ms, and decoding falls from 109.0 to 7.9 ms.
+These replace historical timings for the paired comparison; they do not change
+the workload or the cache-hit count.
+
+A final cold comparison checks the slower cold result against a current baseline.
+With fresh caches and sequential runs, CPU is 16.440 seconds before and 15.620
+after. Both execute eight core SQL statements over 5,725 files. Job wall time is
+18.255 and 10.218 seconds, but concurrent machine load makes that difference a
+poor estimate of the isolated speedup. Artifacts are in `cold-pair/baseline` and
+`cold-pair/candidate`. This check finds no cold CPU regression; the earlier quiet
+10.954-second result is not a valid baseline for today's loaded machine.

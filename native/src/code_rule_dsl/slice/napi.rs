@@ -98,7 +98,7 @@ impl CodeRuleSlice {
 /// `policies` lowered and dumped as `rir` (list step 18, `rerail engine dump --rule <file>
 /// [--clause <id>] [--fused] [--setplan]`), without a store.
 #[napi]
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(any(test, feature = "test-hooks"), allow(dead_code))]
 pub fn dump_rir(policies: Vec<SlicePolicy>, capabilities_json: String, clause: Option<String>, fused: Option<bool>, setplan: Option<bool>) -> Result<String> {
     let policies: Vec<_> = policies.into_iter().map(|policy| (policy.name, policy.source, policy.format)).collect();
     crate::code_rule_dsl::tools::dump(&policies, &capabilities_json, clause.as_deref(), fused.unwrap_or(false), setplan.unwrap_or(false))
@@ -108,7 +108,7 @@ pub fn dump_rir(policies: Vec<SlicePolicy>, capabilities_json: String, clause: O
 /// `rir` assembled (`rerail-engine asm`): every `program` block of `text` through the verifier,
 /// returned as its dump, or the first refusal.
 #[napi]
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(any(test, feature = "test-hooks"), allow(dead_code))]
 pub fn assemble_rir(text: String) -> Result<String> {
     crate::code_rule_dsl::tools::assemble(&text).map_err(Error::from_reason)
 }

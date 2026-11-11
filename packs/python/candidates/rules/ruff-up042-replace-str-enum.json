@@ -1,0 +1,56 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up042-replace-str-enum",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Inherit from enum.StrEnum instead of both str and enum.Enum on Python 3.11 and above; it is the standard library base for string-valued enums.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "str-and-enum-bases",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": { "pythonVersion": { "min": "3.11" } },
+          "utils": {
+            "str-base": {
+              "any": [
+                { "any": [{ "kind": "identifier" }, { "kind": "attribute" }], "resolves": { "global": ["str"], "import": ["builtins.str"] } },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "str-base" } }
+              ]
+            },
+            "enum-base": {
+              "any": [
+                { "any": [{ "kind": "identifier" }, { "kind": "attribute" }], "resolves": { "import": ["enum.Enum"] } },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "enum-base" } }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "class_definition",
+              "field": "name",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "superclasses",
+                "kind": "argument_list",
+                "all": [
+                  { "has": { "stopBy": "neighbor", "matches": "str-base" } },
+                  { "has": { "stopBy": "neighbor", "matches": "enum-base" } }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP042",
+        "message": "Inherit from `enum.StrEnum` instead of `str` and `enum.Enum`, unless code relies on `f\"{member}\"` giving `Cls.MEMBER`, on `auto()` giving `'1'` rather than the lowercase name, or on non-string values.",
+        "suppress": { "noqa": { "codes": ["UP042"] } }
+      }
+    }
+  ]
+}

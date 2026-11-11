@@ -7,7 +7,7 @@
 //! does (`super::string_value`), a backtick literal loses its fences (`super::code_body`).
 
 use super::Error;
-use super::syntax::{Code, Head, Item, Lines, Lit, Statement, Suppress, Term};
+use super::syntax::{Code, Fix, Head, Item, Lines, Lit, Statement, Suppress, Term};
 use super::tape::{ERROR, Field, Kind, Node};
 
 /// The tape of `src` as a tree: each node's children in order, extras (comments) left out.
@@ -175,7 +175,16 @@ impl<'a> Tree<'a> {
                 if let Some(t) = self.all(s, Field::Tag).last() {
                     tag = Some(self.brace_column(self.one(t, Field::Column)?));
                 }
-                let fixes = self.all(s, Field::Fix).map(|f| self.name(f, Field::Relation)).collect::<Result<_, _>>()?;
+                let fixes = self
+                    .all(s, Field::Fix)
+                    .map(|f| {
+                        Ok(Fix {
+                            name: self.name(f, Field::Relation)?,
+                            safe: self.has_token(f, "safe"),
+                            title: self.string(self.one(f, Field::Description)?)?,
+                        })
+                    })
+                    .collect::<Result<_, Error>>()?;
                 let suppress = self
                     .all(s, Field::Suppress)
                     .map(|l| {
@@ -309,7 +318,7 @@ impl<'a> Tree<'a> {
 
 /// The statements of `src` from its tape `nodes` (`super::tape`, or a stored tape's facts: `nodes_of_facts`). A tape
 /// with an ERROR gives the error running the file gives (`super::syntax_error`).
-pub(super) fn statements(src: &str, nodes: &[Node]) -> Result<Vec<Statement>, Error> {
+pub fn statements(src: &str, nodes: &[Node]) -> Result<Vec<Statement>, Error> {
     if nodes.iter().any(Node::is_error) {
         let (_, message) = super::syntax_error(src).unwrap_or((0, "a statement that does not parse".to_owned()));
         return Err(Error::Syntax(message));

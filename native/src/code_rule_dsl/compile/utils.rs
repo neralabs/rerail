@@ -1,7 +1,9 @@
 use super::documents::{DocumentScopes, Side};
 use super::order::AllOrderConflict;
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
-use crate::code_rule_dsl::matcher::{CaptureAnalysis, MAX_UTIL_INSTANCES, Transform, UtilTable};
+use crate::code_rule_dsl::matcher::{
+    CallArgs, CaptureAnalysis, MAX_UTIL_INSTANCES, Transform, UtilTable,
+};
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use napi::Result;
 use serde_json::Value;
@@ -42,6 +44,9 @@ pub(super) struct UtilDef<'a> {
 
 /// The utilities a rule may name, by id, with their parameters.
 pub(crate) type UtilIds<'a> = BTreeMap<&'a str, &'a [String]>;
+
+/// Distinct parameterized calls: each utility and the mapping of its parameters.
+pub(crate) type Instances = RefCell<BTreeSet<(usize, CallArgs)>>;
 
 /// Whether a name is a metavariable's (without `$`), as a pattern spells it.
 pub(super) fn is_metavariable_name(name: &str) -> bool {
@@ -229,11 +234,23 @@ impl<'a> UtilScope<'a> {
         args: &[(String, String)],
         path: &str,
     ) -> Result<()> {
-        match self.table.upgrade() {
-            Some(table) if !table.record_instance(index, args) => Err(invalid(format!(
+        let within = match self.instances {
+            Some(instances) => {
+                let mut instances = instances.borrow_mut();
+                instances.insert((index, args.to_vec()));
+                instances.len() <= MAX_UTIL_INSTANCES
+            }
+            None => self
+                .table
+                .upgrade()
+                .is_none_or(|table| table.record_instance(index, args)),
+        };
+        if within {
+            Ok(())
+        } else {
+            Err(invalid(format!(
                 "{path}: more than {MAX_UTIL_INSTANCES} distinct parameterized utility calls in one query"
-            ))),
-            _ => Ok(()),
+            )))
         }
     }
 
@@ -250,38 +267,43 @@ impl<'a> UtilScope<'a> {
             captures: RefCell::default(),
             calls: self.calls,
             documents: self.documents,
+            instances: None,
             side,
         }
     }
 }
 
 /// The utilities a rule's `matches` may name while compiling it for one grammar.
-pub(crate) struct UtilScope<'a> {
-    pub(crate) table: Weak<UtilTable>,
-    pub(crate) ids: &'a UtilIds<'a>,
+pub struct UtilScope<'a> {
+    pub table: Weak<UtilTable>,
+    pub ids: &'a UtilIds<'a>,
     /// The query's `languageOptions`, which its `resolves` terms read.
-    pub(crate) options: Option<Arc<LanguageOptions>>,
+    pub options: Option<Arc<LanguageOptions>>,
     /// A Python query's `languageOptions`.
-    pub(crate) python: Option<Arc<PythonOptions>>,
+    pub python: Option<Arc<PythonOptions>>,
     /// The query's `transform`, whose variables comparisons may read.
-    pub(crate) transform: Option<Arc<Transform>>,
+    pub transform: Option<Arc<Transform>>,
     /// Where the query collects `all` items that read what a later item binds, to settle once it
     /// knows what else binds each name (`compare::settle_all_order`); `None` refuses them at once.
-    pub(crate) conflicts: Option<&'a RefCell<BTreeSet<AllOrderConflict>>>,
+    pub conflicts: Option<&'a RefCell<BTreeSet<AllOrderConflict>>>,
     /// What the rule's terms bind and read, each utility summarized once per compilation of the
     /// table, for capture ordering and `all` order checks.
-    pub(in crate::code_rule_dsl) captures: RefCell<CaptureAnalysis>,
+    pub captures: RefCell<CaptureAnalysis>,
     /// Where the query collects its `calls` terms; `None` where `calls` is not supported.
-    pub(crate) calls: Option<&'a crate::code_rule_dsl::calls::CallsCollector>,
+    pub calls: Option<&'a crate::code_rule_dsl::calls::CallsCollector>,
     /// The documents of the file a query of an embedding language reads (`embed`), with the
     /// tables its `embedded` and `host` rules compile with; `None` for another language's.
-    pub(crate) documents: Option<&'a DocumentScopes>,
+    pub documents: Option<&'a DocumentScopes>,
+    /// Where the query records its parameterized calls when its table is not its own (a
+    /// document's shared table, which every query reaching it records in); `None` records them in
+    /// the table.
+    pub instances: Option<&'a Instances>,
     /// The document the rule being compiled reads.
-    pub(crate) side: Side,
+    pub side: Side,
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use crate::code_rule_dsl::test_support::*;
     use serde_json::json;
 

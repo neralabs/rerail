@@ -43,9 +43,10 @@ to_literal(c, _, _) :- lit_text(c, x), !inner_comment(c), lit_lead(c, x, l), y =
 lit_lead(c, x, " ") :- lit_spaced(c, x).
 lit_lead(c, x, "") :- lit_text(c, x), !lit_spaced(c, x).
 .decl lit_spaced(c: node, x: symbol)
-lit_spaced(c, x) :- lit_text(c, x), token_before(c, t), touching(t, c), text(t, s), cannot_touch(s, x).
+lit_spaced(c, x) :- lit_text(c, x), touching(c, s), cannot_touch(s, x).
+layout_at(c) :- lit_text(c, _).
 .decl lit_text(c: node, x: symbol)
 lit_text(c, cat(p, v)) :- radix_call(c, _, v, r), int_radix(r, _, p, d), match(d, v).
-touch_pair(s, x) :- lit_text(c, x), token_before(c, t), touching(t, c), text(t, s).
+touch_pair(s, x) :- lit_text(c, x), touching(c, s).
 .decl inner_comment(c: node)
 inner_comment(c) :- radix_call(c, _, _, _), kind(k, "comment"), within(k, c).

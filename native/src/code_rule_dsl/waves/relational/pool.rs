@@ -14,7 +14,7 @@ struct Inner {
     db: OnceCell<Database>,
 }
 #[derive(Clone)]
-pub(super) struct Pool(Rc<Inner>);
+pub struct Pool(Rc<Inner>);
 impl Default for Pool {
     fn default() -> Self {
         Self(Rc::new(Inner {
@@ -50,7 +50,7 @@ impl Drop for Scope {
         if let Ok(inner) = Rc::try_unwrap(pool.0)
             && let Some(db) = inner.db.into_inner()
         {
-            let _ = db.progress_handler(0, None::<fn() -> bool>);
+            let _ = db.hooks.progress(None::<fn() -> bool>);
             let _ = super::source::bind(&db, None, Arc::new(AtomicUsize::new(0)));
             super::functions::rebind(&db.regex_binding, 0, Arc::new(AtomicUsize::new(0)));
             let bounded = db.bindings.borrow().data_bytes() <= 4 * 1024 * 1024;
@@ -77,7 +77,7 @@ impl Drop for Scope {
         }
     }
 }
-pub(super) struct Lease {
+pub struct Lease {
     pool: Pool,
     pub id: usize,
     modules: RefCell<Vec<String>>,
@@ -91,7 +91,7 @@ impl Pool {
     }
     pub fn statistics_boundary(&self) -> Result<()> {
         if let Some(db) = self.0.db.get() {
-            db.progress_handler(0, None::<fn() -> bool>)
+            db.hooks.progress(None::<fn() -> bool>)
                 .map_err(super::sql_error)?;
             #[cfg(feature = "code-rule-profile")]
             let _span = crate::code_rule_dsl::profile::trace::Span::start(
@@ -111,7 +111,7 @@ impl Pool {
         #[cfg(feature = "code-rule-profile")]
         let _span = crate::code_rule_dsl::profile::trace::Span::start("sql-pool-trim", "admission");
         if let Some(db) = self.0.db.get() {
-            let _ = db.progress_handler(0, None::<fn() -> bool>);
+            let _ = db.hooks.progress(None::<fn() -> bool>);
             if db.bindings.borrow().data_bytes() > 4 * 1024 * 1024 {
                 db.bindings.borrow_mut().forget();
             }
@@ -201,7 +201,7 @@ impl Drop for Lease {
             crate::code_rule_dsl::profile::trace::Span::start("sql-consumer-release", "lease");
         #[cfg(feature = "code-rule-profile")]
         span.detail(|| serde_json::json!({"lease":self.id}));
-        let _ = self.progress_handler(0, None::<fn() -> bool>);
+        let _ = self.hooks.progress(None::<fn() -> bool>);
         if !self.is_autocommit() {
             let _ = self.execute_batch("ROLLBACK");
         }
@@ -224,7 +224,7 @@ impl Drop for Lease {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn a_successful_lease_returns_empty_backing_and_resets_source_and_function_budgets() {

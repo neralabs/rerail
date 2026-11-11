@@ -3,7 +3,7 @@ use ast_grep_core::{Doc, Node};
 use std::ops::Range;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(crate) struct NodeRef {
+pub struct NodeRef {
     pub doc: u32,
     pub node_id: usize,
     pub start: usize,
@@ -21,7 +21,7 @@ impl NodeRef {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ContextKind {
+pub enum ContextKind {
     Module,
     SyncFunction,
     AsyncFunction,
@@ -446,7 +446,7 @@ pub(crate) fn collect_with<'t, D: Doc>(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_core::AstGrep;

@@ -2,7 +2,7 @@
 use super::Error;
 use super::metal_backend::MappedBuffer;
 use super::metal_batch_abi::{FinalCaptureRecord, ResultRecord};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use super::metal_register_execution::read;
 use metal::Device;
 
@@ -24,7 +24,7 @@ impl CandidateBatch {
     }
 
     /// Serialization is the final boundary. No semantic stage consumes these rows again.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn read(self) -> Result<(Vec<ResultRecord>, Vec<FinalCaptureRecord>), Error> {
         Ok((
             read(&self.results, self.result_count)?,

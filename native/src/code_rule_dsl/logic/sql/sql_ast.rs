@@ -47,7 +47,7 @@ impl SqlAstNodeKind {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl) struct SqlRelationRef(u32);
+pub struct SqlRelationRef(u32);
 
 impl SqlRelationRef {
     pub(in crate::code_rule_dsl) const fn new(value: u32) -> Self {
@@ -76,13 +76,13 @@ pub(in crate::code_rule_dsl) enum PhysicalRelation {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) enum SqlParameter {
+pub enum SqlParameter {
     Batch,
     Files,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) enum SqlValue {
+pub enum SqlValue {
     Null,
     Integer(i64),
     Text(String),
@@ -90,13 +90,13 @@ pub(in crate::code_rule_dsl) enum SqlValue {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct SqlColumn {
-    pub(in crate::code_rule_dsl) relation: Option<SqlRelationRef>,
-    pub(in crate::code_rule_dsl) name: String,
+pub struct SqlColumn {
+    pub relation: Option<SqlRelationRef>,
+    pub name: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) enum SqlBinaryOperator {
+pub enum SqlBinaryOperator {
     Equal,
     NotEqual,
     Less,
@@ -113,7 +113,7 @@ pub(in crate::code_rule_dsl) enum SqlBinaryOperator {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) enum SqlUnaryOperator {
+pub enum SqlUnaryOperator {
     Not,
     IsNull,
     IsNotNull,
@@ -121,7 +121,7 @@ pub(in crate::code_rule_dsl) enum SqlUnaryOperator {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) enum SqlExpression {
+pub enum SqlExpression {
     All,
     Column(SqlColumn),
     Parameter(SqlParameter),
@@ -189,7 +189,7 @@ impl SqlColumn {
 }
 
 impl SqlExpression {
-    pub(in crate::code_rule_dsl) fn render(&self) -> String {
+    pub fn render(&self) -> String {
         match self {
             Self::All => "*".to_owned(),
             Self::Column(column) => column.render(),
@@ -274,7 +274,7 @@ impl SqlExpression {
     }
 
     /// Each subexpression, this one first (subqueries are not entered).
-    pub(in crate::code_rule_dsl) fn visit<'a>(&'a self, f: &mut dyn FnMut(&'a Self)) {
+    pub fn visit<'a>(&'a self, f: &mut dyn FnMut(&'a Self)) {
         f(self);
         match self {
             Self::Binary { left, right, .. } => {
@@ -304,7 +304,7 @@ impl SqlExpression {
     }
 
     /// `visit`, mutably: each subexpression, this one first (subqueries are not entered).
-    pub(in crate::code_rule_dsl) fn visit_mut(&mut self, f: &mut dyn FnMut(&mut Self)) {
+    pub fn visit_mut(&mut self, f: &mut dyn FnMut(&mut Self)) {
         f(self);
         match self {
             Self::Binary { left, right, .. } => {
@@ -1187,7 +1187,7 @@ impl ClauseMergeAst {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     fn column(name: &str) -> SqlExpression {
