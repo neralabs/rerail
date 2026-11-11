@@ -2,8 +2,13 @@
 use super::*;
 use crate::code_rule_dsl::facts::producers::python::families as py;
 use crate::code_rule_dsl::facts::producers::python::families::candidate_spike;
-impl Batch {
-    pub(crate) fn candidate_spike(&self, targets: &std::collections::BTreeSet<String>) -> Result<Vec<Vec<rusqlite::types::Value>>, String> {
+/// The candidate producer spike over a batch.
+pub(crate) trait CandidateSpike {
+    fn candidate_spike(&self, targets: &std::collections::BTreeSet<String>) -> Result<Vec<Vec<rusqlite::types::Value>>, String>;
+}
+
+impl CandidateSpike for Batch {
+    fn candidate_spike(&self, targets: &std::collections::BTreeSet<String>) -> Result<Vec<Vec<rusqlite::types::Value>>, String> {
         use rusqlite::types::Value;
         let _span = crate::code_rule_dsl::logic::profile::span(|| "native candidate spike".into());
         let mode = std::env::var("RERAIL_CANDIDATE_SPIKE").unwrap();

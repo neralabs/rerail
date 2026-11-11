@@ -1,4 +1,5 @@
 use super::*;
+use super::candidates::PythonCandidates as _;
 use crate::code_rule_dsl::facts::core::{self, Built};
 use crate::code_rule_dsl::language::{GrammarDialect, dialect_by_label, tape_tag};
 use crate::code_rule_dsl::model::FileInput;

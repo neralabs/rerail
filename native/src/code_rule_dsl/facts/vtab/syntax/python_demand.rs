@@ -98,9 +98,20 @@ impl Semantics {
     }
 }
 
-impl Batch {
+/// Python's semantic facts over a batch's demands (`SemanticProducer::project`).
+pub(crate) trait PythonProject {
     /// Operations return facts, never rule findings. Node IDs include document and world identity.
-    pub(crate) fn python_project(
+    fn python_project(
+        &self,
+        kind: &str,
+        requests: &[i64],
+        targets: &BTreeSet<String>,
+    ) -> Result<Vec<Vec<Value>>, String>;
+}
+
+impl PythonProject for Batch {
+    /// Operations return facts, never rule findings. Node IDs include document and world identity.
+    fn python_project(
         &self,
         kind: &str,
         requests: &[i64],
@@ -290,6 +301,19 @@ impl Batch {
         crate::code_rule_dsl::prof::count("python.semantic_requests", semantic);
         crate::code_rule_dsl::prof::count("python.argument_rows", arguments);
         Ok(rows)
+    }
+}
+
+/// Python's semantic facts as the batch's registered producer (`syntax::SemanticProducer`).
+pub(crate) struct Semantic;
+
+impl super::SemanticProducer for Semantic {
+    fn project(&self, batch: &Batch, kind: &str, requests: &[i64], targets: &BTreeSet<String>) -> Result<Vec<Vec<Value>>, String> {
+        batch.python_project(kind, requests, targets)
+    }
+    fn candidates(&self, batch: &Batch, scope: &[i64], targets: &BTreeSet<String>, context: &str, member: &str) -> Result<Vec<Vec<Value>>, String> {
+        use super::candidates::PythonCandidates as _;
+        batch.python_candidates(scope, targets, context, member)
     }
 }
 

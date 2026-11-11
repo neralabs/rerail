@@ -2,9 +2,15 @@ use crate::code_rule_dsl::tree::Tree;
 use super::{Arguments, Passed, every, unparenthesized};
 use ast_grep_core::{Doc, Node};
 
-impl Arguments {
+/// Rust's passed arguments of a call (`ArgumentRules`).
+pub(crate) trait RustArguments {
     /// Returns the positional arguments passed by a Rust call expression.
-    pub(crate) fn rust<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>> {
+    fn rust<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>>;
+}
+
+impl RustArguments for Arguments {
+    /// Returns the positional arguments passed by a Rust call expression.
+    fn rust<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>> {
         let unknown = || every(self.slots.len(), || Passed::Unknown);
         let Some(arguments) = call.field("arguments") else {
             return unknown();

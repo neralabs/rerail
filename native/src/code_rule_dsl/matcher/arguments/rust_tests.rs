@@ -1,6 +1,7 @@
 //! Rust `arguments` bindings checked against the rustc oracle.
 
 use super::{Arguments, Passed, SlotKind};
+use super::rust::RustArguments as _;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::oracle;
 use ast_grep_language::LanguageExt;

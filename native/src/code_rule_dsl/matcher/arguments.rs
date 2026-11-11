@@ -668,6 +668,6 @@ mod tests {
 
 #[cfg(test)]
 mod php_syntactic_tests;
-mod rust;
+pub(crate) mod rust;
 #[cfg(test)]
 mod rust_tests;

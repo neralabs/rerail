@@ -2,7 +2,8 @@
 
 use super::*;
 
-impl Graph {
+/// PHP's linking of the call graph (`CallRules::link`).
+pub(crate) trait PhpLinks {
     /// Links a PHP callee name. A namespace fallback (`\ns\f|\f`) is the namespaced function
     /// where the workspace declares one, else the global one. A method `\c.m` is, as PHP looks
     /// it up, `c`'s own, then an alias its trait adaptations give, then a used trait's (but those
@@ -12,7 +13,28 @@ impl Graph {
     /// `c` (`sealed_in`), the method every class the workspace derives from `c` looks up. A name
     /// no definition gives (a builtin, a vendor class, an undefined method only `__call` could
     /// answer) has no edge.
-    pub(crate) fn link_php(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Link {
+    fn link_php(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Link;
+    /// `method` (`\c.m`) late-bound: what `c` and every class derived from it look up.
+    fn link_late(&self, method: &Name, hops: u32, followed: &mut Vec<Name>) -> Link;
+    /// Whether no override replaces `def`, which `method` (`\c.m`) links to, for a call in `c`.
+    /// A final method no derived class declares. A private one binds a call in the class that
+    /// has it: `c`'s own, or one `c` imports from a trait (the copy is `c`'s), private as `c`'s
+    /// adaptations leave it (`m as private`, `m as public`); not one `c` inherits, which PHP
+    /// passes over for an override, nor a constructor, which PHP looks up on the created class.
+    fn sealed_in(&self, class: &Name, method: &Name, def: DefRef) -> bool;
+}
+
+impl PhpLinks for Graph {
+    /// Links a PHP callee name. A namespace fallback (`\ns\f|\f`) is the namespaced function
+    /// where the workspace declares one, else the global one. A method `\c.m` is, as PHP looks
+    /// it up, `c`'s own, then an alias its trait adaptations give, then a used trait's (but those
+    /// `insteadof` excludes), then its parent's, then an interface's (an abstract class's); an
+    /// abstract method (a trait's) yields to a later step's concrete one. A
+    /// late-bound method `\c.m^` is `\c.m` and, unless no override can replace that for a call in
+    /// `c` (`sealed_in`), the method every class the workspace derives from `c` looks up. A name
+    /// no definition gives (a builtin, a vendor class, an undefined method only `__call` could
+    /// answer) has no edge.
+    fn link_php(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Link {
         let text = name.text();
         if let Some(base) = text.strip_suffix('^') {
             return self.link_late(&Name::new(name.family(), base), hops, followed);

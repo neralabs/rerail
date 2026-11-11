@@ -1,6 +1,9 @@
 //! Semantic facts consume an immutable demand frame, once per SQL cursor.
 //! Targets are a scalar JSON array from the query's target relation, not row callbacks.
 use super::*;
+use crate::code_rule_dsl::facts::vtab::syntax::{candidates::PythonCandidates as _, python_demand::PythonProject as _};
+#[cfg(test)]
+use crate::code_rule_dsl::facts::vtab::syntax::candidate_spike::CandidateSpike as _;
 
 #[derive(Clone)]
 struct Producer {

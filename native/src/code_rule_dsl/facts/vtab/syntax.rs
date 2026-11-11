@@ -46,8 +46,8 @@ mod core_rr;
 mod stored_spike;
 pub(crate) mod normalized;
 mod python_syntax;
-mod python_demand;
-mod candidates;
+pub(crate) mod python_demand;
+pub(crate) mod candidates;
 mod python_parts;
 use core_rr::Family;
 mod guests;
@@ -1354,6 +1354,27 @@ impl Batch {
     pub(crate) fn bound<T: 'static>(&self) -> Option<&T> {
         self.families.iter().flatten().find_map(|bound| bound.as_any().downcast_ref::<T>())
     }
+}
+
+/// A family's semantic facts over a batch's explicit demands (Python's qualified names, origins, assignments and
+/// arguments, and its call candidates), which a program's native steps read; registered at load.
+pub(crate) trait SemanticProducer: Send + Sync {
+    /// The `kind` facts of the nodes `requests`, for `targets`.
+    fn project(&self, batch: &Batch, kind: &str, requests: &[i64], targets: &BTreeSet<String>) -> Result<Vec<Vec<rusqlite::types::Value>>, String>;
+    /// The call candidates in the documents `scope` for `targets`, in calls of `context` reading `member`.
+    fn candidates(&self, batch: &Batch, scope: &[i64], targets: &BTreeSet<String>, context: &str, member: &str) -> Result<Vec<Vec<rusqlite::types::Value>>, String>;
+}
+
+static SEMANTIC: std::sync::OnceLock<&'static dyn SemanticProducer> = std::sync::OnceLock::new();
+
+/// Registers the producer of semantic facts (once, at load).
+pub(crate) fn install_semantic_producer(producer: &'static dyn SemanticProducer) {
+    let _ = SEMANTIC.set(producer);
+}
+
+/// The registered producer of semantic facts.
+pub(crate) fn semantic_producer() -> Result<&'static dyn SemanticProducer, String> {
+    SEMANTIC.get().copied().ok_or_else(|| "no producer of semantic facts is registered".to_owned())
 }
 
 /// Whether `rel` is a registered family's lazy relation.
@@ -3138,7 +3159,7 @@ thread_local! {
 }
 
 #[cfg(test)]
-mod candidate_spike;
+pub(crate) mod candidate_spike;
 pub(crate) mod annotation;
 pub(crate) mod cpython;
 pub(crate) mod fstring;

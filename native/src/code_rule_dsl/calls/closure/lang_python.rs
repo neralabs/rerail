@@ -2,13 +2,70 @@
 
 use super::*;
 
-impl Graph {
+/// Python's linking of the call graph (`CallRules::link`).
+pub(crate) trait PythonLinks {
     /// Links a Python callee name: what the name itself names (`member`), else the member of the
     /// longest prefix something names: an alias to follow, a class whose method resolution order
     /// gives the attribute, a function or value whose attribute is set at run time (unknown), or a
     /// module whose member this is. A late-bound name (`pkg.C.m^`, `pkg.C.^` for `cls()`) is the
     /// class's and every workspace subclass's.
-    pub(crate) fn link_python(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Link {
+    fn link_python(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Link;
+    fn reference_field(
+        &self,
+        class: &Name,
+        field: &str,
+        member: &str,
+        hops: u32,
+        followed: &mut Vec<Name>,
+    ) -> Link;
+    fn reference_type_members(
+        &self,
+        caller: &Name,
+        aliases: &[(u32, Name)],
+        member: &str,
+        hops: u32,
+        followed: &mut Vec<Name>,
+    ) -> Link;
+    /// A late-bound name, `pkg.C.m^` (`self.m()`, `cls.m()`) or `pkg.C.^` (`cls()`): the class's
+    /// method (instantiation) and every workspace subclass's. Unknown where a class whose base
+    /// no name denotes, which may derive from `C`, defines the method.
+    fn link_late_python(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Link;
+    /// Attribute `attribute` of class `class`, as its method resolution order gives it; unknown
+    /// where no workspace class of it defines the attribute (an instance's attribute, one set at
+    /// run time, another module's class's).
+    fn class_member(
+        &self,
+        class: &Name,
+        attribute: &str,
+        hops: u32,
+        followed: &mut Vec<Name>,
+    ) -> Link;
+    fn reference_bases(&self, class: &Name, followed: &mut Vec<Name>) -> Vec<Name>;
+    fn reference_order(&self, class: &Name, followed: &mut Vec<Name>) -> Vec<Name>;
+    fn reference_method(
+        &self,
+        order: &[Name],
+        attribute: &str,
+        followed: &mut Vec<Name>,
+    ) -> Option<Link>;
+    fn reference_fq_class(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Option<Name>;
+    fn reference_type(
+        &self,
+        module: &str,
+        short: &str,
+        family: Family,
+        hops: u32,
+        followed: &mut Vec<Name>,
+    ) -> Option<Name>;
+}
+
+impl PythonLinks for Graph {
+    /// Links a Python callee name: what the name itself names (`member`), else the member of the
+    /// longest prefix something names: an alias to follow, a class whose method resolution order
+    /// gives the attribute, a function or value whose attribute is set at run time (unknown), or a
+    /// module whose member this is. A late-bound name (`pkg.C.m^`, `pkg.C.^` for `cls()`) is the
+    /// class's and every workspace subclass's.
+    fn link_python(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Link {
         if self.references
             && let Some((module, rest)) = name.text().split_once(".<type>.")
             && let Some((short, attribute)) = rest.split_once('.')

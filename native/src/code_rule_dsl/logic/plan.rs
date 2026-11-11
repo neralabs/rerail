@@ -3512,9 +3512,10 @@ impl Run<'_, '_> {
             }
             let source = vtab::bound_source(self.db, "node").ok_or_else(|| Error::Plan("Python producer requires bound syntax facts".into()))?;
             let batch = source.python_batch().ok_or_else(|| Error::Plan("Python producer requires a syntax batch".into()))?;
+            let producer = crate::code_rule_dsl::facts::vtab::syntax::semantic_producer().map_err(Error::Plan)?;
             if let Some(super::front::Native::PythonCandidates{context,member,..})=self.prog.natives.get(rel) {
-                batch.python_candidates(&requests,&wanted,context,member).map_err(Error::Plan)?
-            }else{batch.python_project(kind, &requests, &wanted).map_err(Error::Plan)?}
+                producer.candidates(&batch,&requests,&wanted,context,member).map_err(Error::Plan)?
+            }else{producer.project(&batch, kind, &requests, &wanted).map_err(Error::Plan)?}
         };
         if self.model.inputs.atoms.is_some() {
             let strings = rows.iter().flatten().filter_map(|v| match v { SqlValue::Text(s) => Some(s.as_str()), _ => None });

@@ -1,6 +1,7 @@
 //! Moved from `calls.rs` by the crate split (tools/cratify/moves.tsv).
 
 use super::*;
+use crate::code_rule_dsl::calls::closure::lang_python::PythonLinks as _;
 
 impl CallRules for Python {
     const SUPPORTED: bool = true;

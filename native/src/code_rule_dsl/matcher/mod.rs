@@ -14,7 +14,7 @@ pub(in crate::code_rule_dsl) use p_anchors::sql::{anchor_plans, anchor_plans_for
 #[cfg(test)]
 #[allow(dead_code, unused_imports)]
 pub(in crate::code_rule_dsl) mod d_anchors;
-mod arguments;
+pub(crate) mod arguments;
 mod arguments_sql;
 mod binding;
 mod binds;

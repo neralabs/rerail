@@ -2260,10 +2260,10 @@ fn tarjan<'g>(count: usize, successors: impl Fn(u32) -> &'g [u32]) -> Vec<Vec<u3
 }
 
 // PHP's linking of a call graph's names (`lang_php`, its crate's).
-mod lang_php;
+pub(crate) mod lang_php;
 
 // Python's linking of a call graph's names (`lang_python`, its crate's).
-mod lang_python;
+pub(crate) mod lang_python;
 
 // Rust's linking of a call graph's names (`lang_rust`, its crate's).
-mod lang_rust;
+pub(crate) mod lang_rust;

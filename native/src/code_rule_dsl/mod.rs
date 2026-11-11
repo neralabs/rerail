@@ -582,6 +582,8 @@ pub(crate) fn install_languages() {
     facts::vtab::syntax::install_families(vec![&facts::vtab::syntax::py_families::Families]);
     // The families' tables over a bound `node` relation (Python's semantic producers).
     facts::vtab::install_node_tables(vec![facts::vtab::python::register]);
+    // The semantic facts a program's native steps demand (Python's).
+    facts::vtab::syntax::install_semantic_producer(&facts::vtab::syntax::python_demand::Semantic);
     // What compiles a program's `ast` matchers into the transducer wave facts runs (decision 0106).
     facts::vtab::syntax::install_ast_compiler(&facts::vtab::syntax::ast_wave::Compiler);
     // The literal grammars `parse` applies, in the order messages list them (`literal::LiteralGrammar`).

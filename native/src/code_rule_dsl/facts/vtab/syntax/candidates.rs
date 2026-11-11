@@ -4,8 +4,19 @@ use crate::code_rule_dsl::facts::producers::python::families as py;
 use crate::code_rule_dsl::facts::producers::python::{
     families::candidates, python_facts::Fact,
 };
-impl Batch {
-    pub(crate) fn python_candidates(
+/// Python's call candidates over a batch (`SemanticProducer::candidates`).
+pub(crate) trait PythonCandidates {
+    fn python_candidates(
+        &self,
+        scope: &[i64],
+        targets: &BTreeSet<String>,
+        context: &str,
+        member: &str,
+    ) -> Result<Vec<Vec<rusqlite::types::Value>>, String>;
+}
+
+impl PythonCandidates for Batch {
+    fn python_candidates(
         &self,
         scope: &[i64],
         targets: &BTreeSet<String>,

@@ -40,6 +40,8 @@ use std::cmp::Ordering;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
+use crate::code_rule_dsl::calls::closure::lang_rust::RustLinks as _;
+use crate::code_rule_dsl::matcher::arguments::rust::RustArguments as _;
 
 /// Rust's family.
 pub(crate) struct Rust;
