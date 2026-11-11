@@ -7,7 +7,7 @@ use crate::code_rule_dsl::{
     identifier::python_identifier,
     language::{
         Family, GrammarDialect,
-        adapter::{Python, ScopeRules},
+        adapter::{python::Python, ScopeRules},
     },
     module_path::ModulePath,
     scope::{

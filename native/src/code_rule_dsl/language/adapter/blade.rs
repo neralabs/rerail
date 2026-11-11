@@ -1,6 +1,7 @@
 //! Moved from `adapter.rs` by the crate split (tools/cratify/moves.tsv).
 
 use super::*;
+use super::php::Php;
 
 /// Blade templates' own tree (`blade::forte`). A template's semantics are those of the PHP it
 /// embeds (`blade::view`), a guest document read with PHP's family (`embed`): a clause reads

@@ -9,7 +9,8 @@
 
 use super::QueryWhen;
 use super::syntax::QueryOptions;
-use super::{Adapter, Ecma, Refusal, Refused, SyntaxFeature, SyntaxRules};
+use super::ecma::Ecma;
+use super::{Adapter, Refusal, Refused, SyntaxFeature, SyntaxRules};
 use crate::code_rule_dsl::compile::config::Options;
 use crate::code_rule_dsl::language::{Family, SourceType};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};

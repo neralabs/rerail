@@ -124,8 +124,6 @@ fn derive_context(snapshot: &mut Snapshot, files: Vec<usize>, server_graph: bool
 }
 
 pub(crate) mod ecma;
-#[cfg(test)]
-pub(super) use ecma::DERIVED_MANIFESTS;
 
 /// Evaluates `code_rule`, its grammar matchers matched natively (`matcher::run_clause`).
 pub(super) fn evaluate_code_rule(

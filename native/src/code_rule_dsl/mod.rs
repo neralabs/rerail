@@ -526,7 +526,7 @@ impl CodeRuleDslEditor {
 pub(crate) fn install_languages() {
     use language::Family;
     use language::adapter::pack::{Pack, pack, register};
-    use language::adapter::{Blade, Ecma, Json, Php, Python, Rr, Rust, Sql, Vue};
+    use language::adapter::{blade::Blade, ecma::Ecma, json::Json, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
     register(Family::Python, &Pack::<Python>::NEW);
     language::register_base(Family::Python, &Pack::<Python>::NEW);
     register(Family::Ecma, &Pack::<Ecma>::NEW);
