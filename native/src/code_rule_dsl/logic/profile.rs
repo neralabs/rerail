@@ -1662,15 +1662,26 @@ mod tests {
     fn the_memory_sampler_charges_a_rise_to_the_span_open_on_its_thread() {
         let _serial = one_run();
         set(true);
+        // The high-water mark is the process's: other tests in this process may have left it so high that the probe
+        // cannot raise it. Then only the span's own allocation can be seen.
+        let (now, mark) = memory::footprint();
+        let can_rise = mark == 0 || now + (256 << 20) > mark + (32 << 20);
         {
             let _s = span(|| "sampler probe: a big allocation".into());
-            // Touched pages, held for several sampling periods, well above anything before it in this test process.
+            // Touched pages, held for several sampling periods.
             let big = std::hint::black_box(vec![7u8; 256 << 20]);
             std::thread::sleep(std::time::Duration::from_millis(120));
             drop(big);
         }
         let s = memory::SAMPLED.lock().unwrap();
         assert!(s.every_ms > 0);
+        if !can_rise {
+            drop(s);
+            let own = spans().into_iter().find(|(p, _)| p.ends_with("sampler probe: a big allocation")).map(|(_, t)| t.alloc);
+            set(false);
+            assert!(own.is_some_and(|a| a >= 256 << 20) || cfg!(any(windows, target_family = "wasm")), "the probe's own allocation: {own:?}");
+            return;
+        }
         let charged: Vec<&String> = s.rise.iter().filter(|(p, (r, _))| p.ends_with("sampler probe: a big allocation") && *r > 0).map(|(p, _)| p).collect();
         assert!(!charged.is_empty(), "the rise is charged to the open span: {:?}", s.rise.keys().collect::<Vec<_>>());
         drop(s);

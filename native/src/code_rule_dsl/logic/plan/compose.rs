@@ -12,8 +12,16 @@ pub(super) fn enabled() -> bool {
     if experiments::native_only() {
         return false;
     }
+    #[cfg(test)]
+    if ASKED.get() {
+        return true;
+    }
     std::env::var("RERAIL_COMPOSE").is_ok_and(|v| v == "1")
 }
+
+// A test of the composed form asks for it on its own thread (`RERAIL_COMPOSE` would ask for every test's runs).
+#[cfg(test)]
+thread_local! {pub(super) static ASKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };}
 
 pub(super) fn clear() {
     CACHE.with(|c| c.borrow_mut().clear());

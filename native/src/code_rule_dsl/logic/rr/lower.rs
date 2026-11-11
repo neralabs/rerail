@@ -1957,7 +1957,9 @@ impl Lowerer {
                     let rel=loop {let name=format!("rr_python_candidates_{serial}");if !self.prog.decls.contains_key(&name){break name;}serial+=1;};
                     let v=|s:&str|Term::Var(s.to_owned());
                     let a=|r:&str,args:Vec<Term>|Literal::Atom(Atom{rel:r.into(),args,neg:false,gated:false});
-                    let mut body=vec![a(&input,vec![v("d")])];
+                    // The targets are read as `python_qualified`'s are, so every pass that follows rule bodies
+                    // (shared library parts, strata, demand) makes them before the candidates.
+                    let mut body=vec![a(&input,vec![v("d")]),a(&targets,vec![v("q")])];
                     // Locality proof only: the native contract emits nodes from these documents.
                     for n in ["c","f","r","o"] {body.push(a("node",vec![v("d"),v(n),Term::Wild,Term::Wild,Term::Wild]));}
                     self.prog.decls.insert(rel.clone(),["c","f","r","o"].into_iter().map(|n|(n.into(),"node".into())).collect());
