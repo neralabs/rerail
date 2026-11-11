@@ -1110,7 +1110,7 @@ pub(crate) fn read_manifest(value: &serde_json::Value, at: &str) -> napi::Result
 }
 
 /// Serde's reading of a request file's `package` (`read_manifest`).
-pub(crate) fn deserialize_manifest<'de, D: serde::Deserializer<'de>>(
+pub fn deserialize_manifest<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> std::result::Result<Option<FileManifest>, D::Error> {
     let value = <serde_json::Value as serde::Deserialize>::deserialize(deserializer)?;

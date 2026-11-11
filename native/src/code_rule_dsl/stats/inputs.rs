@@ -3,7 +3,7 @@
 //! From Data-layer-rule-expressivity's `matcher/anchors/sql/statistics/mod.rs`: the summaries are
 //! the content store's (`kind_size`, `term_node_freq`, `term_kind_freq`), keyed by kind atom.
 use crate::code_rule_dsl::matcher::{AnchorPlan, Condition, Required, Requirement};
-use crate::code_rule_dsl::prefilter::LANG_STRIDE;
+use crate::code_rule_dsl::facts::core::KIND_STRIDE as LANG_STRIDE;
 use rusqlite::{Connection, Result, limits::Limit, params_from_iter, types::Value};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::Arc;

@@ -270,7 +270,7 @@ pub(crate) type OwnTable = (&'static [&'static str], u16, &'static [&'static str
 /// A dialect whose files a language parses itself, not with tree-sitter (Blade's Forte), or with a parser
 /// standing in for tree-sitter's (JSON's Bitlex parser). The crate that owns the parser registers it for its
 /// dialect as the engine loads (`install_parsers`); the tape reads the file through it (`TapeImage::parse`).
-pub(crate) trait TreeParser: Send + Sync {
+pub trait TreeParser: Send + Sync {
     /// The file's documents: `None` where the parser leaves the file to tree-sitter, `Err(Parser)` where
     /// it stopped at a limit before it read the file.
     fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>>;

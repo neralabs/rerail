@@ -6,7 +6,7 @@ use crate::code_rule_dsl::tape::tokens::TokenGrammar;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// One dialect's automata, as the census asks them.
-pub(crate) struct Lang {
+pub struct Lang {
     pub(crate) dialect: GrammarDialect,
     pub(crate) implied: BTreeMap<String, BTreeSet<(String, String)>>,
     pub(crate) parents: BTreeMap<String, BTreeSet<String>>,
