@@ -2273,7 +2273,9 @@ impl Lowerer {
             .cloned()
             .collect();
         let bound = body_vars(&binders);
-        context.into_iter().filter(|l| text_of(l).is_none_or(|v| bound.contains(&v) || vars.contains(&v))).collect()
+        let kept = context.into_iter().filter(|l| text_of(l).is_none_or(|v| bound.contains(&v) || vars.contains(&v))).collect();
+        // A comparison that read a node only the text bound goes with it (`@doc(FN) = @doc(BOUND)`).
+        Self::bound_context(kept).0
     }
 
     /// The literals of `context` reachable from `vars` through shared variables, in their order.
