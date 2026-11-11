@@ -1216,6 +1216,23 @@ def _strip_strings_keep(s):
     return re.sub(r'"(?:[^"\\]|\\.)*"', lambda m: '"' + " " * (len(m.group(0)) - 2) + '"', s)
 
 
+_READS = ("text(", "value(", "line(", "end_line(", "col(", "@doc(")
+
+
+def bind_read_nodes(lits):
+    """text(X, t) tests a bound node; it never enumerates nodes (decision 0109). A metavariable the body only
+    reads (its text, value, line or document) and binds nowhere is bound first by node(_, X, _, _, _)."""
+    body = _strip_strings_keep(", ".join(lits))      # a pattern's `$X` binds X: ticks are not masked
+    top = [_mask_ticks(_strip_strings_keep(l)) for l in lits if not l.startswith(("(", "!")) and " : {" not in l]
+    add = []
+    for x in sorted(set(re.findall(r"(?<![\w$@])([A-Z][A-Z0-9_]*)\b", " ".join(top)))):
+        uses = re.findall(r"(@?\w*\()?(?<!\w)\$*" + x + r"\b(?!\s*\()", body)
+        if uses and all(u in _READS for u in uses) and \
+                any(re.search(r"(?<![\w$@])(?:text|value)\(" + x + r"\b", t) for t in top):
+            add.append(f"node(_, {x}, _, _, _)")
+    return add + lits if add else lits
+
+
 def _top_binders(lits):
     """Captures the body's own literals bind (not in a disjunction, under `!` or in an aggregate); a metavariable
     only read there (`value(B, t)`) is not one."""
@@ -1985,6 +2002,7 @@ def translate(doc):
             # a transform's result is a string, not a node: its text is itself
             pat = re.compile(r"(?<![\w$@])(?:text|value)\((" + "|".join(sorted(prog.symbolic)) + r"), (\w+)\)")
             lits = [pat.sub(r"\2 = \1", l) for l in lits]
+        lits = bind_read_nodes(list(lits))
         text = wrap(h, lits, edits=edits)
         inputs = getattr(share_metavariables, "inputs", {}).get(h.split("(")[0], ())
         bad = check_rule(text, fix_rels, inputs)
