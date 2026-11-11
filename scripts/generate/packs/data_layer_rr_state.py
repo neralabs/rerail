@@ -166,6 +166,7 @@ def generate(source, target, header):
     utilities = specialize(shared['utils'], shared['utils'], settings)
     text = header(CHECK, target)
     text += '#include "python/print.rr"\n'
+    text += '#include "data-layer/purity-ast.rr"\n'
     text += '.policy ' + json.dumps(dict(format='rerail.policy/v1',id='data-layer-state-matchers',
         revision=1,mode='block',clauses=[dict(id='shared',define=dict(language='python',utils=utilities))])) + '\n'
     text += '''
@@ -182,6 +183,7 @@ spt_prefix(n,"") :- node(_,n,_,_,_), !nearest(n,_,spt_frame_kind).
 .decl spt_callee(n: node, name: symbol)
 spt_callee(n,@nfkc(t)) :- ast_name(n,t).
 spt_callee(n,@nfkc(t)) :- kind(n,"attribute"), field(n,"attribute",a), text(a,t).
+spt_callee(n,s) :- kind(n,"parenthesized_expression"), unparen(n,r), n != r, spt_callee(r,s).
 .decl spt_leaf(n: node, name: symbol)
 spt_leaf(n,c) :- kind(n,"call"), field(n,"function",f), spt_callee(f,c).
 spt_leaf(n,"<call>") :- kind(n,"call"), field(n,"function",f), !spt_callee(f,_).
@@ -247,6 +249,8 @@ return_kind_entry(n,k) :- option_item("returnKindNames",i,n), option_item("retur
 return_kind_entry(n,k) :- spt_generated(n,k), !option("entryPoint",_).
 '''
         if name.endswith('state_flow_1.rr'):
+            from data_layer_rr_state_analysis import scoped
+            program = scoped(program)
             program = ordered_sinks(program)
             program = re.sub(r', !signed\("SPT-\d+", f\)', '', program)
             # Keep the root function. A transitive witness alone loses its owner.
@@ -264,6 +268,14 @@ return_kind_entry(n,k) :- spt_generated(n,k), !option("entryPoint",_).
                 projection(f'StateFlow{ordinal}', line, namespace(definition,prefix,names), qual)
             program = pattern.sub('', program)
         text += namespace(program, prefix) + '\n'
+        if name.endswith('state_flow_1.rr'):
+            text += f'''
+.violation StateAnalysisContext(at: span, family: symbol, line: number, name: symbol, class_scope: symbol) code "SPT_ANALYSIS_CONTEXT" "{{family}}: {{name}}"
+StateAnalysisContext(@place(p,l),"facts",l,name,cls) :- option("entryPoint","_analysis_contexts"),
+    {prefix}fact_context(f), {prefix}contexts(f,name,cls), docof(f,d), doc(d,p,_), line(f,l).
+StateAnalysisContext(@place(p,l),"runtime",l,name,cls) :- option("entryPoint","_analysis_contexts"),
+    {prefix}runtime_context(f), {prefix}contexts(f,name,cls), docof(f,d), doc(d,p,_), line(f,l).
+'''
         if name == CHECK + '.rr':
             for ordinal, (clause, line) in enumerate(MAIN_MESSAGES.items()):
                 pred = (f'{prefix}events_detail({json.dumps(clause)},n,raw_detail)' if clause in
@@ -297,7 +309,12 @@ spt_needs_facts(d) :- doc(d,_,_), option("sourceProvided","false").
 spt_needs_facts(d) :- doc(d,"impl/common/l2070_server_plan/backend_profiles.py",_).
 spt_needs_facts(d) :- source(d,sp), text(sp,s), spt_function_token(t), contains(t,s).
 .decl spt_scan_doc(d: number)
-spt_scan_doc(d) :- doc(d,_,_), !option("entryPoint","scan_project_sources").
+.decl spt_scanner_mode()
+spt_scanner_mode() :- !option("entryPoint",_).
+spt_scanner_mode() :- option("entryPoint","scan_source").
+spt_scanner_mode() :- option("entryPoint","scan_tree").
+spt_scanner_mode() :- option("entryPoint","scan_project_sources").
+spt_scan_doc(d) :- doc(d,_,_), spt_scanner_mode(), !option("entryPoint","scan_project_sources").
 spt_scan_doc(d) :- doc(d,_,_), option("entryPoint","scan_project_sources"), source(d,sp), text(sp,s), spt_scan_token(t), contains(t,s).
 .decl spt_output(path: symbol, line: number, qualname: symbol, code: symbol, message: symbol, mode: symbol, visit: number, phase: number, ordinal: number)
 // The source's fast return preserves visitor order and multiplicity. Its fact
@@ -311,7 +328,8 @@ spt_output(p,l,q,c,m,"sorted",0,0,0) :- spt_result(n,q,c,m,_,_,_,_),
         name = code.replace('-', '')
         text += f'.violation State{name}(at: span, qualname: symbol, text: symbol, mode: symbol, visit: number, phase: number, ordinal: number) code "{code}"\n    "{{text}}"\n'
         text += f'State{name}(@place(p,l),q,m,mode,i,phase,j) :- spt_output(p,l,q,"{code}",m,mode,i,phase,j).\n'
-    return text + helper_contracts(source)
+    from data_layer_rr_state_helpers import program as helper_program
+    return text + helper_contracts(source) + helper_program()
 
 
 def source_program(text):
@@ -328,7 +346,40 @@ def helper_contracts(source):
                 and isinstance(node.value,ast.Call) and isinstance(node.value.func,ast.Name)
                 and node.value.func.id=='frozenset' and not node.value.args and not node.value.keywords):
             values[node.target.id]=frozenset()
-    text = '\n.decl spt_scan_token(token: symbol)\n'
+    text = '\n.decl spt_planning_name(name: symbol)\n'
+    for name in sorted(values['PURE_SCOPE_NAMES']):
+        text += f'spt_planning_name({json.dumps(name)}).\n'
+    text += '.decl spt_provider_path(path: symbol)\n'
+    text += f'spt_provider_path({json.dumps(values["BACKEND_PROVIDER_PURITY_FILE"])}).\n'
+    text += '.decl spt_provider_token(token: symbol)\n'
+    for token in values['BACKEND_PROVIDER_PURITY_NAME_TOKENS']:
+        text += f'spt_provider_token({json.dumps(token)}).\n'
+    text += '.decl spt_native_name(name: symbol)\n'
+    for name in sorted(values['FORBIDDEN_NATIVE_PYTHON_CALL_NAMES']):
+        text += f'spt_native_name({json.dumps(name)}).\n'
+    text += '.decl spt_native_pair(base: symbol, member: symbol)\n'
+    for base,member in sorted(values['FORBIDDEN_NATIVE_PYTHON_CALL_CHAINS']):
+        text += f'spt_native_pair({json.dumps(base)},{json.dumps(member)}).\n'
+    text += '.decl spt_native_method(name: symbol)\n'
+    for name in sorted(values['FORBIDDEN_NATIVE_PYTHON_METHOD_NAMES']):
+        text += f'spt_native_method({json.dumps(name)}).\n'
+    text += '''
+.decl spt_chain_last(n: node, name: symbol)
+spt_chain_last(n,s) :- spt_callee(n,s).
+spt_chain_last(n,s) :- kind(n,"call"), field(n,"function",f), spt_chain_last(f,s).
+spt_chain_last(n,s) :- kind(n,"parenthesized_expression"), unparen(n,r), n != r, spt_chain_last(r,s).
+.decl spt_chain_previous(n: node, name: symbol)
+spt_chain_previous(n,s) :- attr_of(n,o,_), spt_chain_last(o,s).
+spt_chain_previous(n,s) :- kind(n,"call"), field(n,"function",f), spt_chain_previous(f,s).
+spt_chain_previous(n,s) :- kind(n,"parenthesized_expression"), unparen(n,r), n != r, spt_chain_previous(r,s).
+.decl spt_forbidden_native_call(n: node)
+spt_forbidden_native_call(n) :- kind(n,"call"), field(n,"function",f), spt_callee(f,name), spt_native_name(name).
+spt_forbidden_native_call(n) :- kind(n,"call"), field(n,"function",f), spt_chain_last(f,last),
+    spt_chain_previous(f,previous), spt_native_pair(previous,last).
+spt_forbidden_native_call(n) :- kind(n,"call"), field(n,"function",f), unparen(f,a),
+    attr_of(a,_,raw), spt_native_method(@nfkc(raw)).
+.decl spt_scan_token(token: symbol)
+'''
     for token in sorted(values['STATE_TRIPWIRE_SCAN_TOKENS']):
         text += f'spt_scan_token({json.dumps(token)}).\n'
     text += '''

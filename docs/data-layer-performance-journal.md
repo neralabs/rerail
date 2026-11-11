@@ -11683,3 +11683,37 @@ No full-repository cold benchmark runs in this phase.
 
 The inventory remains 99 candidates, 13 recorded full admissions, 86 drafts, and one absent translation.
 Those admissions retain their recorded engine identities. This refresh does not admit State Tripwires.
+
+### State Tripwires selection before inference, 2026-11-10
+
+The source selects functions by called leaf name. It resolves findings through a narrower graph.
+The draft used one graph for both operations. It also admitted definitions beneath conditional statements and read quoted annotations as names.
+The corrected rule separates selection from resolution and gates rich producers on selected contexts.
+Native call classification now follows AST structure, including parentheses and spaced attribute expressions.
+
+The first native scope comparison failed because the rule exported no analysis contexts.
+The corrected initializer scopes now match all 29 source-recorded cases through snapshot and workspace APIs.
+The unreachable-function fixture contains 52 functions. Fact and runtime-authority inference each receive only two.
+
+Four native mutation controls validate the scope checks:
+
+| Mutation | Fact contexts | Runtime contexts | Comparison |
+| --- | ---: | ---: | --- |
+| None, each API | 2 | 2 | Pass |
+| Remove fact selection, each API | 52 | 52 | Fail |
+| Remove runtime selection, each API | 2 | 52 | Fail |
+
+Function collection and reachability helpers now execute native rules over supplied AST columns.
+All 31 helper contracts pass through both APIs. They check call-fact reuse, cache contents, AST identity, and caller order.
+Supplied empty caches and native-work sets remain distinct from missing inputs.
+
+The original module now passes 79 of 80 tests through each API, up from 76.
+Both APIs still match all 77 scanner returns, including 64 positives. All 18 fresh scanner contracts also pass through each API.
+Two tests transfer Python callback observations to native inference scopes. All original assertion predicates remain intact.
+Five transfer tests reject missing, excessive, or incorrectly typed scope rows and verify predicate retention.
+All 421 tooling tests pass.
+
+The [analysis checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-state-tripwires-analysis-progress-final6c6.json.gz) contains source observations, native returns, program bytes, and harness hashes.
+The original plugin-construction test still fails at the source-execution guard. State Tripwires remains a draft.
+Its scanner supplied-AST, project options, production, signing, CLI, and persistent-update contracts remain open.
+No engine rebuild or repository-wide cold run was performed. Each test command remained bounded at 110 seconds.

@@ -7,6 +7,7 @@
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_serverplan_state_tripwires.py
 #include "python/ast.rr"
 #include "python/print.rr"
+#include "data-layer/purity-ast.rr"
 .policy {"format": "rerail.policy/v1", "id": "data-layer-state-matchers", "revision": 1, "mode": "block", "clauses": [{"id": "shared", "define": {"language": "python", "utils": {"state-tail-query": {"any": [{"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:query)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:query)$"}], "stopBy": "neighbor", "field": "attribute"}}]}]}, {"all": [{"kind": "call"}, {"has": {"matches": "state-tail-query", "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "parenthesized_expression"}, {"has": {"matches": "state-tail-query", "stopBy": "neighbor"}}]}]}, "state-tail-conn": {"any": [{"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:conn)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:conn)$"}], "stopBy": "neighbor", "field": "attribute"}}]}]}, {"all": [{"kind": "call"}, {"has": {"matches": "state-tail-conn", "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "parenthesized_expression"}, {"has": {"matches": "state-tail-conn", "stopBy": "neighbor"}}]}]}, "state-tail-connection": {"any": [{"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:connection)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:connection)$"}], "stopBy": "neighbor", "field": "attribute"}}]}]}, {"all": [{"kind": "call"}, {"has": {"matches": "state-tail-connection", "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "parenthesized_expression"}, {"has": {"matches": "state-tail-connection", "stopBy": "neighbor"}}]}]}, "state-tail-cursor": {"any": [{"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:cursor)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:cursor)$"}], "stopBy": "neighbor", "field": "attribute"}}]}]}, {"all": [{"kind": "call"}, {"has": {"matches": "state-tail-cursor", "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "parenthesized_expression"}, {"has": {"matches": "state-tail-cursor", "stopBy": "neighbor"}}]}]}, "state-tail-txn": {"any": [{"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:txn)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:txn)$"}], "stopBy": "neighbor", "field": "attribute"}}]}]}, {"all": [{"kind": "call"}, {"has": {"matches": "state-tail-txn", "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "parenthesized_expression"}, {"has": {"matches": "state-tail-txn", "stopBy": "neighbor"}}]}]}, "state-tail-PlanExecutor": {"any": [{"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:PlanExecutor)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:PlanExecutor)$"}], "stopBy": "neighbor", "field": "attribute"}}]}]}, {"all": [{"kind": "call"}, {"has": {"matches": "state-tail-PlanExecutor", "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "parenthesized_expression"}, {"has": {"matches": "state-tail-PlanExecutor", "stopBy": "neighbor"}}]}]}, "state-tail-executor": {"any": [{"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:executor)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:executor)$"}], "stopBy": "neighbor", "field": "attribute"}}]}]}, {"all": [{"kind": "call"}, {"has": {"matches": "state-tail-executor", "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "parenthesized_expression"}, {"has": {"matches": "state-tail-executor", "stopBy": "neighbor"}}]}]}, "state-graph-chain": {"any": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:graph_query_builder_lazy)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:graph_query_builder_lazy)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "attribute"}, {"has": {"matches": "state-graph-chain", "stopBy": "neighbor", "field": "object"}}]}, {"all": [{"kind": "call"}, {"has": {"matches": "state-graph-chain", "stopBy": "neighbor", "field": "function"}}]}]}, "state-project-source": {"all": [{"kind": "module"}, {"regex": "CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|def\\ compile|execute_runtime|execute_runtime_nested_steps|grammar_|in_server_plan_execution|pending_pipeline_effects|post_op|pre_op|preprocess|runtime_builder|runtime_ref|runtime_result"}]}, "state-function-source": {"any": [{"all": [{"kind": "module"}, {"regex": "CompilationContext|CompiledStep|Hydrator|PipelineLifecycleEffect|PlanExecutor|ResolvedRefs|RuntimeBuilderName|RuntimeBuilderSpec|_lazy|_serverplan_runtime_txn|_serverplan_sql_conn|active_pipeline_txn_for_callbacks|builder_name|convert_row_to_model|create_usearch_index_class|def\\ compile|def\\ lower|def\\ post_op|def\\ pre_op|def\\ preprocess|deserialize_embedding|execute_runtime|execute_runtime_nested_steps|get_similarity_function|json\\.dumps|materialized_pipeline|np\\.array|pending_pipeline_effects|post_op_with_refs|pre_op_with_refs|runtime_builder|runtime_builder_post_op|runtime_hydrator|runtime_ref|runtime_refs"}]}, {"all": [{"kind": "module"}, {"filePath": {"regex": "^impl/common/l2070_server_plan/backend_profiles\\.py$"}}]}]}, "state-signature-source": {"all": [{"kind": "module"}, {"has": {"all": [{"kind": "class_definition"}, {"has": {"has": {"all": [{"not": {"kind": "keyword_argument"}}, {"any": [{"regex": "ServerPlanStep|IntentStep"}, {"all": [{"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"value": {"regex": "ServerPlanStep|IntentStep"}}]}]}], "stopBy": "neighbor"}, "stopBy": "neighbor", "field": "superclasses"}}], "stopBy": "end"}}]}, "state-flow-source": {"all": [{"kind": "module"}, {"any": [{"filePath": {"regex": "(?:^|/)(?:impl/common/l2070_server_plan/|impl/common/l2070_server_plan/backend_profiles\\.py$)"}}, {"has": {"any": [{"any": [{"all": [{"kind": "function_definition"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:compile|lower|post_op|pre_op|preprocess)$"}]}, {"all": [{"kind": "identifier"}, {"regex": "_lazy$"}]}, {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:pending_pipeline_effects)$"}]}, {"all": [{"kind": "identifier"}, {"regex": "^apply_.*_effect$"}]}]}], "stopBy": "neighbor", "field": "name"}}]}, {"all": [{"kind": "function_definition"}, {"inside": {"all": [{"kind": "decorated_definition"}, {"has": {"all": [{"kind": "decorator"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:pure_lazy)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:pure_lazy)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}]}, {"all": [{"kind": "function_definition"}, {"any": [{"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:preprocess)$"}], "stopBy": "neighbor", "field": "name"}}, {"has": {"regex": "sql_builder$", "stopBy": "neighbor", "field": "name"}}, {"has": {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:runtime_refs)$"}]}, {"regex": "RuntimeBuilderSpec"}], "stopBy": "end"}, "stopBy": "neighbor", "field": "parameters"}}, {"has": {"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}], "stopBy": "end"}}]}]}], "stopBy": "end"}}]}]}, "state-projection-source": {"all": [{"kind": "module"}, {"has": {"all": [{"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]}, {"has": {"regex": "alias|extract|project|projected|projection|tuple", "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}]}}}}]}
 
 .decl spt_frame_kind(k: symbol)
@@ -22,6 +23,7 @@ spt_prefix(n,"") :- node(_,n,_,_,_), !nearest(n,_,spt_frame_kind).
 .decl spt_callee(n: node, name: symbol)
 spt_callee(n,@nfkc(t)) :- ast_name(n,t).
 spt_callee(n,@nfkc(t)) :- kind(n,"attribute"), field(n,"attribute",a), text(a,t).
+spt_callee(n,s) :- kind(n,"parenthesized_expression"), unparen(n,r), n != r, spt_callee(r,s).
 .decl spt_leaf(n: node, name: symbol)
 spt_leaf(n,c) :- kind(n,"call"), field(n,"function",f), spt_callee(f,c).
 spt_leaf(n,"<call>") :- kind(n,"call"), field(n,"function",f), !spt_callee(f,_).
@@ -495,30 +497,16 @@ spt_1_parameters(f, p, n, i) :- spt_1_param_row(f, p, n), spt_1_has_param_before
 spt_1_annotation_text(p, s) :- spt_1_param_row(_, p, _), field(p, "type", t), spt_1_gnode(t), text(t, s).
 
 .decl spt_1_contexts(f: node, name: symbol, class_name: symbol)
-spt_1_contexts(f, n, q) :- spt_1_functions(f, n), spt_1_own_top(f, f), spt_1_own_cls(f, c), q = dl_class_path1, spt_1_dl_class_path(c, dl_class_path1).
-spt_1_contexts(f, n, "") :- spt_1_functions(f, n), spt_1_own_top(f, f), !spt_1_own_cls(f, _).
 .decl spt_1_planning_name(n: symbol)
 spt_1_planning_name("compile"). spt_1_planning_name("lower"). spt_1_planning_name("post_op"). spt_1_planning_name("pre_op"). spt_1_planning_name("preprocess").
 .decl spt_1_ctx_planning(f: node)
-spt_1_ctx_planning(f) :- spt_1_contexts(f, n, _), @rx(n, "_lazy$") = 1.
-spt_1_ctx_planning(f) :- spt_1_contexts(f, n, _), spt_1_planning_name(n).
-spt_1_ctx_planning(f) :- spt_1_contexts(f, "pending_pipeline_effects", _).
-spt_1_ctx_planning(f) :- spt_1_contexts(f, n, _), @rx(n, "^apply_.*_effect$") = 1.
-spt_1_ctx_planning(f) :- spt_1_contexts(f, _, _), child(w, f, _), spt_1_gnode(w), kind(w, "decorated_definition"), text(w, t),
-    @rx(t, "(?m)^\\s*@(?:[\\w.]*\\.)?pure_lazy\\b") = 1.
 .decl spt_1_ctx_preprocess(f: node)
 spt_1_ctx_preprocess(f) :- spt_1_contexts(f, "preprocess", _).
 .decl spt_1_ctx_helper(f: node)
-spt_1_ctx_helper(f) :- spt_1_contexts(f, n, _), @rx(n, "sql_builder$") = 1, !spt_1_planning_name(n), spt_1_parameters(f, p, _, _), spt_1_annotation_text(p, t),
-    @rx(t, "\\bCompilationContext\\b") = 1.
 .decl spt_1_ctx_provider_helper(f: node)
 spt_1_ctx_provider_helper(f) :- spt_1_contexts(f, n, _), docof(f, d), doc(d, "impl/common/l2070_server_plan/backend_profiles.py", _),
     @rx(n, "component|components|score|scores") = 1.
 .decl spt_1_ctx_materializer(f: node)
-spt_1_ctx_materializer(f) :- spt_1_contexts(f, n, _), spt_1_parameters(f, _, "runtime_refs", _), @rx(n, "^materialize_.*builder$") = 1.
-spt_1_ctx_materializer(f) :- spt_1_contexts(f, _, _), spt_1_parameters(f, _, "runtime_refs", _), spt_1_parameters(f, p, _, _), spt_1_annotation_text(p, t),
-    @rx(t, "\\bRuntimeBuilderSpec\\b") = 1.
-
 .decl spt_1_body_nodes(fn: node, n: node)
 spt_1_body_nodes(f, x) :- spt_1_own_top(x, f), spt_1_contexts(f, _, _).
 
@@ -535,17 +523,17 @@ spt_1_authority_param("sql_conn").
 .decl spt_1_carrier_param(n: symbol)
 spt_1_carrier_param("hydrator"). spt_1_carrier_param("runtime_hydrator"). spt_1_carrier_param("runtime_refs").
 .decl spt_1_parameter_kinds(fn: node, name: symbol, kind: symbol)
-spt_1_parameter_kinds(f, n, "authority") :- spt_1_parameters(f, _, n, _), spt_1_authority_param(n).
-spt_1_parameter_kinds(f, n, "authority") :- spt_1_parameters(f, p, n, _), spt_1_annotation_text(p, t), @rx(t, "\\b(?:ReadTransaction|SyncDatabaseConnection|SyncSqlConnection|WriteTransaction)\\b") = 1.
-spt_1_parameter_kinds(f, n, "provider") :- spt_1_parameters(f, p, n, _), spt_1_annotation_text(p, t), @rx(t, "\\b(?:CrossBranchQueryProvider|HybridSearchProvider|VectorCandidateProvider|VersionedLoweringProvider|VersionedStorageProvider)\\b") = 1.
-spt_1_parameter_kinds(f, "resolved", "runtime_value") :- spt_1_parameters(f, _, "resolved", _).
-spt_1_parameter_kinds(f, n, "runtime_value") :- spt_1_parameters(f, p, n, _), spt_1_annotation_text(p, t), @rx(t, "\\bResolvedRefs\\b") = 1.
-spt_1_parameter_kinds(f, "runtime_refs", "runtime_value") :- spt_1_parameters(f, _, "runtime_refs", _), spt_1_ctx_materializer(f).
-spt_1_parameter_kinds(f, n, "carrier") :- spt_1_parameters(f, _, n, _), spt_1_carrier_param(n).
-spt_1_parameter_kinds(f, n, "carrier") :- spt_1_parameters(f, p, n, _), spt_1_annotation_text(p, t), @rx(t, "\\bHydrator\\b") = 1.
-spt_1_parameter_kinds(f, n, "carrier") :- spt_1_callback_parameters(f, n, _, 1).
-spt_1_parameter_kinds(f, n, "runtime_value") :- spt_1_callback_parameters(f, n, "post_op_with_refs", 2).
-spt_1_parameter_kinds(f, n, "carrier") :- spt_1_callback_parameters(f, n, "post_op_with_refs", 2).
+spt_1_parameter_kinds(f, n, "authority") :- spt_1_parameters(f, _, n, _), spt_1_authority_param(n), spt_1_fact_context(f).
+spt_1_parameter_kinds(f, n, "authority") :- spt_1_parameters(f, p, n, _), spt_1_annotation_text(p, t), @rx(t, "\\b(?:ReadTransaction|SyncDatabaseConnection|SyncSqlConnection|WriteTransaction)\\b") = 1, spt_1_fact_context(f).
+spt_1_parameter_kinds(f, n, "provider") :- spt_1_parameters(f, p, n, _), spt_1_annotation_text(p, t), @rx(t, "\\b(?:CrossBranchQueryProvider|HybridSearchProvider|VectorCandidateProvider|VersionedLoweringProvider|VersionedStorageProvider)\\b") = 1, spt_1_fact_context(f).
+spt_1_parameter_kinds(f, "resolved", "runtime_value") :- spt_1_parameters(f, _, "resolved", _), spt_1_fact_context(f).
+spt_1_parameter_kinds(f, n, "runtime_value") :- spt_1_parameters(f, p, n, _), spt_1_annotation_text(p, t), @rx(t, "\\bResolvedRefs\\b") = 1, spt_1_fact_context(f).
+spt_1_parameter_kinds(f, "runtime_refs", "runtime_value") :- spt_1_parameters(f, _, "runtime_refs", _), spt_1_ctx_materializer(f), spt_1_fact_context(f).
+spt_1_parameter_kinds(f, n, "carrier") :- spt_1_parameters(f, _, n, _), spt_1_carrier_param(n), spt_1_fact_context(f).
+spt_1_parameter_kinds(f, n, "carrier") :- spt_1_parameters(f, p, n, _), spt_1_annotation_text(p, t), @rx(t, "\\bHydrator\\b") = 1, spt_1_fact_context(f).
+spt_1_parameter_kinds(f, n, "carrier") :- spt_1_callback_parameters(f, n, _, 1), spt_1_fact_context(f).
+spt_1_parameter_kinds(f, n, "runtime_value") :- spt_1_callback_parameters(f, n, "post_op_with_refs", 2), spt_1_fact_context(f).
+spt_1_parameter_kinds(f, n, "carrier") :- spt_1_callback_parameters(f, n, "post_op_with_refs", 2), spt_1_fact_context(f).
 
 .decl spt_1_module_strings(d: number, name: symbol, value: symbol)
 spt_1_module_strings(d, name, v) :- spt_1_assignments(a, _, "identifier", name), child(stmt, a, _), spt_1_gnode(stmt), child(root, stmt, _), spt_1_gnode(root),
@@ -560,25 +548,25 @@ spt_1_ctx_attr("materialized_pipeline"). spt_1_ctx_attr("sql_connection"). spt_1
 spt_1_carrier_attr("_conn"). spt_1_carrier_attr("_serverplan_runtime_txn"). spt_1_carrier_attr("_serverplan_sql_conn"). spt_1_carrier_attr("_txn").
 spt_1_carrier_attr("conn"). spt_1_carrier_attr("connection"). spt_1_carrier_attr("sql_conn"). spt_1_carrier_attr("txn").
 .decl spt_1_special_attributes(fn: node, n: node, owner: symbol, attr: symbol)
-spt_1_special_attributes(f, a, "context", at) :- spt_1_attributes(a, at, _, "ctx"), spt_1_ctx_attr(at), spt_1_body_nodes(f, a).
-spt_1_special_attributes(f, a, "carrier", at) :- spt_1_attributes(a, at, _, ot), ot != "ctx", spt_1_carrier_attr(at), spt_1_body_nodes(f, a), spt_1_parameter_kinds(f, ot, "carrier").
-spt_1_special_attributes(f, a, "carrier", at) :- spt_1_attributes(a, at, _, "ctx"), spt_1_carrier_attr(at), !spt_1_ctx_attr(at), spt_1_body_nodes(f, a), spt_1_parameter_kinds(f, "ctx", "carrier").
+spt_1_special_attributes(f, a, "context", at) :- spt_1_attributes(a, at, _, "ctx"), spt_1_ctx_attr(at), spt_1_body_nodes(f, a), spt_1_fact_context(f).
+spt_1_special_attributes(f, a, "carrier", at) :- spt_1_attributes(a, at, _, ot), ot != "ctx", spt_1_carrier_attr(at), spt_1_body_nodes(f, a), spt_1_parameter_kinds(f, ot, "carrier"), spt_1_fact_context(f).
+spt_1_special_attributes(f, a, "carrier", at) :- spt_1_attributes(a, at, _, "ctx"), spt_1_carrier_attr(at), !spt_1_ctx_attr(at), spt_1_body_nodes(f, a), spt_1_parameter_kinds(f, "ctx", "carrier"), spt_1_fact_context(f).
 spt_1_special_attributes(f, c, "context", v) :- spt_1_calls(c, _, _, "getattr", _), spt_1_body_nodes(f, c), spt_1_arguments(c, r, 0), kind(r, "identifier"), text(r, "ctx"),
-    spt_1_arguments(c, k, 1), node(d, k, _, s, e), spt_1_string_values(d, s, e, v), spt_1_ctx_attr(v).
+    spt_1_arguments(c, k, 1), node(d, k, _, s, e), spt_1_string_values(d, s, e, v), spt_1_ctx_attr(v), spt_1_fact_context(f).
 spt_1_special_attributes(f, c, "context", v) :- spt_1_calls(c, _, _, "getattr", _), spt_1_body_nodes(f, c), spt_1_arguments(c, r, 0), kind(r, "identifier"), text(r, "ctx"),
-    spt_1_arguments(c, k, 1), node(d, k, _, s, e), spt_1_string_values(d, s, e, v), spt_1_carrier_attr(v), spt_1_parameter_kinds(f, "ctx", "carrier").
+    spt_1_arguments(c, k, 1), node(d, k, _, s, e), spt_1_string_values(d, s, e, v), spt_1_carrier_attr(v), spt_1_parameter_kinds(f, "ctx", "carrier"), spt_1_fact_context(f).
 spt_1_special_attributes(f, c, "carrier", v) :- spt_1_calls(c, _, _, "getattr", _), spt_1_body_nodes(f, c), spt_1_arguments(c, r, 0), kind(r, "identifier"), text(r, rt),
-    rt != "ctx", spt_1_arguments(c, k, 1), node(d, k, _, s, e), spt_1_string_values(d, s, e, v), spt_1_carrier_attr(v), spt_1_parameter_kinds(f, rt, "carrier").
+    rt != "ctx", spt_1_arguments(c, k, 1), node(d, k, _, s, e), spt_1_string_values(d, s, e, v), spt_1_carrier_attr(v), spt_1_parameter_kinds(f, rt, "carrier"), spt_1_fact_context(f).
 spt_1_special_attributes(f, c, "carrier", v) :- spt_1_calls(c, g, _, _, "get"), spt_1_body_nodes(f, c), spt_1_attributes(g, _, _, ot), spt_1_arguments(c, k, 0),
-    node(d, k, _, s, e), spt_1_string_values(d, s, e, v), spt_1_carrier_attr(v), spt_1_parameter_kinds(f, ot, "carrier").
+    node(d, k, _, s, e), spt_1_string_values(d, s, e, v), spt_1_carrier_attr(v), spt_1_parameter_kinds(f, ot, "carrier"), spt_1_fact_context(f).
 spt_1_special_attributes(f, n, "carrier", v) :- spt_1_gnode(n), kind(n, "subscript"), spt_1_body_nodes(f, n), field(n, "value", r), spt_1_gnode(r), kind(r, "identifier"),
     text(r, rt), child(n, k, _), spt_1_gnode(k), k != r, node(d, k, _, s, e), spt_1_string_values(d, s, e, v), spt_1_carrier_attr(v),
-    spt_1_parameter_kinds(f, rt, "carrier").
+    spt_1_parameter_kinds(f, rt, "carrier"), spt_1_fact_context(f).
 
 .decl spt_1_runtime(d: number, name: symbol)
-spt_1_runtime(d, n) :- spt_1_contexts(c, n, _), docof(c, d), spt_1_special_attributes(c, _, "carrier", _), spt_1_parameter_kinds(c, _, "carrier").
+spt_1_runtime(d, n) :- spt_1_contexts(c, n, _), docof(c, d), spt_1_special_attributes(c, _, "carrier", _), spt_1_parameter_kinds(c, _, "carrier"), spt_1_runtime_context(c).
 spt_1_runtime(d, n) :- spt_1_contexts(c, n, _), spt_1_body_nodes(c, call), spt_1_calls(call, _, "identifier", _, callee), docof(call, d), spt_1_runtime(d, callee),
-    spt_1_arguments(call, a, _), spt_1_descendants(a, x), kind(x, "identifier"), text(x, t), spt_1_parameter_kinds(c, t, "carrier").
+    spt_1_arguments(call, a, _), spt_1_descendants(a, x), kind(x, "identifier"), text(x, t), spt_1_parameter_kinds(c, t, "carrier"), spt_1_runtime_context(c).
 .decl spt_1_return_kind_entry(name: symbol, kind: symbol)
   
   
@@ -630,9 +618,9 @@ spt_1_runtime(d, n) :- spt_1_contexts(c, n, _), spt_1_body_nodes(c, call), spt_1
 
 .decl spt_1_return_kinds(d: number, name: symbol, kind: symbol)
 spt_1_return_kinds(d, n, "runtime_authority") :- spt_1_runtime(d, n).
-spt_1_return_kinds(d, n, "authority") :- spt_1_contexts(c, n, _), docof(c, d), field(c, "return_type", t), spt_1_gnode(t), text(t, s), @rx(s, "\\b(?:ReadTransaction|SyncDatabaseConnection|SyncSqlConnection|WriteTransaction)\\b") = 1.
-spt_1_return_kinds(d, n, "provider") :- spt_1_contexts(c, n, _), docof(c, d), field(c, "return_type", t), spt_1_gnode(t), text(t, s), @rx(s, "\\b(?:CrossBranchQueryProvider|HybridSearchProvider|VectorCandidateProvider|VersionedLoweringProvider|VersionedStorageProvider)\\b") = 1.
-spt_1_return_kinds(d, n, k) :- spt_1_contexts(c, _, _), docof(c, d), spt_1_return_kind_entry(n, k).
+spt_1_return_kinds(d, n, "authority") :- spt_1_contexts(c, n, _), docof(c, d), field(c, "return_type", t), spt_1_gnode(t), text(t, s), @rx(s, "\\b(?:ReadTransaction|SyncDatabaseConnection|SyncSqlConnection|WriteTransaction)\\b") = 1, spt_1_fact_context(c).
+spt_1_return_kinds(d, n, "provider") :- spt_1_contexts(c, n, _), docof(c, d), field(c, "return_type", t), spt_1_gnode(t), text(t, s), @rx(s, "\\b(?:CrossBranchQueryProvider|HybridSearchProvider|VectorCandidateProvider|VersionedLoweringProvider|VersionedStorageProvider)\\b") = 1, spt_1_fact_context(c).
+spt_1_return_kinds(d, n, k) :- spt_1_contexts(c, _, _), docof(c, d), spt_1_return_kind_entry(n, k), spt_1_fact_context(c).
 
 .decl spt_1_expression_edges(src: node, dst: node)
 spt_1_expression_edges(o, n) :- spt_1_attributes(n, _, o, _).
@@ -644,14 +632,14 @@ spt_1_identifier_nodes(n, t) :- spt_1_gnode(n), kind(n, "identifier"), text(n, t
 .decl spt_1_flow_kind(k: symbol)
 spt_1_flow_kind("authority"). spt_1_flow_kind("provider"). spt_1_flow_kind("runtime_value").
 .decl spt_1_taints(fn: node, n: node, kind: symbol)
-spt_1_taints(f, n, k) :- spt_1_body_nodes(f, n), spt_1_identifier_nodes(n, t), spt_1_parameter_kinds(f, t, k), k != "carrier".
-spt_1_taints(f, n, "authority") :- spt_1_special_attributes(f, n, "carrier", _).
-spt_1_taints(f, n, "authority") :- spt_1_special_attributes(f, n, _, "txn").
-spt_1_taints(f, n, "authority") :- spt_1_special_attributes(f, n, _, "sql_connection").
-spt_1_taints(f, c, k) :- spt_1_body_nodes(f, c), spt_1_calls(c, _, _, _, callee), docof(c, d), spt_1_return_kinds(d, callee, k).
-spt_1_taints(f, t, k) :- spt_1_taints(f, n, k), spt_1_expression_edges(n, t), spt_1_body_nodes(f, t).
+spt_1_taints(f, n, k) :- spt_1_body_nodes(f, n), spt_1_identifier_nodes(n, t), spt_1_parameter_kinds(f, t, k), k != "carrier", spt_1_fact_context(f).
+spt_1_taints(f, n, "authority") :- spt_1_special_attributes(f, n, "carrier", _), spt_1_fact_context(f).
+spt_1_taints(f, n, "authority") :- spt_1_special_attributes(f, n, _, "txn"), spt_1_fact_context(f).
+spt_1_taints(f, n, "authority") :- spt_1_special_attributes(f, n, _, "sql_connection"), spt_1_fact_context(f).
+spt_1_taints(f, c, k) :- spt_1_body_nodes(f, c), spt_1_calls(c, _, _, _, callee), docof(c, d), spt_1_return_kinds(d, callee, k), spt_1_fact_context(f).
+spt_1_taints(f, t, k) :- spt_1_taints(f, n, k), spt_1_expression_edges(n, t), spt_1_body_nodes(f, t), spt_1_fact_context(f).
 spt_1_taints(f, x, k) :- spt_1_taints(f, n, k), spt_1_flow_kind(k), spt_1_assignment_value(a, n), spt_1_assignments(a, _, "identifier", name), spt_1_body_nodes(f, a),
-    spt_1_identifier_nodes(x, name), spt_1_body_nodes(f, x).
+    spt_1_identifier_nodes(x, name), spt_1_body_nodes(f, x), spt_1_fact_context(f).
 
 .decl spt_1_semantic_values(fn: node, n: node)
 spt_1_semantic_values(f, n) :- spt_1_taints(f, n, "runtime_value").
@@ -715,55 +703,53 @@ spt_1_sequence_method("count"). spt_1_sequence_method("index"). spt_1_sequence_m
 spt_1_comprehension_kind("list_comprehension"). spt_1_comprehension_kind("set_comprehension"). spt_1_comprehension_kind("dictionary_comprehension").
 spt_1_comprehension_kind("generator_expression").
 .decl spt_1_direct_events(fn: node, n: node, kind: symbol, priority: number)
-spt_1_direct_events(f, n, "eager_sql", 1) :- spt_1_calls(n, _, _, _, c), spt_1_body_nodes(f, n), spt_1_eager_name(c).
-spt_1_direct_events(f, n, "eager_sql", 1) :- spt_1_calls(n, _, "identifier", _, c), spt_1_body_nodes(f, n), spt_1_exec_name(c).
-spt_1_direct_events(f, n, "eager_sql", 1) :- spt_1_calls(n, _, _, fc, _), spt_1_body_nodes(f, n), spt_1_eager_rx(p), @rx(fc, p) = 1.
-spt_1_direct_events(f, n, "eager_sql", 1) :- spt_1_calls(n, _, _, _, c), spt_1_body_nodes(f, n), spt_1_exec_name(c), spt_1_call_receiver(n, r), spt_1_taints(f, r, "authority").
-spt_1_direct_events(f, n, "native_python_work", 1) :- spt_1_calls(n, _, _, _, c), spt_1_body_nodes(f, n), spt_1_native_name(c).
-spt_1_direct_events(f, n, "native_python_work", 1) :- spt_1_calls(n, _, _, fc, _), spt_1_body_nodes(f, n), spt_1_native_rx(p), @rx(fc, p) = 1.
-spt_1_direct_events(f, n, "runtime_callback", 1) :- spt_1_calls(n, _, _, _, "CompiledStep"), spt_1_body_nodes(f, n), spt_1_keywords(n, _, k, _), spt_1_refs_keyword(k).
-spt_1_direct_events(f, n, "large_column", 1) :- spt_1_calls(n, _, _, _, c), spt_1_body_nodes(f, n), spt_1_large_column_name(c).
+spt_1_direct_events(f, n, "eager_sql", 1) :- spt_1_calls(n, _, _, _, c), spt_1_body_nodes(f, n), spt_1_eager_name(c), spt_1_fact_context(f).
+spt_1_direct_events(f, n, "eager_sql", 1) :- spt_1_calls(n, _, "identifier", _, c), spt_1_body_nodes(f, n), spt_1_exec_name(c), spt_1_fact_context(f).
+spt_1_direct_events(f, n, "eager_sql", 1) :- spt_1_calls(n, _, _, fc, _), spt_1_body_nodes(f, n), spt_1_eager_rx(p), @rx(fc, p) = 1, spt_1_fact_context(f).
+spt_1_direct_events(f, n, "eager_sql", 1) :- spt_1_calls(n, _, _, _, c), spt_1_body_nodes(f, n), spt_1_exec_name(c), spt_1_call_receiver(n, r), spt_1_taints(f, r, "authority"), spt_1_fact_context(f).
+spt_1_direct_events(f, n, "runtime_callback", 1) :- spt_1_calls(n, _, _, _, "CompiledStep"), spt_1_body_nodes(f, n), spt_1_keywords(n, _, k, _), spt_1_refs_keyword(k), spt_1_fact_context(f).
+spt_1_direct_events(f, n, "large_column", 1) :- spt_1_calls(n, _, _, _, c), spt_1_body_nodes(f, n), spt_1_large_column_name(c), spt_1_fact_context(f).
 spt_1_direct_events(f, n, "large_column", 1) :- spt_1_calls(n, _, _, _, "convert_row_to_model"), spt_1_body_nodes(f, n), spt_1_keywords(n, _, "hydrate_large_columns", v),
-    kind(v, "true").
+    kind(v, "true"), spt_1_fact_context(f).
 spt_1_direct_events(f, n, "resolved_refs", 1) :- spt_1_calls(n, g, _, _, c), spt_1_resolved_call(c), spt_1_body_nodes(f, n), spt_1_attributes(g, _, o, _), spt_1_gnode(o),
-    kind(o, "identifier"), text(o, t), spt_1_resolved_name(t).
+    kind(o, "identifier"), text(o, t), spt_1_resolved_name(t), spt_1_fact_context(f).
 spt_1_direct_events(f, n, "resolved_refs", 1) :- spt_1_calls(n, g, _, _, c), spt_1_resolved_call(c), spt_1_body_nodes(f, n), spt_1_attributes(g, _, o, _), spt_1_gnode(o),
-    spt_1_attributes(o, t, _, _), spt_1_resolved_name(t).
+    spt_1_attributes(o, t, _, _), spt_1_resolved_name(t), spt_1_fact_context(f).
 spt_1_direct_events(f, n, "resolved_refs", 1) :- spt_1_calls(n, g, _, _, c), spt_1_resolved_call(c), spt_1_body_nodes(f, n), spt_1_attributes(g, _, o, _), spt_1_gnode(o),
-    kind(o, k), k != "identifier", k != "attribute", text(o, t), @sql_instr(t, "resolved") > 0.
-spt_1_direct_events(f, n, "nested_execute", 1) :- spt_1_calls(n, _, _, _, c), spt_1_body_nodes(f, n), spt_1_nested_name(c).
-spt_1_direct_events(f, n, "nested_execute", 1) :- spt_1_calls(n, _, _, fc, _), spt_1_body_nodes(f, n), spt_1_nested_rx(p), @rx(fc, p) = 1.
-spt_1_direct_events(f, n, "materialized_pipeline", 1) :- spt_1_attributes(n, "materialized_pipeline", _, _), spt_1_body_nodes(f, n).
-spt_1_direct_events(f, n, "materialized_pipeline", 1) :- spt_1_special_attributes(f, n, "context", "materialized_pipeline"), spt_1_body_nodes(f, n), spt_1_gnode(n).
-spt_1_direct_events(f, n, "ctx_access", 1) :- spt_1_special_attributes(f, n, "context", _), spt_1_body_nodes(f, n), spt_1_gnode(n).
-spt_1_direct_events(f, n, "runtime_authority", 1) :- spt_1_special_attributes(f, n, "carrier", _), spt_1_body_nodes(f, n), spt_1_gnode(n), kind(n, "attribute").
-spt_1_direct_events(f, n, "runtime_authority", 1) :- spt_1_special_attributes(f, n, "carrier", _), spt_1_body_nodes(f, n), spt_1_gnode(n), kind(n, "call").
-spt_1_direct_events(f, n, "runtime_authority", 1) :- spt_1_calls(n, _, _, _, "active_pipeline_txn_for_callbacks"), spt_1_body_nodes(f, n).
-spt_1_direct_events(f, n, "runtime_authority", 1) :- spt_1_calls(n, _, _, _, _), spt_1_body_nodes(f, n), spt_1_taints(f, n, "runtime_authority").
-spt_1_direct_events(f, n, "runtime_authority", 0) :- spt_1_assignments(n, _, _, _), spt_1_body_nodes(f, n), spt_1_assignment_value(n, v), spt_1_taints(f, v, "runtime_authority").
-spt_1_direct_events(f, n, "runtime_value", 0) :- spt_1_assignments(n, _, _, _), spt_1_body_nodes(f, n), spt_1_assignment_value(n, v), spt_1_taints(f, v, "runtime_value").
-spt_1_direct_events(f, n, "runtime_value", 1) :- spt_1_calls(n, _, _, _, _), spt_1_body_nodes(f, n), spt_1_taints(f, n, "runtime_value").
-spt_1_direct_events(f, n, "runtime_value", 1) :- spt_1_calls(n, _, _, _, _), spt_1_body_nodes(f, n), spt_1_call_receiver(n, r), spt_1_taints(f, r, "runtime_value").
-spt_1_direct_events(f, n, "runtime_value", 1) :- spt_1_calls(n, _, _, _, _), spt_1_body_nodes(f, n), spt_1_arguments(n, a, _), spt_1_taints(f, a, "runtime_value").
-spt_1_direct_events(f, n, "runtime_value", 1) :- spt_1_calls(n, _, _, _, _), spt_1_body_nodes(f, n), spt_1_keywords(n, _, _, v), spt_1_taints(f, v, "runtime_value").
+    kind(o, k), k != "identifier", k != "attribute", text(o, t), @sql_instr(t, "resolved") > 0, spt_1_fact_context(f).
+spt_1_direct_events(f, n, "nested_execute", 1) :- spt_1_calls(n, _, _, _, c), spt_1_body_nodes(f, n), spt_1_nested_name(c), spt_1_fact_context(f).
+spt_1_direct_events(f, n, "nested_execute", 1) :- spt_1_calls(n, _, _, fc, _), spt_1_body_nodes(f, n), spt_1_nested_rx(p), @rx(fc, p) = 1, spt_1_fact_context(f).
+spt_1_direct_events(f, n, "materialized_pipeline", 1) :- spt_1_attributes(n, "materialized_pipeline", _, _), spt_1_body_nodes(f, n), spt_1_fact_context(f).
+spt_1_direct_events(f, n, "materialized_pipeline", 1) :- spt_1_special_attributes(f, n, "context", "materialized_pipeline"), spt_1_body_nodes(f, n), spt_1_gnode(n), spt_1_fact_context(f).
+spt_1_direct_events(f, n, "ctx_access", 1) :- spt_1_special_attributes(f, n, "context", _), spt_1_body_nodes(f, n), spt_1_gnode(n), spt_1_fact_context(f).
+spt_1_direct_events(f, n, "runtime_authority", 1) :- spt_1_special_attributes(f, n, "carrier", _), spt_1_body_nodes(f, n), spt_1_gnode(n), kind(n, "attribute"), spt_1_fact_context(f).
+spt_1_direct_events(f, n, "runtime_authority", 1) :- spt_1_special_attributes(f, n, "carrier", _), spt_1_body_nodes(f, n), spt_1_gnode(n), kind(n, "call"), spt_1_fact_context(f).
+spt_1_direct_events(f, n, "runtime_authority", 1) :- spt_1_calls(n, _, _, _, "active_pipeline_txn_for_callbacks"), spt_1_body_nodes(f, n), spt_1_fact_context(f).
+spt_1_direct_events(f, n, "runtime_authority", 1) :- spt_1_calls(n, _, _, _, _), spt_1_body_nodes(f, n), spt_1_taints(f, n, "runtime_authority"), spt_1_fact_context(f).
+spt_1_direct_events(f, n, "runtime_authority", 0) :- spt_1_assignments(n, _, _, _), spt_1_body_nodes(f, n), spt_1_assignment_value(n, v), spt_1_taints(f, v, "runtime_authority"), spt_1_fact_context(f).
+spt_1_direct_events(f, n, "runtime_value", 0) :- spt_1_assignments(n, _, _, _), spt_1_body_nodes(f, n), spt_1_assignment_value(n, v), spt_1_taints(f, v, "runtime_value"), spt_1_fact_context(f).
+spt_1_direct_events(f, n, "runtime_value", 1) :- spt_1_calls(n, _, _, _, _), spt_1_body_nodes(f, n), spt_1_taints(f, n, "runtime_value"), spt_1_fact_context(f).
+spt_1_direct_events(f, n, "runtime_value", 1) :- spt_1_calls(n, _, _, _, _), spt_1_body_nodes(f, n), spt_1_call_receiver(n, r), spt_1_taints(f, r, "runtime_value"), spt_1_fact_context(f).
+spt_1_direct_events(f, n, "runtime_value", 1) :- spt_1_calls(n, _, _, _, _), spt_1_body_nodes(f, n), spt_1_arguments(n, a, _), spt_1_taints(f, a, "runtime_value"), spt_1_fact_context(f).
+spt_1_direct_events(f, n, "runtime_value", 1) :- spt_1_calls(n, _, _, _, _), spt_1_body_nodes(f, n), spt_1_keywords(n, _, _, v), spt_1_taints(f, v, "runtime_value"), spt_1_fact_context(f).
 spt_1_direct_events(f, n, "runtime_value", 1) :- spt_1_gnode(n), kind(n, "subscript"), spt_1_body_nodes(f, n), field(n, "value", o), spt_1_gnode(o), kind(o, "identifier"),
-    spt_1_taints(f, o, "runtime_value").
+    spt_1_taints(f, o, "runtime_value"), spt_1_fact_context(f).
 spt_1_direct_events(f, n, "runtime_value", 1) :- spt_1_gnode(n), kind(n, "comparison_operator"), spt_1_body_nodes(f, n), text(n, t), @rx(t, "\\bin\\b") = 1,
-    child(n, o, _), spt_1_gnode(o), kind(o, "identifier"), spt_1_taints(f, o, "runtime_value").
+    child(n, o, _), spt_1_gnode(o), kind(o, "identifier"), spt_1_taints(f, o, "runtime_value"), spt_1_fact_context(f).
 spt_1_direct_events(f, n, "provider_authority", 1) :- spt_1_calls(n, _, _, _, _), spt_1_body_nodes(f, n), spt_1_call_receiver(n, r), spt_1_taints(f, r, "provider"),
-    spt_1_arguments(n, a, _), spt_1_taints(f, a, "authority").
+    spt_1_arguments(n, a, _), spt_1_taints(f, a, "authority"), spt_1_fact_context(f).
 spt_1_direct_events(f, n, "provider_authority", 1) :- spt_1_calls(n, _, _, _, _), spt_1_body_nodes(f, n), spt_1_call_receiver(n, r), spt_1_taints(f, r, "provider"),
-    spt_1_keywords(n, _, _, v), spt_1_taints(f, v, "authority").
+    spt_1_keywords(n, _, _, v), spt_1_taints(f, v, "authority"), spt_1_fact_context(f).
 spt_1_direct_events(f, n, "runtime_semantic_projection", 1) :- spt_1_calls(n, _, _, _, c), spt_1_projection_call(c), spt_1_body_nodes(f, n), spt_1_arguments(n, a, _),
-    spt_1_semantic_values(f, a).
+    spt_1_semantic_values(f, a), spt_1_fact_context(f).
 spt_1_direct_events(f, n, "runtime_semantic_projection", 1) :- spt_1_calls(n, _, _, _, c), spt_1_projection_call(c), spt_1_body_nodes(f, n), spt_1_keywords(n, _, _, v),
-    spt_1_semantic_values(f, v).
+    spt_1_semantic_values(f, v), spt_1_fact_context(f).
 spt_1_direct_events(f, n, "runtime_semantic_projection", 1) :- spt_1_calls(n, _, _, _, c), spt_1_sequence_method(c), spt_1_body_nodes(f, n), spt_1_call_receiver(n, r),
-    spt_1_semantic_values(f, r).
+    spt_1_semantic_values(f, r), spt_1_fact_context(f).
 spt_1_direct_events(f, n, "runtime_semantic_projection", 1) :- spt_1_gnode(n), kind(n, "subscript"), spt_1_body_nodes(f, n), child(n, sl, _), spt_1_gnode(sl),
-    kind(sl, "slice"), field(n, "value", v), spt_1_semantic_values(f, v).
+    kind(sl, "slice"), field(n, "value", v), spt_1_semantic_values(f, v), spt_1_fact_context(f).
 spt_1_direct_events(f, n, "runtime_semantic_projection", 1) :- spt_1_gnode(n), kind(n, k), spt_1_comprehension_kind(k), spt_1_body_nodes(f, n), child(n, fi, _), spt_1_gnode(fi),
-    kind(fi, "for_in_clause"), child(n, ic, _), spt_1_gnode(ic), kind(ic, "if_clause"), field(fi, "right", r), spt_1_semantic_values(f, r).
+    kind(fi, "for_in_clause"), child(n, ic, _), spt_1_gnode(ic), kind(ic, "if_clause"), field(fi, "right", r), spt_1_semantic_values(f, r), spt_1_fact_context(f).
 .decl spt_1_loop_projection(p: node)
 spt_1_loop_projection(p) :- spt_1_gnode(p), kind(p, "subscript").
 spt_1_loop_projection(p) :- spt_1_calls(p, _, _, _, "get").
@@ -774,8 +760,8 @@ spt_1_append_call("append"). spt_1_append_call("extend").
 spt_1_projection_loop(f, n) :- spt_1_gnode(n), kind(n, "for_statement"), spt_1_body_nodes(f, n), field(n, "right", r), spt_1_semantic_values(f, r),
     spt_1_descendants(n, c), spt_1_calls(c, _, _, _, cc), spt_1_append_call(cc), spt_1_descendants(n, p), spt_1_loop_projection(p),
     spt_1_descendants(p, u), spt_1_identifier_nodes(u, name), field(n, "left", l), spt_1_descendants(l, x), spt_1_identifier_nodes(x, name).
-spt_1_direct_events(f, n, "runtime_semantic_projection", 1) :- spt_1_projection_loop(f, n).
-spt_1_direct_events(f, n, "runtime_sequence_projection", 1) :- spt_1_projection_loop(f, n).
+spt_1_direct_events(f, n, "runtime_semantic_projection", 1) :- spt_1_projection_loop(f, n), spt_1_fact_context(f).
+spt_1_direct_events(f, n, "runtime_sequence_projection", 1) :- spt_1_projection_loop(f, n), spt_1_fact_context(f).
 
 .decl spt_1_depth_skip(k: symbol)
 spt_1_depth_skip("module"). spt_1_depth_skip("block"). spt_1_depth_skip("expression_statement"). spt_1_depth_skip("argument_list").
@@ -802,15 +788,6 @@ spt_1_call_graph(f, c, t) :- spt_1_body_nodes(f, c), spt_1_calls(c, g, "attribut
     docof(t, d), t != f, spt_1_attributes(g, _, _, ot), spt_1_self_name(ot).
 
 .decl spt_1_reachable(fn: node)
-spt_1_reachable(c) :- spt_1_ctx_planning(c).
-spt_1_reachable(c) :- spt_1_ctx_preprocess(c).
-spt_1_reachable(c) :- spt_1_ctx_materializer(c).
-spt_1_reachable(c) :- spt_1_ctx_helper(c).
-spt_1_reachable(c) :- spt_1_ctx_provider_helper(c).
-spt_1_reachable(c) :- spt_1_contexts(c, _, _), docof(c, d), doc(d, p, _), @rx(p, "(?:^|/)impl/common/l2070_server_plan/") = 1,
-    spt_1_direct_sinks(c, _, "native_python_work").
-spt_1_reachable(t) :- spt_1_reachable(f), spt_1_call_graph(f, _, t).
-
 
 .decl spt_1_source_edge(f: node, target: node, line: number, name: symbol)
 spt_1_source_edge(f,t,l,q) :- spt_1_call_graph(f,c,t), line(c,l), spt_1_ctx_display(t,q).
@@ -989,6 +966,63 @@ spt_1_dl_qualdepth(f, d) :- spt_1_dl_qual(f, _, d).
 spt_1_return_kind_entry(n,k) :- option_item("returnKindNames",i,n), option_item("returnKindValues",i,k).
 spt_1_return_kind_entry(n,k) :- spt_generated(n,k), !option("entryPoint",_).
 
+
+.decl spt_1_source_scope(body: node, classes: symbol)
+spt_1_source_scope(m,"") :- spt_1_gnode(m), kind(m,"module").
+spt_1_source_scope(b,@nfkc(name)) :- spt_1_source_scope(parent,""), body_member(parent,c), kind(c,"class_definition"),
+    def_name(c,name), field(c,"body",b).
+spt_1_source_scope(b,cat(prefix,".",@nfkc(name))) :- spt_1_source_scope(parent,prefix), prefix != "", body_member(parent,c),
+    kind(c,"class_definition"), def_name(c,name), field(c,"body",b).
+spt_1_contexts(f,@nfkc(name),classes) :- spt_1_source_scope(body,classes), body_member(body,f), kind(f,"function_definition"), def_name(f,name).
+
+
+
+spt_1_ctx_planning(f) :- spt_1_contexts(f,n,_), @rx(n,"_lazy$") = 1.
+spt_1_ctx_planning(f) :- spt_1_contexts(f,n,_), spt_1_planning_name(n).
+spt_1_ctx_planning(f) :- spt_1_contexts(f,"pending_pipeline_effects",_).
+spt_1_ctx_planning(f) :- spt_1_contexts(f,n,_), prefix("apply_",n), suffix("_effect",n).
+spt_1_ctx_planning(f) :- spt_1_contexts(f,_,_), decorator(f,e), short_name(e,name), @nfkc(name) = "pure_lazy".
+
+
+
+spt_1_ctx_helper(f) :- spt_1_contexts(f,name,_), suffix("sql_builder",name), !spt_1_planning_name(name),
+    spt_1_parameters(f,p,_,_), field(p,"type",ann), walk_name(ann,raw), @nfkc(raw) = "CompilationContext".
+
+
+
+spt_1_ctx_materializer(f) :- spt_1_contexts(f,name,_), spt_1_parameters(f,_,"runtime_refs",_), prefix("materialize_",name), suffix("builder",name).
+spt_1_ctx_materializer(f) :- spt_1_contexts(f,_,_), spt_1_parameters(f,_,"runtime_refs",_), spt_1_parameters(f,p,_,_),
+    field(p,"type",ann), walk_name(ann,raw), @nfkc(raw) = "RuntimeBuilderSpec".
+
+
+spt_1_body_nodes(f,e) :- spt_1_contexts(f,_,_), decorator(f,e).
+spt_1_body_nodes(f,n) :- spt_1_contexts(f,_,_), decorator(f,e), within(n,e).
+
+
+.decl spt_1_native_work_context(f: node)
+spt_1_native_work_context(f) :- spt_1_body_nodes(f,c), spt_forbidden_native_call(c).
+spt_1_reachable(f) :- spt_1_ctx_planning(f).
+spt_1_reachable(f) :- spt_1_ctx_helper(f).
+spt_1_reachable(f) :- spt_1_ctx_provider_helper(f).
+spt_1_reachable(f) :- spt_1_ctx_materializer(f).
+// scan_tree already collected native-work calls during its visitor, on any path.
+spt_1_reachable(f) :- spt_1_native_work_context(f).
+// Selection is by called leaf name. Resolution for findings remains class-aware.
+spt_1_reachable(t) :- spt_1_reachable(f), spt_1_body_nodes(f,c), kind(c,"call"), field(c,"function",callee), spt_callee(callee,name),
+    docof(f,d), spt_1_contexts(t,name,_), docof(t,d).
+.decl spt_1_fact_context(f: node)
+spt_1_fact_context(f) :- spt_1_contexts(f,_,_), spt_1_reachable(f), docof(f,d), spt_needs_facts(d).
+.decl spt_1_runtime_context(f: node)
+spt_1_runtime_context(f) :- spt_1_fact_context(f).
+
+spt_1_direct_events(f,n,"native_python_work",1) :- spt_1_body_nodes(f,n), spt_forbidden_native_call(n), spt_1_fact_context(f).
+
+
+.violation StateAnalysisContext(at: span, family: symbol, line: number, name: symbol, class_scope: symbol) code "SPT_ANALYSIS_CONTEXT" "{family}: {name}"
+StateAnalysisContext(@place(p,l),"facts",l,name,cls) :- option("entryPoint","_analysis_contexts"),
+    spt_1_fact_context(f), spt_1_contexts(f,name,cls), docof(f,d), doc(d,p,_), line(f,l).
+StateAnalysisContext(@place(p,l),"runtime",l,name,cls) :- option("entryPoint","_analysis_contexts"),
+    spt_1_runtime_context(f), spt_1_contexts(f,name,cls), docof(f,d), doc(d,p,_), line(f,l).
 
 .decl spt_2_fdef(kind: symbol)
 spt_2_fdef("function_definition").
@@ -1904,7 +1938,12 @@ spt_needs_facts(d) :- doc(d,_,_), option("sourceProvided","false").
 spt_needs_facts(d) :- doc(d,"impl/common/l2070_server_plan/backend_profiles.py",_).
 spt_needs_facts(d) :- source(d,sp), text(sp,s), spt_function_token(t), contains(t,s).
 .decl spt_scan_doc(d: number)
-spt_scan_doc(d) :- doc(d,_,_), !option("entryPoint","scan_project_sources").
+.decl spt_scanner_mode()
+spt_scanner_mode() :- !option("entryPoint",_).
+spt_scanner_mode() :- option("entryPoint","scan_source").
+spt_scanner_mode() :- option("entryPoint","scan_tree").
+spt_scanner_mode() :- option("entryPoint","scan_project_sources").
+spt_scan_doc(d) :- doc(d,_,_), spt_scanner_mode(), !option("entryPoint","scan_project_sources").
 spt_scan_doc(d) :- doc(d,_,_), option("entryPoint","scan_project_sources"), source(d,sp), text(sp,s), spt_scan_token(t), contains(t,s).
 .decl spt_output(path: symbol, line: number, qualname: symbol, code: symbol, message: symbol, mode: symbol, visit: number, phase: number, ordinal: number)
 // The source's fast return preserves visitor order and multiplicity. Its fact
@@ -2013,6 +2052,49 @@ StateSPT033(@place(p,l),q,m,mode,i,phase,j) :- spt_output(p,l,q,"SPT-033",m,mode
     "{text}"
 StateSPT034(@place(p,l),q,m,mode,i,phase,j) :- spt_output(p,l,q,"SPT-034",m,mode,i,phase,j).
 
+.decl spt_planning_name(name: symbol)
+spt_planning_name("compile").
+spt_planning_name("lower").
+spt_planning_name("post_op").
+spt_planning_name("pre_op").
+spt_planning_name("preprocess").
+.decl spt_provider_path(path: symbol)
+spt_provider_path("impl/common/l2070_server_plan/backend_profiles.py").
+.decl spt_provider_token(token: symbol)
+spt_provider_token("score").
+spt_provider_token("scores").
+spt_provider_token("component").
+spt_provider_token("components").
+.decl spt_native_name(name: symbol)
+spt_native_name("create_usearch_index_class").
+spt_native_name("deserialize_embedding").
+spt_native_name("get_similarity_function").
+spt_native_name("serialize_embedding").
+.decl spt_native_pair(base: symbol, member: symbol)
+spt_native_pair("np","array").
+spt_native_pair("np","ascontiguousarray").
+spt_native_pair("np","isinf").
+spt_native_pair("np","isnan").
+spt_native_pair("numpy","array").
+spt_native_pair("numpy","ascontiguousarray").
+spt_native_pair("numpy","isinf").
+spt_native_pair("numpy","isnan").
+.decl spt_native_method(name: symbol)
+
+.decl spt_chain_last(n: node, name: symbol)
+spt_chain_last(n,s) :- spt_callee(n,s).
+spt_chain_last(n,s) :- kind(n,"call"), field(n,"function",f), spt_chain_last(f,s).
+spt_chain_last(n,s) :- kind(n,"parenthesized_expression"), unparen(n,r), n != r, spt_chain_last(r,s).
+.decl spt_chain_previous(n: node, name: symbol)
+spt_chain_previous(n,s) :- attr_of(n,o,_), spt_chain_last(o,s).
+spt_chain_previous(n,s) :- kind(n,"call"), field(n,"function",f), spt_chain_previous(f,s).
+spt_chain_previous(n,s) :- kind(n,"parenthesized_expression"), unparen(n,r), n != r, spt_chain_previous(r,s).
+.decl spt_forbidden_native_call(n: node)
+spt_forbidden_native_call(n) :- kind(n,"call"), field(n,"function",f), spt_callee(f,name), spt_native_name(name).
+spt_forbidden_native_call(n) :- kind(n,"call"), field(n,"function",f), spt_chain_last(f,last),
+    spt_chain_previous(f,previous), spt_native_pair(previous,last).
+spt_forbidden_native_call(n) :- kind(n,"call"), field(n,"function",f), unparen(f,a),
+    attr_of(a,_,raw), spt_native_method(@nfkc(raw)).
 .decl spt_scan_token(token: symbol)
 spt_scan_token("CompilationContext").
 spt_scan_token("CompiledStep").
@@ -2070,3 +2152,90 @@ spt_filter_key(i,cat(c,"::",q,"::",p)) :- spt_filter_path(i,p), option_item("fil
 .violation StateFilter(at: span, ordinal: number) code "SPT_FILTER" "retained finding {ordinal}"
 StateFilter(@place("input.py",1),i) :- option("entryPoint","_filter_signed_python_work_allowlist"),
     spt_filter_key(i,k), !spt_work_allow(k).
+
+.decl sph_kind(n: number, k: symbol)
+sph_kind(n,k) :- option_item("astKinds",n,k).
+.decl sph_edge(p: number, field: symbol, ordinal: number, n: number)
+sph_edge(to_number(p),f,to_number(i),n) :- option_item("astParents",n,p), p != "-1",
+    option_item("astFields",n,f), option_item("astOrdinals",n,i).
+.decl sph_ref(n: number, identity: number)
+sph_ref(n,to_number(r)) :- option_item("helperAstRefs",n,r).
+.decl sph_desc(p: number, n: number, depth: number)
+sph_desc(n,n,0) :- sph_kind(n,_).
+sph_desc(p,n,d+1) :- sph_desc(p,c,d), sph_edge(c,_,_,n), n > c.
+.decl sph_function(n: number, name: symbol)
+sph_function(n,s) :- sph_kind(n,k), (k="FunctionDef";k="AsyncFunctionDef"), option_item("astNames",n,s).
+.decl sph_name(n: number, name: symbol)
+sph_name(n,s) :- sph_kind(n,"Name"), option_item("astIds",n,s).
+sph_name(n,s) :- sph_kind(n,"Attribute"), option_item("astAttrs",n,s).
+.decl sph_decorator_name(n: number, name: symbol)
+sph_decorator_name(n,s) :- sph_name(n,s).
+sph_decorator_name(n,s) :- sph_kind(n,"Call"), sph_edge(n,"func",_,f), sph_decorator_name(f,s).
+.decl sph_chain_last(n: number, name: symbol)
+sph_chain_last(n,s) :- sph_name(n,s).
+sph_chain_last(n,s) :- sph_kind(n,"Call"), sph_edge(n,"func",_,f), sph_chain_last(f,s).
+.decl sph_chain_previous(n: number, name: symbol)
+sph_chain_previous(n,s) :- sph_kind(n,"Attribute"), sph_edge(n,"value",_,v), sph_chain_last(v,s).
+sph_chain_previous(n,s) :- sph_kind(n,"Call"), sph_edge(n,"func",_,f), sph_chain_previous(f,s).
+.decl sph_forbidden(n: number)
+sph_forbidden(n) :- sph_kind(n,"Call"), sph_edge(n,"func",_,f), sph_name(f,s), spt_native_name(s).
+sph_forbidden(n) :- sph_kind(n,"Call"), sph_edge(n,"func",_,f), sph_chain_previous(f,p),
+    sph_chain_last(f,s), spt_native_pair(p,s).
+sph_forbidden(n) :- sph_kind(n,"Call"), sph_edge(n,"func",_,f), sph_kind(f,"Attribute"),
+    option_item("astAttrs",f,s), spt_native_method(s).
+
+// Collection follows module and class bodies only. JSON preserves each class
+// stack component, including supplied names which contain periods or quotes.
+.decl sph_scope(n: number, stack: symbol)
+sph_scope(0,s) :- option("entryPoint","_collect_function_nodes"), option("helperClassStack",s).
+sph_scope(c,cat(@sql_substr(s,1,@sql_length(s)-1),@json_str(name),"]")) :- sph_scope(p,s),
+    sph_edge(p,"body",_,c), c > p, sph_kind(c,"ClassDef"), option_item("astNames",c,name), s="[]".
+sph_scope(c,cat(@sql_substr(s,1,@sql_length(s)-1),",",@json_str(name),"]")) :- sph_scope(p,s),
+    sph_edge(p,"body",_,c), c > p, sph_kind(c,"ClassDef"), option_item("astNames",c,name), s!="[]".
+.violation StateCollectedFunction(at: span, occurrence: number, class_stack: symbol) code "SPT_HELPER_COLLECT" "function {occurrence}"
+StateCollectedFunction(@place("input.py",1),n,s) :- sph_scope(p,s), sph_edge(p,"body",_,n), sph_function(n,_).
+
+.decl sph_input(slot: number, n: number, identity: number)
+sph_input(i,to_number(n),r) :- option_item("helperFunctionNodes",i,n), sph_ref(to_number(n),r).
+.decl sph_repr(identity: number, n: number)
+sph_repr(r,n) :- sph_input(_,_,r), n = min k : { sph_input(_,k,r) }.
+.decl sph_cache_root(identity: number, root: number)
+sph_cache_root(to_number(r),to_number(n)) :- option_item("helperCacheOwners",i,r), option_item("helperCacheRoots",i,n).
+.decl sph_body(identity: number, n: number)
+sph_body(r,n) :- sph_cache_root(r,root), sph_edge(root,"body",_,n).
+sph_body(r,n) :- sph_repr(r,f), !sph_cache_root(r,_), sph_desc(f,n,_).
+.decl sph_argument(f: number, arg: number, name: symbol)
+sph_argument(f,a,name) :- sph_function(f,_), sph_edge(f,"args",_,args), sph_edge(args,field,_,a),
+    (field="posonlyargs";field="args";field="kwonlyargs"), option_item("astArgNames",a,name).
+.decl sph_argument_type(f: number, name: symbol)
+sph_argument_type(f,name) :- sph_argument(f,a,_), sph_edge(a,"annotation",_,ann), sph_desc(ann,n,_), sph_name(n,name).
+.decl sph_root(identity: number)
+sph_root(r) :- sph_repr(r,f), sph_function(f,name), spt_planning_name(name).
+sph_root(r) :- sph_repr(r,f), sph_function(f,name), suffix("_lazy",name).
+sph_root(r) :- sph_repr(r,f), sph_edge(f,"decorator_list",_,d), sph_decorator_name(d,"pure_lazy").
+sph_root(r) :- sph_repr(r,f), sph_function(f,"pending_pipeline_effects").
+sph_root(r) :- sph_repr(r,f), sph_function(f,name), prefix("apply_",name), suffix("_effect",name).
+sph_root(r) :- sph_repr(r,f), sph_function(f,name), sph_argument(f,_,"runtime_refs"), prefix("materialize_",name), suffix("builder",name).
+sph_root(r) :- sph_repr(r,f), sph_argument(f,_,"runtime_refs"), sph_argument_type(f,"RuntimeBuilderSpec").
+sph_root(r) :- sph_repr(r,f), sph_function(f,name), suffix("sql_builder",name), !spt_planning_name(name), sph_argument_type(f,"CompilationContext").
+sph_root(r) :- sph_repr(r,f), sph_function(f,name), option("helperPath",p), spt_provider_path(p), spt_provider_token(t), contains(t,name).
+sph_root(r) :- sph_repr(r,_), option("helperNativeProvided","true"), option_item("helperNativeRefs",_,raw), r=to_number(raw).
+sph_root(r) :- sph_repr(r,_), option("helperNativeProvided","false"), spt_filter_path(0,p),
+    prefix("impl/common/l2070_server_plan/",p), sph_body(r,n), sph_forbidden(n).
+.decl sph_called(identity: number, name: symbol)
+sph_called(to_number(r),s) :- option("helperCalledProvided","true"), option_item("helperCallerRefs",i,r), option_item("helperCalledNames",i,s).
+sph_called(r,s) :- option("helperCalledProvided","false"), sph_body(r,c), sph_kind(c,"Call"), sph_edge(c,"func",_,f), sph_name(f,s).
+.decl sph_selected(identity: number)
+sph_selected(r) :- sph_root(r).
+sph_selected(t) :- sph_selected(r), sph_called(r,s), sph_repr(t,f), sph_function(f,s).
+.decl sph_last_slot(identity: number, slot: number)
+sph_last_slot(r,i) :- sph_input(_,_,r), i = max j : { sph_input(j,_,r) }.
+.violation StateSelectedFunction(at: span, ordinal: number, class_stack: symbol) code "SPT_HELPER_SELECT" "selected function {ordinal}"
+StateSelectedFunction(@place("input.py",1),i,stack) :- option("entryPoint","_select_reachable_function_nodes"),
+    sph_input(i,_,r), sph_selected(r), sph_last_slot(r,j), option_item("helperClassStacks",j,stack).
+.decl sph_walk_requested(identity: number)
+sph_walk_requested(r) :- option("entryPoint","_select_reachable_function_nodes"), sph_repr(r,_),
+    option("helperNativeProvided","false"), spt_filter_path(0,p), prefix("impl/common/l2070_server_plan/",p).
+sph_walk_requested(r) :- option("entryPoint","_select_reachable_function_nodes"), sph_selected(r), option("helperCalledProvided","false").
+.violation StateHelperCache(at: span, owner: number, occurrence: number, depth: number) code "SPT_HELPER_CACHE" "cached AST {occurrence}"
+StateHelperCache(@place("input.py",1),r,n,d) :- sph_walk_requested(r), !sph_cache_root(r,_), sph_repr(r,f), sph_desc(f,n,d).

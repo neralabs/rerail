@@ -2913,14 +2913,14 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-state-tripwires.rr",
-      "sha256": "49ac1713f94253cfd75c0d2ccaaf715ae1cff53c07654e49677b022546cb3acf",
+      "sha256": "0c965bb45ddd57d19fc217ffe00fcde423d067822e7b2c5f6e2e817e8c26cacb",
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_state_tripwires.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-state-tripwires-source.rr",
-      "sha256": "809e13ac749b4ba33a763de1b8684342f3a4d19020784a15fa693897c13af2e5",
+      "sha256": "24ae9d5942d9eedd6d63e53b308eb7b2d27d40b78aa74e0b5e57183a2d74bd26",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_serverplan_state_tripwires.py"
@@ -3890,44 +3890,46 @@
       "legacySha256": "7680e1e3f3e6d2d46ac491905ecd39bd79fb9a469f2d8e8c9566470bdcf7f032",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-state-tripwires.rr",
-      "ruleSha256": "49ac1713f94253cfd75c0d2ccaaf715ae1cff53c07654e49677b022546cb3acf",
+      "ruleSha256": "0c965bb45ddd57d19fc217ffe00fcde423d067822e7b2c5f6e2e817e8c26cacb",
       "migrationProgress": {
-        "status": "native-scanner-progress",
+        "status": "native-analysis-progress",
         "fullMigrationAcceptance": false,
         "checkpoint": {
-          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-state-tripwires-native-progress-final6c6.json.gz",
-          "sha256": "b04488b6994afeb00697924fd1fe77d5cb371bbb3c688d3240b670db05956f57"
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-state-tripwires-analysis-progress-final6c6.json.gz",
+          "sha256": "132e244dc9df3272167ac93b32d34cd14eb3f2d952949bf3592718c3be53f5b1"
         },
         "summary": {
           "snapshot": {
             "originalAssertions": 80,
-            "passed": 76,
-            "failed": 4,
+            "passed": 79,
+            "failed": 1,
             "fullReturnedValuesMatched": 77,
             "positiveReturnsMatched": 64,
-            "nativeCalls": 81
+            "nativeCalls": 85,
+            "nativeScopeAssertionTransfers": 2
           },
           "workspace": {
             "originalAssertions": 80,
-            "passed": 76,
-            "failed": 4,
+            "passed": 79,
+            "failed": 1,
             "fullReturnedValuesMatched": 77,
             "positiveReturnsMatched": 64,
-            "nativeCalls": 81
+            "nativeCalls": 85,
+            "nativeScopeAssertionTransfers": 2
           }
         },
         "freshCasesPerAPI": 18,
+        "analysisCasesPerAPI": 29,
+        "helperCasesPerAPI": 31,
+        "controls": 4,
         "remaining": [
-          "Four original assertions still fail: plugin construction; function-node/reachability helpers; selective fact analysis; selective runtime-authority analysis.",
+          "The original plugin-construction assertion still fails: its guarded source implementation has no native adapter.",
           "The two owned scope assertions and the full production/plugin contract.",
-          "Structured supplied ASTs, all project map options, project signed-work filtering, loader errors and mutable configuration.",
+          "Structured scanner supplied ASTs, all project map options, project signed-work filtering, loader errors and mutable configuration.",
           "Ratchet reporting, signature failure/admin paths, CLI enforcement and persistent workspace acceptance."
         ],
         "failedOriginalCases": [
-          "scripts/tests/test_lint_serverplan_state_tripwires.py::test_function_fact_analysis_excludes_unreachable_functions",
-          "scripts/tests/test_lint_serverplan_state_tripwires.py::test_plugin_factory_does_not_scan_project_sources",
-          "scripts/tests/test_lint_serverplan_state_tripwires.py::test_reachable_function_selection_reuses_collected_call_facts",
-          "scripts/tests/test_lint_serverplan_state_tripwires.py::test_runtime_authority_analysis_skips_unreachable_functions"
+          "scripts/tests/test_lint_serverplan_state_tripwires.py::test_plugin_factory_does_not_scan_project_sources"
         ]
       },
       "migrationProgressHistory": [

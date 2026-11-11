@@ -709,7 +709,7 @@ class Suite:
         self.collected = [item.nodeid for item in items]
         items[:] = items[self.part::self.parts]
         for item in items:
-            if item.path.name not in {'test_lint_connection_caches.py', 'test_lint_no_source_inspection.py', 'test_lint_hasattr_async.py', 'test_lint_admin_async_purity.py', 'test_lint_async_executor.py', 'test_lint_dynamic_module_loading.py', 'test_lint_type_safety_patterns.py'}:
+            if item.path.name not in {'test_lint_connection_caches.py', 'test_lint_no_source_inspection.py', 'test_lint_hasattr_async.py', 'test_lint_admin_async_purity.py', 'test_lint_async_executor.py', 'test_lint_dynamic_module_loading.py', 'test_lint_type_safety_patterns.py', 'test_lint_serverplan_state_tripwires.py'}:
                 continue
             source_lines, source_start = inspect.getsourcelines(item.obj)
             original = textwrap.dedent(''.join(source_lines))
@@ -718,6 +718,10 @@ class Suite:
             function.decorator_list = []
             changed = []
             operations = []
+            if item.path.name=='test_lint_serverplan_state_tripwires.py':
+                from state_assertion_translation import translate
+                operations=translate(tree)
+                changed.extend(op['line'] for op in operations)
 
             class Searches(ast.NodeTransformer):
                 def visit_Attribute(self, node):
@@ -772,13 +776,19 @@ class Suite:
             namespace = {**item.obj.__globals__, '_rr_pattern_search': self.pattern_search,
                          '_rr_anchored_match': self.anchored_pattern_match,
                          '_rr_allowed_pattern_witness': self.allowed_pattern_witness, '_rr_RegexMatch': NativeRegexMatch}
+            if item.path.name=='test_lint_serverplan_state_tripwires.py':
+                from state_tripwires_port import analysis_contexts
+                namespace['_rr_state_analysis_scope']=lambda path,source,family: analysis_contexts(
+                    self,self.modules['serverplan_state_tripwires'],path,source)[family]
             exec(compile(tree, str(item.path), 'exec'), namespace)
             item.obj = namespace[function.name]
             self.translations.append(dict(test=item.nodeid, sourceSha256=sha(original.encode()),
                                           translatedSha256=sha(ast.unparse(tree).encode()),
                                           sites=[source_start + line - 1 for line in changed],
                                           operations=[dict(site=source_start + op['line'] - 1, kind=op['kind']) for op in operations],
-                                          operation='Native regex searches and match-type counterparts; original assertion predicates retained'))
+                                          operation=('Native analysis-scope observations; original assertion predicates retained'
+                                              if item.path.name=='test_lint_serverplan_state_tripwires.py' else
+                                              'Native regex searches and match-type counterparts; original assertion predicates retained')))
 
     @pytest.hookimpl(tryfirst=True)
     def pytest_runtest_setup(self, item):

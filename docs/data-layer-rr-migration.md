@@ -110,12 +110,14 @@ The initial snapshot contained 43 target drafts and 57 absent translations.
 The current inventory has **13 accepted ports, 86 drafts, and one absent translation**.
 This means 99 translation candidates exist. It does not mean 99 migrations have passed acceptance.
 The absent translation is `serverplan_quality`.
-The State Tripwires candidate remains a draft. Its original module passes 76 of 80 assertions through each native API.
+The State Tripwires candidate remains a draft. Its original module passes 79 of 80 assertions through each native API.
 Both APIs match all 77 recorded scanner returns, including 64 positive returns.
-The four failures concern plugin construction, function-node/reachability helpers, and selective fact and runtime-authority analysis.
-The selection tests currently fail their Python observer assertions. The native implementation must enforce and expose the same selection guarantees.
+The remaining failure concerns plugin construction. Function collection and reachability now execute native rules over supplied AST columns.
+The two selection tests observe actual native inference scopes. Their assertion predicates remain unchanged, including the nested collection-type assertion.
+All 31 helper contracts and 29 analysis-scope contracts pass through both APIs.
+Four native mutation controls reject removal of the fact or runtime-authority selection guards.
 Its two owned scope assertions and its broader production, supplied-AST, options, signing, CLI, and update contracts remain open.
-The [State Tripwires checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-state-tripwires-native-progress-final6c6.json.gz) retains these failures alongside the passing scanner observations.
+The [State Tripwires checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-state-tripwires-analysis-progress-final6c6.json.gz) retains the remaining failure and all passing observations.
 All 18 fresh contracts pass through both APIs on the same engine, including 15 positives and three clean cases.
 `no_api_root_imports` passes its complete recorded contract on Final `ec3cfe1b7`.
 Its [admission receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-api-imports-complete-finalec3.json.gz) verifies 467 native executions.
@@ -3206,3 +3208,30 @@ The inventory is 12 accepted ports, 84 drafts, and four absent translations, acr
 No full-repository cold benchmark ran. No Linear ticket was created.
 
 The final tooling run passes 394 tests and 165 subtests in 12.67 seconds elapsed.
+
+### State Tripwires analysis selection and supplied helper facts, 2026-11-10
+
+The native collector now follows module and direct class bodies, matching the source helper.
+It excludes definitions beneath functions and control statements. Caller-supplied class stacks preserve each component.
+Selection follows called leaf names, including every same-name method. Finding resolution retains its narrower class-aware graph.
+Quoted annotations do not supply AST names. Decorator and native-call classification use structured expressions.
+
+Native helper inputs preserve AST identity, duplicate function occurrences, explicit empty fact sets, and existing body caches.
+Missing caches contain the source's breadth-first walk order. Supplied call facts avoid another AST walk.
+The helper contract includes mutated AST names, alternate cached bodies, and duplicate identities with different class stacks.
+All 31 source-recorded helper cases pass through both native APIs.
+
+Rich facts and runtime-authority inference now require selected function contexts.
+Both native APIs match all 29 recorded scope-and-finding cases. Fifty unrelated functions remain outside inference.
+Removing the fact guard expands both scopes from two functions to 52. Removing the runtime guard expands only that scope.
+All four mutated runs fail the scope comparison as required.
+
+The original suite now passes 79 of 80 cases through each API. Previously, it passed 76.
+Its 77 complete scanner returns still match, including 64 positive returns. All 18 fresh scanner contracts also pass through both APIs.
+The two observer transfers preserve every original assertion predicate and record their source and translated hashes.
+Five transfer tests check predicate retention and rejection of empty, excessive, and incorrectly typed scope results.
+All 421 tooling tests pass.
+
+Plugin construction still fails at the source-execution guard. This checkpoint does not claim plugin, production, CLI, or full migration acceptance.
+The migration inventory remains 13 accepted ports, 86 drafts, and one absent translation.
+No engine rebuild or full-repository cold benchmark was required.
