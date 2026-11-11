@@ -44,6 +44,9 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("lower", &[Text], Text),
     // `.rr`'s `cat(a, b, …)`, two at a time: the native engine's concatenation (SQL concatenates with `||`).
     ("str_concat", &[Text, Text], Text),
+    // `str_concat` run backwards: the text between a prefix and a suffix, none when the text has not both
+    // (`simplify::concat_inverses`: `$v = cat($a, $x, $b)` with `$v` bound binds `$x`).
+    ("str_between", &[Text, Text, Text], Text),
     // -1, 0 or 1 as `a` sorts before, with or after `b` (by bytes): the order of two symbols (`plan::lower`).
     ("str_cmp", &[Text, Text], Number),
     // Soufflé's `to_number`: a decimal integer's value; no value for other text.
@@ -219,6 +222,7 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "qname" => Some(format!("{}#{}", t(0), t(1))),
         "pkg_up" => Some(pkg_up(t(0), numbers[0])),
         "head" => Some(t(0).split('.').next().unwrap_or("").to_owned()),
+        "str_between" => t(0).strip_prefix(t(1)).and_then(|rest| rest.strip_suffix(t(2))).map(str::to_owned),
         "dir" => Some(t(0).rsplit_once('/').map_or("", |(d, _)| d).to_owned()),
         "join" => Some(join(t(0), t(1))),
         "glob_sub" => Some(glob_sub(t(0), t(1), t(2))),

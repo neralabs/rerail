@@ -6336,7 +6336,8 @@ mod tests {
             registry.remove_batch(batch);
         }
         let anchor_scan = metal_backend::prepare_anchor_scan(&programs, &files).unwrap();
-        let anchor_pipeline_count = metal_backend::pipeline_cache_len();
+        // This thread's compilations: the cache is the process's, and other tests fill it at the same time.
+        let anchor_pipeline_count = metal_backend::pipelines_compiled_here();
         let gpu_anchors = anchor_scan.run().unwrap();
         assert_eq!(anchor_scan.run().unwrap(), gpu_anchors);
         let semantic = |mut batch: Vec<Vec<Vec<Output>>>| {
@@ -6360,7 +6361,7 @@ mod tests {
             Some(&[vec![0b01], vec![0b10]]),
         )
         .unwrap();
-        assert_eq!(metal_backend::pipeline_cache_len(), anchor_pipeline_count);
+        assert_eq!(metal_backend::pipelines_compiled_here(), anchor_pipeline_count);
         let filtered = filtered_scan.run().unwrap();
         assert_eq!(filtered[0][0], gpu_anchors[0][0]);
         assert!(filtered[0][1].is_empty());

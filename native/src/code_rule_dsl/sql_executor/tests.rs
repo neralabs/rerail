@@ -569,7 +569,7 @@ named(n, x) :- def(n, x), x = "g".
     let out = dir.join("out");
     let report = crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     assert_eq!(report.memo, (0, 0), "the run memoises every file");
-    let store = std::env::var("RERAIL_TAPE_CACHE").map_or_else(|_| std::env::temp_dir().join("rerail-tape-cache.sqlite"), std::path::PathBuf::from);
+    let store = crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().expect("the tape cache");
     let mut executor = CodeRuleSqlExecutor::new(store.to_string_lossy().into_owned()).unwrap();
     let bound: Value = serde_json::from_str(&executor.bind_corpus(dir.to_string_lossy().into_owned(), None).unwrap()).unwrap();
     // `def` is handed on as rows; `named`, a file-local output, as its rendered lines. `dup` reads

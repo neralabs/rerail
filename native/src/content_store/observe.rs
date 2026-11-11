@@ -207,6 +207,10 @@ pub struct Observer {
     /// leaves the outer run's roots as they are.
     roots: Vec<Root>,
     flushes: u64,
+    /// Runs begun and not yet flushed (`begin`, `flush`; a run inside a run counts twice). A root is asked of the
+    /// journal only inside a run, and its answer trusted until the run ends: a read outside every run (a rule file
+    /// read again by a process that runs nothing between) checks by `stat`, as without a journal.
+    open: u32,
     /// The roots the store has a cursor for (`journal`): a path under one is watched as the run first reads it.
     stored_roots: Vec<PathBuf>,
     /// Where the journal's cookies are written: beside the store.
@@ -221,13 +225,13 @@ struct Root {
     /// Its canonical form: a canonical answer under it is under the root.
     real: PathBuf,
     /// The journal's cursor as it was asked (`mark`): what it names later is after this ask.
-    cursor: Option<u64>,
+    cursor: Option<String>,
     /// The paths resolved this run under a root in stat mode: their canonical answers are kept, the rest dropped.
     resolved: HashSet<PathBuf>,
     /// The journal said what changed under it since the run before: the answers kept under it hold.
     trusted: bool,
     /// The cursor to store at the run's end, once the answers it did not check are forgotten (not trusted only).
-    pending: Option<(Option<[u8; 16]>, u64)>,
+    pending: Option<(Option<[u8; 16]>, String)>,
     /// The paths under it this run checked by `stat` or recorded (not trusted only).
     checked: HashSet<PathBuf>,
 }
@@ -299,7 +303,7 @@ impl Observer {
                 Some(keys.iter().filter_map(|k| k.splitn(3, ':').nth(2)).map(PathBuf::from).collect())
             })
             .unwrap_or_default();
-        Observer { db, entries: HashMap::new(), dirty: Vec::new(), aliases: HashMap::new(), new_aliases: Vec::new(), canon: HashMap::new(), new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, stored_roots, cookies }
+        Observer { db, entries: HashMap::new(), dirty: Vec::new(), aliases: HashMap::new(), new_aliases: Vec::new(), canon: HashMap::new(), new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, cookies }
     }
 
     /// `path` made absolute, as entries are kept.
@@ -547,6 +551,7 @@ impl Observer {
     /// asked of the journal again (`watch`).
     pub fn begin(&mut self) {
         self.git.clear();
+        self.open += 1;
     }
 
     /// Watches `roots` for this run (decision 0105): asks the journal what changed under each since the run that
@@ -554,7 +559,14 @@ impl Observer {
     /// the run ends. A root the journal cannot speak for is checked by `stat`, and its unchecked answers forgotten
     /// at the run's end (`flush`). Without a store there is nothing kept across runs to trust.
     pub fn watch(&mut self, roots: &[PathBuf]) {
+        // Without the journal, every path is checked by its `stat`, as it is where the journal cannot say.
+        if !journal_on() {
+            return;
+        }
         let (Some(_), Some(cookies)) = (self.db.as_ref(), self.cookies.clone()) else { return };
+        if self.open == 0 {
+            return;
+        }
         for root in roots {
             let root = self.abs(root);
             if self.roots.iter().any(|r| r.asked == self.flushes && root.starts_with(&r.path)) {
@@ -568,44 +580,56 @@ impl Observer {
             let volume = super::journal::volume(&root);
             // A cursor is of the volume it was taken on: kept under the volume's id with the root.
             let cursor = volume.and_then(|v| {
-                self.db.as_ref()?.query_row("SELECT value FROM observer_meta WHERE key = ?1", [cursor_key(&root, v)], |r| r.get::<_, i64>(0)).optional().ok().flatten()
+                self.db.as_ref()?.query_row("SELECT value FROM observer_meta WHERE key = ?1", [cursor_key(&root, v)], |r| r.get::<_, rusqlite::types::Value>(0)).optional().ok().flatten()
             });
-            let cursor = cursor.map(|c| c as u64);
-            match super::journal::since(std::slice::from_ref(&root), cursor, &cookies) {
+            // A cursor is the journal's own text (an FSEvents id, a Watchman clock); one kept as a number is an id.
+            let cursor = cursor.and_then(|c| match c {
+                rusqlite::types::Value::Text(t) => Some(t),
+                rusqlite::types::Value::Integer(i) => Some(i.to_string()),
+                _ => None,
+            });
+            match super::journal::since(std::slice::from_ref(&root), cursor.as_deref(), &cookies) {
                 super::journal::Since::Changed { paths, cursor: next } => {
-                    self.forget(&root, &paths, volume, next);
+                    self.forget(&root, &paths, volume, &next);
                     self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default() });
                 }
                 super::journal::Since::Lost { cursor, .. } => {
                     let pending = cursor.map(|c| (volume, c));
-                    self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: pending.map(|(_, c)| c), path: root, asked: self.flushes, trusted: false, pending, checked: Default::default(), resolved: Default::default() });
+                    self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: pending.as_ref().map(|(_, c)| c.clone()), path: root, asked: self.flushes, trusted: false, pending, checked: Default::default(), resolved: Default::default() });
                 }
             }
         }
     }
 
-    /// Watches `roots` and gives the journal's cursor as it was asked for them (the earliest, for several): a record
-    /// made after this, of what is under them, holds while the journal names no change in what it read since
-    /// (`unchanged_since`). `None` where the journal has no cursor to give.
-    pub fn mark(&mut self, roots: &[PathBuf]) -> Option<u64> {
+    /// Watches `roots` and gives the journal's cursor for each as it was asked: a record made after this, of what is
+    /// under them, holds while the journal names no change in what it read since (`changed_since`). `None` where the
+    /// journal has no cursor to give.
+    pub fn mark(&mut self, roots: &[PathBuf]) -> Option<Vec<String>> {
         self.watch(roots);
-        let mut at: Option<u64> = None;
-        for root in roots {
-            let root = self.abs(root);
-            let c = self.roots.iter().find(|r| r.asked == self.flushes && root.starts_with(&r.path))?.cursor?;
-            at = Some(at.map_or(c, |a| a.min(c)));
-        }
-        at
+        roots
+            .iter()
+            .map(|root| {
+                let root = self.abs(root);
+                self.roots.iter().find(|r| r.asked == self.flushes && root.starts_with(&r.path))?.cursor.clone()
+            })
+            .collect()
     }
 
-    /// What the journal names as changed under `roots` since `cursor` (`mark`'s), decision 0105: `None` where it
-    /// cannot say.
-    pub fn changed_since(&mut self, roots: &[PathBuf], cursor: u64) -> Option<Vec<PathBuf>> {
+    /// What the journal names as changed under each of `roots` since its cursor in `cursors` (`mark`'s), decision
+    /// 0105: `None` where it cannot say.
+    pub fn changed_since(&mut self, roots: &[PathBuf], cursors: &[String]) -> Option<Vec<PathBuf>> {
         let cookies = self.cookies.clone().filter(|_| self.db.is_some())?;
-        match super::journal::since(roots, Some(cursor), &cookies) {
-            super::journal::Since::Changed { paths, .. } => Some(paths),
-            super::journal::Since::Lost { .. } => None,
+        if roots.len() != cursors.len() {
+            return None;
         }
+        let mut named = Vec::new();
+        for (root, cursor) in roots.iter().zip(cursors) {
+            match super::journal::since(std::slice::from_ref(root), Some(cursor), &cookies) {
+                super::journal::Since::Changed { paths, .. } => named.extend(paths),
+                super::journal::Since::Lost { .. } => return None,
+            }
+        }
+        Some(named)
     }
 
     /// Watches the root above `path` when no root this run watches holds it: the stored root above it (one the
@@ -627,7 +651,7 @@ impl Observer {
 
     /// Forgets the answers kept for each of `paths` and under it, and for its directory (whose listing it is in), in
     /// memory and in the store, with `root`'s cursor moved to `cursor` in the same transaction.
-    fn forget(&mut self, root: &Path, paths: &[PathBuf], volume: Option<[u8; 16]>, cursor: u64) {
+    fn forget(&mut self, root: &Path, paths: &[PathBuf], volume: Option<[u8; 16]>, cursor: &str) {
         // A path named is forgotten with what is under it (a directory moved or removed takes its files); its
         // directory only for its own answer, the listing the path is in.
         let gone: Vec<PathBuf> = paths.to_vec();
@@ -657,7 +681,7 @@ impl Observer {
                     forgotten += one.execute([l.to_string_lossy()]).unwrap_or(0) as u64;
                 }
                 if let Some(v) = volume {
-                    let _ = tx.execute("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![cursor_key(root, v), cursor as i64]);
+                    let _ = tx.execute("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![cursor_key(root, v), cursor]);
                 }
             }
             let _ = tx.commit();
@@ -786,6 +810,7 @@ impl Observer {
         self.write_dirty();
         self.settle_roots();
         self.flushes += 1;
+        self.open = self.open.saturating_sub(1);
     }
 
     fn write_dirty(&mut self) {
@@ -831,7 +856,7 @@ impl Observer {
     /// in memory and in the store, and stores the cursor taken as the run began, in one transaction. Every answer
     /// left under the root then held as of that cursor, so the next run may trust the journal from it.
     fn settle_roots(&mut self) {
-        type Settled = (PathBuf, Option<[u8; 16]>, u64, HashSet<PathBuf>, HashSet<PathBuf>);
+        type Settled = (PathBuf, Option<[u8; 16]>, String, HashSet<PathBuf>, HashSet<PathBuf>);
         let roots: Vec<Settled> = self
             .roots
             .iter_mut()
@@ -863,7 +888,7 @@ impl Observer {
                     let _ = drop_key.execute([k]);
                 }
                 if let Some(v) = volume {
-                    let _ = tx.execute("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![cursor_key(&root, v), cursor as i64]);
+                    let _ = tx.execute("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![cursor_key(&root, v), cursor]);
                 }
             }
             let _ = tx.commit();
@@ -1166,4 +1191,27 @@ mod tests {
         assert_eq!(decode_listing(&encode_listing(&[]).unwrap()).unwrap(), Vec::<(String, bool)>::new());
         assert!(encode_listing(&[("a\nb".to_owned(), false)]).is_none());
     }
+}
+
+/// Whether the observer asks the file system's journal (decision 0105). On unless `RERAIL_JOURNAL=off`, or turned off
+/// by `set_journal`: the engine's tests do (each run of a test waits for its cookie's event, up to `journal`'s `WAIT`, and a test
+/// makes many runs), and the journal's own tests here keep it on.
+static JOURNAL: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+fn journal_on() -> bool {
+    use std::sync::atomic::Ordering;
+    match JOURNAL.load(Ordering::Relaxed) {
+        1 => true,
+        2 => false,
+        _ => {
+            let on = !std::env::var("RERAIL_JOURNAL").is_ok_and(|v| v == "off");
+            JOURNAL.store(if on { 1 } else { 2 }, Ordering::Relaxed);
+            on
+        }
+    }
+}
+
+/// Turns the observer's use of the journal on or off for the process, whatever `RERAIL_JOURNAL` says.
+pub fn set_journal(on: bool) {
+    JOURNAL.store(if on { 1 } else { 2 }, std::sync::atomic::Ordering::Relaxed);
 }

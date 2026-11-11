@@ -1961,6 +1961,61 @@ pub fn output_rows(conn: &Connection, table: &str, text: &[bool]) -> Result<Opti
     Ok(Some(out))
 }
 
+/// The rows of `src`, an input bound on `conn`, as an output is read (`output_rows`): its columns `text` gives as the
+/// symbols' text, the others as integers. An input the run hands on as an output is read where it is bound.
+pub fn source_rows(conn: &Connection, src: &dyn crate::code_rule_dsl::facts::vtab::Source, text: &[bool]) -> Result<Vec<Vec<Value>>> {
+    let syms = symbols(conn)?;
+    let syms = syms.read().unwrap();
+    let k = src.columns().len();
+    let mut out = Vec::with_capacity(src.len());
+    for row in 0..src.len() {
+        let mut vals = Vec::with_capacity(k);
+        for c in 0..k {
+            let v = src.value(row, c);
+            vals.push(if text.get(c).copied().unwrap_or(false) {
+                if v < 0 || v as usize >= syms.len() {
+                    return Err(err(format!("no symbol {v}")));
+                }
+                Value::Text(syms.name(v))
+            } else {
+                Value::Integer(v)
+            });
+        }
+        out.push(vals);
+    }
+    Ok(out)
+}
+
+/// `finding` decoded where the engine holds it: each (check, node) with the node's document's path and the node's
+/// start, from the bound `node` and `doc` inputs, as SQL's join of `finding` with them gives (each distinct).
+/// `None`: the run holds no `finding`, or `node` or `doc` is not bound in place.
+pub fn finding_rows(conn: &Connection) -> Result<Option<Vec<(String, String, i64)>>> {
+    let Some(rel) = held(conn, "finding") else { return Ok(None) };
+    let (Some(node), Some(doc)) = (crate::code_rule_dsl::facts::vtab::bound_source(conn, "node"), crate::code_rule_dsl::facts::vtab::bound_source(conn, "doc")) else { return Ok(None) };
+    let col = |src: &dyn crate::code_rule_dsl::facts::vtab::Source, name: &str| src.columns().iter().position(|c| c == name);
+    let (Some(nn), Some(nd), Some(ns), Some(dd), Some(dp)) = (col(node.as_ref(), "n"), col(node.as_ref(), "d"), col(node.as_ref(), "start"), col(doc.as_ref(), "d"), col(doc.as_ref(), "path")) else { return Ok(None) };
+    let syms = symbols(conn)?;
+    let syms = syms.read().unwrap();
+    let name = |v: i64| if v < 0 || v as usize >= syms.len() { Err(err(format!("finding: no symbol {v}"))) } else { Ok(syms.name(v)) };
+    let mut out = Vec::with_capacity(rel.rows());
+    for id in 0..rel.len() {
+        if is_dead(&rel.dead, id as u32) {
+            continue;
+        }
+        let row = rel.row(id);
+        let Some(ks) = node.lookup(nn, &[row[1]]) else { return Ok(None) };
+        for k in ks {
+            let Some(ds) = doc.lookup(dd, &[node.value(k, nd)]) else { return Ok(None) };
+            for d in ds {
+                out.push((name(row[0])?, name(doc.value(d, dp))?, node.value(k, ns)));
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    Ok(Some(out))
+}
+
 /// Puts a relation kept from an earlier run into `conn`'s next run as the input `table`: its strata read it in place,
 /// with the indexes it has (`r:` sources), not copied into a source and indexed again. The run's planner takes the
 /// names (`adopted`).
@@ -2226,7 +2281,7 @@ impl InRel {
                 best
             };
             // (grow ms, probe-weighted ms over what it ends as, merge-once ms or 0, probe ns, rows read by merges)
-            let mut sums = [(0.0f64, 0.0f64, 0.0f64, 0.0f64, 0usize); 4];
+            let mut sums = [(0.0f64, 0.0f64, 0.0f64, 0.0f64, 0usize); 6];
             for (oi, order) in orders.iter().enumerate() {
                 let len = prefix[oi];
                 let ks = keys(order, len);
@@ -2245,6 +2300,10 @@ impl InRel {
                 let grow = t.elapsed().as_secs_f64() * 1e3;
                 let ns = best_ns(&|| for key in &ks { std::hint::black_box(tagged.count(rows, k, key)); });
                 sums[1] = (sums[1].0 + grow, sums[1].1 + w * ns / 1e6, 0.0, sums[1].3 + ns, sums[1].4 + tagged.row_compares);
+                // 4: the same, its probes from the tag's interpolated place (mldb's PathIndex); the merges' tag
+                // collisions (ties of different leading values).
+                let ns = best_ns(&|| for key in &ks { std::hint::black_box(tagged.count_interp(rows, k, key)); });
+                sums[4] = (sums[4].0 + grow, sums[4].1 + w * ns / 1e6, 0.0, sums[4].3 + ns, sums[4].4 + tagged.collisions);
                 // 2: never merged; merged once where its probes pay for it.
                 let t = Instant::now();
                 let mut lazy = ordered::Runs::with_fanout(order.clone(), usize::MAX);
@@ -2267,9 +2326,17 @@ impl InRel {
                 let t = Instant::now();
                 let one = lazy_t.merged_all(rows, k);
                 let merge_ms = t.elapsed().as_secs_f64() * 1e3;
+                let merge_ms_t = merge_ms;
                 let ns_one = best_ns(&|| for key in &ks { std::hint::black_box(one.count(rows, k, key)); });
                 let (over_runs, merged_then) = (w * ns_runs / 1e6, merge_ms + w * ns_one / 1e6);
                 let (probe_ms, merge_ms, ns) = if merged_then < over_runs { (w * ns_one / 1e6, merge_ms, ns_one) } else { (over_runs, 0.0, ns_runs) };
+                // 5: the same, probed from the tags' interpolated places.
+                let merge_once = merge_ms_t;
+                let ns_runs = best_ns(&|| for key in &ks { std::hint::black_box(lazy_t.count_interp(rows, k, key)); });
+                let ns_one = best_ns(&|| for key in &ks { std::hint::black_box(one.count_interp(rows, k, key)); });
+                let (over_runs, merged_then) = (w * ns_runs / 1e6, merge_once + w * ns_one / 1e6);
+                let (probe_i, merge_i, ns_i) = if merged_then < over_runs { (w * ns_one / 1e6, merge_once, ns_one) } else { (over_runs, 0.0, ns_runs) };
+                sums[5] = (sums[5].0 + grow, sums[5].1 + probe_i, sums[5].2 + merge_i, sums[5].3 + ns_i, sums[5].4 + usize::from(merge_i > 0.0));
                 sums[3] = (sums[3].0 + grow, sums[3].1 + probe_ms, sums[3].2 + merge_ms, sums[3].3 + ns, sums[3].4 + usize::from(merge_ms > 0.0));
             }
             let unprobed = probes.iter().filter(|&&p| p == 0).count();
@@ -2311,7 +2378,7 @@ impl InRel {
     /// The spike's growth totals since the last take: today's ms, the mixed ms, offers, rows held, today's bytes, the
     /// mixed bytes, and the mixed ms by part (set, placed, orders).
     /// The orders' totals by variant since the last take (`VARIANTS`).
-    pub fn index_spike_variants() -> ([(f64, f64, f64, f64, usize); 4], usize, usize) {
+    pub fn index_spike_variants() -> ([(f64, f64, f64, f64, usize); 6], usize, usize) {
         VARIANTS.with(|f| std::mem::take(&mut *f.borrow_mut()))
     }
     pub fn index_spike_grown() -> Grown {
@@ -2518,7 +2585,7 @@ thread_local! {
     /// The orders grown four ways (`InRel::grow_spike`: eager, tagged, lazy, lazy tagged): grow ms, probe-weighted
     /// ms, merge-once ms, probe ns summed over orders, and rows read by merges (eager, tagged) or orders merged once
     /// (lazy); then orders, and orders no probe read.
-    static VARIANTS: std::cell::RefCell<([(f64, f64, f64, f64, usize); 4], usize, usize)> = const { std::cell::RefCell::new(([(0.0, 0.0, 0.0, 0.0, 0); 4], 0, 0)) };
+    static VARIANTS: std::cell::RefCell<([(f64, f64, f64, f64, usize); 6], usize, usize)> = const { std::cell::RefCell::new(([(0.0, 0.0, 0.0, 0.0, 0); 6], 0, 0)) };
 }
 
 /// Tests: this thread's count steps build their tables at their first probe.
@@ -3307,6 +3374,18 @@ impl crate::code_rule_dsl::facts::vtab::Source for Stored {
     }
     fn composite(&self) -> bool { true }
     fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<Vec<usize>> {
+        // Omitted columns read as zero, just as `value` does. They have no array to sort or probe.
+        // Remove their satisfied predicates before using an order over the columns that are held.
+        if equal.iter().any(|&(c, _)| self.values[c].get().is_none()) {
+            if equal.iter().any(|&(c, v)| self.values[c].get().is_none() && v != 0) {
+                return Some(Vec::new());
+            }
+            let held: Vec<_> = equal.iter().copied().filter(|&(c, _)| self.values[c].get().is_some()).collect();
+            return self.lookup_all(&held);
+        }
+        if equal.is_empty() {
+            return Some((0..self.len()).collect());
+        }
         let cols: Vec<usize> = equal.iter().map(|e| e.0).collect();
         let (on, order) = self.order(&cols);
         let by: Vec<(&[i64], i64)> = on[..cols.len()].iter().map(|&c| (self.col(c), equal.iter().find(|e| e.0 == c).map_or(0, |e| e.1))).collect();
@@ -3321,14 +3400,17 @@ impl crate::code_rule_dsl::facts::vtab::Source for Stored {
     /// (`sorted_rows`), or builds its own over a filtered view.
     fn indexed(&self, _: usize) -> bool { true }
     fn lookup(&self, c: usize, values: &[i64]) -> Option<Vec<usize>> {
+        if self.values[c].get().is_none() {
+            return Some(if values.contains(&0) { (0..self.len()).collect() } else { Vec::new() });
+        }
         let mut out: Vec<usize> = values.iter().flat_map(|&v| self.rows_of(c, v).iter().map(|&r| r as usize)).collect();
         out.sort_unstable();
         Some(out)
     }
     /// A column held nowhere (no rule names it, `columns_source`) reads as 0.
     fn value(&self, row: usize, c: usize) -> i64 { self.col(c).get(row).copied().unwrap_or(0) }
-    fn sorted_rows(&self, c: usize, v: i64) -> Option<&[u32]> { Some(self.rows_of(c, v)) }
-    fn sorts_rows(&self, _: usize) -> bool { true }
+    fn sorted_rows(&self, c: usize, v: i64) -> Option<&[u32]> { self.values[c].get().map(|_| self.rows_of(c, v)) }
+    fn sorts_rows(&self, c: usize) -> bool { self.values[c].get().is_some() }
 }
 /// A relation held in memory as columns (`None`: a column no rule reads, which reads as 0), read in place: a
 /// probe on a column is a slice of its sorted index, built on first use.
@@ -4418,6 +4500,21 @@ mod posted_tests {
         let mut want = crate::code_rule_dsl::facts::vtab::syntax::measured(&Unknown(plain));
         want.push(("x".to_owned(), 60, 60, 60, 60));
         assert_eq!(held.statistics().expect("held rows keep statistics"), want);
+    }
+
+    #[test]
+    fn omitted_columns_obey_zero_semantics_in_indexed_probes() {
+        for values in [vec![3], vec![3, 1, 3], vec![]] {
+            let source = columns_source(vec!["key".into(), "omitted".into()], vec![Some(values), None]);
+            for equal in [vec![], vec![(1, 0)], vec![(1, 7)], vec![(0, 3), (1, 0)], vec![(0, 3), (1, 7)]] {
+                let want: Vec<usize> = source.filter_eq(&equal).into_iter().map(|r| r as usize).collect();
+                assert_eq!(source.lookup_all(&equal), Some(want), "{equal:?}");
+            }
+            assert_eq!(source.lookup(1, &[0]), Some((0..source.len()).collect()));
+            assert_eq!(source.lookup(1, &[7]), Some(Vec::new()));
+            assert!(!source.sorts_rows(1));
+            assert_eq!(source.sorted_rows(1, 0), None);
+        }
     }
 
     /// A source with no statistics of its own, so `measured` measures it.

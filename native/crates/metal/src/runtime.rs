@@ -742,12 +742,26 @@ pub fn pipeline_named_constant(
         }
         pipelines.insert(key, pipeline.clone());
     }
+    #[cfg(any(test, feature = "test-hooks"))]
+    COMPILED_HERE.set(COMPILED_HERE.get() + 1);
     Ok(pipeline)
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    /// Pipelines this thread compiled (the process's cache is shared with every other test's).
+    static COMPILED_HERE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn pipeline_cache_len() -> usize {
     PIPELINES.lock().map_or(0, |pipelines| pipelines.len())
+}
+
+/// The pipelines this thread has compiled, not found in the cache: a test's own, whatever other tests compile.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn pipelines_compiled_here() -> usize {
+    COMPILED_HERE.get()
 }
 
 #[cfg(test)]

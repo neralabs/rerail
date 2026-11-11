@@ -15,8 +15,10 @@
 #define W W32
 
 // Take a bit-compressed representation of rows, and turn it into a
-// decompressed version with one float per row (the sign gives the
-// label, and the magnitude gives the weight).
+// decompressed version with two floats per row: its weights to false and
+// true (a label's side has the weight; a regression row's target t, by
+// example, gives w (1 - t) and w t). Upstream had one float, the sign giving
+// the label and the magnitude the weight.
 //
 // This is a 1D kernel over the array of rows, not very complicated
 
@@ -27,12 +29,14 @@ struct DecompressRowsKernelArgs {
     uint32_t numRows;
     WeightFormat weightFormat;
     float weightMultiplier;
+    uint32_t numTargets;
 };
 
 __kernel void
 decompressRowsKernel(__constant DecompressRowsKernelArgs & args,
                      __global const uint64_t * rowData,
                      __global const float * weightData,                     
+                     __global const float * targets,
                      __global float * decodedRowsOut,
                      uint32_t id [[thread_position_in_grid]],
                      uint32_t n [[threads_per_grid]])
@@ -45,8 +49,8 @@ decompressRowsKernel(__constant DecompressRowsKernelArgs & args,
     float weightMultiplier = args.weightMultiplier;
 
     decompressRowsImpl(rowData, rowDataLength, weightBits, exampleNumBits, numRows,
-                             weightFormat, weightMultiplier, weightData, decodedRowsOut,
-                             id, n);
+                             weightFormat, weightMultiplier, weightData, args.numTargets, targets,
+                             decodedRowsOut, id, n);
 }
 
 
@@ -121,9 +125,11 @@ getPartitionSplitsKernel(__constant const TreeTrainingInfo & treeTrainingInfo,
                          uint3 local_size [[threads_per_threadgroup]])
 {
     __local WIndexed wStartBest[2];
+    __local WIndexed wRanked[MAX_CATEGORICAL_BUCKETS];
+    __local uint16_t ranked[MAX_CATEGORICAL_BUCKETS];
     getPartitionSplitsImpl(&treeTrainingInfo, bucketNumbers, activeFeatureList, featureIsOrdinal,
                            buckets, wAll, featurePartitionSplitsOut,
-                           &treeDepthInfo, wLocal, args.wLocalSize, wStartBest,
+                           &treeDepthInfo, wLocal, args.wLocalSize, wStartBest, wRanked, ranked,
                            get_global_id(1), get_global_size(1),
                            get_local_id(0), get_local_size(0),
                            get_global_id(2), get_global_size(2));
@@ -310,21 +316,85 @@ struct PredictForestArgs {
     uint32_t numRows;
     uint32_t numTrees;
     uint32_t maxDepth;
+    uint32_t lanesPerRow;
+    uint32_t columnStride;
 };
 
-// [row]
+// [row group]
 __kernel void
 predictForestKernel(__constant const PredictForestArgs & args,
                     __global const uint32_t * bucketData,
-                    __global const uint32_t * bucketDataOffsets,
-                    __global const uint32_t * bucketEntryBits,
                     __global const PredictNode * nodes,
+                    __global const uint32_t * subsets,
                     __global const int32_t * treeRoots,
                     __global const float * treeWeights,
                     __global const float * leafPreds,
                     __global float * predictionsOut,
-                    uint32_t id [[thread_position_in_grid]])
+                    __local float * partials,
+                    uint32_t group [[threadgroup_position_in_grid]],
+                    uint32_t tid [[thread_position_in_threadgroup]],
+                    uint32_t ntid [[threads_per_threadgroup]])
 {
-    predictForestImpl(args.numRows, args.numTrees, args.maxDepth, bucketData, bucketDataOffsets, bucketEntryBits,
-                      nodes, treeRoots, treeWeights, leafPreds, predictionsOut, id);
+    predictForestImpl(args.numRows, args.numTrees, args.maxDepth, args.lanesPerRow, args.columnStride, bucketData,
+                      nodes, subsets, treeRoots, treeWeights, leafPreds, predictionsOut, partials,
+                      group, tid, ntid);
+}
+
+struct NumericBucketsArgs {
+    uint32_t numRows;
+    uint32_t numSplits;
+    uint32_t numericOffset;
+};
+
+// [row]
+__kernel void
+numericBucketsKernel(__constant const NumericBucketsArgs & args,
+                     __global const int64_t * keys,
+                     __global const int64_t * splitKeys,
+                     __global uint32_t * bucketsOut,
+                     uint32_t id [[thread_position_in_grid]])
+{
+    numericBucketsImpl(args.numRows, keys, splitKeys, args.numSplits, args.numericOffset, bucketsOut, id);
+}
+
+struct CodesArgs {
+    uint32_t numRows;
+    uint32_t numCodes;
+};
+
+// [row]
+__kernel void
+markCodesKernel(__constant const CodesArgs & args,
+                __global const uint32_t * codes,
+                __global uint32_t * presentOut,
+                uint32_t id [[thread_position_in_grid]])
+{
+    markCodesImpl(args.numRows, args.numCodes, codes, presentOut, id);
+}
+
+// [row]
+__kernel void
+categoricalBucketsKernel(__constant const CodesArgs & args,
+                         __global const uint32_t * codes,
+                         __global const uint32_t * codeBuckets,
+                         __global uint32_t * bucketsOut,
+                         uint32_t id [[thread_position_in_grid]])
+{
+    categoricalBucketsImpl(args.numRows, args.numCodes, codes, codeBuckets, bucketsOut, id);
+}
+
+struct PackBucketsArgs {
+    uint32_t numRows;
+    uint32_t entryBits;
+    uint32_t numWords;
+};
+
+// [word]
+__kernel void
+packBucketsKernel(__constant const PackBucketsArgs & args,
+                  __global const uint32_t * buckets,
+                  __global uint32_t * wordsOut,
+                  uint32_t id [[thread_position_in_grid]])
+{
+    packBucketsImpl(args.numRows, args.entryBits, args.numWords, buckets, wordsOut, id);
 }
