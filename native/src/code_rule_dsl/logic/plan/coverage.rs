@@ -300,6 +300,63 @@ fn metal() -> bool {
     false
 }
 
+/// The second ledger, `packs.tsv`: each gap the matrix records (a probe not native, or not on the device), by how
+/// many shipped programs of each pack use its operations: which gaps the packs meet, and how often. Written and
+/// compared with the matrix (`RERAIL_BLESS_COVERAGE=1`).
+fn packs_ledger(all: &[Probe], matrix: &str) {
+    let (used, _, _) = census();
+    // A file's pack: the directory under `packs/`, else the tree it is in (`data-layer`, `lib`, the engine's own).
+    let pack = |f: &str| -> String {
+        if let Some((_, rest)) = f.split_once("/rule-syntax/packs/") {
+            return rest.split('/').next().unwrap_or("?").to_owned();
+        }
+        if let Some((_, rest)) = f.split_once("/rule-syntax/") {
+            return rest.split('/').next().filter(|d| !d.ends_with(".rr")).unwrap_or("rule-syntax").to_owned();
+        }
+        if f.contains("/programs/data_layer/") { "data-layer (engine)".into() } else { "engine".into() }
+    };
+    let cells: BTreeMap<&str, (&str, &str)> = matrix.lines().filter(|l| !l.starts_with('#')).filter_map(|l| {
+        let mut c = l.split('\t');
+        Some((c.next()?, (c.next()?, c.next()?)))
+    }).collect();
+    let mut rows: Vec<(usize, String)> = Vec::new();
+    for pr in all {
+        let Some(&(native, device)) = cells.get(pr.name.as_str()) else { continue };
+        if native == "native" && device == "device" {
+            continue;
+        }
+        let files: BTreeSet<&String> = pr.ops.iter().filter_map(|op| used.get(op)).flatten().collect();
+        if files.is_empty() {
+            continue;
+        }
+        let mut by: BTreeMap<String, usize> = BTreeMap::new();
+        for f in &files {
+            *by.entry(pack(f)).or_default() += 1;
+        }
+        let mut by: Vec<(String, usize)> = by.into_iter().collect();
+        by.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        let gap = match (native == "native", device == "device") {
+            (false, _) => format!("not native: {native}"),
+            _ => format!("not on the device: {device}"),
+        };
+        let packs = by.iter().map(|(p, n)| format!("{p} {n}")).collect::<Vec<_>>().join(", ");
+        rows.push((files.len(), format!("{}\t{}\t{}\t{packs}", files.len(), pr.name, gap)));
+    }
+    rows.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    let mut text = String::from("# Executor gaps by the shipped programs that meet them (plan/coverage.rs, from matrix.tsv; RERAIL_BLESS_COVERAGE=1 writes this).\n# programs\tprobe\tgap\tprograms by pack\n");
+    for (_, r) in rows {
+        text.push_str(&r);
+        text.push('\n');
+    }
+    let path = ledger().with_file_name("packs.tsv");
+    if std::env::var_os("RERAIL_BLESS_COVERAGE").is_some() {
+        std::fs::write(&path, &text).unwrap();
+        return;
+    }
+    let had = std::fs::read_to_string(&path).unwrap_or_default();
+    assert!(had == text, "the executors' gaps by pack differ from {}: RERAIL_BLESS_COVERAGE=1 writes it", path.display());
+}
+
 /// The ledger's place.
 fn ledger() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/executor-coverage/matrix.tsv")
@@ -345,9 +402,14 @@ fn every_operation_runs_on_every_executor() {
     if std::env::var_os("RERAIL_BLESS_COVERAGE").is_some() {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, &rows).unwrap();
+        packs_ledger(&all, &rows);
         return;
     }
     let had = std::fs::read_to_string(&path).unwrap_or_default();
+    // The gaps by pack follow from the matrix: compared once the matrix is as the ledger says.
+    if had == rows {
+        packs_ledger(&all, &rows);
+    }
     if had != rows {
         let old: BTreeSet<&str> = had.lines().collect();
         let new: BTreeSet<&str> = rows.lines().collect();
@@ -457,8 +519,9 @@ fn shipped() -> Vec<PathBuf> {
 
 /// What the shipped files use: each operation (the probes' names, `ops_of`) with the first file that uses it, and
 /// each call's arities (`arity <name> <n>`); read once.
-fn census() -> &'static (BTreeMap<String, String>, usize, usize) {
-    static CENSUS: std::sync::OnceLock<(BTreeMap<String, String>, usize, usize)> = std::sync::OnceLock::new();
+/// Every operation the shipped files use, with the files that use it; the files read, and those unparsed.
+fn census() -> &'static (BTreeMap<String, BTreeSet<String>>, usize, usize) {
+    static CENSUS: std::sync::OnceLock<(BTreeMap<String, BTreeSet<String>>, usize, usize)> = std::sync::OnceLock::new();
     CENSUS.get_or_init(|| {
         use rayon::prelude::*;
         let files = shipped();
@@ -473,10 +536,10 @@ fn census() -> &'static (BTreeMap<String, String>, usize, usize) {
             })
             .collect();
         let unread = read.iter().filter(|r| r.is_none()).count();
-        let mut used = BTreeMap::new();
+        let mut used: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for one in read.into_iter().flatten() {
             for (op, f) in one {
-                used.entry(op).or_insert(f);
+                used.entry(op).or_default().insert(f);
             }
         }
         (used, files.len(), unread)
@@ -509,7 +572,7 @@ fn every_operation_a_shipped_rule_uses_has_a_probe() {
     let (used, files, unread) = census();
     // Forms the tree probes cover (`tree_forms_run_on_every_executor`) once they exist; until then, named here.
     let tree = ["nearest", "ast", "call doc", "call in", "call place", "call place_path", "call place_line", "call flat_bin", "call id", "call line", "call depth", "call within", "call tree_digest"];
-    let missing: Vec<String> = used.iter().filter(|(op, _)| !op.starts_with("arity ") && !probed.contains(*op) && !tree.contains(&op.as_str())).map(|(op, f)| format!("{op} (first in {f})")).collect();
+    let missing: Vec<String> = used.iter().filter(|(op, _)| !op.starts_with("arity ") && !probed.contains(*op) && !tree.contains(&op.as_str())).map(|(op, f)| format!("{op} (first in {})", f.first().map_or("", String::as_str))).collect();
     eprintln!("{files} shipped files ({unread} unparsed), {} operations used", used.len());
     assert!(missing.is_empty(), "operations shipped rules use that no coverage probe runs:\n{}", missing.join("\n"));
 }

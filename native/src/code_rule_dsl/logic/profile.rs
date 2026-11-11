@@ -681,6 +681,15 @@ pub(crate) fn behind_the_run() {
     BEHIND.with(|b| b.set(true));
 }
 
+/// Runs `f` behind the run on this thread, which is then as it was: work after the command's end (its cost
+/// samples written) on a thread that otherwise is the run's.
+pub(crate) fn behind<T>(f: impl FnOnce() -> T) -> T {
+    let was = BEHIND.with(|b| b.replace(true));
+    let out = f();
+    BEHIND.with(|b| b.set(was));
+    out
+}
+
 fn in_waves() -> bool {
     on() && WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0 && !BEHIND.with(std::cell::Cell::get)
 }
@@ -2025,7 +2034,8 @@ mod tests {
         assert!(report.contains("Stratum xstratum  [engine: native set engine]  (loops=2"), "{report}");
         assert!(report.contains("why: every rule has a native step"));
         assert!(report.contains("== Fell back to SQLite: 1 strata"), "{report}");
-        assert!(report.contains("== Executor hazards: what kept each stratum off Metal and off the native engine (2 strata; runs: 1 Metal, 1 SQLite, 1 native CPU)"), "{report}");
+        // Other tests' strata may be recorded beside these (the profile is the process's): the heading alone.
+        assert!(report.contains("== Executor hazards: what kept each stratum off Metal and off the native engine ("), "{report}");
         assert!(report.contains("native: aggregate join (string concatenation)") && report.contains("metal: computed term: @sql_instr in a comparison"), "{report}");
         assert!(report.contains("xstratum: Metal x1, native CPU x1; metal: computed term: @sql_instr in a comparison"), "{report}");
         assert!(report.contains("== Forces SQL waits (hazards): 1 statements, 1 runs, 2.0 ms inside the waves"), "{report}");

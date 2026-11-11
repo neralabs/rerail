@@ -17,25 +17,25 @@ cmp <: number and constant	native	device	cov_013_p(x) :- n(x), x < 2.
 cmp <: symbols	native	no computed term	cov_014_p(a, b) :- s(a), t(b), a < b.
 cmp <: symbol and constant	native	no computed term	cov_015_p(a) :- s(a), a < "alpha".
 cmp <: computed number	native	device	cov_016_p(x) :- n(x), x + 1 < 3.
-cmp <: computed symbol	sqlite: function @concat (the native engine declined: rule #0000: @concat($a, 1) < 10 has no native step)	not native	cov_017_p(a) :- s(a), cat(a, "!") < "alpha!".
+cmp <: computed symbol	native	no computed term	cov_017_p(a) :- s(a), cat(a, "!") < "alpha!".
 cmp <=: numbers	native	device	cov_018_p(x, y) :- n(x), n(y), x <= y.
 cmp <=: number and constant	native	device	cov_019_p(x) :- n(x), x <= 2.
 cmp <=: symbols	native	no computed term	cov_020_p(a, b) :- s(a), t(b), a <= b.
 cmp <=: symbol and constant	native	no computed term	cov_021_p(a) :- s(a), a <= "alpha".
 cmp <=: computed number	native	device	cov_022_p(x) :- n(x), x + 1 <= 3.
-cmp <=: computed symbol	sqlite: function @concat (the native engine declined: rule #0000: @concat($a, 1) <= 10 has no native step)	not native	cov_023_p(a) :- s(a), cat(a, "!") <= "alpha!".
+cmp <=: computed symbol	native	no computed term	cov_023_p(a) :- s(a), cat(a, "!") <= "alpha!".
 cmp >: numbers	native	device	cov_024_p(x, y) :- n(x), n(y), x > y.
 cmp >: number and constant	native	device	cov_025_p(x) :- n(x), x > 2.
 cmp >: symbols	native	no computed term	cov_026_p(a, b) :- s(a), t(b), a > b.
 cmp >: symbol and constant	native	no computed term	cov_027_p(a) :- s(a), a > "alpha".
 cmp >: computed number	native	device	cov_028_p(x) :- n(x), x + 1 > 3.
-cmp >: computed symbol	sqlite: function @concat (the native engine declined: rule #0000: @concat($a, 1) > 10 has no native step)	not native	cov_029_p(a) :- s(a), cat(a, "!") > "alpha!".
+cmp >: computed symbol	native	no computed term	cov_029_p(a) :- s(a), cat(a, "!") > "alpha!".
 cmp >=: numbers	native	device	cov_030_p(x, y) :- n(x), n(y), x >= y.
 cmp >=: number and constant	native	device	cov_031_p(x) :- n(x), x >= 2.
 cmp >=: symbols	native	no computed term	cov_032_p(a, b) :- s(a), t(b), a >= b.
 cmp >=: symbol and constant	native	no computed term	cov_033_p(a) :- s(a), a >= "alpha".
 cmp >=: computed number	native	device	cov_034_p(x) :- n(x), x + 1 >= 3.
-cmp >=: computed symbol	sqlite: function @concat (the native engine declined: rule #0000: @concat($a, 1) >= 10 has no native step)	not native	cov_035_p(a) :- s(a), cat(a, "!") >= "alpha!".
+cmp >=: computed symbol	native	no computed term	cov_035_p(a) :- s(a), cat(a, "!") >= "alpha!".
 arithmetic +	native	device	cov_036_p(x, y, z) :- n(x), n(y), z = x + y.
 arithmetic -	native	device	cov_037_p(x, y, z) :- n(x), n(y), z = x - y.
 arithmetic *	native	device	cov_038_p(x, y, z) :- n(x), n(y), z = x * y.
@@ -133,57 +133,57 @@ shipped functor @to_precision/2	sqlite: error: no SQL for @to_precision($a, $y)	
 shipped functor @trim/1	native	no computed term	cov_130_p(v) :- t(a), v = @trim(a).
 shipped functor @trim/2	native	no computed term	cov_131_p(v) :- t(a), t(b), v = @trim(a, b).
 shipped functor @upper/1	native	no computed term	cov_132_p(v) :- t(a), v = @upper(a).
-text test glob: a constant pattern	native	no computed term	cov_133_p(a) :- s(a), glob("a", a).
-text test glob: negated	native	no computed term	cov_134_p(a) :- s(a), !glob("a", a).
-text test glob: a set of patterns	native	no computed term	cov_135_p(a) :- s(a), (glob("a", a) ; glob("B", a)).
-text test glob: a bound pattern	native	no computed term	cov_136_p(a, b) :- s(a), t(b), glob(b, a).
-text test iglob: a constant pattern	native	no computed term	cov_137_p(a) :- s(a), iglob("a", a).
-text test iglob: negated	native	no computed term	cov_138_p(a) :- s(a), !iglob("a", a).
-text test iglob: a set of patterns	native	no computed term	cov_139_p(a) :- s(a), (iglob("a", a) ; iglob("B", a)).
-text test iglob: a bound pattern	native	no computed term	cov_140_p(a, b) :- s(a), t(b), iglob(b, a).
-text test prefix: a constant pattern	native	no computed term	cov_141_p(a) :- s(a), prefix("a", a).
-text test prefix: negated	native	no computed term	cov_142_p(a) :- s(a), !prefix("a", a).
-text test prefix: a set of patterns	native	no computed term	cov_143_p(a) :- s(a), (prefix("a", a) ; prefix("B", a)).
-text test prefix: a bound pattern	native	no computed term	cov_144_p(a, b) :- s(a), t(b), prefix(b, a).
-text test iprefix: a constant pattern	native	no computed term	cov_145_p(a) :- s(a), iprefix("a", a).
-text test iprefix: negated	native	no computed term	cov_146_p(a) :- s(a), !iprefix("a", a).
-text test iprefix: a set of patterns	native	no computed term	cov_147_p(a) :- s(a), (iprefix("a", a) ; iprefix("B", a)).
-text test iprefix: a bound pattern	native	no computed term	cov_148_p(a, b) :- s(a), t(b), iprefix(b, a).
-text test suffix: a constant pattern	native	no computed term	cov_149_p(a) :- s(a), suffix("a", a).
-text test suffix: negated	native	no computed term	cov_150_p(a) :- s(a), !suffix("a", a).
-text test suffix: a set of patterns	native	no computed term	cov_151_p(a) :- s(a), (suffix("a", a) ; suffix("B", a)).
-text test suffix: a bound pattern	native	no computed term	cov_152_p(a, b) :- s(a), t(b), suffix(b, a).
-text test isuffix: a constant pattern	native	no computed term	cov_153_p(a) :- s(a), isuffix("a", a).
-text test isuffix: negated	native	no computed term	cov_154_p(a) :- s(a), !isuffix("a", a).
-text test isuffix: a set of patterns	native	no computed term	cov_155_p(a) :- s(a), (isuffix("a", a) ; isuffix("B", a)).
-text test isuffix: a bound pattern	native	no computed term	cov_156_p(a, b) :- s(a), t(b), isuffix(b, a).
-text test contains: a constant pattern	native	no computed term	cov_157_p(a) :- s(a), contains("a", a).
-text test contains: negated	native	no computed term	cov_158_p(a) :- s(a), !contains("a", a).
-text test contains: a set of patterns	native	no computed term	cov_159_p(a) :- s(a), (contains("a", a) ; contains("B", a)).
-text test contains: a bound pattern	native	no computed term	cov_160_p(a, b) :- s(a), t(b), contains(b, a).
-text test icontains: a constant pattern	native	no computed term	cov_161_p(a) :- s(a), icontains("a", a).
-text test icontains: negated	native	no computed term	cov_162_p(a) :- s(a), !icontains("a", a).
-text test icontains: a set of patterns	native	no computed term	cov_163_p(a) :- s(a), (icontains("a", a) ; icontains("B", a)).
-text test icontains: a bound pattern	native	no computed term	cov_164_p(a, b) :- s(a), t(b), icontains(b, a).
-text test word: a constant pattern	native	no computed term	cov_165_p(a) :- s(a), word("a", a).
-text test word: negated	native	no computed term	cov_166_p(a) :- s(a), !word("a", a).
-text test word: a set of patterns	native	no computed term	cov_167_p(a) :- s(a), (word("a", a) ; word("B", a)).
-text test word: a bound pattern	native	no computed term	cov_168_p(a, b) :- s(a), t(b), word(b, a).
-text test iword: a constant pattern	native	no computed term	cov_169_p(a) :- s(a), iword("a", a).
-text test iword: negated	native	no computed term	cov_170_p(a) :- s(a), !iword("a", a).
-text test iword: a set of patterns	native	no computed term	cov_171_p(a) :- s(a), (iword("a", a) ; iword("B", a)).
-text test iword: a bound pattern	native	no computed term	cov_172_p(a, b) :- s(a), t(b), iword(b, a).
-text test match: a constant pattern	native	no computed term	cov_173_p(a) :- s(a), match("a", a).
-text test match: negated	native	no computed term	cov_174_p(a) :- s(a), !match("a", a).
-text test match: a set of patterns	native	no computed term	cov_175_p(a) :- s(a), (match("a", a) ; match("B", a)).
-text test match: a bound pattern	native	no computed term	cov_176_p(a, b) :- s(a), t(b), match(b, a).
+text test glob: a constant pattern	native	no text test	cov_133_p(a) :- s(a), glob("a", a).
+text test glob: negated	native	no text test	cov_134_p(a) :- s(a), !glob("a", a).
+text test glob: a set of patterns	native	no text test	cov_135_p(a) :- s(a), (glob("a", a) ; glob("B", a)).
+text test glob: a bound pattern	native	no text test	cov_136_p(a, b) :- s(a), t(b), glob(b, a).
+text test iglob: a constant pattern	native	no text test	cov_137_p(a) :- s(a), iglob("a", a).
+text test iglob: negated	native	no text test	cov_138_p(a) :- s(a), !iglob("a", a).
+text test iglob: a set of patterns	native	no text test	cov_139_p(a) :- s(a), (iglob("a", a) ; iglob("B", a)).
+text test iglob: a bound pattern	native	no text test	cov_140_p(a, b) :- s(a), t(b), iglob(b, a).
+text test prefix: a constant pattern	native	no text test	cov_141_p(a) :- s(a), prefix("a", a).
+text test prefix: negated	native	no text test	cov_142_p(a) :- s(a), !prefix("a", a).
+text test prefix: a set of patterns	native	no text test	cov_143_p(a) :- s(a), (prefix("a", a) ; prefix("B", a)).
+text test prefix: a bound pattern	native	no text test	cov_144_p(a, b) :- s(a), t(b), prefix(b, a).
+text test iprefix: a constant pattern	native	no text test	cov_145_p(a) :- s(a), iprefix("a", a).
+text test iprefix: negated	native	no text test	cov_146_p(a) :- s(a), !iprefix("a", a).
+text test iprefix: a set of patterns	native	no text test	cov_147_p(a) :- s(a), (iprefix("a", a) ; iprefix("B", a)).
+text test iprefix: a bound pattern	native	no text test	cov_148_p(a, b) :- s(a), t(b), iprefix(b, a).
+text test suffix: a constant pattern	native	no text test	cov_149_p(a) :- s(a), suffix("a", a).
+text test suffix: negated	native	no text test	cov_150_p(a) :- s(a), !suffix("a", a).
+text test suffix: a set of patterns	native	no text test	cov_151_p(a) :- s(a), (suffix("a", a) ; suffix("B", a)).
+text test suffix: a bound pattern	native	no text test	cov_152_p(a, b) :- s(a), t(b), suffix(b, a).
+text test isuffix: a constant pattern	native	no text test	cov_153_p(a) :- s(a), isuffix("a", a).
+text test isuffix: negated	native	no text test	cov_154_p(a) :- s(a), !isuffix("a", a).
+text test isuffix: a set of patterns	native	no text test	cov_155_p(a) :- s(a), (isuffix("a", a) ; isuffix("B", a)).
+text test isuffix: a bound pattern	native	no text test	cov_156_p(a, b) :- s(a), t(b), isuffix(b, a).
+text test contains: a constant pattern	native	no text test	cov_157_p(a) :- s(a), contains("a", a).
+text test contains: negated	native	no text test	cov_158_p(a) :- s(a), !contains("a", a).
+text test contains: a set of patterns	native	no text test	cov_159_p(a) :- s(a), (contains("a", a) ; contains("B", a)).
+text test contains: a bound pattern	native	no text test	cov_160_p(a, b) :- s(a), t(b), contains(b, a).
+text test icontains: a constant pattern	native	no text test	cov_161_p(a) :- s(a), icontains("a", a).
+text test icontains: negated	native	no text test	cov_162_p(a) :- s(a), !icontains("a", a).
+text test icontains: a set of patterns	native	no text test	cov_163_p(a) :- s(a), (icontains("a", a) ; icontains("B", a)).
+text test icontains: a bound pattern	native	no text test	cov_164_p(a, b) :- s(a), t(b), icontains(b, a).
+text test word: a constant pattern	native	no text test	cov_165_p(a) :- s(a), word("a", a).
+text test word: negated	native	no text test	cov_166_p(a) :- s(a), !word("a", a).
+text test word: a set of patterns	native	no text test	cov_167_p(a) :- s(a), (word("a", a) ; word("B", a)).
+text test word: a bound pattern	native	no text test	cov_168_p(a, b) :- s(a), t(b), word(b, a).
+text test iword: a constant pattern	native	no text test	cov_169_p(a) :- s(a), iword("a", a).
+text test iword: negated	native	no text test	cov_170_p(a) :- s(a), !iword("a", a).
+text test iword: a set of patterns	native	no text test	cov_171_p(a) :- s(a), (iword("a", a) ; iword("B", a)).
+text test iword: a bound pattern	native	no text test	cov_172_p(a, b) :- s(a), t(b), iword(b, a).
+text test match: a constant pattern	native	no text test	cov_173_p(a) :- s(a), match("a", a).
+text test match: negated	native	no text test	cov_174_p(a) :- s(a), !match("a", a).
+text test match: a set of patterns	native	no text test	cov_175_p(a) :- s(a), (match("a", a) ; match("B", a)).
+text test match: a bound pattern	native	no text test	cov_176_p(a, b) :- s(a), t(b), match(b, a).
 aggregate count	native	no aggregate	cov_177_p(a, c) :- s(a), c = count : { p(a, _) }.
 aggregate sum	native	no aggregate	cov_178_p(a, c) :- s(a), c = sum v : { p(a, v) }.
 aggregate min	native	no aggregate	cov_179_p(a, c) :- t(a), c = min v : { p(a, v) }.
 aggregate max	native	no aggregate	cov_180_p(a, c) :- t(a), c = max v : { p(a, v) }.
 aggregate product	sqlite: aggregate product (the native engine declined: rule #0000: $c = product $v : { p($a, $v) } has no native step)	not native	cov_181_p(a, c) :- s(a), c = product v : { p(a, v) }.
 aggregate join	native	no string join	cov_182_p(a, c) :- t(a), c = join b by b sep ", " : { q(a, b) }.
-membership of a constant set	native	no computed term	cov_183_p(a) :- s(a), (a = "alpha" ; a = "x_1").
+membership of a constant set	native	no text test	cov_183_p(a) :- s(a), (a = "alpha" ; a = "x_1").
 lattice relation (shortest)	unparsed: unbounded lattice: cov_184_p has no finite height and no `widen k`	unparsed: unbounded lattice: cov_184_p has no finite height and no `widen k`	cov_184_p(x, 0) :- n(x), x = 1. cov_184_p(y, d + 1) :- cov_184_p(x, d), e(x, y).
 aggregate count = 0 (a negation)	native	device	cov_185_p(a) :- s(a), count : { p(a, _) } = 0.
 aggregate over two atoms' bag	native	no aggregate	cov_186_p(a, c) :- t(a), c = count : { q(a, _) }.

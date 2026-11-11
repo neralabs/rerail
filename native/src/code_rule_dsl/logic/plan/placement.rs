@@ -277,6 +277,10 @@ impl Shape {
                         self.note(Form::Computed, || format!("{op} in an atom's argument"));
                     }
                 }
+                // A text test as a comparison (`@contains(s, p) = 1`, `rx`'s search): a text test, not a value.
+                Literal::Cmp { l: Term::Call(f, _), .. } | Literal::Cmp { r: Term::Call(f, _), .. } if crate::code_rule_dsl::logic::strings::TESTS.contains(&f.as_str()) => {
+                    self.note(Form::TextTest, || format!("text test @{f}"));
+                }
                 Literal::Cmp { l, r, .. } => match [l, r].iter().find_map(|t| not_row(t)) {
                     Some(op) => self.note(Form::Computed, || format!("{op} in a comparison")),
                     None => self.note(Form::Comparison, String::new),

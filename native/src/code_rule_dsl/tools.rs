@@ -238,7 +238,8 @@ pub fn run_rr(
         None,
         out,
         "program",
-        Binding::Cpu,
+        // The device as `logic --metal` places it: `RERAIL_DEVICE=metal` (by price) or `always` (wherever it can).
+        if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu },
         1 << 18,
         &Default::default(),
         &with_reuse(options),
