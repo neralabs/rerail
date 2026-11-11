@@ -35,8 +35,10 @@ def main(tsv, *flags):
     rows = collections.defaultdict(list)
     for line in list(open(tsv))[1:]:
         f, l, c, kind, now, at, item, users = line.rstrip('\n').split('\t')
-        if kind == 'module':
-            continue
+        if kind in ('module', 'macro'):
+            continue  # modules are apply.py's; a macro crosses crates by #[macro_export] or a `pub use`, never `pub`
+        if kind == '70':
+            kind = 'method'  # SCIP's kind for a method a trait declares
         rows[f].append((int(l), int(c), kind, now, at, item))
     done = collections.Counter()
     refused = []
