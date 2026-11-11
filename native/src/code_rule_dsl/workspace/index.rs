@@ -22,7 +22,7 @@ use super::{
 use crate::code_rule_dsl::json::{invalid, json_error};
 use crate::code_rule_dsl::language::adapter::{module_path, package_manifests};
 use crate::code_rule_dsl::model::FileInput;
-use crate::code_rule_dsl::package_manifest::Manifests;
+use super::ingest::{RepositoryContext, repository_context};
 use crate::content_store::{
     CandidateCatalogIdentity, DirectoryReuse, HashKey, StoredFile, StoredPathObjects,
 };
@@ -137,7 +137,7 @@ pub(super) struct RepositoryIndex {
     /// its own rules, so this index neither lists nor reads them.
     nested_checkouts: Vec<String>,
     /// The `package.json` files read so far, by directory.
-    manifests: Manifests,
+    manifests: Box<dyn RepositoryContext>,
 }
 
 struct PendingFile {
@@ -155,7 +155,7 @@ struct PendingFile {
 pub(super) fn reusable_directories(
     repository: &git_workspace::GitWorkspace,
     repository_prefix: &str,
-    manifests: &mut Manifests,
+    manifests: &mut dyn RepositoryContext,
 ) -> Vec<DirectoryReuse> {
     let root = repository_prefix.trim_end_matches('/');
     repository
@@ -215,7 +215,7 @@ pub(super) fn repository_module(
 /// worktree of a file whose family reads one (`package_manifests`), below the workspace root
 /// `manifests` reads.
 pub(super) fn repository_package(
-    manifests: &mut Manifests,
+    manifests: &mut dyn RepositoryContext,
     repository: &git_workspace::GitWorkspace,
     repository_path: &str,
     language: &str,
@@ -223,7 +223,6 @@ pub(super) fn repository_package(
     package_manifests(language)
         .then(|| manifests.of_file(&repository.worktree_root.join(repository_path)))
         .flatten()
-        .map(|manifest| manifest as crate::code_rule_dsl::language::FileManifest)
 }
 
 fn restore_prepared_file(
@@ -478,13 +477,13 @@ impl WorkspaceIndexTask {
             |path| storage.withholds(path),
             &mut failures,
         )?;
-        let mut manifests = Manifests::new(repository.worktree_root.join(prefix))
-            .reading_server_graphs(
-                code_rules
-                    .iter()
-                    .any(|code_rule| code_rule.reads_server_graph()),
-            );
-        let directories = reusable_directories(repository, prefix, &mut manifests);
+        let mut manifests = repository_context(
+            repository.worktree_root.join(prefix),
+            code_rules
+                .iter()
+                .any(|code_rule| code_rule.reads_server_graph()),
+        );
+        let directories = reusable_directories(repository, prefix, &mut *manifests);
         let catalog = candidate_catalog(&code_rules)?;
         let reusable_prefixes = if REUSE_DIRECTORY_RESULTS {
             storage
@@ -505,7 +504,7 @@ impl WorkspaceIndexTask {
                 &accepted,
                 &reusable_prefixes,
                 catalog,
-                &mut manifests,
+                &mut *manifests,
             )?
         } else {
             HashSet::new()
@@ -537,7 +536,7 @@ impl WorkspaceIndexTask {
         accepted: &[PendingFile],
         reusable_prefixes: &HashSet<String>,
         catalog: CandidateCatalogIdentity,
-        manifests: &mut Manifests,
+        manifests: &mut dyn RepositoryContext,
     ) -> Result<HashSet<String>> {
         let aliases = accepted
             .iter()
@@ -677,7 +676,7 @@ impl WorkspaceIndexTask {
                 .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned());
             let module = repository_module(repository, &file.repository_path, &file.language);
             let package = repository_package(
-                &mut index.manifests,
+                &mut *index.manifests,
                 repository,
                 &file.repository_path,
                 &file.language,

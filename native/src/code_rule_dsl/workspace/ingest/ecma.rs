@@ -3,7 +3,24 @@
 //! from which the workspace gives an ECMA file the host sent no `package` its nearest manifest.
 
 use super::*;
+use crate::code_rule_dsl::package_manifest::{
+    GITIGNORE, Manifest, Manifests, NPMIGNORE, ignore_file_directory, manifest_directory, manifest_in,
+};
 use std::any::Any;
+
+/// The repository's `package.json` files below its root (`RepositoryContext`).
+pub(crate) fn repository_context(root: std::path::PathBuf, server_graph: bool) -> Box<dyn RepositoryContext> {
+    Box::new(Manifests::new(root).reading_server_graphs(server_graph))
+}
+
+impl RepositoryContext for Manifests {
+    fn of_file(&mut self, file: &std::path::Path) -> Option<crate::code_rule_dsl::language::FileManifest> {
+        Manifests::of_file(self, file).map(|manifest| manifest as crate::code_rule_dsl::language::FileManifest)
+    }
+    fn of_directory(&mut self, directory: &std::path::Path) -> Option<crate::code_rule_dsl::language::FileManifest> {
+        Manifests::of_directory(self, directory).map(|manifest| manifest as crate::code_rule_dsl::language::FileManifest)
+    }
+}
 
 /// A file the request's context changes moved to another manifest: its path, its input, and the manifest it reads
 /// now (`ProjectState::refresh`).
@@ -35,6 +52,9 @@ pub(crate) struct EcmaProject {
 impl ProjectState for EcmaProject {
     fn unhosted(&self, files: &[WireFile]) -> HashSet<String> {
         unhosted_manifests(files)
+    }
+    fn is_context_file(&self, path: &str) -> bool {
+        manifest_directory(path).is_some() || ignore_file_directory(path).is_some()
     }
     fn refresh(
         &self,

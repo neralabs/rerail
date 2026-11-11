@@ -15,11 +15,46 @@ use crate::code_rule_dsl::model::{
     python_module_in,
 };
 use crate::code_rule_dsl::module_graph;
-use crate::code_rule_dsl::package_manifest::{
-    GITIGNORE, Manifest, NPMIGNORE, ignore_file_directory, manifest_directory,
-    manifest_in,
-};
 pub(crate) mod ecma;
+
+/// A repository's project context as its index reads it on disk (ECMAScript's `package.json` files below the
+/// workspace's root): the context of each file of a family that reads one, and what a clean tree's files inherit.
+pub(crate) trait RepositoryContext: Send {
+    /// The context of the repository file at `file` (absolute).
+    fn of_file(&mut self, file: &std::path::Path) -> Option<crate::code_rule_dsl::language::FileManifest>;
+    /// The context a file directly in `directory` (absolute) inherits.
+    fn of_directory(&mut self, directory: &std::path::Path) -> Option<crate::code_rule_dsl::language::FileManifest>;
+}
+
+/// What makes a repository's context: below `root`, with server graphs where `server_graph`.
+pub(crate) type MakeRepositoryContext = fn(std::path::PathBuf, bool) -> Box<dyn RepositoryContext>;
+
+static REPOSITORY_CONTEXT: std::sync::OnceLock<MakeRepositoryContext> = std::sync::OnceLock::new();
+
+/// Registers what makes a repository's context (once, at load).
+pub(crate) fn install_repository_context(make: MakeRepositoryContext) {
+    let _ = REPOSITORY_CONTEXT.set(make);
+}
+
+/// No repository context: a family set that reads none.
+struct NoRepositoryContext;
+
+impl RepositoryContext for NoRepositoryContext {
+    fn of_file(&mut self, _: &std::path::Path) -> Option<crate::code_rule_dsl::language::FileManifest> {
+        None
+    }
+    fn of_directory(&mut self, _: &std::path::Path) -> Option<crate::code_rule_dsl::language::FileManifest> {
+        None
+    }
+}
+
+/// The repository's context below `root` (`RepositoryContext`).
+pub(crate) fn repository_context(root: std::path::PathBuf, server_graph: bool) -> Box<dyn RepositoryContext> {
+    match REPOSITORY_CONTEXT.get() {
+        Some(make) => make(root, server_graph),
+        None => Box::new(NoRepositoryContext),
+    }
+}
 
 /// A file a request's context changes moved to another context: its path, its input, and the context it reads now.
 pub(crate) type StaleContext = (String, FileInput, Option<crate::code_rule_dsl::language::FileManifest>);
@@ -30,6 +65,8 @@ pub(crate) type StaleContext = (String, FileInput, Option<crate::code_rule_dsl::
 pub(crate) trait ProjectState: Send + Sync {
     /// The paths of the request's `files` whose context the host left to the workspace.
     fn unhosted(&self, files: &[WireFile]) -> HashSet<String>;
+    /// Whether the file at `path` is one the context reads (a manifest, an ignore file).
+    fn is_context_file(&self, path: &str) -> bool;
     /// The request's changes of the context (`inputs` after it, `removed` the paths it removes), applied by
     /// `apply` once nothing after can fail; gives `unhosted` inputs their context, and the files outside the
     /// request whose context it changes, with the context they read now.
@@ -56,6 +93,9 @@ struct NoProject;
 impl ProjectState for NoProject {
     fn unhosted(&self, _: &[WireFile]) -> HashSet<String> {
         HashSet::new()
+    }
+    fn is_context_file(&self, _: &str) -> bool {
+        false
     }
     fn refresh(
         &self,
@@ -801,8 +841,7 @@ pub(super) fn is_cheap(state: &WorkspaceState, request: &Request) -> bool {
         && state.files.len() <= 4
         && request.files[0].source.len() <= 1024
         && !adds_package_marker(state, &request.files[0])
-        && manifest_directory(&request.files[0].path).is_none()
-        && ignore_file_directory(&request.files[0].path).is_none()
+        && !state.project.is_context_file(&request.files[0].path)
         && state
             .files
             .values()

@@ -603,6 +603,8 @@ pub(crate) fn install_languages() {
     residency::install_ast_producer(&residency::PythonAst);
     // What ECMAScript's import targets resolve among (`resolution`).
     resolution::install(import_target::held::RESOLUTIONS);
+    // A repository's context as its index reads it (ECMAScript's `package.json` files).
+    workspace::ingest::install_repository_context(workspace::ingest::ecma::repository_context);
     // What compiles a program's `ast` matchers into the transducer wave facts runs (decision 0106).
     facts::vtab::syntax::install_ast_compiler(&facts::vtab::syntax::ast_wave::Compiler);
     // The literal grammars `parse` applies, in the order messages list them (`literal::LiteralGrammar`).

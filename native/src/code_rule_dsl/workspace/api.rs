@@ -1506,12 +1506,12 @@ impl Task for WorkspaceCompletionTask {
             };
             let completed_at = unix_seconds()?;
             let written = if let Some(repository) = &storage.repository {
-                let mut manifests = crate::code_rule_dsl::package_manifest::Manifests::new(
+                let mut manifests = super::ingest::repository_context(
                     repository.worktree_root.join(&storage.repository_prefix),
-                )
-                .reading_server_graphs(server_graph);
+                    server_graph,
+                );
                 let directories =
-                    reusable_directories(repository, &storage.repository_prefix, &mut manifests);
+                    reusable_directories(repository, &storage.repository_prefix, &mut *manifests);
                 storage.store.complete_directories(
                     WorkspaceCompletion {
                         workspace_id: storage.workspace_id,
