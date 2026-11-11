@@ -5798,15 +5798,15 @@ fn git_files(root: &Path) -> Option<(Vec<String>, usize)> {
     use std::path::PathBuf;
     let real = observe(|o| o.canonical(root))?;
     let key = format!("git-files:{}", real.display());
-    // What the record read: the journal's cursor before the status, a line of the roots it was asked over, then a
-    // path a line.
+    // What the record read: the journal's cursors before the status and the roots they are of (a line each, by tab),
+    // then a path a line.
     let kept = observe(|o| {
         let (read, files) = o.run_record(&key)?;
         let mut lines = read.lines();
-        let cursor: u64 = lines.next()?.parse().ok()?;
+        let cursors: Vec<String> = lines.next()?.split('\t').map(str::to_owned).collect();
         let watched: Vec<PathBuf> = lines.next()?.split('\t').map(PathBuf::from).collect();
         let read: Vec<PathBuf> = lines.map(PathBuf::from).collect();
-        let named = o.changed_since(&watched, cursor)?;
+        let named = o.changed_since(&watched, &cursors)?;
         // The repository's own directories, of which only what `read` names counts (not its objects).
         let git_dirs: Vec<PathBuf> = watched.iter().skip(2).cloned().collect();
         Some((read, git_dirs, named, String::from_utf8(files).ok()?))
@@ -5843,7 +5843,7 @@ fn git_files(root: &Path) -> Option<(Vec<String>, usize)> {
     }
     // Watched before the status is read: a change while it reads is named to the next run.
     let places = crate::git_workspace::locations(&real);
-    let cursor = places.as_ref().and_then(|(work, own, common)| observe(|o| o.mark(&[real.clone(), work.clone(), own.clone(), common.clone()])));
+    let cursors = places.as_ref().and_then(|(work, own, common)| observe(|o| o.mark(&[real.clone(), work.clone(), own.clone(), common.clone()])));
     let found = observe(|o| o.git(root)).and_then(|g| {
         let prefix = real.strip_prefix(&g.worktree_root).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
         let under: Vec<String> = g
@@ -5853,12 +5853,12 @@ fn git_files(root: &Path) -> Option<(Vec<String>, usize)> {
             .collect();
         (!under.is_empty()).then(|| (under, g.overlays.len()))
     });
-    if let (Some((work, own, common)), Some(cursor), Some((under, overlays))) = (&places, cursor, &found) {
+    if let (Some((work, own, common)), Some(cursors), Some((under, overlays))) = (&places, cursors, &found) {
         let mut read: Vec<PathBuf> = vec![real.clone(), work.join(".git"), own.join("HEAD"), own.join("index")];
         read.extend(real.ancestors().filter(|d| d.starts_with(work) && *d != real.as_path()).map(|d| d.join(".gitignore")));
         read.extend(["HEAD", "refs", "packed-refs", "config", "info"].iter().map(|f| common.join(f)));
         let watched = [&real, work, own, common].iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>().join("\t");
-        let read = [cursor.to_string(), watched].into_iter().chain(read.iter().map(|p| p.to_string_lossy().into_owned())).collect::<Vec<_>>().join("\n");
+        let read = [cursors.join("\t"), watched].into_iter().chain(read.iter().map(|p| p.to_string_lossy().into_owned())).collect::<Vec<_>>().join("\n");
         let text = std::iter::once(overlays.to_string()).chain(under.iter().cloned()).collect::<Vec<_>>().join("\n");
         observe(|o| o.put_run_record(&key, &read, text.as_bytes()));
     }
@@ -6458,6 +6458,8 @@ outer(f, x) :- uses(f, x), encl(f, p), bound(p, x).
     #[test]
     fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
         use crate::code_rule_dsl::typing::file_local::Binding;
+        // It ran past its timeout once in 34 runs under load, with no output: a run past 60 s leaves its stacks.
+        let _watchdog = watchdog("k4", std::time::Duration::from_secs(60));
         let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         let base = std::env::temp_dir().join(format!("rerail-k4-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
@@ -6538,6 +6540,35 @@ outer(f, x) :- uses(f, x), encl(f, p), bound(p, x).
         assert!(findings().len() >= 3, "the cycle's imports: {:?}", findings());
         assert!(recursive > 0, "the import cycle's stratum is maintained");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A guard that, when the test it guards runs past `after`, samples this process's stacks (macOS `sample`) into
+    /// a file beside the temp dir and says where: a hang leaves what each thread was doing. Dropped, it does nothing.
+    pub(super) fn watchdog(name: &str, after: std::time::Duration) -> Watchdog {
+        let done = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let seen = std::sync::Arc::clone(&done);
+        let name = name.to_owned();
+        std::thread::spawn(move || {
+            let (lock, cv) = &*seen;
+            let (finished, _) = cv.wait_timeout_while(lock.lock().unwrap(), after, |d| !*d).unwrap();
+            if *finished {
+                return;
+            }
+            let out = std::env::temp_dir().join(format!("rerail-watchdog-{name}-{}.txt", std::process::id()));
+            let sampled = std::process::Command::new("sample").arg(std::process::id().to_string()).arg("3").arg("-file").arg(&out).output();
+            eprintln!("watchdog {name}: still running after {after:?}; stacks in {} ({:?})", out.display(), sampled.map(|o| o.status));
+        });
+        Watchdog(done)
+    }
+
+    pub(super) struct Watchdog(std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>);
+
+    impl Drop for Watchdog {
+        fn drop(&mut self) {
+            let (lock, cv) = &*self.0;
+            *lock.lock().unwrap_or_else(|e| e.into_inner()) = true;
+            cv.notify_all();
+        }
     }
 
     /// Decision 0077 §4: with no session, the cross part's strata are kept in the tape cache. A run over unchanged
