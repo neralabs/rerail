@@ -103,7 +103,7 @@ impl<'tree> AnchorNode<'tree> for crate::code_rule_dsl::tape::TapeNode<'tree> {
     }
 }
 
-use crate::code_rule_dsl::prefilter::probes::TextProbe;
+use rerail_store::probes::TextProbe;
 use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 #[cfg(test)]

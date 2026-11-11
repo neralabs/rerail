@@ -147,7 +147,11 @@ def main(tsv, *flags):
                 pos, span = at.split(':')
                 i = int(pos) - 1
                 s, e = (int(x) for x in span.split('-'))
-                if i >= len(lines) or lines[i][s:e].replace(' ', '') != now:
+                name = item_name(item)
+                def names_it(j, a, b):
+                    # the visibility at (j, a..b) is the item's: its name follows (after a keyword, or as `name:`)
+                    return name is not None and re.match(r'\s*(?:(?:unsafe|async|const|extern\s+"C")\s+)*(?:(?:fn|struct|enum|trait|type|const|static|union|mod)\s+)?' + re.escape(name) + r'(?![A-Za-z0-9_])', lines[j][b:]) is not None
+                if i >= len(lines) or lines[i][s:e].replace(' ', '') != now or not names_it(i, s, e):
                     # moved: the nearest line with the name after this visibility
                     name = item_name(item)
                     found = None
