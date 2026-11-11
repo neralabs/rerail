@@ -372,6 +372,9 @@ UKL_FUNCTION(v1,uint32_t,testRow)
     uint32_t exampleNum = rowId;
     float wFalse = rowData[2 * rowId];
     float wTrue = rowData[2 * rowId + 1];
+    // A row with no weight is not in the tree (a row sample's rows weighed by a tree): it counts nothing.
+    if (wFalse == 0 && wTrue == 0)
+        return 0;
     //int f = get_global_id(0);
     uint16_t bucket
         = getBucket(exampleNum, bucketData, bucketDataLength,
@@ -1661,7 +1664,9 @@ updatePartitionNumbersImpl) (CONSTBUFFER(TreeTrainingInfo) treeTrainingInfo,
         uint32_t r = i + workerIdInGrid;
 
         uint16_t storedPartition = r < numRows ? partitions[r].num : 0;
-        uint16_t oldPartition = depth == 0 ? 0 : storedPartition;
+        // At the root, a row with no weight (not in this tree's row sample) is in no partition from the start.
+        uint16_t oldPartition = depth != 0 ? storedPartition
+            : r < numRows && decodedRows[2 * r] == 0 && decodedRows[2 * r + 1] == 0 ? (uint16_t)-1 : 0;
         uint16_t partition = oldPartition;
 
         if (r < numRows && partition != (uint16_t)-1) {

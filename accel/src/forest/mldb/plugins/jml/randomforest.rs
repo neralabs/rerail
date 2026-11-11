@@ -176,17 +176,30 @@ impl<'a> FeatureSamplingTrainerKernel<'a> {
     }
 
     /// `init`, the device splitting at most `max_device_levels` levels (at most `MAX_DEVICE_LEVELS`).
-    pub fn init_with_device_levels(_debug_name: &str, max_depth: i32, rows: &Rows, features: &'a [Feature], bucket_memory: FrozenMemoryRegionT<u32>, fs: &'a DatasetFeatureSpace, max_device_levels: u32) -> Result<Self, String> {
-        let shared = shared()?;
-        let device = &shared.device;
-        let num_rows = rows.row_count() as u32;
-        let nf = features.len() as u32;
-        if max_depth < 1 {
-            return Err(format!("max depth {max_depth}"));
-        }
+    pub fn init_with_device_levels(debug_name: &str, max_depth: i32, rows: &Rows, features: &'a [Feature], bucket_memory: FrozenMemoryRegionT<u32>, fs: &'a DatasetFeatureSpace, max_device_levels: u32) -> Result<Self, String> {
         // The kernels read each row's buckets at its row number.
         if rows.example_num_bits != 0 && (0..rows.row_count()).any(|i| rows.get_example_num(i) != i as u32) {
             return Err("the rows' example numbers are not their row numbers".into());
+        }
+        Self::init_over(debug_name, max_depth, rows, None, features, bucket_memory, fs, max_device_levels)
+    }
+
+    /// A trainer for trees that each weigh the rows themselves (`TreeRows`, `init_with_rows`): over every example
+    /// number of the rows (a tree's row r is example r; the examples the rows leave out have no weight in any
+    /// tree), the rows not decoded.
+    pub fn init_for_tree_rows(debug_name: &str, max_depth: i32, rows: &Rows, features: &'a [Feature], bucket_memory: FrozenMemoryRegionT<u32>, fs: &'a DatasetFeatureSpace) -> Result<Self, String> {
+        let num_examples = (0..rows.row_count()).map(|i| rows.get_example_num(i) + 1).max().unwrap_or(0);
+        Self::init_over(debug_name, max_depth, rows, Some(num_examples), features, bucket_memory, fs, Self::MAX_DEVICE_LEVELS)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn init_over(_debug_name: &str, max_depth: i32, rows: &Rows, num_examples: Option<u32>, features: &'a [Feature], bucket_memory: FrozenMemoryRegionT<u32>, fs: &'a DatasetFeatureSpace, max_device_levels: u32) -> Result<Self, String> {
+        let shared = shared()?;
+        let device = &shared.device;
+        let num_rows = num_examples.unwrap_or(rows.row_count() as u32);
+        let nf = features.len() as u32;
+        if max_depth < 1 {
+            return Err(format!("max depth {max_depth}"));
         }
         let device_levels = (max_depth as u32).min(max_device_levels.clamp(1, Self::MAX_DEVICE_LEVELS));
         let max_partition_count = (1u32 << device_levels).min(Self::MAX_DEVICE_WIDTH);
@@ -226,6 +239,7 @@ impl<'a> FeatureSamplingTrainerKernel<'a> {
         let device_targets = transfer_to_device_immutable(device, if targets.is_empty() { &[0f32][..] } else { targets });
 
         let mut queue = MetalComputeQueue::new(&shared.queue);
+        if num_examples.is_none() {
         run(&queue, "decodeRows", &[
             ("rowData", B(&row_data)),
             ("rowDataLength", Int(rows.row_data.length() as i64)),
@@ -239,6 +253,7 @@ impl<'a> FeatureSamplingTrainerKernel<'a> {
             ("targets", B(&device_targets)),
             ("decodedRowsOut", B(&expanded_row_data)),
         ], &[num_rows])?;
+        }
         let device_bucket_entry_bits = transfer_to_device_immutable(device, &bucket_entry_bits);
         let device_bucket_data_offsets = transfer_to_device_immutable(device, &bucket_memory_offsets);
         queue.flush().await_()?;
@@ -310,6 +325,47 @@ pub struct PartitionControlData {
     pub tree_depth_info0: TreeDepthInfo,
     pub num_active_features: u32,
     pub num_active_buckets: u32,
+    /// The tree's own row weights (`TreeRows`), when it has them; else the trainer's rows.
+    pub rows: Option<TreeRows>,
+}
+
+/// A tree's rows as the weights it gives the trainer's rows (a row sample per tree, `train_weighted`): each row's
+/// weights to false and true (`row_weights`; both zero for a row the tree leaves out, which then counts nothing and
+/// goes in no partition), on the device, and their total.
+#[derive(Clone, Debug)]
+pub struct TreeRows {
+    pub decoded_rows: Buffer,
+    pub w_all: W,
+}
+
+impl TreeRows {
+    /// The rows weighed by `weight(i)` (zero to leave row i out), with the targets `target(i)`.
+    pub fn new(num_rows: usize, weight: impl Fn(usize) -> f32, target: impl Fn(usize) -> f32) -> Result<Self, String> {
+        let shared = shared()?;
+        let decoded_rows = alloc_uninitialized_array_sync::<RowWeights>(&shared.device, num_rows);
+        let out = unsafe { std::slice::from_raw_parts_mut(decoded_rows.contents().cast::<RowWeights>(), num_rows) };
+        let mut w_all = W::default();
+        for (i, o) in out.iter_mut().enumerate() {
+            let w = weight(i);
+            *o = if w == 0.0 { [0.0; 2] } else { row_weights(w, target(i)) };
+            if w != 0.0 {
+                w_all.add_weights(*o);
+            }
+        }
+        Ok(TreeRows { decoded_rows, w_all })
+    }
+}
+
+impl PartitionControlData {
+    /// The tree's rows' weights on the device.
+    pub fn decoded_rows<'b>(&'b self, o: &'b FeatureSamplingTrainerKernel) -> &'b Buffer {
+        self.rows.as_ref().map_or(&o.expanded_row_data, |r| &r.decoded_rows)
+    }
+
+    /// The tree's rows' total weight.
+    pub fn w_all(&self, o: &FeatureSamplingTrainerKernel) -> W {
+        self.rows.as_ref().map_or(o.rows.w_all, |r| r.w_all)
+    }
 }
 
 /// The device memory one tree's training works in, reused tree after tree (each tree's work is queued after the
@@ -418,7 +474,12 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
 
     /// Sets up one tree: its training info, active features and bucket numbering, the root's wAll and buckets, and
     /// the root's buckets accumulated (`testFeature`), all enqueued.
-    pub fn init(&mut self, feature_sampling: i32, feature_vector_sampling: i32, _debug_name: &str, active_features_in: &[i32]) -> Result<PartitionControlData, String> {
+    pub fn init(&mut self, feature_sampling: i32, feature_vector_sampling: i32, debug_name: &str, active_features_in: &[i32]) -> Result<PartitionControlData, String> {
+        self.init_with_rows(feature_sampling, feature_vector_sampling, debug_name, active_features_in, None)
+    }
+
+    /// `init`, the tree weighing the rows as `rows` does (else as the trainer's rows are).
+    pub fn init_with_rows(&mut self, feature_sampling: i32, feature_vector_sampling: i32, _debug_name: &str, active_features_in: &[i32], rows: Option<TreeRows>) -> Result<PartitionControlData, String> {
         let o = self.owner;
         let nf = o.nf as usize;
         // In feature order: the kernels take the first of equal scores in this list's order, and the tree of a set of
@@ -427,7 +488,7 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
         let mut active_features_in = active_features_in.to_vec();
         active_features_in.sort_unstable();
         active_features_in.dedup();
-        let mut data = PartitionControlData { active_feature_list: active_features_in.iter().map(|&f| f as u32).collect(), active_features_in, bucket_numbers: vec![0], feature_is_active: vec![0; nf], ..Default::default() };
+        let mut data = PartitionControlData { active_feature_list: active_features_in.iter().map(|&f| f as u32).collect(), active_features_in, bucket_numbers: vec![0], feature_is_active: vec![0; nf], rows, ..Default::default() };
         let active_feature_set: BTreeSet<i32> = data.active_features_in.iter().copied().collect();
         let num_active_features = data.active_feature_list.len() as u32;
         let mut num_active_buckets = 0u32;
@@ -462,11 +523,11 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
         q.enqueue_copy_from_host(&self.device_bucket_numbers, 0, bytes_of(&data.bucket_numbers));
         q.enqueue_copy_from_host(&self.device_feature_is_active, 0, bytes_of(&data.feature_is_active));
         q.enqueue_copy_from_host(&self.device_active_feature_list, 0, bytes_of(&data.active_feature_list));
-        q.enqueue_fill_array(&self.device_w_all_pool, &o.rows.w_all, 0, Some(1));
+        q.enqueue_fill_array(&self.device_w_all_pool, &data.w_all(o), 0, Some(1));
         q.enqueue_fill_array(&self.device_partition_bucket_pool, &W::default(), 0, Some(num_active_buckets as usize));
         q.enqueue_fill_array(&self.device_tree_depth_info, &data.tree_depth_info0, 0, Some(1));
         run(q, "testFeature", &[
-            ("decodedRows", B(&o.expanded_row_data)),
+            ("decodedRows", B(data.decoded_rows(o))),
             ("numRows", Int(o.num_rows as i64)),
             ("bucketData", B(&o.bucket_data)),
             ("bucketDataOffsets", B(&o.device_bucket_data_offsets)),
@@ -547,7 +608,7 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
                 ("bucketNumbers", B(&self.device_bucket_numbers)),
                 ("bucketEntryBits", B(&o.device_bucket_entry_bits)),
                 ("featureIsOrdinal", B(&o.device_feature_is_ordinal)),
-                ("decodedRows", B(&o.expanded_row_data)),
+                ("decodedRows", B(data.decoded_rows(o))),
             ], &[nr])?;
             // Now the small side buckets are clear, we can accumulate their weights.
             run(q, "updateBuckets", &[
@@ -561,7 +622,7 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
                 ("wAll", B(&self.device_w_all_pool)),
                 ("smallSideIndexes", B(&self.small_side_indexes)),
                 ("smallSideIndexToPartition", B(&self.small_side_index_to_partition_numbers)),
-                ("decodedRows", B(&o.expanded_row_data)),
+                ("decodedRows", B(data.decoded_rows(o))),
                 ("bucketData", B(&o.bucket_data)),
                 ("bucketDataOffsets", B(&o.device_bucket_data_offsets)),
                 ("bucketNumbers", B(&self.device_bucket_numbers)),
@@ -624,7 +685,7 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
             let partitions = transfer_to_host_sync::<RowPartitionInfo>(partitions, o.num_rows as usize);
             let w_all = transfer_to_host_sync::<W>(w_all, nap);
             let indexes = transfer_to_host_sync::<PartitionIndex>(indexes, nap);
-            let decoded_rows = transfer_to_host_sync::<RowWeights>(&o.expanded_row_data, o.num_rows as usize);
+            let decoded_rows = transfer_to_host_sync::<RowWeights>(data.decoded_rows(o), o.num_rows as usize);
             let mut features = o.features.to_vec();
             for (i, f) in features.iter_mut().enumerate() {
                 f.active = data.feature_is_active[i] != 0;
@@ -719,6 +780,32 @@ impl PartitionData {
     /// buckets, so the two disagreed; the bucket lists were sized by the column's distinct values but written with
     /// the feature's bucket count. Inactive features carry no buckets (upstream kept the old ones, outside the
     /// bag's memory). The weights must total less than 2 (W32 accumulates them with 30 fraction bits).
+    /// The data with its active features' buckets in one block (`bucket_memory`, as the device trainer takes
+    /// them), copied as they are (every example's bucket; the rows unchanged).
+    pub fn with_bucket_memory(&self, serializer: &mut MemorySerializer) -> PartitionData {
+        let words: usize = self.features.iter().filter(|f| f.active).map(|f| f.buckets.storage.data().len()).sum();
+        let mut block = serializer.allocate_writable_t::<u32>(words.max(1), 4096 /* page aligned */);
+        let mut spans = Vec::new();
+        let mut at = 0;
+        for f in &self.features {
+            spans.push(f.active.then(|| {
+                let d = f.buckets.storage.data();
+                block.data_mut()[at..at + d.len()].copy_from_slice(d);
+                at += d.len();
+                (at - d.len(), d.len())
+            }));
+        }
+        let bucket_memory = serializer.freeze_t(&mut block);
+        let features = self.features.iter().zip(spans).map(|(f, span)| {
+            let buckets = match span {
+                Some((start, len)) => BucketList { storage: FrozenMemoryRegionT::new(bucket_memory.raw().range(start * 4, (start + len) * 4)), ..f.buckets.clone() },
+                None => BucketList::default(),
+            };
+            Feature { buckets, ..f.clone() }
+        }).collect();
+        PartitionData { fs: self.fs.clone(), rows: self.rows.clone(), bucket_memory, features }
+    }
+
     pub fn reweight_and_compact(&self, counts: &[u32], scale: f64, serializer: &mut MemorySerializer) -> Result<PartitionData, String> {
         let n = self.rows.row_count();
         if counts.len() != n {
