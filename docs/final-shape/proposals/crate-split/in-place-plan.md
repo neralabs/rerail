@@ -208,6 +208,61 @@ All of this happens on `jeremybarnes/Cratification`, which merges the hub in dai
 4. **Rehearsals:** replay the whole stop procedure onto a copy of the current hub tip and time each step.
    Repeat until it runs well under the two hours.
 
+### The generators, as built
+
+`tools/cratify/regenerate.sh <index> <work>` runs them in order on the tree it sits in. The index is
+rust-analyzer's SCIP output for macOS and `wasm32-wasip1`, all features, decoded by `scip_decode.py`. Making it
+takes about 3 minutes per target. The syn tool in `tools/cratify/rs` reads and edits by byte span; nothing edits
+by regex.
+
+| step | tool | what it does |
+|---|---|---|
+| module tree | `cratify tree` | every module, where its parent declares it, its visibility and cfg |
+| join | `join.py` | each reference across crates, by the crate map: upward ones (`upward.tsv`, `tests.tsv`), items to widen (`widen.tsv`), all reads (`reads.tsv`) |
+| test hosts | `hosts.py` | a test module that reads a crate above its own is compiled by the least crate that sees all it reads (`test-hosts.tsv`, read after the map) |
+| widen | `widen.py` | each item another crate reads becomes `pub`: a restricted visibility is replaced, a private item gets `pub ` before its keyword. Trait methods and enum variants' fields are left |
+| mounts | `mounts.py` | each crate's `lib.rs`: inline modules over the original directories, the files it owns, globs of the crates below. A module whose owner is below but where the crate sees more is a facade: the owner's glob plus the rest |
+| apply | `apply.py` | writes the `lib.rs`s, the `Cargo.toml`s and the workspace members, then edits the files (below) |
+
+What `apply.py` edits in the files, all checked for overlaps:
+
+- **Declarations.** A parent's `mod x;` for a child of another crate becomes `pub use rerail_x::…::x;` (or a
+  facade) when the child's crate is below, and is dropped when it is above.
+- **Visibility.**
+  - Module declarations in crates other than the engine become `pub`.
+  - So do their restricted re-exports (`pub(crate) use`), since other crates path through them.
+  - A re-export of a module of a crate above is dropped from the file; the facades above repeat it.
+- **Facades repeat imports.** Each facade repeats its original's own `use` lines, made absolute, where the crate
+  can see their targets. A mounted child's `use super::*` and paths such as `crate::code_rule_dsl::X` then
+  resolve as they did.
+- **Tests across crates.** In every crate, the `test` atom of a cfg predicate becomes
+  `any(test, feature = "test-hooks")`. The exception is a test module no other crate reads, which stays its own
+  crate's.
+  - The engine dev-depends on itself with `test-hooks`, which turns on every crate's test hooks in test builds
+    only. Product builds have none.
+- **Manifest directory.** In a crate under `native/crates/`, `env!("CARGO_MANIFEST_DIR")` becomes
+  `concat!(env!("CARGO_MANIFEST_DIR"), "/../..")`, which is `native/` as before.
+
+Hand-written cuts, done on the prep branch:
+
+- **Devices** (§2.1): `logic::device::SolverDevice` and `transducer::packed::device::MatcherDevice`. Metal
+  implements both in `device_metal.rs` and registers them as the engine loads. So does the profiler's reader of
+  Metal's buffer sizes.
+- **Build identities:** the engine sets them as it loads (`build_ids`); no other crate reads `env!` for them.
+- **Language registry:** one generator for the engine and `rerail-lang`. Each runs it from its own build
+  script, through the same code in `build_languages.rs`.
+- **Fixtures:** `fixtures_dir!`, `oracle!`, `document` and `temp` are `fixtures.rs`, in `rerail-lang`. Every
+  crate's tests read them, and `RERAIL_FIXTURES_DIR` comes from `.cargo/config.toml`.
+- **The profiler:**
+  - The recorder stays in `rerail-prof`.
+  - The report (`write`, `placed`, `placements`) is `logic/profile/report.rs`, in `rerail-logic`.
+  - The device report struct, phase 0's flag and the allocator purge moved down into `rerail-prof`.
+- **Moves by name** (`move_items.py`, `moves.tsv` and `moves2.tsv`): the `.rr` AST, the device data types, the
+  profiler's report.
+
+Rehearsal: a worktree of the prep branch, `regenerate.sh` on its own index, then `cargo check` bottom-up.
+`rerail-rr-syntax` checks green. What the other crates still fail on is the remaining cuts.
+
 ### The stop (target under two hours)
 
 | step | time | what |
