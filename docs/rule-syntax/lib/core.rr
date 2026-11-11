@@ -200,6 +200,7 @@
 .decl doc_role(d: number, role: symbol)                  // "primary" (a file), "fragment", or an embed's role
 .decl doc_root(d: number, n: node)                       // the root of document d's tree
 .decl tape_of(d: number, t: tape)                        // document d places tape t; equal texts share a tape
+.decl guest_policy(k: symbol, v: symbol)                 // the program's `.guests` and `.on guest_error` settings
 .decl host_node(n: node, h: node)                        // h is the innermost host node over guest node n
 .input sub_tape, guest, doc_role, doc_root, tape_of, host_node
 // What a rule sees (decision 0058): files, and guests in the run's language unless `.guests off`. A rule that

@@ -84,6 +84,7 @@ pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
     let mut report = Report::default();
     unit_columns(prog);
     report.constants += ground_rules(prog);
+    report.constants += decided_fact_tests(prog);
     // `RERAIL_EXISTENCE_COUNTS=off`: existence counts stay counts, for comparison.
     if std::env::var("RERAIL_EXISTENCE_COUNTS").map_or(true, |v| v != "off") {
         for rule in &mut prog.rules {
@@ -352,6 +353,64 @@ fn unit_columns(prog: &mut Program) {
 }
 
 /// Rules whose bodies are only `$v = constant` equations, made facts (above). Returns the rules replaced.
+/// A test of stated facts alone is decided before the run: an atom of all constants over a relation that has
+/// facts and no rules (`guest_policy("library", "off")`, a library's setting) holds or not. A positive one that holds,
+/// or a negated one that does not, is dropped from its body; a rule with one that cannot hold goes. The rows are the
+/// facts only when some are stated and no rule, input or engine relation adds to them.
+fn decided_fact_tests(prog: &mut Program) -> usize {
+    let constant = |t: &Term| match t {
+        Term::Int(i) => Some(Value::Int(*i)),
+        Term::Str(s) => Some(Value::Str(s.clone())),
+        _ => None,
+    };
+    let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
+    let stated = |rel: &str| {
+        // Facts stated: a relation of none may be filled from outside the program (a later phase's input).
+        prog.facts.get(rel).is_some_and(|f| !f.is_empty()) && !derived.contains(rel) && !fixed(prog, rel) && !kept_by_engine(prog, rel)
+    };
+    let mut decided: Vec<Option<Vec<usize>>> = Vec::with_capacity(prog.rules.len());
+    for rule in &prog.rules {
+        let mut drop = Vec::new();
+        let mut holds = true;
+        for (i, l) in rule.body.iter().enumerate() {
+            let Literal::Atom(a) = l else { continue };
+            if !stated(&a.rel) {
+                continue;
+            }
+            let Some(row) = a.args.iter().map(constant).collect::<Option<Vec<Value>>>() else { continue };
+            let present = prog.facts.get(&a.rel).is_some_and(|f| f.iter().any(|r| *r == row));
+            if present != a.neg {
+                drop.push(i);
+            } else {
+                holds = false;
+                break;
+            }
+        }
+        decided.push(holds.then_some(drop));
+    }
+    let mut n = 0;
+    let rules = std::mem::take(&mut prog.rules);
+    for (mut rule, d) in rules.into_iter().zip(decided) {
+        match d {
+            None => n += 1,
+            Some(drop) => {
+                n += drop.len();
+                for i in drop.into_iter().rev() {
+                    rule.body.remove(i);
+                }
+                prog.rules.push(rule);
+            }
+        }
+    }
+    n
+}
+
+/// A relation whose rows come from outside the program's rules and facts: an input, a lattice, a native relation, a
+/// gate or a demand (`fixed`), or one the engine fills (the guests' requests and policy are facts the runner reads).
+fn kept_by_engine(prog: &Program, rel: &str) -> bool {
+    prog.inputs.iter().any(|i| i == rel) || prog.natives.contains_key(rel)
+}
+
 fn ground_rules(prog: &mut Program) -> usize {
     let constant = |t: &Term| match t {
         Term::Int(i) => Some(Value::Int(*i)),
@@ -2300,6 +2359,34 @@ mod tests {
         assert_eq!(report.projected, vec![("docmod".to_owned(), vec![1])]);
         let text: Vec<String> = prog.rules.iter().map(|r| r.to_string()).collect();
         assert!(text.iter().any(|r| r.starts_with("docmod($d, $q) :-")), "{text:?}");
+    }
+
+    /// A test of stated facts alone is decided before the run: `!setting("guests", "off")` drops its rule when the
+    /// fact is stated, and a positive test that holds leaves its body.
+    #[test]
+    fn tests_of_stated_facts_are_decided() {
+        let mut prog = super::super::rr::parse(
+            r#"
+            .decl node(d: number, n: node, kind: symbol, start: number, end: number)
+            .input node
+            .decl setting(k: symbol, v: symbol)
+            setting("guests", "off").
+            .decl gated(n: node)
+            .decl kept(n: node)
+            .decl lost(n: node)
+            .output gated
+            .output kept
+            .output lost
+            gated(n) :- !setting("guests", "off"), node(_, n, "call", _, _).
+            kept(n) :- setting("guests", "off"), node(_, n, "call", _, _).
+            lost(n) :- setting("guests", "on"), node(_, n, "call", _, _).
+            "#,
+        )
+        .unwrap();
+        simplify(&mut prog);
+        let text: Vec<String> = prog.rules.iter().map(|r| r.to_string()).collect();
+        assert!(!text.iter().any(|r| r.starts_with("gated(") || r.starts_with("lost(")), "{text:?}");
+        assert!(text.iter().any(|r| r.starts_with("kept(") && !r.contains("setting")), "{text:?}");
     }
 
     /// `count : { r(…) } = 0` is `!r(…)`, and `> 0` is `r(…)`: a plain read for demand, inlining and projection.

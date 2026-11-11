@@ -364,14 +364,16 @@ sym_of(n, q) :- builtin_ref(n, x), q = @dot("builtins", x).
 .decl global_ref(n: node, x: symbol)
 global_ref(n, x) :- builtin_ref(n, x).
 
+// A program that says `.guests off` sees files only: its names are not resolved inside string annotations either
+// (no parse is asked for; guest_policy("library", "off"), decision 0055).
 // annotation(n): n is (inside) a type annotation: parameter types, return types, `x: T = ...`, and the parsed
 // contents of string annotations such as `def f() -> "Foo[int]"`. Rules use it to ignore type-only uses of a name.
 .decl annotation(n: node)
 annotation(t) :- ann_root(t).
 annotation(n) :- ann_root(t), within(n, t).                            // every node below an annotation root
 annotation(n) :- parsed_in(n, _).                                      // and the trees parsed from its strings
-annotation(r) :- string_annotation(s), parsed(s, "annotation", r).   // native sub-grammar parse of "Foo[int]"
-annotation(n) :- string_annotation(s), parsed(s, "annotation", r), within(n, r).
+annotation(r) :- !guest_policy("library", "off"), string_annotation(s), parsed(s, "annotation", r).   // native sub-grammar parse of "Foo[int]"
+annotation(n) :- !guest_policy("library", "off"), string_annotation(s), parsed(s, "annotation", r), within(n, r).
 // ann_root(t): the root of an annotation: a parameter's, a return's, an annotated assignment's.
 //   def f(x: int) -> str: ...      ann_root(<int>), ann_root(<str>)
 .decl ann_root(t: node)
@@ -386,9 +388,9 @@ ann_root(t) :- kind(a, "assignment"), field(a, "type", t).
 .decl parsed_in(e: node, s: node)
 .decl ann_ctx(s: node)  // s is an annotation root or inside one: where a string annotation can stand
 ann_ctx(s) :- ann_root(a), (s = a ; within(s, a)).
-parsed_in(e, s) :- ann_ctx(s), ann_str(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
+parsed_in(e, s) :- !guest_policy("library", "off"), ann_ctx(s), ann_str(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
 // s is a string inside a parsed annotation (a fragment document): only those are asked to be parsed again.
-parsed_in(e, s0) :- parsed_in(s, s0), frag_str(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
+parsed_in(e, s0) :- !guest_policy("library", "off"), parsed_in(s, s0), frag_str(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
 .decl frag_str(s: node)  // a string inside a parsed annotation (a fragment document)
 frag_str(s) :- ann_str(s), d = @doc(s), doc_role(d, "fragment").
 .decl str_node(s: node)  // a string or an implicit concatenation: what a parse request may name
