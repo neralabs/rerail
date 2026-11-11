@@ -2,7 +2,7 @@
 //! The sink sees validated preorder nodes. No partially admitted result is published.
 use super::*;
 
-pub(in crate::code_rule_dsl) struct Node {
+pub struct Node {
     pub id: u32,
     pub kind: u16,
     pub field: u16,

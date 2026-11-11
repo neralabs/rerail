@@ -2548,7 +2548,7 @@ pub(crate) fn pattern_doc(lang: GrammarDialect, source: &str) -> Result<(TapeDoc
 
 /// What a pattern's tree-sitter nodes say that its tape leaves out, per record
 /// (`ast_grep_core::matcher::PatternShape`, `native/vendor/ast-grep-core-0.51.0/PATCHES.md`).
-pub(crate) struct PatternShape {
+pub struct PatternShape {
     /// Whether the node ended in implied tokens after its last child (unless that child is an
     /// ellipsis, which takes every candidate anyway): its pattern ends its children there.
     pub(crate) ends: Vec<bool>,
