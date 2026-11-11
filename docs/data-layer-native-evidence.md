@@ -114,4 +114,4 @@ Older reports without a recorded API appear in the unspecified column. No API is
 | matching_architecture | draft | 42 | 0 | 0 | 0 |
 | hnsw_architecture | draft | 13 | 0 | 0 | 13 |
 | embedding_vector_orchestration | draft | 13 | 0 | 0 | 0 |
-| generated_index_sources | draft | 5 | 5 | 5 | 0 |
+| generated_index_sources | full-contract-passed | 5 | 5 | 5 | 0 |
