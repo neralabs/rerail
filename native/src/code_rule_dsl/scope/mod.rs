@@ -299,6 +299,23 @@ pub(crate) struct ModuleImport {
     pub(crate) offset: usize,
 }
 
+/// Where a Python type definition may start: recorded while the table is built, classified after
+/// (`python::string_type_definitions`).
+pub(crate) struct TypeRoot {
+    pub(crate) node: NodeRef,
+    pub(crate) kind: RootKind,
+}
+
+/// What a `TypeRoot` starts.
+pub(crate) enum RootKind {
+    /// An annotation, a `type` statement's value, a type parameter's bound.
+    Definition,
+    /// A subscript or call whose name may be a typing generic or callable.
+    Candidate,
+    /// The value of `x: A = value`, a type definition where `A` is `TypeAlias`.
+    AliasValue(NodeRef),
+}
+
 impl ScopeTable {
     /// Ruff's `seen_module`: whether an import of one of `modules` (top-level names) is visited
     /// before a node Ruff visits at `depth` (function bodies around it; `u32::MAX` for a lambda
@@ -1259,7 +1276,7 @@ pub(crate) struct Builder<'d> {
     /// Marks references as read in a definition's type scope (`Reference::type_scope`).
     typing: bool,
     /// Python: where a type definition may start, for `python::string_type_definitions`.
-    type_roots: Vec<python::TypeRoot>,
+    type_roots: Vec<TypeRoot>,
     /// Python: each string literal's scope, by its range.
     strings: HashMap<(usize, usize), u32>,
     /// The current Python branch (`Binding::branch`), and the last one opened.

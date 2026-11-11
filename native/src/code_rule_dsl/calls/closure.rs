@@ -161,7 +161,7 @@ impl Contribution {
                     .entry(key.clone())
                     .or_default()
                     .push((target.clone(), *kind));
-                if *kind == php::PARENT {
+                if *kind == super::PARENT {
                     contribution
                         .children
                         .entry(target.clone())

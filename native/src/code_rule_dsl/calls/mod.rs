@@ -26,6 +26,10 @@ use crate::code_rule_dsl::lines::Span;
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::{Reading, ScopeTable};
 use crate::content_store::HashKey;
+
+/// A super edge's kind (`Summary::supers`): the class-like's parent class, `(class, parent)`, which a closure
+/// also reads the other way (its children).
+pub(crate) const PARENT: u8 = 0;
 use ast_grep_core::{Doc, Node};
 use closure::{DefRef, Graph, GraphUpdate, Hop, Region};
 use names::Name;
