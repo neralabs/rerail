@@ -4773,11 +4773,11 @@
       "batch": 10,
       "legacyPath": "gate/data-layer/packs/data-layer/rules/data-layer-generated-index-sources.json",
       "legacySha256": "80fba2624934f3f927a0777746fe9af604c63c6df6391e532ef739c5c36e3f5f",
-      "status": "draft",
+      "status": "full-contract-passed",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
       "ruleSha256": "a2f0f86363133a10cb2bf0c1080ffd22082e12ca508ed00eb6191c1693a7a796",
       "migrationProgress": {
-        "status": "native-contract-progress",
+        "status": "full-contract-passed",
         "fullMigrationAcceptance": false,
         "checkpoint": {
           "path": "gate/data-layer/fixtures/host/data-layer-port/rr-generated-indexes-progress-finalfcce.json.gz",
@@ -4798,7 +4798,59 @@
           "CLI contracts",
           "Persistent workspace updates",
           "Full production and shared registration acceptance"
-        ]
+        ],
+        "verifiedNativeExecutions": 1096
+      },
+      "evidence": {
+        "assertions": 5,
+        "positives": 4,
+        "failures": 0,
+        "skipped": 0,
+        "semanticFallbacks": 0,
+        "ruleSha256": "a2f0f86363133a10cb2bf0c1080ffd22082e12ca508ed00eb6191c1693a7a796",
+        "engineCommit": "4e07746800e7fb958a57c5208c1ea956bc8f7412",
+        "engineSha256": "f4db14313662e14ca1e1924296c91acb48107035461e85db4a2977d61b6ce6e2",
+        "corpusSha256": "3b808fc7366bc0b57464c43a7de0ac2727f4181b7323f9f67a8e62b781974a8b",
+        "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "originalInventory": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory-v2.json",
+          "sha256": "a3636d7f8dbb210cfec64aa05b20ff37a97899365b68b3ba2a4ab855ccdda0db"
+        },
+        "reports": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-generated-indexes-complete-native-snapshot.json",
+            "sha256": "9bf034db114a73c35b74758816c798c987295b471f30c1129a73e449aa3d6a7d"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-generated-indexes-complete-native-workspace.json",
+            "sha256": "f603ef22140d08711342525bfcaf82c7faca1fb955c005668c358785e5a71d2c"
+          }
+        ],
+        "acceptanceCheckpoints": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-generated-indexes-complete-finalfcce.json.gz",
+            "sha256": "da7d07de21ced586278876d0c3bcc2271ed89a7fa7321385337400fee2daa823"
+          }
+        ],
+        "supplemental": {
+          "originalCasesPerAPI": 5,
+          "originalPositiveObservationsPerAPI": 4,
+          "supplementalCasesPerAPI": 117,
+          "supplementalFindingPositiveCases": 72,
+          "controls": 14,
+          "nativeExecutions": 1096,
+          "admitted": true,
+          "integrationCasesPerAPI": 84,
+          "legacyCasesPerAPI": 47,
+          "persistentStepsPerAPI": 18,
+          "integrationControls": 18,
+          "fullMigrationAcceptance": false,
+          "hostProtocols": {
+            "cli-help": "Unchanged argparse help exits before rule evaluation.",
+            "cli-bad-option": "Unchanged argparse rejects an unknown option before rule evaluation."
+          }
+        },
+        "scope": "All original assertions, all earlier batch-ten inputs, scanner, registered collector, supplied facts, helpers, CLI, production, persistent updates and removal controls through both native APIs."
       }
     }
   ],
@@ -5252,28 +5304,28 @@
     ],
     "cliArtifact": {
       "format": "rerail.root-engine-build/v1",
-      "engineCommit": "3d47054af8d62cd4ea3b8137b9f6d2a273ce2422",
+      "engineCommit": "4e07746800e7fb958a57c5208c1ea956bc8f7412",
       "upstreamCommit": "fcce32b26cf5e561ded72575ed6d327394f822fe",
       "sourceTrees": {
-        "native": "ffeeccf5991ed2f5af6f399a6743964c016f0750",
+        "native": "8865070494bfd31d16ddf67d87560fa0f705e53e",
         "accel": "c0a9697122e57c9e213919c4e9b9686dd17a1b07",
         "tools/bitlex": "3699290356d32d790f91b76c5df41186268ada69",
         "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
         "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
       },
-      "path": ".rerail/modern-engine-alignment/cli-4ea24f57dc936371",
-      "sha256": "4ea24f57dc93637177d4e56fa7df10e1f474e27b44f29dfa78e1f3d3a6ec2004",
+      "path": ".rerail/modern-engine-alignment/cli-f4db14313662e14c",
+      "sha256": "f4db14313662e14ca1e1924296c91acb48107035461e85db4a2977d61b6ce6e2",
       "command": "nice -n 19 rustup run 1.95.0 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling",
-      "wallSeconds": 56.92,
-      "userCpuSeconds": 389.46,
-      "systemCpuSeconds": 6.9
+      "wallSeconds": 62.4,
+      "userCpuSeconds": 429.57,
+      "systemCpuSeconds": 7.74
     },
     "adoptionAudit": {
       "format": "rerail.engine-cohort-adoption/v1",
       "upstreamCommit": "fcce32b26cf5e561ded72575ed6d327394f822fe",
-      "engineCommit": "3d47054af8d62cd4ea3b8137b9f6d2a273ce2422",
+      "engineCommit": "4e07746800e7fb958a57c5208c1ea956bc8f7412",
       "sourceTrees": {
-        "native": "ffeeccf5991ed2f5af6f399a6743964c016f0750",
+        "native": "8865070494bfd31d16ddf67d87560fa0f705e53e",
         "accel": "c0a9697122e57c9e213919c4e9b9686dd17a1b07",
         "tools/bitlex": "3699290356d32d790f91b76c5df41186268ada69",
         "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",

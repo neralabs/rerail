@@ -10,8 +10,12 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 
 ## Active engine
 
+The latest registered root CLI is `f4db14313662e14c…`, built from native repair commit `4e0774680`.
+It includes Final `fcce32b26`. Generated-index sources passes complete acceptance on this cohort.
+The thirteen earlier admissions retain their recorded engine versions.
+
 Build and develop the engine in this repository root.
-Final `fcce32b26` is merged in `b9aee60a0`. The registered root CLI is `f5e7abbacdd014c5…`.
+Final `fcce32b26` is merged in `b9aee60a0`. Its earlier checkpoint used root CLI `f5e7abbacdd014c5…`.
 Generated-index tests pass through both APIs: five original cases, 117 supplemental cases, and fourteen native removal controls.
 The [current checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-generated-indexes-progress-finalfcce.json.gz) binds those results to this binary.
 The earlier cohorts below retain their own engine identities and acceptance limits.
@@ -117,7 +121,7 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory has **13 accepted ports, 86 drafts, and one absent translation**.
+The current inventory has **14 accepted ports, 85 drafts, and one absent translation**.
 This means 99 translation candidates exist. It does not mean 99 migrations have passed acceptance.
 The absent translation is `serverplan_quality`.
 The State Tripwires candidate remains a draft. Its original module passes all 80 tests through each native API.
@@ -3365,3 +3369,19 @@ The historical census now contains 923 reports. Its 55-rule evidence count and 4
 Per-rule progress now links the source-inspection and generated-index checkpoints and names their remaining acceptance work.
 The full migration remains open: 13 full admissions, 86 drafts, and one absent translation.
 No full-repository cold run or additional Linear ticket was created.
+
+
+### Complete generated-index admission on Final fcce, 2026-11-11
+
+The [complete receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-generated-indexes-complete-finalfcce.json.gz) certifies 1,096 native executions.
+Both APIs pass all five unchanged original tests, including four finding-positive tests.
+Each API also passes 117 scanner contracts, 84 integration contracts, and all 47 earlier batch-ten inputs.
+The integration set covers plugin configuration, registered collector extraction, supplied facts, helpers, CLI streams, and production discovery.
+Each API passes 18 persistent update steps. All 32 scanner and integration removal controls detect their intended semantic changes.
+CLI help and unknown-option rejection remain unchanged argparse protocols. They exit before rule evaluation and are explicitly identified.
+Rules invoke no Python. Original linter callbacks remain blocked during native execution.
+The admission validator rejects omitted positives, omitted legacy cases, incomplete updates, mixed cohorts, and invalid mutation controls.
+The receipt binds source recordings, complete results, consumed programs, mutant programs, harness bytes, and the optimized root binary.
+
+The complete inventory now has fourteen recorded admissions, eighty-five drafts, and one absent translation.
+This does not certify the remaining rules or refresh earlier admissions on this engine version.

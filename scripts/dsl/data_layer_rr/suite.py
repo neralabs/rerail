@@ -528,6 +528,9 @@ class Suite:
             shared = importlib.import_module('scripts.lint_lib.serverplan_facts')
             originals.update(codes({'serverplan_facts': shared}))
         for check, module in self.modules.items():
+            if check == 'generated_index_sources':
+                from generated_indexes_port import install
+                install(self,module)
             if check == 'serverplan_state_tripwires':
                 from state_tripwires_port import install
                 install(self,module)

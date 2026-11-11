@@ -11848,3 +11848,62 @@ The historical census now contains 923 reports. Its 55-rule evidence count and 4
 Per-rule progress now links the source-inspection and generated-index checkpoints and names their remaining acceptance work.
 The full migration remains open: 13 full admissions, 86 drafts, and one absent translation.
 No full-repository cold run or additional Linear ticket was created.
+
+
+### 2026-11-11 — Generated-index update admission and duplicate parameters
+
+The complete generated-index acceptance run is in progress. This entry does not admit the rule.
+The current cohort includes Final `fcce32b26` and native repair commit `4e0774680`.
+The registered root CLI hash starts `f4db14313662e14c`.
+
+The native integration contracts cover 84 source-recorded cases through each API.
+They include registered collector extraction, supplied facts, helper returns, CLI streams, and physical repository loading.
+A separate replay preserves all 47 generated-index inputs from four earlier batch-ten corpora.
+These inputs exposed a duplicate keyword-only parameter mismatch.
+The source checks the first `source` annotation and the last keyword-only `source` default.
+The native rule now makes those selections separately. The first 12-case replay shard passes after the repair.
+The committed red receipt retains the unchanged earlier corpus input and both complete results.
+
+Persistent empty-to-positive updates exposed a retained-row failure.
+The first view-dependency repair did not resolve it. A seven-step rerun still failed.
+The diagnostic now identifies the missing relation and its reader: `gis_file_probe`, read by `gis_present_file`.
+The admission pass treated ruleless native answer relations as immutable literal facts.
+World replay could change those answers and activate a consumer whose retained input payload was not admitted.
+The repair treats native answers and native operators as potentially changing producers.
+The same seven-step sequence now passes, including unchanged, clean, removed, and re-added states.
+A smaller ten-step filesystem probe already passed before this repair; it did not reproduce the failure.
+
+Earlier integration repairs preserved external handler names during relation sharing.
+That change fixed simultaneous ground directory-listing and metadata requests.
+The preceding request-cone expansion alone did not fix that failure.
+The Python integer text functor reuses the existing native decoder; rules do not invoke Python.
+
+Build times remain separate from rule execution:
+
+| Build | Wall seconds | CPU seconds |
+|---|---:|---:|
+| View dependency admission | 58.40 | 423.46 |
+| Retained reader diagnostic | 56.92 | 396.36 |
+| Native answer admission | 62.40 | 437.31 |
+
+All builds target the optimized headless CLI. No full-repository cold benchmark or Linear ticket was added.
+
+
+### 2026-11-11 — Complete generated-index acceptance
+
+All 49 bounded acceptance commands pass on the frozen `f4db14313662e14c` root CLI.
+The self-contained complete receipt records 1,096 native executions.
+Both APIs pass five original tests, including all four original positive observations.
+Each API also passes 117 scanner cases, 84 integration cases, and all 47 earlier generated-index corpus inputs.
+The 72 scanner finding-positive cases remain covered through both APIs.
+Each API passes eighteen persistent update steps, including creation, removal, no-op, links, syntax errors, and restoration.
+All fourteen scanner controls and eighteen integration controls pass.
+Native decimal formatting, combined ground filesystem requests, and ten retained filesystem update steps also pass.
+CLI help and unknown-option rejection remain explicitly identified host argparse protocols.
+Fourteen validator tests reject missing positives, omitted legacy inputs, omitted updates, old cohorts, and invalid mutants.
+
+The complete admission receipt is `rr-generated-indexes-complete-finalfcce.json.gz`.
+The manifest now records fourteen full admissions, eighty-five drafts, and one absent translation.
+Earlier admissions retain their original engine identities. The entire migration remains incomplete.
+
+The complete tooling suite passes all 465 tests. The migration inventory audit also passes.

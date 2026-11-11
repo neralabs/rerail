@@ -35,6 +35,8 @@ ENGINE_EXTENSION_BOUNDARIES = (
     'native/src/code_rule_dsl/logic/plan/demand.rs',
     # External request names retain their handler identity during relation sharing.
     'native/src/code_rule_dsl/logic/simplify.rs',
+    # Stated requests publish their answers through the current request cone.
+    'native/src/code_rule_dsl/logic/answers.rs',
     # Generic ordered BFS, on Final's existing native-relation boundary.
     'native/src/code_rule_dsl/logic/front.rs',
     'native/src/code_rule_dsl/logic/native.rs',

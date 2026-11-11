@@ -1,0 +1,84 @@
+// Generated-index public API and production projections share one finding relation.
+pp_config("name","generated_index_sources").
+pp_config("enforcement","hard-fail").
+pp_config("description","Generated auxiliary indexes include source attribution").
+pp_config("extractor","generated_index_sources.violations").
+pp_config("findingSeverity","error").
+pp_config("parser","ast_collect").
+pp_config("fact_kind","list").
+pp_config("scope","explicit").
+pp_trigger(t) :- gis_trigger(t).
+.decl gis_file_probe(path: symbol, directory: symbol, name: symbol)
+gis_file_probe(p,d,n) :- gis_generator_file(p),match("(?<d>.*)/(?<n>[^/]+)",p).
+.decl gis_parent(directory: symbol)
+gis_parent(d) :- gis_file_probe(_,d,_).
+// The directory request has its own input anchor. Its key must not depend on
+// the filename output of the same filesystem relation.
+.decl gis_present_file(path: symbol)
+gis_present_file(p) :- !env("data-layer.api","true"),gis_parent(d),gis_file_probe(p,d,n),dir_metadata(d,n,1,_,_).
+.decl gis_read_failed(path: symbol)
+gis_read_failed(p) :- gis_present_file(p),file_error(p,_,_,_,_,_,_,_).
+pp_file(p) :- gis_present_file(p),!gis_read_failed(p).
+pp_report(p,l,"missing_source",m,@replace_all(p,"/","\u0000"),0,"",0,i,r,0) :- pp_run(),gis_output(_,p,l,m,i,r).
+.violation GeneratedProductionFact(at: span, path: symbol, path_order: symbol, order0: number, order1: number, order2: number, f_line: number, f_message: symbol) code "DL_FACT" "production fact"
+GeneratedProductionFact(@place("",0),p,@replace_all(p,"/","\u0000"),i,r,0,l,m) :- option("entryPoint","_production_contract"),gis_output(_,p,l,m,i,r).
+.violation GeneratedReadError(at: span, kind: symbol, errno: number, detail: symbol, bytes_hex: symbol, start: number, end: number, reason: symbol) code "GIS_READ_ERROR" "{detail}"
+GeneratedReadError(@place(p,0),k,n,detail,b,s,e,r) :- pp_run(),gis_present_file(p),file_error(p,k,n,detail,b,s,e,r).
+
+.violation GeneratedConfig(at: span, key: symbol, value: symbol) code "GIS_CONFIG" "configuration"
+GeneratedConfig(@place("",0),k,v) :- option("entryPoint","_gis_configuration"),gis_config(k,v).
+GeneratedConfig(@place("",0),"file",p) :- option("entryPoint","_gis_configuration"),gis_generator_file(p).
+.violation GeneratedCollectorFact(at: span, ordinal: number, rank: number, source_line: number, source_message: symbol) code "GIS_FACT" "{source_message}"
+GeneratedCollectorFact(@place(p,l),i,r,l,m) :- option("entryPoint","_collector_facts"),gis_output(_,p,l,m,i,r).
+
+// The supplied-fact reporter takes the view's mapping key, not bundle.path.
+#include "data-layer/supplied-facts.rr"
+sf_config("message","field"). sf_config("strict_line","true").
+sf_config("code","missing_source"). sf_config("order","bundle").
+sf_strict("message").
+sf_path_input(b,r,p) :- sf_active(b,r),sf_source_bundle(b,p).
+
+// Primitive helpers keep unbounded integer lines as canonical decimal text.
+.decl gis_parse(first: symbol, raw_line: symbol, message: symbol)
+gis_parse(p,v,rest) :- option("entryPoint","_parse_violation_line"),option("gisParseValue",raw),
+    match("(?s)(?<head>.*?): (?<rest>.*)",raw),match("(?s)(?<p>.*):(?<v>[^:]*)",head).
+.decl gis_parsed(path: symbol, source_line: symbol, message: symbol)
+gis_parsed(p,@python_int_text(raw),m) :- gis_parse(p,raw,m).
+.violation GeneratedParsed(at: span, file: symbol, line_json: symbol, source_message: symbol) code "GIS_PARSED" "{source_message}"
+GeneratedParsed(@place("",0),p,n,m) :- gis_parsed(p,n,m).
+.violation GeneratedNone(at: span) code "GIS_NONE" "not a parsed finding"
+GeneratedNone(@place("",0)) :- option("entryPoint","_parse_violation_line"),!gis_parsed(_,_,_).
+.decl gis_format_path(value: symbol)
+.input gis_format_path(IO=json,filename="generated-values.json",path="/path",projection="python-str")
+.decl gis_format_line(value: symbol)
+.input gis_format_line(IO=json,filename="generated-values.json",path="/line",projection="python-str")
+.decl gis_format_message(value: symbol)
+.input gis_format_message(IO=json,filename="generated-values.json",path="/message",projection="python-str")
+.violation GeneratedFormatted(at: span, value: symbol) code "GIS_FORMATTED" "{value}"
+GeneratedFormatted(@place("",0),cat(p,":",l,": ",m)) :- option("entryPoint","_format_finding"),gis_format_path(p),gis_format_line(l),gis_format_message(m).
+.violation GeneratedUnavailable(at: span, value: symbol) code "GIS_UNAVAILABLE" "{value}"
+GeneratedUnavailable(@place("",0),v) :- option("entryPoint","_extract_generated_index_source_facts"),gis_config("runtime_error",v).
+
+.violation GeneratedCliOutput(at: span, ordinal: number, value: symbol) code "GIS_CLI_OUTPUT" "{value}"
+GeneratedCliOutput(@place("",0),i,cat(v,"\n")) :- option("entryPoint","_cli_report"),option_item("gisCliValues",i,v).
+.violation GeneratedCliExit(at: span, status: number) code "GIS_CLI_EXIT" "CLI status"
+GeneratedCliExit(@place("",0),1) :- option("entryPoint","_cli_report"),option("gisCliCheck","1"),option_item("gisCliValues",_,_).
+GeneratedCliExit(@place("",0),0) :- option("entryPoint","_cli_report"),option("gisCliCheck","0").
+GeneratedCliExit(@place("",0),0) :- option("entryPoint","_cli_report"),!option_item("gisCliValues",_,_).
+
+.violation GeneratedCollectorStatus(at: span, present: number) code "GIS_COLLECTED" "collector status"
+GeneratedCollectorStatus(@place(p,0),1) :- option("entryPoint","_collector_facts"),pp_doc(d,p),!syntax_error(d,_,_).
+GeneratedCollectorStatus(@place(p,0),0) :- option("entryPoint","_collector_facts"),pp_doc(d,p),syntax_error(d,_,_).
+.violation GeneratedCollectorError(at: span, value: symbol) code "GIS_COLLECTOR_ERROR" "{value}"
+GeneratedCollectorError(@place(p,l),cat("SyntaxError: ",detail," (",@replace_all(owner,".*/",""),", line ",to_string(l),")")) :-
+    option("entryPoint","_collector_facts"),pp_doc(d,p),syntax_error(d,l,detail),gis_owner(d,owner).
+
+// File batches carry filesystem observations; selection, deduplication and order
+// are native. FactEngine sorts lexical Path components and skips non-Python files.
+.decl gis_candidate(i: number, path: symbol, key: symbol)
+gis_candidate(i,p,@replace_all(p,"/","\u0000")) :- option("entryPoint","_select_files"),option_item("gisCandidatePaths",i,p),
+    option_item("gisCandidateIsFile",i,"1"),suffix(".py",p),strlen(@replace_all(p,".*/",""))>3.
+.decl gis_duplicate_candidate(i: number)
+gis_duplicate_candidate(i) :- gis_candidate(i,p,_),gis_candidate(j,p,_),j<i.
+.violation GeneratedSelectedFile(at: span, ordinal: number, path: symbol, order_key: symbol) code "GIS_SELECTED_FILE" "selected file"
+GeneratedSelectedFile(@place("",0),i,p,k) :- gis_candidate(i,p,k),!gis_duplicate_candidate(i).

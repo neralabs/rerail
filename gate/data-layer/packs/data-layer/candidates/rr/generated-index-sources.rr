@@ -2,7 +2,7 @@
 .description "Generated auxiliary indexes are built by _generated_index, which takes and forwards a required IndexSource."
 .language python
 .mode block
-.scope include "impl/common/l7245_versioned_backends/generic_sparse.py"
+.scope dirs "__generated_index_no_primary__"
 .scope dirs option("apiInputDirs")
 // Python linter: scripts/lint_generated_index_sources.py, on the generator file only. One code, missing_source:
 //   an Index(…) call outside a def named _generated_index (module level included), or inside one without source=source;
@@ -20,6 +20,9 @@
 
 #include "python/ast.rr"     // def_frame, sig_param, unparen, dotted_expr, from_module_raw
 #include "python/calls.rr"   // call_arg
+#include "data-layer/plugin-production.rr"
+#include "generated-index-sources.tables.rr"
+#include "data-layer/generated-indexes-api.rr"
 
 // Python normalizes identifier spellings before collector callbacks. Keep raw
 // source triggers unchanged, but compare semantic names in that normalized form.
@@ -31,10 +34,12 @@ gis_name(n,@nfkc(raw)) :- kind(n,"dotted_name"),text(n,raw).
 .decl gis_trigger(t: symbol)
 gis_trigger("Index("). gis_trigger("_generated_index"). gis_trigger("IndexSource").
 .decl gis_doc(d: number)
-gis_doc(d) :- source(d, sp), text(sp, t), gis_trigger(g), contains(g, t).
+gis_doc(d) :- pp_doc(d,_),pp_fact_present(d).
+gis_doc(d) :- option("entryPoint","_collector_facts"),pp_doc(d,_),!syntax_error(d,_,_).
 .decl gis_owner(d: number, path: symbol)
 gis_owner(d,p) :- doc(d,b,_),option_item("apiBuffers",i,b),option_item("apiSourcePaths",i,p).
-gis_owner(d,p) :- doc(d,p,_),!option_item("apiBuffers",_,_).
+gis_owner(d,cat(root,"/",p)) :- pp_run(),pp_doc(d,p),workspace_root(root).
+gis_owner(d,p) :- pp_api(),doc(d,p,_),!option_item("apiBuffers",_,_).
 
 // gis_index_name(x, i): x names Index from import i on; i is unset for the built-in "Index".
 // gis_module_name(x, i): x names the schema_def module, the same way.
@@ -81,17 +86,26 @@ gis_forwards(c) :- gis_source_kw(c,a,v),!gis_later_kw(c,a),kind(v,"identifier"),
 .decl gis_check(f: node)
 gis_check(f) :- gis_helper(f), !op(f, "async"), docof(f, d), gis_doc(d).
 .decl gis_source_param(f: node, k: symbol, ann: loc, dflt: loc)
-gis_source_param(f, k, a, v) :- gis_check(f), sig_param(f, _, nm, _, k, a, v), gis_name(nm, "source"), (k = "pos" ; k = "kwonly").
+.decl gis_source_candidate(f: node, i: number, k: symbol, ann: loc, dflt: loc)
+gis_source_candidate(f,i,k,a,v) :- gis_check(f),sig_param(f,i,nm,_,k,a,v),gis_name(nm,"source"),(k="pos";k="kwonly").
+// ast.parse accepts duplicate parameters. The source chooses the first annotation,
+// while its keyword-default dictionary retains the last matching default.
+gis_source_param(f,k,a,v) :- gis_source_candidate(f,i,k,a,v),i=min j:{gis_source_candidate(f,j,_,_,_)}.
+.decl gis_kw_default(f: node, dflt: loc)
+gis_kw_default(f,v) :- gis_source_candidate(f,i,"kwonly",_,v),i=max j:{gis_source_candidate(f,j,"kwonly",_,_)}.
 .decl gis_model_declared(s: symbol)
 gis_model_declared("MODEL_DECLARED"). gis_model_declared("IndexSource.MODEL_DECLARED").
 
 .decl gis_finding(at: node, why: symbol, rank: number)
+// Preserve the collector's parse-back fallback, including caller path spelling.
+.decl gis_output(d: number, path: symbol, source_line: number, message: symbol, ordinal: number, rank: number)
+gis_output(d,p,l,why,i,rank) :- gis_finding(n,why,rank),visit_index(n,i),line(n,l),docof(n,d),pp_doc(d,p),gis_owner(d,owner),!contains(": ",owner).
+gis_output(d,p,1,cat(owner,":",to_string(l),": ",why),i,rank) :- gis_finding(n,why,rank),visit_index(n,i),line(n,l),docof(n,d),pp_doc(d,p),gis_owner(d,owner),contains(": ",owner).
+.decl gis_scan()
+gis_scan() :- !option("entryPoint",_).
+gis_scan() :- option("entryPoint",e),(e="check_file";e="check_source";e="check_repo";e="_run_fact_engine_for_files").
 .violation missing_source(at: span, why: symbol, ordinal: number, rank: number) "{why}"
-missing_source(n,why,i,rank) :- gis_finding(n,why,rank),visit_index(n,i),docof(n,d),gis_owner(d,p),!contains(": ",p).
-// The source collector reparses its rendered string. A colon-space in the
-// caller path makes that parse fail; its fact retains the full string at line 1.
-missing_source(@place(b,1),cat(p,":",to_string(l),": ",why),i,rank) :- gis_finding(n,why,rank),
-    visit_index(n,i),line(n,l),docof(n,d),doc(d,b,_),gis_owner(d,p),contains(": ",p).
+missing_source(@place(p,l),why,i,rank) :- gis_scan(),gis_output(_,p,l,why,i,rank).
 gis_finding(c, "generated indexes must use _generated_index(..., source=IndexSource.*)", 0) :-
     gis_index_call(c), !gis_in_helper(c).
 gis_finding(c, "_generated_index must forward source=source into Index(...)", 0) :-
@@ -101,7 +115,7 @@ gis_finding(f, "_generated_index must require a source: IndexSource parameter", 
 gis_finding(f, "_generated_index source parameter must be annotated as IndexSource", 1) :-
     gis_source_param(f, _, a, _), !gis_index_source(a).
 gis_finding(f, "_generated_index source must not default to MODEL_DECLARED", 2) :-
-    gis_source_param(f, "kwonly", _, v), unparen(v, e), dotted_expr(e, s), gis_model_declared(@nfkc(s)).
+    gis_kw_default(f, v), unparen(v, e), dotted_expr(e, s), gis_model_declared(@nfkc(s)).
 // gis_in_helper(c): c's innermost def (decorators and defaults belong to it) is a _generated_index.
 .decl gis_in_helper(c: node)
 gis_in_helper(c) :- gis_index_call(c), def_frame(c, f), gis_helper(f).

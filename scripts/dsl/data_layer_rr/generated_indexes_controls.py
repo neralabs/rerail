@@ -31,9 +31,9 @@ def run(source,engine,baseline,out):
         'import-alias':('unicode-import:check_file','gis_index_name(d, x, i) :-','gis_index_name(d, x, i) :- 1 = 0,'),
         'first-keyword':('duplicate-keyword:check_file','!gis_later_kw(c,a),',''),
         'unicode-name':('unicode-call:check_file','@nfkc(raw)','raw'),
-        'path-fallback':('colon-multiline','gis_owner(d,p),contains(": ",p).','gis_owner(d,p),contains(": ",p),1 = 0.'),
+        'path-fallback':('colon-multiline','gis_owner(d,owner),contains(": ",owner).','gis_owner(d,owner),contains(": ",owner),1 = 0.'),
         'required-parameter':('required:check_file','gis_check(f), !gis_source_param(f, _, _, _).','gis_check(f), !gis_source_param(f, _, _, _),1 = 0.'),
-        'finding-order':('multiple:check_file','missing_source(n,why,i,rank) :-','missing_source(n,why,i,-rank) :-'),
+        'finding-order':('multiple:check_file','gis_output(d,p,l,why,i,rank) :-','gis_output(d,p,l,why,i,-rank) :-'),
     }
     records=[]
     with tempfile.TemporaryDirectory(prefix='generated-index-controls-cache-') as cache:
@@ -43,6 +43,8 @@ def run(source,engine,baseline,out):
             for mode,execute in [('snapshot',execute_native),('workspace',execute_workspace)]:
                 with tempfile.TemporaryDirectory(prefix='generated-index-control-',dir=ROOT/'.rerail') as scratch:
                     target=Path(scratch)/'policy.rr';target.write_text(mutated)
+                    companion=(policy.parent/'generated-index-sources.tables.rr').read_text()
+                    (Path(scratch)/'generated-index-sources.tables.rr').write_text(companion)
                     class Backend:
                         def __init__(self):self.calls=[];self.originals=[]
                         def replace(self,owner,key,value):self.originals.append((owner,key,getattr(owner,key)));setattr(owner,key,value)
@@ -59,7 +61,7 @@ def run(source,engine,baseline,out):
                         sys.setprofile(None)
                         for owner,key,original in reversed(backend.originals):setattr(owner,key,original)
                     records.append(dict(control=name,mode=mode,input=row['input'],expected=row['expected'],actual=actual,
-                        rejected=not equal(actual,row['expected']),native=backend.calls,mutatedPolicy=mutated,policySha256=sha(mutated.encode())))
+                        rejected=not equal(actual,row['expected']),native=backend.calls,mutatedPolicy=mutated,policySha256=sha(mutated.encode()),companionTable=companion))
                     write_json(out,dict(passed=False,cases=records))
                     if isinstance(actual,dict) and 'error' in actual:raise AssertionError('Invalid native mutation: '+str(actual))
                     if equal(actual,row['expected']):raise AssertionError('Ineffective native mutation: '+name)

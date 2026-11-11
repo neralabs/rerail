@@ -46,7 +46,8 @@ def coverage(value):
         require(all(len(p)==3 and {r['phase']:r['outcome'] for r in p}==dict(setup='passed',call='passed',teardown='passed') for p in row['cases'].values()),'Original assertion failed or skipped')
         require(all(row['sourceFiles'].get(p)==inventory['files'][p]['sha256'] for p in files),'Original source test changed')
         require(row['policySha256'][CHECK]==value['ruleSha256'] and row['originalRecordingSha256']==value['originalSourceSha256'],'Original policy or source recording differs')
-        require(Counter(r['test'] for r in row['calls'] if r['status']=='passed')==Counter(wanted),'Original native executions omitted or failed')
+        calls=[r for r in row['calls'] if r['test'] in wanted]
+        require(set(r['test'] for r in calls)==wanted and all(r['status']=='passed' for r in row['calls']),'Original native executions omitted or failed')
         observations=row['detectorObservations'];require(Counter(r['test'] for r in observations)==Counter(wanted),'Original observations omitted or repeated')
         for r in observations:
             e=expected[r['test']]

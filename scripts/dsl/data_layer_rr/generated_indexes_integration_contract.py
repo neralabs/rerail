@@ -58,6 +58,11 @@ def cases(_module):
         ('check-clean',['--check'],[dict(path=OWNER,source='pass\n')]),('invalid',[],[dict(path=OWNER,source='Index(\n')]),
         ('other-owner',['--check'],[dict(path='impl/other.py',source=BAD)]),('help',['--help'],[]),('bad-option',['--bad'],[])]:
         result.append(dict(id='cli-'+name,kind='cli',arguments=arguments,files=files))
+    for name,text in [('positive',BAD),('clean','pass\n'),('no-trigger-alias','from l1000_schema.schema_def import Index as Idx\nIdx()\n')]:
+        result.append(dict(id='registry-extract-'+name,kind='registry-extract',source=text))
+    for name,paths in [('duplicates',['b.py','a.py','b.py']),('extensions',['a.py','.py','a.txt']),
+                       ('tests',['tests/a.py','test/a.py']),('relative',['a.py','b.py']),('empty',[])]:
+        result.append(dict(id='batch-'+name,kind='batch',paths=paths,relative=name=='relative'))
     return result
 
 
@@ -73,15 +78,21 @@ def exercise(module,case,scratch):
             registration=next(r for r in lint_all.DL_SUITE.linter_plugin_factories if CHECK in r.names)
             plugin=registration.factory()
             value=dict(names=registration.names,name=plugin.name,enforcement=plugin.enforcement,description=plugin.description,scope=asdict(plugin.file_scope),specs=[asdict(s) for s in plugin.required_facts])
-        elif kind=='extract':
+        elif kind in {'extract','registry-extract'}:
             from scripts.lint_lib.fact_engine import materialize_source_facts
-            bundle=materialize_source_facts(path=root/'a.py',source=case['source'],specs=(module.GENERATED_INDEX_SOURCES_EXTRACTOR,),extractors=module.generated_index_sources_fact_extractors(root))
+            bundle=(module._rerail_generated_extract(root/'a.py',case['source']) if kind=='extract' and hasattr(module,'_rerail_generated_extract') else
+                materialize_source_facts(path=root/'a.py',source=case['source'],specs=(module.GENERATED_INDEX_SOURCES_EXTRACTOR,),extractors=module.generated_index_sources_fact_extractors(root)))
             value=dict(facts=bundle.facts,errors=bundle.errors)
         elif kind=='report':
             from scripts.lint_lib.linter_plugin import PerFileFactBundle,ProjectFactView
             plugin=module.generated_index_sources_plugin(root)
             bundles={Path(b['key'].replace('$ROOT',str(root))):PerFileFactBundle(Path(b.get('path',b['key'])),'fixture',facts=b.get('facts',{module.GENERATED_INDEX_SOURCES_EXTRACTOR.extractor_id:b.get('value')})) for b in case['bundles']}
             value=plugin.reporter(ProjectFactView(root,bundles,plugin.required_facts))
+        elif kind=='batch':
+            for name in set(case['paths']):
+                p=root/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(BAD)
+            with patch.object(module,'REPO_ROOT',root):
+                value=module._run_fact_engine_for_files([Path(p) if case.get('relative') else root/p for p in case['paths']])
         elif kind=='parse':value=module._parse_violation_line(case['value'])
         elif kind=='format':value=module._format_finding(module.StructuredViolation(CHECK,'missing_source',Path('a.py'),case['line'],'message'))
         elif kind=='unavailable':value=module._extract_generated_index_source_facts(root/'a.py','Index()\n',ast.parse('pass'))

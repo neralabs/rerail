@@ -1,0 +1,2078 @@
+{
+  "format": "rerail.rr-original-assertions/v1",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "oracle": false,
+  "engineSha256": "f4db14313662e14ca1e1924296c91acb48107035461e85db4a2977d61b6ce6e2",
+  "exitCode": 0,
+  "sourceFiles": {
+    "scripts/tests/test_lint_generated_index_sources.py": "91845203020c05797eb2abc9000d0ca24ad77fb07df37e47d6ba71ab88165ecf",
+    "scripts/lint_generated_index_sources.py": "4b883dde1f8561eafd88911a7a5da80c2186e518ad86b06051cfb42c2a653ebf"
+  },
+  "ruleRoot": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr",
+  "testTargets": [
+    "scripts/tests/test_lint_generated_index_sources.py"
+  ],
+  "api": "workspace-cli",
+  "mode": "workspace",
+  "harnessFiles": {
+    "scripts/dsl/data_layer_audit/native_guard.py": "9de4f513c0855f77870f14a3de6723cc0f65ca933cb6df28a7f49c8ed53f68b8",
+    "scripts/dsl/data_layer_batch_eight.py": "b0aa06282577557f293ab4493adbca1d36eb7c3cd72bc32f11b98f5c706684d9",
+    "scripts/dsl/data_layer_batch_five.py": "c4bd8edcb10c65ddbac6eea03eca11bad9389a0ec727d77889334a554010d34d",
+    "scripts/dsl/data_layer_batch_four.py": "af190011454ce4c136164cb31813375f607f765ced3a13393fd0cbfebb816ef1",
+    "scripts/dsl/data_layer_batch_seven.py": "06b95e9a6d34683f68b15a67bc65bdac95cc532ba0e3f2ab282cddc6ee7f0951",
+    "scripts/dsl/data_layer_batch_six.py": "c696511c6b23941317878d5fa77322b860e0ee061ac0da6fb5318eb06823a3ad",
+    "scripts/dsl/data_layer_batch_three.py": "bb528abe50676159a06c3bfc071fdbeca0aae200db90945d187cccb412c9b7e8",
+    "scripts/dsl/data_layer_batch_two.py": "04835aa6befc2229b7d7de6c6d23f6cb17ee7dd546d90bc731f0377313b17df9",
+    "scripts/dsl/data_layer_probe_record.py": "24c6a5d37b67e2d7569224523b046bb64617179dfa1d881804a4694ce7fbb1db",
+    "scripts/dsl/data_layer_probe_three.py": "e46fa55d33f3888b97a694e81a3c370eb0cf2362d723bbfb65cb7095d9ed3f8c",
+    "scripts/dsl/data_layer_record.py": "7d32c79a7eda75b2c40e2be6bcae2dee08f3b02f8fa0a2226bf504b5e568af9e",
+    "scripts/dsl/data_layer_rr/dto.py": "a94d1342fe9900ba05f972d613089a07fe58a472f3faac1c6a5112931cf6e262",
+    "scripts/dsl/data_layer_rr/framework_fixtures.py": "01eb634cc14db618cca8f837a62cd42477805af4eb4cb11428cb248fd4cc4bc1",
+    "scripts/dsl/data_layer_rr/generated_indexes_port.py": "56b1184ecd29f1a609413baa0e2d5a93fdef734008041d2a0dc810ce9d3d7869",
+    "scripts/dsl/data_layer_rr/migration.py": "e4cd1e3073f4a21ddab81d0dabe65361a65ac9a6e3e2a1f041dc645500bda305",
+    "scripts/dsl/data_layer_rr/policy_routes.py": "4e7390039fd78720823f8424d308e39c4420a72d18d0e52dff733a1a03262f22",
+    "scripts/dsl/data_layer_rr/replay.py": "c1d4bbd11057736c7883c90660df690768302cd475cdb06b0a5ec649c129249b",
+    "scripts/dsl/data_layer_rr/suite.py": "358aa2a377f31f9d224993344b62b12dc090cbf3cfdc9dc6b5433653a32dad06",
+    "scripts/dsl/data_layer_rule_audit.py": "9a87c1d158f1f621f3a7b32bf46ff43228f4bf2c2e186894dcf160f16d1e80ef"
+  },
+  "policySha256": {
+    "generated_index_sources": "a2f0f86363133a10cb2bf0c1080ffd22082e12ca508ed00eb6191c1693a7a796"
+  },
+  "sourceFilesChecked": 1466,
+  "missingResults": [],
+  "collected": [
+    "scripts/tests/test_lint_generated_index_sources.py::test_direct_index_call_is_flagged",
+    "scripts/tests/test_lint_generated_index_sources.py::test_generated_index_helper_may_construct_index",
+    "scripts/tests/test_lint_generated_index_sources.py::test_generated_index_helper_must_require_source_parameter",
+    "scripts/tests/test_lint_generated_index_sources.py::test_generated_index_helper_rejects_model_declared_default",
+    "scripts/tests/test_lint_generated_index_sources.py::test_alias_and_qualified_index_calls_are_flagged"
+  ],
+  "part": 0,
+  "parts": 1,
+  "cases": {
+    "scripts/tests/test_lint_generated_index_sources.py::test_direct_index_call_is_flagged": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_generated_index_sources.py::test_generated_index_helper_may_construct_index": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_generated_index_sources.py::test_generated_index_helper_must_require_source_parameter": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_generated_index_sources.py::test_generated_index_helper_rejects_model_declared_default": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_generated_index_sources.py::test_alias_and_qualified_index_calls_are_flagged": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ]
+  },
+  "calls": [
+    {
+      "test": "<native-configuration>",
+      "check": "generated_index_sources",
+      "entry": "_gis_configuration",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "_gis_configuration"
+      },
+      "findings": 6,
+      "diagnostics": [
+        {
+          "policy": "data-layer:generated-index-sources",
+          "clause": "GeneratedConfig",
+          "code": "GIS_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "configuration",
+          "parameters": {
+            "key": "check_help",
+            "value": "Exit non-zero on violations"
+          }
+        },
+        {
+          "policy": "data-layer:generated-index-sources",
+          "clause": "GeneratedConfig",
+          "code": "GIS_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "configuration",
+          "parameters": {
+            "key": "description",
+            "value": "Guard generated auxiliary indexes against missing source attribution."
+          }
+        },
+        {
+          "policy": "data-layer:generated-index-sources",
+          "clause": "GeneratedConfig",
+          "code": "GIS_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "configuration",
+          "parameters": {
+            "key": "extractor",
+            "value": "{\"extractor_id\": \"generated_index_sources.violations\", \"schema_version\": \"1\", \"implementation_version\": \"generated-index-sources-v2\", \"parser_mode\": \"ast_collect\", \"source_triggers\": [\"Index(\", \"_generated_index\", \"IndexSource\"], \"source_trigger_groups\": [], \"cacheable\": true, \"workload_scope\": \"file\", \"project_input_facts\": [], \"project_input_scope\": null, \"implementation_digest\": \"4b883dde1f8561ea\", \"node_kinds\": [\"Import\", \"ImportFrom\", \"FunctionDef\", \"AsyncFunctionDef\", \"Call\"]}"
+          }
+        },
+        {
+          "policy": "data-layer:generated-index-sources",
+          "clause": "GeneratedConfig",
+          "code": "GIS_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "configuration",
+          "parameters": {
+            "key": "file",
+            "value": "impl/common/l7245_versioned_backends/generic_sparse.py"
+          }
+        },
+        {
+          "policy": "data-layer:generated-index-sources",
+          "clause": "GeneratedConfig",
+          "code": "GIS_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "configuration",
+          "parameters": {
+            "key": "plugin",
+            "value": "{\"name\": \"generated_index_sources\", \"enforcement\": \"hard-fail\", \"description\": \"Generated auxiliary indexes include source attribution\"}"
+          }
+        },
+        {
+          "policy": "data-layer:generated-index-sources",
+          "clause": "GeneratedConfig",
+          "code": "GIS_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "configuration",
+          "parameters": {
+            "key": "runtime_error",
+            "value": "generated_index_sources uses AstEventCollector facts"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/generated-indexes-api.rr",
+          "sha256": "641bc2a5b8560c8ac73ceef25b8da86a0a99c7fabd1da5c756445eae0619e2dd"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/generated-index-sources.tables.rr",
+          "sha256": null
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/calls.rr",
+          "sha256": "c2306f38a7917175858352ef8c4f233a7dbed29b7742e53b06c1db82d831d12a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+          "sha256": "a2f0f86363133a10cb2bf0c1080ffd22082e12ca508ed00eb6191c1693a7a796"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.tables.rr",
+          "sha256": "e13ee043130ea3470ad3bade4ace6937a2f352cfcb1f1cbe7e8269ee3f926b33"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.03811099999999999,
+          "systemCpuSeconds": 0.0007589999999999993,
+          "peakRssMB": 86.130688,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 3.0000000000030003e-06,
+          "systemCpuSeconds": 3.0000000000030003e-06,
+          "peakRssMB": 116.768768,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 116.768768,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.057373999999999994,
+          "systemCpuSeconds": 0.005299999999999999,
+          "peakRssMB": 101.105664,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.03007299999999999,
+          "systemCpuSeconds": 0.0025459999999999997,
+          "peakRssMB": 116.768768,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.013239,
+          "systemCpuSeconds": 0.00046600000000000114,
+          "peakRssMB": 116.768768,
+          "submittedStatements": 25
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 3.0000000000002247e-05,
+          "systemCpuSeconds": 0.0014979999999999993,
+          "peakRssMB": 116.768768,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_generated_index_sources.py::test_direct_index_call_is_flagged",
+      "check": "generated_index_sources",
+      "entry": "_select_files",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "_select_files",
+        "gisCandidatePaths": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17611/test_direct_index_call_is_flag0/generic_sparse.py"
+        ],
+        "gisCandidateIsFile": [
+          "1"
+        ]
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer:generated-index-sources",
+          "clause": "GeneratedSelectedFile",
+          "code": "GIS_SELECTED_FILE",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "selected file",
+          "parameters": {
+            "ordinal": 0,
+            "path": "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17611/test_direct_index_call_is_flag0/generic_sparse.py",
+            "order_key": "\u0000private\u0000var\u0000folders\u0000hj\u0000lnls5j015kxbb395l7cx5nvh0000gn\u0000T\u0000pytest-of-jeremy\u0000pytest-17611\u0000test_direct_index_call_is_flag0\u0000generic_sparse.py"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/generated-indexes-api.rr",
+          "sha256": "641bc2a5b8560c8ac73ceef25b8da86a0a99c7fabd1da5c756445eae0619e2dd"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/generated-index-sources.tables.rr",
+          "sha256": null
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/calls.rr",
+          "sha256": "c2306f38a7917175858352ef8c4f233a7dbed29b7742e53b06c1db82d831d12a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+          "sha256": "a2f0f86363133a10cb2bf0c1080ffd22082e12ca508ed00eb6191c1693a7a796"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.tables.rr",
+          "sha256": "e13ee043130ea3470ad3bade4ace6937a2f352cfcb1f1cbe7e8269ee3f926b33"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.038586999999999996,
+          "systemCpuSeconds": 0.0008139999999999988,
+          "peakRssMB": 50.069504,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 2.000000000002e-06,
+          "systemCpuSeconds": 1.9999999999950613e-06,
+          "peakRssMB": 94.584832,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 94.584832,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.05906900000000001,
+          "systemCpuSeconds": 0.00498,
+          "peakRssMB": 84.590592,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.017777999999999988,
+          "systemCpuSeconds": 0.0027810000000000022,
+          "peakRssMB": 94.584832,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.012802000000000008,
+          "systemCpuSeconds": 0.0004899999999999974,
+          "peakRssMB": 94.584832,
+          "submittedStatements": 25
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 3.100000000000325e-05,
+          "systemCpuSeconds": 0.0016310000000000005,
+          "peakRssMB": 94.584832,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_generated_index_sources.py::test_direct_index_call_is_flagged",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [
+        {
+          "path": "input/0/generic_sparse.py",
+          "sourceSha256": "d2be4d8ff67b33cd08dd831d1c9892be9f65d132e2046e0370518660be562108"
+        }
+      ],
+      "options": {
+        "entryPoint": "check_file",
+        "apiInputDirs": [
+          "input"
+        ],
+        "apiBuffers": [
+          "input/0/generic_sparse.py"
+        ],
+        "apiSourcePaths": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17611/test_direct_index_call_is_flag0/generic_sparse.py"
+        ]
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer:generated-index-sources",
+          "clause": "missing_source",
+          "code": "missing_source",
+          "path": "input/0/generic_sparse.py",
+          "line": 2,
+          "at": 0,
+          "tag": null,
+          "message": "generated indexes must use _generated_index(..., source=IndexSource.*)",
+          "parameters": {
+            "why": "generated indexes must use _generated_index(..., source=IndexSource.*)",
+            "ordinal": 6,
+            "rank": 0
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/generated-indexes-api.rr",
+          "sha256": "641bc2a5b8560c8ac73ceef25b8da86a0a99c7fabd1da5c756445eae0619e2dd"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/generated-index-sources.tables.rr",
+          "sha256": null
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/calls.rr",
+          "sha256": "c2306f38a7917175858352ef8c4f233a7dbed29b7742e53b06c1db82d831d12a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+          "sha256": "a2f0f86363133a10cb2bf0c1080ffd22082e12ca508ed00eb6191c1693a7a796"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.tables.rr",
+          "sha256": "e13ee043130ea3470ad3bade4ace6937a2f352cfcb1f1cbe7e8269ee3f926b33"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.038451000000000006,
+          "systemCpuSeconds": 0.0003870000000000002,
+          "peakRssMB": 51.314688,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 3.700000000000925e-05,
+          "systemCpuSeconds": 4.399999999998502e-05,
+          "peakRssMB": 93.077504,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0002479999999999982,
+          "systemCpuSeconds": 0.00023099999999999857,
+          "peakRssMB": 93.077504,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.05933799999999999,
+          "systemCpuSeconds": 0.005058000000000002,
+          "peakRssMB": 83.656704,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.029928375000000007,
+          "systemCpuSeconds": 0.012189000000000002,
+          "peakRssMB": 92.291072,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 0.00020416600000003338,
+          "systemCpuSeconds": 0.0007740000000000004,
+          "peakRssMB": 92.291072,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.005281000000000008,
+          "systemCpuSeconds": 0.0005349999999999973,
+          "peakRssMB": 92.291072,
+          "submittedStatements": 9
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.015672999999999992,
+          "systemCpuSeconds": 0.0006909999999999972,
+          "peakRssMB": 93.06112,
+          "submittedStatements": 25
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 2.6999999999999247e-05,
+          "systemCpuSeconds": 0.0012840000000000004,
+          "peakRssMB": 93.077504,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_generated_index_sources.py::test_generated_index_helper_may_construct_index",
+      "check": "generated_index_sources",
+      "entry": "_select_files",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "_select_files",
+        "gisCandidatePaths": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17611/test_generated_index_helper_ma0/generic_sparse.py"
+        ],
+        "gisCandidateIsFile": [
+          "1"
+        ]
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer:generated-index-sources",
+          "clause": "GeneratedSelectedFile",
+          "code": "GIS_SELECTED_FILE",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "selected file",
+          "parameters": {
+            "ordinal": 0,
+            "path": "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17611/test_generated_index_helper_ma0/generic_sparse.py",
+            "order_key": "\u0000private\u0000var\u0000folders\u0000hj\u0000lnls5j015kxbb395l7cx5nvh0000gn\u0000T\u0000pytest-of-jeremy\u0000pytest-17611\u0000test_generated_index_helper_ma0\u0000generic_sparse.py"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/generated-indexes-api.rr",
+          "sha256": "641bc2a5b8560c8ac73ceef25b8da86a0a99c7fabd1da5c756445eae0619e2dd"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/generated-index-sources.tables.rr",
+          "sha256": null
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/calls.rr",
+          "sha256": "c2306f38a7917175858352ef8c4f233a7dbed29b7742e53b06c1db82d831d12a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+          "sha256": "a2f0f86363133a10cb2bf0c1080ffd22082e12ca508ed00eb6191c1693a7a796"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.tables.rr",
+          "sha256": "e13ee043130ea3470ad3bade4ace6937a2f352cfcb1f1cbe7e8269ee3f926b33"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.038076000000000006,
+          "systemCpuSeconds": 0.0003599999999999992,
+          "peakRssMB": 51.314688,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 4.000000000004e-06,
+          "systemCpuSeconds": 4.999999999994592e-06,
+          "peakRssMB": 93.028352,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 93.028352,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.059081999999999996,
+          "systemCpuSeconds": 0.005478000000000002,
+          "peakRssMB": 83.869696,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.017970999999999987,
+          "systemCpuSeconds": 0.0027769999999999982,
+          "peakRssMB": 93.028352,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.013112000000000013,
+          "systemCpuSeconds": 0.000562,
+          "peakRssMB": 93.028352,
+          "submittedStatements": 25
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 3.800000000001025e-05,
+          "systemCpuSeconds": 0.0020610000000000003,
+          "peakRssMB": 93.028352,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_generated_index_sources.py::test_generated_index_helper_may_construct_index",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [
+        {
+          "path": "input/0/generic_sparse.py",
+          "sourceSha256": "5bbb8160506db81bc20adae0fc4cedc515eb929ddf53f8311fcae0f0f76e394b"
+        }
+      ],
+      "options": {
+        "entryPoint": "check_file",
+        "apiInputDirs": [
+          "input"
+        ],
+        "apiBuffers": [
+          "input/0/generic_sparse.py"
+        ],
+        "apiSourcePaths": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17611/test_generated_index_helper_ma0/generic_sparse.py"
+        ]
+      },
+      "findings": 0,
+      "diagnostics": [],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/generated-indexes-api.rr",
+          "sha256": "641bc2a5b8560c8ac73ceef25b8da86a0a99c7fabd1da5c756445eae0619e2dd"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/generated-index-sources.tables.rr",
+          "sha256": null
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/calls.rr",
+          "sha256": "c2306f38a7917175858352ef8c4f233a7dbed29b7742e53b06c1db82d831d12a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+          "sha256": "a2f0f86363133a10cb2bf0c1080ffd22082e12ca508ed00eb6191c1693a7a796"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.tables.rr",
+          "sha256": "e13ee043130ea3470ad3bade4ace6937a2f352cfcb1f1cbe7e8269ee3f926b33"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.039242000000000006,
+          "systemCpuSeconds": 0.00037799999999999986,
+          "peakRssMB": 51.298304,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 4.100000000001325e-05,
+          "systemCpuSeconds": 3.400000000000625e-05,
+          "peakRssMB": 89.12896,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0002979999999999927,
+          "systemCpuSeconds": 0.0003239999999999979,
+          "peakRssMB": 89.12896,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.058790999999999996,
+          "systemCpuSeconds": 0.005151000000000001,
+          "peakRssMB": 83.509248,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.023821041000000015,
+          "systemCpuSeconds": 0.009369999999999996,
+          "peakRssMB": 87.441408,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 0.00012041699999998379,
+          "systemCpuSeconds": 0.0007390000000000001,
+          "peakRssMB": 87.441408,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.006336000000000008,
+          "systemCpuSeconds": 0.0007160000000000014,
+          "peakRssMB": 87.441408,
+          "submittedStatements": 9
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.01497699999999999,
+          "systemCpuSeconds": 0.0005929999999999998,
+          "peakRssMB": 89.112576,
+          "submittedStatements": 25
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 2.5999999999998247e-05,
+          "systemCpuSeconds": 0.0014960000000000043,
+          "peakRssMB": 89.12896,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_generated_index_sources.py::test_generated_index_helper_must_require_source_parameter",
+      "check": "generated_index_sources",
+      "entry": "_select_files",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "_select_files",
+        "gisCandidatePaths": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17611/test_generated_index_helper_mu0/generic_sparse.py"
+        ],
+        "gisCandidateIsFile": [
+          "1"
+        ]
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer:generated-index-sources",
+          "clause": "GeneratedSelectedFile",
+          "code": "GIS_SELECTED_FILE",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "selected file",
+          "parameters": {
+            "ordinal": 0,
+            "path": "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17611/test_generated_index_helper_mu0/generic_sparse.py",
+            "order_key": "\u0000private\u0000var\u0000folders\u0000hj\u0000lnls5j015kxbb395l7cx5nvh0000gn\u0000T\u0000pytest-of-jeremy\u0000pytest-17611\u0000test_generated_index_helper_mu0\u0000generic_sparse.py"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/generated-indexes-api.rr",
+          "sha256": "641bc2a5b8560c8ac73ceef25b8da86a0a99c7fabd1da5c756445eae0619e2dd"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/generated-index-sources.tables.rr",
+          "sha256": null
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/calls.rr",
+          "sha256": "c2306f38a7917175858352ef8c4f233a7dbed29b7742e53b06c1db82d831d12a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+          "sha256": "a2f0f86363133a10cb2bf0c1080ffd22082e12ca508ed00eb6191c1693a7a796"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.tables.rr",
+          "sha256": "e13ee043130ea3470ad3bade4ace6937a2f352cfcb1f1cbe7e8269ee3f926b33"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.038764,
+          "systemCpuSeconds": 0.0008470000000000005,
+          "peakRssMB": 50.659328,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 1.000000000001e-06,
+          "systemCpuSeconds": 4.000000000004e-06,
+          "peakRssMB": 95.322112,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 95.322112,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.05813700000000001,
+          "systemCpuSeconds": 0.0061800000000000015,
+          "peakRssMB": 85.508096,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.018066,
+          "systemCpuSeconds": 0.0030549999999999987,
+          "peakRssMB": 95.322112,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.013186000000000003,
+          "systemCpuSeconds": 0.0005709999999999986,
+          "peakRssMB": 95.322112,
+          "submittedStatements": 25
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 2.9000000000001247e-05,
+          "systemCpuSeconds": 0.0016150000000000019,
+          "peakRssMB": 95.322112,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_generated_index_sources.py::test_generated_index_helper_must_require_source_parameter",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [
+        {
+          "path": "input/0/generic_sparse.py",
+          "sourceSha256": "ac2bc84247b64f786d909b2eb5761b74ad82ee8e040fc751a39e86158bad74f9"
+        }
+      ],
+      "options": {
+        "entryPoint": "check_file",
+        "apiInputDirs": [
+          "input"
+        ],
+        "apiBuffers": [
+          "input/0/generic_sparse.py"
+        ],
+        "apiSourcePaths": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17611/test_generated_index_helper_mu0/generic_sparse.py"
+        ]
+      },
+      "findings": 2,
+      "diagnostics": [
+        {
+          "policy": "data-layer:generated-index-sources",
+          "clause": "missing_source",
+          "code": "missing_source",
+          "path": "input/0/generic_sparse.py",
+          "line": 1,
+          "at": 0,
+          "tag": null,
+          "message": "_generated_index must require a source: IndexSource parameter",
+          "parameters": {
+            "why": "_generated_index must require a source: IndexSource parameter",
+            "ordinal": 1,
+            "rank": 0
+          }
+        },
+        {
+          "policy": "data-layer:generated-index-sources",
+          "clause": "missing_source",
+          "code": "missing_source",
+          "path": "input/0/generic_sparse.py",
+          "line": 2,
+          "at": 0,
+          "tag": null,
+          "message": "_generated_index must forward source=source into Index(...)",
+          "parameters": {
+            "why": "_generated_index must forward source=source into Index(...)",
+            "ordinal": 6,
+            "rank": 0
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/generated-indexes-api.rr",
+          "sha256": "641bc2a5b8560c8ac73ceef25b8da86a0a99c7fabd1da5c756445eae0619e2dd"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/generated-index-sources.tables.rr",
+          "sha256": null
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/calls.rr",
+          "sha256": "c2306f38a7917175858352ef8c4f233a7dbed29b7742e53b06c1db82d831d12a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+          "sha256": "a2f0f86363133a10cb2bf0c1080ffd22082e12ca508ed00eb6191c1693a7a796"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.tables.rr",
+          "sha256": "e13ee043130ea3470ad3bade4ace6937a2f352cfcb1f1cbe7e8269ee3f926b33"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.038219,
+          "systemCpuSeconds": 0.0008190000000000003,
+          "peakRssMB": 50.724864,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 4.199999999998649e-05,
+          "systemCpuSeconds": 3.899999999999737e-05,
+          "peakRssMB": 89.030656,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.00030000000000002247,
+          "systemCpuSeconds": 0.00033000000000000043,
+          "peakRssMB": 89.030656,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.060049000000000005,
+          "systemCpuSeconds": 0.005372,
+          "peakRssMB": 86.048768,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.024156959000000006,
+          "systemCpuSeconds": 0.009600999999999998,
+          "peakRssMB": 88.375296,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 0.00012620799999998877,
+          "systemCpuSeconds": 0.0008210000000000023,
+          "peakRssMB": 88.375296,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.005707999999999991,
+          "systemCpuSeconds": 0.000560999999999999,
+          "peakRssMB": 88.375296,
+          "submittedStatements": 9
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.015265999999999974,
+          "systemCpuSeconds": 0.0006019999999999984,
+          "peakRssMB": 88.997888,
+          "submittedStatements": 25
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 2.9000000000001247e-05,
+          "systemCpuSeconds": 0.001353,
+          "peakRssMB": 89.030656,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_generated_index_sources.py::test_generated_index_helper_rejects_model_declared_default",
+      "check": "generated_index_sources",
+      "entry": "_select_files",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "_select_files",
+        "gisCandidatePaths": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17611/test_generated_index_helper_re0/generic_sparse.py"
+        ],
+        "gisCandidateIsFile": [
+          "1"
+        ]
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer:generated-index-sources",
+          "clause": "GeneratedSelectedFile",
+          "code": "GIS_SELECTED_FILE",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "selected file",
+          "parameters": {
+            "ordinal": 0,
+            "path": "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17611/test_generated_index_helper_re0/generic_sparse.py",
+            "order_key": "\u0000private\u0000var\u0000folders\u0000hj\u0000lnls5j015kxbb395l7cx5nvh0000gn\u0000T\u0000pytest-of-jeremy\u0000pytest-17611\u0000test_generated_index_helper_re0\u0000generic_sparse.py"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/generated-indexes-api.rr",
+          "sha256": "641bc2a5b8560c8ac73ceef25b8da86a0a99c7fabd1da5c756445eae0619e2dd"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/generated-index-sources.tables.rr",
+          "sha256": null
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/calls.rr",
+          "sha256": "c2306f38a7917175858352ef8c4f233a7dbed29b7742e53b06c1db82d831d12a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+          "sha256": "a2f0f86363133a10cb2bf0c1080ffd22082e12ca508ed00eb6191c1693a7a796"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.tables.rr",
+          "sha256": "e13ee043130ea3470ad3bade4ace6937a2f352cfcb1f1cbe7e8269ee3f926b33"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.038242,
+          "systemCpuSeconds": 0.000338999999999999,
+          "peakRssMB": 51.347456,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 3.0000000000030003e-06,
+          "systemCpuSeconds": 4.000000000000531e-06,
+          "peakRssMB": 88.653824,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 88.653824,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.058554999999999996,
+          "systemCpuSeconds": 0.005179,
+          "peakRssMB": 83.72224,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.017779000000000017,
+          "systemCpuSeconds": 0.0027350000000000013,
+          "peakRssMB": 88.653824,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.01327299999999998,
+          "systemCpuSeconds": 0.0005469999999999989,
+          "peakRssMB": 88.653824,
+          "submittedStatements": 25
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 3.100000000000325e-05,
+          "systemCpuSeconds": 0.0016500000000000022,
+          "peakRssMB": 88.653824,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_generated_index_sources.py::test_generated_index_helper_rejects_model_declared_default",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [
+        {
+          "path": "input/0/generic_sparse.py",
+          "sourceSha256": "cea8aecd96b4daa92133b3dc5d88e7a389e74c3cc89a1c9fc491d6ba07809283"
+        }
+      ],
+      "options": {
+        "entryPoint": "check_file",
+        "apiInputDirs": [
+          "input"
+        ],
+        "apiBuffers": [
+          "input/0/generic_sparse.py"
+        ],
+        "apiSourcePaths": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17611/test_generated_index_helper_re0/generic_sparse.py"
+        ]
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer:generated-index-sources",
+          "clause": "missing_source",
+          "code": "missing_source",
+          "path": "input/0/generic_sparse.py",
+          "line": 1,
+          "at": 0,
+          "tag": null,
+          "message": "_generated_index source must not default to MODEL_DECLARED",
+          "parameters": {
+            "why": "_generated_index source must not default to MODEL_DECLARED",
+            "ordinal": 1,
+            "rank": 2
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/generated-indexes-api.rr",
+          "sha256": "641bc2a5b8560c8ac73ceef25b8da86a0a99c7fabd1da5c756445eae0619e2dd"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/generated-index-sources.tables.rr",
+          "sha256": null
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/calls.rr",
+          "sha256": "c2306f38a7917175858352ef8c4f233a7dbed29b7742e53b06c1db82d831d12a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+          "sha256": "a2f0f86363133a10cb2bf0c1080ffd22082e12ca508ed00eb6191c1693a7a796"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.tables.rr",
+          "sha256": "e13ee043130ea3470ad3bade4ace6937a2f352cfcb1f1cbe7e8269ee3f926b33"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.038797000000000005,
+          "systemCpuSeconds": 0.0007900000000000008,
+          "peakRssMB": 50.659328,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 4.299999999998749e-05,
+          "systemCpuSeconds": 3.499999999999684e-05,
+          "peakRssMB": 89.21088,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0002640000000000142,
+          "systemCpuSeconds": 0.0003370000000000005,
+          "peakRssMB": 89.21088,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.05877799999999998,
+          "systemCpuSeconds": 0.006220999999999999,
+          "peakRssMB": 83.099648,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.023414917000000035,
+          "systemCpuSeconds": 0.009253999999999998,
+          "peakRssMB": 87.441408,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 0.00010750000000001037,
+          "systemCpuSeconds": 0.0007729999999999994,
+          "peakRssMB": 87.441408,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.006294999999999995,
+          "systemCpuSeconds": 0.0007060000000000018,
+          "peakRssMB": 87.441408,
+          "submittedStatements": 9
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.015167999999999987,
+          "systemCpuSeconds": 0.0005749999999999991,
+          "peakRssMB": 89.096192,
+          "submittedStatements": 25
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 3.0000000000002247e-05,
+          "systemCpuSeconds": 0.0016670000000000018,
+          "peakRssMB": 89.21088,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_generated_index_sources.py::test_alias_and_qualified_index_calls_are_flagged",
+      "check": "generated_index_sources",
+      "entry": "_select_files",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "_select_files",
+        "gisCandidatePaths": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17611/test_alias_and_qualified_index0/generic_sparse.py"
+        ],
+        "gisCandidateIsFile": [
+          "1"
+        ]
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer:generated-index-sources",
+          "clause": "GeneratedSelectedFile",
+          "code": "GIS_SELECTED_FILE",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "selected file",
+          "parameters": {
+            "ordinal": 0,
+            "path": "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17611/test_alias_and_qualified_index0/generic_sparse.py",
+            "order_key": "\u0000private\u0000var\u0000folders\u0000hj\u0000lnls5j015kxbb395l7cx5nvh0000gn\u0000T\u0000pytest-of-jeremy\u0000pytest-17611\u0000test_alias_and_qualified_index0\u0000generic_sparse.py"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/generated-indexes-api.rr",
+          "sha256": "641bc2a5b8560c8ac73ceef25b8da86a0a99c7fabd1da5c756445eae0619e2dd"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/generated-index-sources.tables.rr",
+          "sha256": null
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/calls.rr",
+          "sha256": "c2306f38a7917175858352ef8c4f233a7dbed29b7742e53b06c1db82d831d12a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+          "sha256": "a2f0f86363133a10cb2bf0c1080ffd22082e12ca508ed00eb6191c1693a7a796"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.tables.rr",
+          "sha256": "e13ee043130ea3470ad3bade4ace6937a2f352cfcb1f1cbe7e8269ee3f926b33"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.038184,
+          "systemCpuSeconds": 0.0003420000000000003,
+          "peakRssMB": 51.44576,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 2.000000000002e-06,
+          "systemCpuSeconds": 4.9999999999980616e-06,
+          "peakRssMB": 92.176384,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 92.176384,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.05851899999999999,
+          "systemCpuSeconds": 0.004956,
+          "peakRssMB": 83.673088,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.018081000000000014,
+          "systemCpuSeconds": 0.0026999999999999975,
+          "peakRssMB": 92.176384,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.013132000000000005,
+          "systemCpuSeconds": 0.0005770000000000011,
+          "peakRssMB": 92.176384,
+          "submittedStatements": 25
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 2.9000000000001247e-05,
+          "systemCpuSeconds": 0.0018220000000000007,
+          "peakRssMB": 92.176384,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_generated_index_sources.py::test_alias_and_qualified_index_calls_are_flagged",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [
+        {
+          "path": "input/0/generic_sparse.py",
+          "sourceSha256": "ea240f0abd72cd147fac7f63eae216447c69fb9abc6b252235f2101aaa330275"
+        }
+      ],
+      "options": {
+        "entryPoint": "check_file",
+        "apiInputDirs": [
+          "input"
+        ],
+        "apiBuffers": [
+          "input/0/generic_sparse.py"
+        ],
+        "apiSourcePaths": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17611/test_alias_and_qualified_index0/generic_sparse.py"
+        ]
+      },
+      "findings": 2,
+      "diagnostics": [
+        {
+          "policy": "data-layer:generated-index-sources",
+          "clause": "missing_source",
+          "code": "missing_source",
+          "path": "input/0/generic_sparse.py",
+          "line": 4,
+          "at": 0,
+          "tag": null,
+          "message": "generated indexes must use _generated_index(..., source=IndexSource.*)",
+          "parameters": {
+            "why": "generated indexes must use _generated_index(..., source=IndexSource.*)",
+            "ordinal": 20,
+            "rank": 0
+          }
+        },
+        {
+          "policy": "data-layer:generated-index-sources",
+          "clause": "missing_source",
+          "code": "missing_source",
+          "path": "input/0/generic_sparse.py",
+          "line": 5,
+          "at": 0,
+          "tag": null,
+          "message": "generated indexes must use _generated_index(..., source=IndexSource.*)",
+          "parameters": {
+            "why": "generated indexes must use _generated_index(..., source=IndexSource.*)",
+            "ordinal": 37,
+            "rank": 0
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/generated-indexes-api.rr",
+          "sha256": "641bc2a5b8560c8ac73ceef25b8da86a0a99c7fabd1da5c756445eae0619e2dd"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/generated-index-sources.tables.rr",
+          "sha256": null
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/calls.rr",
+          "sha256": "c2306f38a7917175858352ef8c4f233a7dbed29b7742e53b06c1db82d831d12a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.rr",
+          "sha256": "a2f0f86363133a10cb2bf0c1080ffd22082e12ca508ed00eb6191c1693a7a796"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/generated-index-sources.tables.rr",
+          "sha256": "e13ee043130ea3470ad3bade4ace6937a2f352cfcb1f1cbe7e8269ee3f926b33"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.038445999999999994,
+          "systemCpuSeconds": 0.0008490000000000008,
+          "peakRssMB": 50.62656,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 4.599999999999049e-05,
+          "systemCpuSeconds": 3.599999999999784e-05,
+          "peakRssMB": 91.01312,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.00029600000000001847,
+          "systemCpuSeconds": 0.0003510000000000006,
+          "peakRssMB": 91.01312,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.05871000000000001,
+          "systemCpuSeconds": 0.005704000000000001,
+          "peakRssMB": 85.327872,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.022892834,
+          "systemCpuSeconds": 0.009259,
+          "peakRssMB": 89.473024,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 8.133399999996072e-05,
+          "systemCpuSeconds": 0.0008020000000000006,
+          "peakRssMB": 87.719936,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.007592999999999989,
+          "systemCpuSeconds": 0.0008009999999999996,
+          "peakRssMB": 88.113152,
+          "submittedStatements": 9
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.015379999999999977,
+          "systemCpuSeconds": 0.0006359999999999977,
+          "peakRssMB": 91.01312,
+          "submittedStatements": 25
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 2.8000000000000247e-05,
+          "systemCpuSeconds": 0.0014440000000000008,
+          "peakRssMB": 91.01312,
+          "submittedStatements": 0
+        }
+      ]
+    }
+  ],
+  "assertionTranslations": [],
+  "configurationBindings": {
+    "generated_index_sources": {
+      "nativeCall": 0,
+      "names": [
+        "GENERATED_INDEX_SOURCES_EXTRACTOR",
+        "GENERATOR_FILES"
+      ]
+    }
+  },
+  "hostTransfers": [],
+  "originalRecordingSha256": "3b808fc7366bc0b57464c43a7de0ac2727f4181b7323f9f67a8e62b781974a8b",
+  "detectorObservations": [
+    {
+      "test": "scripts/tests/test_lint_generated_index_sources.py::test_direct_index_call_is_flagged",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "expectedSourceResult": [
+        "generic_sparse.py:2: generated indexes must use _generated_index(..., source=IndexSource.*)"
+      ],
+      "actualSourceResult": [
+        "generic_sparse.py:2: generated indexes must use _generated_index(..., source=IndexSource.*)"
+      ],
+      "expected": [
+        {
+          "path": "generic_sparse.py",
+          "line": 2,
+          "column": null,
+          "code": "missing_source",
+          "message": "generated indexes must use _generated_index(..., source=IndexSource.*)",
+          "severity": null
+        }
+      ],
+      "actual": [
+        {
+          "path": "generic_sparse.py",
+          "line": 2,
+          "column": null,
+          "code": "missing_source",
+          "message": "generated indexes must use _generated_index(..., source=IndexSource.*)",
+          "severity": null
+        }
+      ],
+      "status": "passed"
+    },
+    {
+      "test": "scripts/tests/test_lint_generated_index_sources.py::test_generated_index_helper_may_construct_index",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "expectedSourceResult": [],
+      "actualSourceResult": [],
+      "expected": [],
+      "actual": [],
+      "status": "passed"
+    },
+    {
+      "test": "scripts/tests/test_lint_generated_index_sources.py::test_generated_index_helper_must_require_source_parameter",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "expectedSourceResult": [
+        "generic_sparse.py:1: _generated_index must require a source: IndexSource parameter",
+        "generic_sparse.py:2: _generated_index must forward source=source into Index(...)"
+      ],
+      "actualSourceResult": [
+        "generic_sparse.py:1: _generated_index must require a source: IndexSource parameter",
+        "generic_sparse.py:2: _generated_index must forward source=source into Index(...)"
+      ],
+      "expected": [
+        {
+          "path": "generic_sparse.py",
+          "line": 1,
+          "column": null,
+          "code": "missing_source",
+          "message": "_generated_index must require a source: IndexSource parameter",
+          "severity": null
+        },
+        {
+          "path": "generic_sparse.py",
+          "line": 2,
+          "column": null,
+          "code": "missing_source",
+          "message": "_generated_index must forward source=source into Index(...)",
+          "severity": null
+        }
+      ],
+      "actual": [
+        {
+          "path": "generic_sparse.py",
+          "line": 1,
+          "column": null,
+          "code": "missing_source",
+          "message": "_generated_index must require a source: IndexSource parameter",
+          "severity": null
+        },
+        {
+          "path": "generic_sparse.py",
+          "line": 2,
+          "column": null,
+          "code": "missing_source",
+          "message": "_generated_index must forward source=source into Index(...)",
+          "severity": null
+        }
+      ],
+      "status": "passed"
+    },
+    {
+      "test": "scripts/tests/test_lint_generated_index_sources.py::test_generated_index_helper_rejects_model_declared_default",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "expectedSourceResult": [
+        "generic_sparse.py:1: _generated_index source must not default to MODEL_DECLARED"
+      ],
+      "actualSourceResult": [
+        "generic_sparse.py:1: _generated_index source must not default to MODEL_DECLARED"
+      ],
+      "expected": [
+        {
+          "path": "generic_sparse.py",
+          "line": 1,
+          "column": null,
+          "code": "missing_source",
+          "message": "_generated_index source must not default to MODEL_DECLARED",
+          "severity": null
+        }
+      ],
+      "actual": [
+        {
+          "path": "generic_sparse.py",
+          "line": 1,
+          "column": null,
+          "code": "missing_source",
+          "message": "_generated_index source must not default to MODEL_DECLARED",
+          "severity": null
+        }
+      ],
+      "status": "passed"
+    },
+    {
+      "test": "scripts/tests/test_lint_generated_index_sources.py::test_alias_and_qualified_index_calls_are_flagged",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "expectedSourceResult": [
+        "generic_sparse.py:4: generated indexes must use _generated_index(..., source=IndexSource.*)",
+        "generic_sparse.py:5: generated indexes must use _generated_index(..., source=IndexSource.*)"
+      ],
+      "actualSourceResult": [
+        "generic_sparse.py:4: generated indexes must use _generated_index(..., source=IndexSource.*)",
+        "generic_sparse.py:5: generated indexes must use _generated_index(..., source=IndexSource.*)"
+      ],
+      "expected": [
+        {
+          "path": "generic_sparse.py",
+          "line": 4,
+          "column": null,
+          "code": "missing_source",
+          "message": "generated indexes must use _generated_index(..., source=IndexSource.*)",
+          "severity": null
+        },
+        {
+          "path": "generic_sparse.py",
+          "line": 5,
+          "column": null,
+          "code": "missing_source",
+          "message": "generated indexes must use _generated_index(..., source=IndexSource.*)",
+          "severity": null
+        }
+      ],
+      "actual": [
+        {
+          "path": "generic_sparse.py",
+          "line": 4,
+          "column": null,
+          "code": "missing_source",
+          "message": "generated indexes must use _generated_index(..., source=IndexSource.*)",
+          "severity": null
+        },
+        {
+          "path": "generic_sparse.py",
+          "line": 5,
+          "column": null,
+          "code": "missing_source",
+          "message": "generated indexes must use _generated_index(..., source=IndexSource.*)",
+          "severity": null
+        }
+      ],
+      "status": "passed"
+    }
+  ],
+  "pythonHashSeed": null,
+  "executionIsolation": "One owned persistent cache per assertion shard; shared-cache concurrency is tested separately",
+  "semanticFallbacks": [],
+  "hostProtocolCalls": [],
+  "casesWithoutNativeCalls": []
+}
