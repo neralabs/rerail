@@ -32,7 +32,7 @@ pub(in crate::code_rule_dsl) mod match_all;
 #[cfg(test)]
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod extension;
-pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, intern_batch, keep_inputs, register_symbols, sym_text_of};
+pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, intern_batch, keep_inputs, register_symbols};
 /// A connection's identity for the state a run leaves with it (`setfix::scope`).
 pub(in crate::code_rule_dsl) use setfix::scope as setfix_scope;
 pub(in crate::code_rule_dsl) use setfix::symbol_text;

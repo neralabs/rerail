@@ -188,42 +188,10 @@ impl ContentStore {
         self.admit_frames(space, std::slice::from_ref(rel), part)?.get(rel).map(|f| f.rows()).transpose()
     }
 
-    /// The frames of `rel` in `space` at each of `parts`, admitted: queued ones from memory, the others read in one
-    /// statement a batch of parts. A part with no frame is absent.
-    pub fn admit_frame_parts(&self, space: &[u8; 32], rel: &Rel, parts: &[i64]) -> StoreResult<HashMap<i64, Arc<Admitted>>> {
-        let mut out = HashMap::new();
-        let mut missing = Vec::new();
-        for &part in parts {
-            if let Some(pending) = self.pending::<Option<Arc<Admitted>>>(&frame_key(space, rel, part)) {
-                if let Some(frame) = pending.as_ref() {
-                    out.insert(part, Arc::clone(frame));
-                }
-            } else {
-                missing.push(part);
-            }
-        }
-        missing.sort_unstable();
-        missing.dedup();
-        if missing.is_empty() || !self.frames_table()? {
-            return Ok(out);
-        }
-        let connection = self.connection.lock().expect("content store mutex poisoned");
-        for batch in missing.chunks(READ_BATCH * 4) {
-            let values = (0..batch.len()).map(|i| format!("(?{})", 4 + i)).collect::<Vec<_>>().join(",");
-            let sql = format!(
-                "WITH demanded(part) AS (VALUES {values}) SELECT f.part, f.digest, f.reads, f.rows, f.types, f.data \
-                 FROM demanded d CROSS JOIN frames f ON f.space = ?1 AND f.rel = ?2 AND f.ident = ?3 AND f.part = d.part"
-            );
-            let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into(), rel.name.clone().into(), rel.ident.to_vec().into()];
-            args.extend(batch.iter().map(|p| rusqlite::types::Value::from(*p)));
-            let mut st = connection.prepare_cached(&sql)?;
-            let rows = st.query_map(rusqlite::params_from_iter(args), admitted_part)?;
-            for row in rows {
-                let (part, frame) = row?;
-                out.insert(part, frame);
-            }
-        }
-        Ok(out)
+    /// The frames of `rel` in `space` at each of `parts`, admitted (`admit_frame_parts`). A part with no frame is absent.
+    pub fn admit_parts_of(&self, space: &[u8; 32], rel: &Rel, parts: &[i64]) -> StoreResult<HashMap<i64, Arc<Admitted>>> {
+        let keys: Vec<(Rel, i64)> = parts.iter().map(|p| (rel.clone(), *p)).collect();
+        Ok(self.admit_frame_parts(space, &keys)?.into_iter().map(|((_, p), f)| (p, f)).collect())
     }
 
     /// Every stored frame of `rel` in `space`, by part, admitted (queued writes are not among them).

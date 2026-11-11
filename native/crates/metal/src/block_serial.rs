@@ -925,6 +925,49 @@ fn carried_serial(at: usize, inst: &BlockInst, out: &mut String) {
 
 /// The serial kernels for `programs` (each in its planes form): the segments' runs, the check, and
 /// the positions and totals from the finished words.
+/// `generate_serial`'s sources by what they are made from: each program, the pass's stores and
+/// slots, what runs have learned of each, and the switches the generator reads. A batch's
+/// source is made once, not at every run: made in a debug build, a pass of `.rr`'s took 26 s.
+static SOURCES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u64, (std::sync::Arc<String>, usize, usize)>>> = std::sync::LazyLock::new(Default::default);
+
+/// A source's kernels by its key (`serial_source`) and name: found without hashing the source
+/// again, as `pipeline_named` does (twelve kernels a pass, its source near a megabyte).
+pub(crate) static KERNELS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(u64, &'static str), metal::ComputePipelineState>>> = std::sync::LazyLock::new(Default::default);
+
+fn kernel(key: u64, source: &str, name: &'static str) -> Result<metal::ComputePipelineState, Error> {
+    if let Some(hit) = KERNELS.lock().ok().and_then(|m| m.get(&(key, name)).cloned()) {
+        return Ok(hit);
+    }
+    let made = pipeline_named(source, name)?;
+    if let Ok(mut m) = KERNELS.lock() {
+        m.insert((key, name), made.clone());
+    }
+    Ok(made)
+}
+
+fn serial_source(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (u64, std::sync::Arc<String>, usize, usize) {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for p in programs {
+        format!("{p:?}").hash(&mut h);
+        LEARNED.lock().ok().and_then(|m| m.get(&fingerprint(p)).cloned()).hash(&mut h);
+    }
+    io.hash(&mut h);
+    for k in ["RERAIL_SERIAL_EXACT", "RERAIL_SERIAL_LANES", "RERAIL_SERIAL_CONE"] {
+        std::env::var(k).ok().hash(&mut h);
+    }
+    let key = h.finish();
+    if let Some((source, sw, counted)) = SOURCES.lock().ok().and_then(|m| m.get(&key).cloned()) {
+        return (key, source, sw, counted);
+    }
+    let (source, sw, counted) = generate_serial(programs, io);
+    let made = (std::sync::Arc::new(source), sw, counted);
+    if let Ok(mut m) = SOURCES.lock() {
+        m.insert(key, made.clone());
+    }
+    (key, made.0, made.1, made.2)
+}
+
 fn generate_serial(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (String, usize, usize) {
     let mut out = format!("{CARRY}\n{}\n{}{EQ16}\n{TRANSPOSE8}\n", batch_helpers(), table_helpers(3));
     // A program in passes (`native_ir::Passes`): its slots a block, and the pass's stores.
@@ -1326,21 +1369,35 @@ pub fn run_serial_split(programs: &[&BlockNative], files: &[BatchFile<'_>], segm
 /// Run `files` in segments (each under `programs[file.program]`, in its planes form): one first
 /// pass, the checks and runs again until every start agrees, then the positions and totals.
 pub fn run_serial(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments) -> Result<SerialRun, Error> {
-    Ok(run_kept(programs, files, segments, true)?.0)
+    Ok(run_kept(programs, files, None, segments, true)?.0)
 }
 
 /// `run_serial` with tier 1's buffers left where the device wrote them (`Resident`): no copy of
 /// them back. The run's `files` are empty.
 pub fn run_resident(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments) -> Result<(SerialRun, Resident), Error> {
-    let (run, kept) = run_kept(programs, files, segments, false)?;
+    run_resident_digested(programs, files, None, segments)
+}
+
+/// `run_resident` with each file's SHA-256 given (`digests`, in the files' order), as the
+/// residency's documents take theirs (decision 0032 §4): the engine knows them from a `stat` or
+/// a Git blob (decision 0095 §3), and the run hashes no file's bytes.
+pub fn run_resident_digested(programs: &[&BlockNative], files: &[BatchFile<'_>], digests: Option<&[[u8; 32]]>, segments: Segments) -> Result<(SerialRun, Resident), Error> {
+    let (run, kept) = run_kept(programs, files, digests, segments, false)?;
     Ok((run, kept.ok_or(Error::BackendFailure)?))
 }
 
-fn run_kept(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments, read: bool) -> Result<(SerialRun, Option<Resident>), Error> {
+/// The files' bytes admitted once a run, every pass of it reading them where they are.
+fn run_kept(programs: &[&BlockNative], files: &[BatchFile<'_>], digests: Option<&[[u8; 32]]>, segments: Segments, read: bool) -> Result<(SerialRun, Option<Resident>), Error> {
+    let bytes: Vec<&[u8]> = files.iter().map(|f| f.bytes).collect();
+    let sources = match digests {
+        Some(d) if d.len() == files.len() => crate::slabs::admit_sources_digested(&bytes, d)?,
+        Some(_) => return Err(Error::InvalidOperand(0)),
+        None => crate::slabs::admit_sources(&bytes)?,
+    };
     if programs.iter().any(|p| p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_)))) {
-        return run_passes(programs, files, segments, read);
+        return run_passes(programs, files, &sources, segments, read);
     }
-    let (run, kept) = run_serial_io(programs, files, segments, None, read)?;
+    let (run, kept) = run_serial_io(programs, files, &sources, segments, None, read)?;
     Ok((run, kept.map(|k| k.with(None))))
 }
 
@@ -1406,10 +1463,29 @@ fn blocks_of(len: usize, delay: u8) -> usize {
 /// as made; each backward pass's fills from the files' last blocks to their first
 /// (`back_kernels`). The slots stay in the device's buffer from pass to pass. One program a
 /// batch.
-fn run_passes(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments, read: bool) -> Result<(SerialRun, Option<Resident>), Error> {
+/// A program's passes (`BlockNative::passes`), made once a program: in a debug build `.rr`'s
+/// took most of a second, at every run.
+fn passes_of(program: &BlockNative) -> std::sync::Arc<rerail_compiler::block_native::Passes> {
+    use std::hash::{Hash, Hasher};
+    static PASSES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u64, std::sync::Arc<rerail_compiler::block_native::Passes>>>> = std::sync::LazyLock::new(Default::default);
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    format!("{program:?}").hash(&mut h);
+    let key = h.finish();
+    if let Some(hit) = PASSES.lock().ok().and_then(|m| m.get(&key).cloned()) {
+        return hit;
+    }
+    let made = std::sync::Arc::new(program.passes());
+    if let Ok(mut m) = PASSES.lock() {
+        m.insert(key, made.clone());
+    }
+    made
+}
+
+fn run_passes(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[std::sync::Arc<crate::slabs::ResidentSource>], segments: Segments, read: bool) -> Result<(SerialRun, Option<Resident>), Error> {
     let [program] = programs else { return Err(Error::UnsupportedBackend) };
     METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
-    let passes = program.passes();
+    let passes = passes_of(program);
+    let passes: &rerail_compiler::block_native::Passes = &passes;
     let fit = |n: usize| u32::try_from(n).map_err(|_| Error::BackendCapacity);
     let blocks: Vec<usize> = files.iter().map(|f| blocks_of(f.bytes.len(), program.delay)).collect();
     let total_blocks: usize = blocks.iter().sum();
@@ -1448,7 +1524,7 @@ fn run_passes(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segm
         match pass {
             rerail_compiler::block_native::Pass::Forward { body, stores } => {
                 let io = Io { out: &out, offset, slot_base: &slot_base, slots: passes.slots, stores };
-                let (run, kept) = run_serial_io(&[body], files, segments, Some(&io), read && i == last)?;
+                let (run, kept) = run_serial_io(&[body], files, sources, segments, Some(&io), read && i == last)?;
                 seconds += run.run.seconds;
                 launches += run.run.launches;
                 reruns += run.reruns;
@@ -1541,15 +1617,14 @@ fn back_kernels(fills: &[(u16, u16, u16)], slots: u16) -> String {
 }
 
 /// `run_serial` over programs without passes, or one forward pass of a program in passes (`io`).
-fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments, io: Option<&Io<'_>>, read: bool) -> Result<(SerialRun, Option<Kept>), Error> {
+fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[std::sync::Arc<crate::slabs::ResidentSource>], segments: Segments, io: Option<&Io<'_>>, read: bool) -> Result<(SerialRun, Option<Kept>), Error> {
     METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
     let forms: Vec<BlockNative> = programs.iter().map(|p| p.planes_form()).collect();
     let refs: Vec<&BlockNative> = forms.iter().collect();
-    let (source, sw, counted) = generate_serial(&refs, io.map(|io| (io.stores, io.slots)));
+    let (source_key, source, sw, counted) = serial_source(&refs, io.map(|io| (io.stores, io.slots)));
+    let source: &str = &source;
     let fit = |n: usize| u32::try_from(n).map_err(|_| Error::BackendCapacity);
-    let bytes: Vec<&[u8]> = files.iter().map(|f| f.bytes).collect();
-    let sources = crate::slabs::admit_sources(&bytes)?;
-    let (slabs, slab_of) = crate::slabs::source_slabs(&sources).ok_or(Error::BackendCapacity)?;
+    let (slabs, slab_of) = crate::slabs::source_slabs(sources).ok_or(Error::BackendCapacity)?;
     if files.is_empty() {
         return Ok((SerialRun { run: BatchRun { files: Vec::new(), launches: 0, seconds: 0.0 }, segments: 0, reruns: 0, rounds: 0, first_seconds: 0.0, rerun_seconds: 0.0, sink_seconds: 0.0 }, None));
     }
@@ -1617,22 +1692,22 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: S
     // Segments run again in all, and the most one thread ran.
     let hopped = crate::pool::zeroed::<u32>(2)?;
     assert!(2 * segments.warm < segments.blocks, "a segment is longer than its two warm-ups");
-    let cone = pipeline_named(&source, if lanes_on() { "lanes_cone" } else { "serial_cone" })?;
-    let cone_prefix = pipeline_named(&source, "serial_cone_prefix")?;
-    let group_pass = pipeline_named(&source, "lanes_group")?;
+    let cone = kernel(source_key, source, if lanes_on() { "lanes_cone" } else { "serial_cone" })?;
+    let cone_prefix = kernel(source_key, source, "serial_cone_prefix")?;
+    let group_pass = kernel(source_key, source, "lanes_group")?;
     let lanes = lanes_on();
     if lanes {
         // The lanes: the warm-up, the segment, and the block after it for the delayed outputs.
         assert!(segments.warm >= 1 && segments.blocks + 2 * segments.warm < GROUP, "a segment and its two warm-ups fit a SIMD group");
     }
-    let lanes_run = pipeline_named(&source, "lanes_run").inspect_err(|e| eprintln!("lanes: pipeline: {e:?}"))?;
-    let lanes_again = pipeline_named(&source, "lanes_again")?;
-    let run = pipeline_named(&source, "serial_run").inspect_err(|e| eprintln!("serial: pipeline: {e:?}"))?;
-    let check = pipeline_named(&source, "serial_check")?;
-    let count = pipeline_named(&source, "serial_count")?;
-    let prefix = pipeline_named(&source, "serial_prefix")?;
-    let write = pipeline_named(&source, "serial_write")?;
-    let lanes_write = pipeline_named(&source, "lanes_write")?;
+    let lanes_run = kernel(source_key, source, "lanes_run").inspect_err(|e| eprintln!("lanes: pipeline: {e:?}"))?;
+    let lanes_again = kernel(source_key, source, "lanes_again")?;
+    let run = kernel(source_key, source, "serial_run").inspect_err(|e| eprintln!("serial: pipeline: {e:?}"))?;
+    let check = kernel(source_key, source, "serial_check")?;
+    let count = kernel(source_key, source, "serial_count")?;
+    let prefix = kernel(source_key, source, "serial_prefix")?;
+    let write = kernel(source_key, source, "serial_write")?;
+    let lanes_write = kernel(source_key, source, "lanes_write")?;
     let mut common: Vec<(u64, &metal::BufferRef, u64)> = vec![(1, out.buffer(), 0), (2, table.buffer(), 0), (3, seg_table.buffer(), 0)];
     for (k, &at) in SLAB_BUFFERS.iter().enumerate() {
         common.push((at, &slabs.get(k).unwrap_or(&slabs[0]).buffer.buffer, 0));
@@ -1795,7 +1870,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: S
             .iter()
             .map(|r| ResidentFile { out_base: r.out_base as usize, blocks: r.groups as usize, pos_base: r.pos_base as usize, capacity: (r.len as usize).max(1), tot_base: r.tot_base as usize })
             .collect();
-        return Ok((serial(Vec::new()), Some(Kept { out: owned, tot, positions, files: placed, sources })));
+        return Ok((serial(Vec::new()), Some(Kept { out: owned, tot, positions, files: placed, sources: sources.to_vec() })));
     }
     let words = out.read::<u64>(out_base.max(1));
     let tot = tot.read::<u32>(tot_base.max(1));
