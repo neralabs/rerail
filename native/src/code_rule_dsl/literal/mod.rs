@@ -619,8 +619,9 @@ impl Language for SubLang {
             .flatten()
     }
     fn build_pattern(&self, builder: &PatternBuilder) -> Result<Pattern, PatternError> {
-        // Patterns are Python's, and only annotations hold Python.
-        builder.build(|src| StrDoc::try_new(src, GrammarDialect::Python))
+        // Patterns are Python's, and only annotations hold Python: written as its trees are,
+        // with no token the grammar implies (RER-131).
+        ast_grep_core::Language::build_pattern(&GrammarDialect::Python, builder)
     }
 }
 
