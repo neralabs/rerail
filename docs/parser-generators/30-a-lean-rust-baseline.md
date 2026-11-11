@@ -113,6 +113,60 @@ The lexer's 33M cycles is the bar for tier 1 (page 31 says why
 its block shape is at parity with a byte lexer on this corpus).
 The parse's 200 instructions a token is a fair bar for tier 2.
 
+## Counters and hot spots
+
+The tapes are now named-only (page 32): 1.15 million nodes, not 1.9.
+`rr_profile_loop` runs one form over the corpus for a while,
+for `xctrace` (Time Profiler, CPU Counters).
+CPU Counters splits the core's issue slots four ways:
+useful, waiting on the back end (processing), waiting on fetch (delivery),
+and thrown away after a mispredicted branch (discarded).
+
+| | useful | processing | delivery | discarded |
+|---|---|---|---|---|
+| lean, whole | 51% | 17% | 11% | 21% |
+| lean, lexer alone | 38% | 31% | 5% | 25% |
+| tier 1 | 48% | 41% | 5% | 6% |
+| tier 2 | 39% | 39% | 8% | 14% |
+
+The lexer waits on the back end and on mispredicted branches.
+The parse alone (the whole less the lexer) is mostly useful slots;
+what it loses, it loses to branches: recursive descent on token kinds.
+
+Three changes, measured with `rr_against_rust`, least of 7 rounds:
+
+| | instructions | cycles |
+|---|---|---|
+| before | 390M | 77.1M |
+| no index of lines | 381M | 71.7M |
+| `push` inline, comments out of line | 368M | 70.6M |
+| `leaf_over`, `open`, `close`, `anon` inline | **357M** | **68.7M** |
+
+- **No index of lines.** A setting's or a declaration's tail ends at its line's end.
+  The parser made an index of every newline the first time it asked (3.5% of the time).
+  Now it reads the bytes between the tail's last token and the next for a newline,
+  each byte once.
+- **`push` inline.** It saved and restored seven register pairs a node,
+  because placing a comment made it too big to inline.
+  Now one compare says no comment is near, and placing one is a cold call.
+
+One change made it worse, and was undone: writing a run's tokens
+four at a time without a branch, as simdjson writes its index.
+The lexer went from 32.5M to 39.0M cycles:
+a token here is more work than an index entry,
+and the tokens written past a run cost more than the branch saved.
+
+What is left, by the profile:
+
+- The lexer is 43% of the time.
+  Its losses are back-end waits (the token's table loads and its store)
+  and mispredicts, which the counters do not place.
+  Placing them needs Instruments' discarded-sampling mode, which `xctrace` cannot choose.
+- The parse costs about 195 instructions a node:
+  every token read and node write is bounds-checked,
+  the parser's state goes through memory between calls,
+  and each term goes down `term`, `product`, `primary`.
+
 ## Why tier 2 is heavy
 
 Tier 2 runs 11.7 of its words a token.

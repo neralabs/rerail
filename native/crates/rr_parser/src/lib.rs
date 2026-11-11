@@ -861,6 +861,13 @@ pub mod tests {
         let files = corpus();
         let ours: Vec<&String> = files.iter().filter(|f| crate::compiled_tape(f).is_some()).collect();
         let p = &c.parser;
+        // `RR_DUMP=dir`: tier 2's CLIF and machine code there, to read.
+        if let Ok(dir) = std::env::var("RR_DUMP") {
+            std::fs::write(format!("{dir}/tier2.clif"), &p.tier2.clif).expect("writes");
+            std::fs::write(format!("{dir}/tier2.s"), &p.tier2.disassembly).expect("writes");
+            std::fs::write(format!("{dir}/tier2.words"), &c.words).expect("writes");
+            std::fs::write(format!("{dir}/tier2.machine"), &c.machine).expect("writes");
+        }
         let mut batches: Vec<_> = ours.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()])).collect();
         for b in &mut batches {
             b.call(&p.tier1);
