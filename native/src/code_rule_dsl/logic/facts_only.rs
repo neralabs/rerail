@@ -188,6 +188,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/extension/setfix.rs", "LOADS"),
     ("code_rule_dsl/logic/native/extension/setfix.rs", "SYMS"),
     ("code_rule_dsl/logic/native/setfix.rs", "ADOPTED"),
+    // A strand's first interning that failed, until its stratum checks (0113): an error, not a result.
+    ("code_rule_dsl/logic/native/setfix.rs", "HELD_FAILED"),
     ("code_rule_dsl/logic/native/setfix.rs", "CHANGING"),
     ("code_rule_dsl/logic/native/setfix.rs", "COMPONENTS"),
     ("code_rule_dsl/logic/native/setfix.rs", "DERIVATIONS"),
@@ -258,7 +260,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile/roofline.rs", "ROOFS"),
     ("code_rule_dsl/logic/rr.rs", "CORE"),
     ("code_rule_dsl/logic/rr.rs", "READS"),
-    ("code_rule_dsl/logic/derived.rs", "KEYS"),
     ("content_store/atoms.rs", "CANONICAL"),
     // Each database file's identity, read once a file: a registry, as CANONICAL is.
     ("content_store/atoms.rs", "IDENTITIES"),

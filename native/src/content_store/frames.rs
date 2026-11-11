@@ -319,7 +319,28 @@ impl ContentStore {
 
     /// `keep_frames`, queued behind the run (decision 0102): encoded and written by the store's writer.
     pub fn queue_frames(&self, space: [u8; 32], puts: Vec<Put>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
-        let bytes = puts.iter().map(|p| p.rows.rows.len() * 8).sum();
+        let bytes: usize = puts.iter().map(|p| p.rows.rows.len() * 8).sum();
+        // What a large write of frames holds, by relation (profiling only): what makes the store's writes large.
+        if bytes > 16 << 20 && std::env::var_os("RERAIL_PROFILE").is_some() {
+            let mut by: HashMap<&str, (usize, usize, usize)> = HashMap::new();
+            for p in &puts {
+                let e = by.entry(p.rel.name.as_str()).or_default();
+                e.0 += 1;
+                e.1 += p.rows.n;
+                e.2 += p.rows.rows.len() * 8;
+            }
+            let mut by: Vec<_> = by.into_iter().collect();
+            by.sort_by(|a, b| b.1.2.cmp(&a.1.2));
+            let top: Vec<String> = by.iter().take(15).map(|(r, (f, n, b))| format!("{r}: {f} frames, {n} rows, {:.1} MB", *b as f64 / 1048576.0)).collect();
+            eprintln!("rerail: frames queued: {:.1} MB in {} frames of {} relations; by relation: {}", bytes as f64 / 1048576.0, puts.len(), by.len(), top.join("; "));
+            if let Some(dir) = std::env::var_os("RERAIL_PROFILE") {
+                let mut tsv = String::from("relation\tframes\trows\tbytes\n");
+                for (r, (f, n, b)) in &by {
+                    tsv.push_str(&format!("{r}\t{f}\t{n}\t{b}\n"));
+                }
+                let _ = std::fs::write(std::path::Path::new(&dir).join(format!("frames-{}.tsv", bytes)), tsv);
+            }
+        }
         let puts: Vec<_> = puts.into_iter().map(Arc::new).collect();
         let mut keys: Vec<(super::write_back::Key, Option<Arc<dyn std::any::Any + Send + Sync>>)> = puts.iter().map(|p| {
             let frame = Arc::new(Admitted { stored: Stored { digest: p.digest, reads: p.reads.clone() }, data: Data::Queued(Arc::clone(p)) });

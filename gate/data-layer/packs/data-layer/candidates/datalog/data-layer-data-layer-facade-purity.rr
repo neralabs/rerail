@@ -115,7 +115,7 @@ facade_top_parent(m) :- node(_, m, "module", _, _).
 facade_top_parent(w) :- node(_, w, "decorated_definition", _, _), child(m, w, _), node(_, m, "module", _, _).
 facade_named_at(p, st, en) :- facade_top_parent(p), child(p, c, _), node(_, c, _, st, en).
 facade_anon(p, st) :- facade_top_parent(p), token(p, _, s, st, en), !match("#(?s:.*)", s), !facade_named_at(p, st, en).
-rr_ctx2(p, st) :- facade_anon(p, st), child(p, c, _), node(_, c, _, _, e), end_line(c, l).
+rr_ctx2(p, st) :- facade_anon(p, st).
 rr_agg1(p, st, x) :- rr_demand_agg_rr_agg1(p, st), rr_ctx2(p, st), facade_named_at(p, _, x), x <= st.
 facade_anon_line(p, st, l) :- facade_anon(p, st), e = max x : { rr_agg1(p, st, x) }, child(p, c, _), node(_, c, _, _, e), end_line(c, l).
 violation("data-layer-data-layer-facade-purity", "statement", "FAC002", p, l) :- facade_anon_line(t, _, l), node(d, t, _, _, _), facade_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _).

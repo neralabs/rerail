@@ -277,7 +277,13 @@ pub(crate) fn unchanged(programs: &[&str], root: &Path, typing: &Typing, options
 /// consulted did: the same documents, by path, and every request's answer as it was (`World::still`). `None` when
 /// anything else changed, or the run cannot be compared (its documents named, typing, phases read).
 pub(crate) fn changes(programs: &[&str], root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)]) -> Result<Option<Vec<String>>> {
-    if options.get("inputFiles").is_some() || consulted.is_empty() {
+    let trace = |why: String| if std::env::var_os("RERAIL_REUSE_TRACE").is_some() { eprintln!("rerail: changes: {why}"); };
+    // A run given no file of its own (`inputFiles: []`, a phase's: phase 1 loads its documents by request) has no
+    // listed documents to compare; what it loaded is among its requests, checked below. Other named files are not
+    // compared.
+    let none_named = options.get("inputFiles").and_then(|v| v.as_array()).is_some_and(Vec::is_empty);
+    if (options.get("inputFiles").is_some() && !none_named) || consulted.is_empty() {
+        trace(format!("not comparable: input files {}, {} consulted", options.get("inputFiles").is_some(), consulted.len()));
         return Ok(None);
     }
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
@@ -286,21 +292,29 @@ pub(crate) fn changes(programs: &[&str], root: &Path, typing: &Typing, options: 
     let programs: Vec<&str> = with_settings.iter().map(String::as_str).collect();
     let prog = combine(&programs, "")?;
     if prog.decls.contains_key("declared_ret") || !phases::wanted(&prog, None)?.is_empty() {
+        trace(format!("not comparable: declared_ret {}, phases {:?}", prog.decls.contains_key("declared_ret"), phases::wanted(&prog, None)?.iter().map(|p| format!("{p:?}").chars().take(60).collect::<String>()).collect::<Vec<_>>()));
         return Ok(None);
     }
     let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned());
     let found = scoped(corpus_files(root)?, &prog, options);
     let label = corpus_language(language.as_deref(), typing, &found);
-    let files = found.of(label);
+    let files = if none_named { Default::default() } else { found.of(label) };
     let docs: Vec<&(String, String, String)> = consulted.iter().filter(|c| c.0 == "doc").collect();
     if files.len() != docs.len() || files.iter().zip(&docs).any(|(f, d)| *f != d.1) {
+        trace(format!("the documents differ: {} files, {} kept", files.len(), docs.len()));
         return Ok(None);
     }
     // A document listed without a digest was not read (none of the run's rules reads a document): its edit changes nothing.
     let changed: Vec<String> = docs.iter().filter(|d| !d.2.is_empty() && world::bytes_digest(&root.join(&d.1)) != d.2).map(|d| d.1.clone()).collect();
     const READERS: [&str; 6] = ["input", "input_dir", "artifact", "base", "git_rev", "git_index"];
     let (read, requests): (Vec<_>, Vec<_>) = consulted.iter().filter(|c| c.0 != "doc").cloned().partition(|c| READERS.contains(&c.0.as_str()));
-    Ok((inputs::still(&prog, root, &read) && world::World::new(root, &prog).still(&requests)).then_some(changed))
+    let (inputs_still, world_still) = (inputs::still(&prog, root, &read), world::World::new(root, &prog).still(&requests));
+    if !(inputs_still && world_still) {
+        trace(format!("inputs as they were {inputs_still} ({} read), requests as they were {world_still} ({} requests)", read.len(), requests.len()));
+    } else if !changed.is_empty() {
+        trace(format!("{} documents changed: {:?}", changed.len(), changed.iter().take(3).collect::<Vec<_>>()));
+    }
+    Ok((inputs_still && world_still).then_some(changed))
 }
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -582,6 +596,11 @@ struct Prepared {
 /// or more documents, joined by values), `same-unit` (every atom on one document), `config` (no document at all).
 /// A relation inherits the worst class of the relations its rules read.
 fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file_local::Programs) {
+    // The two parts' rules beside it, a line each, and the exports.
+    let rules = |p: &crate::code_rule_dsl::logic::front::Program| p.rules.iter().map(|r| format!("{r}\n")).collect::<String>();
+    let _ = std::fs::write(path.with_extension("local.rr"), rules(&split.local));
+    let _ = std::fs::write(path.with_extension("cross.rr"), rules(&split.cross));
+    let _ = std::fs::write(path.with_extension("exports.txt"), split.exports.join("\n"));
     use front::{Literal, Term};
     use std::io::Write;
     const ORDER: [&str; 10] = ["config", "same-unit", "union", "recursive-local", "lookup", "exists", "grouped", "total", "recursive", "-"];
@@ -1670,10 +1689,17 @@ pub fn run_with_options(
     // Phase 0's observations, written once the run has read everything (they may lag the run, never lead it).
     let did = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "phase 0's observations written".into());
-        observe(|o| {
+        let did = observe(|o| {
             o.flush();
             o.counts.since(&before)
-        })
+        });
+        // The outermost run's last writes, its whole-run record (`reuse::record`) and this flush, are queued after
+        // `run_observed` waited for the observer: wait for them too, or the process ends with them queued, and the
+        // next run finds no record (every warm run evaluated again).
+        if !phase0::active() && RUNS_UNDER_WAY.with(std::cell::Cell::get) == 0 {
+            crate::content_store::observe::written();
+        }
+        did
     };
     // `RERAIL_OBSERVED`: what the run's observer did, on stderr (the profile is written before this).
     if std::env::var_os("RERAIL_OBSERVED").is_some() {
@@ -2226,6 +2252,12 @@ fn run_observed(
             // An export that is a join of parts meeting at a key it projects away is handed on as its parts (decision 0099).
             let _step = crate::code_rule_dsl::logic::profile::span(|| "factorize the exports".into());
             let factorized = if factorizing { crate::code_rule_dsl::typing::file_local::factorize_exports(&mut lowered.program) } else { Vec::new() };
+            drop(_step);
+            // Each export cut to what its cross-file readers can use: their demand, made file-local.
+            let _step = crate::code_rule_dsl::logic::profile::span(|| "cut the exports to their readers' demand".into());
+            for line in crate::code_rule_dsl::typing::file_local::demand_exports(&mut lowered.program) {
+                crate::code_rule_dsl::logic::profile::decision("export demand", || line.clone());
+            }
             drop(_step);
             // Every relation the chunks hand on names its document per row, so a file's rows can be memoised (decision 0052).
             let _step = crate::code_rule_dsl::logic::profile::span(|| "locate the chunks' rows".into());
@@ -3100,22 +3132,26 @@ fn run_observed(
     });
     // The entries the statistics keeper counted for files changed or gone since (`keptstats`), found before the
     // first wave too: it counts them out in the waves, and reads none of them from SQLite there.
-    let counted_before: HashMap<String, memo::Found> = match (memo, keeper.borrow().as_ref()) {
+    // A file looked up here and not found is kept as `None`: the waves do not ask SQLite again for what it has not.
+    // That includes a file whose content is unchanged but whose entry the run's plan does not have (a new build
+    // over an older store): the keeper counts it out against the entry it was counted under.
+    let counted_before: HashMap<String, Option<memo::Found>> = match (memo, keeper.borrow().as_ref()) {
         (Some(memo @ memo::Memo::Stored(_)), Some(k)) if looking => {
             let _before = crate::code_rule_dsl::logic::profile::span(|| "memo lookup, before the first wave".into());
             let now = before.lock();
-            let changed: Vec<(String, memo::Content)> = k.counted_files().into_iter().filter(|(p, c, _)| now.get(p).is_none_or(|b| b.content != Some(*c))).map(|(p, c, _)| (p, c)).collect();
+            let changed: Vec<(String, memo::Content)> = k.counted_files().into_iter().filter(|(p, c, _)| now.get(p).is_none_or(|b| b.content != Some(*c) || b.found.is_none())).map(|(p, c, _)| (p, c)).collect();
             drop(now);
             let keys: Vec<(memo::Content, &str)> = changed.iter().map(|(p, c)| (*c, world::store_path(p))).collect();
             let found = memo.found_all(&memo_program, &keys).map_err(|e| Error::Plan(e.to_string()))?;
-            changed.iter().map(|(p, _)| p.clone()).zip(found).filter_map(|(p, f)| f.map(|f| (p, f))).collect()
+            changed.iter().map(|(p, _)| p.clone()).zip(found).collect()
         }
         _ => HashMap::new(),
     };
     // The entry a file was counted under: found before the first wave, else (a session's, in memory) looked up.
     let counted_entry = |path: &str, c: memo::Content, key: i64| -> Option<memo::Entry> {
         match counted_before.get(path) {
-            Some(found) => found.entry(key).ok().flatten(),
+            Some(Some(found)) => found.entry(key).ok().flatten(),
+            Some(None) => None,
             None => memo.and_then(|m| m.lookup(c, world::store_path(path), key, &memo_program).ok().flatten()),
         }
     };
@@ -5422,7 +5458,10 @@ fn run_observed(
                             return None;
                         }
                         let kept = cell.as_ref()?;
-                        let (_, new) = cross_inputs.iter().find(|(r, _)| r == rel)?;
+                        let Some((_, new)) = cross_inputs.iter().find(|(r, _)| r == rel) else {
+                            if std::env::var_os("RERAIL_PROFILE").is_some() { eprintln!("rerail: input delta of {rel}: not among the cross part's inputs, diffed by rules"); }
+                            return None;
+                        };
                         if let Some(changes) = &changes {
                             let _s = crate::code_rule_dsl::logic::profile::span(|| "session/input delta from the changed documents".into());
                             let read: Option<(String, Vec<Option<usize>>)> = if let Some(held) = base_held.get(rel) {
@@ -5478,6 +5517,9 @@ fn run_observed(
                         };
                         input_docs.insert(rel.to_owned(), docs);
                         hashed.push(rel.to_owned());
+                        if std::env::var_os("RERAIL_SPIKE_DELTA").is_some() {
+                            eprintln!("O125 input delta {rel}: +{} -{} of {} rows", delta.0.len(), delta.1.len(), new.len());
+                        }
                         Some(delta)
                     };
                     let mut maintained = maintain::rewrite(&cut, cell.as_ref(), &cross, &mut answer)?;

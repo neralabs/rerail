@@ -1095,7 +1095,10 @@ impl Retained {
                         for (c, v) in row.iter().enumerate() { columns[c].push(*v); }
                     }
                 }
-                let names = (0..width).map(|c| format!("c{c}")).collect();
+                // Named as the program declares them, as the run's own rows are: the session's input delta by
+                // document (`document_delta`) takes an old and a new source of the same columns, and with other names
+                // every input fell back to the diff by rules (`r__old, !r`), a scan per row (192 s on 20 files).
+                let names = prog.decls.get(*rel)?.iter().map(|(n, _)| n.clone()).collect();
                 let source = crate::code_rule_dsl::logic::native::component::columns_source(names, columns.into_iter().map(Some).collect());
                 // Granule headers carry no digest. Their rows must match the admitted per-document digests,
                 // including documents removed or replaced between the header and payload reads.
