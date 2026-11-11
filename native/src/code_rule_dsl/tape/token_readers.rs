@@ -379,29 +379,41 @@ fn token_readers() {
     eprintln!("  all: {}", row.join(", "));
 }
 
-/// The token tests that still read a token as a node although the tape may not hold it, by pack,
-/// rule and path, and why each holds anyway: the token is stored where the rule looks (a hole, a
-/// trailing comma, an optional modifier, a for-in head's keyword), or the regex reads a node's text.
-const READS_STORED: [(&str, &str, &str, &str); 8] = [
+/// The token tests that hold as written although D cannot place them, by pack, rule and path, and
+/// why. A gap's tokens are left out only when they are exactly the grammar's implied word, so an
+/// optional or alternative token is stored where these rules look (a hole, a trailing comma, a
+/// slice's leading colons, a for-in head's keyword, a modifier); or the test keeps tokens out, or
+/// reads a node's text.
+const AS_WRITTEN: [(&str, &str, &str, &str); 18] = [
+    ("javascript", "eslint-grouped-accessor-pairs", "utils/mod/rule/has/any/0", "a method's `static`, one of its optional modifiers: stored"),
     ("javascript", "eslint-no-sparse-arrays", "clauses/0/rule", "a comma after `[` or a comma: a hole, stored"),
-    ("javascript", "eslint-one-var", "utils/r16/all/0", "`const` in a for-in head (`inside` in a sibling item), stored"),
-    ("javascript", "eslint-one-var", "utils/r17/all/0", "`var` in a for-in head, stored"),
-    ("node/candidates", "n-no-unsupported-features-es-syntax", "clauses/205/rule", "a trailing comma before `)`, stored"),
-    ("python", "ruff-com818-trailing-comma-on-bare-tuple", "clauses/0/rule", "a trailing comma ending a statement, stored"),
-    ("python", "ruff-com818-trailing-comma-on-bare-tuple", "clauses/2/rule", "a trailing comma in targets, stored; an implied one has its own clause"),
-    ("typescript", "typescript-eslint-explicit-member-accessibility", "clauses/2/rule/all/0/any/0", "optional modifiers, stored"),
+    ("javascript", "eslint-one-var", "utils/r16/all/0", "`const` in a for-in head, one of three: stored"),
+    ("javascript", "eslint-one-var", "utils/r17/all/0", "`var` in a for-in head: stored"),
+    ("node/candidates", "n-no-unsupported-features-es-syntax", "clauses/204/rule/has", "a trailing comma before `]` or `}`: optional, stored"),
+    ("node/candidates", "n-no-unsupported-features-es-syntax", "clauses/205/rule", "a trailing comma before `)`: stored"),
+    ("python", "ruff-com818-trailing-comma-on-bare-tuple", "clauses/0/rule", "a trailing comma ending a statement: stored"),
+    ("python", "ruff-com818-trailing-comma-on-bare-tuple", "clauses/2/rule", "a trailing comma in targets: stored; an implied one has its own clause"),
+    ("python", "ruff-fast001-fast-api-redundant-response-model", "utils/risky-node/any/0/has", "a lone trailing comma in a subscript or longer tuple: stored; a one-element tuple is the next alternative"),
+    ("python", "ruff-pyi003-unrecognized-version-info-check", "utils/prefix-subscript/has/all/0/has/follows", "a slice's leading colon (`[:N]`): stored"),
+    ("python", "ruff-pyi004-patch-version-comparison", "utils/prefix-subscript/has/all/0/has/follows", "a slice's leading colon (`[:N]`): stored"),
+    ("python", "ruff-pyi005-wrong-tuple-length-version-comparison", "utils/version-slice/any/0/all/2/has/all/0/has/follows", "a slice's leading colon (`[:N]`): stored"),
+    ("python", "ruff-ruf007-zip-instead-of-pairwise", "utils/step-node/all/2/any/0/follows", "a slice's `::` (`[::2]`, `[1::2]`): stored; implied colons are the next alternative"),
+    ("python", "ruff-ruf013-implicit-optional", "utils/allows-none/any/8/not/any/0/any/0", "keeps stored tokens out of an annotation's parts"),
+    ("python", "ruff-ytt101-sys-version-slice3", "utils/upper-three-slice/all/0/has/all/1/not/follows", "a slice's `::`: stored"),
+    ("python", "ruff-ytt303-sys-version-slice1", "utils/upper-one-slice/all/0/has/all/1/not/follows", "a slice's `::`: stored"),
+    ("typescript", "typescript-eslint-explicit-member-accessibility", "clauses/2/rule/all/0/any/0", "optional modifiers: stored"),
     ("typescript", "typescript-eslint-explicit-module-boundary-types", "clauses/2/rule", "a regex over a declaration's text"),
 ];
 
 /// The guard (t31): no pack rule tests, as a node or in a gap nothing answers, a token the tape
-/// may leave out. D's `root`, `below`, `gap` and `gap?` tests are each a rule in
-/// [`READS_STORED`], whose token is stored where it looks; anything else is to be rewritten or
-/// answered by the gap test or the parts walk (`matcher::gap`).
+/// may leave out. Each of D's `root`, `below`, `gap` and `gap?` tests is in [`AS_WRITTEN`], which
+/// holds as written; any other is rewritten to ask the named structure, or the gap test
+/// (`matcher::gap`).
 #[test]
 fn no_rule_reads_a_token_the_tape_may_leave_out() {
     let mut unanswered = BTreeSet::new();
     census(|label, name, _, test| {
-        if matches!(test.category, "root" | "below" | "gap" | "gap?") && !READS_STORED.iter().any(|(pack, rule, path, _)| *pack == label && *rule == name && *path == test.path) {
+        if matches!(test.category, "root" | "below" | "gap" | "gap?") && !AS_WRITTEN.iter().any(|(pack, rule, path, _)| *pack == label && *rule == name && *path == test.path) {
             unanswered.insert(format!("{label}/{name} {} {} at {}", test.category, test.regex, test.path));
         }
     });

@@ -98,22 +98,68 @@ The compiler adds the test beside a relation whose target is a token regex
 A regex that also matches a name or a number (`(?s).*`, `^_`) is a test of node text. It is not
 lowered: the tape's dropping a token does not change what it means.
 
-### A token and more: the parts walk
+### A token beside other kinds
 
-Some targets say more about the token than its text:
+A token test often carries a `not` that keeps out a named node with the same text:
 
 ```jsonc
-// eslint-no-eval: the second argument, by the comma after the first one.
-{ "follows": { "regex": "^,$", "follows": { "matches": "first-arg" } } }
+// typescript-eslint: the `accessor` keyword, not a property named accessor.
+{ "has": { "regex": "^accessor$", "not": { "kind": "property_identifier" } } }
 ```
 
-Such a relation also walks the parent's parts: its stored children with the implied tokens
-between them (`Tree::parts`). An implied token is tested by what the target says of its text and
-of the parts around it (`follows`, `precedes`, `inside`, `not`, `all`, `any`, utilities). Nothing
-else holds of a token. `has` past the neighbours descends the subtree in the same way.
+An implied token is never one of those kinds, so the `not` holds of it. The compiler gives such a
+target the plain gap test. Where the `not` named a utility that only lists kinds (`name-token`,
+`r37`), the utility is inlined in the rule.
 
-At the top level the walk tests only implied tokens; the relation beside it answers for stored
-ones. A walk whose target no token can pass (a target with a `kind`) answers false at once.
+### A token and more: rewritten
+
+A target that says more about the token than its text is rewritten into the question it asks.
+Most count arguments by their commas:
+
+```jsonc
+// eslint-no-eval, before: the argument after the comma after the first argument.
+{ "follows": { "regex": "^,$", "follows": { "matches": "a0" } } }
+// now: the second argument, comments not counted.
+{ "nthChild": { "position": 2, "ofRule": { "not": { "kind": "comment" } } } }
+```
+
+`has` past the neighbours to a token (`stopBy: end`, or a stop rule) splits in two. The token is
+in the node's own gaps, or in the gaps of a node the descent passes through:
+
+```jsonc
+// before
+{ "has": { "stopBy": { "not": { "kind": "type_parameter" } }, "regex": "^,$" } }
+// now
+{ "any": [
+  { "has": { "regex": "^,$" } },
+  { "has": { "stopBy": { "not": { "kind": "type_parameter" } }, "kind": "type_parameter",
+             "has": { "regex": "^,$" } } } ] }
+```
+
+The other rewrites:
+
+| Rule | Before | Now |
+|---|---|---|
+| no-eval, no-invalid-this, accessor-pairs, RUF061, SIM905, SIM910, SIM911, AIR303 | the nth argument, by commas | `nthChild` among the non-comment children |
+| no-self-assign, n-no-unsupported (`declare`) | a utility as the relation's target | the utility inlined: a plain gap test |
+| curly | a break before or after the block's `}` | a break after its last child, or after the block |
+| no-inline-comments | the layout of a `jsx_expression`'s braces | the layout of the `jsx_expression` |
+| RUF007 | a slice's step, after two colons | also: after a colon, with an earlier child after one |
+| FAST001 | a lone trailing comma | also: a one-element tuple |
+| UP015 | a mode after a comma after `\` | a mode after `\` |
+| UP034 | a `,` or `yield` that stops the scan | the same, asked of the gaps of its parent |
+
+### Read as written
+
+Some token tests read a token the tape still stores where the rule looks, so they hold as written.
+A gap's tokens are left out only when they are exactly the grammar's implied word. Optional and
+alternative tokens stay:
+
+- a slice's leading colons (`x[:3]`, `x[::2]`): the implied word to a first child is empty;
+- trailing commas (`[a,]`, `f(a,)`), a hole's comma, a for-in head's `const` or `var`;
+- a method's `static`, `get` or `set`, and optional modifiers.
+
+The guard lists each of these tests by rule and path, with its reason.
 
 ### Layout
 
@@ -145,23 +191,27 @@ over them: `prev_token` for the token before a node, the parent's `token` rows f
 
 | Category | Rules | Tests |
 |---|---:|---:|
-| `lowered` (gap test or parts walk) | 303 | 1,379 |
+| `lowered` (gap test) | 182 | 1,048 |
 | `layout` (gap window) | 13 | 22 |
-| `excluder` (`not` over a token: an implied one is in no set) | 147 | 305 |
-| `root` (the token stored there: holes, trailing commas, modifiers) | 6 | 8 |
-| `incidental` | 3 | 3 |
-| `gap`, `gap?`, `below` | 0 | 0 |
+| `excluder` (`not` over a token: an implied one is in no set) | 192 | 487 |
+| `incidental` (a regex over node text) | 69 | 127 |
+| `root`, `gap`, `gap?`, `below`, read as written (above) | 13 | 18 |
+
+String annotations parse into trees of their own. Those drop implied tokens too, as a tape does,
+so a rule reads the same structure inside an annotation as outside it.
 
 ### Checks
 
-Each step compares the original rules on full tapes with the current rules on named-only tapes,
-as finding keys:
+Each step compares finding keys with a baseline recorded before the step:
 
 - JavaScript: 1,229 = 1,229 keys on 100 files.
 - TypeScript: 302 = 302 keys on 100 files.
 - Python: 885 cases from Ruff's and Bandit's generators (the inline cases in `generate.py`), equal
   in every chunk. Two chunks hit a stale-store error in both modes (`noqa-PTH113.py`).
 - The data-layer replay sample: 268 of 268 events give their recorded findings.
+- Rules that are off in the packs, and the rewritten ones: their crafted and upstream cases
+  against the engine with the parts walk, on the rules before the rewrite. JS and TS are equal.
+  Python is equal except three UP015 findings that Ruff reports and the old rule missed.
 
 ### Open
 
@@ -192,11 +242,11 @@ as finding keys:
 ## The guard
 
 `no_rule_reads_a_token_the_tape_may_leave_out` runs D over every pack rule. It fails on any
-`root`, `below`, `gap` or `gap?` test that is not one of eight listed by rule and path
-(`READS_STORED`), each with the reason its token is stored there.
+`root`, `below`, `gap` or `gap?` test that is not one of the 18 listed by rule and path
+(`AS_WRITTEN`), each with the reason it holds as written.
 
 Next, D's classification moves into rule compilation. A token test whose token the grammar implies
-where the rule looks, and that neither the gap test nor the parts walk answers, becomes a compile
+where the rule looks, and that the gap test does not answer, becomes a compile
 error naming the rule and the test. A rule whose parent can't be placed (today's `gap?`) has to say its parent. After that, a
 rule can't depend on a token the tapes don't hold, and a grammar update that implies a new token
 shows up at compile time.
