@@ -514,16 +514,22 @@ A model that wins is trained again on every sample, put in place and saved (tabl
 for each machine); the next run puts the saved one in place at once. One that loses is taken out with the saved
 one. Training runs on a thread of its own at the utility quality of service, in a pool of two threads apart from
 the engine's, and again once 2,000 more samples are written, at most every ten minutes. A comparison on 20,000
-samples takes 0.50 s wall and 0.32 s CPU (debug build). The host does nothing per row per tree: each tree's bag is
+samples takes 0.48 s wall and 0.16 s CPU (debug build). The host does nothing per row per tree: each tree's bag is
 drawn on the GPU (a hash of the bag and the example, kept with the sampling's proportion and counted Poisson(1)
 times; not upstream's Mersenne Twister draws, as diverse), the root's total summed there, each launch replayed
-from a plan made once, and each tree built flat from the GPU's splits. One forest of 100 trees on 12,000 rows:
-380 → 100 ms CPU. The background quality of service was
+from a plan made once, and each tree built flat from the GPU's splits. Each tree's kernels write its splits
+into one of six result slots kept by the trainer (no buffer a tree, no copy of the pool); a command buffer keeps
+one encoder open across its launches; the flat tree is built from the splits in place through an open-addressed
+table by partition. One forest of 100 trees on 12,000 rows: 380 → 37 ms CPU, 76 ms wall (the GPU's). The
+background quality of service was
 tried first and refused: it holds the threads to the efficiency cores and the GPU's lowest priority, 4–10× the
 wall and twice the GPU seconds on an idle machine, 22 s under load. The prediction kernels are compiled on the
-training thread before a model is put in place, so placement never waits on a compile. A batch of up to 4 jobs
-is predicted on the host (17 µs a job in a debug build); a larger one on the GPU: 1,024 jobs in 0.4 ms wall and
-0.27 ms CPU, of which 0.04 ms is GPU, the rest the host's lookup of each job's names and the call's round trip.
+training thread before a model is put in place; placement no longer uses them. A placement's prediction
+is found without strings or trees: each thread keeps, for the model in place, each (kernel name, lane)'s job key
+by the name's address, and a memo of predictions by the job's buckets (the forests see only those, and a batch's
+jobs share all but their units'). A launch is a lookup by address, a binary search for its units' bucket and a
+memo lookup; the forests are walked on the host only for buckets not seen. Prediction for one launch, debug
+build: 10.4 → 0.3 µs; 16 launches 43–53 → 3.2 µs; 1,024 launches 549–586 → 195 µs, none of it on the GPU.
 
 ## Order of work
 

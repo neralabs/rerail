@@ -119,6 +119,63 @@ pub struct CostModel {
     device: OnceLock<Option<Arc<(DeviceForest, DeviceBucketizer)>>>,
 }
 
+/// A job's lane and names as the model knows them (`CostModel::job`).
+#[derive(Clone, Copy)]
+pub struct JobKey(Entry);
+
+/// The buckets of the features a batch's jobs share (`CostModel::shared_buckets`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SharedBuckets([u32; 4]);
+
+/// A job's buckets in every feature (`CostModel::key`): the forests' prediction is a function of it, so a memo
+/// of predictions by key (`CostMemo`) is the model's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CostKey(pub [u32; 7]);
+
+impl std::hash::Hash for CostKey {
+    /// One word: the buckets folded by multiplies (not the slice's bytes, written one by one).
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        let k = &self.0;
+        let a = (k[0] as u64) | (k[1] as u64) << 32;
+        let b = (k[2] as u64) | (k[3] as u64) << 32;
+        let c = (k[4] as u64) | (k[5] as u64) << 32;
+        let d = k[6] as u64;
+        let m = 0x9E37_79B9_7F4A_7C15u64;
+        state.write_u64(((a.wrapping_mul(m) ^ b).wrapping_mul(m) ^ c).wrapping_mul(m) ^ d);
+    }
+}
+
+/// Predictions by key, for one model (a caller keeps one per model; `get` walks the forests only for a key not
+/// seen). At most `CostMemo::MAX` keys: past that it starts again.
+#[derive(Default)]
+pub struct CostMemo {
+    map: HashMap<CostKey, CostPrediction, Words>,
+}
+
+impl CostMemo {
+    pub const MAX: usize = 1 << 16;
+
+    pub fn get(&mut self, model: &CostModel, key: CostKey) -> Result<CostPrediction, String> {
+        if let Some(&p) = self.map.get(&key) {
+            return Ok(p);
+        }
+        let p = model.predict_key(&key)?;
+        if self.map.len() >= Self::MAX {
+            self.map.clear();
+        }
+        self.map.insert(key, p);
+        Ok(p)
+    }
+
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+}
+
 /// What a query's lane and names give, found once a query with no allocation: the codes of the device's
 /// categorical columns (in `lanes` and `forms`, the same every batch) and the host's buckets.
 #[derive(Clone, Copy)]
@@ -204,6 +261,9 @@ impl std::hash::Hasher for WordHasher {
     fn write_usize(&mut self, v: usize) {
         self.word(v as u64);
     }
+    fn write_u64(&mut self, v: u64) {
+        self.word(v);
+    }
     fn finish(&self) -> u64 {
         self.0
     }
@@ -254,6 +314,32 @@ impl CostModel {
             trained_on: used.len(),
             device: OnceLock::new(),
         })
+    }
+
+    /// A job's lane and names as the model knows them (`None`: it does not price them), found once by the caller and
+    /// kept: what `key` takes in place of the strings.
+    pub fn job(&self, lane: &str, forms: &str) -> Option<JobKey> {
+        self.index.get(lane, forms).map(JobKey)
+    }
+
+    /// The buckets of the features a batch's jobs share (`key` takes them): their launches, coldness, load and
+    /// threads.
+    pub fn shared_buckets(&self, launches: u32, cold: bool, load: f64, threads: u32) -> SharedBuckets {
+        let r = &self.rules;
+        SharedBuckets([r.bucket_of_number(2, launches as f64), r.bucket_of_number(4, cold as u8 as f64), r.bucket_of_number(5, load), r.bucket_of_number(6, threads as f64)])
+    }
+
+    /// A job's buckets in every feature: all the forests see of it (`predict_key`). Its units are the one
+    /// feature found here.
+    pub fn key(&self, job: JobKey, shared: SharedBuckets, units: f64) -> CostKey {
+        let [launches, cold, load, threads] = shared.0;
+        CostKey([job.0.lane_bucket, job.0.forms_bucket, launches, self.rules.bucket_of_number(3, units), cold, load, threads])
+    }
+
+    /// The prediction for a job's buckets, walked on the host (`predict`'s, for the same job).
+    pub fn predict_key(&self, key: &CostKey) -> Result<CostPrediction, String> {
+        let (w, c) = (self.wall.predict_row(&key.0)?, self.cpu.predict_row(&key.0)?);
+        Ok(CostPrediction { wall: self.wall_scale.from_unit(w[1]).exp(), cpu: self.cpu_scale.from_unit(c[1]).exp() })
     }
 
     /// Whether the model prices a job of these names on this lane.
@@ -657,5 +743,30 @@ mod tests {
         let mut damaged = model.to_bytes();
         damaged.truncate(damaged.len() - 3);
         assert!(CostModel::from_bytes(&damaged).is_err());
+    }
+    /// Placement's path (a job key, the batch's shared buckets, the units' bucket, then the memo) is the model's
+    /// prediction, a memo hit as the walk that filled it.
+    #[test]
+    fn keys_and_the_memo_are_the_models_prediction() {
+        let train = samples(3000);
+        let config = CostConfig { forest: RandomForestProcedureConfig { feature_vector_samplings: 20, ..CostConfig::default().forest }, host_batch: usize::MAX, ..Default::default() };
+        let model = CostModel::train(&train, &config).unwrap();
+        let mut memo = CostMemo::default();
+        let mut seen = 0;
+        let test: Vec<CostSample> = samples(3300)[3000..].iter().map(|s| CostSample { launches: 1, cold: false, ..s.clone() }).collect();
+        for pass in 0..2 {
+            for s in &test {
+                let want = model.predict(&[query(s)]).unwrap()[0];
+                let job = model.job(&s.lane, &s.forms);
+                assert_eq!(job.is_some(), want.is_some());
+                let Some(job) = job else { continue };
+                let got = memo.get(&model, model.key(job, model.shared_buckets(1, false, s.load, s.threads), s.units)).unwrap();
+                assert_eq!(Some(got), want, "pass {pass}");
+            }
+            // The second pass is all memo hits.
+            assert!(pass == 0 || memo.len() == seen, "{} keys after {seen}", memo.len());
+            seen = memo.len();
+        }
+        assert!(model.job("ane", "closure").is_none());
     }
 }
