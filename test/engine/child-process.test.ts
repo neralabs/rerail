@@ -2,7 +2,7 @@ import * as childProcess from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import { PassThrough } from "node:stream";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -110,6 +110,20 @@ describe("endProcessTree", () => {
     expect(events).toEqual(["taskkill /T /F /PID 4242"]);
     failed!();
     expect(events).toEqual(["taskkill /T /F /PID 4242", "kill child"]);
+  });
+
+  it("on Windows kills the child alone, and throws nothing, when taskkill cannot start", () => {
+    // A spawn that throws, and one that answers with no child, as a test's stand-in for spawn can.
+    const cannotStart = [() => { throw new Error("spawn EPERM"); }, () => undefined];
+    for (const start of cannotStart) {
+      // The stand-ins break spawn's promise of a child on purpose. Windows pids are multiples of 4, so 4242 names no process.
+      vi.mocked(childProcess.spawn).mockImplementationOnce(start as unknown as typeof childProcess.spawn);
+      const kills: string[] = [];
+      expect(() => endProcessTree({ pid: 4242, kill: () => kills.push("kill child") > 0 }, { platform: "win32" })).not.toThrow();
+      expect(kills).toEqual(["kill child"]);
+    }
+    expect(vi.mocked(childProcess.spawn).mock.calls.map(([program, args]) => [win32.basename(program), args]))
+      .toEqual(Array.from(cannotStart, () => ["taskkill.exe", ["/T", "/F", "/PID", "4242"]]));
   });
 
   it("ends a child and the process it started, which holds the child's output, so that output closes", async () => {

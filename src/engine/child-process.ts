@@ -87,13 +87,33 @@ export const execFile: typeof childProcess.execFile = Object.assign(hidden("exec
 /** Ends the process tree under `pid` on Windows, calling `failed` when that could not be done; tests pass their own. */
 export type TreeKill = (pid: number, failed: () => void) => void;
 
-/** `taskkill /T /F`, which walks the tree from `pid`: the process must still run for it to find the rest. */
+/**
+ * `taskkill /T /F`, which walks the tree from `pid`: the process must still run for it to find the rest. A taskkill
+ * that cannot start reaches `failed` like one that fails, and never throws: this runs from abort listeners and timers,
+ * where a throw is an uncaught exception.
+ */
 function taskkillTree(pid: number, failed: () => void): void {
-  const taskkill = spawn(windowsSystemProgram("taskkill.exe"), ["/T", "/F", "/PID", String(pid)], { stdio: "ignore" });
+  const taskkill = startTaskkill(pid);
+  if (taskkill === undefined) {
+    failed();
+    return;
+  }
   taskkill.on("error", failed);
   taskkill.on("exit", code => {
     if (code !== 0) failed();
   });
+}
+
+/**
+ * `taskkill /T /F /PID pid`, started; undefined when spawn threw or answered with no child. Node's spawn always answers
+ * with one, so the return type admits what a stand-in for it can do.
+ */
+function startTaskkill(pid: number): childProcess.ChildProcess | undefined {
+  try {
+    return spawn(windowsSystemProgram("taskkill.exe"), ["/T", "/F", "/PID", String(pid)], { stdio: "ignore" });
+  } catch {
+    return undefined;
+  }
 }
 
 /** How {@link endProcessTree} reaches the processes a child started. */
