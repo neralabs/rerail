@@ -1138,7 +1138,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
     await shellInWorktree(bridge, () => writeFile(path, "gone\nours\nmine\n"));
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
-      [[{ path: relative(root, path), language: "python", previousText: "gone\nours\n", generatedText: "gone\nours\nmine\n" }], "log"],
+      [[{ path: repositoryPath(root, path), language: "python", previousText: "gone\nours\n", generatedText: "gone\nours\nmine\n" }], "log"],
     ]);
   });
 
