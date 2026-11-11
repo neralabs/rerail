@@ -276,7 +276,7 @@ pub fn by_rules(native: &Structure) -> Cut {
     // each rule a function, as the program says (the verifier checked only calls cross).
     if !native.rules.is_empty() {
         let of = (0..n).map(|pc| (native.rules.partition_point(|&s| usize::from(s) <= pc) - 1) as u32).collect();
-        return Cut { of, count: native.rules.len() as u32, calls: true, ..Cut::one(n) };
+        return Cut { of, count: native.rules.len() as u32, calls: true, held: crate::native_cpu_stream::HELD_IN_RULES.to_vec(), ..Cut::one(n) };
     }
     // Else a state machine's rules, found: from each call's callee.
     let mut entries: BTreeSet<usize> = std::iter::once(0)
@@ -327,5 +327,5 @@ pub fn by_rules(native: &Structure) -> Cut {
             }
         }
     }
-    Cut { of, count: entries.len() as u32, calls: true, ..Cut::one(n) }
+    Cut { of, count: entries.len() as u32, calls: true, held: crate::native_cpu_stream::HELD_IN_RULES.to_vec(), ..Cut::one(n) }
 }

@@ -239,63 +239,51 @@ The run barely changes, as the keyword tests cost 6 instructions a token.
 The code is a tenth smaller, and a third of the words are gone.
 Both shapes still give the engine's tape on every corpus file they take.
 
-## Built: one test of any mark a token
+## Built: the code laid out as the lean parser's
 
-Over the corpus, a mark holds at 21,082 of the 2,624,017 mark tests (0.8%).
-So a state tests all its marks only where one holds.
+These changes move tier 2's code toward what rustc emits for the lean parser.
+They are judged by that shape, not by one run's cycles.
 
-- **Tier 1** writes one more mask: the marks' masks joined.
-- **The state** tests it first (`MARK m=64`).
-  Where no mark holds and the stream goes on, it goes to its switch.
-  Else it runs its marks' tests, placed after its arms, which go back to the switch.
-- **Cranelift** reads the mask once a token, at `TOKEN`,
-  and sets the marks live at the token: all of them, or none.
-  The test is then a register's: 3 instructions, no load.
-  A state is entered 1.64 times a token (a call's return switches on the token again),
-  so reading the mask at each test was 15 instructions, 24.6 a token.
-
-A record's bit would be cheaper still, but every record pass would write it:
-the interpreter's, Cranelift's and Metal's.
-At 3 instructions a test it is not worth that yet.
+- **Marks.** `TOKEN m=1+k` names mask `k`, where any mark holds.
+  `TOKEN` sets the marks live there (and at the stream's end), none elsewhere.
+  A state's `MARK` tests then fail on a register, with no load.
+  This is the lean parser's one compare of the next comment's place.
+- **State in registers within a rule's function** (`HELD_IN_RULES`):
+  the token's place, record, bytes taken, marks live, the end before it,
+  and the nodes written.
+  They are stored at a call and loaded after it, as `&mut self`'s fields are.
+- **Branches, not booleans.** A guard of two or three tests is a branch each.
+  Refusals are cold blocks, after the hot code.
+- **Layout** (`lay_out`), on the words:
+  - a target goes past places that only jump on;
+  - a jump to a lone `STOP`, or to its rule's `RETURN`, is that word;
+  - a run entered by one jump alone goes after that jump;
+  - a jump to the next place goes.
+- **Kinds numbered** so neighbours share targets:
+  a switch on the kind has fewer ranges.
 
 | | Before | After |
 |---|---|---|
-| Marks, instructions a token | 43 | 7.1 |
-| `TOKEN`, instructions a token | 61 | 73 |
-| Tier 2, instructions | 481.3M | 467.8M |
-| Words | 8,860 | 9,826 |
+| Words | 8,860 | 8,570 |
+| `GOTO`s | 3,430 | 1,953 |
+| Machine instructions | 148,533 | 135,201 |
+| `cset`, `uxtb`, `orr`, `csel` | 6,020 | 3,453 |
+| Loads | 42,748 | 41,928 |
+| Stores | 28,105 | 28,709 |
+| `TOKEN`, instructions a token | 61 | 50 |
+| `SWITCH`, instructions a token | 87 | 78 |
+| `PUSH` and `RETURN`, instructions a token | 26 | 52 |
+| Tier 2, instructions (cycles) | 481.3M (89M) | 497.5M (105M) |
 
-The switch on a kind whose keywords it names now tests the word only in that kind's own block.
-A token that is no keyword pays one test.
-The tree over the kind and every word together cost 6 instructions a switch more.
-Cranelift's own code did as well, so the run is the same (468.0M); the code is smaller.
-
-## Measured: state in registers, within a function
-
-Tier 2's state lives in memory: each word loads and stores the fields it uses.
-Holding fields in registers inside each function (SSA variables)
-runs fewer instructions but more cycles:
-
-| Fields held | Instructions | Cycles | IPC |
-|---|---|---|---|
-| None | 468.1M | 87.6M | 5.35 |
-| The token's 7 (start, end, limit, next, taken, ...) | 462.0M | 92.9M | 4.97 |
-| Those and 2 more | 475.4M | 96.7M | 4.92 |
-| Those and 5 more | 481.2M | 102.5M | 4.70 |
-
-Each call stores the held fields and each return loads them again.
-A function is a rule, and a token crosses about one call,
-so the stores and loads move rather than go away, and the moves land on the critical path.
-Loads from a stack frame that stays in place are cheap on this core.
-
-Passing the fields as a call's arguments and results is the way to do it,
-but the lowering refuses argument passing when it makes calls (`Cut::pass` with `Cut::calls`).
-That is the next piece to build, before held fields can pay.
+The held fields cost at calls: each call stores all ten and loads them after.
+The lean parser stores only what its callee reads or changes.
+That is the next step: a call's arguments and results, or only the fields it touches.
 
 ## The order
 
 1. One symbol a token: rows and keywords in the record, one switch a state.
    Built for keywords; rows stay `ROW` tests, which are cold.
-2. Marks in the record. Built as one test a token, from a mask.
+2. Marks in the record. Built as the marks live from one mask, at `TOKEN`.
 3. A cheaper `TOKEN`, and the hot state in registers.
+   Built within a function; across calls still to build.
 4. Tier 1's primitives: the picked hash, then nibble fingerprints.

@@ -212,7 +212,7 @@ pub(crate) fn successors(native: &Structure, pushes: &[u16], pc: usize) -> Vec<u
             out
         }
         Op::Return { again } => pushes.iter().map(|&p| usize::from(p) + usize::from(again)).collect(),
-        Op::Word { test: true, .. } | Op::Mark { .. } | Op::AnyMark { .. } | Op::Row { .. } | Op::Flag { op: FlagOp::Test, .. } => vec![pc + 1, pc + 2],
+        Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } | Op::Flag { op: FlagOp::Test, .. } => vec![pc + 1, pc + 2],
         _ => vec![pc + 1],
     }
     .into_iter()
@@ -434,6 +434,12 @@ enum Mem {
 impl Mem {
     const COUNT: u32 = 23;
 }
+
+/// The fields a rule's function holds in registers (`Cut::held`), as the lean parser holds its
+/// token's place and its tape's end within a function: the token's (its place, record, bytes
+/// taken, marks live, the end before it) and the nodes written. Stored at a call and loaded
+/// after it, as `&mut self`'s fields are.
+pub const HELD_IN_RULES: [u32; 10] = [Mem::Next as u32, Mem::Taken as u32, Mem::Start as u32, Mem::End as u32, Mem::Limit as u32, Mem::LastEnd as u32, Mem::AtEnd as u32, Mem::Nodes as u32, Mem::Need as u32, Mem::Live as u32];
 
 /// A compare tree over a byte (or a place): runs of one target, split at the middle run.
 fn dispatch(f: &mut FunctionBuilder<'_>, x: Value, runs: &[(u32, Block)]) {
@@ -1036,7 +1042,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     let words = &native.structural;
     let pushes = push_targets(native);
     let named = |op: fn(&Op) -> Option<u16>| words.iter().find_map(|b| op(&b.operation)).map(usize::from);
-    let starts = named(|o| if let Op::Token { extract } = *o { Some(extract) } else { None });
+    let starts = named(|o| if let Op::Token { extract, .. } = *o { Some(extract) } else { None });
     // The mask `SPAN m=1` names, as its output's index.
     // The records' last bytes, an extract (`records`).
     let lasts = starts.and(native.block_programs.first().and_then(|b| b.records.as_ref())).map(|r| usize::from(r.lasts));
@@ -1045,8 +1051,6 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         let n = r.kinds.iter().copied().max().map_or(0, |m| usize::from(m) + 1);
         (0..n).map(|k| r.kinds.iter().position(|&x| usize::from(x) == k).unwrap_or(0) as u8).collect()
     });
-    // Any mark's mask (`MARK m=64`): its output, read at each `TOKEN`.
-    let any_mark: Option<usize> = words.iter().find_map(|w| if let Op::AnyMark { mask } = w.operation { native.block_programs.first().and_then(|b| b.masks.get(usize::from(mask)).copied()) } else { None });
     // Each word's kind: its first byte's.
     let word_kinds: Vec<u8> = starts.and(native.block_programs.first().and_then(|b| b.records.as_ref())).map_or_else(Vec::new, |r| r.words.iter().map(|w| r.kinds[usize::from(w[0])]).collect());
 
@@ -1453,13 +1457,18 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
             };
             let fall = goto(pc + 1);
             match w.operation {
-                Op::Token { .. } => {
+                Op::Token { any, .. } => {
+                    // Any mark's mask (`TOKEN m=1+k`): its output.
+                    let any_mark: Option<usize> = match any {
+                        Some(k) => Some(native.block_programs.first().and_then(|b| b.masks.get(usize::from(k)).copied()).ok_or(Error::UnsupportedBackend)?),
+                        None => None,
+                    };
                     heads.push((wb[pc].expect("its own place"), Step::Token));
                     // The path from here to the next token word writes at most `bound`'s nodes,
                     // supertypes and returns: past the tape's room, the run stops for a bigger
                     // tape. Three compares a token, not one a write.
-                    let mut over = f.ins().iconst(types::I8, 0);
                     let open_calls = mget(&mut f, Mem::Ret);
+                    let overflow = f.ins().iconst(types::I64, OVERFLOW as i64);
                     let counts = [mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Supers), mget(&mut f, Mem::Ret)];
                     for (at, (room, (most, per_call))) in counts.into_iter().zip(rooms.into_iter().zip([(bound.nodes, bound.pop_nodes), (bound.supers, bound.pop_supers), (bound.pushes, 0)])) {
                         let at = if per_call > 0 {
@@ -1469,13 +1478,12 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                             at
                         };
                         let reach = f.ins().iadd_imm(at, most as i64);
+                        // A branch each, not the compares joined (`cset`, `orr`, `cbnz`).
                         let past = f.ins().icmp(IntCC::UnsignedGreaterThan, reach, room);
-                        over = f.ins().bor(over, past);
+                        let fits = f.create_block();
+                        f.ins().brif(past, refuse, &[BlockArg::from(overflow)], fits, &[]);
+                        f.switch_to_block(fits);
                     }
-                    let fits = f.create_block();
-                    let overflow = f.ins().iconst(types::I64, OVERFLOW as i64);
-                    f.ins().brif(over, refuse, &[BlockArg::from(overflow)], fits, &[]);
-                    f.switch_to_block(fits);
                     // A token whose bytes are not taken yet (after a mark's arm) is kept.
                     let take = f.create_block();
                     let need = mget(&mut f, Mem::Need);
@@ -1513,7 +1521,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     mset(&mut f, Mem::Taken, code);
                     mset(&mut f, Mem::AtEnd, at_end);
                     // The marks live at this token: every one; with any mark's mask
-                    // (`MARK m=64`), none where no mark holds and the stream goes on, so a
+                    // (`TOKEN m=1+k`), none where no mark holds and the stream goes on, so a
                     // state's marks fail at their first test, with no load.
                     let all = f.ins().iconst(types::I64, -1);
                     let live = match any_mark {
@@ -1722,16 +1730,6 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     mset(&mut f, Mem::Live, rest);
                     f.ins().jump(fall, &[]);
                 }
-                Op::AnyMark { mask } => {
-                    // Any mark at the token's start: one load; at the stream's end, the marks'
-                    // tests run.
-                    let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(mask)).copied()).ok_or(Error::UnsupportedBackend)?;
-                    // `TOKEN` read the mask (`any_mark`): the marks are live where it holds.
-                    let _ = output;
-                    let skip = goto(pc + 2);
-                    let live = mget(&mut f, Mem::Live);
-                    f.ins().brif(live, fall, &[], skip, &[]);
-                }
                 Op::Row { mask } => {
                     // The row's start bit at the token's start: one load.
                     let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(mask)).copied()).ok_or(Error::UnsupportedBackend)?;
@@ -1889,8 +1887,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     };
                     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
                     let no_last = f.ins().icmp_imm(IntCC::Equal, last, 0);
-                    let bad = f.ins().bor(none, no_last);
-                    guard(&mut f, bad, pc);
+                    // A branch each, not the tests joined.
+                    guard(&mut f, none, pc);
+                    guard(&mut f, no_last, pc);
                     let r = f.ins().iadd_imm(last, -1);
                     let (nodes, wraps) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Wraps));
                     let (fld, st) = {
@@ -1935,8 +1934,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     };
                     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
                     let no_last = f.ins().icmp_imm(IntCC::Equal, last, 0);
-                    let bad = f.ins().bor(none, no_last);
-                    guard(&mut f, bad, pc);
+                    // A branch each, not the tests joined.
+                    guard(&mut f, none, pc);
+                    guard(&mut f, no_last, pc);
                     let r = f.ins().iadd_imm(last, -1);
                     let mark = {
                         let a = slot(&mut f, wc(head_c), r);
@@ -1966,8 +1966,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     };
                     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
                     let no_last = f.ins().icmp_imm(IntCC::Equal, last, 0);
-                    let bad = f.ins().bor(none, no_last);
-                    guard(&mut f, bad, pc);
+                    // A branch each, not the tests joined.
+                    guard(&mut f, none, pc);
+                    guard(&mut f, no_last, pc);
                     let r = f.ins().iadd_imm(last, -1);
                     let x = if matches!(w.operation, Op::Retag { .. }) { kind_of(&mut f, kind, pc) } else { f.ins().iconst(types::I64, i64::from(kind)) };
                     let col = if matches!(w.operation, Op::Retag { .. }) { kind_c } else { field_c };
@@ -1998,8 +1999,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     };
                     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
                     let no_last = f.ins().icmp_imm(IntCC::Equal, last, 0);
-                    let bad = f.ins().bor(none, no_last);
-                    guard(&mut f, bad, pc);
+                    // A branch each, not the tests joined.
+                    guard(&mut f, none, pc);
+                    guard(&mut f, no_last, pc);
                     let root = f.ins().iadd_imm(last, -1);
                     let (nodes, pending) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Pending));
                     let end = f.ins().isub(nodes, pending);
@@ -2139,8 +2141,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     let want = f.ins().iadd_imm(o, 3);
                     let count = f.ins().icmp(IntCC::NotEqual, nodes, want);
                     let waiting = f.ins().icmp_imm(IntCC::NotEqual, pending, 0);
-                    let bad = f.ins().bor(count, waiting);
-                    guard(&mut f, bad, pc);
+                    // A branch each, not the tests joined.
+                    guard(&mut f, count, pc);
+                    guard(&mut f, waiting, pc);
                     let (a, b) = (f.ins().iadd_imm(o, 1), f.ins().iadd_imm(o, 2));
                     let (sa, sb) = {
                         let x = slot(&mut f, size_c, a);
@@ -2149,8 +2152,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     };
                     let na = f.ins().icmp_imm(IntCC::NotEqual, sa, 1);
                     let nb = f.ins().icmp_imm(IntCC::NotEqual, sb, 1);
-                    let bad = f.ins().bor(na, nb);
-                    guard(&mut f, bad, pc);
+                    // A branch each, not the tests joined.
+                    guard(&mut f, na, pc);
+                    guard(&mut f, nb, pc);
                     let end = {
                         let x = slot(&mut f, end_c, b);
                         f.ins().uload32(flags, x, 0)
@@ -2346,9 +2350,10 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     let not_end = f.ins().icmp_imm(IntCC::Equal, at_end, 0);
                     let not_one = f.ins().icmp_imm(IntCC::NotEqual, open, 1);
                     let returns = f.ins().icmp_imm(IntCC::NotEqual, ret, 0);
-                    let bad = f.ins().bor(not_end, not_one);
-                    let bad = f.ins().bor(bad, returns);
-                    guard(&mut f, bad, pc);
+                    // A branch each, not the tests joined.
+                    guard(&mut f, not_end, pc);
+                    guard(&mut f, not_one, pc);
+                    guard(&mut f, returns, pc);
                     let root = f.ins().uload32(flags, open_c, 0);
                     put(&mut f, end_c, root, len);
                     let nodes = mget(&mut f, Mem::Nodes);
@@ -2512,10 +2517,13 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
             let r = call_own(&mut f, made.0, &made.1, &[p[0], p[1], p[2], open_c, parent_c, extra_c]);
             f.ins().return_(&[r[0]]);
         }
+        // Refusals are cold: placed after the hot code, branched to forward.
         f.switch_to_block(off_end);
+        f.set_cold_block(off_end);
         let past = f.ins().iconst(types::I64, words.len() as i64 + 1);
         f.ins().jump(refuse, &[BlockArg::from(past)]);
         f.switch_to_block(refuse);
+        f.set_cold_block(refuse);
         let pc = f.block_params(refuse)[0];
         // Inside a shared run, its words are the first place's: the shift makes them this one's.
         let sh = mget(&mut f, Mem::Shift);

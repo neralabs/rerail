@@ -1725,8 +1725,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end });
     }
     // Any mark at a token: the marks' masks joined, after them. Marks hold at few tokens (0.8%
-    // of the tests of `.rr`'s corpus), so a state tests this once and its marks only where it
-    // holds (`MARK m=64`).
+    // of the tests of `.rr`'s corpus), so `TOKEN` reads this once and the marks are live only
+    // where it holds (`TOKEN m=1+k`).
     let any_mark = match mark_masks.split_first() {
         Some((&first, rest)) => {
             let mut any = first;
@@ -1757,18 +1757,40 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     crate::rir_text::reading_rows(&mut lowered.text, &readings);
     let takes_last: Vec<bool> = rows.iter().map(bitlex_tier2::Row::takes_last).collect();
     // The records: a byte's kind, the class of first bytes no switch on the first byte tells
-    // apart, numbered in order of their least byte; the words, the strings. (A switch on a later
-    // byte, a keyword's, reads its byte.)
+    // apart; the words, the strings. (A switch on a later byte, a keyword's, reads its byte.)
     let mut kinds = vec![0u8; 256];
     let mut classes: HashMap<Vec<u16>, u8> = HashMap::new();
+    let mut sigs: Vec<Vec<u16>> = Vec::new();
     for b in 0..256 {
         let sig: Vec<u16> = lowered.switches.iter().filter(|s| s.offset == 0).map(|s| s.targets[b]).collect();
         let n = classes.len();
-        let k = *classes.entry(sig).or_insert(n as u8);
+        let k = *classes.entry(sig.clone()).or_insert(n as u8);
+        if usize::from(k) == sigs.len() {
+            sigs.push(sig);
+        }
         if classes.len() > 256 {
             return Err("more than 256 kinds of first byte".into());
         }
         kinds[b] = k;
+    }
+    // Numbered so a switch on the kind has few ranges of one target (its compare tree is
+    // shallow, as a jump table on the lean lexer's kinds is small): from byte 0's class, each
+    // next the class that the fewest switches tell apart from the one before (ties by least
+    // byte).
+    let differ = |a: &[u16], b: &[u16]| a.iter().zip(b).filter(|(x, y)| x != y).count();
+    let mut order: Vec<usize> = vec![0];
+    let mut left: Vec<usize> = (1..sigs.len()).collect();
+    while !left.is_empty() {
+        let last = *order.last().expect("one");
+        let (i, _) = left.iter().enumerate().min_by_key(|&(_, &c)| (differ(&sigs[last], &sigs[c]), c)).expect("left");
+        order.push(left.remove(i));
+    }
+    let mut renumber = vec![0u8; sigs.len()];
+    for (new, &old) in order.iter().enumerate() {
+        renumber[old] = new as u8;
+    }
+    for k in &mut kinds {
+        *k = renumber[usize::from(*k)];
     }
     let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone() };
     crate::records::WordTable::new(&records.words)?;

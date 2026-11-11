@@ -250,9 +250,7 @@ pub mod tests {
         // A ratchet, as the machine's (`the_state_machine_shares_its_rules`): lower it as the
         // compiler improves. Keywords are the switches' targets (`ByteSwitch::words`): 13,119
         // words before, when each state tested each keyword with a `SPAN`, a `WORD` and jumps.
-        // A third are still jumps (`GOTO`). A state's marks are tested after one test of any
-        // mark (`MARK m=64`), three words a state that tests marks (8,860 before): marks hold at
-        // 0.8% of the tests, so they cost 7 instructions a token, not 43.
+        // A third are still jumps (`GOTO`).
         assert!(c.program.switches.iter().any(|s| !s.words.is_empty()), "the switches name keywords");
         // Its words in order, by the verifier: out of order, refused.
         let mut bad = c.program.clone();
@@ -261,7 +259,7 @@ pub mod tests {
         assert!(stream::validate(&bad).is_err(), "a switch's words out of order");
         let states = c.machine.lines().filter(|l| l.starts_with("state ")).count();
         let arms = c.machine.lines().filter(|l| l.starts_with("arm ")).count();
-        assert!(states <= 371 && arms <= 3068 && c.program.words.len() <= 9826, "{states} states, {arms} arms, {} words", c.program.words.len());
+        assert!(states <= 371 && arms <= 3068 && c.program.words.len() <= 8860, "{states} states, {arms} arms, {} words", c.program.words.len());
         let native = native_ir::lower(&c.program, 0, 0).expect("lowers");
         let cut = native_cpu_clusters::by_rules(&native);
         assert_eq!((cut.count as usize, cut.calls), (rules.len(), true), "a function a rule");

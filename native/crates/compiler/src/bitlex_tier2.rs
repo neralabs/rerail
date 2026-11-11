@@ -127,7 +127,7 @@ struct Emit<'a> {
     arms: &'a [ArmRow],
     rows: &'a [Row],
     marks: &'a [Mark],
-    /// The mask of any mark at a token (`MARK m=64`), when there are marks.
+    /// The mask of any mark at a token (`TOKEN m=1+k`), when there are marks.
     any_mark: Option<u16>,
     /// The rows each state can meet (`bitlex_compile::row_modes`).
     meets: &'a [Vec<bool>],
@@ -651,12 +651,11 @@ impl Emit<'_> {
             }
             return Ok(());
         }
-        self.push("TOKEN", 0, Arg::Num(STARTS));
+        // `m=1+k`: mask `k` holds where any mark does; `TOKEN` sets the marks live there (and
+        // at the stream's end) and none elsewhere, so a state's mark tests fail on a register.
+        self.push("TOKEN", self.any_mark.map_or(0, |k| k as u8 + 1), Arg::Num(STARTS));
         // The marks, in order: each the state takes, a test and a jump to its arm; each not
-        // hidden that it does not take, and each its level refuses, a test that refuses. Where
-        // no mark holds at the token, none of them is taken: one test of any mark first
-        // (`MARK m=64`), and the marks' tests after the state's arms, which go back to its
-        // switch.
+        // hidden that it does not take, and each its level refuses, a test that refuses.
         let tests: Vec<(usize, Option<usize>)> = (0..self.marks.len())
             .filter_map(|k| {
                 let m = &self.marks[k];
@@ -665,18 +664,7 @@ impl Emit<'_> {
             })
             .collect();
         let mut mark_arms = Vec::new();
-        let guard = match self.any_mark {
-            Some(any) if !tests.is_empty() => {
-                self.push("MARK", 64, Arg::Num(any));
-                let jump = self.pc();
-                self.push("GOTO", 0, Arg::Pc(0));
-                Some(jump)
-            }
-            _ => {
-                self.mark_tests_here(&tests, &mut mark_arms);
-                None
-            }
-        };
+        self.mark_tests_here(&tests, &mut mark_arms);
         let t = self.switches.len();
         self.switches.push(ByteSwitch::refusing(0));
         self.switch_at[s] = self.pc();
@@ -766,11 +754,6 @@ impl Emit<'_> {
             let pc = self.by_words(t, b, cs)?;
             self.switches[t].targets[usize::from(b)] = pc;
         }
-        if let Some(jump) = guard {
-            self.words[usize::from(jump)].2 = Arg::Pc(self.pc());
-            self.mark_tests_here(&tests, &mut mark_arms);
-            self.push("GOTO", 0, Arg::Pc(self.switch_at[s]));
-        }
         // The marks' arms: their acts, no bytes taken (the next state switches on this token).
         for (jump, a) in mark_arms {
             let to = self.body(a);
@@ -839,7 +822,8 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         let Some(c) = st.end else { return Err(format!("state {p} takes no token and may not end")) };
         e.rule = st.rule;
         let at = e.pc();
-        e.push("TOKEN", 0, Arg::Num(STARTS));
+        let any = e.any_mark.map_or(0, |k| k as u8 + 1);
+        e.push("TOKEN", any, Arg::Num(STARTS));
         let t = e.switches.len();
         e.push("SWITCH", 0, Arg::Table(t as u16));
         let end = e.pc();
@@ -881,6 +865,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         }
     }
     let (words, switches, kept_rules) = merge_words(&placed, &e.switches, rules.then_some(&rule_of[..]));
+    let (words, switches, kept_rules) = lay_out(&words, &switches, &kept_rules);
     e.words = words;
     e.switches = switches;
     // Each rule's first place.
@@ -918,6 +903,214 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         text.push('\n');
     }
     Ok(Lowered { text, switches: e.switches, strings: e.strings, tested: e.tested.into_iter().collect(), rules: firsts })
+}
+
+/// The words laid out as compiled code is, with no jump a layout can spare (the lean parser's
+/// `match` arms run on into their code):
+///
+/// - a place a jump reaches that only jumps on is passed: every target goes to where the jumps
+///   end, within its rule;
+/// - a jump to a lone `STOP`, or within a rule to a `RETURN`, is that word (not after a `MARK`
+///   or `ROW`, whose way is a `GOTO` or `STOP`);
+/// - a run of words entered by one jump alone is placed after that jump, and a jump to the
+///   next place goes.
+///
+/// A run is words that go on by position: a word and the next it falls to, and a test's two
+/// ways. Runs move whole, and a rule's runs stay its own, its first run first.
+fn lay_out(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], rules: &[u16]) -> (Vec<(&'static str, u8, Arg)>, Vec<ByteSwitch>, Vec<u16>) {
+    let n = words.len();
+    if n == 0 {
+        return (words.to_vec(), switches.to_vec(), rules.to_vec());
+    }
+    let rule = |pc: usize| rules.get(pc).copied().unwrap_or(0);
+    let by_place: Vec<usize> = (0..n).map(|pc| ways(words, switches, pc).1).collect();
+    // `glued[pc]`: the word at `pc + 1` is reached from `pc`'s run by position.
+    let glued: Vec<bool> = (0..n).map(|pc| pc + 1 < n && (by_place[pc] >= 1 || (pc > 0 && by_place[pc - 1] == 2))).collect();
+    let starts_run = |pc: usize| pc == 0 || !glued[pc - 1];
+    let mut words: Vec<(&'static str, u8, Arg)> = words.to_vec();
+    let mut switches: Vec<ByteSwitch> = switches.to_vec();
+    // Each switch's rule: its word's.
+    let mut table_rule: HashMap<u16, u16> = HashMap::new();
+    for (pc, w) in words.iter().enumerate() {
+        if let ("SWITCH", _, Arg::Table(t)) = *w {
+            table_rule.insert(t, rule(pc));
+        }
+    }
+    // Where a jump to `t` ends, within rule `r`: past places that are a lone `GOTO`.
+    let lone_goto = |words: &[(&'static str, u8, Arg)], t: usize| words[t].0 == "GOTO" && starts_run(t) && !glued[t];
+    let dest = |words: &[(&'static str, u8, Arg)], t: u16, r: u16| -> u16 {
+        let mut t = t;
+        for _ in 0..n {
+            if t == REFUSE || usize::from(t) >= n || rule(usize::from(t)) != r || !lone_goto(words, usize::from(t)) {
+                break;
+            }
+            let Arg::Pc(next) = words[usize::from(t)].2 else { break };
+            if next == t || (usize::from(next) < n && rule(usize::from(next)) != r) {
+                break;
+            }
+            t = next;
+        }
+        t
+    };
+    // 1. Targets past jumps.
+    for pc in 0..n {
+        if let (op, mode, Arg::Pc(t)) = words[pc] {
+            // A call's callee is another rule's first place: kept as it is.
+            if op == "GOTO" && pc > 0 && words[pc - 1].0 == "PUSH" {
+                continue;
+            }
+            let d = dest(&words, t, rule(pc));
+            words[pc] = (op, mode, Arg::Pc(d));
+        }
+    }
+    for (t, sw) in switches.iter_mut().enumerate() {
+        let r = table_rule.get(&(t as u16)).copied().unwrap_or(0);
+        let w = &words;
+        for x in sw.targets.iter_mut().chain([&mut sw.end]).chain(sw.words.iter_mut().map(|(_, x)| x)) {
+            *x = dest(w, *x, r);
+        }
+    }
+    // 2. A jump to a lone `STOP`, or to a `RETURN` of its rule, is that word.
+    for pc in 0..n {
+        let ("GOTO", _, Arg::Pc(t)) = words[pc] else { continue };
+        if (pc > 0 && words[pc - 1].0 == "PUSH") || usize::from(t) >= n {
+            continue;
+        }
+        let after_mark = pc > 0 && matches!(words[pc - 1].0, "MARK" | "ROW");
+        let (op, mode, arg) = words[usize::from(t)];
+        let copy = match op {
+            "STOP" => true,
+            "RETURN" => rule(usize::from(t)) == rule(pc) && !after_mark,
+            _ => false,
+        };
+        if copy {
+            words[pc] = (op, mode, arg);
+        }
+    }
+    // The runs, and the references into each from the runs that are reached.
+    let mut run_of = vec![0usize; n];
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for pc in 0..n {
+        if starts_run(pc) {
+            runs.push((pc, pc));
+        }
+        let last = runs.len() - 1;
+        runs[last].1 = pc;
+        run_of[pc] = last;
+    }
+    let targets_of = |words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], pc: usize| -> Vec<u16> {
+        match words[pc] {
+            (_, _, Arg::Pc(t)) => vec![t],
+            ("SWITCH", _, Arg::Table(t)) => switches[usize::from(t)].all_targets().collect(),
+            _ => Vec::new(),
+        }
+    };
+    // Kept from the start, and from each rule's first run (a call enters there).
+    let mut reached = vec![false; runs.len()];
+    let mut work: Vec<usize> = vec![0];
+    for pc in 1..n {
+        if rule(pc) != rule(pc - 1) {
+            work.push(run_of[pc]);
+        }
+    }
+    let firsts: std::collections::HashSet<usize> = work.iter().copied().collect();
+    let mut refs = vec![0usize; runs.len()];
+    let mut ref_from_goto_end = vec![None::<usize>; runs.len()];
+    while let Some(r) = work.pop() {
+        if reached[r] {
+            continue;
+        }
+        reached[r] = true;
+        let (a, b) = runs[r];
+        for pc in a..=b {
+            for t in targets_of(&words, &switches, pc) {
+                if t == REFUSE || usize::from(t) >= n {
+                    continue;
+                }
+                let tr = run_of[usize::from(t)];
+                // Into a run's middle, or a call's landing (its next place too): never moved.
+                let whole = runs[tr].0 == usize::from(t) && words[pc].0 != "PUSH";
+                refs[tr] += if whole { 1 } else { 2 };
+                if whole && pc == b && words[pc].0 == "GOTO" && !(pc > 0 && words[pc - 1].0 == "PUSH") {
+                    ref_from_goto_end[tr] = Some(r);
+                }
+                work.push(tr);
+            }
+        }
+    }
+    // 3. The order: each rule's runs as they were, a run entered by one jump alone after it.
+    let movable = |r: usize| reached[r] && refs[r] == 1 && !firsts.contains(&r) && r != 0;
+    let mut placed = vec![false; runs.len()];
+    let mut order: Vec<usize> = Vec::new();
+    for r in 0..runs.len() {
+        if placed[r] || !reached[r] || (movable(r) && ref_from_goto_end[r].is_some_and(|from| rule(runs[from].0) == rule(runs[r].0))) {
+            continue;
+        }
+        let mut at = r;
+        loop {
+            placed[at] = true;
+            order.push(at);
+            let end = runs[at].1;
+            let ("GOTO", _, Arg::Pc(t)) = words[end] else { break };
+            if usize::from(t) >= n || (end > 0 && words[end - 1].0 == "PUSH") {
+                break;
+            }
+            let next = run_of[usize::from(t)];
+            if placed[next] || !movable(next) || ref_from_goto_end[next] != Some(at) || rule(runs[next].0) != rule(end) {
+                break;
+            }
+            at = next;
+        }
+    }
+    // A run whose one way in was never placed (its jump's run unreached): placed where it was.
+    for r in 0..runs.len() {
+        if reached[r] && !placed[r] {
+            placed[r] = true;
+            order.push(r);
+        }
+    }
+    order.sort_by_key(|&r| rule(runs[r].0));
+    // 4. The places, numbered: a run's last `GOTO` to the run after it goes.
+    let drops: Vec<bool> = order
+        .iter()
+        .enumerate()
+        .map(|(i, &r)| {
+            let end = runs[r].1;
+            let call = end > 0 && words[end - 1].0 == "PUSH";
+            matches!(words[end], ("GOTO", _, Arg::Pc(t)) if !call && order.get(i + 1).is_some_and(|&q| runs[q].0 == usize::from(t)))
+        })
+        .collect();
+    let mut new_at = vec![REFUSE; n];
+    let mut k = 0u16;
+    for (i, &r) in order.iter().enumerate() {
+        let (a, b) = runs[r];
+        for pc in a..=b {
+            new_at[pc] = k;
+            if !(pc == b && drops[i]) {
+                k += 1;
+            }
+        }
+    }
+    let to = |t: u16| if t == REFUSE || usize::from(t) >= n { REFUSE } else { new_at[usize::from(t)] };
+    let mut out = Vec::with_capacity(usize::from(k));
+    let mut out_rules = Vec::with_capacity(usize::from(k));
+    for (i, &r) in order.iter().enumerate() {
+        let (a, b) = runs[r];
+        for pc in a..=b {
+            if pc == b && drops[i] {
+                continue;
+            }
+            let (op, mode, arg) = words[pc];
+            out.push((op, mode, if let Arg::Pc(t) = arg { Arg::Pc(to(t)) } else { arg }));
+            out_rules.push(rule(pc));
+        }
+    }
+    for sw in &mut switches {
+        for x in sw.targets.iter_mut().chain([&mut sw.end]).chain(sw.words.iter_mut().map(|(_, x)| x)) {
+            *x = to(*x);
+        }
+    }
+    (out, switches, out_rules)
 }
 
 /// A word's operand without its target, for the first partition (`merge_words`).

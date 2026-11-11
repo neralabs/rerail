@@ -28,7 +28,8 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
     let records = block.and_then(|b| b.records.as_ref());
     let ok = match opcode {
         // A token is a record (`records`): its extract is the records' starts.
-        TOKEN => mode == 0 && usize::from(operand) < extracts && records.is_some_and(|r| r.starts == operand),
+        // `m=1+k`: mask `k` holds where any mark does (the marks are live only there).
+        TOKEN => (mode == 0 || usize::from(mode - 1) < masks) && usize::from(operand) < extracts && records.is_some_and(|r| r.starts == operand),
         ACCEPT => mode == 0 && operand == 0,
         EMPTY => mode == 0 && usize::from(operand) < totals,
         SWITCH => mode == 0 && usize::from(operand) < program.switches.len(),
@@ -44,7 +45,7 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         // `m=3`: a token the grammar implies, no node.
         LEAF => mode <= 3 && operand != REMEMBERED,
         // Mark `m % 32` (its order), its bit in mask `operand`; `m & 32`: the file's end has it.
-        MARK => (mode < 64 || mode == 64) && usize::from(operand) < masks,
+        MARK => mode < 64 && usize::from(operand) < masks,
         ROW => mode == 0 && usize::from(operand) < masks,
         // `m=1`: the node a wrap moved; `m=2`: the node made last at this level (`relabel`);
         // `m=3` (a field): the node that one, a wrap, holds first. `RETAG m=3`: that node and
@@ -243,11 +244,11 @@ pub fn run(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun) -> Res
 /// states follow which, how often), for laying out the generated code.
 pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, seen: &mut dyn FnMut(usize)) -> Result<Vec<Node>, Refused> {
     let words = &program.words;
-    let stream = |op: u8, m: u8| words.iter().map(|&w| split(w)).find(|&(o, mm, _)| o == op && mm == m).map(|(_, _, x)| usize::from(x));
     let none: Vec<u32> = Vec::new();
     // A kind as a word names it: a level's word's (`REMEMBERED`), none where it has none.
     let kind_of = |k: u16, word: u16| if k != REMEMBERED { Some(k) } else if word != 0 { Some(word) } else { None };
-    let starts: &[u32] = stream(TOKEN, 0).map_or(&none, |e| &tier1.positions[e]);
+    // The records' starts, as any `TOKEN` names them (its mode names the marks' mask).
+    let starts: &[u32] = words.iter().map(|&w| split(w)).find(|&(o, _, _)| o == TOKEN).map_or(&none, |(_, _, x)| &tier1.positions[usize::from(x)]);
     let records = program.block_programs.first().and_then(|b| b.records.as_ref());
     let lasts: &[u32] = records.map_or(&none, |r| &tier1.positions[usize::from(r.lasts)]);
     let mut pc = 0usize;
@@ -299,7 +300,6 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     return refuse(pc - 1, "a token past the stream's end");
                 }
                 need = false;
-                live = u32::MAX;
                 last_end = end;
                 // The record pass checked the records (the totals' flag, `EMPTY`): as many lasts
                 // as starts, each token after the one before.
@@ -311,6 +311,9 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     code = tier1.codes.get(next).copied().unwrap_or(0);
                     next += 1;
                 }
+                // The marks live: all, or (`m=1+k`) none where no mark holds and the stream
+                // goes on.
+                live = if mode == 0 || at_end || mask_bit(u16::from(mode - 1), start) { u32::MAX } else { 0 };
             }
             SPAN => {
                 // The token's bytes taken: its record's end, or a length (a one-byte token),
@@ -350,13 +353,6 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     // A test: the next word is the keyword's way; a token that is not the word skips it.
                     (1, false) => pc += 1,
                     _ => return refuse(pc - 1, "not the keyword"),
-                }
-            }
-            // Any mark (`m=64`): where one holds at the token, or at the stream's end, the next
-            // word runs (the state's marks' tests); else it is skipped.
-            MARK if mode == 64 => {
-                if !(at_end || mask_bit(operand, start)) {
-                    pc += 1;
                 }
             }
             MARK => {
