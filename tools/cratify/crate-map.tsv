@@ -16,6 +16,7 @@ logic::front::ast	rerail-rr-syntax
 # The registry, tapes and what every crate reads
 language	rerail-lang
 build_ids	rerail-lang
+fixtures	rerail-lang
 tape	rerail-lang
 tree	rerail-lang
 lines	rerail-lang
@@ -198,3 +199,4 @@ logic::rr::print	rerail-rr
 logic::rr::translate	rerail-rr
 logic::rr::aggregate_demand	rerail-rr
 logic::rr::tape_type	rerail-rr
+device_metal	rerail-device-metal

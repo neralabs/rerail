@@ -21,3 +21,6 @@ LIBSQLITE3_FLAGS = "-DSQLITE_DEFAULT_MEMSTATUS=0 -USQLITE_ENABLE_MEMORY_MANAGEME
 # also bounds expression depth, so deep expressions recurse further on the stack before failing.
 # Drop this once libsqlite3-sys bundles SQLite >= 3.54.2.
 SQLITE_MAX_EXPR_DEPTH = "50000"
+# The conformance fixtures every crate's tests read (`fixtures_dir!`, `native/src/code_rule_dsl/fixtures.rs`). The
+# engine's build script sets it too, from `RERAIL_ORACLES_DIR` when that is set (`native/build.rs`).
+RERAIL_FIXTURES_DIR = { value = "fixtures", relative = true }

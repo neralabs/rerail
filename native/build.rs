@@ -436,6 +436,9 @@ fn configure_fixtures() {
         .canonicalize()
         .expect("fixtures directory is readable");
     println!("cargo:rustc-env=RERAIL_ORACLES_DIR={}", directory.display());
+    // What the tests' `fixtures_dir!` reads (`code_rule_dsl/fixtures.rs`); the engine's crates have it from
+    // `.cargo/config.toml`, the engine from here, so an `RERAIL_ORACLES_DIR` override holds for its tests.
+    println!("cargo:rustc-env=RERAIL_FIXTURES_DIR={}", directory.display());
     println!("cargo:rerun-if-changed={}", directory.display());
 }
 

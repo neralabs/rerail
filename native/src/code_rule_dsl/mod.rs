@@ -105,30 +105,10 @@ mod vue;
 mod waves;
 mod workspace;
 
-/// The conformance fixtures directory `native/build.rs` found: `RERAIL_ORACLES_DIR`, or the
-/// repository's `fixtures/`.
 #[cfg(test)]
-macro_rules! fixtures_dir {
-    () => {
-        env!(
-            "RERAIL_ORACLES_DIR",
-            "Rerail fixtures not found: check out the repository's fixtures/ directory, or set RERAIL_ORACLES_DIR"
-        )
-    };
-}
-
+pub(crate) mod fixtures;
 #[cfg(test)]
-pub(crate) use fixtures_dir;
-
-#[cfg(test)]
-macro_rules! oracle {
-    ($path:literal) => {
-        include_str!(concat!(crate::code_rule_dsl::fixtures_dir!(), "/", $path))
-    };
-}
-
-#[cfg(test)]
-pub(crate) use oracle;
+pub(crate) use fixtures::{fixtures_dir, oracle};
 
 use compile::{compile_document, parse_capabilities, parse_document};
 use eval::{DerivedPackages, evaluate_code_rule, evaluation_json, parse_snapshot, violation_ids};
