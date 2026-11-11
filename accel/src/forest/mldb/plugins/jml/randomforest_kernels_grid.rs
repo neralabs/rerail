@@ -158,6 +158,22 @@ pub fn template(name: &str) -> Option<GridComputeKernelTemplate> {
             r.set_grid_expression("[ceilDiv(numRows,threadsPerBlock)]", "[threadsPerBlock]").allow_grid_padding();
             r.set_compute_function("randomforest_kernels", if name == "markCodes" { "markCodesKernel" } else { "categoricalBucketsKernel" });
         }
+        "rowBuckets" => {
+            // Prediction rows' bucket columns, packed at predictForest's stride (an item is a column's word).
+            r.add_dimension("i", "numColumnWords");
+            r.add_parameter("numRows", "r", "u32")
+                .add_parameter("numColumns", "r", "u32")
+                .add_parameter("columnStride", "r", "u32")
+                .add_parameter("columns", "r", "u32[numColumns * 8]")
+                .add_parameter("numbers", "r", "u64[numNumbers]")
+                .add_parameter("codes", "r", "u32[numCodes]")
+                .add_parameter("splitKeys", "r", "i64[numSplitKeys]")
+                .add_parameter("codeTables", "r", "u32[numTableEntries]")
+                .add_parameter("bucketDataOut", "w", "u32[numColumns * columnStride]");
+            r.add_tuneable("threadsPerBlock", 256);
+            r.set_grid_expression("[ceilDiv(numColumns * columnStride,threadsPerBlock)]", "[threadsPerBlock]").allow_grid_padding();
+            r.set_compute_function("randomforest_kernels", "rowBucketsKernel");
+        }
         "packBuckets" => {
             r.add_dimension("w", "numWords");
             r.add_parameter("numRows", "r", "u32")
@@ -240,7 +256,7 @@ pub fn template(name: &str) -> Option<GridComputeKernelTemplate> {
 /// The threads of a prediction group (`predictForest`): rows times their lanes.
 pub const PREDICT_GROUP_THREADS: u32 = 128;
 
-pub const GRID_KERNELS: [&str; 14] = ["decodeRows", "testFeature", "getPartitionSplits", "bestPartitionSplit", "assignPartitionNumbers", "clearBuckets", "updatePartitionNumbers", "updateBuckets", "fixupBuckets", "predictForest", "numericBuckets", "markCodes", "categoricalBuckets", "packBuckets"];
+pub const GRID_KERNELS: [&str; 15] = ["rowBuckets", "decodeRows", "testFeature", "getPartitionSplits", "bestPartitionSplit", "assignPartitionNumbers", "clearBuckets", "updatePartitionNumbers", "updateBuckets", "fixupBuckets", "predictForest", "numericBuckets", "markCodes", "categoricalBuckets", "packBuckets"];
 
 /// Grid kernel `name`, specialized against its Metal function (once).
 pub fn kernel(name: &str) -> Result<&'static GridComputeKernelSpecialization, String> {

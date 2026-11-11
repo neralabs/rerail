@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use crate::forest::bucket::{BucketList, CellValue};
 use crate::forest::compute_kernel_grid::ComputeKernelArgument;
 use crate::forest::compute_kernel_metal::{alloc_uninitialized_array_sync, transfer_to_device_immutable, MetalComputeQueue};
-use crate::forest::dataset_feature_space::DatasetFeatureSpace;
+use crate::forest::dataset_feature_space::{ColumnData, DatasetFeatureSpace};
 use crate::forest::jml::committee::Committee;
 use crate::forest::jml::decision_tree::DecisionTree;
 use crate::forest::jml::split::Op;
@@ -245,6 +245,63 @@ struct Scratch {
     out: Option<(metal::Buffer, usize)>,
     queue: Option<MetalComputeQueue>,
     plans: HashMap<(usize, u32, usize), crate::forest::compute_kernel_grid::GridLaunchPlan>,
+    /// `predict_values`: rowBuckets' plans by (rows, stride), and the columns' descriptions, numbers, codes and
+    /// code tables.
+    row_plans: HashMap<(usize, usize), crate::forest::compute_kernel_grid::GridLaunchPlan>,
+    columns: Option<(metal::Buffer, usize)>,
+    numbers: Option<(metal::Buffer, usize)>,
+    codes: Option<(metal::Buffer, usize)>,
+    tables: Option<(metal::Buffer, usize)>,
+}
+
+/// The words describing a column to `rowBuckets` (`ROW_BUCKET_WORDS` in the kernels).
+const ROW_BUCKET_WORDS: usize = 8;
+
+/// A feature space's columns as the device bucketizes prediction rows (`DeviceForest::predict_values`): built once
+/// per feature space, the bucket rules of `ColumnInfo::bucket_of` (numbers by the numeric splits, strings by name,
+/// a null in bucket 0 when the column had nulls, anything else in the unseen bucket).
+pub struct DeviceBucketizer {
+    columns: Vec<BucketizerColumn>,
+    split_keys: metal::Buffer,
+}
+
+struct BucketizerColumn {
+    bits: u32,
+    split_start: u32,
+    num_splits: u32,
+    numeric_offset: u32,
+    null_bucket: u32,
+    unseen: u32,
+    strings: HashMap<String, u32>,
+}
+
+impl DeviceBucketizer {
+    pub fn new(fs: &DatasetFeatureSpace) -> Result<Self, String> {
+        use crate::forest::dataset_feature_space::{order_key, unseen_bucket};
+        let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
+        let mut keys: Vec<i64> = Vec::new();
+        let mut columns = Vec::new();
+        for i in 0..fs.column_info.len() {
+            let c = fs.column(i).ok_or_else(|| format!("no column {i}"))?;
+            let d = &c.bucket_descriptions;
+            let unseen = unseen_bucket(d);
+            let numeric = d.numeric.active;
+            columns.push(BucketizerColumn {
+                bits: prediction_bucket_bits(c),
+                split_start: keys.len() as u32,
+                num_splits: if numeric { d.numeric.splits.len() as u32 } else { 0 },
+                numeric_offset: if numeric { d.numeric.offset } else { unseen },
+                null_bucket: if d.has_nulls { 0 } else { unseen },
+                unseen,
+                strings: d.strings.buckets.iter().enumerate().map(|(j, s)| (s.clone(), d.strings.offset + j as u32)).collect(),
+            });
+            if numeric {
+                keys.extend(d.numeric.splits.iter().map(|&s| order_key(s)));
+            }
+        }
+        keys.push(0);
+        Ok(DeviceBucketizer { columns, split_keys: transfer_to_device_immutable(&shared.device, &keys) })
+    }
 }
 
 /// A kept buffer of at least `n` elements of `T` (`slot`'s when it is big enough, else a new one, twice the size).
@@ -322,7 +379,6 @@ impl DeviceForest {
 
     /// `predict`, with the seconds the GPU spent on the dispatch.
     pub fn predict_timed(&self, rows: &RowBuckets) -> Result<(Vec<[f32; 2]>, f64), String> {
-        use ComputeKernelArgument::{Buffer as B, Int};
         if rows.columns.len() != self.num_features {
             return Err(format!("{} columns for a forest over {}", rows.columns.len(), self.num_features));
         }
@@ -333,22 +389,133 @@ impl DeviceForest {
             return Err(format!("column {i} has {}-bit buckets, the forest's {}", rows.columns[i].entry_bits, self.feature_bits[i]));
         }
         let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
-        let device = &shared.device;
         let mut scratch = self.scratch.lock().map_err(|_| "a prediction panicked")?;
         // Every column at the same stride (the widest column's words), so a node finds its column without a load.
         let stride = rows.columns.iter().map(|c| c.storage.data().len()).max().unwrap_or(0) + 1;
         let words = stride * rows.columns.len() + 1;
-        let d_data = kept::<u32>(device, &mut scratch.data, words);
+        let d_data = kept::<u32>(&shared.device, &mut scratch.data, words);
         let data = unsafe { std::slice::from_raw_parts_mut(d_data.contents().cast::<u32>(), words) };
         for (i, c) in rows.columns.iter().enumerate() {
             data[i * stride..i * stride + c.storage.data().len()].copy_from_slice(c.storage.data());
         }
-        let items = rows.num_rows * self.num_forests as usize;
+        self.launch(&mut scratch, &d_data, rows.num_rows, stride)
+    }
+
+    /// The predictions on rows of values (`RowBuckets::from_values`'s columns as `ColumnData`, in the feature
+    /// space's column order), bucketized on the device (`rowBuckets`) in the command buffer that predicts them; the
+    /// host only copies the values and maps each categorical column's names (not its rows) to buckets.
+    pub fn predict_values(&self, b: &DeviceBucketizer, columns: &[ColumnData]) -> Result<Vec<[f32; 2]>, String> {
+        Ok(self.predict_values_timed(b, columns)?.0)
+    }
+
+    /// `predict_values`, with the GPU's seconds (bucketizing and predicting).
+    pub fn predict_values_timed(&self, b: &DeviceBucketizer, columns: &[ColumnData]) -> Result<(Vec<[f32; 2]>, f64), String> {
+        use ComputeKernelArgument::{Buffer as B, Int};
+        if columns.len() != self.num_features || b.columns.len() != self.num_features {
+            return Err(format!("{} columns and a bucketizer of {} for a forest over {}", columns.len(), b.columns.len(), self.num_features));
+        }
+        if let Some(i) = (0..self.num_features).find(|&i| b.columns[i].bits != self.feature_bits[i]) {
+            return Err(format!("column {i} has {}-bit buckets, the forest's {}", b.columns[i].bits, self.feature_bits[i]));
+        }
+        let num_rows = columns.first().map_or(0, |c| c.len());
+        if columns.iter().any(|c| c.len() != num_rows) {
+            return Err("the columns differ in length".into());
+        }
+        if num_rows == 0 {
+            return Ok((Vec::new(), 0.0));
+        }
+        let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
+        let device = &shared.device;
+        let mut scratch = self.scratch.lock().map_err(|_| "a prediction panicked")?;
+        let words: Vec<usize> = b.columns.iter().map(|c| crate::forest::bucket::WritableBucketList::words_required(num_rows, (1u32 << c.bits) - 1)).collect();
+        let stride = words.iter().copied().max().unwrap_or(0) + 1;
+        let (mut num_numbers, mut num_codes, mut num_table) = (0usize, 0usize, 0usize);
+        for c in columns {
+            match c {
+                ColumnData::Numeric(v) => num_numbers += v.len(),
+                ColumnData::Categorical { codes, names } => {
+                    num_codes += codes.len();
+                    num_table += names.len() + 1;
+                }
+            }
+        }
+        let d_columns = kept::<u32>(device, &mut scratch.columns, columns.len() * ROW_BUCKET_WORDS);
+        let d_numbers = kept::<u64>(device, &mut scratch.numbers, num_numbers.max(1));
+        let d_codes = kept::<u32>(device, &mut scratch.codes, num_codes.max(1));
+        let d_tables = kept::<u32>(device, &mut scratch.tables, num_table.max(1));
+        let view = |buf: &metal::Buffer, n: usize| unsafe { std::slice::from_raw_parts_mut(buf.contents().cast::<u32>(), n) };
+        let desc = view(&d_columns, columns.len() * ROW_BUCKET_WORDS);
+        let numbers = unsafe { std::slice::from_raw_parts_mut(d_numbers.contents().cast::<f64>(), num_numbers) };
+        let codes_out = view(&d_codes, num_codes);
+        let tables = view(&d_tables, num_table);
+        let (mut at_number, mut at_code, mut at_table) = (0usize, 0usize, 0usize);
+        for (i, (c, bc)) in columns.iter().zip(&b.columns).enumerate() {
+            let d = &mut desc[i * ROW_BUCKET_WORDS..(i + 1) * ROW_BUCKET_WORDS];
+            d[1] = bc.bits;
+            d[7] = words[i] as u32;
+            match c {
+                ColumnData::Numeric(v) => {
+                    numbers[at_number..at_number + v.len()].copy_from_slice(v);
+                    d[0] = 0;
+                    d[2] = at_number as u32;
+                    d[3] = bc.num_splits;
+                    d[4] = bc.split_start;
+                    d[5] = bc.numeric_offset;
+                    d[6] = bc.null_bucket;
+                    at_number += v.len();
+                }
+                ColumnData::Categorical { codes, names } => {
+                    codes_out[at_code..at_code + codes.len()].copy_from_slice(codes);
+                    let t = &mut tables[at_table..at_table + names.len() + 1];
+                    for (e, name) in t.iter_mut().zip(names) {
+                        *e = bc.strings.get(name.as_str()).copied().unwrap_or(bc.unseen);
+                    }
+                    t[names.len()] = bc.null_bucket;
+                    d[0] = 1;
+                    d[2] = at_code as u32;
+                    d[3] = names.len() as u32;
+                    d[4] = at_table as u32;
+                    d[5] = 0;
+                    d[6] = bc.null_bucket;
+                    at_code += codes.len();
+                    at_table += names.len() + 1;
+                }
+            }
+        }
+        let d_data = kept::<u32>(device, &mut scratch.data, stride * columns.len() + 1);
+        let k = kernel("rowBuckets")?;
+        let buffers: [(&str, &metal::BufferRef); 6] =
+            [("columns", &d_columns), ("numbers", &d_numbers), ("codes", &d_codes), ("splitKeys", &b.split_keys), ("codeTables", &d_tables), ("bucketDataOut", &d_data)];
+        let key = (num_rows, stride);
+        if !scratch.row_plans.contains_key(&key) {
+            let mut named = vec![("numRows", Int(num_rows as i64)), ("numColumns", Int(columns.len() as i64)), ("columnStride", Int(stride as i64))];
+            named.extend(buffers.iter().map(|&(n, b)| (n, B(b))));
+            if scratch.row_plans.len() >= 64 {
+                scratch.row_plans.clear();
+            }
+            scratch.row_plans.insert(key, k.plan(&named, &[(columns.len() * stride) as u32])?);
+        }
+        {
+            let Scratch { queue, row_plans: plans, .. } = &mut *scratch;
+            let queue = queue.get_or_insert_with(|| MetalComputeQueue::new(&shared.queue));
+            let mut ctx = queue.new_bind_context(k.function);
+            k.launch_plan(&plans[&key], &buffers, &mut ctx)?;
+        }
+        self.launch(&mut scratch, &d_data, num_rows, stride)
+    }
+
+    /// Predicts the rows whose bucket columns are (or will be, earlier in the queue's command buffer) in `d_data`
+    /// at `stride` words a column, and commits the command buffer.
+    fn launch(&self, scratch: &mut Scratch, d_data: &metal::BufferRef, num_rows: usize, stride: usize) -> Result<(Vec<[f32; 2]>, f64), String> {
+        use ComputeKernelArgument::{Buffer as B, Int};
+        let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
+        let device = &shared.device;
+        let items = num_rows * self.num_forests as usize;
         let d_out = kept::<f32>(device, &mut scratch.out, items * 2);
         let k = kernel("predictForest")?;
         let lanes = lanes_per_row(items, self.max_trees as usize);
         let buffers: [(&str, &metal::BufferRef); 8] = [
-            ("bucketData", &d_data),
+            ("bucketData", d_data),
             ("nodes", &self.nodes),
             ("subsets", &self.subsets),
             ("forestTreeStart", &self.forest_tree_start),
@@ -372,7 +539,7 @@ impl DeviceForest {
             }
             scratch.plans.insert(key, k.plan(&named, &[items as u32])?);
         }
-        let Scratch { queue, plans, .. } = &mut *scratch;
+        let Scratch { queue, plans, .. } = scratch;
         let queue = queue.get_or_insert_with(|| MetalComputeQueue::new(&shared.queue));
         let mut ctx = queue.new_bind_context(k.function);
         k.launch_plan(&plans[&key], &buffers, &mut ctx)?;
@@ -597,6 +764,13 @@ mod tests {
         (r, w.elapsed().as_secs_f64(), crate::exec::process_cpu() - c)
     }
 
+    /// `timed`, with the GPU seconds of the forest kernels' command buffers the run awaited.
+    fn timed_gpu<T>(f: impl FnOnce() -> T) -> (T, f64, f64, f64) {
+        let g = crate::forest::compute_kernel_metal::gpu_seconds_awaited();
+        let (r, w, c) = timed(f);
+        (r, w, c, crate::forest::compute_kernel_metal::gpu_seconds_awaited() - g)
+    }
+
     fn train_bench(what: &str, cols: &[Vec<CellValue>], labels: &[f32], config: &RandomForestProcedureConfig) -> (Arc<DatasetFeatureSpace>, Forest) {
         let names = ["lane", "forms", "launches", "units", "cold", "load", "threads"];
         let named: Vec<(String, Vec<CellValue>)> = names.iter().zip(cols).map(|(n, c)| (n.to_string(), c.clone())).collect();
@@ -807,21 +981,35 @@ mod tests {
 
     /// Batch prediction on resident forests (one dispatch and wait each): per batch size, the call's wall and CPU
     /// and the GPU's time, the mean of several calls.
+    /// Batch prediction at each size, three ways: the values bucketized on the host (`RowBuckets::from_values`,
+    /// timed alone), the forest on those buckets (`predict`), and values to predictions on the device
+    /// (`predict_values`: bucketizing in the same command buffer). The values come as typed columns
+    /// (`ColumnData`), as a caller holds them; turning cells into them is not timed.
     fn batch_timings(what: &str, fs: &DatasetFeatureSpace, forests: &DeviceForest, test_cols: &[Vec<CellValue>]) {
+        let bucketizer = DeviceBucketizer::new(fs).unwrap();
         for b in [1usize, 16, 256, 4096, 65536] {
-            let rows = RowBuckets::from_values(fs, &cycled(test_cols, b)).unwrap();
+            let cells = cycled(test_cols, b);
+            let typed = typed_columns(&cells);
             let reps = if b <= 256 { 20 } else { 3 };
-            let (gpu, w, c) = timed(|| {
-                let mut gpu = 0.0;
-                for _ in 0..reps {
-                    gpu += forests.predict_timed(&rows).unwrap().1;
-                }
-                gpu
-            });
             let r = reps as f64;
-            eprintln!("BATCH {what} batch {b:6}: {:8.1} us wall {:8.1} us CPU {:8.1} us GPU a call; {:8.1} ns/row wall",
-                w / r * 1e6, c / r * 1e6, gpu / r * 1e6, w / r / b as f64 * 1e9);
+            let (rows, hw, hc) = timed(|| {
+                let mut rows = None;
+                for _ in 0..reps {
+                    rows = Some(RowBuckets::from_values(fs, &cells).unwrap());
+                }
+                rows.unwrap()
+            });
+            let (gpu, w, c) = timed(|| (0..reps).map(|_| forests.predict_timed(&rows).unwrap().1).sum::<f64>());
+            let (dgpu, dw, dc) = timed(|| (0..reps).map(|_| forests.predict_values_timed(&bucketizer, &typed).unwrap().1).sum::<f64>());
+            eprintln!("BATCH {what} batch {b:6}: host bucketize {:8.1} us wall {:8.1} us CPU; predict buckets {:8.1} us wall {:8.1} us CPU {:8.1} us GPU; \
+                device bucketize+predict {:8.1} us wall {:8.1} us CPU {:8.1} us GPU a call; {:8.1} ns/row wall",
+                hw / r * 1e6, hc / r * 1e6, w / r * 1e6, c / r * 1e6, gpu / r * 1e6, dw / r * 1e6, dc / r * 1e6, dgpu / r * 1e6, dw / r / b as f64 * 1e9);
         }
+    }
+
+    /// Cells as the typed columns a caller holds (`ColumnData`).
+    fn typed_columns(cols: &[Vec<CellValue>]) -> Vec<ColumnData> {
+        cols.iter().enumerate().map(|(i, c)| ColumnData::from_values(&format!("c{i}"), c).unwrap()).collect()
     }
 
     /// One data set: exported for the other libraries (`BENCH_EXPORT`), then this forest's runs.
@@ -871,21 +1059,21 @@ mod tests {
                 }
                 let kind = format!("{}{tag}", if subsets { "cart" } else { "one-vs-rest" });
                 if want("classification") {
-                    let (forest, w, c) = timed(|| train_forest(&training_data(fs_class.clone(), &s.train_labels, None, None).unwrap(), &config).unwrap());
+                    let (forest, w, c, tg) = timed_gpu(|| train_forest(&training_data(fs_class.clone(), &s.train_labels, None, None).unwrap(), &config).unwrap());
                     let flat = FlatForest::new(&forest).unwrap();
                     let rows = RowBuckets::from_values(&fs_class, &test_cols).unwrap();
                     let resident = DeviceForest::new(&flat).unwrap();
                     let ((p, gpu), pw, pc) = timed(|| resident.predict_timed(&rows).unwrap());
                     let ll = p.iter().zip(&s.test_labels).map(|(p, &l)| -((if l != 0.0 { p[1] } else { p[0] }).clamp(1e-6, 1.0) as f64).ln()).sum::<f64>() / p.len() as f64;
-                    eprintln!("RESULT {} rerail-{kind} classification depth {depth}: train {:.0} ms wall {:.0} ms CPU; {} nodes; predict {nt} {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; accuracy {:.4} logloss {:.4}",
-                        s.name, w * 1e3, c * 1e3, flat.nodes.len(), pw * 1e3, pc * 1e3, gpu * 1e3, right(&p, &s.test_labels), ll);
+                    eprintln!("RESULT {} rerail-{kind} classification depth {depth}: train {:.0} ms wall {:.0} ms CPU {:.0} ms GPU; {} nodes; predict {nt} {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; accuracy {:.4} logloss {:.4}",
+                        s.name, w * 1e3, c * 1e3, tg * 1e3, flat.nodes.len(), pw * 1e3, pc * 1e3, gpu * 1e3, right(&p, &s.test_labels), ll);
                 }
                 if want("calibrated") {
                     // The forest on 80% of the training rows; a logistic curve over its log odds fitted on the other
                     // 20% (Platt's calibration, mldb's GLZ probabilizer with a logit link).
                     let fit_labels: Vec<f32> = fit.iter().map(|&i| s.train_labels[i]).collect();
                     let cal_labels: Vec<f32> = cal.iter().map(|&i| s.train_labels[i]).collect();
-                    let ((resident, a, b), w, c) = timed(|| {
+                    let ((resident, a, b), w, c, tg) = timed_gpu(|| {
                         let forest = train_forest(&training_data(fs_fit.clone(), &fit_labels, None, None).unwrap(), &config).unwrap();
                         let resident = DeviceForest::new(&FlatForest::new(&forest).unwrap()).unwrap();
                         let p = resident.predict(&RowBuckets::from_values(&fs_fit, &cal_cols).unwrap()).unwrap();
@@ -898,19 +1086,19 @@ mod tests {
                         (p.iter().map(|p| { let q = 1.0 / (1.0 + (-(a * log_odds(p[1]) + b)).exp()); [(1.0 - q) as f32, q as f32] }).collect::<Vec<_>>(), gpu)
                     });
                     let ll = p.iter().zip(&s.test_labels).map(|(p, &l)| -((if l != 0.0 { p[1] } else { p[0] }).clamp(1e-6, 1.0) as f64).ln()).sum::<f64>() / p.len() as f64;
-                    eprintln!("RESULT {} rerail-{kind}-platt classification depth {depth}: train {:.0} ms wall {:.0} ms CPU; curve {a:.3} x + {b:.3}; predict {nt} {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; accuracy {:.4} logloss {:.4}",
-                        s.name, w * 1e3, c * 1e3, pw * 1e3, pc * 1e3, gpu * 1e3, right(&p, &s.test_labels), ll);
+                    eprintln!("RESULT {} rerail-{kind}-platt classification depth {depth}: train {:.0} ms wall {:.0} ms CPU {:.0} ms GPU; curve {a:.3} x + {b:.3}; predict {nt} {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; accuracy {:.4} logloss {:.4}",
+                        s.name, w * 1e3, c * 1e3, tg * 1e3, pw * 1e3, pc * 1e3, gpu * 1e3, right(&p, &s.test_labels), ll);
                 }
                 if want("regression") {
-                    let (forest, w, c) = timed(|| train_regression_forest(fs_real.clone(), &s.train_targets, None, None, &config).unwrap());
+                    let (forest, w, c, tg) = timed_gpu(|| train_regression_forest(fs_real.clone(), &s.train_targets, None, None, &config).unwrap());
                     let flat = FlatForest::new(&forest).unwrap();
                     let rows = RowBuckets::from_values(&fs_real, &test_cols).unwrap();
                     let resident = DeviceForest::new(&flat).unwrap();
                     let ((p, gpu), pw, pc) = timed(|| resident.predict_timed(&rows).unwrap());
                     let values: Vec<f64> = p.iter().map(|p| forest.regression_value(*p).unwrap()).collect();
                     let (rmse, r2) = regression_scores(&values, &s.test_targets);
-                    eprintln!("RESULT {} rerail-{kind} regression depth {depth}: train {:.0} ms wall {:.0} ms CPU; {} nodes; predict {nt} {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; rmse {rmse:.4} r2 {r2:.4}",
-                        s.name, w * 1e3, c * 1e3, flat.nodes.len(), pw * 1e3, pc * 1e3, gpu * 1e3);
+                    eprintln!("RESULT {} rerail-{kind} regression depth {depth}: train {:.0} ms wall {:.0} ms CPU {:.0} ms GPU; {} nodes; predict {nt} {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; rmse {rmse:.4} r2 {r2:.4}",
+                        s.name, w * 1e3, c * 1e3, tg * 1e3, flat.nodes.len(), pw * 1e3, pc * 1e3, gpu * 1e3);
                     if depth == 20 && !subsets && want("batch") {
                         batch_timings(&format!("{} regression depth {depth}", s.name), &fs_real, &resident, &test_cols);
                     }
@@ -927,7 +1115,7 @@ mod tests {
                     // Each bucket's median target, bucket b holding the targets between thresholds b - 1 and b.
                     let medians: Vec<f64> = (0..k).map(|b| sorted[(2 * b + 1) * sorted.len() / (2 * k)] as f64).collect();
                     // The K - 1 forests, resident together: one dispatch predicts them all.
-                    let ((forests, nodes), w, c) = timed(|| {
+                    let ((forests, nodes), w, c, tg) = timed_gpu(|| {
                         let mut flats = Vec::new();
                         for &t in &thresholds {
                             let labels: Vec<f32> = fit.iter().map(|&i| (s.train_targets[i] > t) as u8 as f32).collect();
@@ -937,14 +1125,15 @@ mod tests {
                         let nodes: usize = flats.iter().map(|f| f.nodes.len()).sum();
                         (DeviceForest::new_many(&flats.iter().collect::<Vec<_>>()).unwrap(), nodes)
                     });
-                    // The probabilities "above threshold k", per row, for a set of rows.
-                    let probs = |cols: &[Vec<CellValue>]| -> (Vec<Vec<f64>>, f64) {
-                        let rows = RowBuckets::from_values(&fs, cols).unwrap();
-                        let (p, gpu) = forests.predict_timed(&rows).unwrap();
+                    // The probabilities "above threshold k", per row, for a set of rows (bucketized on the device).
+                    let bucketizer = DeviceBucketizer::new(&fs).unwrap();
+                    let probs = |cols: &[ColumnData]| -> (Vec<Vec<f64>>, f64) {
+                        let (p, gpu) = forests.predict_values_timed(&bucketizer, cols).unwrap();
                         (p.chunks(k - 1).map(|r| r.iter().map(|p| p[1] as f64).collect()).collect(), gpu)
                     };
                     // Least squares over [1, p_1 .. p_{K-1}] on the calibration rows (a little ridge).
-                    let (cal_p, _) = probs(&cal_cols);
+                    let (cal_p, _) = probs(&typed_columns(&cal_cols));
+                    let test_typed = typed_columns(&test_cols);
                     let n = k;
                     let (mut a, mut b) = (vec![0.0; n * n], vec![0.0; n]);
                     for (p, &i) in cal_p.iter().zip(&cal) {
@@ -960,13 +1149,13 @@ mod tests {
                         a[r * n + r] += 1e-3;
                     }
                     let coef = solve(a, b);
-                    let ((test_p, gpu), pw, pc) = timed(|| probs(&test_cols));
+                    let ((test_p, gpu), pw, pc) = timed(|| probs(&test_typed));
                     let expected: Vec<f64> = test_p.iter().map(|p| medians[0] + p.iter().enumerate().map(|(q, &pq)| pq * (medians[q + 1] - medians[q])).sum::<f64>()).collect();
                     let fitted: Vec<f64> = test_p.iter().map(|p| coef[0] + p.iter().zip(&coef[1..]).map(|(p, c)| p * c).sum::<f64>()).collect();
                     let (rmse_e, r2_e) = regression_scores(&expected, &s.test_targets);
                     let (rmse_l, r2_l) = regression_scores(&fitted, &s.test_targets);
-                    eprintln!("RESULT {} rerail-{kind}-k{k} kbucket depth {depth}: train {:.0} ms wall {:.0} ms CPU; {nodes} nodes; predict {nt} {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; expected rmse {rmse_e:.4} r2 {r2_e:.4}; least squares rmse {rmse_l:.4} r2 {r2_l:.4}",
-                        s.name, w * 1e3, c * 1e3, pw * 1e3, pc * 1e3, gpu * 1e3);
+                    eprintln!("RESULT {} rerail-{kind}-k{k} kbucket depth {depth}: train {:.0} ms wall {:.0} ms CPU {:.0} ms GPU; {nodes} nodes; predict {nt} {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; expected rmse {rmse_e:.4} r2 {r2_e:.4}; least squares rmse {rmse_l:.4} r2 {r2_l:.4}",
+                        s.name, w * 1e3, c * 1e3, tg * 1e3, pw * 1e3, pc * 1e3, gpu * 1e3);
                     if depth == 20 && !subsets && k == 8 && want("batch") {
                         batch_timings(&format!("{} kbucket k{k} depth {depth}", s.name), &fs, &forests, &test_cols);
                     }
@@ -1011,6 +1200,55 @@ mod tests {
                 train,
                 test,
             });
+        }
+    }
+
+    /// Rows of values bucketized on the device give the host's bucket words (`RowBuckets::from_values`) and
+    /// predictions, with values training never saw: numbers past the splits, unseen strings, nulls in a column that
+    /// had none, and numbers in a categorical column.
+    #[test]
+    fn device_bucketizing_is_the_host_s() {
+        if crate::gpu::shared::get().is_none() {
+            return;
+        }
+        let (cols, labels) = columns(3000, 3);
+        let named: Vec<(String, Vec<CellValue>)> = cols.iter().enumerate().map(|(i, c)| (format!("c{i}"), c.clone())).collect();
+        let fs = Arc::new(DatasetFeatureSpace::from_columns(&named, FeatureType::Boolean).unwrap());
+        let forest = train_forest(&training_data(fs.clone(), &labels, None, None).unwrap(), &RandomForestProcedureConfig::default()).unwrap();
+        let f = DeviceForest::new(&FlatForest::new(&forest).unwrap()).unwrap();
+        let b = DeviceBucketizer::new(&fs).unwrap();
+        let (mut test, _) = columns(777, 9);
+        for (i, c) in test.iter_mut().enumerate() {
+            for (r, v) in c.iter_mut().enumerate() {
+                match (r % 11, i) {
+                    (0, _) => *v = CellValue::Empty,
+                    (1, _) if matches!(v, CellValue::String(_)) => *v = CellValue::String(format!("never seen {r}")),
+                    (2, _) if matches!(v, CellValue::Float(_) | CellValue::Integer(_)) => *v = CellValue::Float(1e300 * if r % 2 == 0 { 1.0 } else { -1.0 }),
+                    (3, _) if matches!(v, CellValue::Float(_) | CellValue::Integer(_)) => *v = CellValue::Float(-0.0),
+                    _ => {}
+                }
+            }
+        }
+        for n in [777usize, 1, 33] {
+            let part: Vec<Vec<CellValue>> = test.iter().map(|c| c[..n].to_vec()).collect();
+            // A categorical column given numbers: every number is unseen there.
+            let mut values: Vec<ColumnData> = part.iter().enumerate().map(|(i, c)| ColumnData::from_values(&format!("c{i}"), c).unwrap()).collect();
+            let host = RowBuckets::from_values(&fs, &part).unwrap();
+            let want = f.predict(&host).unwrap();
+            let got = f.predict_values(&b, &values).unwrap();
+            assert_eq!(got, want, "{n} rows");
+            let stride = host.columns.iter().map(|c| c.storage.data().len()).max().unwrap() + 1;
+            let data = f.scratch.lock().unwrap().data.clone().unwrap().0;
+            let data = unsafe { std::slice::from_raw_parts(data.contents().cast::<u32>(), stride * host.columns.len()) };
+            for (i, c) in host.columns.iter().enumerate() {
+                assert_eq!(&data[i * stride..i * stride + c.storage.data().len()], c.storage.data(), "{n} rows, column {i}");
+            }
+            if let Some(i) = values.iter().position(|v| matches!(v, ColumnData::Categorical { .. })) {
+                values[i] = ColumnData::Numeric((0..n).map(|r| r as f64).collect());
+                let mut swapped = part.clone();
+                swapped[i] = (0..n).map(|r| CellValue::Float(r as f64)).collect();
+                assert_eq!(f.predict_values(&b, &values).unwrap(), f.predict(&RowBuckets::from_values(&fs, &swapped).unwrap()).unwrap());
+            }
         }
     }
 

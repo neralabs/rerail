@@ -2101,8 +2101,39 @@ predictForestImpl) (uint32_t numItems,     // rows times forests: item r is row 
 // A row's key that stands for a null (no number orders below it).
 #define NULL_ORDER_KEY ((int64_t)0x8000000000000000UL)
 
-// [row]: a numeric column's bucket: 0 for a null; else the numeric buckets' offset plus the split points below the
-// value (the keys order as the values do, so the comparison is exact). A bounded binary search.
+// A number's key (order_key) from its bits: -0 as +0, a negative's bits flipped below the positives; a NaN is a
+// null (NULL_ORDER_KEY).
+UKL_FUNCTION(v1,int64_t,
+numberOrderKey) (uint64_t bits)
+{
+    if ((bits & 0x7fffffffffffffffUL) > 0x7ff0000000000000UL)
+        return NULL_ORDER_KEY;
+    if (bits == 0x8000000000000000UL)
+        bits = 0;
+    int64_t b = (int64_t)bits;
+    return b < 0 ? (b ^ (int64_t)0x7fffffffffffffffL) : b;
+}
+
+// A non-null key's numeric bucket: the numeric buckets' offset plus the split points below it (the keys order as
+// the values do, so the comparison is exact). A bounded binary search.
+UKL_FUNCTION(v1,uint32_t,
+numericBucketOf) (int64_t k,
+                  ROBUFFER(int64_t) splitKeys,
+                  uint32_t numSplits,
+                  uint32_t numericOffset)
+{
+    uint32_t lo = 0, hi = numSplits;
+    for (uint32_t step = 0;  step < 32 && lo < hi;  ++step) {
+        uint32_t mid = (lo + hi) / 2;
+        if (splitKeys[mid] < k)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return numericOffset + lo;
+}
+
+// [row]: a numeric column's bucket: 0 for a null, else numericBucketOf.
 UKL_FUNCTION(v1,void,
 numericBucketsImpl) (uint32_t numRows,
                      ROBUFFER(int64_t) keys,
@@ -2115,19 +2146,7 @@ numericBucketsImpl) (uint32_t numRows,
     if (r >= numRows)
         return;
     int64_t k = keys[r];
-    if (k == NULL_ORDER_KEY) {
-        bucketsOut[r] = 0;
-        return;
-    }
-    uint32_t lo = 0, hi = numSplits;
-    for (uint32_t step = 0;  step < 32 && lo < hi;  ++step) {
-        uint32_t mid = (lo + hi) / 2;
-        if (splitKeys[mid] < k)
-            lo = mid + 1;
-        else
-            hi = mid;
-    }
-    bucketsOut[r] = numericOffset + lo;
+    bucketsOut[r] = k == NULL_ORDER_KEY ? 0 : numericBucketOf(k, splitKeys, numSplits, numericOffset);
 }
 
 // [row]: marks the codes a categorical column holds (code numCodes for a null).
@@ -2157,6 +2176,70 @@ categoricalBucketsImpl) (uint32_t numRows,
         return;
     uint32_t c = codes[r];
     bucketsOut[r] = codeBuckets[c < numCodes ? c : numCodes];
+}
+
+// Prediction rows bucketized on the device (rowBuckets; RowBuckets::from_values on the host): each column described
+// in ROW_BUCKET_WORDS words, its values among the numbers (f64 bits) or the codes.
+#define ROW_BUCKET_WORDS 8
+#define RB_KIND 0     // 0: numbers; 1: codes
+#define RB_BITS 1     // the column's entry bits (its buckets and the unseen one)
+#define RB_VALUES 2   // the column's first value in numbers or codes
+#define RB_COUNT 3    // numbers: the split keys; codes: the codes (codeTables has one more, for a null or a code past them)
+#define RB_TABLE 4    // numbers: the first split key; codes: the code table's first entry
+#define RB_OFFSET 5   // numbers: the numeric buckets' offset (the unseen bucket when the column has none)
+#define RB_NULL 6     // numbers: a null's bucket (0 when the column had nulls, else the unseen bucket)
+#define RB_WORDS 7    // the column's packed words (the rest of its stride is zero)
+
+// Row r's bucket in the column described at `col`.
+UKL_FUNCTION(v1,uint32_t,
+rowBucketOf) (ROBUFFER(uint32_t) col,
+              ROBUFFER(uint64_t) numbers,
+              ROBUFFER(uint32_t) codes,
+              ROBUFFER(int64_t) splitKeys,
+              ROBUFFER(uint32_t) codeTables,
+              uint32_t r)
+{
+    if (col[RB_KIND] == 1) {
+        uint32_t c = codes[col[RB_VALUES] + r];
+        return codeTables[col[RB_TABLE] + (c < col[RB_COUNT] ? c : col[RB_COUNT])];
+    }
+    int64_t k = numberOrderKey(numbers[col[RB_VALUES] + r]);
+    return k == NULL_ORDER_KEY ? col[RB_NULL] : numericBucketOf(k, splitKeys + col[RB_TABLE], col[RB_COUNT], col[RB_OFFSET]);
+}
+
+// [column * columnStride + word]: one word of the packed bucket columns predictForest reads (packBucketsImpl's
+// packing, each entry's bucket found as it is packed): the rows' buckets, zero past the column's words.
+UKL_FUNCTION(v1,void,
+rowBucketsImpl) (uint32_t numRows,
+                 uint32_t numColumns,
+                 uint32_t columnStride,
+                 ROBUFFER(uint32_t) columns,
+                 ROBUFFER(uint64_t) numbers,
+                 ROBUFFER(uint32_t) codes,
+                 ROBUFFER(int64_t) splitKeys,
+                 ROBUFFER(uint32_t) codeTables,
+                 RWBUFFER(uint32_t) bucketDataOut,
+                 uint32_t i)
+{
+    if (i >= numColumns * columnStride)
+        return;
+    uint32_t w = i % columnStride;
+    ROBUFFER(uint32_t) col = columns + (i / columnStride) * ROW_BUCKET_WORDS;
+    uint32_t entryBits = col[RB_BITS];
+    uint32_t word = 0;
+    if (w < col[RB_WORDS]) {
+        uint32_t firstBit = 32 * w;
+        uint32_t first = firstBit / entryBits;
+        for (uint32_t j = 0;  j < 34;  ++j) {
+            uint32_t e = first + j;
+            if (e >= numRows || e * entryBits >= firstBit + 32)
+                break;
+            int32_t shift = (int32_t)(e * entryBits) - (int32_t)firstBit;
+            uint32_t b = rowBucketOf(col, numbers, codes, splitKeys, codeTables, e);
+            word |= shift >= 0 ? b << shift : b >> (-shift);
+        }
+    }
+    bucketDataOut[i] = word;
 }
 
 // [word]: one 32-bit word of the packed buckets: the entries whose bits fall in it (at most 32 / entryBits + 2, a
