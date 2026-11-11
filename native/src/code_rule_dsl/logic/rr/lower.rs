@@ -2307,7 +2307,7 @@ impl Lowerer {
         // Only the literals tied to `vars` through shared variables: one tied to none tests that some row exists
         // anywhere (`ann_root(_)` once `(s = a ; within(s, a))` is left out), which makes every row of the context
         // depend on every document. Leaving it out widens the context, which the rule joins with its own literals.
-        let context = Self::connected(Self::placed_texts(Self::connected(context, vars), vars), vars);
+        let context = Self::covering(Self::connected(Self::placed_texts(Self::connected(context, vars), vars), vars), vars);
         let ctx = self.fresh("ctx");
         let alts = self.conjunction(&context, &vars.iter().cloned().collect())?;
         let types = vars.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
@@ -2362,6 +2362,55 @@ impl Lowerer {
             }
         }
         context.into_iter().zip(keep).filter(|(_, k)| *k).map(|(l, _)| l).collect()
+    }
+
+    /// Of a context's groups of literals (joined through variables other than `vars`), those that bind a variable of
+    /// `vars` no group before them does. Another group only tests that rows exist, and joined in it multiplies the
+    /// context's rows by its own: `within(c1, n), within(c2, n)` asked for `n` is every pair of n's descendants (1.3 G
+    /// rows on 20 files). The context may hold more rows than the rule, which joins it with its own literals.
+    fn covering(context: Vec<Lit>, vars: &[String]) -> Vec<Lit> {
+        let asked: BTreeSet<String> = vars.iter().cloned().collect();
+        let of: Vec<BTreeSet<String>> = context.iter().map(|l| body_vars(std::slice::from_ref(l))).collect();
+        // Each literal's group: literals sharing a variable not asked about are one group.
+        let mut group: Vec<usize> = (0..context.len()).collect();
+        fn root(g: &mut [usize], mut i: usize) -> usize {
+            while g[i] != i {
+                g[i] = g[g[i]];
+                i = g[i];
+            }
+            i
+        }
+        for i in 0..context.len() {
+            for j in 0..i {
+                if of[i].iter().any(|v| !asked.contains(v) && of[j].contains(v)) {
+                    let (a, b) = (root(&mut group, i), root(&mut group, j));
+                    group[a] = b;
+                }
+            }
+        }
+        let binds = |l: &Lit| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() && rel != "earlier");
+        let mut covered: BTreeSet<String> = BTreeSet::new();
+        let mut kept: BTreeSet<usize> = BTreeSet::new();
+        for i in 0..context.len() {
+            let g = root(&mut group, i);
+            if kept.contains(&g) {
+                continue;
+            }
+            let bound: BTreeSet<String> = (0..context.len())
+                .filter(|&k| root(&mut group, k) == g && binds(&context[k]))
+                .flat_map(|k| of[k].iter().filter(|v| asked.contains(*v)).cloned().collect::<Vec<_>>())
+                .collect();
+            if !bound.is_subset(&covered) {
+                covered.extend(bound);
+                kept.insert(g);
+            }
+        }
+        // A variable no group binds is left to the context as it was.
+        if !asked.is_subset(&covered) {
+            return context;
+        }
+        let groups: Vec<usize> = (0..context.len()).map(|k| root(&mut group, k)).collect();
+        context.into_iter().zip(groups).filter(|(_, g)| kept.contains(g)).map(|(l, _)| l).collect()
     }
 
     /// A context's atoms and the comparisons it can evaluate, in order, and the variables they bind.

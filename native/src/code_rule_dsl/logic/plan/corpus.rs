@@ -2860,6 +2860,9 @@ fn run_observed(
     let started_ns = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as i64);
     let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().into_owned();
     let stat_index = if recording {
+        // An earlier run of this process may have queued the root's stats: read once they are written, before the
+        // first wave (decision 0104).
+        store.settle(&stats_key(&canonical_root));
         store.corpus_stats(&canonical_root).map_err(|e| Error::Plan(e.to_string()))?
     } else {
         crate::content_store::StatIndex::default()
@@ -3039,7 +3042,8 @@ fn run_observed(
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, texts.iter().map(|t| t.len() as u64).sum());
             let digests: Vec<[u8; 32]> = texts.par_iter().map(|t| Sha256::digest(t.as_bytes()).into()).collect();
             // A content the store does not hold is new: its source is written with its tape, behind the run.
-            let contents: Vec<Option<memo::Content>> = if reading {
+            // A session's memo is in memory: asked in the waves too.
+            let contents: Vec<Option<memo::Content>> = if reading || matches!(memo, memo::Memo::Held(_)) {
                 memo.found(&digests).map_err(|e| Error::Plan(e.to_string()))?.into_iter().zip(&digests).map(|(c, d)| c.or(Some(memo::Content::Unstored(*d)))).collect()
             } else {
                 digests.iter().map(|d| Some(memo::Content::Unstored(*d))).collect()
@@ -3053,8 +3057,9 @@ fn run_observed(
                     stats_read.lock().push((world::store_path(&window[*i].1).to_owned(), stat, *c));
                 }
             }
-            // A file the index knew, read again because its entry was missing, is not looked up a second time.
-            if memoised && reading {
+            // A file the index knew, read again because its entry was missing, is not looked up a second time. In
+            // the waves every content is looked up by its digest, in the frames held in memory (decision 0104).
+            if memoised {
                 let asked: Vec<usize> = (0..rest.len()).filter(|r| contents[*r].is_some() && !(known[rest[*r]].is_some() && known[rest[*r]] == contents[*r].and_then(memo::Content::stored))).collect();
                 let keys: Vec<(memo::Content, &str)> = asked.iter().map(|r| (contents[*r].expect("a content"), world::store_path(&window[rest[*r]].1))).collect();
                 for (r, f) in asked.into_iter().zip(memo.found_all(&memo_program, &keys).map_err(|e| Error::Plan(e.to_string()))?) {
@@ -3756,7 +3761,8 @@ fn run_observed(
             for (path, entry, content) in hits {
                 // The statistics kept by file (decision 0096 §3): a content new to the keeper is counted in.
                 if let (Some(k), Some(memo)) = (keeper.borrow_mut().as_mut(), memo) {
-                    k.file(&path, content, entry.key, &entry, &|c, key| memo.lookup(c, world::store_path(&path), key, &memo_program).ok().flatten());
+                    let _ = memo;
+                    k.file(&path, content, entry.key, &entry, &|c, key| counted_entry(&path, c, key));
                 }
                 // The session's counted exports hold its export rows (0096 step 3): they are not held again. Listed,
                 // so that a run whose keeper gives up later holds them after all.
@@ -4771,7 +4777,7 @@ fn run_observed(
         store.write_back(
             "the files' stats",
             read.len() * 64,
-            Vec::new(),
+            vec![(stats_key(&root), None)],
             Box::new(move |store| {
                 let mut ids = Vec::with_capacity(read.len());
                 // A busy-store retry must leave the captured inputs available.
@@ -6255,6 +6261,11 @@ fn run_observed(
         let outcome = store.written();
         drop(waited);
         let w = store.written_so_far();
+        let (by_what, peak, held) = store.written_by_what();
+        crate::code_rule_dsl::logic::profile::decision("write-back by what (decision 0102)", || {
+            let rows: Vec<String> = by_what.iter().map(|(what, jobs, bytes, cpu)| format!("{what}: {jobs} jobs, {:.1} MB, {cpu:.3} s", *bytes as f64 / 1048576.0)).collect();
+            format!("queue peak {:.1} MB; back-pressure held producers {} times, {:.3} s; {}", peak as f64 / 1048576.0, held.0, held.1, rows.join("; "))
+        });
         crate::code_rule_dsl::logic::profile::decision("write-back (decision 0102)", || format!("{} writes queued behind the run in {} transactions, {:.1} MB, {:.3} s of the writer's CPU", w.jobs, w.batches, w.bytes as f64 / 1048576.0, w.cpu));
         outcome.map_err(|e| Error::Plan(e.to_string()))?;
     }
@@ -8086,4 +8097,9 @@ fn in_policy(text: &str, e: crate::code_rule_dsl::logic::front::Error) -> crate:
         (Error::Syntax(m), Some(n)) => Error::Syntax(format!("policy {n}: {m}")),
         (e, _) => e,
     }
+}
+
+/// The queued write of a root's stats: the next run of this process reads them once they are written.
+fn stats_key(root: &str) -> crate::content_store::write_back::Key {
+    crate::content_store::write_back::Key::of(&[b"corpus stats", root.as_bytes()])
 }

@@ -7078,6 +7078,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             }
         }
         // This stratum runs in SQL, which reads the native relations it joins from their tables.
+        super::profile::strict_declined(&skey, &why, run.why_class.as_deref());
         let read: Vec<String> = rules
             .iter()
             .flat_map(|r| &r.body)

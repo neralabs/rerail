@@ -349,17 +349,30 @@ pub(super) fn found_all(store: &ContentStore, program: &[u8; 32], docs: &[(Sourc
     let held: Vec<Option<std::sync::Arc<Entry>>> = docs.iter().map(|(s, p)| store.pending::<Entry>(&queued(*s, p, program))).collect();
     let asked: Vec<usize> = (0..docs.len()).filter(|i| held[*i].is_none()).collect();
     let digests = store.source_digests(&asked.iter().map(|i| docs[*i].0).collect::<Vec<_>>())?;
-    let wanted: Vec<(usize, [u8; 32], i64)> = asked.iter().zip(&digests).filter_map(|(i, d)| d.map(|d| (*i, d, part_of(&d, docs[*i].1)))).collect();
-    let (space, rel) = (crate::content_store::local_space(&plan), entry_rel(&plan));
-    let mut frames = store.admit_parts_of(&space, &rel, &wanted.iter().map(|(_, _, p)| *p).collect::<Vec<_>>())?;
+    let wanted: Vec<(usize, [u8; 32])> = asked.iter().zip(&digests).filter_map(|(i, d)| d.map(|d| (*i, d))).collect();
+    let paths: Vec<&str> = docs.iter().map(|(_, p)| *p).collect();
     let mut out: Vec<Option<Found>> = held.into_iter().map(|h| h.map(Found::Held)).collect();
+    for (i, f) in by_digest(store, &plan, &paths, wanted)? {
+        out[i] = Some(f);
+    }
+    Ok(out)
+}
+
+/// The frames of `wanted`, each `(at, content digest)` of the document at `paths[at]`: a frame's part is its
+/// content's and path's, and the frame names both. No source is read: in the waves, the frames are in memory.
+fn by_digest(store: &ContentStore, plan: &[u8; 32], paths: &[&str], wanted: Vec<(usize, [u8; 32])>) -> StoreResult<Vec<(usize, Found)>> {
+    let wanted: Vec<(usize, [u8; 32], i64)> = wanted.into_iter().map(|(i, d)| (i, d, part_of(&d, paths[i]))).collect();
+    let docs: Vec<((), &str)> = paths.iter().map(|p| ((), *p)).collect();
+    let (space, rel) = (crate::content_store::local_space(plan), entry_rel(plan));
+    let mut frames = store.admit_parts_of(&space, &rel, &wanted.iter().map(|(_, _, p)| *p).collect::<Vec<_>>())?;
+    let mut out = Vec::new();
     let mut used = Vec::new();
     for (i, digest, part) in wanted {
         let Some(frame) = frames.remove(&part).and_then(Frame::of) else { continue };
         // A part another content or path collides into is a miss.
         if frame.digest == digest && frame.path == docs[i].1 {
             used.push(part);
-            out[i] = Some(Found::Frame(frame));
+            out.push((i, Found::Frame(frame)));
         }
     }
     if !used.is_empty() {
@@ -420,6 +433,23 @@ pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Ve
     }
     let held: Vec<(Content, String, std::sync::Arc<Entry>)> = entries.into_iter().filter(|e| e.0.in_store()).map(|(content, path, key, entry)| (content, path, std::sync::Arc::new(Entry { key, ..entry }))).collect();
     let bytes: usize = held.iter().map(|(_, _, e)| e.bytes()).sum();
+    if bytes > 32 << 20 && crate::code_rule_dsl::logic::profile::on() {
+        let mut by: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+        for (_, _, e) in &held {
+            for (r, (w, v)) in &e.rows {
+                let at = by.entry(r.as_str()).or_default();
+                at.0 += v.len() / (*w).max(1);
+                at.1 += v.len() * 8;
+            }
+            for (r, (_, l)) in &e.lines {
+                by.entry(r.as_str()).or_default().1 += l.iter().map(|t| t.len() + 24).sum::<usize>();
+            }
+        }
+        let mut by: Vec<_> = by.into_iter().collect();
+        by.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+        let top: Vec<String> = by.iter().take(12).map(|(r, (n, b))| format!("{r}: {n} rows, {:.1} MB", *b as f64 / 1048576.0)).collect();
+        eprintln!("rerail: the memo's entries: {:.1} MB over {} documents; by relation: {}", bytes as f64 / 1048576.0, held.len(), top.join("; "));
+    }
     let keys = held.iter().filter_map(|(content, path, e)| Some((queued_content(*content, path, program)?, Some(std::sync::Arc::clone(e) as std::sync::Arc<dyn std::any::Any + Send + Sync>)))).collect();
     let token = super::run_token();
     store.write_back(
@@ -575,10 +605,20 @@ impl Memo<'_> {
                 for (i, e) in at.into_iter().zip(found_all(store, program, &stored)?) {
                     out[i] = e;
                 }
-                // A content not stored yet has no stored entry: only one this process queued.
+                // A content not known to be stored: one this process queued, else a frame of its digest's.
+                let mut by_frame = Vec::new();
                 for (i, (c, p)) in docs.iter().enumerate() {
                     if let Content::Unstored(d) = c {
                         out[i] = store.pending::<Entry>(&queued_unstored(d, p, program)).map(Found::Held);
+                        if out[i].is_none() {
+                            by_frame.push((i, *d));
+                        }
+                    }
+                }
+                if !by_frame.is_empty() {
+                    let paths: Vec<&str> = docs.iter().map(|(_, p)| *p).collect();
+                    for (i, f) in by_digest(store, &plan_digest(program), &paths, by_frame)? {
+                        out[i] = Some(f);
                     }
                 }
                 Ok(out)
@@ -599,7 +639,14 @@ impl Memo<'_> {
     pub(super) fn lookup(self, content: Content, path: &str, key: i64, program: &[u8; 32]) -> StoreResult<Option<Entry>> {
         match (self, content) {
             (Memo::Stored(store), Content::Stored(id)) => lookup(store, id, path, key, program),
-            (Memo::Stored(store), Content::Unstored(d)) => Ok(store.pending::<Entry>(&queued_unstored(&d, path, program)).map(|e| (*e).clone()).filter(|e| e.key == key)),
+            (Memo::Stored(store), Content::Unstored(d)) => match store.pending::<Entry>(&queued_unstored(&d, path, program)) {
+                Some(e) => Ok(Some((*e).clone()).filter(|e| e.key == key)),
+                // Found in the waves by its digest (`by_digest`): its frame.
+                None => match by_digest(store, &plan_digest(program), &[path], vec![(0, d)])?.pop() {
+                    Some((_, found)) => found.entry(key),
+                    None => Ok(None),
+                },
+            },
             (Memo::Held(held), Content::Held(digest)) => {
                 Ok(held.lock().expect("the session memo").get(&(digest, path.to_owned(), *program)).filter(|e| e.key == key).cloned())
             }

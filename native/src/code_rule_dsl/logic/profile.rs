@@ -1089,6 +1089,14 @@ fn placements(r: &mut String, state: &State) {
 }
 
 /// Records that stratum `key` fell back to SQLite, and the kind of literal the native engine declined (`class`).
+/// A stratum SQLite is about to run inside the waves: under the strict mode, the end of the process, naming it and
+/// what the native engine declined.
+pub(in crate::code_rule_dsl) fn strict_declined(key: &str, why: &str, class: Option<&str>) {
+    if strict() && inside_waves() {
+        violation("inside the waves: a stratum the native engine declined", &format!("stratum {key}: {why}; {}", class.unwrap_or("no class")));
+    }
+}
+
 pub(in crate::code_rule_dsl) fn fallback(key: &str, class: String) {
     if !on() {
         return;

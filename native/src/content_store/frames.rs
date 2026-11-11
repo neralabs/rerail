@@ -132,8 +132,9 @@ fn frame_key(space: &[u8; 32], rel: &Rel, part: i64) -> super::write_back::Key {
 }
 
 impl ContentStore {
+    /// The snapshot of this store's file, by its canonical path: handles that name it differently share it.
     fn snapshot(&self) -> Option<Arc<std::sync::Mutex<Snapshot>>> {
-        snapshots().lock().expect("the frames' snapshots").get(&self.database_path).cloned()
+        snapshots().lock().expect("the frames' snapshots").get(&super::atoms::key(&self.database_path)).cloned()
     }
 
     /// Reads every frame of the store, once a process (decision 0104: before a run's first wave): from then on the
@@ -165,7 +166,7 @@ impl ContentStore {
                 snapshot.entry(space).or_default().insert(key, frame);
             }
         }
-        snapshots().lock().expect("the frames' snapshots").entry(self.database_path.clone()).or_insert_with(|| Arc::new(std::sync::Mutex::new(snapshot)));
+        snapshots().lock().expect("the frames' snapshots").entry(super::atoms::key(&self.database_path)).or_insert_with(|| Arc::new(std::sync::Mutex::new(snapshot)));
         Ok((frames, bytes))
     }
 
@@ -754,4 +755,9 @@ mod tests {
         assert!(!store.frames(&space, &[first.clone()], 0).unwrap().contains_key(&first));
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+/// A store created at `path` (its schema new): a snapshot of an earlier file there is not this one's.
+pub fn forget_snapshot(path: &str) {
+    snapshots().lock().expect("the frames' snapshots").remove(&super::atoms::key(std::path::Path::new(path)));
 }

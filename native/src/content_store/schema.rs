@@ -721,6 +721,7 @@ impl ContentStore {
             })?;
             if let Some(path) = connection.path() {
                 super::atoms::forget_identity(path);
+                super::frames::forget_snapshot(path);
             }
         }
         Ok(connection.query_row("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0))?)

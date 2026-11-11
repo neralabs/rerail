@@ -759,6 +759,13 @@ fn fold_constants(rule: &mut Rule) -> usize {
                 Term::Call(_, args) => args.iter_mut().for_each(|a| put(a, var, value)),
                 _ => {}
             }
+            // A node's document of a constant node is a constant (`DocOf`: the node's high 32 bits).
+            if let Term::Call(f, args) = t
+                && f == "doc"
+                && let [Term::Int(n)] = args.as_slice()
+            {
+                *t = Term::Int(n >> 32);
+            }
         }
         for l in &mut rule.body {
             match l {

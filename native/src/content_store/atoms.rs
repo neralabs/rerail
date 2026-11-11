@@ -296,7 +296,7 @@ pub struct Atoms {
     /// Every stored atom is held in this process, and the lease has been held since that was seen: a string not in
     /// memory is not interned, and is found without reading the store (decision 0104).
     complete: AtomicBool,
-    /// A flush is queued to the store's writer and has not run yet (`queue_flush`).
+    /// A flush is queued to the store's writer and has not run yet (`queue_atoms_flush`).
     flush_queued: AtomicBool,
 }
 
@@ -318,7 +318,7 @@ static MEMORY: LazyLock<Arc<Atoms>> = LazyLock::new(|| Arc::new(Atoms::new(None,
 
 /// A path's registry key: its canonical form, resolved once per path (a `realpath` per stratum was 2.5% of a corpus
 /// run's main thread). A path that does not resolve yet is not remembered.
-fn key(path: &Path) -> PathBuf {
+pub(super) fn key(path: &Path) -> PathBuf {
     static CANONICAL: LazyLock<Mutex<HashMap<PathBuf, PathBuf>>> = LazyLock::new(Default::default);
     if let Some(key) = CANONICAL.lock().get(path) {
         return key.clone();
@@ -972,17 +972,12 @@ impl Atoms {
     }
 
     /// Whether a flush is due: enough pending (count, bytes or age), or another process waiting. Never inside a run
-    /// (`ready_for_run`): the store's writer flushes then (`queue_flush`), and no wave writes (decision 0104).
+    /// (`ready_for_run`): the store's writer flushes then (`queue_atoms_flush`), and no wave writes (decision 0104).
     pub fn due(&self) -> bool {
         !self.kept.load(Ordering::Acquire) && self.due_now()
     }
 
-    /// Inside a run, whether a flush is due and none is queued to the store's writer yet: the caller queues one.
-    pub fn queue_flush(&self) -> bool {
-        self.kept.load(Ordering::Acquire) && self.due_now() && !self.flush_queued.swap(true, Ordering::AcqRel)
-    }
-
-    fn due_now(&self) -> bool {
+    pub(super) fn due_now(&self) -> bool {
         if self.path.is_none() {
             return false;
         }
@@ -1134,10 +1129,13 @@ impl super::ContentStore {
 
     pub fn intern_atoms(&self, values: &[&str]) -> StoreResult<Vec<Sym>> {
         let ids = self.atoms.intern_all(values)?;
-        if self.atoms.due() {
+        // A store with a writer has it append them (decision 0104: only its writers write); one without, now.
+        if self.write_back.is_some() {
+            if self.atoms.due_now() && !self.atoms.flush_queued.swap(true, Ordering::AcqRel) {
+                self.queue_atoms_flush();
+            }
+        } else if self.atoms.due() {
             self.flush_atoms()?;
-        } else if self.atoms.queue_flush() {
-            self.queue_atoms_flush();
         }
         Ok(ids)
     }
