@@ -88,19 +88,40 @@
                 }
               ],
               "not": {
-                "has": {
-                  "stopBy": {
-                    "matches": "bracket"
-                  },
-                  "any": [
-                    {
-                      "regex": "^,$"
-                    },
-                    {
-                      "regex": "^yield$"
+                "any": [
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "regex": "^,$"
+                        },
+                        {
+                          "regex": "^yield$"
+                        }
+                      ]
                     }
-                  ]
-                }
+                  },
+                  {
+                    "has": {
+                      "stopBy": {
+                        "matches": "bracket"
+                      },
+                      "not": {
+                        "matches": "bracket"
+                      },
+                      "has": {
+                        "any": [
+                          {
+                            "regex": "^,$"
+                          },
+                          {
+                            "regex": "^yield$"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
               }
             },
             "only-child-of-parentheses": {
@@ -361,15 +382,6 @@
                 }
               ]
             },
-            "scan-stopper": {
-              "regex": "^(,|yield)$",
-              "inside": {
-                "stopBy": {
-                  "matches": "bracket"
-                },
-                "matches": "tuple-start"
-              }
-            },
             "before-scan-stop": {
               "any": [
                 {
@@ -401,25 +413,67 @@
             },
             "level-clear": {
               "not": {
-                "follows": {
-                  "stopBy": "end",
-                  "any": [
-                    {
-                      "matches": "scan-stopper"
+                "any": [
+                  {
+                    "follows": {
+                      "stopBy": "end",
+                      "regex": "^(,|yield)$"
                     },
-                    {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "matches": "tuple-start"
+                        },
+                        {
+                          "not": {
+                            "matches": "bracket"
+                          },
+                          "inside": {
+                            "stopBy": {
+                              "matches": "bracket"
+                            },
+                            "matches": "tuple-start"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "follows": {
+                      "stopBy": "end",
                       "not": {
                         "matches": "bracket"
                       },
-                      "has": {
+                      "inside": {
                         "stopBy": {
                           "matches": "bracket"
                         },
-                        "matches": "scan-stopper"
-                      }
+                        "matches": "tuple-start"
+                      },
+                      "any": [
+                        {
+                          "has": {
+                            "regex": "^(,|yield)$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": {
+                              "matches": "bracket"
+                            },
+                            "not": {
+                              "matches": "bracket"
+                            },
+                            "has": {
+                              "regex": "^(,|yield)$"
+                            }
+                          }
+                        }
+                      ]
                     }
-                  ]
-                }
+                  }
+                ]
               }
             },
             "after-args-open": {

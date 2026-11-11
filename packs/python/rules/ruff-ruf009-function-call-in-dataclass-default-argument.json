@@ -413,14 +413,30 @@
                               },
                               {
                                 "not": {
-                                  "has": {
-                                    "stopBy": {
-                                      "not": {
-                                        "kind": "type_parameter"
+                                  "any": [
+                                    {
+                                      "has": {
+                                        "regex": "^,$"
                                       }
                                     },
-                                    "regex": "^,$"
-                                  }
+                                    {
+                                      "has": {
+                                        "stopBy": {
+                                          "not": {
+                                            "kind": "type_parameter"
+                                          }
+                                        },
+                                        "not": {
+                                          "not": {
+                                            "kind": "type_parameter"
+                                          }
+                                        },
+                                        "has": {
+                                          "regex": "^,$"
+                                        }
+                                      }
+                                    }
+                                  ]
                                 }
                               },
                               {
@@ -616,14 +632,30 @@
                               },
                               {
                                 "not": {
-                                  "has": {
-                                    "stopBy": {
-                                      "not": {
-                                        "kind": "type_parameter"
+                                  "any": [
+                                    {
+                                      "has": {
+                                        "regex": "^,$"
                                       }
                                     },
-                                    "regex": "^,$"
-                                  }
+                                    {
+                                      "has": {
+                                        "stopBy": {
+                                          "not": {
+                                            "kind": "type_parameter"
+                                          }
+                                        },
+                                        "not": {
+                                          "not": {
+                                            "kind": "type_parameter"
+                                          }
+                                        },
+                                        "has": {
+                                          "regex": "^,$"
+                                        }
+                                      }
+                                    }
+                                  ]
                                 }
                               },
                               {
