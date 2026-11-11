@@ -374,7 +374,10 @@ export function gitText(cwd: string, args: readonly string[]): string | undefine
  * the checkout impossible to remove or rename for a moment.
  */
 export interface GitReadOptions {
-  /** Once aborted, the read kills its Git, or starts none, and answers as it does without Git. */
+  /**
+   * Once aborted, the read ends its Git with every process that Git started, as its timeout does ({@link settleWhenDone}),
+   * or starts none, and answers as it does past its timeout.
+   */
   signal?: AbortSignal | undefined;
 }
 
@@ -414,10 +417,7 @@ function readerGit(signal: AbortSignal | undefined): string | undefined {
   }
 }
 
-/**
- * Resolves once `child` has exited, or at once when it never started. An aborted read is answered before that: Node
- * reports the abort as an error as soon as it kills the process.
- */
+/** Resolves once `child` has exited, or at once when it never started. */
 async function exited(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
   const { promise, resolve: settle } = Promise.withResolvers<void>();
@@ -430,7 +430,8 @@ async function exited(child: ChildProcess): Promise<void> {
 
 /**
  * Trimmed stdout of a successful Git command run under `runGit`'s safe configuration without blocking; else undefined.
- * Settles once that Git has exited ({@link GitReadOptions}).
+ * Its timeout and `signal` end it as they end a batch read ({@link settleWhenDone}); it settles once that Git has exited
+ * ({@link GitReadOptions}).
  */
 async function gitOutput(cwd: string, args: readonly string[], signal: AbortSignal | undefined): Promise<string | undefined> {
   return (await gitStdout(cwd, args, signal))?.trim();
@@ -444,9 +445,12 @@ async function gitStdout(cwd: string, args: readonly string[], signal: AbortSign
   const child = execFile(
     executable,
     [...SAFE_CONFIG, "-C", cwd, ...args],
-    { encoding: "utf8", maxBuffer, timeout: DEFAULT_TIMEOUT_MS, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" }, signal },
-    (error, stdout) => settle(error === null ? stdout : undefined),
+    { encoding: "utf8", maxBuffer, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" } },
+    (error, stdout) => settle(error === null && signal?.aborted !== true ? stdout : undefined),
   );
+  // execFile's own `close` listener comes first and answers with the output; this one answers a Git that was ended and
+  // whose output stays open.
+  settleWhenDone(child, () => settle(undefined), { timeoutMs: DEFAULT_TIMEOUT_MS, signal });
   const [output] = await Promise.all([promise, exited(child)]);
   return output;
 }
@@ -699,38 +703,54 @@ export async function readGitBlobIds(cwd: string, revisions: readonly string[], 
   return ids;
 }
 
-/** How long a batch read waits for Git's output once its time is up and its process tree has been ended. */
+/** How long a read waits for Git's output to close once the Git it ended has exited. */
 const EXIT_DRAIN_MS = 500;
 
+/** What ends a Git read before its Git is done: its time limit, and the signal that stops the reads it belongs to. */
+interface ReadLimits {
+  readonly timeoutMs: number;
+  readonly signal: AbortSignal | undefined;
+}
+
 /**
- * Calls `settle` once `child` fails to start, its output closes, or {@link EXIT_DRAIN_MS} after `timeoutMs` ends it,
- * whichever comes first. On Windows the process Rerail starts can still be a launcher that runs the real Git as its own
- * child (a scoop shim, or Git for Windows' `cmd\git.exe` without its own git.exe beside it; {@link gitBehindLauncher}),
- * so the timeout ends the whole tree (`endProcessTree`): killing only the launcher left the real Git running in the
- * repository. Should the output stay open anyway, the answer does not wait for it. A Git that exits by itself is read
- * to the end of its output.
+ * Calls `settle` once `child` fails to start, its output closes, or {@link EXIT_DRAIN_MS} after it exits once ended,
+ * whichever comes first. `timeoutMs`, or `signal` once aborted, ends the whole process tree (`endProcessTree`), never
+ * the child alone: on Windows the process Rerail starts can still be a launcher that runs the real Git as its own child
+ * (a scoop shim, or Git for Windows' `cmd\git.exe` without its own git.exe beside it; {@link gitBehindLauncher}), and
+ * killing only the launcher left the real Git running in the repository. Node's own `signal` option kills the child
+ * alone, so it is not used. The real Git holds the output too, so the output closes once the whole tree has exited;
+ * should it stay open anyway, the answer does not wait for it. A Git that exits by itself is read to the end of its
+ * output; one a signal from elsewhere ended is waited for as one this ended.
  */
-function settleWhenDone(child: ChildProcess, settle: () => void, timeoutMs: number): void {
-  const drain = (): void => {
+function settleWhenDone(child: ChildProcess, settle: () => void, { timeoutMs, signal }: ReadLimits): void {
+  let ended = false;
+  const forget = (): void => {
     clearTimeout(timer);
+    signal?.removeEventListener("abort", end);
+  };
+  const drain = (): void => {
+    forget();
     setTimeout(() => {
       child.stdout?.destroy();
       settle();
     }, EXIT_DRAIN_MS).unref();
   };
-  const timer = setTimeout(() => {
-    endProcessTree(child);
-    drain();
-  }, timeoutMs);
+  const end = (): void => {
+    ended = true;
+    // A child that has exited has no tree left to reach, and its pid may name another process by now.
+    if (child.exitCode === null && child.signalCode === null) endProcessTree(child);
+    else drain();
+  };
+  const timer = setTimeout(end, timeoutMs);
+  signal?.addEventListener("abort", end, { once: true });
   const done = (): void => {
-    clearTimeout(timer);
+    forget();
     settle();
   };
   child.on("error", done);
   child.on("close", done);
-  // A Git a signal from elsewhere ended is waited for as one the timeout ended.
-  child.on("exit", (_code, signal) => {
-    if (signal !== null) drain();
+  child.on("exit", (_code, killedBy) => {
+    if (ended || killedBy !== null) drain();
   });
 }
 
@@ -754,10 +774,9 @@ async function streamGit(cwd: string, args: readonly string[], stream: GitStream
   const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
     env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
     stdio: ["pipe", "pipe", "ignore"],
-    signal: stream.signal,
   });
   child.stdout.on("data", stream.onData);
-  settleWhenDone(child, settle, stream.timeout ?? DEFAULT_TIMEOUT_MS);
+  settleWhenDone(child, settle, { timeoutMs: stream.timeout ?? DEFAULT_TIMEOUT_MS, signal: stream.signal });
   // Git exits before reading every line when it cannot start in `cwd`; what it answered before that is kept.
   child.stdin.on("error", () => undefined);
   child.stdin.end(stream.input);

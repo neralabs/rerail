@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, join } from "node:path";
@@ -13,6 +13,7 @@ import {
   gitInstalled, gitModifiedOrUntrackedPaths, GitReads, GitUnavailableError, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobIds,
   readGitBlobs, runGit, searchGitFrom,
 } from "../../src/engine/git.js";
+import { processState } from "../../src/engine/process-liveness.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
@@ -199,6 +200,51 @@ describe("GitReads", () => {
     const stopped = reads.stop().then(() => "stopped");
     await expect(Promise.race([stopped, delay(3_000, "still running", { ref: false })])).resolves.toBe("stopped");
     await expect(read).resolves.toEqual(new Map([["HEAD:./a.py", Buffer.from("1\n")]]));
+  });
+
+  /**
+   * A launcher, run with the file to write a pid to: it runs the real Git as its own child holding the output it was
+   * given, writes that child's pid, and waits for it, as Git for Windows' `cmd\git.exe` waits for the git.exe it starts.
+   * `detached` keeps the child out of the job object Node puts its children in, which would end it with the launcher;
+   * a launcher without one leaves its child running when it is killed.
+   */
+  const LAUNCHER = [
+    "const git = require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30_000)'], { stdio: 'inherit', windowsHide: true, detached: true });",
+    "require('node:fs').writeFileSync(process.argv[1], String(git.pid));",
+    "setTimeout(() => {}, 30_000);",
+  ].join(" ");
+
+  /** The pid in `file`, once a launcher has written it there. */
+  async function launchedGit(file: string): Promise<number> {
+    return await vi.waitFor(async () => {
+      const pid = Number(await readFile(file, "utf8"));
+      if (!(pid > 0)) throw new Error(`${file} holds no pid yet`);
+      return pid;
+    }, { timeout: 10_000, interval: 20 });
+  }
+
+  it.runIf(process.platform === "win32")("ends the Git behind a launcher with the launcher, and answers once both have exited", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    const pids = await mkdtemp(join(tmpdir(), "rerail-git-launched-"));
+    roots.push(pids);
+    const [headPid, blobsPid] = [join(pids, "head"), join(pids, "blobs")];
+    vi.mocked(execFile).mockImplementationOnce((_git, args, options, callback) =>
+      actualChildProcess.execFile(process.execPath, ["-e", LAUNCHER, "--", headPid, ...(args ?? [])], options, callback));
+    vi.mocked(spawn).mockImplementationOnce((_git, args, options) =>
+      actualChildProcess.spawn(process.execPath, ["-e", LAUNCHER, "--", blobsPid, ...args], options));
+    const reads = new GitReads();
+    const answers = Promise.all([
+      reads.run(signal => gitHead(root, { signal })),
+      reads.run(signal => readGitBlobs(root, ["HEAD:./a.py"], { maxBlobBytes: 1_000, timeout: 60_000, signal })),
+    ]);
+    const gits = await Promise.all([launchedGit(headPid), launchedGit(blobsPid)]);
+    await reads.stop();
+
+    // Each read settles only once its whole tree has exited, so neither Git is waited for here.
+    const running = gits.filter(pid => processState(pid) !== "gone");
+    for (const pid of running) process.kill(pid);
+    expect(running).toEqual([]);
+    await expect(answers).resolves.toEqual([undefined, new Map()]);
   });
 });
 
