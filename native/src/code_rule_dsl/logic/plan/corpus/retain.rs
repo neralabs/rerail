@@ -887,6 +887,22 @@ fn docs_of(source: &dyn Source) -> DocDigests {
     by
 }
 
+/// A view of one input's digest (`maintain::input_views`): never kept, its rows are a function of its input's, so
+/// its digest is its input's, mixed with its name. Its readers' frames record it as they record any read.
+fn view_digest(view: &str, input: u64) -> u64 {
+    use sha2::Digest as _;
+    let mut h = sha2::Sha256::new();
+    h.update(b"rerail.view-digest/v1\0");
+    h.update(view.as_bytes());
+    h.update(input.to_le_bytes());
+    u64::from_le_bytes(h.finalize()[..8].try_into().expect("8 bytes"))
+}
+
+/// Each view of one input, with its input.
+fn view_inputs(prog: &front::Program) -> HashMap<String, String> {
+    super::maintain::input_views(prog).into_iter().filter_map(|(v, r)| Some((v, r.body.first()?.atom()?.rel.clone()))).collect()
+}
+
 fn granule(doc: i64) -> i64 {
     1 + doc.rem_euclid(GRANULES)
 }
@@ -922,11 +938,16 @@ impl Retained {
             input_docs.insert(rel.clone(), Arc::clone(&docs));
             frames.inputs.insert(rel.clone(), (at.digest, docs));
         }
-        // In stratum order: a relation is current when each of its reads is as it was when it was derived.
+        // In stratum order: a relation is current when each of its reads is as it was when it was derived. A view of
+        // one input is current when its input is (`view_digest`).
+        let views = view_inputs(prog);
         for scc in &sccs {
             let current = scc.iter().all(|rel| {
                 let Some(at) = frames.names.get(rel).and_then(|n| stored.get(n)) else { return false };
-                at.reads.iter().all(|(read, d)| frames.inputs.get(read).map(|(i, _)| i == d).or_else(|| frames.derived.get(read).map(|(x, _)| x == d)).unwrap_or(false))
+                at.reads.iter().all(|(read, d)| {
+                    let view = || views.get(read).and_then(|i| frames.inputs.get(i)).map(|(i, _)| view_digest(read, *i) == *d);
+                    frames.inputs.get(read).map(|(i, _)| i == d).or_else(|| frames.derived.get(read).map(|(x, _)| x == d)).or_else(view).unwrap_or(false)
+                })
             });
             if current {
                 for rel in scc {
@@ -985,6 +1006,70 @@ impl Retained {
         Ok((rels, rows))
     }
 
+    /// The frames this part was read from, taken out: a run of rounds carries them from one round's part to the
+    /// next (`with_frames`), so a relation no round read stays in the store and is still held.
+    pub(in crate::code_rule_dsl) fn take_frames(&mut self) -> Option<InFrames> {
+        self.frames.take()
+    }
+
+    /// `frames` carried into this part, which `cut` made: a relation it derived again is held only as derived (its
+    /// stored rows are of the reads before), the others as stored.
+    pub(in crate::code_rule_dsl) fn with_frames(&mut self, mut frames: InFrames, cut: &Cut) {
+        frames.derived.retain(|rel, _| cut.clean.contains(rel) && !self.rels.contains_key(rel));
+        self.frames = Some(frames);
+    }
+
+    /// Whether the part knows input `rel`'s rows: bound by its run, or current in the frames.
+    pub(in crate::code_rule_dsl) fn has_input(&self, rel: &str) -> bool {
+        self.input_srcs.contains_key(rel) || self.frames.as_ref().is_some_and(|f| f.inputs.contains_key(rel))
+    }
+
+    /// Input `rel`'s rows, as bound or read back from the frames; with `docs`, only the rows of the documents it
+    /// takes (by the first column's document), and only their granules read.
+    pub(in crate::code_rule_dsl) fn read_input(&self, store: &ContentStore, prog: &front::Program, rel: &str, docs: Option<&dyn Fn(i64) -> bool>) -> Result<Option<Vec<Vec<i64>>>> {
+        let width = prog.decls.get(rel).map_or(0, Vec::len);
+        let take = |row: &[i64]| docs.is_none_or(|d| d(super::memo::document_of(row[0])));
+        if let Some(src) = self.input_srcs.get(rel) {
+            let all: Vec<usize> = (0..width).collect();
+            let mut out = Vec::new();
+            let mut row = vec![0i64; width];
+            for i in 0..src.len() {
+                src.row_at(i, &all, &mut row);
+                if width > 0 && take(&row) {
+                    out.push(row.clone());
+                }
+            }
+            return Ok(Some(out));
+        }
+        let Some(frames) = self.frames.as_ref() else { return Ok(None) };
+        let Some((_, by_doc)) = frames.inputs.get(rel) else { return Ok(None) };
+        if width == 0 {
+            return Ok(Some(vec![Vec::new(); by_doc.values().map(|(_, n)| *n as usize).sum()]));
+        }
+        let granules: BTreeSet<i64> = by_doc.keys().filter(|d| docs.is_none_or(|f| f(**d))).map(|d| granule(*d)).collect();
+        let _span = crate::code_rule_dsl::logic::profile::span(|| format!("{rel}: {} granules, from the frames", granules.len()));
+        let mut out = Vec::new();
+        for g in granules {
+            let Some(got) = store.frame_rows(&frames.space, &frames.names[rel], g).map_err(|e| Error::Plan(e.to_string()))? else {
+                return Err(Error::Plan(format!("{rel}: granule {g} of its stored rows is missing")));
+            };
+            out.extend(got.rows.chunks_exact(width.max(1)).take(got.n).filter(|r| take(r)).map(<[i64]>::to_vec));
+        }
+        Ok(Some(out))
+    }
+
+    /// Derived relation `rel`'s rows, as held or read back from the frames.
+    pub(in crate::code_rule_dsl) fn read_derived(&self, store: &ContentStore, rel: &str) -> Result<Option<Vec<Vec<i64>>>> {
+        if let Some(k) = self.rels.get(rel) {
+            let Some(flat) = k.rel.live_rows() else { return Ok(None) };
+            return Ok(Some(flat.chunks_exact(k.width.max(1)).map(<[i64]>::to_vec).collect()));
+        }
+        let Some(frames) = self.frames.as_ref().filter(|f| f.derived.contains_key(rel)) else { return Ok(None) };
+        let Some(got) = store.frame_rows(&frames.space, &frames.names[rel], DOCS_PART).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(None) };
+        let width = got.types.len();
+        Ok(Some(got.rows.chunks_exact(width.max(1)).take(got.n).map(<[i64]>::to_vec).collect()))
+    }
+
     /// What the frames held of this part before the run (`from_frames`).
     pub(in crate::code_rule_dsl) fn frames(&self) -> Option<&InFrames> {
         self.frames.as_ref()
@@ -1005,7 +1090,14 @@ impl Retained {
             let width = source.columns().len();
             let digest = digests.get(rel).copied().unwrap_or_else(|| digest(source.as_ref()));
             now.insert(rel.clone(), digest);
-            if width == 0 || was.inputs.get(rel).is_some_and(|(d, _)| *d == digest) {
+            if was.inputs.get(rel).is_some_and(|(d, _)| *d == digest) {
+                continue;
+            }
+            // A relation of no columns is its count: one document's entry, its digest the input's (`digest`).
+            if width == 0 {
+                let n = source.len() as u64;
+                let rows = vec![0, (digest ^ n.wrapping_mul(0xff51_afd7_ed55_8ccd)) as i64, n as i64];
+                puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest, reads: Vec::new(), rows: FrameRows { types: vec![b'i'; 3], n: 1, rows } });
                 continue;
             }
             let docs = self.input_docs.get(rel).cloned().filter(|d| digest_of_docs(d) == digest).unwrap_or_else(|| Arc::new(docs_of(source.as_ref())));
@@ -1037,9 +1129,17 @@ impl Retained {
             let rows: Vec<i64> = table.iter().flat_map(|(d, (s, n))| [*d, *s as i64, *n as i64]).collect();
             puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest, reads: Vec::new(), rows: FrameRows { types: vec![b'i'; 3], n: table.len(), rows } });
         }
+        let views = view_inputs(prog);
         for scc in &sccs {
-            let reads: Vec<String> = reads(prog, scc).into_iter().filter(|r| !scc.contains(r)).collect();
+            // A read with no frame (neither an input nor derived: the program's own facts) is the program's, which
+            // its key names: not a read whose rows can change.
+            let reads: Vec<String> = reads(prog, scc).into_iter().filter(|r| !scc.contains(r) && (was.names.contains_key(r) || views.contains_key(r))).collect();
             for rel in scc {
+                // A view is not kept; its readers record its digest, its input's (`view_digest`).
+                if let Some(d) = views.get(rel).and_then(|i| now.get(i)) {
+                    now.insert(rel.clone(), view_digest(rel, *d));
+                    continue;
+                }
                 let Some(name) = was.names.get(rel) else { continue };
                 if cut.clean.contains(rel) {
                     if let Some((d, _)) = was.derived.get(rel) {
