@@ -127,6 +127,16 @@ pub(in crate::code_rule_dsl) fn program_digest(program: &crate::code_rule_dsl::l
     digest
 }
 
+/// A local memo's stored statistics are a projection demanded by its consumers.
+/// Include the projection in the key so a wider consumer cannot reuse a narrower frame.
+pub(super) fn with_tree_demand(digest: [u8; 32], tree: bool) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.corpus-local-tree-demand/v1\0");
+    hash.update(digest);
+    hash.update([u8::from(tree)]);
+    hash.finalize().into()
+}
+
 /// `digest` with the run's options folded in: the key of a file-local part that reads them (`option_item`).
 pub(super) fn with_options(digest: [u8; 32], options: &serde_json::Value) -> [u8; 32] {
     let mut hash = Sha256::new();
@@ -240,12 +250,20 @@ pub(super) enum Found {
 impl Found {
     /// The entry, when it is the document's (`key`).
     pub(super) fn entry(&self, key: i64) -> StoreResult<Option<Entry>> {
-        Ok(match self {
-            Found::Held(e) => Some((**e).clone()),
-            Found::Frame(f) => Some(decode(&f.bytes()?)?),
-        }
-        .filter(|e| e.key == key))
+        self.projected(key, &|_| true)
     }
+
+    /// Decode only demanded relations. Skipped payloads are validated but never allocated or copied.
+    pub(super) fn projected(&self, key: i64, keep: &dyn Fn(&str) -> bool) -> StoreResult<Option<Entry>> {
+        let entry = match self {
+            Found::Held(e) => Entry { key: e.key, nodes: e.nodes,
+                rows: e.rows.iter().filter(|(r, _)| keep(r)).map(|(r, v)| (r.clone(), v.clone())).collect(),
+                lines: e.lines.clone() },
+            Found::Frame(f) => decode_projected(&f.bytes()?, keep)?,
+        };
+        Ok(Some(entry).filter(|e| e.key == key))
+    }
+
 }
 
 /// `lookup_all`, each entry found and not decoded: one statement whatever the documents' number.
@@ -562,13 +580,18 @@ fn encode(entry: &Entry) -> Vec<u8> {
 }
 
 fn decode(bytes: &[u8]) -> StoreResult<Entry> {
+    decode_projected(bytes, &|_| true)
+}
+
+fn decode_projected(bytes: &[u8], keep: &dyn Fn(&str) -> bool) -> StoreResult<Entry> {
     struct Reader<'a> {
         bytes: &'a [u8],
         at: usize,
     }
     impl<'a> Reader<'a> {
         fn take(&mut self, n: usize) -> StoreResult<&'a [u8]> {
-            let slice = self.bytes.get(self.at..self.at + n).ok_or_else(|| StoreError::Invalid("a corpus memo entry is truncated".into()))?;
+            let end = self.at.checked_add(n).ok_or_else(|| StoreError::Invalid("a corpus memo length overflows".into()))?;
+            let slice = self.bytes.get(self.at..end).ok_or_else(|| StoreError::Invalid("a corpus memo entry is truncated".into()))?;
             self.at += n;
             Ok(slice)
         }
@@ -587,11 +610,12 @@ fn decode(bytes: &[u8]) -> StoreResult<Entry> {
         let rel = r.text()?;
         let width = r.u64()? as usize;
         let n = r.u64()? as usize;
-        let mut values = Vec::with_capacity(n);
-        for _ in 0..n {
-            values.push(i64::from_le_bytes(r.take(8)?.try_into().expect("8 bytes")));
+        let size = n.checked_mul(8).ok_or_else(|| StoreError::Invalid("a corpus memo length overflows".into()))?;
+        let bytes = r.take(size)?;
+        if keep(&rel) {
+            let values = bytes.chunks_exact(8).map(|b| i64::from_le_bytes(b.try_into().expect("8 bytes"))).collect();
+            entry.rows.insert(rel, (width, values));
         }
-        entry.rows.insert(rel, (width, values));
     }
     for _ in 0..r.u64()? {
         let rel = r.text()?;
@@ -608,6 +632,26 @@ fn decode(bytes: &[u8]) -> StoreResult<Entry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn projection_preserves_outputs_and_validates_skipped_payloads() {
+        let mut entry = Entry { key: 5, nodes: 100, ..Entry::default() };
+        entry.rows.insert("wanted".into(), (2, vec![5,9]));
+        entry.rows.insert("unused".into(), (2, vec![1;2000]));
+        entry.lines.insert("diagnostic".into(), (vec![0], vec!["5\tbad".into()]));
+        let keep = |r: &str| r == "wanted";
+        let bytes = encode(&entry);
+        let projected = decode_projected(&bytes, &keep).unwrap();
+        assert_eq!(projected.rows.len(),1);
+        assert_eq!(projected.rows["wanted"],entry.rows["wanted"]);
+        assert_eq!(projected.lines,entry.lines);
+        assert_eq!(projected.nodes,100);
+        let held = Found::Held(std::sync::Arc::new(entry));
+        assert_eq!(held.projected(5,&keep).unwrap(),Some(projected));
+        assert!(held.projected(6,&keep).unwrap().is_none());
+        assert!(decode_projected(&bytes[..100],&keep).is_err(),"a truncated unused payload is still corrupt");
+        assert_ne!(with_tree_demand([0;32],false),with_tree_demand([0;32],true),"wider consumers cannot hit narrower frames");
+    }
 
     #[test]
     fn an_entry_round_trips_and_keys_are_stable() {

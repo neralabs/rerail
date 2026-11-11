@@ -2425,6 +2425,11 @@ fn run_observed(
         }
         stored.push((rel.clone(), named.iter().map(|c| (*c).to_owned()).collect()));
     }
+    // Decide after projection planning: the split's base list can still contain unused inputs.
+    // This changes the local frame's identity, not the cross-file program's semantic identity.
+    let memo_tree_stats = !stored.is_empty() || cross.program.rules.iter().flat_map(|r| &r.body)
+        .any(|l| matches!(l, front::Literal::Nearest { .. }));
+    let memo_program = memo::with_tree_demand(memo_program, memo_tree_stats);
     // The run holds its memo plan and the sources it reads until its manifest names them (O95): a collector running
     // meanwhile would otherwise take the rows this run writes, or the sources they and its tapes are of.
     let _held = match memo {
@@ -2835,6 +2840,12 @@ fn run_observed(
     let mut waves = Some(crate::code_rule_dsl::logic::profile::waves());
     // A file's memo entry when the run is memoised and the memo has it, else its document, built. An entry
     // without the base rows this run's cross-file part reads is a miss.
+    let memo_rows: BTreeSet<String> = split.exports.iter().cloned()
+        .chain(stored.iter().map(|(r, _)| memo::base_key(r))).collect();
+    let memo_row_needed = |r: &str| r == OWN_DOCS || memo_rows.contains(r)
+        || (memo_tree_stats && (r == OWN_KINDS || r == OWN_EDGES || r.starts_with(OWN_POSTINGS)));
+    crate::code_rule_dsl::logic::profile::decision("memo consumer projection", || format!(
+        "{} demanded relations; tree distributions {}", memo_rows.len(), if memo_tree_stats { "retained" } else { "omitted" }));
     let has_base = |e: &memo::Entry| e.rows.contains_key(OWN_DOCS) && stored.iter().all(|(rel, _)| e.rows.contains_key(&memo::base_key(rel)));
     // A window's files resolved together: as found before the first wave, or (a load's) looked up now. A hit's
     // entry is decoded here; a miss's file is read here, and is a new content if it changed since it was found.
@@ -2867,7 +2878,7 @@ fn run_observed(
                 let b = b.expect("every file looked up");
                 if let (true, Some(found)) = (memoised, b.found) {
                     let _decode = crate::code_rule_dsl::logic::profile::span(|| "memo decode".into());
-                    if let Some(entry) = found.entry(*d).map_err(|e| Error::Plan(e.to_string()))?.filter(|e| has_base(e)) {
+                    if let Some(entry) = found.projected(*d, &memo_row_needed).map_err(|e| Error::Plan(e.to_string()))?.filter(|e| has_base(e)) {
                         return Ok((b.content, Ok(entry)));
                     }
                 }
@@ -3355,33 +3366,8 @@ fn run_observed(
                 format!("{} entries replayed, {:.1} MB of values", hits.len(), values as f64 * 8.0 / 1e6)
             });
             db.execute_batch("BEGIN")?;
-            // The planner's tree counts for the files read from the memo (decision 0063): a chunk mix's measured
-            // counts, scaled by the hits' nodes, as an evaluated chunk's are. Without them a run read whole from the
-            // memo plans its cross-file part with no kinds (every `kind(n, "identifier")` looks empty), and a
-            // join can start from a cross product of two kinds.
-            // Hits come in batches that cross chunks, so they are grouped by file type, and each group takes the
-            // counts of its own mix, else of a mix of its types, else of any mix measured under this program.
-            if own {
-                let mut groups: BTreeMap<&str, Vec<(&str, usize)>> = BTreeMap::new();
-                for (path, e, _) in &hits {
-                    let name = path.rsplit('/').next().unwrap_or(path);
-                    groups.entry(name.rsplit_once('.').map_or("", |(_, ext)| ext)).or_default().push((path.as_str(), e.nodes as usize));
-                }
-                for (ext, files) in groups {
-                    let hit_nodes: usize = files.iter().map(|(_, n)| n).sum();
-                    let mix = chunk_mix(files.into_iter());
-                    let keys = [mix.clone(), format!("types/{ext}"), "any".to_owned()];
-                    let found = keys.iter().find_map(|k| {
-                        own_once.get(k).cloned().or_else(|| own_counts(store, &memo_program, k, &mut own_sources)).filter(|(first, _)| *first > 0)
-                    });
-                    match found {
-                        Some((first, measured)) => own_totals.add(&measured.scaled(hit_nodes as f64 / first as f64)),
-                        None => {
-                            memo_why.insert(format!("no tree counts for the memo hits' mix {mix}: the cross-file part plans without them"));
-                        }
-                    }
-                }
-            }
+            // Each accepted frame contains its own statistics. Do not also add a scaled chunk estimate:
+            // that counted the same warm files twice, and loaded statistics no consumer requested.
             // Each export's rows over the batch, as columns, in two parts: a hit's rows of its own document, which
             // no other file's entry holds, are appended to the export unchecked (`Exports::append_own`); the others
             // (a value document's, kept by each file that asked for it) are kept once, through the export's set.
@@ -3405,9 +3391,8 @@ fn run_observed(
                 nodes += entry.nodes as usize;
                 // Its tree counts and base rows are the keeper's too, when counted.
                 if !counted {
-                    let own = Own::taken(&entry.rows);
-                    own_totals.add(&own);
-                    own_seen.add(&own);
+                    own_totals.add_rows(&entry.rows);
+                    if keeper.borrow().is_some() { own_seen.add_rows(&entry.rows); }
                 }
                 for (rel, names) in stored.iter().filter(|_| !counted) {
                     let Some((width, values)) = entry.rows.get(&memo::base_key(rel)) else { continue };
@@ -3694,7 +3679,12 @@ fn run_observed(
         if let (true, Some(chunk)) = (attributable, &chunk_own) {
             // Each document's share of the chunk's tree statistics, by its nodes, as a chunk mix is scaled.
             for entry in entries.values_mut() {
-                chunk.scaled(entry.nodes as f64 / chunk_nodes_built.max(1) as f64).put(&mut entry.rows);
+                let share = entry.nodes as f64 / chunk_nodes_built.max(1) as f64;
+                if memo_tree_stats {
+                    chunk.scaled(share).put(&mut entry.rows);
+                } else {
+                    entry.rows.insert(OWN_DOCS.into(), (1, vec![((chunk.docs as f64 * share).round() as i64).max(1)]));
+                }
             }
         }
         if memoised {
@@ -4405,7 +4395,12 @@ fn run_observed(
     let applying = crate::code_rule_dsl::logic::profile::span(|| "apply the chunks' totals".into());
     let mut cross_stats = t_stats;
     if own {
-        own_totals.apply(&mut cross_stats);
+        if memo_tree_stats {
+            own_totals.apply(&mut cross_stats);
+        } else {
+            cross_stats.nodes = nodes as f64;
+            cross_stats.docs = Some(own_totals.docs);
+        }
     }
     totals.apply(&mut cross_stats);
     // Applied: the chunks' per-value counts are not read again.
@@ -5707,6 +5702,27 @@ fn constants_tested(prog: &front::Program) -> HashMap<&str, BTreeSet<(usize, i64
             }
         }
     }
+    // A consumer may test a projection, while statistics are collected on its source. Propagate those
+    // demands through single-atom projections before counting. A worklist also handles alias chains/cycles.
+    let mut projections: HashMap<(&str, usize), Vec<(&str, usize)>> = HashMap::new();
+    for rule in &prog.rules {
+        let [front::Literal::Atom(a)] = rule.body.as_slice() else { continue };
+        if a.neg { continue; }
+        for (hc, term) in rule.head.args.iter().enumerate() {
+            let front::Term::Var(v) = term else { continue };
+            for (bc, arg) in a.args.iter().enumerate() {
+                if matches!(arg, front::Term::Var(x) if x == v) {
+                    projections.entry((&rule.head.rel, hc)).or_default().push((&a.rel, bc));
+                }
+            }
+        }
+    }
+    let mut queue: Vec<(&str, usize, i64)> = by.iter().flat_map(|(r, cols)| cols.iter().map(move |(c, v)| (*r, *c, *v))).collect();
+    while let Some((rel, col, value)) = queue.pop() {
+        for &(source, at) in projections.get(&(rel, col)).into_iter().flatten() {
+            if by.entry(source).or_default().insert((at, value)) { queue.push((source, at, value)); }
+        }
+    }
     by
 }
 
@@ -6643,6 +6659,20 @@ impl Own {
         }
     }
 
+    /// Add a frame directly to the run's totals. No per-file maps are reconstructed.
+    fn add_rows(&mut self, rows: &BTreeMap<String, (usize, Vec<i64>)>) {
+        let flat = |key: &str| rows.get(key).map(|(_, v)| v.as_slice()).unwrap_or_default();
+        for r in flat(OWN_KINDS).chunks_exact(3) {
+            let k = self.kinds.entry(r[0]).or_default(); k.0 += r[1]; k.1 += r[2];
+        }
+        for r in flat(OWN_EDGES).chunks_exact(3) { *self.edges.entry((r[0], r[1])).or_default() += r[2]; }
+        self.docs += flat(OWN_DOCS).first().copied().unwrap_or(0);
+        for (key, (_, values)) in rows.range(OWN_POSTINGS.to_owned()..).take_while(|(k, _)| k.starts_with(OWN_POSTINGS)) {
+            let Some((rel, col)) = key[OWN_POSTINGS.len()..].split_once(':') else { continue };
+            for r in values.chunks_exact(2) { *self.postings.entry((rel.into(), col.into(), r[0])).or_default() += r[1]; }
+        }
+    }
+
     /// From a memo entry's rows (`put`).
     fn taken(rows: &BTreeMap<String, (usize, Vec<i64>)>) -> Own {
         let mut own = Own::default();
@@ -6671,6 +6701,30 @@ impl Own {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn constant_demands_reach_projected_input_columns() {
+        let p=crate::code_rule_dsl::logic::rr::parse(".decl raw(d:number,n:number,k:number)\n.input raw\n.decl tags(n:number,k:number)\ntags(n,k) :- raw(_,n,k).\n.decl alias(n:number,k:number)\nalias(n,k) :- tags(n,k).\n.decl out(n:number)\nout(n) :- alias(n,9).\n").unwrap();
+        let demands=super::constants_tested(&p);
+        assert!(demands["alias"].contains(&(1,9)));
+        assert!(demands["tags"].contains(&(1,9)));
+        assert!(demands["raw"].contains(&(2,9)),"measure the actual source column before planning its consumers");
+    }
+
+    #[test]
+    fn memo_tree_statistics_accumulate_once_without_per_file_maps() {
+        use super::*;
+        let mut first = Own::default();
+        first.kinds.insert(1,(10,20)); first.edges.insert((1,2),5); first.docs=1;
+        first.postings.insert(("kind".into(),"k".into(),1),10);
+        let mut rows=BTreeMap::new(); first.put(&mut rows);
+        let mut totals=Own::default(); totals.add_rows(&rows); totals.add_rows(&rows);
+        assert_eq!(totals.kinds[&1],(20,40)); assert_eq!(totals.edges[&(1,2)],10);
+        assert_eq!(totals.docs,2); assert_eq!(totals.postings.values().sum::<i64>(),20);
+        let projected=BTreeMap::from([(OWN_DOCS.into(),(1,vec![1]))]);
+        let mut narrow=Own::default(); narrow.add_rows(&projected);
+        assert_eq!(narrow.docs,1); assert!(narrow.kinds.is_empty()); assert!(narrow.edges.is_empty());
+    }
 
     /// Phase 0 alone over `RERAIL_P0_ROOT`: the corpus's files (from Git in a Git work tree, else the walk) and
     /// every Python document's digest, with the observer's counts and the CPU. Run it twice for the warm figure; the
