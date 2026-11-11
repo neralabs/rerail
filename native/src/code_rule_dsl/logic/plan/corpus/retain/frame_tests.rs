@@ -10,7 +10,7 @@ fn fixture(store: &ContentStore, count: usize) -> (front::Program, HashMap<Strin
         text += &format!(".decl input{i}(x:number)\n.input input{i}\n.decl result{i}(x:number)\nresult{i}(x) :- input{i}(x).\n");
     }
     let prog = rr::parse(&text).unwrap();
-    let empty = Retained::from_frames(store, SPACE, KEY, &prog).unwrap();
+    let empty = Retained::from_frames(store, SPACE, KEY, &prog, &HashMap::new()).unwrap();
     let frames = empty.frames.unwrap();
     let mut puts = Vec::new();
     let mut now = HashMap::new();
@@ -51,7 +51,7 @@ fn k4_admission_batches_input_digests_derived_rows_and_mixed_granules() {
     profile::reset(); profile::set(true);
     let wave = profile::waves();
     let span = profile::span(|| "bulk K4 admission".into());
-    let mut kept = Retained::from_frames(&store, SPACE, KEY, &prog).unwrap();
+    let mut kept = Retained::from_frames(&store, SPACE, KEY, &prog, &HashMap::new()).unwrap();
     let cut = cut(Some(&kept), KEY, &prog, &changed).unwrap();
     kept.load(&store, &cut, &prog).unwrap();
     assert_eq!(kept.input_srcs.len(), 131);
@@ -74,7 +74,7 @@ fn k4_rejects_a_derived_frame_replaced_after_metadata_admission() {
     let dir=tempfile::tempdir().unwrap();
     let store=ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
     let (prog,now,frames)=fixture(&store,1);
-    let mut kept=Retained::from_frames(&store,SPACE,KEY,&prog).unwrap();
+    let mut kept=Retained::from_frames(&store, SPACE, KEY, &prog, &HashMap::new()).unwrap();
     let changed=now.iter().map(|(r,d)|(r.clone(),d.wrapping_add(1))).collect();
     let cut=cut(Some(&kept),KEY,&prog,&changed).unwrap();
     store.keep_frames(&SPACE,&[FramePut{rel:frames.names["result0"].clone(),part:0,digest:99,reads:vec![],
@@ -89,7 +89,7 @@ fn k4_rejects_an_input_granule_replaced_after_its_digest_was_admitted() {
     let dir=tempfile::tempdir().unwrap();
     let store=ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
     let (prog,now,frames)=fixture(&store,1);
-    let mut kept=Retained::from_frames(&store,SPACE,KEY,&prog).unwrap();
+    let mut kept=Retained::from_frames(&store, SPACE, KEY, &prog, &HashMap::new()).unwrap();
     let changed=now.iter().map(|(r,d)|(r.clone(),d.wrapping_add(1))).collect();
     let cut=cut(Some(&kept),KEY,&prog,&changed).unwrap();
     // Granule headers have no content digest. Validate the rows against the admitted per-document digests.
@@ -127,7 +127,7 @@ fn failed_k4_admission_makes_a_clean_consumer_run_again() {
     let extra = rr::parse(".decl consumer(x:number)\nconsumer(x) :- result0(x), x > 0.\n").unwrap();
     prog.decls.extend(extra.decls);
     prog.rules.extend(extra.rules);
-    let mut kept = Retained::from_frames(&store, SPACE, KEY, &prog).unwrap();
+    let mut kept = Retained::from_frames(&store, SPACE, KEY, &prog, &HashMap::new()).unwrap();
     let initial = cut(Some(&kept), KEY, &prog, &now).unwrap();
     // Input views are recomputed; force the result's existing payload to be required, as a dirty reader does.
     let demanded = Cut { clean: BTreeSet::from(["result0".into()]), strata: initial.strata, changed: vec![] };

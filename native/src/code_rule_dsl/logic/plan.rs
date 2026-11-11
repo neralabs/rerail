@@ -2351,16 +2351,20 @@ impl Model {
                                 .then(|| (v.clone(), dv.clone()))
                         });
                         let (v, dv) = found.ok_or_else(|| Error::Plan(format!("no document for the range read of {l}")))?;
-                        // A document's nodes are `d << 32 | index` (`stat_docrange` held these intervals): the range
-                        // is `d`'s, computed, so no table of documents is read or made.
-                        let d = sql_term(&dv, &env, atoms)?;
-                        let lo = bin(Op::Multiply, d, integer(1 << 32));
                         let rc = l.args.iter().position(|t| matches!(t, Term::Var(x) if *x == v)).expect("the range column");
-                        conds.push(Expr::Between {
-                            input: Box::new(col(&al, &self.col(&l.rel, rc))),
-                            low: Box::new(lo.clone()),
-                            high: Box::new(bin(Op::Add, lo, integer(0xffff_ffff))),
-                        });
+                        let (low, high) = if self.docs_by_shift {
+                            // A document's nodes are `d << 32 | index`: the interval is computed, no table read or
+                            // made (decision 0104). T's facts number nodes in preorder over the corpus: there the
+                            // intervals are `stat_docrange`'s.
+                            let lo = bin(Op::Multiply, sql_term(&dv, &env, atoms)?, integer(1 << 32));
+                            (lo.clone(), bin(Op::Add, lo, integer(0xffff_ffff)))
+                        } else {
+                            let ra = a_name();
+                            let range = FromItem::cross(Relation::DocRange { schema: self.inputs.stats.clone() }, ra.clone());
+                            frm.push((range, vec![eq(col(&ra, "d"), sql_term(&dv, &env, atoms)?)]));
+                            (col(&ra, "lo"), col(&ra, "hi"))
+                        };
+                        conds.push(Expr::Between { input: Box::new(col(&al, &self.col(&l.rel, rc))), low: Box::new(low), high: Box::new(high) });
                     }
                     for (c, t) in l.args.iter().enumerate() {
                         let column = col(&al, &self.col(&l.rel, c));
@@ -3627,7 +3631,8 @@ impl<'a> Run<'a, '_> {
                 let named = |n: &String| sql_names(&create, &crate::code_rule_dsl::logic::sql::ident(n));
                 let views: Vec<String> = self.pending.keys().filter(|n| named(n)).cloned().collect();
                 self.ensure(&views)?;
-                let held: Vec<String> = self.native_rels.iter().filter(|n| named(n)).cloned().collect();
+                // Not `r` itself: its own table's statement names it, and it is moved there once the table is made.
+                let held: Vec<String> = self.native_rels.iter().filter(|n| *n != r && named(n)).cloned().collect();
                 self.materialize(&held)?;
                 self.db.execute_batch(&create)?;
             }
@@ -5714,7 +5719,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         // The composed query is one statement over every needed rule. Where SQLite cannot prepare it (a relation it
         // reads that only the engine holds, or SQLite's limits on a statement's references and nesting), the program
         // runs by strata instead, as one the composer does not accept does: composition is a plan, not a semantics.
-        let plan=compose::planned(prog,db,inputs.clone())?;
+        let plan=compose::planned(prog,db,&mut inputs.clone())?;
         if let Err(e)=db.prepare_cached(&plan.sql) {
             super::profile::decision("composed relational query", || format!("declined: SQLite cannot prepare it ({e}); the program runs by strata"));
             if let Some(unload)=hooks.unload.as_deref_mut(){unload(&reads)?;}
