@@ -1,6 +1,8 @@
 # 0113: Strata issued from a scoreboard: merged into components first, then run in parallel on the one executor
 
-Status: draft (2026-11-11), a proposal; nothing here is built. It builds on 0100 (one executor, levels as
+Status: draft (2026-11-11); steps 1–5 built in a first form (2026-11-11, `logic::plan::issue`, `accel::stream`),
+step 6 in part. What is built, measured, and where it departs from the text below is in **Built so far** at the
+end. It builds on 0100 (one executor, levels as
 batches, claims, one pool) and takes up two items 0100 and 0101 left open: 0100 step 6's queued shape for parallel
 strata, and 0101 §3's merged component.
 
@@ -281,3 +283,52 @@ wall, and check the 1-file and 10-file findings against the serial run.
   Moving a whole component to the GPU is 0027's and 0100's to decide.
 - **SQL strata in parallel.** They stay on the run's thread, with its connection. A connection per thread is a
   separate design.
+
+## Built so far (2026-11-11)
+
+**What runs.** The strata loop is the retire loop. Beside it, `plan::issue::Board`:
+
+- keeps the scoreboard of §1, as pending counts and readers by stratum;
+- at each stratum the loop reaches, packs the ready strata from there on into components (§2): ready strata in
+  program order plus chains through the component's own members, up to *k* = 8 fixed costs or 64 members;
+- sends the components' count tables and seed joins as one device batch (step 6, for the issued set);
+- submits each component to the executor's host stream (§3) with its estimate.
+
+A component retires at its first member's position. Its members run in order on one strand: a `Run` over a fork
+of the run's model (`Model::fork`), holding the statistics of the relations it reads, the run's scope, and no
+connection. Members that wait on their device wave share one wave.
+
+**The host stream** (`accel::stream`) claims largest first and scores each job on the executor's scoreboard. It
+starts workers only while the queued estimate per worker is above the measured floor and the cores leave a
+thread. The waiter runs its own job if no one claimed it. A job never runs inside another on one thread.
+
+**Switches.** `RERAIL_STRANDS=off` gives the serial loop. `RERAIL_STRATA_PARALLEL=off` runs components at
+their retire. `RERAIL_STRATA_MERGE=off` gives one stratum per component.
+
+**Measured.** O125 replay, steps 1–8, profiling build, load average 21–47 (wall time is not comparable):
+
+| | same as full | instructions retired | user + sys |
+|---|---|---|---|
+| strands off | 8 of 8 | 576.6 G | 35.8 s |
+| merged, run at retire | 8 of 8 | 620.0 G | 41.1 s |
+| merged, parallel | 8 of 8 | 579.5 G (+0.5%) | 43.5 s |
+
+Components: 6,628 for 10,700 strata issued, of which 43 ran on the loop's thread after all. The parallel gate
+on instructions (within 1%) holds. The merging gate does not: about 1.6 strata per component, and no fixed work
+is shared yet beyond the fork and the scope's prime.
+
+**Departures, and what is left.**
+
+- **The interner overlay (§4) is not built.** A component gives out no new atom (`atoms::held_only`). A member
+  that would make one stops, and runs in order on the run's thread. So atom ids are the serial run's, and no
+  commit meets another thread's pending atoms (0049). The cost is that strata which make strings run serially.
+- **Sessions are not issued:** a run with kept strata, strata derived again, or deferred deltas runs serially.
+  Nor are answered requests, native operators, lattices, facts, `Ast` literals, or the relational lab.
+- **Shared work per component** (one plan cache entry, one open of the fixpoint space) is not built. Each member
+  still opens and plans alone. That and the low merge ratio are step 2's CPU gain, still open.
+- **Device batches go per component** for waves (members share one). Count tables and seed joins go per issued
+  set.
+- **Estimates** are the fixed cost plus 20 ns per row read, not the cost model's prices (0100 §14).
+- **Not yet measured:** wall time at 10, 50, 100 and 300 files on a quiet machine, and the 1-file and 10-file
+  findings.
+
