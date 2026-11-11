@@ -11,6 +11,7 @@ def main():
     from migration import ROOT  # Also locates the existing source recorder.
     import data_layer_record as recording
     recording.ADAPTERS += (('hnsw_architecture', 'find_hnsw_architecture_findings', 'files'),
+                           ('generated_index_sources', 'check_file', 'file'),
                            ('backend_type_strings', 'should_skip_file', 'backend_helper'),
                            ('backend_type_strings', 'find_python_files', 'backend_helper'),
                            ('error_handling', 'scan_file_content', 'error_file'),
@@ -38,6 +39,9 @@ def main():
     recording.snapshot = input_snapshot
     original_normalize = recording.normalize
     def result_snapshot(check, entry, result, root, files):
+        if check == 'generated_index_sources':
+            from generated_indexes_port import normalize
+            return normalize(result, root)
         if check == 'backend_type_strings' and entry in {'should_skip_file', 'find_python_files'}:
             return []  # Helpers return values, not detector findings; sourceResult keeps the full value.
         if check == 'error_handling':

@@ -26,6 +26,7 @@ sys.path.insert(0, str(ROOT / 'scripts/dsl/data_layer_audit'))
 from native_guard import codes, bind_aliases
 
 ENTRIES = {
+    'generated_index_sources': ['check_file'],
     'removed_compat_surfaces': ['scan_file'],
     'versioned_lifecycle_legacy_surfaces': ['scan_file', 'scan_file_content'],
     'no_source_inspection': ['find_violations', 'scan_file_content'],
@@ -177,6 +178,8 @@ class Suite:
                            originalRetainedReason=original.get('retained_reason'))
         self.observations.append(observation)
         from data_layer_record import ADAPTERS, snapshot, normalize
+        if check == 'generated_index_sources':
+            from generated_indexes_port import normalize
         if check=='plan_scope_ownership':
             from plan_ownership_port import snapshot
             files,scope,root=snapshot(module,entry,args,kwargs)
