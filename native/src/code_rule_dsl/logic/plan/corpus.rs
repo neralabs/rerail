@@ -1371,7 +1371,8 @@ pub(in crate::code_rule_dsl) static SESSION_TESTS: std::sync::Mutex<()> = std::s
 /// The store the corpus runner keeps tapes in: `RERAIL_TAPE_CACHE`, else one in the temporary
 /// directory; `RERAIL_TAPE_CACHE=off` keeps none.
 pub(in crate::code_rule_dsl) fn tape_cache() -> std::result::Result<Option<ContentStore>, crate::content_store::StoreError> {
-    tape_cache_path().map(|path| ContentStore::open(&path)).transpose()
+    // A session opens it at every step: its schema is checked at the process's first open (`open_again`).
+    tape_cache_path().map(|path| ContentStore::open_again(&path)).transpose()
 }
 
 /// Runs `f` with phase 0's observer (`content_store::observe`), kept beside the tape cache (`<tape cache>.files`), or
@@ -1397,6 +1398,12 @@ pub(in crate::code_rule_dsl) fn observe<T>(f: impl FnOnce(&mut crate::content_st
         std::path::PathBuf::from(format!("{}.thread{thread}", p.display()))
     });
     crate::content_store::observe::with(store.as_deref(), f)
+}
+
+/// Closes a run's connection on a thread of its own: its close frees what the process kept for it (the bound
+/// sources, the engine's relations: `vtab::connection_scope`), which is no step's work. Idle, it holds no lock.
+fn close_beside(db: Connection) {
+    let _ = std::thread::Builder::new().name("rerail-close".into()).spawn(move || drop(db));
 }
 
 /// The path `tape_cache` opens (`None`: `RERAIL_TAPE_CACHE=off`).
@@ -1864,8 +1871,9 @@ fn run_observed(
     // `shortlex_min<>` orders the run's symbols by their text: the store's atoms (decision 0108).
     crate::code_rule_dsl::logic::native::declare("shortlex_min", Arc::new(crate::code_rule_dsl::logic::native::ShortlexMin(store.atoms_handle())));
     let db = Connection::open(&path)?;
-    // The run's databases are scratch, made again by every run (removed above): a commit need not reach the disk.
-    db.execute_batch("PRAGMA synchronous=OFF")?;
+    // The run's databases are scratch, made again by every run (removed above): a commit need not reach the disk. Set
+    // when SQL first runs on it (`vtab::setup_now`).
+    crate::code_rule_dsl::facts::vtab::defer_setup(&db, "PRAGMA synchronous=OFF;");
     let statements = Statements::on(&db);
     statements.enter("stats");
     // The program as this run prepares it, kept for the process (`Prepared`): a session or a test running one program
@@ -3550,7 +3558,7 @@ fn run_observed(
                         // Under its mix, its types, and as the program's last measured mix (a hit's fallbacks).
                         let types = mix.split('/').next().unwrap_or_default();
                         for key in [mix.clone(), format!("types/{types}"), "any".to_owned()] {
-                            record_own_counts(store, &memo_program, &key, chunk_nodes_built, &measured, &mut own_sources)?;
+                            record_own_counts(store, &memo_program, &key, chunk_nodes_built, &measured, &late_sources);
                         }
                     }
                     measured
@@ -4069,8 +4077,10 @@ fn run_observed(
         let modes = modes.to_owned();
         let cone = crate::threads::beside("the cone of requests", move || -> Result<(Vec<(String, Vec<Vec<i64>>)>, Option<(usize, usize)>)> {
             let db2 = Connection::open(&db_path)?;
-            db2.execute_batch("PRAGMA synchronous=OFF")?;
-            db2.execute("ATTACH ?1 AS x", [x_path.to_string_lossy()])?;
+            let statements = Statements::on_as(&db2, ".cone");
+            statements.enter("cone");
+            // When SQL first runs on it (`vtab::setup_now`), as the run's.
+            crate::code_rule_dsl::facts::vtab::defer_setup(&db2, &format!("PRAGMA synchronous=OFF; ATTACH '{}' AS x;", x_path.to_string_lossy().replace('\'', "''")));
             super::docs_by_shift(&db2);
             crate::code_rule_dsl::logic::native::register(&db2)?;
             crate::code_rule_dsl::logic::native::register_symbols(&db2)?;
@@ -4115,6 +4125,8 @@ fn run_observed(
             for rel in &kept_in {
                 out.push((rel.clone(), held_rows(&db2, &got, rel, decls[rel].len())?));
             }
+            drop(statements);
+            close_beside(db2);
             Ok((out, cone_strata))
         });
         // The answers turn request atoms back into text, warm runs included (nothing else registers them then).
@@ -4641,7 +4653,7 @@ fn run_observed(
         let mut rows = Vec::new();
         for r in held_rows(&db, &got, cross_memo::COMPONENT, 3)? {
             if !keys.contains_key(&r[2]) {
-                let text: String = db.query_row("SELECT sym_text(?1)", [r[2]], |row| row.get(0))?;
+                let text = crate::code_rule_dsl::logic::native::symbol_text(&db, r[2])?;
                 keys.insert(r[2], text);
             }
             rows.push((r[0], r[1], keys[&r[2]].clone()));
@@ -5688,11 +5700,10 @@ fn run_observed(
     phases.insert(2, ("batch (worker)", batch_cpu.0, batch_cpu.1, rss, 0));
     let (tested, text_cpu) = *vocabulary.tested.lock().unwrap();
     drop(statements);
-    // The run's atoms are written at its end (decision 0049 §4.3), and the profile says how often they were.
-    {
-        let _s = crate::code_rule_dsl::logic::profile::span(|| "the run's atoms written".into());
-        store.flush_atoms().map_err(|e| Error::Plan(e.to_string()))?;
-    }
+    // The run's atoms are written at its end (decision 0049 §4.3), behind the run as any write (decision 0102): every
+    // queued write that names an atom appends the pending atoms before it commits, so this writes those no later
+    // write did. The profile says how often they were.
+    store.write_back("the run's atoms", 0, Vec::new(), Box::new(|store| store.flush_atoms()));
     let ((segments, atoms, bytes), pending) = store.atom_writes();
     crate::code_rule_dsl::logic::profile::decision("atoms", || {
         format!("{atoms} atoms appended in {segments} segments ({:.1} MB), {pending} pending at the end (decision 0049)", bytes as f64 / 1e6)
@@ -5740,7 +5751,9 @@ fn run_observed(
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the Git index consulted".into());
         consulted.extend(crate::code_rule_dsl::logic::strings::git::consulted(root));
     }
-    Ok(Report { phases, phase_instructions, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default() })
+    let report = Report { phases, phase_instructions, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default() };
+    close_beside(db);
+    Ok(report)
 }
 
 
@@ -5934,9 +5947,11 @@ fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, h
 ///
 /// `RDL_STMTS=<file>`: also each statement's cost at its end (`SQLITE_TRACE_PROFILE`): its time and SQLite's own
 /// counters (VM steps, full-scan steps, sorts, automatic-index rows), summed by statement text and written to `<file>`
-/// as tab-separated rows (phase, runs, ms, vm steps, full-scan steps, sorts, autoindex rows, text).
+/// as tab-separated rows (phase, runs, ms, vm steps, full-scan steps, sorts, autoindex rows, text); another connection's
+/// (`on_as`) to `<file><suffix>`.
 pub(super) struct Statements {
     db: *mut rusqlite::ffi::sqlite3,
+    suffix: &'static str,
     state: Box<StatementState>,
     /// The profile's span of the phase entered last (`logic::profile`).
     span: std::cell::RefCell<Option<crate::code_rule_dsl::logic::profile::Span>>,
@@ -5949,6 +5964,9 @@ struct StatementState {
 }
 impl Statements {
     pub(super) fn on(db: &Connection) -> Self {
+        Self::on_as(db, "")
+    }
+    pub(super) fn on_as(db: &Connection, suffix: &'static str) -> Self {
         use rusqlite::ffi;
         unsafe extern "C" fn trace(event: u32, state: *mut std::ffi::c_void, p: *mut std::ffi::c_void, x: *mut std::ffi::c_void) -> std::ffi::c_int {
             // SAFETY: the state outlives the callback (removed on drop).
@@ -5997,7 +6015,7 @@ impl Statements {
         // SAFETY: the connection is live for the run; the state is boxed (a stable address) and outlives the callback.
         let db = unsafe { db.handle() };
         unsafe { ffi::sqlite3_trace_v2(db, mask, Some(trace), std::ptr::from_ref(&*state).cast_mut().cast()) };
-        Statements { db, state, span: Default::default() }
+        Statements { db, suffix, state, span: Default::default() }
     }
     pub(super) fn count(&self) -> usize {
         self.state.count.load(std::sync::atomic::Ordering::Relaxed)
@@ -6022,6 +6040,8 @@ impl Drop for Statements {
                 .iter()
                 .map(|((phase, sql), [n, ns, vm, scan, sort, auto])| format!("{phase}\t{n}\t{:.3}\t{vm}\t{scan}\t{sort}\t{auto}\t{sql}\n", *ns as f64 / 1e6))
                 .collect();
+            let mut file = file;
+            file.push(self.suffix);
             let _ = std::fs::write(file, text);
         }
     }
@@ -6451,27 +6471,64 @@ fn own_name(program: &[u8; 32], mix: &str) -> String {
     format!("own-counts/{}/{mix}", memo::plan_digest(program).iter().map(|b| format!("{b:02x}")).collect::<String>())
 }
 
-/// A chunk mix's measured tree counts and the nodes they were measured over, stored by an earlier run.
-/// Its source is named in the run's manifest (`held`), so collection keeps it (decision 0053).
+/// The tree counts this process stored or read, by store and name (`own_name`), with their stored source once it is
+/// known: a session reads them from memory, as the store's writer writes them behind it (decision 0102).
+type OwnKept = HashMap<(std::path::PathBuf, String), (usize, Own, Option<crate::content_store::SourceId>)>;
+static OWN_KEPT: std::sync::LazyLock<parking_lot::Mutex<OwnKept>> = std::sync::LazyLock::new(Default::default);
+/// The tree counts kept at most (each a few kilobytes).
+const OWN_KEPT_MAX: usize = 4096;
+
+/// A chunk mix's measured tree counts and the nodes they were measured over, stored by an earlier run (or this
+/// process's, from memory). Its source is named in the run's manifest (`held`), so collection keeps it (decision
+/// 0053); one still queued is named by its write (`record_own_counts`).
 fn own_counts(store: &ContentStore, program: &[u8; 32], mix: &str, held: &mut Vec<crate::content_store::SourceId>) -> Option<(usize, Own)> {
-    let digest = store.binding(&own_name(program, mix)).ok()??;
+    let key = (store.database_path().to_path_buf(), own_name(program, mix));
+    if let Some((nodes, own, source)) = OWN_KEPT.lock().get(&key) {
+        held.extend(*source);
+        return Some((*nodes, own.clone()));
+    }
+    let digest = store.binding(&key.1).ok()??;
     let source = store.source_by_hash(crate::content_store::HashKey::from_sha256_digest(digest)).ok()??;
-    let own = Own::decode(&store.get_source(source).ok()?)?;
+    let (nodes, own) = Own::decode(&store.get_source(source).ok()?)?;
     held.push(source);
-    Some(own)
+    keep_own(key, nodes, own.clone(), Some(source));
+    Some((nodes, own))
 }
 
-/// Stores a chunk mix's measured tree counts, for a later run whose files of that mix are all read from the memo.
-fn record_own_counts(store: &ContentStore, program: &[u8; 32], mix: &str, nodes: usize, own: &Own, held: &mut Vec<crate::content_store::SourceId>) -> Result<()> {
-    use sha2::Digest as _;
-    let plan = |e: crate::content_store::StoreError| Error::Plan(e.to_string());
+fn keep_own(key: (std::path::PathBuf, String), nodes: usize, own: Own, source: Option<crate::content_store::SourceId>) {
+    let mut kept = OWN_KEPT.lock();
+    if kept.len() >= OWN_KEPT_MAX && !kept.contains_key(&key) {
+        kept.clear();
+    }
+    kept.insert(key, (nodes, own, source));
+}
+
+/// Stores a chunk mix's measured tree counts, for a later run whose files of that mix are all read from the memo:
+/// kept in memory now, written behind the run (decision 0102). The write names its source in the run's manifest
+/// (`late`, read by the manifest's job, queued after this one).
+fn record_own_counts(store: &ContentStore, program: &[u8; 32], mix: &str, nodes: usize, own: &Own, late: &Late) {
+    let key = (store.database_path().to_path_buf(), own_name(program, mix));
+    keep_own(key.clone(), nodes, own.clone(), None);
     let bytes = own.encode(nodes);
-    held.push(store.put_source(&bytes, &[]).map_err(plan)?);
-    let digest: [u8; 32] = sha2::Sha256::digest(&bytes).into();
     let producer = memo::plan_digest(program);
-    let record = crate::content_store::DerivationRecord { output: own_name(program, mix), producer, inputs: Vec::new(), digest, status: 0, cost: 0 };
-    store.record_derivations(&[record]).map_err(plan)?;
-    Ok(())
+    let late = Arc::clone(late);
+    store.write_back(
+        "the tree counts",
+        bytes.len(),
+        Vec::new(),
+        Box::new(move |store| {
+            use sha2::Digest as _;
+            let source = store.put_source(&bytes, &[])?;
+            late.lock().expect("the late sources").push(source);
+            let digest: [u8; 32] = sha2::Sha256::digest(&bytes).into();
+            let record = crate::content_store::DerivationRecord { output: key.1.clone(), producer, inputs: Vec::new(), digest, status: 0, cost: 0 };
+            store.record_derivations(&[record])?;
+            if let Some(kept) = OWN_KEPT.lock().get_mut(&key) {
+                kept.2 = Some(source);
+            }
+            Ok(())
+        }),
+    );
 }
 
 #[derive(Clone, Default)]
