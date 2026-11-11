@@ -1,0 +1,27 @@
+#include "project.rr"
+.decl exec_config(key:symbol,value:symbol)
+.violation ExecutorConfiguration(at:span,key:symbol,value:symbol) code "EXEC_CONFIG" "executor configuration"
+ExecutorConfiguration(@place("",0),k,v) :- option("entryPoint","_exec_configuration"),exec_config(k,v).
+
+// Read failures come from the filesystem; native formatting preserves CLI warnings.
+.violation ExecutorWarning(at:span,ordinal:number,text:symbol) code "EXEC_WARNING" "executor read warning"
+ExecutorWarning(@place("",0),i,cat("Warning: Could not read ",p,": ",e,"\n")) :- option("entryPoint","_exec_warnings"),option_item("execErrorPaths",i,p),option_item("execErrors",i,e).
+
+// The reporter uses the view's key, rather than the bundle's path.
+.decl pp_config(key:symbol,value:symbol)
+pp_config("findingSeverity","hard-fail").
+#include "data-layer/supplied-facts.rr"
+#include "data-layer/typed-supplied-facts.rr"
+.input sfe_member(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/key",projection="python-str")
+.input sfe_value(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/encoded",projection="python-value-str")
+.input sfe_tag(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/encoded/0",projection="python-str")
+.input sfe_scalar(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/encoded/1",projection="python-str")
+.input sfe_json(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/encoded/1",projection="json")
+sf_type(b,r,k,"string") :- sfe_member(b,r,f,k),sfe_tag(b,r,f,"str").
+sf_config("strict_line","true"). sf_config("code","run_in_executor"). sf_config("order","bundle").
+sf_strict("source").
+executor_path(p) :- sf_source_bundle(_,p).
+sf_excluded(b) :- sf_source_bundle(b,p),!executor_strict(p).
+sf_excluded(b) :- sf_source_bundle(b,p),executor_allowed(p).
+sf_path_input(b,r,p) :- sf_active(b,r),sf_source_bundle(b,p).
+sf_message(b,r,cat("run_in_executor in backend implementation: ",@slice(s,0,80))) :- sf_active(b,r),sf_field(b,r,"source",s).

@@ -1575,7 +1575,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/async-executor.rr",
-      "sha256": "9aa0a04c332c3e38f8d8717138d54cda7eed1b586426971017cf90cf2fb3d764",
+      "sha256": "c375d18556efc62a85dad74f21b5f04550cd2d13914cf78bb1ef0cecfeea127e",
       "origin": "authored",
       "upstreamPath": "scripts/lint_async_executor.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -3036,6 +3036,20 @@
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_type_safety_patterns.py",
       "sha256": "e222431c3aaa10bc6116a1ade4916ba96c25941a8b69add13b9a462354c82e51"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/executor-api.rr",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_async_executor.py",
+      "sha256": "7028e3c52f4168072a375a7ca52c6f46b1268364ca28446d238d3dc1746bd3f5"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/executor-cli.rr",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_async_executor.py",
+      "sha256": "586aad360f22c80ba726e3dd45589b562ac9868ba311fb5d8188d94da973762b"
     }
   ],
   "rules": [
@@ -4103,7 +4117,7 @@
       "legacySha256": "0e64fd634326c0bb3676f2cf8ed817f4508cde8a5dbc33ea8934afae6b88751b",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/async-executor.rr",
-      "ruleSha256": "9aa0a04c332c3e38f8d8717138d54cda7eed1b586426971017cf90cf2fb3d764"
+      "ruleSha256": "c375d18556efc62a85dad74f21b5f04550cd2d13914cf78bb1ef0cecfeea127e"
     },
     {
       "check": "async_patterns",

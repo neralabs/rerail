@@ -331,6 +331,8 @@ def async_executor(source, target, header):
     text += '.decl executor_input(d: number)\n'
     for entry in ['check_file', 'check_source']:
         text += f'executor_input(d) :- doc(d, _, _), option("entryPoint", {q(entry)}).\n'
+    text += 'executor_input(d) :- doc(d, _, _), option("entryPoint", "_extract_async_executor_facts").\n'
+    text += 'executor_input(d) :- doc(d, _, _), option("entryPoint", "_exec_batch").\n'
     text += 'executor_input(d) :- doc(d, p, _), !option("entryPoint", _), executor_strict(p), !executor_allowed(p).\n'
     trim = r'\A' + space + '+|' + space + r'+\z'
     text += '\n.violation Executor(at: span, source: symbol, preview: symbol) code "run_in_executor"\n    "run_in_executor in backend implementation: {preview}"\n'
@@ -341,7 +343,8 @@ def async_executor(source, target, header):
     for entry, code, relation in [('should_check_file', 'EXECUTOR_STRICT', 'executor_strict'), ('is_allowed', 'EXECUTOR_ALLOWED', 'executor_allowed')]:
         name = 'ExecutorStrictProbe' if entry == 'should_check_file' else 'ExecutorAllowedProbe'
         text += f'\n.violation {name}(at: span) code "{code}" "matched"\n{name}(@place("input.py", 1)) :- option("entryPoint", {q(entry)}), option("path", p), {relation}(p).\n'
-    return text
+    from data_layer_rr_executor import suffix
+    return text + suffix(source)
 
 
 def rust_sql_grammar_boundary(source, target, header):

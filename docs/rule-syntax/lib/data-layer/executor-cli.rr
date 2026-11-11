@@ -1,0 +1,64 @@
+#include "data-layer/python-discovery-roots.rr"
+.violation ExecutorCliRoot(at:span,path:symbol) code "EXEC_CLI_ROOT" "executor CLI root"
+ExecutorCliRoot(@place("",0),p) :- option("entryPoint","_exec_cli_root"),option("execExplicitRoot","1"),option("execRoot",p).
+ExecutorCliRoot(@place("",0),@dir(@dir(@dir(p)))) :- option("entryPoint","_exec_cli_root"),option("execExplicitRoot","0"),option("execDiscoverySource",p).
+.violation ExecutorCliArgument(at:span,ordinal:number,path:symbol) code "EXEC_CLI_ARG" "executor CLI argument"
+ExecutorCliArgument(@place("",0),i,p) :- option("entryPoint","_exec_cli_root"),option("execHasDirs","1"),option_item("execDirs",i,p).
+ExecutorCliArgument(@place("",0),i,p) :- option("entryPoint","_exec_cli_root"),option("execHasDirs","0"),option_item("execDefaults",i,p).
+sgd_enabled() :- env("executor.paths","true").
+sgd_configured() :- env("executor.paths","true").
+.violation ExecutorCliDirectory(at:span,argument:number,rank:number,path:symbol) code "EXEC_CLI_DIR" "executor CLI directory"
+ExecutorCliDirectory(@place("",0),i,r,p) :- option("entryPoint","_exec_cli_dirs"),sgd_chosen(i,r,p).
+
+executor_path(p) :- option_item("execCandidates",_,p).
+.decl exc_selected(i:number,path:symbol)
+exc_selected(i,p) :- option("entryPoint","_exec_cli_select"),option_item("execCandidates",i,p),(option("execExplicitRoot","1");executor_strict(p)).
+.decl exc_allowed(i:number)
+exc_allowed(i) :- exc_selected(i,p),option("execExplicitRoot","0"),executor_allowed(p).
+.decl exc_relative(i:number,path:symbol)
+exc_relative(i,@slice(p,strlen(root)+1,strlen(p))) :- exc_selected(i,p),option("execRoot",root),root!="/",prefix(cat(root,"/"),p).
+exc_relative(i,@slice(p,1,strlen(p))) :- exc_selected(i,p),option("execRoot","/"),prefix("/",p).
+.decl exc_group(i:number,name:symbol)
+exc_group(i,"allowed") :- exc_selected(i,_),exc_allowed(i).
+exc_group(i,"strict") :- exc_selected(i,_),!exc_allowed(i).
+.violation ExecutorCliRead(at:span,ordinal:number,path:symbol,relative:symbol,group:symbol) code "EXEC_CLI_READ" "executor CLI source"
+ExecutorCliRead(@place("",0),i,p,r,g) :- exc_selected(i,p),exc_relative(i,r),exc_group(i,g).
+.violation ExecutorVerbose(at:span,ordinal:number,text:symbol) code "EXEC_VERBOSE" "executor CLI verbose output"
+ExecutorVerbose(@place("",0),i,cat("Checking: ",r,"\n")) :- exc_relative(i,r),option("execVerbose","1").
+
+// Each positive file assignment replaces the preceding dictionary value.
+.decl exc_file(f:number,path:symbol)
+.input exc_file(IO=json,filename="executor-cli.json",path="/files/*/path",projection="python-str")
+.decl exc_file_group(f:number,group:symbol)
+.input exc_file_group(IO=json,filename="executor-cli.json",path="/files/*/group",projection="python-str")
+.decl exc_line(f:number,r:number,value:symbol)
+.input exc_line(IO=json,filename="executor-cli.json",path="/files/*/violations/*/0",projection="python-str")
+.decl exc_text(f:number,r:number,value:symbol)
+.input exc_text(IO=json,filename="executor-cli.json",path="/files/*/violations/*/1",projection="python-str")
+.decl exc_positive(f:number)
+exc_positive(f) :- exc_line(f,_,_).
+.decl exc_later(f:number)
+exc_later(f) :- exc_file(f,p),exc_file_group(f,g),exc_file(other,p),exc_file_group(other,g),other>f,exc_positive(other).
+.decl exc_active(f:number,path:symbol,group:symbol)
+exc_active(f,p,g) :- option("entryPoint","_exec_cli_report"),exc_file(f,p),exc_file_group(f,g),exc_positive(f),!exc_later(f).
+.decl exc_total(group:symbol,n:number)
+exc_total("strict",n) :- option("entryPoint","_exec_cli_report"),n=count:{exc_active(f,_,"strict"),exc_line(f,_,_)}.
+exc_total("allowed",n) :- option("entryPoint","_exec_cli_report"),n=count:{exc_active(f,_,"allowed"),exc_line(f,_,_)}.
+.decl exc_show(group:symbol)
+exc_show("strict") :- exc_total("strict",n),n>0.
+exc_show("allowed") :- exc_total("allowed",n),n>0,option("execStrict","1").
+.decl exc_section(group:symbol,n:number)
+exc_section("strict",1). exc_section("allowed",4).
+.violation ExecutorCliOutput(at:span,section:number,path_key:symbol,part:number,ordinal:number,text:symbol) code "EXEC_CLI_OUTPUT" "executor CLI output"
+ExecutorCliOutput(@place("",0),0,"",0,0,"\n======================================================================\nVIOLATIONS: run_in_executor found in backend implementations\n======================================================================\n\nThese must be replaced with native async database operations:\n\n") :- exc_show("strict").
+ExecutorCliOutput(@place("",0),s,@replace_all(p,"/","\u0000"),0,0,cat(p,":\n")) :- exc_active(_,p,g),exc_show(g),exc_section(g,s).
+ExecutorCliOutput(@place("",0),s,@replace_all(p,"/","\u0000"),1,r,cat("  Line ",l,": ",@slice(t,0,80),"\n")) :- exc_active(f,p,g),exc_show(g),exc_section(g,s),exc_line(f,r,l),exc_text(f,r,t).
+ExecutorCliOutput(@place("",0),s,@replace_all(p,"/","\u0000"),2,0,"\n") :- exc_active(_,p,g),exc_show(g),exc_section(g,s).
+ExecutorCliOutput(@place("",0),2,"",0,0,"To fix: Replace run_in_executor with native async I/O.\nTo suppress: Add '# noqa: async-executor' comment to the line.\n\n") :- exc_show("strict").
+ExecutorCliOutput(@place("",0),3,"",0,0,"\n----------------------------------------------------------------------\nINFO: run_in_executor in allowed locations (not blocking)\n----------------------------------------------------------------------\n\n") :- exc_show("allowed").
+ExecutorCliOutput(@place("",0),5,"",0,0,"No run_in_executor violations in backend implementations.\n") :- exc_total("strict",0).
+ExecutorCliOutput(@place("",0),5,"",1,0,cat("(",to_string(n)," uses in allowed locations - OK)\n")) :- exc_total("strict",0),exc_total("allowed",n),n>0.
+ExecutorCliOutput(@place("",0),5,"",0,0,cat("\nFound ",to_string(n)," violation(s) that must be fixed.\n")) :- exc_total("strict",n),n>0.
+.violation ExecutorCliExit(at:span,status:number) code "EXEC_CLI_EXIT" "executor CLI status"
+ExecutorCliExit(@place("",0),1) :- exc_total("strict",n),n>0.
+ExecutorCliExit(@place("",0),0) :- exc_total("strict",0).

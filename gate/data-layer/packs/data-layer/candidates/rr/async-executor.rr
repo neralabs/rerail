@@ -32,6 +32,8 @@ executor_allowed(p) :- executor_path(p), match("(?s:.*)(?:impl/sqlite/connection
 .decl executor_input(d: number)
 executor_input(d) :- doc(d, _, _), option("entryPoint", "check_file").
 executor_input(d) :- doc(d, _, _), option("entryPoint", "check_source").
+executor_input(d) :- doc(d, _, _), option("entryPoint", "_extract_async_executor_facts").
+executor_input(d) :- doc(d, _, _), option("entryPoint", "_exec_batch").
 executor_input(d) :- doc(d, p, _), !option("entryPoint", _), executor_strict(p), !executor_allowed(p).
 
 .violation Executor(at: span, source: symbol, preview: symbol) code "run_in_executor"
@@ -49,3 +51,13 @@ ExecutorStrictProbe(@place("input.py", 1)) :- option("entryPoint", "should_check
 
 .violation ExecutorAllowedProbe(at: span) code "EXECUTOR_ALLOWED" "matched"
 ExecutorAllowedProbe(@place("input.py", 1)) :- option("entryPoint", "is_allowed"), option("path", p), executor_allowed(p).
+exec_config("extractor","{\"extractor_id\": \"async_executor.violations\", \"schema_version\": \"1\", \"implementation_version\": \"async-executor-v1\", \"parser_mode\": \"source\", \"source_triggers\": [\"run_in_executor\"], \"source_trigger_groups\": [], \"cacheable\": true, \"workload_scope\": \"file\", \"project_input_facts\": [], \"project_input_scope\": null, \"implementation_digest\": \"8e2021746621b999\"}").
+exec_config("plugin","{\"name\": \"async_executor\", \"enforcement\": \"hard-fail\", \"description\": \"run_in_executor in async paths\"}").
+exec_config("scope","{\"directories\": [\"impl\"], \"explicit_files\": [], \"include_tests\": false, \"broad_repo_scope\": false}").
+exec_config("strict","[\"impl/sqlite\", \"impl/postgres\", \"impl/mariadb\", \"impl/doltdb\", \"impl/mongodb\", \"impl/neo4j\", \"impl/l1595_llm_cache\"]").
+exec_config("allowed","[\"l2000_connection/connection\\\\.py\", \"l2060_query_builder/query_builder\\\\.py\", \"l2060_query_builder/tuple_query\\\\.py\", \"impl/common/.*\", \".*/tests?/.*\", \"conform/.*\", \"benchmarks/.*\", \"impl/read_through/.*\", \"impl/sqlite/native_async_wrapper\\\\.py\", \"impl/sqlite/connection\\\\.py\"]").
+exec_config("patterns","{\"EXECUTOR_PATTERN\": [\"run_in_executor\\\\s*\\\\(\", 32], \"NOQA_PATTERN\": [\"#\\\\s*noqa:\\\\s*async-executor\", 32]}").
+exec_config("cli_schema","{\"description\": \"Lint for run_in_executor usage in async code paths\", \"arguments\": [{\"names\": [\"--strict\"], \"kwargs\": {\"action\": \"store_true\", \"help\": \"Also report violations in allowed locations (informational)\"}}, {\"names\": [\"--verbose\", \"-v\"], \"kwargs\": {\"action\": \"store_true\", \"help\": \"Show files being checked\"}}, {\"names\": [\"--root\"], \"kwargs\": {\"type\": \"str\", \"default\": null, \"help\": \"Project root directory to scan (default: data layer repo root)\"}}, {\"names\": [\"--dirs\"], \"kwargs\": {\"type\": \"str\", \"nargs\": \"*\", \"default\": null, \"help\": \"Subdirectories under --root to scan (default: production roots for the detected layout)\"}}]}").
+exec_config("cli_default_dirs","[\"impl\"]").
+#include "data-layer/executor-api.rr"
+#include "data-layer/executor-cli.rr"

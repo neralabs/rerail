@@ -315,6 +315,9 @@ class Suite:
         return files
 
     def scan(self, check, entry, module, arguments):
+        if check=='async_executor':
+            from executor_port import scan
+            return scan(self,entry,module,arguments)
         if check=='generated_index_sources':
             from generated_indexes_port import scan
             return scan(self,entry,module,arguments)
@@ -490,6 +493,9 @@ class Suite:
             shared = importlib.import_module('scripts.lint_lib.serverplan_facts')
             originals.update(codes({'serverplan_facts': shared}))
         for check, module in self.modules.items():
+            if check == 'async_executor':
+                from executor_port import install
+                install(self,module)
             if check == 'type_safety_patterns':
                 from types_port import install
                 install(self,module)
@@ -587,7 +593,7 @@ class Suite:
                         result = original(*args,**kwargs) if check=='dynamic_module_loading' else self.scan(check, entry, module, values)
                         self.compare_original(check, entry, module, args, kwargs, result)
                         return result
-                    if check=='backend_type_strings' and entry=='check_file' or check=='hasattr_async' and entry in {'check_file','should_exclude'}:run._rerail_native_check=check
+                    if check=='backend_type_strings' and entry=='check_file' or check=='hasattr_async' and entry in {'check_file','should_exclude'} or check=='async_executor':run._rerail_native_check=check
                     return run
                 self.replace(owner, parts[-1], wrapper(check, entry, module, original, signature))
 
@@ -609,7 +615,6 @@ class Suite:
                 return
             check, name, passive = originals[frame.f_code]
             host = {'admin_async_purity': {'cli_main'},
-                    'async_executor': {'cli_main'},
                     'data_layer_compat_aliases': {'cli_main', '_print_results'},
                     'data_layer_facade_purity': {'cli_main', '_print_results'},
                     'backend_coupling': {'cli_main', 'get_project_root'},
