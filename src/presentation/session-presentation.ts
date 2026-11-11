@@ -209,7 +209,9 @@ export async function dashboardOrigin(cwd: string): Promise<string | undefined> 
  * and without a dashboard leaves them unlinked.
  */
 export async function linkDeliveries<Delivery extends AdapterDelivery>(deliveries: readonly Delivery[], cwd: string | undefined): Promise<Delivery[]> {
-  const dashboard = cwd === undefined ? undefined : await steerDashboard(cwd);
+  // Hooks call this on every event, and most events deliver nothing: only a rule to link is worth asking the daemon.
+  const linksRules = deliveries.some(delivery => delivery.rules.length > 0);
+  const dashboard = cwd === undefined || !linksRules ? undefined : await steerDashboard(cwd);
   if (dashboard === undefined) return deliveries.map(delivery => ({ ...delivery }));
   return deliveries.map(delivery => ({ ...delivery, rules: delivery.rules.map(rule => ({ ...rule, url: ruleUrl(dashboard, rule.id) })) }));
 }
@@ -231,18 +233,17 @@ export async function steerDashboard(cwd: string): Promise<string | undefined> {
 }
 
 /**
- * The part of `repository_context_get` the dashboard link needs. Not the operation's own strict schema: a daemon of
- * another version may answer with more or fewer repository fields, and the link needs none of them.
+ * What the dashboard link needs of `repository_checkout_get`. Not the operation's own strict schema, so a daemon of
+ * another version may add fields.
  */
-const dashboardScopeSchema = z.object({
-  repository: z.object({ repositoryKey: z.string() }),
-  checkout: z.object({ checkoutPath: z.string() }).nullable(),
-});
+const dashboardScopeSchema = z.object({ repositoryKey: z.string(), checkoutPath: z.string() });
 
-/** The repository and checkout the daemon records for the verified checkout; null when it cannot say. */
+/**
+ * The repository and checkout the daemon records for the verified checkout; null when it cannot say. It reads that one
+ * checkout (`repository_checkout_get`): `repository_context_get` would work out every checkout's state for two fields.
+ */
 async function dashboardScope(daemon: VerifiedDaemon): Promise<RulesDashboardScope | null> {
-  return get(daemon, `/api/repository?${new URLSearchParams({ checkout: daemon.workspace })}`, dashboardScopeSchema)
-    .then(context => ({ repositoryKey: context.repository.repositoryKey, checkoutPath: context.checkout?.checkoutPath ?? null }))
+  return get(daemon, `/api/repository/checkout?${new URLSearchParams({ checkout: daemon.workspace })}`, dashboardScopeSchema)
     .catch(() => null);
 }
 

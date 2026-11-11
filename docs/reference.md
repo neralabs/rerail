@@ -442,6 +442,7 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 | --- | --- | --- |
 | `repositories_list` | `GET /api/repositories` | Known repositories: key, name, aliases, set up, started, checkout count. |
 | `repository_context_get` | `GET /api/repository?repository=&checkout=` | A repository's clones and checkouts (own and effective state), and the caller's checkout and folder. |
+| `repository_checkout_get` | `GET /api/repository/checkout?checkout=` | The repository key and the checkout's own folder for a path, as dashboard links name them; reads that one checkout. |
 | `repository_rules_get` | `GET /api/repository/rules?repository=&checkout=` | Rules per attachment folder with on, mode, suppressions, config, what decided each, `addedAt`, and `updatedAt` for your rules; unresolvable ones marked unavailable. |
 | `repository_settings_set` | `PUT /api/repository/settings` | On/off, mode, `suppressions` per repository or checkout (`owner`) and folder; By Rerail code rule `config` (whole repository). Null clears. |
 | `repository_follow_gitignore_set` | `PUT /api/repository/follow-gitignore` | Follow `.gitignore` (default on): ignored files aren't audited (shell writes, direct edits, repository audits); tracked files are. A tool edit it leaves unchecked, and a change that makes Git's ignore rules ignore more, are recorded on the session (`sessions_get` `gaps`; [what is and isn't](in-session-surfaces.md#files-git-ignores)). New sessions only; summary field `followGitignore`. Agents may only turn it on, before set-up. |
