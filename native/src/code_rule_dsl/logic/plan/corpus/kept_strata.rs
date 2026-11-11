@@ -32,9 +32,15 @@ use std::sync::Arc;
 /// Rows (values) buffered before a write.
 const FLUSH_VALUES: usize = 1 << 22;
 
-/// The cross-file fact space of the corpus at `root`.
+/// The cross-file fact space of the corpus at `root`, of the phase that runs (decision 0083: each phase its own
+/// namespaced fact space). Phase 1 and the analysis read `doc` over the same root with different rows (phase 1's
+/// with the libraries' documents): in one space, each overwrote the other's `doc` frame and the next run found no
+/// stratum current.
 pub(in crate::code_rule_dsl) fn space(root: &Path) -> [u8; 32] {
-    part_space(root, "cross")
+    match super::phases::current() {
+        Some(phase) => part_space(root, &format!("cross/{phase}")),
+        None => part_space(root, "cross"),
+    }
 }
 
 /// The fact space of a part of the run over `root` (`cross`, `cone`: the cone of requests answered in the fixpoint).

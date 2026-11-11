@@ -217,6 +217,11 @@ pub(super) fn in_phase() -> bool {
     RUNNING.with(|r| !r.borrow().is_empty())
 }
 
+/// The innermost phase whose run is under way on this thread, if any: its facts are its own fact space's.
+pub(super) fn current() -> Option<String> {
+    RUNNING.with(|r| r.borrow().last().cloned())
+}
+
 /// Phase 1's program, the builtin one.
 pub(super) fn sources_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/typing/programs/sources.rr")

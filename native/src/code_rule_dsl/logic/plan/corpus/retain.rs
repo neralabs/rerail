@@ -644,9 +644,11 @@ impl Retained {
             let g = InRel::index_spike_grown();
             if g.2 > 0 {
                 out.push(format!("SPIKE grown, all kept: {} offers, {} held; today {:.1} ms {:.1} B/row; mixed {:.1} ms (set {:.1}, placed {:.1}, orders {:.1}) {:.1} B/row; {} rows read again by doublings", g.2, g.3, g.0, g.4 as f64 / g.3.max(1) as f64, g.1, g.6, g.7, g.8, g.5 as f64 / g.3.max(1) as f64, g.14));
-                for (t, f) in [2, 4, 8].iter().zip(InRel::index_spike_fanout()) {
-                    out.push(format!("SPIKE orders grown at fanout {t}: {:.1} ms, {} ids copied by merges, {} runs over {} relations; a probe {:.0} ns over the runs vs {:.0} ns over one (mean of relations)", f.0, f.1, f.2, f.5, f.3 / f.5.max(1) as f64, f.4 / f.5.max(1) as f64));
+                let (v, orders, unprobed) = InRel::index_spike_variants();
+                for (name, x) in ["eager (merged as they come)", "tagged (eager, a 16-bit tag an id)", "lazy (a run a wave, merged once where probes pay)", "lazy tagged"].iter().zip(v) {
+                    out.push(format!("SPIKE orders {name}: grow {:.1} ms, merge once {:.1} ms, probes {:.1} ms, total {:.1} ms; mean probe {:.0} ns; {} {}", x.0, x.2, x.1, x.0 + x.1 + x.2, x.3 / orders.max(1) as f64, x.4, if name.starts_with("lazy") { "orders merged once" } else { "ids merged or rows read in merges" }));
                 }
+                out.push(format!("SPIKE orders: {orders} orders, {unprobed} with no probe this step"));
                 out.push(format!("SPIKE delta path, all kept ({} relations with a maintained run's rows, the rest their last wave): {} offers; today {:.1} ms + copy {:.1} ms; mixed {:.1} ms + copy {:.1} ms", g.15, g.9, g.10, g.11, g.12, g.13));
             }
             out.push(format!("SPIKE mixed (whole row placed, hot selective sets placed, the rest in orders): {:.1} MB ({:.1} B/row), {:.1} ms", mixed.0 as f64 / 1e6, mixed.0 as f64 / rows.max(1) as f64, mixed.1 / 1e6));

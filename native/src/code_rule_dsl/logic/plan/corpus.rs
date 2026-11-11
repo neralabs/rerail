@@ -4212,9 +4212,10 @@ fn run_observed(
             Vec::new(),
             Box::new(move |store| {
                 let mut ids = Vec::with_capacity(read.len());
-                for (path, stat, content) in read {
-                    if let Some(id) = content.resolve(store)? {
-                        ids.push((path, stat, id));
+                // Run again after a busy store (the writer's retries): it reads what it holds, moves none of it.
+                for (path, stat, content) in &read {
+                    if let Some(id) = content.clone().resolve(store)? {
+                        ids.push((path.clone(), stat.clone(), id));
                     }
                 }
                 store.record_corpus_stats(&root, &ids, started_ns)
