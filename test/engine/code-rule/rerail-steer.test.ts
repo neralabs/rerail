@@ -25,6 +25,7 @@ import {
 import { steerOrigin } from "../../../src/engine/code-rule/steer-origin.js";
 import { installPack, installPackDirectory, thirdPartyPack } from "../../support/installed-packs.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
+import { shellLatitude } from "../../support/steers.js";
 
 // The steer names a rule's pack from the installed catalog, the publisher of a third party's, and a pack installed from
 // a folder, whatever its package.json calls itself.
@@ -322,5 +323,19 @@ describe("Rerail steer text", () => {
       "",
       steer,
     ].join("\n"));
+  });
+});
+
+// The tests' helper writes the steer's last line out by hand, so a test that expects it checks this code against a
+// second account of the text. Here the two are held equal in every shell, on any machine.
+describe("the steer line the tests expect (test/support/steers.ts)", () => {
+  it.each(["posix", "git-bash", "powershell"] as const)("is the line an edit's steer ends with in %s", shell => {
+    const steer = steerBlock({ kind: "edit" }, [{ ruleId: "test:needle", mode: "steer", message: "No needle" }], shell);
+    expect(steer.split("\n").at(-1)).toBe(shellLatitude(shell, "test:needle"));
+  });
+
+  it.each(["posix", "git-bash", "powershell"] as const)("is the line a tool call's guidance ends with in %s", shell => {
+    const steer = steerBlock({ kind: "tool", tool: "Bash" }, [{ ruleId: "test:needle", mode: "steer", message: "No needle" }], shell);
+    expect(steer.split("\n").at(-1)).toBe(shellLatitude(shell, "test:needle", "Follow"));
   });
 });
