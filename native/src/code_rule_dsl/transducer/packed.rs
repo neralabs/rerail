@@ -59,8 +59,6 @@ pub(in crate::code_rule_dsl) use metal_program_backend::nearest as metal_nearest
 // The transducer's device interface: Metal registers itself there (`rerail-device-metal`).
 pub(in crate::code_rule_dsl) mod device;
 pub(in crate::code_rule_dsl) use device::{RootJobs, RootsFound};
-#[cfg(target_os = "macos")]
-pub(in crate::code_rule_dsl) use metal_program_backend::label_passes::drop_pipelines as drop_label_pipelines;
 
 #[cfg(all(test, target_os = "macos"))]
 pub(in crate::code_rule_dsl) fn reset_metal_execution_metrics() {

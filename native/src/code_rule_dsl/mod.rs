@@ -604,7 +604,7 @@ pub(crate) fn install_languages() {
     // The numbers `toPrecision` reads (ECMAScript's).
     matcher::install_number_text(&value::ecma::Numbers);
     // The canonical AST stage's producer (Python's CPython `ast`).
-    residency::install_ast_producer(&residency::PythonAst);
+    residency::install_ast_producer(&residency::admission::relational::python_ast::PythonAst);
     // What ECMAScript's import targets resolve among (`resolution`).
     resolution::install(import_target::held::RESOLUTIONS);
     // A repository's context as its index reads it (ECMAScript's `package.json` files).

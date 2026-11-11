@@ -303,7 +303,9 @@ pub(in crate::code_rule_dsl) fn drop_all() {
     rerail_metal::pool::drop_all();
     #[cfg(target_os = "macos")]
     rerail_accel::gpu::shared::drop_idle();
-    crate::code_rule_dsl::transducer::packed::drop_label_pipelines();
+    if let Some(device) = crate::code_rule_dsl::transducer::packed::device::matcher() {
+        device.drop_label_pipelines();
+    }
     crate::code_rule_dsl::prof::count("residency.dropped", 1);
 }
 
