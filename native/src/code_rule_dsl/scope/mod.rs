@@ -467,9 +467,31 @@ pub(crate) struct ScopeTable {
     pub(crate) declaration_sites: OnceLock<Arc<usage::Usage>>,
     /// What reaches each read of a variable, where the family has a flow (PHP's, `flow::VariableFlow`).
     pub(crate) flow: Option<Box<dyn flow::VariableFlow>>,
-    /// SQL: the file's query blocks, relations and qualified references, which resolve a
-    /// reference and decide a relation's usage (`scope/sql.rs`).
-    pub(crate) sql: Option<Box<sql::SqlScopes>>,
+    /// The family's own resolution of the file's references beside its scopes, where it has one (SQL's query
+    /// blocks, relations and qualified references, `scope/sql.rs`): it resolves a reference and decides a
+    /// binding's usage.
+    pub(crate) sql: Option<Box<dyn FileResolution>>,
+}
+
+/// A family's own resolution of a file's references beside the table's scopes (SQL's query blocks): a
+/// reference's binding, whether a rule reads the reference, and each binding's uses.
+pub(crate) trait FileResolution: Send + Sync {
+    /// The binding the reference spanning `start..end` resolves to: its scope in the file's table, its name there
+    /// and its index among that scope's bindings of the name.
+    fn resolved(&self, start: usize, end: usize) -> Option<(u32, &str, usize)>;
+    /// Whether the family's unresolved-reference rule reads the reference spanning `start..end`.
+    fn reported(&self, start: usize, end: usize) -> bool;
+    /// Each binding's uses, with the file table's scope, name and index of the binding.
+    fn usage(&self) -> Vec<(u32, &str, usize, Uses)>;
+}
+
+/// How the references use one binding: a family's walk (`FileResolution::usage`, SQL's AL05 walk).
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Uses {
+    /// References that use it.
+    pub(crate) reads: u32,
+    /// Those of them in a block nested in the binding's.
+    pub(crate) nested: u32,
 }
 
 /// How a table reads its file, beyond the grammar: tables of one file under different readings

@@ -15,7 +15,7 @@ pub(in crate::code_rule_dsl) use p_anchors::sql::{anchor_plans, anchor_plans_for
 #[allow(dead_code, unused_imports)]
 pub(in crate::code_rule_dsl) mod d_anchors;
 pub(crate) mod arguments;
-mod arguments_sql;
+pub(crate) mod arguments_sql;
 mod binding;
 mod binds;
 mod call;
@@ -57,7 +57,6 @@ pub(super) use anchors::{AnchorPlan, FileAnchorIndex, Selection};
 // The prefilter lowers a plan's structure to SQL (`prefilter/lower.rs`).
 pub(super) use anchors::{Condition, Direction, Required, Requirement};
 pub(super) use arguments::{Arguments, Passed, SlotKind};
-pub(super) use arguments_sql::SQL_CALL_KINDS;
 use ast_grep_core::matcher::Matcher;
 use ast_grep_core::matcher::{KindMatcher, Pattern};
 use ast_grep_core::matcher::{MatcherExt, NodeMatch};

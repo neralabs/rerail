@@ -124,14 +124,7 @@ struct Reference {
     bare: bool,
 }
 
-/// How the references use one binding: AL05's walk (`SqlScopes::uses`).
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct Uses {
-    /// References that use it.
-    pub(crate) reads: u32,
-    /// Those of them in a block nested in the binding's.
-    pub(crate) nested: u32,
-}
+pub(crate) use super::Uses;
 
 /// The query blocks of one SQL file with their bindings and references.
 #[derive(Debug, Default)]
@@ -194,6 +187,18 @@ pub(crate) fn visit<D: Doc>(
     scopes.ids = ids;
     builder.table.sql = Some(Box::new(scopes));
     Ok(())
+}
+
+impl super::FileResolution for SqlScopes {
+    fn resolved(&self, start: usize, end: usize) -> Option<(u32, &str, usize)> {
+        SqlScopes::resolved(self, start, end)
+    }
+    fn reported(&self, start: usize, end: usize) -> bool {
+        SqlScopes::reported(self, start, end)
+    }
+    fn usage(&self) -> Vec<(u32, &str, usize, Uses)> {
+        SqlScopes::usage(self).collect()
+    }
 }
 
 impl SqlScopes {
