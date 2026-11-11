@@ -133,6 +133,8 @@ tt_part(n, p) :- token_text_ask(n), within(p, n).
 .decl tt_piece(n: node, p: number, q: number, x: symbol)
 // A stored child with no stored children of its own: an anonymous token, a leaf. Comments drop out.
 tt_piece(n, 2 * st, 0, x) :- tt_part(n, p), token(p, _, x, st, _), !tt_inner(p, st).
+// A node asked about that is itself a leaf (`1`, `x`) is its one piece; with none, any two leaves were equal.
+tt_piece(n, 2 * st, 0, x) :- token_text_ask(n), !token(n, _, _, _, _), text(n, x), node(_, n, _, st, _).
 .decl tt_inner(p: node, st: number)  // p's child at st is a comment, or has stored children (it gives their pieces)
 tt_inner(p, st) :- tt_part(_, p), child(p, c, _), node(_, c, _, st, _), (comment(c, _) ; token(c, _, _, _, _)).
 // The source before each stored named child, and after the last one.
