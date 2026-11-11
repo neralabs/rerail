@@ -1,6 +1,7 @@
 # 0114: Suspend, never block: every wait is a scoreboard event, and answers are loaded as batches on workers
 
-Status: draft (2026-11-11). §1 and §5 are built (`plan::issue`, `content_store::atoms`); the rest is proposed.
+Status: draft (2026-11-11). §1 and §5 are built (`plan::issue`, `content_store::atoms`), and §3's posting and
+resuming (see **Built so far** at the end); the rest is proposed.
 It builds on 0113 (strata issued from a scoreboard) and 0100 (one executor, claims, one pool), and takes up
 the requests answered inside the fixpoint of 0065 §2a and the load order of 0108.
 
@@ -199,3 +200,36 @@ of the step before.
   costs CPU.
 - Whether the write-back's order must be 0108's for every load, or only where the load budget binds.
 - How the statistics keeper merges a chunk's statistics out of order (it counts files as they come today).
+
+## Built so far (2026-11-11)
+
+**Diagnostics (§6).** Each cone reports where its answers' time went: requests, documents loaded, taking them,
+waiting for chunks built on workers, evaluating the chunks on the answering thread, reading answer rows back, and
+that thread's wait for the next request. It goes in the profile as a decision, and to stderr as `RERAIL_ANSWERS`
+with `RERAIL_STRATA_COUNTS`. On the O125 replay (steps 1–8):
+
+| | |
+|---|---|
+| Requests answered, documents loaded | 45, 1,273 |
+| Answering, on the main thread | 0.80 s |
+| of which waiting for chunks built on workers | 0.34 s |
+| of which evaluating the chunks on the main thread | 0.42 s |
+| The main thread idle, waiting for the cone's next request | 0.61 s |
+
+**Posting and resuming (§3, first half).** Where the strata loop retires from the board, a component with
+requests posts them (`Asking::post`, a ticket each) and suspends (`Native::Asking`). The loop goes on. Answers are
+taken as they come (`Asking::arrived`), and each stratum whose tickets have all been answered resumes. A stratum
+that reads one still asking waits on the answers' channel, not in `help_until`. While it waits it takes the
+board's finished components. Relations that a stratum still asking reads are not released or unloaded until it
+finishes, because its fixpoint reads them again. The cone's channels carry tickets (`corpus::Asks`). The rounds
+(`cone_rounds`) and strata needed at once still answer in place. `RERAIL_ASK_ASYNC=off` answers in place
+everywhere.
+
+Measured: same as full 8 of 8. On this replay the trace shows the posting gains no wall time. In the cone's
+program, every stratum after the request's (`ask_loaded_bff`) reads it, so the answer is on the critical path and
+nothing else can run beside it (span 2.05 s against 2.10 s waited in place, within noise). What shortens it is
+the second half of §3: evaluating the loaded chunks on workers (0.42 s now on the main thread) and taking the
+batch's chunks as they are built.
+
+**Not yet:** the second half of §3 (load and evaluate on workers, write back in order), §4, and the rounds'
+answers posted.

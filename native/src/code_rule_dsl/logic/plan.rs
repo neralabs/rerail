@@ -3135,6 +3135,9 @@ enum Native<'a> {
     Ran,
     /// Its run waits on its device wave (`lanes::wave`): the driver's state, to resume once the wave ran.
     Waiting(Box<Driving<'a>>),
+    /// Its component posted requests (`Run::asking`, decision 0114 §3): the driver's state and the requests'
+    /// tickets, to resume once every one is answered. Nothing waits for them meanwhile.
+    Asking(Box<Driving<'a>>, Vec<u64>),
 }
 
 /// A native stratum between its component's open and its close: what its driver (`Run::drive`) needs to run the
@@ -3207,6 +3210,9 @@ struct Run<'a, 'b> {
     /// Answers a request (decision 0065 §2a): the request relation and its new rows, to the produced relations'
     /// rows. A component with a request pauses for it (`setfix`'s `request`).
     answer: Option<Answer<'b>>,
+    /// Posts requests and gives their answers as they arrive (decision 0114 §3): where the strata loop retires
+    /// strata from a scoreboard, a component with a request suspends on it instead of waiting in `answer`.
+    asking: Option<&'b mut dyn Asking>,
     /// Each produced relation's rows answered so far, for a stratum above its request's (its table's rows).
     answered: BTreeMap<String, Vec<Vec<i64>>>,
     /// The stratum being evaluated whose answers are logged (`logging`), and each such stratum's answers by produced
@@ -3218,6 +3224,16 @@ struct Run<'a, 'b> {
 /// The runner's answer to requests (`Run::answer`): a request relation and its new rows (atoms and integers), to the
 /// rows each produced relation gains.
 pub(in crate::code_rule_dsl) type Answer<'a> = &'a mut dyn FnMut(&str, &[Vec<i64>]) -> Result<Vec<(String, Vec<Vec<i64>>)>>;
+
+/// The runner's answers to requests, without a wait (decision 0114 §3): a request is posted and its answer is an
+/// event, taken when it has come.
+pub(in crate::code_rule_dsl) trait Asking {
+    /// Posts a request relation's new rows: the ticket its answer comes back with.
+    fn post(&mut self, rel: &str, rows: &[Vec<i64>]) -> Result<u64>;
+    /// The answers that have come, each with its ticket; when none has, waits up to `wait` for one. The rows
+    /// each produced relation gains, as `Answer` gives them.
+    fn arrived(&mut self, wait: std::time::Duration) -> Result<Vec<(u64, Vec<(String, Vec<Vec<i64>>)>)>>;
+}
 
 /// Answers a paused component's requests and adds the answers to its produced relations (decision 0065 §2a).
 /// Rows for a produced relation outside it are kept for the stratum that holds that relation.
@@ -3231,16 +3247,23 @@ fn answer_pending(db: &Connection, direct: bool, answer: &mut Option<Answer<'_>>
     }
     let asked = super::native::component::pending(db, name)?;
     let answer = answer.as_deref_mut().ok_or_else(|| Error::Plan(format!("{name}: a request, and no one to answer it")))?;
-    let mut by: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
+    let mut given = Vec::new();
     for (rel, rows) in &asked {
         let _span = super::profile::span(|| format!("answer {rel} ({} rows)", rows.len()));
         let t0 = std::time::Instant::now();
-        let given = answer(rel, rows)?;
+        given.extend(answer(rel, rows)?);
         ANSWER_WAIT.fetch_add(t0.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
         ANSWER_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        for (p, got) in given {
-            by.entry(p).or_default().extend(got);
-        }
+    }
+    add_answers(db, answered, log, name, scc, given)
+}
+
+/// Adds a component's answers to its produced relations; rows for a produced relation outside it are kept for the
+/// stratum that holds that relation.
+fn add_answers(db: &Connection, answered: &mut BTreeMap<String, Vec<Vec<i64>>>, log: Option<&mut BTreeMap<String, BTreeSet<Vec<i64>>>>, name: &str, scc: &BTreeSet<String>, given: Vec<(String, Vec<Vec<i64>>)>) -> Result<()> {
+    let mut by: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
+    for (p, got) in given {
+        by.entry(p).or_default().extend(got);
     }
     if let Some(log) = log {
         for (p, rows) in &by {
@@ -4167,6 +4190,7 @@ impl<'a> Run<'a, '_> {
             inputs: Arc::clone(&self.inputs),
             numbers: Arc::clone(&self.numbers),
             answer: None,
+            asking: None,
             why_class: None,
             answered: BTreeMap::new(),
             logging: None,
@@ -4213,6 +4237,7 @@ impl<'a> Strand<'a> {
                         Native::Ran => {}
                         Native::Waiting(d) => waiting.push((k, d)),
                         Native::Declined => return Err(Error::Plan(format!("{:?}: a stratum that waited on its wave declined", members[k].0))),
+                        Native::Asking(..) => return Err(Error::Plan(format!("{:?}: requests posted off the run's thread", members[k].0))),
                     }
                 }
             }
@@ -4237,6 +4262,7 @@ impl<'a> Strand<'a> {
                     waiting.push((k, d));
                     continue;
                 }
+                Ok(Native::Asking(..)) => Err(Error::Plan(format!("{scc:?}: requests posted off the run's thread"))),
                 Ok(Native::Declined) => Ok((self.0.why_not.take(), self.0.why_class.take())),
                 Err(e) => Err(e),
             };
@@ -4827,6 +4853,14 @@ impl<'a> Run<'a, '_> {
     /// else it holds, whose outputs stay for their strata) and is resumed until it ran. Whether it ran natively. For
     /// a stratum its caller needs at once (one derived again, 0090 §4).
     fn native_stratum_now(&mut self, scc: &BTreeSet<String>, rules: &[&'a Rule]) -> Result<bool> {
+        // Needed at once: its requests are answered in place (`answer`), not posted.
+        let asking = self.asking.take();
+        let got = self.native_stratum_now_(scc, rules);
+        self.asking = asking;
+        got
+    }
+
+    fn native_stratum_now_(&mut self, scc: &BTreeSet<String>, rules: &[&'a Rule]) -> Result<bool> {
         let mut got = self.native_stratum(scc, rules)?;
         loop {
             match got {
@@ -4836,6 +4870,7 @@ impl<'a> Run<'a, '_> {
                     super::lanes::wave::flush(1).map_err(Error::Plan)?;
                     got = self.native_resume(d)?;
                 }
+                Native::Asking(..) => return Err(Error::Plan(format!("{scc:?}: requests posted by a stratum needed at once"))),
             }
         }
     }
@@ -5297,6 +5332,24 @@ impl<'a> Run<'a, '_> {
                     timed[k] += item.rsplit(':').next().and_then(|c| c.parse::<f64>().ok()).unwrap_or(0.0) / 1e3;
                 }
             }
+            macro_rules! suspended {
+                () => {{
+                    drop(rels);
+                    Box::new(Driving {
+                        scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, probes, order_rules, nseeds, seeds, ngates,
+                        explained, counted, timed, chunk, replanned_at, started, placed, shape, lab, not_taken,
+                        cpu_own: if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_at } else { 0.0 },
+                    })
+                }};
+            }
+            // Requests, where they are posted (decision 0114 §3): the stratum suspends with its tickets.
+            if f.last() == Some(&"2") && self.asking.is_some() && self.model.inputs.atoms.is_some() {
+                let asked = super::native::component::pending(&self.db, &name)?;
+                let asking = self.asking.as_deref_mut().expect("checked");
+                let tickets = asked.iter().map(|(rel, rows)| asking.post(rel, rows)).collect::<Result<Vec<u64>>>()?;
+                ANSWER_CALLS.fetch_add(tickets.len() as u64, std::sync::atomic::Ordering::Relaxed);
+                return Ok(Native::Asking(suspended!(), tickets));
+            }
             if f.last() == Some(&"2") {
                 let log = self.logging.map(|at| self.answer_logs.entry(at).or_default());
                 answer_pending(&self.db, self.model.inputs.atoms.is_some(), &mut self.answer, &mut self.answered, log, &name, scc)?;
@@ -5304,12 +5357,7 @@ impl<'a> Run<'a, '_> {
             }
             // Waiting on its device wave: the stratum is suspended with its driver's state, and resumed here.
             if f.last() == Some(&"3") {
-                drop(rels);
-                return Ok(Native::Waiting(Box::new(Driving {
-                    scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, probes, order_rules, nseeds, seeds, ngates,
-                    explained, counted, timed, chunk, replanned_at, started, placed, shape, lab, not_taken,
-                    cpu_own: if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_at } else { 0.0 },
-                })));
+                return Ok(Native::Waiting(suspended!()));
             }
             let steps = self.fx().steps(&name)?;
             for ((o, &rule), line) in orders.iter().chain(probes.iter().map(|p| &p.2)).zip(&order_rules).zip(&steps) {
@@ -5915,6 +5963,9 @@ pub(in crate::code_rule_dsl) struct Hooks<'a> {
     pub(in crate::code_rule_dsl) unload: Option<&'a mut dyn FnMut(&[String]) -> Result<()>>,
     /// Answers the requests a component makes, inside the fixpoint (decision 0065 §2a).
     pub(in crate::code_rule_dsl) answer: Option<Answer<'a>>,
+    /// Posts the requests a component makes, their answers taken as they come (decision 0114 §3); used where the
+    /// strata loop retires from a scoreboard, `answer` elsewhere.
+    pub(in crate::code_rule_dsl) asking: Option<&'a mut dyn Asking>,
     /// The strata an earlier run of the program kept (decision 0077 §4): a stratum whose reads are unchanged is not run.
     pub(in crate::code_rule_dsl) strata: Option<&'a mut dyn KeptStrata>,
 }
@@ -6181,13 +6232,14 @@ pub(in crate::code_rule_dsl) fn run_atoms_native_answering<'a>(
     kept: BTreeSet<String>,
     modes: &str,
     answer: Answer<'a>,
+    asking: Option<&'a mut dyn Asking>,
     strata: Option<&'a mut dyn KeptStrata>,
 ) -> Result<Outcome> {
     let mut native = native_modes(modes);
     native.remove("nearest");
     native.remove("kseed");
     let inputs = Inputs { facts: format!("{facts}."), stats: "s.".to_owned(), atoms: Some(lowered.ops), native, batch: HashMap::new(), given: Some(given), kept };
-    run_native_inputs(lowered, db, inputs, Hooks { answer: Some(answer), strata, ..Default::default() })
+    run_native_inputs(lowered, db, inputs, Hooks { answer: Some(answer), asking, strata, ..Default::default() })
 }
 
 fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs, hooks: Hooks<'_>) -> Result<Outcome> {
@@ -6678,7 +6730,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     if !(atoms && !native.is_empty()) {
         crate::code_rule_dsl::facts::vtab::setup_now(db)?;
     }
-    let mut run = Run { prog, db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections(prog)), inputs: Arc::new(prog.inputs.iter().map(String::as_str).collect()), numbers: Arc::new(prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect()), answer: hooks.answer.take(), why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new() };
+    let mut run = Run { prog, db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections(prog)), inputs: Arc::new(prog.inputs.iter().map(String::as_str).collect()), numbers: Arc::new(prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect()), answer: hooks.answer.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new() };
     // A native run makes no views: a projection of an input is a stratum like any, run from the input where it is
     // held (decision 0104: no SQL in the run's waves). A SQL run reads its inputs through views in place.
     let planned_views = if atoms && !native.is_empty() { Vec::new() } else { plan_views(prog, &mut run.model, &rules_by)? };
@@ -6943,6 +6995,9 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     }
     // Strata waiting on their device wave: position, key, driver's state.
     let mut waiting: Vec<(usize, String, Box<Driving>)> = Vec::new();
+    // Strata suspended on their requests (decision 0114 §3), and the answers come for them so far, by ticket.
+    let mut asked: Vec<Asked> = Vec::new();
+    let mut arrived: HashMap<u64, Vec<(String, Vec<Vec<i64>>)>> = HashMap::new();
     // Relations no stratum reads, of strata that finished after the stratum following them ran: released or read
     // out at the next stratum, as they would have been at the one following them.
     let mut carry: Vec<String> = Vec::new();
@@ -6993,19 +7048,41 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     // Decision 0113: native strata issued ahead, as components on the executor's host stream, retired here in order.
     let mut board = (issue::on() && native.contains("program") && prog.again.is_empty() && strata_kept.is_none()).then(|| issue::Board::new(&sccs, &deps));
     let ambient = Ambient::here();
+    // Requests are posted, not waited for, where strata retire from the scoreboard (`RERAIL_ASK_ASYNC=off`: waited).
+    if board.is_some() && std::env::var("RERAIL_ASK_ASYNC").as_deref() != Ok("off") {
+        run.asking = hooks.asking.take();
+    }
+    // What the strata suspended on their requests read: kept until they finish (their fixpoints read them again).
+    let held_by_asked = |asked: &[Asked]| -> HashSet<String> { asked.iter().flat_map(|a| stratum_reads(prog, &sccs[a.at], &by_stratum[a.at])).collect() };
     super::lanes::executor().stream("strata", |stream| -> Result<()> {
     for (at, scc) in sccs.iter().enumerate() {
+        // Answers come as events: their strata resume. One that reads a stratum still asking waits for its answers
+        // (helping nothing: the board's components go on, and are taken as they end).
+        if !asked.is_empty() {
+            take_answers(&mut run, &mut asked, &mut arrived, &mut waiting, &mut outcome, &mut carry, &sccs, &last, std::time::Duration::ZERO)?;
+            let reads_asked = |asked: &[Asked]| {
+                let theirs: HashSet<&str> = asked.iter().flat_map(|a| sccs[a.at].iter().map(String::as_str)).collect();
+                scc.iter().flat_map(|r| deps.get(r).into_iter().flatten()).any(|(d, _)| theirs.contains(d.as_str()))
+            };
+            while reads_asked(&asked) {
+                if let Some(b) = board.as_mut() {
+                    b.collect(&mut run, stream)?;
+                }
+                take_answers(&mut run, &mut asked, &mut arrived, &mut waiting, &mut outcome, &mut carry, &sccs, &last, std::time::Duration::from_millis(1))?;
+            }
+        }
+        let held = if asked.is_empty() { HashSet::new() } else { held_by_asked(&asked) };
         if !waiting.is_empty() {
             let reads_waiting = || {
                 let theirs: HashSet<&str> = waiting.iter().flat_map(|w| sccs[w.0].iter().map(String::as_str)).collect();
                 scc.iter().flat_map(|r| deps.get(r).into_iter().flatten()).any(|(d, _)| theirs.contains(d.as_str()))
             };
             if level_of[at] != level_of[waiting[0].0] || reads_waiting() {
-                finish_wave(&mut run, &mut waiting, &mut outcome, &mut carry, &sccs, &last)?;
+                finish_wave(&mut run, &mut waiting, &mut outcome, &mut carry, &sccs, &last, &mut asked)?;
             }
         }
         if let Some(b) = board.as_mut() {
-            b.advance(at, &waiting.iter().map(|w| w.0).collect::<Vec<_>>());
+            b.advance(at, &waiting.iter().map(|w| w.0).chain(asked.iter().map(|a| a.at)).collect::<Vec<_>>());
         }
         super::lanes::prof::level(Some(level_of[at]));
         if let Some(ks) = strata_kept.as_deref_mut() {
@@ -7015,6 +7092,15 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 let reads = with_answers(prog, &sccs[k], stratum_read_digests.remove(&k).flatten(), run.answer_logs.remove(&k));
                 kept_strata_ran(ks, db, &run, &sccs[k], reads.as_ref(), &mut fresh);
             }
+        }
+        // A relation a stratum still asking reads is kept to a later position.
+        if !held.is_empty() {
+            let (later, now): (Vec<String>, Vec<String>) = std::mem::take(&mut after_last[at]).into_iter().partition(|r| held.contains(r));
+            after_last[at] = now;
+            after_last[at + 1].extend(later);
+            let (later, now): (Vec<String>, Vec<String>) = std::mem::take(&mut unloads[at]).into_iter().partition(|r| held.contains(r));
+            unloads[at] = now;
+            unloads[at + 1].extend(later);
         }
         for r in &after_last[at] { run.demands.forget(r); }
         let candidates: Vec<String> = if at == 0 {
@@ -7026,6 +7112,13 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             let mut seen = HashSet::new();
             c.retain(|r| run.native_rels.contains(r) && seen.insert(r.clone()));
             c
+        };
+        let candidates: Vec<String> = if held.is_empty() {
+            candidates
+        } else {
+            let (later, now): (Vec<String>, Vec<String>) = candidates.into_iter().partition(|r| held.contains(r));
+            carry.extend(later);
+            now
         };
         let done: Vec<String> = candidates.iter().filter(|r| !stays.contains(*r) && last.get(*r).is_none_or(|&l| l < at)).cloned().collect();
         if !done.is_empty() {
@@ -7390,7 +7483,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             if let (Some(path), Some(t0)) = (level_trace(), t0) {
                 use std::io::Write as _;
                 if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-                    let _ = writeln!(f, "stratum\t{}\t{at}\t{:.6}\t{}\t{}", level_of[at], thread_cpu() - t0, match ran { Native::Ran => "ran", Native::Waiting(_) => "waiting", Native::Declined => "declined" }, rules.len());
+                    let _ = writeln!(f, "stratum\t{}\t{at}\t{:.6}\t{}\t{}", level_of[at], thread_cpu() - t0, match ran { Native::Ran => "ran", Native::Waiting(_) => "waiting", Native::Asking(..) => "asking", Native::Declined => "declined" }, rules.len());
                 }
             }
             match ran {
@@ -7400,6 +7493,10 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 }
                 Native::Waiting(d) => {
                     waiting.push((at, key, d));
+                    continue;
+                }
+                Native::Asking(d, tickets) => {
+                    asked.push(Asked { at, key, d, tickets, since: std::time::Instant::now() });
                     continue;
                 }
                 Native::Declined => {}
@@ -7500,6 +7597,16 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             }
         }
     }
+    // The strata still asking, and those waiting on their waves, finish (each may wait on the other's).
+    while !asked.is_empty() || !waiting.is_empty() {
+        finish_wave(&mut run, &mut waiting, &mut outcome, &mut carry, &sccs, &last, &mut asked)?;
+        while !asked.is_empty() {
+            if let Some(b) = board.as_mut() {
+                b.collect(&mut run, stream)?;
+            }
+            take_answers(&mut run, &mut asked, &mut arrived, &mut waiting, &mut outcome, &mut carry, &sccs, &last, std::time::Duration::from_millis(1))?;
+        }
+    }
     Ok(())
     })?;
     if let Some(b) = board.as_mut() {
@@ -7509,10 +7616,18 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     if let Some(b) = &board {
         super::profile::decision("strata issued ahead (decision 0113)", || format!("{:?}", b.counts));
         if std::env::var_os("RERAIL_STRATA_COUNTS").is_some() {
-            eprintln!("RERAIL_STRATA_COUNTS {:?} answers {} in {:.3} s", b.counts, ANSWER_CALLS.load(std::sync::atomic::Ordering::Relaxed), ANSWER_WAIT.load(std::sync::atomic::Ordering::Relaxed) as f64 * 1e-9);
+            let r = std::sync::atomic::Ordering::Relaxed;
+            eprintln!(
+                "RERAIL_STRATA_COUNTS {:?} answers {} in {:.3} s; suspended on requests {} times, {:.3} s in all",
+                b.counts,
+                ANSWER_CALLS.load(r),
+                ANSWER_WAIT.load(r) as f64 * 1e-9,
+                ASK_SUSPENSIONS.load(r),
+                ASK_SUSPENDED.load(r) as f64 * 1e-9
+            );
         }
     }
-    finish_wave(&mut run, &mut waiting, &mut outcome, &mut carry, &sccs, &last)?;
+    finish_wave(&mut run, &mut waiting, &mut outcome, &mut carry, &sccs, &last, &mut asked)?;
     super::lanes::prof::level(None);
     if let Some(ks) = strata_kept.as_deref_mut() {
         for k in std::mem::take(&mut evaluated) {
@@ -7604,7 +7719,7 @@ fn by_level(sccs: Vec<BTreeSet<String>>, deps: &super::front::Edges, sort: bool)
 
 /// Runs the device wave the waiting strata wait on (`lanes::wave::flush`: their launches as one batch), then
 /// resumes each in order; one that waits again (a second form's launches) waits on the next wave.
-fn finish_wave<'a>(run: &mut Run<'a, '_>, waiting: &mut Vec<(usize, String, Box<Driving<'a>>)>, outcome: &mut Outcome, carry: &mut Vec<String>, sccs: &[BTreeSet<String>], last: &HashMap<String, usize>) -> Result<()> {
+fn finish_wave<'a>(run: &mut Run<'a, '_>, waiting: &mut Vec<(usize, String, Box<Driving<'a>>)>, outcome: &mut Outcome, carry: &mut Vec<String>, sccs: &[BTreeSet<String>], last: &HashMap<String, usize>, asked: &mut Vec<Asked<'a>>) -> Result<()> {
     while !waiting.is_empty() {
         {
             let _wave = super::profile::span(|| "device wave (kernel launches)".into());
@@ -7618,8 +7733,71 @@ fn finish_wave<'a>(run: &mut Run<'a, '_>, waiting: &mut Vec<(usize, String, Box<
                     carry.extend(sccs[j].iter().filter(|r| !last.contains_key(*r)).cloned());
                 }
                 Native::Waiting(d) => waiting.push((j, key, d)),
+                Native::Asking(d, tickets) => asked.push(Asked { at: j, key, d, tickets, since: std::time::Instant::now() }),
                 Native::Declined => return Err(Error::Plan(format!("{key}: a stratum that waited on its wave declined"))),
             }
+        }
+    }
+    Ok(())
+}
+
+/// A stratum suspended on its requests (decision 0114 §3): its position and key, its driver's state, the tickets
+/// of the requests it posted, and when it posted them.
+struct Asked<'a> {
+    at: usize,
+    key: String,
+    d: Box<Driving<'a>>,
+    tickets: Vec<u64>,
+    since: std::time::Instant,
+}
+
+/// How often strata suspended on requests, and for how long in all (`RERAIL_STRATA_COUNTS`, the profile).
+static ASK_SUSPENSIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static ASK_SUSPENDED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Takes the answers that have come (waiting up to `wait` for one when none has), and resumes each stratum whose
+/// requests are all answered: it runs on, finishes, waits on its wave, or asks again.
+#[allow(clippy::too_many_arguments)]
+fn take_answers<'a>(
+    run: &mut Run<'a, '_>,
+    asked: &mut Vec<Asked<'a>>,
+    arrived: &mut HashMap<u64, Vec<(String, Vec<Vec<i64>>)>>,
+    waiting: &mut Vec<(usize, String, Box<Driving<'a>>)>,
+    outcome: &mut Outcome,
+    carry: &mut Vec<String>,
+    sccs: &[BTreeSet<String>],
+    last: &HashMap<String, usize>,
+    wait: std::time::Duration,
+) -> Result<()> {
+    let Some(asking) = run.asking.as_deref_mut() else {
+        return Err(Error::Plan("requests posted, and no one to answer them".into()));
+    };
+    let t0 = std::time::Instant::now();
+    let came = asking.arrived(wait)?;
+    if !wait.is_zero() {
+        ANSWER_WAIT.fetch_add(t0.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+    }
+    arrived.extend(came);
+    let mut k = 0;
+    while k < asked.len() {
+        if !asked[k].tickets.iter().all(|t| arrived.contains_key(t)) {
+            k += 1;
+            continue;
+        }
+        let a = asked.remove(k);
+        ASK_SUSPENSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        ASK_SUSPENDED.fetch_add(a.since.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        let given: Vec<(String, Vec<Vec<i64>>)> = a.tickets.iter().flat_map(|t| arrived.remove(t).unwrap_or_default()).collect();
+        let _stratum = super::profile::span(|| format!("stratum {} (after its answers)", if a.key.len() > 80 { format!("{}…", &a.key[..80]) } else { a.key.clone() }));
+        add_answers(&run.db, &mut run.answered, None, &a.d.name, &a.d.scc, given)?;
+        match run.native_resume(a.d)? {
+            Native::Ran => {
+                outcome.native.insert(a.key);
+                carry.extend(sccs[a.at].iter().filter(|r| !last.contains_key(*r)).cloned());
+            }
+            Native::Waiting(d) => waiting.push((a.at, a.key, d)),
+            Native::Asking(d, tickets) => asked.push(Asked { at: a.at, key: a.key, d, tickets, since: std::time::Instant::now() }),
+            Native::Declined => return Err(Error::Plan(format!("{}: a stratum that asked declined", a.key))),
         }
     }
     Ok(())

@@ -4289,8 +4289,8 @@ fn run_observed(
         let mut answered: BTreeMap<String, Vec<Vec<i64>>> = world_rels.iter().map(|(r, _)| (r.clone(), Vec::new())).collect();
         let lowered_load = part(load.clone());
         let load_stats = t_stats.clone();
-        let (ask_tx, ask_rx) = std::sync::mpsc::channel::<(String, Vec<Vec<i64>>)>();
-        let (reply_tx, reply_rx) = std::sync::mpsc::channel::<std::result::Result<Vec<(String, Vec<Vec<i64>>)>, String>>();
+        let (ask_tx, ask_rx) = std::sync::mpsc::channel::<(u64, String, Vec<Vec<i64>>)>();
+        let (reply_tx, reply_rx) = std::sync::mpsc::channel::<(u64, std::result::Result<Vec<(String, Vec<Vec<i64>>)>, String>)>();
         // The rows the cone starts from: the counted exports less those of the files not seen yet (gone, or a load
         // of the last run's, not yet loaded), when the chunks did not hold the hits' rows again; from here on they do.
         let counted_view: Option<Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>> = {
@@ -4403,15 +4403,10 @@ fn run_observed(
             }
             let cone_handle = cone_store.as_deref().map(|p| connections::Cone::take_store(&cone_slot, p)).transpose().map_err(|e| Error::Plan(e.to_string()))?;
             let mut cone_kept = cone_handle.as_ref().map(|s| kept_strata::Kept::new(s, cone_space, &cone_inputs));
-            let mut answer = |rel: &str, rows: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
-                ask_tx.send((rel.to_owned(), rows.to_vec())).map_err(|_| Error::Plan("the request channel closed".to_owned()))?;
-                rerail_accel::exec::help_until_as("the cone: an answer", || match reply_rx.try_recv() {
-                    Ok(r) => Some(Ok(r)),
-                    Err(std::sync::mpsc::TryRecvError::Empty) => None,
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err(Error::Plan("the answer channel closed".to_owned()))),
-                })?
-                .map_err(Error::Plan)
-            };
+            // Requests go to the main thread with a ticket, and their answers come back with it (decision 0114 §3).
+            let asks = std::cell::RefCell::new(Asks { tx: ask_tx, rx: reply_rx, next: 0, early: BTreeMap::new(), posted: HashMap::new(), recorded: None });
+            // A request answered in place (the rounds, a stratum needed at once): it waits for its own ticket.
+            let mut answer = |rel: &str, rows: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> { asks.borrow_mut().ask(rel, rows) };
             // The rounds from the last run's final round, kept in the store.
             let rounds_key = round.as_ref().map(|r| retain::key(&[0; 32], &r.program));
             let rounds_space = rounds_key.as_ref().map(&rounds_space_of).unwrap_or_default();
@@ -4473,17 +4468,15 @@ fn run_observed(
                 crate::code_rule_dsl::logic::profile::decision("the cone's rounds (decision 0108)", || format!("given up ({why}): the gated fixpoint runs"));
             }
             // The gated fixpoint, its answers recorded for a closing round.
-            let mut recorded = cone_rounds::Answers::default();
-            let mut recording = |rel: &str, rows: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
-                let given = answer(rel, rows)?;
-                recorded.record(rel, rows, &given);
-                Ok(given)
-            };
+            asks.borrow_mut().recorded = Some(cone_rounds::Answers::default());
+            let mut recording = |rel: &str, rows: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> { asks.borrow_mut().ask(rel, rows) };
+            let mut posting = Posting(&asks);
             let mut fixpoint_keeps = kept_in.clone();
             if let Some(r) = &round {
                 fixpoint_keeps.extend(r.asks().cloned());
             }
-            let got = super::run_atoms_native_answering(&lowered_load, &db2, "main", load_stats, fixpoint_keeps, &modes, &mut recording, cone_kept.as_mut().map(|k| k as &mut dyn super::KeptStrata))?;
+            let got = super::run_atoms_native_answering(&lowered_load, &db2, "main", load_stats, fixpoint_keeps, &modes, &mut recording, Some(&mut posting), cone_kept.as_mut().map(|k| k as &mut dyn super::KeptStrata))?;
+            let recorded = asks.borrow_mut().recorded.take().unwrap_or_default();
             let cone_strata = cone_kept.as_ref().and_then(|k| k.strata);
             if let Some(k) = cone_kept {
                 k.finish();
@@ -4647,7 +4640,7 @@ fn run_observed(
             Ok(out)
         };
         let mut idle = 0.0;
-        while let Some((rel, rows)) = {
+        while let Some((ticket, rel, rows)) = {
             let t = std::time::Instant::now();
             let got = cone.wait_for("the main thread: the cone's requests", || match ask_rx.try_recv() {
                 Ok(asked) => Some(Some(asked)),
@@ -4665,7 +4658,7 @@ fn run_observed(
                     }
                 }
             }
-            if reply_tx.send(reply).is_err() {
+            if reply_tx.send((ticket, reply)).is_err() {
                 break;
             }
         }
@@ -8117,5 +8110,88 @@ struct Finally<F: FnMut()>(F);
 impl<F: FnMut()> Drop for Finally<F> {
     fn drop(&mut self) {
         (self.0)();
+    }
+}
+
+/// The cone's side of its requests (decision 0114 §3): each posted with a ticket to the thread that answers them,
+/// and its answer taken back by that ticket, in place (`ask`) or as it comes (`Posting`). The fixpoint's answers
+/// are recorded for a closing round (`recorded`).
+struct Asks {
+    tx: std::sync::mpsc::Sender<(u64, String, Vec<Vec<i64>>)>,
+    rx: std::sync::mpsc::Receiver<(u64, std::result::Result<Vec<(String, Vec<Vec<i64>>)>, String>)>,
+    next: u64,
+    /// Answers come before they were taken.
+    early: BTreeMap<u64, Vec<(String, Vec<Vec<i64>>)>>,
+    /// Each ticket's request, until its answer comes.
+    posted: HashMap<u64, (String, Vec<Vec<i64>>)>,
+    recorded: Option<cone_rounds::Answers>,
+}
+
+impl Asks {
+    fn post(&mut self, rel: &str, rows: &[Vec<i64>]) -> Result<u64> {
+        let ticket = self.next;
+        self.next += 1;
+        self.tx.send((ticket, rel.to_owned(), rows.to_vec())).map_err(|_| Error::Plan("the request channel closed".to_owned()))?;
+        self.posted.insert(ticket, (rel.to_owned(), rows.to_vec()));
+        Ok(ticket)
+    }
+
+    /// An answer come: recorded, and kept until taken.
+    fn came(&mut self, ticket: u64, reply: std::result::Result<Vec<(String, Vec<Vec<i64>>)>, String>) -> Result<()> {
+        let given = reply.map_err(Error::Plan)?;
+        if let (Some(rec), Some((rel, rows))) = (self.recorded.as_mut(), self.posted.remove(&ticket)) {
+            rec.record(&rel, &rows, &given);
+        }
+        self.early.insert(ticket, given);
+        Ok(())
+    }
+
+    /// What has come, waiting up to `wait` for the first answer when none has.
+    fn poll(&mut self, wait: std::time::Duration) -> Result<()> {
+        if self.early.is_empty() && !wait.is_zero() {
+            match self.rx.recv_timeout(wait) {
+                Ok((t, r)) => self.came(t, r)?,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Err(Error::Plan("the answer channel closed".to_owned())),
+            }
+        }
+        loop {
+            match self.rx.try_recv() {
+                Ok((t, r)) => self.came(t, r)?,
+                Err(std::sync::mpsc::TryRecvError::Empty) => return Ok(()),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => return Err(Error::Plan("the answer channel closed".to_owned())),
+            }
+        }
+    }
+
+    /// A request answered in place: posted, then its own answer waited for (the others come are kept).
+    fn ask(&mut self, rel: &str, rows: &[Vec<i64>]) -> Result<Vec<(String, Vec<Vec<i64>>)>> {
+        let ticket = self.post(rel, rows)?;
+        loop {
+            if let Some(given) = self.early.remove(&ticket) {
+                return Ok(given);
+            }
+            let rx = &self.rx;
+            let (t, r) = rerail_accel::exec::help_until_as("the cone: an answer", || match rx.try_recv() {
+                Ok(got) => Some(Ok(got)),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err(Error::Plan("the answer channel closed".to_owned()))),
+            })?;
+            self.came(t, r)?;
+        }
+    }
+}
+
+/// The cone's fixpoint's requests, posted and taken as they come (`plan::Asking`).
+struct Posting<'r>(&'r std::cell::RefCell<Asks>);
+
+impl super::Asking for Posting<'_> {
+    fn post(&mut self, rel: &str, rows: &[Vec<i64>]) -> Result<u64> {
+        self.0.borrow_mut().post(rel, rows)
+    }
+    fn arrived(&mut self, wait: std::time::Duration) -> Result<Vec<(u64, Vec<(String, Vec<Vec<i64>>)>)>> {
+        let mut a = self.0.borrow_mut();
+        a.poll(wait)?;
+        Ok(std::mem::take(&mut a.early).into_iter().collect())
     }
 }

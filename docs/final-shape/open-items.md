@@ -3599,3 +3599,14 @@ neither the relation's columns nor a lazy entry. The run comes through `cone_rou
 connection address or by path (`""` for in-memory databases). Not yet traced.
 
 **Closure:** the shared state is found and keyed per run, and `base_tests` passes 20 of 20 in parallel.
+
+## O-wave-test-shared. `closures_of_one_level_launch_in_one_wave` fails beside other tests
+
+Run with the rest of `logic::plan::tests` on the harness's parallel threads, this test sometimes sees its level's
+three closures go out as more than one wave of three launches. Alone, or with `--test-threads=1`, it passes, and
+the run has no requests, so decision 0114's suspension on them is not on its path. The device wave
+(`lanes::wave`) is process-wide, so a concurrent test's launches, or its flush, are suspected of splitting this
+test's wave.
+
+**Closure:** a wave belongs to its run (or the test counts only its own launches), and the test passes 20 of 20
+beside the others.
