@@ -4076,18 +4076,16 @@ fn run_observed(
                     documents.get(path).into_iter().flatten().map(move |d|vec![row[0],row[1],row[2],*d])).collect()
             };
             let mut out = Vec::new();
-            out.push((world::LOADED.to_owned(), loaded_rows));
             if fresh.is_empty() {
                 if loaded_identity {
                     out.push((world::LOADED_DOC.to_owned(), identity_rows(&corpus.documents)));
                 }
-            }
-            if fresh.is_empty() && again.is_empty() {
-                out.extend(per_file.iter().map(|r| (r.clone(), Vec::new())));
-                return Ok(out);
-            }
-            if fresh.is_empty() {
+                out.push((world::LOADED.to_owned(), loaded_rows));
                 for rel in &per_file {
+                    if again.is_empty() {
+                        out.push((rel.clone(), Vec::new()));
+                        continue;
+                    }
                     let at = split.locations.get(rel).and_then(|l| l.first().copied()).ok_or_else(|| Error::Plan(format!("{rel}: no location column")))?;
                     let width = lowered.program.decls[rel].len();
                     out.push((rel.clone(), exports.borrow().rows_of(rel, width, at, &again)));
@@ -4102,6 +4100,7 @@ fn run_observed(
                 for (d,file) in keys.iter().zip(&fresh) { corpus.documents.entry(file.path.clone()).or_default().push(*d); }
                 out.push((world::LOADED_DOC.to_owned(),identity_rows(&corpus.documents)));
             }
+            out.push((world::LOADED.to_owned(), loaded_rows));
             // A loaded document's interval is its key's (`docs_by_shift`): nothing is written for it in the waves.
             if !super::by_shift_of(&db) {
                 let ranges = keys.iter().map(|d| vec![SqlValue::Integer(*d), SqlValue::Integer(d << 32), SqlValue::Integer((d << 32) | 0xffff_ffff)]).collect();
