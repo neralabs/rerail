@@ -3731,17 +3731,33 @@ impl<'a> Run<'a, '_> {
                 Term::Int(_) => Some("int".to_owned()),
                 Term::Str(_) => Some("sym".to_owned()),
                 // A variable's type: its column's in a positive atom; a count's, a sum's or a number function's
-                // value is a number.
-                Term::Var(n) => order.iter().find_map(|s| match &s.lit {
-                    Literal::Atom(l) if !l.neg => l
-                        .args
-                        .iter()
-                        .position(|x| matches!(x, Term::Var(v) if v == n))
-                        .and_then(|c| Some(prog.decls.get(l.rel.as_str())?.get(c)?.1.clone())),
-                    Literal::Agg { var, op: AggOp::Count | AggOp::Sum | AggOp::Product, .. } if var == n => Some("int".to_owned()),
-                    Literal::Cmp { l: Term::Var(v), op: "=", r: r @ Term::Call(..) } if v == n && numeric_call(r) => Some("int".to_owned()),
-                    _ => None,
-                }),
+                // value is a number. A variable equal to another (`$m = $a`, a capture's alias) has the other's type.
+                Term::Var(n) => {
+                    let mut same: Vec<&str> = vec![n.as_str()];
+                    let mut i = 0;
+                    while i < same.len() {
+                        for s in order {
+                            if let Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } = &s.lit {
+                                for (x, y) in [(a, b), (b, a)] {
+                                    if x == same[i] && !same.contains(&y.as_str()) {
+                                        same.push(y.as_str());
+                                    }
+                                }
+                            }
+                        }
+                        i += 1;
+                    }
+                    same.iter().find_map(|n| order.iter().find_map(|s| match &s.lit {
+                        Literal::Atom(l) if !l.neg => l
+                            .args
+                            .iter()
+                            .position(|x| matches!(x, Term::Var(v) if v == n))
+                            .and_then(|c| Some(prog.decls.get(l.rel.as_str())?.get(c)?.1.clone())),
+                        Literal::Agg { var, op: AggOp::Count | AggOp::Sum | AggOp::Product, .. } if var == n => Some("int".to_owned()),
+                        Literal::Cmp { l: Term::Var(v), op: "=", r: r @ Term::Call(..) } if v == n && numeric_call(r) => Some("int".to_owned()),
+                        _ => None,
+                    }))
+                }
                 _ => None,
             }
         };
