@@ -153,7 +153,9 @@ pub(in crate::code_rule_dsl) fn digest(source: &dyn Source) -> u64 {
 pub(in crate::code_rule_dsl) fn document_delta(rel: &str, old: &dyn Source, was: Option<&DocDigests>, new: &dyn Source) -> Option<((Arc<dyn Source>, Arc<dyn Source>), Arc<DocDigests>)> {
     use rustc_hash::FxHashSet;
     let width = new.columns().len();
-    if width == 0 || old.columns() != new.columns() {
+    // By position: both are the relation's rows in its declared order, whatever their sources name the columns
+    // (`c0` for rows kept as frames, the SQL's or the declaration's names for a run's own).
+    if width == 0 || old.columns().len() != width {
         return None;
     }
     let all: Vec<usize> = (0..width).collect();
@@ -1088,7 +1090,10 @@ impl Retained {
                         for (c, v) in row.iter().enumerate() { columns[c].push(*v); }
                     }
                 }
-                let names = (0..width).map(|c| format!("c{c}")).collect();
+                // Named as the program declares them, as the run's own rows are: the session's input delta by
+                // document (`document_delta`) takes an old and a new source of the same columns, and with other names
+                // every input fell back to the diff by rules (`r__old, !r`), a scan per row (192 s on 20 files).
+                let names = prog.decls.get(*rel)?.iter().map(|(n, _)| n.clone()).collect();
                 let source = crate::code_rule_dsl::logic::native::component::columns_source(names, columns.into_iter().map(Some).collect());
                 // Granule headers carry no digest. Their rows must match the admitted per-document digests,
                 // including documents removed or replaced between the header and payload reads.

@@ -5402,7 +5402,10 @@ fn run_observed(
                             return None;
                         }
                         let kept = cell.as_ref()?;
-                        let (_, new) = cross_inputs.iter().find(|(r, _)| r == rel)?;
+                        let Some((_, new)) = cross_inputs.iter().find(|(r, _)| r == rel) else {
+                            if std::env::var_os("RERAIL_PROFILE").is_some() { eprintln!("rerail: input delta of {rel}: not among the cross part's inputs, diffed by rules"); }
+                            return None;
+                        };
                         if let Some(changes) = &changes {
                             let _s = crate::code_rule_dsl::logic::profile::span(|| "session/input delta from the changed documents".into());
                             let read: Option<(String, Vec<Option<usize>>)> = if let Some(held) = base_held.get(rel) {
@@ -5427,9 +5430,16 @@ fn run_observed(
                                 return Some((rows_source(&plus, "plus"), rows_source(&gone, "minus")));
                             }
                         }
-                        let old = kept.input_source(rel)?;
+                        let trace = std::env::var_os("RERAIL_PROFILE").is_some();
+                        let Some(old) = kept.input_source(rel) else {
+                            if trace { eprintln!("rerail: input delta of {rel}: no old rows kept, diffed by rules"); }
+                            return None;
+                        };
                         let _s = crate::code_rule_dsl::logic::profile::span(|| "session/input delta by document".into());
-                        let (delta, docs) = retain::document_delta(rel, old.as_ref(), kept.input_docs(rel).map(|d| d.as_ref()), new.as_ref())?;
+                        let Some((delta, docs)) = retain::document_delta(rel, old.as_ref(), kept.input_docs(rel).map(|d| d.as_ref()), new.as_ref()) else {
+                            if trace { eprintln!("rerail: input delta of {rel}: not by document (old columns {:?}, new {:?}, {} and {} rows), diffed by rules", old.columns(), new.columns(), old.len(), new.len()); }
+                            return None;
+                        };
                         input_docs.insert(rel.to_owned(), docs);
                         hashed.push(rel.to_owned());
                         Some(delta)
