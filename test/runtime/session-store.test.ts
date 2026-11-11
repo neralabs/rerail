@@ -30,7 +30,7 @@ import { SqlitePresentationPreferenceStore } from "../../src/runtime/presentatio
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js";
 import { decodeEventPayload, SqliteSessionReader, SqliteSessionStore } from "../../src/runtime/session-store.js";
 import { NativeSessionClient } from "../../src/harness/index.js";
-import { databaseInstalledAt, resetRepositoryHistoryIn, schema } from "../../src/engine/index.js";
+import { databaseInstalledAt, resetRepositoryHistoryIn, schema, type AdapterEvent } from "../../src/engine/index.js";
 import { testEmbedder } from "../support/hook-events.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../support/native-daemon.js";
 import { startTestRepository } from "../support/started-repository.js";
@@ -566,6 +566,73 @@ describe("SQLite session persistence", () => {
     const reader = closeAfterTest(new SqliteSessionReader(path));
     expect(reader.events("session-1").map(event => event.eventId)).toEqual(Array.from({ length: 20 }, (_, i) => `event-${i + 1}`));
   }, 30_000);
+
+  describe("after a power cut kept the session ledger's lines for events the history lost", () => {
+    const sessionId = "cut-session";
+
+    /**
+     * Sends `sent` to a runtime, cuts its history as `cut` says, then sends `sent` again to a new runtime, as an agent
+     * that replays its session's events after a restart does. The history syncs only at checkpoints, while the ledger
+     * line written after each event's insert can reach the disk first: deleting the events' rows leaves the state such a
+     * cut leaves. Returns the history and the session ledger's entries before the cut and after the second sending.
+     */
+    async function sendAgainAfterCut(root: string, sent: readonly AdapterEvent[], cut: (database: Database.Database) => void) {
+      const databasePath = defaultRerailDatabasePath();
+      const storageRoot = join(root, "sessions");
+      const options = { storageRoot, databasePath, workspaceRoot: root, embedder: testEmbedder };
+      const ledgerPath = join(storageRoot, createHash("sha256").update(sessionId).digest("hex"), "events.jsonl");
+      const ledger = async () => (await readFile(ledgerPath, "utf8")).split("\n").filter(Boolean).map(line => JSON.parse(line) as { type: string });
+      const before = new RerailRuntime(options);
+      for (const event of sent) await before.ingest(event);
+      await before.dispose();
+      const ledgerBefore = await ledger();
+      const database = new Database(databasePath);
+      cut(database);
+      database.close();
+      const after = new RerailRuntime(options);
+      for (const event of sent) await after.ingest(event);
+      await after.dispose();
+      return { databasePath, ledgerBefore, ledgerAfter: await ledger() };
+    }
+
+    it.each([
+      { lost: "its last events", cut: (database: Database.Database) => database.exec("DELETE FROM events WHERE event_id IN ('prompt-2', 'turn-2')") },
+      { lost: "the session itself", cut: (database: Database.Database) => database.exec("DELETE FROM events; DELETE FROM sessions") },
+    ])("stores $lost again when the agent sends them again, and does nothing else for them twice", async ({ cut }) => {
+      const root = await temporaryDirectory();
+      const sent: AdapterEvent[] = [
+        { kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId, cwd: root } },
+        { kind: "user-prompt", eventId: "prompt-1", sessionId, text: "first" },
+        { kind: "turn-end", eventId: "turn-1", sessionId, text: "done first" },
+        { kind: "user-prompt", eventId: "prompt-2", sessionId, text: "second" },
+        { kind: "turn-end", eventId: "turn-2", sessionId, text: "done second" },
+      ];
+      const { databasePath, ledgerBefore, ledgerAfter } = await sendAgainAfterCut(root, sent, cut);
+
+      const ids = sent.map(event => event.eventId);
+      const reader = closeAfterTest(new SqliteSessionReader(databasePath));
+      expect(reader.events(sessionId).map(event => event.eventId).filter(id => ids.includes(id))).toEqual(ids);
+      // The ledger already held the rest of what each event did: its mark as processed, its samples and its turn.
+      const done = (entries: readonly { type: string }[]) => entries.filter(entry => ["event", "sample", "turn"].includes(entry.type));
+      expect(done(ledgerAfter)).toEqual(done(ledgerBefore));
+    });
+
+    it("stores a result it withheld without its output again", async () => {
+      const root = await temporaryDirectory();
+      const secret = "API_TOKEN=sk-live-0123456789";
+      const sent: AdapterEvent[] = [
+        { kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId, cwd: root } },
+        { kind: "call", eventId: "env-call", toolCallId: "env", sessionId, toolName: "Bash", input: { command: "cat .env" } },
+        { kind: "result", eventId: "env-result", toolCallId: "env", sessionId, toolName: "Bash", output: secret },
+      ];
+      const { databasePath } = await sendAgainAfterCut(root, sent, database => database.exec("DELETE FROM events WHERE event_id = 'env-result'"));
+
+      const database = closeAfterTest(new Database(databasePath, { readonly: true }));
+      const stored = database.prepare("SELECT payload_json FROM events WHERE event_id = 'env-result'").pluck().get();
+      expect(JSON.parse(String(stored))).toMatchObject({ output: { withheld: "tool output", bytes: secret.length } });
+      expect((database.prepare("SELECT payload_json FROM events").pluck().all() as string[]).join("\n")).not.toContain(secret);
+    });
+  });
 
   it("counts successful steers across the full session history, deduplicating only receipt retries", async () => {
     const { store, reader, session: first } = await hudFixture("first");

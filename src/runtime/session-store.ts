@@ -212,9 +212,12 @@ export class SqliteSessionStore {
     this.#repositoryId = repositoryId ?? null;
     this.#database = openRerailDatabase(path);
     // Events arrive with every hook, and a disk sync at each commit (FULL) held the daemon tens of milliseconds an
-    // event on a busy disk. NORMAL syncs the write-ahead log only before a checkpoint: a committed event still
-    // survives the daemon crashing, since it sits in the operating system's cache, while a power cut or system crash
-    // can roll back the last events, as it can the session ledger, which is never synced. The file stays consistent.
+    // event on a busy disk. NORMAL syncs the write-ahead log only before a checkpoint, and the file stays consistent.
+    // A committed event survives the daemon crashing, since it sits in the operating system's cache. A power cut or
+    // system crash loses what that cache had not written back, on Linux the last 30 s or more: the latest events, and
+    // a session opened in that time with all of its events. The session ledger, written after each insert and never
+    // synced, can keep its lines for events the history lost; an agent that sends one again stores it again
+    // (`unrecorded` in runtime.ts).
     this.#database.run(sql`PRAGMA synchronous = NORMAL`);
   }
 
@@ -349,6 +352,15 @@ export class SqliteSessionStore {
 
   closeSession(sessionId: string, endedAt = Date.now()): void {
     this.#database.update(sessions).set({ endedAt }).where(eq(sessions.sessionId, sessionId)).run();
+  }
+
+  /** Those of `eventIds` the session's history does not hold, in one query: one probe of its event index each. */
+  unrecordedEvents(sessionId: string, eventIds: Iterable<string>): Set<string> {
+    const rows = this.#database.all<{ eventId: string }>(sql`
+      SELECT given.value AS eventId FROM json_each(${JSON.stringify([...eventIds])}) given
+      WHERE NOT EXISTS (SELECT 1 FROM ${events} event WHERE event.session_id = ${sessionId} AND event.event_id = given.value)
+    `);
+    return new Set(rows.map(row => row.eventId));
   }
 
   sessions(): readonly StoredSessionSummary[] {
