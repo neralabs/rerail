@@ -104,8 +104,9 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    * Re-read every known checkout's eligibility, in one statement however many the session knows: its walks come to
    * know every worktree of its repository. A lane whose checkout may no longer run rules (stopped, not set up, or the
    * session's own checkout stopped) is closed, so its last result stops reaching later responses; it opens again if
-   * the checkout becomes eligible. Every other lane reads its rules again at its next use (`#lane`), before it answers
-   * or audits anything, so a tool call reads the rules of the lanes it uses, not of every lane open.
+   * the checkout becomes eligible. The session's own checkout reads its rules again now, since the session's rule
+   * coverage reports its catalog after every event. Every other lane reads them at its next use (`#lane`), before it
+   * answers or audits anything, so a tool call reads the rules of the lanes it uses, not of every lane open.
    */
   refreshCodeRules(): void {
     if (this.#closing) return;
@@ -116,6 +117,11 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
       this.#lanes.delete(lane.root);
       lane.enforcer.interrupt();
       void lane.opening.catch(() => undefined).then(() => lane.enforcer.close()).catch(() => undefined);
+    }
+    const own = this.#lanes.get(this.#options.startingCheckout);
+    if (own !== undefined) {
+      own.refreshed = this.#refreshes;
+      own.enforcer.refreshCodeRules();
     }
   }
 

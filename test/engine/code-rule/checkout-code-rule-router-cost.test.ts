@@ -159,6 +159,19 @@ describe("CheckoutCodeRuleRouter in a repository with many worktrees", () => {
     expect(await gitOf(6)).toBe(await gitOf(1));
   }, 60_000);
 
+  it("reads the session checkout's rules at every event, so what its catalog reports is current before any tool call", async () => {
+    const { main, databasePath, catalogs, auditor } = await sessionWithWorktrees(1);
+    const catalog = catalogs.catalog(main);
+    expect(catalog.status.ruleCount).toBe(1);
+    const repositoryKey = catalogs.checkout(main)!.repositoryKey;
+    withDatabase(databasePath, database => {
+      setRuleSetting(database, { owner: { kind: "repository", repositoryKey }, folder: "", targetKind: "rule", targetId: RULE.id, on: false, mode: null });
+    });
+    // An event with no tool call, as a message's end is: the runtime then reports the session's rule coverage from it.
+    auditor.refreshCodeRules();
+    expect(catalog.status.ruleCount).toBe(0);
+  }, 60_000);
+
   it("closes the lane of a worktree another process stops at the next event, and audits with a setting changed elsewhere", async () => {
     const { databasePath, worktrees: [stopped, turnedOff], auditor } = await sessionWithWorktrees(2);
     const needle = (worktree: string) => [{ path: join(worktree, "api", "x.py"), language: "python" as const, generatedText: "NEEDLE\n" }];
