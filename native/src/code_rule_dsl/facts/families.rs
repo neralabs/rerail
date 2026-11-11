@@ -615,3 +615,21 @@ fn prefilter_image(
         None => Err(crate::content_store::StoreError::Invalid("no prefilter image is registered".to_owned())),
     }
 }
+
+/// The documents of `paths` in `scope` whose core facts are bound, each keyed by its path name's
+/// atom, its facts rebuilt from its stored tape.
+pub(crate) fn stored_documents(graph: &(impl Graph + ?Sized), scope: &str, paths: &[String]) -> StoreResult<Vec<crate::code_rule_dsl::facts::vtab::syntax::Document>> {
+    let mut out = Vec::new();
+    for path in paths {
+        let core = core_name(scope, path);
+        let Some(digest) = graph.binding(&core)? else { continue };
+        let Some(tape) = Families::stored(graph, scope, path)? else { continue };
+        let facts = crate::code_rule_dsl::facts::core::from_tape(&tape.doc, Arc::clone(&tape.lines)).map_err(StoreError::Invalid)?;
+        if crate::code_rule_dsl::facts::core::digest(&facts) != digest {
+            return Err(StoreError::Invalid(format!("stale core facts for {core}")));
+        }
+        let key = graph.store().atom(&crate::code_rule_dsl::facts::observe::path_name(scope, path))?.ok_or_else(|| StoreError::Corrupt(format!("{path} has no atom")))?;
+        out.push(crate::code_rule_dsl::facts::vtab::syntax::Document { key, path: path.clone(), core, digest, facts: Arc::new(facts), tape: None, guest: None, module: None });
+    }
+    Ok(out)
+}

@@ -181,7 +181,7 @@ impl CodeRuleSqlExecutor {
                 return Err(error("stored document paths must be distinct"));
             }
             let documents =
-                super::waves::matches::documents(&this.store, &scope, &paths).map_err(error)?;
+                super::facts::families::stored_documents(&this.store, &scope, &paths).map_err(error)?;
             if documents.len() != paths.len() || documents.iter().any(|d| d.facts.syntax_errors) {
                 return Err(error(
                     "requested stored documents have missing or incomplete core facts",
