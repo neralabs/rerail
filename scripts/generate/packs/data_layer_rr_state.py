@@ -329,7 +329,8 @@ spt_output(p,l,q,c,m,"sorted",0,0,0) :- spt_result(n,q,c,m,_,_,_,_),
         text += f'.violation State{name}(at: span, qualname: symbol, text: symbol, mode: symbol, visit: number, phase: number, ordinal: number) code "{code}"\n    "{{text}}"\n'
         text += f'State{name}(@place(p,l),q,m,mode,i,phase,j) :- spt_output(p,l,q,"{code}",m,mode,i,phase,j).\n'
     from data_layer_rr_state_helpers import program as helper_program
-    return text + helper_contracts(source) + helper_program()
+    from data_layer_rr_state_plugin import program as plugin_program
+    return text + helper_contracts(source) + helper_program() + plugin_program(source)
 
 
 def source_program(text):

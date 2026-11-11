@@ -11717,3 +11717,28 @@ The [analysis checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-st
 The original plugin-construction test still fails at the source-execution guard. State Tripwires remains a draft.
 Its scanner supplied-AST, project options, production, signing, CLI, and persistent-update contracts remain open.
 No engine rebuild or repository-wide cold run was performed. Each test command remained bounded at 110 seconds.
+
+### State Tripwires native plugin and ratchet reporting, 2026-11-10
+
+The plugin now obtains its descriptor and ordered roots from native relations.
+Supplied-fact reporting also runs natively, including generated-category validation, signature checks, signed filtering, ratchet counts, ordering, and typed file errors.
+The facade transports values and builds passive DTOs. It calls no original State Tripwires implementation.
+
+Both APIs pass all 51 recorded plugin contracts. Three additional contracts cover all 14 signed-work keys and a new positive.
+They also confirm that signed filtering precedes ratchet evaluation: filtered findings leave 14 stale ratchet entries.
+Both APIs now pass all 80 original module tests. All 77 complete scanner returns match, including 64 positive returns.
+All 421 tooling tests pass. The [plugin checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-state-tripwires-plugin-progress-final6c6.json.gz) retains the complete evidence.
+
+The first directory implementation returned no roots. A literal `dir_entry(".",...)` request returned no rows in an isolated probe.
+The equivalent named request returned all three probe directories. The plugin uses that existing request shape.
+The checkpoint preserves the failing case and its complete program, verified against the recorded execution hash.
+Reconstruction also restored the provider-token fact order. That generator currently iterates a frozenset; deterministic ordering remains a maintenance task.
+
+The two-case shared scope suite is still incomplete. Its first test runs shared Python discovery without a native call.
+Its factory loop passes State Tripwires, then fails the guard on the next linter's factory. Neither case counts as completed native coverage.
+Ratchet reads use exported settings because the world request phase cannot price the post-load option relation in this shape.
+The read can occur before generated-category or signature validation. Result and exception precedence match the recorded cases.
+Full production, generated-file mutation, scanner supplied-AST, project options, signing administration, CLI, and persistent-update acceptance remain open.
+
+The inventory stays at 13 admitted ports, 86 drafts, and one absent translation.
+No engine rebuild or full-repository cold benchmark ran. Test commands remained bounded at 110 seconds.

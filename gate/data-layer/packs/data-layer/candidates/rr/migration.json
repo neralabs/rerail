@@ -2913,14 +2913,14 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-state-tripwires.rr",
-      "sha256": "0c965bb45ddd57d19fc217ffe00fcde423d067822e7b2c5f6e2e817e8c26cacb",
+      "sha256": "6665df951a40b3f004fcae4abb80a6ca3f1c6fddbf30b106fd8d78d5ed0ce5a2",
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_state_tripwires.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-state-tripwires-source.rr",
-      "sha256": "24ae9d5942d9eedd6d63e53b308eb7b2d27d40b78aa74e0b5e57183a2d74bd26",
+      "sha256": "9243252bd92b77a94d693856c53f9d44275f5c0b9d29650ad64411ed4c5ac1c0",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_serverplan_state_tripwires.py"
@@ -3890,47 +3890,42 @@
       "legacySha256": "7680e1e3f3e6d2d46ac491905ecd39bd79fb9a469f2d8e8c9566470bdcf7f032",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-state-tripwires.rr",
-      "ruleSha256": "0c965bb45ddd57d19fc217ffe00fcde423d067822e7b2c5f6e2e817e8c26cacb",
+      "ruleSha256": "6665df951a40b3f004fcae4abb80a6ca3f1c6fddbf30b106fd8d78d5ed0ce5a2",
       "migrationProgress": {
-        "status": "native-analysis-progress",
+        "status": "native-plugin-progress",
         "fullMigrationAcceptance": false,
         "checkpoint": {
-          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-state-tripwires-analysis-progress-final6c6.json.gz",
-          "sha256": "132e244dc9df3272167ac93b32d34cd14eb3f2d952949bf3592718c3be53f5b1"
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-state-tripwires-plugin-progress-final6c6.json.gz",
+          "sha256": "dbb200d88fef27cb9de1c683d8efe4d6fc3ec2dc5c449910a8968f78a59c2396"
         },
         "summary": {
           "snapshot": {
             "originalAssertions": 80,
-            "passed": 79,
-            "failed": 1,
+            "passed": 80,
+            "failed": 0,
             "fullReturnedValuesMatched": 77,
             "positiveReturnsMatched": 64,
-            "nativeCalls": 85,
-            "nativeScopeAssertionTransfers": 2
+            "nativeCalls": 86
           },
           "workspace": {
             "originalAssertions": 80,
-            "passed": 79,
-            "failed": 1,
+            "passed": 80,
+            "failed": 0,
             "fullReturnedValuesMatched": 77,
             "positiveReturnsMatched": 64,
-            "nativeCalls": 85,
-            "nativeScopeAssertionTransfers": 2
+            "nativeCalls": 86
           }
         },
-        "freshCasesPerAPI": 18,
-        "analysisCasesPerAPI": 29,
-        "helperCasesPerAPI": 31,
-        "controls": 4,
+        "pluginCasesPerAPI": 51,
+        "signedFilterCasesPerAPI": 3,
+        "signedKeysCovered": 14,
         "remaining": [
-          "The original plugin-construction assertion still fails: its guarded source implementation has no native adapter.",
-          "The two owned scope assertions and the full production/plugin contract.",
-          "Structured scanner supplied ASTs, all project map options, project signed-work filtering, loader errors and mutable configuration.",
-          "Ratchet reporting, signature failure/admin paths, CLI enforcement and persistent workspace acceptance."
+          "The shared two-case scope suite still fails on the next linter factory; its discovery assertion remains host-only.",
+          "Scanner supplied ASTs, all project map options, project signed-work filtering, generated-file errors and mutable loader configuration.",
+          "Production integration, signature administration, CLI enforcement and persistent workspace acceptance.",
+          "The current world interface requires exported file requests before post-load option and fact validation; supplied reporter reads are prefetched."
         ],
-        "failedOriginalCases": [
-          "scripts/tests/test_lint_serverplan_state_tripwires.py::test_plugin_factory_does_not_scan_project_sources"
-        ]
+        "failedOriginalCases": []
       },
       "migrationProgressHistory": [
         {

@@ -1,12 +1,16 @@
 """Check that native scope comparisons reject removal of inference guards."""
 import argparse
+import os
 from pathlib import Path
+import tempfile
 
 from migration import ROOT,read_json,write_json,sha
 from replay import execute_native,execute_workspace
 
 
 def run(engine,baseline,out):
+    cache=tempfile.TemporaryDirectory(prefix='state-analysis-controls-')
+    os.environ['RERAIL_TAPE_CACHE']=str(Path(cache.name)/'store.sqlite')
     original=ROOT/'gate/data-layer/packs/data-layer/candidates/rr/serverplan-state-tripwires-source.rr'
     program=original.read_text();case=read_json(baseline)['cases'][0]
     expected=case['expected']['scopes'];data=case['input']

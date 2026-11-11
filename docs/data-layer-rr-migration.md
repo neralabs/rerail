@@ -110,14 +110,17 @@ The initial snapshot contained 43 target drafts and 57 absent translations.
 The current inventory has **13 accepted ports, 86 drafts, and one absent translation**.
 This means 99 translation candidates exist. It does not mean 99 migrations have passed acceptance.
 The absent translation is `serverplan_quality`.
-The State Tripwires candidate remains a draft. Its original module passes 79 of 80 assertions through each native API.
+The State Tripwires candidate remains a draft. Its original module passes all 80 tests through each native API.
 Both APIs match all 77 recorded scanner returns, including 64 positive returns.
-The remaining failure concerns plugin construction. Function collection and reachability now execute native rules over supplied AST columns.
+Plugin construction and supplied-fact reporting now execute native rules. All 51 plugin contracts pass through both APIs.
+Three additional contracts cover every signed-work key, a retained positive, and filtering before ratchet evaluation.
+Function collection and reachability execute native rules over supplied AST columns.
 The two selection tests observe actual native inference scopes. Their assertion predicates remain unchanged, including the nested collection-type assertion.
-All 31 helper contracts and 29 analysis-scope contracts pass through both APIs.
-Four native mutation controls reject removal of the fact or runtime-authority selection guards.
-Its two owned scope assertions and its broader production, supplied-AST, options, signing, CLI, and update contracts remain open.
-The [State Tripwires checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-state-tripwires-analysis-progress-final6c6.json.gz) retains the remaining failure and all passing observations.
+The preceding analysis checkpoint records 31 helper contracts, 29 analysis-scope contracts, and four passing mutation controls through both APIs.
+The shared scope suite remains incomplete: one assertion runs in Python; the factory loop fails when it reaches the next linter.
+Broader production, scanner supplied-AST, options, signing administration, CLI, and update contracts remain open.
+The [plugin checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-state-tripwires-plugin-progress-final6c6.json.gz) retains the 80-test replay and supplied-fact results.
+The [analysis checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-state-tripwires-analysis-progress-final6c6.json.gz) preserves its earlier program and harness bytes.
 All 18 fresh contracts pass through both APIs on the same engine, including 15 positives and three clean cases.
 `no_api_root_imports` passes its complete recorded contract on Final `ec3cfe1b7`.
 Its [admission receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-api-imports-complete-finalec3.json.gz) verifies 467 native executions.
@@ -3235,3 +3238,25 @@ All 421 tooling tests pass.
 Plugin construction still fails at the source-execution guard. This checkpoint does not claim plugin, production, CLI, or full migration acceptance.
 The migration inventory remains 13 accepted ports, 86 drafts, and one absent translation.
 No engine rebuild or full-repository cold benchmark was required.
+
+### State Tripwires plugin metadata and supplied-fact reporting, 2026-11-10
+
+The plugin descriptor now comes from native rule outputs. It preserves fact specifications, dependency versions, collector configuration, and ordered production roots.
+The reporter validates generated categories, verifies both signed allowlists, validates supplied facts, filters signed findings, and applies the count ratchet.
+It preserves grouping order, complete messages, Boolean and arbitrary-size integer lines, stale keys, and typed read errors.
+The facade serializes supplied values and constructs public DTOs. It executes no original State Tripwires semantics.
+
+All 51 source-recorded plugin cases pass through both native APIs.
+Three further cases cover all 14 signed-work keys, an unsuppressed positive, and stale ratchet entries after signed filtering.
+The complete original module passes all 80 tests through each API. All 77 scanner returns still match, including 64 positives.
+All 421 tooling tests pass.
+
+The directory regression first returned no roots through either API.
+A focused probe showed that this engine returns no rows for a literal directory request. A named request returns the expected directories.
+The plugin now uses that named request. The checkpoint preserves the failing and corrected results and their exact program hashes.
+
+The separate shared scope suite still fails on `lazy_result_usage_plugin`. Its discovery-only case has no native call.
+These two cases remain outside State's completed native coverage. They are retained in the checkpoint, without an exclusion or admission claim.
+Reporter file requests use the engine's exported environment interface. The physical ratchet read can precede post-load validation.
+Generated-file mutations, scanner supplied ASTs, complete project options, production integration, signing administration, CLI, and persistent updates remain open.
+The inventory remains 13 full admissions, 86 drafts, and one absent translation.

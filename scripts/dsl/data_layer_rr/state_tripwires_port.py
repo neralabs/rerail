@@ -179,3 +179,5 @@ def install(backend, module):
     backend.replace(module,'_select_reachable_function_nodes',lambda path,function_nodes,function_body_nodes_by_fn,**kw:
                     select_functions(backend,module,path,function_nodes,function_body_nodes_by_fn,**kw))
     backend.replace(module,'ServerPlanStateTripwireCollector',NativeCollector)
+    from state_plugin_port import install as install_plugin
+    install_plugin(backend,module)

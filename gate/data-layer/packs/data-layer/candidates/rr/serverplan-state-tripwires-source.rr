@@ -2061,10 +2061,10 @@ spt_planning_name("preprocess").
 .decl spt_provider_path(path: symbol)
 spt_provider_path("impl/common/l2070_server_plan/backend_profiles.py").
 .decl spt_provider_token(token: symbol)
-spt_provider_token("score").
 spt_provider_token("scores").
 spt_provider_token("component").
 spt_provider_token("components").
+spt_provider_token("score").
 .decl spt_native_name(name: symbol)
 spt_native_name("create_usearch_index_class").
 spt_native_name("deserialize_embedding").
@@ -2239,3 +2239,315 @@ sph_walk_requested(r) :- option("entryPoint","_select_reachable_function_nodes")
 sph_walk_requested(r) :- option("entryPoint","_select_reachable_function_nodes"), sph_selected(r), option("helperCalledProvided","false").
 .violation StateHelperCache(at: span, owner: number, occurrence: number, depth: number) code "SPT_HELPER_CACHE" "cached AST {occurrence}"
 StateHelperCache(@place("input.py",1),r,n,d) :- sph_walk_requested(r), !sph_cache_root(r,_), sph_repr(r,f), sph_desc(f,n,d).
+
+#include "data-layer/signing.rr"
+.decl spp_metadata(json: symbol)
+spp_metadata("{\"plugin\": {\"name\": \"serverplan_state_tripwires\", \"enforcement\": \"hard-fail\", \"description\": \"ServerPlan state/eager execution tripwires\"}, \"scope\": {\"explicit_files\": [], \"include_tests\": false, \"broad_repo_scope\": false}, \"extractors\": [{\"extractor_id\": \"serverplan_state_tripwires.violations\", \"schema_version\": \"1\", \"implementation_version\": \"serverplan-state-tripwire-violations-v4:9870593dbfef0520b8520e6fd675c707cce1c39406baada70fc8a65d689bbb71\", \"parser_mode\": \"ast_collect\", \"source_triggers\": [\"CompilationContext\", \"CompiledStep\", \"LazyResult\", \"LazySeq\", \"PipelineLifecycleEffect\", \"PipelineResolvedIR\", \"ResolvedRefs\", \"RuntimeBuilder\", \"StepIR\", \"def compile\", \"execute_runtime\", \"execute_runtime_nested_steps\", \"grammar_\", \"in_server_plan_execution\", \"pending_pipeline_effects\", \"post_op\", \"pre_op\", \"preprocess\", \"runtime_builder\", \"runtime_ref\", \"runtime_result\"], \"source_trigger_groups\": [], \"cacheable\": true, \"workload_scope\": \"file\", \"project_input_facts\": [], \"project_input_scope\": null, \"implementation_digest\": \"95920b70b644615a\", \"node_kinds\": [\"Module\"]}, {\"extractor_id\": \"serverplan_state_tripwires.return_kinds\", \"schema_version\": \"1\", \"implementation_version\": \"serverplan-return-kinds-v1\", \"parser_mode\": \"ast_collect\", \"source_triggers\": [], \"source_trigger_groups\": [], \"cacheable\": true, \"workload_scope\": \"file\", \"project_input_facts\": [], \"project_input_scope\": null, \"implementation_digest\": \"95920b70b644615a\", \"node_kinds\": [\"FunctionDef\", \"AsyncFunctionDef\"]}]}").
+.decl spp_violation_family(name: symbol)
+spp_violation_family("serverplan_state_tripwires.violations").
+.decl spp_return_family(name: symbol)
+spp_return_family("serverplan_state_tripwires.return_kinds").
+.decl spp_generated_path(path: symbol)
+spp_generated_path("/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/data-layer-testsuite-positives/upstream-git/scripts/serverplan_return_kinds.json").
+.decl spp_generated_order(ordinal: number,name: symbol)
+spp_generated_order(0,"__aenter__").
+spp_generated_order(1,"__call__").
+spp_generated_order(2,"__enter__").
+spp_generated_order(3,"__new__").
+spp_generated_order(4,"_acquire_sync_context_impl").
+spp_generated_order(5,"_assert_upload_scope").
+spp_generated_order(6,"_build_cross_branch_provider").
+spp_generated_order(7,"_build_hybrid_search_provider").
+spp_generated_order(8,"_build_plan_versioned_write_transaction").
+spp_generated_order(9,"_build_plan_versioned_write_transaction_from_context_result").
+spp_generated_order(10,"_build_plan_versioned_write_transaction_from_literal").
+spp_generated_order(11,"_build_read_txn").
+spp_generated_order(12,"_build_vector_candidate_provider").
+spp_generated_order(13,"_build_versioned_lowering_provider").
+spp_generated_order(14,"_build_versioned_storage_provider").
+spp_generated_order(15,"_build_versioned_write_context").
+spp_generated_order(16,"_build_write_txn").
+spp_generated_order(17,"_conn").
+spp_generated_order(18,"_connection_for_txn").
+spp_generated_order(19,"_connections").
+spp_generated_order(20,"_create_backend_write_transaction").
+spp_generated_order(21,"_create_connection").
+spp_generated_order(22,"_create_from_url").
+spp_generated_order(23,"_create_historical_read_transaction").
+spp_generated_order(24,"_create_read_transaction").
+spp_generated_order(25,"_create_read_transaction_async").
+spp_generated_order(26,"_create_sqlite").
+spp_generated_order(27,"_create_sync_doltdb_connection").
+spp_generated_order(28,"_create_sync_mariadb_connection").
+spp_generated_order(29,"_create_sync_mongodb_connection").
+spp_generated_order(30,"_create_sync_neo4j_connection").
+spp_generated_order(31,"_create_sync_postgres_connection").
+spp_generated_order(32,"_create_sync_sqlite_connection").
+spp_generated_order(33,"_create_worker_connection").
+spp_generated_order(34,"_create_write_transaction").
+spp_generated_order(35,"_create_write_transaction_async").
+spp_generated_order(36,"_ensure_system_txn").
+spp_generated_order(37,"_enter_doltdb_versioned_write_async").
+spp_generated_order(38,"_enter_doltdb_versioned_write_sync").
+spp_generated_order(39,"_enter_read_transaction_context").
+spp_generated_order(40,"_enter_sparse_versioned_async").
+spp_generated_order(41,"_enter_sparse_versioned_sync").
+spp_generated_order(42,"_enter_sql_read_async").
+spp_generated_order(43,"_enter_sql_read_sync").
+spp_generated_order(44,"_enter_sql_versioned_write_async").
+spp_generated_order(45,"_enter_sql_versioned_write_sync").
+spp_generated_order(46,"_enter_sql_write_async").
+spp_generated_order(47,"_enter_sql_write_sync").
+spp_generated_order(48,"_enter_write_transaction_context").
+spp_generated_order(49,"_factory").
+spp_generated_order(50,"_find_root_transaction").
+spp_generated_order(51,"_get_connection").
+spp_generated_order(52,"_get_context_cache").
+spp_generated_order(53,"_get_ops_connection_terminal").
+spp_generated_order(54,"_get_ops_connection_terminal_async").
+spp_generated_order(55,"_get_owner_connection").
+spp_generated_order(56,"_get_plan_vrt_class").
+spp_generated_order(57,"_get_sql_conn").
+spp_generated_order(58,"_get_sql_conn_from_txn").
+spp_generated_order(59,"_is_read_or_write_transaction").
+spp_generated_order(60,"_is_versioned_transaction_plan_target").
+spp_generated_order(61,"_make_branch_tip_read_transaction").
+spp_generated_order(62,"_make_inferred_branch_read_transaction").
+spp_generated_order(63,"_make_plan_versioned_read_transaction").
+spp_generated_order(64,"_materialize_sql_versioned_read_txn").
+spp_generated_order(65,"_materialize_sql_versioned_read_txn_async").
+spp_generated_order(66,"_materialize_sql_versioned_read_txn_impl").
+spp_generated_order(67,"_open_cache_txn").
+spp_generated_order(68,"_open_cache_txn_async").
+spp_generated_order(69,"_open_upstream_txn").
+spp_generated_order(70,"_open_upstream_txn_async").
+spp_generated_order(71,"_prepare_base_write_transaction").
+spp_generated_order(72,"_require_async_write_transaction").
+spp_generated_order(73,"_require_base_write_transaction").
+spp_generated_order(74,"_require_cache_txn").
+spp_generated_order(75,"_require_cache_txn_for_write").
+spp_generated_order(76,"_require_sync_database_connection").
+spp_generated_order(77,"_require_upstream_txn").
+spp_generated_order(78,"_require_upstream_write_txn").
+spp_generated_order(79,"_require_versioned_write_transaction").
+spp_generated_order(80,"_require_worker_connection_owner").
+spp_generated_order(81,"_require_write_transaction").
+spp_generated_order(82,"_resolve_base_txn").
+spp_generated_order(83,"_storage_read_context").
+spp_generated_order(84,"_transaction_types").
+spp_generated_order(85,"_validated").
+spp_generated_order(86,"_versioned_read_transaction_async").
+spp_generated_order(87,"_versioned_read_transaction_base_cls").
+spp_generated_order(88,"_versioned_write_transaction").
+spp_generated_order(89,"_versioned_write_transaction_async").
+spp_generated_order(90,"_versioned_write_transaction_impl").
+spp_generated_order(91,"_versioned_write_transaction_runtime_cls").
+spp_generated_order(92,"acquire_sync_context").
+spp_generated_order(93,"base_read_transaction").
+spp_generated_order(94,"base_write_transaction").
+spp_generated_order(95,"cache").
+spp_generated_order(96,"conn").
+spp_generated_order(97,"create_db_connection").
+spp_generated_order(98,"create_queue_worker").
+spp_generated_order(99,"create_sync").
+spp_generated_order(100,"create_worker_connection").
+spp_generated_order(101,"get_ops_connection").
+spp_generated_order(102,"get_ops_connection_async").
+spp_generated_order(103,"get_ops_connection_lazy").
+spp_generated_order(104,"get_schema_transaction_connection").
+spp_generated_order(105,"get_schema_transaction_connection_runtime_lazy").
+spp_generated_order(106,"get_transaction_connection").
+spp_generated_order(107,"get_transaction_connection_runtime_lazy").
+spp_generated_order(108,"_graph_visibility_plan_owner").
+spp_generated_order(109,"handler_txn").
+spp_generated_order(110,"nested_versioned_read_context").
+spp_generated_order(111,"nested_versioned_read_context_async").
+spp_generated_order(112,"nested_versioned_read_context_with_schema_context_async").
+spp_generated_order(113,"nested_versioned_write_context").
+spp_generated_order(114,"read").
+spp_generated_order(115,"read_async").
+spp_generated_order(116,"read_transaction").
+spp_generated_order(117,"read_txn").
+spp_generated_order(118,"readthrough_transaction").
+spp_generated_order(119,"require_cross_branch_query_provider").
+spp_generated_order(120,"require_hybrid_search_provider").
+spp_generated_order(121,"require_permission_compile_txn").
+spp_generated_order(122,"require_permission_lazy_read_transaction").
+spp_generated_order(123,"require_permission_read_transaction").
+spp_generated_order(124,"require_permission_write_transaction").
+spp_generated_order(125,"require_sql_hybrid_search_provider").
+spp_generated_order(126,"require_vector_candidate_provider").
+spp_generated_order(127,"require_versioned_lowering_provider").
+spp_generated_order(128,"require_versioned_storage_provider").
+spp_generated_order(129,"runtime_write_txn_from_hydrator").
+spp_generated_order(130,"serverplan_cache_transaction").
+spp_generated_order(131,"transaction").
+spp_generated_order(132,"txn").
+spp_generated_order(133,"versioned_read").
+spp_generated_order(134,"versioned_read_async").
+spp_generated_order(135,"versioned_read_transaction").
+spp_generated_order(136,"versioned_write").
+spp_generated_order(137,"versioned_write_async").
+spp_generated_order(138,"write").
+spp_generated_order(139,"write_async").
+spp_generated_order(140,"write_transaction").
+spp_generated_order(141,"write_txn").
+.decl spp_whitespace(pattern: symbol)
+spp_whitespace("[\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}-\\x{2029}\\x{202f}\\x{205f}\\x{3000}]*").
+.decl spp_kind(n: number,value: symbol)
+.input spp_kind(IO=json,filename="state-plugin-facts.json",path="/values/*/kind",projection="python-str")
+.decl spp_text(n: number,value: symbol)
+.input spp_text(IO=json,filename="state-plugin-facts.json",path="/values/*/text",projection="python-str")
+.decl spp_parent(n: number,value: symbol)
+.input spp_parent(IO=json,filename="state-plugin-facts.json",path="/values/*/parent",projection="python-str")
+.decl spp_key_kind(n: number,value: symbol)
+.input spp_key_kind(IO=json,filename="state-plugin-facts.json",path="/values/*/key_kind",projection="python-str")
+.decl spp_key(n: number,value: symbol)
+.input spp_key(IO=json,filename="state-plugin-facts.json",path="/values/*/key",projection="python-str")
+.decl spp_ordinal(n: number,value: symbol)
+.input spp_ordinal(IO=json,filename="state-plugin-facts.json",path="/values/*/ordinal",projection="python-str")
+.decl spp_family_name(bundle: number,family: number,value: symbol)
+.input spp_family_name(IO=json,filename="state-plugin-facts.json",path="/bundles/*/families/*/name",projection="python-str")
+.decl spp_family_root(bundle: number,family: number,value: symbol)
+.input spp_family_root(IO=json,filename="state-plugin-facts.json",path="/bundles/*/families/*/root",projection="python-str")
+
+.decl spp_plugin_entry()
+spp_plugin_entry() :- option("entryPoint","_state_plugin_metadata").
+spp_plugin_entry() :- option("entryPoint","_state_plugin_report").
+.violation StatePluginMetadata(at: span,json: symbol) code "SPT_PLUGIN_META" "plugin metadata"
+StatePluginMetadata(@place("",0),j) :- option("entryPoint","_state_plugin_metadata"),spp_metadata(j).
+.violation StatePluginReturnKind(at: span,name: symbol,kind: symbol) code "SPT_PLUGIN_RETURN_KIND" "{name}: {kind}"
+StatePluginReturnKind(@place("",0),n,k) :- option("entryPoint","_state_plugin_metadata"),spt_generated(n,k).
+.violation StatePluginReturnName(at: span,ordinal: number,name: symbol) code "SPT_PLUGIN_RETURN_NAME" "{name}"
+StatePluginReturnName(@place("",0),i,n) :- option("entryPoint","_state_plugin_metadata"),spp_generated_order(i,n).
+.decl spp_top(name: symbol)
+.decl spp_directory(path: symbol)
+spp_directory(".") :- env("state.plugin.metadata","true").
+spp_top(n) :- spp_directory(p),dir_entry(p,n,1).
+.decl spp_layer(name: symbol)
+spp_layer(n) :- spp_top(n),@rx(n,"^l\\d{4}_.+")=1.
+.violation StatePluginDirectory(at: span,ordinal: number,path: symbol) code "SPT_PLUGIN_DIR" "plugin directory"
+StatePluginDirectory(@place("",0),0,"impl") :- spp_top("impl").
+StatePluginDirectory(@place("",0),1,"data_layer") :- spp_top("data_layer").
+StatePluginDirectory(@place("",0),2,"_internal") :- spp_top("_internal").
+StatePluginDirectory(@place("",0),i+3,n) :- spp_layer(n),i=count : { spp_layer(p),@str_cmp(p,n)<0 }.
+
+.decl spp_edge(p: number,c: number,key_kind: symbol,key: symbol,ordinal: number)
+spp_edge(to_number(p),c,k,s,to_number(i)) :- spp_parent(c,p),p!="-1",spp_key_kind(c,k),spp_key(c,s),spp_ordinal(c,i).
+.decl spp_bad_json(n: number)
+spp_bad_json(n) :- spp_kind(n,k),k!="str",k!="int",k!="float",k!="bool",k!="NoneType",k!="list",k!="tuple",k!="dict".
+spp_bad_json(n) :- spp_edge(n,c,_,_,_),spp_bad_json(c).
+spp_bad_json(n) :- spp_kind(n,"dict"),spp_edge(n,_,k,_,_),k!="str".
+.decl spp_family(b: number,name: symbol,root: number)
+spp_family(b,s,to_number(r)) :- spp_family_name(b,i,s),spp_family_root(b,i,r).
+.decl spp_return_name(name: symbol)
+spp_return_name(s) :- spp_return_family(f),spp_family(_,f,root),spp_kind(root,"dict"),spp_edge(root,n,"str",s,_),spp_kind(n,"list").
+.decl spp_return_kind(name: symbol,kind: symbol)
+spp_return_kind(s,k) :- spp_return_family(f),spp_family(_,f,root),spp_kind(root,"dict"),spp_edge(root,n,"str",s,_),spp_kind(n,"list"),
+    spp_edge(n,v,_,_,_),spp_kind(v,"str"),spp_text(v,k).
+.decl spp_stale_generated()
+spp_stale_generated() :- spt_generated(n,_),!spp_return_name(n).
+spp_stale_generated() :- spp_return_name(n),!spt_generated(n,_).
+spp_stale_generated() :- spt_generated(n,k),!spp_return_kind(n,k).
+spp_stale_generated() :- spp_return_kind(n,k),!spt_generated(n,k).
+
+// Signature failures precede fact validation and ratchet reads.
+allow_entry("state-production",s) :- spp_plugin_entry(),option_item("productionIrEntries",_,s).
+allow_sig("state-production","production_ir_allowlist",s) :- spp_plugin_entry(),option("productionIrSignature",s).
+multi_name("state-work","native_python_work") :- spp_plugin_entry().
+multi_name("state-work","preprocess_runtime_value") :- spp_plugin_entry().
+multi_name("state-work","runtime_callbacks") :- spp_plugin_entry().
+multi_entry("state-work","native_python_work",s) :- spp_plugin_entry(),option_item("nativeWorkEntries",_,s).
+multi_entry("state-work","preprocess_runtime_value",s) :- spp_plugin_entry(),option_item("preprocessEntries",_,s).
+multi_entry("state-work","runtime_callbacks",s) :- spp_plugin_entry(),option_item("callbackEntries",_,s).
+multi_sig("state-work","lint_serverplan_state_tripwires_python_work",s) :- spp_plugin_entry(),option("pythonWorkSignature",s).
+.decl spp_work_allow(key: symbol)
+spp_work_allow(s) :- option_item("nativeWorkEntries",_,s).
+spp_work_allow(s) :- option_item("preprocessEntries",_,s).
+spp_work_allow(s) :- option_item("callbackEntries",_,s).
+.decl spp_verified()
+spp_verified() :- option("entryPoint","_state_plugin_report"),!spp_stale_generated(),allow_status("state-production","valid"),multi_status("state-work","valid").
+.decl spp_output(ordinal: number,text: symbol)
+spp_output(0,cat("FAIL: WARNING: Allowlist for production_ir_allowlist is ",label,". Sign with --sign or a maintainer signing flow.\n")) :-
+    option("entryPoint","_state_plugin_report"),!spp_stale_generated(),allow_status("state-production","unsigned"),option("productionIrSignature",s),
+    (s="NEEDS_SIGNING",label="needs signing";s!="NEEDS_SIGNING",label="unsigned").
+spp_output(0,cat("FAIL: Allowlist signature verification failed for production_ir_allowlist: ",detail,"\n")) :-
+    option("entryPoint","_state_plugin_report"),!spp_stale_generated(),allow_status("state-production","invalid"),
+    allow_message("state-production",m),option("productionIrSignature",s),nera_key(k),detail=@ed25519_error(k,m,s).
+spp_output(1,cat("FAIL: WARNING: Allowlists for lint_serverplan_state_tripwires_python_work are ",label,". Sign with --sign-allowlist.\n")) :-
+    option("entryPoint","_state_plugin_report"),!spp_stale_generated(),allow_status("state-production","valid"),multi_status("state-work","unsigned"),
+    option("pythonWorkSignature",s),(s="NEEDS_SIGNING",label="needs signing";s!="NEEDS_SIGNING",label="unsigned").
+spp_output(1,cat("FAIL: Allowlist signature verification failed for lint_serverplan_state_tripwires_python_work: ",detail,"\n")) :-
+    option("entryPoint","_state_plugin_report"),!spp_stale_generated(),allow_status("state-production","valid"),multi_status("state-work","invalid"),
+    multi_message("state-work",m),option("pythonWorkSignature",s),nera_key(k),detail=@ed25519_error(k,m,s).
+.violation StatePluginOutput(at: span,ordinal: number,text: symbol) code "SPT_PLUGIN_STDERR" "plugin output"
+StatePluginOutput(@place("",0),i,t) :- spp_output(i,t).
+.decl spp_bad_bundle(b: number)
+spp_bad_bundle(b) :- spp_violation_family(f),spp_family(b,f,r),spp_kind(r,k),k!="list".
+spp_bad_bundle(b) :- spp_violation_family(f),spp_family(b,f,r),spp_bad_json(r).
+.violation StatePluginFactError(at: span,bundle: number,detail: symbol) code "SPT_PLUGIN_FACT_ERROR" "{detail}"
+StatePluginFactError(@place("",0),b,"Fact array requires a list of JSON values") :- spp_verified(),spp_bad_bundle(b),b=min k : { spp_bad_bundle(k) }.
+.decl spp_field(r: number,name: symbol,kind: symbol,value: symbol)
+spp_field(r,name,k,v) :- spp_kind(r,"dict"),spp_edge(r,n,"str",name,_),spp_kind(n,k),spp_text(n,v).
+.decl spp_line(r: number,json: symbol)
+spp_line(r,v) :- spp_field(r,"line","int",v).
+spp_line(r,v) :- spp_field(r,"line","bool",v).
+.decl spp_path_root(raw: symbol,prefix: symbol)
+spp_path_root(p,"") :- spp_field(_,"file","str",p),!prefix("/",p).
+spp_path_root(p,"/") :- spp_field(_,"file","str",p),prefix("/",p),!prefix("//",p).
+spp_path_root(p,"/") :- spp_field(_,"file","str",p),prefix("///",p).
+spp_path_root(p,"//") :- spp_field(_,"file","str",p),prefix("//",p),!prefix("///",p).
+.decl spp_path_body(raw: symbol,body: symbol)
+spp_path_body(p,body) :- spp_path_root(p,_),body=join part by i sep "/" : { match_all("(?<part>[^/]+)",p,i,_,_),part!="." }.
+.decl spp_path(raw: symbol,path: symbol)
+spp_path(p,cat(root,body)) :- spp_path_root(p,root),spp_path_body(p,body),(root!="";body!="").
+spp_path(p,".") :- spp_path_root(p,""),spp_path_body(p,"").
+.decl spp_raw(b: number,i: number,code: symbol,path: symbol,line_json: symbol,qualname: symbol,message: symbol)
+spp_raw(b,i,c,p,l,q,m) :- spp_verified(),!spp_bad_bundle(_),spp_violation_family(f),spp_family(b,f,root),spp_edge(root,r,_,_,i),
+    spp_field(r,"code","str",c),spp_field(r,"file","str",raw),spp_path(raw,p),spp_line(r,l),spp_field(r,"qualname","str",q),spp_field(r,"message","str",m).
+.decl spp_relative(path: symbol,relative: symbol)
+spp_relative(p,p) :- spp_raw(_,_,_,p,_,_,_),!prefix("/",p).
+spp_relative(p,r) :- spp_raw(_,_,_,p,_,_,_),option("moduleRoot",root),prefix(cat(root,"/"),p),r=@sql_substr2(p,@sql_length(root)+2).
+spp_relative(p,r) :- spp_raw(_,_,_,p,_,_,_),option("moduleRoot",root),prefix("/",p),!prefix(cat(root,"/"),p),
+    r=@rx_extract(p,"(?:^|/)((?:impl|data_layer|_internal|l[0-9]{4}_[^/]+)(?:/.*|$))",1).
+spp_relative(p,p) :- spp_raw(_,_,_,p,_,_,_),option("moduleRoot",root),prefix("/",p),!prefix(cat(root,"/"),p),
+    @rx(p,"(?:^|/)(?:impl|data_layer|_internal|l[0-9]{4}_[^/]+)(?:/|$)")=0.
+.decl spp_retained(b: number,i: number,key: symbol)
+spp_retained(b,i,key) :- spp_raw(b,i,c,p,_,q,_),spp_relative(p,r),key=cat(c,"::",q,"::",r),!spp_work_allow(key).
+.decl spp_ratchet_path(path: symbol)
+// World requests consume exported settings before runtime option relations.
+// Keep the physical read key independent of the post-load reporting stage.
+spp_ratchet_path(p) :- env("state.plugin.allowlist",p).
+.decl spp_ratchet_entry(line: number,fragment: number,key: symbol)
+spp_ratchet_entry(i,j,key) :- spp_verified(),!spp_bad_bundle(_),spp_ratchet_path(p),file_line(p,i,raw),
+    match_all("(?<part>[^\\n\\r\\v\\f\\x{1c}-\\x{1e}\\x{85}\\x{2028}\\x{2029}]+)",raw,j,_,_),
+    spp_whitespace(w),key=@replace_all(part,cat("^",w,"|",w,"$"),""),key!="",!prefix("#",key).
+.decl spp_allow_count(key: symbol,n: number)
+spp_allow_count(k,n) :- spp_retained(_,_,k),n=count : { spp_ratchet_entry(_,_,k) }.
+.decl spp_current_count(key: symbol,n: number)
+spp_current_count(k,n) :- spp_ratchet_entry(_,_,k),n=count : { spp_retained(_,_,k) }.
+.decl spp_first(key: symbol,bundle: number,ordinal: number)
+spp_first(k,b,i) :- spp_retained(b,i,k),!spp_retained_before(k,b,i,_,_).
+.decl spp_retained_before(key: symbol,bundle: number,ordinal: number,earlier_bundle: number,earlier_ordinal: number)
+spp_retained_before(k,b,i,a,j) :- spp_retained(b,i,k),spp_retained(a,j,k),(a<b;a=b,j<i).
+.decl spp_key_rank(key: symbol,rank: number)
+spp_key_rank(k,r) :- spp_first(k,b,i),r=count : { spp_first(_,a,j),(a<b;a=b,j<i) }.
+.decl spp_report(phase: number,group_order: number,bundle: number,ordinal: number,code: symbol,path: symbol,line_json: symbol,message: symbol)
+spp_report(0,0,0,0,"SPT-GENERATED-RETURN-KINDS",p,"1","generated ServerPlan return kinds are stale; run the return-kind generator and rerun lint") :-
+    option("entryPoint","_state_plugin_report"),spp_stale_generated(),option("generatedPath",p).
+spp_report(0,0,0,0,"SPT-ALLOWLIST",p,"1","production IR allowlist integrity verification failed") :-
+    option("entryPoint","_state_plugin_report"),!spp_stale_generated(),allow_status("state-production",s),s!="valid",option("linterPath",p).
+spp_report(0,0,0,0,"SPT-ALLOWLIST",p,"1","ServerPlan Python-work allowlist signature verification failed") :-
+    option("entryPoint","_state_plugin_report"),!spp_stale_generated(),allow_status("state-production","valid"),multi_status("state-work",s),s!="valid",option("linterPath",p).
+spp_report(1,g,b,i,c,p,l,cat(q,": ",m)) :- spp_retained(b,i,k),spp_allow_count(k,allowed),spp_key_rank(k,g),
+    before=count : { spp_retained_before(k,b,i,_,_) },before>=allowed,spp_raw(b,i,c,p,l,q,m).
+.decl spp_stale_key(key: symbol)
+spp_stale_key(key) :-
+    spp_ratchet_entry(_,_,key),spp_current_count(key,current),allowed=count : { spp_ratchet_entry(_,_,key) },current<allowed,
+    spp_verified().
+spp_report(2,g,0,0,"SPT-STALE-ALLOWLIST",p,"1",cat("stale allowlist entry should be removed: ",key)) :-
+    spp_stale_key(key),g=count : { spp_stale_key(other),@str_cmp(other,key)<0 },option("allowlistPath",p).
+.violation StatePluginReport(at: span,phase: number,group_order: number,bundle: number,ordinal: number,source_code: symbol,path: symbol,line_json: symbol,message: symbol) code "SPT_PLUGIN_REPORT" "{message}"
+StatePluginReport(@place("",0),a,g,b,i,c,p,l,m) :- spp_report(a,g,b,i,c,p,l,m).
+.violation StatePluginReadError(at: span,path: symbol,io_kind: symbol,errno: number,detail: symbol,bytes_hex: symbol,start: number,end: number,reason: symbol) code "SPT_PLUGIN_IO_ERROR" "allowlist read failed"
+StatePluginReadError(@place("",0),p,k,n,d,b,s,e,r) :- spp_verified(),!spp_bad_bundle(_),spp_ratchet_path(p),file_error(p,k,n,d,b,s,e,r).
