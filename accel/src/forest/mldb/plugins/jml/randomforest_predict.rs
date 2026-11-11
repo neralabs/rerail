@@ -11,6 +11,8 @@
 //!
 //! A prediction is the two labels' weighted leaf distributions (label 1's is the probability the row is true).
 
+use std::collections::HashMap;
+
 use crate::forest::bucket::{BucketList, CellValue};
 use crate::forest::compute_kernel_grid::ComputeKernelArgument;
 use crate::forest::compute_kernel_metal::{alloc_uninitialized_array_sync, transfer_to_device_immutable, MetalComputeQueue};
@@ -234,11 +236,15 @@ pub struct DeviceForest {
     scratch: std::sync::Mutex<Scratch>,
 }
 
-/// The kept buffers: the rows' bucket columns and the predictions, with their capacities (in u32 and f32).
+/// What a forest keeps from call to call: the rows' bucket columns and the predictions (with their capacities, in
+/// u32 and f32), its queue (whose next command buffer is made as the last commits), and the launch plans by
+/// (items, lanes a row, column stride): a call whose batch shape was seen before skips the grid's solve.
 #[derive(Default)]
 struct Scratch {
     data: Option<(metal::Buffer, usize)>,
     out: Option<(metal::Buffer, usize)>,
+    queue: Option<MetalComputeQueue>,
+    plans: HashMap<(usize, u32, usize), crate::forest::compute_kernel_grid::GridLaunchPlan>,
 }
 
 /// A kept buffer of at least `n` elements of `T` (`slot`'s when it is big enough, else a new one, twice the size).
@@ -339,24 +345,37 @@ impl DeviceForest {
         }
         let items = rows.num_rows * self.num_forests as usize;
         let d_out = kept::<f32>(device, &mut scratch.out, items * 2);
-        let mut queue = MetalComputeQueue::new(&shared.queue);
         let k = kernel("predictForest")?;
+        let lanes = lanes_per_row(items, self.max_trees as usize);
+        let buffers: [(&str, &metal::BufferRef); 8] = [
+            ("bucketData", &d_data),
+            ("nodes", &self.nodes),
+            ("subsets", &self.subsets),
+            ("forestTreeStart", &self.forest_tree_start),
+            ("treeRoots", &self.roots),
+            ("treeWeights", &self.weights),
+            ("leafPreds", &self.leaves),
+            ("predictionsOut", &d_out),
+        ];
+        let key = (items, lanes, stride);
+        if !scratch.plans.contains_key(&key) {
+            let mut named = vec![
+                ("numItems", Int(items as i64)),
+                ("numForests", Int(self.num_forests as i64)),
+                ("maxDepth", Int(self.max_depth as i64 + 1)),
+                ("lanesPerRow", Int(lanes as i64)),
+                ("columnStride", Int(stride as i64)),
+            ];
+            named.extend(buffers.iter().map(|&(n, b)| (n, B(b))));
+            if scratch.plans.len() >= 64 {
+                scratch.plans.clear();
+            }
+            scratch.plans.insert(key, k.plan(&named, &[items as u32])?);
+        }
+        let Scratch { queue, plans, .. } = &mut *scratch;
+        let queue = queue.get_or_insert_with(|| MetalComputeQueue::new(&shared.queue));
         let mut ctx = queue.new_bind_context(k.function);
-        k.enqueue(&[
-            ("numItems", Int(items as i64)),
-            ("numForests", Int(self.num_forests as i64)),
-            ("maxDepth", Int(self.max_depth as i64 + 1)),
-            ("lanesPerRow", Int(lanes_per_row(items, self.max_trees as usize) as i64)),
-            ("columnStride", Int(stride as i64)),
-            ("bucketData", B(&d_data)),
-            ("nodes", B(&self.nodes)),
-            ("subsets", B(&self.subsets)),
-            ("forestTreeStart", B(&self.forest_tree_start)),
-            ("treeRoots", B(&self.roots)),
-            ("treeWeights", B(&self.weights)),
-            ("leafPreds", B(&self.leaves)),
-            ("predictionsOut", B(&d_out)),
-        ], &[items as u32], &mut ctx)?;
+        k.launch_plan(&plans[&key], &buffers, &mut ctx)?;
         drop(ctx);
         let event = queue.flush();
         event.await_()?;
@@ -993,5 +1012,89 @@ mod tests {
                 test,
             });
         }
+    }
+
+    /// Where a single-row call's time goes: each phase of `predict_timed`, the mean over many calls (wall and the
+    /// process's CPU).
+    #[test]
+    #[ignore = "benchmark: run by name with --ignored --nocapture"]
+    fn single_row_call_phases() {
+        use ComputeKernelArgument::{Buffer as B, Int};
+        if crate::gpu::shared::get().is_none() {
+            return;
+        }
+        let (cols, labels) = columns(4000, 1);
+        let named: Vec<(String, Vec<CellValue>)> = cols.iter().enumerate().map(|(i, c)| (format!("c{i}"), c.clone())).collect();
+        let fs = Arc::new(DatasetFeatureSpace::from_columns(&named, FeatureType::Boolean).unwrap());
+        let forest = train_forest(&training_data(fs.clone(), &labels, None, None).unwrap(), &RandomForestProcedureConfig::default()).unwrap();
+        let f = DeviceForest::new(&FlatForest::new(&forest).unwrap()).unwrap();
+        let one: Vec<Vec<CellValue>> = cols.iter().map(|c| c[..1].to_vec()).collect();
+        let rows = RowBuckets::from_values(&fs, &one).unwrap();
+        for _ in 0..20 {
+            f.predict(&rows).unwrap();
+        }
+        let n = 300;
+        let thread_cpu = || { let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 }; unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) }; ts.tv_sec as f64 + ts.tv_nsec as f64 * 1e-9 };
+        let wait = std::env::var("WAIT").unwrap_or("wait".into());
+        let mut t = [(0.0f64, 0.0f64); 8];
+        let mut tt = [0.0f64; 8];
+        let names = ["lock + write rows", "queue (command buffer)", "encoder", "grid enqueue", "end encoder", "commit", "wait", "read out"];
+        let shared = crate::gpu::shared::get().unwrap();
+        for _ in 0..n {
+            let mut mark = (std::time::Instant::now(), crate::exec::process_cpu(), thread_cpu());
+            let mut phase = |i: usize, t: &mut [(f64, f64); 8]| {
+                let now = (std::time::Instant::now(), crate::exec::process_cpu(), thread_cpu());
+                t[i].0 += (now.0 - mark.0).as_secs_f64();
+                t[i].1 += now.1 - mark.1;
+                tt[i] += now.2 - mark.2;
+                mark = now;
+            };
+            let mut scratch = f.scratch.lock().unwrap();
+            let stride = rows.columns.iter().map(|c| c.storage.data().len()).max().unwrap_or(0) + 1;
+            let words = stride * rows.columns.len() + 1;
+            let d_data = kept::<u32>(&shared.device, &mut scratch.data, words);
+            let data = unsafe { std::slice::from_raw_parts_mut(d_data.contents().cast::<u32>(), words) };
+            for (i, c) in rows.columns.iter().enumerate() {
+                data[i * stride..i * stride + c.storage.data().len()].copy_from_slice(c.storage.data());
+            }
+            let d_out = kept::<f32>(&shared.device, &mut scratch.out, 2);
+            phase(0, &mut t);
+            let mut queue = MetalComputeQueue::new(&shared.queue);
+            phase(1, &mut t);
+            let k = kernel("predictForest").unwrap();
+            let mut ctx = queue.new_bind_context(k.function);
+            phase(2, &mut t);
+            k.enqueue(&[
+                ("numItems", Int(1)), ("numForests", Int(1)), ("maxDepth", Int(f.max_depth as i64 + 1)),
+                ("lanesPerRow", Int(lanes_per_row(1, f.max_trees as usize) as i64)), ("columnStride", Int(stride as i64)),
+                ("bucketData", B(&d_data)), ("nodes", B(&f.nodes)), ("subsets", B(&f.subsets)), ("forestTreeStart", B(&f.forest_tree_start)),
+                ("treeRoots", B(&f.roots)), ("treeWeights", B(&f.weights)), ("leafPreds", B(&f.leaves)), ("predictionsOut", B(&d_out)),
+            ], &[1], &mut ctx).unwrap();
+            phase(3, &mut t);
+            drop(ctx);
+            phase(4, &mut t);
+            let event = queue.flush();
+            phase(5, &mut t);
+            match wait.as_str() {
+                // Spinning on the status: the thread's CPU while the GPU works, no wake-up.
+                "spin" => while !matches!(event.command_buffer.status(), metal::MTLCommandBufferStatus::Completed | metal::MTLCommandBufferStatus::Error) { std::hint::spin_loop() },
+                "yield" => while !matches!(event.command_buffer.status(), metal::MTLCommandBufferStatus::Completed | metal::MTLCommandBufferStatus::Error) { std::thread::yield_now() },
+                _ => event.await_().unwrap(),
+            }
+            phase(6, &mut t);
+            let _ = unsafe { std::slice::from_raw_parts(d_out.contents().cast::<[f32; 2]>(), 1) }.to_vec();
+            drop(queue);
+            phase(7, &mut t);
+        }
+        for (name, (w, c)) in names.iter().zip(t) {
+            let i = names.iter().position(|x| x == name).unwrap();
+            eprintln!("PHASE {wait} {name:24} {:7.1} us wall {:7.1} us process CPU {:7.1} us this thread", w / n as f64 * 1e6, c / n as f64 * 1e6, tt[i] / n as f64 * 1e6);
+        }
+        // The whole call as `predict` makes it (a kept queue, a cached plan).
+        let (w0, c0, t0) = (std::time::Instant::now(), crate::exec::process_cpu(), thread_cpu());
+        for _ in 0..n {
+            f.predict(&rows).unwrap();
+        }
+        eprintln!("PHASE predict() whole call           {:7.1} us wall {:7.1} us process CPU {:7.1} us this thread", w0.elapsed().as_secs_f64() / n as f64 * 1e6, (crate::exec::process_cpu() - c0) / n as f64 * 1e6, (thread_cpu() - t0) / n as f64 * 1e6);
     }
 }
