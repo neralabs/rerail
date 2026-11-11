@@ -170,11 +170,91 @@ form's best of five rounds, the forms in turn. Every file's table equals the one
 - **A small profile is enough.** 11 files (90 ms of CPU) gave a cut at 2,500 words no slower
   than the one function.
 
+### Compiling in parallel
+
+The clusters are compiled on threads, one function each, largest first
+(`native_cpu_codegen::define_functions`), then defined in the module in order. At cap 2,500
+(4 functions), tier 2's compile is 0.40 to 0.44 s of CPU in 0.29 to 0.32 s of wall time,
+against the one function's 0.39 to 0.41 s in the same wall time. The largest cluster bounds
+the wall time; smaller caps spread better (cap 600: 0.51 s CPU in 0.31 s).
+
+## Spills and the run
+
+The clusters were meant to cut spills, and so to run faster. Three ways were tried, alone and
+together, at caps from 150 to 2,500 words.
+
+- **The cut's size.** Caps of 150, 400, 600, 1,200 and 2,500 words.
+- **The state in registers** (`Cut::held`). The run's state fields become SSA variables in
+  each function: loaded where it is entered, stored before each tail call. Three sets: the
+  token's 8 fields, those and the tree's (14), all 23.
+- **`ctx` at each word** (`Cut::reload`). Each word loads the `ctx` fields it reads where it
+  runs, so none lives from the function's entry. Before, every cluster loaded about 30
+  fields at entry, all live everywhere, and the allocator spilled them.
+
+In clusters the pinned register holds `ctx`, and the state is inside it (`Ctx::state`): one
+register for both.
+
+Stack loads and stores (all functions), and tier 2's time over the corpus (best of 3 to 5,
+load 15 to 30):
+
+| | in memory | `ctx` at each word | the token's state held | all held |
+|---|---|---|---|---|
+| one function | 15.6K + state, 40.7 ms | 14.8K + state, 44.0 ms | 25.8K + state, 39.5 ms | 104K, 45.4 ms |
+| cap 150 (53 functions) | 13.8K, 52.1 ms | 2.3K, 52.9 ms | 26.7K, 57.2 ms | 74K, 54.5 ms |
+| cap 1,200 (7) | 15.8K, 40.1 ms | 4.4K, 41.2 ms | 32.0K, 39.8 ms | 88K, 45.3 ms |
+| cap 2,500 (4) | 16.7K, 37.5 ms | 3.9K, 38.7 ms | 39.6K, 37.0 ms | 106K, 42.8 ms |
+
+"+ state": the one function also keeps the state in its frame, 27,142 stack accesses that
+are not spills.
+
+- **`ctx` at each word removes three quarters of the spills** in clusters (16.7K to 3.9K at
+  cap 2,500, 13.8K to 2.3K at cap 150), and the run is no faster.
+- **The state held in registers spills more**, at every cap. In the dumps the variables live
+  in stack slots around the 855 calls of outlined helpers and across joins. Within 150 words
+  as within 2,500.
+- **Small clusters are slower**: at cap 150, 2.6% of the steps cross, at about 10 ns each.
+
+### Why fewer spills did not run faster
+
+A spilled `ctx` field is a value that never changes. Its spill is one store at the entry and
+one L1 load at each use: the same load as reading it from `ctx` at the word. Removing it
+moves the load, not the cost.
+
+What the run waits on, by the CPU's counters (Instruments' CPU Counters, over each form's
+tier 2 alone, 80 rounds of the corpus): the share of the cycles the core spent in each state.
+
+| | useful | delivery | discarded | processing |
+|---|---|---|---|---|
+| one function | 0.37 | 0.08 | 0.19 | 0.36 |
+| cap 2,500 | 0.42 | 0.08 | 0.16 | 0.34 |
+| cap 2,500, `ctx` at each word | 0.42 | 0.09 | 0.14 | 0.35 |
+
+- **"Processing" (the back end waiting) is a third of the cycles**, with spills or without.
+  It is the state's own round trips: a word stores a field and the next word loads it back,
+  a dependency through memory each time.
+- **"Discarded" (mispredicted work) is a sixth.** It is what the clusters improved: 0.19 to
+  0.16, the 8% the cut gains. A token runs 11.7 words: 1.9 jumps, 1.7 marks, 1.6 switches on
+  the token's kind, 1.0 spans, 0.9 leaves, 0.7 calls and 0.7 returns of the grammar.
+- **A token is about 100 cycles**, 8.6 a word.
+
+So the spills a split can remove are not on the run's path. What is on it is the mutable
+state between words, and the branches.
+
+### What would pay
+
+- **The state's hot fields in registers, without spills.** This needs the functions to hold
+  no calls on the hot path and few values at once. The outlined helpers (the span, the
+  table) take arguments in caller-saved registers, so every value live across them goes to
+  the stack. A split that leaves each hot loop free of calls, with its state as block
+  parameters, is the shape. That is a different cut from the traffic's: around the loops of
+  the token, not between them.
+- **Fewer mispredicted branches.** The switches on a token's kind are the grammar's own
+  choices. A cut that keeps each switch's hot arms together already helped; ordering the arms
+  by the profile would help more.
+
 ## Not measured yet
 
-- **Compiling the clusters in parallel.** They are independent functions. Register allocation
-  and emission could run on a thread each, then be defined in the module.
 - **A profile for the product's path.** The grammar's compile needs sample documents: the
   ladder's, or a few the grammar ships with.
-- **Cheaper crossings.** A cluster's entry could load only the `ctx` fields its words use.
+- **Cheaper crossings.** With `ctx` at each word, an entry loads nothing but the state.
 - **The cut by grammar levels**, and a grammar much larger than `.rr`.

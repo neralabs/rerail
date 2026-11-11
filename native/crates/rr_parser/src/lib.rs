@@ -717,9 +717,25 @@ pub mod tests {
         let t = thread_cpu();
         let traffic = traffic(&c.program, &sample);
         eprintln!("{} words; the profile of {} files: {:.2?} CPU", native.structural.len(), sample.len(), thread_cpu() - t);
+        {
+            // Words run a token, by kind: what a token's ~100 cycles pay for.
+            let tokens: u64 = traffic.iter().filter(|((_, b), _)| matches!(native.structural[*b as usize].operation, rerail_compiler::native_ir::StructuralOperation::Token { .. })).map(|(_, w)| w).sum();
+            let mut by: std::collections::BTreeMap<String, u64> = Default::default();
+            for (&(_, b), &w) in &traffic {
+                let op = format!("{:?}", native.structural[b as usize].operation);
+                *by.entry(op.split([' ', '{', '(']).next().unwrap_or("").to_owned()).or_default() += w;
+            }
+            let all: u64 = by.values().sum();
+            let mut v: Vec<_> = by.into_iter().collect();
+            v.sort_by(|a, b| b.1.cmp(&a.1));
+            eprintln!("{:.2} words a token: {}", all as f64 / tokens.max(1) as f64, v.iter().take(14).map(|(k, w)| format!("{k} {:.2}", *w as f64 / tokens.max(1) as f64)).collect::<Vec<_>>().join(", "));
+        }
         // The whole corpus's traffic, for the crossings off the sample too.
         let all: Vec<&[u8]> = files.iter().map(|f| f.as_bytes()).collect();
-        let whole = rerail_compiler::native_cpu_clusters::traffic(&c.program, &all);
+        // `RR_ONLY=form`: that form alone, its crossings over the sample only (a profile of its
+        // run, `xctrace`'s counters, with little else in the trace).
+        let only = std::env::var("RR_ONLY").ok();
+        let whole = if only.is_some() { traffic.clone() } else { rerail_compiler::native_cpu_clusters::traffic(&c.program, &all) };
         let caps: Vec<usize> = std::env::var("RR_CAPS").ok().map(|v| v.split(',').filter_map(|x| x.parse().ok()).collect()).unwrap_or_else(|| vec![600, 1200, 2500]);
         // By the traffic, and by the program alone (no profile: its own edges, in order of place).
         let none = std::collections::HashMap::new();
@@ -740,6 +756,7 @@ pub mod tests {
                 let at_word = std::env::var_os("RR_RELOAD").is_some().then(|| (format!("{name}+ctx"), Cut { reload: true, ..cut.clone() }));
                 std::iter::once((name, cut)).chain(at_word)
             })
+            .filter(|(name, _)| only.as_ref().is_none_or(|o| o == name))
             .collect();
         // Tier 1's buffers, a batch a file, made once.
         let one = &c.parser;
@@ -778,7 +795,7 @@ pub mod tests {
             let regalloc = timing.lines().find(|l| l.contains("Register allocation")).map(|l| l.split_whitespace().next().unwrap_or("?").to_owned()).unwrap_or_default();
             let (code, stack) = asm(&p.tier2.disassembly);
             if let Ok(dir) = std::env::var("RR_DUMP") {
-                let tag = name.replace(' ', "-");
+                let tag = name.replace([' ', '/', '+'], "-");
                 std::fs::write(format!("{dir}/tier2-{tag}.s"), &p.tier2.disassembly).expect("writes");
                 std::fs::write(format!("{dir}/tier2-{tag}.clif"), &p.tier2.clif).expect("writes");
             }
