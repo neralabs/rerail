@@ -57,6 +57,37 @@ Identity(@place(p,1),m) :- loaded_doc(p,m,"python",d),doc(d,p,_).
 }
 
 #[test]
+fn file_error_answers_guard_loads_in_the_request_cone() {
+    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("file-error-before-load");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("bad.py"), [0xff]).unwrap();
+    std::fs::write(root.join("good.py"), "value = 1\n").unwrap();
+    let rule = root.join("read-error.rr");
+    std::fs::write(&rule, r#"
+.language python
+.scope dirs "__no_primary__"
+.decl wanted(path: symbol)
+wanted("bad.py"). wanted("good.py").
+.decl failed(path: symbol)
+failed(p) :- wanted(p), file_error(p, _, _, _, _, _, _, _).
+load(p, "probe", "python") :- wanted(p), !failed(p).
+.violation ReadError(at: span, io_kind: symbol, bytes: symbol) code "READ_ERROR" "{io_kind}"
+ReadError(@place(p, 1), k, b) :- wanted(p), file_error(p, k, _, _, b, _, _, _).
+"#).unwrap();
+    let options = serde_json::json!({"inputFiles":[]});
+    for _ in 0..2 {
+        let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"), &options).unwrap();
+        assert_eq!(report["files"], 1, "only the readable file may load");
+        let rows = report["diagnostics"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["path"], "bad.py");
+        assert_eq!(rows[0]["parameters"]["io_kind"], "InvalidUtf8");
+        assert_eq!(rows[0]["parameters"]["bytes"], "ff");
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn host_info_answers_only_demanded_keys_without_primary_documents() {
     let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("host-info");
     std::fs::create_dir_all(&root).unwrap();
