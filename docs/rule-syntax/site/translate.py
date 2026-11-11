@@ -1782,7 +1782,9 @@ def translate(doc):
     langs += [c["define"].get("language") for c in clauses if "define" in c]
     lang = next((l for l in langs if l), "")
     prog = Program(lang)
-    head = [f".policy {q(doc.get('id', ''))} revision {doc.get('revision', 1)}"]
+    head = [f".policy {q(doc.get('id', ''))} revision {doc.get('revision', 1)}",
+            # main matches files only, never the guest trees inside string annotations
+            ".guests off"]
     if doc.get("description"):
         head.append(f".description {q(doc['description'])}")
     if lang:
