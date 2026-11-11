@@ -57,7 +57,7 @@ pub struct Leaf {
 }
 
 /// Node. Contains child pointers and a test.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Node {
     pub base: Base,
     /// Value to split on.
@@ -70,6 +70,16 @@ pub struct Node {
     pub child_false: Ptr,
     /// Result if missing.
     pub child_missing: Ptr,
+    /// The bucket the split is at, among its feature's buckets (`split_bucket < 0` for none): the random forest
+    /// trainer splits on buckets, and its prediction routes rows by them (an addition to upstream's node, whose
+    /// split is only the value).
+    pub split_bucket: i32,
+}
+
+impl Default for Node {
+    fn default() -> Self {
+        Node { base: Base::default(), split: Split::default(), z: 0.0, child_true: Ptr::Null, child_false: Ptr::Null, child_missing: Ptr::Null, split_bucket: -1 }
+    }
 }
 
 impl Node {

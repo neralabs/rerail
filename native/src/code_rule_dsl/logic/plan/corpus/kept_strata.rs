@@ -91,7 +91,7 @@ impl<'s> Kept<'s> {
         self.values = 0;
         if !puts.is_empty() || !gone.is_empty() || used.is_some() {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "keep the strata's frames, queued".into());
-            self.store.queue_frames(self.space, puts, gone, used);
+            self.store.queue_frames(self.space, puts, gone, used.map(|u| (u, super::run_token())));
         }
     }
 
@@ -299,6 +299,7 @@ pub(in crate::code_rule_dsl) fn load(
     now: &HashMap<String, u64>,
 ) -> super::Result<(Option<super::retain::Retained>, Part)> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the cross-file part kept, from the store".into());
+    // The fact space of the corpus at `root` that a maintained cross-file part is kept in.
     let space = part_space(root, "cross-maintained");
     let (sccs, _) = crate::code_rule_dsl::logic::front::strata(prog).map_err(|e| super::Error::Plan(e.to_string()))?;
     let by_stratum: Vec<Vec<&crate::code_rule_dsl::logic::front::Rule>> = sccs.iter().map(|scc| prog.rules.iter().filter(|r| scc.contains(&r.head.rel)).collect()).collect();
@@ -410,5 +411,5 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
     }
     crate::code_rule_dsl::logic::profile::decision("cross-file part kept across processes (t32 4.1)", || format!("{} frames, {written} rows, written to the store", puts.len()));
     let used: Vec<FrameRel> = part.frames.into_values().map(|(f, _)| f).collect();
-    store.queue_frames(part.space, puts, Vec::new(), Some(used));
+    store.queue_frames(part.space, puts, Vec::new(), Some((used, super::run_token())));
 }

@@ -16,6 +16,8 @@
 //!
 //! Frames are written only by the store's writer (decision 0102), behind the run. What a space keeps is the
 //! relations its runs use: a relation is collected by the [`RUNS`]th run of its space in a row that does not use it.
+//! A run is the outermost run (its token): the programs of one run that keep frames in one space (a phase's, P3's
+//! cross part, its loading cone) each mark what they used, and the space counts the run once.
 
 use super::{ContentStore, StoreResult};
 use rusqlite::params;
@@ -24,6 +26,16 @@ use std::sync::Arc;
 
 /// How many runs of a space in a row may leave a relation unused before it is collected.
 pub const RUNS: i64 = 4;
+
+/// The run each space last counted in this process, by its token: a later program of that run marks what it used and
+/// counts nothing. A new process counts its first run of a space, since its tokens are new.
+fn counted() -> &'static std::sync::Mutex<HashMap<[u8; 32], u64>> {
+    static COUNTED: std::sync::OnceLock<std::sync::Mutex<HashMap<[u8; 32], u64>>> = std::sync::OnceLock::new();
+    COUNTED.get_or_init(Default::default)
+}
+
+/// What a run used of a space: the relations, and the run's token (`0`: a run of its own, counted each time).
+pub type Used = (Vec<Rel>, u64);
 
 const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS frames(space BLOB NOT NULL, rel TEXT NOT NULL, ident BLOB NOT NULL, \
      part INTEGER NOT NULL, digest INTEGER NOT NULL, reads BLOB NOT NULL, width INTEGER NOT NULL, rows INTEGER NOT NULL, \
@@ -170,7 +182,7 @@ impl ContentStore {
     }
 
     /// `keep_frames`, queued behind the run (decision 0102): encoded and written by the store's writer.
-    pub fn queue_frames(&self, space: [u8; 32], puts: Vec<Put>, gone: Vec<(Rel, i64)>, used: Option<Vec<Rel>>) {
+    pub fn queue_frames(&self, space: [u8; 32], puts: Vec<Put>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
         let bytes = puts.iter().map(|p| p.rows.rows.len() * 8).sum();
         let puts: Vec<_> = puts.into_iter().map(Arc::new).collect();
         let mut keys: Vec<(super::write_back::Key, Option<Arc<dyn std::any::Any + Send + Sync>>)> = puts.iter().map(|p| {
@@ -181,23 +193,33 @@ impl ContentStore {
         self.write_back("frames", bytes, keys, Box::new(move |store| {
             // Attempted once: a busy store leaves these frames unwritten, and the next run derives them again.
             let refs: Vec<_> = puts.iter().map(Arc::as_ref).collect();
-            let _ = store.keep_frame_refs(&space, &refs, &gone, used.as_deref());
+            let _ = store.keep_frame_refs(&space, &refs, &gone, used.as_ref().map(|(rels, run)| (rels.as_slice(), *run)));
             Ok(())
         }));
     }
 
-    /// Writes `puts` into `space` (each replacing its frame) and forgets `gone`. With `used`, the run is over: the
-    /// space counts it, marks the relations it used, and forgets those the last [`RUNS`] runs did not use.
-    pub fn keep_frames(&self, space: &[u8; 32], puts: &[Put], gone: &[(Rel, i64)], used: Option<&[Rel]>) -> StoreResult<()> {
+    /// Writes `puts` into `space` (each replacing its frame) and forgets `gone`. With `used`, a program of run `token`
+    /// is over: the space counts the run if it has not yet, marks the relations the program used, and forgets those
+    /// the last [`RUNS`] runs did not use.
+    pub fn keep_frames(&self, space: &[u8; 32], puts: &[Put], gone: &[(Rel, i64)], used: Option<(&[Rel], u64)>) -> StoreResult<()> {
         self.keep_frame_refs(space, &puts.iter().collect::<Vec<_>>(), gone, used)
     }
 
-    fn keep_frame_refs(&self, space: &[u8; 32], puts: &[&Put], gone: &[(Rel, i64)], used: Option<&[Rel]>) -> StoreResult<()> {
+    fn keep_frame_refs(&self, space: &[u8; 32], puts: &[&Put], gone: &[(Rel, i64)], used: Option<(&[Rel], u64)>) -> StoreResult<()> {
         let blocks: Vec<Vec<u8>> = puts.iter().map(|p| super::cross_rows::encode(p.rows.types.len(), &p.rows.rows)).collect();
         self.immediate_transaction_once(|t| {
             t.execute_batch(SCHEMA)?;
             t.execute("INSERT INTO frame_spaces(space, runs) VALUES (?1, 0) ON CONFLICT(space) DO NOTHING", [&space[..]])?;
-            let run: i64 = t.query_row("SELECT runs FROM frame_spaces WHERE space = ?1", [&space[..]], |r| r.get(0))?;
+            let mut run: i64 = t.query_row("SELECT runs FROM frame_spaces WHERE space = ?1", [&space[..]], |r| r.get(0))?;
+            // A run's first program counts it: what it writes and marks is of the new run.
+            if let Some((_, token)) = used {
+                let mut counted = counted().lock().expect("the spaces' counted runs");
+                if token == 0 || counted.get(space) != Some(&token) {
+                    t.execute("UPDATE frame_spaces SET runs = runs + 1 WHERE space = ?1", [&space[..]])?;
+                    run += 1;
+                    counted.insert(*space, token);
+                }
+            }
             // Nine bound values per frame, plus shared space and run, stay below 999 parameters.
             // Each statement publishes a bounded batch. No frame launches its own SQL execution.
             for batch in puts.iter().zip(&blocks).collect::<Vec<_>>().chunks(96) {
@@ -223,7 +245,7 @@ impl ContentStore {
                 for (rel,part) in batch { args.extend([rel.name.clone().into(),rel.ident.to_vec().into(),(*part).into()]); }
                 t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
             }
-            if let Some(used) = used {
+            if let Some((used, _)) = used {
                 for batch in used.chunks(READ_BATCH) {
                     let values=(0..batch.len()).map(|i|format!("(?{},?{})",3+2*i,4+2*i)).collect::<Vec<_>>().join(",");
                     // Row-value membership selects primary-key prefixes, including every partition of a relation.
@@ -234,7 +256,6 @@ impl ContentStore {
                     t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
                 }
                 t.execute("DELETE FROM frames WHERE space = ?1 AND used <= ?2", params![&space[..], run - RUNS])?;
-                t.execute("UPDATE frame_spaces SET runs = runs + 1 WHERE space = ?1", [&space[..]])?;
             }
             Ok(())
         })
@@ -481,13 +502,37 @@ mod tests {
         let space = [2u8; 32];
         let (kept, old) = (rel("kept", 1), rel("old", 1));
         let put = |r: &Rel| Put { rel: r.clone(), part: 0, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } };
-        store.keep_frames(&space, &[put(&kept), put(&old)], &[], Some(&[kept.clone(), old.clone()])).unwrap();
+        store.keep_frames(&space, &[put(&kept), put(&old)], &[], Some((&[kept.clone(), old.clone()][..], 0))).unwrap();
         for _ in 0..RUNS {
             assert!(store.frames(&space, &[old.clone()], 0).unwrap().contains_key(&old));
-            store.keep_frames(&space, &[], &[], Some(&[kept.clone()])).unwrap();
+            store.keep_frames(&space, &[], &[], Some((&[kept.clone()][..], 0))).unwrap();
         }
         let got = store.frames(&space, &[kept.clone(), old.clone()], 0).unwrap();
         assert!(got.contains_key(&kept) && !got.contains_key(&old));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The programs of one run that keep frames in one space (a phase's, P3's cross part, its loading cone) count one
+    /// run: however many there are, a relation one of them used is kept for the next [`RUNS`] runs.
+    #[test]
+    fn the_programs_of_one_run_count_one_run_of_their_space() {
+        let dir = std::env::temp_dir().join(format!("rerail-frames-runs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
+        let space = [3u8; 32];
+        let (first, other) = (rel("first", 1), rel("other", 1));
+        let put = |r: &Rel| Put { rel: r.clone(), part: 0, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } };
+        // Run 7's first program keeps `first`; eight more programs of run 7 keep `other`.
+        store.keep_frames(&space, &[put(&first)], &[], Some((&[first.clone()][..], 7))).unwrap();
+        for _ in 0..2 * RUNS {
+            store.keep_frames(&space, &[put(&other)], &[], Some((&[other.clone()][..], 7))).unwrap();
+        }
+        assert!(store.frames(&space, &[first.clone()], 0).unwrap().contains_key(&first), "one run, not nine");
+        // RUNS later runs that do not use it collect it.
+        for run in 8..8 + RUNS as u64 {
+            store.keep_frames(&space, &[], &[], Some((&[other.clone()][..], run))).unwrap();
+        }
+        assert!(!store.frames(&space, &[first.clone()], 0).unwrap().contains_key(&first));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

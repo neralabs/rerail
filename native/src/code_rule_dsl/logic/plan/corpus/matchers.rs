@@ -224,17 +224,31 @@ pub(in crate::code_rule_dsl) fn lower(prog: &mut Program) -> Vec<(String, String
     let mut out = Vec::new();
     for (k, (text, names)) in texts.into_iter().enumerate() {
         let rel = relation(k, names.len());
-        prog.decls.insert(rel.clone(), columns(&rel).iter().map(|c| ((*c).to_owned(), "node".to_owned())).collect());
+        // A name of the rule's `transform` binds text (a symbol); every other name, and the root, a node.
+        let made = transformed(&text);
+        let types = std::iter::once("node").chain(names.iter().map(|name| if made.contains(name) { "sym" } else { "node" }));
+        prog.decls.insert(rel.clone(), columns(&rel).iter().zip(types).map(|(c, t)| ((*c).to_owned(), t.to_owned())).collect());
         if !prog.inputs.contains(&rel) {
             prog.inputs.push(rel.clone());
         }
         out.push((rel, text, names));
     }
-    if !out.is_empty() && !prog.inputs.iter().any(|r| r == "docof") && prog.rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| a.rel == "docof"))) {
+    // `docof` is an input unless the program derives it already (`hiding` writes it as a view where documents are
+    // hidden): then the rules read the view, and an input of the same name would have no statistics.
+    let derived = prog.rules.iter().any(|r| r.head.rel == "docof");
+    if !out.is_empty() && !derived && !prog.inputs.iter().any(|r| r == "docof") && prog.rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| a.rel == "docof"))) {
         prog.decls.entry("docof".to_owned()).or_insert_with(|| vec![("n".to_owned(), "loc".to_owned()), ("d".to_owned(), "number".to_owned())]);
         prog.inputs.push("docof".to_owned());
     }
     out
+}
+
+/// The names an `ast` atom's matcher text makes in its `transform`: they bind text, not nodes.
+fn transformed(text: &str) -> BTreeSet<String> {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|v| v.get("transform")?.as_object().map(|t| t.keys().cloned().collect()))
+        .unwrap_or_default()
 }
 
 /// The process's lowered matchers, by their text and their base policy's: lowered once.
@@ -301,6 +315,44 @@ b(c, f) :- kind(c, "call"), field(c, "function", f), kind(f, "attribute").
         assert_eq!(m["rule"]["all"][1]["has"]["field"], "function");
         assert_eq!(m["rule"]["all"][1]["has"]["kind"], "attribute");
         assert_eq!(body("b").len(), 3, "a field the head reads stays a join");
+    }
+
+    /// `any`'s arms bind into the environment only when they match, so two arms binding one name share nothing; a
+    /// name two parts of one `all` bind is a join the labels do not carry, and stays refused.
+    #[test]
+    fn any_arms_binding_one_name_lower() {
+        let lower = |rule: &str| crate::code_rule_dsl::waves::policies::lower_matcher(&format!(r#"{{"language": "python", "rule": {rule}}}"#), None).map(|_| ());
+        lower(r#"{"any": [{"all": [{"kind": "call"}, {"pattern": "$X"}]}, {"all": [{"kind": "attribute"}, {"pattern": "$X"}]}]}"#).unwrap();
+        let err = lower(r#"{"all": [{"pattern": "$X"}, {"has": {"pattern": "$X", "stopBy": "neighbor"}}]}"#).unwrap_err();
+        assert!(err.contains("shared binding"), "{err}");
+    }
+
+    /// A comparison of captures, which the labels do not carry, is dropped where that only widens the matcher; one
+    /// under an `any` arm left with nothing is not.
+    #[test]
+    fn a_matcher_relaxed_where_it_only_widens() {
+        use crate::code_rule_dsl::waves::policies::relaxed;
+        let m = |rule: &str| serde_json::from_str::<serde_json::Value>(&format!(r#"{{"language": "python", "rule": {rule}}}"#)).unwrap();
+        let got = relaxed(&m(r#"{"all": [{"kind": "call"}, {"pattern": "$A"}, {"not": {"compare": {"left": "A", "right": "A", "op": "ne"}}}]}"#), false).unwrap();
+        assert_eq!(got["rule"], serde_json::json!({"all": [{"kind": "call"}, {"pattern": "$A"}]}));
+        let got = relaxed(&m(r#"{"kind": "call", "has": {"compare": {"left": "A", "right": "B", "op": "eq"}, "stopBy": "neighbor"}}"#), false).unwrap();
+        assert_eq!(got["rule"], serde_json::json!({"kind": "call"}));
+        assert!(relaxed(&m(r#"{"any": [{"kind": "call"}, {"compare": {"left": "A", "right": "B", "op": "eq"}}]}"#), false).is_none());
+        assert!(relaxed(&m(r#"{"kind": "call"}"#), false).is_none());
+        // A path test is W's to confirm; an `any` with an arm left matching every node goes with it.
+        let got = relaxed(&m(r#"{"all": [{"kind": "call"}, {"any": [{"filePath": {"regex": "x"}}, {"kind": "call"}]}]}"#), false).unwrap();
+        assert_eq!(got["rule"], serde_json::json!({"all": [{"kind": "call"}]}));
+        // Every negation in a positive place, only where asked.
+        let not = m(r#"{"all": [{"kind": "call"}, {"not": {"kind": "identifier"}}]}"#);
+        assert!(relaxed(&not, false).is_none());
+        assert_eq!(relaxed(&not, true).unwrap()["rule"], serde_json::json!({"all": [{"kind": "call"}]}));
+        // The relaxed matcher lowers; its roots are confirmed by W's.
+        let (_, _, captor) = crate::code_rule_dsl::waves::policies::lower_matcher(
+            r#"{"language": "python", "rule": {"all": [{"kind": "call"}, {"has": {"pattern": "$A", "field": "function", "stopBy": "neighbor"}}, {"not": {"compare": {"left": "A", "right": "A", "op": "ne", "text": "node"}}}]}}"#,
+            None,
+        )
+        .unwrap();
+        assert!(captor.verify);
     }
 
     /// A field's multiplicity from the grammar: `import os, sys` holds two names, a subscript several indexes.

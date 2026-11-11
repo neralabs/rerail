@@ -26,6 +26,10 @@ pub const DEAD: u16 = u16::MAX;
 /// `GONE`, the nodes inside taking its place; else the kind it takes, the nodes inside read too.
 pub const KEEP: u16 = u16::MAX;
 pub const GONE: u16 = u16::MAX - 1;
+/// A kind that names its level's word (`remember C`, `as C`): the kind of the token the level
+/// remembered last (`REMEMBER`), as a wrap's or a relabel's moved node's (`RETAG m=1, 2`) or a
+/// reading's way (`K as C`).
+pub const REMEMBERED: u16 = u16::MAX - 2;
 
 /// A reading (`reading R = …`, `reread R`): what `RETAG m=3` does with the node made last at a
 /// level and each node inside it, by kind; a kind not listed refuses. A node read but the first

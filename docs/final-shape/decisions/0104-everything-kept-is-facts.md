@@ -104,14 +104,29 @@ The profile reports every statement that a wave's thread runs, and every wait fo
 
 ## The tapes are facts
 
-A document's syntax is two ordinary rules too:
+A document's syntax is two ordinary rules too. They are phase 1's (`typing/programs/sources.rr`):
 
 ```text
-// The key: a document's content and its grammar.
-doc_key(d, c, g) :- doc(d, p, _), file(p, c), grammar_of(p, g).
-// The result: the parser's answer for the key.
-doc_tape(d, t) :- doc_key(d, c, g), parse_of(c, g, t).
+// The key: a source file's content, its grammar and the tape's version.
+doc_key(p, c, g, "tape-1") :- observer__source_file(p, g, c).
+// Each key asks for its file as a document, answered inside the fixed point.
+load(p, p, g) :- doc_key(p, _, g, _).
+// The result: the loaded document's tape.
+doc_tape(p, t) :- doc_key(p, _, g, _), loaded(f, p, g), doc(d, f, p), tape_of(d, t).
+.cache doc_tape by doc_key
 ```
+
+The run's phases:
+
+| Phase | What it does |
+|---|---|
+| 0 | loads the rule files and the rule libraries (`bootstrap.rr`) |
+| 1 | loads every source file, finds the libraries, and runs the imports to their fixed point |
+| 2 | runs the typing to its fixed point |
+| 3 | the analysis |
+
+Then the findings are written. Phase 3 takes its documents from phase 1: it does not list or
+parse a file itself.
 
 What `parse_of` answers, and what the file-local part reads of it, are a document's facts. They
 are stored where a document's facts are stored, as every relation is, and read with them.
@@ -126,7 +141,7 @@ warm and after an edit), CPU (user + sys, with the load) and the pins of `facts_
 
 | # | What | Done when |
 |---|---|---|
-| 1 | The tapes as the two rules above, for a run's files and its guests; contents by digest; the tape and source writes are the writer's | **the writes and reads are built** (below): no tape or source statement of a file or a guest among the hazards, and the 4.2 s wait is gone. The two rules are not built yet |
+| 1 | The tapes as the two rules above, for a run's files and its guests; contents by digest; the tape and source writes are the writer's | **built** (below): phase 1 loads every source file by its key; no tape or source statement of a file or a guest among the hazards, and the 4.2 s wait is gone |
 | 2 | The memo's entries read before the first wave; a lookup writes nothing | **built**: no memo statement among the hazards of a cold run or of a run after an edit (below) |
 | 3 | The constants, the statistics and the choices read before the first wave, written by the writer | no store statement among the hazards |
 | 4 | A program's stated facts and `rdl_int` bound in the engine, not loaded through SQL tables; inputs read from where they are held | **built**: on the slice, one statement is left on the run's connection (below) |
@@ -149,6 +164,32 @@ On the slice, cold, run side by side with the run before this step: the hazards 
 17.7 s, and wall from 25.2 s to 16.2 s, at a load of 50 to 100. The findings are the same, cold,
 warm and after an edit, and on a second program over a cache the first one filled (its tapes
 hit).
+
+**Step 1, as built (phase 1).** Every run that is not itself a phase runs phase 1 first:
+
+- the observer states each source file of the run's grammar, with its content's digest. It
+  reads a file only where its journal, stat or Git index cannot vouch for it;
+- phase 1's run is given no file. It loads each one by its key. Its rows are kept as any
+  run's: its per-file memo, and its cone of requests in the frames;
+- its export, `document(path, grammar, content)`, is the run's list of documents. A file it
+  made no document of is listed as before, so that the run reports it.
+
+A memo entry's key is taken under the earlier phases' rows only where a rule it depends on
+reads them. Phase 1's keys feed no entry, so an edit misses only the edited file's entry.
+
+On the slice, the findings are the same as before phase 1, cold, warm, after an edit and on
+a fresh cache. After an edit, both phases read 485 of 486 files from their memos, and only
+the edited file is parsed. A warm run is still the whole-run cutoff (0.37 s CPU); phase 1's
+program is among the rule files its record checks. Cold, CPU is within the load's noise of
+the run before (21.5 s, user + sys, at a load of 15 to 45).
+
+Phase 1 still asks for every key's file on every run. An unchanged file's answer is its memo
+entry, not a parse or a build. Asking only for the keys that changed needs the cone to be
+maintained from its delta, not kept as a whole stratum.
+
+A run inside another (phase 0's, phase 1's, the constants') leaves the store's collection to
+the outer run. After an edit, the outer run's own collection, run at its end, is still
+counted among the hazards when a pass is due.
 
 Two source statements are left among the hazards. The planning choices and the measured
 constants are kept under a small text stored as a source. They are step 3's.

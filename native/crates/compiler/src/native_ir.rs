@@ -141,9 +141,22 @@ pub enum StructuralOperation {
     NodeField { field: u16, on: On },
     NodeSuper { kind: u16 },
     Push { target: u16 },
+    /// The token just taken is its level's word, of `kind` (`REMEMBER`).
+    Remember { kind: u16 },
+    /// The level's flag `flag`: set, clear, or a test that runs the next word where it is set
+    /// (`FLAG m=0, 1, 2`).
+    Flag { flag: u16, op: FlagOp },
     /// To switch on this token again (`again`), or to take the next.
     Return { again: bool },
     Accept,
+}
+
+/// What `FLAG` does with its flag.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum FlagOp {
+    Set = 0,
+    Clear = 1,
+    Test = 2,
 }
 
 impl StructuralOperation {
@@ -198,6 +211,8 @@ impl StructuralOperation {
             Self::NodeField { field, on } => (NODE_FIELD, on as u8, field),
             Self::NodeSuper { kind } => (NODE_SUPER, 0, kind),
             Self::Push { target } => (PUSH, 0, target),
+            Self::Remember { kind } => (REMEMBER, 0, kind),
+            Self::Flag { flag, op } => (FLAG, op as u8, flag),
             Self::Return { again } => (RETURN, u8::from(again), 0),
             Self::Accept => (ACCEPT, 0, 0),
             Self::Text { .. } | Self::Assert { .. } => {
@@ -427,6 +442,15 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             NODE_FIELD => StructuralOperation::NodeField { field: operand, on: On::of(mode) },
             NODE_SUPER => StructuralOperation::NodeSuper { kind: operand },
             PUSH => StructuralOperation::Push { target: operand },
+            REMEMBER => StructuralOperation::Remember { kind: operand },
+            FLAG => StructuralOperation::Flag {
+                flag: operand,
+                op: match mode {
+                    0 => FlagOp::Set,
+                    1 => FlagOp::Clear,
+                    _ => FlagOp::Test,
+                },
+            },
             RETURN => StructuralOperation::Return { again: mode != 0 },
             ACCEPT => StructuralOperation::Accept,
             _ => {
