@@ -598,6 +598,8 @@ pub(crate) fn install_languages() {
     eval::install_snapshot_context(eval::ecma::derive);
     // The numbers `toPrecision` reads (ECMAScript's).
     matcher::install_number_text(&value::ecma::Numbers);
+    // The canonical AST stage's producer (Python's CPython `ast`).
+    residency::install_ast_producer(&residency::PythonAst);
     // What compiles a program's `ast` matchers into the transducer wave facts runs (decision 0106).
     facts::vtab::syntax::install_ast_compiler(&facts::vtab::syntax::ast_wave::Compiler);
     // The literal grammars `parse` applies, in the order messages list them (`literal::LiteralGrammar`).

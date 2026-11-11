@@ -26,6 +26,7 @@ mod inputs;
 mod insert;
 pub(in crate::code_rule_dsl) mod producer;
 pub(in crate::code_rule_dsl) mod python_ast;
+pub(in crate::code_rule_dsl) mod ast_stage;
 mod reachability;
 mod ordered_first;
 pub(in crate::code_rule_dsl) mod schema;
@@ -46,7 +47,7 @@ pub(in crate::code_rule_dsl) struct Stage {
     pub(in crate::code_rule_dsl) query: String,
     pub(in crate::code_rule_dsl) indexes: Vec<Vec<String>>,
     pub(in crate::code_rule_dsl) reachability: Option<Reachability>,
-    pub(in crate::code_rule_dsl) python_ast: Option<python_ast::Spec>,
+    pub(in crate::code_rule_dsl) python_ast: Option<ast_stage::Spec>,
     pub(in crate::code_rule_dsl) deferred: BTreeMap<String, String>,
     pub(in crate::code_rule_dsl) stored_columns: Vec<String>,
     pub(in crate::code_rule_dsl) output_columns: Vec<String>,
@@ -827,7 +828,7 @@ impl<'a> Session<'a> {
             columns(&self.db, &stage.query, &self.tables)?;
             if let Some(spec) = &stage.python_ast {
                 columns(&self.db, &spec.roots, &self.tables)?;
-                return Ok(Some(python_ast::demand(
+                return Ok(Some(ast_stage::demand(
                     &self.db,
                     spec,
                     &self.syntax_trees,

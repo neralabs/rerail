@@ -294,24 +294,16 @@ impl Facts {
         cache.insert(key, Arc::clone(&index));
         Ok(index)
     }
-    pub(super) fn python_ast_source(&self) -> String {
+    pub(in crate::code_rule_dsl) fn ast_source(&self) -> String {
         String::from_utf8(self.doc.transducer_source().to_vec()).expect("UTF-8 source")
     }
-    pub(super) fn python_ast_request(
-        &self,
-        id: u32,
-        fields: Vec<String>,
-    ) -> Result<crate::code_rule_dsl::value::python_ast::Request> {
+    /// A canonical AST root's span and kind.
+    pub(in crate::code_rule_dsl) fn ast_root(&self, id: u32) -> Result<(usize, usize, String)> {
         if self.positions.get(id as usize).is_none_or(Option::is_none) {
             return Err(invalid("invalid Python AST root"));
         }
         let span = self.packed.span(id);
-        Ok(crate::code_rule_dsl::value::python_ast::Request {
-            start: span.start,
-            end: span.end,
-            kind: self.packed.kind(id).into(),
-            fields,
-        })
+        Ok((span.start, span.end, self.packed.kind(id).into()))
     }
     pub(in crate::code_rule_dsl) fn subtree_ends(&self) -> &[u32] {
         &self.packed.subtree_end

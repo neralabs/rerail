@@ -82,10 +82,10 @@ struct Output {
 pub(in crate::code_rule_dsl) struct Completed {
     output: Output,
     paths: Vec<String>,
-    python_ast: Option<super::python_ast::Output>,
+    python_ast: Option<Box<dyn super::ast_stage::PublishedAst>>,
 }
 impl Completed {
-    pub(super) fn python(output: super::python_ast::Output, paths: Vec<String>) -> Self {
+    pub(super) fn python(output: Box<dyn super::ast_stage::PublishedAst>, paths: Vec<String>) -> Self {
         Self {
             output: Output {
                 roots: Vec::new(),
@@ -100,7 +100,7 @@ impl Completed {
         #[cfg(feature = "code-rule-profile")]
         let _span = crate::code_rule_dsl::profile::trace::Span::start("producer-publish", name);
         if let Some(output) = self.python_ast {
-            return super::python_ast::publish(output, self.paths, db, name, Arc::clone(work));
+            return output.publish(self.paths, db, name, Arc::clone(work));
         }
         completed::publish(self, db, name, Arc::clone(work))
     }
@@ -259,7 +259,10 @@ pub(in crate::code_rule_dsl) fn execute(
     }
     for (slot, result) in ast_slots
         .into_iter()
-        .zip(super::python_ast::execute(ast, contexts, allowance))
+        .zip(match super::ast_stage::producer() {
+            Some(producer) => producer.execute(ast, contexts, allowance),
+            None => ast.iter().map(|_| Err(invalid("no canonical AST producer"))).collect(),
+        })
     {
         slots[slot] = Some(result);
     }

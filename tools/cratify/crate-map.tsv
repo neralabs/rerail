@@ -255,3 +255,4 @@ scope::usage::lang_rust	rerail-lang-rust
 scope::usage::lang_php	rerail-lang-php
 scope::usage::lang_sql	rerail-lang-sql
 scope::usage::lang_python	rerail-lang-python
+residency::admission::relational::ast_stage	rerail-w
