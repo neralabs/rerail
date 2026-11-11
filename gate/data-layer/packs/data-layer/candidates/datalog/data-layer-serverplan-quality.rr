@@ -600,6 +600,10 @@ spq_vector_filter_constants_kinds1("concatenated_string").
 .decl rr_agg3(b2: number, d: number, nm: symbol)
 .decl rr_agg6(c: node, j: number, y: number)
 .decl rr_ctx7(c: node, j: number)
+.decl rr_demand_agg_rr_agg1(c: node, d: number, nm: symbol)
+.decl rr_demand_agg_rr_agg2(d: number, nm: symbol)
+.decl rr_demand_agg_rr_agg3(d: number, nm: symbol)
+.decl rr_demand_agg_rr_agg6(c: node, j: number)
 .decl source(d: number, sp: node)
 .decl spq_can_batch_lock_10(n: node)
 .decl spq_can_batch_lock_11(n: node)
@@ -2347,9 +2351,9 @@ spq_sync_async_duplication_cls(n, c) :- spq_sync_async_duplication_pair_methods(
 spq_sync_async_duplication_cls(n, c) :- spq_sync_async_duplication_pair_methods(n), child(x, n, _), node(_, x, "decorated_definition", _, _), child(b, x, _), node(_, b, "block", _, _), field(c, "body", b), node(_, c, "class_definition", _, _).
 spq_sync_async_duplication_pm(d, n, c, nm) :- spq_sync_async_duplication_pair_methods(n), node(d, n, _, _, _), spq_sync_async_duplication_cls(n, c), field(n, "name", x), text(x, nm).
 spq_sync_async_duplication_pf(d, n, nm) :- spq_sync_async_duplication_pair_functions(n), node(d, n, _, _, _), field(n, "name", x), text(x, nm).
-rr_agg1(c, d, nm, s) :- spq_sync_async_duplication_pm(d, m, c, nm), node(d, m, _, s, _).
+rr_agg1(c, d, nm, s) :- rr_demand_agg_rr_agg1(c, d, nm), spq_sync_async_duplication_pm(d, m, c, nm), node(d, m, _, s, _).
 spq_sync_async_duplication_last_m(d, n, c, nm) :- spq_sync_async_duplication_pm(d, n, c, nm), node(d, n, _, st, _), st = max s : { rr_agg1(c, d, nm, s) }.
-rr_agg2(d, nm, s) :- spq_sync_async_duplication_pf(d, m, nm), node(d, m, _, s, _).
+rr_agg2(d, nm, s) :- rr_demand_agg_rr_agg2(d, nm), spq_sync_async_duplication_pf(d, m, nm), node(d, m, _, s, _).
 spq_sync_async_duplication_last_f(d, n, nm) :- spq_sync_async_duplication_pf(d, n, nm), node(d, n, _, st, _), st = max s : { rr_agg2(d, nm, s) }.
 spq_sync_async_duplication_admitted(d) :- spq_sync_async_duplication_admission(n), node(d, n, _, _, _).
 spq_sync_async_duplication_hit(d, n) :- spq_sync_async_duplication_pm(d, n, c, nm), spq_sync_async_duplication_last_m(d, s, c, sn), nm = @concat(sn, "_async"), !spq_sync_async_duplication_abstract_functions(n), !spq_sync_async_duplication_abstract_functions(s), spq_sync_async_duplication_long_functions(n).
@@ -3310,7 +3314,7 @@ spq_vector_filter_constants_file77(d) :- option_value("entryPoint", "all"), !opt
 spq_vector_filter_constants_admission(n) :- node(_, n, "module", _, _), node(d69, n, _, _, _), spq_vector_filter_constants_file68(d69), node_text(n, s70), match("(?s:.*)(?:QueryFilter)(?s:.*)", s70), node(d78, n, _, _, _), spq_vector_filter_constants_file77(d78), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d).
 spq_vector_filter_constants_fn(d, n, nm) :- spq_vector_filter_constants_filter_names(n), node(d, n, _, _, _), text(n, nm).
 spq_vector_filter_constants_ms(d, s, nm, v) :- spq_vector_filter_constants_module_strings(s), node(d, s, _, _, _), field(s, "left", x), text(x, nm), field(s, "right", r), value(r, v).
-rr_agg3(b2, d, nm) :- spq_vector_filter_constants_module_strings(o), node(d, o, _, b2, _), field(o, "left", x2), text(x2, nm).
+rr_agg3(b2, d, nm) :- rr_demand_agg_rr_agg3(d, nm), spq_vector_filter_constants_module_strings(o), node(d, o, _, b2, _), field(o, "left", x2), text(x2, nm).
 spq_vector_filter_constants_last(d, s, nm, v) :- spq_vector_filter_constants_ms(d, s, nm, v), node(d, s, _, b, _), b = max b2 : { rr_agg3(b2, d, nm) }.
 spq_vector_filter_constants_admitted(d) :- spq_vector_filter_constants_admission(n), node(d, n, _, _, _).
 violation("data-layer-serverplan-quality", "spq-vector-filter-constants", "SPQ-042", p, l) :- spq_vector_filter_constants_fn(d, n, nm), spq_vector_filter_constants_last(d, _, nm, v), spq_vector_filter_constants_scope_value(v), spq_vector_filter_constants_admitted(d), doc(d, p, _), line(n, l).
@@ -3833,7 +3837,7 @@ conditional_architecture_cut(c, j) :- conditional_architecture_split(c, k), j = 
 conditional_architecture_stop(c, k) :- conditional_architecture_split(c, k).
 conditional_architecture_stop(c, n) :- conditional_architecture_sup(c, _, n).
 rr_ctx7(c, j) :- conditional_architecture_cut(c, j), conditional_architecture_sup(c, t, _).
-rr_agg6(c, j, y) :- rr_ctx7(c, j), conditional_architecture_stop(c, y), y >= j.
+rr_agg6(c, j, y) :- rr_demand_agg_rr_agg6(c, j), rr_ctx7(c, j), conditional_architecture_stop(c, y), y >= j.
 conditional_architecture_item(c, x) :- conditional_architecture_cut(c, j), conditional_architecture_sup(c, t, _), q = min y : { rr_agg6(c, j, y) }, re = @concat(@concat(@concat(@concat("^(?:[^,]*,){", @to_string(j)), "}([^,]*(?:,[^,]*){"), @to_string(@sub(q, j))), "})(?:,(?s:.*))?$"), u = @rx_replace(t, re, "$1"), x = @rx_replace(u, "^[ \\t\\n\\r]+|[ \\t\\n\\r]+$", "").
 conditional_architecture_base(c, x) :- conditional_architecture_cclass(_, c, _, _, _, _), conditional_architecture_item(c, x), match("[A-Za-z_]\\w*(?:\\s*\\.\\s*[A-Za-z_]\\w*)*", x).
 conditional_architecture_base(c, x) :- conditional_architecture_cclass(_, c, _, _, _, _), conditional_architecture_item(c, x), match("[A-Za-z_][\\w.\\s]*\\((?s:.*)", x), match("(?s:.*)\\)", x).
@@ -3953,3 +3957,7 @@ violation("data-layer-serverplan-quality", "conditional-architecture", "SPQ-029"
 violation("data-layer-serverplan-quality", "conditional-architecture", "SPQ-029", "impl/common/l2070_server_plan/sql_backend_executor.py", 1) :- conditional_architecture_present(_), !conditional_architecture_has_qn("impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor").
 violation("data-layer-serverplan-quality", "conditional-architecture", "SPQ-029", p, l) :- conditional_architecture_cfunc(d, n, _, _, "impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step"), !conditional_architecture_compiler_ok(n), conditional_architecture_present(_), doc(d, p, _), line(n, l).
 violation("data-layer-serverplan-quality", "conditional-architecture", "SPQ-029", "impl/common/l2070_server_plan/steps/_conditional_compile.py", 1) :- conditional_architecture_present(_), !conditional_architecture_has_cfunc("impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step").
+rr_demand_agg_rr_agg1(c, d, nm) :- spq_sync_async_duplication_pm(d, n, c, nm), node(d, n, _, st, _).
+rr_demand_agg_rr_agg2(d, nm) :- spq_sync_async_duplication_pf(d, n, nm), node(d, n, _, st, _).
+rr_demand_agg_rr_agg3(d, nm) :- spq_vector_filter_constants_ms(d, s, nm, v), node(d, s, _, b, _).
+rr_demand_agg_rr_agg6(c, j) :- conditional_architecture_cut(c, j), conditional_architecture_sup(c, t, _).

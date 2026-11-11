@@ -66,6 +66,7 @@ constructor_fdef_kinds("function_definition").
 .decl out_scope(d: number)
 .decl rr_agg1(p: node, s: number, x: node, xs: number)
 .decl rr_ctx2(p: node, s: number)
+.decl rr_demand_agg_rr_agg1(p: node, s: number)
 .decl strprefix(n: node, p: symbol)
 .decl syntax_error(d: number)
 .decl tape_syntax_error(d: number)
@@ -192,7 +193,7 @@ captured_field(c, x) :- captured_init(c, f), node(_, a, "assignment", _, _), ins
 captured_index_list(p) :- node(_, p, k, _, _), captured_pattern_kinds(k).
 captured_index_list(p) :- node(_, p, k, _, _), captured_value_list_kinds(k).
 rr_ctx2(p, s) :- child(p, c, _), node(_, c, _, s, _).
-rr_agg1(p, s, x, xs) :- rr_ctx2(p, s), child(p, x, _), node(_, x, _, xs, _), xs < s, !node(_, x, "comment", _, _).
+rr_agg1(p, s, x, xs) :- rr_demand_agg_rr_agg1(p, s), rr_ctx2(p, s), child(p, x, _), node(_, x, _, xs, _), xs < s, !node(_, x, "comment", _, _).
 captured_index(p, c, k) :- captured_index_list(p), child(p, c, _), node(_, c, _, s, _), k = count : { rr_agg1(p, s, _, _) }.
 captured_param_named(q, p) :- node(_, q, "identifier", _, _), text(q, p).
 captured_param_named(q, p) :- node(_, q, k, _, _), captured_param_kinds(k), field(q, "name", n), text(n, p).
@@ -239,3 +240,4 @@ captured_return_row(d, r, c, x) :- captured_return(d, r, c, _), captured_returns
 captured_reach(c, "render") :- captured_return_row(_, _, c, _).
 captured_reach(c, y) :- captured_reach(c, x), captured_edge(c, x, y).
 violation("data-layer-grammar-fragment-usage", "captured-return", "sqlfragment_usage", p, l) :- captured_return_row(d, r, c, x), captured_reach(c, x), doc(d, p, _), line(r, l).
+rr_demand_agg_rr_agg1(p, s) :- captured_index_list(p), child(p, c, _), node(_, c, _, s, _).

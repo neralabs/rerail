@@ -301,7 +301,10 @@ fn every_unstratified_component_is_named() {
 fn value_cycles_bounded_by_the_data() {
     let decls = ".decl child(p: node, c: node, i: number)\n.decl field(p: node, f: symbol, c: node)\n.decl next_sibling(a: node, b: node)\n.decl kind(n: node, k: symbol)\n.decl text(n: node, s: symbol)\n.decl e(a: node, b: node)\n.decl lim(k: number)\n.input child, field, next_sibling, kind, text, e, lim\n";
     let ok = |src: &str| parse(&format!("{decls}{src}")).unwrap_or_else(|e| panic!("{src}: {e}"));
-    let refused = |src: &str| assert!(matches!(parse(&format!("{decls}{src}")), Err(Error::UnboundedValueCycle { .. })), "{src}");
+    let refused = |src: &str| {
+        let got = parse(&format!("{decls}{src}"));
+        assert!(matches!(got, Err(Error::UnboundedValueCycle { .. })), "{src}\ngot: {:?}", got.map(|_| "accepted"));
+    };
     // A counter below a constant, or below a value of a lower stratum; not one with no bound, or bounded the
     // wrong way, or below a value the recursion itself makes.
     ok(".decl n(x: number)\nn(1).\nn(x + 1) :- n(x), x < 20.\n");

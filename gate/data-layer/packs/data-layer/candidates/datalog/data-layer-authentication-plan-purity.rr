@@ -37,6 +37,8 @@ auth_plan_def("function_definition").
 .decl out_scope(d: number)
 .decl rr_agg1(b: number, d: number, k: number, s: symbol)
 .decl rr_agg2(b: number, c: node, s: symbol)
+.decl rr_demand_agg_rr_agg1(d: number, k: number, s: symbol)
+.decl rr_demand_agg_rr_agg2(c: node, s: symbol)
 .decl syntax_error(d: number)
 .decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
@@ -78,7 +80,7 @@ auth_plan_depths(n, j) :- auth_plan_depths(p, j), child(p, n, _), node(_, n, k, 
 auth_plan_depths(n, i) :- auth_plan_depths(p, j), child(p, n, _), node(_, n, k, _, _), !auth_plan_flat(k), i = @add(j, 1).
 auth_plan_class_depth(c, d, s, k) :- auth_plan_classes(c, d, s), auth_plan_depths(c, k).
 auth_plan_deepest(d, s, k) :- auth_plan_class_depth(_, d, s, _), k = max j : { auth_plan_class_depth(_, d, s, j) }.
-rr_agg1(b, d, k, s) :- auth_plan_class_depth(c, d, s, k), node(_, c, _, b, _).
+rr_agg1(b, d, k, s) :- rr_demand_agg_rr_agg1(d, k, s), auth_plan_class_depth(c, d, s, k), node(_, c, _, b, _).
 auth_plan_deepest_start(d, s, st) :- auth_plan_deepest(d, s, k), st = max b : { rr_agg1(b, d, k, s) }.
 auth_plan_selected_classes(c, d, s) :- auth_plan_deepest_start(d, s, st), auth_plan_classes(c, d, s), node(_, c, _, st, _).
 auth_plan_heads(c, b) :- auth_plan_selected_classes(c, _, _), child(c, a, _), node(_, a, "argument_list", _, _), child(a, b, _), !node(_, b, "comment", _, _).
@@ -93,7 +95,7 @@ auth_plan_step_methods(f) :- auth_plan_methods(f, _, _, cn), node(d, f, _, _, _)
 auth_plan_self_stores(n, f, s) :- node(d, n, "assignment", _, _), auth_plan_doc(d, _), field(n, "left", a), node(_, a, "attribute", _, _), field(a, "object", o), text(o, "self"), field(a, "attribute", x), text(x, s), inside(n, f, auth_plan_def), auth_plan_step_methods(f).
 auth_plan_type_part(n, t) :- auth_plan_self_stores(n, _, _), field(n, "type", y), node_text(y, t).
 auth_plan_type_part(n, t) :- auth_plan_self_stores(n, f, _), field(n, "right", v), node(_, v, "identifier", _, _), text(v, s), auth_plan_parameter_types(f, s, t).
-rr_agg2(b, c, s) :- auth_plan_methods(f, c, s, _), node(_, f, _, b, _).
+rr_agg2(b, c, s) :- rr_demand_agg_rr_agg2(c, s), auth_plan_methods(f, c, s, _), node(_, f, _, b, _).
 auth_plan_last_start(c, s, st) :- auth_plan_methods(_, c, s, _), st = max b : { rr_agg2(b, c, s) }.
 auth_plan_last_methods(f, c, s, cn) :- auth_plan_last_start(c, s, st), auth_plan_methods(f, c, s, cn), node(_, f, _, st, _).
 auth_plan_method_calls(c, s, x) :- auth_plan_last_methods(f, c, s, _), auth_plan_calls(k, x), inside(k, f, auth_plan_def).
@@ -113,3 +115,5 @@ violation("data-layer-authentication-plan-purity", "authentication-contracts", "
 auth_plan_lazy_wrapper(f) :- auth_plan_function_decorators(f, s), (s = "legacy_sync" ; s = "legacy_async").
 auth_plan_lazy_wrapper(f) :- auth_plan_function_decorators(f, s), (s = "direct_legacy_sync" ; s = "direct_legacy_async"), auth_plan_calls(k, x), suffix("_lazy", x), inside(k, f, auth_plan_def).
 violation("data-layer-authentication-plan-purity", "authentication-contracts", "APP004", p, l) :- auth_plan_functions(n, d, s), (suffix("_sync", s) ; suffix("_async", s)), (icontains("auth", s) ; icontains("credential", s) ; icontains("admission", s)), !auth_plan_lazy_wrapper(n), auth_plan_doc(d, p), line(n, l).
+rr_demand_agg_rr_agg1(d, k, s) :- auth_plan_deepest(d, s, k).
+rr_demand_agg_rr_agg2(c, s) :- auth_plan_methods(_, c, s, _).

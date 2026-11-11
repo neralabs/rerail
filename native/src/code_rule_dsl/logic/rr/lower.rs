@@ -896,6 +896,13 @@ impl Lowerer {
         if warn {
             self.prog.settings.push(("severity".to_owned(), "guest_error warning".to_owned()));
         }
+        // The libraries' `embed`s are made by default: a program that reads the setting and sets none reads
+        // `guest_policy("library", "on")`, a stated fact, so `!guest_policy("library", "off")` is decided before the
+        // run (`simplify`) instead of reading a relation nothing gives.
+        let reads = self.prog.rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == GUEST_POLICY);
+        if reads && !facts.iter().any(|(k, _)| k == "library") {
+            facts.push(("library".to_owned(), "on".to_owned()));
+        }
         if !facts.is_empty() {
             self.prog.decls.insert(GUEST_POLICY.to_owned(), vec![("k".to_owned(), "sym".to_owned()), ("v".to_owned(), "sym".to_owned())]);
             let rows = self.prog.facts.entry(GUEST_POLICY.to_owned()).or_default();

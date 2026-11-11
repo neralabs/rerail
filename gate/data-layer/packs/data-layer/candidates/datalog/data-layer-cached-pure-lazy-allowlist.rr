@@ -166,6 +166,8 @@
 .decl rr_agg1(os: number, s: number, v: node)
 .decl rr_agg3(p: node, s2: number)
 .decl rr_ctx2(s: number, v: node)
+.decl rr_demand_agg_rr_agg1(s: number, v: node)
+.decl rr_demand_agg_rr_agg3(p: node)
 .decl runtime_ctor(x: symbol)
 .decl runtime_def_k(k: symbol)
 .decl runtime_dump(x: symbol, n: node, v: symbol)
@@ -542,12 +544,12 @@ cached_kwcount(c, k) :- cached_sel(_, _, c), k = count : { cpl_kwnode(c, _) }.
 cached_badcontainer(v) :- cached_sel(_, _, c), cpl_kw(c, "cache_args", v), cpl_kid(v, el), node(_, el, k, _, _), !cached_str_k(k).
 cached_el(v, el, s) :- cached_sel(_, _, c), cpl_kw(c, "cache_args", v), node(_, v, vk, _, _), cached_container_k(vk), cpl_kid(v, el), node(_, el, _, s, _).
 rr_ctx2(s, v) :- cached_el(v, _, s).
-rr_agg1(os, s, v) :- rr_ctx2(s, v), cached_el(v, _, os), os < s.
+rr_agg1(os, s, v) :- rr_demand_agg_rr_agg1(s, v), rr_ctx2(s, v), cached_el(v, _, os), os < s.
 cached_elpos(v, s, i) :- cached_el(v, _, s), i = count : { rr_agg1(_, s, v) }.
 cached_arg(f, i, x) :- cached_sel(d, f, c), cpl_kw(c, "cache_args", v), cached_el(v, _, s), !cpl_isposarg_of(c), cached_kwcount(c, 1), !cached_badcontainer(v), cached_str(d, s, x), cached_elpos(v, s, i).
 cpl_isposarg_of(c) :- cpl_posarg(c, _).
 cached_param(f, p, "identifier", x, s) :- cached_sel(_, f, _), cpl_params(f, ps, _, _), cpl_kid(ps, p), node(_, p, "identifier", s, _), cpl_txt(p, x).
-rr_agg3(p, s2) :- cpl_kid(p, o), node(_, o, _, s2, _).
+rr_agg3(p, s2) :- rr_demand_agg_rr_agg3(p), cpl_kid(p, o), node(_, o, _, s2, _).
 cached_param(f, p, k, x, s) :- cached_sel(_, f, _), cpl_params(f, ps, _, _), cpl_kid(ps, p), node(_, p, k, s, _), cached_param_k(k), cpl_kid(p, c), node(_, c, "identifier", cs, _), first = min s2 : { rr_agg3(p, s2) }, cs = first, cpl_txt(c, x).
 cached_name(f, n) :- cached_sel(d, f, _), cpl_body(f, bs, be), node(d, n, "identifier", s, e), s >= bs, e <= be, cpl_txt(n, x), cached_arg(f, _, x), !cpl_attr_field(n).
 cpl_apath(a, x, m) :- cpl_attr(a, m), field(a, "object", o), node(_, o, "identifier", _, _), cpl_txt(o, x).
@@ -753,3 +755,5 @@ runtime_issue(s) :- runtime_hash(h), runtime_meta("CACHED_PURE_LAZY_RUNTIME_SOUR
 runtime_issue(s) :- runtime_hash(h), runtime_meta("CACHED_PURE_LAZY_RUNTIME_SOURCE_HASH", lj), match("-?[0-9]+", lj), s = @concat(@concat(@concat("cached pure-lazy runtime source hash changed: actual=", h), " policy="), lj).
 runtime_issue("cached pure-lazy policy signature is invalid") :- runtime_on(_), !runtime_valid(_).
 violation("data-layer-cached-pure-lazy-allowlist", "cached-runtime-contract", s, "l2055_lazy_result/cached_pure_lazy_policy.py", 1) :- runtime_on(_), runtime_issue(s).
+rr_demand_agg_rr_agg1(s, v) :- cached_el(v, _, s).
+rr_demand_agg_rr_agg3(p) :- cached_sel(_, f, _), cpl_params(f, ps, _, _), cpl_kid(ps, p), node(_, p, k, s, _), cached_param_k(k), cpl_kid(p, c), node(_, c, "identifier", cs, _), cpl_txt(c, x).

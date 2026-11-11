@@ -212,6 +212,7 @@ bootstrap_invariants_stmtk("class_definition"). bootstrap_invariants_stmtk("func
 .decl primitive_install_not_first(c: node)
 .decl primitive_install_valid(d: number, p: symbol)
 .decl rr_agg1(c: node, dn: node)
+.decl rr_demand_agg_rr_agg1(dn: node)
 .decl src_line_lf(d: number, l: number, sp: node)
 .decl strprefix(n: node, p: symbol)
 .decl syntax_error(d: number)
@@ -701,7 +702,7 @@ bootstrap_invariants_not_name(n) :- node(_, x, "except_group_clause", _, _), chi
 bootstrap_invariants_not_name(n) :- node(_, n, "identifier", _, _), child(p, n, _), node(_, p, k, _, _), bootstrap_invariants_patk(k), inside(n, _, bootstrap_invariants_casek).
 bootstrap_invariants_not_name(n) :- node(_, n, "identifier", _, _), child(t, n, _), node(_, t, "as_pattern_target", _, _), inside(n, _, bootstrap_invariants_casek).
 bootstrap_invariants_not_name(n) :- node(_, p, "keyword_pattern", _, _), child(p, n, 0), node(_, n, "identifier", _, _).
-rr_agg1(c, dn) :- child(dn, c, _), node(_, c, "identifier", _, _).
+rr_agg1(c, dn) :- rr_demand_agg_rr_agg1(dn), child(dn, c, _), node(_, c, "identifier", _, _).
 bootstrap_invariants_pat_dotted(dn, k) :- node(_, dn, "dotted_name", _, _), inside(dn, _, bootstrap_invariants_casek), k = count : { rr_agg1(_, dn) }.
 bootstrap_invariants_not_name(n) :- bootstrap_invariants_pat_dotted(dn, 1), child(dn, n, _), !field(_, "key", dn), !bootstrap_invariants_class_head(dn).
 bootstrap_invariants_not_name(n) :- bootstrap_invariants_pat_dotted(dn, k), k > 1, child(dn, n, j), j > 0.
@@ -1020,3 +1021,4 @@ bootstrap_source_syntax_scope(d) :- bootstrap_source_syntax_doc(d, p), match("(.
 bootstrap_source_syntax_scope(d) :- bootstrap_source_syntax_doc(d, _), bootstrap_invariants_base_bootstrap(d).
 bootstrap_source_syntax_scope(d) :- bootstrap_source_syntax_doc(d, _), node(d, m, "module", _, _), node_text(m, s), (contains("Bootstrap", s) ; contains("bootstrap", s) ; contains("schema_transaction", s) ; contains("materialized_pipeline", s) ; contains("physical_table", s) ; contains("reconciliation", s)).
 violation("data-layer-bootstrap-engine-invariants", "bootstrap-source-syntax", "NATIVE-SYNTAX", p, l) :- bootstrap_source_syntax_scope(d), bootstrap_source_syntax_doc(d, p), node(d, m, "module", _, _), line(m, l).
+rr_demand_agg_rr_agg1(dn) :- node(_, dn, "dotted_name", _, _), inside(dn, _, bootstrap_invariants_casek).

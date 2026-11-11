@@ -51,6 +51,14 @@ spt_type_kind("type").
 .decl rr_ctx3(p: number)
 .decl rr_ctx6(q: number)
 .decl rr_ctx9(p: number)
+.decl rr_demand_agg_rr_agg10(p: number)
+.decl rr_demand_agg_rr_agg13(p: number)
+.decl rr_demand_agg_rr_agg16(v: number)
+.decl rr_demand_agg_rr_agg2(p: number)
+.decl rr_demand_agg_rr_agg23(d: number, f: node, k: symbol)
+.decl rr_demand_agg_rr_agg24(d: number, f: node, k: symbol, l: number, p: number)
+.decl rr_demand_agg_rr_agg5(q: number)
+.decl rr_demand_agg_rr_agg8(p: number)
 .decl spt_admitted(d: number)
 .decl spt_bare_callee(c: node, s: symbol)
 .decl spt_callee(c: node, s: symbol)
@@ -1230,11 +1238,11 @@ spt_flow_jws(i) :- spt_flow_jb(i, v), v = 10.
 spt_flow_jws(i) :- spt_flow_jb(i, v), v = 13.
 spt_flow_jnws(i) :- spt_flow_jb(i, _), !spt_flow_jws(i).
 rr_ctx3(p) :- spt_flow_jb(p, _), rr_t4 = @sub(p, 1), spt_flow_jb(rr_t4, 92).
-rr_agg2(j, p) :- rr_ctx3(p), spt_flow_jb(j, v), v != 92, j < p.
+rr_agg2(j, p) :- rr_demand_agg_rr_agg2(p), rr_ctx3(p), spt_flow_jb(j, v), v != 92, j < p.
 spt_flow_jbs_odd(p) :- spt_flow_jb(p, _), rr_t1 = @sub(p, 1), spt_flow_jb(rr_t1, 92), m = max j : { rr_agg2(j, p) }, r = @sub(@sub(p, 1), m), @sub(r, @mul(2, @div(r, 2))) = 1.
 spt_flow_juq(q) :- spt_flow_jb(q, 34), !spt_flow_jbs_odd(q).
 rr_ctx6(q) :- spt_flow_juq(q).
-rr_agg5(j, q) :- rr_ctx6(q), spt_flow_juq(j), j < q.
+rr_agg5(j, q) :- rr_demand_agg_rr_agg5(q), rr_ctx6(q), spt_flow_juq(j), j < q.
 spt_flow_juqn(q, k) :- spt_flow_juq(q), k = count : { rr_agg5(_, q) }.
 spt_flow_jstr(o, c) :- spt_flow_juqn(o, k), @sub(k, @mul(2, @div(k, 2))) = 0, rr_t7 = @add(k, 1), spt_flow_juqn(c, rr_t7).
 spt_flow_jcand(i, v) :- spt_flow_jb(i, v), v = 123.
@@ -1253,20 +1261,20 @@ spt_flow_jpt(p) :- spt_flow_jstr(p, _).
 spt_flow_jpt(p) :- spt_flow_jopen(p).
 spt_flow_jpt(p) :- spt_flow_jclose(p).
 rr_ctx9(p) :- spt_flow_jpt(p).
-rr_agg8(j, p) :- rr_ctx9(p), spt_flow_jopen(j), j < p.
+rr_agg8(j, p) :- rr_demand_agg_rr_agg8(p), rr_ctx9(p), spt_flow_jopen(j), j < p.
 rr_ctx11(p) :- spt_flow_jpt(p).
-rr_agg10(j, p) :- rr_ctx11(p), spt_flow_jclose(j), j < p.
+rr_agg10(j, p) :- rr_demand_agg_rr_agg10(p), rr_ctx11(p), spt_flow_jclose(j), j < p.
 spt_flow_jdepth(p, x) :- spt_flow_jpt(p), a = count : { rr_agg8(_, p) }, b = count : { rr_agg10(_, p) }, x = @sub(a, b).
 spt_flow_jafter(c) :- spt_flow_jstr(_, c).
 spt_flow_jafter(i) :- spt_flow_js(i, 58).
 spt_flow_jnext(p, i) :- spt_flow_jafter(p), i = @add(p, 1), spt_flow_jnws(i).
 rr_ctx14(p) :- spt_flow_jafter(p), rr_t15 = @add(p, 1), spt_flow_jws(rr_t15).
-rr_agg13(j, p) :- rr_ctx14(p), spt_flow_jnws(j), j > p.
+rr_agg13(j, p) :- rr_demand_agg_rr_agg13(p), rr_ctx14(p), spt_flow_jnws(j), j > p.
 spt_flow_jnext(p, i) :- spt_flow_jafter(p), rr_t12 = @add(p, 1), spt_flow_jws(rr_t12), i = min j : { rr_agg13(j, p) }.
 spt_flow_jobj(t) :- spt_flow_rkh(_), t = min j : { spt_flow_jnws(j) }, spt_flow_js(t, 123).
 spt_flow_jkeyish(o) :- spt_flow_jstr(o, c), spt_flow_jnext(c, i), spt_flow_js(i, 58).
 rr_ctx17(v) :- spt_flow_jkeyish(o), spt_flow_jdepth(o, 1), spt_flow_jstr(o, c), spt_flow_jnext(c, i), spt_flow_jnext(i, v), spt_flow_jopen(v).
-rr_agg16(j, v) :- rr_ctx17(v), spt_flow_jclose(j), spt_flow_jdepth(j, 2), j > v.
+rr_agg16(j, v) :- rr_demand_agg_rr_agg16(v), rr_ctx17(v), spt_flow_jclose(j), spt_flow_jdepth(j, 2), j > v.
 spt_flow_jentry(o, v, m) :- spt_flow_jobj(_), spt_flow_jkeyish(o), spt_flow_jdepth(o, 1), spt_flow_jstr(o, c), spt_flow_jnext(c, i), spt_flow_jnext(i, v), spt_flow_jopen(v), m = min j : { rr_agg16(j, v) }.
 spt_flow_jmember(v, o) :- spt_flow_jentry(_, v, m), spt_flow_jstr(o, _), o > v, o < m, spt_flow_jdepth(o, 2), !spt_flow_jkeyish(o).
 spt_flow_jesc(o, p, x) :- spt_flow_jstr(o, c), spt_flow_jb(p, 92), o < p, p < c, !spt_flow_jbs_odd(p), rr_t18 = @add(p, 1), spt_flow_jb(rr_t18, x).
@@ -1554,7 +1562,7 @@ spt_flow_tl(d, f, k, l, f) :- spt_flow_dk(d, f, k), spt_flow_reach(d, f), spt_fl
 spt_flow_tl(d, f, k, l2, o) :- spt_flow_tl(d, t, k, l, o), spt_flow_cg(d, f, _, t), spt_flow_reach(d, f), !spt_flow_dk(d, f, k), spt_flow_w(d, f, w), spt_flow_add(d, l, w, l2).
 spt_flow_tmin(d, f, k, l) :- spt_flow_tl(d, f, k, _, _), !spt_flow_dk(d, f, k), l = min x : { spt_flow_tl(d, f, k, x, _) }.
 spt_flow_tcand(d, f, k, c, t, l1) :- spt_flow_tmin(d, f, k, l), spt_flow_w(d, f, w), l1 = @sub(l, w), spt_flow_cg(d, f, c, t), spt_flow_tl(d, t, k, l1, _).
-rr_agg23(d, f, k, y) :- spt_flow_tcand(d, f, k, c, _, _), node(d, c, _, y, _).
+rr_agg23(d, f, k, y) :- rr_demand_agg_rr_agg23(d, f, k), spt_flow_tcand(d, f, k, c, _, _), node(d, c, _, y, _).
 spt_flow_tstart(d, f, k, s) :- spt_flow_tcand(d, f, k, _, _, _), s = min y : { rr_agg23(d, f, k, y) }.
 spt_flow_tsite(d, f, k, c) :- spt_flow_tstart(d, f, k, s), spt_flow_tcand(d, f, k, c, _, _), node(d, c, _, s, _).
 spt_flow_torig(d, f, k, o, s) :- spt_flow_tsite(d, f, k, c), spt_flow_tcand(d, f, k, c, t, l1), spt_flow_tl(d, t, k, l1, o), node(d, o, _, s, _).
@@ -1589,7 +1597,7 @@ spt_flow_pl(d, f, k, l, p, n) :- spt_flow_pseed(d, f, n, k, p), spt_flow_w(d, f,
 spt_flow_pl(d, f, k, l2, p, n) :- spt_flow_pl(d, t, k, l, p, n), spt_flow_cg(d, f, _, t), !spt_flow_pk(d, f, k), spt_flow_w(d, f, w), spt_flow_add(d, l, w, l2).
 spt_flow_plmin(d, f, k, l) :- spt_flow_pl(d, f, k, _, _, _), l = min x : { spt_flow_pl(d, f, k, x, _, _) }.
 spt_flow_plprio(d, f, k, l, p) :- spt_flow_plmin(d, f, k, l), p = min q : { spt_flow_pl(d, f, k, l, q, _) }.
-rr_agg24(d, f, k, l, p, y) :- spt_flow_pl(d, f, k, l, p, m), node(d, m, _, y, _).
+rr_agg24(d, f, k, l, p, y) :- rr_demand_agg_rr_agg24(d, f, k, l, p), spt_flow_pl(d, f, k, l, p, m), node(d, m, _, y, _).
 spt_flow_ps(d, f, k, n) :- spt_flow_plprio(d, f, k, l, p), spt_flow_pl(d, f, k, l, p, n), node(d, n, _, s, _), s = min y : { rr_agg24(d, f, k, l, p, y) }.
 spt_flow_fhit(d, f, "SPT-003", n) :- spt_flow_ts(d, f, "eager_sql", n, o), o != f, spt_flow_planning(f), !spt_flow_preprocess(f).
 spt_flow_fhit(d, f, "SPT-011", n) :- spt_flow_ts(d, f, "eager_sql", n, o), o != f, spt_flow_preprocess(f).
@@ -1619,3 +1627,11 @@ spt_flow_hit(d, "SPT-023", n) :- spt_flow_call(d, n, _, _), spt_flow_callee(n, "
 spt_flow_hit(d, "SPT-028", n) :- spt_flow_sps(1), spt_flow_planning(f), spt_flow_ps(d, f, "builder", n), !spt_flow_pk_sink(d, f, "semantic").
 spt_flow_pk_sink(d, f, k) :- spt_flow_ps(d, f, k, _).
 violation("data-layer-serverplan-state-tripwires", "state-flow-narrow", code, p, l) :- spt_flow_hit(d, code, n), spt_doc(d, p), line(n, l).
+rr_demand_agg_rr_agg10(p) :- spt_flow_jpt(p).
+rr_demand_agg_rr_agg13(p) :- spt_flow_jafter(p), rr_t12 = @add(p, 1).
+rr_demand_agg_rr_agg16(v) :- spt_flow_jkeyish(o), spt_flow_jdepth(o, 1), spt_flow_jstr(o, c), spt_flow_jnext(c, i), spt_flow_jnext(i, v), spt_flow_jopen(v).
+rr_demand_agg_rr_agg2(p) :- spt_flow_jb(p, _), rr_t1 = @sub(p, 1).
+rr_demand_agg_rr_agg23(d, f, k) :- spt_flow_tcand(d, f, k, _, _, _).
+rr_demand_agg_rr_agg24(d, f, k, l, p) :- spt_flow_plprio(d, f, k, l, p), spt_flow_pl(d, f, k, l, p, n), node(d, n, _, s, _).
+rr_demand_agg_rr_agg5(q) :- spt_flow_juq(q).
+rr_demand_agg_rr_agg8(p) :- spt_flow_jpt(p).

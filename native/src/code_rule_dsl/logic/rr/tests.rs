@@ -264,6 +264,9 @@ fn check_rr_finds_problems() {
     // `m = @dot(q, x)` splits a bound `m` at each dot, binding both parts; an unbound `m` is named.
     let split = statements(".decl a(m: symbol)\n.decl b(q: symbol)\nb(q) :- a(m), m = @dot(q, x).\nb(q) :- m = @dot(q, x), a(m).\nb(q) :- a(q), m = @dot(q, x).\n");
     assert_eq!(check::grounded(&split, &BTreeSet::new()), vec![(5, vec!["m".to_owned()])]);
+    // So does `m = @cat(q, x)`, at each position (the front end's `cmp_binds`).
+    let cat = statements(".decl a(m: symbol)\n.decl b(q: symbol)\nb(q) :- a(m), m = @cat(q, x).\nb(q) :- a(q), m = @cat(q, x).\n");
+    assert_eq!(check::grounded(&cat, &BTreeSet::new()), vec![(4, vec!["m".to_owned()])]);
     let cyclic = statements(".decl a(x: number)\n.decl b(x: number)\na(x) :- b(x), !a(x).\nb(x) :- a(x).\n");
     let refs: Vec<&syntax::Statement> = cyclic.iter().collect();
     assert_eq!(check::strata(&refs).len(), 1);
