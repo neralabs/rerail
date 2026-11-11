@@ -6306,7 +6306,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         // Only those consumers' retained inputs and the outputs need payloads. Early cutoff during
         // execution can shrink this set, but cannot add a reader not covered here.
         let mut unchanged = HashSet::new();
-        let mut demand: BTreeSet<String> = stays.iter().filter(|r| ks.has_rows(r)).cloned().collect();
+        let mut demand: BTreeSet<String> = pinned.iter().filter(|r| ks.has_rows(r)).cloned().collect();
         for (scc, rules) in sccs.iter().zip(&by_stratum) {
             let reads = stratum_reads(prog, scc, rules);
             let clean = retainable_stratum(prog, scc, rules, &run.views) && scc.iter().all(|r| ks.has_rows(r))
@@ -6318,7 +6318,22 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                     now.is_some() && scc.iter().all(|x| ks.read_was(x, r) == now)
                 });
             if clean { unchanged.extend(scc.iter().cloned()); }
-            else { demand.extend(reads.into_iter().filter(|r| ks.has_rows(r))); }
+            else {
+                // A SQL view reads its retained inputs when this consumer runs.
+                // Admit that closure now, rather than discovering an unadmitted
+                // clean relation when the view is evaluated later.
+                let mut pending: Vec<String> = reads.into_iter().collect();
+                let mut seen = HashSet::new();
+                while let Some(rel) = pending.pop() {
+                    if !seen.insert(rel.clone()) { continue; }
+                    if ks.has_rows(&rel) { demand.insert(rel.clone()); }
+                    if run.views.contains(&rel) {
+                        pending.extend(rules_by.get(rel.as_str()).into_iter().flatten()
+                            .flat_map(|rule| rule.body.iter().filter_map(Literal::atom))
+                            .map(|atom| atom.rel.clone()));
+                    }
+                }
+            }
             // Native-answer validation reads requests, and a view holds its component members.
             if scc.iter().any(|r| run.views.contains(r) || prog.answers.contains_key(r)) {
                 demand.extend(scc.iter().filter(|r| ks.has_rows(r)).cloned());
