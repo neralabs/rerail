@@ -1610,10 +1610,17 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
-      "sha256": "5e63e8a8dd7d60825fc3e2081618682e63ad32a41b887020390bf72fa16d4939",
+      "sha256": "ae991a67e16d99ca7e79c36053055755dcdb4acbfbed07896ffcaf4b1dbd6f6d",
       "origin": "authored",
       "upstreamPath": "scripts/lint_forwardref.py",
-      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "repairs": [
+        {
+          "before": "5e63e8a8dd7d60825fc3e2081618682e63ad32a41b887020390bf72fa16d4939",
+          "after": "ae991a67e16d99ca7e79c36053055755dcdb4acbfbed07896ffcaf4b1dbd6f6d",
+          "reason": "Normalize parenthesized assignment names without treating tuple targets or comment commas as names"
+        }
+      ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/data-layer-compat-aliases.rr",
@@ -3584,7 +3591,50 @@
       "legacySha256": "9bccddea5856ae1e41d834d68d7da4d96fdebe512c93c03bcef605a818f35333",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
-      "ruleSha256": "5e63e8a8dd7d60825fc3e2081618682e63ad32a41b887020390bf72fa16d4939"
+      "ruleSha256": "ae991a67e16d99ca7e79c36053055755dcdb4acbfbed07896ffcaf4b1dbd6f6d",
+      "migrationProgress": {
+        "status": "scanner-and-production-contracts-passed",
+        "admitted": false,
+        "checkpoint": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-forwardref-scanner-progress-finalfcce.json.gz",
+          "sha256": "d069703da5d3aafe0ff39b5f82367044feef650506d831cef787a401c2da872e"
+        },
+        "summary": {
+          "admitted": false,
+          "fullMigrationAcceptance": false,
+          "originalCasesPerAPI": 53,
+          "nativeLinterOriginalCasesPerAPI": 5,
+          "originalPositiveObservationsPerAPI": 2,
+          "hostWorkflowCasesPerAPI": 48,
+          "publicCasesPerAPI": 80,
+          "productionCasesPerAPI": 18,
+          "nativeExecutions": 240,
+          "casesWithoutNativeCalls": {
+            "public": {
+              "snapshot": [
+                "file-missing",
+                "file-invalid-utf8",
+                "content-missing"
+              ],
+              "workspace": [
+                "file-missing",
+                "file-invalid-utf8",
+                "content-missing"
+              ]
+            },
+            "production": {
+              "snapshot": [],
+              "workspace": []
+            }
+          }
+        },
+        "remaining": [
+          "Native explicit-file preparation for the three identified host-only I/O cases",
+          "Native collector, registry, helpers, configuration and supplied-fact contracts",
+          "Native CLI and its source-recorded assertions",
+          "Persistent updates, behavior-removal controls and complete admission"
+        ]
+      }
     },
     {
       "check": "unresolved_forward_refs",

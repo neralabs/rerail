@@ -3474,3 +3474,39 @@ The inventory now records fifteen admissions, eighty-four drafts, and one absent
 Earlier admissions retain their recorded engine versions. This receipt does not certify those rules on the current binary.
 The remote Final branch and sibling worktree still point to `fcce32b26`; that commit is already merged here.
 No full-repository cold run or additional Linear ticket was created.
+
+### 2026-11-11 — ForwardRef scanner repair and retained coverage
+
+The existing ForwardRef rule and its production adapter remain the starting point.
+Both native APIs pass its five unchanged linter tests, including both positive observations, on Final fcce.
+Both APIs also pass eighteen complete production contracts.
+
+The inventory includes 48 additional PR-monitor tests because that module mentions ForwardRef handling.
+Those tests mock `monitor_pr_status.check_forwardref_handling`; they produce no linter observations.
+All 48 pass through each suite run. The progress receipt identifies them individually as host workflow assertions.
+They do not count as native detector coverage.
+
+A fresh public corpus exposed a false negative in `(annotation) = field.annotation`.
+CPython treats the target as a Name. Tree-sitter represents its parentheses as `tuple_pattern`.
+The first native replay missed the following unguarded `callable(annotation)` finding.
+Commit `0bca8a1ae` retains the source case and failing native evidence before the rule repair.
+
+The rule now unwraps assignment target parentheses only when the direct comma token is absent.
+It handles nested parentheses and comments containing commas without accepting a real tuple target.
+The existing tape operator relation supplies this distinction; no engine feature or Rust change was needed.
+The offline generator reproduces the repaired policy exactly.
+
+Both APIs pass all eighty expanded public cases and the refreshed original and production suites.
+The progress receipt records 240 native executions on one program and adapter cohort.
+Its scope remains partial and cannot grant migration admission.
+Eight validator tests reject omitted observations, missing cases, hidden host workflow coverage, changed returns, mixed engines, and altered snapshots.
+All 508 tooling tests pass, with 165 subtests. The inventory audit passes.
+
+Three public cases still make no native call: `file-missing`, `file-invalid-utf8`, and `content-missing`.
+The current adapter performs their I/O or missing-file handling before native evaluation.
+Native explicit-file preparation remains open, along with collectors, helpers, configuration, supplied facts, CLI, updates, and controls.
+ForwardRef remains a draft. The global inventory remains fifteen admissions, eighty-four drafts, and one absent translation.
+
+The progress receipt is `rr-forwardref-scanner-progress-finalfcce.json.gz`.
+The red receipt is `rr-forwardref-parenthesized-target-red-finalfcce.json.gz`.
+No engine build, full-repository cold run, or additional Linear ticket was created.

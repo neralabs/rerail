@@ -27,9 +27,14 @@ fr_name(e, @nfkc(t)) :- unparen(e, n), ast_name(n, t).
 fr_attr(e, @nfkc(t)) :- unparen(e, n), kind(n, "attribute"), field(n, "attribute", a), text(a, t).
 .decl fr_nested_assign(a: node)
 fr_nested_assign(a) :- kind(p, "assignment"), field(p, "right", a).
+.decl fr_target_name(t: node, name: symbol)
+fr_target_name(t,name) :- fr_name(t,name).
+// A parenthesized store target is a Name in CPython. A comma makes it a Tuple.
+// Use the tape's direct token, so commas inside comments do not change the shape.
+fr_target_name(t,name) :- kind(t,"tuple_pattern"),!op(t,","),child(t,c,_),!kind(c,"comment"),fr_target_name(c,name).
 .decl fr_assign(a: node, f: node)
 fr_assign(a, f) :- kind(a, "assignment"), !field(a, "type", _), !fr_nested_assign(a),
-    field(a, "left", t), fr_name(t, "annotation"), field(a, "right", v), fr_attr(v, "annotation"), fr_scope(a, f).
+    field(a, "left", t), fr_target_name(t, "annotation"), field(a, "right", v), fr_attr(v, "annotation"), fr_scope(a, f).
 .decl fr_arg(c: node, i: number, n: node)
 fr_arg(c, i, n) :- kind(c, "call"), field(c, "arguments", al), child(al, n, j),
     !kind(n, "keyword_argument"), !kind(n, "dictionary_splat"), !kind(n, "comment"), !kind(n, "line_continuation"),
