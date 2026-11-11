@@ -2336,18 +2336,16 @@ impl Model {
                                 .then(|| (v.clone(), dv.clone()))
                         });
                         let (v, dv) = found.ok_or_else(|| Error::Plan(format!("no document for the range read of {l}")))?;
+                        // A document's nodes are `d << 32 | index` (`stat_docrange` held these intervals): the range
+                        // is `d`'s, computed, so no table of documents is read or made.
+                        let d = sql_term(&dv, &env, atoms)?;
+                        let lo = bin(Op::Multiply, d, integer(1 << 32));
                         let rc = l.args.iter().position(|t| matches!(t, Term::Var(x) if *x == v)).expect("the range column");
-                        let (low, high) = if self.docs_by_shift {
-                            // The interval is the key's: no table is read for it (decision 0104).
-                            let lo = bin(Op::Multiply, sql_term(&dv, &env, atoms)?, integer(1 << 32));
-                            (lo.clone(), bin(Op::Add, lo, integer(0xffff_ffff)))
-                        } else {
-                            let ra = a_name();
-                            let range = FromItem::cross(Relation::DocRange { schema: self.inputs.stats.clone() }, ra.clone());
-                            frm.push((range, vec![eq(col(&ra, "d"), sql_term(&dv, &env, atoms)?)]));
-                            (col(&ra, "lo"), col(&ra, "hi"))
-                        };
-                        conds.push(Expr::Between { input: Box::new(col(&al, &self.col(&l.rel, rc))), low: Box::new(low), high: Box::new(high) });
+                        conds.push(Expr::Between {
+                            input: Box::new(col(&al, &self.col(&l.rel, rc))),
+                            low: Box::new(lo.clone()),
+                            high: Box::new(bin(Op::Add, lo, integer(0xffff_ffff))),
+                        });
                     }
                     for (c, t) in l.args.iter().enumerate() {
                         let column = col(&al, &self.col(&l.rel, c));
@@ -3608,6 +3606,7 @@ impl<'a> Run<'a, '_> {
     fn ensure<'r>(&mut self, rels: impl IntoIterator<Item = &'r String>) -> Result<()> {
         for r in rels {
             if let Some(create) = self.pending.remove(r) {
+                crate::code_rule_dsl::facts::vtab::setup_now(self.db)?;
                 self.db.execute_batch(&create)?;
             }
         }
@@ -3747,6 +3746,9 @@ impl<'a> Run<'a, '_> {
                         .and_then(|c| Some(prog.decls.get(&l.rel)?.get(c)?.1.clone())),
                     Literal::Agg { var, op: AggOp::Count | AggOp::Sum | AggOp::Product, .. } if var == n => Some("int".to_owned()),
                     Literal::Cmp { l: Term::Var(v), op: "=", r: r @ Term::Call(..) } if v == n && numeric_call(r) => Some("int".to_owned()),
+                    // A variable equal to a constant (`0 = $r`, an inlined `fneed(f, 0)`) has the constant's type.
+                    Literal::Cmp { l: Term::Var(v), op: "=", r: Term::Int(_) } | Literal::Cmp { l: Term::Int(_), op: "=", r: Term::Var(v) } if v == n => Some("int".to_owned()),
+                    Literal::Cmp { l: Term::Var(v), op: "=", r: Term::Str(_) } | Literal::Cmp { l: Term::Str(_), op: "=", r: Term::Var(v) } if v == n => Some("sym".to_owned()),
                     _ => None,
                 }),
                 _ => None,
@@ -5844,6 +5846,10 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     // Inputs kept in the engine from an earlier run (a session's, decision 0090 step 3) are read in place, as native
     // relations, with the indexes they have.
     let adopted: BTreeSet<String> = super::native::component::adopted(db).into_iter().filter(|r| prog.inputs.contains(r)).collect();
+    // A run that is not native runs SQL from its start: the connection's deferred set-up first (`vtab::setup_now`).
+    if !(atoms && !native.is_empty()) {
+        crate::code_rule_dsl::facts::vtab::setup_now(db)?;
+    }
     let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: projections(prog), inputs: prog.inputs.iter().map(String::as_str).collect(), numbers: prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect(), answer: hooks.answer.take(), why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new() };
     // A native run makes no views: a projection of an input is a stratum like any, run from the input where it is
     // held (decision 0104: no SQL in the run's waves). A SQL run reads its inputs through views in place.
@@ -6656,7 +6662,9 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     // SQLite between this run and its reader (the guests' requests start the next wave). `finding` joins the nodes'
     // and documents' inputs, in SQL.
     let native_out: BTreeSet<String> = if atoms {
-        written.iter().filter(|r| *r != "finding" && run.native_rels.contains(*r) && !run.inputs.contains(r.as_str()) && super::native::component::held(db, r).is_some()).cloned().collect()
+        // `finding` too, when the nodes and documents it is decoded with are bound in place (`finding_rows`).
+        let in_place = |r: &str| r != "finding" || ["node", "doc"].iter().all(|t| crate::code_rule_dsl::facts::vtab::bound_source(db, t).is_some());
+        written.iter().filter(|r| in_place(r) && run.native_rels.contains(*r) && !run.inputs.contains(r.as_str()) && super::native::component::held(db, r).is_some()).cloned().collect()
     } else {
         BTreeSet::new()
     };
@@ -6858,9 +6866,14 @@ fn decoded_outputs(
             SqlValue::Null => "None".to_owned(),
             SqlValue::Blob(b) => format!("{b:?}"),
         };
-        let held = if native.contains(rel) {
-            let text: Vec<bool> = domains.iter().map(|d| *d == lower::Domain::Name).collect();
-            super::native::component::output_rows(db, rel, &text)?
+        let text_cols: Vec<bool> = domains.iter().map(|d| *d == lower::Domain::Name).collect();
+        let held = if native.contains(rel) && rel == "finding" {
+            super::native::component::finding_rows(db)?.map(|rows| rows.into_iter().map(|(c, p, at)| vec![SqlValue::Text(c), SqlValue::Text(p), SqlValue::Integer(at)]).collect())
+        } else if native.contains(rel) {
+            super::native::component::output_rows(db, rel, &text_cols)?
+        } else if atoms && rel != "finding" && prog.inputs.contains(rel) && let Some(src) = crate::code_rule_dsl::facts::vtab::bound_source(db, rel) {
+            // An input handed on as an output is read where it is bound.
+            Some(super::native::component::source_rows(db, src.as_ref(), &text_cols)?)
         } else {
             None
         };

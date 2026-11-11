@@ -19,6 +19,8 @@ pub(in crate::code_rule_dsl) fn install(
     db: &Connection,
     tables: &BTreeSet<String>,
 ) -> Result<Reads> {
+    // Every bound table connected before the authorizer is on (`vtab::resolve_tables`).
+    crate::code_rule_dsl::facts::vtab::resolve_tables(db)?;
     let tables = tables.clone();
     let reads = Arc::new(parking_lot::Mutex::new(
         BTreeMap::<String, BTreeSet<String>>::new(),

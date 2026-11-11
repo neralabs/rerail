@@ -1961,6 +1961,61 @@ pub fn output_rows(conn: &Connection, table: &str, text: &[bool]) -> Result<Opti
     Ok(Some(out))
 }
 
+/// The rows of `src`, an input bound on `conn`, as an output is read (`output_rows`): its columns `text` gives as the
+/// symbols' text, the others as integers. An input the run hands on as an output is read where it is bound.
+pub fn source_rows(conn: &Connection, src: &dyn crate::code_rule_dsl::facts::vtab::Source, text: &[bool]) -> Result<Vec<Vec<Value>>> {
+    let syms = symbols(conn)?;
+    let syms = syms.read().unwrap();
+    let k = src.columns().len();
+    let mut out = Vec::with_capacity(src.len());
+    for row in 0..src.len() {
+        let mut vals = Vec::with_capacity(k);
+        for c in 0..k {
+            let v = src.value(row, c);
+            vals.push(if text.get(c).copied().unwrap_or(false) {
+                if v < 0 || v as usize >= syms.len() {
+                    return Err(err(format!("no symbol {v}")));
+                }
+                Value::Text(syms.name(v))
+            } else {
+                Value::Integer(v)
+            });
+        }
+        out.push(vals);
+    }
+    Ok(out)
+}
+
+/// `finding` decoded where the engine holds it: each (check, node) with the node's document's path and the node's
+/// start, from the bound `node` and `doc` inputs, as SQL's join of `finding` with them gives (each distinct).
+/// `None`: the run holds no `finding`, or `node` or `doc` is not bound in place.
+pub fn finding_rows(conn: &Connection) -> Result<Option<Vec<(String, String, i64)>>> {
+    let Some(rel) = held(conn, "finding") else { return Ok(None) };
+    let (Some(node), Some(doc)) = (crate::code_rule_dsl::facts::vtab::bound_source(conn, "node"), crate::code_rule_dsl::facts::vtab::bound_source(conn, "doc")) else { return Ok(None) };
+    let col = |src: &dyn crate::code_rule_dsl::facts::vtab::Source, name: &str| src.columns().iter().position(|c| c == name);
+    let (Some(nn), Some(nd), Some(ns), Some(dd), Some(dp)) = (col(node.as_ref(), "n"), col(node.as_ref(), "d"), col(node.as_ref(), "start"), col(doc.as_ref(), "d"), col(doc.as_ref(), "path")) else { return Ok(None) };
+    let syms = symbols(conn)?;
+    let syms = syms.read().unwrap();
+    let name = |v: i64| if v < 0 || v as usize >= syms.len() { Err(err(format!("finding: no symbol {v}"))) } else { Ok(syms.name(v)) };
+    let mut out = Vec::with_capacity(rel.rows());
+    for id in 0..rel.len() {
+        if is_dead(&rel.dead, id as u32) {
+            continue;
+        }
+        let row = rel.row(id);
+        let Some(ks) = node.lookup(nn, &[row[1]]) else { return Ok(None) };
+        for k in ks {
+            let Some(ds) = doc.lookup(dd, &[node.value(k, nd)]) else { return Ok(None) };
+            for d in ds {
+                out.push((name(row[0])?, name(doc.value(d, dp))?, node.value(k, ns)));
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    Ok(Some(out))
+}
+
 /// Puts a relation kept from an earlier run into `conn`'s next run as the input `table`: its strata read it in place,
 /// with the indexes it has (`r:` sources), not copied into a source and indexed again. The run's planner takes the
 /// names (`adopted`).
