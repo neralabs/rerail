@@ -58,15 +58,17 @@ export interface CheckoutContext {
 export const REPOSITORY_START_STATES = ["started", "stopped", "not-set-up"] as const;
 export type RepositoryStartState = (typeof REPOSITORY_START_STATES)[number];
 
+const RUNNING_START_STATES: readonly string[] = ["started", "not-set-up"];
+
+/** Whether Rerail runs in a checkout in `state`, set up or not. `state` may be a daemon's or the CLI's answer, as text. */
+export function rerailRunsIn(state: string): boolean {
+  return RUNNING_START_STATES.includes(state);
+}
+
 export interface RepositoryStatus {
   readonly started: boolean;
   readonly setUp: boolean;
   readonly startedBy: "checkout" | "parent" | "repository";
-}
-
-/** Whether Rerail is started in a checkout in `state`, set up or not: what `isRerailStarted` decides, for a state in hand. */
-export function isStartedState(state: RepositoryStartState): boolean {
-  return state !== "stopped";
 }
 
 export const RULE_SOURCE_KINDS = ["pack", "rerail_rule", "library_rule"] as const;

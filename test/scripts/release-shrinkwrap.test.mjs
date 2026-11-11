@@ -56,9 +56,22 @@ describe("shrinkwrapFrom", () => {
     expect(shrinkwrap.packages[""]).not.toHaveProperty("devDependencies");
     expect(shrinkwrap.packages[""]).not.toHaveProperty("workspaces");
     expect(shrinkwrap.packages[""].version).toBe("1.2.0");
-    expect(shrinkwrap.packages["node_modules/a/node_modules/b"]).toEqual({ version: "2.0.0", resolved: "https://r/b2.tgz", integrity: "sha512-b2" });
+    expect(shrinkwrap.packages["node_modules/a/node_modules/b"]).toEqual({ version: "2.0.0", resolved: "https://r/b2.tgz", integrity: "sha512-b2", gypfile: false });
     expect(shrinkwrap.packages["node_modules/fsevents"].optional).toBe(true);
     expect(shrinkwrap.packages["node_modules/a"]).not.toHaveProperty("optional");
+  });
+
+  // npm reads a shrinkwrapped dependency from its entry, and the entries npm writes have no `gypfile`. Left that way,
+  // npm runs `node-gyp rebuild` for better-sqlite3, which ships prebuilt binaries and sets `gypfile: false` in its own
+  // package.json, and the build fails on an image with no compiler, such as node:24-slim.
+  it("tells npm to build no dependency from source, as the managed install runs no install script", () => {
+    const shrinkwrap = shrinkwrapFrom(manifest, lockfile());
+    for (const [location, entry] of Object.entries(shrinkwrap.packages)) {
+      if (location === "") expect(entry).not.toHaveProperty("gypfile");
+      else expect(entry.gypfile, location).toBe(false);
+    }
+    const repository = JSON.parse(shrinkwrapText(process.cwd()));
+    expect(repository.packages["node_modules/better-sqlite3"].gypfile).toBe(false);
   });
 
   it("refuses a lockfile that is not package.json's, or lacks a package a dependency needs", () => {

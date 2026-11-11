@@ -144,6 +144,7 @@
     "generate:packs": "node --import tsx scripts/generate/packs/pack-list.ts",
     "package:check": "npm run build && npm pack --dry-run",
     "version:packs": "changeset version && node scripts/release/sync-pack-lockfile.mjs",
+    "prepare": "node scripts/dev/install-git-hooks.mjs",
     "prepack": "node scripts/release/shrinkwrap-pack.mjs write && node scripts/build/stamp-plugin-versions.mjs stamp",
     "postpack": "node scripts/build/stamp-plugin-versions.mjs restore && node scripts/release/shrinkwrap-pack.mjs remove"
   },

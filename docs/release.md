@@ -296,6 +296,9 @@ The tarball ships an `npm-shrinkwrap.json`, so installs get exactly the dependen
 - **Contents.** The root and every package its dependencies reach in `package-lock.json`: no development dependency,
   workspace pack, or optional peer nothing else needs. Packages reached only through optional dependencies are marked
   `optional`.
+- **No source builds.** Every dependency's entry sets `gypfile: false`. npm reads a shrinkwrapped dependency from its
+  entry, not its own `package.json`, so without it npm compiles `better-sqlite3` with `node-gyp` during
+  `npx @neralabs/rerail setup`, and the install fails on an image with no compiler, such as `node:24-slim`.
 - **Write failures.** Writing fails if `package-lock.json`'s root dependencies differ from `package.json`'s, or the
   lockfile lacks a package a dependency needs.
 - **Release check.** Before publishing, `release.yml` runs `node scripts/release/shrinkwrap-pack.mjs check <tarball>`.

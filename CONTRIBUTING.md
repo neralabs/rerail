@@ -42,6 +42,17 @@ Pack data your change stages in `publish/` comes in with the ported pull request
 submit is licensed under Apache-2.0 ([Licence of contributions](#licence-of-contributions)), and
 [Third-party material](#third-party-material) applies to it like any other change.
 
+### AI tools and automated accounts
+
+You can use AI tools, coding agents included, to write a change. A person still stands behind it: they answer the
+review, can explain any part of it, and ran the checks the pull request reports.
+
+A maintainer closes a pull request from an account that looks automated when no person behind it can be reached: for
+example, a new account opening pull requests across many unrelated repositories. Maintainers don't have the capacity to
+review automated contributions at that volume. Closing it is not a judgement on the code, and a maintainer may fix the
+issue in their own pull request. If you are the person behind such an account, email
+[opensource@nera.software](mailto:opensource@nera.software) to talk about the change.
+
 ## Contributors
 
 Contributors push branches to this repository and open pull requests from them, so CI runs on their changes. Nera
@@ -189,7 +200,7 @@ Prerequisites:
 On Windows, see also [Windows](#windows).
 
 ```sh
-npm ci
+npm ci                    # also installs the pre-commit hook (below)
 npm run build:native      # compile the native kernel into native/
 npm run build             # clean build: native kernel, runtime, host bundles, UI
 npm run check:all         # TypeScript, rustfmt + clippy, UI token and reference checks
@@ -197,6 +208,11 @@ npm run test:all          # build, unit, conformance, reference, native, and int
 npm run test:conformance  # the language conformance gate, offline
 npm run package:check     # build and dry-run the npm pack
 ```
+
+`npm ci` and `npm install` (`prepare`) install a Git pre-commit hook that runs `scripts/check/pre-commit.sh`, the
+checks of CI's "Lint and type-check" job: the Justfile's format, the release notes your branch adds against your local
+`origin/main`, `npm run check`, `check:ui-tokens` and `check:reference`. It checks the working tree, not only what is
+staged; `git commit --no-verify` skips it. A `pre-commit` hook of your own is left in place.
 
 The pack tests also need the pack test data: run `npm run fixtures:pull` ([Pack test data](#pack-test-data)).
 

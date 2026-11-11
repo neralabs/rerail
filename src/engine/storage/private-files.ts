@@ -8,7 +8,17 @@ import { chmodSync, lstatSync, mkdirSync, readdirSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { MACHINE_ID_FILE, REMOTE_CONFIG_FILE, REMOTE_OUTBOX_FILE, REMOTE_TOKENS_FOLDER } from "./rerail-home.js";
+import {
+  CLAUDE_STATUS_DATABASE_FILE,
+  DAEMON_ACCESS_TOKEN_FILE,
+  DAEMON_LOG_FILE,
+  DAEMON_STATE_FILE,
+  MACHINE_ID_FILE,
+  REMOTE_CONFIG_FILE,
+  REMOTE_OUTBOX_FILE,
+  REMOTE_TOKENS_FOLDER,
+  RERAIL_DATABASE_FILE,
+} from "./rerail-home.js";
 import { insideProfile, WINDOWS_ACL, type WindowsAcl } from "./windows-acl.js";
 
 /** The system a path is kept private on: its platform, Windows' access control and the profile folder; tests pass their own. */
@@ -117,7 +127,7 @@ export function keepFilesPrivate(folder: string, prefixes: readonly string[]): v
  * (`rerail.sqlite*`), the coding-agent recovery database (`harness.sqlite*`), the daemon's state, capability and log, and
  * the remote sink's configuration, tokens, outbox and machine id (`remote.json`, `remote-tokens/`, `remote-outbox.sqlite*`, `machine-id`).
  */
-const PRIVATE_HOME_FILES: readonly string[] = ["rerail.sqlite", "harness.sqlite", "daemon.json", "access-token", "daemon.log",
+const PRIVATE_HOME_FILES: readonly string[] = [RERAIL_DATABASE_FILE, CLAUDE_STATUS_DATABASE_FILE, DAEMON_STATE_FILE, DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE,
   REMOTE_CONFIG_FILE, REMOTE_TOKENS_FOLDER, REMOTE_OUTBOX_FILE, MACHINE_ID_FILE];
 
 /**

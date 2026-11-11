@@ -6,7 +6,7 @@
 declare module "*/ui/sessions-model.js" {
   export interface Correction {
     key: string;
-    finding: { path?: string | null; [k: string]: unknown };
+    finding: { path?: string | null; at: number; span?: { startLine: number } | null; [k: string]: unknown };
     rule: unknown;
   }
   export interface CallView {
@@ -27,7 +27,7 @@ declare module "*/ui/sessions-model.js" {
     failed: boolean;
     dur: number | null;
     lines?: number;
-    correction: Correction | null;
+    corrections: Correction[];
     raw: unknown[];
   }
   export interface TurnView {
@@ -107,7 +107,7 @@ declare module "*/ui/poll.js" {
 }
 
 declare module "*/ui/derive.js" {
-  export function violationOutcome(finding: { mode?: string }): "logged" | "steered";
+  export function violationOutcome(finding: { mode?: string; logged: boolean }): "logged" | "steered";
   export function isRunning(stored: { enabled: boolean; configError?: string | null }): boolean;
   export function packSuppressions(rules: readonly object[], packId: string, owner: "repository" | "checkout", checkoutPath?: string): { text: string; next: "honour" | "ignore" };
   export function inPack(rule: object, packId: string): boolean;
@@ -249,7 +249,10 @@ declare module "*/ui/repo-rules.js" {
   export function ruleCountsOf(entries: ReadonlyArray<object>): RuleCounts;
   export function repoTag(counts: RuleCounts | null): string | null;
   export function repoLine(repo: { setUp: boolean; started: boolean; checkoutCount: number }, counts: RuleCounts | null): string;
-  export function repoRuleCounts(key: string): RuleCounts | null;
+}
+
+declare module "*/ui/repo-rule-counts.js" {
+  export function repoRuleCounts(key: string): { total: number; on: number } | null;
   export function loadRepoRuleCounts(keys: readonly string[]): Promise<boolean>;
 }
 

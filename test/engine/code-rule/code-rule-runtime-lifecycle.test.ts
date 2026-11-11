@@ -151,6 +151,11 @@ describe("source-scoped steers", () => {
       expect(await runtime.ingest({
         kind: "user-prompt", eventId: "poll", sessionId: session.sessionId, text: "continue",
       })).toEqual([]);
+      // A command the turn's end finds still running: what it wrote while the baseline was pending is the session's own.
+      await runtime.ingest({
+        kind: "call", eventId: "shell-call", sessionId: session.sessionId,
+        toolCallId: "shell", toolName: "bash", input: { command: "./write.sh &" },
+      });
       await writeFile(join(root, "shell.py"), "safe()\n");
       gate.resolve();
       await enforcer!.settle();
@@ -788,7 +793,7 @@ describe("source-scoped steers", () => {
         expect(test.audits.list({ sessionId: test.session.sessionId }).audits).toEqual([]);
         test.attachments.workspaces[0]!.release();
         // Opened: the call it answered is not begun or finished late. The evaluator's first walk still sees the file
-        // changed while it ran, as it sees any change it did not watch being made, and checks it.
+        // changed while it ran, and the call's window, opened as it was answered, makes the change the session's own.
         expect(await test.steers()).toEqual([expect.objectContaining({ content: expect.stringContaining("- edited.py:1:1 — No needle [") })]);
 
       } finally { await test.close(); }
@@ -1087,6 +1092,60 @@ describe("source-scoped steers", () => {
       expect(readBoundary).toEqual([]);
       expect(await test.runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId, text: "done" })).toEqual([]);
       expect(batches).toHaveLength(1);
+    } finally { await test.close(); }
+  });
+
+  it("steers a Codex write no hook showed, made between the prompt and the turn's end, as the session's own", async () => {
+    const batches: Parameters<CodeRuleAuditor["auditGeneratedEdits"]>[1][] = [];
+    const test = await fixture({
+      host: "codex",
+      prepare: root => writeFile(join(root, "route.py"), "transaction.fetch_value('SELECT 1')\n"),
+      auditGeneratedEdits: steerDelivery => async (sessionId, batch) => {
+        batches.push(batch);
+        await steerDelivery.requestSteer(sessionId, "steer", `CURSOR_EXECUTE revision ${batch.revision}`, {
+          revision: batch.revision, scope: batch.edits.map(edit => edit.path),
+        });
+        return { revision: batch.revision, disposition: "continue", violations: [], failures: [] };
+      },
+    });
+    try {
+      const sessionId = test.session.sessionId;
+      expect(await test.runtime.ingest({ kind: "turn-end", eventId: "baseline", sessionId, text: "" })).toEqual([]);
+      await test.runtime.ingest({ kind: "user-prompt", eventId: "prompt", sessionId, text: "use a cursor" });
+      // `apply_patch`: Codex fires no hook for it, so no call opens around the write.
+      await writeFile(join(test.root, "route.py"), "cursor.execute('SELECT 1')\n");
+      const turnEnd = await test.runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId, text: "done" });
+      // Steered, not recorded in Log as another writer's change.
+      expect(batches.map(batch => [batch.mode, batch.edits.map(edit => [edit.path, edit.generatedText])])).toEqual([
+        [undefined, [["route.py", "cursor.execute('SELECT 1')\n"]]],
+      ]);
+      expect(turnEnd).toEqual([expect.objectContaining({ content: "CURSOR_EXECUTE revision 1" })]);
+    } finally { await test.close(); }
+  });
+
+  it("opens a Codex turn's window at its first call when the runtime never saw the turn's prompt, as after a restart", async () => {
+    const batches: Parameters<CodeRuleAuditor["auditGeneratedEdits"]>[1][] = [];
+    const test = await fixture({
+      host: "codex",
+      prepare: root => writeFile(join(root, "route.py"), "transaction.fetch_value('SELECT 1')\n"),
+      auditGeneratedEdits: () => async (_sessionId, batch) => {
+        batches.push(batch);
+        return { revision: batch.revision, disposition: "continue", violations: [], failures: [] };
+      },
+    });
+    try {
+      const sessionId = test.session.sessionId;
+      expect(await test.runtime.ingest({ kind: "turn-end", eventId: "baseline", sessionId, text: "" })).toEqual([]);
+      // No user-prompt: the daemon that saw it is gone. The turn's next shell command reaches this one.
+      const command = { sessionId, toolCallId: "shell-1", toolName: "exec_command" };
+      await test.runtime.ingest({ kind: "call", eventId: "call", ...command, input: { cmd: "ls" } });
+      await test.runtime.ingest({ kind: "result", eventId: "result", ...command, output: "" });
+      // `apply_patch` after the command, which no hook shows.
+      await writeFile(join(test.root, "route.py"), "cursor.execute('SELECT 1')\n");
+      await test.runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId, text: "done" });
+      expect(batches.map(batch => [batch.mode, batch.edits.map(edit => [edit.path, edit.generatedText])])).toEqual([
+        [undefined, [["route.py", "cursor.execute('SELECT 1')\n"]]],
+      ]);
     } finally { await test.close(); }
   });
 

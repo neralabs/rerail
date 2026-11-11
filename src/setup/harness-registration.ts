@@ -31,16 +31,14 @@ import { andList } from "../harness/setup-screens.js";
 import { commandLine, powershellLiteral, shellWord } from "../engine/command-line.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
-import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { CURRENT_LINK, DAEMON_ACCESS_TOKEN_FILE, defaultRerailHome, VERSIONS_DIR } from "../engine/storage/rerail-home.js";
 import { mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import { runGit } from "../engine/git.js";
 import { replaceFile } from "../engine/file-replace.js";
 import { pinnedNodePath } from "./node-path.js";
-import { DAEMON_ACCESS_TOKEN_FILE } from "../runtime/daemon-control.js";
 import { ACTIVE_PROFILE_FILE, PROFILES_DIR } from "../activation/customer-profile.js";
 import { DEVICE_SECRETS_DIR } from "../activation/device-keystore.js";
 import { RERAIL_HOSTS, type RerailHost } from "../engine/adapter-contract.js";
-import { CURRENT_LINK, VERSIONS_DIR } from "./updater.js";
 import { z } from "zod";
 
 export type Harness = RerailHost;

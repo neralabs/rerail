@@ -1,5 +1,6 @@
 import { ADAPTER_CAPABILITIES, type CommandSigil, type RerailHost } from "../engine/adapter-contract.js";
 import { commandLine, placeholderWord, textPlaceholder, type Shell } from "../engine/command-line.js";
+import type { NoFitExplanation } from "../engine/catalog/rule-packs.js";
 import type { SetupOption, SetupOptionInput, SetupQuestion, SetupQuestionId } from "./setup-step.js";
 import { RERAIL_BRAND_FOREGROUND } from "../presentation/terminal-brand.generated.js";
 import { rerailMark, type ColourDepth } from "../presentation/rerail-mark.js";
@@ -463,6 +464,8 @@ export interface RecommendedPacksInput {
   readonly setupCommand?: SetupCommand;
   /** The rule settings starting Rerail takes from the repository's lint config; nothing shown when empty. */
   readonly lintConfig?: LintConfigInput;
+  /** Why no rule pack fits, when set-up scanned the repository and had packs to offer. */
+  readonly nothingFits?: NoFitExplanation;
 }
 
 /** At most this many lines say which rule packs set-up could not fetch; the rest are counted. */
@@ -562,6 +565,121 @@ function withoutRulesLines(names: readonly string[] | undefined, wouldFit: boole
   return [`  ${andList(names.map(clean))} ${wouldFit ? `would fit, but ${has}` : has} no rules yet, so set-up does not offer ${one ? "it" : "them"}.`];
 }
 
+// Why no rule pack fits: labelled rows, each wrapped under its label.
+const NO_FIT_LABEL_WIDTH = 16;
+/** The text after a label wraps here, so a row fits an 80-column terminal. */
+const NO_FIT_TEXT_WIDTH = 60;
+const MAX_NEAR_MISSES = 2;
+const MAX_EXCLUDED_GLOBS = 3;
+const MAX_LOOKS_FOR_FILES = 3;
+const MAX_LOOKS_FOR_DEPENDENCIES = 2;
+const PACK_NAME_GAP = 2;
+/** The pack name column is no wider than this, so one long name does not squeeze every pack's text. */
+const MAX_PACK_NAME_WIDTH = 24;
+
+/** `words` joined by spaces into rows of at most `width` characters; a longer word has a row of its own. */
+function wrapWords(words: readonly string[], width: number): string[] {
+  const rows: string[] = [];
+  for (const word of words) {
+    const last = rows.at(-1);
+    if (last !== undefined && last.length + 1 + word.length <= width) rows[rows.length - 1] = `${last} ${word}`;
+    else rows.push(word);
+  }
+  return rows;
+}
+
+/** `items`, each but the last followed by `mark`, as words for `wrapWords`. */
+const marked = (items: readonly string[], mark: string): string[] => items.map((item, index) => (index < items.length - 1 ? `${item}${mark}` : item));
+
+/** `label`, dim, then `rows`, each later one indented under the first. */
+function labelled(label: string, rows: readonly string[], style: Style): string[] {
+  return rows.map((row, index) => `  ${index === 0 ? style.dim(label.padEnd(NO_FIT_LABEL_WIDTH)) : " ".repeat(NO_FIT_LABEL_WIDTH)}${row}`);
+}
+
+/** `items` past `max` counted as one more item: `+2 more`. */
+function capped(items: readonly string[], max: number, more: (count: number) => string): string[] {
+  return items.length <= max ? [...items] : [...items.slice(0, max), more(items.length - max)];
+}
+
+/** The files the scan read, counted by ending; files without one are counted only when no file has one. */
+function endingRows(explanation: NoFitExplanation): string[] {
+  const endings = explanation.endings.map(({ ending, fileCount }) => `${clean(ending)} ${fileCount}`);
+  if (endings.length > 0) return wrapWords(marked(endings, " ·"), NO_FIT_TEXT_WIDTH);
+  return [explanation.fileCount === 0 ? "no files" : `${plural(explanation.fileCount, "file")}, none with an ending`];
+}
+
+/** How the scan read the repository, when that bounds what it found: Git's listing, or a walk that stopped early. */
+function howScannedRows(explanation: NoFitExplanation): string[] {
+  if (explanation.git) return ["from Git’s list of files, which leaves out what Git ignores"];
+  return explanation.stoppedEarly ? [`the scan stopped early, after ${explanation.fileCount.toLocaleString("en-US")} files`] : [];
+}
+
+/** The folders the scan skipped that the repository has, with the files Git lists in each. */
+function notScannedRows(explanation: NoFitExplanation): string[] {
+  const folders = explanation.notScanned.map(({ folder, fileCount }) => `${clean(folder)}/${fileCount === undefined ? "" : ` (${fileCount})`}`);
+  return wrapWords(marked(folders, ","), NO_FIT_TEXT_WIDTH);
+}
+
+function nearMissRows(explanation: NoFitExplanation): string[] {
+  return explanation.nearMisses.slice(0, MAX_NEAR_MISSES).flatMap(({ name, fileCount, excludedBy }) => {
+    const globs = capped(excludedBy.map(({ glob, fileCount: count }) => `${clean(glob)} (${count})`), MAX_EXCLUDED_GLOBS, count => `+${count} more`);
+    const sentence = `${clean(name)} excludes the ${plural(fileCount, "file")} it looks for:`;
+    return wrapWords([...sentence.split(" "), ...marked(globs, ",")], NO_FIT_TEXT_WIDTH);
+  });
+}
+
+/** A pack's file globs, then its dependencies, each list capped, as words for `wrapWords`. */
+function looksForWords(pack: NoFitExplanation["packs"][number]): string[] {
+  const more = (count: number): string => `+${count} more`;
+  const files = capped(pack.files.map(clean), MAX_LOOKS_FOR_FILES, more);
+  const dependencies = marked(capped(pack.dependencies.map(clean), MAX_LOOKS_FOR_DEPENDENCIES, more), ",");
+  if (dependencies.length === 0) return marked(files, ",");
+  // The label stays with the first name, so a wrap never leaves it alone at the end of a row.
+  dependencies[0] = `${pack.dependencies.length === 1 ? "dependency:" : "dependencies:"} ${dependencies[0]}`;
+  return [...files.map(file => `${file},`), ...dependencies];
+}
+
+/** What a pack looks for, on one line, as `rerail packs recommend` prints it after the pack. */
+export const looksForText = (pack: NoFitExplanation["packs"][number]): string => looksForWords(pack).join(" ");
+
+/** Each pack, then what it looks for, wrapped in a column after the names; a name too long for it has its own row. */
+function looksForRows(explanation: NoFitExplanation): string[] {
+  const nameWidth = Math.min(MAX_PACK_NAME_WIDTH, Math.max(0, ...explanation.packs.map(pack => clean(pack.name).length))) + PACK_NAME_GAP;
+  return explanation.packs.flatMap(pack => {
+    const name = clean(pack.name);
+    const rows = wrapWords(looksForWords(pack), NO_FIT_TEXT_WIDTH - nameWidth);
+    if (name.length + PACK_NAME_GAP > nameWidth) return [name, ...rows.map(row => `${" ".repeat(nameWidth)}${row}`)];
+    return rows.map((row, index) => `${(index === 0 ? name : "").padEnd(nameWidth)}${row}`);
+  });
+}
+
+/** What the scan found and left out, and the packs that came closest. */
+function scanRows(explanation: NoFitExplanation, style: Style): string[] {
+  const notScanned = notScannedRows(explanation);
+  const nearMisses = nearMissRows(explanation);
+  return [
+    ...labelled("Found", [...endingRows(explanation), ...howScannedRows(explanation)], style),
+    ...(notScanned.length === 0 ? [] : labelled("Not scanned", notScanned, style)),
+    ...(nearMisses.length === 0 ? [] : labelled("Closest", nearMisses, style)),
+  ];
+}
+
+/** Why no rule pack fits: the scan's rows, then what each pack looks for. */
+function noFitRows(explanation: NoFitExplanation, style: Style): string[] {
+  return [...scanRows(explanation, style), ...labelled("Packs look for", looksForRows(explanation), style)];
+}
+
+/** What the scan found and left out, as `rerail packs recommend` prints it; each pack's line says what it looks for. */
+export function noFitScanLines(explanation: NoFitExplanation): string[] {
+  return scanRows(explanation, PLAIN_STYLE);
+}
+
+/** The packs that fit, as a table, or why none does. */
+function fitLines(input: RecommendedPacksInput, style: Style): string[] {
+  if (input.packs.length > 0) return ["", ...packTable(input.packs, style)];
+  return input.nothingFits === undefined ? [] : ["", ...noFitRows(input.nothingFits, style)];
+}
+
 function recommendationLines(input: RecommendedPacksInput, lane: SetupLane): string[] {
   const style = styleFor(lane);
   const repo = clean(input.repoName);
@@ -574,7 +692,7 @@ function recommendationLines(input: RecommendedPacksInput, lane: SetupLane): str
     : [`  Will connect to: ${agentNames(input.agentsFound).join(", ")}`, `  Adds ${sigilIn(input.agentsFound)}rerail commands and a status line to each. Connecting is free.`];
   return [
     lane === "terminal" ? bullet(scanned, style) : scanned,
-    ...(count === 0 ? [] : ["", ...packTable(input.packs, style)]),
+    ...fitLines(input, style),
     ...replaceLines(input.packs, style),
     ...unreviewedLines(input.packs, style),
     ...withoutRulesLines(input.withoutRules, true),

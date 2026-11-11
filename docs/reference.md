@@ -38,7 +38,7 @@ The package ships no rules. Each rule is one of:
 
 A third party's pack installs into `$RERAIL_HOME/packs` too. Pack rules are read from the installed packs, never copied into the database. They run only where a repository adds the rule or a pack that holds it.
 
-Editing a By Rerail rule stores a copy in the library, added where the original was. The original switches off there once the copy is approved.
+Editing a By Rerail rule stores a copy in the library, added where the original was. The original switches off there once the copy is approved. From a terminal or any coding agent, `rerail rules show <id>` prints the rule as a draft, and `rerail rules add` of a draft that keeps its id stores the copy ([Testing and adding a rule draft](#testing-and-adding-a-rule-draft)).
 
 `rerail update` first copies the whole database to `$RERAIL_HOME/rerail.sqlite.pre-update`. `rerail reset` never touches rules.
 
@@ -104,6 +104,8 @@ A conversation rule file:
 | `sample.source` (event source) | `assistant-text`, `user-input`, `tool:<tool-name>` |
 | `sample.boundary` (inspection boundary) | `sentence`, `message`, `turn`, `tool-call` |
 | `repeat` | `once`, `always`, `{ "mode": "after-gap", "gapTurns": 3 }` |
+
+A turn, for `sample.boundary: "turn"` and `gapTurns`, is counted at each turn end the coding agent reports. In Claude Code and Codex that is each `Stop`, including each one after a Stop hook kept the turn going; in OMP and Pi it is each model call.
 
 </details>
 
@@ -468,7 +470,7 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 | `audit_requests_create` | `POST /api/sessions/{sessionId}/audit-requests` | Internal testing. Queue an audit for a session. |
 | `audit_requests_list` | `GET /api/sessions/{sessionId}/audit-requests` | Internal testing. `{ auditRequests }` with their `auditIds`. |
 | `audits_list` | `GET /api/audits?auditId=&sessionId=&status=&scope=&mode=` | `{ audits, total }` with `violations` and failures; `mode` is run mode. |
-| `violations_list` | `GET /api/violations?since=&ruleId=&sessionId=&limit=&cursor=` | Violations newest first with `ruleId`, `clauseId`, session, `host`, `auditId`; `total`, `nextCursor`. |
+| `violations_list` | `GET /api/violations?since=&ruleId=&sessionId=&limit=&cursor=` | Violations newest first with `ruleId`, `clauseId`, session, `host`, `auditId`, and `logged` (the agent wasn't told: the audit or the rule was in Log mode); `total`, `nextCursor`. |
 | `repository_audits_list` | `GET /api/repository-audits` | Internal testing. Each repository's `repositoryAudit` and latest `audit` summary with `violationCount`. |
 | `repository_audit_entries_list` | `GET /api/repository-audits/{auditId}/entries?kind=&mode=&code=&path=&q=` | Internal testing. Paged entries; `kind` `violation`/`failure`, `mode` the rule's mode. |
 
@@ -680,12 +682,12 @@ With `RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT=1` set for the runtime's proces
 
 #### How AI-output scope finds changed lines
 
-AI-output scope diffs source, not violation IDs: it compares each edit with pre-edit source captured at the host's tool-call boundary. A new file is entirely generated. A file Git wrote is no edit at all, whichever session ran the command.
+AI-output scope diffs source, not violation IDs: it compares each edit with pre-edit source captured at the host's tool-call boundary. A new file is entirely generated. A file Git wrote is no edit at all, whichever session ran the command, and neither is one changed while none of the session's tool calls ran.
 
 <details>
 <summary>Fallbacks when no pre-edit source was captured</summary>
 
-Without a boundary (a shell write, a Codex `apply_patch` its hooks don't show), Rerail uses the file's last-seen text this session (from the most recently changed 64 MB). Else it uses the file's Git index or `HEAD` blob. Each counts only if its SHA-256 matches the pre-change file. Blob reads never fetch a partial clone's missing objects.
+Without a boundary (a shell write, a Codex `apply_patch` its hooks don't show), Rerail uses the file's last-seen text this session (from the most recently changed 64 MB). For a file Git lists as modified or untracked when Rerail first sees it (`git ls-files --modified --others --exclude-standard`), that is the text it held then, up to 8 MB of such files per session. Else it uses the file's Git index or `HEAD` blob. Each counts only if its SHA-256 matches the pre-change file. Blob reads never fetch a partial clone's missing objects.
 
 If nothing matches, the edit reports its whole file, as `touched-files` does, until Rerail has seen the file change in the session. Parsing and cross-file query context may exceed reporting scope. Source, parse and match caches are incremental; repository scans stream bounded batches through a separate native workspace.
 
@@ -697,10 +699,17 @@ If nothing matches, the edit reports its whole file, as `touched-files` does, un
 - a file that now holds exactly its `HEAD` blob after anything but a commit moved `HEAD` (a checkout, switch, pull, merge, rebase, reset), or with `HEAD` where it was (`git restore`, `git stash`);
 - a file that now holds exactly the blob a branch or remote-tracking branch has at its path (`git show origin/main:path > path`, `git checkout main -- path`, `git restore --source main path`), unless that branch's tip is a commit made since Rerail last looked;
 - a file a move removed;
-- the files of a merge or rebase stopped on a conflict;
+- the files a merge or rebase wrote when it stopped on a conflict (a later edit to one is an edit, even if the file still holds its side of the conflict);
 - a new linked worktree's files.
 
 A file written and committed in one command stays an edit, measured from the tree before the commit. One written in the command that moved `HEAD` is measured from what Git wrote. Rerail goes by bytes: any write that leaves a file exactly as a branch has it counts as a restore, and a restore from a tag, a stash or another commit (`git show HEAD~3:path > path`) is an edit.
+
+</details>
+
+<details>
+<summary>What counts as the session's own write</summary>
+
+A session's walk finds that a file changed, not who changed it, so it goes by the file's timestamp, and by its folder's for a file removed. An agent writes only through its tool calls, so each session notes when each of its calls ran, whatever the tool, including those answered while its code rules were still opening. A Codex `apply_patch` runs no hook, so a Codex session counts its whole turn, from your prompt (or, after a daemon restart, its next tool call) to the turn's end, as one call. A change stamped while one of them ran is the session's own. Any other is another writer's (another session, your editor, a process a command left running in the background): it steers nobody, and the session's next shell edit of the file is measured from what that writer left; where the session had changed the file, the change is recorded in Log with no generated lines. When two sessions' calls ran at once, both take a change made then, so a Codex session in the middle of a turn takes another session's change too. A call whose result never comes (one you interrupted) counts as running until the turn ends.
 
 </details>
 
@@ -741,7 +750,7 @@ OMP and Pi expose these natively, with slash-completion descriptions; Claude Cod
 
 - **`/rerail`**: rendered by `rerail session`; Cursor gets the repository-level form.
 - **`/rerail-manage`**: the same link the footer's rule count carries.
-- **`/rerail-create`**: suggestions come from sessions (`rerail rules evidence`) and written standards. Following `skills/rerail-create`, the agent drafts the rule, tests it (`rerail rules test <draft.json>`) and reads it back. On your yes, `rerail rules add <draft.json>` and `rerail rules approve <id>` add it to your library and this repository, setting the repository up with that rule if needed. It also tunes misfiring rules, and audits a pending rule or pack before asking you to approve it.
+- **`/rerail-create`**: suggestions come from sessions (`rerail rules evidence`) and written standards. Following `skills/rerail-create`, the agent drafts the rule, tests it (`rerail rules test <draft.json>`) and reads it back. On your yes, `rerail rules add <draft.json>` and `rerail rules approve <id>` add it to your library and this repository, setting the repository up with that rule if needed. It also tunes misfiring rules, changes where a rule applies (its scope only, a shipped rule's as your copy, without the full review), and audits a pending rule or pack before asking you to approve it.
 - **`/rerail-start`**: OMP and Pi ask set-up's questions via their picker; Claude Code and Cursor as text.
 - **`/rerail-stop`**: the shared daemon keeps running; the reply names `rerail daemon stop`, run in a terminal.
 - **`/rerail-uninstall`**: OMP and Pi ask via a native selector; Claude Code doesn't pre-approve it.
@@ -754,8 +763,9 @@ OMP and Pi expose these natively, with slash-completion descriptions; Claude Cod
 
 A draft is `{ kind, rule, folder?, cases: { caught: [...], passed: [...] } }`. `rerail rules test --help` prints the format; [Writing rules](writing-rules.md#testing-a-draft) explains each field.
 
+- `rerail rules show <rule id> [--repo <dir>]` prints a rule as a draft: one of yours, or a By Rerail rule as this repository runs it (the option values and mode the repository's settings give it, not a checkout's). A note on stderr, so stdout saves as a draft file, says where saving changes it: your rule here and in which other repositories, or that it is not added here; for a By Rerail rule, your copy, the copy this repository already has, or that the rule is not added or is off here (a copy would run on).
 - `rerail rules test` validates a draft, runs its cases and a repository pass, and writes nothing.
-- `rerail rules add` stores the draft in your library and adds it, on, to this repository (or the draft's `folder`).
+- `rerail rules add` stores the draft in your library and adds it, on, to this repository (or the draft's `folder`). A draft that keeps a By Rerail rule's id is stored as your copy (`<id>-copy`), added where the original is in this repository; approving the copy turns the original off there ([copy on edit](rule-scoping.md#coding-agents)).
 - The rule runs in Log until `rerail rules approve [<rule id | package> …] [--repo <dir>]` approves it as it is now ([approval](rule-scoping.md#approval)).
 
 <details>
@@ -766,7 +776,7 @@ A draft is `{ kind, rule, folder?, cases: { caught: [...], passed: [...] } }`. `
 - Text output shows the first five matches and files; `--json` shows all. Path and `file`-query matches have no line.
 - A bare rule document, such as `.rerail/rules/<name>.json`, gets validation and the repository pass only.
 
-`rerail rules add` sets the repository up with only that rule if needed, and won't replace a rule shipped by Rerail. `rerail rules approve` with no names lists everything awaiting approval and its source.
+`rerail rules add` sets the repository up with only that rule if needed. A rule already added here stays where it is when the draft names no `folder`; `"folder": ""` widens it to the whole repository. It never replaces a rule shipped by Rerail. Your copy of one takes no `folder`. It is refused where the repository does not add the original, and where your copy of it is already added; `rules show` names that copy, the one to change. Your copy made for another repository is refused where its original runs and the copy is not added, since both would steer. `rerail rules approve` with no names lists everything awaiting approval and its source.
 
 </details>
 

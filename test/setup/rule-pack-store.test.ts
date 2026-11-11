@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -16,6 +16,7 @@ import {
   type PackStore,
   type PackVersion,
 } from "../../src/setup/index.js";
+import { directoryPackStore } from "../support/directory-pack-store.js";
 import { installPackDirectory, linkingPackStore, thirdPartyPack, uninstallPack } from "../support/installed-packs.js";
 import { fixturesPath, repositoryPath } from "../support/oracles.js";
 import { removeFolderSync } from "../support/platform/remove-folder.js";
@@ -412,6 +413,84 @@ describe("discoverPacks", () => {
     const discovery = await discoverPacks(undefined, offline);
 
     expect(discovery.available.map(found => [found.pack.id, found.version, found.installed])).toEqual([["typescript", version, version]]);
+  });
+
+  describe("when no pack fits", { timeout: COMPILING_TIMEOUT_MS }, () => {
+    // Rerail's own Python and SQL packs: Python skips tests/ and scripts/, and SQL looks for *.sql only.
+    const store = (home: string): PackStore => directoryPackStore(repositoryPath("packs"), ["python", "sql"], home);
+
+    function project(files: Record<string, string>): string {
+      const root = temporaryHome();
+      for (const [path, content] of Object.entries(files)) {
+        mkdirSync(dirname(join(root, path)), { recursive: true });
+        writeFileSync(join(root, path), content);
+      }
+      return root;
+    }
+
+    it("says what the scan found, the pack whose excludes left out every file it looks for, and what each pack looks for", async () => {
+      const root = project({ "tests/test_a.py": "a = 1\n", "tests/test_b.py": "b = 1\n", "scripts/release.py": "r = 1\n", "README.md": "hi\n" });
+
+      const discovery = await discoverPacks(root, store(temporaryHome()));
+
+      expect(discovery.recommended).toEqual([]);
+      expect(discovery.nothingFits).toEqual({
+        fileCount: 4,
+        endings: [{ ending: ".py", fileCount: 3 }, { ending: ".md", fileCount: 1 }],
+        notScanned: [],
+        git: false,
+        stoppedEarly: false,
+        nearMisses: [{ name: "Python", fileCount: 3, excludedBy: [{ glob: "tests/", fileCount: 2 }, { glob: "scripts/", fileCount: 1 }] }],
+        packs: [{ id: "python", name: "Python", files: ["*.py", "*.pyi"], dependencies: [] }, { id: "sql", name: "SQL", files: ["*.sql"], dependencies: [] }],
+      });
+    });
+
+    it("names the folder it did not scan when that held the only source file", async () => {
+      const root = project({ "fixtures/app.py": "app = 1\n" });
+
+      const discovery = await discoverPacks(root, store(temporaryHome()));
+
+      expect(discovery.nothingFits).toMatchObject({ endings: [], notScanned: [{ folder: "fixtures" }], nearMisses: [] });
+    });
+
+    it("explains nothing when a pack fits, or when there is no repository to scan", async () => {
+      const root = project({ "src/app.py": "app = 1\n", "tests/test_app.py": "t = 1\n" });
+
+      const fits = await discoverPacks(root, store(temporaryHome()));
+      const unscanned = await discoverPacks(undefined, store(temporaryHome()));
+
+      expect(fits.recommended.map(found => found.pack.id)).toEqual(["python"]);
+      expect(fits.nothingFits).toBeUndefined();
+      expect(unscanned.nothingFits).toBeUndefined();
+    });
+
+    it("explains nothing when the only pack that fits has no rules yet: that reason is the whole answer", async () => {
+      // Rerail's Rust pack, and its SQL pack as it would be published before any of its rules is ready.
+      const packsRoot = temporaryHome();
+      for (const id of ["rust", "sql"]) cpSync(repositoryPath("packs", id), join(packsRoot, id), { recursive: true, filter: source => !source.includes("upstream") });
+      const packJson = join(packsRoot, "sql", "pack.json");
+      writeFileSync(packJson, JSON.stringify({ ...JSON.parse(readFileSync(packJson, "utf8")) as Record<string, unknown>, rules: [] }));
+      const root = project({ "db/schema.sql": "select 1;\n" });
+
+      const discovery = await discoverPacks(root, directoryPackStore(packsRoot, ["rust", "sql"], temporaryHome()));
+
+      expect(discovery.withoutRules.map(found => [found.pack.id, found.match !== undefined])).toEqual([["sql", true]]);
+      expect(discovery.recommended).toEqual([]);
+      expect(discovery.nothingFits).toBeUndefined();
+    });
+
+    it("explains nothing when no pack could be fetched", async () => {
+      const root = project({ "tests/test_a.py": "a = 1\n" });
+      const offline: PackStore = {
+        ...store(temporaryHome()),
+        fetch: async ids => ({ fetched: [], problems: ids.map(id => ({ packageName: `@neralabs/rerail-pack-${id}`, reason: "npm could not reach the registry (ENOTFOUND)" })), release: async () => {} }),
+      };
+
+      const discovery = await discoverPacks(root, offline);
+
+      expect(discovery.available).toEqual([]);
+      expect(discovery.nothingFits).toBeUndefined();
+    });
   });
 });
 

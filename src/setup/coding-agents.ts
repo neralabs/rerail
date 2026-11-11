@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
+import { CURRENT_LINK } from "../engine/storage/rerail-home.js";
 import {
   CODEX_TRUST_NOTE,
   detectHarnesses,
@@ -17,7 +18,6 @@ import {
   type Harness,
   type RegistrationChange,
 } from "./harness-registration.js";
-import { CURRENT_LINK } from "./updater.js";
 
 /** The names people see for each coding agent `--agents` takes. */
 export const CODING_AGENT_NAMES: Readonly<Record<Harness, string>> = {

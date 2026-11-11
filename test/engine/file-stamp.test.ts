@@ -1,7 +1,7 @@
 import { runInNewContext } from "node:vm";
 import { setFlagsFromString } from "node:v8";
 import { describe, expect, it } from "vitest";
-import { fileStamp } from "../../../src/engine/code-rule/code-rule-bridge.js";
+import { fileStamp } from "../../src/engine/file-stamp.js";
 
 setFlagsFromString("--expose-gc");
 const gc = runInNewContext("gc") as () => void;

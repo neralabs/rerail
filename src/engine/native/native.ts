@@ -301,6 +301,8 @@ export interface NativeExclusiveFileLock {
 }
 
 export interface NativeBinding {
+  /** The message of a workspace task's failure while another apply holds the engine's one slot: pause and call again. */
+  readonly WORKSPACE_BUSY: string;
   health(): NativeHealth;
   /** Checks the model directory against its `manifest.json` (each file's SHA-256) without loading the model. */
   verifyModelFiles(modelPath: string): NativeModelCheck;
@@ -378,8 +380,27 @@ export function resolveNativeBindingPath(configuredPath = process.env.RERAIL_ENG
   return addonPath;
 }
 
+/**
+ * The engine's busy refusal, kept when the addon first loads. `isWorkspaceBusy` runs in a retry's `catch`, after the
+ * failed call loaded the addon, so it reads this instead of resolving the addon there again, where a moved addon would
+ * throw over the error it classifies.
+ */
+let workspaceBusy: unknown;
+
 export function loadNativeBinding(): NativeBinding {
-  return require(resolveNativeBindingPath()) as NativeBinding;
+  const binding = require(resolveNativeBindingPath()) as NativeBinding;
+  workspaceBusy ??= binding.WORKSPACE_BUSY;
+  return binding;
+}
+
+/** Whether `error` is a workspace task's refusal because another apply holds the engine's one slot. */
+export function isWorkspaceBusy(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const busy = workspaceBusy ?? loadNativeBinding().WORKSPACE_BUSY;
+  if (typeof busy !== "string") {
+    throw new Error("The native addon exports no WORKSPACE_BUSY, so it is older than this Rerail; rebuild or reinstall it", { cause: error });
+  }
+  return error.message === busy;
 }
 
 export function nativeHealth(): NativeHealth {

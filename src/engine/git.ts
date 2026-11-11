@@ -1,8 +1,10 @@
 import type { ChildProcess } from "node:child_process";
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { dirname, join, posix, resolve, win32 } from "node:path";
 import { endProcessTree, execFile, spawn, spawnSync } from "./child-process.js";
+import { fileStamp } from "./file-stamp.js";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
 export interface GitSearch {
@@ -431,14 +433,19 @@ async function exited(child: ChildProcess): Promise<void> {
  * Settles once that Git has exited ({@link GitReadOptions}).
  */
 async function gitOutput(cwd: string, args: readonly string[], signal: AbortSignal | undefined): Promise<string | undefined> {
+  return (await gitStdout(cwd, args, signal))?.trim();
+}
+
+/** Stdout, as Git wrote it, of a successful Git command run as `gitOutput` runs one; undefined past `maxBuffer` bytes. */
+async function gitStdout(cwd: string, args: readonly string[], signal: AbortSignal | undefined, maxBuffer = 1024 * 1024): Promise<string | undefined> {
   const executable = readerGit(signal);
   if (executable === undefined) return undefined;
   const { promise, resolve: settle } = Promise.withResolvers<string | undefined>();
   const child = execFile(
     executable,
     [...SAFE_CONFIG, "-C", cwd, ...args],
-    { encoding: "utf8", timeout: DEFAULT_TIMEOUT_MS, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" }, signal },
-    (error, stdout) => settle(error === null ? stdout.trim() : undefined),
+    { encoding: "utf8", maxBuffer, timeout: DEFAULT_TIMEOUT_MS, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" }, signal },
+    (error, stdout) => settle(error === null ? stdout : undefined),
   );
   const [output] = await Promise.all([promise, exited(child)]);
   return output;
@@ -656,6 +663,19 @@ export async function gitCrlfPaths(
   return rules;
 }
 
+/** The most bytes of a listing `gitModifiedOrUntrackedPaths` and `unmergedEntries` read: past it, the first lists none and the second cannot say. */
+const MAX_LISTED_PATH_BYTES = 64 * 1024 * 1024;
+
+/**
+ * The files of the checkout at `cwd` whose text its index may not hold: modified since staged (or deleted), and untracked
+ * but not ignored; relative to `cwd`. Empty without Git, outside a repository, past the timeout, or past
+ * `MAX_LISTED_PATH_BYTES` of paths.
+ */
+export async function gitModifiedOrUntrackedPaths(cwd: string, options: GitReadOptions = {}): Promise<string[]> {
+  const listed = await gitStdout(cwd, ["ls-files", "-z", "--modified", "--others", "--exclude-standard"], options.signal, MAX_LISTED_PATH_BYTES);
+  return listed === undefined ? [] : listed.split("\0").filter(path => path !== "");
+}
+
 /**
  * The object id of each of `revisions` (as for {@link readGitBlobs}) that names a blob, by one `git cat-file
  * --batch-check`: no blob is read. A revision Git does not resolve to a blob is absent, and so is every revision
@@ -742,6 +762,64 @@ async function streamGit(cwd: string, args: readonly string[], stream: GitStream
   child.stdin.on("error", () => undefined);
   child.stdin.end(stream.input);
   await Promise.all([promise, exited(child)]);
+}
+
+/**
+ * The index's unmerged entries under `cwd`, by path relative to it. Each value holds the path's modes, blobs and stages,
+ * so a later conflict on the same path reads differently. Undefined when Git cannot say: outside a repository, past the
+ * timeout, past `MAX_LISTED_PATH_BYTES` of entries, or once `signal` is aborted.
+ */
+async function unmergedEntries(cwd: string, signal: AbortSignal | undefined): Promise<ReadonlyMap<string, string> | undefined> {
+  const listed = await gitStdout(cwd, ["ls-files", "--unmerged", "-z"], signal, MAX_LISTED_PATH_BYTES);
+  if (listed === undefined) return undefined;
+  const entries = new Map<string, string>();
+  for (const record of listed.split("\0")) {
+    const tab = record.indexOf("\t");
+    if (tab < 0) continue;
+    const path = record.slice(tab + 1);
+    entries.set(path, `${entries.get(path) ?? ""}${record.slice(0, tab)}\n`);
+  }
+  return entries;
+}
+
+/** The file `cwd`'s checkout keeps its index in (a linked worktree's is under the main `.git`); undefined when Git cannot say. */
+async function gitIndexPath(cwd: string, signal: AbortSignal | undefined): Promise<string | undefined> {
+  const path = await gitOutput(cwd, ["rev-parse", "--git-path", "index"], signal);
+  return path === undefined ? undefined : resolve(cwd, path);
+}
+
+/**
+ * Reads the index's unmerged entries under a folder ({@link unmergedEntries}), for a caller that asks every pass: it
+ * starts a Git process only when the folder's index file changed since the last read, and otherwise costs one `stat`
+ * (plus one Git process the first time, to find the file). Git replaces that file with a new one on every write, so a
+ * write changes its inode even inside one clock tick. A folder whose file cannot be found or stamped is read every time,
+ * so this can cost more, never answer with stale entries. When Git cannot list them (it failed, timed out or was
+ * stopped), the answer is undefined and nothing is kept, so the next read asks Git again.
+ */
+export function gitUnmergedReader(): (cwd: string, options?: GitReadOptions) => Promise<ReadonlyMap<string, string> | undefined> {
+  const indexes = new Map<string, string>();
+  const held = new Map<string, { readonly stamp: string; readonly entries: ReadonlyMap<string, string> }>();
+  /** The stamp of `cwd`'s index file, found once and remembered; undefined when it cannot be found or stamped. */
+  const indexStamp = async (cwd: string, signal: AbortSignal | undefined): Promise<string | undefined> => {
+    const index = indexes.get(cwd) ?? await gitIndexPath(cwd, signal);
+    if (index === undefined) return undefined;
+    indexes.set(cwd, index);
+    try {
+      return fileStamp(await stat(index));
+    } catch {
+      return undefined;
+    }
+  };
+  return async (cwd, options = {}) => {
+    // Stamped before the read: an index written between the two reads as changed next time.
+    const stamp = await indexStamp(cwd, options.signal);
+    const last = held.get(cwd);
+    if (last !== undefined && last.stamp === stamp) return last.entries;
+    held.delete(cwd);
+    const entries = await unmergedEntries(cwd, options.signal);
+    if (entries !== undefined && stamp !== undefined) held.set(cwd, { stamp, entries });
+    return entries;
+  };
 }
 
 /** One object body of `git cat-file --batch` output being read: kept, or skipped as it streams past. */

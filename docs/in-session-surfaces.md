@@ -26,7 +26,7 @@ Every coding agent gets the same commands:
 
 - `/rerail` or `/rerail-help`: what Rerail is doing here, and every command.
 - `/rerail-manage`: open the dashboard.
-- `/rerail-create`: create a rule in your own words.
+- `/rerail-create`: create a rule in your own words, or change one, where it applies included.
 - `/rerail-start`, `/rerail-stop`, `/rerail-update`.
 - `/rerail-uninstall`: remove Rerail from this computer; rules and history are kept in a backup.
 - `/rerail-show-me`: a demo that breaks a throwaway rule, gets steered, fixes it and cleans up.
@@ -173,8 +173,8 @@ One line per rule, `◆ Rerail · <rule id>  steered  ·  why?`, where `why?` op
 
 Where your line appears, and what happens to a steer found as the turn ends:
 
-- **Claude Code:** under the tool call, after `PostToolUse:<Tool> says:`; two or more lines start on their own line. `why?` is a link in terminals known to draw them ([below](#links-in-the-terminal)), else `why? → <url>`. A turn-end steer shows its line then; the block reaches the agent at its next tool call or session start as a late steer, never with your next prompt.
-- **Codex:** under the tool call (`↳ Hook · …`), plain: `… steered  ·  why? → <url>`. A turn-end steer shows its line then; the block rides the next hook carrying context (your next prompt, a tool call, a session start) as a late steer.
+- **Claude Code:** under the tool call, after `PostToolUse:<Tool> says:`; two or more lines start on their own line. `why?` is a link in terminals known to draw them ([below](#links-in-the-terminal)), else `why? → <url>`. A turn-end steer goes out at the turn's end: its line for you, and its block for the agent as `Stop hook feedback`, which continues the turn so the agent can act on it. Once a Stop hook, Rerail's or another, has kept the turn going, a steer found when it ends again waits, line and block together, for the agent's next tool call or session start, led as a late steer, so Rerail never keeps a turn going twice.
+- **Codex:** under the tool call (`↳ Hook · …`), plain: `… steered  ·  why? → <url>`. Codex takes a turn-end block as your message, so a turn-end steer shows nothing then: its line and its block ride the next hook carrying context (your next prompt, a tool call, a session start), the block led as a late steer.
 - **Cursor:** no line of Rerail's own; the agent is asked to begin its reply with `… steered  ·  [why?](<url>)`. A turn-end steer waits for the next tool result or session start.
 - **OMP:** drawn in OMP's theme colours, `why?` a link where the terminal draws them. Ctrl+O expands it to show each rule's source and the block, dimmed. A steer riding an edit's tool result shows right after that call's results, before the next model call; the agent never sees the line. At turn end, the run waits up to 10 seconds for the turn's check, then pending steers continue the run before it reports done. A steer arriving once the session is idle waits for your next message.
 - **Pi:** Pi's default message card, showing the whole block; Pi's extension API gives Rerail nothing to draw its own line with. Turn end as OMP.
@@ -201,7 +201,7 @@ Slower checks steer at the next hook, reply or poll. The waits are fixed, not pe
 A steer never becomes your message, before or after the agent compacts its context:
 
 - **OMP and Pi:** a steer from an edit's own check goes into that tool result. Later ones are Rerail messages, which compaction summaries label automated rule checks, not your messages. Pi hands the model such a message as one of yours, so in Pi it opens with a line saying it is an automated note from Rerail, advice rather than a new task, and that the agent carries on with your request.
-- **Claude Code and Cursor:** context beside a tool result or at session start, never with your prompt.
+- **Claude Code and Cursor:** context beside a tool result, at session start or, in Claude Code, at the turn's end; never with your prompt.
 - **Codex:** a developer message, which can arrive with your next prompt but is not part of it.
 
 </details>
@@ -318,7 +318,7 @@ The footer never animates. Full audits and rule lists are on the dashboard.
 <summary>Exact counting</summary>
 
 - **Rules** is the session's configured coverage: code and conversation rules that are on, including mid-session changes. Not rules matching the current file, nor checks that passed.
-- **Steered** counts lines you saw: two rules in one edit count 2; a delivery naming no rule counts 1. A Claude Code turn-end steer counts once, when its line shows. Logs, matches, queued guidance and failed sends don't count.
+- **Steered** counts lines you saw: two rules in one edit count 2; a delivery naming no rule counts 1. A steer counts once, when its line shows, which is when its block reaches the agent. Logs, matches, queued guidance and failed sends don't count.
 - **Unknown is not zero.** Older sessions, and history lost in a reset, show `steering unavailable`; recomputing coverage shows `rules unavailable`.
 - **A steer proves nothing** about whether the agent read it or fixed anything. A crash right after sending can leave it uncounted.
 - **Violations are not a to-do list** or a review-ready signal. Rerail running normally and an audit reporting failures are separate states.

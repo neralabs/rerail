@@ -25,6 +25,7 @@ export {
   AdapterEventSchema,
   decodeRerailEventFrame,
   encodeRerailEventResult,
+  InactiveSessionError,
   RERAIL_EVENT_PROTOCOL_PREFACE,
 } from "./event-protocol.js";
 export { type HostRuntimePort, type HostRuntimeSessionState, RerailHostRuntime } from "./host-runtime.js";

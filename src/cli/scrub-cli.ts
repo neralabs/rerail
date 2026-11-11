@@ -15,6 +15,7 @@ import {
 } from "../engine/storage/database.js";
 import { openLedgerFile, readLedgerFile, writeLedgerFile } from "../engine/storage/ledger-paths.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { tableColumns } from "../engine/storage/table-probe.js";
 import { type HookHost, scrubbedPendingText, withPendingFileLock } from "../harness/hook-adapter.js";
 import { preUpdateSnapshotPath } from "./project-cli.js";
 import { DAEMON_LOG_FILE } from "../runtime/daemon-control.js";
@@ -95,7 +96,7 @@ function rewriteRows<Row extends Record<string, unknown>>(
 ): { scrubbed: number; read: number } {
   const client = database.$client;
   const [table, ...columns] = query.columns;
-  const present = new Set((client.pragma(`table_info(${table})`) as Array<{ name: string }>).map(column => column.name));
+  const present = new Set(tableColumns(client, table));
   if (!columns.every(column => present.has(column))) return { scrubbed: 0, read: 0 };
   const next = client.prepare(query.select);
   const write = client.prepare(query.update);

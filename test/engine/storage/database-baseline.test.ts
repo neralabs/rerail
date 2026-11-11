@@ -485,7 +485,7 @@ describe("the migration path", () => {
       // Twice: the first refusal must not change the file's mode so that the next reader upgrades it after all.
       for (let attempt = 0; attempt < 2; attempt += 1) {
         expect(() => listRepositoryRules(openRerailDatabase(path, { readonly: true }), loadRuleCatalog(), "repo"))
-          .toThrow(/needs this Rerail's schema steps \(rule-settings-suppressions-config, audit-history-derived-tables, repositories-follow-gitignore, rule-approvals\) before it can be read, and this process cannot write it: .+\. Run a rerail command as the file's owner, or make it writable for this user\.$/u);
+          .toThrow(/needs this Rerail's schema steps \(rule-settings-suppressions-config, audit-history-derived-tables, repositories-follow-gitignore, rule-approvals, audit-violations-logged-by-audit-mode\) before it can be read, and this process cannot write it: .+\. Run a rerail command as the file's owner, or make it writable for this user\.$/u);
         expect(statSync(path).mode).toBe(mode);
       }
     } finally {

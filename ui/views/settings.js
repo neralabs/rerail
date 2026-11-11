@@ -11,7 +11,8 @@ import { send } from "../api.js";
 import { data, ui, repoName } from "../state.js";
 import { captureScope, changeScope, inScope, loadAgents, loadPresence, loadFollowGitignore, saveFollowGitignore } from "../poll.js";
 import { applyTheme, invalidate, toast } from "../shell.js";
-import { loadRepoRuleCounts, repoTag } from "../repo-rules.js";
+import { loadRepoRuleCounts } from "../repo-rule-counts.js";
+import { repoTag } from "../repo-rules.js";
 import { repoCounts } from "../render/repos.js";
 import { agentStatus, installedLabel } from "../settings-model.js";
 

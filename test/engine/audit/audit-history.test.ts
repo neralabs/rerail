@@ -34,18 +34,21 @@ const KEY = (value: string): string => `coalesce(json_extract(${value}, '$.claus
   || coalesce(json_extract(${value}, '$.span'), '') || char(31)
   || coalesce(json_extract(${value}, '$.code'), '')`;
 
+/** The agent was not told: the audit ran in Log mode, or the violation's rule was in Log mode. */
+const LOGGED = "(audit.mode = 'log' OR json_extract(violation.value, '$.mode') = 'log')";
+
 const scopeSql = (repositories: readonly string[] | undefined): string => repositories === undefined
   ? "1 = 1"
   : `audit.session_id IN (SELECT session_id FROM sessions WHERE repository_id IN (${repositories.map(id => `'${id}'`).join(", ")}))`;
 
 function oracleActivity(client: Database.Database, since: number, repositories?: readonly string[]): Map<string, RuleActivityTotals> {
   const rows = client.prepare(`
-    WITH in_range AS (SELECT audit_id, session_id, started_at, violations_json, rule_revisions_json FROM audits audit
+    WITH in_range AS (SELECT audit_id, session_id, started_at, mode, violations_json, rule_revisions_json FROM audits audit
       WHERE started_at >= ? AND ${scopeSql(repositories)}),
     violations AS (
       SELECT json_extract(violation.value, '$.ruleId') AS ruleId,
         count(DISTINCT ${KEY("violation.value")}) AS distinctViolations,
-        count(DISTINCT CASE WHEN json_extract(violation.value, '$.mode') = 'log' THEN ${KEY("violation.value")} END) AS loggedViolations,
+        count(DISTINCT CASE WHEN ${LOGGED} THEN ${KEY("violation.value")} END) AS loggedViolations,
         count(DISTINCT audit.session_id) AS sessions, max(audit.started_at) AS lastSeenAt
       FROM in_range audit, json_each(audit.violations_json) violation GROUP BY ruleId),
     audited AS (
@@ -61,18 +64,21 @@ function oracleActivity(client: Database.Database, since: number, repositories?:
   return new Map(rows.map(({ ruleId, ...totals }) => [ruleId, totals]));
 }
 
-interface HistoryRow { auditId: string; sessionId: string; at: number; ruleId: string | null; payload: string }
+interface HistoryRow { auditId: string; sessionId: string; at: number; ruleId: string | null; payload: string; logged: boolean }
 
 function oracleHistory(client: Database.Database, since: number, repositories?: readonly string[]): HistoryRow[] {
-  return client.prepare(`
-    SELECT payload, auditId, sessionId, at, ruleId FROM (
+  return (client.prepare(`
+    SELECT payload, auditId, sessionId, at, ruleId, logged FROM (
       SELECT violation.value AS payload, audit.audit_id AS auditId, audit.session_id AS sessionId, audit.started_at AS at,
         json_extract(violation.value, '$.ruleId') AS ruleId,
-        row_number() OVER (PARTITION BY audit.audit_id, json_extract(violation.value, '$.ruleId'), ${KEY("violation.value")} ORDER BY violation.key) AS copy
+        row_number() OVER copies AS copy,
+        max(${LOGGED}) OVER copies AS logged
       FROM audits audit, json_each(audit.violations_json) violation
       WHERE audit.started_at >= ? AND ${scopeSql(repositories)}
+      WINDOW copies AS (PARTITION BY audit.audit_id, json_extract(violation.value, '$.ruleId'), ${KEY("violation.value")} ORDER BY violation.key
+        ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
     ) WHERE copy = 1
-  `).all(since) as HistoryRow[];
+  `).all(since) as Array<Omit<HistoryRow, "logged"> & { logged: number }>).map(row => ({ ...row, logged: row.logged === 1 }));
 }
 
 /** Every page of the derived history, walked by cursor, as the oracle's rows. */
@@ -83,15 +89,15 @@ function pagedHistory(store: SqliteAuditStore, query: { since: number; ruleId?: 
   for (;;) {
     const page = store.listViolationHistory({ ...query, limit: 7, ...(cursor === undefined ? {} : { cursor }) }, repositories);
     totals.add(page.total);
-    rows.push(...page.violations.map(({ violation, auditId, sessionId, at }) => ({
-      auditId, sessionId, at, ruleId: violation.ruleId ?? null, payload: JSON.stringify(violation),
+    rows.push(...page.violations.map(({ violation, auditId, sessionId, at, logged }) => ({
+      auditId, sessionId, at, ruleId: violation.ruleId ?? null, payload: JSON.stringify(violation), logged,
     })));
     if (page.nextCursor === null) return { rows, totals };
     cursor = page.nextCursor;
   }
 }
 
-const rowKey = (row: HistoryRow): string => `${row.auditId}|${row.at}|${JSON.stringify(JSON.parse(row.payload))}`;
+const rowKey = (row: HistoryRow): string => `${row.auditId}|${row.at}|${row.logged}|${JSON.stringify(JSON.parse(row.payload))}`;
 
 /** Deterministic, so a failure reproduces. */
 function random(seed: number): () => number {
@@ -127,6 +133,9 @@ function violations(next: () => number): CodeRuleViolation[] {
   });
 }
 
+/** An audit's own mode: in Log mode it tells the agent nothing, whatever its rules' modes. */
+const auditMode = (next: () => number): "steer" | "log" => (next() < 0.25 ? "log" : "steer");
+
 const revisions = (next: () => number) => RULES.filter(() => next() < 0.6).map(ruleId => ({ ruleId, revision: 1 }));
 
 /**
@@ -144,12 +153,12 @@ function writeHistory(path: string, client: Database.Database, seed: number): vo
       if (way === 0) {
         client.prepare(`INSERT INTO audits (audit_id, session_id, workspace_root, scope, mode, revision, catalog_revision,
           rule_revisions_json, rule_provenance_json, paths_json, started_at, finished_at, status, violations_json, failures_json)
-          VALUES (?, ?, '/w', 'touched-files', 'steer', 1, NULL, ?, '[]', '[]', ?, NULL, 'completed', ?, '[]')`)
-          .run(`older-${index}`, sessionId, JSON.stringify(revisions(next)), Math.floor(next() * 10_000), JSON.stringify(violations(next)));
+          VALUES (?, ?, '/w', 'touched-files', ?, 1, NULL, ?, '[]', '[]', ?, NULL, 'completed', ?, '[]')`)
+          .run(`older-${index}`, sessionId, auditMode(next), JSON.stringify(revisions(next)), Math.floor(next() * 10_000), JSON.stringify(violations(next)));
         continue;
       }
       const auditId = store.start({
-        sessionId, workspaceRoot: "/w", scope: "repository", mode: "steer", revision: 1, catalogRevision: null,
+        sessionId, workspaceRoot: "/w", scope: "repository", mode: auditMode(next), revision: 1, catalogRevision: null,
         ruleRevisions: revisions(next), paths: [], ruleProvenance: [],
       });
       if (way === 1) {
@@ -322,6 +331,39 @@ describe("derived audit history", () => {
     }
   });
 
+  it("repairs the history of a file whose triggers left out the audit's mode, and replaces those triggers", async () => {
+    const path = await temporaryDatabase();
+    const previous = openRerailDatabase(path);
+    const client = previous.$client;
+    const triggers = () => client.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name").all();
+    const current = triggers();
+    try {
+      openSessions(path);
+      // The file as the build before `audit-violations-logged-by-audit-mode` left it: its triggers read each
+      // violation's rule mode alone, and it has not run the step (unrecorded after the writes, whose opens would run it).
+      for (const { name, sql } of current as Array<{ name: string; sql: string }>) {
+        if (!sql.includes("NEW.mode = 'log' OR ")) continue;
+        client.exec(`DROP TRIGGER \`${name}\`; ${sql.replaceAll("NEW.mode = 'log' OR ", "")}`);
+      }
+      writeHistory(path, client, 7);
+      client.prepare("DELETE FROM schema_migrations WHERE id = 'audit-violations-logged-by-audit-mode'").run();
+      // The older triggers derived some violations of Log-mode audits as steered: the case to repair.
+      expect(client.prepare(`SELECT count(*) AS n FROM audit_violations violation JOIN audits audit USING (audit_id)
+        WHERE audit.mode = 'log' AND violation.logged = 0`).get()).not.toEqual({ n: 0 });
+    } finally {
+      client.close();
+    }
+
+    const database = openRerailDatabase(path);
+    try {
+      // The step dropped the older triggers, and the DDL created this build's again.
+      expect(database.$client.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name").all()).toEqual(current);
+      expectMatchesOracle(path, database.$client);
+    } finally {
+      database.$client.close();
+    }
+  });
+
   it("fills the derived history from the audits a file already holds when it is upgraded, then keeps it current", async () => {
     const path = await temporaryDatabase();
     const created = new Database(path);
@@ -342,8 +384,8 @@ describe("derived audit history", () => {
         const next = random(index + 10);
         baseline.prepare(`INSERT INTO audits (audit_id, session_id, workspace_root, scope, mode, revision, catalog_revision,
           rule_revisions_json, rule_provenance_json, paths_json, started_at, finished_at, status, violations_json, failures_json)
-          VALUES (?, ?, '/w', 'touched-files', 'steer', 1, NULL, ?, '[]', '[]', ?, NULL, 'completed', ?, '[]')`)
-          .run(`before-${index}`, SESSIONS[index % SESSIONS.length]![0], JSON.stringify(revisions(next)), Math.floor(next() * 10_000), JSON.stringify(violations(next)));
+          VALUES (?, ?, '/w', 'touched-files', ?, 1, NULL, ?, '[]', '[]', ?, NULL, 'completed', ?, '[]')`)
+          .run(`before-${index}`, SESSIONS[index % SESSIONS.length]![0], auditMode(next), JSON.stringify(revisions(next)), Math.floor(next() * 10_000), JSON.stringify(violations(next)));
       }
     } finally {
       baseline.close();

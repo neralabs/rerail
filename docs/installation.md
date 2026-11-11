@@ -45,8 +45,8 @@ It installs Rerail under `~/.rerail`, without admin rights or, on Windows, Devel
    edit) to check them against your rules?
 2. Outside a repository it asks which folder to start with, or lets you skip; `--repo <folder>` names one. If you skip
    the scan and pick rule packs yourself, no code is read.
-3. It shows the recommended rule packs, each with why it matched, and the coding agents it will connect. "Not now"
-   installs, connects and turns on nothing.
+3. It shows the recommended rule packs, each with why it matched, or why none fits, and the coding agents it will
+   connect. "Not now" installs, connects and turns on nothing.
 
 </details>
 
@@ -216,8 +216,9 @@ In short: macOS, glibc Linux and Windows 11 on arm64 or x64, with Node.js 24+, f
 - **Coding agents**, each found by its config folder in your home folder (`~/.claude`, `~/.codex`, `~/.cursor`,
   `~/.omp/agent`, `~/.pi/agent`; on Windows, the profile folder, `USERPROFILE`). Run `rerail setup` again to connect
   one installed later.
-  - Claude Code: the CLI, the VS Code extension (its panel shows no status line) and the JetBrains plugin; 2.1.139 or
-    newer on Windows.
+  - Claude Code 2.1.196 or newer: the CLI, the VS Code extension (its panel shows no status line) and the JetBrains
+    plugin. Older versions do not tell hooks which prompt they belong to, so Rerail records none of their prompts or
+    turn ends and steers nothing as a turn ends.
   - Codex CLI; trust the hook once with `/hooks`.
   - Cursor's IDE agent and its CLI (`cursor-agent`).
   - OMP and Pi.

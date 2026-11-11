@@ -452,7 +452,8 @@ export const auditResultPages = sqliteTable(
 
 /**
  * One row per distinct violation an audit reported: `(rule_id, violation_key)` once per audit, at the `ordinal` of
- * its first copy in `audits.violations_json`, where its payload stays. `logged`: some copy was recorded in Log mode.
+ * its first copy in `audits.violations_json`, where its payload stays. `logged`: the coding agent was not told, because
+ * the audit ran in Log mode or some copy's rule was in Log mode.
  */
 export const auditViolations = sqliteTable(
   "audit_violations",
@@ -472,15 +473,15 @@ export const auditViolations = sqliteTable(
     index("audit_violations_rule_started").on(table.ruleId, table.startedAt),
     // An append looks up the audit's own rows by (rule, key).
     index("audit_violations_audit_key").on(table.auditId, table.ruleId, table.violationKey),
-    // The rollup's maxima: a key's latest sighting, and its latest in Log mode, each one index probe.
+    // The rollup's maxima: a key's latest sighting, and its latest logged, each one index probe.
     index("audit_violations_key").on(table.sessionId, table.ruleId, table.violationKey, table.startedAt),
     index("audit_violations_key_logged").on(table.sessionId, table.ruleId, table.violationKey, table.startedAt).where(sql`${table.logged} = 1`),
   ],
 );
 
 /**
- * Per session, rule and violation key: the latest audit start that reported it, and the latest that reported it in
- * Log mode. A range `[since, now)` holds the violation exactly when `last_seen_at >= since`.
+ * Per session, rule and violation key: the latest audit start that reported it, and the latest that reported it
+ * `logged` (`audit_violations`). A range `[since, now)` holds the violation exactly when `last_seen_at >= since`.
  */
 export const ruleViolationRollup = sqliteTable(
   "rule_violation_rollup",

@@ -243,7 +243,7 @@ The owner is the nearest folder above the file holding a `.git` entry that Git c
 
 A worktree of a repository where Rerail runs is recorded the first time a session looks at it, wherever it sits and whichever folder the session started in, and judges its files itself. A session looks at it when a path it names falls in it, or when it first walks the repository's other worktrees (below), so any session of the repository records every such worktree, edited or not. Its record stays, as every recorded checkout's does. Git decides what counts: `git worktree list`, run in a recorded checkout of the same clone, must name it. Another clone of the same remote doesn't count.
 
-Shell writes are found by walking files, so each session also walks the repository's other worktrees that may run rules, behind its own folder's walk. A command doesn't wait for this. The walk can't tell who wrote a file, so what it finds is recorded under the repository, in Log, and steers no session: an agent is steered only on its own tool calls and on its own folder's shell writes. A shell write an agent makes in another worktree is therefore recorded but not steered. What Git wrote is left out, as in the session's own folder.
+Shell writes are found by walking files, so each session also walks the repository's other worktrees that may run rules, behind its own folder's walk. A command doesn't wait for this. The walk can't tell who wrote a file, so what it finds is recorded under the repository, in Log, and steers no session: an agent is steered only on its own tool calls and on its own folder's shell writes. A shell write an agent makes in another worktree is therefore recorded but not steered. What Git wrote is left out, as in the session's own folder. In its own folder, a change made while none of the session's tool calls ran is another writer's and doesn't steer it ([the session's own write](reference.md#how-ai-output-scope-finds-changed-lines)).
 
 <details>
 <summary>Nested checkouts and symlinks</summary>
@@ -268,7 +268,7 @@ The HTTP API (`/api`) is for people; MCP callers (`/mcp`) are coding agents. The
 
 Anything else is refused with `403 agent-not-permitted` and the dashboard URL where a person can make the change. Only a person links repository addresses, starts and stops a whole repository, or approves a rule's content ([approval](#approval)). A rule a coding agent writes runs in Log until then.
 
-**Copy on edit.** Writing a By Rerail rule's id through `library_rules_upsert` stores an edited copy in the library instead (`<id>-copy`, `-copy-2`, …).
+**Copy on edit.** Writing a By Rerail rule's id through `library_rules_upsert` stores an edited copy in the library instead (`<id>-copy`, `-copy-2`, …). The CLI does the same for every coding agent, MCP or not: `rerail rules show <id>` prints the rule as a draft, and `rerail rules add` of a draft that keeps its id stores the copy. `rules add` refuses a second copy where one is already added, and naming the copy is how to change it again.
 
 <details>
 <summary>How the copy replaces the original</summary>

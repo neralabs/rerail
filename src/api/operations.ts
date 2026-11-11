@@ -2,7 +2,7 @@ import { isAbsolute } from "node:path";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 import { SECRET_FILE_FINDING_MESSAGE, type CodeRuleViolation, type CodeRuleViolationFix, type CodeRuleSourceSpan } from "../engine/code-rule/code-rule.js";
-import { AUDIT_BLIND_REASONS, AUDIT_FAILURE_CODES, type AuditFailure } from "../engine/audit/audit.js";
+import { AUDIT_BLIND_REASONS, AUDIT_FAILURE_CODES, AUDIT_MODES, AUDIT_SCOPES, AUDIT_STATUSES, type AuditFailure } from "../engine/audit/audit.js";
 import type { AuditQuery, RepositoryAuditEntryQuery, RepositoryAuditQuery } from "../engine/audit/audit-store.js";
 import { checkoutRealpath, withinCheckout } from "../engine/catalog/checkout-control.js";
 import { RERAIL_HOSTS } from "../engine/adapter-contract.js";
@@ -107,9 +107,9 @@ export const auditControlsResponseSchema = auditControlsSchema.extend({
 export const auditQuerySchema = z.object({
   auditId: z.string().min(1).optional(),
   sessionId: z.string().min(1).optional(),
-  status: z.enum(["running", "completed", "failed", "interrupted", "superseded"]).optional(),
-  scope: z.enum(["repository", "touched-files", "ai-output"]).optional(),
-  mode: z.enum(["steer", "log"]).optional().describe("Audit mode (steer, log), not the mode of the rules it ran."),
+  status: z.enum(AUDIT_STATUSES).optional(),
+  scope: z.enum(AUDIT_SCOPES).optional(),
+  mode: z.enum(AUDIT_MODES).optional().describe("Audit mode (steer, log), not the mode of the rules it ran."),
   limit: countParameter.min(1).max(200).optional().describe("Maximum records to return; defaults to 50 and is capped at 200."),
   offset: countParameter.optional().describe("Number of matching records to skip; defaults to 0."),
 }).strict();
@@ -124,8 +124,8 @@ const repositoryAuditSummarySchema = z.object({
   repositoryAudit: repositoryAuditSchema.nullable(),
   audit: z.object({
     auditId: z.string(),
-    scope: z.enum(["repository", "touched-files", "ai-output"]),
-    status: z.enum(["running", "completed", "failed", "interrupted", "superseded"]),
+    scope: z.enum(AUDIT_SCOPES),
+    status: z.enum(AUDIT_STATUSES),
     startedAt: z.number(),
     finishedAt: z.number().nullable(),
     revision: z.number().int().nonnegative(),
@@ -266,6 +266,7 @@ const violationRecordSchema = z.object({
   auditId: z.string(),
   at: z.number().int().describe("Start time of the audit that reported the violation."),
   host: z.string().nullable().describe("The coding agent of the violation's session; null when the session is not recorded."),
+  logged: z.boolean().describe("Rerail recorded the violation without telling the coding agent: the audit ran in Log mode, or the rule was in Log mode then. `mode` is the rule's mode alone."),
 }).strict();
 
 const repositoryPathSchema = z.string().refine(value => value === "" || isAbsolute(value), "Repository must be an absolute path or empty for the database default.");
@@ -580,9 +581,9 @@ export const operations: readonly Operation[] = [
       }, historyScope(stores, caller, input.repository));
       return {
         total: page.total,
-        violations: page.violations.map(({ violation: found, sessionId, auditId, at, host }) => {
+        violations: page.violations.map(({ violation: found, sessionId, auditId, at, host, logged }) => {
           const { id, ruleId, clauseId, code, mode, message, path, span, fix } = agentViolation(caller, found);
-          return { id, ruleId, clauseId, code, mode, message, path: path ?? null, span: span ?? null, fix: fix ?? null, sessionId, auditId, at, host };
+          return { id, ruleId, clauseId, code, mode, message, path: path ?? null, span: span ?? null, fix: fix ?? null, sessionId, auditId, at, host, logged };
         }),
         nextCursor: page.nextCursor,
       };

@@ -12,7 +12,7 @@ import semver from "semver";
 import { CodeRuleCompileError, EngineUnavailableError, storableCodeRule } from "../code-rule/code-rule-compile.js";
 import { PACKAGE_ROOT, RERAIL_PACKAGE_NAME } from "../package-root.js";
 import { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "../stable-json.js";
-import { defaultRerailHome } from "../storage/rerail-home.js";
+import { CURRENT_LINK, defaultRerailHome } from "../storage/rerail-home.js";
 import type { RuleCatalog, SkippedRulePack } from "./repository-model.js";
 import {
   compareRulePacks,
@@ -159,7 +159,7 @@ function coreVersionAt(root: string): string | undefined {
  * else this package's. A coding agent's extension may run an older package than the active one after an update.
  */
 export function activeCoreVersion(home: string = defaultRerailHome()): string {
-  const version = coreVersionAt(join(home, "current")) ?? coreVersionAt(PACKAGE_ROOT);
+  const version = coreVersionAt(join(home, CURRENT_LINK)) ?? coreVersionAt(PACKAGE_ROOT);
   if (version === undefined) throw new Error(`${PACKAGE_ROOT}/package.json is not ${RERAIL_PACKAGE_NAME}'s`);
   return version;
 }

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { steers, type RuleMode } from "./catalog/rule-mode.js";
 import type { Shell } from "./command-line.js";
 
@@ -202,6 +202,19 @@ export function hookText(host: string) {
       return typeof value === "string" && value.trim() !== "" ? value : undefined;
     },
   };
+}
+
+/**
+ * The suffix a `Stop` adds to its turn-end id when a Stop hook kept the turn going (`stop_hook_active`): empty for a
+ * turn's first `Stop`, otherwise a hash of the message the continuation ended on. Neither coding agent counts
+ * continuations, so the same `Stop` delivered twice keeps one id, and continuations that said different things each
+ * get their own. Two continuations of one turn that ended on the same message, or on none (Codex sends `null`), share
+ * an id: the second is still walked, but not recorded or sampled for conversation rules.
+ */
+export function stopContinuation(stopHookActive: unknown, lastAssistantMessage: unknown): string {
+  if (stopHookActive !== true) return "";
+  const text = typeof lastAssistantMessage === "string" ? lastAssistantMessage : "";
+  return `:continued:${createHash("sha256").update(text).digest("hex").slice(0, 16)}`;
 }
 
 type ContextualAdapterEvent = {

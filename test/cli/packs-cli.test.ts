@@ -1,14 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { packAddSpec, runPacksCommand } from "../../src/cli/packs-cli.js";
 import { openRerailDatabase, recordCheckout, setUpRepository } from "../../src/engine/index.js";
 import { setRepositoryStarted } from "../../src/runtime/index.js";
 import { installedPackagesOf, type PackStore } from "../../src/setup/index.js";
+import { directoryPackStore } from "../support/directory-pack-store.js";
 import { installPackDirectory, linkingPackStore, thirdPartyPack } from "../support/installed-packs.js";
-import { fixturesPath } from "../support/oracles.js";
+import { fixturesPath, repositoryPath } from "../support/oracles.js";
 import { removeFolderSync } from "../support/platform/remove-folder.js";
 
 const homes: string[] = [];
@@ -173,6 +174,30 @@ describe("a third party's pack", () => {
     const store = linkingPackStore(temporaryHome(), {});
     await expect(runPacksCommand(["remove", "@acme/sql"], () => "usage", store)).rejects.toThrow("Name the rule packs to remove by id or package");
     expect(store.removes).toEqual([]);
+  });
+});
+
+describe("rerail packs recommend", () => {
+  it("says why no rule pack fits, then lists each pack once, with what it looks for", { timeout: 30_000 }, async () => {
+    const root = realpathSync(temporaryHome());
+    for (const path of ["tests/test_a.py", "tests/test_b.py", "scripts/release.py", "README.md"]) {
+      mkdirSync(dirname(join(root, path)), { recursive: true });
+      writeFileSync(join(root, path), "x = 1\n");
+    }
+    execFileSync("git", ["-C", root, "init", "-q"]);
+
+    const text = await packsOutput(["recommend", "--repo", root], directoryPackStore(repositoryPath("packs"), ["python"], temporaryHome()));
+
+    expect(text).toMatch(new RegExp([
+      `No rule pack fits ${root.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}\\.`,
+      "  Found           \\.py 3 · \\.md 1",
+      "                  from Git’s list of files, which leaves out what Git ignores",
+      "  Closest         Python excludes the 3 files it looks for: tests/ \\(2\\),",
+      "                  scripts/ \\(1\\)",
+      "Other rule packs:",
+      "  @neralabs/rerail-pack-python@\\S+ \\(\\d+ rules\\): looks for \\*\\.py, \\*\\.pyi\n",
+    ].join("\n"), "u"));
+    expect(text).not.toContain("Packs look for");
   });
 });
 

@@ -18,7 +18,7 @@ import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
 import { engineHoldsCapability } from "./engine-proof.js";
 import { enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf } from "./engine-pipe.js";
 import { processState, type ProcessSignal } from "../engine/process-liveness.js";
-import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE, defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { keepFolderPrivate, makeRerailHome } from "../engine/storage/private-files.js";
 import type { ModelStatus } from "../engine/native/model-status.js";
 
@@ -62,8 +62,6 @@ export interface DaemonState {
 export const DAEMON_ACCESS_HEADER = "x-rerail-access";
 /** The query parameter of the dashboard link; the page keeps its value in its origin's storage and sends the header. */
 export const DAEMON_ACCESS_PARAM = "rerail-access";
-/** In the Rerail home: the capability a loopback daemon keeps across restarts. */
-export const DAEMON_ACCESS_TOKEN_FILE = "access-token";
 
 /** The headers that admit a request to the daemon `state` records: its access capability, when it has one. */
 export function daemonAccessHeaders(state: Pick<DaemonState, "accessToken">): Record<string, string> {
@@ -261,8 +259,7 @@ export function nodeExecutable(platform: NodeJS.Platform = process.platform): st
   throw new Error("Rerail runs its CLI under Node.js, and no node.exe is on PATH");
 }
 
-export const DAEMON_STATE_FILE = "daemon.json";
-export const DAEMON_LOG_FILE = "daemon.log";
+export { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE };
 /** The lock a daemon start holds, `locks/start.lock` in the Rerail home. */
 const START_LOCK = "start";
 /** In the Rerail home: the folder Rerail before `locks/` held as the start lock, which uninstall removes. */

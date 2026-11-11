@@ -24,7 +24,10 @@ Below, `<id>` is the pack (`packs/<id>/`), `<tool>` the upstream tool, `<rule>` 
 <summary>Candidates and whether a port starts on</summary>
 
 A rule the reviewer is not sure of stays a candidate; `candidates/README.md` says what each candidate waits on.
-Whether a shipped port starts on is not a judgement call: `upstream-status` decides it from the tool's declared facts.
+Whether a shipped port starts on follows `upstream-status`, from the tool's declared facts, with one exception: a steer
+that would do harm where no matcher change can tell the cases apart
+([rule quality](../skills/rerail-create/references/rule-quality.md#the-fix-ladder)). The reviewer lists that rule
+`"on": false`, and its section in the pack's README says why.
 This page is for the contributor and for the coding agent working with them.
 
 </details>
@@ -91,16 +94,22 @@ A rule with no upstream needs no test data; its examples are the proof.
 1. Write `packs/<id>/rules/<rule>.json` ([writing-rules.md](writing-rules.md),
    [text criteria](pack-format.md#description), check 8).
 2. List it in `pack.json` with a caught and a passing example in the rule's scope (check 3).
-3. Add its section under `## Rule details` in `packs/<id>/README.md` (check 5).
-4. Add a changeset, its file name opening with its change type ([.changeset/README.md](../.changeset/README.md)).
-5. Run `npx vitest run test/engine/catalog/packs.test.ts -t "pack <id>"`.
+3. In a pack with a `conformance.json`, add its id to `own` there, so the gates know it has no upstream and judge it on `loads` and `compact` alone
+   ([conformance.json](pack-format.md#conformancejson)). Where a generator writes `conformance.json`, add it to the
+   generator's input instead (React: `OWN` in `scripts/generate/packs/react-specs.mjs`).
+4. Add its section under `## Rule details` in `packs/<id>/README.md` (check 5).
+5. Add a changeset, its file name opening with its change type ([.changeset/README.md](../.changeset/README.md)).
+6. Run `npx vitest run test/engine/catalog/packs.test.ts -t "pack <id>"`.
 
 The pull request says what the examples show and what they leave out.
 
 <details>
 <summary>Edge cases</summary>
 
-- No shipped pack has one yet, so this is the contract's path, not a walked one. The model is the example in
+- The React pack's practice rules are the model: own rules beside a tool-pack's ports, listed in its
+  `conformance.json` `own`. Their cases are pack test data in an archive of their own,
+  `packs/react/upstream/react-practice/` (written by Rerail, listed in its `UPSTREAM.md`, no upstream tool or
+  generator), run by `test/cli/react-practice-rules.test.ts`. A pack with no tool-pack follows
   [language-packs.md, "A pack for a supported language"](language-packs.md#a-pack-for-a-supported-language).
 - Each example sits at a path inside the rule's scope; a conversation rule's examples carry no path.
 - The changeset is needed because the rule changes what the pack publishes.

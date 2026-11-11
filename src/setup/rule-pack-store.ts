@@ -22,15 +22,18 @@ import {
   readRuleCatalog,
 } from "../engine/catalog/rule-catalog.js";
 import type { RuleCatalog, SkippedRulePack } from "../engine/catalog/repository-model.js";
+import { scanRepository, type RepositoryScan } from "../engine/catalog/rule-pack-matcher.js";
 import {
+  explainNoFit,
   packIdOfPackage,
   RULE_PACK_PACKAGE_NAME,
   rulePackPackageName,
   rulePackPackageOf,
   rulePacksThatFit,
+  type NoFitExplanation,
   type RulePack,
 } from "../engine/catalog/rule-packs.js";
-import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { defaultRerailHome, UPDATE_STATE_FILE } from "../engine/storage/rerail-home.js";
 import { prefixInstallNpm, runNpm, unreachableRegistryReason, type NpmRunner } from "../runtime/npm.js";
 import { withPacksLock } from "./packs-lock.js";
 
@@ -191,15 +194,20 @@ export function npmPackStore(home: string = defaultRerailHome(), runner: NpmRunn
 
 /** The update channel in the Rerail home's `update-state.json`: the dist-tag packs are fetched under. */
 export function updateChannel(home: string = defaultRerailHome()): string {
-  const path = join(home, "update-state.json");
+  const path = join(home, UPDATE_STATE_FILE);
   if (!existsSync(path)) return "latest";
+  return readChannel(path) ?? "latest";
+}
+
+/** The channel the update state file at `path` names; undefined when it names none or cannot be read. */
+function readChannel(path: string): string | undefined {
   try {
     const state = JSON.parse(readFileSync(path, "utf8")) as unknown;
     if (typeof state === "object" && state !== null && "channel" in state && typeof state.channel === "string") return state.channel;
   } catch {
     // An unreadable state file is the updater's to report; discovery falls back to latest.
   }
-  return "latest";
+  return undefined;
 }
 
 /** The version a pack directory's `package.json` names; null when it names none or cannot be read. */
@@ -256,6 +264,8 @@ export interface PackDiscovery {
   readonly downloadFailures?: readonly string[];
   /** The catalog of the fetched packs: what their rules would be, before any is installed. */
   readonly catalog: RuleCatalog;
+  /** When the repository was scanned, packs were available, and none fits it: why not. */
+  readonly nothingFits?: NoFitExplanation;
 }
 
 /** Why a pack was left out, naming its files from the pack's own folder: the package name already says which pack. */
@@ -276,6 +286,16 @@ export function packsLeftOutByCore(home: string, current: string, previous: stri
   const leftOut = (coreVersion: string) => readRuleCatalog(directories, { coreVersion }).skipped;
   const before = new Set((previous === undefined ? [] : leftOut(previous)).map(skipped => skipped.path));
   return leftOut(current).filter(skipped => !before.has(skipped.path)).map(skippedProblem);
+}
+
+/**
+ * Why no pack fits the scanned repository, explained over the packs with rules: only when none of the `discovered`
+ * fits, since one that fits but has no rules yet is named with that reason, which is the whole answer.
+ */
+function nothingFits(scan: RepositoryScan | undefined, discovered: readonly DiscoveredPack[]): Pick<PackDiscovery, "nothingFits"> {
+  const available = discovered.filter(found => found.ruleCount > 0);
+  if (scan === undefined || available.length === 0 || discovered.some(found => found.match !== undefined)) return {};
+  return { nothingFits: explainNoFit(scan, available.map(found => found.pack)) };
 }
 
 /**
@@ -305,7 +325,8 @@ export async function discoverPacks(repositoryRoot: string | undefined, store: P
       coreVersion: activeCoreVersion(home), compile: true, localSources: localSources(home, standIns),
     });
     const packs = [...catalog.packs.values()];
-    const matched = new Map((repositoryRoot === undefined ? [] : rulePacksThatFit(repositoryRoot, packs)).map(found => [found.pack.id, found]));
+    const scan = repositoryRoot === undefined ? undefined : scanRepository(repositoryRoot);
+    const matched = new Map((scan === undefined ? [] : rulePacksThatFit(scan, packs)).map(found => [found.pack.id, found]));
     const discovered = packs.flatMap((pack): DiscoveredPack[] => {
       if (pack.version === null || pack.packageName === null) return [];
       const found = matched.get(pack.id);
@@ -328,6 +349,7 @@ export async function discoverPacks(repositoryRoot: string | undefined, store: P
       problems: [...fetch.problems.map(problem => `${problem.packageName}: ${problem.reason}`), ...catalog.skipped.map(skippedProblem)],
       ...(fetch.fetched.length === 0 && fetch.problems.length > 0 ? { downloadFailures: [...new Set(fetch.problems.map(problem => problem.reason))] } : {}),
       catalog,
+      ...nothingFits(scan, discovered),
     };
   } finally {
     await fetch.release();

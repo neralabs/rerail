@@ -27,20 +27,13 @@ import { daemonUsesPackageRoot, lookupDaemon, stopFoundDaemon } from "../runtime
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../runtime/event-protocol.js";
 import { auditSignatures, checkRegistry, outsideAnyProject, prefixInstallNpm, runNpm, type NpmRunner } from "../runtime/npm.js";
 import { ensureSqlite, type SqliteRepairResult } from "../runtime/sqlite-repair.js";
-import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { CURRENT_LINK, defaultRerailHome, LAUNCHER_DIR, UPDATE_STATE_FILE, VERSIONS_DIR } from "../engine/storage/rerail-home.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
 import { pinnedNodePath } from "./node-path.js";
 
 export const DEFAULT_UPDATE_CHANNEL = "latest";
 
-/** In the Rerail home: the updater's record of the installed versions and the update channel. */
-export const UPDATE_STATE_FILE = "update-state.json";
-/** In the Rerail home: the installed versions. */
-export const VERSIONS_DIR = "versions";
-/** In the Rerail home: the link to the active package root. */
-export const CURRENT_LINK = "current";
-/** In the Rerail home: the folder holding the launcher. */
-export const LAUNCHER_DIR = "bin";
+export { CURRENT_LINK, LAUNCHER_DIR, UPDATE_STATE_FILE, VERSIONS_DIR };
 /** The lock an update holds, `locks/update.lock` in the Rerail home. */
 const UPDATE_LOCK = "update";
 /** In the Rerail home: the folder Rerail before `locks/` held as the update lock, which uninstall removes. */

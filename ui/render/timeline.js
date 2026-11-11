@@ -8,7 +8,7 @@ import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPe
 const EF = () => (ui.showAll ? "all" : "corrections");
 /** A violation's card shows unless the timeline is filtered to another rule (`ui.sessRule`). */
 const cardShown = c => ui.sessRule === null || c.finding.ruleId === ui.sessRule;
-const hasShownCard = ev => ev.correction !== null && cardShown(ev.correction);
+const hasShownCard = ev => ev.corrections.some(cardShown);
 /** Folded away as noise, unless a shown correction hangs off it: that one must show, whatever its level. */
 const QUIET = ev => (ev.level === "observe" || ev.level === "coordinate") && !hasShownCard(ev);
 
@@ -187,14 +187,17 @@ function foldSummary(quiet) {
   return parts.join(" · ").replace(/^./, c => c.toUpperCase());
 }
 
-function updateTurn(node, turn, sessionId) {
-  const [u, a, fold, foldBody, body] = node.children;
-  setAttr(u, "hidden", turn.u === null);
-  if (turn.u !== null) { setText(u.querySelector(".msg"), turn.u); setText(u.querySelector(".mt"), `#${turn.uSeq} · ${clockSeconds(turn.uTime)}`); }
-  setAttr(a, "hidden", turn.a === null);
-  if (turn.a !== null) { setText(a.querySelector(".msg"), truncate(turn.a, 600)); setText(a.querySelector(".mt"), `#${turn.aSeq} · ${clockSeconds(turn.aTime)}`); }
-  const shown = turn.tools.filter(evMatches);
-  const quiet = shown.filter(QUIET), loud = turn.tools.filter(e => !QUIET(e));
+/** The prompt or reply row of a turn, hidden when the turn has none. */
+function updateMessage(row, text, seq, time) {
+  setAttr(row, "hidden", text === null);
+  if (text === null) return;
+  setText(row.querySelector(".msg"), text);
+  setText(row.querySelector(".mt"), `#${seq} · ${clockSeconds(time)}`);
+}
+
+/** The fold of a turn's quiet calls (reads, searches, plan updates): offered only while every event shows. */
+function updateFold(fold, foldBody, turn, sessionId) {
+  const quiet = turn.tools.filter(evMatches).filter(QUIET);
   const fkey = `${sessionId}:f${turn.ti}`, fopen = ui.openFolds.has(fkey), showFold = quiet.length > 0 && EF() === "all";
   setAttr(fold, "hidden", !showFold);
   setAttr(fold, "data-i", fkey);
@@ -202,14 +205,27 @@ function updateTurn(node, turn, sessionId) {
   if (showFold) setText(fold.lastChild, foldSummary(quiet));
   setAttr(foldBody, "hidden", !(showFold && fopen));
   syncChildren(foldBody, showFold && fopen ? quiet : [], e => e.key, createEvent, updateEvent);
-  const items = [];
-  for (const ev of loud) {
-    if (!evMatches(ev)) continue;
+}
+
+/** The turn's body: its shown loud calls, each followed by its shown cards. */
+function turnItems(turn) {
+  const card = c => ({ key: `c:${c.key}`, c });
+  // Orphans are older than every loaded call, so they lead the turn.
+  const items = turn.orphans.filter(cardShown).map(card);
+  for (const ev of turn.tools) {
+    if (QUIET(ev) || !evMatches(ev)) continue;
     items.push({ key: `e:${ev.key}`, ev });
-    if (hasShownCard(ev)) items.push({ key: `c:${ev.correction.key}`, c: ev.correction });
+    items.push(...ev.corrections.filter(cardShown).map(card));
   }
-  for (const c of turn.orphans) if (cardShown(c)) items.push({ key: `c:${c.key}`, c });
-  syncChildren(body, items, i => i.key, i => (i.ev ? createEvent(i.ev) : createCorr(i)), (n, i) => (i.ev ? updateEvent(n, i.ev) : updateCorr(n, i)));
+  return items;
+}
+
+function updateTurn(node, turn, sessionId) {
+  const [u, a, fold, foldBody, body] = node.children;
+  updateMessage(u, turn.u, turn.uSeq, turn.uTime);
+  updateMessage(a, turn.a === null ? null : truncate(turn.a, 600), turn.aSeq, turn.aTime);
+  updateFold(fold, foldBody, turn, sessionId);
+  syncChildren(body, turnItems(turn), i => i.key, i => (i.ev ? createEvent(i.ev) : createCorr(i)), (n, i) => (i.ev ? updateEvent(n, i.ev) : updateCorr(n, i)));
 }
 
 const turnVisible = turn => EF() === "all" || turn.tools.some(evMatches) || turn.orphans.some(cardShown);

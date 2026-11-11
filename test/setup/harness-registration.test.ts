@@ -934,7 +934,7 @@ describe("Claude Code commands", () => {
     expect(manage).toContain(`Under Orca (\`ORCA_TAB_ID\` set): run \`${command} manage\`.`);
     const create = await read("rerail-create");
     expect(create).toContain(
-      `allowed-tools: Bash(${command} rules evidence *), Bash(${command} rules test *), Bash(${command} rules add *)\n`,
+      `allowed-tools: Bash(${command} rules evidence *), Bash(${command} rules show *), Bash(${command} rules test *), Bash(${command} rules add *)\n`,
     );
     // Approving a rule is the person's: Claude Code asks them before the agent runs it.
     expect(create).not.toMatch(/allowed-tools:.*rules approve/u);
