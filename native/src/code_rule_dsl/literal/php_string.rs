@@ -99,7 +99,7 @@ fn spans<D: Doc>(node: &Node<'_, D>, text: &str, double: bool) -> Option<Decoded
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_core::tree_sitter::LanguageExt;

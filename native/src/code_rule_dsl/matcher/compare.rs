@@ -1,4 +1,4 @@
-mod semantic;
+pub mod semantic;
 
 use crate::code_rule_dsl::tree::Tree;
 use super::collate::natural_compare;
@@ -7,7 +7,7 @@ use super::transform::Transform;
 use super::value::Reading;
 use ast_grep_core::meta_var::MetaVarEnv;
 use ast_grep_core::{Doc, Node};
-pub(crate) use semantic::SemanticText;
+pub use semantic::SemanticText;
 use std::cmp::Ordering;
 use std::sync::Arc;
 
@@ -18,24 +18,24 @@ use std::sync::Arc;
 /// Over values or property names it is three-valued: where either side is not known, so is the
 /// comparison.
 #[derive(Clone)]
-pub(crate) struct Comparison {
-    pub(crate) left: String,
-    pub(crate) op: CompareOp,
-    pub(crate) right: String,
-    pub(crate) collation: Collation,
-    pub(crate) text: CompareText,
+pub struct Comparison {
+    pub left: String,
+    pub op: CompareOp,
+    pub right: String,
+    pub collation: Collation,
+    pub text: CompareText,
     /// How the semantic modes read the captures (`SemanticText`); set per grammar at compile
     /// time.
     pub(crate) reading: Option<Reading>,
     /// The query's `transform`, where a side names one of its variables: that side is its text.
-    pub(crate) transform: Option<Arc<Transform>>,
+    pub transform: Option<Arc<Transform>>,
     /// `tokens` only: binary operators whose operands compare in either order (ESLint
     /// no-dupe-else-if's `equal`); empty when none.
-    pub(crate) commute: Vec<String>,
+    pub commute: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CompareOp {
+pub enum CompareOp {
     Lt,
     Le,
     Eq,
@@ -47,7 +47,7 @@ pub(crate) enum CompareOp {
 /// How texts are ordered. Every collation compares UTF-16 code units after its fold, as
 /// JavaScript's `<` does, so JavaScript linters' orderings port exactly.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Collation {
+pub enum Collation {
     Ordinal,
     /// `toLowerCase()` first.
     FoldLower,
@@ -62,7 +62,7 @@ pub(crate) enum Collation {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CompareText {
+pub enum CompareText {
     /// The captured node's source text.
     Source,
     /// The source text without one pair of enclosing matching quotes (`'`, `"` or `` ` ``);
@@ -85,7 +85,7 @@ pub(crate) enum CompareText {
 /// (`Comparison::eq_class`): two bound nodes compare unknown where either class is `Unknown`,
 /// true where both are the same `Text`, and false otherwise.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum EqClass {
+pub enum EqClass {
     /// Equal exactly to the nodes of the same text.
     Text(Vec<u16>),
     /// Equal to no node: a key or name it does not have.
@@ -429,7 +429,7 @@ pub(crate) fn tokens<D: Doc>(node: &Node<'_, D>) -> Vec<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use crate::code_rule_dsl::test_support::*;
     use serde_json::{Value, json};
 

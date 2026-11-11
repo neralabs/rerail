@@ -2,7 +2,7 @@
 
 use super::core_rr::DialectFacts;
 
-pub(crate) struct EcmaFacts;
+pub struct EcmaFacts;
 
 impl DialectFacts for EcmaFacts {
     fn string_body(&self, prefix: &str, text: &str) -> Option<String> {

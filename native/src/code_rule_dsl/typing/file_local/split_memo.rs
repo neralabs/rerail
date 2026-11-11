@@ -132,6 +132,6 @@ pub(super) fn split(prog: &Program) -> Arc<Split> {
 }
 
 /// Drops the kept splits: preparation is done with them.
-pub(crate) fn forget() {
+pub fn forget() {
     SPLITS.lock().expect("the kept splits").clear();
 }

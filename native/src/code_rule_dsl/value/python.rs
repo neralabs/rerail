@@ -4,8 +4,8 @@
 use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::language::Family;
 
-mod ops;
-pub(crate) mod words;
+pub mod ops;
+pub mod words;
 
 use super::{BigInt, ContainerKind, Context, MAX_INT_BITS, MAX_STRING_BYTES, Value, int_to_float};
 use crate::code_rule_dsl::identifier::python_identifier;
@@ -86,7 +86,7 @@ fn follow<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
 /// Expressions: the subtypes of the grammar's `expression` and `primary_expression` supertypes
 /// (tree-sitter-python 0.25.0 `node-types.json`), and bare tuples. Only an expression has a value;
 /// on any other node (a statement, a keyword argument, punctuation) every value predicate fails.
-pub(crate) const EXPRESSION_KINDS: &[&str] = &[
+pub const EXPRESSION_KINDS: &[&str] = &[
     "as_pattern",
     "attribute",
     "await",
@@ -124,7 +124,7 @@ pub(crate) const EXPRESSION_KINDS: &[&str] = &[
 ];
 
 /// Kinds whose value `decode` can know; any other expression is `Unknown`.
-pub(crate) const VALUE_KINDS: &[&str] = &[
+pub const VALUE_KINDS: &[&str] = &[
     "integer",
     "float",
     "true",
@@ -785,4 +785,4 @@ pub(crate) fn float_repr(value: f64) -> String {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

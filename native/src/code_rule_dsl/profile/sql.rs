@@ -2,12 +2,12 @@
 //! outside callbacks and timed spans, while the connection's schema still exists.
 
 #[path = "sql/coverage.rs"]
-mod coverage;
+pub mod coverage;
 #[allow(dead_code)]
 #[path = "sql/snapshot.rs"]
-pub(in crate::code_rule_dsl) mod snapshot;
+pub mod snapshot;
 #[path = "sql/timing.rs"]
-mod timing;
+pub mod timing;
 use rusqlite::{Connection, ffi};
 use serde_json::{Value, json};
 use std::cell::{Cell, RefCell};
@@ -37,7 +37,7 @@ static ORIGIN: LazyLock<(Instant, u128)> = LazyLock::new(|| {
 static CONTEXT_FILTER: LazyLock<Option<String>> =
     LazyLock::new(|| std::env::var("RERAIL_SQL_PROFILE_SCOPE").ok());
 #[allow(dead_code)]
-pub(in crate::code_rule_dsl) fn captures_scope(scope: &str) -> bool {
+pub fn captures_scope(scope: &str) -> bool {
     DIRECTORY.is_some()
         && CONTEXT_FILTER
             .as_deref()
@@ -58,7 +58,7 @@ thread_local! {
     static EXPLAINING: Cell<bool> = const { Cell::new(false) };
 }
 
-pub(in crate::code_rule_dsl) fn explaining() -> bool {
+pub fn explaining() -> bool {
     EXPLAINING.get()
 }
 
@@ -71,7 +71,7 @@ impl Drop for Explanation {
 
 /// Cumulative callback counts, read at statement boundaries. No clocks in row callbacks.
 #[derive(Clone, Copy)]
-pub(in crate::code_rule_dsl) enum FrameEvent {
+pub enum FrameEvent {
     Scan,
     Lookup,
     Next,
@@ -82,7 +82,7 @@ pub(in crate::code_rule_dsl) enum FrameEvent {
 }
 
 #[inline]
-pub(in crate::code_rule_dsl) fn frame(event: FrameEvent, count: usize) {
+pub fn frame(event: FrameEvent, count: usize) {
     if ACTIVE.get() != 0 {
         FRAME.with(|counter| {
             let mut values = counter.get();
@@ -94,7 +94,7 @@ pub(in crate::code_rule_dsl) fn frame(event: FrameEvent, count: usize) {
 
 /// Time only cache misses, including any scan-order preparation needed by the lookup.
 /// These spans are contained in SQL time; they must not be added to the CPU budget.
-pub(in crate::code_rule_dsl) fn index_build(rows: usize) -> IndexBuild {
+pub fn index_build(rows: usize) -> IndexBuild {
     let started = (ACTIVE.get() != 0).then(Started::now);
     frame(FrameEvent::IndexBuild, 1);
     frame(FrameEvent::IndexedRows, rows);
@@ -178,7 +178,7 @@ impl State {
 
 /// Must drop before its connection. The Box keeps callback data stable when Session moves.
 /// Each connection runs on one worker at a time, as required by rusqlite.
-pub(in crate::code_rule_dsl) struct Profiler {
+pub struct Profiler {
     database: *mut ffi::sqlite3,
     state: RefCell<State>,
     context: Arc<parking_lot::Mutex<Value>>,
@@ -186,7 +186,7 @@ pub(in crate::code_rule_dsl) struct Profiler {
 }
 
 /// Context can nest around mutable session methods without borrowing the connection.
-pub(in crate::code_rule_dsl) struct Context {
+pub struct Context {
     context: Arc<parking_lot::Mutex<Value>>,
     previous: Value,
 }
@@ -202,9 +202,9 @@ unsafe impl Send for Profiler {}
 
 impl Profiler {
     /// Cumulative executions, wall nanoseconds, VM steps, scans, sorts, and autoindex rows.
-    pub(in crate::code_rule_dsl) fn totals(&self) -> [u64;6] { self.state.borrow().totals }
+    pub fn totals(&self) -> [u64;6] { self.state.borrow().totals }
     /// Untimed API outcome. Measured work remains in SQL and native operator events.
-    pub(in crate::code_rule_dsl) fn result(&self, name:&str, error:Option<String>) {
+    pub fn result(&self, name:&str, error:Option<String>) {
         let mut state=self.state.borrow_mut();
         let query=state.query(&format!("API {name} result"),"operator");
         let mut context=self.context.lock().clone();
@@ -213,15 +213,15 @@ impl Profiler {
             "wallNs":0,"cpuNs":0,"selfWallNs":0,"selfCpuNs":0,"rows":null,
             "completed":true,"outcome":if error.is_some(){"error"}else{"ok"},"context":context,"thread":format!("{:?}",std::thread::current().id())}));
     }
-    pub(in crate::code_rule_dsl) fn context(&self, value: Value) {
+    pub fn context(&self, value: Value) {
         *self.context.lock() = value;
     }
 
-    pub(in crate::code_rule_dsl) fn stage(&self, value: &str) {
+    pub fn stage(&self, value: &str) {
         self.context.lock()["stage"] = json!(value);
     }
 
-    pub(in crate::code_rule_dsl) fn scope(&self, fields: Value) -> Context {
+    pub fn scope(&self, fields: Value) -> Context {
         let mut context = self.context.lock();
         let previous = context.clone();
         if !context.is_object() { *context = json!({}); }
@@ -232,7 +232,7 @@ impl Profiler {
     }
     /// # Safety
     /// The returned profiler must be dropped before its connection closes.
-    pub(in crate::code_rule_dsl) unsafe fn configured(
+    pub unsafe fn configured(
         connection: &Connection,
     ) -> rusqlite::Result<Option<Box<Self>>> {
         let directory = DIRECTORY.clone().or_else(|| {
@@ -281,7 +281,7 @@ impl Profiler {
         Ok(this)
     }
 
-    pub(in crate::code_rule_dsl) fn operation(
+    pub fn operation(
         &self,
         sql: &str,
         at: (&str, usize),
@@ -316,7 +316,7 @@ impl Profiler {
     }
 
     /// Explains every newly observed statement without running its body or tracing EXPLAIN.
-    pub(in crate::code_rule_dsl) fn checkpoint(
+    pub fn checkpoint(
         &self,
         connection: &Connection,
     ) -> rusqlite::Result<()> {
@@ -325,7 +325,7 @@ impl Profiler {
     }
 
     /// Capture plans before their physical inputs are released, without rewriting the report.
-    pub(in crate::code_rule_dsl) fn explain_pending(&self, connection: &Connection) {
+    pub fn explain_pending(&self, connection: &Connection) {
         let _explanation = Explanation(EXPLAINING.replace(true));
         self.state.borrow_mut().enabled = false;
         {
@@ -407,7 +407,7 @@ impl Drop for Profiler {
     }
 }
 
-pub(in crate::code_rule_dsl) struct Operation<'a> {
+pub struct Operation<'a> {
     profiler: &'a Profiler,
     query: usize,
     previous: Option<Value>,
@@ -420,12 +420,12 @@ pub(in crate::code_rule_dsl) struct Operation<'a> {
 }
 
 impl Operation<'_> {
-    pub(in crate::code_rule_dsl) fn finish(mut self, rows: usize) {
+    pub fn finish(mut self, rows: usize) {
         self.rows = Some(rows);
         self.completed = true;
     }
 
-    pub(in crate::code_rule_dsl) fn finish_unobserved(mut self) {
+    pub fn finish_unobserved(mut self) {
         self.completed = true;
     }
 }
@@ -618,4 +618,4 @@ unsafe extern "C" fn trace(
 
 #[cfg(test)]
 #[path = "sql/tests.rs"]
-mod tests;
+pub mod tests;

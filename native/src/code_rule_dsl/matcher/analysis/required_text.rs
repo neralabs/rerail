@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Clauses a file's text must all satisfy, each by holding at least one of its literals.
 #[derive(Debug, PartialEq)]
-pub(in crate::code_rule_dsl) struct RequiredText {
+pub struct RequiredText {
     clauses: Vec<Vec<Box<str>>>,
 }
 
@@ -61,7 +61,7 @@ impl RequiredText {
 
     /// `holds`, with `found` saying whether `text` holds a literal (a file's clauses share many,
     /// so a caller can remember each search).
-    pub(in crate::code_rule_dsl) fn holds_with<'a>(
+    pub fn holds_with<'a>(
         &'a self,
         text: &str,
         found: &mut impl FnMut(&str, &'a str) -> bool,
@@ -209,7 +209,7 @@ fn pattern_leaves(node: &PatternNode, clauses: &mut Vec<Clause>) {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::RequiredText;
     use crate::code_rule_dsl::test_support::{compile_typescript_ast, grammar_matchers};
     use serde_json::{Value, json};

@@ -1,6 +1,6 @@
-pub(super) mod evidence;
-mod output;
-mod query;
+pub mod evidence;
+pub mod output;
+pub mod query;
 
 use super::calls;
 use super::json::{invalid, json_error, required_str};
@@ -11,17 +11,17 @@ use super::model::{
 };
 use super::value::names;
 use napi::Result;
-pub(super) use output::{
+pub use output::{
     coverage, evaluation_json, failure, overflow_evaluation, result_order, violation_from_witness,
     violation_id, violation_ids,
 };
-pub(super) use query::Output;
-pub(super) use query::{
+pub use query::Output;
+pub use query::{
     TapeCacheSlot, WitnessError, document_matcher, evaluate_query, file_language, file_tape,
     grammar_matcher, witness_from_match, witnesses_from_match,
 };
-#[cfg(test)]
-pub(super) use query::{reset_shared_group_lookups, shared_group_lookups};
+#[cfg(any(test, feature = "test-hooks"))]
+pub use query::{reset_shared_group_lookups, shared_group_lookups};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
@@ -33,7 +33,7 @@ use std::sync::Arc;
 /// files read the same modules and manifests. With `server_graph`, a derived manifest naming
 /// `next` carries the server graph the snapshot's files give. Also returns what the derivation
 /// read, so an editor's edit derives again only what it changes (`DerivedPackages::edited`).
-pub(super) fn parse_snapshot(
+pub fn parse_snapshot(
     source: &str,
     server_graph: bool,
 ) -> Result<(Snapshot, DerivedPackages)> {
@@ -90,7 +90,7 @@ pub(super) fn parse_snapshot(
 /// A snapshot's project context of a language family's files (ECMAScript's manifests): the context it gives the
 /// files the host sent none for, kept so an editor's edit derives again only what it changes. Registered at load
 /// (`install_snapshot_context`).
-pub(crate) trait SnapshotContext: Send + Sync {
+pub trait SnapshotContext: Send + Sync {
     /// Derives again what an edit of the file at `index` changes.
     fn edited(&mut self, snapshot: &mut Snapshot, index: usize);
 }
@@ -102,7 +102,7 @@ pub(crate) type DeriveContext = fn(&mut Snapshot, Vec<usize>, bool) -> Box<dyn S
 static SNAPSHOT_CONTEXT: std::sync::OnceLock<DeriveContext> = std::sync::OnceLock::new();
 
 /// Registers what derives a snapshot's context (once, at load).
-pub(crate) fn install_snapshot_context(derive: DeriveContext) {
+pub fn install_snapshot_context(derive: DeriveContext) {
     let _ = SNAPSHOT_CONTEXT.set(derive);
 }
 
@@ -123,7 +123,7 @@ fn derive_context(snapshot: &mut Snapshot, files: Vec<usize>, server_graph: bool
     }
 }
 
-pub(crate) mod ecma;
+// cratify: `ecma` is rerail-lang-ecma's (it mounts it)
 
 /// Evaluates `code_rule`, its grammar matchers matched natively (`matcher::run_clause`).
 pub(super) fn evaluate_code_rule(
@@ -148,7 +148,7 @@ pub(super) fn evaluate_clauses(
     clauses: &[CompiledClause],
 ) -> Result<Evaluation> {
     // P's anchor corpus for every rule (the `p-anchor-corpus` path, open item O20).
-    #[cfg(all(test, feature = "p-anchor-corpus"))]
+    #[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
     let _corpus = crate::code_rule_dsl::matcher::CorpusSlot::enter();
     let _tapes = TapeCacheSlot::install();
     // P's syntax facts, shared by P's relational inputs (test-only, open item O18).
@@ -186,7 +186,7 @@ pub(super) fn evaluate_clauses(
         },
         clauses: covered,
     };
-    #[cfg(all(test, feature = "p-anchor-corpus"))]
+    #[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
     prepare_candidates(code_rule, snapshot);
     // Import targets resolve among the snapshot's files; a workspace's evaluation installed the
     // view of the files it holds instead (`resolution::install_snapshot_unless_present`).
@@ -384,7 +384,7 @@ fn merge(evaluation: &mut Evaluation, mut other: Evaluation) {
 
 /// P's corpus publication and candidate preparation for one rule's stateless evaluation (the
 /// `p-anchor-corpus` path, open item O20).
-#[cfg(all(test, feature = "p-anchor-corpus"))]
+#[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
 fn prepare_candidates(code_rule: &CompiledCodeRule, snapshot: &Snapshot) {
     use crate::code_rule_dsl::matcher::{CorpusSlot, anchor_plans};
     let plans = anchor_plans(std::iter::once(code_rule));
@@ -432,8 +432,8 @@ fn prepare_candidates(code_rule: &CompiledCodeRule, snapshot: &Snapshot) {
 }
 
 /// Each input relation's rows of a relational clause (P's, test-only, open item O18).
-#[cfg(test)]
-pub(super) fn relational_rows(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn relational_rows(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     plan: &crate::code_rule_dsl::residency::admission::relational::Plan,
@@ -456,8 +456,8 @@ pub(super) fn relational_rows(
 }
 
 /// Each input relation's rows of D's relational plan (test-only, open item O19).
-#[cfg(test)]
-pub(super) fn data_layer_rows(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn data_layer_rows(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     plan: &crate::code_rule_dsl::waves::relational::Plan,
@@ -481,7 +481,7 @@ pub(super) fn data_layer_rows(
 
 /// An evidence relation's rows in a stateless snapshot: each file of the code rule's scope and the
 /// relation's domain evaluated alone, so that one file's failure makes only its rows unknown.
-pub(super) fn stateless_rows(
+pub fn stateless_rows(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     (relation, side): (&FactQuery, evidence::Side),
@@ -560,7 +560,7 @@ pub(in crate::code_rule_dsl) fn stateless_rows_to(
 /// spends the evaluation's work budget (`metrics.visited_nodes`); seed witnesses are no violation,
 /// so each seed evaluation has its own witness budget, as a workspace's seed producer has per
 /// file, and spends none of the clauses'.
-pub(in crate::code_rule_dsl) fn stateless_calls(
+pub fn stateless_calls(
     code_rule: &CompiledCodeRule,
     snapshot: &Snapshot,
     clauses: &[CompiledClause],
@@ -711,5 +711,4 @@ pub(in crate::code_rule_dsl) fn stateless_calls(
     )))
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

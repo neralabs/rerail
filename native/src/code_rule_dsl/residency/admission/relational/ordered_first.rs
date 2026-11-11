@@ -317,7 +317,7 @@ pub(super) fn create(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn cycles_preserve_negative_memo_entries_and_edge_order() {

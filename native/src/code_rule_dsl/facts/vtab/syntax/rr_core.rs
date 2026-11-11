@@ -4,7 +4,7 @@
 use super::core_rr::{DialectFacts, Literal};
 use crate::code_rule_dsl::facts::core::Facts;
 
-pub(crate) struct RrFacts;
+pub struct RrFacts;
 
 impl DialectFacts for RrFacts {
     /// A `.rr` string reads as the rule engine reads it; a backtick literal's `str` is its body.

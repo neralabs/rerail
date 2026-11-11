@@ -234,7 +234,7 @@ fn publish(
 }
 
 /// Python's canonical AST stage (`AstProducer`): CPython's `ast` of each root, by field.
-pub(in crate::code_rule_dsl) struct PythonAst;
+pub struct PythonAst;
 
 impl AstProducer for PythonAst {
     fn fields(&self) -> &'static [&'static str] {

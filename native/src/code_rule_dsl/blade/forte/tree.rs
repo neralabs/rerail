@@ -304,7 +304,7 @@ impl Content for BladeSource {
 }
 
 /// A parsed template as a tree.
-pub(crate) struct BladeTree {
+pub struct BladeTree {
     source: BladeSource,
     nodes: Vec<Rec>,
     /// The flat node each node stands for (`NONE` for leaves).
@@ -804,20 +804,20 @@ impl BladeTree {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn index_of(&self, node_id: usize) -> Option<usize> {
         let index = node_id.checked_sub(self.base)?;
         (index < self.nodes.len()).then_some(index)
     }
 
     /// Nodes in the tree.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn len(&self) -> usize {
         self.nodes.len()
     }
 
     /// The template's bytes.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn source(&self) -> &[u8] {
         &self.source.bytes
     }
@@ -831,12 +831,12 @@ impl BladeTree {
     }
 
     /// Where the template has lexer errors (zero-wide, at the error's offset).
-    pub(crate) fn error_ranges(&self) -> &[Range<usize>] {
+    pub fn error_ranges(&self) -> &[Range<usize>] {
         &self.errors
     }
 
     /// The flat node (index into Forte's array) the node with this id stands for.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn forte_index(&self, node_id: usize) -> Option<usize> {
         let forte = *self.forte.get(self.index_of(node_id)?)?;
         (forte != NONE).then_some(forte as usize)
@@ -851,7 +851,7 @@ impl BladeTree {
 ///
 /// `Err` where Forte stopped at a limit (its nesting depth, or Rerail's step budget): that says
 /// nothing about the template, which then has no tree, not a tree of one syntax error.
-pub(crate) fn parse_tree(source: &[u8]) -> Result<BladeTree, ParseError> {
+pub fn parse_tree(source: &[u8]) -> Result<BladeTree, ParseError> {
     let mut budget = Budget::for_template(source.len());
     let mut directives = Directives::with_defaults();
     directives.set_accept_all(true);
@@ -913,7 +913,7 @@ pub(crate) struct BladeDoc {
 }
 
 impl BladeDoc {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn new(tree: BladeTree, lang: BladeLang) -> Self {
         Self {
             tree: Arc::new(tree),
@@ -1093,4 +1093,4 @@ impl<'r> SgNode<'r> for BladeNode<'r> {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

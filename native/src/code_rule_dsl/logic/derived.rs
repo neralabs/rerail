@@ -160,7 +160,7 @@ pub(in crate::code_rule_dsl) fn value<V: Clone + Send + Sync + 'static>(name: &'
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

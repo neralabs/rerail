@@ -166,7 +166,7 @@ fn ecma_features(value: Option<&Value>, path: &str) -> Result<(bool, bool)> {
 /// it leaves out: the latest `ecmaVersion`, no extra `globals`, no `ecmaFeatures`. Without a
 /// `sourceType` each file has its own (`SourceType::of_file`), as ESLint's default config gives
 /// `.cjs` files `commonjs` and the rest `module`.
-pub(crate) fn compile_language_options(value: &Value, path: &str) -> Result<LanguageOptions> {
+pub fn compile_language_options(value: &Value, path: &str) -> Result<LanguageOptions> {
     let path = format!("{path}/languageOptions");
     let options = object(value, &path)?;
     reject_unknown(options, LANGUAGE_OPTIONS_KEYS, &path)?;
@@ -248,7 +248,7 @@ const MAX_TYPING_NAMES: usize = 256;
 /// pinned builtins table has (Ruff's default, 3.10, when omitted); `typingModules` and
 /// `extendGenerics`, Ruff's `lint.typing-modules` and `lint.pyflakes.extend-generics`, each a list
 /// of dotted names.
-pub(crate) fn compile_python_options(value: &Value, path: &str) -> Result<PythonOptions> {
+pub fn compile_python_options(value: &Value, path: &str) -> Result<PythonOptions> {
     let path = format!("{path}/languageOptions");
     let options = object(value, &path)?;
     reject_unknown(
@@ -330,7 +330,7 @@ fn python_minor(version: &Value, path: &str) -> Result<u8> {
 /// A Python ast query's `when`: the versions it applies to, `{ "pythonVersion": { "min", "max" } }`,
 /// read against its own `languageOptions`, else Ruff's default (3.10). Every key must hold.
 /// Whether the query applies.
-pub(crate) fn compile_python_when(
+pub fn compile_python_when(
     value: &Value,
     path: &str,
     python: Option<&PythonOptions>,
@@ -352,7 +352,7 @@ pub(crate) fn compile_python_when(
 /// equal the query's), read against its own `languageOptions`, else ESLint's defaults (the latest,
 /// no features). Every key must hold. Whether the query applies, and the source types a file must
 /// have where the query leaves `sourceType` to each file (`SourceType::of_file`).
-pub(crate) fn compile_ecma_when(
+pub fn compile_ecma_when(
     value: &Value,
     path: &str,
     options: Option<&LanguageOptions>,
@@ -409,7 +409,7 @@ pub(crate) fn compile_ecma_when(
 
 /// The `when` of an ast query whose language has no versions or settings (SQL): the document's
 /// options alone, `{ "option": ... }`. Whether the query applies.
-pub(crate) fn compile_option_when(value: &Value, path: &str, document: &Options) -> Result<bool> {
+pub fn compile_option_when(value: &Value, path: &str, document: &Options) -> Result<bool> {
     let path = format!("{path}/when");
     let when = object(value, &path)?;
     reject_unknown(when, &["option"], &path)?;

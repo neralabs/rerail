@@ -221,4 +221,4 @@ fn call_kinds(
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

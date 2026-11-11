@@ -55,7 +55,7 @@ pub(super) fn owner(rel: &str) -> Owner {
 
 /// What the chunks handed on for one document.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) struct Entry {
+pub struct Entry {
     /// The document key the rows were made under (`doc_keys`): their node ids are `key << 32 | index`.
     pub key: i64,
     /// The document's nodes (for the run's report).
@@ -69,7 +69,7 @@ pub(in crate::code_rule_dsl) struct Entry {
 /// Each path's document key: from its hash, in `1..2^30`, the next free one on a collision. A key is in each entry,
 /// so a key a collision moved only misses the memo. Guests (decision 0055) take `2^30..2^31`, so every key's
 /// `key << 32` stays positive.
-pub(in crate::code_rule_dsl) fn doc_keys(paths: &[String]) -> Vec<i64> {
+pub fn doc_keys(paths: &[String]) -> Vec<i64> {
     const SPAN: u64 = (1 << 30) - 1;
     let mut taken = HashSet::with_capacity(paths.len());
     paths
@@ -240,7 +240,7 @@ fn frame_reads(path: &str, key: i64, digest: &[u8; 32]) -> Vec<(String, u64)> {
 }
 
 /// A memo entry as its stored frame holds it, not decoded: the document's path and key, and its content's digest.
-pub(in crate::code_rule_dsl) struct Frame {
+pub struct Frame {
     pub path: String,
     key: i64,
     digest: [u8; 32],
@@ -275,7 +275,7 @@ impl Frame {
 /// The newest corpus run of `root`: the relations its memo plan holds, by name, as recorded (`.decl` columns as
 /// JSON), and its documents' frames, not decoded, by path. A frame's document key is `frame_key`, its entry
 /// `decode_frame`.
-pub(in crate::code_rule_dsl) fn read_run(store: &ContentStore, root: &str) -> StoreResult<Option<(BTreeMap<String, String>, Vec<Frame>)>> {
+pub fn read_run(store: &ContentStore, root: &str) -> StoreResult<Option<(BTreeMap<String, String>, Vec<Frame>)>> {
     let Some((plan, sources, relations)) = store.corpus_run_of(root)? else { return Ok(None) };
     let ids: Vec<SourceId> = sources.into_iter().map(SourceId::from_raw).collect();
     let contents: HashSet<[u8; 32]> = store.source_digests(&ids)?.into_iter().flatten().collect();
@@ -290,12 +290,12 @@ pub(in crate::code_rule_dsl) fn read_run(store: &ContentStore, root: &str) -> St
 }
 
 /// The document key of a frame's entry.
-pub(in crate::code_rule_dsl) fn frame_key(frame: &Frame) -> StoreResult<i64> {
+pub fn frame_key(frame: &Frame) -> StoreResult<i64> {
     Ok(frame.key)
 }
 
 /// A frame's entry.
-pub(in crate::code_rule_dsl) fn decode_frame(frame: &Frame) -> StoreResult<Entry> {
+pub fn decode_frame(frame: &Frame) -> StoreResult<Entry> {
     frame.entry()
 }
 
@@ -825,7 +825,7 @@ fn from_rows_projected(frame: &crate::content_store::FrameRows, keep: &dyn Fn(&s
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

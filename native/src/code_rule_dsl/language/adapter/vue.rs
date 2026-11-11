@@ -25,7 +25,7 @@ use std::ops::Range;
 use std::path::Path;
 
 /// Vue single-file components (`.vue`).
-pub(crate) struct Vue;
+pub struct Vue;
 
 impl Adapter for Vue {
     const FAMILY: Family = Family::Vue;
@@ -125,7 +125,7 @@ impl SyntaxRules for Vue {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
     use ast_grep_core::Doc;

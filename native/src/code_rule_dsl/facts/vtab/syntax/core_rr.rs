@@ -18,7 +18,7 @@ use crate::code_rule_dsl::facts::core::Facts;
 
 /// What a family reads of its own documents' core.rr facts, registered at load by the crate that knows it: the
 /// literals it decodes itself, its syntax verdict, and its strings' constant parts. Defaults: the common reading.
-pub(crate) trait DialectFacts: Send + Sync {
+pub trait DialectFacts: Send + Sync {
     /// The literal facts of a node of `kind` with source `text`, where the family reads them itself (`.rr`'s);
     /// `None`: the common reading.
     fn literal(&self, kind: &str, text: &str) -> Option<Literal> {
@@ -51,7 +51,7 @@ static DIALECT_FACTS: [std::sync::OnceLock<&'static dyn DialectFacts>; Family::C
     [const { std::sync::OnceLock::new() }; Family::COUNT];
 
 /// Registers `family`'s reading of its facts; the first registration holds.
-pub(crate) fn register_dialect_facts(family: Family, facts: &'static dyn DialectFacts) {
+pub fn register_dialect_facts(family: Family, facts: &'static dyn DialectFacts) {
     let _ = DIALECT_FACTS[family as usize].set(facts);
 }
 
@@ -68,7 +68,7 @@ pub(super) const TEXT_INLINE: usize = 256;
 
 /// A language's literal and line rules.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Family {
+pub enum Family {
     Python,
     Ecma,
     Php,
@@ -95,7 +95,7 @@ impl Family {
 }
 
 /// A document's lines: where each starts and where its text ends (before its terminator).
-pub(super) struct Lines {
+pub struct Lines {
     source: std::sync::Arc<String>,
     python: bool,
     index: std::sync::OnceLock<LineIndex>,
@@ -135,7 +135,7 @@ impl Lines {
     /// Python ends a line at `\n`, `\r\n` or a lone `\r`; the others at `\n`, a `\r` before it left out of the
     /// line's text. A last line without a terminator counts when it is not empty (Python) or always (the others,
     /// so an empty file has one empty line, as `split('\n')` gives).
-    pub(super) fn new(src: &str, python: bool) -> Self {
+    pub fn new(src: &str, python: bool) -> Self {
         // A borrowed, one-shot source is indexed immediately without copying its text.
         Self { source: std::sync::Arc::new(String::new()), python, index: std::sync::OnceLock::from(Self::build(src, python)) }
     }
@@ -185,11 +185,11 @@ impl Lines {
         LineIndex { starts, ends }
     }
     /// Physical lines, as `src_line` numbers them.
-    pub(super) fn count(&self) -> usize {
+    pub fn count(&self) -> usize {
         self.index().ends.len()
     }
     /// Line `l`'s text, `[start, end)`, from 1.
-    pub(super) fn span(&self, l: usize) -> [u32; 2] {
+    pub fn span(&self, l: usize) -> [u32; 2] {
         [self.index().starts[l - 1], self.index().ends[l - 1]]
     }
     /// The 1-based line holding byte `at`.
@@ -266,10 +266,10 @@ pub(super) fn name(kind: &str, text: &str) -> Option<String> {
 
 /// What a literal node gives: `strprefix`, `str`, and `value` with its `value_type`.
 #[derive(Default, Debug, PartialEq)]
-pub(crate) struct Literal {
+pub struct Literal {
     pub(crate) prefix: Option<String>,
-    pub(crate) str: Option<String>,
-    pub(crate) value: Option<(String, &'static str)>,
+    pub str: Option<String>,
+    pub value: Option<(String, &'static str)>,
 }
 
 /// The literal facts of a node of `kind` with source `text`; `interpolated` when it has a part other than
@@ -352,7 +352,7 @@ pub(super) fn string_contents(family: Family, text: &str) -> Option<(String, Str
 /// A Python literal's escapes, as the language reference gives them: unknown escapes keep their backslash, octal up
 /// to three digits, `\x`, `\u`, `\U`, a backslash-newline joins lines. For bytes and f-string pieces, which
 /// `str_value` does not decode.
-pub(super) fn py_unescape(s: &str) -> String {
+pub fn py_unescape(s: &str) -> String {
     let c: Vec<char> = s.chars().collect();
     let mut out = String::new();
     let mut i = 0;
@@ -501,7 +501,7 @@ pub(super) fn js_number(t: &str) -> Option<String> {
 }
 
 /// The error a batch reading CPython's facts of document `path` fails with, where `ast.parse` raises no `SyntaxError`.
-pub(crate) fn failure(path: &str, raised: &str) -> crate::content_store::StoreError {
+pub fn failure(path: &str, raised: &str) -> crate::content_store::StoreError {
     crate::content_store::StoreError::Invalid(format!("{path}: CPython's ast.parse raises {raised}"))
 }
 
@@ -1035,7 +1035,7 @@ impl CoreRows {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /// Python's verdict is CPython's grammar's: Python 2's `print "x"`, which tree-sitter accepts, is an error; a
@@ -1091,7 +1091,7 @@ mod tests {
 }
 
 /// A pattern's single-node metavariables (`$X`, not `$$$X` nor `$_X`), each once, in order.
-pub(crate) fn single_metavars(pattern: &str) -> Vec<String> {
+pub fn single_metavars(pattern: &str) -> Vec<String> {
     let b = pattern.as_bytes();
     let mut out: Vec<String> = Vec::new();
     let mut i = 0;

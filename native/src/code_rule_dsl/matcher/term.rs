@@ -12,7 +12,7 @@ use std::any::TypeId;
 use std::sync::{Arc, OnceLock};
 
 /// A compiled language term.
-pub(crate) trait LanguageTerm: Send + Sync {
+pub trait LanguageTerm: Send + Sync {
     /// The rule key it is compiled from.
     fn key(&self) -> &'static str;
     /// How it reads the node's value (its anchors are the nodes with one).
@@ -49,19 +49,19 @@ pub(crate) fn holds<D: Doc>(term: &dyn LanguageTerm, node: &Node<'_, D>) -> bool
 }
 
 /// What compiles a language term from its rule key.
-pub(crate) struct TermCompiler {
-    pub(crate) key: &'static str,
+pub struct TermCompiler {
+    pub key: &'static str,
     /// Checks the key's value before compilation (`validate_ast_rule`).
-    pub(crate) validate: fn(&serde_json::Value, &str) -> napi::Result<()>,
+    pub validate: fn(&serde_json::Value, &str) -> napi::Result<()>,
     /// The term of the key's value, in `language`.
-    pub(crate) compile:
+    pub compile:
         fn(&serde_json::Value, GrammarDialect, &str, Option<&Arc<LanguageOptions>>) -> napi::Result<AstMatcher>,
 }
 
 static TERMS: OnceLock<Vec<TermCompiler>> = OnceLock::new();
 
 /// Registers the language terms (once, at load).
-pub(crate) fn install_terms(terms: Vec<TermCompiler>) {
+pub fn install_terms(terms: Vec<TermCompiler>) {
     let _ = TERMS.set(terms);
 }
 

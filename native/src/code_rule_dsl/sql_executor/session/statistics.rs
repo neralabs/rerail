@@ -4,11 +4,11 @@ use super::*;
 use std::cell::RefCell;
 
 #[derive(Default)]
-pub(in crate::code_rule_dsl::sql_executor) struct Statistics {
+pub struct Statistics {
     modules: Modules,
     current: RefCell<Option<Arc<Rows>>>,
 }
-pub(in crate::code_rule_dsl::sql_executor) struct Rows(Vec<(String, i64)>);
+pub struct Rows(Vec<(String, i64)>);
 impl Source for Rows {
     fn columns(&self) -> Vec<String> {
         vec!["tbl".into(), "rows".into()]

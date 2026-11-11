@@ -11,7 +11,7 @@ use crate::code_rule_dsl::tape::resident::{self, DeviceCode};
 use crate::code_rule_dsl::transducer::packed::Error;
 use crate::content_store::ContentStore;
 #[allow(unused_imports)]
-pub(in crate::code_rule_dsl) use rerail_metal::slabs::*;
+pub use rerail_metal::slabs::*;
 use sha2::{Digest as _, Sha256};
 use std::collections::HashMap;
 use std::io::Read as _;
@@ -89,7 +89,7 @@ fn plan(frames: &crate::content_store::ResidentFrames) -> Result<Plan, Error> {
 /// The documents of the tapes `digests` (SHA-256), resident, in order: hits from the residency,
 /// misses admitted from `store` in one read. `grammar` gives each tape's grammar by
 /// `tape_objects.grammar_id`. A digest the store has no tape for is an error.
-pub(in crate::code_rule_dsl) fn admit(
+pub fn admit(
     store: &ContentStore,
     digests: &[[u8; 32]],
     grammar: &dyn Fn(i64) -> Result<Arc<Grammar>, String>,
@@ -318,9 +318,9 @@ pub(in crate::code_rule_dsl) fn drop_all() {
 
 /// A full execution ended: everything resident is dropped `DROP_AFTER` from now, unless another
 /// ends first (which moves the deadline).
-pub(in crate::code_rule_dsl) fn executed() {
+pub fn executed() {
     rerail_metal::slabs::executed(drop_all);
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

@@ -9,7 +9,7 @@ use std::{
     sync::Arc,
 };
 
-pub(in crate::code_rule_dsl) fn plans<'a>(
+pub fn plans<'a>(
     rules: impl IntoIterator<Item = &'a CompiledCodeRule>,
 ) -> BTreeMap<u32, Vec<Arc<AnchorPlan>>> {
     fn query(q: &Query, out: &mut BTreeMap<u32, Vec<Arc<AnchorPlan>>>, seen: &mut HashSet<usize>) {
@@ -64,7 +64,7 @@ pub(in crate::code_rule_dsl) fn plans<'a>(
 }
 
 /// Discover file demand without running selectors. Conditional scheduling remains the caller's job.
-pub(in crate::code_rule_dsl) fn for_file(
+pub fn for_file(
     rule: &CompiledCodeRule,
     file: &crate::code_rule_dsl::model::FileInput,
     doc: &crate::code_rule_dsl::tape::TapeDoc,

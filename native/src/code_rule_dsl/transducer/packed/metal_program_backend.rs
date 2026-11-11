@@ -11,46 +11,46 @@ use super::packed_workspace::WorkspaceTotals;
 use super::*;
 use crate::code_rule_dsl::tape::TapeDoc;
 use metal::{ComputePipelineState, Device, MTLSize};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, LazyLock, Mutex};
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     static INVOCATIONS: Cell<usize> = const { Cell::new(0) };
     static HOST_EVENTS: Cell<usize> = const { Cell::new(0) };
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(in crate::code_rule_dsl) fn reset_metrics() {
     INVOCATIONS.set(0);
     HOST_EVENTS.set(0);
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(in crate::code_rule_dsl) fn metrics() -> (usize, usize) {
     (INVOCATIONS.get(), HOST_EVENTS.get())
 }
 
 #[path = "metal_label_passes.rs"]
-pub(in crate::code_rule_dsl) mod label_passes;
+pub mod label_passes;
 #[cfg(test)]
 #[path = "metal_tape_tests.rs"]
-mod tape_tests;
+pub mod tape_tests;
 #[path = "metal_set_steps.rs"]
-pub(in crate::code_rule_dsl) mod set_steps;
+pub mod set_steps;
 // Block programs on Metal: the Metal crate's.
-pub(in crate::code_rule_dsl) use rerail_metal::block_program;
+pub use rerail_metal::block_program;
 #[path = "metal_work_queue.rs"]
-pub(in crate::code_rule_dsl) mod work_queue;
+pub mod work_queue;
 #[path = "metal_lattice.rs"]
-pub(in crate::code_rule_dsl) mod lattice;
+pub mod lattice;
 #[path = "metal_nearest.rs"]
-pub(in crate::code_rule_dsl) mod nearest;
+pub mod nearest;
 // Pre-pinned blocks: the Metal crate's.
-pub(in crate::code_rule_dsl) use rerail_metal::pool as blocks;
+pub use rerail_metal::pool as blocks;
 
 const METAL_JIT_CACHE_LIMIT: usize = 32;
 pub(super) const EXECUTION_LANES: usize = 64;
@@ -66,7 +66,7 @@ pub(super) fn release_workspaces() -> bool {
     let released = METAL_WORKSPACE_POOL.lock().map(|mut pool| std::mem::take(&mut *pool)).unwrap_or_default();
     !released.is_empty()
 }
-pub(in crate::code_rule_dsl) use rerail_metal::METAL_DEVICE;
+pub use rerail_metal::METAL_DEVICE;
 
 struct MetalWorkspace {
     totals: WorkspaceTotals,
@@ -909,7 +909,7 @@ pub(in crate::code_rule_dsl) fn execute_packed_with_result_limits(
     if command.status() == metal::MTLCommandBufferStatus::Error {
         return Err(Error::BackendFailure);
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     INVOCATIONS.set(INVOCATIONS.get() + 1);
     batch.global_arenas = unsafe {
         scheduler_buffer

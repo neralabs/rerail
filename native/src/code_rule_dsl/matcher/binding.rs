@@ -24,7 +24,7 @@ use crate::code_rule_dsl::language::adapter::pack as language_pack;
 /// each listed sub-rule matches that binding's node: its site, its value, its annotation. The
 /// sub-rules share the caller's environment, as `has` does, so they may bind captures.
 #[derive(Clone)]
-pub(crate) struct BindingTest {
+pub struct BindingTest {
     pub(crate) language: GrammarDialect,
     /// How the binding is read: through `global` or not, and whether it must be the first.
     pub(crate) lookup: Lookup,
@@ -44,15 +44,15 @@ pub(crate) struct BindingTest {
     pub(crate) options: Option<Arc<LanguageOptions>>,
     pub(crate) python: Option<Arc<PythonOptions>>,
     /// Filters over the binding, as `binds` has.
-    pub(crate) filter: BindingFilter,
+    pub filter: BindingFilter,
     /// Matches the construct that binds the name (`Site::node`).
-    pub(crate) site: Option<AstMatcher>,
+    pub site: Option<AstMatcher>,
     /// Matches the value the binding carries (`ScopeTable::binding`).
-    pub(crate) value: Option<AstMatcher>,
+    pub value: Option<AstMatcher>,
     /// Matches the binding's annotation.
-    pub(crate) annotation: Option<AstMatcher>,
+    pub annotation: Option<AstMatcher>,
     /// TypeScript: matches some definition name or reference of the binding's variable.
-    pub(crate) occurrence: Option<AstMatcher>,
+    pub occurrence: Option<AstMatcher>,
 }
 
 thread_local! {
@@ -315,8 +315,8 @@ pub(super) fn match_binding_nodes<'tree, D: Doc>(
 }
 
 impl BindingTest {
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn facts<'tree, D: Doc>(
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    pub fn facts<'tree, D: Doc>(
         &self,
         node: Node<'tree, D>,
         env: &MetaVarEnv<'tree, D>,
@@ -400,7 +400,7 @@ impl BindingTest {
     }
 
     /// `resolves.write: "last"` (see `match_anchor`).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     fn anchor_facts<'tree, D: Doc>(
         &self,
         reference: Node<'tree, D>,
@@ -486,7 +486,7 @@ impl BindingTest {
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
 pub(super) fn binding_node_facts<'tree, D: Doc>(
     anchor: &Node<'tree, D>,
     targets: [(bool, u16, Option<NodeRef>); 3],
@@ -512,7 +512,7 @@ pub(super) fn binding_node_facts<'tree, D: Doc>(
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
 pub(super) fn occurrence_facts<'tree, D: Doc>(
     anchor: &Node<'tree, D>,
     occurrences: &[NodeRef],

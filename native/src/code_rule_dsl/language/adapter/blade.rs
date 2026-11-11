@@ -7,7 +7,7 @@ use super::php::Php;
 /// embeds (`blade::view`), a guest document read with PHP's family (`embed`): a clause reads
 /// them with `ast.embedded` or `embedded`. The concerns name PHP's, which the compile refuses on
 /// the template's own tree (`compile::refuse_unavailable_semantics`).
-pub(crate) struct Blade;
+pub struct Blade;
 
 impl Adapter for Blade {
     const FAMILY: Family = Family::Blade;

@@ -2,8 +2,8 @@
 //! the reports ESLint 10.11.0 keeps after applying the fixtures' directive comments
 //! (`fixtures/ecma/suppress/generate_eslint.mjs`).
 
-use crate::code_rule_dsl::oracle;
-use crate::code_rule_dsl::test_support::*;
+// cratify: a re-export of rerail-engine's, which its facades of this module make
+// cratify: a re-export of rerail-engine's, which its facades of this module make
 use serde_json::{Value, json};
 
 const ORACLE: &str = oracle!("ecma/suppress/eslint.expected.json");

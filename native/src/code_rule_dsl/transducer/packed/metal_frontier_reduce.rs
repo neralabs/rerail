@@ -22,7 +22,7 @@ const SOURCE: &str = concat!(
 const STATE_ARGUMENTS: u64 = 8 * 4;
 const SCAN_ARGUMENTS: u64 = 11 * 4;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) struct Frontier {
     pub columns: MappedBuffer,
     pub len: usize,
@@ -972,7 +972,7 @@ impl Scratch {
 
 // Standalone wrappers are independent component tests. Production commands own
 // submission and completion through encode_active and PendingReduction.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn reduce_completed(
     device: &Device,
     frontier: &Frontier,
@@ -992,7 +992,7 @@ pub(super) fn reduce_completed(
     })
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn reduce_active(
     device: &Device,
     frontier: &Frontier,
@@ -1012,7 +1012,7 @@ pub(super) fn reduce_active(
     })
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn reduce_impl(
     device: &Device,
     frontier: &Frontier,

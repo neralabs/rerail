@@ -21,3 +21,34 @@ pub fn tape(src: &str) -> Vec<tape::Node> {
     let _ = parser.statements();
     parser.into_tape().0
 }
+
+// cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
+extern crate self as rerail_rr_syntax;
+#[path = "../../../src/code_rule_dsl"]
+pub mod code_rule_dsl {
+    #[path = "logic"]
+    pub mod logic {
+        #[path = "front"]
+        pub mod front {
+            pub mod ast;
+            pub mod name;
+            #[allow(unused_imports)]
+            use std::collections::{BTreeMap, BTreeSet};
+            #[allow(unused_imports)]
+            use std::fmt;
+            #[allow(unused_imports)]
+            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::name::Name;
+            #[allow(unused_imports)]
+            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, Again, AggOp, Atom, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
+        }
+    }
+    #[allow(unused_imports)]
+    use napi::Result;
+    #[allow(unused_imports)]
+    use napi_derive::napi;
+    #[allow(unused_imports)]
+    use serde_json::Value;
+    #[allow(unused_imports)]
+    use std::sync::Arc;
+}
+// cratify: mounts end

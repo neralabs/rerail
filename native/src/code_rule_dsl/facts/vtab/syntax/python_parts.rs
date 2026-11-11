@@ -1,7 +1,7 @@
 //! Decode Python literal runs and retain each constant's source byte start.
 use super::core_rr::py_unescape;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, usize)> {
     use crate::code_rule_dsl::{facts::core::{self, Built}, model::FileInput};
     use std::sync::Arc;
@@ -145,7 +145,7 @@ impl Constants<'_> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::with_offsets;
 
     /// Decoded parts and their source byte offsets, relative to the part's literal token.

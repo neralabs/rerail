@@ -8,26 +8,26 @@ use std::sync::atomic::{AtomicU64, Ordering};
 thread_local! {
     /// Set while this thread runs phase 0 (`logic::plan::corpus::phase0`): `bootstrap.rr` itself is read by the
     /// builtin reader, and the profiler's roofline measures nothing in it.
-    pub(in crate::code_rule_dsl) static IN_PHASE_0: Cell<bool> = const { Cell::new(false) };
+    pub static IN_PHASE_0: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Whether this thread is running phase 0 (`bootstrap.rr` and `core.rr` are then read by the builtin reader).
-pub(in crate::code_rule_dsl) fn active() -> bool {
+pub fn active() -> bool {
     IN_PHASE_0.with(Cell::get)
 }
 
 /// Construction: files published into the anchor index (`Corpus::put`).
-pub(super) static INDEX_PUBLISH: AtomicU64 = AtomicU64::new(0);
+pub static INDEX_PUBLISH: AtomicU64 = AtomicU64::new(0);
 /// Execution: candidate roots selected from the anchor index (`Corpus::prepare*`).
-pub(super) static ANCHOR_SELECT: AtomicU64 = AtomicU64::new(0);
+pub static ANCHOR_SELECT: AtomicU64 = AtomicU64::new(0);
 /// Construction, nested in `ANCHOR_SELECT` and reported apart from it: anchor plans lowered to SQL
 /// and the SQL prepared.
-pub(super) static ANCHOR_COMPILE: AtomicU64 = AtomicU64::new(0);
+pub static ANCHOR_COMPILE: AtomicU64 = AtomicU64::new(0);
 /// Execution: relational sessions, from input rows to their findings (`relational::evaluate_batch`, `relational::evaluate_prepared`).
-pub(super) static RELATIONAL: AtomicU64 = AtomicU64::new(0);
+pub static RELATIONAL: AtomicU64 = AtomicU64::new(0);
 
 /// Runs `run`, adding the CPU time this thread spent in it to `clock`.
-pub(super) fn timed<T>(clock: &AtomicU64, run: impl FnOnce() -> T) -> T {
+pub fn timed<T>(clock: &AtomicU64, run: impl FnOnce() -> T) -> T {
     let started = thread_cpu_nanoseconds();
     let result = run();
     clock.fetch_add(thread_cpu_nanoseconds().saturating_sub(started), Ordering::Relaxed);
@@ -35,13 +35,13 @@ pub(super) fn timed<T>(clock: &AtomicU64, run: impl FnOnce() -> T) -> T {
 }
 
 /// Adds the CPU time this thread spends until the span drops to `clock`.
-pub(super) struct Span<'c> {
+pub struct Span<'c> {
     clock: &'c AtomicU64,
     started: u64,
 }
 
 impl<'c> Span<'c> {
-    pub(super) fn start(clock: &'c AtomicU64) -> Self {
+    pub fn start(clock: &'c AtomicU64) -> Self {
         Self { clock, started: thread_cpu_nanoseconds() }
     }
 }
@@ -75,7 +75,7 @@ fn thread_cpu_nanoseconds() -> u64 {
 }
 
 /// The clocks' totals so far, in nanoseconds.
-pub(super) fn snapshot() -> serde_json::Value {
+pub fn snapshot() -> serde_json::Value {
     serde_json::json!({
         "indexPublishNanoseconds": INDEX_PUBLISH.load(Ordering::Relaxed),
         "anchorCompileNanoseconds": ANCHOR_COMPILE.load(Ordering::Relaxed),

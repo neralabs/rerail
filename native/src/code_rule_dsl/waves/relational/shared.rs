@@ -7,15 +7,15 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 #[cfg(feature = "code-rule-profile")]
-mod capture;
+pub mod capture;
 #[cfg(feature = "code-rule-profile")]
-pub(super) use capture::save as capture;
+pub use capture::save as capture;
 
 type EvidenceVersion = (String, String, [u8; 32], Option<String>, Option<[u8; 32]>);
 
 /// Authoritative producer context is independent of whether source strings are resident.
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Versions(Arc<VersionSet>);
+pub struct Versions(Arc<VersionSet>);
 #[derive(Eq, PartialEq)]
 struct VersionSet {
     files: Box<[EvidenceVersion]>,
@@ -521,4 +521,4 @@ pub(super) fn stage(stage: &Stage, name: &str, aliases: &BTreeMap<String, String
 
 #[cfg(test)]
 #[path = "shared/identity_tests.rs"]
-mod identity_tests;
+pub mod identity_tests;

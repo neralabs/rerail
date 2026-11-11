@@ -41,7 +41,7 @@ fn snapshot_view(snapshot: &Snapshot) -> Arc<dyn ResolutionView> {
 }
 
 /// ECMAScript's resolutions (`resolution::install`).
-pub(crate) const RESOLUTIONS: Resolutions = Resolutions {
+pub const RESOLUTIONS: Resolutions = Resolutions {
     held: || Box::new(Held::default()),
     snapshot: snapshot_view,
     installed: || super::current_view().is_some(),

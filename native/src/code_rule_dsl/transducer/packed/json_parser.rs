@@ -7,7 +7,7 @@
 //! encoded from it (`tape::TapeImage::parse`). A file the grammar refuses (invalid JSON, an empty
 //! file, a comment holding a quote) goes to tree-sitter-json.
 
-pub(in crate::code_rule_dsl) use rerail_compiler::native_cpu_stream::{Columns, NO_PARENT};
+pub use rerail_compiler::native_cpu_stream::{Columns, NO_PARENT};
 use rerail_compiler::bitlex_masks as bitlex_compile;
 use rerail_compiler::{native_cpu_stream, native_ir, rir_asm as rir};
 
@@ -57,13 +57,13 @@ fn compile() -> Result<Compiled, String> {
 /// `src`'s node table, with tree-sitter-json's ids; `None` where the grammar refuses the file (or
 /// did not compile: the reason is [`compile_error`]).
 // Its tape (`tape::TreeParser`).
-pub(in crate::code_rule_dsl) mod tape;
+pub mod tape;
 
-pub(in crate::code_rule_dsl) fn columns(src: &str) -> Option<Columns> {
+pub fn columns(src: &str) -> Option<Columns> {
     compiled().ok()?.parser.columns(src.as_bytes()).ok()
 }
 
 /// Why the grammar did not compile, if it did not.
-pub(in crate::code_rule_dsl) fn compile_error() -> Option<&'static str> {
+pub fn compile_error() -> Option<&'static str> {
     compiled().err()
 }

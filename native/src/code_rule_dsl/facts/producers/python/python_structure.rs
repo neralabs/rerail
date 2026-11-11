@@ -446,7 +446,7 @@ pub(crate) fn collect_with<'t, D: Doc>(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_core::AstGrep;

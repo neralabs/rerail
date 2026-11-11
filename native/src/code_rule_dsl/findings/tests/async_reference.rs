@@ -138,7 +138,7 @@ fn bind(modules: &Modules, db: &Connection, name: &str, relation: Relation) -> B
     Bound { binding: modules.get(name).unwrap(), len }
 }
 
-fn cpu_ns() -> u64 {
+pub fn cpu_ns() -> u64 {
     let mut time = libc::timespec {
         tv_sec: 0,
         tv_nsec: 0,
@@ -782,15 +782,13 @@ fn execute_sql<'t>(
     Run { findings, metrics }
 }
 
+// cratify: `native_oracle` is rerail-engine's (it mounts it)
+// cratify: `s_native_oracle` is rerail-engine's (it mounts it)
 #[cfg(test)]
-mod native_oracle;
-#[cfg(test)]
-mod s_native_oracle;
-#[cfg(test)]
-mod tests;
+pub mod tests;
 
 #[cfg(test)]
-mod compiler_admission;
+pub mod compiler_admission;
 
 #[cfg(test)]
-mod rr_comparison;
+pub mod rr_comparison;

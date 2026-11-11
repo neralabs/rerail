@@ -6,7 +6,7 @@ use super::*;
 pub(crate) trait RustUsage: Sized {
     /// Rust's index: the reads rustc's unused lints count, with what macros may read unknown
     /// (`rust`).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     fn rust<D: Doc>(
         table: &ScopeTable,
         root: &Node<'_, D>,
@@ -17,7 +17,7 @@ pub(crate) trait RustUsage: Sized {
 impl RustUsage for Usage {
     /// Rust's index: the reads rustc's unused lints count, with what macros may read unknown
     /// (`rust`).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     fn rust<D: Doc>(
         table: &ScopeTable,
         root: &Node<'_, D>,

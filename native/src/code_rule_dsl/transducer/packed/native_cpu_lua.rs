@@ -938,7 +938,7 @@ pub(super) fn define(
         function.finalize();
     }
     super::native_cpu_codegen::define_function(module, id, &mut context).inspect_err(|_| {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         eprintln!("{}", context.func.display());
     })?;
     module.clear_context(&mut context);

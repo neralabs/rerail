@@ -1,7 +1,7 @@
 use super::*;
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::logic::native::component;
 
@@ -60,7 +60,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod integration_tests {
+pub mod integration_tests {
     use crate::code_rule_dsl::{
         facts::{
             core,

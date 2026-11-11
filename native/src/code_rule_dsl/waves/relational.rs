@@ -9,34 +9,34 @@ use crate::code_rule_dsl::violations::{Captures, Witness};
 use napi::Result;
 use rusqlite::Connection;
 use rusqlite::hooks::Authorization;
-mod authorizer;
-pub(in crate::code_rule_dsl) mod compile;
-pub(in crate::code_rule_dsl) mod execution;
-pub(in crate::code_rule_dsl) mod pipeline;
-pub(in crate::code_rule_dsl) mod pool;
-mod shared;
-pub(in crate::code_rule_dsl) use shared::Versions;
-mod storage;
+pub mod authorizer;
+pub mod compile;
+// cratify: `execution` is rerail-engine's (it mounts it)
+pub mod pipeline;
+pub mod pool;
+pub mod shared;
+pub use shared::Versions;
+pub mod storage;
 
-mod admission;
-mod anchors;
-mod batch;
-pub(in crate::code_rule_dsl) mod database;
+pub mod admission;
+pub mod anchors;
+pub mod batch;
+pub mod database;
 use database::Database;
-pub(in crate::code_rule_dsl) mod deferred;
-mod forest;
-mod functions;
-#[cfg(test)]
-pub(in crate::code_rule_dsl) use functions::install_unbounded as install_regex_functions;
-mod inputs;
-mod insert;
-mod producer;
-mod reachability;
-pub(in crate::code_rule_dsl) mod schema;
-mod source;
-pub(in crate::code_rule_dsl) mod syntax;
-mod table;
-pub(in crate::code_rule_dsl) use reachability::Reachability;
+pub mod deferred;
+pub mod forest;
+pub mod functions;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use functions::install_unbounded as install_regex_functions;
+pub mod inputs;
+pub mod insert;
+pub mod producer;
+pub mod reachability;
+pub mod schema;
+pub mod source;
+pub mod syntax;
+pub mod table;
+pub use reachability::Reachability;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{
@@ -45,7 +45,7 @@ use std::sync::{
 };
 
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Stage {
+pub struct Stage {
     pub(in crate::code_rule_dsl) name: String,
     pub(in crate::code_rule_dsl) inputs: BTreeSet<String>,
     pub(in crate::code_rule_dsl) reads_source: bool,
@@ -74,13 +74,13 @@ pub(in crate::code_rule_dsl) const REFERENCE_FIELDS: &[&str] = &[
 ];
 
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Plan {
+pub struct Plan {
     pub(in crate::code_rule_dsl) require_nonempty: Option<usize>,
     pub(in crate::code_rule_dsl) syntax: Option<Arc<syntax::Spec>>,
     pub(in crate::code_rule_dsl) per_file: bool,
     pub(in crate::code_rule_dsl) references: Option<References>,
     pub(in crate::code_rule_dsl) locations: BTreeSet<String>,
-    pub(in crate::code_rule_dsl) inputs: Vec<(String, FactQuery)>,
+    pub inputs: Vec<(String, FactQuery)>,
     pub(in crate::code_rule_dsl) stages: Vec<Stage>,
     pub(in crate::code_rule_dsl) cuts: Vec<pipeline::Cut>,
     pub(in crate::code_rule_dsl) query: String,
@@ -209,7 +209,7 @@ pub(in crate::code_rule_dsl) fn inspect_fields_recursive(
     result
 }
 
-pub(in crate::code_rule_dsl) fn create_input(
+pub fn create_input(
     db: &Database,
     name: &str,
     fields: &[String],
@@ -406,19 +406,19 @@ fn read_value(value: rusqlite::types::ValueRef<'_>) -> Result<Value> {
     })
 }
 
-pub(in crate::code_rule_dsl) struct Job<'a> {
+pub struct Job<'a> {
     pub code_rule: &'a CompiledCodeRule,
     pub clause: &'a CompiledClause,
     pub inputs: Inputs,
     pub budget: crate::code_rule_dsl::budget::Context,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) enum Preparation {
+pub enum Preparation {
     Gate,
     Body,
 }
 
-pub(in crate::code_rule_dsl) struct Inputs {
+pub struct Inputs {
     pub versions: Option<Versions>,
     pub gate: Option<Rows>,
     pub rows: Option<Vec<Rows>>,
@@ -426,16 +426,16 @@ pub(in crate::code_rule_dsl) struct Inputs {
     pub snapshot: Snapshot,
     pub file_local: bool,
 }
-enum Step {
+pub enum Step {
     Sql,
     Native(producer::Demand),
     Done,
 }
-struct Session<'a> {
+pub struct Session<'a> {
     code_rule: &'a CompiledCodeRule,
     clause: &'a CompiledClause,
     plan: &'a Plan,
-    db: pool::Lease,
+    pub db: pool::Lease,
     finished: std::cell::Cell<bool>,
     descriptor_bytes: usize,
     syntax_files: syntax::Files,
@@ -444,8 +444,8 @@ struct Session<'a> {
     work: Arc<AtomicUsize>,
     tables: BTreeSet<String>,
     next: usize,
-    aliases: BTreeMap<String, String>,
-    physical_stages: Arc<Vec<Stage>>,
+    pub aliases: BTreeMap<String, String>,
+    pub physical_stages: Arc<Vec<Stage>>,
     needed: BTreeSet<String>,
     visible: Snapshot,
     scope_bindings: BTreeMap<String, usize>,
@@ -453,7 +453,7 @@ struct Session<'a> {
     plan_signature: u64,
 }
 impl<'a> Session<'a> {
-    fn new(
+    pub fn new(
         code_rule: &'a CompiledCodeRule,
         clause: &'a CompiledClause,
         mut inputs: Inputs,
@@ -948,7 +948,7 @@ impl<'a> Session<'a> {
             native_sources,
         })
     }
-    fn activate(&self) -> Result<()> {
+    pub fn activate(&self) -> Result<()> {
         let changed = self.db.active.get() != self.db.id;
         self.db.activate(
             self.code_rule.capabilities.limits.max_regex_pattern_bytes,
@@ -1039,7 +1039,7 @@ impl<'a> Session<'a> {
         self.next += 1;
         Ok(())
     }
-    fn advance(&mut self) -> Result<Step> {
+    pub fn advance(&mut self) -> Result<Step> {
         self.activate()?;
         let _reader = producer::ReadOnly::enter();
         if let Some(logical) = self.plan.stages.get(self.next) {

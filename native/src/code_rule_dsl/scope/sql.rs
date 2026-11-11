@@ -93,7 +93,7 @@ struct Binding {
     kind: BindingKind,
     /// The relation has an alias. Read by the AL05 oracle (`unused_aliases`); the pack's AL05
     /// rule states the exemptions in its own terms.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     aliased: bool,
     /// The name AL05 compares, and the table's key: naked lower-cased, quoted exact.
     folded: String,
@@ -101,7 +101,7 @@ struct Binding {
     targets: Vec<Vec<String>>,
     /// The folded last part of the table name, for AL05's repeated-table exemption (the
     /// oracle's, as `aliased`).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     table: Option<String>,
     /// For a relation over a table named by one part, that name folded: the `WITH` query of the
     /// name it selects from, where one is visible (`SqlScopes::uses`).
@@ -124,7 +124,7 @@ struct Reference {
     bare: bool,
 }
 
-pub(crate) use super::Uses;
+pub use super::Uses;
 
 /// The query blocks of one SQL file with their bindings and references.
 #[derive(Debug, Default)]
@@ -220,13 +220,13 @@ impl SqlScopes {
         Ok(scopes)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn read<D: Doc>(root: &Node<'_, D>) -> Self {
         Self::build(root, &mut || Ok(())).expect("no budget")
     }
 
     /// The byte ranges of qualifiers no binding resolves (RF01).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn unresolved(&self) -> Vec<Range<usize>> {
         self.references
             .iter()
@@ -238,7 +238,7 @@ impl SqlScopes {
     }
 
     /// The byte ranges of alias names no reference uses (AL05).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn unused_aliases(&self) -> Vec<Range<usize>> {
         let uses = self.uses();
         let mut repeats: HashMap<(usize, &str), usize> = HashMap::new();
@@ -264,7 +264,7 @@ impl SqlScopes {
     }
 
     /// The binding a reference at `range` resolves to, as the binding's name range.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn binding(&self, range: &Range<usize>) -> Option<Range<usize>> {
         let reference = self.reference_at(range.start, range.end)?;
         self.resolve(reference).map(|binding| {
@@ -734,7 +734,7 @@ fn is_policy<D: Doc>(kind: &str, children: &[Node<'_, D>]) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::test_support::pack_test_data;

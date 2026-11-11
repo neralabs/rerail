@@ -44,7 +44,7 @@ pub(super) fn all_order_conflicts(
 /// An `all` item reading `name`, which a later item binds: refused unless something outside those
 /// items (an enclosing rule, a caller) binds it too, which the query checks once it is compiled.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(in crate::code_rule_dsl) struct AllOrderConflict {
+pub struct AllOrderConflict {
     /// The rule object holding the `all`.
     pub(in crate::code_rule_dsl) path: String,
     pub(in crate::code_rule_dsl) item: usize,
@@ -151,7 +151,7 @@ pub(super) fn order_by_captures(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use crate::code_rule_dsl::test_support::*;
     use serde_json::{Value, json};
 

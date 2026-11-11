@@ -4,7 +4,7 @@ use super::{Error, Program};
 use std::sync::Arc;
 
 #[path = "metal_program_tables.rs"]
-mod program_tables;
+pub mod program_tables;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ProgramProof {

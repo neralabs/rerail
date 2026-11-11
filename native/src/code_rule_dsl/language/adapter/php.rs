@@ -4,7 +4,7 @@ use super::*;
 use crate::code_rule_dsl::suppress::{phpcs::PhpcsIndex, phpstan::PhpstanIndex, psalm::PsalmIndex};
 
 /// PHP's family.
-pub(crate) struct Php;
+pub struct Php;
 
 impl Adapter for Php {
     const FAMILY: Family = Family::Php;

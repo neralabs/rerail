@@ -2,8 +2,8 @@
 //! where Ruff 0.16.9 reports them on its own fixtures (`fixtures/python/literal/ruff`,
 //! `fixtures/python/literal/generate_ruff.py`). Where the port differs, the test names each range and why.
 
-use crate::code_rule_dsl::oracle;
-use crate::code_rule_dsl::test_support::*;
+// cratify: a re-export of rerail-engine's, which its facades of this module make
+// cratify: a re-export of rerail-engine's, which its facades of this module make
 use serde_json::{Value, json};
 
 const ORACLE: &str = oracle!("python/literal/ruff.expected.json");

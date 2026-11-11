@@ -4,7 +4,7 @@ use super::value::spend_step;
 use crate::code_rule_dsl::identifier::python_identifier;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::value::{Context, Value};
-use crate::code_rule_dsl::value::{php, python};
+// cratify: a re-export of rerail-lang-php's, which its facades of this module make
 use ast_grep_core::meta_var::MetaVarEnv;
 use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
@@ -13,7 +13,7 @@ use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// How a signature slot may be passed.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum SlotKind {
+pub enum SlotKind {
     /// Before `/`: by position only.
     PositionalOnly,
     /// By position or by keyword.
@@ -30,39 +30,39 @@ pub(crate) enum SlotKind {
 /// in a slot and `absent` asserts a slot was not passed; where a slot is not known either way the
 /// verdict is unknown.
 #[derive(Clone)]
-pub(crate) struct Arguments {
-    pub(crate) language: GrammarDialect,
-    pub(crate) slots: Vec<(String, SlotKind)>,
+pub struct Arguments {
+    pub language: GrammarDialect,
+    pub slots: Vec<(String, SlotKind)>,
     /// Capture names and the slot each binds, by slot index.
-    pub(crate) bind: Vec<(String, usize)>,
+    pub bind: Vec<(String, usize)>,
     /// Slots that must not be passed, by index.
-    pub(crate) absent: Vec<usize>,
+    pub absent: Vec<usize>,
     /// Call kinds: Python `call`; TypeScript `call_expression` and `new_expression`; PHP function,
     /// method, nullsafe method and static calls and `new`.
-    pub(crate) call_kinds: BTreeSet<u16>,
+    pub call_kinds: BTreeSet<u16>,
     /// Python and PHP: find each slot as Ruff's `find_argument` does, by the argument list's
     /// syntax alone (`mode: "syntactic"`), rather than as the call binds it.
-    pub(crate) syntactic: bool,
+    pub syntactic: bool,
     /// TypeScript: each slot is ESLint's `node.arguments[i]`, a spread element included
     /// (`mode: "estree"`), and a tagged template is no call.
-    pub(crate) estree: bool,
+    pub estree: bool,
 }
 
 /// What a call passes for a slot.
-pub(crate) enum Passed<'r, D: Doc> {
+pub enum Passed<'r, D: Doc> {
     Absent,
     Value(Node<'r, D>),
     /// A starred argument or a spread keyword dict may pass it, or a TypeError may be raised.
     Unknown,
 }
 
-fn every<'r, D: Doc>(count: usize, make: impl Fn() -> Passed<'r, D>) -> Vec<Passed<'r, D>> {
+pub fn every<'r, D: Doc>(count: usize, make: impl Fn() -> Passed<'r, D>) -> Vec<Passed<'r, D>> {
     (0..count).map(|_| make()).collect()
 }
 
 
 impl Arguments {
-    pub(crate) fn match_node<'tree, D: Doc>(
+    pub fn match_node<'tree, D: Doc>(
         &self,
         node: Node<'tree, D>,
         env: &mut Cow<MetaVarEnv<'tree, D>>,
@@ -108,7 +108,7 @@ impl Arguments {
     }
 
     /// Positional slots, in order.
-    fn positional(&self) -> impl Iterator<Item = usize> + '_ {
+    pub fn positional(&self) -> impl Iterator<Item = usize> + '_ {
         self.slots
             .iter()
             .enumerate()
@@ -116,7 +116,7 @@ impl Arguments {
             .map(|(index, _)| index)
     }
 
-    fn keyword_slot(&self, name: &str) -> Option<usize> {
+    pub fn keyword_slot(&self, name: &str) -> Option<usize> {
         self.slots
             .iter()
             .position(|(slot, kind)| slot == name && *kind != SlotKind::PositionalOnly)
@@ -126,7 +126,7 @@ impl Arguments {
     /// positional argument at the slot's position among the arguments before the first starred
     /// one. `**kw` and `**{...}` name no keyword. Positional-only slots take no keyword and
     /// keyword-only slots no position. Nothing is unknown.
-    pub(crate) fn syntactic<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>> {
+    pub fn syntactic<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>> {
         let mut passed = every(self.slots.len(), || Passed::Absent);
         let Some(arguments) = call.field("arguments") else {
             return passed;
@@ -169,7 +169,7 @@ impl Arguments {
         passed
     }
 
-    pub(crate) fn typescript<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>> {
+    pub fn typescript<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>> {
         let mut passed = every(self.slots.len(), || Passed::Absent);
         let Some(arguments) = call.field("arguments") else {
             return passed;
@@ -210,7 +210,7 @@ fn passed<'r, D: Doc>(
 /// binds a parameter the signature does not list. `false` where PHP refuses the call: the name
 /// is in `names` already, or the slot was passed by position. After `...$x`, which may pass the
 /// slot too, it is unknown.
-fn pass_by_name<'r, D: Doc>(
+pub fn pass_by_name<'r, D: Doc>(
     passed: &mut [Passed<'r, D>],
     names: &mut BTreeSet<Vec<u8>>,
     name: &[u8],
@@ -237,7 +237,7 @@ fn pass_by_name<'r, D: Doc>(
 
 /// The expression inside any parentheses: neither ESTree nor PHP-Parser has a parenthesized
 /// expression, so `super((a))`'s `arguments[0]` is `a`, as `f((a))`'s PHP argument is.
-fn unparenthesized<'r, D: Doc>(mut node: Node<'r, D>) -> Node<'r, D> {
+pub fn unparenthesized<'r, D: Doc>(mut node: Node<'r, D>) -> Node<'r, D> {
     while super::util::is_paren_kind(&node.kind()) {
         match node.named_code().collect::<Vec<_>>().as_slice() {
             [inner] => node = inner.clone(),
@@ -249,7 +249,7 @@ fn unparenthesized<'r, D: Doc>(mut node: Node<'r, D>) -> Node<'r, D> {
 
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::lang_python::literal_keywords;
     use super::lang_php::PhpArguments as _;
     use crate::code_rule_dsl::language::GrammarDialect;
@@ -382,14 +382,12 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-mod php_syntactic_tests;
-pub(crate) mod rust;
-#[cfg(test)]
-mod rust_tests;
+// cratify: `php_syntactic_tests` is rerail-lang-php's (it mounts it)
+// cratify: `rust` is rerail-lang-rust's (it mounts it)
+// cratify: `rust_tests` is rerail-lang-rust's (it mounts it)
 
 // Python's argument binding (moved from `arguments.rs` by the crate split). (`lang_python`, its crate's).
-pub(crate) mod lang_python;
+// cratify: `lang_python` is rerail-lang-python's (it mounts it)
 
 // PHP's argument binding (moved from `arguments.rs` by the crate split). (`lang_php`, its crate's).
-pub(crate) mod lang_php;
+// cratify: `lang_php` is rerail-lang-php's (it mounts it)

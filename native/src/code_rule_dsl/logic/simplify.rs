@@ -46,7 +46,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// What was simplified.
 #[derive(Debug, Default, PartialEq)]
-pub(in crate::code_rule_dsl) struct Report {
+pub struct Report {
     pub(in crate::code_rule_dsl) implied: usize,
     pub(in crate::code_rule_dsl) kind_tests: usize,
     /// Variables equal to a constant, replaced by it.
@@ -79,12 +79,12 @@ pub(in crate::code_rule_dsl) struct Report {
     /// Existence counts read as the atom they count (`count : { r(…) } = 0` as `!r(…)`, `> 0` as `r(…)`; decision 0099).
     pub(in crate::code_rule_dsl) existence: usize,
     /// Concatenations given their inverse, one for each part (`concat_inverses`).
-    pub(in crate::code_rule_dsl) inverses: usize,
+    pub inverses: usize,
     /// Relations keyed by a function of their columns, made for a join on that function's value (`function_keys`).
-    pub(in crate::code_rule_dsl) keyed_by: Vec<String>,
+    pub keyed_by: Vec<String>,
 }
 
-pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
+pub fn simplify(prog: &mut Program) -> Report {
     let mut report = Report::default();
     unit_columns(prog);
     report.constants += ground_rules(prog);
@@ -2063,7 +2063,7 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /// `congruence` signs a rule by its template and the labels of what it reads; that partitions the relations as

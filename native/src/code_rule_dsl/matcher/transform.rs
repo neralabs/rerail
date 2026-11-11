@@ -3,8 +3,8 @@
 //! fixes and text comparisons. `rewrite` is not supported. `line`, `lines` and `count` (Rerail's)
 //! read where a capture stands and how many nodes it holds.
 
-mod semantic;
-mod string_case;
+pub mod semantic;
+pub mod string_case;
 
 use super::exported::exported_span;
 use super::value::Reading;
@@ -14,29 +14,29 @@ use ast_grep_core::source::Content;
 use ast_grep_core::{Doc, Node};
 use regex::Regex;
 use semantic::value_text;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::ops::Range;
-pub(crate) use string_case::{Separator, StringCase};
+pub use string_case::{Separator, StringCase};
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     static LINE_TABLE_CONSTRUCTIONS: Cell<usize> = const { Cell::new(0) };
 }
 
-#[cfg(test)]
-pub(crate) fn reset_line_table_constructions() {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn reset_line_table_constructions() {
     LINE_TABLE_CONSTRUCTIONS.with(|count| count.set(0));
 }
 
-#[cfg(test)]
-pub(crate) fn note_line_table_construction() {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn note_line_table_construction() {
     LINE_TABLE_CONSTRUCTIONS.with(|count| count.set(count.get() + 1));
 }
 
-#[cfg(test)]
-pub(crate) fn line_table_constructions() -> usize {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn line_table_constructions() -> usize {
     LINE_TABLE_CONSTRUCTIONS.with(Cell::get)
 }
 
@@ -44,14 +44,14 @@ pub(crate) fn line_table_constructions() -> usize {
 /// the text it reads as where it is unbound (`default`) and whether it reads the capture's value
 /// rather than its source text (`value`, with how values are read).
 #[derive(Clone)]
-pub(crate) struct Source {
+pub struct Source {
     pub(crate) variable: MetaVariable,
     pub(crate) default: Option<String>,
     pub(crate) value: Option<Reading>,
 }
 
 /// A `value` source whose value is not known and that has no default.
-pub(crate) struct UnknownValue;
+pub struct UnknownValue;
 
 pub struct TransformLimit;
 
@@ -95,7 +95,7 @@ impl Source {
 }
 
 #[derive(Clone)]
-pub(crate) enum Trans {
+pub enum Trans {
     /// Characters (not bytes) from `start` to `end`; a negative index counts from the end.
     Substring {
         source: Source,
@@ -130,7 +130,7 @@ pub(crate) enum Trans {
 /// `toPrecision`'s significant digits: a number written in the rule, or the text of a capture or
 /// transform variable (`$L`), read as an integer.
 #[derive(Clone)]
-pub(crate) enum Digits {
+pub enum Digits {
     Fixed(u32),
     Variable(MetaVariable),
 }
@@ -307,7 +307,7 @@ impl Trans {
 
 /// `text` with each match of `regex` replaced by `by` (`$1`, `${name}` its groups, `$$` a dollar), unbounded: the
 /// `replace` transform's rewrite, as `.rr`'s `@replace_all` computes it (`logic::plan`).
-pub(in crate::code_rule_dsl) fn replace(text: &str, regex: &Regex, by: &str) -> String {
+pub fn replace(text: &str, regex: &Regex, by: &str) -> String {
     replace_bounded(text, regex, by, usize::MAX).unwrap_or_else(|_| unreachable!("no output limit"))
 }
 
@@ -449,14 +449,14 @@ fn resolve_char(index: Option<i32>, default: i32, len: i32) -> usize {
 
 /// The query's transforms, in an order where each source is computed before it is read.
 #[derive(Clone, Default)]
-pub(crate) struct Transform {
+pub struct Transform {
     pub(crate) steps: Vec<(String, Trans)>,
     pub(crate) max_output_bytes: usize,
 }
 
 impl Transform {
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn simple_case(&self, name: &str) -> Option<(&str, StringCase)> {
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    pub fn simple_case(&self, name: &str) -> Option<(&str, StringCase)> {
         let (
             _,
             Trans::Convert {
@@ -476,7 +476,7 @@ impl Transform {
             .then_some((source_name, *case))
     }
 
-    pub(crate) fn contains(&self, name: &str) -> bool {
+    pub fn contains(&self, name: &str) -> bool {
         self.steps.iter().any(|(key, _)| key == name)
     }
 
@@ -493,7 +493,7 @@ impl Transform {
 
     /// Upstream's `apply_transform`: each variable in order, the empty text where its source is
     /// unbound (or its value unknown), de-indented relative to its source node.
-    pub(crate) fn apply<D: Doc>(&self, env: &mut MetaVarEnv<'_, D>) -> Result<(), TransformLimit> {
+    pub fn apply<D: Doc>(&self, env: &mut MetaVarEnv<'_, D>) -> Result<(), TransformLimit> {
         self.apply_steps(env, |_| true)
     }
 
@@ -525,7 +525,7 @@ impl Transform {
 
     /// A transform variable's text over the bindings so far, for a comparison; `Ok(None)` where a
     /// capture it derives from is unbound, `Err` where a value it reads is not known.
-    pub(crate) fn text<D: Doc>(
+    pub fn text<D: Doc>(
         &self,
         name: &str,
         env: &MetaVarEnv<'_, D>,
@@ -570,7 +570,7 @@ impl Transform {
     }
 
     /// The captures `name` is computed from, following transform variables to their sources.
-    pub(crate) fn roots(&self, name: &str) -> BTreeSet<&str> {
+    pub fn roots(&self, name: &str) -> BTreeSet<&str> {
         let mut roots = BTreeSet::new();
         for key in self.chain(name) {
             if let Some((_, trans)) = self.steps.iter().find(|(known, _)| known == key) {
@@ -582,7 +582,7 @@ impl Transform {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::{Trans, replace_bounded};
     use crate::code_rule_dsl::CompiledCodeRuleDsl;
     use crate::code_rule_dsl::test_support::*;
@@ -1446,7 +1446,7 @@ mod tests {
 
 /// `Number::toString(x)` in base 10: the shortest digits that read back as `x`, laid out as
 /// ECMA-262 §6.1.6.1.20 lays them out.
-pub(crate) fn number_to_string(value: f64) -> String {
+pub fn number_to_string(value: f64) -> String {
     if value.is_nan() {
         return "NaN".to_owned();
     }
@@ -1487,7 +1487,7 @@ pub(crate) fn number_to_string(value: f64) -> String {
 
 /// The numbers `toPrecision` reads and writes (ECMAScript's: `Number.prototype.toPrecision` of the number a numeric
 /// literal's text or a value's `String(v)` denotes), registered at load.
-pub(crate) trait NumberText: Send + Sync {
+pub trait NumberText: Send + Sync {
     /// `text`'s number to `digits` significant digits (1 to 100); `None` where `text` denotes no number.
     fn to_precision(&self, text: &str, digits: u32) -> Option<String>;
 }
@@ -1495,6 +1495,6 @@ pub(crate) trait NumberText: Send + Sync {
 static NUMBER_TEXT: std::sync::OnceLock<&'static dyn NumberText> = std::sync::OnceLock::new();
 
 /// Registers the numbers `toPrecision` reads (once, at load).
-pub(crate) fn install_number_text(numbers: &'static dyn NumberText) {
+pub fn install_number_text(numbers: &'static dyn NumberText) {
     let _ = NUMBER_TEXT.set(numbers);
 }

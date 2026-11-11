@@ -80,7 +80,7 @@ pub(super) fn prepare<'t, D: Doc>(
 }
 
 /// PHP's `sscanf` and `fscanf` calls (`FormatPreparer`).
-pub(crate) struct Scanf;
+pub struct Scanf;
 
 impl super::FormatPreparer for Scanf {
     fn prepare_tape<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, crate::code_rule_dsl::tape::TapeDoc>) -> Prepared<'t, crate::code_rule_dsl::tape::TapeDoc> {

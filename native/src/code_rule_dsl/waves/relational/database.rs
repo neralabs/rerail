@@ -4,7 +4,7 @@ use std::ops::Deref;
 
 type ProgramCache =
     std::collections::BTreeMap<Vec<(String, String)>, std::sync::Arc<Vec<super::Stage>>>;
-pub(in crate::code_rule_dsl) struct Database {
+pub struct Database {
     #[cfg(feature = "code-rule-profile")]
     profiler: Option<Box<crate::code_rule_dsl::profile::sql::Profiler>>,
     connection: Connection,
@@ -23,7 +23,7 @@ pub(in crate::code_rule_dsl) struct Database {
     pub(super) descriptor_bytes: std::cell::Cell<usize>,
     pub(super) programs: std::cell::RefCell<ProgramCache>,
     pub(super) record_relations: bool,
-    pub(super) modules:
+    pub modules:
         std::cell::RefCell<std::collections::BTreeMap<String, super::table::Binding>>,
 }
 
@@ -111,7 +111,7 @@ impl Database {
         Self::from_connection(Connection::open_in_memory()?)
     }
 
-    pub(in crate::code_rule_dsl) fn from_connection(
+    pub fn from_connection(
         connection: Connection,
     ) -> rusqlite::Result<Self> {
         #[cfg(feature = "code-rule-profile")]

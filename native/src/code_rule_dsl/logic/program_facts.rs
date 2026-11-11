@@ -808,7 +808,7 @@ pub(in crate::code_rule_dsl) fn decode(bytes: &[u8]) -> Result<Facts, String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     /// The encoding names each string by its first use and puts the table first: the bytes the two-pass writer made
     /// (strings counted, then the rows written), and they decode to the facts.
     #[test]

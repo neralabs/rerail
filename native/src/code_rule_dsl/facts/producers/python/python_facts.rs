@@ -20,8 +20,8 @@ use crate::code_rule_dsl::tree::Tree;
 use ast_grep_core::{Doc, Node};
 use std::collections::{BTreeMap, HashSet};
 
-mod value_origins;
-pub(crate) use value_origins::value_origins;
+pub mod value_origins;
+pub use value_origins::value_origins;
 
 pub(crate) type NodeRange = (usize, usize);
 
@@ -465,7 +465,7 @@ fn binding(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::scope::options::DEFAULT_PYTHON_MINOR;
     use ast_grep_language::LanguageExt;

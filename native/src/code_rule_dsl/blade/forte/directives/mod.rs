@@ -8,9 +8,9 @@
 //! (`Directives::withDefaults()` clones its template) costs no allocation until a parse registers
 //! a directive. Names are bytes, lowercased as `StringInterner::lower` (`strtolower`, ASCII) does.
 
-pub(crate) mod arguments;
-pub(crate) mod helper;
-pub(crate) mod token_index;
+pub mod arguments;
+pub mod helper;
+pub mod token_index;
 
 use super::node::StructureRole;
 use indexmap::{IndexMap, IndexSet};
@@ -164,7 +164,7 @@ impl Directives {
     }
 
     /// A registry from its parts (the oracle's recorded registries).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn from_parts(
         table: Table,
         seen: IndexSet<Box<[u8]>>,
@@ -182,7 +182,7 @@ impl Directives {
     }
 
     /// The registry's directive table.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn table(&self) -> &Table {
         &self.table
     }

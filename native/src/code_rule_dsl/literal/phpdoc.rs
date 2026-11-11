@@ -22,8 +22,8 @@
 //! wrap it without nesting the parse), or a parse that backtracks past a bound proportional to the
 //! comment's tokens, is not read: the comment's tree is unknown.
 
-mod lexer;
-mod parser;
+pub mod lexer;
+pub mod parser;
 
 use super::{Grammar, PNode};
 use crate::code_rule_dsl::value::Value;
@@ -198,13 +198,13 @@ fn tree(parser: &parser::Parser<'_>, id: parser::Id, parent: usize, depth: usize
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
 
 /// The `phpDoc` grammar (`literal::LiteralGrammar`).
 pub(crate) struct PhpDocGrammar;
 
 /// Its handle, which the engine registers (`literal::install`).
-pub(crate) const GRAMMAR: super::Grammar = super::Grammar::new(&PhpDocGrammar);
+pub const GRAMMAR: super::Grammar = super::Grammar::new(&PhpDocGrammar);
 
 impl super::LiteralGrammar for PhpDocGrammar {
     fn name(&self) -> &'static str {

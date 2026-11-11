@@ -1,8 +1,8 @@
 //! Retained native document indexes. File edits replace only changed search paths and shared-fact counts.
 use super::*;
-mod shards;
-mod shared;
-mod tree;
+pub mod shards;
+pub mod shared;
+pub mod tree;
 use shards::Family;
 use shared::Shared;
 
@@ -10,10 +10,10 @@ type Sources = BTreeMap<String, Arc<dyn Source>>;
 
 /// A file of a snapshot a session binds: its path, its dialect's label and its text.
 #[derive(Clone)]
-pub(crate) struct File {
-    pub(crate) path: String,
-    pub(crate) language: String,
-    pub(crate) source: Arc<String>,
+pub struct File {
+    pub path: String,
+    pub language: String,
+    pub source: Arc<String>,
 }
 
 impl crate::code_rule_dsl::facts::core::SourceFile for File {
@@ -35,7 +35,7 @@ pub(crate) type SnapshotFiles = fn(&str) -> Result<Vec<File>>;
 static SNAPSHOT_FILES: std::sync::OnceLock<SnapshotFiles> = std::sync::OnceLock::new();
 
 /// Registers what reads a snapshot's files (once, at load).
-pub(crate) fn install_snapshot_files(read: SnapshotFiles) {
+pub fn install_snapshot_files(read: SnapshotFiles) {
     let _ = SNAPSHOT_FILES.set(read);
 }
 
@@ -46,12 +46,12 @@ fn snapshot_files(json: &str) -> Result<Vec<File>> {
     }
 }
 #[derive(Clone)]
-pub(super) struct Document {
+pub struct Document {
     file: File,
     key: u32,
-    pub(super) sources: Sources,
+    pub sources: Sources,
 }
-pub(super) struct Documents {
+pub struct Documents {
     files: BTreeMap<String, Document>,
     families: BTreeMap<String, Arc<Family>>,
     shared: Arc<Shared>,

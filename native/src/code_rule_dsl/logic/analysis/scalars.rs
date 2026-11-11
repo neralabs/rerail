@@ -13,7 +13,7 @@ pub(in crate::code_rule_dsl) fn unused_sum(bound: bool, observed: bool) -> Decis
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
-pub(in crate::code_rule_dsl) enum Expression {
+pub enum Expression {
     Column(usize),
     Integer(i64),
     Text(String),
@@ -56,7 +56,7 @@ impl Expression {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
-pub(in crate::code_rule_dsl) enum Kind {
+pub enum Kind {
     Count,
     Sum,
     Product,
@@ -67,7 +67,7 @@ pub(in crate::code_rule_dsl) enum Kind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-pub(in crate::code_rule_dsl) struct Scalar {
+pub struct Scalar {
     pub kind: Kind,
     pub source: String,
     pub keys: Vec<Expression>,
@@ -130,7 +130,7 @@ impl Scalar {
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize)]
-pub(in crate::code_rule_dsl) struct Layout {
+pub struct Layout {
     pub count: bool,
     pub sum: bool,
     pub min: bool,
@@ -150,12 +150,12 @@ pub(in crate::code_rule_dsl) struct Check {
     pub decision: Decision,
 }
 #[derive(Clone, Debug, Default, serde::Serialize)]
-pub(in crate::code_rule_dsl) struct Analysis {
+pub struct Analysis {
     pub inputs: Vec<Scalar>,
     pub families: Vec<Family>,
     pub checks: Vec<Check>,
 }
-pub(in crate::code_rule_dsl) fn analyze(inputs: Vec<Scalar>) -> Analysis {
+pub fn analyze(inputs: Vec<Scalar>) -> Analysis {
     analyze_mode(inputs, true)
 }
 pub(in crate::code_rule_dsl) fn analyze_bags(inputs: Vec<Scalar>) -> Analysis {
@@ -249,7 +249,7 @@ impl Analysis {
 }
 
 /// Equal input snapshots and applied journals permit reuse across scheduler gates.
-pub(in crate::code_rule_dsl) fn maintenance_equivalent(inputs: bool, cursors: bool) -> Decision {
+pub fn maintenance_equivalent(inputs: bool, cursors: bool) -> Decision {
     Decision::new(inputs && cursors, if !inputs {
         "Input versions differ; wave gates keep independent summaries"
     } else if !cursors {

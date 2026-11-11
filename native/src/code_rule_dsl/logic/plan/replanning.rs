@@ -10,7 +10,7 @@ struct Version {
     priced: Option<(Vec<f64>, Option<HashMap<Constant, i64>>)>,
 }
 
-pub(super) struct Watch {
+pub struct Watch {
     versions: Vec<Vec<Version>>,
     delta_of: Vec<Option<usize>>,
     delta_readers: Vec<Vec<usize>>,
@@ -47,7 +47,7 @@ impl Watch {
         watch
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn changed(&mut self, rel: usize, slot: usize) {
         let Some(version) = self.versions[rel].get_mut(slot) else { return };
         version.value += 1;
@@ -90,7 +90,7 @@ impl Watch {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn only_affected_active_plans_reconsider_their_signatures() {

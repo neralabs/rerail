@@ -5,7 +5,7 @@ use crate::code_rule_dsl::{
     violations::Span,
 };
 use ast_grep_core::source::SgNode;
-mod packed;
+pub mod packed;
 use packed::{Columns, Fields, Postings};
 use rusqlite::{Connection, types::Value, vtab::Context};
 use std::{
@@ -85,7 +85,7 @@ struct OwnerIndex {
     distinct: usize,
 }
 type Selections = parking_lot::Mutex<HashMap<(Vec<String>, bool), Arc<Selection>>>;
-pub(in crate::code_rule_dsl) struct Facts {
+pub struct Facts {
     doc: TapeDoc,
     lines: Arc<LineTable>,
     rows: Vec<u32>,

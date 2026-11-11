@@ -1,49 +1,49 @@
 //! File-backed positional FTS, following ast-index-spike. SQL selects candidates;
 //! the existing matcher validates them and constructs captures.
 #[path = "lower/audit.rs"]
-mod audit;
-pub(in crate::code_rule_dsl) use audit::candidate_frontier_audit;
-mod candidates;
+pub mod audit;
+pub use audit::candidate_frontier_audit;
+pub mod candidates;
 #[cfg(feature = "code-rule-profile")]
-mod capture;
-mod corpus;
-mod execute;
-pub(in crate::code_rule_dsl) use corpus::{Corpus, CorpusSlot};
-mod functions;
-mod graph;
+pub mod capture;
+pub mod corpus;
+pub mod execute;
+pub use corpus::{Corpus, CorpusSlot};
+pub mod functions;
+pub mod graph;
 #[path = "store/kinds.rs"]
-mod kind_postings;
-mod lower;
-mod nodes;
-mod plans;
-mod postings;
-pub(in crate::code_rule_dsl) use plans::{
+pub mod kind_postings;
+pub mod lower;
+pub mod nodes;
+pub mod plans;
+pub mod postings;
+pub use plans::{
     for_file as anchor_plans_for_file, plans as anchor_plans,
 };
-mod reader;
-#[cfg(all(test, feature = "code-rule-profile"))]
-mod replay;
-mod session;
+pub mod reader;
+#[cfg(all(any(test, feature = "test-hooks"), feature = "code-rule-profile"))]
+pub mod replay;
+pub mod session;
 #[path = "functions/source_batch.rs"]
-mod source_batch;
+pub mod source_batch;
 #[cfg(test)]
 #[path = "functions/source_batch_tests.rs"]
-mod source_batch_tests;
-mod statistics;
-mod store;
-mod values;
+pub mod source_batch_tests;
+pub mod statistics;
+pub mod store;
+pub mod values;
 
 use super::AnchorPlan;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use super::Selection;
 use crate::code_rule_dsl::{language, tape::TapeDoc};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use ast_grep_core::Node;
 use ast_grep_core::{AstGrep, Doc};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::borrow::Cow;
 
-pub(in crate::code_rule_dsl) struct FileAnchorIndex<'tree, D: Doc> {
+pub struct FileAnchorIndex<'tree, D: Doc> {
     _root: &'tree AstGrep<D>,
     file: Option<std::sync::Arc<corpus::File>>,
     #[cfg(feature = "code-rule-profile")]
@@ -52,8 +52,8 @@ pub(in crate::code_rule_dsl) struct FileAnchorIndex<'tree, D: Doc> {
 }
 
 impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn build(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn build(
         root: &'tree AstGrep<TapeDoc>,
         _plans: &[&AnchorPlan],
         max_nodes: usize,
@@ -114,12 +114,12 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
     pub(in crate::code_rule_dsl) fn visited_nodes(&self) -> usize {
         self.visited
     }
-    #[cfg(any(test, feature = "code-rule-profile"))]
-    pub(in crate::code_rule_dsl) fn complete(&self) -> bool {
+    #[cfg(any(any(test, feature = "test-hooks"), feature = "code-rule-profile"))]
+    pub fn complete(&self) -> bool {
         self.file.is_some()
     }
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn node(&self, pre: usize) -> Node<'tree, TapeDoc> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn node(&self, pre: usize) -> Node<'tree, TapeDoc> {
         self._root
             .adopt(self._root.root().get_doc().node(pre as u32))
     }
@@ -151,8 +151,8 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
         roots
     }
 
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn select(&self, plan: &AnchorPlan) -> Selection<'_> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn select(&self, plan: &AnchorPlan) -> Selection<'_> {
         let id = plan as *const AnchorPlan as usize;
         match self
             .file
@@ -169,11 +169,11 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
 }
 
 #[cfg(test)]
-mod preparation_tests;
+pub mod preparation_tests;
 #[cfg(all(test, feature = "code-rule-profile"))]
-mod retention_spikes;
+pub mod retention_spikes;
 #[cfg(test)]
-mod tests;
+pub mod tests;
 
 #[path = "corpus/cache.rs"]
-mod cache;
+pub mod cache;

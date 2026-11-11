@@ -10,7 +10,7 @@ use super::*;
 use metal::{BufferRef, CommandBufferRef, CommandQueueRef, Device};
 
 #[path = "metal_terminal_repeat_cost.rs"]
-mod cost;
+pub mod cost;
 
 pub(super) fn guard_source(words: &[u32], pc: usize) -> String {
     let (op, mode, _) = split(words[pc]);

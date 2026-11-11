@@ -221,7 +221,7 @@ fn within(count: Option<&BindingCount>) -> Names {
 /// in environments of their own. A nested parse's exports pass through, and so do those of the
 /// utilities the rule calls, at any depth: a utility compiled before the table was filled reads its
 /// draft (`UtilTable::draft`).
-pub(in crate::code_rule_dsl) fn parse_exported(matcher: &AstMatcher, names: &mut Names) {
+pub fn parse_exported(matcher: &AstMatcher, names: &mut Names) {
     exported_in(matcher, &mut UtilitySummary::new(), names);
 }
 

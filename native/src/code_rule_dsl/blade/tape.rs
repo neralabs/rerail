@@ -14,7 +14,7 @@ use crate::code_rule_dsl::tape::{
 };
 
 /// Blade's tree parser.
-pub(crate) struct Forte;
+pub struct Forte;
 
 impl TreeParser for Forte {
     fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
@@ -158,7 +158,7 @@ fn encode_blade_tree(
 }
 
 /// The documents of a Blade template, parsed with Rerail's port of Forte (`encode_blade`).
-pub(in crate::code_rule_dsl) fn encode_template(
+pub fn encode_template(
     grammar: &Grammar,
     source: &str,
     budget: &impl Fn() -> bool,

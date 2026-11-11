@@ -431,7 +431,7 @@ impl Source for Family {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 

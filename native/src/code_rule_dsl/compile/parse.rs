@@ -631,12 +631,11 @@ fn compile_sub_relation(
 }
 
 #[cfg(test)]
-mod annotation_tests;
+pub mod annotation_tests;
 #[cfg(test)]
-mod host_tests;
+pub mod host_tests;
 #[cfg(test)]
-mod m12b_tests;
+pub mod m12b_tests;
+// cratify: `ruff` is rerail-lang-python's (it mounts it)
 #[cfg(test)]
-mod ruff;
-#[cfg(test)]
-mod tests;
+pub mod tests;

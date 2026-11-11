@@ -30,7 +30,7 @@ use super::{Dialect, Projected};
 use crate::code_rule_dsl::cpython::printed::{Printed, Want, by_start, of_kind, printed};
 use std::collections::{BTreeSet, HashMap};
 
-pub(crate) use crate::code_rule_dsl::facts::core::cpython_relations::{
+pub use crate::code_rule_dsl::facts::core::cpython_relations::{
     AST_DUMP, BODY_SHA256, DUMP_SHA256, LITERAL_JSON, SIGNATURE_SHA256, SYNTAX_ERROR, UNPARSE, columns,
 };
 
@@ -170,7 +170,7 @@ impl CPython {
 
 
 /// CPython's syntax verdicts, `ast.unparse` and `ast.dump` as a batch's producer (`syntax::Producer`).
-pub(crate) struct Producer;
+pub struct Producer;
 
 impl super::Producer for Producer {
     fn dialect(&self) -> crate::code_rule_dsl::language::GrammarDialect {

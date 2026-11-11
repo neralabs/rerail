@@ -124,7 +124,7 @@ pub(super) fn named(key: &[u8; 32]) -> (String, [u8; 32]) {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

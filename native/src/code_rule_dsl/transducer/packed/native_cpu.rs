@@ -304,22 +304,22 @@ pub(super) struct CompiledStraightLine {
     _module: JITModule,
     value_tables: PackedValueTables,
     entry: NativeTaskEntry,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     cursor_equal: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     repeat_equal: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     capture_contains: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     query_admit: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     exact_state_equal:
         unsafe extern "C" fn(*mut NativeTaskContext, u32, u32, u32, u32, u32, u32) -> u32,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     queue_insert: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     greedy_schedule: unsafe extern "C" fn(*mut NativeTaskContext, u32) -> u64,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     greedy_take: unsafe extern "C" fn(*mut NativeTaskContext, u32) -> u64,
 }
 
@@ -479,9 +479,9 @@ pub(super) fn compile_straight_line(native: &NativeModule) -> Result<CompiledStr
     let builder = JITBuilder::new(default_libcall_names()).map_err(|_| Error::BackendFailure)?;
     let mut module = JITModule::new(builder);
     let scheduler = native_cpu_scheduler::define(&mut module).map_err(|error| {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         eprintln!("native scheduler definition failed: {error:?}");
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-hooks")))]
         let _ = error;
         Error::BackendFailure
     })?;
@@ -499,18 +499,18 @@ pub(super) fn compile_straight_line(native: &NativeModule) -> Result<CompiledStr
         scheduler.path_enqueue,
     );
     let value_functions = native_cpu_value::define(&mut module, native).map_err(|error| {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         eprintln!("native value definition failed: {error:?}");
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-hooks")))]
         let _ = error;
         Error::BackendFailure
     })?;
     let capture_functions =
         native_cpu_capture::define(&mut module, native, &value_functions.evaluators).map_err(
             |error| {
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-hooks"))]
                 eprintln!("native capture definition failed: {error:?}");
-                #[cfg(not(test))]
+                #[cfg(not(any(test, feature = "test-hooks")))]
                 let _ = error;
                 Error::BackendFailure
             },
@@ -526,18 +526,18 @@ pub(super) fn compile_straight_line(native: &NativeModule) -> Result<CompiledStr
         native.tree_sitter_query && native.has_repeats,
     )
     .map_err(|error| {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         eprintln!("native reduction definition failed: {error:?}");
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-hooks")))]
         let _ = error;
         Error::BackendFailure
     })?;
     let output_function =
         native_cpu_output::define(&mut module, native, value_functions.regex_find).map_err(
             |error| {
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-hooks"))]
                 eprintln!("native output definition failed: {error:?}");
-                #[cfg(not(test))]
+                #[cfg(not(any(test, feature = "test-hooks")))]
                 let _ = error;
                 Error::UnsupportedBackend
             },
@@ -2754,49 +2754,49 @@ pub(super) fn compile_straight_line(native: &NativeModule) -> Result<CompiledStr
         .map_err(|_| Error::BackendFailure)?;
     let code = module.get_finalized_function(function_id);
     let entry = unsafe { mem::transmute::<*const u8, NativeTaskEntry>(code) };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let cursor_equal = unsafe {
         mem::transmute::<*const u8, unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32>(
             module.get_finalized_function(scheduler.cursor_equal),
         )
     };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let repeat_equal = unsafe {
         mem::transmute::<*const u8, unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32>(
             module.get_finalized_function(scheduler.repeat_equal),
         )
     };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let capture_contains = unsafe {
         mem::transmute::<*const u8, unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32>(
             module.get_finalized_function(scheduler.capture_contains),
         )
     };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let query_admit = unsafe {
         mem::transmute::<*const u8, unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32>(
             module.get_finalized_function(scheduler.query_admit),
         )
     };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let queue_insert = unsafe {
         mem::transmute::<*const u8, unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32>(
             module.get_finalized_function(scheduler.queue_insert),
         )
     };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let greedy_schedule = unsafe {
         mem::transmute::<*const u8, unsafe extern "C" fn(*mut NativeTaskContext, u32) -> u64>(
             module.get_finalized_function(scheduler.greedy_schedule),
         )
     };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let greedy_take = unsafe {
         mem::transmute::<*const u8, unsafe extern "C" fn(*mut NativeTaskContext, u32) -> u64>(
             module.get_finalized_function(scheduler.greedy_take),
         )
     };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let exact_state_equal = unsafe {
         mem::transmute::<
             *const u8,
@@ -2807,21 +2807,21 @@ pub(super) fn compile_straight_line(native: &NativeModule) -> Result<CompiledStr
         _module: module,
         value_tables,
         entry,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         cursor_equal,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         repeat_equal,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         capture_contains,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         query_admit,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         exact_state_equal,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         queue_insert,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         greedy_schedule,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         greedy_take,
     })
 }
@@ -2879,7 +2879,7 @@ pub(super) fn compile_cached(program: &Program) -> Result<Arc<CompiledStraightLi
     Ok(compiled)
 }
 
-pub(super) fn execute_batch(
+pub fn execute_batch(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: &[Vec<Vec<u32>>],
@@ -2918,8 +2918,8 @@ pub(super) fn execute_batch_packed_with_result_limits(
     )
 }
 
-#[cfg(all(test, target_os = "macos"))]
-pub(super) fn execute_terminal_reference_with_work_limit(
+#[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+pub fn execute_terminal_reference_with_work_limit(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: &[Vec<Vec<u32>>],
@@ -3357,7 +3357,7 @@ fn execute_batch_packed_with_work_limit(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::{
         tape::{Grammar, TapeImage},

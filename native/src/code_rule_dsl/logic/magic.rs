@@ -16,11 +16,11 @@
 
 use super::front::{AggOp, Atom, Error, Literal, Program, Rule, Term, Value, cmp_binds, join, strata, tarjan};
 use std::collections::{BTreeMap, BTreeSet};
-pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{Gate, Report};
+pub use crate::code_rule_dsl::logic::front::ast::{Gate, Report};
 
 /// T's environment switches.
 #[derive(Clone, Debug)]
-pub(in crate::code_rule_dsl) struct Options {
+pub struct Options {
     /// `RDL_COARSE`: magic rules take no extras.
     pub(in crate::code_rule_dsl) coarse: bool,
     /// `RDL_MAGIC_KEY`: adorn the key column only.
@@ -30,7 +30,7 @@ pub(in crate::code_rule_dsl) struct Options {
     /// `RDL_MAGIC_INPUT_FIRST`: sideways, an input on a bound key before a derived atom.
     pub(in crate::code_rule_dsl) input_first: bool,
     /// `RDL_GATE` (with the native program mode): gate negations instead of computing relations in full.
-    pub(in crate::code_rule_dsl) gate: bool,
+    pub gate: bool,
     /// `RDL_MAGIC_EXCLUDE`: relations computed in full.
     pub(in crate::code_rule_dsl) exclude: Vec<String>,
 }
@@ -104,7 +104,7 @@ fn binds(l: &Literal, bound: &BTreeSet<String>) -> Option<BTreeSet<String>> {
 /// relation with facts, gate or already demanded), not recursive, negated somewhere, read only by atoms with a
 /// variable key, and every rule reads its key from such an atom. Returns the program and the relations demanded; a
 /// relation some reader gives no test of the key alone stays whole.
-pub(in crate::code_rule_dsl) fn demand_negated_tests(prog: Program) -> (Program, Vec<String>) {
+pub fn demand_negated_tests(prog: Program) -> (Program, Vec<String>) {
     let kept = |rel: &str| {
         prog.outputs.iter().any(|o| o == rel)
             || prog.inputs.iter().any(|i| i == rel)
@@ -213,7 +213,7 @@ fn rename_atom(a: &Atom, from: &str, to: &str) -> Atom {
 
 /// `.demand r, …`: applies demand, dropping a demanded relation whose negated use would close a negative cycle
 /// through its own demand; that relation is computed in full (`demand_dropped` says why).
-pub(in crate::code_rule_dsl) fn magic_sets(prog: Program, options: &Options) -> Result<Program, Error> {
+pub fn magic_sets(prog: Program, options: &Options) -> Result<Program, Error> {
     let mut dropped: Vec<(String, String)> = Vec::new();
     loop {
         let mut p = prog.clone();
@@ -381,7 +381,7 @@ impl From<Error> for Attempt {
 /// `.demand *`: Soufflé's magic-set transformation on every derived relation (T's `magic_adorn`; see the module
 /// docs). A negative cycle that demand closes makes each relation negated inside it, with what it depends on,
 /// computed in full, and the transformation is tried again.
-pub(in crate::code_rule_dsl) fn magic_adorn(prog: Program, options: &Options) -> Result<Program, Error> {
+pub fn magic_adorn(prog: Program, options: &Options) -> Result<Program, Error> {
     let derived: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
     let mut by: BTreeMap<String, Vec<Rule>> = BTreeMap::new();
     for r in &prog.rules {
@@ -955,5 +955,4 @@ impl Adorn<'_> {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-logic's (it mounts it)

@@ -154,7 +154,7 @@ struct Implied {
 }
 
 /// Every visible kind's automaton for one grammar.
-pub(in crate::code_rule_dsl) struct TokenGrammar {
+pub struct TokenGrammar {
     names: FxHashMap<String, Sym>,
     texts: Vec<String>,
     kinds: FxHashMap<Sym, Automaton>,
@@ -174,8 +174,8 @@ pub(in crate::code_rule_dsl) struct TokenGrammar {
 /// last child. Each token is its text and its field (`""` for none).
 #[derive(Debug, Default)]
 pub struct Gaps<'g> {
-    pub(in crate::code_rule_dsl) before: Vec<Vec<(&'g str, &'g str)>>,
-    pub(in crate::code_rule_dsl) end: Vec<(&'g str, &'g str)>,
+    pub before: Vec<Vec<(&'g str, &'g str)>>,
+    pub end: Vec<(&'g str, &'g str)>,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -471,7 +471,7 @@ impl TokenGrammar {
         self.kinds.len()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn text(&self, sym: Sym) -> &str {
         &self.texts[sym as usize]
     }
@@ -480,7 +480,7 @@ impl TokenGrammar {
     /// module). `None` where it stores them all: a node with no automaton, or one whose children
     /// the automaton cannot walk. A MISSING child walks the automaton as the child it stands for
     /// and is always stored: it is a syntax error.
-    pub(in crate::code_rule_dsl) fn stored_children(&self, node: TsNode<'_>) -> Option<Vec<bool>> {
+    pub fn stored_children(&self, node: TsNode<'_>) -> Option<Vec<bool>> {
         if node.is_error() || !node.is_named() || node.child_count() == 0 {
             return None;
         }
@@ -537,18 +537,18 @@ impl TokenGrammar {
     /// Whether `regex` tests a token the grammar implies somewhere: it matches one. A regex that
     /// also matches names (`(?s).`, `^`) counts too: `not follows (?s).` asks for a first child,
     /// and a node after an implied `(` was never one.
-    pub(in crate::code_rule_dsl) fn tests_implied(&self, regex: &regex::Regex) -> bool {
+    pub fn tests_implied(&self, regex: &regex::Regex) -> bool {
         self.implied_texts.iter().any(|token| regex.is_match(token))
     }
 
     /// Whether `regex` tests a token the grammar implies in `field` somewhere: a `has` in a field
     /// whose implied words hold no such token asks only for stored children.
-    pub(in crate::code_rule_dsl) fn tests_implied_in(&self, regex: &regex::Regex, field: &str) -> bool {
+    pub fn tests_implied_in(&self, regex: &regex::Regex, field: &str) -> bool {
         self.kinds.values().flat_map(Automaton::dropped).any(|label| self.texts[label.field as usize] == field && regex.is_match(&self.texts[label.name as usize]))
     }
 
     /// Whether `kind` is one of the grammar's extras (a comment and the like).
-    pub(in crate::code_rule_dsl) fn is_extra(&self, kind: &str) -> bool {
+    pub fn is_extra(&self, kind: &str) -> bool {
         self.extras.contains(kind)
     }
 
@@ -717,7 +717,7 @@ impl TokenGrammar {
     /// Per kind: the (token, field) pairs a tape of it may leave out: those some implied word of
     /// its automaton holds, less the kept ones ([`kept`]). `""` is no
     /// field.
-    pub(in crate::code_rule_dsl) fn implied_tokens(&self) -> BTreeMap<String, BTreeSet<(String, String)>> {
+    pub fn implied_tokens(&self) -> BTreeMap<String, BTreeSet<(String, String)>> {
         let mut out: BTreeMap<String, BTreeSet<(String, String)>> = BTreeMap::new();
         for (kind, automaton) in &self.kinds {
             let entry = out.entry(self.texts[*kind as usize].clone()).or_default();
@@ -729,7 +729,7 @@ impl TokenGrammar {
     }
 
     /// Per kind: the kinds whose automata have it as a named child.
-    pub(in crate::code_rule_dsl) fn parents(&self) -> BTreeMap<String, BTreeSet<String>> {
+    pub fn parents(&self) -> BTreeMap<String, BTreeSet<String>> {
         let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for (kind, automaton) in &self.kinds {
             for label in automaton.moves.iter().flat_map(|moves| moves.keys()).filter(|label| !label.token) {
@@ -740,7 +740,7 @@ impl TokenGrammar {
     }
 
     /// Every token text some automaton moves on.
-    pub(in crate::code_rule_dsl) fn token_texts(&self) -> BTreeSet<String> {
+    pub fn token_texts(&self) -> BTreeSet<String> {
         self.kinds
             .values()
             .flat_map(|automaton| automaton.moves.iter().flat_map(|moves| moves.keys()))
@@ -756,7 +756,7 @@ impl TokenGrammar {
 pub(in crate::code_rule_dsl) fn grammar_json(lang: GrammarDialect) -> Option<&'static str> {
     macro_rules! grammar {
         ($path:literal) => {
-            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/grammars/", $path, "/grammar.json"))
+            include_str!(concat!(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."), "/grammars/", $path, "/grammar.json"))
         };
     }
     Some(match lang {
@@ -774,7 +774,7 @@ pub(in crate::code_rule_dsl) fn grammar_json(lang: GrammarDialect) -> Option<&'s
 
 impl TokenGrammar {
     /// A dialect's automata, for its tape grammar's tree-sitter language; `None` where it has none.
-    pub(in crate::code_rule_dsl) fn of_dialect(lang: GrammarDialect) -> Option<Arc<Self>> {
+    pub fn of_dialect(lang: GrammarDialect) -> Option<Arc<Self>> {
         // Built once per dialect, as `of` builds it; a lookup after that, for the token queries.
         static BY_DIALECT: [OnceLock<Option<Arc<TokenGrammar>>>; 256] = [const { OnceLock::new() }; 256];
         BY_DIALECT
@@ -797,7 +797,7 @@ impl TokenGrammar {
 
     /// A dialect's automata, built once per process from its `grammar.json`; `None` where there
     /// is none (a dialect with its own parser, or no grammar on disk).
-    pub(in crate::code_rule_dsl) fn of(lang: GrammarDialect, language: &Language) -> Option<Arc<Self>> {
+    pub fn of(lang: GrammarDialect, language: &Language) -> Option<Arc<Self>> {
         static BUILT: LazyLock<Mutex<FxHashMap<GrammarDialect, Option<Arc<TokenGrammar>>>>> = LazyLock::new(Default::default);
         let mut built = BUILT.lock().ok()?;
         built
@@ -808,7 +808,7 @@ impl TokenGrammar {
 }
 
 /// `parent`'s stored children and its gaps; `None` where its kind has no automaton.
-pub(in crate::code_rule_dsl) fn stored_gaps<'t, 'g, D: ast_grep_core::Doc>(grammar: &'g TokenGrammar, parent: &ast_grep_core::Node<'t, D>) -> Option<(Vec<ast_grep_core::Node<'t, D>>, Gaps<'g>)> {
+pub fn stored_gaps<'t, 'g, D: ast_grep_core::Doc>(grammar: &'g TokenGrammar, parent: &ast_grep_core::Node<'t, D>) -> Option<(Vec<ast_grep_core::Node<'t, D>>, Gaps<'g>)> {
     let kind = parent.kind();
     let mut fields: std::collections::HashMap<usize, &str> = std::collections::HashMap::new();
     for field in grammar.fields_of(&kind) {

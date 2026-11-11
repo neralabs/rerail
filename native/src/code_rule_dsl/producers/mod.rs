@@ -3,14 +3,14 @@ use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct Column {
+pub struct Column {
     pub name: String,
     #[serde(rename = "type")]
     pub kind: String,
     pub nullable: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct Definition {
+pub struct Definition {
     pub inputs: BTreeMap<String, String>,
     pub options: BTreeMap<String, String>,
     pub columns: Vec<Column>,
@@ -27,7 +27,7 @@ pub struct Order {
     pub nulls: String,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct Contract {
+pub struct Contract {
     pub name: String,
     #[serde(flatten)]
     pub definition: Definition,
@@ -36,7 +36,7 @@ pub(crate) struct Contract {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(tag = "kind", content = "value", rename_all = "lowercase")]
-pub(crate) enum OptionValue {
+pub enum OptionValue {
     Integer(i64),
 }
 impl OptionValue {
@@ -47,23 +47,23 @@ impl OptionValue {
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct Binding<I> {
+pub struct Binding<I> {
     pub contract: usize,
     pub inputs: BTreeMap<String, I>,
     pub options: BTreeMap<String, OptionValue>,
     pub domain: Option<String>,
 }
 #[derive(Default)]
-pub(crate) struct Registry<I> {
+pub struct Registry<I> {
     contracts: Vec<Contract>,
     names: BTreeMap<String, usize>,
     bindings: Vec<(Binding<I>, BTreeSet<String>)>,
     // Ordered maps compare complete definitions. No digest can establish sharing.
     identities: BTreeMap<Binding<I>, usize>,
 }
-#[cfg(any(test, feature = "code-rule-profile"))]
+#[cfg(any(any(test, feature = "test-hooks"), feature = "code-rule-profile"))]
 #[derive(Serialize)]
-pub(crate) struct External {
+pub struct External {
     pub name: String,
     pub generation: String,
 }
@@ -141,7 +141,7 @@ impl<I: Ord + Clone> Registry<I> {
         self.bindings.push((binding, BTreeSet::from([consumer])));
         Ok(id)
     }
-    #[cfg(any(test, feature = "code-rule-profile"))]
+    #[cfg(any(any(test, feature = "test-hooks"), feature = "code-rule-profile"))]
     pub fn manifest(&self, snapshot: &str, resolve: impl Fn(&I) -> External) -> serde_json::Value {
         let bindings: Vec<_> = self.bindings.iter().enumerate().map(|(id, (binding, consumers))| {
             let inputs: BTreeMap<_, _> = binding.inputs.iter().map(|(name, input)| (name, serde_json::json!({"external":resolve(input)}))).collect();
@@ -176,4 +176,4 @@ fn differences(path: &str, a: &serde_json::Value, b: &serde_json::Value, fields:
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

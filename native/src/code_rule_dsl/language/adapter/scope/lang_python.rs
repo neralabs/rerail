@@ -129,7 +129,7 @@ impl ScopeRules for Python {
         )
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn unbound_locally(
         table: &ScopeTable,
         reference: &Reference,

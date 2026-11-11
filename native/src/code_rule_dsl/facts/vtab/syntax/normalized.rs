@@ -15,7 +15,7 @@ use super::core_rr::{string_contents, Family};
 /// One stretch of a decoded text: from decoded byte `d`, at source byte `s` (relative to the literal's start); an
 /// escape's stretch stands whole at its source, a copied one byte for byte. The last entry ends the text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Piece {
+pub struct Piece {
     pub d: u32,
     pub s: i64,
     pub escape: bool,
@@ -30,7 +30,7 @@ pub struct Normalized {
 
 impl Normalized {
     /// Whether the text is copied whole: one stretch, no escapes (a `Placement::Copied`).
-    pub(crate) fn copied(&self) -> Option<i64> {
+    pub fn copied(&self) -> Option<i64> {
         match self.pieces.as_slice() {
             [p, end] if !p.escape && end.s - p.s == i64::from(end.d - p.d) => Some(p.s - i64::from(p.d)),
             _ => None,
@@ -40,7 +40,7 @@ impl Normalized {
 
 /// The string literal `text` of `kind` in a `label` file, normalized, with its map; `None` when it is not a constant
 /// string (bytes, an f-string, a template with substitutions) or the language's decoder disagrees with the map.
-pub(crate) fn normalized(label: &str, kind: &str, text: &str) -> Option<Normalized> {
+pub fn normalized(label: &str, kind: &str, text: &str) -> Option<Normalized> {
     if !matches!(kind, "string" | "string_literal" | "raw_string_literal" | "interpreted_string_literal") {
         return None;
     }
@@ -142,7 +142,7 @@ fn decode_escape(family: Family, escape: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     fn map(n: &Normalized) -> Vec<(u32, i64, bool)> {

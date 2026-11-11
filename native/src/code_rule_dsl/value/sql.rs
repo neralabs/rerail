@@ -533,7 +533,7 @@ pub(crate) fn node_name<D: ast_grep_core::Doc>(
         .flatten()
 }
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use serde_json::Value as Json;
 
@@ -915,7 +915,7 @@ mod tests {
     fn cv05_reports_beside_positional_parameters() {
         use crate::code_rule_dsl::CodeRuleDslRuntime;
         use crate::code_rule_dsl::test_support::{CAPABILITIES, evaluate_file};
-        let rule = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let rule = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
             .join("../packs/sql/rules/sqlfluff-cv05-convention-is-null.json");
         let document = std::fs::read_to_string(rule).expect("CV05 rule");
         let compiled =

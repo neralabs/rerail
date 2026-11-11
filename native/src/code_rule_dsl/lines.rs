@@ -9,18 +9,18 @@ use serde::{Deserialize, Serialize};
 /// order so a direct serialization writes the bytes the object's would.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct Span {
-    pub(crate) end_byte: usize,
-    pub(crate) end_column: usize,
-    pub(crate) end_line: usize,
-    pub(crate) start_byte: usize,
-    pub(crate) start_column: usize,
-    pub(crate) start_line: usize,
+pub struct Span {
+    pub end_byte: usize,
+    pub end_column: usize,
+    pub end_line: usize,
+    pub start_byte: usize,
+    pub start_column: usize,
+    pub start_line: usize,
 }
 
 /// The line terminators of a linter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum Terminators {
+pub enum Terminators {
     /// ESLint's `\r\n|[\r\n  ]` (`astUtils.createGlobalLinebreakMatcher`).
     Eslint,
     /// Ruff's `\r\n`, `\r` and `\n` (`ruff_source_file`) and PHP's tokenizer.
@@ -29,11 +29,11 @@ pub(crate) enum Terminators {
 
 impl Terminators {
     /// The linter a language's ports follow (`Adapter::TERMINATORS`).
-    pub(crate) fn of(language: GrammarDialect) -> Self {
+    pub fn of(language: GrammarDialect) -> Self {
         crate::code_rule_dsl::language::base(Family::of(language)).terminators()
     }
 
-    pub(crate) const fn index(self) -> usize {
+    pub const fn index(self) -> usize {
         match self {
             Self::Eslint => 0,
             Self::Newlines => 1,
@@ -43,7 +43,7 @@ impl Terminators {
 
 /// Where each line of a file starts, and where its text ends before its terminator.
 #[derive(Debug)]
-pub(crate) struct LineTable {
+pub struct LineTable {
     /// Byte offset of each line's first byte; the first is 0.
     starts: Vec<usize>,
     /// Byte offset where each line's terminator starts, or the file's end on the last line.
@@ -51,7 +51,7 @@ pub(crate) struct LineTable {
 }
 
 impl LineTable {
-    pub(crate) fn new(source: &str, terminators: Terminators) -> Self {
+    pub fn new(source: &str, terminators: Terminators) -> Self {
         let bytes = source.as_bytes();
         let mut starts = vec![0];
         let mut ends = Vec::new();
@@ -99,23 +99,23 @@ impl LineTable {
     }
 
     /// Byte offset of each line's first byte.
-    pub(crate) fn starts(&self) -> &[usize] {
+    pub fn starts(&self) -> &[usize] {
         &self.starts
     }
 
     /// The 0-based line holding `byte`; a terminator's bytes belong to the line they end.
-    pub(crate) fn line(&self, byte: usize) -> usize {
+    pub fn line(&self, byte: usize) -> usize {
         self.starts.partition_point(|start| *start <= byte) - 1
     }
 
     /// The 0-based line and byte column holding `byte`.
-    pub(crate) fn point(&self, byte: usize) -> (usize, usize) {
+    pub fn point(&self, byte: usize) -> (usize, usize) {
         let line = self.line(byte);
         (line, byte - self.start(line))
     }
 
     /// The diagnostic span at two byte offsets.
-    pub(crate) fn span(&self, start: usize, end: usize) -> Span {
+    pub fn span(&self, start: usize, end: usize) -> Span {
         let (start_line, start_column) = self.point(start);
         let (end_line, end_column) = self.point(end);
         Span {
@@ -129,25 +129,25 @@ impl LineTable {
     }
 
     #[cfg(feature = "code-rule-profile")]
-    pub(crate) fn estimated_bytes(&self) -> usize {
+    pub fn estimated_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             + self.starts.capacity() * std::mem::size_of::<usize>()
             + self.ends.capacity() * std::mem::size_of::<usize>()
     }
 
     /// The first byte of `line`.
-    pub(crate) fn start(&self, line: usize) -> usize {
+    pub fn start(&self, line: usize) -> usize {
         self.starts[line]
     }
 
     /// Where `line`'s text ends: its terminator's first byte, or the file's end.
-    pub(crate) fn end(&self, line: usize) -> usize {
+    pub fn end(&self, line: usize) -> usize {
         self.ends[line]
     }
 
     /// Where the line after `line` starts, or the file's end on the last line (Ruff's
     /// `full_line_end`).
-    pub(crate) fn full_end(&self, line: usize) -> usize {
+    pub fn full_end(&self, line: usize) -> usize {
         self.starts
             .get(line + 1)
             .copied()
@@ -155,17 +155,16 @@ impl LineTable {
     }
 
     /// The number of lines: one more than the terminators.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn len(&self) -> usize {
         self.starts.len()
     }
 }
 
-#[cfg(test)]
-mod eslint;
+// cratify: `eslint` is rerail-w's (it mounts it)
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

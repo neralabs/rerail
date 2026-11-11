@@ -245,4 +245,4 @@ fn compile_value_in(pack: &dyn language_pack::LanguagePack, value: &Json, path: 
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

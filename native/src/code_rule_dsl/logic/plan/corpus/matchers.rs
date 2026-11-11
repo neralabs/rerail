@@ -8,11 +8,11 @@
 use crate::code_rule_dsl::logic::front::{Atom, Literal, Program, Term};
 use std::collections::{BTreeSet, HashMap};
 
-pub(in crate::code_rule_dsl) use crate::code_rule_dsl::facts::grammar_shape::single_field;
-#[cfg(test)]
+pub use crate::code_rule_dsl::facts::grammar_shape::single_field;
+#[cfg(any(test, feature = "test-hooks"))]
 use crate::code_rule_dsl::facts::grammar_shape::{field_kinds, leaf_kind};
 
-pub(in crate::code_rule_dsl) use crate::code_rule_dsl::facts::core::ast_matches::{MOST_CAPTURES, PREFIX, columns};
+pub use crate::code_rule_dsl::facts::core::ast_matches::{MOST_CAPTURES, PREFIX, columns};
 
 /// The relation of the `k`th distinct matcher, capturing `m` names.
 fn relation(k: usize, m: usize) -> String {
@@ -115,7 +115,7 @@ pub(in crate::code_rule_dsl) fn absorb(prog: &mut Program, capture: bool) -> usi
 
 /// Rewrites `prog`'s `ast` atoms over the matchers' relations: each relation, its matcher's text and the names it
 /// captures (an atom naming more than [`MOST_CAPTURES`] is left as written).
-pub(in crate::code_rule_dsl) fn lower(prog: &mut Program) -> Vec<(String, String, Vec<String>)> {
+pub fn lower(prog: &mut Program) -> Vec<(String, String, Vec<String>)> {
     let mut texts: Vec<(String, Vec<String>)> = Vec::new();
     for rule in &mut prog.rules {
         if !rule.body.iter().any(|l| matches!(l, Literal::Ast { captures, .. } if captures.len() <= MOST_CAPTURES)) {
@@ -188,7 +188,7 @@ pub(in crate::code_rule_dsl) fn compiled(matchers: &[(String, String, Vec<String
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /// Each `ast` atom without captures reads its matcher's relation, one per distinct matcher; `docof` joins the node

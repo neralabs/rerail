@@ -88,7 +88,7 @@ pub(crate) const VALUE_KINDS: &[&str] = &[
     "unary_op_expression",
 ];
 
-pub(crate) use super::types::Key;
+pub use super::types::Key;
 
 /// A PHP number.
 #[derive(Clone, Copy, Debug)]
@@ -1626,4 +1626,4 @@ fn subscript<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Option<Va
 }
 
 #[cfg(test)]
-pub(crate) mod tests;
+pub mod tests;

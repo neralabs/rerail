@@ -3,7 +3,7 @@
 use super::scratch::Work;
 use super::*;
 
-mod reads;
+pub mod reads;
 
 struct Definition {
     sql: String,
@@ -25,12 +25,12 @@ struct Output {
     keys: Keys,
     key_width: usize,
 }
-pub(super) struct Counts {
+pub struct Counts {
     pub keys: usize,
     pub rows: usize,
 }
 #[derive(Default)]
-pub(super) struct Phase {
+pub struct Phase {
     pub analyses: Vec<Value>,
     definitions: Vec<Definition>,
     outputs: Vec<Output>,
@@ -303,4 +303,4 @@ impl Phase {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

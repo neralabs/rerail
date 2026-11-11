@@ -35,7 +35,7 @@ use std::path::Path;
 
 /// A planning or evaluation failure.
 #[derive(Debug)]
-pub(in crate::code_rule_dsl) enum Error {
+pub enum Error {
     Front(super::front::Error),
     Sql(rusqlite::Error),
     /// The facts have no planner statistics, or statistics of other data.
@@ -66,41 +66,41 @@ impl From<super::front::Error> for Error {
     }
 }
 
-type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = std::result::Result<T, Error>;
 
-pub(in crate::code_rule_dsl) mod corpus;
-pub(in crate::code_rule_dsl) mod placement;
-mod choices;
-mod issue;
-mod demand;
-pub(in crate::code_rule_dsl) mod keeps;
-mod native_demand;
-mod replanning;
-mod compose;
-mod connection;
-pub(in crate::code_rule_dsl) mod sketch;
-pub(in crate::code_rule_dsl) mod statkeep;
-pub(in crate::code_rule_dsl) mod lower;
+pub mod corpus;
+pub mod placement;
+pub mod choices;
+pub mod issue;
+pub mod demand;
+pub mod keeps;
+pub mod native_demand;
+pub mod replanning;
+pub mod compose;
+pub mod connection;
+pub use rerail_facts::code_rule_dsl::logic::plan::sketch;
+pub mod statkeep;
+pub mod lower;
 
 /// Where a run reads its inputs and statistics, and how it holds symbols.
 #[derive(Clone, Debug)]
-pub(in crate::code_rule_dsl) struct Inputs {
+pub struct Inputs {
     /// The schema prefix of the input relations: T's attached facts file (`f.`) or the bound vtabs (`main.`).
-    facts: String,
+    pub facts: String,
     /// The schema prefix of the `stat_*` tables.
-    stats: String,
+    pub stats: String,
     /// Symbols are atoms: the name atoms of `flat_bin`'s operators `+`, `-` and `*`. `None`: symbols are text.
-    atoms: Option<[i64; 3]>,
+    pub atoms: Option<[i64; 3]>,
     /// T's `RDL_NATIVE` modes (`native_modes`); empty is T's pure SQL mode.
-    native: BTreeSet<String>,
+    pub native: BTreeSet<String>,
     /// Batch inputs: relations a wave reads from its chunk's `demand(batch)`, which have no
     /// statistics outside a batch. Each is read from its source and planned from its row estimate.
-    batch: HashMap<String, (Source, f64)>,
+    pub batch: HashMap<String, (Source, f64)>,
     /// The planner's statistics, measured by the caller from the inputs in memory (`corpus::run`): nothing is read
     /// or counted at plan time.
-    given: Option<Stats>,
+    pub given: Option<Stats>,
     /// Outputs left in the native engine (`DERIVED`) for the caller: neither written to their tables nor decoded.
-    kept: BTreeSet<String>,
+    pub kept: BTreeSet<String>,
 }
 
 /// T's `NATIVE`: the comma-separated modes, `all` as every one but `direct` and `upsert`, and `program` with the
@@ -124,14 +124,14 @@ fn unhex(s: &str) -> Option<String> {
 
 impl Inputs {
     /// T's facts file attached as `f`, statistics in it.
-    fn file() -> Self {
+    pub fn file() -> Self {
         Inputs { facts: "f.".to_owned(), stats: "f.".to_owned(), atoms: None, native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() }
     }
 }
 
 /// A constant of a rule or of the statistics (`stat_val.val`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(in crate::code_rule_dsl) enum Constant {
+pub enum Constant {
     Int(i64),
     Str(String),
 }
@@ -169,14 +169,14 @@ fn text(v: &SqlValue) -> String {
 
 /// How a join literal is read: a range inside one document, or a `nearest` climb or descent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) enum Mode {
+pub enum Mode {
     Range,
     Climb,
     Descend,
 }
 
 impl Mode {
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Mode::Range => "range",
             Mode::Climb => "climb",
@@ -187,9 +187,9 @@ impl Mode {
 
 /// A planned body literal: its position in the rule's body (T compared literals by identity), and its mode.
 #[derive(Clone, Debug)]
-pub(in crate::code_rule_dsl) struct Step {
-    pub(in crate::code_rule_dsl) at: usize,
-    pub(in crate::code_rule_dsl) lit: Literal,
+pub struct Step {
+    pub at: usize,
+    pub lit: Literal,
     pub(in crate::code_rule_dsl) mode: Option<Mode>,
 }
 
@@ -289,21 +289,21 @@ impl std::fmt::Debug for LazyMap {
 /// (`stat_*` in the facts database) in one statement. Nothing is counted at plan time (ast-index-spike S174, S178).
 /// Statistics whose fingerprint (row counts) does not match the facts are refused.
 #[derive(Clone, Debug)]
-pub(in crate::code_rule_dsl) struct Stats {
+pub struct Stats {
     /// (table, column) → (rows, ndv, sum of squared postings, the same within documents).
-    col: HashMap<(String, String), [i64; 4]>,
+    pub col: HashMap<(String, String), [i64; 4]>,
     // The tree's statistics (`tree`), and those below to `card`, shared by a component's model (`Model::fork`).
-    kfreq: std::sync::Arc<IndexMap<String, i64>>,
+    pub kfreq: std::sync::Arc<IndexMap<String, i64>>,
     size: std::sync::Arc<HashMap<String, f64>>,
-    nodes: f64,
+    pub nodes: f64,
     parents: std::sync::Arc<IndexMap<String, IndexMap<String, f64>>>,
-    pub(in crate::code_rule_dsl) card: HashMap<String, f64>,
+    pub card: HashMap<String, f64>,
     /// Current wave cardinalities, distinct from full relation cardinalities.
-    delta_rows: HashMap<String, f64>,
+    pub delta_rows: HashMap<String, f64>,
     /// (rel, col) → posting-weighted fanout of an equality probe: sq / rows.
-    pub(in crate::code_rule_dsl) fan: HashMap<(String, usize), f64>,
+    pub fan: HashMap<(String, usize), f64>,
     /// (derived rel, col) → {value: postings}, for a column of few values (native statistics).
-    pub(in crate::code_rule_dsl) dfreq: HashMap<(String, usize), HashMap<Constant, i64>>,
+    pub dfreq: HashMap<(String, usize), HashMap<Constant, i64>>,
     /// (rule, binding pattern) → [bindings in, bindings out]: fanouts native joins observed, per rule (`obs_rule`).
     /// By rule first: a component's model takes its rules' alone (`Model::fork`).
     pub(in crate::code_rule_dsl) obs: HashMap<u64, HashMap<Sig, [i64; 2]>>,
@@ -317,7 +317,7 @@ pub(in crate::code_rule_dsl) struct Stats {
     docs: Option<i64>,
     /// Exact postings of the program's constants: table → (column, value) → n. By table first: a relation's are
     /// read without a pass over every table's (`of_relation`, once per input of a session's run).
-    memo: HashMap<String, HashMap<(String, Constant), i64>>,
+    pub memo: HashMap<String, HashMap<(String, Constant), i64>>,
     steps_cache: RefCell<HashMap<(Option<String>, String), f64>>,
     kindsets: std::sync::Arc<BTreeMap<String, Vec<String>>>,
     /// Relations whose statistics are made when first planned with (`lazy`, `Model::resolve`).
@@ -329,7 +329,7 @@ pub(in crate::code_rule_dsl) struct Stats {
 
 impl Stats {
     /// The recursive component being planned (`solving`), and its digest.
-    pub(in crate::code_rule_dsl) fn solve(&mut self, scc: BTreeSet<String>) {
+    pub fn solve(&mut self, scc: BTreeSet<String>) {
         self.solving_digest = super::derived::digest(|d| {
             d.u64(scc.len() as u64);
             scc.iter().for_each(|r| d.str(r));
@@ -367,7 +367,7 @@ impl Stats {
 
     /// No statistics but the program's kindsets: the caller measures every input (`measured`, `tree`), as the
     /// typing programs' own ingestion does (`corpus::run` without T's facts, list step 29).
-    pub(in crate::code_rule_dsl) fn empty(prog: &Program) -> Self {
+    pub fn empty(prog: &Program) -> Self {
         Stats {
             col: HashMap::new(),
             kfreq: Default::default(),
@@ -544,7 +544,7 @@ impl Stats {
     }
 
     /// Exact postings for a constant probe on an input column; `None` if the column has no statistics.
-    fn const_freq(&self, rel: &str, cname: &str, v: &Constant) -> Option<i64> {
+    pub fn const_freq(&self, rel: &str, cname: &str, v: &Constant) -> Option<i64> {
         if let Some(&n) = self.memo.get(rel).and_then(|m| m.get(&(cname.to_owned(), v.clone()))) {
             return Some(n);
         }
@@ -597,26 +597,26 @@ impl Stats {
 }
 
 /// The planner's model of the data: statistics, distinct counts, and what the views are.
-pub(in crate::code_rule_dsl) struct Model {
+pub struct Model {
     /// The program's logical key and scalar analysis, made once per plan and shared (not made again per stratum),
     /// when first asked (`analysis`): only the SQL executor reads it, so the native set engine's runs never make it.
-    analysis: std::sync::OnceLock<std::sync::Arc<super::analysis::ProgramAnalysis>>,
+    pub analysis: std::sync::OnceLock<std::sync::Arc<super::analysis::ProgramAnalysis>>,
     /// The inputs of the program last asked about, hashed (`is_input`), with the list's address and length.
-    input_set: std::sync::Mutex<(usize, usize, rustc_hash::FxHashSet<String>)>,
-    pub(in crate::code_rule_dsl) stats: Stats,
-    pub(in crate::code_rule_dsl) ndv: HashMap<(String, usize), f64>,
+    pub input_set: std::sync::Mutex<(usize, usize, rustc_hash::FxHashSet<String>)>,
+    pub stats: Stats,
+    pub ndv: HashMap<(String, usize), f64>,
     /// rel → (node column, document column) for projections of `node(d, n)`: documents are id intervals.
-    docof: std::sync::Arc<HashMap<String, (usize, usize)>>,
+    pub docof: std::sync::Arc<HashMap<String, (usize, usize)>>,
     /// View over one input atom → (input, the input column behind each view column).
-    view_src: std::sync::Arc<HashMap<String, (String, Vec<Option<String>>)>>,
+    pub view_src: std::sync::Arc<HashMap<String, (String, Vec<Option<String>>)>>,
     /// Shared, not copied, by a component's model (`Model::fork`): set before the strata run.
-    inputs: std::sync::Arc<Inputs>,
+    pub inputs: std::sync::Arc<Inputs>,
     /// The run's documents are node-id intervals by their keys (`d << 32` to `d << 32 | 0xffff_ffff`,
     /// `docs_by_shift`): a range read computes its interval, and reads no table of them.
-    docs_by_shift: bool,
+    pub docs_by_shift: bool,
     /// The relations the program's rules derive or its facts state. Their columns are `c0`, `c1`, … even where an
     /// input of the same name has named columns: `rr::lower`'s projections (`kind`, `docof` over nodes) are rules.
-    derived: std::sync::Arc<HashSet<String>>,
+    pub derived: std::sync::Arc<HashSet<String>>,
 }
 
 impl Model {
@@ -744,7 +744,7 @@ impl Model {
     }
 
     /// Column `col` of `rel` in SQL: an input's name, or `c{col}` for a relation the program derives.
-    fn col(&self, rel: &str, col: usize) -> String {
+    pub fn col(&self, rel: &str, col: usize) -> String {
         if self.derived.contains(rel) {
             format!("c{col}")
         } else if let Some((source, _)) = self.inputs.batch.get(rel) {
@@ -944,7 +944,7 @@ struct Priced {
 pub(in crate::code_rule_dsl) const PRICE_DRIFT: f64 = 2.0;
 
 /// Whether sizes `now` are within `PRICE_DRIFT` of `then`, each counted as at least one row.
-fn near(then: &[f64], now: &[f64]) -> bool {
+pub fn near(then: &[f64], now: &[f64]) -> bool {
     then.len() == now.len()
         && then.iter().zip(now).all(|(a, b)| {
             // Negative signatures distinguish unknown and proven-empty constant postings.
@@ -959,7 +959,7 @@ fn near(then: &[f64], now: &[f64]) -> bool {
 
 /// Plans kept across chunks on this thread while held (a corpus run), none kept at the start; for a session's run
 /// (`across`, the session's generation), the plans its earlier runs kept, put back at the end (decision 0090 step 5).
-pub(in crate::code_rule_dsl) struct KeepPlans(Option<u64>);
+pub struct KeepPlans(Option<u64>);
 
 thread_local! {
     /// A session's plans between its runs, with the session's generation: another session's are not taken.
@@ -967,7 +967,7 @@ thread_local! {
 }
 
 impl KeepPlans {
-    pub(in crate::code_rule_dsl) fn start(across: Option<u64>) -> Self {
+    pub fn start(across: Option<u64>) -> Self {
         compose::clear();
         let kept = across.and_then(|g| SESSION_PLANS.with(|s| s.borrow_mut().take().filter(|(k, _)| *k == g).map(|(_, p)| p)));
         PLANS.with(|p| *p.borrow_mut() = Some(Arc::new(parking_lot::Mutex::new(kept.unwrap_or_default()))));
@@ -1069,7 +1069,7 @@ impl Model {
     /// Bound a binding's distinct values by measured rows surviving its constant filters. The full column's
     /// domain is too wide after, for example, `kind(n, function_definition)`: those bindings are functions,
     /// not random nodes. Treating them as random misses underprices expansion from each function to its body.
-    fn binding_domains(&self, _prog: &Program, a: &Atom) -> Vec<Option<f64>> {
+    pub fn binding_domains(&self, _prog: &Program, a: &Atom) -> Vec<Option<f64>> {
         let mut cap = self.stats.card.get(a.rel.as_str()).copied().unwrap_or(f64::INFINITY);
         for (c, t) in a.args.iter().enumerate() {
             let Some(k) = constant(t) else { continue };
@@ -1103,7 +1103,7 @@ impl Model {
 
     /// Positive joins whose keys cannot occur in the forced first atom's values. Only that atom is a binding
     /// source: a later predicate whose variables happen to be bound has not yet restricted the demand.
-    fn delta_misses(&self, body: &[Literal], first: Option<usize>) -> Vec<usize> {
+    pub fn delta_misses(&self, body: &[Literal], first: Option<usize>) -> Vec<usize> {
         let first = first.or_else(|| body.iter().position(|l| matches!(l, Literal::Atom(a) if !a.neg && a.rel.contains("rr_demand_agg_"))));
         let Some(first) = first else { return Vec::new() };
         let Some(delta) = body[first].atom() else { return Vec::new() };
@@ -1126,13 +1126,13 @@ impl Model {
     /// step plus tape reads for `nearest` (climb: steps per row; descent: mean subtree size per row). With `first`
     /// (a body position), that atom reads its semi-naive delta. A smaller connected changed-input demand may
     /// precede its indexed probe.
-    pub(in crate::code_rule_dsl) fn plan_rule(&self, prog: &Program, head: &Atom, body: &[Literal], first: Option<usize>) -> Result<Plan> {
+    pub fn plan_rule(&self, prog: &Program, head: &Atom, body: &[Literal], first: Option<usize>) -> Result<Plan> {
         Ok(self.plan_rule_explained(prog, head, body, first)?.0)
     }
 
     /// `plan_rule`, and when profiling, the plan as EXPLAIN shows it (`profile::RulePlan`): the search's size, and per
     /// step its access method, source and the rows expected after it.
-    pub(in crate::code_rule_dsl) fn plan_rule_explained(
+    pub fn plan_rule_explained(
         &self,
         prog: &Program,
         head: &Atom,
@@ -1146,7 +1146,7 @@ impl Model {
     /// re-priced with this chunk's statistics, and searched again only where its work per node grew more than
     /// `REPLAN` times, or it no longer runs (a relation it reads is missing). The planner's cache lives for a
     /// corpus run (`reset_plans`).
-    pub(in crate::code_rule_dsl) fn plan_rule_reused(
+    pub fn plan_rule_reused(
         &self,
         prog: &Program,
         head: &Atom,
@@ -1303,7 +1303,7 @@ impl Model {
     /// sizes it saw: while no size moved over `PRICE_DRIFT` times, the same search is not made again (decision
     /// 0090 step 5: in a session's run these searches were most of its planning). Outside a corpus run every one
     /// is searched.
-    pub(in crate::code_rule_dsl) fn plan_rule_live(
+    pub fn plan_rule_live(
         &self,
         prog: &Program,
         head: &Atom,
@@ -2138,7 +2138,7 @@ impl Model {
     /// A view over one input atom takes its statistics from the input's: a constant filters by its exact postings
     /// fraction, and each column keeps the input column's NDV (at most the view's rows) and fanout (scaled by the
     /// filter, assuming independence).
-    fn view_stats(&mut self, rel: &str, h: &Atom, a: &Atom) {
+    pub fn view_stats(&mut self, rel: &str, h: &Atom, a: &Atom) {
         let base = self.stats.card[a.rel.as_str()];
         let mut rows = base;
         for (c, t) in a.args.iter().enumerate() {
@@ -2263,7 +2263,7 @@ fn input_stats(stats: &mut Stats, ndv: &mut HashMap<(String, usize), f64>, prog:
 }
 
 /// Reads the statistics and the input relations' cardinalities, distinct counts, fanouts and indexes.
-fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<Model> {
+pub fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<Model> {
     let analysis = std::sync::OnceLock::new();
     // A relation of the program's facts is its table too (`run`: `c0`, `c1`, …), though an input of that name has
     // named columns (the converter's `option_item`, core.rr's `option_item(name, i, v)`).
@@ -3019,27 +3019,27 @@ impl Model {
 
 /// A rule's chosen plan, as T's `plan.json` lists it.
 #[derive(Clone, Debug, PartialEq)]
-pub(in crate::code_rule_dsl) struct Chosen {
+pub struct Chosen {
     /// The rule's index in the program, and its body positions in plan order with their modes.
-    pub(in crate::code_rule_dsl) rule: usize,
-    pub(in crate::code_rule_dsl) steps: Vec<(usize, Option<Mode>)>,
-    pub(in crate::code_rule_dsl) head: String,
-    pub(in crate::code_rule_dsl) anchor: String,
-    pub(in crate::code_rule_dsl) walks: Vec<(String, &'static str)>,
-    pub(in crate::code_rule_dsl) work: i64,
+    pub rule: usize,
+    pub steps: Vec<(usize, Option<Mode>)>,
+    pub head: String,
+    pub anchor: String,
+    pub walks: Vec<(String, &'static str)>,
+    pub work: i64,
 }
 
 /// What a run derived: the chosen plans, each output's rows (sorted, tab-separated), and the rounds per recursive
 /// component.
 #[derive(Debug, Default)]
-pub(in crate::code_rule_dsl) struct Outcome {
-    pub(in crate::code_rule_dsl) chosen: Vec<Chosen>,
-    pub(in crate::code_rule_dsl) outputs: BTreeMap<String, Vec<String>>,
+pub struct Outcome {
+    pub chosen: Vec<Chosen>,
+    pub outputs: BTreeMap<String, Vec<String>>,
     pub(in crate::code_rule_dsl) iterations: BTreeMap<String, usize>,
     /// The components a native mode ran (T's `iterations` value `"native"`).
-    pub(in crate::code_rule_dsl) native: BTreeSet<String>,
+    pub native: BTreeSet<String>,
     /// Each output's node columns (atoms mode: node ids are the vtabs', `d << 32 | index`).
-    pub(in crate::code_rule_dsl) nodes: BTreeMap<String, Vec<usize>>,
+    pub nodes: BTreeMap<String, Vec<usize>>,
     /// Outputs held as resident facts (`native::derived`), including decoded composed outputs kept for sessions.
     pub(in crate::code_rule_dsl) kept: BTreeSet<String>,
     /// The kept relations handed to the caller during the run (`run_atoms_native_handing`), no longer held.
@@ -3764,12 +3764,12 @@ fn prog_types<'p>(prog: &'p Program, r: &str) -> Vec<&'p str> {
 /// gives inputs.
 /// A native relation's live statistics (`setfix::live`): rows, per column distinct values and the sum of squared
 /// postings, and each value's postings in a column of few values.
-struct LiveRel {
-    n: i64,
-    delta: i64,
-    ndv: Vec<i64>,
-    sq: Vec<i64>,
-    freq: Vec<(usize, HashMap<Constant, i64>)>,
+pub struct LiveRel {
+    pub n: i64,
+    pub delta: i64,
+    pub ndv: Vec<i64>,
+    pub sq: Vec<i64>,
+    pub freq: Vec<(usize, HashMap<Constant, i64>)>,
 }
 impl LiveRel {
     /// From T's extension's text line (`set_fixpoint_stats`); `text(c)`: column `c` holds symbols as text.
@@ -3840,7 +3840,7 @@ fn prior_now(model: &mut Model, prog: &Program, r: &str, fill: bool) -> Option<f
     Some((rows as f64).max(1.0))
 }
 
-fn live_stats(model: &mut Model, r: &str, live: LiveRel) -> Vec<usize> {
+pub fn live_stats(model: &mut Model, r: &str, live: LiveRel) -> Vec<usize> {
     // Level-held rows are represented by their prior statistics, not their temporarily visible subset.
     if r.ends_with("__live") { return Vec::new(); }
     model.stats.prior_later.remove(r);
@@ -5789,7 +5789,7 @@ impl<'a> Run<'a, '_> {
 /// Evaluates `prog` over the facts database at `facts` (T's `run_sql`, pure SQL mode): views for projections of
 /// one input, typed tables for the rest, then each stratum planned from the statistics and the counts of the strata
 /// before it, non-recursive ones once and recursive ones semi-naively.
-pub(in crate::code_rule_dsl) fn run_sql(prog: &Program, facts: &Path) -> Result<Outcome> {
+pub fn run_sql(prog: &Program, facts: &Path) -> Result<Outcome> {
     let db = Connection::open_in_memory()?;
     db.execute("ATTACH ?1 AS f", [format!("file:{}?mode=ro", facts.display())])?;
     // Map the facts file, so probes of the input relations' indexes are memory reads, and keep ephemeral b-trees
@@ -5800,7 +5800,7 @@ pub(in crate::code_rule_dsl) fn run_sql(prog: &Program, facts: &Path) -> Result<
 
 /// `run_sql` with T's `RDL_NATIVE` modes (`native_modes`). `load` registers T's extension functions on the run's
 /// connection before anything runs, as T's `run_sql` loads `RDL_EXT`.
-pub(in crate::code_rule_dsl) fn run_sql_native(
+pub fn run_sql_native(
     prog: &Program,
     facts: &Path,
     modes: &str,
@@ -5817,7 +5817,7 @@ pub(in crate::code_rule_dsl) fn run_sql_native(
 /// with the planner's statistics in the attached schema `stats`. `db` is a connection to the content store: the
 /// symbols the run makes are the store's atoms (pending until a flush, decision 0049), and derived relations are
 /// `temp` tables, dropped by the next run. Outputs are decoded: names and kinds as text, node ids as the vtabs'.
-pub(in crate::code_rule_dsl) fn run_atoms(lowered: &lower::Lowered, db: &Connection, stats: &str) -> Result<Outcome> {
+pub fn run_atoms(lowered: &lower::Lowered, db: &Connection, stats: &str) -> Result<Outcome> {
     temp_in_memory(db)?;
     connection::run(db,2,||super::native::register_symbols(db))?;
     let inputs = Inputs {
@@ -5838,7 +5838,7 @@ pub(in crate::code_rule_dsl) fn run_atoms(lowered: &lower::Lowered, db: &Connect
 /// `db`) over atoms, the rest in SQL. T's `nearest` and `kseed` modes read a per-run copy of the tree
 /// (`tape_load`), which is not kept: `nearest` is the transducer's (`Lowered::transduce_nearest`), so those two
 /// modes are dropped from `modes`.
-pub(in crate::code_rule_dsl) fn run_atoms_native(lowered: &lower::Lowered, db: &Connection, stats: &str, modes: &str) -> Result<Outcome> {
+pub fn run_atoms_native(lowered: &lower::Lowered, db: &Connection, stats: &str, modes: &str) -> Result<Outcome> {
     let mut native = native_modes(modes);
     native.remove("nearest");
     native.remove("kseed");
@@ -5850,7 +5850,7 @@ pub(in crate::code_rule_dsl) fn run_atoms_native(lowered: &lower::Lowered, db: &
 /// what the chunks wrote, `corpus::run`).
 /// With the planner's statistics `given` (measured by the caller, in memory), and the outputs `kept` in the native
 /// engine for the caller (`Outcome::kept`): neither written to their tables nor decoded.
-pub(in crate::code_rule_dsl) fn run_atoms_native_over(
+pub fn run_atoms_native_over(
     lowered: &lower::Lowered,
     db: &Connection,
     facts: &str,
@@ -5868,7 +5868,7 @@ pub(in crate::code_rule_dsl) fn run_atoms_native_over(
 
 /// What a run tells its caller as it goes, so neither holds every relation from the run's start to its end.
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct Hooks<'a> {
+pub struct Hooks<'a> {
     /// A kept relation no later stratum reads: the caller writes it where it goes, and the run drops it
     /// (`Outcome::handed`).
     pub(in crate::code_rule_dsl) hand_off: Option<&'a mut dyn FnMut(&str) -> Result<()>>,
@@ -6178,7 +6178,7 @@ fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs, 
 
 /// Inserts `rows` (each of one width) with `insert` (`INSERT [OR …] INTO t`), many rows per statement: a statement
 /// per row would be a host loop over data.
-pub(in crate::code_rule_dsl) fn insert_many(db: &Connection, insert: &str, rows: Vec<Vec<SqlValue>>) -> Result<()> {
+pub fn insert_many(db: &Connection, insert: &str, rows: Vec<Vec<SqlValue>>) -> Result<()> {
     let Some(width) = rows.first().map(Vec::len) else { return Ok(()) };
     // SQLite binds at most 32766 parameters per statement.
     let per = (32_000 / width.max(1)).max(1);
@@ -6195,7 +6195,7 @@ pub(in crate::code_rule_dsl) fn insert_many(db: &Connection, insert: &str, rows:
 /// The relations a single rule projects from one input atom, as views (`CREATE TEMP VIEW`), with
 /// their statistics, input columns and document columns recorded in `model`.
 /// A view's statement.
-pub(in crate::code_rule_dsl) fn view_sql(rel: &str, query: &Query) -> String {
+pub fn view_sql(rel: &str, query: &Query) -> String {
     format!("CREATE TEMP VIEW {} AS {}", crate::code_rule_dsl::logic::sql::ident(rel), query.render())
 }
 
@@ -6369,7 +6369,7 @@ fn stated_apart(prog: &mut Program) -> Vec<(String, String)> {
 
 
 
-fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>, mut hooks: Hooks<'_>) -> Result<Outcome> {
+pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>, mut hooks: Hooks<'_>) -> Result<Outcome> {
     let (mut normalized,sentinels)=sql_kernel::normalize(prog)?;
     // A relation of rules and stated facts: its facts are a relation of facts alone, read by one rule, so the engine
     // holds them as it holds every relation, and no table is loaded with them in the run's waves (decision 0104).
@@ -7682,11 +7682,10 @@ fn decoded_outputs(
     Ok((outputs, all_nodes))
 }
 
-pub(in crate::code_rule_dsl) mod emit;
-mod sql_kernel;
+pub mod emit;
+pub mod sql_kernel;
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)
 
 /// Whether the SQL text `sql` names the identifier `name` (as a whole word, outside string literals).
 fn sql_names(sql: &str, name: &str) -> bool {

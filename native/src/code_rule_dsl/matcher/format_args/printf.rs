@@ -156,7 +156,7 @@ pub(super) fn expression<'t, D: Doc>(mut node: Node<'t, D>) -> Node<'t, D> {
 }
 
 /// PHP's printf-family calls (`FormatPreparer`).
-pub(crate) struct Printf;
+pub struct Printf;
 
 impl super::FormatPreparer for Printf {
     fn prepare_tape<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, crate::code_rule_dsl::tape::TapeDoc>) -> Prepared<'t, crate::code_rule_dsl::tape::TapeDoc> {

@@ -8,7 +8,7 @@ use super::metal_successor_codegen::{self, Code};
 use metal::{CommandBufferRef, Device};
 
 #[path = "metal_successor_register.rs"]
-mod register;
+pub mod register;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct Capacity {
@@ -672,7 +672,7 @@ pub(super) fn prepare<const FIELDS: usize>(
     finish_inputs(device, queue, input, counted)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn prepare_register<const FIELDS: usize>(
     device: &Device,
     queue: &metal::CommandQueueRef,

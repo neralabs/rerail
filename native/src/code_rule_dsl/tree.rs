@@ -27,7 +27,7 @@ pub(crate) fn is_comment(kind: &str) -> bool {
 }
 
 /// Punctuation the tree's shape already records: separators and brackets.
-pub(crate) fn is_punctuation(kind: &str) -> bool {
+pub fn is_punctuation(kind: &str) -> bool {
     matches!(kind, "," | ";" | "(" | ")" | "[" | "]" | "{" | "}" | ":")
 }
 
@@ -39,16 +39,16 @@ pub struct Token<'r, D: Doc> {
 
 impl<'r, D: Doc> Token<'r, D> {
     /// The token's kind: its text in the grammar (`"+"`, `"async"`, `","`).
-    pub(crate) fn kind(&self) -> Cow<'_, str> {
+    pub fn kind(&self) -> Cow<'_, str> {
         self.node.kind()
     }
     /// The token's text in the source (`B"`, `FUNCTION`): may differ from its kind in case or
     /// prefix.
-    pub(crate) fn text(&self) -> Cow<'r, str> {
+    pub fn text(&self) -> Cow<'r, str> {
         self.node.text()
     }
     /// The token's byte span in the source.
-    pub(crate) fn range(&self) -> Range<usize> {
+    pub fn range(&self) -> Range<usize> {
         self.node.range()
     }
 }
@@ -91,7 +91,7 @@ impl<'r, D: Doc> Part<'r, D> {
 }
 
 /// Shape queries on a tree node; see the module documentation.
-pub(crate) trait Tree<'r, D: Doc> {
+pub trait Tree<'r, D: Doc> {
     /// The named children, comments included.
     fn named(&self) -> impl Iterator<Item = Node<'r, D>> + '_;
     /// The named children that are not comments: what a reader of code walks.
@@ -167,7 +167,7 @@ fn part<'r, D: Doc>(child: Node<'r, D>) -> Part<'r, D> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};

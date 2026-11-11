@@ -119,7 +119,7 @@ fn domain_of(name: &str) -> Option<lower::Domain> {
 }
 
 /// `prepared` as facts.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn facts_of(prepared: &Prepared) -> Facts {
     let mut facts = Facts::new();
     for group in groups(prepared) {
@@ -558,7 +558,7 @@ impl crate::code_rule_dsl::text::vocabulary::DfaCache for StoredDfas<'_> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     /// A program one process prepared is read from the store by the next (decision 0073). With this process's
     /// prepared programs dropped, as a new process starts without them, the second run reads it from the store and
     /// gives the first run's rows. A third run finds it in memory.
@@ -604,7 +604,7 @@ mod tests {
     /// its tape (decision 0074). A pack rule, prepared, both of its programs.
     #[test]
     fn a_prepared_program_reads_back_from_its_facts_and_its_tape() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-up006-non-pep585-annotation.rr");
+        let path = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../docs/rule-syntax/packs/python/ruff-up006-non-pep585-annotation.rr");
         let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap();
         let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("prepared-facts");
         std::fs::create_dir_all(&dir).unwrap();
@@ -694,4 +694,4 @@ mod tests {
 }
 
 #[cfg(test)]
-mod identity_tests;
+pub mod identity_tests;

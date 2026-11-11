@@ -14,7 +14,7 @@ struct Inner {
     db: OnceCell<Database>,
 }
 #[derive(Clone)]
-pub(super) struct Pool(Rc<Inner>);
+pub struct Pool(Rc<Inner>);
 impl Default for Pool {
     fn default() -> Self {
         Self(Rc::new(Inner {
@@ -77,7 +77,7 @@ impl Drop for Scope {
         }
     }
 }
-pub(super) struct Lease {
+pub struct Lease {
     pool: Pool,
     pub id: usize,
     modules: RefCell<Vec<String>>,
@@ -224,7 +224,7 @@ impl Drop for Lease {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn a_successful_lease_returns_empty_backing_and_resets_source_and_function_budgets() {

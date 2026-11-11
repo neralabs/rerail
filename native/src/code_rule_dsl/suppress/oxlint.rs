@@ -27,7 +27,7 @@ use std::ops::Range;
 
 /// Oxlint's `oxlint-disable` comments: oxlint's names of the rule (without a plugin), which a
 /// directive must name (after its last `/`, or name none).
-pub(crate) struct Suppressions;
+pub struct Suppressions;
 
 impl super::SuppressionKind for Suppressions {
     const KEY: &'static str = "oxlint";
@@ -308,7 +308,7 @@ fn collect_rule_names(text: &str) -> Vec<&str> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_language::LanguageExt;

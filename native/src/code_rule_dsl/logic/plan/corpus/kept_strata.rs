@@ -200,7 +200,7 @@ impl KeptStrata for Kept<'_> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::logic::{native, plan, rr};
     use crate::code_rule_dsl::logic::plan::lower;

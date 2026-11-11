@@ -9,9 +9,9 @@ use super::metal_state_values::{
 use metal::{BufferRef, CommandBufferRef, Device};
 
 #[path = "metal_successor_active.rs"]
-mod active;
+pub mod active;
 #[path = "metal_successor_comparisons.rs"]
-mod comparisons;
+pub mod comparisons;
 
 /// Six SoA columns: position, pending body, and latest offer spans (start/count).
 /// Digits encode logical branch choices. They are not state identity or public ordinals.
@@ -169,13 +169,13 @@ impl<const FIELDS: usize> SuccessorCounts<FIELDS> {
         })
     }
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[must_use = "Check successor failures after the shared command completes"]
 pub(super) struct PendingSuccessors<const FIELDS: usize = POSITIONED_COLUMNS> {
     command: metal::CommandBuffer,
     counts: SuccessorCounts<FIELDS>,
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl<const FIELDS: usize> PendingSuccessors<FIELDS> {
     pub(super) fn check_completed(self) -> Result<(), Error> {
         if self.command.status() != metal::MTLCommandBufferStatus::Completed {
@@ -220,7 +220,7 @@ fn validate_output<const FIELDS: usize>(
         ],
     )
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn encode<const FIELDS: usize>(
     device: &Device,
     queue: &metal::CommandQueueRef,
@@ -232,7 +232,7 @@ pub(super) fn encode<const FIELDS: usize>(
     let preparation = super::metal_successor_prepare::prepare(device, queue, &input)?;
     encode_prepared(device, command, input, output, preparation)
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn encode_prepared<const FIELDS: usize>(
     device: &Device,
     command: &CommandBufferRef,
@@ -461,7 +461,7 @@ pub(super) fn encode_counts<const FIELDS: usize>(
     })
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn encode_publish<const FIELDS: usize>(
     command: &CommandBufferRef,
     input: &SuccessorInput<'_, FIELDS>,
