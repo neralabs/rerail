@@ -1,4 +1,4 @@
-//! The forest's build step: MLDB's random forest kernels (`src/forest/mldb/`, one C source for every target, through
+//! The forest's build step: MLDB's random forest kernels (`src/mldb/`, one C source for every target, through
 //! UKL's shims) preprocessed into Metal source by the C preprocessor, as MLDB's `compileFromSourceFile` did:
 //! `c++ -C -CC -xc++ -I. -I block/ukl -I builtin/metal/ukl -D__METAL_VERSION__ -D__METAL_MACOS__
 //! -D__UKL_METAL_PREPROCESSING -E`. The Metal compiler is not needed here (the gpu lane compiles source on the
@@ -9,10 +9,13 @@ use std::path::PathBuf;
 /// The Metal language version the shims see. They test only that it is defined (`ukl_shim.h` picks the Metal shim).
 const METAL_VERSION: &str = "310";
 
-pub fn run() {
-    println!("cargo:rerun-if-changed=build/forest.rs");
-    println!("cargo:rerun-if-changed=src/forest/mldb");
-    let root = PathBuf::from("src/forest");
+fn main() {
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=src/mldb");
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
+        return;
+    }
+    let root = PathBuf::from("src");
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR")).join("randomforest_kernels.metal");
     let compiler = cc::Build::new().cpp(true).get_compiler();
     let status = compiler

@@ -1,7 +1,7 @@
 //! randomforest_recursive.cc, in Rust.
 //!
 //! Jeremy Barnes, 13 October 2018. Copyright (c) 2018 mldb.ai inc. This file is part of MLDB. Copyright 2016 mldb.ai
-//! inc. Apache-2.0 (see the LICENSE at `accel/src/forest/mldb/`).
+//! inc. Apache-2.0 (see the LICENSE at `forest/src/mldb/`).
 //!
 //! Recursive (CPU) kernels for the random forest algorithm: the core of the split search
 //! (`testFeatureKernel`, `chooseSplitKernel`, `testFeatureNumber`) and `decodeRows`, which the kernels' host forms
@@ -23,12 +23,12 @@
 //! and `BucketSource` (a bucket list, a view of one, or a plain `u16`/`u32` array). The `debug` traces are not
 //! brought over.
 
-use crate::forest::bucket::{BucketList, BucketListRef, WritableBucketList};
-use crate::forest::memory_region::MemorySerializer;
-use crate::forest::randomforest_kernels::score_split;
-use crate::forest::dataset_feature_space::DatasetFeatureSpace;
-use crate::forest::randomforest_types::{decode_row_arr, decode_row_iter, get_leaf, get_node, Feature, IndexedPartitionSplit, PartitionEntry, PartitionIndex, PartitionSplit, PartitionSplitDirection, RowIterator, RowPartitionInfo, RowWeights, Rows, SplitCriterion, W, CategorySet, MAX_CATEGORICAL_BUCKETS, in_category_set};
-use crate::forest::tree::{Ptr, Tree};
+use crate::bucket::{BucketList, BucketListRef, WritableBucketList};
+use crate::memory_region::MemorySerializer;
+use crate::randomforest_kernels::score_split;
+use crate::dataset_feature_space::DatasetFeatureSpace;
+use crate::randomforest_types::{decode_row_arr, decode_row_iter, get_leaf, get_node, Feature, IndexedPartitionSplit, PartitionEntry, PartitionIndex, PartitionSplit, PartitionSplitDirection, RowIterator, RowPartitionInfo, RowWeights, Rows, SplitCriterion, W, CategorySet, MAX_CATEGORICAL_BUCKETS, in_category_set};
+use crate::tree::{Ptr, Tree};
 use std::collections::BTreeMap;
 
 /// `decodeRow` over what the split search reads its rows from.

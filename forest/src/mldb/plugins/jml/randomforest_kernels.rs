@@ -1,7 +1,7 @@
 //! randomforest_kernels.h and randomforest_kernels.cc, in Rust.
 //!
 //! Jeremy Barnes, 13 October 2018. Copyright (c) 2018 mldb.ai inc. This file is part of MLDB. Copyright 2016 mldb.ai
-//! inc. Apache-2.0 (see the LICENSE at `accel/src/forest/mldb/`).
+//! inc. Apache-2.0 (see the LICENSE at `forest/src/mldb/`).
 //!
 //! Kernels for the random forest algorithm: the split score, and the host (CPU) forms of the trainer's kernels,
 //! which the device forms (randomforest_kernels_common.h, through the Metal shim) are checked against.
@@ -14,15 +14,15 @@
 //! The functions the header declares and randomforest_recursive.cc defines are re-exported from
 //! randomforest_recursive.rs as they are translated.
 
-use crate::forest::bucket::BucketListRef;
-use crate::forest::fixed_point_accum::FixedPointAccum32;
-use crate::forest::memory_region::FrozenMemoryRegionT;
-use crate::forest::randomforest_types::{
+use crate::bucket::BucketListRef;
+use crate::fixed_point_accum::FixedPointAccum32;
+use crate::memory_region::FrozenMemoryRegionT;
+use crate::randomforest_types::{
     IndexedPartitionSplit, PartitionIndex, PartitionInfo, PartitionSplit, PartitionSplitDirection, RowPartitionInfo, Rows, TreeDepthInfo, TreeTrainingInfo, UpdateWorkEntry, WeightFormat, W, RowWeights, SplitCriterion, in_category_set, FEATURE_KIND_ORDINAL, FEATURE_KIND_SUBSETS,
 };
 use std::ops::Range;
 
-pub use crate::forest::randomforest_recursive::{choose_split_kernel, decode_rows, test_feature_kernel, test_feature_kernel_cpu, test_feature_number, BucketSource, RowSource};
+pub use crate::randomforest_recursive::{choose_split_kernel, decode_rows, test_feature_kernel, test_feature_kernel_cpu, test_feature_number, BucketSource, RowSource};
 
 pub const SQRT3_MULT_BEFORE: f32 = 65536.0;
 pub const SQRT3_MULT_AFTER: f32 = 1.0 / 256.0;
@@ -195,7 +195,7 @@ pub fn assign_partition_numbers_kernel(tree_training_info: &[TreeTrainingInfo], 
     let next_num_active = num_active_partitions + num_continuing.saturating_sub(inactive_partitions.len() as u32);
     let next_num_finished = if depth == 0 { 0 } else { tree_depth_info[0].num_finished_partitions } + num_active_partitions;
     if next_num_active > max_num_active_partitions || next_num_finished as u64 + next_num_active as u64 > tree_training_info[0].max_num_finished_partitions as u64 {
-        tree_depth_info[0].status = crate::forest::randomforest_types::TREE_DEPTH_STATUS_STOPPED;
+        tree_depth_info[0].status = crate::randomforest_types::TREE_DEPTH_STATUS_STOPPED;
         return;
     }
 
@@ -623,9 +623,9 @@ pub const HOST_KERNELS: &[KernelSpec] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::forest::bucket::WritableBucketList;
-    use crate::forest::memory_region::MemorySerializer;
-    use crate::forest::randomforest_types::{RowWriter, WeightEncoder};
+    use crate::bucket::WritableBucketList;
+    use crate::memory_region::MemorySerializer;
+    use crate::randomforest_types::{RowWriter, WeightEncoder};
 
     #[test]
     fn sqrt3_is_exact_and_scores_pure_splits_zero() {

@@ -10,9 +10,9 @@
 //! on. `BucketDescriptions::discretize` and `getValue` were declared in bucket.h with no definition upstream, so
 //! they have none here either.
 
-use crate::forest::memory_region::{FrozenMemoryRegionT, MappedSerializer, MutableMemoryRegionT};
-use crate::forest::bit_range_ops::{BitExtractor, BitWriter};
-use crate::forest::buckets::{BucketFreqs, bucket_dist_full, bucket_dist_reduced};
+use crate::memory_region::{FrozenMemoryRegionT, MappedSerializer, MutableMemoryRegionT};
+use crate::bit_range_ops::{BitExtractor, BitWriter};
+use crate::buckets::{BucketFreqs, bucket_dist_full, bucket_dist_reduced};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
@@ -516,7 +516,7 @@ impl BucketDescriptions {
 
 #[cfg(test)]
 mod tests {
-    use crate::forest::memory_region::MemorySerializer;
+    use crate::memory_region::MemorySerializer;
     use super::*;
 
     #[test]

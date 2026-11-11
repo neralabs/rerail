@@ -2,7 +2,7 @@
 //! has been cut from the .cc, the rest is still there).
 //!
 //! Jeremy Barnes, 21 July 2021. Copyright (c) 2021 Jeremy Barnes. This file is part of MLDB. Copyright 2016 mldb.ai
-//! inc. Apache-2.0 (see the LICENSE at `accel/src/forest/mldb/`).
+//! inc. Apache-2.0 (see the LICENSE at `forest/src/mldb/`).
 //!
 //! Grid compute kernels: a kernel registered with its dimensions, parameters, tuneables, constraints and grid
 //! expressions (a `GridComputeKernelTemplate`), specialized against a compute function's reflected arguments into
@@ -20,7 +20,7 @@
 //! hazard tracking, events, tracing and the multi-device context are not brought over: a buffer argument is a
 //! Metal buffer.
 
-use crate::forest::compute_kernel_metal::{ComputeKernelType, GridComputeFunctionArgumentDisposition, KernelBaseType, MetalComputeFunction};
+use crate::compute_kernel_metal::{ComputeKernelType, GridComputeFunctionArgumentDisposition, KernelBaseType, MetalComputeFunction};
 use metal::BufferRef;
 use std::collections::BTreeMap;
 

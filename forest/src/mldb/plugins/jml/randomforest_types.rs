@@ -1,7 +1,7 @@
 //! randomforest_types.h and randomforest_types.cc, in Rust.
 //!
 //! Jeremy Barnes, 13 October 2018. Copyright (c) 2018 mldb.ai inc. This file is part of MLDB. Copyright 2016 mldb.ai
-//! inc. Apache-2.0 (see the LICENSE at `accel/src/forest/mldb/`).
+//! inc. Apache-2.0 (see the LICENSE at `forest/src/mldb/`).
 //!
 //! Types for the random forest algorithm: the weights, rows and partitions the host and the kernels share. Every
 //! type the kernels read is `#[repr(C)]` with the size and offsets randomforest_types.cc asserts (and
@@ -10,13 +10,13 @@
 //! The `ValueDescription`s of the .cc (MLDB's JSON reflection) are `Debug`; its `print*` helpers print that. A
 //! `Feature`'s column is named by its hash in the feature space, where upstream held a pointer to its `ColumnInfo`.
 
-use crate::forest::bit_range_ops::{BitExtractor, BitWriter};
-use crate::forest::bucket::{BucketList, CellValue};
-use crate::forest::dataset_feature_space::{ColumnHash, DatasetFeatureSpace};
-use crate::forest::fixed_point_accum::{FixedPointAccum32, FixedPointAccum64};
-use crate::forest::memory_region::{FrozenMemoryRegionT, MappedSerializer, MutableMemoryRegionT, Pod};
-use crate::forest::split::{Op, Split};
-use crate::forest::tree::{Ptr, Tree};
+use crate::bit_range_ops::{BitExtractor, BitWriter};
+use crate::bucket::{BucketList, CellValue};
+use crate::dataset_feature_space::{ColumnHash, DatasetFeatureSpace};
+use crate::fixed_point_accum::{FixedPointAccum32, FixedPointAccum64};
+use crate::memory_region::{FrozenMemoryRegionT, MappedSerializer, MutableMemoryRegionT, Pod};
+use crate::split::{Op, Split};
+use crate::tree::{Ptr, Tree};
 use std::collections::BTreeSet;
 use std::fmt;
 use std::ops::{Add, AddAssign, Sub, SubAssign};
@@ -115,7 +115,7 @@ impl SplitCriterion {
     /// The criterion for a feature space's label (the variance for a real label, else upstream's), with its
     /// fewest rows a leaf may have (`DatasetFeatureSpace::min_leaf_examples`).
     pub fn of(fs: &DatasetFeatureSpace) -> SplitCriterion {
-        let kind = if fs.label_info == crate::forest::dataset_feature_space::FeatureType::Real { SplitCriterion::Variance } else { SplitCriterion::Sqrt };
+        let kind = if fs.label_info == crate::dataset_feature_space::FeatureType::Real { SplitCriterion::Variance } else { SplitCriterion::Sqrt };
         kind.with_min_leaf(fs.min_leaf_examples)
     }
 
@@ -983,7 +983,7 @@ pub fn decode_row_arr(arr: &[RowWeights], row_number: usize) -> (u32, RowWeights
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::forest::memory_region::MemorySerializer;
+    use crate::memory_region::MemorySerializer;
     use std::mem::{align_of, offset_of, size_of};
 
     /// randomforest_types.cc: "Verify that sizes of structures are matched by GPU versions".
