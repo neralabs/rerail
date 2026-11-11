@@ -60,7 +60,7 @@ block_id(b, "unexpectedObjectBlock") :- unwanted(b), lone_return(b, r), returns(
 // brace_first(e): e's first token is `{`, as ESLint tests it: an object literal, or `{a: 1}.a`. After the `=>`
 // it would read as a block, so it needs parentheses there.
 .decl brace_first(e: node)
-brace_first(e) :- returns(_, e), first_token(e, t), text(t, "{").
+brace_first(e) :- returns(_, e), text(e, t), match("(?s)\\{.*", t).
 .decl says(id: symbol, m: symbol)
 says("unexpectedOtherBlock", "Unexpected block statement surrounding arrow body.").
 says("unexpectedEmptyBlock", "Unexpected block statement surrounding arrow body; put a value of `undefined` immediately after the `=>`.").
@@ -80,7 +80,8 @@ unbrace_body(b, _, _) :- lone_return(b, r), returns(r, e), safe_unbrace(b), !bra
 safe_unbrace(b) :- block_body(f, b), count : { before_close(b, c), kind(c, "comment") } = 0,
     !inside(f, _, "for_statement"), !asi_next(b).
 .decl asi_next(b: node)  // the token after b would continue the value: `() => { return a } (b)` style
-asi_next(b) :- token_after(b, t), match("[(\\[/`+-].*", t).
+asi_next(b) :- next_code(b, t), match("(?s)\\s*[(\\[/`+-].*", t).
+layout_at(b) :- block_body(_, b).
 // Bracing replaces the whole body, parentheses included: `() => (1)` becomes `() => {return (1)}`. Parentheses
 // that only made an object literal an expression go: `() => ({})` becomes `() => {return {}}`.
 brace_body(at, _, _) :- wanted(e), deparen(e, at), !forced_parens(e, _) => replace(e, `{return $e}`).

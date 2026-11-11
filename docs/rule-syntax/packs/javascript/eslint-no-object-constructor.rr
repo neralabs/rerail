@@ -32,8 +32,8 @@ with_args(n) :- field(n, "arguments", a), kind(a, "template_string").
 
 // The literal needs parentheses at the start of a statement or right after `=>`.
 .decl wrap(n: node)
-wrap(n) :- no_object_constructor(n), stmt_start(n).
-wrap(n) :- no_object_constructor(n), token_before(n, t), text(t, "=>").
+wrap(n) :- no_object_constructor(n), stmt_start(n, _).
+wrap(n) :- no_object_constructor(n), field(f, "body", n), kind(f, "arrow_function").
 to_literal(n) :- wrap(n), semi_needed(n) => replace(n, `;({})`).
 to_literal(n) :- wrap(n), !semi_needed(n) => replace(n, `({})`).
 to_literal(n) :- no_object_constructor(n), !wrap(n) => replace(n, `{}`).

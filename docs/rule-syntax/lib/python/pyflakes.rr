@@ -39,7 +39,7 @@
 //   try: f()
 //   except: pass          bare_except(<except clause>, <except>)
 .decl bare_except(x: node, kw: span)
-bare_except(x, kw) :- kind(x, "except_clause"), !field(x, "value", _), first_token(x, kw).
+bare_except(x, kw) :- kind(x, "except_clause"), !field(x, "value", _), match("(?s)(?<kw>except)\\b.*", x).
 // handler_block(x, b): the body of except clause x.
 .decl handler_block(x: node, b: node)
 handler_block(x, b) :- kind(x, "except_clause"), child(x, b, _), kind(b, "block").

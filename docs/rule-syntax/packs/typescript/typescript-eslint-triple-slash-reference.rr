@@ -30,8 +30,8 @@ triple_slash_reference(c, cat("Remove this triple-slash types reference to ", m,
 reference(c, k, m) :- js_comment(c, "Line", _), leading(c),
     match("///\\s*<reference\\s*(?<k>types|path|lib)\\s*=\\s*[\"|'](?<m>.*)[\"|'].*", c).
 .decl leading(c: node)  // no token before c, but perhaps a `#!` line (ESLint's Shebang comment)
-leading(c) :- kind(c, "comment"), !token_before(c, _).
-leading(c) :- kind(c, "comment"), token_before(c, t), match("#!.*", t), !token_before(t, _).
+leading(c) :- kind(c, "comment"), child(p, c, i), kind(p, "program"),
+    count : { child(p, x, j), j < i, !kind(x, "comment"), !kind(x, "hash_bang_line") } = 0.
 .decl setting(k: symbol, v: symbol)
 setting(k, v) :- option(k, v), (k = "types" ; k = "path" ; k = "lib").
 setting("lib", "always") :- !option("lib", _).

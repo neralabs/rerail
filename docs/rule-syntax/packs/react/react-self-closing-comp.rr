@@ -25,4 +25,5 @@ self_closing(o) :- react_open(e, o), kind(e, "jsx_element"), field(o, "name", n)
 checked_name(n) :- kind(n, "identifier") ; kind(n, "member_expression").
 checked_name(n) :- kind(n, "jsx_namespace_name"), glob("[a-z]**", n).
 // ESLint's fix: everything from the open tag's `>` to the end of the close tag becomes ` />`.
-self_close(o) :- last_token(o, gt), jsx_open(e, o), field(e, "close_tag", c) => replace(gt, ` />`), delete(c).
+// The `>` is o's last character (its kind implies it; the tape keeps none).
+self_close(o) :- match("(?s).*(?<gt>>)", o), jsx_open(e, o), field(e, "close_tag", c) => replace(gt, ` />`), delete(c).

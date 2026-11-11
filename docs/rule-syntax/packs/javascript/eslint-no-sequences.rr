@@ -20,14 +20,19 @@
     suppress eslint "no-sequences"
     suppress oxlint "no-sequences"
     suppress biome "lint/complexity/noCommaOperator"
-no_sequences(t) :- kind(s, "sequence_expression"), !in_for_head(s), !intended(s), child(s, x, 0), token_after(x, t).
+// At s's own `,` (the tape keeps none): the line where the code after its first operand x starts. A finding is
+// keyed by its line.
+no_sequences(t) :- kind(s, "sequence_expression"), !in_for_head(s), !intended(s), child(s, x, 0), after_line(x, l),
+    node(d, s, _, _, _), src_line(d, l, t).
+layout_at(x) :- kind(s, "sequence_expression"), child(s, x, 0).
 
 .decl in_for_head(s: node)  // for (a, b; ; c, d): the initialiser or the update
 in_for_head(s) :- kind(f, "for_statement"), (field(f, "initializer", e) ; field(f, "increment", e)), deparen(e, s).
 .decl intended(s: node)
 intended(s) :- !option("allowInParentheses", "false"), syntax_parens(s, k), k >= 2.
 intended(s) :- !option("allowInParentheses", "false"), kind(s, "sequence_expression"), !syntax_parens(s, _),
-    token_before(s, p), text(p, "("), token_after(s, q), text(q, ")").
+    wrapped(s).
+layout_at(s) :- kind(s, "sequence_expression").
 // syntax_parens(s, k): s is the test of if/while/do, a switch's or with's head, or an arrow's body, inside k
 // pairs of parentheses (the statement's own pair counts).
 .decl syntax_parens(s: node, k: number)

@@ -32,7 +32,9 @@ no_magic_numbers(at, cat("No magic number: ", cat(raw, "."))) :- signed(n, f, _,
     !option(o, "true"), !listed(v), ts_shown(n, at, raw).
 no_magic_numbers(f, "Number constants declarations must use 'const'.") :- signed(n, f, _, _), estree_parent(f, p),
     !excused(f), !ts_place(f, _), kind(p, "variable_declarator"), option("enforceConst", "true"), estree_parent(p, d),
-    !op(d, "const").
+    !const_decl(d).
+.decl const_decl(d: node)
+const_decl(d) :- kind(d, "lexical_declaration"), op(d, "const").
 
 // signed(n, f, raw, v): literal n, or the unary -n / +n holding it, is the number f, written raw, of value v.
 // A BigInt's value ends in n (-2n), so it never equals a Number's.

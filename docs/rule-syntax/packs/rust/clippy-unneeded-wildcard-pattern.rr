@@ -19,7 +19,10 @@
 unneeded_wildcard_pattern(w, "Remove the _ wildcards before this ..; the rest pattern already skips them.") :-
     rest_pat(p, r), !kind(p, "slice_pattern"), left_run(r, w), !wild_before(w, _).
 unneeded_wildcard_pattern(c, "Remove the _ wildcards after this ..; the rest pattern already skips them.") :-
-    rest_pat(p, r), !kind(p, "slice_pattern"), wild_after(r, _), token_after(r, c).
+    rest_pat(p, r), !kind(p, "slice_pattern"), rest_next(r, c).
+.stored rest_next "a gap holding `_` elements is not the implied word, so the tape keeps the comma after `..`"
+.decl rest_next(r: node, c: span)
+rest_next(r, c) :- rest_pat(_, r), wild_after(r, _), token_after(r, c).
 unneeded_wildcard_pattern(f, "Remove the field: _ entries before this ..; the rest pattern already skips those fields.") :-
     field_run(r, f), !next_field(_, f).
 unneeded_wildcard_pattern(f, "Remove the field: _ entries before this ..; the rest pattern already skips those fields.") :-

@@ -47,7 +47,8 @@ ref_same_ask(a, b, "static") :- yoda_range_ask(_, a, b, _, _).
 .decl yoda_up(e: node, l: node, r: node)  // e is `l < r` or `l <= r`
 yoda_up(e, l, r) :- binop(e, "<", l, r) ; binop(e, "<=", l, r).
 .decl yoda_wrapped(g: node)  // astUtils.isParenthesised: `(` just before g and `)` just after it
-yoda_wrapped(g) :- token_before(g, a), text(a, "("), token_after(g, b), text(b, ")").
+yoda_wrapped(g) :- wrapped(g).
+layout_at(g) :- option("exceptRange", "true"), (binop(g, "&&", _, _) ; binop(g, "||", _, _)).
 // yoda_in_order(lo, hi): one bound is a literal and the other is not, or both are and `lo <= hi` holds in
 // JavaScript: two strings by code point (join sorts them; JavaScript compares UTF-16 units, the same below
 // U+10000), anything else as numbers, null 0, booleans 0 and 1, a numeric string its number. A bound with no number
@@ -100,16 +101,15 @@ yoda_lead(n, "") :- yoda(n, _, _), !yoda_lead_sp(n).
 .decl yoda_lead_sp(n: node)
 yoda_lead_sp(n) :- yoda_before(n, x, y), cannot_touch(x, y).
 .decl yoda_before(n: node, x: symbol, y: symbol)  // the token touching n's start, and the right operand's first
-yoda_before(n, x, y) :- yoda(n, _, _), token_before(n, t), touching(t, n), text(t, x), field(n, "right", b),
-    first_token(b, u), text(u, y).
+yoda_before(n, x, y) :- yoda(n, _, _), touching(n, x), field(n, "right", b), text(b, y).
+layout_at(n) :- yoda(n, _, _).
 .decl yoda_trail(n: node, s: symbol)
 yoda_trail(n, " ") :- yoda_trail_sp(n).
 yoda_trail(n, "") :- yoda(n, _, _), !yoda_trail_sp(n).
 .decl yoda_trail_sp(n: node)
 yoda_trail_sp(n) :- yoda_after(n, x, y), cannot_touch(x, y).
 .decl yoda_after(n: node, x: symbol, y: symbol)  // the left operand's last token, and the token touching n's end
-yoda_after(n, x, y) :- yoda(n, _, _), token_after(n, t), end_line(n, l), line(t, l), end_col(n, c), col(t, c),
-    text(t, y), field(n, "left", a), last_token(a, u), text(u, x).
+yoda_after(n, x, y) :- yoda(n, _, _), touch_after(n, y), field(n, "left", a), text(a, x).
 touch_pair(x, y) :- yoda_before(_, x, y) ; yoda_after(_, x, y).
 .decl yoda_flip(o: symbol, f: symbol)
 yoda_flip("==", "=="). yoda_flip("===", "==="). yoda_flip("!=", "!="). yoda_flip("!==", "!=="). yoda_flip("<", ">").

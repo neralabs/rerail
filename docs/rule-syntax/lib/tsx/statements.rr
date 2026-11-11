@@ -34,6 +34,7 @@
 
 
 #include "tsx/names.rr"
+#include "layout.rr"
 
 // Computed only for the arguments rules ask about, not for every node in the file.
 .pragma "magic-transform" "one_liner,asi_hazard,unbrace_unsafe"
@@ -75,7 +76,7 @@ single_statement(b, x) :- block_stmt(b, x), count : { block_stmt(b, _) } = 1.
 .decl needs_braces(b: node)
 needs_braces(b) :- braced(b), count : { block_stmt(b, _) } != 1.
 needs_braces(b) :- single_statement(b, x), block_declaration(x).
-needs_braces(b) :- single_statement(b, x), dangling_if(x), token_after(b, t), text(t, "else").
+needs_braces(b) :- single_statement(b, x), dangling_if(x), field(i, "consequence", b), field(i, "alternative", _).
 // block_declaration(x): what JavaScript allows only in a block, never as the bare body of if or a loop.
 .decl block_declaration(x: node)
 block_declaration(x) :- var_decl(x, k), k != "var".
@@ -92,53 +93,61 @@ dangling_if(x) :- else_of(x, y), dangling_if(y).
 dangling_if(x) :- body(x, b, w), w != "if", w != "else", w != "do", dangling_if(b).
 
 // ---- layout ------------------------------------------------------------------------------------------------------
-// last_code_token(n, t): n's last token, or the one before it when that is `;`. ESLint measures lines to it, so
+// The tokens ESLint measures may be ones the tape leaves out (a call's `)`, a block's braces), so lines are read
+// from the nodes, and the code around a node from the source (layout.rr).
+// code_end_line(n, l): the line n's code ends on, not counting a trailing `;`. ESLint measures lines to it, so
 // `x()\n;` still counts as one line.
-.decl last_code_token(n: node, t: span)
-last_code_token(n, t) :- last_token(n, t), !text(t, ";").
-last_code_token(n, u) :- last_token(n, t), text(t, ";"), token_before(t, u).
+.decl code_end_line(n: node, l: number)
+code_end_line(n, l) :- end_line(n, l), text(n, t), !match("(?s).*;", t).
+code_end_line(n, l) :- text(n, t), match("(?s).*;", t), last_code_child(n, c), end_line(c, l).
+.decl last_code_child(n: node, c: node)
+last_code_child(n, c) :- child(n, c, i), !kind(c, "comment"), !code_child_after(n, i).
+.decl code_child_after(n: node, i: number)
+code_child_after(n, i) :- child(n, _, i), child(n, d, j), j > i, !kind(d, "comment").
 // one_liner(x): ESLint's isOneLiner. `foo();` is; `foo(\n  a);` is not; `;` (empty statement) always is.
 .decl one_liner(x: node)
 one_liner(x) :- kind(x, "empty_statement").
-one_liner(x) :- line(x, l), last_code_token(x, t), end_line(t, l).
+one_liner(x) :- line(x, l), code_end_line(x, l).
 // collapsed(b): ESLint's isCollapsedOneLiner: the body ends on the line of the token before it (the `)` of the
 // condition, `else` or `do`). `if (a) b();` and `if (a) { b(); }` are; `if (a)\n  b();` is not.
 .decl collapsed(b: node)
-collapsed(b) :- body(_, b, _), token_before(b, t), line(t, l), last_code_token(b, u), end_line(u, l).
+collapsed(b) :- body(_, b, _), before_line(b, l), code_end_line(b, l).
+layout_at(b) :- body(_, b, _).
 
 // ---- braces and automatic semicolon insertion -------------------------------------------------------------------
 // asi_hazard(x): a line that starts with ( [ / ` + or - continues the statement before it; JavaScript inserts no
 // semicolon there.   a = b \n (c || d).run()   runs as   a = b(c || d).run().   (\x60 is the backtick.)
-.decl asi_hazard(x: loc)
-asi_hazard(x) :- token_after(x, t), match("[(\\[/\\x60+-].*", t).
+.decl asi_hazard(x: node)
+asi_hazard(x) :- next_code(x, t), match("(?s)\\s*[(\\[/\\x60+-].*", t).
+layout_at(b) :- braced(b).
 // unbrace_unsafe(b): removing b's braces would break the program in a way needs_braces does not catch.
 // 1. b's last statement would run into the code after the block: no `;` ends it and none would be inserted.
 //    ESLint's curly reports such a block but offers no fix.
 //      if (a) { x = y } (z || w)()      unbraced: `x = y (z || w)()`, a call
-//    Safe: the last token is `;`, nothing follows the block, or the last statement ends with a block of its own.
+//    Safe: the last statement ends in `;`, nothing follows the block, or it ends with a block of its own.
 .decl unbrace_unsafe(b: node)
-unbrace_unsafe(b) :- braced(b), last_token(b, c), token_before(c, t), !text(t, ";"), !closes_block(t),
-    token_after(c, n), ( line(n, l), end_line(t, l) ; asi_hazard(c) ; text(t, "++") ; text(t, "--") ).
+unbrace_unsafe(b) :- braced(b), last_code_child(b, x), text(x, t), !match("(?s).*;", t), !closes_block(x), next_code(b, _),
+    ( end_line(x, l), after_line(b, l) ; asi_hazard(b) ; match("(?s).*(\\+\\+|--)", t) ).
 // 2. b holds a TypeScript enum or interface, which may not stand bare as a body. ESLint's curly does not count
 //    them as declarations, so it reports the braces (and its fix breaks the code).
 unbrace_unsafe(b) :- single_statement(b, x), kind(x, k), (k = "enum_declaration" ; k = "interface_declaration").
-// closes_block(t): t is the `}` of a block statement. A function expression's or arrow's body does not count:
-// the expression goes on after it (`f = function () {}` then `(x)` on the next line is a call).
-.decl closes_block(t: span)
-closes_block(t) :- last_token(k, t), kind(k, "statement_block"), !value_body(k).
+// closes_block(x): statement x ends with the `}` of a block statement. A function expression's or arrow's body does
+// not count: the expression goes on after it (`f = function () {}` then `(x)` on the next line is a call).
+.decl closes_block(x: node)
+closes_block(x) :- last_code_child(_, x), node(_, x, _, _, e), (k = x ; within(k, x)), node(_, k, _, _, e),
+    kind(k, "statement_block"), !value_body(k).
 .decl value_body(k: node)  // the body of a function used as a value
 value_body(k) :- field(f, "body", k), kind(f, fk),
     (fk = "function_expression" ; fk = "arrow_function" ; fk = "generator_function" ; fk = "method_definition").
 // unbrace(b): `{ x(); }` becomes ` x(); `: both braces go, everything between them stays. After a keyword with
-// no space, `do{x()}while(c)` or `else{x()}`, the `{` becomes a space, or `dox()` would be one identifier.
+// no space, `do{x()}while(c)` or `else{x()}`, the `{` becomes a space, or `dox()` would be one identifier. The
+// braces are the block's first and last characters (the tape keeps no token for them).
 .edit unbrace(b: node)
-unbrace(b) :- first_token(b, o), last_token(b, c), !glued(b) => replace(o, ``), replace(c, ``).
-unbrace(b) :- first_token(b, o), last_token(b, c), glued(b) => replace(o, ` `), replace(c, ``).
-// glued(b): the token before b is a word (`do`, `else`) ending where b starts, and b's statement starts with a
-// word character.
+unbrace(b) :- match("(?s)(?<o>\\{).*(?<c>\\})", b), !glued(b) => replace(o, ``), replace(c, ``).
+unbrace(b) :- match("(?s)(?<o>\\{).*(?<c>\\})", b), glued(b) => replace(o, ` `), replace(c, ``).
+// glued(b): a word (`do`, `else`) ends where b starts, and b's statement starts with a word character.
 .decl glued(b: node)
-glued(b) :- token_before(b, w), match(".*[A-Za-z0-9_$]", w), text(w, s), line(w, l), line(b, l), col(w, i),
-    col(b, j), j = i + strlen(s), first_token(b, o), token_after(o, x), match("[A-Za-z0-9_$\\\\].*", x).
+glued(b) :- braced(b), structural_before(b, w), match("(?s).*[A-Za-z0-9_$]", w), match("(?s)\\{\\s*[A-Za-z0-9_$\\\\].*", b).
 
 // ---- declarations ----------------------------------------------------------------------------------------------
 // var_decl(d, k): `var a`, `let a`, `const a`, `using a`, `await using a`. The kind is the leading keyword token.
@@ -163,8 +172,9 @@ lead(s, x) :- kind(s, "expression_statement"), child(s, q, 0), kind(q, "sequence
 for_head(f, k) :- kind(f, "for_in_statement"), field(f, "left", _), op(f, k), (k = "var" ; k = "let" ; k = "const").
 // keyword(d, t): `var` in `var a;`, and in `for (\n var k in o)` too, where the head starts after the loop.
 .decl keyword(d: node, t: span)
-keyword(d, t) :- var_decl(d, _), first_token(d, t).
-keyword(f, t) :- for_head(f, _), field(f, "left", x), token_before(x, t).
+// The first word of the declaration (`var` the kind implies, so the tape keeps none), or of the for's head.
+keyword(d, t) :- var_decl(d, _), match("(?s)(?<t>[A-Za-z]+)\\b.*", d).
+keyword(f, t) :- for_head(f, _), field(f, "left", _), match("(?s)for\\s*(await\\s*)?\\(\\s*(?<t>var|let|const)\\b.*", f).
 // declarator(d, v, i): `let a = 1, b;` has declarators `a = 1` (i = 0) and `b` (i = 1). A for head is its own
 // single declarator; TypeScript's `using` has its assignments.
 .decl declarator(d: node, v: node, i: number)

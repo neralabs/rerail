@@ -107,6 +107,7 @@ ident_pg(n, v) :- quoted(n, _), ident_name(n, v).
 // ---- expressions ----------------------------------------------------------------------------------------------------
 // comparison(e, o, at): `a <> NULL` gives o = "<>" and at the `<>` token, where sqlfluff reports. The operator is
 // an anonymous token between the operands, so it is the token after the left operand.
+.stored comparison "a binary expression's operator is a choice, so the tape keeps the token after the left operand"
 .decl comparison(e: node, o: symbol, at: loc)
 comparison(e, o, t) :- kind(e, "binary_expression"), field(e, "left", l), token_after(l, t), text(t, o),
     comparison_op(o).
