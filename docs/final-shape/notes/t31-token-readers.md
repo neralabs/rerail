@@ -270,7 +270,7 @@ have no such clause, so they find nothing there:
 
 | | in the wave | not in the wave |
 |---|---|---|
-| on in `pack.json` | 199 | 219 |
+| on in `pack.json` | 203 | 219 |
 | off in `pack.json` | 96 | 123 |
 
 So the findings that seemed lost with the off rules were never computed. It is not a
