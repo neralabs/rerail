@@ -155,19 +155,50 @@ const GPU_PER_SUBMISSION: f64 = 0.15e-3;
 /// The GPU is chosen only when it is this much cheaper: the estimates are rough.
 const MARGIN: f64 = 2.0;
 
+/// Where a thread's run may place strata: the CPU only, the device where it is the cheaper (the Metal binding), or
+/// the device wherever it has every form (`Always`: what the device can run, apart from what it should; the
+/// executor coverage gate's, and `RERAIL_DEVICE=always`'s).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::code_rule_dsl) enum Binding {
+    Cpu,
+    Metal,
+    Always,
+}
+
 thread_local! {
-    /// Whether this thread's run may use the device (the run's binding, `typing::file_local::Binding::Metal`).
-    static DEVICE: Cell<bool> = const { Cell::new(false) };
+    /// This thread's run's binding (`typing::file_local::Binding::Metal` is `Metal`).
+    static DEVICE: Cell<Binding> = const { Cell::new(Binding::Cpu) };
 }
 
 /// Whether this thread's run may use the device.
 pub(in crate::code_rule_dsl) fn device() -> bool {
+    DEVICE.with(Cell::get) != Binding::Cpu
+}
+
+/// Sets whether this thread's run may place strata on the device; the previous value, to restore. `RERAIL_DEVICE=always`
+/// makes a Metal binding `Always`.
+pub(in crate::code_rule_dsl) fn set_device(on: bool) -> bool {
+    let b = match on {
+        false => Binding::Cpu,
+        true if always_env() => Binding::Always,
+        true => Binding::Metal,
+    };
+    set_binding(b) != Binding::Cpu
+}
+
+/// This thread's binding.
+pub(in crate::code_rule_dsl) fn binding() -> Binding {
     DEVICE.with(Cell::get)
 }
 
-/// Sets whether this thread's run may place strata on the device; the previous value, to restore.
-pub(in crate::code_rule_dsl) fn set_device(on: bool) -> bool {
-    DEVICE.with(|d| d.replace(on))
+/// Sets this thread's binding; the previous one, to restore.
+pub(in crate::code_rule_dsl) fn set_binding(b: Binding) -> Binding {
+    DEVICE.with(|d| d.replace(b))
+}
+
+fn always_env() -> bool {
+    static ALWAYS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ALWAYS.get_or_init(|| std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "always"))
 }
 
 /// A stratum's shape: its forms, and its planned work.
@@ -290,9 +321,67 @@ pub(in crate::code_rule_dsl) fn price_join(j: &JoinEst, sorted: bool) -> JoinCho
     JoinChoice { rel: j.rel.clone(), form, index_s, probe_s, tile_s }
 }
 
+/// Where a native stratum ran, as the executor coverage gate reads it (`plan::coverage`): the device, or the CPU and
+/// why (the forms the device lacks, else its refusal). Kept only while `recording` is on, for every thread.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::code_rule_dsl) struct Ran {
+    pub(in crate::code_rule_dsl) device: bool,
+    pub(in crate::code_rule_dsl) why: String,
+}
+
+static RECORDING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static RECORDED: std::sync::Mutex<Vec<(String, Ran)>> = std::sync::Mutex::new(Vec::new());
+
+/// While the guard lives, every native stratum's placement is kept (`recorded`).
+#[cfg(test)]
+pub(in crate::code_rule_dsl) fn recording() -> impl Drop {
+    struct On;
+    impl Drop for On {
+        fn drop(&mut self) {
+            RECORDING.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    RECORDING.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    On
+}
+
+/// The kept placements of strata whose key starts with `prefix` (taken).
+#[cfg(test)]
+pub(in crate::code_rule_dsl) fn recorded(prefix: &str) -> Vec<(String, Ran)> {
+    let mut all = RECORDED.lock().unwrap_or_else(|e| e.into_inner());
+    let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut *all).into_iter().partition(|(k, _)| k.starts_with(prefix));
+    *all = rest;
+    mine
+}
+
+/// Keeps a native stratum's placement while recording: `refused`, the device's report's refusal (`Some(None)`: it ran
+/// there).
+pub(in crate::code_rule_dsl) fn record(key: &str, placed: &Placement, refused: Option<Option<String>>) {
+    if RECORDING.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+        return;
+    }
+    let ran = match (placed.gpu, refused) {
+        (true, Some(None)) => Ran { device: true, why: "device".into() },
+        (true, Some(Some(why))) => Ran { device: false, why: format!("refused: {why}") },
+        (true, None) => Ran { device: false, why: "placed, no device report".into() },
+        (false, _) if !placed.missing.is_empty() => Ran { device: false, why: format!("no {}", placed.missing.iter().map(|f| f.name()).collect::<Vec<_>>().join(", no ")) },
+        (false, _) => Ran { device: false, why: placed.why() },
+    };
+    RECORDED.lock().unwrap_or_else(|e| e.into_inner()).push((key.to_owned(), ran));
+}
+
+/// Keeps a stratum that fell back to SQLite while recording: the class of literal the native engine had no step
+/// for, and its explanation.
+pub(in crate::code_rule_dsl) fn record_fallback(key: &str, class: &str, why: &str) {
+    if RECORDING.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+        return;
+    }
+    RECORDED.lock().unwrap_or_else(|e| e.into_inner()).push((key.to_owned(), Ran { device: false, why: format!("sqlite: {class} ({why})") }));
+}
+
 /// Whether this thread's run may place strata on the device.
 pub(in crate::code_rule_dsl) fn device_on() -> bool {
-    DEVICE.with(Cell::get)
+    device()
 }
 
 /// Where a stratum runs, and what the choice weighed.
@@ -361,9 +450,11 @@ pub(in crate::code_rule_dsl) fn place(shape: &Shape) -> Placement {
         + GPU_PER_WORK * (shape.work - join_work).max(0.0) + DEVICE_ROW_BACK * shape.rows.min(1e12);
     let gpu_s = CPU_PER_STRATUM + device_s;
     let missing: Vec<Form> = shape.forms.iter().copied().filter(|f| !DEVICE_FORMS.contains(f)).collect();
-    let device = DEVICE.with(Cell::get);
+    let binding = DEVICE.with(Cell::get);
+    let device = binding != Binding::Cpu;
     let gpu_cheaper = device_s * MARGIN < CPU_PER_WORK * shape.work;
-    Placement { gpu: device && gpu_cheaper && missing.is_empty(), gpu_cheaper, missing, cpu_s, gpu_s, device, joins }
+    let gpu = missing.is_empty() && (binding == Binding::Always || device && gpu_cheaper);
+    Placement { gpu, gpu_cheaper, missing, cpu_s, gpu_s, device, joins }
 }
 
 #[cfg(test)]

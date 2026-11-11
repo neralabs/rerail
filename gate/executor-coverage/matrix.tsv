@@ -1,0 +1,202 @@
+# The executor coverage gate (plan/coverage.rs; RERAIL_BLESS_COVERAGE=1 writes this): per probe, where it ran.
+# probe	native	device	rule
+cmp =: numbers	native	device	cov_000_p(x, y) :- n(x), n(y), x = y.
+cmp =: number and constant	native	device	cov_001_p(x) :- n(x), x = 2.
+cmp =: symbols	native	device	cov_002_p(a, b) :- s(a), t(b), a = b.
+cmp =: symbol and constant	native	device	cov_003_p(a) :- s(a), a = "alpha".
+cmp =: computed number	native	no computed term	cov_004_p(x) :- n(x), x + 1 = 3.
+cmp =: computed symbol	native	no computed term	cov_005_p(a) :- s(a), cat(a, "!") = "alpha!".
+cmp !=: numbers	native	device	cov_006_p(x, y) :- n(x), n(y), x != y.
+cmp !=: number and constant	native	device	cov_007_p(x) :- n(x), x != 2.
+cmp !=: symbols	native	device	cov_008_p(a, b) :- s(a), t(b), a != b.
+cmp !=: symbol and constant	native	device	cov_009_p(a) :- s(a), a != "alpha".
+cmp !=: computed number	native	no computed term	cov_010_p(x) :- n(x), x + 1 != 3.
+cmp !=: computed symbol	native	no computed term	cov_011_p(a) :- s(a), cat(a, "!") != "alpha!".
+cmp <: numbers	native	device	cov_012_p(x, y) :- n(x), n(y), x < y.
+cmp <: number and constant	native	device	cov_013_p(x) :- n(x), x < 2.
+cmp <: symbols	native	no computed term	cov_014_p(a, b) :- s(a), t(b), a < b.
+cmp <: symbol and constant	native	no computed term	cov_015_p(a) :- s(a), a < "alpha".
+cmp <: computed number	native	no computed term	cov_016_p(x) :- n(x), x + 1 < 3.
+cmp <: computed symbol	sqlite: function @concat (the native engine declined: rule #0000: @concat($a, 1) < 10 has no native step)	not native	cov_017_p(a) :- s(a), cat(a, "!") < "alpha!".
+cmp <=: numbers	native	device	cov_018_p(x, y) :- n(x), n(y), x <= y.
+cmp <=: number and constant	native	device	cov_019_p(x) :- n(x), x <= 2.
+cmp <=: symbols	native	no computed term	cov_020_p(a, b) :- s(a), t(b), a <= b.
+cmp <=: symbol and constant	native	no computed term	cov_021_p(a) :- s(a), a <= "alpha".
+cmp <=: computed number	native	no computed term	cov_022_p(x) :- n(x), x + 1 <= 3.
+cmp <=: computed symbol	sqlite: function @concat (the native engine declined: rule #0000: @concat($a, 1) <= 10 has no native step)	not native	cov_023_p(a) :- s(a), cat(a, "!") <= "alpha!".
+cmp >: numbers	native	device	cov_024_p(x, y) :- n(x), n(y), x > y.
+cmp >: number and constant	native	device	cov_025_p(x) :- n(x), x > 2.
+cmp >: symbols	native	no computed term	cov_026_p(a, b) :- s(a), t(b), a > b.
+cmp >: symbol and constant	native	no computed term	cov_027_p(a) :- s(a), a > "alpha".
+cmp >: computed number	native	no computed term	cov_028_p(x) :- n(x), x + 1 > 3.
+cmp >: computed symbol	sqlite: function @concat (the native engine declined: rule #0000: @concat($a, 1) > 10 has no native step)	not native	cov_029_p(a) :- s(a), cat(a, "!") > "alpha!".
+cmp >=: numbers	native	device	cov_030_p(x, y) :- n(x), n(y), x >= y.
+cmp >=: number and constant	native	device	cov_031_p(x) :- n(x), x >= 2.
+cmp >=: symbols	native	no computed term	cov_032_p(a, b) :- s(a), t(b), a >= b.
+cmp >=: symbol and constant	native	no computed term	cov_033_p(a) :- s(a), a >= "alpha".
+cmp >=: computed number	native	no computed term	cov_034_p(x) :- n(x), x + 1 >= 3.
+cmp >=: computed symbol	sqlite: function @concat (the native engine declined: rule #0000: @concat($a, 1) >= 10 has no native step)	not native	cov_035_p(a) :- s(a), cat(a, "!") >= "alpha!".
+arithmetic +	native	no computed term	cov_036_p(x, y, z) :- n(x), n(y), z = x + y.
+arithmetic -	native	no computed term	cov_037_p(x, y, z) :- n(x), n(y), z = x - y.
+arithmetic *	native	no computed term	cov_038_p(x, y, z) :- n(x), n(y), z = x * y.
+arithmetic /	native	no computed term	cov_039_p(x, y, z) :- n(x), n(y), z = x / y.
+arithmetic %	native	no computed term	cov_040_p(x, y, z) :- n(x), n(y), z = x % y.
+arithmetic of floats	native	no computed term	cov_041_p(z) :- s(a), z = to_float("1.5") + 2.25, a = "alpha".
+builtin strlen/1	native	no computed term	cov_042_p(v) :- t(a), v = strlen(a).
+builtin to_string/1	native	no computed term	cov_043_p(v) :- m(x), v = to_string(x).
+builtin to_number/1	native	no computed term	cov_044_p(v) :- t(a), v = to_number(a).
+builtin substr/3	native	no computed term	cov_045_p(v) :- t(a), m(y), m(w), v = substr(a, y, w).
+builtin max/2	native	no computed term	cov_046_p(v) :- m(x), m(y), v = max(x, y).
+builtin min/2	native	no computed term	cov_047_p(v) :- m(x), m(y), v = min(x, y).
+builtin cat/2	native	no computed term	cov_048_p(v) :- t(a), t(b), v = cat(a, b).
+functor @dot/2	native	no computed term	cov_049_p(v) :- t(a), t(b), v = @dot(a, b).
+functor @concat/2	native	no computed term	cov_050_p(v) :- t(a), t(b), v = @concat(a, b).
+functor @replace_all/3	native	no computed term	cov_051_p(v) :- t(a), t(b), t(c), v = @replace_all(a, b, c).
+functor @json_str/1	native	no computed term	cov_052_p(v) :- t(a), v = @json_str(a).
+functor @nfkc/1	native	no computed term	cov_053_p(v) :- t(a), v = @nfkc(a).
+functor @py_repr/1	sqlite: function @py_repr (the native engine declined: rule #0000: $v = @py_repr($a) has no native step)	not native	cov_054_p(v) :- t(a), v = @py_repr(a).
+functor @ed25519_ok/3	sqlite: function @ed25519_ok (the native engine declined: rule #0000: $v = @ed25519_ok($a, $b, $c) has no native step)	not native	cov_055_p(v) :- t(a), t(b), t(c), v = @ed25519_ok(a, b, c).
+functor @rx_replace/3	native	no computed term	cov_056_p(v) :- t(a), t(b), t(c), v = @rx_replace(a, b, c).
+functor @rx_group/3	native	no computed term	cov_057_p(v) :- t(a), t(b), t(c), v = @rx_group(a, b, c).
+function @qname/2	native	no computed term	cov_058_p(v) :- t(a), t(b), v = @qname(a, b).
+function @pkg_up/2	native	no computed term	cov_059_p(v) :- t(a), m(y), v = @pkg_up(a, y).
+function @head/1	native	no computed term	cov_060_p(v) :- t(a), v = @head(a).
+function @dir/1	native	no computed term	cov_061_p(v) :- t(a), v = @dir(a).
+function @join/2	native	no computed term	cov_062_p(v) :- t(a), t(b), v = @join(a, b).
+function @glob_sub/3	native	no computed term	cov_063_p(v) :- t(a), t(b), t(c), v = @glob_sub(a, b, c).
+function @package_of/1	native	no computed term	cov_064_p(v) :- t(a), v = @package_of(a).
+function @replace_all/3	native	no computed term	cov_065_p(v) :- t(a), t(b), t(c), v = @replace_all(a, b, c).
+function @convert/3	native	no computed term	cov_066_p(v) :- t(a), t(b), t(c), v = @convert(a, b, c).
+function @slice/3	native	no computed term	cov_067_p(v) :- t(a), m(y), m(w), v = @slice(a, y, w).
+function @count_matches/2	native	no computed term	cov_068_p(v) :- t(a), t(b), v = @count_matches(a, b).
+function @sha256/1	native	no computed term	cov_069_p(v) :- t(a), v = @sha256(a).
+function @git_commit/1	native	no computed term	cov_070_p(v) :- t(a), v = @git_commit(a).
+function @git_has/2	native	no computed term	cov_071_p(v) :- t(a), t(b), v = @git_has(a, b).
+function @git_tracked/1	native	no computed term	cov_072_p(v) :- t(a), v = @git_tracked(a).
+function @json_str/1	native	no computed term	cov_073_p(v) :- t(a), v = @json_str(a).
+function @nfkc/1	native	no computed term	cov_074_p(v) :- t(a), v = @nfkc(a).
+function @lower/1	native	no computed term	cov_075_p(v) :- t(a), v = @lower(a).
+function @str_concat/2	native	no computed term	cov_076_p(v) :- t(a), t(b), v = @str_concat(a, b).
+function @str_between/3	native	no computed term	cov_077_p(v) :- t(a), t(b), t(c), v = @str_between(a, b, c).
+function @str_cmp/2	native	no computed term	cov_078_p(v) :- t(a), t(b), v = @str_cmp(a, b).
+function @to_number/1	native	no computed term	cov_079_p(v) :- t(a), v = @to_number(a).
+function @max/2	native	no computed term	cov_080_p(v) :- m(x), m(y), v = @max(x, y).
+function @min/2	native	no computed term	cov_081_p(v) :- m(x), m(y), v = @min(x, y).
+function @mod/2	native	no computed term	cov_082_p(v) :- m(x), m(y), v = @mod(x, y).
+function @to_float/1	native	no computed term	cov_083_p(v) :- t(a), v = @to_float(a).
+function @float_add/2	native	no computed term	cov_084_p(v) :- m(x), m(y), v = @float_add(x, y).
+function @float_sub/2	native	no computed term	cov_085_p(v) :- m(x), m(y), v = @float_sub(x, y).
+function @float_mul/2	native	no computed term	cov_086_p(v) :- m(x), m(y), v = @float_mul(x, y).
+function @float_div/2	native	no computed term	cov_087_p(v) :- m(x), m(y), v = @float_div(x, y).
+function @float_str/1	native	no computed term	cov_088_p(v) :- m(x), v = @float_str(x).
+function @rx_group/3	native	no computed term	cov_089_p(v) :- t(a), t(b), t(c), v = @rx_group(a, b, c).
+function @sql_instr/2	native	no computed term	cov_090_p(v) :- t(a), t(b), v = @sql_instr(a, b).
+function @sql_substr/3	native	no computed term	cov_091_p(v) :- t(a), m(y), m(w), v = @sql_substr(a, y, w).
+function @sql_substr2/2	native	no computed term	cov_092_p(v) :- t(a), m(y), v = @sql_substr2(a, y).
+function @sql_substr_bytes/3	native	no computed term	cov_093_p(v) :- t(a), m(y), m(w), v = @sql_substr_bytes(a, y, w).
+function @sql_length/1	native	no computed term	cov_094_p(v) :- t(a), v = @sql_length(a).
+function @sql_trim/1	native	no computed term	cov_095_p(v) :- t(a), v = @sql_trim(a).
+function @sql_trim2/2	native	no computed term	cov_096_p(v) :- t(a), t(b), v = @sql_trim2(a, b).
+function @sql_ltrim/1	native	no computed term	cov_097_p(v) :- t(a), v = @sql_ltrim(a).
+function @sql_ltrim2/2	native	no computed term	cov_098_p(v) :- t(a), t(b), v = @sql_ltrim2(a, b).
+function @sql_rtrim2/2	native	no computed term	cov_099_p(v) :- t(a), t(b), v = @sql_rtrim2(a, b).
+function @sql_upper/1	native	no computed term	cov_100_p(v) :- t(a), v = @sql_upper(a).
+function @sql_lower/1	native	no computed term	cov_101_p(v) :- t(a), v = @sql_lower(a).
+function @sql_replace/3	native	no computed term	cov_102_p(v) :- t(a), t(b), t(c), v = @sql_replace(a, b, c).
+function @sql_like/2	native	no computed term	cov_103_p(v) :- t(a), t(b), v = @sql_like(a, b).
+function @sql_cast_int/1	native	no computed term	cov_104_p(v) :- t(a), v = @sql_cast_int(a).
+function @sql_char/1	native	no computed term	cov_105_p(v) :- m(x), v = @sql_char(x).
+function @rx_extract/3	native	no computed term	cov_106_p(v) :- t(a), t(b), m(w), v = @rx_extract(a, b, w).
+function @rx_replace/3	native	no computed term	cov_107_p(v) :- t(a), t(b), t(c), v = @rx_replace(a, b, c).
+shipped functor @cast_int/1	sqlite: error: no SQL for @cast_int($a)	sqlite: error: no SQL for @cast_int($a)	cov_108_p(v) :- t(a), v = @cast_int(a).
+shipped functor @char/1	sqlite: error: no SQL for @char($a)	sqlite: error: no SQL for @char($a)	cov_109_p(v) :- t(a), v = @char(a).
+shipped functor @class_path/1	sqlite: error: no SQL for @class_path($a)	sqlite: error: no SQL for @class_path($a)	cov_110_p(v) :- t(a), v = @class_path(a).
+shipped functor @class_prefix/1	sqlite: error: no SQL for @class_prefix($a)	sqlite: error: no SQL for @class_prefix($a)	cov_111_p(v) :- t(a), v = @class_prefix(a).
+shipped functor @drop_components/2	sqlite: error: no SQL for @drop_components($a, $b)	sqlite: error: no SQL for @drop_components($a, $b)	cov_112_p(v) :- t(a), t(b), v = @drop_components(a, b).
+shipped functor @instr/2	sqlite: error: no SQL for @instr($a, $b)	sqlite: error: no SQL for @instr($a, $b)	cov_113_p(v) :- t(a), t(b), v = @instr(a, b).
+shipped functor @join_nonempty/4	sqlite: error: no SQL for @join_nonempty($a, $b, $c, $a)	sqlite: error: no SQL for @join_nonempty($a, $b, $c, $a)	cov_114_p(v) :- t(a), t(b), t(c), t(a), v = @join_nonempty(a, b, c, a).
+shipped functor @length/1	sqlite: error: no SQL for @length($a)	sqlite: error: no SQL for @length($a)	cov_115_p(v) :- t(a), v = @length(a).
+shipped functor @like/2	sqlite: error: no SQL for @like($a, $b)	sqlite: error: no SQL for @like($a, $b)	cov_116_p(v) :- t(a), t(b), v = @like(a, b).
+shipped functor @ltrim/2	sqlite: error: no SQL for @ltrim($a, $b)	sqlite: error: no SQL for @ltrim($a, $b)	cov_117_p(v) :- t(a), t(b), v = @ltrim(a, b).
+shipped functor @printf/2	sqlite: error: no SQL for @printf($a, $b)	sqlite: error: no SQL for @printf($a, $b)	cov_118_p(v) :- t(a), t(b), v = @printf(a, b).
+shipped functor @printf/3	sqlite: error: no SQL for @printf($a, $b, $c)	sqlite: error: no SQL for @printf($a, $b, $c)	cov_119_p(v) :- t(a), t(b), t(c), v = @printf(a, b, c).
+shipped functor @printf/4	sqlite: error: no SQL for @printf($a, $b, $c, $a)	sqlite: error: no SQL for @printf($a, $b, $c, $a)	cov_120_p(v) :- t(a), t(b), t(c), t(a), v = @printf(a, b, c, a).
+shipped functor @printf/5	sqlite: error: no SQL for @printf($a, $b, $c, $a, $b)	sqlite: error: no SQL for @printf($a, $b, $c, $a, $b)	cov_121_p(v) :- t(a), t(b), t(c), t(a), t(b), v = @printf(a, b, c, a, b).
+shipped functor @qualdepth/1	sqlite: error: no SQL for @qualdepth($a)	sqlite: error: no SQL for @qualdepth($a)	cov_122_p(v) :- t(a), v = @qualdepth(a).
+shipped functor @qualname/1	sqlite: error: no SQL for @qualname($a)	sqlite: error: no SQL for @qualname($a)	cov_123_p(v) :- t(a), v = @qualname(a).
+shipped functor @replace/3	sqlite: error: no SQL for @replace($a, $b, $c)	sqlite: error: no SQL for @replace($a, $b, $c)	cov_124_p(v) :- t(a), t(b), t(c), v = @replace(a, b, c).
+shipped functor @rx_matches/2	sqlite: error: no SQL for @rx_matches($a, $b)	sqlite: error: no SQL for @rx_matches($a, $b)	cov_125_p(v) :- t(a), t(b), v = @rx_matches(a, b).
+shipped functor @semver_subset/2	sqlite: error: no SQL for @semver_subset($a, $b)	sqlite: error: no SQL for @semver_subset($a, $b)	cov_126_p(v) :- t(a), t(b), v = @semver_subset(a, b).
+shipped functor @semver_valid/1	sqlite: error: no SQL for @semver_valid($a)	sqlite: error: no SQL for @semver_valid($a)	cov_127_p(v) :- t(a), v = @semver_valid(a).
+shipped functor @substr_bytes/3	sqlite: error: no SQL for @substr_bytes($a, $b, $c)	sqlite: error: no SQL for @substr_bytes($a, $b, $c)	cov_128_p(v) :- t(a), t(b), t(c), v = @substr_bytes(a, b, c).
+shipped functor @to_precision/2	sqlite: error: no SQL for @to_precision($a, $y)	sqlite: error: no SQL for @to_precision($a, $y)	cov_129_p(v) :- t(a), m(y), v = @to_precision(a, y).
+shipped functor @trim/1	sqlite: error: no SQL for @trim($a)	sqlite: error: no SQL for @trim($a)	cov_130_p(v) :- t(a), v = @trim(a).
+shipped functor @trim/2	sqlite: error: no SQL for @trim($a, $b)	sqlite: error: no SQL for @trim($a, $b)	cov_131_p(v) :- t(a), t(b), v = @trim(a, b).
+shipped functor @upper/1	sqlite: error: no SQL for @upper($a)	sqlite: error: no SQL for @upper($a)	cov_132_p(v) :- t(a), v = @upper(a).
+text test glob: a constant pattern	native	no computed term	cov_133_p(a) :- s(a), glob("a", a).
+text test glob: negated	native	no computed term	cov_134_p(a) :- s(a), !glob("a", a).
+text test glob: a set of patterns	native	no computed term	cov_135_p(a) :- s(a), (glob("a", a) ; glob("B", a)).
+text test glob: a bound pattern	native	no computed term	cov_136_p(a, b) :- s(a), t(b), glob(b, a).
+text test iglob: a constant pattern	native	no computed term	cov_137_p(a) :- s(a), iglob("a", a).
+text test iglob: negated	native	no computed term	cov_138_p(a) :- s(a), !iglob("a", a).
+text test iglob: a set of patterns	native	no computed term	cov_139_p(a) :- s(a), (iglob("a", a) ; iglob("B", a)).
+text test iglob: a bound pattern	native	no computed term	cov_140_p(a, b) :- s(a), t(b), iglob(b, a).
+text test prefix: a constant pattern	native	no computed term	cov_141_p(a) :- s(a), prefix("a", a).
+text test prefix: negated	native	no computed term	cov_142_p(a) :- s(a), !prefix("a", a).
+text test prefix: a set of patterns	native	no computed term	cov_143_p(a) :- s(a), (prefix("a", a) ; prefix("B", a)).
+text test prefix: a bound pattern	native	no computed term	cov_144_p(a, b) :- s(a), t(b), prefix(b, a).
+text test iprefix: a constant pattern	native	no computed term	cov_145_p(a) :- s(a), iprefix("a", a).
+text test iprefix: negated	native	no computed term	cov_146_p(a) :- s(a), !iprefix("a", a).
+text test iprefix: a set of patterns	native	no computed term	cov_147_p(a) :- s(a), (iprefix("a", a) ; iprefix("B", a)).
+text test iprefix: a bound pattern	native	no computed term	cov_148_p(a, b) :- s(a), t(b), iprefix(b, a).
+text test suffix: a constant pattern	native	no computed term	cov_149_p(a) :- s(a), suffix("a", a).
+text test suffix: negated	native	no computed term	cov_150_p(a) :- s(a), !suffix("a", a).
+text test suffix: a set of patterns	native	no computed term	cov_151_p(a) :- s(a), (suffix("a", a) ; suffix("B", a)).
+text test suffix: a bound pattern	native	no computed term	cov_152_p(a, b) :- s(a), t(b), suffix(b, a).
+text test isuffix: a constant pattern	native	no computed term	cov_153_p(a) :- s(a), isuffix("a", a).
+text test isuffix: negated	native	no computed term	cov_154_p(a) :- s(a), !isuffix("a", a).
+text test isuffix: a set of patterns	native	no computed term	cov_155_p(a) :- s(a), (isuffix("a", a) ; isuffix("B", a)).
+text test isuffix: a bound pattern	native	no computed term	cov_156_p(a, b) :- s(a), t(b), isuffix(b, a).
+text test contains: a constant pattern	native	no computed term	cov_157_p(a) :- s(a), contains("a", a).
+text test contains: negated	native	no computed term	cov_158_p(a) :- s(a), !contains("a", a).
+text test contains: a set of patterns	native	no computed term	cov_159_p(a) :- s(a), (contains("a", a) ; contains("B", a)).
+text test contains: a bound pattern	native	no computed term	cov_160_p(a, b) :- s(a), t(b), contains(b, a).
+text test icontains: a constant pattern	native	no computed term	cov_161_p(a) :- s(a), icontains("a", a).
+text test icontains: negated	native	no computed term	cov_162_p(a) :- s(a), !icontains("a", a).
+text test icontains: a set of patterns	native	no computed term	cov_163_p(a) :- s(a), (icontains("a", a) ; icontains("B", a)).
+text test icontains: a bound pattern	native	no computed term	cov_164_p(a, b) :- s(a), t(b), icontains(b, a).
+text test word: a constant pattern	native	no computed term	cov_165_p(a) :- s(a), word("a", a).
+text test word: negated	native	no computed term	cov_166_p(a) :- s(a), !word("a", a).
+text test word: a set of patterns	native	no computed term	cov_167_p(a) :- s(a), (word("a", a) ; word("B", a)).
+text test word: a bound pattern	native	no computed term	cov_168_p(a, b) :- s(a), t(b), word(b, a).
+text test iword: a constant pattern	native	no computed term	cov_169_p(a) :- s(a), iword("a", a).
+text test iword: negated	native	no computed term	cov_170_p(a) :- s(a), !iword("a", a).
+text test iword: a set of patterns	native	no computed term	cov_171_p(a) :- s(a), (iword("a", a) ; iword("B", a)).
+text test iword: a bound pattern	native	no computed term	cov_172_p(a, b) :- s(a), t(b), iword(b, a).
+text test match: a constant pattern	native	no computed term	cov_173_p(a) :- s(a), match("a", a).
+text test match: negated	native	no computed term	cov_174_p(a) :- s(a), !match("a", a).
+text test match: a set of patterns	native	no computed term	cov_175_p(a) :- s(a), (match("a", a) ; match("B", a)).
+text test match: a bound pattern	native	no computed term	cov_176_p(a, b) :- s(a), t(b), match(b, a).
+aggregate count	native	no aggregate	cov_177_p(a, c) :- s(a), c = count : { p(a, _) }.
+aggregate sum	native	no aggregate	cov_178_p(a, c) :- s(a), c = sum v : { p(a, v) }.
+aggregate min	native	no aggregate	cov_179_p(a, c) :- t(a), c = min v : { p(a, v) }.
+aggregate max	native	no aggregate	cov_180_p(a, c) :- t(a), c = max v : { p(a, v) }.
+aggregate product	sqlite: aggregate product (the native engine declined: rule #0000: $c = product $v : { p($a, $v) } has no native step)	not native	cov_181_p(a, c) :- s(a), c = product v : { p(a, v) }.
+aggregate join	native	no string join	cov_182_p(a, c) :- t(a), c = join b by b sep ", " : { q(a, b) }.
+membership of a constant set	native	no computed term	cov_183_p(a) :- s(a), (a = "alpha" ; a = "x_1").
+lattice relation (shortest)	unparsed: unbounded lattice: cov_184_p has no finite height and no `widen k`	unparsed: unbounded lattice: cov_184_p has no finite height and no `widen k`	cov_184_p(x, 0) :- n(x), x = 1. cov_184_p(y, d + 1) :- cov_184_p(x, d), e(x, y).
+aggregate count = 0 (a negation)	native	device	cov_185_p(a) :- s(a), count : { p(a, _) } = 0.
+aggregate over two atoms' bag	native	no aggregate	cov_186_p(a, c) :- t(a), c = count : { q(a, _) }.
+join	native	device	cov_187_p(x, y) :- e(x, y), n(y).
+join of three	native	device	cov_188_p(x, z) :- e(x, y), e(y, z), n(z).
+negation	native	device	cov_189_p(x) :- n(x), !m(x).
+negation of a pair	native	device	cov_190_p(x, y) :- n(x), n(y), !e(x, y).
+semi-join (a column unread)	native	device	cov_191_p(x) :- n(x), e(x, _).
+constant in an atom	native	device	cov_192_p(y) :- e(2, y).
+constant in a head	native	device	cov_193_p(x, 7) :- n(x).
+recursion (closure)	native	no recursion	cov_194_p(x, y) :- e(x, y). cov_194_p(x, z) :- cov_194_p(x, y), e(y, z).
+recursion with a negation	native	no recursion	cov_195_p(x, y) :- e(x, y), !m(y). cov_195_p(x, z) :- cov_195_p(x, y), e(y, z), !m(z).
+recursion with a comparison	native	no recursion	cov_196_p(x, y) :- e(x, y). cov_196_p(x, z) :- cov_196_p(x, y), e(y, z), z < 5.
+recursion with a computed term	native	no computed term, no recursion	cov_197_p(x, 0) :- n(x). cov_197_p(y, d + 1) :- cov_197_p(x, d), e(x, y), d < 4.
+computed head	native	no computed term	cov_198_p(x + 1) :- n(x).
+computed symbol head	native	no computed term	cov_199_p(@dot(a, "x")) :- s(a).

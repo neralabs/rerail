@@ -68,7 +68,7 @@ use crate::code_rule_dsl::logic::strings::SET;
 mod findings;
 
 /// The text tests: their `.rr` names and the engine's.
-pub(super) const TESTS: [(&str, &str); 11] = [
+pub(in crate::code_rule_dsl) const TESTS: [(&str, &str); 11] = [
     ("glob", "glob"),
     ("iglob", "iglob"),
     ("prefix", "prefix"),

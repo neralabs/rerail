@@ -15,6 +15,8 @@ mod check;
 mod aggregate_demand;
 mod from_tape;
 mod lower;
+#[cfg(test)]
+pub(in crate::code_rule_dsl) use lower::TESTS as RR_TESTS;
 mod print;
 // The parser and the tape's tree, the `.rr` parser crate's (`rerail_rr_syntax`).
 use rerail_rr_syntax::syntax;

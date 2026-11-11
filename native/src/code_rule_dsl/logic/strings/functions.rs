@@ -118,6 +118,11 @@ pub(in crate::code_rule_dsl) fn native_call(f: &str) -> Option<(&'static str, &'
     }
 }
 
+/// Every function: its name, arguments and result (the executor coverage gate probes each, `plan::coverage`).
+pub(in crate::code_rule_dsl) fn all() -> &'static [(&'static str, &'static [Kind], Kind)] {
+    FUNCTIONS
+}
+
 /// A function's name (as SQL names it), arguments and result, if `name` is one of these.
 pub(in crate::code_rule_dsl) fn signature(name: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
     FUNCTIONS.iter().find(|(n, _, _)| *n == name).copied()

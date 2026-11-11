@@ -4057,7 +4057,7 @@ struct Ambient {
     plans: Option<SharedPlans>,
     memo: Option<super::derived::Shared>,
     observed: keeps::SharedObserved,
-    device: bool,
+    device: placement::Binding,
     explain: bool,
 }
 
@@ -4065,19 +4065,19 @@ impl Ambient {
     fn here() -> Self {
         let explain = explaining(false);
         explaining(explain);
-        Ambient { plans: share_plans(), memo: super::derived::share(), observed: keeps::share_observed(), device: placement::device(), explain }
+        Ambient { plans: share_plans(), memo: super::derived::share(), observed: keeps::share_observed(), device: placement::binding(), explain }
     }
 
     /// While the guard lives, this thread works in the run's ambient.
     fn enter(&self) -> impl Drop {
-        struct Entered(bool, bool, Box<dyn Drop>, Box<dyn Drop>, Box<dyn Drop>);
+        struct Entered(placement::Binding, bool, Box<dyn Drop>, Box<dyn Drop>, Box<dyn Drop>);
         impl Drop for Entered {
             fn drop(&mut self) {
-                placement::set_device(self.0);
+                placement::set_binding(self.0);
                 explaining(self.1);
             }
         }
-        Entered(placement::set_device(self.device), explaining(self.explain), Box::new(enter_plans(self.plans.clone())), Box::new(super::derived::enter(self.memo.clone())), Box::new(keeps::enter_observed(self.observed.clone())))
+        Entered(placement::set_binding(self.device), explaining(self.explain), Box::new(enter_plans(self.plans.clone())), Box::new(super::derived::enter(self.memo.clone())), Box::new(keeps::enter_observed(self.observed.clone())))
     }
 }
 
@@ -5391,6 +5391,10 @@ impl<'a> Run<'a, '_> {
         let _ = not_taken;
         #[cfg(not(target_os = "macos"))]
         let device: Option<()> = None;
+        #[cfg(target_os = "macos")]
+        placement::record(&stratum_key(scc), &placed, device.as_ref().map(|d| d.refused.clone()));
+        #[cfg(not(target_os = "macos"))]
+        placement::record(&stratum_key(scc), &placed, None);
         if profiling {
             let (u, s) = corpus::thread_usage();
             let work: u64 = counted.iter().flatten().map(|(a, _)| *a).sum();
@@ -7462,7 +7466,9 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         if !ran_native {
             let n=sql_kernel::component(&mut run,scc,&rules,&planned,recursive)?;
             super::profile::stratum(&skey,"SQL wave kernel",||format!("{why}; {n} waves"));
-            super::profile::fallback(&skey, run.why_class.take().unwrap_or_else(|| if native.contains("program") { "no reason given".into() } else { "the native engine is off".into() }));
+            let class = run.why_class.take().unwrap_or_else(|| if native.contains("program") { "no reason given".into() } else { "the native engine is off".into() });
+            placement::record_fallback(&skey, &class, &why);
+            super::profile::fallback(&skey, class);
             if recursive {outcome.iterations.insert(key,n as usize);}
             for (((h,_),rule),(x,took)) in planned.iter().zip(&rules).zip(&explained){
                 if let Some(x)=x{super::profile::planned(&skey,&format!("sql wave {}",h.rel),Some(rule_no(rule)),x,*took,0,None,None);}
@@ -7782,6 +7788,8 @@ mod sql_kernel;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod coverage;
 
 /// Whether the SQL text `sql` names the identifier `name` (as a whole word, outside string literals).
 fn sql_names(sql: &str, name: &str) -> bool {

@@ -169,6 +169,9 @@ pub(in crate::code_rule_dsl) enum SqlExpression {
     Scalar(Box<super::select::Select>),
 }
 
+/// SQLite's keywords that a function's name may be (a call is written as one only when quoted).
+const KEYWORDS: [&str; 16] = ["JOIN", "CROSS", "LEFT", "RIGHT", "FULL", "INNER", "OUTER", "NATURAL", "USING", "ON", "GROUP", "ORDER", "UNION", "SELECT", "FROM", "WHERE"];
+
 fn quote_identifier(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
@@ -261,6 +264,8 @@ impl SqlExpression {
             }
             Self::Qualified { alias, column } => format!("{alias}.{column}"),
             Self::Call { name, arguments } => {
+                // A function named as a keyword (`.rr`'s `@join`) is quoted: SQLite reads `join(…)` as a join.
+                let name = if KEYWORDS.contains(&name.to_ascii_uppercase().as_str()) { quote_identifier(name) } else { name.to_string() };
                 format!("{name}({})", arguments.iter().map(Self::render).collect::<Vec<_>>().join(", "))
             }
             Self::Between { input, low, high } => {
