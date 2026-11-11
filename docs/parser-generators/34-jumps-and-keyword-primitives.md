@@ -304,7 +304,13 @@ That is the next step: a call's arguments and results, or only the fields it tou
 
 What is left at a call: the four passed fields spill between blocks
 (21,725 stack accesses), as rule functions are large.
-And the level's word and flags are stored around every call, though few rules use them.
+
+A call keeps the level's word and flags only where its callee's level may change them
+(a `REMEMBER`, or a `FLAG` set or cleared, in its function or one it goes on to):
+432.5M instructions, 84.0M cycles.
+
+The rules are 55 functions, the smallest 23 words: none is small enough to copy into callers.
+The lean parser has 45.
 
 ## The order
 

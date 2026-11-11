@@ -1172,6 +1172,29 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         }
     }
     let index: Vec<std::collections::HashMap<usize, usize>> = incoming.iter().map(|s| s.iter().enumerate().map(|(i, &g)| (g, i)).collect()).collect();
+    // Each cluster's level may change its word or flags (`REMEMBER`, `FLAG` set or clear): in
+    // its own words, or in a cluster it goes on to (a tail call); its own calls give them back.
+    // A call keeps the caller's only where its callee's may change (`Op::Push`).
+    let mut changes_context: Vec<bool> = vec![false; cut.count as usize];
+    for pc in (0..n_words).filter(|&pc| matches!(words[pc].operation, Op::Remember { .. } | Op::Flag { op: FlagOp::Set | FlagOp::Clear, .. })) {
+        changes_context[cut.of[pc] as usize] = true;
+    }
+    loop {
+        let mut more = false;
+        for pc in (0..n_words).filter(|&pc| !shared_all.skipped[pc]) {
+            let c = cut.of[pc] as usize;
+            if changes_context[c] {
+                continue;
+            }
+            if goes_to(pc).into_iter().any(|t| cut.of[t] as usize != c && changes_context[cut.of[t] as usize]) {
+                changes_context[c] = true;
+                more = true;
+            }
+        }
+        if !more {
+            break;
+        }
+    }
     for c in 0..cut.count {
         // The places this cluster's function names: its own words and every place they can go
         // on to. A block each, and no more: Cranelift's passes size their tables by the blocks.
@@ -2251,7 +2274,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     guard(&mut f, deep, pc);
                     let ret = f.ins().iadd_imm(ret, 1);
                     mset(&mut f, Mem::Ret, ret);
-                    let kept = two_slots.then(|| (mget(&mut f, Mem::Word), mget(&mut f, Mem::Flags)));
+                    let kept = (two_slots && changes_context[cut.of[callee(native, pc)] as usize]).then(|| (mget(&mut f, Mem::Word), mget(&mut f, Mem::Flags)));
                     for (k, v) in vars.iter().enumerate() {
                         if let Some(v) = v.filter(|_| !cut.pass.contains(&(k as u32))) {
                             let x = f.use_var(v);
