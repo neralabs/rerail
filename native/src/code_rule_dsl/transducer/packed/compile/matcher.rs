@@ -637,12 +637,15 @@ impl LoweredMatcher {
 }
 
 /// How a wave's batch ran ([`LoweredWave::roots_batch`]): on Metal or the CPU, its command buffers and their seconds on
-/// the GPU.
-#[derive(Clone, Copy, Debug, Default)]
+/// the GPU; and the (clause, tape) pairs whose roots outran the interpreter's work limit.
+#[derive(Clone, Debug, Default)]
 pub(in crate::code_rule_dsl) struct WaveRun {
     pub(in crate::code_rule_dsl) metal: bool,
     pub(in crate::code_rule_dsl) command_buffers: usize,
     pub(in crate::code_rule_dsl) device: f64,
+    /// A clause's roots on a tape where its program outran the work limit: there, its found roots are every
+    /// candidate (its domain, past its entry), which the caller confirms with W's matcher.
+    pub(in crate::code_rule_dsl) limited: Vec<(usize, usize)>,
 }
 
 /// A wave's lowered clauses evaluated together (06 S4): each clause's labels shifted past the
@@ -1007,7 +1010,9 @@ impl LoweredWave {
     /// wave as one run: its labels' passes once, then each clause's root program from its starts. On Metal, every
     /// pass and root program in one command buffer (`roots_metal`, the batch halved where it outgrows a workspace or
     /// the launch bound); on the CPU, the passes by level (`labelled`) and the roots on the interpreter.
-    /// `active` (per clause, per tape) is where a clause runs: a tape its gates exclude has no matches.
+    /// `active` (per clause, per tape) is where a clause runs: a tape its gates exclude has no matches. A clause whose
+    /// program outruns the work limit on a tape gives every candidate root there, listed in [`WaveRun::limited`], so
+    /// one large file does not fail the wave: the caller confirms those roots with W's matcher.
     pub(in crate::code_rule_dsl) fn roots_batch(&self, backend: Backend, tapes: &[TapeDoc], active: &[Vec<bool>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, WaveRun), Error> {
         #[cfg(target_os = "macos")]
         if let Backend::MetalInterpreter = backend {
@@ -1018,26 +1023,29 @@ impl LoweredWave {
         }
         let _ = backend;
         let views = self.labelled_sets(tapes, active)?;
-        let found = self
-            .clauses
-            .iter()
-            .enumerate()
-            .map(|(c, clause)| {
-                let entry = Entry::of(&clause.program);
-                views
-                    .iter()
-                    .enumerate()
-                    .map(|(t, (view, sets))| {
-                        if !active[c][t] {
-                            return Ok(BTreeSet::new());
-                        }
-                        let outputs = clause.program.execute_roots(view, domain(&clause.domain, view, sets).filter(|&node| entry.admits(view, node)))?;
-                        Ok(outputs.into_iter().map(|output| output.start).collect())
-                    })
-                    .collect::<Result<Vec<_>, Error>>()
-            })
-            .collect::<Result<Vec<_>, Error>>()?;
-        Ok((found, WaveRun::default()))
+        let mut limited = Vec::new();
+        let mut found = Vec::with_capacity(self.clauses.len());
+        for (c, clause) in self.clauses.iter().enumerate() {
+            let entry = Entry::of(&clause.program);
+            let mut per = Vec::with_capacity(views.len());
+            for (t, (view, sets)) in views.iter().enumerate() {
+                if !active[c][t] {
+                    per.push(BTreeSet::new());
+                    continue;
+                }
+                let candidates = || domain(&clause.domain, view, sets).filter(|&node| entry.admits(view, node));
+                per.push(match clause.program.execute_roots(view, candidates()) {
+                    Ok(outputs) => outputs.into_iter().map(|output| output.start).collect(),
+                    Err(Error::WorkLimit) => {
+                        limited.push((c, t));
+                        candidates().collect()
+                    }
+                    Err(e) => return Err(e),
+                });
+            }
+            found.push(per);
+        }
+        Ok((found, WaveRun { limited, ..WaveRun::default() }))
     }
 
     /// [`roots_metal`](Self::roots_metal), each half of the batch on its own where the whole outgrows a workspace or
@@ -1053,9 +1061,9 @@ impl LoweredWave {
                 for (l, r) in left.iter_mut().zip(right) {
                     l.extend(r);
                 }
-                Ok((left, WaveRun { metal: true, command_buffers: a.command_buffers + b.command_buffers, device: a.device + b.device }))
+                Ok((left, WaveRun { metal: true, command_buffers: a.command_buffers + b.command_buffers, device: a.device + b.device, limited: Vec::new() }))
             }
-            found => found.map(|(found, outcome)| (found, WaveRun { metal: true, command_buffers: outcome.command_buffers, device: outcome.device })),
+            found => found.map(|(found, outcome)| (found, WaveRun { metal: true, command_buffers: outcome.command_buffers, device: outcome.device, limited: Vec::new() })),
         }
     }
 
