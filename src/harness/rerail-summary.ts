@@ -1,13 +1,12 @@
 import { rerailCommandList } from "./rerail-commands.js";
 import type { CommandSigil } from "../engine/adapter-contract.js";
-import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
-import type { SessionPresentation } from "../presentation/session-presentation.js";
+import type { SessionPresentation, SummaryState } from "../presentation/session-presentation.js";
 
 export interface RerailSummaryInput {
   /** This session's presentation, read on demand; null where the coding agent cannot name its session (Cursor). */
   presentation: SessionPresentation | null;
   /** The repository's state when there is no session presentation; ignored otherwise. */
-  repositoryState: RepositoryStartState | null;
+  repositoryState: SummaryState;
   /** Rules on in this repository, for the no-session form. */
   ruleCount: number | null;
   /** Rules and packs on in this repository that run in Log waiting for the person's approval, for the no-session form. */
@@ -21,6 +20,12 @@ export interface RerailSummaryInput {
 const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
 const NOT_RUNNING: readonly string[] = ["✕ Rerail is not running.", "  Start it with `rerail daemon start` in a terminal."];
+
+/** The daemon runs but gave no answer in time: starting it cannot help, and `rerail status` says more if it stays so. */
+const NOT_ANSWERING: readonly string[] = [
+  "● Rerail is running, but its daemon did not answer in time.",
+  "  Ask again in a moment; if it keeps happening, run `rerail status` in a terminal.",
+];
 
 const notOnLines = ({ repositoryName, sigil }: RerailSummaryInput): string[] =>
   [`○ Rerail is not on in ${repositoryName}.`, `  Start it with ${sigil}rerail-start.`];
@@ -46,6 +51,7 @@ function awaitingLines(awaiting: number | null, rulesUrl: string | null): string
 function repositoryHeadline(input: RerailSummaryInput): readonly string[] {
   const { repositoryState, ruleCount, rulesUrl } = input;
   if (repositoryState === null) return NOT_RUNNING;
+  if (repositoryState === "not-answering") return NOT_ANSWERING;
   if (repositoryState === "not-set-up") return notSetUpLines(input);
   if (repositoryState === "stopped") return notOnLines(input);
   const lines = [onLine(input)];
@@ -71,6 +77,8 @@ function headline(input: RerailSummaryInput): readonly string[] {
       return notSetUpLines(input);
     case "not-running":
       return NOT_RUNNING;
+    case "not-answering":
+      return NOT_ANSWERING;
     case "starting":
       return [onLine(input), "  This session is not recorded yet; ask again after your next message."];
     case "unavailable":

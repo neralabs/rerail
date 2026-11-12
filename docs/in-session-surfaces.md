@@ -98,6 +98,7 @@ In a terminal: rerail status · rerail version · rerail update · rerail daemon
 
 - **Not started:** says so and points at `/rerail-start`.
 - **No daemon:** says `✕ Rerail is not running.` and how to start it.
+- **Daemon not answering:** the daemon runs but gave no answer within 2 seconds, so it says to ask again, and to run `rerail status` if that keeps happening, rather than how to start it.
 - **Cursor:** shows the repository's rule count and a link to its rules.
 
 ## Steer
@@ -281,7 +282,8 @@ R E R A I L ● 26 rules · steered 3×
 | Footer | Meaning |
 | --- | --- |
 | `R E R A I L ○ not set up · rerail start` | Started, but no rules set up |
-| `R E R A I L ✕ not running` | No daemon answers |
+| `R E R A I L ✕ not running` | No daemon is running |
+| `R E R A I L ● not answering` | The daemon is running but gave no answer within 2 seconds, as when it is busy |
 | `R E R A I L ● starting` | Session not recorded yet: Rerail is still starting it |
 | `R E R A I L ● session unavailable` | The session could not be read |
 
