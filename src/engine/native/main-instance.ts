@@ -115,7 +115,6 @@ export function acquireMainInstance(build: MainRerailBuild, directory: string = 
  * main store whatever `RERAIL_CONTENT_STORE_PATH` says; they reach it only through the main daemon.
  */
 export function assertContentStoreOwner(storePath: string): void {
-  // `contentStoreProblem` reports a store there as none for any build but main, by the same test.
   if (!isInMainContentStoreDirectory(storePath)) return;
   if (held !== undefined && resolve(held.directory) === resolve(mainContentStoreDirectory())) return;
   throw new Error(
