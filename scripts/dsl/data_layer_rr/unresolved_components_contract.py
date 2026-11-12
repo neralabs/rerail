@@ -77,7 +77,7 @@ def exercise(module,case,scratch):
 
 def install(backend,module,detectors=False):
     from unresolved_port import install as install_native
-    install_native(backend,module)
+    install_native(backend,module,detectors=detectors)
 
 
 if __name__=='__main__':main(CHECK,'rerail.unresolved-components/v1',cases,exercise,install,['unresolved_components_contract.py','async_pattern_components_contract.py'])

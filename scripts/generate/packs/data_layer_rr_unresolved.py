@@ -1,5 +1,7 @@
 """Port FieldInfo inspection, function-local resolution discovery, and predicate contracts."""
 import json
+from dataclasses import asdict
+from pathlib import Path
 from data_layer_rr_text import module, character_class
 from data_layer_rr_unresolved_graph import supplied_ast
 
@@ -7,10 +9,20 @@ from data_layer_rr_unresolved_graph import supplied_ast
 def unresolved_forward_refs(source, target, header):
     original = module(source, 'unresolved_forward_refs')
     text = header('unresolved_forward_refs', target)
+    from data_layer_rr_cli import api_scope
+    text = api_scope(text)
     text += '.decl uf_config(key: symbol, value: symbol)\n'
     for key in ['TYPE_INSPECTION_FUNCTIONS', 'RESOLVED_PATTERNS']:
         for value in sorted(getattr(original, key)):
             text += f'uf_config({json.dumps(key)}, {json.dumps(value)}).\n'
+    plugin = original.unresolved_forward_refs_plugin(Path('.'))
+    metadata = dict(extractor=asdict(original.UNRESOLVED_FORWARD_REFS_EXTRACTOR),
+                    plugin={key:getattr(plugin,key) for key in ['name','enforcement','description']},
+                    scope=asdict(plugin.file_scope))
+    metadata['scope']['directories'] = [str(p) for p in plugin.file_scope.directories]
+    metadata['scope']['explicit_files'] = [str(p) for p in plugin.file_scope.explicit_files]
+    for key,value in metadata.items():
+        text += f'uf_config({json.dumps(key)}, {json.dumps(json.dumps(value))}).\n'
     uppercase = '(?s)' + character_class(str.isupper) + '.*'
     text += f'.decl uf_upper(name: symbol)\nuf_upper(name) :- uf_name(_, name), match({json.dumps(uppercase)}, name).\n'
     space = character_class(str.isspace)
@@ -160,4 +172,4 @@ uf_cli_hidden(i) :- option_item("cliRelativePaths", i, path),
 CliFile(@place("cli", 1), i) :- option("entryPoint", "cli_selection"), option_item("cliModes", i, "direct").
 CliFile(@place("cli", 1), i) :- option("entryPoint", "cli_selection"), option_item("cliModes", i, "recursive"),
     option_item("cliNames", i, name), suffix(".py", name), !uf_cli_hidden(i).
-''' + supplied_ast()
+''' + supplied_ast() + '\n#include "data-layer/unresolved-api.rr"\n'

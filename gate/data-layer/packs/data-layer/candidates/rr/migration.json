@@ -1747,7 +1747,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/unresolved-forward-refs.rr",
-      "sha256": "f38a5191b38d4eca938ba63d6c9c463470df2bfae2589db1eb67d4be11f978ee",
+      "sha256": "b84021dfba7bf9b62ce368e152249d9e0ed98958ef1f53831f709b4e7c2465dc",
       "origin": "authored",
       "upstreamPath": "scripts/lint_unresolved_forward_refs.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -3938,7 +3938,7 @@
       "legacySha256": "084da92045c5621c0305bfaeee185abc331c46a6e1ad45de61e89ee3c382d231",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/unresolved-forward-refs.rr",
-      "ruleSha256": "f38a5191b38d4eca938ba63d6c9c463470df2bfae2589db1eb67d4be11f978ee"
+      "ruleSha256": "b84021dfba7bf9b62ce368e152249d9e0ed98958ef1f53831f709b4e7c2465dc"
     },
     {
       "check": "classvar_check",

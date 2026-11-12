@@ -18,6 +18,13 @@ The existing detector adapter does not replace these entry points. Its CLI also 
 These contracts must run through native rules before admission. The copied CLI must also be replaced.
 The [red receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-components-red.json.gz) preserves both runs without claiming migration acceptance.
 
+All fifty now pass through snapshot and workspace execution, with no Python linter callbacks.
+Native rules supply extractor and plugin metadata, inspect supplied syntax trees, project fact paths, and report typed raw facts.
+The comparisons retain state, duplicate findings, Boolean and unbounded integer lines, malformed containers, and exact message and path ordering.
+The adapter no longer copies or compiles the original Python CLI. Its replacement remains open.
+The [component receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-components-native.json.gz) preserves all hundred native comparisons.
+Four tooling tests enforce the recorded input coverage and exact results. This checkpoint does not admit the rule.
+
 ## Active engine
 
 The latest registered root CLI is `f4db14313662e14c…`, built from native repair commit `4e0774680`.

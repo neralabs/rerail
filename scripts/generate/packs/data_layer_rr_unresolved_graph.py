@@ -45,9 +45,10 @@ uf_supplied_line(n, to_number(line)) :- option_item("astLines", n, line).
 uf_supplied_snippet(n, @replace_all(raw, trim, "")) :- uf_supplied_line(n, line), line > 0,
     option_item("sourceLines", line - 1, raw), uf_trim(trim).
 uf_supplied_snippet(n, "") :- uf_supplied_line(n, line), !option_item("sourceLines", line - 1, _).
-.violation Supplied(at: span, function: symbol, problem: symbol, source: symbol, ordinal: number)
+.violation Supplied(at: span, function: symbol, problem: symbol, source: symbol, ordinal: number, file: symbol)
     code "unresolved_forward_ref" "{function}(): {problem}"
-Supplied(@place("provided-tree", line), function, problem, snippet, n) :- uf_bad(n, function, problem),
-    option("entryPoint", "AnnotationUsageFinder.analyze"), option("providedSource", text), contains(".annotation", text),
+Supplied(@place("provided-tree", line), function, problem, snippet, n, path) :- uf_bad(n, function, problem),
+    option("entryPoint", entry), (entry = "AnnotationUsageFinder.analyze" ; entry = "analyze_source_content"),
+    option("providedSource", text), contains(".annotation", text), uf_fact_path(path),
     uf_supplied_line(n, line), uf_supplied_snippet(n, snippet).
 '''

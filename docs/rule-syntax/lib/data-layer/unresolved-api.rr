@@ -1,0 +1,31 @@
+// A supplied tree is input data. Its source gate and path projection remain native.
+.decl uf_relative_path(path:symbol)
+uf_relative_path(".") :- option("ufOwnerPath",p),option("ufFactRoot",p).
+uf_relative_path(@slice(p,strlen(r)+1,strlen(p))) :- option("ufOwnerPath",p),option("ufFactRoot",r),r!=".",r!="/",r!="//",prefix(cat(r,"/"),p).
+uf_relative_path(@slice(p,1,strlen(p))) :- option("ufOwnerPath",p),option("ufFactRoot","/"),p!="/",prefix("/",p),!prefix("//",p).
+uf_relative_path(@slice(p,2,strlen(p))) :- option("ufOwnerPath",p),option("ufFactRoot","//"),p!="//",prefix("//",p).
+uf_relative_path(p) :- option("ufOwnerPath",p),option("ufFactRoot","."),!prefix("/",p).
+.decl uf_fact_path(path:symbol)
+uf_fact_path(p) :- uf_relative_path(p).
+uf_fact_path(p) :- option("ufOwnerPath",p),!uf_relative_path(_).
+.violation MissingTree(at:span,detail:symbol) code "UF_SOURCE_ERROR" "{detail}"
+MissingTree(@place("provided-tree",0),"AST tree is required; parsing is owned by the fact framework") :-
+    option("entryPoint","analyze_source_content"),option("providedSource",s),contains(".annotation",s),option("ufHasTree","false").
+
+#include "project.rr"
+#include "data-layer/supplied-facts.rr"
+#include "data-layer/typed-supplied-facts.rr"
+.decl pp_config(key:symbol,value:symbol)
+pp_config("findingSeverity","hard-fail").
+sf_config("path_field","file").
+sf_config("code","unresolved_forward_ref").
+sf_config("order","message").
+sf_config("bundle_fallback","exact").
+sf_default("function","<module>").
+sf_default("problem","unresolved forward reference annotation").
+sf_message(b,r,cat(f,"(): ",p)) :- sf_active(b,r),sf_field(b,r,"function",f),sf_field(b,r,"problem",p).
+.input sfe_member(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/key",projection="python-str")
+.input sfe_value(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/encoded",projection="python-value-str")
+.input sfe_tag(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/encoded/0",projection="python-str")
+.input sfe_scalar(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/encoded/1",projection="python-str")
+.input sfe_json(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/encoded/1",projection="json")
