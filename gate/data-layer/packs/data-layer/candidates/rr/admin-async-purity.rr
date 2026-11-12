@@ -63,5 +63,7 @@ admin_config("patterns","[{\"pattern\": \"\\\\basyncio\\\\.to_thread\\\\b\", \"f
 admin_config("skips","[{\"pattern\": \"/tests/\", \"flags\": 32}, {\"pattern\": \"test_\", \"flags\": 32}, {\"pattern\": \"__pycache__\", \"flags\": 32}]").
 admin_config("extractor","{\"extractor_id\": \"admin_async_purity.violations\", \"schema_version\": \"1\", \"implementation_version\": \"admin-async-purity-v1\", \"parser_mode\": \"source\", \"source_triggers\": [\"asyncio.to_thread\", \"run_in_executor\", \"disable_sync_in_async_check\"], \"source_trigger_groups\": [], \"cacheable\": true, \"workload_scope\": \"file\", \"project_input_facts\": [], \"project_input_scope\": null, \"implementation_digest\": \"956d03ade9ade204\"}").
 admin_config("scope","{\"directories\": [\"l8000_admin/tools\"], \"explicit_files\": [], \"include_tests\": false, \"broad_repo_scope\": false}").
+admin_config("finding_severity","\"error\"").
 admin_config("plugin","{\"name\": \"admin_async_purity\", \"enforcement\": \"hard-fail\", \"description\": \"Admin async-native purity guardrail\"}").
 admin_config("cli_schema","{\"description\": \"Lint admin tools for async purity violations\", \"arguments\": [{\"names\": [\"--check\"], \"kwargs\": {\"action\": \"store_true\", \"help\": \"CI mode: exit 1 on violations\"}}, {\"names\": [\"--sign-allowlist\"], \"kwargs\": {\"action\": \"store_true\", \"help\": \"Sign the current allowlist (requires NERA_SIGNING_KEY)\"}}]}").
+pp_config("findingSeverity","error").

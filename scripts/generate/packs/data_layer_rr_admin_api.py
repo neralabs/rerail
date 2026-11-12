@@ -19,7 +19,8 @@ def suffix(source):
         patterns=[dict(pattern=p.pattern,flags=p.flags,name=name) for p,name in original.FORBIDDEN_PATTERNS],
         skips=[dict(pattern=p.pattern,flags=p.flags) for p in original.SKIP_PATTERNS],
         extractor=asdict(original.ADMIN_ASYNC_PURITY_EXTRACTOR),scope=scope,
+        finding_severity=original.StructuredViolation.__dataclass_fields__['severity'].default,
         plugin=dict(name=plugin.name,enforcement=plugin.enforcement,description=plugin.description),
         cli_schema=dict(description=literal(next(k.value for k in parser.keywords if k.arg=='description')),
             arguments=[dict(names=[literal(v) for v in n.args],kwargs={k.arg:literal(k.value) for k in n.keywords}) for n in calls]))
-    return '#include "data-layer/admin-api.rr"\n'+''.join('admin_config('+json.dumps(k)+','+json.dumps(json.dumps(v))+').\n' for k,v in config.items())
+    return '#include "data-layer/admin-api.rr"\n'+''.join('admin_config('+json.dumps(k)+','+json.dumps(json.dumps(v))+').\n' for k,v in config.items())+'pp_config("findingSeverity",'+json.dumps(config['finding_severity'])+').\n'

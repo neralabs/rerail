@@ -56,7 +56,6 @@ sf_property(b,r,key,value) :- ar_field(b,r,key,value).
 sf_line(b,r,value,value) :- ar_line(b,r,value).
 sf_config("strict_line","true").
 sf_config("code","AAP001").
-pp_config("findingSeverity","hard-fail").
 sf_message(b,r,cat(pattern,": ",text)) :- sf_active(b,r),ar_field(b,r,"pattern",pattern),ar_field(b,r,"text",text).
 sf_path_input(b,r,path) :- sf_active(b,r),ar_field(b,r,"file",path),prefix("/",path).
 sf_path_input(b,r,cat(root,"/",path)) :- sf_active(b,r),ar_field(b,r,"file",path),!prefix("/",path),option("adminReportRoot",root),!suffix("/",root).

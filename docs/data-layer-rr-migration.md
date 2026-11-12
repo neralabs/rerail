@@ -4156,3 +4156,19 @@ Every mismatch is the structured finding's severity: the source uses the default
 The complete failing cohort is `rr-admin-components-severity-red-finalfcce.json.gz`.
 The correction must export the source DTO's default severity separately from plugin enforcement.
 The rule remains a draft; no additional engine feature is required.
+
+### 2026-11-12 — Admin components pass through both APIs
+
+The generator now exports the source finding's default severity independently from plugin enforcement.
+Both APIs pass all 128 complete component outcomes with no source semantic callbacks.
+The receipt `rr-admin-components-finalfcce.json.gz` retains 286 native executions, full source results, consumed programs, and harness snapshots.
+All 666 Python tooling tests pass in 47.564 seconds. The manifest audit passes.
+
+Thirty-eight new public scanner cases record supplied source, explicit file targets, duplicate targets, target order, suffixes, hidden directories, symlinks, syntax errors, and read errors.
+The corpus includes invalid UTF-8 files that must be skipped before reading when allowlisted or excluded.
+The current public adapter still reaches original scanner callbacks. All 38 native cases are rejected by the source guard.
+That red witness is `rr-admin-public-source-red-finalfcce.json.gz`.
+
+The admin rule remains a draft. Full native original assertions, public scanners, production, CLI, earlier corpora, retained updates, and valid removal controls remain required.
+The inventory remains twenty admitted rules, seventy-nine drafts, and one absent translation.
+No engine source changed, no whole-repository cold run was performed, and no Linear ticket was created.
