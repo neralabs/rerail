@@ -407,8 +407,8 @@ describe("gitHeadReader", () => {
     const root = await repository({ "a.py": "1\n" });
     await mkdir(join(root, "src"));
     const read = gitHeadReader();
-    // The first read asks Git where the checkout keeps HEAD, then asks for HEAD.
-    expect(await processes(read, root)).toBe(2);
+    // The first read asks Git once, for where the checkout keeps HEAD and for HEAD, and keeps the answer.
+    expect(await processes(read, root)).toBe(1);
     expect(await processes(read, root)).toBe(0);
     git(root, "commit", "--quiet", "--allow-empty", "-m", "two");
     expect(await processes(read, root)).toBe(1);
@@ -470,7 +470,7 @@ describe("gitHeadReader", () => {
     const root = await repository({ "a.py": "1\n" });
     git(root, "pack-refs", "--all");
     const read = gitHeadReader({ settleMs: 3_600_000 });
-    expect(await processes(read, root)).toBe(2);
+    expect(await processes(read, root)).toBe(1);
     expect(await processes(read, root)).toBe(1);
   });
 
@@ -497,8 +497,8 @@ describe("gitHeadReader", () => {
     roots.push(worktree);
     git(root, "worktree", "add", "--quiet", worktree, "first");
     const read = gitHeadReader();
-    expect(await processes(read, worktree)).toBe(2);
-    expect(await processes(read, root)).toBe(2);
+    expect(await processes(read, worktree)).toBe(1);
+    expect(await processes(read, root)).toBe(1);
     git(worktree, "commit", "--quiet", "--allow-empty", "-m", "in the worktree");
     expect(await processes(read, worktree)).toBe(1);
     expect(await processes(read, root)).toBe(0);
@@ -518,14 +518,34 @@ describe("gitHeadReader", () => {
     const place = join(parent, "a", "wt");
     git(root, "worktree", "add", "--quiet", place, "one");
     const read = gitHeadReader();
-    expect(await processes(read, place)).toBe(2);
+    expect(await processes(read, place)).toBe(1);
+    expect(await processes(read, place)).toBe(0);
     git(root, "worktree", "remove", place);
     git(root, "worktree", "add", "--quiet", join(parent, "b", "wt"), "two");
     git(root, "worktree", "add", "--quiet", place, "three");
-    expect(await processes(read, place)).toBe(2);
+    expect(await processes(read, place)).toBe(1);
+    expect(await processes(read, place)).toBe(0);
     // The worktree's HEAD now lives in another Git folder than the one first read.
     git(place, "commit", "--quiet", "--allow-empty", "-m", "three moved");
     expect(await processes(read, place)).toBe(1);
+  });
+
+  it("keeps no answer where Git reads HEAD from other folders than the checkout's files name", async () => {
+    // With GIT_DIR set, Git reads another repository on the same commit: the files of `root` name the commit Git
+    // answers, but Git did not read them, so they cannot vouch for the next answer.
+    const root = await repository({ "a.py": "1\n" });
+    const other = `${root}-other`;
+    roots.push(other);
+    git(root, "clone", "--quiet", root, other);
+    vi.stubEnv("GIT_DIR", join(other, ".git"));
+    try {
+      const read = gitHeadReader();
+      expect(await processes(read, root)).toBe(1);
+      git(other, "commit", "--quiet", "--allow-empty", "-m", "two");
+      expect(await processes(read, root)).toBe(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("names no commit outside a repository or before the first commit, and the first commit once made", async () => {
@@ -559,7 +579,7 @@ describe("gitHeadReader", () => {
     git(root, "init", "--quiet", "--ref-format=reftable");
     git(root, "commit", "--quiet", "--allow-empty", "-m", "first");
     const read = gitHeadReader();
-    expect(await processes(read, root)).toBe(2);
+    expect(await processes(read, root)).toBe(1);
     git(root, "commit", "--quiet", "--allow-empty", "-m", "two");
     expect(await processes(read, root)).toBe(1);
     expect(await processes(read, root)).toBe(1);

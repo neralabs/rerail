@@ -243,18 +243,28 @@ async function gitOutput(cwd: string, args: readonly string[]): Promise<string |
 
 /** Stdout, as Git wrote it, of a successful Git command run as `gitOutput` runs one; undefined past `maxBuffer` bytes. */
 async function gitStdout(cwd: string, args: readonly string[], maxBuffer = 1024 * 1024): Promise<string | undefined> {
+  const run = await gitRun(cwd, args, maxBuffer);
+  return run?.code === 0 ? run.stdout : undefined;
+}
+
+/**
+ * Stdout, as Git wrote it, and the exit code of a Git command run as `gitOutput` runs one, whatever code it exits with;
+ * undefined when Git could not start, was ended (its timeout), or wrote more than `maxBuffer` bytes.
+ */
+async function gitRun(cwd: string, args: readonly string[], maxBuffer = 1024 * 1024): Promise<{ readonly stdout: string; readonly code: number } | undefined> {
   let executable: string;
   try {
     executable = gitExecutable();
   } catch {
     return undefined;
   }
-  const { promise, resolve: settle } = Promise.withResolvers<string | undefined>();
+  const { promise, resolve: settle } = Promise.withResolvers<{ readonly stdout: string; readonly code: number } | undefined>();
   execFile(
     executable,
     [...SAFE_CONFIG, "-C", cwd, ...args],
     { encoding: "utf8", maxBuffer, timeout: DEFAULT_TIMEOUT_MS, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" } },
-    (error, stdout) => settle(error === null ? stdout : undefined),
+    // A number is the code Git exited with, unless its timeout ended it; a string names why it did not run or was cut off.
+    (error, stdout) => settle(error === null ? { stdout, code: 0 } : typeof error.code === "number" && error.killed !== true ? { stdout, code: error.code } : undefined),
   );
   return await promise;
 }
@@ -271,14 +281,14 @@ export async function gitHead(cwd: string): Promise<string | undefined> {
 const SETTLE_MS = 2_000;
 
 /**
- * Where a checkout's top folder keeps `HEAD` and its branches, as Git named them (`kept`), or `asked` where every read
- * asks Git: a folder below the top, a bare repository or Git folder, a reftable repository. `dotGit` is what the
- * folder's `.git` entry held before Git named them ({@link fileText}).
+ * Where a checkout's top folder keeps `HEAD` and its branches: its Git folder, which holds `HEAD`, and the common Git
+ * folder, which holds the branches, `config`, `objects` and `refs`. They are one folder in a repository's main checkout;
+ * a linked worktree has a Git folder of its own.
  */
-type HeadLayout =
-  | { readonly kind: "kept"; readonly dotGit: string; readonly gitDir: string; readonly commonDir: string }
-  | { readonly kind: "asked"; readonly dotGit: string };
-type KeptLayout = Extract<HeadLayout, { kind: "kept" }>;
+interface HeadLayout {
+  readonly gitDir: string;
+  readonly commonDir: string;
+}
 
 /**
  * What {@link gitHeadReader} compares between reads, and what a read checks before it keeps Git's answer with the key:
@@ -365,17 +375,6 @@ function repositoryFormat(config: string): string {
   return lines.join("\n");
 }
 
-/**
- * The `commondir` file of a linked worktree's Git folder, by which Git finds the common Git folder; `""` where the Git
- * folder is the common one. Undefined where that file is gone or cannot be read: Git then takes the worktree's Git
- * folder for a repository of its own, which has no `objects` or `refs`, and refuses it.
- */
-function commonDirFile(layout: KeptLayout): string | undefined {
-  if (layout.gitDir === layout.commonDir) return "";
-  const text = fileText(join(layout.gitDir, "commondir"));
-  return text === undefined || text.startsWith("!") ? undefined : text;
-}
-
 async function present(path: string): Promise<boolean> {
   try {
     await stat(path);
@@ -386,31 +385,53 @@ async function present(path: string): Promise<boolean> {
 }
 
 /**
- * Where the folder `cwd`, whose `.git` entry held `dotGit`, keeps `HEAD`, by one Git process; undefined when Git cannot
- * say, so the next read asks again.
+ * Where the files of the folder `cwd` say Git finds `HEAD`, following them as Git does from a checkout's top folder: the
+ * `.git` folder, or the folder a `.git` file names (`gitdir: <path>`), is the Git folder; the folder that Git folder's
+ * `commondir` file names is the common one, else the Git folder itself. Without `commondir` a linked worktree's Git
+ * folder has no `objects` or `refs`, and Git refuses it. Undefined where `cwd` has no `.git` entry (a folder below a
+ * checkout's top, a bare repository, no repository), or where `.git` or `commondir` cannot be read or names no folder.
  */
-async function headLayout(cwd: string, dotGit: string): Promise<HeadLayout | undefined> {
-  // A folder without a `.git` entry is no checkout's top folder (or is outside any): Git is asked every time.
-  if (dotGit === "!ENOENT") return { kind: "asked", dotGit };
-  const printed = await gitStdout(cwd, ["rev-parse", "--show-cdup", "--git-dir", "--git-common-dir"]);
-  if (printed === undefined) return undefined;
-  // An empty line first when `cwd` is the top folder (a bare repository or a Git folder prints none), then the Git
-  // folder and the common one, each absolute or relative to `cwd`.
-  const top = /^\r?\n([^\r\n]+)\r?\n([^\r\n]+)\r?\n$/u.exec(printed);
-  if (top?.[1] === undefined || top[2] === undefined) return { kind: "asked", dotGit };
-  const commonDir = resolve(cwd, top[2]);
-  // A reftable repository keeps its refs in tables this reader does not follow.
-  if (await present(join(commonDir, "reftable"))) return { kind: "asked", dotGit };
-  return { kind: "kept", dotGit, gitDir: resolve(cwd, top[1]), commonDir };
+function filesLayout(cwd: string): HeadLayout | undefined {
+  const dotGit = fileText(join(cwd, ".git"));
+  const named = dotGit?.startsWith("gitdir: ") === true ? dotGit.slice("gitdir: ".length).trimEnd() : "";
+  const gitDir = dotGit === "!EISDIR" ? resolve(cwd, ".git") : named === "" ? undefined : resolve(cwd, named);
+  if (gitDir === undefined) return undefined;
+  const common = fileText(join(gitDir, "commondir"));
+  if (common === "!ENOENT") return { gitDir, commonDir: gitDir };
+  const path = common === undefined || common.startsWith("!") ? "" : common.trimEnd();
+  return path === "" ? undefined : { gitDir, commonDir: resolve(gitDir, path) };
 }
 
 /**
- * The key of what Git reads `HEAD` from in a `kept` layout: `HEAD` itself, and for a branch its loose ref, or the stamp
- * of packed-refs where it has none. Undefined where Git would read a file the key leaves out: `HEAD` naming a ref other
- * than a branch (or the `refs/heads/.invalid` a reftable repository writes there), a branch naming another ref, or a
- * file that could not be read.
+ * `HEAD`'s commit in `cwd`, as {@link gitHead} names it, and where Git found the Git folders it read it from, by one Git
+ * process. The layout is undefined unless `cwd` is the top folder of a checkout.
  */
-async function headKey(layout: KeptLayout, settleMs: number): Promise<HeadKey | undefined> {
+async function gitLayoutAndHead(cwd: string): Promise<{ readonly layout: HeadLayout | undefined; readonly head: string | undefined }> {
+  const run = await gitRun(cwd, ["rev-parse", "--show-cdup", "--git-dir", "--git-common-dir", "--verify", "--quiet", "HEAD"]);
+  // An empty line first when `cwd` is the top folder (a folder below prints the way up, a bare repository or a Git
+  // folder prints nothing), then the Git folder and the common one, each absolute or relative to `cwd`, then HEAD's
+  // commit. Where HEAD names no commit Git prints no commit and exits 1; outside a repository it exits 128.
+  const lines = run?.code === 0 || run?.code === 1 ? run.stdout.split(/\r?\n/u) : [];
+  if (lines.at(-1) === "") lines.pop();
+  const head = run?.code === 0 ? lines.pop() : undefined;
+  const [cdup, gitDir, commonDir] = lines;
+  const layout = lines.length === 3 && cdup === "" && gitDir !== undefined && commonDir !== undefined
+    ? { gitDir: resolve(cwd, gitDir), commonDir: resolve(cwd, commonDir) }
+    : undefined;
+  return { layout, head };
+}
+
+function sameLayout(one: HeadLayout | undefined, other: HeadLayout | undefined): boolean {
+  return one !== undefined && other !== undefined && one.gitDir === other.gitDir && one.commonDir === other.commonDir;
+}
+
+/**
+ * The key of what Git reads `HEAD` from in a checkout's layout: `HEAD` itself, and for a branch its loose ref, or the
+ * stamp of packed-refs where it has none. Undefined where Git would read a file the key leaves out: `HEAD` naming a ref
+ * other than a branch (or the `refs/heads/.invalid` a reftable repository writes there, as its refs live in tables
+ * this reader does not follow), a branch naming another ref, or a file that could not be read.
+ */
+async function headKey(layout: HeadLayout, settleMs: number): Promise<HeadKey | undefined> {
   const head = fileText(join(layout.gitDir, "HEAD"));
   if (head === undefined || head.startsWith("!")) return undefined;
   // Detached: `HEAD` holds the commit itself.
@@ -429,17 +450,18 @@ async function headKey(layout: KeptLayout, settleMs: number): Promise<HeadKey | 
 
 /**
  * Reads `HEAD` ({@link gitHead}) for a caller that asks every pass, as the walk of a repository's worktrees does: it
- * starts a Git process only when a file Git reads `HEAD` from changed since the last read, and otherwise reads two to
+ * starts a Git process only when a file Git reads `HEAD` from changed since the last read, and otherwise reads three or
  * four small files and stamps three or four (`config`, `objects`, `refs`, packed-refs). A read keeps Git's answer with
- * what those files held before Git read them: the folder's `.git` entry, `HEAD`, and the branch's loose ref, else the
- * stamp of packed-refs; and what decides whether Git takes the Git folders for a repository: a linked worktree's
- * `commondir` file ({@link commonDirFile}), and the common Git folder's `objects` and `refs` folders and the format its
- * `config` names ({@link repositoryFormat}). It keeps the answer only where those
- * files name that commit, so an answer Git gave after one of them moved is not kept, and a write between the two reads
- * as a change next time. The first read of a folder with a `.git` entry, and the first after that entry changes, also
- * asks Git where the folder keeps `HEAD` (one more Git process). Where Git would read other files (a folder below the
- * top of its checkout, a branch naming another ref, a reftable repository), where packed-refs is newer than `settleMs`,
- * and where Git named no commit, every read asks Git.
+ * what those files held before Git read them: where the folder's `.git` entry and its Git folder's `commondir` file put
+ * the Git folders ({@link filesLayout}), `HEAD`, and the branch's loose ref, else the stamp of packed-refs; and what
+ * decides whether Git takes the common Git folder for a repository: its `objects` and `refs` folders and the format its
+ * `config` names ({@link repositoryFormat}). It keeps the answer only where the Git process that named the commit found
+ * the Git folders where those files put them, and where those files name that commit, so an answer Git gave after one
+ * of them moved is not kept, and a write between the two reads as a change next time. A checkout's first read
+ * therefore starts one Git process, as {@link gitHead} does, and keeps its answer. Where Git would read other files (a
+ * folder below the top of its checkout, a branch naming another ref, a reftable repository), where Git finds the Git
+ * folders by other paths than the files give (`GIT_DIR` set, or a symbolic link on the way to them), where packed-refs
+ * is newer than `settleMs`, and where Git named no commit, every read asks Git.
  * Two changes make Git refuse the repository and are not seen here, so the held commit is still answered: a `config`
  * line Git cannot parse outside the `core` and `extensions` sections, and a new owner of the folder (`safe.directory`).
  * Every file is read by one call that closes it before returning ({@link fileText}) or stamped by one `stat`, so no file
@@ -447,20 +469,9 @@ async function headKey(layout: KeptLayout, settleMs: number): Promise<HeadKey | 
  */
 export function gitHeadReader(options: { readonly settleMs?: number } = {}): (cwd: string) => Promise<string | undefined> {
   const settleMs = options.settleMs ?? SETTLE_MS;
-  const layouts = new Map<string, HeadLayout>();
   const held = new Map<string, { readonly key: string; readonly head: string }>();
   /** The format of each common Git folder read, with the stamp of the `config` it was read from. */
   const formats = new Map<string, { readonly stamp: string; readonly format: string }>();
-  const layoutOf = async (cwd: string): Promise<HeadLayout | undefined> => {
-    const dotGit = fileText(join(cwd, ".git"));
-    const known = layouts.get(cwd);
-    if (known !== undefined && known.dotGit === dotGit) return known;
-    layouts.delete(cwd);
-    held.delete(cwd);
-    const layout = dotGit === undefined ? undefined : await headLayout(cwd, dotGit);
-    if (layout !== undefined) layouts.set(cwd, layout);
-    return layout;
-  };
   /**
    * {@link repositoryFormat} of the common Git folder `commonDir`, read again only once its `config` has another stamp,
    * or while that stamp is too new to vouch for the file; undefined where `config` cannot be read.
@@ -479,26 +490,25 @@ export function gitHeadReader(options: { readonly settleMs?: number } = {}): (cw
     return format;
   };
   /**
-   * {@link headKey}, with a linked worktree's {@link commonDirFile} and the common Git folder's format; undefined where
-   * Git would refuse the worktree's Git folder or the common one as a repository.
+   * {@link headKey} in `layout`, with the layout itself and the common Git folder's format; undefined where Git would
+   * refuse the common Git folder as a repository.
    */
-  const keyOf = async (layout: KeptLayout): Promise<HeadKey | undefined> => {
-    const { commonDir } = layout;
-    const common = commonDirFile(layout);
-    if (common === undefined) return undefined;
+  const keyOf = async (layout: HeadLayout): Promise<HeadKey | undefined> => {
+    const { gitDir, commonDir } = layout;
     const [format, objects, refs, key] = await Promise.all([
       formatOf(commonDir), present(join(commonDir, "objects")), present(join(commonDir, "refs")), headKey(layout, settleMs),
     ]);
-    return format === undefined || !objects || !refs || key === undefined ? undefined : { ...key, key: `${common}\0${format}\0${key.key}` };
+    return format === undefined || !objects || !refs || key === undefined ? undefined : { ...key, key: `${gitDir}\0${commonDir}\0${format}\0${key.key}` };
   };
   return async cwd => {
-    const layout = await layoutOf(cwd);
-    const key = layout?.kind === "kept" ? await keyOf(layout) : undefined;
+    const layout = filesLayout(cwd);
+    const key = layout === undefined ? undefined : await keyOf(layout);
     const last = held.get(cwd);
     if (key !== undefined && last?.key === key.key) return last.head;
     held.delete(cwd);
-    const head = await gitHead(cwd);
-    if (key?.settled === true && head !== undefined && key.names(head)) held.set(cwd, { key: key.key, head });
+    const asked = await gitLayoutAndHead(cwd);
+    const { head } = asked;
+    if (key?.settled === true && head !== undefined && sameLayout(asked.layout, layout) && key.names(head)) held.set(cwd, { key: key.key, head });
     return head;
   };
 }
