@@ -103,6 +103,9 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
      file's path.
    - `repository.folders` are the folders the repo pass covered: where `rules add` would have the rule run (`""` is the
      whole repo). A match outside them is not counted, since the added rule would not catch it.
+   - `refusal`, when the report has one, is why `rules add` would refuse the draft as it is. Fix the draft and test it
+     again before the card. `repository.notNarrowed`, when there, means the count may not be what the rule would catch:
+     say so on the card.
    - `repository.leftOut` counts files and folders the repo pass did not read: hidden, secret-named, or ignored by Git.
      Its matches say nothing about those. `repository.binary` counts files in scope it skipped as binary.
    - A rule that matches hundreds of places fights the repo's convention.

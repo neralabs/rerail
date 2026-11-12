@@ -18,6 +18,7 @@ import {
   stableJsonText,
   checkoutStatus,
   repositories,
+  installedPacksPrefix,
 } from "../../src/engine/index.js";
 import { runRuleDraftCommand, type RuleDraftReport } from "../../src/cli/rule-draft.js";
 import { BLOCK_STEERS_NOTE } from "../../src/engine/index.js";
@@ -273,13 +274,15 @@ describe("rerail rules test", () => {
     const rule = { ...noConsolePolicy(), id: "no-console-in-folders", scope: { include: ["**/*.ts"], exclude: [] } };
     const tested = async (draft: object) => {
       const { report, stdout } = await testReportText(writeDraft(repo, { kind: "code", rule, ...draft }), repo);
-      return { folders: report.repository?.folders, paths: report.repository?.matches.map(match => match.path), stdout };
+      return { report, folders: report.repository?.folders, paths: report.repository?.matches.map(match => match.path), stdout };
     };
 
     // Not added yet: a draft that names no folder is added to the whole repository, and one that names a folder there.
     expect(await tested({})).toMatchObject({ folders: [""], paths: ["d.ts", "lib/c.ts", "web/src/a.ts", "web2/src/b.ts"] });
     const nested = await tested({ folder: "web/src" });
     expect(nested).toMatchObject({ folders: ["web/src"], paths: ["web/src/a.ts"] });
+    expect(nested.report).not.toHaveProperty("refusal");
+    expect(nested.report.repository).not.toHaveProperty("notNarrowed");
     expect(nested.stdout).toContain("  Repo: 1 place matches under web/src/, where the rule runs.\n    web/src/a.ts:1:1  console.log('web');");
 
     // Added at web: it stays there when the draft names no folder, and a folder the draft names is one more.
@@ -291,6 +294,31 @@ describe("rerail rules test", () => {
     const whole = await tested({ folder: "" });
     expect(whole).toMatchObject({ folders: [""], paths: ["d.ts", "lib/c.ts", "web/src/a.ts", "web2/src/b.ts"] });
     expect(whole.stdout).toContain("  Repo: 4 places match.\n");
+  });
+
+  it("says so where it cannot read where the rule is added, and still counts the repository", async () => {
+    // A home of its own: the installed packs cannot be listed there, since their node_modules is a file.
+    const home = await mkdtemp(join(tmpdir(), "rerail-rule-draft-home-"));
+    directories.push(home);
+    const prior = process.env.RERAIL_HOME;
+    process.env.RERAIL_HOME = home;
+    try {
+      const repo = await repository({ "src/a.ts": "console.log(1);\n" });
+      setUpEmpty(repo);
+      mkdirSync(installedPacksPrefix(home), { recursive: true });
+      writeFileSync(join(installedPacksPrefix(home), "node_modules"), "");
+      const file = writeDraft(repo, { kind: "code", rule: { ...noConsolePolicy(), id: "no-console-unread" } });
+
+      const { exit, report, stdout } = await testReportText(file, repo);
+
+      expect(exit).toBe(0);
+      expect(report.repository).toMatchObject({ folders: [""], matches: [{ path: "src/a.ts" }] });
+      expect(report.repository?.notNarrowed).toContain(join(installedPacksPrefix(home), "node_modules"));
+      expect(stdout).toContain(`  Rerail could not read where the rule is added (${report.repository?.notNarrowed}), so the count may not be what the added rule would catch.\n`);
+    } finally {
+      if (prior === undefined) delete process.env.RERAIL_HOME;
+      else process.env.RERAIL_HOME = prior;
+    }
   });
 
   it("lists every match in the JSON report, and the first five in the text one", async () => {
@@ -826,6 +854,8 @@ describe("rerail rules add", () => {
       expect(exit).toBe(0);
       expect(report.repository).toMatchObject({ folders: ["api"], matches: [{ path: "api/core.py", line: 1 }] });
       expect(stdout).toContain("  Repo: 1 place matches under api/, where the rule runs.\n    api/core.py:1:");
+      expect(report).not.toHaveProperty("refusal");
+      expect(report.repository).not.toHaveProperty("notNarrowed");
       expect(stableJsonText(rulesOf(repo))).toBe(before);
     });
 
@@ -842,6 +872,22 @@ describe("rerail rules add", () => {
         expect(report.repository).toMatchObject({ folders: [""], matches: [{ path: "api/core.py" }, { path: "other/outside.py" }] });
         expect(stdout).toContain("  Repo: 2 places match.\n");
       }
+    });
+
+    it("is tested where the copy would run when its draft names a folder, with the refusal rules add gives", async () => {
+      const repo = await repository({ "api/core.py": BRANCHY, "other/outside.py": BRANCHY });
+      setUpWithComplexity(repo, "api");
+      const file = writeDraft(repo, { ...(await show(repo, SHIPPED)).draft, folder: "other" });
+
+      const { exit, report, stdout } = await testReportText(file, repo);
+
+      expect(exit).toBe(0);
+      expect(report).toMatchObject({ ok: true, refusal: `folder: your copy of ${SHIPPED} is added where ${SHIPPED} is, so the draft cannot name a folder` });
+      expect(report.repository).toMatchObject({ folders: ["api"], matches: [{ path: "api/core.py", line: 1 }] });
+      expect(report.repository?.matches).toHaveLength(1);
+      expect(stdout).toContain("  Repo: 1 place matches under api/.\n    api/core.py:1:");
+      expect(stdout).toContain(`  rules add would refuse this draft: ${report.refusal}\n`);
+      expect((await run("add", [file, "--repo", repo])).stderr).toBe(`● The rule was not added: ${report.refusal}\n`);
     });
 
     it("keeps the copy where the original is when it is changed again, from rules show of the copy", async () => {
@@ -921,7 +967,7 @@ describe("rerail rules add", () => {
       expect(stderr).toMatch(new RegExp(`^● ${id} is off in rerail-rule-draft-\\w+, and your copy would run there, on\\.`));
     });
 
-    it("refuses your copy made for another repository where its original runs, which show points at", async () => {
+    it("refuses your copy made for another repository where its original runs, which show points at and test says", async () => {
       const first = await repository();
       setUpWithComplexity(first);
       const id = "complexity-cyclomatic-vue";
@@ -932,40 +978,52 @@ describe("rerail rules add", () => {
       expect(shown.stderr).toContain(`${id}-copy is your copy of ${id} for another repository, and is not added to rerail-rule-draft-`);
       expect(shown.stderr).toContain(`To change ${id} here: rerail rules show ${id}\n`);
 
-      const { exit, stderr } = await run("add", [writeDraft(second, shown.draft), "--repo", second]);
+      const file = writeDraft(second, shown.draft);
+      const tested = await testReport(file, second);
+
+      const { exit, stderr } = await run("add", [file, "--repo", second]);
 
       expect(exit).toBe(1);
       expect(stderr).toContain(`${id}-copy is your copy of ${id} for another repository, and ${id} runs in rerail-rule-draft-`);
+      expect(tested).toMatchObject({ exit: 0, report: { ok: true, repository: { folders: [""] } } });
+      expect(stderr).toBe(`● The rule was not added: ${tested.report.refusal}\n`);
       expect(rulesNamed(second, id)).toEqual([{ id, kind: "pack", folder: "", on: true }]);
     });
 
-    it("is refused where the repository does not run the original, which show says first, storing nothing", async () => {
+    it("is refused where the repository does not run the original, which show and test say first, storing nothing", async () => {
       const repo = await repository();
       setUpEmpty(repo);
       const id = "complexity-cyclomatic-php";
       const shown = await show(repo, id);
       expect(shown.stderr).toContain(`${id} is not added to rerail-rule-draft-`);
       const file = writeDraft(repo, shown.draft);
+      const tested = await testReport(file, repo);
 
       const { exit, stdout, stderr } = await run("add", [file, "--repo", repo]);
 
       expect(exit).toBe(1);
       expect(stdout).toBe("");
       expect(stderr).toContain(`${id} is not added to rerail-rule-draft-`);
+      expect(tested).toMatchObject({ exit: 0, report: { ok: true, repository: { folders: [""] } } });
+      expect(stderr).toBe(`● The rule was not added: ${tested.report.refusal}\n`);
       expect(rulesOf(repo).library.filter(rule => rule.startsWith(id))).toEqual([]);
     });
 
-    it("is refused where your copy of it is already added, which show and add both name", async () => {
+    it("is refused where your copy of it is already added, which show, test and add all name", async () => {
       const repo = await repository();
       setUpWithComplexity(repo);
       const id = "complexity-cyclomatic-rust";
       const file = writeDraft(repo, (await show(repo, id)).draft);
       expect((await run("add", [file, "--repo", repo])).exit).toBe(0);
 
+      const tested = await testReport(file, repo);
+
       const again = await run("add", [file, "--repo", repo]);
 
       expect(again.exit).toBe(1);
       expect(again.stderr).toContain(`already has your copy of ${id}, ${id}-copy. Change that one: rerail rules show ${id}-copy`);
+      expect(tested).toMatchObject({ exit: 0, report: { ok: true, repository: { folders: [""] } } });
+      expect(again.stderr).toBe(`● The rule was not added: ${tested.report.refusal}\n`);
       expect((await show(repo, id)).stderr).toContain(`Change that one: rerail rules show ${id}-copy`);
       expect(rulesOf(repo).library.filter(rule => rule.startsWith(id))).toEqual([`${id}-copy`]);
     });

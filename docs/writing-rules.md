@@ -155,10 +155,16 @@ rerail rules show <id> > draft.json     # one rule as a draft, a By Rerail one t
 The text report shows the first five matches and the count; `--json` lists all. Path and `file` matches name the file
 with no line. Binary files in scope are counted; no rule reads them.
 
-The repo pass looks only where the added rule would run, so the count is what it would catch: the draft's `folder`,
-the folders a rule is already added at, or, for your copy of a By Rerail rule, the folders the original is added at.
-A new rule that names no `folder` is checked across the whole repo. A count over part of the repo names the folders;
-`--json` lists them in `repository.folders`, where `""` is the whole repo.
+The repo pass looks only where the added rule would run, so the count is what it would catch: for a rule of yours,
+the draft's `folder` and the folders it is already added at; for your copy of a By Rerail rule, the folders the
+original is added at. A new rule that names no `folder` is checked across the whole repo. A count over part of the
+repo names the folders; `--json` lists them in `repository.folders`, where `""` is the whole repo.
+
+Where `rules add` would refuse a code rule's draft as it is, the report says why, in the words `rules add` gives
+(`refusal` in `--json`): a copy's draft that names a `folder`, a By Rerail rule that is not added here or already has
+your copy here, or your copy made for another repo where the original runs. The cases alone still decide the exit
+code. Where Rerail cannot read where the rule is added, the report says so (`repository.notNarrowed`), and the count
+covers the draft's `folder`, else the whole repo.
 
 The repo pass skips, and counts without naming:
 
