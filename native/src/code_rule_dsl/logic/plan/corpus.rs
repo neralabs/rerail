@@ -3101,6 +3101,17 @@ fn run_observed(
             for (i, c) in rest.iter().zip(contents) {
                 content[*i] = c;
             }
+            // In the waves the store is not read, so a content is named by its digest: but a file the stat index
+            // knows is that source, as it is before the first wave. Named by its digest instead, every unchanged
+            // file of a load (a phase's files) was a content new to the statistics keeper: each run counted all of
+            // them out and in again, decoding every entry (decision 0116, step 3).
+            if !reading {
+                for &i in &rest {
+                    if let (Some(id), Some(memo::Content::Unstored(_))) = (known[i], content[i]) {
+                        content[i] = Some(memo::Content::Stored(id));
+                    }
+                }
+            }
         }
         // The tapes of the files the memo has no entry for, of those whose sources the store holds: one read.
         let mut tape: Vec<Option<crate::content_store::TapeFrame>> = vec![None; window.len()];
@@ -3136,6 +3147,9 @@ fn run_observed(
             let _before = crate::code_rule_dsl::logic::profile::span(|| "memo lookup, before the first wave".into());
             let batch: Vec<(i64, String, Option<Arc<str>>)> = docs.iter().map(|(d, p)| (*d, p.clone(), given_modules.get(p).cloned())).collect();
             let looked = look_up(&batch, false)?;
+            if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
+                eprintln!("statkeep before the first wave: {} files, {} known by stat, {} found", looked.len(), looked.iter().filter(|b| matches!(b.content, Some(memo::Content::Stored(_)))).count(), looked.iter().filter(|b| b.found.is_some()).count());
+            }
             batch.into_iter().map(|(_, p, _)| p).zip(looked).collect()
         }
         _ => HashMap::new(),
@@ -3252,6 +3266,9 @@ fn run_observed(
         let late: Vec<usize> = (0..window.len()).filter(|i| taken[*i].is_none()).collect();
         if !late.is_empty() {
             let asked: Vec<(i64, String, Option<Arc<str>>)> = late.iter().map(|i| window[*i].clone()).collect();
+            if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
+                eprintln!("statkeep looked up in the waves: {} of {} ({})", asked.len(), window.len(), asked.first().map_or("", |a| a.1.as_str()));
+            }
             for (i, b) in late.into_iter().zip(look_up(&asked, true)?) {
                 taken[i] = Some(b);
             }
