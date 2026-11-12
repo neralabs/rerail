@@ -343,5 +343,52 @@ keys of its own). With the default budget the outputs are as before.
 The same shape holds for any relation read with a bound key that is answered by a native step
 or a search, such as decision 0083 §4's memoised searches, including misses. Declare the
 relation's adornment, write its answer as `r :- m_r, source`, and the rewrite, the gates and
-maintenance apply unchanged. One part is not built yet: adornments over several columns (the demand key is only the
-first column today, which 00-review measured as 13× slower for a one-file query).
+maintenance apply unchanged.
+
+### Built: a program's demand, by every bound column
+
+A program can list the relations it wants computed only on demand:
+
+```
+// calls.rr: found(c, a, at) is read with c and a bound, so only those pairs are looked up.
+.pragma "magic-transform" "found"
+// Or every derived relation, wherever a reader binds one of its columns:
+.pragma "magic-transform" "*"
+```
+
+The corpus path used to ignore this pragma. Now it rewrites the program by magic sets with
+adornments over every column a reader binds (`found` read with `c` and `a` bound becomes
+`found_bbf`), not the first column alone. Relations not listed are computed in full.
+`RERAIL_DEMAND=off` turns it off, and `RERAIL_DEMAND_DUMP=<file>` writes the rewritten rules.
+
+Building it surfaced an engine bug. In a recursive stratum's first wave, two rules with the same
+body and different heads shared one whole plan, so one head lost its first-wave rows. Demand
+writes such pairs (`magic_vopen_b(o) :- magic_vopen_b(n), …` and `magic_pv_bff(o) :-` the same
+body), so the bug showed up as 10 open calls instead of 27. The plans are now kept apart by head.
+
+Measured on a one-file query (the open calls and targets of one 16 k-line file, over the 77
+files of the O125 replay's first step; machine load 25–40). Answers are equal in every run.
+
+| Run | Demand | Cross-file part | File-local part |
+|---|---|---|---|
+| Cold | off | 0.47 s | 2.32 s |
+| Cold | 5 listed relations | 0.44 s | 2.51 s |
+| Cold | `*` | 0.27 s | 2.01 s |
+| After an edit to the file | off | 2.77 s | 0.09 s |
+| After an edit to the file | `*` | 2.72 s | 0.07 s |
+
+Listing a few relations barely helps. Relations computed in full still read the demanded ones
+with keys from every file, and those reads seed demand corpus-wide (`magic_pv_bff(e) :-
+callee(_, e)`). With `*` the cold cross-file part falls by 43%. A cold run also pays 0.43 s once
+to prepare the rewrite, which a session keeps.
+
+After an edit, demand is not the lever. Maintaining the 165-relation component costs 1.2 s, and
+patching its statistics costs 0.38 s, of which 0.32 s is a full count of `kind` and `docof`:
+reads of unchanged data.
+
+Open:
+
+- With `*`, a few seeds are still corpus-wide (`magic_bv_bbff(s, x) :- look(n, x, s)`, and
+  `magic_qv_bff`, `magic_fv_bbff`, `magic_retval_bf`, `magic_posarg_bbf`). Each comes from a reader
+  that demand leaves in full.
+- Statistics patching after an edit counts `kind` and `docof` again.
