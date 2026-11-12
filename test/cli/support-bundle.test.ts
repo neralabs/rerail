@@ -276,6 +276,21 @@ describe("rerail support-bundle", () => {
     });
   });
 
+  it("names a Rerail with no content store as a problem, with no daemon to ask", async () => {
+    const world = await fixture();
+    const install = join(homedir(), "install", "node_modules", "@neralabs", "rerail");
+    const problem = `Rerail at ${install} is neither the managed installation under ${join(world.home, "versions")} nor in a Git checkout, so it has no content store`;
+    const exit = await runSupportBundleCommand(["--repo", world.repo, "--output", world.output], () => "usage", {
+      packageVersion: "9.9.9", stdout: { write: () => true }, contentStoreProblem: () => problem,
+    });
+    expect(exit).toBe(0);
+    const bundle = JSON.parse(readFileSync(world.output, "utf8")) as SupportBundle;
+    expect(bundle.daemon.status).toBe("absent");
+    expect(bundle.problems).toEqual([
+      `content store: Rerail at ${join("~", "install", "node_modules", "@neralabs", "rerail")} is neither the managed installation under ${join("<rerail-home>", "versions")} nor in a Git checkout, so it has no content store`,
+    ]);
+  });
+
   it("names an installed pack that failed to load, with the reason and no path of this computer", async () => {
     const world = await fixture();
     const pack = join(world.home, "packs", "node_modules", "@neralabs", "rerail-pack-broken");

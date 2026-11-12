@@ -49,12 +49,38 @@ export function resolveRerailBuild(packageRoot: string, environment: NodeJS.Proc
   );
 }
 
-let current: RerailBuild | undefined;
+/**
+ * The running build, or why it has none: resolved once per process, a failure as much as a build. Every code rule
+ * workspace asks for it, so a failure resolved again would repeat the realpath and the walk to the root each time.
+ */
+let current: { build: RerailBuild } | { problem: string } | undefined;
 
-/** The running build, resolved once per process. */
-export function currentRerailBuild(): RerailBuild {
-  current ??= resolveRerailBuild(PACKAGE_ROOT);
+function currentResolution(): { build: RerailBuild } | { problem: string } {
+  if (current === undefined) {
+    try {
+      current = { build: resolveRerailBuild(PACKAGE_ROOT) };
+    } catch (error) {
+      current = { problem: error instanceof Error ? error.message : String(error) };
+    }
+  }
   return current;
+}
+
+/** The running build, resolved once per process; a package with no content store throws the same reason every time. */
+export function currentRerailBuild(): RerailBuild {
+  const resolution = currentResolution();
+  if ("problem" in resolution) throw new Error(resolution.problem);
+  return resolution.build;
+}
+
+/**
+ * Why this process has no content store, so no code rule can run; undefined when it has one (its build's, or the one
+ * `RERAIL_CONTENT_STORE_PATH` names). Never throws: the daemon reports it as its engine's status.
+ */
+export function contentStoreProblem(): string | undefined {
+  if (contentStoreOverride() !== undefined) return undefined;
+  const resolution = currentResolution();
+  return "problem" in resolution ? resolution.problem : undefined;
 }
 
 /**

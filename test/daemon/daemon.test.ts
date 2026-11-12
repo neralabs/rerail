@@ -149,6 +149,22 @@ describe("Rerail daemon", () => {
     expect(existsSync(join(root, "rerail.sqlite"))).toBe(false);
   });
 
+  it("reports the engine unavailable, with the reason, when this Rerail has no content store for code rules", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const problem = "Rerail at /opt/rerail is neither the managed installation under /home/me/.rerail/versions nor in a Git checkout, so it has no content store";
+    const daemon = await start({ contentStoreProblem: () => problem });
+    const { body: health } = await getJson<DaemonHealth>(daemon, "/healthz");
+    expect(health).toMatchObject({ native: { ok: false, error: problem }, healthy: false });
+    const query = new URLSearchParams({ repository: root, host: "omp", sessionId: "missing" });
+    expect((await getJson(daemon, `/api/presentation?${query}`)).body).toMatchObject({ context: { daemon: { native: { ok: false } } } });
+  });
+
+  it("reports the engine ok when the kernel loads and this Rerail has a content store", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const daemon = await start({ contentStoreProblem: () => undefined });
+    expect((await getJson<DaemonHealth>(daemon, "/healthz")).body).toMatchObject({ native: { ok: true, kernelVersion: "1" } });
+  });
+
   it("requires the private capability for every native session and protects its ownership", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const workspaceRoot = join(root, "daemon-workspace");

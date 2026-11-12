@@ -439,6 +439,13 @@ rerail: Rerail daemon exited with code 1 before it was ready:
 The following lines are what this start wrote to `~/.rerail/daemon.log`, and say why. A taken `--port` reads
 `listen EADDRINUSE: address already in use 127.0.0.1:<n>`: pick another port, or leave `--port` out.
 
+### `Engine: unavailable: … so it has no content store`
+
+`rerail status` says this when Rerail runs from a package in no Git checkout and outside `~/.rerail/versions`, such as
+one `npm install` put in a folder of its own. No code rule runs there, and every audit fails. Install a published
+version with `npx @neralabs/rerail setup`, or run a checkout's build with `just rerail-dev --install-bridge`
+([Developing from a checkout](how-setup-works.md#developing-from-a-checkout)).
+
 ### `Another main Rerail instance is running`
 
 A second daemon, from another `RERAIL_HOME` or left behind, holds Rerail's machine-wide lock. Stop it
@@ -548,7 +555,8 @@ read it first and replace anything you'd rather not post with `<redacted>`.
 
 - `--output <file>` writes elsewhere. The file is readable by your user only.
 - It covers the repository's latest session; `--session <id>` names another (the id is in its dashboard address).
-- It works where Rerail won't start or set-up never finished, and says which parts it could not read.
+- It works where Rerail won't start or set-up never finished, and says which parts it could not read and whether this
+  Rerail has no content store.
 
 | In the file | Left out |
 | --- | --- |

@@ -1,11 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   contentStorePath,
+  contentStoreProblem,
   currentRerailBuild,
   isMainRerailBuild,
   mainContentStoreDirectory,
@@ -102,6 +103,48 @@ describe("resolveRerailBuild", () => {
 
     expect(contentStorePath(resolveRerailBuild(packageRoot, { RERAIL_HOME: home }))).toBe(join(root, "override.sqlite"));
     expect(contentStorePath(resolveRerailBuild(checkout, {}))).toBe(join(root, "override.sqlite"));
+  });
+});
+
+describe("a running package with no content store", () => {
+  /** This module as a process running from `packageRoot` loads it: its own `currentRerailBuild` cache. */
+  async function runningFrom(packageRoot: string): Promise<typeof import("../../../src/engine/native/rerail-build.js")> {
+    vi.resetModules();
+    vi.doMock("../../../src/engine/package-root.js", async (original) => ({ ...(await original<object>()), PACKAGE_ROOT: packageRoot }));
+    return await import("../../../src/engine/native/rerail-build.js");
+  }
+
+  afterEach(() => {
+    vi.doUnmock("../../../src/engine/package-root.js");
+    vi.resetModules();
+  });
+
+  test("fails the same way on every call: the failure is resolved once per process, like a build", async () => {
+    const packageRoot = join(root, "install", "node_modules", "@neralabs", "rerail");
+    mkdirSync(packageRoot, { recursive: true });
+    const running = await runningFrom(packageRoot);
+
+    expect(() => running.currentRerailBuild()).toThrow("so it has no content store");
+    // Resolving again would now find a checkout; the process keeps the answer it started with.
+    mkdirSync(join(root, "install", ".git"));
+    expect(() => running.currentRerailBuild()).toThrow("so it has no content store");
+  });
+
+  test("says why, for the daemon to report, without throwing; the store override gives it one", async () => {
+    const packageRoot = join(root, "install", "node_modules", "@neralabs", "rerail");
+    mkdirSync(packageRoot, { recursive: true });
+    const running = await runningFrom(packageRoot);
+
+    expect(running.contentStoreProblem()).toBe(
+      `Rerail at ${packageRoot} is neither the managed installation under ` +
+        `${join(resolve(process.env.RERAIL_HOME!), "versions")} nor in a Git checkout, so it has no content store`,
+    );
+    process.env.RERAIL_CONTENT_STORE_PATH = join(root, "override.sqlite");
+    expect(running.contentStoreProblem()).toBeUndefined();
+  });
+
+  test("a build that has a store has no problem to report", () => {
+    expect(contentStoreProblem()).toBeUndefined();
   });
 });
 

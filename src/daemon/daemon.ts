@@ -28,7 +28,7 @@ import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { acquireMainInstance } from "../engine/native/main-instance.js";
-import { currentRerailBuild, isMainRerailBuild } from "../engine/native/rerail-build.js";
+import { contentStoreProblem, currentRerailBuild, isMainRerailBuild } from "../engine/native/rerail-build.js";
 
 export const DEFAULT_DAEMON_HOST = "127.0.0.1";
 export const DEFAULT_DAEMON_PORT = 4737;
@@ -85,6 +85,8 @@ export interface RerailDaemonOptions {
   /** Written once the server is listening and removed on close. */
   stateFile?: string;
   nativeHealth?: () => NativeHealth;
+  /** Why this Rerail has no content store for code rules, or undefined when it has one (default: `contentStoreProblem`). */
+  contentStoreProblem?: () => string | undefined;
   /** Local IPC endpoint for the engine service; mainly useful for isolated embedding and tests. */
   kernelSocketPath?: string;
   /** The coding agent check `GET /api/coding-agents` reports; the daemon's entry point passes set-up's. */
@@ -117,12 +119,16 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
   ".txt": "text/plain; charset=utf-8",
 };
 
-function readNativeStatus(probe: () => NativeHealth): NativeStatus {
+/**
+ * The engine is ok when its kernel loads and this Rerail has a content store: without one every code rule's workspace
+ * fails to open, so no code rule runs, and the reason is what `rerail status`, the footer and `/healthz` show.
+ */
+function readNativeStatus(probe: () => NativeHealth, storeProblem: () => string | undefined): NativeStatus {
   try {
     const health = probe();
-    return health.ok
-      ? { ok: true, kernelVersion: health.kernelVersion }
-      : { ok: false, error: `Native kernel ${health.kernelVersion} reported unhealthy` };
+    if (!health.ok) return { ok: false, error: `Native kernel ${health.kernelVersion} reported unhealthy` };
+    const problem = storeProblem();
+    return problem === undefined ? { ok: true, kernelVersion: health.kernelVersion } : { ok: false, error: problem };
   } catch (error) {
     return { ok: false, error: (error as Error).message };
   }
@@ -454,7 +460,7 @@ export class RerailDaemon {
     const { bindHost, publicHosts, remote } = daemonHosts(options);
     const accessToken = await daemonAccessToken(options, remote);
     const { uiRoot, ui } = daemonUi(options);
-    const native = readNativeStatus(options.nativeHealth ?? loadNativeHealth);
+    const native = readNativeStatus(options.nativeHealth ?? loadNativeHealth, options.contentStoreProblem ?? contentStoreProblem);
     const databasePath = resolve(options.databasePath ?? defaultRerailDatabasePath());
     // Anyone on the machine can make `rerail-<uid>` in a shared temp directory first, so a refused one falls back to a
     // `run` folder beside the database, checked the same way. Clients find the socket through the state file, never by

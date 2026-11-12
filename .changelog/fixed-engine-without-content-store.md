@@ -1,0 +1,1 @@
+A Rerail that runs from a package in no Git checkout and outside `~/.rerail/versions` has no content store, so it ran no code rule while `rerail status` said `Engine: ok`. `rerail status`, the session footer, `/healthz` and the daemon log now report the engine unavailable with the reason, and the support bundle lists it as a problem.
