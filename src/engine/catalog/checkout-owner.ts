@@ -85,8 +85,8 @@ export class CheckoutOwners {
    * through a link, so each keeps the real path it had. The recorded checkouts' version is read once, here, not at each
    * lookup. What a lookup learns of a folder is kept for the walks after it, each of which checks it with one lstat of
    * the folder's `.git` entry, the first time it asks: a folder that gained or lost that entry may have become a
-   * checkout or stopped being one, and so may the folders below it, so every folder is looked up again, as when the
-   * recorded checkouts change. A walk of folders an earlier walk looked up costs no realpath and no statement.
+   * checkout or stopped being one, which changes the checkout of the folders below it, so those are looked up again;
+   * the others keep their answers. A walk of folders an earlier walk looked up costs no realpath and no statement.
    */
   walk(): (folder: string) => CheckoutOwner | undefined {
     this.#revalidate();
@@ -103,16 +103,23 @@ export class CheckoutOwners {
     const gitEntry = holdsGitEntry(lexical);
     const known = this.#walked.get(lexical);
     if (known?.gitEntry === gitEntry) return known.owner;
-    if (known !== undefined) {
-      // Whether this folder is a checkout, and so which checkout holds each folder below it, may differ now. Of the
-      // folders Git confirmed or turned down, only this one's answer rests on this entry.
-      this.#walked.clear();
-      this.#roots.clear();
-      this.#confirmed.delete(lexical);
-    }
+    if (known !== undefined) this.#forgetAt(lexical);
     const owner = this.#lookUp(lexical);
     this.#walked.set(lexical, { owner, gitEntry });
     return owner;
+  }
+
+  /**
+   * Forgets the answers that rest on the `.git` entry of the real folder `folder`, which came or went: whether it is a
+   * checkout, which checkout holds it and each folder below it, and whether the checkout around each checkout below it
+   * declares that one a submodule. A folder below it keeps Git's answer of whether it is a checkout itself, which rests
+   * on its own entry, and a folder outside it keeps every answer.
+   */
+  #forgetAt(folder: string): void {
+    this.#confirmed.delete(folder);
+    for (const answers of [this.#walked, this.#roots, this.#submodules]) {
+      for (const key of answers.keys()) if (within(folder, key)) answers.delete(key);
+    }
   }
 
   /** `ownerOf` of the resolved path `lexical`, from the answers as they are. */

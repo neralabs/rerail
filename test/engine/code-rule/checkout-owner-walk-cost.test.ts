@@ -1,21 +1,26 @@
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-/** Rerail's calls of the `node:fs` functions a checkout lookup makes; the test's own go through `node:fs/promises`. */
-const fsCalls = vi.hoisted(() => ({ realpath: 0 }));
+/**
+ * Rerail's calls of the `node:fs` functions a checkout lookup makes, and the paths it resolved; the test's own go
+ * through `node:fs/promises`.
+ */
+const fsCalls = vi.hoisted(() => ({ realpath: 0, resolved: [] as string[] }));
 vi.mock("node:fs", async importOriginal => {
   const original = await importOriginal<typeof import("node:fs")>();
   const realpathSync = Object.assign(
     (...args: Parameters<typeof original.realpathSync>) => {
       fsCalls.realpath += 1;
+      fsCalls.resolved.push(String(args[0]));
       return original.realpathSync(...args);
     },
     {
       native: (...args: Parameters<typeof original.realpathSync.native>) => {
         fsCalls.realpath += 1;
+        fsCalls.resolved.push(String(args[0]));
         return original.realpathSync.native(...args);
       },
     },
@@ -182,5 +187,33 @@ describe("checkout lookups of a session's walks", () => {
     }
     expect(costs[1]!.routed).toBeGreaterThan(costs[0]!.routed);
     expect(costs[1]!.others).toBe(costs[0]!.others);
+  });
+});
+
+describe("a walk's checkout lookups", () => {
+  it("look up again only the folders at and below one whose `.git` entry came or went", async () => {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "rerail-owner-walk-")));
+    cleanups.push(() => removeFolder(base));
+    const main = join(base, "main");
+    await sources(main, FOLDERS, 1);
+    git(base, "init", "--quiet", "-b", "main", main);
+    const owners = new CheckoutOwners();
+    const walk = (): void => {
+      const lookUp = owners.walk();
+      for (const folder of ["", ...FOLDERS]) lookUp(join(main, folder));
+    };
+    walk();
+
+    // `src/a/` becomes a checkout of its own: only it and the folders below it may have another checkout now.
+    const nested = join(main, "src", "a");
+    git(nested, "init", "--quiet");
+    const before = fsCalls.resolved.length;
+    walk();
+
+    const below = (path: string): boolean => {
+      const rest = relative(nested, path);
+      return rest === "" || (!isAbsolute(rest) && rest !== ".." && !rest.startsWith(`..${sep}`));
+    };
+    expect(fsCalls.resolved.slice(before).filter(path => !below(path))).toEqual([]);
   });
 });
