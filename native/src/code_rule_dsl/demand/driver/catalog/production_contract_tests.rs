@@ -3221,9 +3221,9 @@ fn production_contract_phase_four_fact_rows_are_exact_and_typed() {
                 row(1, (0, 18), None, 14, 0, 0, 0, None, None),
                 row(1, (0, 18), None, 14, 0, 1, 0, None, None),
                 row(1, (0, 18), Some((0, 5)), 17, 0, 0, 1, Some(1), Some("S")),
+                // `$$$A` is `a` and `b`: the comma between them is implied, so not a node (RER-131).
                 row(1, (0, 18), Some((13, 14)), 17, 0, 0, 1, Some(2), Some("A")),
-                row(1, (0, 18), Some((14, 15)), 17, 0, 1, 1, Some(2), Some("A")),
-                row(1, (0, 18), Some((16, 17)), 17, 0, 2, 1, Some(2), Some("A")),
+                row(1, (0, 18), Some((16, 17)), 17, 0, 1, 1, Some(2), Some("A")),
             ],
             "semantic-format-missing-fields" => vec![
                 row(1, (0, 25), None, 0, 0, 0, 1, Some(1), None),
@@ -3234,14 +3234,13 @@ fn production_contract_phase_four_fact_rows_are_exact_and_typed() {
                 row(1, (0, 25), Some((0, 11)), 17, 0, 0, 1, Some(1), Some("S")),
                 row(1, (0, 25), Some((19, 24)), 17, 0, 0, 1, Some(2), Some("A")),
             ],
+            // Not `(` or `)`: a call's parentheses are implied, so not nodes (RER-131).
             "semantic-layout" => vec![
                 row(1, (0, 1), None, 0, 0, 0, 1, None, None),
                 row(1, (0, 8), None, 0, 0, 0, 1, None, None),
                 row(1, (0, 8), None, 0, 0, 0, 1, None, None),
-                row(1, (1, 2), None, 0, 0, 0, 1, None, None),
                 row(1, (1, 8), None, 0, 0, 0, 1, None, None),
                 row(1, (2, 7), None, 0, 0, 0, 1, None, None),
-                row(1, (7, 8), None, 0, 0, 0, 1, None, None),
             ],
             "semantic-calls-direct" => vec![
                 row(2, (23, 31), None, 0, 0, 0, 1, None, None),

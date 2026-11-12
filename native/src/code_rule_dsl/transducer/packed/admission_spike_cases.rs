@@ -38,9 +38,9 @@ fn native_rows(query: &str, source: &str, tape: &TapeDoc) -> CaptureRows {
         assert_eq!(tape.transducer_kind(index), node.kind_id());
         assert_eq!(tape.transducer_span(index), node.byte_range());
         nodes.insert(node.id(), index);
-        let mut cursor = node.walk();
-        let children = node.children(&mut cursor).collect::<Vec<_>>();
-        pending.extend(children.into_iter().rev());
+        // The children a tape stores: tree-sitter's, the tokens the grammar implies left out (RER-131).
+        let children = crate::code_rule_dsl::tape::stored_children_for_test(SupportLang::Python, node);
+        pending.extend(children.into_iter().rev().map(|(child, _)| child));
     }
     assert_eq!(nodes.len(), tape.transducer_len());
     let mut cursor = tree_sitter::QueryCursor::new();
@@ -617,10 +617,11 @@ fn wildcard_and_missing_flags_preserve_native_node_meaning() {
 #[test]
 fn native_repetition_preserves_anonymous_sibling_boundaries_and_capture_order() {
     for (query, source) in [
-        ("(list ((identifier) @item)+)", "items = [a, b, c]\n"),
+        // Separated by comparison operators, which a tape stores (a list's commas are implied, so not, RER-131).
+        ("(comparison_operator ((identifier) @item)+)", "a < b < c\n"),
         (
-            r#"(list [(identifier) @name "," @comma]+)"#,
-            "items = [a, b, c]\n",
+            r#"(comparison_operator [(identifier) @name "<" @comma]+)"#,
+            "a < b < c\n",
         ),
         (
             "(module [(comment) @x @y (comment) @y @x]+ @z)",

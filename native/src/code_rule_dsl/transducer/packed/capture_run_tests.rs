@@ -50,9 +50,12 @@ pub(super) fn program() -> Program {
     .with_tree_sitter_query_semantics()
     .unwrap()
 }
+/// The run's start: the named argument `r` before the sibling run (`f(r, …)`). Stepping to the following named
+/// siblings from it visits the arguments after it, as from the `(` a tape no longer stores (implied tokens are
+/// not written, RER-131).
 fn root(tape: &TapeDoc) -> u32 {
     let roots = (0..tape.transducer_len() as u32)
-        .filter(|&node| tape.transducer_text(node) == b"(")
+        .filter(|&node| tape.transducer_text(node) == b"r")
         .collect::<Vec<_>>();
     assert_eq!(roots.len(), 1);
     roots[0]
@@ -72,13 +75,13 @@ fn capture(tape: &TapeDoc, label: u16, text: &[u8]) -> Capture {
 }
 #[test]
 fn capture_runs_execute_zero_capture_joins_and_preserve_complete_results_and_raw_ordinal_gaps() {
-    let doc = tape("f(a,1,b,\"sep\",c,2,\"end\")\n");
+    let doc = tape("f(r,a,1,b,\"sep\",c,2,\"end\")\n");
     let p = program();
     let root = root(&doc);
     let expected = [(0, vec![b"a".as_slice(), b"b"]), (4, vec![b"c".as_slice()])]
         .into_iter()
         .map(|(ordinal, names)| {
-            let mut captures = vec![capture(&doc, 0, b"(")];
+            let mut captures = vec![capture(&doc, 0, b"r")];
             captures.extend(names.into_iter().map(|name| capture(&doc, 1, name)));
             Output {
                 task_ordinal: 0,
@@ -125,9 +128,9 @@ fn capture_runs_preserve_work_failures_before_joins_and_suppress_work_after_dupl
     let p = program();
     let compiled = super::capture_run::prepare(&p).unwrap();
     for source in [
-        "f(1,2,3,\"end\")\n",
-        "f(a,1,b,\"sep\",c,2,\"end\")\n",
-        "f(a,1,b)\n",
+        "f(r,1,2,3,\"end\")\n",
+        "f(r,a,1,b,\"sep\",c,2,\"end\")\n",
+        "f(r,a,1,b)\n",
     ] {
         let doc = tape(source);
         let root = root(&doc);
@@ -165,7 +168,7 @@ fn capture_runs_match_the_interpreter_across_generated_mixed_sibling_domains() {
                     value
                 })
                 .collect::<Vec<_>>();
-            let source = format!("f({})\n", values.join(","));
+            let source = format!("f(r,{})\n", values.join(","));
             let doc = tape(&source);
             let root = root(&doc);
             let expected = p.execute_roots(&doc, [root]);
@@ -235,14 +238,14 @@ fn capture_runs_preserve_every_duplicate_capture_property_and_transformed_value(
         Directive::Downcase { capture: 1 },
     ])
     .unwrap();
-    let doc = tape("f(A,1,B,\"sep\",C,2,\"end\")\n");
+    let doc = tape("f(r,A,1,B,\"sep\",C,2,\"end\")\n");
     let root = root(&doc);
     let mut expected = Vec::new();
     for (ordinal, names) in [
         (0, vec![b"A".as_slice(), b"A", b"B", b"B"]),
         (4, vec![b"C".as_slice(), b"C"]),
     ] {
-        let mut captures = vec![capture(&doc, 0, b"(")];
+        let mut captures = vec![capture(&doc, 0, b"r")];
         captures.extend(names.into_iter().map(|name| {
             let mut c = capture(&doc, 1, name);
             c.text = Some(name.to_ascii_lowercase());
@@ -273,7 +276,7 @@ fn capture_runs_preserve_every_duplicate_capture_property_and_transformed_value(
 fn capture_runs_reject_invalid_programs_roots_and_limits_without_default_results() {
     let p = program();
     let compiled = super::capture_run::prepare(&p).unwrap();
-    let doc = tape("f(a,\"end\")\n");
+    let doc = tape("f(r,a,\"end\")\n");
     for (root, limits) in [
         (u32::MAX, Limits::default()),
         (
@@ -332,9 +335,9 @@ fn capture_runs_preserve_aggregate_work_at_the_exact_last_admitted_operation() {
     let p = program();
     let compiled = super::capture_run::prepare(&p).unwrap();
     for source in [
-        "f(1,2,3,\"end\")\n",
-        "f(a,1,b,\"sep\",c,2,\"end\")\n",
-        "f(a,1,b)\n",
+        "f(r,1,2,3,\"end\")\n",
+        "f(r,a,1,b,\"sep\",c,2,\"end\")\n",
+        "f(r,a,1,b)\n",
     ] {
         let doc = tape(source);
         let root = root(&doc);
@@ -377,9 +380,11 @@ fn capture_runs_execute_a_compiled_scm_sibling_sequence() {
     let doc = tape("f(a,1,b,\"sep\",c,2,\"end\")\n");
     let root = capture(&doc, 0, b"a").node;
     let expected = p.execute_roots(&doc, [root]).unwrap();
+    // Raw path ordinals: no path through a stored comma comes before the first result (a tape leaves implied
+    // tokens out, RER-131).
     assert_eq!(
         expected.iter().map(|r| r.local_ordinal).collect::<Vec<_>>(),
-        [2, 4]
+        [0, 4]
     );
     let compiled = super::capture_run::prepare(&p).unwrap();
     assert_eq!(
@@ -536,9 +541,9 @@ fn capture_runs_preserve_all_initial_repeat_and_tail_navigation_modes() {
         p.validate().unwrap();
         let compiled = super::capture_run::prepare(&p).unwrap();
         for source in [
-            "f(1,2,3,\"end\")\n",
-            "f(a,1,b,\"sep\",c,2,\"end\")\n",
-            "f(a,1,b)\n",
+            "f(r,1,2,3,\"end\")\n",
+            "f(r,a,1,b,\"sep\",c,2,\"end\")\n",
+            "f(r,a,1,b)\n",
         ] {
             let doc = tape(source);
             let root = root(&doc);
@@ -596,11 +601,13 @@ fn capture_runs_refuse_capture_ranges_that_skip_an_observable_unnamed_event() {
     let mut p = program();
     let lang = SupportLang::Python.get_ts_language();
     p.words[3] = word(FOLLOWING, 0, 0);
+    // The unnamed siblings are comparison operators, which a tape stores (a list's commas are implied, so not
+    // stored, RER-131).
     for pc in [5, 13] {
-        p.words[pc] = word(KIND, 0, lang.id_for_node_kind(",", false));
+        p.words[pc] = word(KIND, 0, lang.id_for_node_kind("<", false));
     }
     p.validate().unwrap();
-    let doc = tape("f(a,1,b,\"end\")\n");
+    let doc = tape("r < a < 1 < b < \"end\"\n");
     let root = root(&doc);
     let expected = p.execute_roots(&doc, [root]).unwrap();
     assert!(!expected.is_empty());
@@ -619,7 +626,7 @@ fn capture_run_execution_benchmark() {
     let compiled = super::capture_run::prepare(&p).unwrap();
     for parts in [8, 32, 64] {
         let source = format!(
-            "f({},\"end\")\n",
+            "f(r,{},\"end\")\n",
             (0..parts)
                 .flat_map(|i| [format!("v{i}"), i.to_string()])
                 .collect::<Vec<_>>()

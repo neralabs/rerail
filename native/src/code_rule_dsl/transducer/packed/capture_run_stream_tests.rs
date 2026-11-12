@@ -58,10 +58,10 @@ fn streaming_runs_preserve_joins(p: Program, lengths: std::ops::RangeInclusive<u
                     })
                     .chain(std::iter::once("\"end\"".to_owned()))
                     .collect::<Vec<_>>();
-                let source = format!("f({})\n", values.join(","));
+                let source = format!("f(r,{})\n", values.join(","));
                 let doc = tape(&source);
                 let roots = (0..doc.transducer_len() as u32)
-                    .filter(|&n| doc.transducer_text(n) == b"(")
+                    .filter(|&n| doc.transducer_text(n) == b"r")
                     .collect::<Vec<_>>();
                 assert_eq!(roots.len(), 1);
                 let root = roots[0];
@@ -116,9 +116,9 @@ fn streaming_runs_preserve_joins(p: Program, lengths: std::ops::RangeInclusive<u
 fn streaming_runs_refuse_separated_body_domains_without_dropping_their_results() {
     let p = capture_run_tests::program();
     let prepared = prepare(&p).unwrap();
-    let doc = tape("f(a,1,\"middle\",b,\"end\")\n");
+    let doc = tape("f(r,a,1,\"middle\",b,\"end\")\n");
     let root = (0..doc.transducer_len() as u32)
-        .find(|&n| doc.transducer_text(n) == b"(")
+        .find(|&n| doc.transducer_text(n) == b"r")
         .unwrap();
     let expected = p.execute_roots(&doc, [root]).unwrap();
     assert_eq!(expected.len(), 2);

@@ -889,11 +889,12 @@ mod tests {
             "rule": { "kind": "expression_statement", "follows": { "kind": "expression_statement", "pattern": "$PREV" } },
             "constraints": { "PREV": { "regex": "^g" } },
         })));
-        // A capture made inside the witness is bound or not by clean source alone.
+        // A capture made inside the witness is bound or not by clean source alone. (The constraint tests the
+        // arguments' text, not their `(`: a tape does not store implied tokens, RER-131.)
         assert!(compiled_sound(json!({
             "rule": { "kind": "call_expression", "pattern": "$F($$$)", "any": [{ "has": { "kind": "arguments", "pattern": "$ARGS" } }, { "regex": "." }],
                 "not": { "compare": { "left": "F", "op": "eq", "right": "ARGS" } } },
-            "constraints": { "ARGS": { "regex": "^\\(" } },
+            "constraints": { "ARGS": { "regex": "[a-z]" } },
         })));
         // Positive comparisons stay sound: an unbound side makes them fail, a false negative.
         assert!(compiled_sound(json!({
