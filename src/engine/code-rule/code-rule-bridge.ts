@@ -445,12 +445,13 @@ function filesystemClock(): number {
 /**
  * Opens `CLOCK_PROBE_FILE` to rewrite its byte, making it (private, as Rerail's other files are) and the Rerail home the
  * first time. The open makes the file when it is missing but never empties it, as `w` would: a sample needs only its one
- * byte rewritten.
+ * byte rewritten. It refuses a link at the file's name, as the bridge's other opens do, so no sample writes into the
+ * file a link names; the sample falls back to `Date.now()` while the link stays.
  */
 function openClockProbe(): number {
   const home = defaultRerailHome();
   const path = join(home, CLOCK_PROBE_FILE);
-  const flags = constants.O_RDWR | constants.O_CREAT;
+  const flags = constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW;
   try {
     return openSync(path, flags, 0o600);
   } catch (error) {

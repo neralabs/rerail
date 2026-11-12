@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
 import { createHash } from "node:crypto";
 import type * as SyncFileSystem from "node:fs";
-import { appendFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
+import { appendFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
@@ -1840,5 +1840,24 @@ describe("the file system's clock", () => {
     const begun = bridge.begin("shell-1", "Bash", { command: "./build.sh" });
 
     expect(await Promise.race([begun.then(() => "answered"), held.entered.then(() => "waited for the open")])).toBe("answered");
+  });
+
+  // Windows has no O_NOFOLLOW for the open to refuse a link with, and making a link there takes a privilege.
+  it.skipIf(process.platform === "win32")("writes nothing through a link planted at the probe's name", async () => {
+    const elsewhere = join(await workspace(), "notes.txt");
+    await writeFile(elsewhere, "kept\n");
+    const probe = join(defaultRerailHome(), CLOCK_PROBE_FILE);
+    await rm(probe, { force: true });
+    await symlink(elsewhere, probe);
+    try {
+      const bridge = createBridge(await workspace(), auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))));
+      await bridge.openWorkspace("session-1");
+      await bridge.begin("shell-1", "Bash", { command: "./build.sh" });
+      await bridge.finish("shell-1");
+    } finally {
+      await rm(probe, { force: true });
+    }
+
+    expect(await readFile(elsewhere, "utf8")).toBe("kept\n");
   });
 });
