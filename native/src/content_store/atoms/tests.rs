@@ -159,8 +159,10 @@ fn a_store_created_again_at_its_path_has_its_own_atoms() {
     assert_eq!(store.atom_value(1).unwrap().as_deref(), Some("new"));
     assert_eq!(store.atom("old").unwrap(), Some(2));
     assert_eq!(store.intern_atoms(&["next"]).unwrap(), [3]);
-    // Closing writes `next` to the new store, on this thread's connection to it rather than the old one's.
+    // Closing queues `next` for the new store's writer, on its connection rather than the old one's; a handle
+    // opened again shares that writer and waits for it.
     drop(store);
+    ContentStore::open(&at).unwrap().written().unwrap();
     assert_eq!(segments(&at), [(0, 1), (1, 2), (3, 1)]);
     drop(old);
 }
