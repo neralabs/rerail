@@ -115,10 +115,13 @@ function keptAsItIs(kept: KeptRead, source: ObservedSource): boolean {
 /**
  * Whether a walk found nothing the kept reads of its root lack: each source is the one it started from, the one the
  * last daemon kept, or one the next daemon may not take. Only a source the walk read is judged by `keptRead`, so the
- * first walk after a start, which took its files from the kept reads, costs two comparisons a file.
+ * first walk after a start, which took its files from the kept reads, costs two comparisons a file, a slice at a time.
  */
-function holdsNothingNew(walk: WalkReads): boolean {
+async function holdsNothingNew(walk: WalkReads): Promise<boolean> {
+  let count = 0;
   for (const [path, source] of walk.sources) {
+    count += 1;
+    if (count % SLICE === 0) await nextTurn();
     if (walk.previous.get(path) === source) continue;
     const kept = walk.kept?.get(path);
     if (kept !== undefined && keptAsItIs(kept, source)) continue;
@@ -255,6 +258,11 @@ export class WalkDigests {
   readonly #pending = new Map<string, Pick<WalkReads, "sources" | "observedAt">>();
   readonly #writtenAt = new Map<string, number>();
   #timer: NodeJS.Timeout | undefined;
+  /**
+   * Each walk's check for anything new, and each removal of a root, one after another, so a later walk's reads are
+   * never replaced by an earlier one's; never rejects.
+   */
+  #checks: Promise<void> = Promise.resolve();
   /** Every write and removal, one after another; never rejects. */
   #disk: Promise<void> = Promise.resolve();
   #closed = false;
@@ -271,6 +279,8 @@ export class WalkDigests {
    * clock is behind the walk that kept them: a file written after the clock went back may carry a stamp it had before.
    */
   async load(root: string, observedAt: number): Promise<KeptReads> {
+    // What a walk that finished already found is handed on.
+    await this.#checks;
     const pending = this.#pending.get(root);
     if (pending !== undefined) return await this.#pendingReads(pending, observedAt);
     const name = fileName(root);
@@ -291,29 +301,39 @@ export class WalkDigests {
    * root's last write; `close` writes what still waits. A walk that found nothing new writes nothing.
    */
   keep(root: string, walk: WalkReads): void {
-    if (this.#closed || holdsNothingNew(walk)) return;
-    this.#pending.set(root, { sources: walk.sources, observedAt: walk.observedAt });
-    this.#schedule();
-  }
-
-  /** Drops the reads of `root`, a worktree that is gone. */
-  forget(root: string): void {
-    this.#pending.delete(root);
-    this.#writtenAt.delete(root);
-    this.#queue(async () => {
-      const files = await this.#opened();
-      await this.#remove(files, fileName(root));
-      await this.#trim(files);
+    if (this.#closed) return;
+    this.#check(async () => {
+      if (await holdsNothingNew(walk)) return;
+      this.#pending.set(root, { sources: walk.sources, observedAt: walk.observedAt });
+      this.#schedule();
     });
   }
 
-  /** Writes every root still waiting, then keeps nothing more. */
+  /** Drops the reads of `root`, a worktree that is gone, after what the walks before kept of it. */
+  forget(root: string): void {
+    this.#check(async () => {
+      this.#pending.delete(root);
+      this.#writtenAt.delete(root);
+      this.#queue(async () => {
+        const files = await this.#opened();
+        await this.#remove(files, fileName(root));
+        await this.#trim(files);
+      });
+    });
+  }
+
+  /** Writes every root still waiting, the walks that finished before it included, then keeps nothing more. */
   async close(): Promise<void> {
     this.#closed = true;
     clearTimeout(this.#timer);
     this.#timer = undefined;
+    await this.#checks;
     this.#queue(async () => await this.#writeDue(true));
     await this.#disk;
+  }
+
+  #check(operation: () => Promise<void>): void {
+    this.#checks = this.#checks.then(operation).catch((error: unknown) => this.#failed("write", error));
   }
 
   async #pendingReads(pending: Pick<WalkReads, "sources" | "observedAt">, observedAt: number): Promise<KeptReads> {
