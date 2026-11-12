@@ -120,6 +120,28 @@ function preimageOf(source: Source): Preimage | undefined {
   if (source.readError !== undefined) return { readError: source.readError };
   return source.deleted === true ? {} : undefined;
 }
+/** A file a tool's own result says it wrote (`path`, as the result names it), and what the file held before. */
+interface ReportedPreimage {
+  readonly path: string;
+  readonly preimage: Preimage;
+}
+/**
+ * What the file a tool wrote held before it, as the tool's result says: Claude Code's Write, Edit and MultiEdit results
+ * name the file (`filePath`) and the text the tool replaced (`originalFile`), and a Write that made the file says
+ * `type: "create"`. Undefined when the result says neither.
+ */
+function reportedPreimage(output: unknown): ReportedPreimage | undefined {
+  if (typeof output !== "object" || output === null) return undefined;
+  const { filePath, originalFile, type } = output as { filePath?: unknown; originalFile?: unknown; type?: unknown };
+  if (typeof filePath !== "string" || filePath === "") return undefined;
+  if (type === "create") return { path: filePath, preimage: {} };
+  return typeof originalFile === "string" ? { path: filePath, preimage: { text: originalFile } } : undefined;
+}
+/** `preimage` of the file at `path` as a capture keeps it: a file named like one holding secrets keeps only its digest and size. */
+function keptPreimage(path: string, preimage: Preimage): Preimage {
+  if (preimage.text === undefined || !sensitiveByName(path)) return preimage;
+  return { withheld: { sha256: sha256(preimage.text), bytes: Buffer.byteLength(preimage.text) } };
+}
 /**
  * The digest a tool edit's source had before it when its text was not captured: the one observed before a call whose start
  * was not seen, or a secret-like file's, which finds it again where this session or Git holds it.
@@ -283,6 +305,13 @@ function failFolder(walk: SourceWalk, path: string, readError: string): void {
 /** Whether the tool call left the source as its preimage: the same text, or a secret-like file's same digest. */
 function unchangedSince(source: Source, preimage: Preimage | undefined): boolean {
   return preimage?.withheld === undefined ? preimage?.text === source.text : preimage.withheld.sha256 === source.digest;
+}
+/**
+ * The preimage a tool edit of `source` is read against: the call's own capture, or, where that capture already holds
+ * what the tool wrote (the call reached Rerail only after the tool ran), what the tool's result says the file held.
+ */
+function editPreimage(source: Source, captured: Preimage | undefined, reported: Preimage | undefined): Preimage | undefined {
+  return reported !== undefined && captured !== undefined && unchangedSince(source, captured) ? keptPreimage(source.path, reported) : captured;
 }
 function absentThroughout(source: Source, preimage: Preimage | undefined): boolean {
   return source.deleted === true && preimage !== undefined && preimage.text === undefined && preimage.readError === undefined;
@@ -869,9 +898,11 @@ export class CodeRuleBridge {
 
   /**
    * A failed command may still have written files, so command results reconcile regardless of `failed`. With
-   * `rewindable` the edit's preimages are kept for `rewind` until `release`.
+   * `rewindable` the edit's preimages are kept for `rewind` until `release`. `output`, the tool's result, may say what
+   * the file it wrote held before (`reportedPreimage`): that is the edit's preimage where the call's own capture already
+   * holds the write, as it does when the call reached Rerail only after the tool ran.
    */
-  async finish(toolCallId: string, failed = false, options: { rewindable?: boolean } = {}): Promise<readonly CodeRuleResponse[]> {
+  async finish(toolCallId: string, failed = false, options: { rewindable?: boolean; output?: unknown } = {}): Promise<readonly CodeRuleResponse[]> {
     const discovery = this.#requireDiscovery();
     discovery.toolCalls.finish(toolCallId, await filesystemClock());
     if (this.#commands.delete(toolCallId)) {
@@ -887,12 +918,12 @@ export class CodeRuleBridge {
       this.refreshCodeRules();
       this.#reportIgnoredEdits(discovery.root, pending.paths);
       await this.#noteIgnoreRules(pending.paths);
-      const { edits, uncaptured } = await this.#readEdits(discovery, pending.paths, pending.preimages);
+      const { edits, uncaptured, preimages } = await this.#readEdits(discovery, pending, reportedPreimage(options.output));
       if (edits.length === 0) return [];
       // Kept before the audit starts, so a steer its evaluation publishes finds it.
       if (options.rewindable === true) {
-        const after = new Map([...pending.preimages.keys()].map(path => [path, this.#observed.get(path)?.digest]));
-        this.#rewindable.set(toolCallId, { revision: this.#revision + 1, preimages: pending.preimages, after });
+        const after = new Map([...preimages.keys()].map(path => [path, this.#observed.get(path)?.digest]));
+        this.#rewindable.set(toolCallId, { revision: this.#revision + 1, preimages, after });
       }
       return [await this.#auditEdits(discovery, edits, ["edit", "function"], uncaptured)];
     });
@@ -1185,33 +1216,43 @@ export class CodeRuleBridge {
     return preimages;
   }
 
-  /** The tool call's edits, and the digest each source had before it where the call's start captured no preimage. */
+  /**
+   * The tool call's edits, the digest each source had before it where the call's start captured no preimage, and the
+   * preimages the edits were read against (`editPreimage`): the call's own, or the one its result reports.
+   */
   async #readEdits(
     discovery: SourceDiscovery,
-    paths: readonly string[],
-    preimages: ReadonlyMap<string, Preimage>,
-  ): Promise<{ edits: CodeRuleEdit[]; uncaptured: Map<string, string> }> {
+    pending: PendingEdit,
+    reported: ReportedPreimage | undefined,
+  ): Promise<{ edits: CodeRuleEdit[]; uncaptured: Map<string, string>; preimages: ReadonlyMap<string, Preimage> }> {
     const root = await realpath(this.#cwd);
     const edits: CodeRuleEdit[] = [];
     const uncaptured = new Map<string, string>();
-    for (const configuredPath of [...paths].sort(compareDeterministicStrings)) {
-      const edit = await this.#readToolEdit(discovery, root, configuredPath, preimages, uncaptured);
+    const preimages = new Map(pending.preimages);
+    const reportedPath = reported === undefined ? undefined : this.#sourceLocation(root, reported.path)?.path;
+    const preimageOfEdit = (source: Source): Preimage | undefined => {
+      const preimage = editPreimage(source, preimages.get(source.path), source.path === reportedPath ? reported?.preimage : undefined);
+      if (preimage !== undefined) preimages.set(source.path, preimage);
+      return preimage;
+    };
+    for (const configuredPath of [...pending.paths].sort(compareDeterministicStrings)) {
+      const edit = await this.#readToolEdit(discovery, root, configuredPath, preimageOfEdit, uncaptured);
       if (edit !== undefined) edits.push(edit);
     }
-    return { edits, uncaptured };
+    return { edits, uncaptured, preimages };
   }
 
   async #readToolEdit(
     discovery: SourceDiscovery,
     root: string,
     configuredPath: string,
-    preimages: ReadonlyMap<string, Preimage>,
+    preimageOfEdit: (source: Source) => Preimage | undefined,
     uncaptured: Map<string, string>,
   ): Promise<CodeRuleEdit | undefined> {
     const source = await this.#readSource(root, configuredPath);
     if (source === undefined) return undefined;
     this.#touchSource(discovery, source.path);
-    const preimage = preimages.get(source.path);
+    const preimage = preimageOfEdit(source);
     const before = this.#observed.get(source.path)?.digest;
     const edit = this.#readEdit(source, preimage);
     if (edit === undefined) return undefined;

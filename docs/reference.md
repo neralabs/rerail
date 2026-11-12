@@ -624,6 +624,7 @@ Each session has its own serialized lane, and native tool-call IDs pair edits wi
 - Pairing holds even for concurrent calls to one tool.
 - Lanes are keyed by runtime configuration and session ID. One agent's open, audit or delivery never holds up another, and separate databases or workspaces never share a lane, even when session IDs coincide.
 - Pending calls and captured preimages survive daemon restarts.
+- A call the daemon takes up only after its tool ran (the hook gave up waiting on a busy daemon) captures the file as the tool left it. Its edit is then read against the file as the tool's result says it was: Claude Code's Write, Edit and MultiEdit results give `originalFile`, and `type: "create"` for a file the Write made. A result that gives neither leaves that edit unchecked.
 - Turn checkpoints catch filesystem changes from shells or tools without explicit edit paths. They keep source fingerprints, not a copy of the source or a baseline of violations.
 
 OMP captures pre-edit source in its awaited `tool_call` hook and submits post-edit source from `tool_result` for background evaluation. Its asynchronous `tool_execution_start` and `tool_execution_end` notifications aren't execution barriers and aren't used.

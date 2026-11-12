@@ -871,7 +871,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         try {
           // From the finish on, which may check the edit before it returns, to the end of the wait.
           await this.#waitingForEditChecks(state, false, async () => {
-            await this.#finishCall(state, bridge, call!.id, event.failed === true);
+            await this.#finishCall(state, bridge, event);
             await this.#append(state, { type: "policy-result", toolCallId: call!.id });
             await this.#awaitEditChecks(state, bridge, ADAPTER_CAPABILITIES[descriptor.host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS);
           });
@@ -974,10 +974,13 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     else if (event.kind === "turn-end") await state.codeRuleBridge?.unwatchedResult(TURN_WINDOW_ID);
   }
 
-  /** Finishes a tool call on the open evaluator; one answered while it opened only ends its window (`unwatchedResult`). */
-  async #finishCall(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, toolCallId: string, failed: boolean): Promise<void> {
-    if (bridge !== undefined) await bridge.finish(toolCallId, failed, { rewindable: true });
-    else await state.codeRuleBridge?.unwatchedResult(toolCallId);
+  /**
+   * Finishes a tool call on the open evaluator, with the tool's result, which may say what the file it wrote held; one
+   * answered while the evaluator opened only ends its window (`unwatchedResult`).
+   */
+  async #finishCall(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, result: Extract<AdapterEvent, { kind: "result" }>): Promise<void> {
+    if (bridge !== undefined) await bridge.finish(result.toolCallId, result.failed === true, { rewindable: true, output: result.output });
+    else await state.codeRuleBridge?.unwatchedResult(result.toolCallId);
   }
 
   /**
