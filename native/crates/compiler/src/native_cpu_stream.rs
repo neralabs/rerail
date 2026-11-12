@@ -272,6 +272,33 @@ pub struct CompiledStream {
     pub word_insts: Vec<u32>,
 }
 
+/// Each word's phases (`stream::phases`), over the lowered words: `TAKEN` after a `SPAN`,
+/// `UNTAKEN` after a `TOKEN`; a return lands on its caller's `TOKEN` with the token taken
+/// (`RETURN m=0`) or past it (`m=1`). The verifier checked them on the program.
+pub(crate) fn phases(native: &Structure, pushes: &[u16]) -> Vec<u8> {
+    use crate::stream::{TAKEN, UNTAKEN};
+    let n = native.structural.len();
+    let mut phase = vec![0u8; n];
+    let mut work = vec![(0usize, TAKEN)];
+    while let Some((pc, ph)) = work.pop() {
+        if pc >= n || phase[pc] & ph != 0 {
+            continue;
+        }
+        phase[pc] |= ph;
+        let after = match native.structural[pc].operation {
+            Op::Span { .. } => TAKEN,
+            Op::Token { .. } => UNTAKEN,
+            _ => ph,
+        };
+        match native.structural[pc].operation {
+            Op::Return { again } => work.extend(pushes.iter().map(|&p| if again { (usize::from(p) + 1, UNTAKEN) } else { (usize::from(p), TAKEN) })),
+            Op::Token { .. } => work.push((pc + 1, after)),
+            _ => work.extend(successors(native, pushes, pc).into_iter().map(|q| (q, after))),
+        }
+    }
+    phase
+}
+
 /// Each word's successors, as `stream::validate` reads them, `TOKEN`'s cut.
 pub(crate) fn successors(native: &Structure, pushes: &[u16], pc: usize) -> Vec<usize> {
     match native.structural[pc].operation {
@@ -1121,6 +1148,11 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     }
     let words = &native.structural;
     let pushes = push_targets(native);
+    // Each word's phase (`stream::phases`): where every `TOKEN` knows whether it takes a token,
+    // no flag says so, and a word after a `SPAN` reads its token's end from its record.
+    let phase_of = phases(native, &pushes);
+    let flagged = phase_of.iter().any(|&p| p == crate::stream::TAKEN | crate::stream::UNTAKEN);
+    let taken = |pc: usize| !flagged && phase_of[pc] == crate::stream::TAKEN;
     let named = |op: fn(&Op) -> Option<u16>| words.iter().find_map(|b| op(&b.operation)).map(usize::from);
     let starts = named(|o| if let Op::Token { extract, .. } = *o { Some(extract) } else { None });
     // The mask `SPAN m=1` names, as its output's index.
@@ -1394,6 +1426,19 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                 f.ins().store(MemFlags::trusted(), x, p, STATE + 8 * k as i32);
             }
         };
+        // The token's end, as a word at `pc` reads it: after its `SPAN`, its record's; before
+        // (its bytes not taken), its start, or at the stream's end the last record's end. Where
+        // a `TOKEN` has both phases, a field says (`flagged`).
+        let token_end = |f: &mut FunctionBuilder<'_>, pc: usize| -> Value {
+            if flagged {
+                mget(f, Mem::End)
+            } else if taken(pc) {
+                mget(f, Mem::Limit)
+            } else {
+                let (at_end, limit, start) = (mget(f, Mem::AtEnd), mget(f, Mem::Limit), mget(f, Mem::Start));
+                f.ins().select(at_end, limit, start)
+            }
+        };
         // The token's kind and word, read from its code in memory as the lean parser reads a
         // token's (`ldrb` of the kind; the word's bytes after it): no shift or mask a test, which
         // Cranelift would make again in every block that tests (`band` with a constant is
@@ -1479,7 +1524,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     f.def_var(v, zero);
                 }
             }
-            mset(&mut f, Mem::Need, one);
+            if flagged {
+                mset(&mut f, Mem::Need, one);
+            }
             mset(&mut f, Mem::Lw, before_first);
             match wb.first().copied().flatten() {
                 Some(b) => f.ins().jump(b, &[]),
@@ -1649,15 +1696,23 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     let overflow = f.ins().iconst(types::I64, OVERFLOW as i64);
                     f.ins().jump(refuse, &[BlockArg::from(overflow)]);
                     f.switch_to_block(fits);
-                    // A token whose bytes are not taken yet (after a mark's arm) is kept.
-                    let take = f.create_block();
-                    let need = mget(&mut f, Mem::Need);
-                    f.ins().brif(need, take, &[], fall, &[]);
-                    f.switch_to_block(take);
-                    mset(&mut f, Mem::Need, zero);
+                    // A token whose bytes are not taken yet (after a mark's arm) is kept: by the
+                    // word's phase, or where a `TOKEN` has both, by a flag.
+                    if flagged {
+                        let take = f.create_block();
+                        let need = mget(&mut f, Mem::Need);
+                        f.ins().brif(need, take, &[], fall, &[]);
+                        f.switch_to_block(take);
+                        mset(&mut f, Mem::Need, zero);
+                    } else if phase_of[pc] != crate::stream::TAKEN {
+                        f.ins().jump(fall, &[]);
+                        let dead = f.create_block();
+                        f.switch_to_block(dead);
+                    }
                     let at_end = mget(&mut f, Mem::AtEnd);
                     guard(&mut f, at_end, pc);
-                    let (next, end) = (mget(&mut f, Mem::Next), mget(&mut f, Mem::End));
+                    let next = mget(&mut f, Mem::Next);
+                    let end = if flagged { mget(&mut f, Mem::End) } else { mget(&mut f, Mem::Limit) };
                     mset(&mut f, Mem::LastEnd, end);
                     // The stream's end: once a file, a cold block (the lean parser's index past
                     // its tokens). The token's fields stay; every mark is live (a mark the end
@@ -1685,7 +1740,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     let l1 = f.ins().iadd_imm(l, 1);
                     let after = f.ins().iadd_imm(next, 1);
                     mset(&mut f, Mem::Start, s);
-                    mset(&mut f, Mem::End, s);
+                    if flagged {
+                        mset(&mut f, Mem::End, s);
+                    }
                     mset(&mut f, Mem::Next, after);
                     mset(&mut f, Mem::Limit, l1);
                     mset(&mut f, Mem::Taken, c);
@@ -1834,17 +1891,22 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     let rec_end = mget(&mut f, Mem::Limit);
                     let past = f.ins().icmp(IntCC::NotEqual, e, rec_end);
                     guard(&mut f, past, pc);
-                    mset(&mut f, Mem::End, e);
-                    let one = f.ins().iconst(types::I64, 1);
-                    mset(&mut f, Mem::Need, one);
+                    // Taken: the words after read the record's end (`taken`).
+                    if flagged {
+                        mset(&mut f, Mem::End, e);
+                        let one = f.ins().iconst(types::I64, 1);
+                        mset(&mut f, Mem::Need, one);
+                    }
                     f.ins().jump(fall, &[]);
                 }
                 Op::Span { last: true, .. } => {
-                    // The record's end.
-                    let rec_end = mget(&mut f, Mem::Limit);
-                    mset(&mut f, Mem::End, rec_end);
-                    let one = f.ins().iconst(types::I64, 1);
-                    mset(&mut f, Mem::Need, one);
+                    // The record's end: the words after read it there (`taken`).
+                    if flagged {
+                        let rec_end = mget(&mut f, Mem::Limit);
+                        mset(&mut f, Mem::End, rec_end);
+                        let one = f.ins().iconst(types::I64, 1);
+                        mset(&mut f, Mem::Need, one);
+                    }
                     f.ins().jump(fall, &[]);
                 }
                 Op::Word { string, test } => {
@@ -1967,7 +2029,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     };
                     let (nodes, pending) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Pending));
                     let e = if this {
-                        mget(&mut f, Mem::End)
+                        token_end(&mut f, pc)
                     } else {
                         let (keep, last_end) = (mget(&mut f, Mem::Keep), mget(&mut f, Mem::LastEnd));
                         f.ins().select(pending, keep, last_end)
@@ -2005,7 +2067,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         zero
                     };
                     mset(&mut f, Mem::Pending, pending);
-                    let (nodes, start, end) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Start), mget(&mut f, Mem::End));
+                    let (nodes, start, end) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Start), token_end(&mut f, pc));
                     let k = f.ins().iconst(types::I64, i64::from(kind));
                     let one = f.ins().iconst(types::I64, 1);
                     // Its row: its kind with no field, one word; its bytes; one record.
@@ -2355,7 +2417,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     let bad = f.ins().band(any, inside);
                     guard(&mut f, bad, pc);
                     let k = f.ins().iconst(types::I64, i64::from(kind));
-                    let end = mget(&mut f, Mem::End);
+                    let end = token_end(&mut f, pc);
                     kind_c.put_row(&mut f, leaf_row, k);
                     end_c.put_row(&mut f, leaf_row, end);
                     mset(&mut f, Mem::Nodes, kept);
