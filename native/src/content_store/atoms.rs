@@ -1,5 +1,5 @@
 //! One string interner for the graph: every name, key, path and content hash is a `Sym` (u32).
-//! Strings live back to back in one byte arena; the table holds only ids. Append-only: a string
+//! Strings live back to back in one byte arena; the table holds ids and hash tags. Append-only: a string
 //! interned by any worktree keeps its id for every other (ids are shared across base and deltas).
 //!
 //! The store's single interner (C12, docs/final-shape/03-architecture.md §10.6; decision 0049). A
@@ -64,7 +64,9 @@ pub struct Interner {
     /// ends[i] = end offset of pending atom `base + i` in `buf`.
     ends: Vec<u32>,
     hashes: Vec<u64>,
-    table: hashbrown::HashTable<Sym>,
+    /// Each atom's id with its hash's high half (`tag`): a probe compares tags and reads no atom's hash, so a
+    /// stored atom costs no segment lookup until its tag matches (then one, for its string).
+    table: hashbrown::HashTable<(u32, Sym)>,
 }
 
 impl Default for Interner {
@@ -92,12 +94,14 @@ impl Interner {
         (i < held.ends.len()).then(|| held.str(i))
     }
 
-    fn hash_of(held: &std::collections::BTreeMap<Sym, Held>, base: Sym, hashes: &[u64], s: Sym) -> u64 {
-        if s >= base {
-            return hashes[(s - base) as usize];
-        }
-        let (first, h) = held.range(..=s).next_back().expect("a held atom");
-        h.hashes[(s - first) as usize]
+    /// A hash's tag, and the table's hash of a tag: the table places entries by what it holds, so it rehashes
+    /// without reading an atom.
+    fn tag(h: u64) -> u32 {
+        (h >> 32) as u32
+    }
+
+    fn placed(tag: u32) -> u64 {
+        ((tag as u64) << 32) | tag.rotate_left(16) as u64
     }
 
     pub fn get(&self, s: &str) -> Option<Sym> {
@@ -105,7 +109,8 @@ impl Interner {
     }
 
     pub fn get_h(&self, s: &str, h: u64) -> Option<Sym> {
-        self.table.find(h, |&id| Self::hash_of(&self.held, self.base, &self.hashes, id) == h && self.str(id) == Some(s)).copied()
+        let tag = Self::tag(h);
+        self.table.find(Self::placed(tag), |&(t, id)| t == tag && self.str(id) == Some(s)).map(|&(_, id)| id)
     }
 
     pub fn intern(&mut self, s: &str) -> Sym {
@@ -122,8 +127,8 @@ impl Interner {
         assert!(self.buf.len() <= u32::MAX as usize, "pending atoms over 4 GiB");
         self.ends.push(self.buf.len() as u32);
         self.hashes.push(h);
-        let (held, base, hashes) = (&self.held, self.base, &self.hashes);
-        self.table.insert_unique(h, id, |&x| Self::hash_of(held, base, hashes, x));
+        let tag = Self::tag(h);
+        self.table.insert_unique(Self::placed(tag), (tag, id), |&(t, _)| Self::placed(t));
         id
     }
 
@@ -145,7 +150,7 @@ impl Interner {
     /// Heap bytes held (capacities).
     pub fn bytes(&self) -> usize {
         let held: usize = self.held.values().map(|h| h.bytes.capacity() + h.ends.capacity() * 4 + h.hashes.capacity() * 8 + 48).sum();
-        held + self.buf.capacity() + self.ends.capacity() * 4 + self.hashes.capacity() * 8 + self.table.capacity() * 5
+        held + self.buf.capacity() + self.ends.capacity() * 4 + self.hashes.capacity() * 8 + self.table.capacity() * 9
     }
 
     /// The pending atoms from `from` on as one segment: their end offsets (u32, little-endian, relative to the
@@ -238,9 +243,8 @@ impl Interner {
             self.held.insert(at, held);
             for k in 0..n {
                 let id = at + k as Sym;
-                let h = self.held[&at].hashes[k];
-                let (held, base, hashes) = (&self.held, self.base, &self.hashes);
-                self.table.insert_unique(h, id, |&x| Self::hash_of(held, base, hashes, x));
+                let tag = Self::tag(self.held[&at].hashes[k]);
+                self.table.insert_unique(Self::placed(tag), (tag, id), |&(t, _)| Self::placed(t));
             }
         }
         Ok(())
