@@ -32,7 +32,7 @@ impl CaptureAnalysis {
     /// Names a matcher may bind into the environment it runs in. `not` and `count` keep what they
     /// bind to themselves; a stop rule runs in an environment of its own. A count's own value
     /// (`as`) is bound as text; the captures of its counted rule remain local.
-    pub(in crate::code_rule_dsl) fn binds(&mut self, matcher: &AstMatcher) -> Names {
+    pub fn binds(&mut self, matcher: &AstMatcher) -> Names {
         let mut names = Names::new();
         collect_binds(matcher, &mut self.binds, &mut names);
         names
@@ -45,7 +45,7 @@ impl CaptureAnalysis {
     /// tests or a fresh one. A stop rule reads only what it binds itself. An `any` reads what any
     /// branch reads: another branch binding the same name binds it only when that branch is the
     /// one that matches.
-    pub(in crate::code_rule_dsl) fn reads(&mut self, matcher: &AstMatcher) -> Names {
+    pub fn reads(&mut self, matcher: &AstMatcher) -> Names {
         binds_and_reads(matcher, &mut self.binds, &mut self.reads).1
     }
 
@@ -53,7 +53,7 @@ impl CaptureAnalysis {
     /// `count` too: what could read differently when a sibling that would have bound it was left
     /// unknown. That is what its patterns define, its comparisons read, its constraints name and
     /// its calls pass, through the utilities it reaches.
-    pub(in crate::code_rule_dsl) fn mentions(&mut self, matcher: &AstMatcher) -> Names {
+    pub fn mentions(&mut self, matcher: &AstMatcher) -> Names {
         let mut names = Names::new();
         collect_mentions(matcher, &mut self.mentions, &mut names);
         names

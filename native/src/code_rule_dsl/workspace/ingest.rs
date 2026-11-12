@@ -355,7 +355,7 @@ pub fn make_file(
     }
 }
 
-pub(super) fn candidate_dispatch(
+pub fn candidate_dispatch(
     language: Option<GrammarDialect>,
     selected: Vec<ClauseId>,
     code_rules: &[Arc<CompiledCodeRule>],

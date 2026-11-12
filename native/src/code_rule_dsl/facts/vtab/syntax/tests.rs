@@ -403,7 +403,7 @@ fn programs_that_include_core_rr_read_its_shape() {
 #[test]
 fn core_rr_programs_read_options_and_functors() {
     use crate::code_rule_dsl::logic::plan::corpus;
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("core-rr");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("core-rr");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "# hello\nx = 1\n").unwrap();
     let core = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
@@ -616,6 +616,7 @@ fn lookups_with_a_bound_document_read_that_document_only() {
 
 
 #[test]
+#[cfg(feature = "python-syntax-error")]
 fn python_grammar_verdict_is_demanded_and_shared_across_projections() {
     let store = ContentStore::open(&temp("python-verdict")).unwrap();
     let doc = document(0, "a.py", "python", "print \"legacy\"\n");
@@ -913,6 +914,7 @@ fn definition_ids_follow_granules_in_every_language() {
          &["put", "v", "main", "5"]),
     ];
     for (label, path, before, after, kept) in cases {
+        if crate::code_rule_dsl::language::dialect_by_label(label).is_none_or(|d| !d.built()) { continue; }
         let (a, pa) = leaf_ids(label, path, before);
         let (b, pb) = leaf_ids(label, path, after);
         let id_of = |set: &BTreeSet<(String, i64)>, t: &str| set.iter().filter(|(x, _)| x == t).map(|(_, i)| *i).collect::<BTreeSet<i64>>();

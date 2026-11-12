@@ -16,7 +16,7 @@ use std::collections::BTreeSet;
 use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Filters over a binding, in `binds` and `resolves.binding`.
-pub(super) const FILTER_KEYS: &[&str] = &[
+pub const FILTER_KEYS: &[&str] = &[
     "form",
     "scope",
     "used",
@@ -100,7 +100,7 @@ fn every_family<T: 'static>(
 }
 
 /// The grammar-independent checks of a filter's keys.
-pub(super) fn validate_filter(object: &Map<String, Value>, path: &str) -> Result<()> {
+pub fn validate_filter(object: &Map<String, Value>, path: &str) -> Result<()> {
     // Every family's names, in the order its errors list them; each family's compile narrows
     // them to its own.
     if let Some(form) = object.get("form") {
@@ -177,7 +177,7 @@ fn binding_count(value: &Value, path: &str) -> Result<BindingCount> {
 /// `outer`) are Python's, and PHP's from its flow; ESLint's directive comments (`directives`) and
 /// configured globals (`builtin`) are TypeScript's. `bindings` counts a scope's bindings of the
 /// name in all three: Ruff's `scope.get_all`, eslint-scope's `defs`, PHP's binding sites.
-pub(super) fn compile_filter(
+pub fn compile_filter(
     pack: &dyn language_pack::LanguagePack, object: &Map<String, Value>,
     language: GrammarDialect,
     path: &str,
@@ -399,8 +399,7 @@ fn compile_binds_in(
     }))))
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 // cratify: `ruff` is rerail-lang-python's (it mounts it)
 

@@ -87,8 +87,7 @@ pub mod code_rule_dsl {
     #[path = "lines"]
     pub mod lines {
         pub use rerail_lang::code_rule_dsl::lines::*;
-        #[cfg(test)]
-        pub mod eslint;
+        // eslint: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
         #[allow(unused_imports)]
         use crate::code_rule_dsl::language::Family;
         #[allow(unused_imports)]
@@ -161,6 +160,7 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::semver;
     pub mod soundness;
     pub use rerail_facts::code_rule_dsl::sql_profile;
+    pub use rerail_facts::code_rule_dsl::sql_admission;
     pub mod stats;
     pub mod suppress;
     #[path = "tape"]

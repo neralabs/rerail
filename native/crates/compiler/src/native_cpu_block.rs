@@ -1467,7 +1467,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
             let mut context: Context = module.make_context();
             context.func.signature = signature.clone();
             context.set_disasm(true);
-            record_pass(&mut context, r, &t, native.extracts.len())?;
+            record_pass(&mut context, r, &t, native.extracts.len(), native.outputs.len())?;
             crate::native_cpu_codegen::define_function(&mut module, id, &mut context).map_err(|_| Error::BackendFailure)?;
             disassembly.push_str(&context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default());
             module.clear_context(&mut context);
@@ -1547,7 +1547,7 @@ fn cut_to(f: &mut FunctionBuilder<'_>, w: Value, len: Value) -> Value {
 /// extracts'; where the streams disagree, the totals' flag set. Its loops are a file's and a
 /// token's; a token's work is straight-line, but for a word past eight bytes, whose other words
 /// are compared in a block of their own.
-fn record_pass(context: &mut Context, r: &crate::records::Records, t: &RecordTables, extracts: usize) -> Result<(), Error> {
+fn record_pass(context: &mut Context, r: &crate::records::Records, t: &RecordTables, extracts: usize, outputs: usize) -> Result<(), Error> {
     let mut builder_context = FunctionBuilderContext::new();
     let mut f = FunctionBuilder::new(&mut context.func, &mut builder_context);
     let (entry, row, head, token, long, coded, finish, exit, done) =
@@ -1555,8 +1555,9 @@ fn record_pass(context: &mut Context, r: &crate::records::Records, t: &RecordTab
     f.append_block_params_for_function_params(entry);
     f.append_block_param(row, types::I64);
     // The loop's values: the token, the end of the token before, the refusal so far; the file's
-    // bytes, its three columns, its token count and its row. Computed once a file.
-    const LOOP: usize = 9;
+    // bytes, its three columns, its token count, its row and its output words. Computed once a
+    // file.
+    const LOOP: usize = 10;
     for b in [head, coded] {
         for _ in 0..LOOP {
             f.append_block_param(b, types::I64);
@@ -1569,7 +1570,7 @@ fn record_pass(context: &mut Context, r: &crate::records::Records, t: &RecordTab
     f.append_block_param(exit, types::I64);
     f.switch_to_block(entry);
     let p = f.block_params(entry).to_vec();
-    let (bytes_all, rows, nrows, positions_all, counts_all) = (p[0], p[1], p[2], p[4], p[5]);
+    let (bytes_all, rows, nrows, out_all, positions_all, counts_all) = (p[0], p[1], p[2], p[3], p[4], p[5]);
     let zero = f.ins().iconst(types::I64, 0);
     let tables = f.ins().iconst(types::I64, t.words.as_ptr() as i64);
     let no_rows = f.ins().icmp_imm(IntCC::Equal, nrows, 0);
@@ -1592,6 +1593,10 @@ fn record_pass(context: &mut Context, r: &crate::records::Records, t: &RecordTab
     let counts = f.ins().load(types::I64, ro, at, 48);
     let counts = f.ins().ishl_imm(counts, 3);
     let counts = f.ins().iadd(counts_all, counts);
+    // The file's output words: output `o`'s word `w` at `o + w * outputs` (interleaved).
+    let out = f.ins().load(types::I64, ro, at, 24);
+    let out = f.ins().ishl_imm(out, 3);
+    let out = f.ins().iadd(out_all, out);
     let column = |f: &mut FunctionBuilder<'_>, k: i64| {
         let off = f.ins().imul_imm(cap, k);
         let off = f.ins().iadd(pos, off);
@@ -1604,7 +1609,7 @@ fn record_pass(context: &mut Context, r: &crate::records::Records, t: &RecordTab
     let differ = f.ins().icmp(IntCC::NotEqual, ns, nl);
     let differ = f.ins().uextend(types::I64, differ);
     let n = f.ins().umin(ns, nl);
-    let start: Vec<BlockArg> = [zero, zero, differ, bytes, starts, lasts, codes, n, rr].into_iter().map(BlockArg::from).collect();
+    let start: Vec<BlockArg> = [zero, zero, differ, bytes, starts, lasts, codes, n, rr, out].into_iter().map(BlockArg::from).collect();
     f.ins().jump(head, &start);
 
     f.switch_to_block(head);
@@ -1647,7 +1652,32 @@ fn record_pass(context: &mut Context, r: &crate::records::Records, t: &RecordTab
     let w = f.ins().ushr_imm(meta, 8);
     let word = f.ins().select(hit, w, zero);
     let shifted = f.ins().ishl_imm(word, i64::from(crate::records::KIND_BITS));
-    let code = f.ins().bor(kind, shifted);
+    let mut code = f.ins().bor(kind, shifted);
+    // The kind and the marks that need no word: the code where a long word's tail differs.
+    let mut no_word = kind;
+    // The marks at its first byte (`Records::marks`): each its mask's word at the start, the
+    // bit, and (a mark of one word) the word compared. Straight-line: a load a mark.
+    if !r.marks.is_empty() {
+        let row_w = f.ins().ushr_imm(s, 6);
+        let row_off = f.ins().imul_imm(row_w, 8 * outputs as i64);
+        let row_at = f.ins().iadd(h[9], row_off);
+        let sh = f.ins().band_imm(s, 63);
+        for (k, &(o, wc)) in r.marks.iter().enumerate() {
+            let x = f.ins().load(types::I64, fl, row_at, 8 * i32::from(o));
+            let bit = f.ins().ushr(x, sh);
+            let mut bit = f.ins().band_imm(bit, 1);
+            if wc != 0 {
+                let same = f.ins().icmp_imm(IntCC::Equal, word, i64::from(wc));
+                let same = f.ins().uextend(types::I64, same);
+                bit = f.ins().band(bit, same);
+            }
+            let placed = f.ins().ishl_imm(bit, i64::from(crate::records::MARK_SHIFT) + k as i64);
+            code = f.ins().bor(code, placed);
+            if wc == 0 {
+                no_word = f.ins().bor(no_word, placed);
+            }
+        }
+    }
     let longer = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, len, 8);
     let check = f.ins().band(hit, longer);
     let mut vals: Vec<BlockArg> = [k, next_after, bad].into_iter().chain(h[3..LOOP].iter().copied()).map(BlockArg::from).collect();
@@ -1671,7 +1701,7 @@ fn record_pass(context: &mut Context, r: &crate::records::Records, t: &RecordTab
         let ok = f.ins().bor(past, same);
         all = f.ins().band(all, ok);
     }
-    let code2 = f.ins().select(all, code, kind);
+    let code2 = f.ins().select(all, code, no_word);
     let mut vals: Vec<BlockArg> = [k, next_after, bad].into_iter().chain(h[3..LOOP].iter().copied()).map(BlockArg::from).collect();
     vals.push(code2.into());
     f.ins().jump(coded, &vals);

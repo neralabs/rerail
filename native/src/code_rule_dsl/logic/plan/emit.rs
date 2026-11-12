@@ -36,6 +36,8 @@ pub struct Emitted {
     pub views: Vec<(String, Query)>,
     /// The program's inputs, which its statements may read.
     pub inputs: Vec<String>,
+    /// Integer-domain constants can bind immutable roots without cold SQL scratch tables.
+    pub constant_rows: std::sync::Arc<BTreeMap<String, Vec<Vec<i64>>>>,
 }
 
 impl Emitted {
@@ -94,14 +96,27 @@ pub fn emit(
         given: None,
         kept: BTreeSet::new(),
     };
-    emit_inputs(&lowered.program,db,name,counts,inputs)
+    let mut emitted = emit_inputs(&lowered.program,db,name,counts,inputs)?;
+    // Lowering distinguishes grammar IDs from interned names even when both
+    // columns were declared symbolic. Retain that domain after integer lowering.
+    emitted.value_types = std::sync::Arc::new(lowered.domains.iter().map(|(r,ds)| {
+        let types = ds.iter().map(|d| match d {
+            lower::Domain::Int => "int",
+            lower::Domain::Node => "node",
+            lower::Domain::Kind => "kind",
+            lower::Domain::Field => "field",
+            lower::Domain::Name => "sym",
+        }.to_owned()).collect();
+        (r.clone(),types)
+    }).collect());
+    Ok(emitted)
 }
 
 /// The positions table an emitted program's setup makes first (a script run on its own, outside a run's waves; a run's
 /// SQL reads the same integers as a series in the statement).
 const RDL_INT: &str = "CREATE TEMP TABLE rdl_int(i INTEGER PRIMARY KEY); INSERT INTO rdl_int WITH RECURSIVE i(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM i WHERE i < 4096) SELECT i FROM i;";
 
-pub(in crate::code_rule_dsl) fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTreeMap<String,u64>>, inputs:Inputs)->Result<Emitted>{
+pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTreeMap<String,u64>>, inputs:Inputs)->Result<Emitted>{
     let atoms=inputs.atoms.is_some();
     let mut model = make_plan(prog, db, inputs)?;
     let (sccs, _) = strata(prog)?;
@@ -224,6 +239,8 @@ pub(in crate::code_rule_dsl) fn emit_inputs(prog:&Program, db:&Connection, name:
     }
     let lattices = prog.lattice.iter().filter(|(rel, _)| derived(rel)).map(|(rel, l)| (rel.clone(), l.keys, super::super::native::TOP)).collect();
     Ok(Emitted {
+        constant_rows: std::sync::Arc::new(prog.facts.iter().filter(|(rel,rows)|derived(rel) && !rows.is_empty())
+            .filter_map(|(rel,rows)|rows.iter().map(|row|row.iter().map(|v|if let Value::Int(n)=v {Some(*n)}else{None}).collect::<Option<Vec<_>>>()).collect::<Option<Vec<_>>>().map(|rows|(rel.clone(),rows))).collect()),
         value_types: std::sync::Arc::new(prog.decls.iter().map(|(r,c)|(r.clone(),c.iter().map(|(_,t)|t.clone()).collect())).collect()),
         analysis: model.analysis(prog),
         program: schedule::Program { name: name.to_owned(), column_types:relations.iter().map(|(rel,_)|(rel.clone(),prog.decls[rel].iter().map(|(_,ty)|if !atoms && ty=="sym" {"TEXT".into()} else {"INTEGER".into()}).collect())).collect(), relations, steps, file_local: false, partitions: Vec::new(), lattices, lattice_operations:BTreeMap::new() },
@@ -266,7 +283,7 @@ pub fn emit_program(
 /// relation of its own stratum or a later one (recursion), reads a walk or constant rows, or the
 /// program has lattices.
 pub fn single(emitted: Emitted, output: &str) -> Result<Emitted> {
-    let Emitted { value_types, analysis, program, setup, queries, views, inputs } = emitted;
+    let Emitted { value_types, analysis, program, setup, queries, views, inputs, constant_rows } = emitted;
     let fail = |message: String| Error::Plan(format!("{}: {message}", program.name));
     if !program.lattices.is_empty() {
         return Err(fail("a lattice needs the fixpoint".to_owned()));
@@ -346,7 +363,7 @@ pub fn single(emitted: Emitted, output: &str) -> Result<Emitted> {
         steps: vec![schedule::Step { output: output.to_owned(), stratum: 0, reads: Vec::new(), sql }],
         ..program
     };
-    Ok(Emitted { value_types, analysis, program, setup: kept, queries: vec![Some(query)], views: Vec::new(), inputs })
+    Ok(Emitted { value_types, analysis, program, setup: kept, queries: vec![Some(query)], views: Vec::new(), inputs, constant_rows })
 }
 
 /// The emitted program's outputs on `db` after it ran, decoded as `run_atoms` decodes its own.

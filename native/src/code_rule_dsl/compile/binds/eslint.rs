@@ -9,7 +9,7 @@
 //! `ESLINT_USAGE_ORACLE_ROOT` points the test at another directory's `eslint-usage.expected.json`
 //! and its sources (the repository-wide rerun).
 
-use crate::code_rule_dsl::oracle;
+use crate::code_rule_dsl::fixtures::oracle;
 use crate::code_rule_dsl::test_support::*;
 use serde_json::{Value, json};
 
@@ -484,7 +484,7 @@ fn ports_report_where_eslint_and_typescript_eslint_do() {
     let root = std::env::var("ESLINT_USAGE_ORACLE_ROOT")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| {
-            std::path::Path::new(crate::code_rule_dsl::fixtures_dir!()).join("ecma/scope")
+            std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("ecma/scope")
         });
     let repository = std::env::var("ESLINT_USAGE_ORACLE_ROOT").is_ok();
     let report = differences(&root);

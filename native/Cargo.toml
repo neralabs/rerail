@@ -201,6 +201,11 @@ tempfile = "=3.27.0"
 [build-dependencies]
 napi-build = "2.2"
 sha2 = "0.11"
+# The vendored grammars' build (`src/build_grammars.rs`), which the build script mounts; it runs in rerail-lang's
+# once the crate split gives it there (`BUILDS_GRAMMARS`).
+cc = "=1.10.0"
+tree-sitter-generate = { version = "=0.27.1", default-features = false }
+flate2 = "=1.1.10"
 # Reads and validates the language registry (`languages/*.json`) the build generates tables from.
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

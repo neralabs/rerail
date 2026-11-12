@@ -163,8 +163,8 @@ mod on {
         }
     }
 
-    pub fn predict_batch(kernels: &[(&Kernel, Vec<Lane>)], load: f64) -> Vec<[Option<Predicted>; 4]> {
-        let mut out = vec![[None; 4]; kernels.len()];
+    pub fn predict_batch(kernels: &[(&Kernel, Vec<Lane>)], load: f64) -> Vec<[Option<Predicted>; Lane::COUNT]> {
+        let mut out = vec![[None; Lane::COUNT]; kernels.len()];
         let Some(model) = current() else { return out };
         let version = VERSION.load(std::sync::atomic::Ordering::Acquire);
         let shared = model.shared_buckets(1, false, load, crate::exec::threads() as u32);
@@ -248,13 +248,13 @@ pub use rerail_forest::randomforest_procedure::{Qos, set_qos};
 
 /// Every launch's predicted cost on each of its lanes (by lane index), one model call for the batch: `None` where
 /// there is no model, it does not know the launch's lane and name, or the prediction failed.
-pub fn predict_batch(kernels: &[(&Kernel, Vec<Lane>)], load: f64) -> Vec<[Option<Predicted>; 4]> {
+pub fn predict_batch(kernels: &[(&Kernel, Vec<Lane>)], load: f64) -> Vec<[Option<Predicted>; Lane::COUNT]> {
     #[cfg(target_os = "macos")]
     return on::predict_batch(kernels, load);
     #[cfg(not(target_os = "macos"))]
     {
         let _ = load;
-        vec![[None; 4]; kernels.len()]
+        vec![[None; Lane::COUNT]; kernels.len()]
     }
 }
 

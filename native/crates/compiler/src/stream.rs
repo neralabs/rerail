@@ -208,7 +208,69 @@ pub fn validate(program: &Words) -> Result<(), Error> {
             }
         }
     }
+    phases(program)?;
     Ok(())
+}
+
+/// A word's phase (`phases`): its token taken (`SPAN`) and the next not taken yet (`TOKEN`).
+pub const TAKEN: u8 = 1;
+/// The token not taken: words switch on it, test its marks, take it.
+pub const UNTAKEN: u8 = 2;
+
+/// Each word's phases, as bits (`TAKEN`, `UNTAKEN`): a word runs between a `SPAN` and the next
+/// `TOKEN` (the token taken) or between a `TOKEN` and the next `SPAN`. A `SPAN` takes a token
+/// for good, so the phase is the program's, not the run's, and no executor keeps it:
+///
+/// - the program starts with no token, as after one taken;
+/// - a call's callee starts in its caller's phase; a return lands on its caller's `TOKEN` with
+///   a token taken (`RETURN m=0`), or past it with none (`m=1`);
+/// - a word that reads the next token (`SWITCH`, `MARK`, `ROW`, `SPAN`) runs only with it
+///   untaken, and every word but `TOKEN` (which then takes none) in one phase only.
+///
+/// Words of an unreached place have none.
+pub fn phases(program: &Words) -> Result<Vec<u8>, Error> {
+    let words = &program.words;
+    let n = words.len();
+    let returns: Vec<usize> = words.iter().filter(|&&w| split(w).0 == PUSH).map(|&w| usize::from(split(w).2)).collect();
+    let mut phase = vec![0u8; n];
+    let mut work = vec![(0usize, TAKEN)];
+    while let Some((pc, ph)) = work.pop() {
+        if pc >= n || phase[pc] & ph != 0 {
+            continue;
+        }
+        phase[pc] |= ph;
+        let (op, mode, operand) = split(words[pc]);
+        let reads = matches!(op, SWITCH | MARK | ROW | SPAN);
+        if (reads && ph == TAKEN) || (op != TOKEN && phase[pc] == TAKEN | UNTAKEN) {
+            return Err(Error::Phase(pc));
+        }
+        let after = match op {
+            SPAN => TAKEN,
+            TOKEN => UNTAKEN,
+            _ => ph,
+        };
+        match op {
+            STOP | ACCEPT => {}
+            RETURN => {
+                if (mode == 0) != (ph == TAKEN) {
+                    return Err(Error::Phase(pc));
+                }
+                for &p in &returns {
+                    work.push(if mode == 0 { (p, TAKEN) } else { (p + 1, UNTAKEN) });
+                }
+            }
+            GOTO => work.push((usize::from(operand), after)),
+            SWITCH => {
+                let s = &program.switches[usize::from(operand)];
+                work.extend(s.all_targets().filter(|&t| t != REFUSE).map(|t| (usize::from(t), after)));
+            }
+            WORD_IS if mode != 0 => work.extend([(pc + 1, after), (pc + 2, after)]),
+            FLAG if mode == 2 => work.extend([(pc + 1, after), (pc + 2, after)]),
+            MARK | ROW => work.extend([(pc + 1, after), (pc + 2, after)]),
+            _ => work.push((pc + 1, after)),
+        }
+    }
+    Ok(phase)
 }
 
 /// A node tier 2 wrote, in preorder.
@@ -333,7 +395,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     let at = start as usize + usize::from(s.offset);
                     // A word the switch names: its target. Else zeros past the file, as every
                     // executor reads them.
-                    let word = (code >> crate::records::KIND_BITS).checked_sub(1).and_then(|w| s.word(w as u16));
+                    let word = crate::records::word_of(code).checked_sub(1).and_then(|w| s.word(w as u16));
                     match word {
                         Some(t) if s.offset == 0 => t,
                         _ if at >= rec_end as usize => REFUSE,
@@ -347,7 +409,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             }
             WORD_IS => {
                 // The record's word: its code names the string.
-                let same = code >> crate::records::KIND_BITS == u32::from(operand) + 1;
+                let same = crate::records::word_of(code) == u32::from(operand) + 1;
                 match (mode, same) {
                     (_, true) => {}
                     // A test: the next word is the keyword's way; a token that is not the word skips it.
@@ -357,7 +419,20 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             }
             MARK => {
                 let k = u32::from(mode % 32);
-                let here = if at_end { mode & 32 != 0 } else { mask_bit(operand, start) };
+                // A mark of one word (`Words::mark_words`): the token's record names it too.
+                let word_ok = || match program.mark_words.iter().find(|&&(x, _)| u32::from(x) == k) {
+                    Some(&(_, s)) => crate::records::word_of(code) == u32::from(s) + 1,
+                    None => true,
+                };
+                // A mark the record has (`Records::marks`): its bit in the code.
+                let in_code = (k as usize) < records.map_or(0, |r| r.marks.len());
+                let here = if at_end {
+                    mode & 32 != 0
+                } else if in_code {
+                    code >> (crate::records::MARK_SHIFT + k) & 1 == 1
+                } else {
+                    mask_bit(operand, start) && word_ok()
+                };
                 if live >> k & 1 == 1 && here {
                     // Taken: it and the marks before it are done at this token.
                     live &= !(u32::MAX >> (31 - k));
@@ -636,7 +711,23 @@ pub fn validate_tier2(program: &Words) -> Result<(), Error> {
         }
     }
     validate(program)?;
+    validate_mark_words(program)?;
     validate_rules(program)
+}
+
+/// The marks' words (`Words::mark_words`): rising by mark, each a mark a `MARK` tests and a
+/// string of the records' words.
+pub fn validate_mark_words(program: &Words) -> Result<(), Error> {
+    let records = program.block_programs.first().and_then(|b| b.records.as_ref());
+    let tested: Vec<u8> = program.words.iter().map(|&w| split(w)).filter(|w| w.0 == MARK).map(|w| w.1 % 32).collect();
+    for (i, &(k, s)) in program.mark_words.iter().enumerate() {
+        let rising = i == 0 || program.mark_words[i - 1].0 < k;
+        let ok = rising && k < 32 && tested.contains(&k) && usize::from(s) < program.strings.len() && records.is_some_and(|r| r.words == program.strings);
+        if !ok {
+            return Err(Error::InvalidOperand(i));
+        }
+    }
+    Ok(())
 }
 
 /// Tier 2's rules (`Words::rules`), when it has them: from place 0, rising, within the words;

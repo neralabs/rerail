@@ -251,8 +251,6 @@ pub mod code_rule_dsl {
             #[path = "corpus"]
             pub mod corpus {
                 pub use rerail_logic::code_rule_dsl::logic::plan::corpus::*;
-                #[cfg(test)]
-                pub mod base_tests;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::logic::plan::{Error, Outcome, Result, lower};
                 #[allow(unused_imports)]
@@ -434,6 +432,7 @@ pub mod code_rule_dsl {
     pub use rerail_w::code_rule_dsl::soundness;
     pub use rerail_transducer::code_rule_dsl::space;
     pub use rerail_facts::code_rule_dsl::sql_profile;
+    pub use rerail_facts::code_rule_dsl::sql_admission;
     pub use rerail_w::code_rule_dsl::stats;
     pub use rerail_w::code_rule_dsl::suppress;
     #[path = "tape"]

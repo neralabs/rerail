@@ -52,6 +52,8 @@ const FACT_STORE: &[&str] = &[
     "frame_spaces",
     // The executor's measured jobs (decision 0100 §14), the cost model's data: kept as the measurements they are.
     "samples",
+    // The SQL executor's planning observations (`costs::sql_plans`), its plan model's data: measurements, as `samples`.
+    "sql_plan_observations",
     "{p}_out in code_rule_dsl/logic/native.rs",
     "{p}_out in code_rule_dsl/logic/native/extension.rs",
     "{} in code_rule_dsl/logic/plan.rs",
@@ -62,15 +64,7 @@ const FACT_STORE: &[&str] = &[
 ];
 /// Tables made and dropped inside one statement, one lab or one older pipeline's query.
 const SCRATCH: &[&str] = &[
-    // The device tests' inputs (`setfix/device.rs`, an inline test module the file filter cannot leave out).
-    "e",
-    "m",
-    "n",
     "x",
-    "a",
-    "b",
-    "c",
-    "h0",
     "t",
     "input",
     "value",
@@ -90,8 +84,9 @@ const SCRATCH: &[&str] = &[
     "stat_val",
     "stat_docrange",
     "{table} in code_rule_dsl/logic/native/setfix/lab.rs",
-    "{t} in code_rule_dsl/logic/native/setfix/lab.rs",
     "{} in code_rule_dsl/slice.rs",
+    // A test's in-memory input (`plan/acyclic/queries.rs`).
+    "facts",
 ];
 /// Caches between runs not yet facts: (table, the 0104 step that moves it).
 const NOT_YET_TABLES: &[(&str, &str)] = &[
@@ -186,6 +181,18 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/costs.rs", "FITTED"),
     ("code_rule_dsl/logic/costs.rs", "WRITER"),
     ("code_rule_dsl/logic/costs.rs", "MODEL_STATE"),
+    // The SQL executor's plan model, fitted from `sql_plan_observations`, and the observations queued for writing.
+    ("code_rule_dsl/logic/costs/sql_plans.rs", "MODEL"),
+    ("code_rule_dsl/logic/costs/sql_plans.rs", "QUEUE"),
+    // The SQL lane's executor, and the work a thread's device wave runs when flushed (`lanes::wave`).
+    ("code_rule_dsl/logic/lanes.rs", "SQL"),
+    ("code_rule_dsl/logic/lanes.rs", "DEFERRED"),
+    // The device's wave on this thread (decision 0113 §3): its open command buffer, the waves flushed, the strata
+    // waiting for theirs; and the rule being compiled's arena-text slots. State of the run, not a result kept.
+    ("code_rule_dsl/logic/native/setfix/device.rs", "WAVE"),
+    ("code_rule_dsl/logic/native/setfix/device.rs", "FLUSHED"),
+    ("code_rule_dsl/logic/native/setfix/device.rs", "SUSPENDED"),
+    ("code_rule_dsl/logic/native/setfix/device.rs", "ARENA"),
     // Which connections hold tables or views a run left in SQL: state of the connections, not a result kept.
     ("code_rule_dsl/logic/plan.rs", "TEMP_LEFT"),
     // Each live connection's path and symbols, by its scope; dropped when it closes (`setfix::forget_scope`).
@@ -235,6 +242,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus.rs", "PATH"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT"),
+    // The device copies of `replace_all`'s regex automata, per thread: resident buffers, as `RESIDENT`.
+    ("code_rule_dsl/logic/native/setfix/device.rs", "UPLOADED"),
     ("code_rule_dsl/logic/native/setfix/level.rs", "PENDING"),
     ("code_rule_dsl/logic/native/setfix/table.rs", "BUILT"),
     ("code_rule_dsl/logic/plan.rs", "LOG"),

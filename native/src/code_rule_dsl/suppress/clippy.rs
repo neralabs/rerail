@@ -593,7 +593,7 @@ pub mod tests {
                  expands",
             ),
         ];
-        let oracle: Oracle = serde_json::from_str(crate::code_rule_dsl::oracle!(
+        let oracle: Oracle = serde_json::from_str(crate::code_rule_dsl::fixtures::oracle!(
             "rust/suppress/fixtures.expected.json"
         ))
         .expect("fixture oracle JSON");
@@ -620,24 +620,24 @@ pub mod tests {
             let source_path = case.file.strip_prefix("fixtures/").expect("fixture path");
             let source = match source_path {
                 "argument.rs" => {
-                    crate::code_rule_dsl::oracle!("rust/suppress/fixtures/argument.rs")
+                    crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/argument.rs")
                 }
                 "cfg_attr.rs" => {
-                    crate::code_rule_dsl::oracle!("rust/suppress/fixtures/cfg_attr.rs")
+                    crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/cfg_attr.rs")
                 }
-                "expect.rs" => crate::code_rule_dsl::oracle!("rust/suppress/fixtures/expect.rs"),
+                "expect.rs" => crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/expect.rs"),
                 "expression.rs" => {
-                    crate::code_rule_dsl::oracle!("rust/suppress/fixtures/expression.rs")
+                    crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/expression.rs")
                 }
-                "forbid.rs" => crate::code_rule_dsl::oracle!("rust/suppress/fixtures/forbid.rs"),
-                "groups.rs" => crate::code_rule_dsl::oracle!("rust/suppress/fixtures/groups.rs"),
-                "macros.rs" => crate::code_rule_dsl::oracle!("rust/suppress/fixtures/macros.rs"),
-                "names.rs" => crate::code_rule_dsl::oracle!("rust/suppress/fixtures/names.rs"),
+                "forbid.rs" => crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/forbid.rs"),
+                "groups.rs" => crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/groups.rs"),
+                "macros.rs" => crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/macros.rs"),
+                "names.rs" => crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/names.rs"),
                 "override.rs" => {
-                    crate::code_rule_dsl::oracle!("rust/suppress/fixtures/override.rs")
+                    crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/override.rs")
                 }
                 "placement.rs" => {
-                    crate::code_rule_dsl::oracle!("rust/suppress/fixtures/placement.rs")
+                    crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/placement.rs")
                 }
                 _ => panic!("unknown fixture {source_path}"),
             };

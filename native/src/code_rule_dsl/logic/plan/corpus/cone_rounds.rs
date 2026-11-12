@@ -170,6 +170,17 @@ pub(in crate::code_rule_dsl) struct LoadLedger {
     /// The files the rounds took back, which the answering thread has not yet unloaded (`World::unload`): their
     /// places in the load budget are free again.
     pub(in crate::code_rule_dsl) taken_back: Vec<i64>,
+    /// The rounds are asking (set by the cone's thread while they run): their loads are answered at once, not in
+    /// the budget's levels.
+    pub(in crate::code_rule_dsl) rounds: bool,
+    /// A load the rounds asked was past the budget: what they load then depends on their order, so they give up and
+    /// the cone runs fresh, in levels (decision 0108).
+    pub(in crate::code_rule_dsl) bound: bool,
+    /// The rounds gave up and the cone runs fresh: what was answered to them is not the run's answers.
+    pub(in crate::code_rule_dsl) restarted: bool,
+    /// The cone runs again in the budget's levels: the answering thread takes back what was loaded from beyond the
+    /// corpus (`World::take_back_libraries`) and answers the loads asked again level by level.
+    pub(in crate::code_rule_dsl) relevel: bool,
 }
 
 impl Inputs<'_> {
@@ -352,10 +363,10 @@ impl RoundProgram {
                 provisional.insert(rel.clone(), k.read_input(on.store, program, rel, None)?.unwrap_or_default());
             }
             // The loaded documents' rows of each per-file relation: the kept rows not of the corpus's documents
-            // (only their granules read, where the documents are the first column's).
+            // (only their granules read, where the documents are the column the frames group its rows by).
             for (rel, _, at) in inputs.per_file {
                 let loaded = |d: i64| !inputs.corpus.contains(&d);
-                let rows = k.read_input(on.store, program, rel, (*at == 0).then_some(&loaded as &dyn Fn(i64) -> bool))?.unwrap_or_default();
+                let rows = k.read_input(on.store, program, rel, (*at == retain::group_col(program, rel)).then_some(&loaded as &dyn Fn(i64) -> bool))?.unwrap_or_default();
                 provisional.insert(rel.clone(), rows.into_iter().filter(|r| loaded(super::memo::document_of(r[*at]))).collect());
             }
             for (req, _) in &self.requests {
@@ -443,6 +454,9 @@ impl RoundProgram {
             if let Some(batch) = batch {
                 for (req, keys) in batch {
                     let given: Vec<(String, Vec<Vec<i64>>)> = answer(&req, &keys)?.into_iter().map(|(r, rows)| (self.kept_as(&r), rows)).collect();
+                    if inputs.ledger.lock().unwrap_or_else(|e| e.into_inner()).bound {
+                        return Err(Gave::Up("a load past the budget: where it binds, the loads are taken level by level, in a fresh cone".into()));
+                    }
                     // A document taken back and loaded again is the run's again.
                     if req == super::world::LOAD && !withdrawn.is_empty() {
                         let ledger = inputs.ledger.lock().unwrap_or_else(|e| e.into_inner());

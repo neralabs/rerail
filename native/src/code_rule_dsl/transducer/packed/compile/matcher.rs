@@ -2396,16 +2396,22 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
-    /// `top: step; FORK reached; SUPERTYPE bound; GOTO top; reached:` — every node the step
-    /// reaches, going on past a node only where it has `bound`.
+    /// `top: step; FORK on; GOTO reached; on: SUPERTYPE bound; GOTO top; reached:` — every node
+    /// the step reaches, going on past a node only where it has `bound`. The path that stops at a
+    /// node goes first and the one that goes on is the fork's frame: a walk then holds one frame
+    /// for the loop, not one per node it passes (a module's 300 statements by `NEXT` outgrew a
+    /// micro walk's 256 frames). A label is a set of nodes, so the order of its paths is free.
     fn bounded(&mut self, step: u8, bound: u16) -> Result<(), Error> {
         let top = self.here()?;
         self.push(step, 0, 0);
         let fork = self.push(FORK, 0, 0);
+        let exit = self.push(GOTO, 0, 0);
+        let on = self.here()?;
+        self.patch(fork, on);
         self.push(SUPERTYPE, 0, bound);
         self.push(GOTO, 0, top);
         let reached = self.here()?;
-        self.patch(fork, reached);
+        self.patch(exit, reached);
         Ok(())
     }
 

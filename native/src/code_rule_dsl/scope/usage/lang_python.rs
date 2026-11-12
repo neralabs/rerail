@@ -188,11 +188,11 @@ impl PythonUsage for Usage {
 }
 
 /// The names the module's `__all__` definitions list, and whether every definition is static.
-pub(super) struct Exports {
-    pub(super) names: BTreeSet<String>,
+pub struct Exports {
+    pub names: BTreeSet<String>,
     /// Each string entry: its range and the name.
-    pub(super) entries: Vec<(usize, usize, String)>,
-    pub(super) complete: bool,
+    pub entries: Vec<(usize, usize, String)>,
+    pub complete: bool,
 }
 
 impl Exports {
@@ -215,7 +215,7 @@ impl Exports {
 /// entries of lists and tuples (a bare tuple on the right side too), joined by `+`, and
 /// `list(...)`/`tuple(...)` of a display. Anything else, a non-string entry included, makes the
 /// exports incomplete (Ruff ignores it).
-pub(super) fn dunder_all<D: Doc>(
+pub fn dunder_all<D: Doc>(
     table: &ScopeTable,
     root: &Node<'_, D>,
     steps: &mut Steps<'_>,

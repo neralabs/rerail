@@ -105,73 +105,18 @@ pub(super) fn profile<T>(
     e: &mut CodeRuleSqlExecutor,
     run: impl FnOnce(&mut CodeRuleSqlExecutor) -> T,
 ) -> (T, Box<SqlWork>) {
-    if let Some(before) = e.sql_profile_totals() {
-        let result = run(e);
-        let after = e.sql_profile_totals().unwrap();
-        let work = Box::<SqlWork>::default();
-        work.vm.set(after[2] - before[2]);
-        work.scans.set(after[3] - before[3]);
-        work.data_scans.set(after[3] - before[3]);
-        return (result, work);
-    }
-    use rusqlite::ffi;
-    unsafe extern "C" fn trace(
-        _: u32,
-        context: *mut std::ffi::c_void,
-        statement: *mut std::ffi::c_void,
-        _elapsed: *mut std::ffi::c_void,
-    ) -> i32 {
-        // SQLite invokes the callback synchronously while the boxed counters remain registered.
-        let work = unsafe { &*context.cast::<SqlWork>() };
-        let stmt = statement.cast::<ffi::sqlite3_stmt>();
-        let vm =
-            unsafe { ffi::sqlite3_stmt_status(stmt, ffi::SQLITE_STMTSTATUS_VM_STEP, 1) } as u64;
-        let scans =
-            unsafe { ffi::sqlite3_stmt_status(stmt, ffi::SQLITE_STMTSTATUS_FULLSCAN_STEP, 1) }
-                as u64;
-        work.vm.set(work.vm.get() + vm);
-        work.scans.set(work.scans.get() + scans);
-        let sql = unsafe { std::ffi::CStr::from_ptr(ffi::sqlite3_sql(stmt)) }.to_string_lossy();
-        if !sql.starts_with("DROP ") && !sql.starts_with("CREATE ") {
-            work.data_scans.set(work.data_scans.get() + scans);
-        }
-        if (scans > 100 || vm > 10000) && !sql.starts_with("DROP ") && !sql.starts_with("CREATE ") {
-            let mut rows = work.sql.borrow_mut();
-            let row = rows.entry(sql.into_owned()).or_default();
-            row.0 += vm;
-            row.1 += scans;
-        }
-        0
-    }
-    struct Trace(*mut ffi::sqlite3);
-    impl Drop for Trace {
-        fn drop(&mut self) {
-            unsafe {
-                ffi::sqlite3_trace_v2(self.0, 0, None, std::ptr::null_mut());
-            }
+    let receipts=e.db.admission().receipts();
+    let result=run(e);
+    let work=Box::<SqlWork>::default();
+    for row in receipts.lock().iter() {
+        let [vm,scans,_,_]=row.counters;
+        work.vm.set(work.vm.get()+vm);work.scans.set(work.scans.get()+scans);
+        if !row.sql.starts_with("DROP ") && !row.sql.starts_with("CREATE ") {
+            work.data_scans.set(work.data_scans.get()+scans);
+            if scans>100 || vm>10000 {let mut sql=work.sql.borrow_mut();let totals=sql.entry(row.sql.clone()).or_default();totals.0+=vm;totals.1+=scans;}
         }
     }
-    let work = Box::<SqlWork>::default();
-    let handle = unsafe { e.connection().handle() };
-    unsafe {
-        // Cached statements can retain counters from preparation before tracing starts.
-        let mut stmt = ffi::sqlite3_next_stmt(handle, std::ptr::null_mut());
-        while !stmt.is_null() {
-            ffi::sqlite3_stmt_status(stmt, ffi::SQLITE_STMTSTATUS_VM_STEP, 1);
-            ffi::sqlite3_stmt_status(stmt, ffi::SQLITE_STMTSTATUS_FULLSCAN_STEP, 1);
-            stmt = ffi::sqlite3_next_stmt(handle, stmt);
-        }
-        ffi::sqlite3_trace_v2(
-            handle,
-            ffi::SQLITE_TRACE_PROFILE as u32,
-            Some(trace),
-            std::ptr::from_ref(&*work).cast_mut().cast(),
-        );
-    }
-    let guard = Trace(handle);
-    let result = run(e);
-    drop(guard);
-    (result, work)
+    (result,work)
 }
 
 fn change(e: &mut CodeRuleSqlExecutor, patch: Value) -> Value {
@@ -202,6 +147,7 @@ fn ordered(e: &mut CodeRuleSqlExecutor, table: &str) -> Value {
 #[test]
 fn wide_old_sql_joins_use_indexed_deletion_rows_and_rollback_restores_them() {
     let (_d, mut e) = executor();
+    e.legacy_initial=true;
     bind(
         &mut e,
         "item",
@@ -485,15 +431,10 @@ owns(p,o) :- node(d,n,"call",_,_), doc(d,p,_), nearest(n,a,scope), field(a,"name
             json!([]),
             "{report}"
         );
-        assert!(
-            rows(
-                &mut e,
-                "SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '__sql_walk_*'"
-            )[0][0]
-                .as_u64()
-                .unwrap()
-                > 0
-        );
+        let walks=e.executions[0].objects.iter().filter(|(name,_)|name.starts_with("__sql_walk_")).map(|(name,_)|name).collect::<Vec<_>>();
+        assert!(!walks.is_empty());
+        assert!(walks.iter().all(|name|e.versions.owns(name)));
+        assert_eq!(rows(&mut e,"SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '__sql_walk_*' OR name GLOB '__sql_state_*' OR name GLOB '__rr_update_*'"),json!([[0]]));
         let (_fresh_dir, mut fresh) = executor();
         fresh.bind_snapshot(snapshot(&files)).unwrap();
         fresh.run(program.into(), "python".into(), None).unwrap();

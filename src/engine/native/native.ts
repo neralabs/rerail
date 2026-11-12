@@ -379,6 +379,8 @@ export interface NativeCodeRuleSqlExecutor {
   /** Atomic [{name, insert?: rows, delete?: rows}] batch; returns deltas and refreshed strata. */
   applyChanges(changesJson: string, maxWaves?: number | null): string;
   query(sql: string, parametersJson?: string | null, maxRows?: number | null): string;
+  /** Read-only SQL graph: CTE fusion, shared statement limits, and parallel SQL groups. */
+  queryPlan(planJson: string): string;
 }
 
 export interface NativeCodeRuleSqlExecutorConstructor {

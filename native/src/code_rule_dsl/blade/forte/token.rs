@@ -4,7 +4,7 @@
 /// A token type, numbered as Forte numbers it (the oracle records the numbers).
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum TokenType {
+pub enum TokenType {
     Text = 0,
     LessThan = 1,
     GreaterThan = 2,
@@ -63,17 +63,17 @@ pub(crate) enum TokenType {
 
 /// A token: its type and byte range in the template (`TokenRecord`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Token {
-    pub(crate) kind: TokenType,
-    pub(crate) start: u32,
-    pub(crate) end: u32,
+pub struct Token {
+    pub kind: TokenType,
+    pub start: u32,
+    pub end: u32,
 }
 
 /// A lexer state (`Lexer\State`), numbered as Forte numbers it; Forte's `TagOpen` (1), `Verbatim`
 /// (15) and `PhpBlock` (16) are left out, since no error Forte logs carries them.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum State {
+pub enum State {
     Data = 0,
     TagName = 2,
     BeforeAttrName = 3,
@@ -96,7 +96,7 @@ pub(crate) enum State {
 impl State {
     /// Every state, for reading a name back.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) const ALL: [State; 15] = [
+    pub const ALL: [State; 15] = [
         State::Data,
         State::TagName,
         State::BeforeAttrName,
@@ -116,7 +116,7 @@ impl State {
 
     /// The case name (`State::label`).
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         use State::*;
         match self {
             Data => "Data",
@@ -143,7 +143,7 @@ impl State {
 /// and never logs them.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ErrorReason {
+pub enum ErrorReason {
     UnexpectedEof = 3,
     UnclosedComment = 5,
     ConstructCollision = 8,
@@ -153,7 +153,7 @@ pub(crate) enum ErrorReason {
 impl ErrorReason {
     /// Every reason, for reading a name back.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) const ALL: [ErrorReason; 4] = [
+    pub const ALL: [ErrorReason; 4] = [
         ErrorReason::UnexpectedEof,
         ErrorReason::UnclosedComment,
         ErrorReason::ConstructCollision,
@@ -162,7 +162,7 @@ impl ErrorReason {
 
     /// The case name (`ErrorReason::label`, and `Diagnostic::$code`).
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         use ErrorReason::*;
         match self {
             UnexpectedEof => "UnexpectedEof",
@@ -176,8 +176,8 @@ impl ErrorReason {
 /// An error the lexer logged (`Lexer\LexerError`): Forte's diagnostics, each an error spanning
 /// the byte at `offset` (`Diagnostic::fromLexerError`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct LexerError {
-    pub(crate) state: State,
-    pub(crate) reason: ErrorReason,
-    pub(crate) offset: u32,
+pub struct LexerError {
+    pub state: State,
+    pub reason: ErrorReason,
+    pub offset: u32,
 }

@@ -378,8 +378,8 @@ pub struct Reference {
 /// index (`ScopeTable::annotations`) above the low 24 bits, which hold the offset into its text.
 /// No source position has them. On wasm32 (the browser build) the bit is bit 30 and the offset keeps 16 bits,
 /// so 16,384 annotations of up to 64 KiB each, below 1 GiB of source.
-pub(crate) const ANNOTATION_RANGE: usize = 1 << (usize::BITS - 2);
-const ANNOTATION_SHIFT: u32 = if usize::BITS == 32 { 16 } else { 24 };
+pub const ANNOTATION_RANGE: usize = 1 << (usize::BITS - 2);
+pub const ANNOTATION_SHIFT: u32 = if usize::BITS == 32 { 16 } else { 24 };
 
 /// Where the names of the annotation with this index start.
 /// A family's own name table for a file, built before its scope where the family resolves names itself (PHP's
@@ -831,7 +831,7 @@ impl ScopeTable {
     /// Whether `name` at `reference` has no binding: none resolves, or a `del` unbound it
     /// (Ruff's F821, builtins and star imports aside).
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn unbound(&self, reference: &Reference, name: &str) -> bool {
+    pub fn unbound(&self, reference: &Reference, name: &str) -> bool {
         if reference.access != Access::Del
             && let Some(annotation) = { let pack = language_pack::pack(self.family); pack.scope_unbound_annotation(self, reference, name) }
         {
@@ -848,7 +848,7 @@ impl ScopeTable {
     /// the name is no builtin, which the handler's lookup would have found), or a function's bare
     /// annotation no nested `nonlocal` may initialize.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn unbound_locally(&self, reference: &Reference, name: &str, builtin: bool) -> bool {
+    pub fn unbound_locally(&self, reference: &Reference, name: &str, builtin: bool) -> bool {
         { let pack = language_pack::pack(self.family); pack.scope_unbound_locally(self, reference, name, builtin) }
     }
 
@@ -1404,5 +1404,4 @@ impl Builder<'_> {
     }
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

@@ -158,6 +158,7 @@ pub mod code_rule_dsl {
     pub use rerail_w::code_rule_dsl::soundness;
     pub mod space;
     pub use rerail_facts::code_rule_dsl::sql_profile;
+    pub use rerail_facts::code_rule_dsl::sql_admission;
     pub use rerail_w::code_rule_dsl::stats;
     pub use rerail_w::code_rule_dsl::suppress;
     #[path = "tape"]

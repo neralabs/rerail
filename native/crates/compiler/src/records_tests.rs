@@ -74,12 +74,14 @@ fn records_are_each_tokens_bytes_and_code() {
                     .map(|(&s, &l)| {
                         let text = &bytes[s as usize..=l as usize];
                         let w = r.words.iter().position(|w| w[..] == *text).map_or(0, |i| i as u32 + 1);
-                        u32::from(r.kinds[usize::from(bytes[s as usize])]) | w << crate::records::KIND_BITS
+                        // Each mark: its bit at the start, and its word where it names one.
+                        let marks: u32 = r.marks.iter().enumerate().filter(|&(_, &(o, mw))| run.outputs[usize::from(o)].get(s as usize / 64).is_some_and(|x| x >> (s % 64) & 1 == 1) && (mw == 0 || u32::from(mw) == w)).map(|(k, _)| 1 << k).sum();
+                        u32::from(r.kinds[usize::from(bytes[s as usize])]) | w << crate::records::KIND_BITS | marks << crate::records::MARK_SHIFT
                     })
                     .collect();
                 assert_eq!(run.codes, oracle, "{name}: {doc:?}");
                 tokens += oracle.len();
-                worded += oracle.iter().filter(|&&c| c >> crate::records::KIND_BITS != 0).count();
+                worded += oracle.iter().filter(|&&c| crate::records::word_of(c) != 0).count();
             }
             let got = tier1.extract(bytes);
             assert_eq!((&got.positions, &got.codes, &got.totals), (&run.positions, &run.codes, &run.totals), "{name}: {doc:?}: the compiled record pass");

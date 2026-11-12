@@ -18,6 +18,19 @@ pub fn register() {
     crate::code_rule_dsl::prof::register_device_memory(|| (packed::metal_backend::reserved_mb(), packed::metal_backend::driver_mb()));
 }
 
+/// This crate's own test binary, which the engine does not load: Metal is registered as the binary loads, as the
+/// engine registers it (`crate::install_devices`), so the device's tests run on the device.
+#[cfg(test)]
+mod test_load {
+    extern "C" fn load() {
+        super::register();
+    }
+    #[used]
+    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+    #[cfg_attr(not(target_vendor = "apple"), unsafe(link_section = ".init_array"))]
+    static LOAD: extern "C" fn() = load;
+}
+
 fn refused(error: Error) -> Refused {
     match error {
         Error::UnsupportedBackend => Refused::NoDevice,
@@ -51,6 +64,14 @@ impl SolverDevice for Metal {
 
     fn run_joins(&self, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
         joins::run(&plans(rules)?, store, names, fresh)
+    }
+
+    fn submit(&self, rules: &[(&JoinPlan, &JoinRule, usize)], names: &Interner) -> Result<Option<u64>, String> {
+        joins::submit(&plans(rules)?, names)
+    }
+
+    fn resume(&self, ticket: u64, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+        joins::resume(ticket, &plans(rules)?, store, names, fresh)
     }
 
     fn reads_own(&self, plan: &JoinPlan) -> bool {
@@ -172,8 +193,11 @@ pub mod matcher {
             programs::label_passes::drop_pipelines();
         }
         fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[crate::code_rule_dsl::transducer::packed::block::BatchFile<'_>]) -> Option<Vec<Vec<u64>>> {
-            use programs::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
-            let run = run_split(natives, batch, LaneWidth::W64, Executor::Generated(ClassStrategy::Lookup), 64).ok()?;
+            use programs::block_program::{ClassStrategy, Executor, LaneWidth, generated_ready, run_split};
+            // Each set of patterns is a kernel of its own: until its compile (on a thread of its own) is done, the
+            // interpreter's pipeline runs the batch, so no launch waits on the compiler.
+            let executor = if generated_ready(natives, LaneWidth::W64) { Executor::Generated(ClassStrategy::Lookup) } else { Executor::Interpreter };
+            let run = run_split(natives, batch, LaneWidth::W64, executor, 64).ok()?;
             Some(run.files.into_iter().map(|mut r| r.outputs.swap_remove(0)).collect())
         }
         fn execution_metrics(&self) -> (usize, usize) {

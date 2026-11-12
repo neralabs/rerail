@@ -21,6 +21,8 @@
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
+pub mod sql_plans;
+
 /// The samples kept per machine: older ones are deleted past this.
 const KEPT: i64 = 500_000;
 /// The recent samples a run's prices are fitted from, and its model trained on.
@@ -67,6 +69,7 @@ fn open(path: &PathBuf) -> rusqlite::Result<rusqlite::Connection> {
          CREATE INDEX IF NOT EXISTS samples_by_machine ON samples(machine, at);
          CREATE TABLE IF NOT EXISTS models(machine TEXT PRIMARY KEY, at REAL, trained_on INTEGER, comparison TEXT, model BLOB);",
     )?;
+    sql_plans::create(&db)?;
     Ok(db)
 }
 
@@ -75,12 +78,13 @@ static WRITER: Mutex<Option<rusqlite::Connection>> = Mutex::new(None);
 
 /// Writes the samples the executor kept since the last write: one transaction.
 fn write() {
-    let (samples, dropped) = rerail_accel::score::take_samples();
-    if samples.is_empty() {
-        return;
-    }
     let Some(path) = path() else { return };
     let mut w = WRITER.lock().unwrap_or_else(|p| p.into_inner());
+    let (samples, dropped) = rerail_accel::score::take_samples();
+    let plans = sql_plans::take();
+    if samples.is_empty() && plans.is_empty() {
+        return;
+    }
     if w.is_none() {
         *w = open(&path).ok();
         // Past `KEPT`, the oldest of this machine's samples go.
@@ -88,24 +92,39 @@ fn write() {
             let _ = db.execute("DELETE FROM samples WHERE machine = ?1 AND at < (SELECT at FROM samples WHERE machine = ?1 ORDER BY at DESC LIMIT 1 OFFSET ?2)", rusqlite::params![machine(), KEPT]);
         }
     }
-    let Some(db) = w.as_mut() else { return };
-    let machine = machine();
+    let Some(db) = w.as_mut() else {
+        sql_plans::retry(plans);
+        return;
+    };
+    let (machine, threads) = (machine(), rerail_accel::exec::threads() as i64);
     let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
-    let r = (|| -> rusqlite::Result<()> {
+    let r = (|| -> rusqlite::Result<Vec<i64>> {
         let tx = db.transaction()?;
-        {
+        if !samples.is_empty() {
             let mut ins = tx.prepare_cached("INSERT INTO samples VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)")?;
             for s in &samples {
                 ins.execute(rusqlite::params![at, machine, s.threads, s.lane.name(), s.forms, s.launches, s.units, s.estimate, s.host_estimate, s.wall, s.cpu, s.waited, s.phases, s.cold, s.ok, s.load])?;
             }
         }
-        tx.commit()
+        let ids = if plans.is_empty() {
+            Vec::new()
+        } else {
+            sql_plans::insert(&tx, &machine, threads, at, &plans)?
+        };
+        tx.commit()?;
+        Ok(ids)
     })();
     match r {
-        Ok(()) => {
+        Ok(ids) => {
             WRITTEN.fetch_add(samples.len(), std::sync::atomic::Ordering::Relaxed);
+            if !ids.is_empty() {
+                sql_plans::learn(ids, &plans);
+            }
         }
-        Err(e) => crate::code_rule_dsl::logic::profile::decision("cost statistics", || format!("{} samples not written: {e}", samples.len())),
+        Err(e) => {
+            crate::code_rule_dsl::logic::profile::decision("cost statistics", || format!("{} job samples and {} SQL reports not written: {e}", samples.len(), plans.len()));
+            sql_plans::retry(plans);
+        }
     }
     if dropped > 0 {
         crate::code_rule_dsl::logic::profile::decision("cost statistics", || format!("{dropped} samples dropped: the writer fell behind"));
@@ -149,7 +168,13 @@ fn read() {
     if !path.exists() {
         return;
     }
-    let r = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).and_then(|db| read_samples(&db, READ));
+    let r = (|| -> rusqlite::Result<Vec<rerail_accel::score::Sample>> {
+        let db = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        if let Err(e) = sql_plans::read(&db, &machine(), rerail_accel::exec::threads() as i64) {
+            eprintln!("rerail: SQL planning observations not read from {}: {e}", path.display());
+        }
+        read_samples(&db, READ)
+    })();
     match r {
         Ok(samples) => {
             let fitted = rerail_accel::price::learn_from(&samples);
@@ -300,12 +325,13 @@ static FITTED: Mutex<Option<(usize, usize)>> = Mutex::new(None);
 
 /// Starts the statistics, once: the executor keeps its samples, a thread writes them, and a job reads the stored
 /// ones and fits the prices. Without a store (`RERAIL_COSTS=off`, or in tests) nothing is kept.
-pub(in crate::code_rule_dsl) fn start() {
+pub fn start() {
     static STARTED: OnceLock<()> = OnceLock::new();
     STARTED.get_or_init(|| {
         if path().is_none() {
             return;
         }
+        sql_plans::enable();
         rerail_accel::score::keep_samples(true);
         let _ = rerail_accel::exec::service("rerail-costs", None, || {
             crate::code_rule_dsl::logic::profile::behind_the_run();
@@ -326,7 +352,7 @@ pub fn flush() {
 }
 
 /// For the profile: the samples read, the rates fitted and the rates in place.
-pub(in crate::code_rule_dsl) fn summary() -> String {
+pub fn summary() -> String {
     let fitted = *FITTED.lock().unwrap_or_else(|p| p.into_inner());
     let mut s = match (path(), fitted) {
         (None, _) => "off (RERAIL_COSTS=off, or a test)\n".to_owned(),

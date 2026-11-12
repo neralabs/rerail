@@ -40,7 +40,8 @@ pub fn template() -> &'static Path {
         let ready = dir.join(format!("{key}.ready"));
         let _lock = Lock::take(&dir.join(format!("{key}.lock")));
         if !(path.exists() && std::fs::read_to_string(&ready).is_ok_and(|k| k == key)) {
-            make(&path);
+            // Test plumbing, not a run's SQL: the strict mode (`RERAIL_SQL_STRICT`) leaves it alone.
+            crate::code_rule_dsl::logic::profile::behind(|| make(&path));
             std::fs::write(&ready, &key).expect("the template's ready mark");
         } else {
             // Used: its mark is fresh, so no other process takes it for stale.
@@ -60,7 +61,8 @@ fn make(path: &Path) {
     let filling = store.clone();
     let filled = std::thread::Builder::new()
         .name("store template".into())
-        .spawn(move || fill(&filling))
+        // Test plumbing, not a run's SQL: the strict mode (`RERAIL_SQL_STRICT`) leaves it alone.
+        .spawn(move || crate::code_rule_dsl::logic::profile::behind(|| fill(&filling)))
         .expect("the template's thread")
         .join()
         .unwrap_or_else(|panic| Err(panic.downcast_ref::<String>().cloned().or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default()));

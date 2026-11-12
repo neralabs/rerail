@@ -13,7 +13,7 @@ pub mod scan;
 pub mod tree;
 use tree::{Key, Link, Node};
 #[derive(Clone)]
-struct Row {
+pub struct Row {
     id: i64,
     values: Key,
 }
@@ -107,7 +107,7 @@ impl Schema {
 #[derive(Clone)]
 pub struct Version {
     schema: Arc<Schema>,
-    full: Link<Row>,
+    pub full: Link<Row>,
     primary: Link<Row>,
     ids: Link<Row>,
     indexes: Vec<Link<Row>>,
@@ -116,10 +116,20 @@ pub struct Version {
     distinct: Vec<usize>,
     next: i64,
 }
-fn key(values: impl IntoIterator<Item = Option<i64>>) -> Key {
+pub fn key(values: impl IntoIterator<Item = Option<i64>>) -> Key {
     tree::key(values.into_iter().collect())
 }
 impl Version {
+    pub fn distinct_values(&self, column: usize) -> Option<usize> {
+        (column < self.distinct.len() && (column == 0 || self.secondary[column]))
+            .then(|| self.distinct[column])
+    }
+    pub fn arity(&self) -> usize {
+        self.schema.columns.len()
+    }
+    pub fn same_schema(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.schema, &other.schema) || self.schema == other.schema
+    }
     pub fn empty_like(&self) -> Self {
         let mut empty = Self::empty(self.schema.clone());
         empty.secondary = self.secondary.clone();
@@ -639,7 +649,7 @@ struct Slot {
 #[derive(Default)]
 pub struct Store {
     reuse: RefCell<BTreeMap<TableKey, Version>>,
-    modules: Modules,
+    pub modules: Modules,
     tables: RefCell<BTreeMap<TableKey, Arc<Mutable>>>,
     slots: RefCell<BTreeMap<String, Slot>>,
     scope: std::cell::Cell<usize>,
@@ -654,7 +664,7 @@ impl Drop for Store {
         self.undo.write().clear();
     }
 }
-pub(super) struct Scope<'a> {
+pub struct Scope<'a> {
     store: &'a Store,
     previous: usize,
 }
@@ -684,6 +694,15 @@ impl Store {
             .filter(|(s, _)| *s > mark)
             .cloned()
             .collect::<Vec<_>>();
+        for key in keys {
+            self.remove_key(db, &key)?;
+        }
+        Ok(())
+    }
+    pub fn discard_scope(&self, db: &rusqlite::Connection, scope: usize) -> Result<()> {
+        let keys = self.tables.borrow().range((scope, String::new())..)
+            .take_while(|((owner, _), _)| *owner == scope)
+            .map(|(key, _)| key.clone()).collect::<Vec<_>>();
         for key in keys {
             self.remove_key(db, &key)?;
         }
@@ -890,8 +909,13 @@ impl Store {
             return Ok(());
         };
         let (scope, name) = key;
-        let owners = self.slots.borrow()[name].owners.clone();
-        if owners.len() == 1 {
+        let remaining = self.slots.borrow()[name].owners.iter().find(|s| *s != scope).copied();
+        if let Some(remaining) = remaining {
+            self.modules.get(name).unwrap()
+                .set(self.tables.borrow()[&(remaining, name.clone())].clone())
+                .map_err(error)?;
+            self.slots.borrow_mut().get_mut(name).unwrap().owners.remove(scope);
+        } else {
             for undo in self.undo.write().iter_mut() {
                 let existing = !undo.created.iter().any(|(_, id)| *id == table.id)
                     || undo.removed.keys().any(|(_, n)| n == name);
@@ -905,19 +929,6 @@ impl Store {
             }
             self.modules.unregister(db, name).map_err(error)?;
             self.slots.borrow_mut().remove(name);
-        } else {
-            let remaining = *owners.iter().find(|s| *s != scope).unwrap();
-            self.modules
-                .get(name)
-                .unwrap()
-                .set(self.tables.borrow()[&(remaining, name.clone())].clone())
-                .map_err(error)?;
-            self.slots
-                .borrow_mut()
-                .get_mut(name)
-                .unwrap()
-                .owners
-                .remove(scope);
         }
         self.tables.borrow_mut().remove(key);
         for undo in self.undo.write().iter_mut() {
@@ -953,7 +964,5 @@ impl Drop for Transaction<'_> {
 
 #[cfg(test)]
 pub mod bulk_tests;
-#[cfg(test)]
-pub mod operators;
-#[cfg(test)]
-pub mod tests;
+// operators: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

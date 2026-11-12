@@ -13,6 +13,6 @@ pub fn thread_cpu_ns() -> Option<u128> {
 }
 
 #[cfg(not(unix))]
-pub(crate) fn thread_cpu_ns() -> Option<u128> {
+pub fn thread_cpu_ns() -> Option<u128> {
     None
 }

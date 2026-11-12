@@ -193,11 +193,11 @@ impl Lines {
         [self.index().starts[l - 1], self.index().ends[l - 1]]
     }
     /// The 1-based line holding byte `at`.
-    pub(super) fn line(&self, at: u32) -> u32 {
+    pub fn line(&self, at: u32) -> u32 {
         self.index().starts.partition_point(|&s| s <= at).max(1) as u32
     }
     /// A span's first line, last line (of its last character) and 0-based start column (bytes).
-    pub(super) fn place(&self, [start, end]: [u32; 2]) -> (u32, u32, u32) {
+    pub fn place(&self, [start, end]: [u32; 2]) -> (u32, u32, u32) {
         let line = self.line(start);
         let last = if end > start { self.line(end - 1) } else { line };
         (line, last, start - self.index().starts[line as usize - 1])
@@ -228,7 +228,7 @@ pub(super) fn is_comment(kind: &str) -> bool {
 }
 
 /// A comment's text without its marker (`#`, `//`, `/* */`, `<!-- -->`, `--`), trimmed.
-pub(super) fn comment_body(t: &str) -> &str {
+pub fn comment_body(t: &str) -> &str {
     let t = t.trim_end();
     let body = if let Some(r) = t.strip_prefix("/*") {
         r.strip_suffix("*/").unwrap_or(r)
@@ -245,7 +245,7 @@ pub(super) fn is_spread(kind: &str) -> bool {
 }
 
 /// `name`: an identifier's text, or a dotted chain's without spaces, when it holds only name characters.
-pub(super) fn name(kind: &str, text: &str) -> Option<String> {
+pub fn name(kind: &str, text: &str) -> Option<String> {
     let chain = kind.contains("identifier")
         || matches!(kind, "member_expression" | "attribute" | "dotted_name" | "scoped_identifier" | "field_expression" | "qualified_name" | "nested_identifier" | "name");
     if !chain {
@@ -267,14 +267,14 @@ pub(super) fn name(kind: &str, text: &str) -> Option<String> {
 /// What a literal node gives: `strprefix`, `str`, and `value` with its `value_type`.
 #[derive(Default, Debug, PartialEq)]
 pub struct Literal {
-    pub(crate) prefix: Option<String>,
+    pub prefix: Option<String>,
     pub str: Option<String>,
     pub value: Option<(String, &'static str)>,
 }
 
 /// The literal facts of a node of `kind` with source `text`; `interpolated` when it has a part other than
 /// constant text (a Python `interpolation`, a PHP `encapsed_string`'s variable).
-pub(super) fn literal(family: Family, kind: &str, text: &str, interpolated: bool) -> Literal {
+pub fn literal(family: Family, kind: &str, text: &str, interpolated: bool) -> Literal {
     if let Some(own) = dialect_facts(family).and_then(|facts| facts.literal(kind, text)) {
         return own;
     }
@@ -694,7 +694,7 @@ impl CoreRows {
                 self.name.push([n, string(text) as i64]);
             }
             let named_child = |k: &dyn Fn(&str) -> bool| children.iter().any(|&c| f.named(c) && k(dialect.name(f, c)));
-            let interpolated = match (dialect.family, kind) {
+            let interpolated = !self.skip.literal && match (dialect.family, kind) {
                 (Family::Python, _) => named_child(&|k| k == "interpolation"),
                 (Family::Php, "encapsed_string") => named_child(&|k| !matches!(k, "string_content" | "escape_sequence")),
                 _ => false,
@@ -1034,61 +1034,7 @@ impl CoreRows {
     }
 }
 
-#[cfg(test)]
-pub mod tests {
-    use super::*;
-
-    /// Python's verdict is CPython's grammar's: Python 2's `print "x"`, which tree-sitter accepts, is an error; a
-    /// `match` statement is not; the line is the first error's.
-    #[test]
-    #[cfg(feature = "python-syntax-error")]
-    fn python_syntax_errors_follow_cpythons_grammar() {
-        use super::super::python_syntax::error as python_error;
-        assert_eq!(python_error("x = 1\n"), Ok(None));
-        assert_eq!(python_error("match x:\n    case 1:\n        pass\n"), Ok(None));
-        assert_eq!(python_error("y = 2\nprint \"x\"\n").map(|e| e.map(|e| e.0)), Ok(Some(2)));
-        assert_eq!(python_error("y = 2\r\nz = 3\rdef (:\n").map(|e| e.map(|e| e.0)), Ok(Some(3)), "lines as src_line counts them");
-        assert!(python_error("f\"{x:\\x}\"\n").is_err_and(|e| e.starts_with("UnicodeDecodeError: ")), "ast.parse raises");
-    }
-
-    #[test]
-    fn lines_follow_each_languages_terminators() {
-        let py = Lines::new("a\r\nb\rc\n\nd", true);
-        assert_eq!(py.count(), 5);
-        assert_eq!((1..=5).map(|l| py.span(l)).collect::<Vec<_>>(), [[0, 1], [3, 4], [5, 6], [7, 7], [8, 9]]);
-        assert_eq!(py.line(5), 3);
-        let js = Lines::new("a\r\nb\rc\n", false);
-        assert_eq!(js.count(), 2);
-        assert_eq!(js.span(1), [0, 1]);
-        assert_eq!(js.span(2), [3, 6]);
-        assert_eq!(Lines::new("", false).count(), 1);
-        assert_eq!(Lines::new("", true).count(), 0);
-        // A node ending at a line's start ends on the line before.
-        assert_eq!(js.place([0, 3]), (1, 1, 0));
-        assert_eq!(js.place([4, 5]), (2, 2, 1));
-    }
-
-    #[test]
-    fn literals_decode_per_language() {
-        let lit = |f, k, t| literal(f, k, t, false);
-        assert_eq!(lit(Family::Python, "string", r#""a\nb""#).str.as_deref(), Some("a\nb"));
-        assert_eq!(lit(Family::Python, "string", r#"r"a\nb""#).str.as_deref(), Some("a\\nb"));
-        let f = lit(Family::Python, "string", r#"F"x""#);
-        assert_eq!((f.prefix.as_deref(), f.str.as_deref(), f.value), (Some("f"), Some("x"), None));
-        assert_eq!(literal(Family::Python, "string", r#"f"x{y}""#, true).str, None);
-        assert_eq!(lit(Family::Python, "integer", "0xff").value, Some(("255".to_owned(), "int")));
-        assert_eq!(lit(Family::Ecma, "string", r"'aA'").str.as_deref(), Some("aA"));
-        assert_eq!(lit(Family::Ecma, "template_string", "`a\\tb`").value, Some(("a\tb".to_owned(), "string")));
-        assert_eq!(lit(Family::Ecma, "number", "1_000").value, Some(("1000".to_owned(), "number")));
-        assert_eq!(lit(Family::Rust, "raw_string_literal", r##"r#"a\n"#"##).str.as_deref(), Some("a\\n"));
-        assert_eq!(lit(Family::Rust, "integer_literal", "0x10u8").value, Some(("16".to_owned(), "int")));
-        assert_eq!(lit(Family::Php, "encapsed_string", r#""a\tb""#).str.as_deref(), Some("a\tb"));
-        assert_eq!(name("attribute", "a . b"), Some("a.b".to_owned()));
-        assert_eq!(name("member_expression", "a(b).c"), None);
-        assert_eq!(comment_body("# noqa: E501 "), "noqa: E501");
-        assert_eq!(comment_body("/* x */"), "x");
-    }
-}
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 /// A pattern's single-node metavariables (`$X`, not `$$$X` nor `$_X`), each once, in order.
 pub fn single_metavars(pattern: &str) -> Vec<String> {

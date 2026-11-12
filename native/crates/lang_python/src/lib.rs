@@ -33,8 +33,7 @@ pub mod code_rule_dsl {
             use crate::code_rule_dsl::language::adapter::pack as language_pack;
         }
         pub mod python;
-        #[cfg(test)]
-        pub mod python_tests;
+        // python_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
         #[path = "summary"]
         pub mod summary {
             pub use rerail_w::code_rule_dsl::calls::summary::*;
@@ -54,8 +53,7 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use foldhash::{HashMap, HashMapExt};
         }
-        #[cfg(test)]
-        pub mod tests;
+        // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
         #[allow(unused_imports)]
         use crate::code_rule_dsl::json::{invalid, object};
         #[allow(unused_imports)]
@@ -99,8 +97,7 @@ pub mod code_rule_dsl {
         #[path = "binds"]
         pub mod binds {
             pub use rerail_w::code_rule_dsl::compile::binds::*;
-            #[cfg(test)]
-            pub mod ruff;
+            // ruff: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
             #[allow(unused_imports)]
             use crate::code_rule_dsl::compile::ast_rule::{compile_ast_rule};
             #[allow(unused_imports)]
@@ -131,8 +128,7 @@ pub mod code_rule_dsl {
         #[path = "format_args"]
         pub mod format_args {
             pub use rerail_w::code_rule_dsl::compile::format_args::*;
-            #[cfg(test)]
-            pub mod ruff;
+            // ruff: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
             #[allow(unused_imports)]
             use crate::code_rule_dsl::compile::ast_rule::{compile_ast_rule};
             #[allow(unused_imports)]
@@ -163,8 +159,7 @@ pub mod code_rule_dsl {
         #[path = "parse"]
         pub mod parse {
             pub use rerail_w::code_rule_dsl::compile::parse::*;
-            #[cfg(test)]
-            pub mod ruff;
+            // ruff: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
             #[allow(unused_imports)]
             use crate::code_rule_dsl::compile::ast_rule::{compile_ast_rule};
             #[allow(unused_imports)]
@@ -936,14 +931,14 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::semver;
     pub use rerail_w::code_rule_dsl::soundness;
     pub use rerail_facts::code_rule_dsl::sql_profile;
+    pub use rerail_facts::code_rule_dsl::sql_admission;
     pub use rerail_w::code_rule_dsl::stats;
     #[path = "suppress"]
     pub mod suppress {
         pub use rerail_w::code_rule_dsl::suppress::*;
         pub mod noqa;
         pub mod nosec;
-        #[cfg(test)]
-        pub mod ruff;
+        // ruff: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
         #[allow(unused_imports)]
         use ast_grep_core::{Doc, Node};
         #[allow(unused_imports)]

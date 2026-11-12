@@ -1,6 +1,55 @@
 use super::*;
 
 #[test]
+fn journals_share_empty_roots_and_bulk_compose_signed_changes_in_the_active_scope() {
+    let db=rusqlite::Connection::open_in_memory().unwrap();
+    let store=Store::default();
+    for name in ["journal_plus","journal_minus","incoming_plus","incoming_minus"] {
+        store.create_readonly(&db,name,Schema::integers(1,1)).unwrap();
+        store.restrict_indexes(name,&[]).unwrap();
+    }
+    store.load_rows("journal_plus",vec![vec![Some(9999)]],false).unwrap();
+    let scope=store.new_scope().unwrap();
+    let _scope=store.activate(scope).unwrap();
+    for name in ["journal_plus","journal_minus"] {
+        store.create_readonly(&db,name,Schema::integers(1,1)).unwrap();
+        store.restrict_indexes(name,&[]).unwrap();
+    }
+    let mut positive=BTreeSet::new();
+    let mut negative=BTreeSet::new();
+    for (i,(add,remove)) in [(0..1000,0..0),(0..0,0..1000),(0..1000,0..0),(500..1500,0..600),(0..900,900..1600),
+        (1450..1700,100..700),(0..0,0..1700),(0..1700,0..0)].into_iter().enumerate() {
+        {
+            let _source=store.activate(0).unwrap();
+            for (name,range) in [("incoming_plus",add.clone()),("incoming_minus",remove.clone())] {
+                let next=store.version(name).loaded(range.map(|v|vec![Some(v)]).collect(),false,true).unwrap();
+                store.replace(name,next).unwrap();
+            }
+        }
+        for v in add {if !negative.remove(&v) {positive.insert(v);}}
+        for v in remove {if !positive.remove(&v) {negative.insert(v);}}
+        store.compose("journal_plus","journal_minus","incoming_plus","incoming_minus").unwrap();
+        for (name,expected) in [("journal_plus",&positive),("journal_minus",&negative)] {
+            assert_eq!(store.version(name).rows(),expected.iter().map(|v|vec![Some(*v)]).collect::<Vec<_>>(),"transition {i}");
+        }
+        if i==0 {
+            assert!(Arc::ptr_eq(store.version("journal_plus").full.as_ref().unwrap(),
+                store.available("incoming_plus").unwrap().full.as_ref().unwrap()));
+        }
+    }
+    let before=store.version("journal_plus");
+    let before_minus=store.version("journal_minus");
+    let tx=store.transaction(&db).unwrap();
+    store.compose("journal_plus","journal_minus","incoming_minus","incoming_plus").unwrap();
+    drop(tx);
+    assert!(before.same(&store.version("journal_plus")));
+    assert!(before_minus.same(&store.version("journal_minus")));
+    let _public=store.activate(0).unwrap();
+    assert_eq!(store.version("journal_plus").rows(),vec![vec![Some(9999)]]);
+}
+
+
+#[test]
 fn diagnostic_aliases_share_roots_and_restore_publication_after_rollback() {
     let db = rusqlite::Connection::open_in_memory().unwrap();
     let store = Store::default();
@@ -151,7 +200,7 @@ fn bulk_indexes_have_the_canonical_shape_and_allow_edits() {
         assert!(Node::get(&changed, &[Some(17)]).is_none());
     }
 }
-pub(super) fn data(db: &rusqlite::Connection, name: &str) -> Vec<Vec<Option<i64>>> {
+pub fn data(db: &rusqlite::Connection, name: &str) -> Vec<Vec<Option<i64>>> {
     let mut stmt = db
         .prepare(&format!("SELECT * FROM {name} ORDER BY 1,2"))
         .unwrap();

@@ -45,9 +45,9 @@ pub fn encode_columns(
     if source.len() > u32::MAX as usize {
         return Err("source exceeds tape range".into());
     }
-    let mut nodes = Vec::with_capacity(columns.len());
-    for i in 0..columns.len() {
-        let (kind, field, extra) = (columns.kind[i], columns.field[i], columns.extra[i] != 0);
+    let mut nodes = Vec::with_capacity(columns.rows.len());
+    for r in &columns.rows {
+        let (kind, field, extra) = (u32::from(r.kind), u32::from(r.field), r.extra != 0);
         let error = kind == u32::from(u16::MAX);
         if !error && (kind as usize >= KIND_LIMIT || field as usize >= FIELD_LIMIT || kind == u32::from(ERROR_CODE)) {
             return Err(format!("kind {kind} or field {field} exceeds the tape's codes"));
@@ -56,9 +56,9 @@ pub fn encode_columns(
         let field = if extra { 0 } else { field as u16 };
         nodes.push(Pending {
             kf: if error { ERROR_CODE } else { kind as u16 | (field << 10) },
-            parent: (columns.parent[i] != NO_PARENT).then_some(columns.parent[i]),
-            start: columns.start[i],
-            length: columns.end[i].checked_sub(columns.start[i]).ok_or("inverted node span")?,
+            parent: (r.parent != NO_PARENT).then_some(r.parent),
+            start: r.start,
+            length: r.end.checked_sub(r.start).ok_or("inverted node span")?,
             size: 1,
             extra,
             error,

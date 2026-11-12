@@ -35,6 +35,9 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
                 distinct: d.distinct,
                 bindings: d.bindings,
                 made: d.made,
+                waved: u64::from(d.waved),
+                arena_reruns: u64::from(d.arena_reruns),
+                sized: u64::from(d.sized),
             });
             true
         }
@@ -166,7 +169,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
         let _ = writeln!(sql_tsv, "{p}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{text}", s.runs, s.ns as f64 / 1e6, s.vm, s.scan, s.sort, s.autoindex);
     }
     std::fs::write(dir.join("sql.tsv"), sql_tsv)?;
-    let work = |steps: &Vec<(u64, u64)>| steps.iter().map(|(a, _)| a).sum::<u64>();
+    let work = |steps: &Vec<(u64, u64)>| super::plan_work(steps);
     let mut native: Vec<_> = state.native.iter().collect();
     native.sort_by_key(|(_, s)| std::cmp::Reverse(work(s)));
     let mut native_tsv = String::from("span\twork\tsteps_in_out\tplan\tcpu_s\n");
@@ -470,109 +473,5 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     std::fs::write(dir.join("profile.txt"), r)
 }
 
-/// The report over what a run recorded, and the projection's provenance over a parsed program: here rather than in
-/// `profile`'s own tests, as they read the report and the `.rr` parser, which sit above the profiler.
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use super::super::{
-        behind_the_run, decision, device, executor, fallback, one_run, planned, reset, set, span, sql_in_wave, stratum, waves,
-        RulePlan, StepPlan,
-    };
-
-    #[test]
-    fn explain_shows_engines_plans_devices_and_decisions() {
-        let _serial = one_run();
-        set(true);
-        reset();
-        decision("xtopic", || "2 chunks".into());
-        stratum("xstratum", "native set engine", || "every rule has a native step".into());
-        stratum("xstratum", "native set engine", String::new);
-        let plan = RulePlan {
-            work: 10.0,
-            rows: 2.0,
-            subsets: 4,
-            candidates: 6,
-            steps: vec![
-                StepPlan { literal: "a($x)".into(), access: "scan".into(), source: "input".into(), rows: 5.0, passed: Vec::new() },
-                StepPlan { literal: "b($x)".into(), access: "lookup on (c0)".into(), source: "derived".into(), rows: 2.0, passed: vec![("c($x)".into(), 7.0)] },
-            ],
-        };
-        planned("xstratum", "seed xrule", Some(3), &plan, 0.01, 0, Some(&[(1, 5), (5, 2)]), None);
-        planned("xstratum", "seed xrule", Some(3), &plan, 0.01, 1, Some(&[(1, 4), (4, 1)]), None);
-        {
-            let _s = span(|| "xspan".into());
-            device("xkernel", 1, 0.002, 0.003, 100);
-        }
-        // A stratum that fell back to SQLite, and its span.
-        stratum("xsql", "SQL wave kernel", || "the native engine declined".into());
-        fallback("xsql", "aggregate join (string concatenation)".into());
-        drop(span(|| "stratum xsql".into()));
-        executor("xsql", "SQLite", Some("aggregate join (string concatenation)".into()), vec!["string join: string join".into()]);
-        executor("xstratum", "native CPU", None, vec!["computed term: @sql_instr in a comparison".into()]);
-        executor("xstratum", "Metal", None, Vec::new());
-        // SQL before the waves is the run's beginning; inside them, from a wave's thread, a hazard; from the store's
-        // writer (behind the run), none.
-        sql_in_wave("run", "SELECT 1 FROM xbefore", 1_000);
-        {
-            let _w = waves();
-            let _s = span(|| "xwave".into());
-            sql_in_wave("store", "BEGIN IMMEDIATE", 2_000_000);
-            std::thread::spawn(|| {
-                behind_the_run();
-                sql_in_wave("store", "INSERT INTO xbehind VALUES (1)", 1_000);
-            })
-            .join()
-            .unwrap();
-        }
-        sql_in_wave("run", "SELECT 1 FROM xafter", 1_000);
-        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("explain");
-        write(&dir, "header\n").unwrap();
-        let report = std::fs::read_to_string(dir.join("profile.txt")).unwrap();
-        set(false);
-        assert!(report.contains("Stratum xstratum  [engine: native set engine]  (loops=2"), "{report}");
-        assert!(report.contains("why: every rule has a native step"));
-        assert!(report.contains("== Fell back to SQLite: 1 strata"), "{report}");
-        assert!(report.contains("== Forces SQL waits (hazards): 1 statements, 1 runs, 2.0 ms inside the waves"), "{report}");
-        assert!(report.contains("a write to the store on a wave's thread") && report.contains("xwave"), "{report}");
-        assert!(!report.contains("xbefore") && !report.contains("xafter") && !report.contains("xbehind"), "{report}");
-        assert!(report.contains("xsql: aggregate join (string concatenation)"), "{report}");
-        // Other tests' strata may be recorded beside these (the profile is the process's): the heading alone.
-        assert!(report.contains("== Executor hazards: what kept each stratum off Metal and off the native engine ("), "{report}");
-        assert!(report.contains("native: aggregate join (string concatenation)") && report.contains("metal: computed term: @sql_instr in a comparison"), "{report}");
-        assert!(report.contains("xstratum: Metal x1, native CPU x1; metal: computed term: @sql_instr in a comparison"), "{report}");
-        assert!(report.contains("rule #0003 (seed xrule)") && report.contains("loops=2 replans=1"));
-        assert!(report.contains("passed over c($x)") && report.contains("7.0 rows a binding"), "the joins a step passed over: {report}");
-        // Actual rows add over the loops.
-        assert!(report.contains("actual 9 -> 3"), "{report}");
-        assert!(report.contains("xkernel  (xspan)"));
-        assert!(report.contains("xtopic:\n  - 2 chunks"));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-    #[test]
-    fn projection_reason_traces_real_consumers_and_ignores_dead_scalars() {
-        let _lock = super::super::one_run();
-        super::super::reset();
-        super::super::set(true);
-        let p = crate::code_rule_dsl::logic::rr::parse(
-            r#"
-#include "core.rr"
-.decl selected(n:node)
-selected(n) :- text(n,"request").
-.decl result(n:node)
-result(n) :- selected(n).
-.output result
-"#,
-        )
-        .unwrap();
-        super::super::analysis_report::projection(&p, &std::collections::BTreeSet::from(["text".into()]));
-        let decisions = super::super::decisions();
-        super::super::set(false);
-        assert!(
-            decisions
-                .keys()
-                .any(|(topic, text)| topic == "projection provenance"
-                    && text == "text <- selected <- result")
-        );
-    }
-}
+// Its tests (the report over what a run recorded, and the projection's provenance over a parsed program) run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
+// engine registers as it loads (the languages, their `.rr` libraries).

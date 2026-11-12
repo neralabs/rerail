@@ -107,7 +107,7 @@ pub fn sql_error(error: rusqlite::Error) -> napi::Error {
     invalid(format!("relational query: {error}"))
 }
 
-pub(in crate::code_rule_dsl) fn connection(
+pub fn connection(
     max_pattern: usize,
     work: Arc<AtomicUsize>,
 ) -> Result<Database> {
@@ -130,7 +130,7 @@ fn configure(mut db: Database, max_pattern: usize, work: Arc<AtomicUsize>) -> Re
     configure_in_place(&db, max_pattern, work)?;
     Ok(db)
 }
-fn configure_in_place(db: &Database, max_pattern: usize, work: Arc<AtomicUsize>) -> Result<()> {
+pub fn configure_in_place(db: &Database, max_pattern: usize, work: Arc<AtomicUsize>) -> Result<()> {
     db.hooks.progress(None::<fn() -> bool>).map_err(sql_error)?;
     db.set_limit(
         rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH,

@@ -15,7 +15,13 @@
 //! in its token, each token after the one before); where they do not, the file goes to the
 //! fallback, through the totals' flag.
 //!
-//! A code is `kind | word << 8`: the word is its index in `Records::words` plus one, 0 for none.
+//! - **the marks:** which of the program's marks hold at its first byte (`Records::marks`):
+//!   each mark's bit at the start, one load of its mask's word, and (a mark of one word) its
+//!   word compared.
+//!
+//! A code is `kind | word << 8 | marks << 16`, as the lean lexer's token has its kind and word a
+//! byte each: the word is its index in `Records::words` plus one, 0 for none; mark `k` is bit
+//! `16 + k`. A parser then tests a kind, a word or a mark with one load of the token's code.
 
 /// A block program's records (`BlockProgram::records`).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
@@ -27,6 +33,24 @@ pub struct Records {
     pub kinds: Vec<u8>,
     /// The words a token's code names, at most 64 bytes each.
     pub words: Vec<Vec<u8>>,
+    /// The marks a token's code has, by order: each the output (an index into the program's
+    /// outputs) of its bits at the starts, and the word it needs too (its code, 0 for any). At
+    /// most `MARKS`.
+    pub marks: Vec<(u16, u16)>,
+}
+
+/// The most marks a code holds.
+pub const MARKS: usize = 16;
+
+/// The most words a code names (a byte: 0 is none).
+pub const WORDS: usize = 255;
+
+/// The bit of a code where its marks start.
+pub const MARK_SHIFT: u32 = 16;
+
+/// A code's word: 0 for none, else the word's index plus one.
+pub fn word_of(code: u32) -> u32 {
+    code >> KIND_BITS & 0xff
 }
 
 /// The longest word.
@@ -66,6 +90,9 @@ impl WordTable {
     /// share a slot. Refused: two words with the same first eight bytes and length (no
     /// multiplier parts them), or a word past `MOST` bytes or empty.
     pub fn new(words: &[Vec<u8>]) -> Result<Self, String> {
+        if words.len() > WORDS {
+            return Err(format!("{} record words (at most {WORDS})", words.len()));
+        }
         if let Some(w) = words.iter().find(|w| w.is_empty() || w.len() > MOST) {
             return Err(format!("a record's word of {} bytes (1 to {MOST})", w.len()));
         }
@@ -139,8 +166,8 @@ impl WordTable {
 }
 
 /// The record pass over one file (the interpreter's): each token's code, and whether the two
-/// streams disagree (then the file goes to the fallback).
-pub fn pass(records: &Records, table: &WordTable, bytes: &[u8], starts: &[u32], lasts: &[u32]) -> (Vec<u32>, bool) {
+/// streams disagree (then the file goes to the fallback). `outputs` are the file's output words.
+pub fn pass(records: &Records, table: &WordTable, bytes: &[u8], starts: &[u32], lasts: &[u32], outputs: &[Vec<u64>]) -> (Vec<u32>, bool) {
     let mut bad = starts.len() != lasts.len();
     let n = starts.len().min(lasts.len());
     let mut codes = Vec::with_capacity(n);
@@ -151,7 +178,15 @@ pub fn pass(records: &Records, table: &WordTable, bytes: &[u8], starts: &[u32], 
         after = l as u64 + 1;
         let len = (l + 1).saturating_sub(s);
         let kind = u32::from(records.kinds[usize::from(bytes.get(s).copied().unwrap_or(0))]);
-        codes.push(kind | table.word(bytes, s, len) << KIND_BITS);
+        let word = table.word(bytes, s, len);
+        let mut marks = 0u32;
+        for (k, &(o, w)) in records.marks.iter().enumerate() {
+            let bit = outputs.get(usize::from(o)).and_then(|v| v.get(s / 64)).is_some_and(|x| x >> (s % 64) & 1 == 1);
+            if bit && (w == 0 || u32::from(w) == word) {
+                marks |= 1 << k;
+            }
+        }
+        codes.push(kind | word << KIND_BITS | marks << MARK_SHIFT);
     }
     (codes, bad)
 }

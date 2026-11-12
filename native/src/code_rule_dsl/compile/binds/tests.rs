@@ -1,4 +1,5 @@
-// cratify: a re-export of rerail-engine's, which its facades of this module make
+use crate::code_rule_dsl::CompiledCodeRuleDsl;
+use crate::code_rule_dsl::test_support::*;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::matcher::{FileScopeSlot, UtilLimit};
 use crate::code_rule_dsl::scope::ScopeTable;

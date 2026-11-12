@@ -76,7 +76,7 @@ fn an_installed_model_places_by_its_costs_and_the_rates_without_it() {
 
     // A launch the model does not know keeps the rates.
     let other = Kernel::Program(rerail_accel::kernel::ProgramKernel(Arc::new(Unknown)));
-    assert_eq!(predict_batch(&[(&other, vec![Lane::Cpu, Lane::Gpu])], 1.0)[0], [None; 4]);
+    assert_eq!(predict_batch(&[(&other, vec![Lane::Cpu, Lane::Gpu])], 1.0)[0], [None; Lane::COUNT]);
     install(None);
     assert_eq!(ex.place("test", &batch()).unwrap().0[0].0, Lane::Gpu, "the model taken out: the rates again");
 }

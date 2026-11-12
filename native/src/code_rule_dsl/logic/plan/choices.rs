@@ -29,7 +29,7 @@ use super::super::front::{Program, Value};
 use super::super::program_facts::{self, Facts};
 use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, StoreResult};
 use sha2::{Digest as _, Sha256};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
 /// The entry's schema: bumped when its encoding or meaning changes.
@@ -68,7 +68,37 @@ pub(super) fn key(prog: &Program) -> [u8; 32] {
         hash.0.update(b"\0");
         hash.0.update(std::env::var(switch).unwrap_or_default().as_bytes());
     }
-    let _ = std::fmt::Write::write_fmt(&mut hash, format_args!("\0{prog:?}"));
+    // The rules (and each derived-again group's), most of a program, digested by their structure: formatting the whole
+    // program as text was 0.32 s of a 20-file edit's run (decision 0116, step 4). Every other field as its text. The
+    // fields are named, not `..`: a field added to `Program` is a compile error here until it is digested.
+    let Program {
+        decls, nullary, lattice, facts, rules, inputs, outputs, kindsets, demand, demand_dropped, magic_extras, magic_report, gates, policies,
+        settings, natives, rx_spans, ast_patterns, doc_scopes, answers, text_globs, qualifiers, tapes, again,
+    } = prog;
+    let rules_digest = super::super::derived::digest(|d| {
+        let mut rules_of = |rules: &[super::super::front::Rule]| {
+            d.u64(rules.len() as u64);
+            for r in rules {
+                super::digest_atom(d, &r.head);
+                d.u64(r.body.len() as u64);
+                r.body.iter().for_each(|l| super::digest_literal(d, l));
+            }
+        };
+        rules_of(rules);
+        for g in again {
+            rules_of(&g.rules);
+            rules_of(&g.deltas);
+        }
+    });
+    hash.0.update(b"\0rules\0");
+    hash.0.update(rules_digest.to_le_bytes());
+    let again_names: Vec<(&BTreeSet<String>, &BTreeSet<String>, &Vec<String>, &Vec<String>)> = again.iter().map(|g| (&g.scc, &g.owned, &g.reads, &g.olds)).collect();
+    let _ = std::fmt::Write::write_fmt(
+        &mut hash,
+        format_args!(
+            "\0{decls:?}\0{nullary:?}\0{lattice:?}\0{facts:?}\0{inputs:?}\0{outputs:?}\0{kindsets:?}\0{demand:?}\0{demand_dropped:?}\0{magic_extras:?}\0{magic_report:?}\0{gates:?}\0{policies:?}\0{settings:?}\0{natives:?}\0{rx_spans:?}\0{ast_patterns:?}\0{doc_scopes:?}\0{answers:?}\0{text_globs:?}\0{qualifiers:?}\0{tapes:?}\0{again_names:?}"
+        ),
+    );
     hash.0.finalize().into()
 }
 
@@ -305,78 +335,4 @@ pub(in crate::code_rule_dsl) fn named(prepared: &[u8; 32]) -> (String, [u8; 32])
 }
 
 #[cfg(test)]
-pub mod tests {
-    use super::*;
-
-    #[test]
-    fn kept_choices_are_taken_at_their_scale_or_less_and_read_back_from_the_store() {
-        let dir = std::env::temp_dir().join(format!("rerail-choices-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let db = dir.join("store.sqlite");
-        let program = super::super::super::rr::parse(".decl e(x: int)\n.decl f(x: int)\n.output f\ne(1).\nf(x) :- e(x).\n").unwrap();
-        let rewritten = super::super::super::rr::parse(".decl e(x: int)\n.decl f(x: int)\n.output f\ne(1).\nf(1).\n").unwrap();
-        let key = key(&program);
-        assert_ne!(key, super::key(&rewritten), "the key is the program's");
-        assert!(holds(1000.0, 10.0) && holds(1000.0, 2000.0) && !holds(1000.0, 2001.0));
-        let prepared = [3u8; 32];
-        {
-            let _durable = Durable::start(&db, prepared);
-            remember(key, Chosen { program: Some(Arc::new(rewritten.clone())), inlined: vec!["e".into()], demanded: vec![], nodes: 1000.0 });
-        }
-        // Another process: nothing kept in memory, the store's entry read back.
-        kept().lock().unwrap().clear();
-        let store = ContentStore::open(&db).unwrap();
-        let back = read_all(&store, &prepared).unwrap().remove(&path(&key)).expect("kept in the store");
-        assert_eq!(format!("{:?}", back.program.as_deref()), format!("{:?}", Some(&rewritten)));
-        assert_eq!((back.inlined.clone(), back.nodes), (vec!["e".to_owned()], 1000.0));
-        let (text, _) = named(&prepared);
-        assert!(store.sources_by_hashes(&[HashKey::sha256(text.as_bytes())]).unwrap()[0].is_some());
-        // Under another prepared program, nothing.
-        assert!(read_all(&store, &[4u8; 32]).unwrap().is_empty());
-        {
-            let _durable = Durable::start(&db, prepared);
-            assert!(lookup(&key, 10.0).is_some(), "a smaller run takes the choices");
-            assert!(lookup(&key, 5000.0).is_none(), "a run over many more nodes chooses again");
-        }
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// A plan kept in the store (decision 0116 step 2) reads back as it was written, by its rule and scale, and is
-    /// rebuilt over the rule's body with the body's own literals; over a shorter body it is not taken.
-    #[test]
-    fn kept_plans_read_back_from_the_store_by_rule_and_scale() {
-        use super::super::{Kept, Mode, Priced, Step, StoredPlan, scale};
-        let prog = super::super::super::rr::parse(".decl e(x: int, y: int)\n.decl f(x: int)\n.decl g(x: int)\n.output g\ng(x) :- e(x, y), f(y), x != y.\n").unwrap();
-        let body = &prog.rules[0].body;
-        let order = vec![
-            Step { at: 1, lit: body[1].clone(), mode: None },
-            Step { at: 0, lit: body[0].clone(), mode: Some(Mode::Range) },
-            Step { at: 2, lit: body[2].clone(), mode: Some(Mode::Descend) },
-        ];
-        let priced = Priced { sizes: vec![3700.0, 10.0, 0.0, -2.0], got: ((order.clone(), 12.5, 3.0), None) };
-        let kept: Kept = (order.clone().into(), 0.25, None, 1.5, Some(Arc::new(priced)));
-        let stored = StoredPlan::of(&kept).expect("a plan the store keeps");
-        assert_eq!((scale(3700.0), scale(55_000.0), scale(0.0)), (5, 7, 0), "scales by powers of 4");
-        let key = (0x0123_4567_89ab_cdef_fedc_ba98_7654_3210_u128, scale(3700.0));
-        let row = StoredPlan::row(key, &stored);
-        assert_eq!(StoredPlan::of_row(&row), Some((key, stored.clone())));
-        let back = stored.kept(body).expect("rebuilt over its body");
-        let same = |a: &[Step], b: &[Step]| a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.at == b.at && a.lit == b.lit && a.mode == b.mode);
-        assert!(same(&back.0, &order) && (back.1, back.3) == (0.25, 1.5));
-        let price = back.4.expect("its price");
-        assert!(same(&price.got.0.0, &order) && price.sizes == [3700.0, 10.0, 0.0, -2.0] && (price.got.0.1, price.got.0.2) == (12.5, 3.0));
-        assert!(stored.kept(&body[..2]).is_none(), "a step past the body");
-        let dir = std::env::temp_dir().join(format!("rerail-kept-plans-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
-        let prepared = [9u8; 32];
-        assert!(read_plans(&store, &prepared).unwrap().is_empty());
-        assert!(write_plans(&store, &prepared, &[row.into_iter().map(Value::Int).collect()]).unwrap());
-        let read = read_plans(&store, &prepared).unwrap();
-        assert_eq!((read.len(), read.get(&key)), (1, Some(&stored)));
-        assert!(read_plans(&store, &[8u8; 32]).unwrap().is_empty(), "another prepared program's are not taken");
-        assert!(read_all(&store, &prepared).unwrap().is_empty(), "the choices do not read the plans");
-        drop(store);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
+pub mod tests;

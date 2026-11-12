@@ -20,19 +20,19 @@ thread_local! {
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
-pub(crate) fn reset_exported_text_bytes() {
+pub fn reset_exported_text_bytes() {
     EXPORTED_TEXT_BYTES.set(0);
 }
 
 /// Bytes of group text `export_text` copied into environments on this thread.
 #[cfg(any(test, feature = "test-hooks"))]
-pub(crate) fn exported_text_bytes() -> usize {
+pub fn exported_text_bytes() -> usize {
     EXPORTED_TEXT_BYTES.get()
 }
 
 /// Exports a parsed tree's capture to the host: its decoded text as a transformed variable, which
 /// messages and fix templates interpolate, and its source range under the reserved name.
-pub(super) fn export<D: Doc>(
+pub fn export<D: Doc>(
     env: &mut Cow<MetaVarEnv<'_, D>>,
     name: &str,
     text: &str,

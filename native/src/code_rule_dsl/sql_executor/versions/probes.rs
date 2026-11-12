@@ -3,7 +3,7 @@ use super::*;
 
 impl Version {
     /// Descend only into existing prefixes; do not enumerate the IN lists' Cartesian product.
-    pub(super) fn primary_batch(&self, values: &[Vec<i64>]) -> Vec<usize> {
+    pub fn primary_batch(&self, values: &[Vec<i64>]) -> Vec<usize> {
         assert_eq!(values.len(), self.schema.keys);
         if values.iter().any(Vec::is_empty) {
             return Vec::new();
@@ -51,7 +51,7 @@ impl Version {
         descend(self, values, &mut Vec::new(), 0..self.len(), &mut found);
         found
     }
-    pub(super) fn ensure_indexes(&mut self, columns: &[usize]) {
+    pub fn ensure_indexes(&mut self, columns: &[usize]) {
         for &c in columns {
             if c == 0 || self.secondary[c] {
                 continue;
@@ -80,7 +80,7 @@ impl Version {
             Arc::make_mut(&mut self.secondary)[c] = true;
         }
     }
-    pub(super) fn restrict_indexes(&mut self, columns: &[usize]) {
+    pub fn restrict_indexes(&mut self, columns: &[usize]) {
         self.ensure_indexes(columns);
         let desired = columns
             .iter()

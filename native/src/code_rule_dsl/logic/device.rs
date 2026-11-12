@@ -35,6 +35,11 @@ pub trait SolverDevice: Send + Sync {
     /// The seed joins `rules` (plan, rule, head relation) in one batch, their rows into `fresh`: per rule, the rows
     /// made. `names`: the run's symbols, for texts the device makes into heads.
     fn run_joins(&self, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String>;
+    /// Encodes the seed joins `rules` into this thread's device wave (`lanes::wave`), to be finished by `resume`
+    /// once the wave ran: the ticket, or `None` when they cannot wait in it (they then run by `run_joins`).
+    fn submit(&self, rules: &[(&JoinPlan, &JoinRule, usize)], names: &Interner) -> Result<Option<u64>, String>;
+    /// Finishes the joins `submit` sent with ticket `ticket`: their rows into `fresh`, per rule the rows made.
+    fn resume(&self, ticket: u64, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String>;
     /// Whether the plan reads its own component's relations (a delta join of a recursive component).
     fn reads_own(&self, plan: &JoinPlan) -> bool;
     /// A recursive component's fixpoint on the device: the `seeds` once, then the `deltas` round by round until no

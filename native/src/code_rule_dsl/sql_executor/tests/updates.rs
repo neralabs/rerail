@@ -424,6 +424,11 @@ fn retained_statistics_are_sql_queryable_through_views_and_restore_on_failure() 
     assert!(e.apply_changes(json!([{"name":"edge","insert":[[2,3,2]]}]).to_string(),Some(1)).is_err());
     assert_eq!(rows(&mut e,"SELECT rows FROM observed_counts WHERE tbl='distance'"),json!([[3]]));
     e.run(".decl copied(n:number,d:number)\n.input copied(IO=sql, query=\"SELECT c0,c1 FROM distance\")\n.output copied\n".into(),"python".into(),None).unwrap();
+    assert!(e.statistics.snapshot().is_some());
+    assert_eq!(rows(&mut e,"SELECT rows FROM observed_counts WHERE tbl='distance'"),json!([[3]]));
+    // Explicitly exercise the cold adapter now that producers retain their graph.
+    e.legacy_initial=true;
+    e.run(".decl copied(n:number,d:number)\n.input copied(IO=sql, query=\"SELECT c0,c1 FROM distance\")\n.output copied\n".into(),"python".into(),None).unwrap();
     assert!(e.statistics.snapshot().is_none());
     assert_eq!(rows(&mut e,"SELECT rows FROM observed_counts WHERE tbl='distance'"),json!([[3]]));
 }

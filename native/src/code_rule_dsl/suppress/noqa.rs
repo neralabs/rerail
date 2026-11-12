@@ -411,7 +411,7 @@ impl NoqaIndex {
     /// Whether a diagnostic of one of `codes` starting at `at`, with the parent offset `parent`,
     /// is suppressed (`check_noqa`): by a file exemption, else by the directive on the line an
     /// offset resolves to.
-    pub(crate) fn suppresses(&self, codes: &[String], at: usize, parent: Option<usize>) -> bool {
+    pub fn suppresses(&self, codes: &[String], at: usize, parent: Option<usize>) -> bool {
         if self.file_all || self.file_codes.iter().any(|code| codes.contains(code)) {
             return true;
         }
@@ -436,7 +436,7 @@ impl NoqaIndex {
 
 /// Where the statement around a violation's start begins: the innermost import or expression
 /// statement holding `at`. `node` is a node of the file, near `at`.
-pub(crate) fn parent_statement<D: Doc>(node: &Node<'_, D>, at: usize) -> Option<usize> {
+pub fn parent_statement<D: Doc>(node: &Node<'_, D>, at: usize) -> Option<usize> {
     let holds = |node: &Node<'_, D>| node.range().start <= at && at < node.range().end;
     let mut deepest = node.clone();
     while !holds(&deepest) {

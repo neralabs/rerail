@@ -365,7 +365,7 @@ fn failed_document_does_not_publish_provisional_findings() {
     );
 }
 
-fn collect_paths(root: &std::path::Path, paths: &mut Vec<std::path::PathBuf>) {
+pub(super) fn collect_paths(root: &std::path::Path, paths: &mut Vec<std::path::PathBuf>) {
     for entry in std::fs::read_dir(root).unwrap() {
         let path = entry.unwrap().path();
         if path.is_dir() {

@@ -50,7 +50,7 @@ enum Role {
 }
 
 /// The dialect's roles and fields the producer reads.
-pub(crate) struct Grammar {
+pub struct Grammar {
     tag: u8,
     roles: Vec<Role>,
     calls: Vec<u32>,
@@ -64,7 +64,7 @@ pub(crate) struct Grammar {
 }
 
 impl Grammar {
-    pub(crate) fn new(tag: u8, catalog: &KindCatalog) -> Self {
+    pub fn new(tag: u8, catalog: &KindCatalog) -> Self {
         let roles: Vec<Role> = (0..catalog.kind_count() as u16)
             .map(|code| match (catalog.kind_name(code), catalog.kind_is_named(code)) {
                 (Some("call"), true) => Role::Call,
@@ -112,7 +112,7 @@ impl Grammar {
 
 /// One document's rows, in core ids (`NONE`: none). `kind` and `spread` index [`CONTEXTS`] and [`SPREADS`].
 #[derive(Default, Debug, PartialEq, Eq)]
-pub(crate) struct Rows {
+pub struct Rows {
     pub call: Vec<[u32; 2]>,
     pub site: Vec<[u32; 3]>,
     pub context: Vec<[u32; 3]>,
@@ -167,8 +167,8 @@ fn context(g: &Grammar, f: &Facts, call: u32) -> (u32, u32) {
 }
 
 /// The rows of one document's facts, from its calls' postings.
-pub(crate) fn rows(g: &Grammar, f: &Facts) -> Rows { collect_rows(g,f,true) }
-pub(crate) fn structure(g: &Grammar, f: &Facts) -> Rows { collect_rows(g,f,false) }
+pub fn rows(g: &Grammar, f: &Facts) -> Rows { collect_rows(g,f,true) }
+pub fn structure(g: &Grammar, f: &Facts) -> Rows { collect_rows(g,f,false) }
 fn collect_rows(g: &Grammar, f: &Facts, with_arguments: bool) -> Rows {
     let mut calls: Vec<u32> = g.calls.iter().flat_map(|&atom| f.of_kind(atom).iter().copied()).collect();
     calls.sort_unstable();
@@ -209,11 +209,10 @@ pub(crate) fn digest(rows: &Rows) -> [u8; 32] {
     hash.finalize().into()
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 /// Extract only calls requested by the consumer; no all-call scan or context calculation.
-pub(crate) fn arguments(g:&Grammar,f:&Facts,calls:&[u32])->Vec<[u32;6]> {
+pub fn arguments(g:&Grammar,f:&Facts,calls:&[u32])->Vec<[u32;6]> {
     let mut out=Rows::default();
     for &call in calls { if g.role(f,call)==Role::Call { append_arguments(g,f,call,&mut out); } }
     out.arg

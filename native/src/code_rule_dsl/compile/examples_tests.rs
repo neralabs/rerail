@@ -1,11 +1,11 @@
 //! Worked examples kept within the structural compiler's supported code-rule surface.
 
-// cratify: a re-export of rerail-engine's, which its facades of this module make
+use crate::code_rule_dsl::test_support::*;
 use serde_json::{Value, json};
 
 const NO_UNUSED_VARS: &str =
-    crate::code_rule_dsl::oracle!("ecma/compile/examples/eslint-no-unused-vars.json");
-const A005: &str = crate::code_rule_dsl::oracle!("python/compile/examples/ruff-A005.json");
+    crate::code_rule_dsl::fixtures::oracle!("ecma/compile/examples/eslint-no-unused-vars.json");
+const A005: &str = crate::code_rule_dsl::fixtures::oracle!("python/compile/examples/ruff-A005.json");
 
 fn configured(source: &str, config: Value) -> crate::code_rule_dsl::CompiledCodeRuleDsl {
     let mut document: Value = serde_json::from_str(source).expect("example");

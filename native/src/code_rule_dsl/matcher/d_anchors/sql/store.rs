@@ -10,7 +10,7 @@ pub mod publication;
 
 pub(super) const LANG_STRIDE: u32 = 1024;
 
-pub(super) fn kind_token(code: u32) -> String {
+pub fn kind_token(code: u32) -> String {
     let mut digits = [0_u8; 7];
     let mut at = digits.len();
     let mut code = code;
@@ -28,7 +28,7 @@ pub(super) fn kind_token(code: u32) -> String {
     )
 }
 
-pub(super) struct Store {
+pub struct Store {
     #[cfg(feature = "code-rule-profile")]
     pub(super) versions: parking_lot::Mutex<std::collections::BTreeMap<i64, (u32, [u8; 32])>>,
     #[cfg(feature = "code-rule-profile")]
@@ -37,7 +37,7 @@ pub(super) struct Store {
     pub(super) origins:
         parking_lot::Mutex<std::collections::HashMap<usize, std::collections::BTreeSet<String>>>,
     // Close incremental read cursors before the database destroys its SQL callbacks.
-    pub(super) readers: super::reader::Readers,
+    pub readers: super::reader::Readers,
     pub db: crate::code_rule_dsl::waves::relational::database::Database,
     values: parking_lot::Mutex<super::values::Counts>,
     // Connection closes before the temporary database is unlinked, including on Windows.

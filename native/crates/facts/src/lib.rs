@@ -66,6 +66,7 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::semver;
     #[path = "profile/sql.rs"]
     pub mod sql_profile;
+    pub mod sql_admission;
     #[path = "stats"]
     pub mod stats {
         pub mod identity;

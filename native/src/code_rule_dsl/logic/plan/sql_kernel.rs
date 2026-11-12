@@ -5,7 +5,7 @@ use crate::code_rule_dsl::{
     waves::schedule,
 };
 
-pub(super) fn normalize(prog: &Program) -> Result<(Program, BTreeSet<String>)> {
+pub fn normalize(prog: &Program) -> Result<(Program, BTreeSet<String>)> {
     let mut out = prog.clone();
     let mut sentinels: BTreeSet<String> = prog
         .decls
@@ -79,7 +79,7 @@ fn program_for(run: &Run<'_, '_>, rels: &BTreeSet<String>) -> Result<schedule::P
     })
 }
 
-pub(super) fn merge(run: &Run<'_, '_>, rel: &str, select: &str) -> Result<usize> {
+pub fn merge(run: &Run<'_, '_>, rel: &str, select: &str) -> Result<usize> {
     let mut p = program_for(run, &BTreeSet::from([rel.into()]))?;
     p.steps.push(schedule::Step {
         output: rel.into(),
@@ -95,7 +95,7 @@ pub(super) fn merge(run: &Run<'_, '_>, rel: &str, select: &str) -> Result<usize>
     )? as usize)
 }
 
-pub(super) fn component(
+pub fn component(
     run: &mut Run<'_, '_>,
     scc: &BTreeSet<String>,
     rules: &[&Rule],
@@ -150,6 +150,7 @@ pub(super) fn component(
         })
         .collect::<rusqlite::Result<BTreeMap<_, _>>>()?;
     let mut emitted = emit::Emitted {
+        constant_rows: Default::default(),
         value_types: std::sync::Arc::new(run.prog.decls.iter().map(|(r,c)|(r.clone(),c.iter().map(|(_,t)|t.clone()).collect())).collect()),
         analysis: run.model.analysis(run.prog),
         program: p,

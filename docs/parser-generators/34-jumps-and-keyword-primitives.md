@@ -284,10 +284,11 @@ That is the next step: a call's arguments and results, or only the fields it tou
 - **`ctx` is the state's address,** every rule function's first argument,
   kept by the allocator in a callee-saved register, as `&mut self` is.
   No pinned register, so no move each block.
-- **Four fields are passed and given back** (`HELD_IN_RULES`):
+- **Four fields were passed and given back** (`HELD_IN_RULES`):
   the token's code, start and end, and the stream's end.
   Four fit the argument registers after `ctx` and the entry.
   Ten went through the stack and a return area: 706 KB of code, 525M instructions.
+  Now none is (below: the tape and the state as the lean parser's).
 - **The rest of the state is in memory,** read and written where used (`Cut::reload`).
   So is each `ctx` field: none lives across the function and spills.
 - **A call's result is 0 or 1** for a return (`cbz`, a compare with 1), as a `Result` is.
@@ -312,7 +313,7 @@ A call keeps the level's word and flags only where its callee's level may change
 The rules are 55 functions, the smallest 23 words: none is small enough to copy into callers.
 The lean parser has 45.
 
-## Open: keyword marks from the records
+## Built: keyword marks from the records
 
 A keyword mark is written in bytes:
 
@@ -323,34 +324,363 @@ mark fix_on = fix_w & next(id_ahead, 3)
 
 `fix_w` holds where an identifier token's text is `fix`.
 The record already says so: its word code, as the lean lexer's `word_of`.
-Tested in tier 2 (the lean parser's `is_id(W_FIX)`), the term leaves tier 1,
-and so do its letters' masks (about 180 of tier 1's 865 operations a block).
+Now tier 2 tests that code, as the lean parser's `is_id(W_FIX)` does,
+and the term leaves tier 1.
+The mark keeps only its other terms (here `next(id_ahead, 3)`).
 
-The rewrite must be proved, term by term:
+The compiler makes the rewrite only where it proves, term by term,
+that:
 
 - the term holds only at the grammar's token starts;
-- there, it holds exactly where a row that can begin with the word's first byte starts
-  and its token's text is the word (`Lowering::keyword` over the row's start and last).
+- it holds exactly where a row that can begin with the word's first byte starts
+  and its token's text is the word.
 
-The first proves. The second does not, for any of the `.rr` marks.
-`ident` is `fill(w & alpha, ~w)` and `w` is `code & word & ~hashword`:
-whether a letter continues the identifier depends on `code`, a toggle.
-The prover does not carry a toggle from one byte to the next,
-so it cannot show where the identifier's last byte is.
-A larger search budget does not help.
+### The prover
 
-Two ways on:
+The search prover cannot show the second.
+`ident` is `fill(w & alpha, ~w)`, and `w` reads `code`,
+which a fixed point computes (`rounds until settled`).
+Whether a letter continues an identifier depends on bytes far back.
 
-1. **The prover carries toggles across lags:** a toggle is unchanged across a byte
-   that none of its events can be. Then the rewrite is checked for any grammar.
-2. **A grammar primitive** for a token's word, which the mark names directly.
-   The byte-level reference evaluator then needs tokens.
+The new prover (`bitlex_prove::Induction`) writes the question as clauses
+for a small SAT solver of its own (`bitlex_sat`, conflict learning, no dependencies):
+
+- **A window of bytes.** Each operation at each lag it is read at.
+  Each byte is one of the groups of bytes its readers tell apart.
+- **The equations of carried values**, at every lag of the window:
+  `toggle`, `escaped`, `fill`, and a fixed point's carry, which equals its next.
+- **The stream's two ends.** It begins once and ends once.
+  Past the end the bytes are 0x00, as the executors pad them.
+  Without these, the solver found "ways" no stream has:
+  a byte past the end for one test and in the stream for the next.
+- **The window's edge.** Past it, carried values are free.
+  A run of bytes that changes nothing can carry a free value to the position,
+  however long the window.
+  So a way that reaches the edge is checked:
+  - First, a stream that begins inside the window.
+    A way there is a real stream, and the answer is "no" at once.
+  - Otherwise the edge's values become a lemma to prove: "these never hold together".
+    The lemma is proved by induction over the stream's positions.
+    At the first position where it holds, it held at none before,
+    so the proof assumes it fails at every earlier lag.
+    A proved lemma is made smaller, then holds at every lag of every later window.
+
+A claim the prover cannot settle within its budget counts as not proved.
+That is sound: the compiler then keeps the byte masks.
+
+The first bytes a term can start with come from the same solver.
+A real stream gives a byte, its group is set aside, and the solver goes again.
+When none is left, one proof shows no other byte can start the term.
+
+### What moved
+
+Five marks now test the record's word: `fix`, `suppress`, `options`, `over`, `policy`.
+Tier 1 went from 865 operations a block to 806.
+The rest of the 180 letter operations stay, for two reasons:
+
+- other masks read the same letters (`input_w`, `output_w`, the aggregates' words);
+- the other marks' terms hold away from token starts too.
+
+Each proof takes 10 to 100 ms in a debug build.
+
+## Built: the tape and the state as the lean parser's
+
+The lean parser's code, read beside tier 2's, showed six differences.
+Each is now the lean parser's shape:
+
+- **No load nothing reads.**
+  A word loaded each `ctx` field it might read where it started.
+  On most paths most were unread, and Cranelift keeps a load that is not read-only.
+  A pass before compiling removes each load that can not trap and whose value is unread.
+- **Nothing held or passed across calls.**
+  The four passed fields were live through every block, and spilled:
+  15,133 stack loads, against 161 in the lean parser.
+  Now the token and the state are read from `ctx` where used, as `&mut self` is.
+- **`TOKEN` branches to its end.**
+  The stream's end is a cold block, taken once a file.
+  The token's start, end and code are stored as loaded, with no `select`.
+- **The kind and the word are bytes of the code.**
+  A switch loads the kind's byte (`ldrb`), a keyword test the word's.
+  Before, each test masked the code again: 579 `and #0xff`.
+- **The marks are in the record.**
+  A code is the kind, the word and the token's marks, a byte, a byte and 16 bits.
+  The record pass sets a mark's bit where the mark holds at the token's start,
+  its word compared for a mark of one word.
+  This is on the interpreter, Cranelift and Metal.
+  A mark in tier 2 is one bit test.
+- **The node table is rows.**
+  A node is 24 bytes, as the lean parser's `Node`:
+  kind and field (16 bits each), start, end, size, parent, extra flag.
+  A word computes its row's address once (`madd`) and stores each field at an offset.
+  Before, a node was six column stores, each with its own address.
+  The host reads the rows as written.
+- **One exit a function.**
+  Each return was an epilogue: its saved registers restored, 3,919 `ldp` in all.
+  Every return now jumps to the function's one exit, as in the lean parser.
+
+Not done: a frame-free fast path.
+The lean parser's small functions return without a frame on their fast path.
+That would mean splitting each rule's function into a leaf and its body.
+
+| | Before | After | Lean parser |
+|---|---|---|---|
+| Machine instructions | 157,702 | 100,134 | 10,008 |
+| Stack loads | 15,133 | 365 | 161 |
+| Stack stores | 5,450 | 284 | |
+| Returns | 731 | 58 | 41 |
+| Code bytes | 630,808 | 400,540 | |
+| Tier 2, instructions | 440.2M | 351.7M | 356.9M |
+| Tier 2, cycles | 108M | 71.2M | 74.2M |
+| Tier 1, instructions | 616.3M | 745.3M | |
+
+The cycles are with the machine loaded (load average 60 to 100).
+Tier 1 runs more: the record pass loads each mark's word at each token.
+
+## Built: the state as locals
+
+The lean parser keeps a rule's values in registers between the lines that use them.
+Tier 2 kept its state in `ctx`, so a value went through memory from one word to the next:
+11,912 stores of the state, and as many loads.
+Two changes bring part of that to the lean parser's shape.
+
+- **A pass over each function** treats `ctx`'s fields as variables:
+  - along blocks of one predecessor (a word falling into the next),
+    a field's load after its store, or an earlier load, is that value;
+  - a field every path into a block leaves one constant is that constant,
+    and a branch on it is a jump (`TOKEN` after a `SPAN` takes a token);
+  - a store of the value the field holds, or one every path writes again
+    before reading, is removed.
+
+  A call or a return reads every field, as the callee and the host read the state.
+- **The innermost level's last node is two fields.**
+  With wraps, each level kept the last node made at it, and its base, in a column by depth.
+  Only the innermost level's is read, and each change of level writes the new one's.
+  So two fields hold it: a leaf no longer stores two columns.
+
+| | Before | After | Lean parser |
+|---|---|---|---|
+| Machine instructions | 100,134 | 91,391 | 10,008 |
+| Loads | 27,604 | 21,097 | |
+| Stores | 22,813 | 21,536 | |
+| Code bytes | 400,540 | 365,564 | |
+| Tier 2, instructions | 351.7M | 347.8M | 356.9M |
+| Tier 2, cycles | 71.2M | 76.5M | 76.7M |
+
+What was left of the state's traffic was the transducer's own:
+`SPAN` set that the token is taken, and its end (1,684 and 1,683 stores).
+The next section removes both.
+
+## Built: a token taken for good
+
+`TOKEN` reads the next token's record, unless the token before it was not taken yet.
+So a flag said whether `SPAN` had taken it.
+The lean parser has no such flag: it moves its token index where it takes a token,
+and its next `match` reads the token there.
+
+The flag was needed because the program did not fix it.
+Two kinds of words took a token and then gave it back:
+
+- **A keyword test after the take.**
+  Where a keyword shares its first byte with another kind of token,
+  the words took the token, then tested its word.
+  A token that was no keyword here went to the state's end, taken,
+  and the caller switched on it again.
+- **A guard after the take** (`unless F`): where the flag was set,
+  the state went on as if it had no arm on the token, with the token taken.
+
+The interpreter allowed this, as it reads the next record only at `TOKEN`.
+Now the compiler tests the keyword, and the guard, before the take.
+The record names the token's word, so the test needs no end.
+`SPAN` takes a token for good.
+
+### Each word's phase
+
+A word runs either between a `SPAN` and the next `TOKEN` (the token **taken**),
+or between a `TOKEN` and the next `SPAN` (the token **not taken**).
+The verifier works out each word's phase from the program (`stream::phases`):
+
+- the program starts as after a token taken;
+- a callee starts in its caller's phase;
+- `RETURN m=0` goes back to the caller's `TOKEN` with the token taken,
+  `RETURN m=1` past it with none;
+- a word that reads the next token (`SWITCH`, `MARK`, `ROW`, `SPAN`)
+  runs only with it not taken;
+- every word but `TOKEN` has one phase.
+
+The verifier refuses a program that breaks a rule.
+Two more changes make the compiled grammar keep them:
+
+- a mark's arm goes past the next state's `TOKEN`;
+- a level that ends after a mark, where no token was taken, returns with `m=1`.
+
+Over the corpus, the words that run with a token taken are `LEAF`, `MERGE`, `OPEN`,
+`CLOSE m=1` and `WORD`: they read the token just taken, as the lean parser's
+`push` reads `tokens[i]` before `i += 1`.
+
+### What each executor does with it
+
+Each word means what it did. The verifier proves that each word's phase is fixed,
+so an executor need not track it:
+
+- **The interpreter** is the reference. It still reads the next record at `TOKEN`.
+- **Cranelift** reads each word's phase at compile time.
+  `TOKEN` reads the next record with no test, and `SPAN` stores nothing.
+  After a `SPAN`, a token's end is its record's end.
+  Before it, the end is the token's start, or the last record's end at the stream's end.
+  Neither phase keeps a field.
+  A program where a `TOKEN` has both phases keeps the flag, but the compiled grammar has none.
+- **Metal** runs tier 2 today as the Cranelift code, over tier 1's buffers
+  in the device's shared memory (`tier2_on`), so it has the same code.
+
+### Tier 2 in MSL
+
+Tier 2 in MSL is not built yet. With the phase fixed by the program, it works as follows:
+
+- **One thread per file**, files batched (`13-tape-on-the-gpu.md` §5.4).
+  The state is the thread's registers: the token's start, end and code,
+  the next record's index, and the counts.
+- **No flag, so no branch on it.**
+  Lanes of a SIMD group run different files.
+  A `TOKEN` that tested a flag was a branch whose way differed between lanes.
+  Now every lane at a `TOKEN` takes a token.
+- **The next record is read at `SPAN`.**
+  On the GPU a record's three columns are device-memory loads, hundreds of cycles away.
+  Between a `SPAN` and the next `TOKEN` no word reads the next token (the verifier's rule),
+  so MSL can issue the loads at `SPAN`, into registers of their own.
+  Then `TOKEN` moves them into place, with the leaf's row writes in between to hide the wait.
+  On the CPU the loads stay at `TOKEN`, as the lean parser reads its token at its `match`.
+  The words are the same; where a load goes is the backend's choice.
+- **Rule calls** are an explicit return stack (the `RETURNS` column),
+  as MSL has no recursion and no cheap indirect calls:
+  a `RETURN` is a compare tree over its return places.
+  The stack is in device memory, so threadgroup memory stays well under 32 KB.
+
+| | Before | After | Lean parser |
+|---|---|---|---|
+| Machine instructions | 91,391 | 87,152 | 10,008 |
+| Stores | 21,536 | 18,166 | |
+| `Need` and `End` stores | 3,367 | 0 | |
+| Code bytes | 365,564 | 348,608 | |
+| Tier 2, instructions | 347.8M | 339.0M | 356.7M |
+| Tier 2, cycles | 76.5M | 74.3M | 76.6M |
+
+## Next: words as calls
+
+The lean parser is 10,008 machine instructions; tier 2 is 87,152.
+Its words cost about what the lean parser's code does: a `LEAF` stores a row,
+as the lean parser's `push` does.
+The difference is how many places have that code.
+The lean parser makes leaves at about 100 places,
+most of them inside helpers the grammar's functions call:
+`id()`, `word()`, `string()`, `p_stored()`, `bump_as()`.
+Tier 2 lays out a node's code at each word: 1,097 `LEAF`s, 117 `OPEN`s, 159 `WRAP`s.
+
+Each word's Cranelift instructions, by operation, before optimizing:
+
+| Word | Words | Instructions each | Share |
+|---|---|---|---|
+| `LEAF` | 1,097 | 25 | 21% |
+| `TOKEN` | 340 | 59 | 16% |
+| `SWITCH` | 340 | 42 | 11% |
+| `WRAP` | 159 | 88 | 11% |
+| `PUSH` | 559 | 18 | 8% |
+| `RETAG` | 191 | 47 | 7% |
+| `NODE_FIELD` | 703 | 11 | 6% |
+| `CLOSE`, `MERGE`, `OPEN` | 348 | 32 to 41 | 10% |
+
+`TOKEN` and the words that make or change nodes are about 70% of the code.
+Each one can be a generated function that every place calls,
+with its kind and field as arguments:
+
+- **The state stays in `ctx`,** so a call needs no state passed.
+  After the call the caller reads the fields again,
+  as the lean parser reads `self` after a call.
+- **A word with a refusal** gives back 0, or the refusal,
+  and its caller jumps to its own refusal with its place.
+- **The functions call nothing,** so they need no frame:
+  that is the frame-free path, as the lean parser's small functions have.
+- **`SWITCH` stays where it is:** it is the jump table each state needs.
+
+Two more steps then make fewer words:
+
+- **A leaf of its token's own kind,** as the lean parser's `anon()`:
+  its kind from a table by the record's code.
+  Arms that differ only in their token's kind are then one arm.
+  Merging words that act alike would give 5,450 places within rules, from 6,011.
+- **Code shared across rules.**
+  The grammar repeats alternatives in several rules (`unsigned` and `lattice_unsigned`,
+  `literal` and `negated`).
+  Merged across rules, the words would be 4,405 places, from 6,011.
+
+## Built: words as calls
+
+With a function a grammar rule, these words are generated functions of their own,
+which every place of the word calls:
+
+- `TOKEN`;
+- `LEAF`, `OPEN`, `CLOSE`, `WRAP`;
+- both `MERGE`s;
+- `RETAG` and `NODE_FIELD` on the node made last, the moved node and the open node.
+
+- **Each body is written once,** over what it reads and writes
+  (`WordEnv`: the state's fields, `ctx`'s columns, a refusal).
+  With one function for the whole program (the JSON grammar, the main loop),
+  the same body is made in place.
+- **The state is in `ctx`,** so a call passes `ctx` and the word's kind, nothing more.
+  After it, the caller reads the fields it needs again, as the lean parser reads `self`.
+- **A word that may refuse gives back 1,**
+  and its caller refuses at its own place: the refusals are the interpreter's, place for place.
+- **The functions call nothing, so they have no frame:**
+  each is loads, the row's stores and a `ret`, as the lean parser's inlined `push` is.
+  This is the frame-free path.
+- **A field after its node rides in the call.**
+  A `NODE_FIELD` on the node a `LEAF` or `OPEN` just made is passed with the kind:
+  the row stores the kind and the field as one 32-bit word,
+  so the field costs nothing, and the field word is skipped.
+- **A keyword assertion is one compare and a branch.**
+  It was a `bnot` of a compare, which Cranelift made a `cset`, an `eor` and a `uxtb`.
+
+| | Before | After | Lean parser |
+|---|---|---|---|
+| Machine instructions | 87,152 | 43,654 | 10,008 |
+| Loads | 20,595 | 5,667 | |
+| Stores | 18,166 | 2,541 | |
+| Code bytes | 348,608 | 174,616 | |
+| Tier 2, instructions | 339.0M | 354.2M | 356.7M |
+| Tier 2, cycles | 74.3M | 72.3M | 80.6M |
+
+The machine was loaded (load average 57 to 62) for the last row, so the cycles are rough.
+
+Tried and dropped: a callee taking its caller's token at `RETURN m=0`,
+so that every return lands past the caller's `TOKEN` and the caller tests once.
+The register allocator then kept `ctx` on the stack in many functions
+(1,780 stack accesses, from 439): 49,440 instructions.
+
+What is left, by Cranelift instructions in the rule functions:
+
+| Word | Words | Share |
+|---|---|---|
+| `SWITCH` | 340 | 19% |
+| `PUSH` | 559 | 13% |
+| `LEAF` | 1,097 | 11% |
+| `TOKEN` | 340 | 7% |
+| `ROW` | 373 | 7% |
+
+- **A call** is about 12 instructions, against the lean parser's 3:
+  - the calls open counted and checked against a depth (5);
+  - `ctx` and the place in registers, and the call (3);
+  - a three-way test of its result (4).
+- **Fewer words,** from the two steps above:
+  a leaf of its token's own kind, and code shared across rules.
 
 ## The order
 
 1. One symbol a token: rows and keywords in the record, one switch a state.
    Built for keywords; rows stay `ROW` tests, which are cold.
-2. Marks in the record. Built as the marks live from one mask, at `TOKEN`.
-3. A cheaper `TOKEN`, and the hot state in registers.
-   Built within a function; across calls still to build.
-4. Tier 1's primitives: the picked hash, then nibble fingerprints.
+2. Marks in the record. Built: the record pass writes them into the code.
+3. A cheaper `TOKEN`, and the state as the lean parser's.
+   Built: no select, nothing held across calls, the tape in rows, one exit a function,
+   the state as locals, a token taken for good, words as calls (and so the frame-free path).
+   Next: cheaper calls, then fewer words.
+4. Keyword marks from the records. Built for the marks of one word.
+5. Tier 1's primitives: the picked hash, then nibble fingerprints.

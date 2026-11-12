@@ -205,7 +205,7 @@ fn short_constant(text: &crate::code_rule_dsl::logic::front::ast::Atom) -> bool 
 /// text of the nodes the rule binds, when past the bound (`long_node_text`). The rule and its twins together read every
 /// text, each once. More than `MAX` such atoms in one rule keep the any-kind projection instead. Returns the twins made.
 pub fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::ast::Program, matchers: &[(String, String, Vec<String>)]) -> usize {
-    use crate::code_rule_dsl::logic::front::ast::{Literal, Term};
+    use crate::code_rule_dsl::logic::front::ast::{Atom, Literal, Term};
     const MAX: usize = 3;
     let TextDemand { any, .. } = text_kind_demand(program, matchers);
     let mut by_rule: std::collections::BTreeMap<usize, Vec<usize>> = Default::default();
@@ -236,13 +236,19 @@ pub fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::ast::Pr
                         Term::Var(format!("rr_long_text{fresh}_{bit}"))
                     }
                 };
-                twin.body[i] = Literal::Cmp { l: t, op: "=", r: Term::Call("rr_node_text".into(), vec![v]) };
+                twin.body[i] = Literal::Cmp { l: t, op: "=", r: Term::Call("rr_node_text".into(), vec![v.clone()]) };
+                // Expose the sparse domain to the join planner before evaluating the text functor.
+                twin.body.push(Literal::Atom(Atom { rel: "rr_long_text_node".into(), args: vec![v], neg: false, gated: false }));
             }
             twins.entry(r).or_default().push(twin);
         }
     }
     let made = twins.values().map(Vec::len).sum();
     if made > 0 {
+        program.decls.insert("rr_long_text_node".into(), vec![("n".into(), "node".into())]);
+        if !program.inputs.iter().any(|r| r == "rr_long_text_node") {
+            program.inputs.push("rr_long_text_node".into());
+        }
         let rules = std::mem::take(&mut program.rules);
         for (r, rule) in rules.into_iter().enumerate() {
             program.rules.push(rule);
@@ -1398,7 +1404,7 @@ pub fn install_families(families: Vec<&'static dyn Families>) {
     let _ = FAMILIES.set(families);
 }
 
-pub(crate) fn families() -> &'static [&'static dyn Families] {
+pub fn families() -> &'static [&'static dyn Families] {
     FAMILIES.get().map_or(&[], Vec::as_slice)
 }
 
@@ -2214,6 +2220,9 @@ impl Batch {
             literal: !wants_any(&["str", "strprefix", "value", "static_value", "value_type", "text"]),
             structural: !wants_any(&["structural_before", "structural_after"]),
         };
+        let core_nodes = core && (scalar_nodes || !c.skip.structural);
+        let wants_long_text_nodes = projection.wants("rr_long_text_node");
+        let mut long_text_nodes = Vec::new();
         c.long_text = projection.long_text.clone();
         c.long_text_any = projection.long_text_any;
         c.text_nodes = projection.text_nodes.as_ref().map(|t| (t.kinds.clone(), t.fields.clone()));
@@ -2391,9 +2400,17 @@ impl Batch {
                 if scalar_nodes {
                     rows.document(&p, dialect, core, &mut string);
                 }
-                if core {
+                if core_nodes || wants_long_text_nodes {
                     for local in 0..p.len() {
-                        c.node(&p, dialect, local, &mut string, wants_text, wants_parts, wants_part_starts, wants_words);
+                        if wants_long_text_nodes {
+                            let id = p.core[local as usize] as usize;
+                            if (p.facts.end[id] - p.facts.start[id]) as usize > core_rr::TEXT_INLINE {
+                                long_text_nodes.push(p.global(local));
+                            }
+                        }
+                        if core_nodes {
+                            c.node(&p, dialect, local, &mut string, wants_text, wants_parts, wants_part_starts, wants_words);
+                        }
                     }
                 }
                 if let Some((line, msg)) = &error {
@@ -2452,7 +2469,7 @@ impl Batch {
             let extras: usize = docs.iter().filter_map(|p| p.extra.as_ref()).map(|x| x.token_spans.get().map_or(0, |v| v.capacity()) * 8).sum();
             serde_json::json!({"documents": docs.len(), "coreColumnBytes": docs.iter().map(|p| p.facts.bytes()).sum::<usize>(), "identityCapacityBytes": identities, "extraSpanCapacityBytes": extras}).to_string()
         });
-        crate::code_rule_dsl::logic::profile::decision("projection demand",||serde_json::json!({"scalarNodes":if scalar_nodes {docs.iter().map(|p|p.core.len()).sum::<usize>()}else{0},"nodes":docs.iter().map(|p|p.core.len()).sum::<usize>(),"strings":strings.len(),"reads":projection.reads}).to_string());
+        crate::code_rule_dsl::logic::profile::decision("projection demand",||serde_json::json!({"coreNodes":if core_nodes {docs.iter().map(|p|p.core.len()).sum::<usize>()}else{0},"scalarNodes":if scalar_nodes {docs.iter().map(|p|p.core.len()).sum::<usize>()}else{0},"nodes":docs.iter().map(|p|p.core.len()).sum::<usize>(),"strings":strings.len(),"reads":projection.reads}).to_string());
         let intern = crate::code_rule_dsl::logic::profile::span(|| "intern atoms".into());
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, strings.len() as u64);
         let atoms = store.intern_atoms(&strings.iter().map(String::as_str).collect::<Vec<_>>())?;
@@ -2473,6 +2490,7 @@ impl Batch {
             relation(columns, &mut rows.iter().map(|&[a, b]| vec![if sym[0] { atom(a) } else { a }, if sym[1] { atom(b) } else { b }]))
         };
         let mut relations = vec![
+            ("rr_long_text_node", relation(&["n"], &mut long_text_nodes.iter().map(|&n| vec![n]))),
             ("doc", relation(&["d", "path", "module"], &mut doc.iter().map(|&[d, p, m]| vec![d, atom(p), atom(m)]))),
             ("pkg", pairs(&["d", "p"], &pkg, [false, true])),
             ("path_part", pairs(&["d", "s"], &path_part, [false, true])),

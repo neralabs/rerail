@@ -73,7 +73,7 @@ fn anchor_literal(program: &Program) -> Result<(u16, &[u8], u16, u16), Error> {
     ))
 }
 
-pub(super) struct PreparedAnchorScan {
+pub struct PreparedAnchorScan {
     pipeline: ComputePipelineState,
     queue: CommandQueue,
     kinds: MappedBuffer,
@@ -93,7 +93,7 @@ pub(super) struct PreparedAnchorScan {
 
 /// Prepare one specialized GPU dispatch for exact kind/value anchor selection. The generated
 /// kernel groups literals by kind and length, then uses byte tries. It appends only positive hits.
-pub(super) fn prepare_anchor_scan(
+pub fn prepare_anchor_scan(
     programs: &[Program],
     files: &[TapeDoc],
 ) -> Result<PreparedAnchorScan, Error> {
@@ -103,7 +103,7 @@ pub(super) fn prepare_anchor_scan(
 /// `file_program_masks` carries file/check eligibility from SQL into the GPU scan. Each file owns
 /// `ceil(programs / 32)` words. This representation does not split large program sets into more
 /// dispatches.
-pub(super) fn prepare_anchor_scan_with_eligibility(
+pub fn prepare_anchor_scan_with_eligibility(
     programs: &[Program],
     files: &[TapeDoc],
     file_program_masks: Option<&[Vec<u32>]>,
@@ -246,18 +246,18 @@ kernel void anchors(device const ushort* kinds [[buffer(0)]], device const uint2
 
 type AnchorLists = Vec<Vec<Vec<u32>>>;
 
-pub(super) struct AnchorScanProfile {
+pub struct AnchorScanProfile {
     pub dispatch_and_wait: std::time::Duration,
     pub reconstruction: std::time::Duration,
     pub hit_count: usize,
 }
 
 impl PreparedAnchorScan {
-    pub(super) fn run(&self) -> Result<AnchorLists, Error> {
+    pub fn run(&self) -> Result<AnchorLists, Error> {
         self.run_profiled().map(|(anchors, _)| anchors)
     }
 
-    pub(super) fn run_profiled(&self) -> Result<(AnchorLists, AnchorScanProfile), Error> {
+    pub fn run_profiled(&self) -> Result<(AnchorLists, AnchorScanProfile), Error> {
         let mut anchors = (0..self.file_count)
             .map(|_| (0..self.program_count).map(|_| Vec::new()).collect())
             .collect::<Vec<Vec<Vec<u32>>>>();
@@ -347,98 +347,4 @@ impl PreparedAnchorScan {
 }
 
 #[cfg(test)]
-pub mod launch_tests {
-    use super::launch::*;
-    use super::*;
-
-    #[test]
-    fn production_entry_preserves_the_outer_budget_and_returns_launch_limit() {
-        use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
-        use crate::code_rule_dsl::transducer::packed::{Program, metal_program_backend};
-        use ast_grep_core::tree_sitter::StrDoc;
-        use crate::code_rule_dsl::language::GrammarDialect;
-        use ast_grep_core::tree_sitter::LanguageExt;
-        use std::sync::Arc;
-
-        let _evaluation = LaunchScope::enter();
-        for _ in 0..KERNEL_LAUNCH_LIMIT {
-            assert!(reserve());
-        }
-        assert!(!reserve());
-        let source = "name\n";
-        let grammar = Grammar::new(GrammarDialect::Python).unwrap();
-        let native = StrDoc::new(source, GrammarDialect::Python);
-        let image =
-            TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
-        let doc =
-            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
-        let anchors = vec![vec![(0..doc.transducer_len() as u32).collect()]];
-        let program = Program::compile_tree_sitter_query_pattern(
-            "(identifier) @name",
-            &GrammarDialect::Python.get_ts_language(),
-        )
-        .unwrap();
-        let result = metal_program_backend::execute_packed_with_result_limits(
-            &metal_program_backend::compile_interpreter().unwrap(),
-            &[program],
-            &[doc],
-            &anchors,
-            None,
-        );
-        assert!(
-            matches!(result, Err(Error::BackendLaunchLimit)),
-            "production must preserve the evaluation budget"
-        );
-        assert_eq!(check_submission(), Err(Error::BackendLaunchLimit));
-    }
-
-    #[test]
-    fn production_encoders_cannot_bypass_the_launch_guard() {
-        // The engine's Metal files, and every file of the Metal crate (its runtime is the old
-        // `metal_backend.rs`, its launch layer `launch.rs`).
-        let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
-        let engine = std::fs::read_dir(root.join("src/code_rule_dsl/transducer/packed")).unwrap();
-        let crate_files = std::fs::read_dir(root.join("crates/metal/src")).unwrap();
-        for (in_crate, entry) in engine.map(|e| (false, e)).chain(crate_files.map(|e| (true, e))) {
-            let path = entry.unwrap().path();
-            let name = path.file_name().unwrap().to_str().unwrap();
-            // `*_tests.rs` files are test modules (mounted under `#[cfg(test)]`), not encoders.
-            if !(in_crate || name.starts_with("metal"))
-                || !name.ends_with(".rs")
-                || name.ends_with("_tests.rs")
-                || (in_crate && name == "launch.rs")
-            {
-                continue;
-            }
-            let name = if in_crate && name == "runtime.rs" { "metal_backend.rs" } else { name };
-            let source = std::fs::read_to_string(&path).unwrap();
-            let source = source.split("#[cfg(test)]\nmod ").next().unwrap();
-            for forbidden in [
-                ".dispatch_threads(",
-                ".dispatch_thread_groups(",
-                ".dispatch_thread_groups_indirect(",
-            ] {
-                assert!(
-                    !source.contains(forbidden),
-                    "{name} bypasses the launch guard: {forbidden}"
-                );
-            }
-            if name != "metal_backend.rs" {
-                assert!(
-                    !source.contains(".commit()"),
-                    "{name} bypasses checked submission"
-                );
-            } else {
-                // Only the upload/readback blit commands can submit without a launch check.
-                for prefix in source.split(".commit()").collect::<Vec<_>>().windows(2) {
-                    let before = prefix[0];
-                    assert!(
-                        before.rfind("new_blit_command_encoder")
-                            > before.rfind("new_compute_command_encoder"),
-                        "unchecked compute submission in {name}"
-                    );
-                }
-            }
-        }
-    }
-}
+pub mod launch_tests;

@@ -1,9 +1,12 @@
 //! Logical proofs shared by planners and executors. No connection, SQL, or row statistics.
 pub mod keys;
+pub mod key_sets;
 pub mod storage;
 pub mod bags;
+pub mod deltas;
 pub mod program;
 pub mod scalars;
+pub mod stages;
 pub use program::ProgramAnalysis;
 
 #[derive(Clone, Debug, serde::Serialize)]

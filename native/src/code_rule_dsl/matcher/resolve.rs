@@ -854,7 +854,7 @@ struct FileScopes {
 /// Values decoded so far, by node and the `Reading` instance that determines their semantics.
 /// `Reading` assigns its own monotonic id so independently allocated option Arcs cannot collide or
 /// be confused after an allocator reuses an address.
-pub(super) type ValueKey = (usize, usize);
+pub type ValueKey = (usize, usize);
 
 /// Holds the file's scope table while its roots are matched: built by the first `resolves` that
 /// needs it, shared by every clause on the file, and handed back for caching by `table`.
@@ -1090,11 +1090,11 @@ pub(super) fn decide_file_jsx_runtime<D: Doc>(root: &Node<'_, D>) -> JsxRuntime 
 }
 
 /// A value decoded earlier in this file.
-pub(super) fn memoized_value(key: &ValueKey) -> Option<Rc<Value>> {
+pub fn memoized_value(key: &ValueKey) -> Option<Rc<Value>> {
     FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.values.get(key).cloned()))
 }
 
-pub(super) fn memoize_value(key: ValueKey, value: &Rc<Value>) {
+pub fn memoize_value(key: ValueKey, value: &Rc<Value>) {
     FILE_SCOPES.with_borrow_mut(|slot| {
         if let Some(slot) = slot {
             slot.values.insert(key, Rc::clone(value));
@@ -1103,14 +1103,14 @@ pub(super) fn memoize_value(key: ValueKey, value: &Rc<Value>) {
 }
 
 /// A structure read earlier in this file.
-pub(super) fn memoized_structure(key: &(usize, Equality)) -> Option<Rc<Option<Vec<Tok>>>> {
+pub fn memoized_structure(key: &(usize, Equality)) -> Option<Rc<Option<Vec<Tok>>>> {
     FILE_SCOPES.with_borrow(|slot| {
         slot.as_ref()
             .and_then(|slot| slot.structures.get(key).cloned())
     })
 }
 
-pub(super) fn memoize_structure(key: (usize, Equality), structure: &Rc<Option<Vec<Tok>>>) {
+pub fn memoize_structure(key: (usize, Equality), structure: &Rc<Option<Vec<Tok>>>) {
     FILE_SCOPES.with_borrow_mut(|slot| {
         if let Some(slot) = slot {
             slot.structures.insert(key, Rc::clone(structure));
@@ -1209,7 +1209,7 @@ pub(super) fn memoize_value_parse(key: (ValueKey, Grammar), tree: Option<Arc<Sub
 /// an error region), or when the table cannot be built (`UTIL_EXCEEDED` is then set). With
 /// language options the name must also be a declared global, a builtin of the version or a
 /// variable of a listed lib in either namespace (eslint-utils' `findVariable` reads the name only).
-pub(super) fn unshadowed_global<D: Doc>(
+pub fn unshadowed_global<D: Doc>(
     node: &Node<'_, D>,
     range: Range<usize>,
     name: &str,
@@ -1242,7 +1242,7 @@ pub(super) fn unshadowed_global<D: Doc>(
 /// The value node the name at `range` is bound to (`value.follow`): `None` outside a file
 /// evaluation, in a file with syntax errors, for a builtin or global, or for a binding that carries
 /// no value; also when the table cannot be built (`UTIL_EXCEEDED` is then set).
-pub(super) fn binding_value<D: Doc>(
+pub fn binding_value<D: Doc>(
     node: &Node<'_, D>,
     range: Range<usize>,
     name: &str,
@@ -1263,7 +1263,7 @@ pub(super) fn binding_value<D: Doc>(
 /// The table of `node`'s file a value follows names through (`value.follow`): `None` outside a
 /// file evaluation, in a file with syntax errors (a binding may hide in an error region), or when
 /// the table cannot be built (`UTIL_EXCEEDED` is then set).
-pub(super) fn followed_table<D: Doc>(
+pub fn followed_table<D: Doc>(
     node: &Node<'_, D>,
     language: GrammarDialect,
     options: Option<&LanguageOptions>,
@@ -1280,7 +1280,7 @@ pub(super) fn followed_table<D: Doc>(
 /// the file declares it once (`PhpNames::constant_value`; a Blade template's embedded program's):
 /// `None` outside a file evaluation, in a file with syntax errors (an error region may hide
 /// another declaration), or when the names cannot be read (`UTIL_EXCEEDED` is then set).
-pub(super) fn constant_value<D: Doc>(
+pub fn constant_value<D: Doc>(
     node: &Node<'_, D>,
     target: NodeRef,
     language: GrammarDialect,

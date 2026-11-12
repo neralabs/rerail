@@ -257,13 +257,13 @@ impl TopLevel {
 }
 
 /// PHP's `T_DOC_COMMENT`: `/**` followed by white space.
-pub(super) fn doc_comment(text: &str) -> bool {
+pub fn doc_comment(text: &str) -> bool {
     text.strip_prefix("/**")
         .is_some_and(|rest| rest.starts_with([' ', '\t', '\n', '\r']))
 }
 
 /// PCRE's `\s` without the UTF flag.
-pub(super) fn pcre_space(c: char) -> bool {
+pub fn pcre_space(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\n' | '\x0B' | '\x0C' | '\r')
 }
 
@@ -441,7 +441,7 @@ pub(crate) fn psalm_issue(issue: &str) -> bool {
 pub mod tests {
     use super::{PsalmIndex, parent_issue_type};
     use crate::code_rule_dsl::language::GrammarDialect;
-    use crate::code_rule_dsl::oracle;
+    use crate::code_rule_dsl::fixtures::oracle;
     use ast_grep_core::tree_sitter::LanguageExt;
     use serde_json::Value;
 

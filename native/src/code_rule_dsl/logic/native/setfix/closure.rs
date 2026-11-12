@@ -177,6 +177,7 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
         fused: (0..rest.len()).map(|_| None).collect(),
         forms: (0..rest.len()).map(|_| Default::default()).collect(),
         spec: 0,
+        passed_over: Default::default(),
     };
     Some(Closure { col, rest, y })
 }

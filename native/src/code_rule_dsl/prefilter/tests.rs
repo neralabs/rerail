@@ -6,7 +6,7 @@ use crate::code_rule_dsl::{
 use crate::content_store::prefilter::TOO_BIG;
 use std::path::Path;
 
-pub(in crate::code_rule_dsl) use crate::code_rule_dsl::fixtures::{document, temp};
+pub(in crate::code_rule_dsl) use crate::code_rule_dsl::fixtures::{document, open, temp};
 
 /// Removes the stores `temp` made for processes that have exited.
 fn sweep() {
@@ -38,10 +38,6 @@ pub(in crate::code_rule_dsl) fn put(store: &ContentStore, source: &str, lang: Gr
 
 fn count(store: &ContentStore, sql: &str) -> i64 {
     store.query_rows(sql, [], |r| r.get(0)).unwrap()[0]
-}
-
-pub(in crate::code_rule_dsl) fn open(path: &Path) -> ContentStore {
-    ContentStore::open(path).unwrap()
 }
 
 /// A rule's compiled matcher, outside any rule document.

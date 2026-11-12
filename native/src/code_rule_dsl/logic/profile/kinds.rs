@@ -168,7 +168,7 @@ pub fn by_head(r: &mut String, native: &[(&(String, String), &Vec<(u64, u64)>)],
         let part = kind(&format!("{p}/engine run (joins)"));
         let e = heads.entry((part, head(plan))).or_default();
         e.0 += cpu.get(&(p.clone(), plan.clone())).copied().unwrap_or(0.0);
-        e.1 += steps.iter().map(|(a, _)| a).sum::<u64>();
+        e.1 += super::plan_work(steps);
         e.2 += 1;
     }
     let (all_cpu, all_work) = heads.values().fold((0.0, 0u64), |(c, w), e| (c + e.0, w + e.1));

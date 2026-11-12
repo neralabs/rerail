@@ -8,7 +8,7 @@ pub struct Database {
     connection: Connection,
     /// The progress handler and authorizer a pool connection's holders set (`register_hooks`).
     pub(in crate::code_rule_dsl) hooks: crate::code_rule_dsl::hooks::Hooks,
-    pub(in crate::code_rule_dsl) storage: std::cell::RefCell<super::storage::Storage>,
+    pub storage: std::cell::RefCell<super::storage::Storage>,
 }
 
 impl Database {

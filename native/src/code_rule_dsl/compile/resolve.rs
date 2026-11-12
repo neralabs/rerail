@@ -40,7 +40,7 @@ const RESOLVES_KEYS: &[&str] = &[
 ];
 
 /// The nodes of a binding `resolves.binding` sub-rules may match.
-pub(super) const BINDING_KEYS: &[&str] = &["site", "value", "annotation"];
+pub const BINDING_KEYS: &[&str] = &["site", "value", "annotation"];
 
 /// How `resolves.binding` reads the binding, beside its sub-rules: `stopAtGlobal` (Ruff's
 /// `lookup_symbol`), `only` (Ruff's `only_binding`) and `destructuredValue` (TypeScript: whether a
@@ -48,10 +48,10 @@ pub(super) const BINDING_KEYS: &[&str] = &["site", "value", "annotation"];
 const BINDING_FLAGS: &[&str] = &["stopAtGlobal", "only", "destructuredValue"];
 
 /// The sub-rule over a TypeScript variable's definition names and references.
-pub(super) const OCCURRENCE_KEY: &str = "occurrence";
+pub const OCCURRENCE_KEY: &str = "occurrence";
 
 /// An identifier: ASCII letters, digits, `_` and `$`, not starting with a digit.
-pub(super) fn is_identifier(name: &str) -> bool {
+pub fn is_identifier(name: &str) -> bool {
     let mut chars = name.chars();
     chars
         .next()
@@ -113,7 +113,7 @@ fn names<'a>(value: &'a Value, path: &str, dotted: bool) -> Result<Vec<&'a str>>
 }
 
 /// The grammar-independent checks of a `resolves` object.
-pub(super) fn validate_resolves(value: &Value, path: &str) -> Result<()> {
+pub fn validate_resolves(value: &Value, path: &str) -> Result<()> {
     let resolves = object(value, path)?;
     reject_unknown(resolves, RESOLVES_KEYS, path)?;
     if let Some(write) = resolves.get("write") {
@@ -474,7 +474,7 @@ fn kind_ids_if(asked: bool, language: GrammarDialect, kinds: &[&str]) -> BTreeSe
 }
 
 /// Compiles a validated `resolves` for one grammar.
-pub(super) fn compile_resolves(
+pub fn compile_resolves(
     value: &Value,
     language: GrammarDialect,
     path: &str,
@@ -850,5 +850,4 @@ pub fn install_flow_resolves(compile: FlowResolves) {
 }
 
 // cratify: `php` is rerail-lang-php's (it mounts it)
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

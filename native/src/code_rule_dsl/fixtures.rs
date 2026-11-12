@@ -78,3 +78,7 @@ fn sweep() {
     }
 }
 
+/// The store at `path`, opened (created if it is not there).
+pub fn open(path: &std::path::Path) -> crate::content_store::ContentStore {
+    crate::content_store::ContentStore::open(path).unwrap()
+}

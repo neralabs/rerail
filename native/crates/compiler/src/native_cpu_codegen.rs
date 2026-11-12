@@ -65,7 +65,8 @@ pub fn define_functions(module: &mut JITModule, items: Vec<(FuncId, Context)>, n
             function.colocated = near && matches!(function.name, cranelift_codegen::ir::ExternalName::User(_));
         }
     }
-    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(items.len()).max(1);
+    // On the one pool (decision 0100 §2), a share a thread of it.
+    let threads = rayon::current_num_threads().min(items.len()).max(1);
     let isa = module.isa();
     // The largest first, dealt round the threads.
     let mut order: Vec<usize> = (0..items.len()).collect();
@@ -76,25 +77,23 @@ pub fn define_functions(module: &mut JITModule, items: Vec<(FuncId, Context)>, n
         let (id, c) = slots[i].take().expect("each once");
         shares[k % threads].push((i, id, c));
     }
-    let done: Vec<Result<Vec<(usize, FuncId, Context)>, String>> = std::thread::scope(|scope| {
-        let handles: Vec<_> = shares
-            .into_iter()
+    let done: Vec<Result<Vec<(usize, FuncId, Context)>, String>> = {
+        use rayon::prelude::*;
+        shares
+            .into_par_iter()
             .map(|share| {
-                scope.spawn(move || {
-                    let mut out = Vec::with_capacity(share.len());
-                    for (i, id, mut c) in share {
-                        c.compile(isa, &mut Default::default()).map_err(|e| format!("{:?}", e.inner))?;
-                        out.push((i, id, c));
-                    }
-                    if let Ok(mut t) = PARALLEL_TIMES.lock() {
-                        t.add(&cranelift_codegen::timing::take_current());
-                    }
-                    Ok(out)
-                })
+                let mut out = Vec::with_capacity(share.len());
+                for (i, id, mut c) in share {
+                    c.compile(isa, &mut Default::default()).map_err(|e| format!("{:?}", e.inner))?;
+                    out.push((i, id, c));
+                }
+                if let Ok(mut t) = PARALLEL_TIMES.lock() {
+                    t.add(&cranelift_codegen::timing::take_current());
+                }
+                Ok(out)
             })
-            .collect();
-        handles.into_iter().map(|h| h.join().unwrap_or_else(|_| Err("a compile thread panicked".to_owned()))).collect()
-    });
+            .collect()
+    };
     let mut compiled: Vec<Option<(FuncId, Context)>> = (0..order.len()).map(|_| None).collect();
     for share in done {
         for (i, id, c) in share.map_err(|e| Box::new(anyhow_free(e)))? {

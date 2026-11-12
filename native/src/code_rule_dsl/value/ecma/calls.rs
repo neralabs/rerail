@@ -465,7 +465,7 @@ fn raw<D: Doc>(template: &Node<'_, D>, context: &mut Context<'_>) -> Value {
 
 /// The functions implemented, each under every name the allowlists give it. A test checks that
 /// each is on an allowlist; a name on no list is never called.
-pub(super) const IMPLEMENTED: &[&str] = &[
+pub const IMPLEMENTED: &[&str] = &[
     "Array.isArray",
     "Array.of",
     "Array.prototype.at",

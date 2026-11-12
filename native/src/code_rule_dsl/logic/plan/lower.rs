@@ -279,10 +279,10 @@ pub fn domains(prog: &Program) -> Result<Domains> {
 #[derive(Clone)]
 pub struct Lowered {
     pub program: Program,
-    pub(in crate::code_rule_dsl) domains: Domains,
+    pub domains: Domains,
     /// The name atoms of `flat_bin`'s operators `+`, `-` and `*`.
     pub(in crate::code_rule_dsl) ops: [i64; 3],
-    pub(in crate::code_rule_dsl) dialect: GrammarDialect,
+    pub dialect: GrammarDialect,
 }
 
 struct Constants<'a> {

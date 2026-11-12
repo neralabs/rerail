@@ -4,6 +4,7 @@ use super::*;
 fn unique_incremental_support_preserves_unchanged_heads_and_empty_transitions() {
     let p=".decl event(id:number,g:number,v:number)\n.decl owner(g:number)\n.input event,owner\n.decl r(g:number)\nr(g) :- owner(g), n=count : {event(_,g,_)}, s=sum v : {event(_,g,v)}, n>0,s>0.\n.output r\n";
     let (_directory,mut e)=executor();
+    e.legacy_initial=true;
     bind(&mut e,"event",&["id","g","v"],json!([[1,1,4]]));
     bind(&mut e,"owner",&["g"],json!([[1],[2]]));
     e.run(p.into(),"python".into(),None).unwrap();
@@ -68,7 +69,7 @@ fn shared_scalar_summaries_preserve_bags_empty_groups_extrema_and_sparse_edits()
         &["g"],
         json!((0..2001).map(|g| vec![g]).collect::<Vec<_>>()),
     );
-    e.run(PROGRAM.into(), "python".into(), None).unwrap();
+    let initial:Value=serde_json::from_str(&e.run(PROGRAM.into(), "python".into(), None).unwrap()).unwrap();
     assert_eq!(
         rows(&mut e, "SELECT * FROM stats WHERE c0=17"),
         json!([[17, 3, 17, 3, 7]])
@@ -86,7 +87,7 @@ fn shared_scalar_summaries_preserve_bags_empty_groups_extrema_and_sparse_edits()
     );
     assert_eq!(stats["full_rebuild_grouping_elided"], true);
     assert_eq!(stats["cold_reuse"]["proven"], true);
-    assert_eq!(stats["cold_initialized"], true);
+    assert_eq!(initial["preparation"]["initial_execution"], "retained");
     assert_eq!(stats["rules"][0]["shared_summary_lookups"], 1);
     assert_eq!(stats["rules"][0]["scalar_summaries"]["families"][0]["lookup"]["proven"], true);
     for patch in [
@@ -242,13 +243,16 @@ fn explain_reports_proofs_rejections_and_catalog_updates_without_profiling() {
             .iter()
             .any(|r| r["relation"] == "out" && r["support_uniqueness"]["proven"] == false)
     );
-    assert_eq!(
-        rows(
-            &mut e,
-            "SELECT n FROM __sql_state_out_heads WHERE c0=0 AND c1=7"
-        ),
-        json!([[2]])
-    );
+    let trace=e.executions[0].temporal[&0].explain();
+    let frame=&trace["frames"][0];
+    let _scope=e.versions.activate(frame["native_scope"].as_u64().unwrap() as usize).unwrap();
+    let supports=frame["operators"].as_array().unwrap().iter().filter(|op|op["relation"]=="out" && op["active"]==true)
+        .map(|op| {
+            let table=op["analysis"][0]["head_support_store"].as_str().unwrap();
+            e.verification_rows(&format!("SELECT n FROM {table} WHERE c0=0 AND c1=7")).unwrap()[0][0].unwrap() as u64
+        }).sum::<u64>();
+    assert_eq!(supports,2);
+
 }
 
 #[test]
@@ -311,6 +315,7 @@ fn cold_summaries_wait_for_upstream_strata_and_keep_multiple_supports() {
 #[test]
 fn disjoint_producers_elide_support_grouping_and_keep_every_dirty_arm() {
     let (_d,mut e)=executor();
+    e.legacy_initial=true;
     bind(&mut e,"event",&["x"],json!([[1],[2],[3]]));
     let p=".decl event(x:number)\n.input event\n.decl out(tag:number,x:number)\nout(1,x) :- event(x).\nout(2,x) :- event(x).\n.output out\n";
     e.run(p.into(),"python".into(),None).unwrap();

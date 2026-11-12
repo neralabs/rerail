@@ -24,8 +24,7 @@ pub mod scan;
 pub mod token;
 pub mod tree;
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 use directives::Directives;
 use node::FlatNode;
@@ -33,7 +32,7 @@ use token::{LexerError, Token, TokenType};
 
 /// The tree builder's stack limits (`TreeBuilder::DEFAULT_MAX_*_DEPTH`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct DepthLimits {
+pub struct DepthLimits {
     pub(crate) elements: usize,
     pub(crate) directives: usize,
     pub(crate) conditions: usize,
@@ -51,13 +50,13 @@ impl Default for DepthLimits {
 
 /// Steps a parse may spend: a bound on the work of loops that may revisit input.
 #[derive(Debug)]
-pub(crate) struct Budget {
+pub struct Budget {
     remaining: u64,
 }
 
 /// The budget ran out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Exhausted;
+pub struct Exhausted;
 
 impl Budget {
     /// Steps per template byte and token, and the floor, of `Budget::for_template`.
@@ -69,7 +68,7 @@ impl Budget {
     }
 
     /// The budget for a template of `bytes` bytes.
-    pub(crate) fn for_template(bytes: usize) -> Self {
+    pub fn for_template(bytes: usize) -> Self {
         Self::new(
             (bytes as u64)
                 .saturating_mul(Self::PER_UNIT)
@@ -94,7 +93,7 @@ impl Budget {
 
     /// Steps left.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn remaining(&self) -> u64 {
+    pub fn remaining(&self) -> u64 {
         self.remaining
     }
 }
@@ -126,15 +125,15 @@ impl From<Exhausted> for ParseError {
 
 /// What Forte parses a template to (`Document`'s flat arrays).
 #[derive(Clone, Debug)]
-pub(crate) struct Parsed {
-    pub(crate) tokens: Vec<Token>,
-    pub(crate) nodes: Vec<FlatNode>,
-    pub(crate) errors: Vec<LexerError>,
+pub struct Parsed {
+    pub tokens: Vec<Token>,
+    pub nodes: Vec<FlatNode>,
+    pub errors: Vec<LexerError>,
 }
 
 /// Parses a template as `Document::parse($source, ParserOptions::make()->directives(...))` does.
 /// The registry is trained (`trainCompact`) when it accepts every directive.
-pub(crate) fn parse(
+pub fn parse(
     source: &[u8],
     mut directives: Directives,
     limits: DepthLimits,

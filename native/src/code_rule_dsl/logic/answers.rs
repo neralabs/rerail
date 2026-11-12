@@ -20,6 +20,10 @@ fn atom(rel: String, args: Vec<Term>) -> Atom {
     Atom { rel: rel.into(), args, neg: false, gated: false }
 }
 
+/// An answer's rows under `HELD_BACK` + a request's name are request rows the answerer holds back: asked again once
+/// the stratum is otherwise quiet (`setfix::defer`; the load budget's levels, decision 0108).
+pub(in crate::code_rule_dsl) const HELD_BACK: &str = "rr_held_back:";
+
 /// Whether `rel` is a gate's `done` relation (`gate`): a test of keys its rule's literals bind, which the planner
 /// joins only once they are bound.
 pub(in crate::code_rule_dsl) fn is_gate(rel: &str) -> bool {

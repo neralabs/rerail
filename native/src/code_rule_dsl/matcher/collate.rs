@@ -5,7 +5,7 @@ use std::cmp::Ordering;
 
 /// `naturalCompare(a, b)`: characters by a fixed remapping of ASCII (digits, then capitals, then
 /// small letters, punctuation between), and a run of digits that starts with 1-9 as its number.
-pub(crate) fn natural_compare(a: &[u16], b: &[u16]) -> Ordering {
+pub fn natural_compare(a: &[u16], b: &[u16]) -> Ordering {
     if a == b {
         return Ordering::Equal;
     }
@@ -83,7 +83,7 @@ pub mod tests {
     use super::*;
     use serde_json::Value as Json;
 
-    use crate::code_rule_dsl::oracle;
+    use crate::code_rule_dsl::fixtures::oracle;
 
     const ORACLE: &str = oracle!("ecma/value/natural.expected.json");
 

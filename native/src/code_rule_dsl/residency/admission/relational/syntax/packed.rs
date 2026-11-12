@@ -2,7 +2,7 @@
 use super::*;
 pub(in crate::code_rule_dsl) const NONE: u32 = u32::MAX;
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct Columns {
+pub struct Columns {
     pub parent: Vec<u32>,
     pub subtree_end: Vec<u32>,
     pub kind: Vec<u32>,
@@ -58,7 +58,7 @@ impl Columns {
     }
 }
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct Postings {
+pub struct Postings {
     pub offsets: Vec<u32>,
     pub values: Vec<u32>,
 }
@@ -98,7 +98,7 @@ impl Postings {
             .map_or(&[], |v| &self.values[v[0] as usize..v[1] as usize])
     }
 }
-pub(in crate::code_rule_dsl) struct Fields {
+pub struct Fields {
     offsets: Vec<u32>,
     codes: Vec<u32>,
     nodes: Vec<u32>,

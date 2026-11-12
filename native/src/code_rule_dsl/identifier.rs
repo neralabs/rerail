@@ -73,7 +73,7 @@ pub fn ecma_name(text: Cow<'_, str>) -> Cow<'_, str> {
 }
 
 /// An identifier's text as `dialect`'s family compares names (`Adapter::name`).
-pub(crate) fn name_in(dialect: GrammarDialect, text: Cow<'_, str>) -> Cow<'_, str> {
+pub fn name_in(dialect: GrammarDialect, text: Cow<'_, str>) -> Cow<'_, str> {
     { let pack = language_pack::pack(Family::of(dialect)); pack.name(text) }
 }
 
@@ -86,5 +86,4 @@ pub fn php_label(text: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || !c.is_ascii())
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
