@@ -1,1 +1,0 @@
-`rerail rules show <id>` prints a rule as a draft, and `rerail rules add` stores an edited pack rule as your copy, which turns the original off once approved. Changing where a rule applies, a Rerail pack's rule included, takes a few steps from any coding agent: `/rerail-create` changes only its scope, checks a few paths and shows the change.
