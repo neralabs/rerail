@@ -1,13 +1,14 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, type PathLike, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   checkoutPathBoundary, deniedByPathBoundary, SENSITIVE_FOLDER_NAMES, sensitiveByName,
 } from "../../src/engine/path-boundary.js";
 
 const roots: string[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -143,5 +144,27 @@ describe("the path boundary", () => {
     expect(spent.sensitive("docs/guide.md")).toBe(false);
     expect(spent.sensitive("docs/a.md")).toBe(false);
     expect(checkoutPathBoundary(join(root, "gone")).sensitive("docs/a.md")).toBe(false);
+  });
+
+  it.runIf(process.platform === "win32")("on Windows looks up a local path or one on the checkout's own share, not another machine's or a device", () => {
+    const lookups: string[] = [];
+    // Answered here, not on disk, so no host is reached: every path exists and no link redirects it.
+    vi.spyOn(realpathSync, "native").mockImplementation((path: PathLike) => {
+      lookups.push(String(path));
+      return String(path);
+    });
+    const boundary = checkoutPathBoundary("\\\\192.0.2.1\\share\\repo");
+    for (const path of [
+      "docs/a.md", "../other/notes.txt", "\\\\192.0.2.1\\SHARE\\notes.txt", "\\\\?\\C:\\work\\notes.txt",
+      "//198.51.100.1/api/v1", "\\\\198.51.100.1\\share\\notes.txt", "\\\\?\\UNC\\198.51.100.1\\share\\notes.txt",
+      "\\\\.\\pipe\\notes.txt",
+    ]) expect(boundary.leadsTo(path), path).toBeUndefined();
+    expect(lookups).toEqual([
+      "\\\\192.0.2.1\\share\\repo",
+      "\\\\192.0.2.1\\share\\repo\\docs\\a.md",
+      "\\\\192.0.2.1\\share\\other\\notes.txt",
+      "\\\\192.0.2.1\\SHARE\\notes.txt",
+      "\\\\?\\C:\\work\\notes.txt",
+    ]);
   });
 });

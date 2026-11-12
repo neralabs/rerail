@@ -1,6 +1,6 @@
 import { type EncodingOption, mkdirSync, mkdtempSync, type PathLike, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   agentTranscriptPayload, callNamesDeniedPath, callNamesSecretPath, WITHHELD_INPUT, WITHHELD_OUTPUT, WITHHELD_PAYLOAD,
@@ -25,6 +25,23 @@ const NETWORK_INPUTS = [
   { url: "https://192.0.2.1/docs/a.md" },
   { command: "type \\\\192.0.2.1\\share\\notes.txt" },
 ];
+
+/**
+ * A checkout `repo` with a session folder `repo/packages/app` in it, a secret folder `home/.aws` beside it, and two
+ * links to that folder: `repo/docs/cfg` in the checkout and `out/cfg` outside it. A link to a folder is a junction on
+ * Windows, which needs no privilege to make.
+ */
+function linksToSecretFolder(): { base: string; repo: string; app: string } {
+  const base = checkout("rerail-transcript-links-");
+  const repo = join(base, "repo");
+  const app = join(repo, "packages", "app");
+  const secrets = join(base, "home", ".aws");
+  for (const folder of [app, join(repo, "docs"), join(base, "out"), secrets]) mkdirSync(folder, { recursive: true });
+  writeFileSync(join(secrets, "config"), "[default]\n");
+  symlinkSync(secrets, join(repo, "docs", "cfg"), "junction");
+  symlinkSync(secrets, join(base, "out", "cfg"), "junction");
+  return { base, repo, app };
+}
 
 describe("the transcript boundary for coding agents", () => {
   it("finds a hidden or secret-like path wherever a call's input carries it", () => {
@@ -139,30 +156,50 @@ describe("the transcript boundary for coding agents", () => {
     expect(callNamesDeniedPath({ command: "cat node_modules/.pnpm/left-pad@1.3.0/node_modules/left-pad/index.js" }, root)).toBe(true);
   });
 
-  it("looks up on disk only paths in the session's checkout, never a URL's host or a network share", () => {
-    const root = checkout("rerail-transcript-lookups-");
-    const outside = (path: string): boolean => {
-      const named = relative(root, path);
-      return named === ".." || named.startsWith(`..${sep}`) || isAbsolute(named);
-    };
+  it("withholds a call that names a link outside the checkout to a secret folder, by its absolute path or through ..", () => {
+    const { base, repo } = linksToSecretFolder();
+    for (const input of [
+      { command: `cat ${join(base, "out", "cfg", "config")}` },
+      { file_path: join(base, "out", "cfg", "config") },
+      { command: "cat ../out/cfg/config" },
+    ]) {
+      expect(callNamesSecretPath(input, repo), JSON.stringify(input)).toBe(true);
+      expect(agentTranscriptPayload("call", { toolName: "Bash", input }, repo), JSON.stringify(input))
+        .toEqual({ toolName: "Bash", input: WITHHELD_INPUT });
+    }
+  });
+
+  it("judges a link elsewhere in the checkout when the session runs in a subfolder of it", () => {
+    const { repo, app } = linksToSecretFolder();
+    for (const input of [{ command: "cat ../../docs/cfg/config" }, { command: `cat ${join(repo, "docs", "cfg", "config")}` }]) {
+      expect(callNamesSecretPath(input, app), JSON.stringify(input)).toBe(true);
+    }
+  });
+
+  it("never looks up a URL's host or a network share, and still looks up a local path in or out of the checkout", () => {
+    const base = checkout("rerail-transcript-lookups-");
+    const root = join(base, "repo");
+    mkdirSync(root);
+    // On Windows a path that starts with `\\` names another machine or a device.
+    const viaNetwork = (path: string): boolean => path.startsWith("\\\\");
     const lookUp = realpathSync.native;
     const lookups: string[] = [];
     vi.spyOn(realpathSync, "native").mockImplementation((path: PathLike, options?: EncodingOption) => {
       lookups.push(String(path));
       // Refused, not made: on Windows a `\\host\share` path waits about 21 s for the host to answer.
-      if (outside(String(path))) throw Object.assign(new Error(`ENOENT: no such file or directory, realpath '${String(path)}'`), { code: "ENOENT" });
+      if (viaNetwork(String(path))) throw Object.assign(new Error(`ENOENT: no such file or directory, realpath '${String(path)}'`), { code: "ENOENT" });
       return lookUp(path, options);
     });
-    for (const input of [...NETWORK_INPUTS, { command: `cat ${join(tmpdir(), "notes.txt")}` }]) {
+    for (const input of [...NETWORK_INPUTS, { command: `cat ${join(base, "notes.txt")}` }]) {
       expect(callNamesSecretPath(input, root), JSON.stringify(input)).toBe(false);
       // A coding agent reading the session's events has each stored call judged in the same checkout.
       const call = { toolName: "Bash", input };
       expect(agentTranscriptPayload("call", call, root), JSON.stringify(input)).toBe(call);
     }
-    // A path in the checkout is still looked up, to see where it leads.
     expect(callNamesSecretPath({ command: "cat docs/guide.md" }, root)).toBe(false);
-    expect(lookups.filter(outside)).toEqual([]);
-    expect(lookups).toContain(join(root, "docs", "guide.md"));
+    expect(lookups.filter(viaNetwork)).toEqual([]);
+    // A local path is looked up to see where it leads, in the checkout or out of it.
+    expect(lookups).toEqual(expect.arrayContaining([join(root, "docs", "guide.md"), join(base, "notes.txt")]));
   });
 
   it.runIf(process.platform === "win32")("answers at once for a URL on Windows, where its host part names a network share", () => {

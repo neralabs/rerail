@@ -30,10 +30,7 @@ export const WITHHELD_PAYLOAD: Readonly<Withheld> = {
 /** How deep, and how many strings, a tool input is read: a tool input is small, and a pathological one is not read whole. */
 const INPUT_DEPTH = 8;
 const INPUT_STRINGS = 512;
-/**
- * How many of a tool input's path-shaped tokens in the checkout are resolved on disk, in input order; the rest by name
- * alone.
- */
+/** How many of a tool input's path-shaped tokens are resolved on disk, in input order; the rest by name alone. */
 const INPUT_RESOLUTIONS = 64;
 
 /** Shell, prose and brace-glob delimiters around a token that may be a path. */
@@ -96,9 +93,8 @@ const callNames = (input: unknown, judge: (path: string) => boolean, root: strin
  * With the checkout the call ran in (`root`), a path is also outside when it links to a secret-like one
  * ({@link sensitiveByName}), so `cat docs/a.md` is outside when `docs/a.md` links to `.env`, while a link into a hidden
  * folder alone (pnpm's `node_modules/pkg` into `.pnpm/`) is not; only a path-shaped token (`docs/a.md`, `.envrc`,
- * `notes.txt`) in the checkout is resolved, the first `INPUT_RESOLUTIONS` distinct ones, and a bare word, or a token
- * that leads out of the checkout (a URL's `//host/api`, a `\\server\share` path, another folder or drive), by its
- * name alone.
+ * `notes.txt`) is resolved, the first `INPUT_RESOLUTIONS` distinct ones, and a bare word by its name alone, as is, on
+ * Windows, a token that names another machine (a URL's `//host/api`, a `\\server\share` path) off the checkout's share.
  * It reads names, not a shell: a path built at run time (`cat $(echo .e)nv`) is not seen. An input deeper or larger
  * than it reads counts as naming one.
  */
