@@ -1799,8 +1799,44 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         let since = low.fill(before, gs)?;
         let since = low.prev(since, 1)?;
         let any = low.or(m, since)?;
-        mark_masks.push(low.and(gs, any)?);
-        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word });
+        let at = low.and(gs, any)?;
+        mark_masks.push(at);
+        // The bytes its token can begin with: the first bytes of each row whose starts it may
+        // meet (it holds only at the grammar's starts, so within those rows' starts; a row left
+        // out is proved apart, `never`). A state that refuses it tests it only on those bytes.
+        // Proved on `m`, the mark's own: where it holds only at the grammar's starts
+        // (`m & ~starts` never), the lift to the next start adds nothing.
+        let on_starts = bitlex_prove::never(&low.program.ops, &low.program.tables, before.v, before.d);
+        let mut first: ByteSet = [u64::MAX; 4];
+        if on_starts {
+            first = [0; 4];
+            for r in 0..rows.len() {
+                if low.extra.contains(&token_rows[r].0) {
+                    continue;
+                }
+                let both = low.and(m, token_rows[r].1)?;
+                if !bitlex_prove::never(&low.program.ops, &low.program.tables, both.v, both.d) {
+                    for i in 0..4 {
+                        first[i] |= rows[r].first[i];
+                    }
+                }
+            }
+            // A row of many bytes (the operators'): each byte the mark is proved apart from left
+            // out.
+            for b in 0..=255u8 {
+                if first[usize::from(b) / 64] >> (b % 64) & 1 == 0 {
+                    continue;
+                }
+                let mut one: ByteSet = [0; 4];
+                one[usize::from(b) / 64] |= 1 << (b % 64);
+                let class = low.class_set(one);
+                let both = low.and(m, class)?;
+                if bitlex_prove::never(&low.program.ops, &low.program.tables, both.v, both.d) {
+                    first[usize::from(b) / 64] &= !(1 << (b % 64));
+                }
+            }
+        }
+        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first });
     }
     // Any mark at a token: the marks' masks joined, after them. Marks hold at few tokens (0.8%
     // of the tests of `.rr`'s corpus), so `TOKEN` reads this once and the marks are live only

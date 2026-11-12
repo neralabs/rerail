@@ -1217,6 +1217,38 @@ Each token now pays a shift, a mask and a branch for the comment bit.
 The gain in time has to come from the next steps: marks tested only where their token can be,
 and one compare on a held kind in place of a ladder.
 
+## Built: a mark refused only where its token can be
+
+`no_value` is a mark on a `(` after an aggregate's word. It is not hidden,
+so a state that has no arm for it must refuse it. Each such state tested it
+right after its token, whatever the token: 277 tests, one in almost every state.
+The lean parser looks for it only where it reads a `(`.
+
+Now each mark has the bytes its token can begin with (`Mark::first`),
+found by proof when the program is compiled:
+
+- The mark holds only at the grammar's token starts (`m & ~starts` is never).
+  So moving it to the next token start adds nothing.
+- A byte is left out where the mark and that byte are proved apart (`never`).
+  For `.rr`: `no_value` and `empty_parens` hold only at `(`, `one_name` only at `{`.
+
+A state's refusal of such a mark moves into its switch:
+the target of each of those bytes gets the test first.
+It stays after the token where a later test jumps to a mark's arm,
+because the order of mark tests decides which one wins.
+Refusals can move past each other, since each one only refuses.
+
+| | Before | After |
+|---|---|---|
+| Tier 2's words | 3,341 | 3,193 |
+| Mark tests | 320 | 193 |
+| Tier 2's machine instructions | 17,460 | 17,278 |
+| Tier 2, benchmark instructions (cycles) | 311.3M (60.7M) | 307.1M (58.4M) |
+
+Tapes are identical over the corpus.
+The gain is small: each moved test was a bit test on the record's code, two or three
+instructions a token.
+
 ## The order
 
 1. One symbol a token: rows and keywords in the record, one switch a state.
@@ -1230,7 +1262,7 @@ and one compare on a held kind in place of a ladder.
    a call's bookkeeping as the lean parser's, switches as rustc lowers a `match`,
    one entry a function (all 55).
    Built: comments in the token step.
-   Next: marks tested only where their token can be,
-   as the lean parser does: 31% of tier 2's code.
+   Built: marks refused only where their token can be.
+   Next: a token test as one compare on a held kind, and one failure exit a function.
 4. Keyword marks from the records. Built for the marks of one word.
 5. Tier 1's primitives: the picked hash, then nibble fingerprints.
