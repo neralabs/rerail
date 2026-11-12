@@ -871,19 +871,23 @@ function launchAutostart(home: string, packageRoot: string): number | undefined 
 
 export type StopDaemonResult = "stopped" | "not-running";
 
+/** Whether the process `alive` watches is gone within `ms`, polling while it runs. */
+async function goneWithin(alive: () => boolean, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (alive() && Date.now() < deadline) await sleep(POLL_INTERVAL_MS);
+  return !alive();
+}
+
 export async function stopDaemon(home: string): Promise<StopDaemonResult> {
   const lookup = await lookupHomeDaemon(home);
   if (lookup.status === "absent") return "not-running";
   const pid = lookup.state.pid;
+  const alive = (): boolean => processAlive(pid);
   process.kill(pid, "SIGTERM");
-  const deadline = Date.now() + STOP_TIMEOUT_MS;
-  while (processAlive(pid) && Date.now() < deadline) await sleep(POLL_INTERVAL_MS);
-  if (processAlive(pid)) {
+  if (!(await goneWithin(alive, STOP_TIMEOUT_MS))) {
     process.kill(pid, "SIGKILL");
-    const killDeadline = Date.now() + KILL_TIMEOUT_MS;
-    while (processAlive(pid) && Date.now() < killDeadline) await sleep(POLL_INTERVAL_MS);
     // The state file stays, so a later stop can find the process again.
-    if (processAlive(pid)) {
+    if (!(await goneWithin(alive, KILL_TIMEOUT_MS))) {
       throw new Error(`Rerail daemon pid ${pid} is still running ${KILL_TIMEOUT_MS / 1_000}s after SIGKILL; check it with ps -p ${pid}, then run rerail daemon stop again.`);
     }
   }
