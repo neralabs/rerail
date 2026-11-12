@@ -906,6 +906,8 @@ pub(in crate::code_rule_dsl) struct Report {
     pub(in crate::code_rule_dsl) waved: u32,
     /// Batches run again because their text arena filled (in one as big as their texts asked).
     pub(in crate::code_rule_dsl) arena_reruns: u32,
+    /// Stages whose grids were sized on the device, from the rows before them (not the host's guess of their space).
+    pub(in crate::code_rule_dsl) sized: u32,
     /// Texts made on the device (`cat` into a head) and stored as symbols.
     pub(in crate::code_rule_dsl) made: u64,
     pub(in crate::code_rule_dsl) stages: u32,
@@ -1416,6 +1418,7 @@ pub(super) fn resume(ticket: u64, rules: &[(&Plan, &JoinRule, usize)], store: &S
         rep.submissions += d.submissions;
         rep.dispatches += d.dispatches;
         rep.gpu_seconds += d.gpu_seconds;
+        rep.sized += d.sized;
     }
     rep.waved = 1;
     let c0 = thread_cpu();
@@ -1461,6 +1464,7 @@ fn finish_timed(batch: &mut mj::Batch, rep: &mut Report) -> Result<(), String> {
     rep.submissions += done.submissions;
     rep.dispatches += done.dispatches;
     rep.gpu_seconds += done.gpu_seconds;
+    rep.sized += done.sized;
     Ok(())
 }
 
@@ -1653,6 +1657,7 @@ fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Inte
         rep.submissions += done.submissions;
         rep.dispatches += done.dispatches;
         rep.gpu_seconds += done.gpu_seconds;
+        rep.sized += done.sized;
         let mut again = Vec::new();
         for &k in &pending {
             let r = runs[k].as_mut().expect("a run");
@@ -1791,6 +1796,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         rep.submissions += done.submissions;
         rep.dispatches += done.dispatches;
         rep.gpu_seconds += done.gpu_seconds;
+        rep.sized += done.sized;
         drop(ran);
         drop(hold);
         // The new rows onto each relation, and as its next delta; a relation with none has no delta.
@@ -1824,6 +1830,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         rep.submissions += done.submissions;
         rep.dispatches += done.dispatches;
         rep.gpu_seconds += done.gpu_seconds;
+        rep.sized += done.sized;
         if !any {
             break;
         }
