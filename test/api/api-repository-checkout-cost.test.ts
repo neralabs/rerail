@@ -73,6 +73,26 @@ async function repositoryWith(rows: ReadonlyArray<{ readonly path: (main: string
   return { stores, db, main, repositoryKey, app: createRerailApi(stores, operations, { version: "0.0.0-test" }) };
 }
 
+/** A Git worktree of `main` at `path`, which no row records yet, as `git worktree add` leaves one. */
+function addWorktree(main: string, path: string): void {
+  const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: main, stdio: "ignore" });
+  git("commit", "-q", "--allow-empty", "-m", "first");
+  git("worktree", "add", "-q", "--detach", path);
+}
+
+/** The state the dashboard gives `checkout` (GET /api/repository) and the one the status line and the runtime give it. */
+async function shownStates(app: ReturnType<typeof createRerailApi>, checkout: string) {
+  const context = await (await app.request(`/api/repository?${new URLSearchParams({ checkout })}`)).json() as {
+    clones: Array<{ checkouts: Array<{ checkoutPath: string; state: string; parentCheckoutPath: string | null }> }>;
+    checkout: { state: string } | null;
+  };
+  const presentation = await (await app.request(`/api/presentation?${new URLSearchParams({ repository: checkout, host: "claude-code" })}`)).json() as {
+    repositoryState: string;
+  };
+  const listed = context.clones.flatMap(clone => clone.checkouts).find(entry => entry.checkoutPath === checkout);
+  return { listed: listed === undefined ? null : [listed.state, listed.parentCheckoutPath], dashboard: context.checkout?.state, statusLine: presentation.repositoryState };
+}
+
 /** A repository with `count` checkouts: its main checkout and worktrees in a folder inside it, as the field has them. */
 const repositoryOf = (count: number) => repositoryWith(Array.from({ length: count - 1 }, (_, index) => ({
   path: (main: string) => join(main, "wt", `wt-${index}`), started: null,
@@ -172,5 +192,16 @@ describe("a repository's context", () => {
       [upper, upperHeld ? ["started", "parent", main] : ["stopped", "repository", null]],
     ]));
     expect(body.checkout).toEqual({ checkoutPath: main, folder: "", state: "started" });
+  });
+
+  it("gives the asked checkout the state Rerail runs it in, from the row at its path even when another repository recorded it", async () => {
+    const { db, main, app } = await repositoryWith([]);
+    // A folder once recorded as another repository's checkout, stopped there, is now a worktree of this one, not yet recorded again.
+    const reused = join(main, "..", "reused");
+    const other = "remote:github.com/acme/other";
+    db.insert(repositories).values({ repositoryKey: other, displayName: "other", configuredAt: 1, started: true, createdAt: 1, updatedAt: 1 }).run();
+    db.insert(checkouts).values({ checkoutPath: reused, repositoryKey: other, cloneId: "old-clone", started: false, createdAt: 1, lastSeenAt: 1 }).run();
+    addWorktree(main, reused);
+    expect(await shownStates(app, reused)).toEqual({ listed: null, dashboard: "stopped", statusLine: "stopped" });
   });
 });
