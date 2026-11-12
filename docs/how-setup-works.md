@@ -15,6 +15,7 @@ Set-up copies Rerail out of npm's ephemeral `npx` cache into a durable install i
 ├── update-state.json                                  active + previous version, channel
 ├── daemon.json / daemon.log                           the running daemon
 ├── daemon-port.json                                   the port the daemon comes back on after a restart
+├── clock-probe                                        rewritten at each tool call to read the file system's clock
 ├── coding-agents.json                                 the coding agents set-up and rerail install have seen
 ├── packs/node_modules/@neralabs/rerail-pack-<id>/     Rerail's rule packs you installed (rerail packs)
 ├── packs/node_modules/[@<scope>/]rerail-pack-<id>/    third parties' rule packs you installed

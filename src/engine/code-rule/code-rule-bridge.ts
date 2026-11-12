@@ -1,7 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { constants, type Dirent, type Stats } from "node:fs";
-import { type FileHandle, lstat, mkdtemp, open, opendir, readFile, realpath, rename, rm, unlink } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { type FileHandle, lstat, mkdir, open, opendir, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
   AuditorCloseOptions,
@@ -28,6 +27,7 @@ import { sensitiveByName } from "../path-boundary.js";
 import { containsSecret, scrubSecrets } from "../secret-scrub.js";
 import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./ignore-rule-files.js";
 import { ToolCallWindows } from "./tool-call-windows.js";
+import { defaultRerailHome } from "../storage/rerail-home.js";
 
 
 /** The name of the ignore files a walk observes whatever Git says of them. */
@@ -405,21 +405,49 @@ interface SourceDiscovery {
 }
 
 /**
- * Samples the clock file timestamps are stamped with. `Date.now()` is not that clock: on Linux file stamps
- * advance per scheduler tick and lag it, so a write made right after session start carries an earlier mtime,
- * while on macOS stamps carry sub-millisecond precision that `Date.now()` truncates away.
+ * The file in the Rerail home that `filesystemClock` writes one byte to for each sample. Each write stamps it with the
+ * clock an edit stamps a source with, so a sample makes and removes no folder, and a process killed mid-sample leaves
+ * nothing new behind.
+ */
+const CLOCK_PROBE_FILE = "clock-probe";
+const CLOCK_PROBE_BYTE = Buffer.from(".");
+
+/**
+ * Samples the clock file timestamps are stamped with, as the stamp a write leaves on `CLOCK_PROBE_FILE`. `Date.now()`
+ * is not that clock: on Linux file stamps advance per scheduler tick and lag it, so a write made right after session
+ * start carries an earlier mtime, while on macOS stamps carry sub-millisecond precision that `Date.now()` truncates away.
  */
 async function filesystemClock(): Promise<number> {
   try {
-    const probe = await mkdtemp(join(tmpdir(), "rerail-clock-"));
+    const probe = await openClockProbe();
     try {
-      const info = await lstat(probe);
+      await probe.write(CLOCK_PROBE_BYTE, 0, CLOCK_PROBE_BYTE.length, 0);
+      const info = await probe.stat();
       return Math.min(info.mtimeMs, info.ctimeMs);
     } finally {
-      await rm(probe, { recursive: true, force: true });
+      // A failed close must not throw the sample away for `Date.now()`, the clock this function exists to avoid.
+      await probe.close().catch(() => undefined);
     }
   } catch {
     return Date.now();
+  }
+}
+
+/**
+ * Opens `CLOCK_PROBE_FILE` to rewrite its byte, making it (private, as Rerail's other files are) and the Rerail home the
+ * first time. It is opened `r+`, never `w`: on Linux, emptying the file at each open made the later of two samples taken
+ * together finish first, which turned round the order of a walk's sample and a tool call's.
+ */
+async function openClockProbe(): Promise<FileHandle> {
+  const path = join(defaultRerailHome(), CLOCK_PROBE_FILE);
+  try {
+    return await open(path, "r+");
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    // `a` makes the file without emptying one another process made meanwhile.
+    await writeFile(path, CLOCK_PROBE_BYTE, { flag: "a", mode: 0o600 });
+    return await open(path, "r+");
   }
 }
 

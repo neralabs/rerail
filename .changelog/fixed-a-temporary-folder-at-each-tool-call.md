@@ -1,0 +1,1 @@
+Code rules read the file system's clock at each tool call by rewriting one small file, `clock-probe` in the Rerail home, instead of creating and deleting a folder in your temporary folder each time. On Windows that was about two folders a second in a busy session, and a stopped daemon could leave an empty `rerail-clock-*` folder behind.

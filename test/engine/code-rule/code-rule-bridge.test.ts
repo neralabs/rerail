@@ -27,6 +27,8 @@ const discovery = vi.hoisted(() => ({
  * Git command (`failing`) that is made to fail, by an option Git does not know, while it is set.
  */
 const asyncGitCalls = vi.hoisted(() => ({ args: [] as string[][], failing: undefined as string | undefined }));
+/** Every folder made through `mkdtemp` or `mkdir`, by the prefix or path asked for, for the test that counts them. */
+const madeFolders = vi.hoisted(() => [] as string[]);
 vi.mock("node:child_process", async importOriginal => {
   const actual = await importOriginal<typeof ChildProcess>();
   const { promisify } = await import("node:util");
@@ -55,6 +57,14 @@ vi.mock("node:fs/promises", async importOriginal => {
     opendir: async (...args: Parameters<typeof actual.opendir>) => {
       await discovery.directories.get(String(args[0]))?.shift()?.();
       return await actual.opendir(...args);
+    },
+    mkdtemp: async (...args: Parameters<typeof actual.mkdtemp>) => {
+      madeFolders.push(String(args[0]));
+      return await actual.mkdtemp(...args);
+    },
+    mkdir: async (...args: Parameters<typeof actual.mkdir>) => {
+      madeFolders.push(String(args[0]));
+      return await actual.mkdir(...args);
     },
   };
 });
@@ -1769,5 +1779,31 @@ describe("ToolCallWindows", () => {
     expect(windows.ranDuring(0, 0)).toBe(false);
     expect(windows.ranDuring(10, 10)).toBe(true);
     expect(windows.ranDuring(MAX_FINISHED_CALLS * 10, MAX_FINISHED_CALLS * 10)).toBe(true);
+  });
+});
+
+describe("the file system's clock", () => {
+  it("is sampled at each tool call without making a folder, and still credits each command with what it wrote", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "old\n");
+    await awaitClockAfter(path);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    const made = madeFolders.length;
+
+    // A command's write is the session's only when it is stamped between the samples taken at the call's start and end.
+    for (const call of ["shell-1", "shell-2", "shell-3"]) {
+      await bridge.begin(call, "Bash", { command: "./append.sh" });
+      await appendFile(path, `${call}\n`);
+      await bridge.finish(call);
+    }
+
+    expect(madeFolders.slice(made)).toEqual([]);
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits.map(edit => edit.generatedText))).toEqual([
+      ["old\nshell-1\n"], ["old\nshell-1\nshell-2\n"], ["old\nshell-1\nshell-2\nshell-3\n"],
+    ]);
   });
 });
