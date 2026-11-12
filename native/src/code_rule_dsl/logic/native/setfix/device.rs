@@ -522,11 +522,12 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
                 stages.push(PStage { first: i, span: f.steps, kind: Kind::Filter, desc: d, npassed: f.steps });
                 i += f.steps;
             }
-            Step::Func { name: "str_cmp", args, out, bind: true, .. } => {
-                // The order of two symbols' names: compared on the device a word of eight bytes at a time, their
-                // texts those of the columns that bound the slots (and the constants').
+            Step::Func { name: name @ ("str_cmp" | "rr_strlen"), args, out, bind: true, .. } => {
+                // A function of names: the order of two (compared a word of eight bytes at a time) or one's
+                // characters, their texts those of the columns that bound the slots (and the constants').
                 let mut d = mj::Stage { mode: mj::STRCMP, ..mj::Stage::default() };
-                let kind = text_keys(&mut d, args, &origin, &known, "str_cmp")?;
+                d.agg[0] = if *name == "str_cmp" { mj::NAMES_CMP } else { mj::NAMES_LEN };
+                let kind = text_keys(&mut d, args, &origin, &known, name)?;
                 d.bind_slot[0] = *out as u32;
                 if *out >= bound.len() {
                     bound.resize(*out + 1, false);
@@ -1849,6 +1850,9 @@ mod tests {
             format!("pos {m} v0\npos {n} v1 v2\nfunc str_concat v3 v0 {}\ntest prefix v1 v3 1\nhead v0 v2", sym("_")),
             // A part a let filled with a constant (`q = @dot("builtins", x)`).
             format!("pos {n} v0 v1\nlt v1 i:200\neq v2 {}\ncat v3 v2 v0\nhead v3 v1", sym("builtins")),
+            // Characters of names (multibyte ones among them, names past a word): strlen bound and compared.
+            format!("pos {n} v0 v1\nlt v1 i:300\nfunc rr_strlen v2 v0\nhead v0 v2"),
+            format!("pos {m} v0\nfunc rr_strlen v1 v0\nlt i:9 v1\nhead v0 v1"),
             // A cat's text both compared and in the head.
             format!("pos {m} v0\npos {n} v1 v2\nlt v2 i:500\ncat v3 v0 {}\nne v3 v1\ntest prefix v1 v0 1\nhead v3 v2", sym("ts")),
         ];

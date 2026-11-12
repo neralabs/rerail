@@ -67,9 +67,11 @@ pub(in crate::code_rule_dsl) const AGG_MAX: u32 = 3;
 /// A text test of a slot (`Stage::agg`: `[slot, want]`): a binding passes when its symbol's verdict bit (the right
 /// relation, a bitset of 64 bits a row, by symbol) is `want`.
 pub(in crate::code_rule_dsl) const TEXT: u32 = 5;
-/// `str_cmp` of two symbols, each a slot or a constant (keys 0 and 1), their texts the right relation's (a
-/// `DevText`): the order into `bind_slot[0]`.
+/// A function of symbols' names, each a slot or a constant (keys 0 and 1), their texts the right relation's (a
+/// `DevText`), its value into `bind_slot[0]`: by `agg[0]`, `NAMES_CMP` (`str_cmp`) or `NAMES_LEN` (`strlen`).
 pub(in crate::code_rule_dsl) const STRCMP: u32 = 6;
+pub(in crate::code_rule_dsl) const NAMES_CMP: u32 = 0;
+pub(in crate::code_rule_dsl) const NAMES_LEN: u32 = 1;
 /// A literal text test of a pattern and a subject (keys 0 and 1, 2 and 3), each a symbol or a cat's text never made
 /// (`OPND_*`, `agg[1]`: the pattern's kind, the subject's << 4): `agg[0]` is the want (bit 0), the test (`TEXT_*`
 /// << 1), and `TEXT_SPLIT` when it is a text test (whose pattern a set separator would split).
@@ -400,13 +402,23 @@ static inline long text_cmp(device const uchar* p, uint a, uint alen, uint b, ui
     return alen == blen ? 0 : (alen < blen ? -1 : 1);
 }
 
-// `str_cmp` of two symbols (mode 6): each a slot or a constant (`key_kind`, `key_slot`, `key_const` 0 and 1), their
-// texts in R; the order into `bind_slot[0]`.
+// A function of names (mode 6), its symbols each a slot or a constant (`key_kind`, `key_slot`, `key_const`), their
+// texts in R, the value into `bind_slot[0]`: by agg[0], 0 `str_cmp` of keys 0 and 1 (their order), 1 `strlen` of key
+// 0 (its characters: the bytes less the UTF-8 continuation bytes, `10xxxxxx`, counted a word of eight at a time).
 static inline long strcmp_value(constant Stage& s, device const long* L, uint t, device const long* R) {
     long v[2];
     for (uint k = 0; k < 2; k++) v[k] = s.key_kind[k] == 1 ? L[ulong(s.key_slot[k]) * s.cap_in + t] : s.key_const[k];
     uint ao, al, bo, bl;
     text_find(R, v[0], ao, al);
+    if (s.agg[0] == 1) {
+        device const uchar* p = text_chars(R) + ao;
+        uint cont = 0;
+        for (uint at = 0; at < al; at += 8) {
+            ulong w = text_word(p, at, al);
+            cont += popcount(w & ~(w << 1) & 0x8080808080808080ul);
+        }
+        return long(al - cont);
+    }
     text_find(R, v[1], bo, bl);
     return text_cmp(text_chars(R), ao, al, bo, bl);
 }

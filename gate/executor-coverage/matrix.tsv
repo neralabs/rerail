@@ -42,7 +42,7 @@ arithmetic *	native	device	p(x, y, z) :- n(x), n(y), z = x * y.
 arithmetic /	native	device	p(x, y, z) :- n(x), n(y), z = x / y.
 arithmetic %	native	device	p(x, y, z) :- n(x), n(y), z = x % y.
 arithmetic of floats	native	no computed term	p(z) :- s(a), z = to_float("1.5") + 2.25, a = "alpha".
-builtin strlen/1	native	no computed term	p(v) :- t(a), v = strlen(a).
+builtin strlen/1	native	device	p(v) :- t(a), v = strlen(a).
 builtin to_string/1	native	no computed term	p(v) :- m(x), v = to_string(x).
 builtin to_number/1	native	no computed term	p(v) :- t(a), v = to_number(a).
 builtin substr/3	native	no computed term	p(v) :- t(a), m(y), m(w), v = substr(a, y, w).
