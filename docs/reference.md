@@ -607,7 +607,7 @@ Anything else, including `/native/*`, `/mcp`, `/healthz` and the page, gets `421
 
 `daemon-port.json` remembers the last port (or `--port`), reused by a start without `--port` so dashboard links survive restarts. `rerail daemon start` reuses a running daemon and says where; stale state from a crash or reboot is cleared. `stop`, `status` and `manage` run from the launcher you invoked, not the managed version, so they work mid-update.
 
-A Rerail home has one daemon. The daemon holds `locks/daemon.lock` in the home for as long as it runs, and a second daemon started there stops at once, naming the first. The daemon also checks every second that `daemon.json` still names it and writes it again when it is gone, so `rerail daemon start` and `rerail daemon stop` find a running daemon even after its `daemon.json` was removed.
+A Rerail home has one daemon. The daemon holds `locks/daemon.lock` in the home for as long as it runs, and a second daemon started there stops at once, naming the first. The daemon also checks every second that `daemon.json` still holds what it wrote and writes it again when it is gone or changed, so `rerail daemon start` and `rerail daemon stop` find a running daemon even after its `daemon.json` was removed.
 
 `daemon.json` also records `kernelSocketPath` (Unix socket or Windows named pipe), which hooks reuse; when another process already holds the default pipe name, the daemon listens on that name with a random suffix and records that one; `RERAIL_ENGINE_SOCKET` selects an explicitly managed endpoint. Events there need `x-rerail-access`. For a `RERAIL_ENGINE_SOCKET` socket, hooks send the capability from the Rerail home's `daemon.json` if it names the same socket.
 

@@ -299,15 +299,8 @@ describe("Rerail daemon control", () => {
     expect(await findRunningDaemon(home)).toBeUndefined();
   });
 
-  it("writes its record back when it is removed or names another process, and removes it for good when it closes", async () => {
+  it("writes its record back when it is removed, names another process or holds what this daemon did not write, and removes it for good when it closes", async () => {
     const stateFile = join(home, DAEMON_STATE_FILE);
-    const recorded = (): number | undefined => {
-      try {
-        return (JSON.parse(readFileSync(stateFile, "utf8")) as { pid?: number }).pid;
-      } catch {
-        return undefined;
-      }
-    };
     const daemon = await RerailDaemon.start({
       version: "0.0.0-test",
       databasePath: join(home, "rerail.sqlite"),
@@ -317,19 +310,30 @@ describe("Rerail daemon control", () => {
       recordCheckMs: 20,
       nativeHealth: () => ({ ok: true, kernelVersion: "1" }),
     });
+    const written = readFileSync(stateFile, "utf8");
+    const restored = (): boolean => {
+      try {
+        return readFileSync(stateFile, "utf8") === written;
+      } catch {
+        return false;
+      }
+    };
     try {
       await rm(stateFile);
-      await until(() => recorded() === process.pid);
+      await until(restored);
       expect(await readDaemonState(stateFile)).toEqual(daemon.state());
       await writeFile(stateFile, JSON.stringify(stateFor({ pid: DEAD_PID })));
-      await until(() => recorded() === process.pid);
+      await until(restored);
+      // This daemon's pid with a capability it does not accept: every hook and start reading it would be refused (401).
+      await writeFile(stateFile, JSON.stringify({ ...daemon.state(), accessToken: "not-this-daemons" }));
+      await until(restored);
     } finally {
       await daemon.close();
     }
     expect(existsSync(stateFile)).toBe(false);
     await delay(100);
     expect(existsSync(stateFile)).toBe(false);
-  });
+  }, 20_000);
 
   it("repairs the SQLite binding before spawning, and surfaces an unrepairable binding instead of a daemon crash", async () => {
     const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
