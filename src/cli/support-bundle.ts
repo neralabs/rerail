@@ -567,16 +567,27 @@ function readLogTail(home: string): { lines: string[]; omitted: number } {
  * The daemon recorded in `home` as `lookupDaemon` finds it, with a busy daemon waited for: one that is alive but missed
  * the 2 s probe is looked up once more, with up to `busyWaitMs` for its answer. That lookup reads `daemon.json` again,
  * so a daemon that took the busy one's place meanwhile is the one reported. One 2 s probe called the same daemon running
- * in one bundle and unresponsive in the next.
+ * in one bundle and unresponsive in the next. `whileWaiting` gets what the first lookup found before the wait starts.
  */
-async function patientLookup(home: string, busyWaitMs: number): Promise<DaemonLookup> {
-  const lookup = await lookupDaemon(home);
-  return lookup.status === "unresponsive" ? await lookupDaemon(home, busyWaitMs) : lookup;
+async function patientDaemon(home: string, busyWaitMs: number, whileWaiting: (first: SupportBundle["daemon"]) => void, problems: string[]): Promise<SupportBundle["daemon"]> {
+  const started = performance.now();
+  const first = await readDaemon(lookupDaemon(home), started, problems);
+  if (first.status !== "unresponsive") return first;
+  whileWaiting(first);
+  return await readDaemon(lookupDaemon(home, busyWaitMs), started, problems);
 }
 
-async function readDaemon(home: string, busyWaitMs: number): Promise<SupportBundle["daemon"]> {
-  const started = performance.now();
-  const lookup = await patientLookup(home, busyWaitMs);
+/** The daemon section from one lookup started at `started`; one that fails gives `unknown` and says why in `problems`. */
+async function readDaemon(pending: Promise<DaemonLookup>, started: number, problems: string[]): Promise<SupportBundle["daemon"]> {
+  try {
+    return daemonSection(await pending, started);
+  } catch (error) {
+    problems.push(`daemon: ${error instanceof Error ? error.message : String(error)}`);
+    return { status: "unknown" };
+  }
+}
+
+function daemonSection(lookup: DaemonLookup, started: number): SupportBundle["daemon"] {
   if (lookup.status !== "running") return { status: lookup.status };
   const { version, ui, uptimeMs, native } = lookup.health;
   return {
@@ -623,15 +634,27 @@ interface CollectInput {
   packageVersion: string;
   /** The package this command runs from; the bundle says whether it is the managed installation. */
   packageRoot: string;
-  /** How long to wait for a busy daemon (`patientLookup`); `BUSY_DAEMON_WAIT_MS` unless a test shortens it. */
+  /** How long to wait for a busy daemon (`patientDaemon`); `BUSY_DAEMON_WAIT_MS` unless a test shortens it. */
   busyDaemonWaitMs?: number;
+  /**
+   * Given the bundle as it stands, with the daemon unresponsive, before the wait for a busy daemon starts: the command
+   * writes it, so a caller that stops the command during the wait still has the bundle it had before there was a wait.
+   */
+  whileWaiting?: (draft: CollectedBundle) => void;
+}
+
+/** A bundle, scrubbed, and the ids of the rules the person's team wrote, which the summary names. */
+interface CollectedBundle {
+  bundle: SupportBundle;
+  ownRules: string[];
 }
 
 /**
  * Everything but the session is read section by section, and a section that fails says why in `problems`: the bundle
- * matters most when Rerail cannot start, its database is damaged or set-up never finished.
+ * matters most when Rerail cannot start, its database is damaged or set-up never finished. The daemon is read last, as
+ * it can be waited for.
  */
-export async function collectSupportBundle(input: CollectInput): Promise<{ bundle: SupportBundle; ownRules: string[] }> {
+export async function collectSupportBundle(input: CollectInput): Promise<CollectedBundle> {
   const { repo, home, databasePath, sessionId, packageVersion, packageRoot, busyDaemonWaitMs = BUSY_DAEMON_WAIT_MS } = input;
   const problems: string[] = [];
   const attempt = <T>(section: string, read: () => T, fallback: T): T => {
@@ -661,33 +684,35 @@ export async function collectSupportBundle(input: CollectInput): Promise<{ bundl
   }
 
   const { lines, omitted } = attempt("daemon log", () => readLogTail(home), { lines: [], omitted: 0 });
-  const daemon = await readDaemon(home, busyDaemonWaitMs).catch((error: unknown) => {
-    problems.push(`daemon: ${error instanceof Error ? error.message : String(error)}`);
-    return { status: "unknown" };
-  });
   const build = attempt("install", () => installBuild(packageRoot, home), undefined);
-  const bundle: SupportBundle = {
-    format: SUPPORT_BUNDLE_FORMAT,
-    createdAt: Date.now(),
-    leftOut: LEFT_OUT,
-    rerail: {
-      version: packageVersion,
-      activeVersion: attempt("active version", () => activeCoreVersion(home), null),
-      managedInstall: build?.kind === "main",
-      installedPacks: [...(catalog?.packs.values() ?? [])].map(pack => ({ id: pack.id, version: pack.version })),
-      skippedPacks: (catalog?.skipped ?? []).map(pack => ({ package: pack.packageName, version: pack.version, reason: pack.reason })),
-    },
-    platform: { os: platform(), arch: arch(), release: release(), node: process.versions.node },
-    daemon,
-    codingAgents: seenCodingAgents(home) ?? null,
-    repository,
-    session,
-    daemonLog: lines,
-    daemonLogOmittedLines: omitted,
-    problems,
+  const rerail: SupportBundle["rerail"] = {
+    version: packageVersion,
+    activeVersion: attempt("active version", () => activeCoreVersion(home), null),
+    managedInstall: build?.kind === "main",
+    installedPacks: [...(catalog?.packs.values() ?? [])].map(pack => ({ id: pack.id, version: pack.version })),
+    skippedPacks: (catalog?.skipped ?? []).map(pack => ({ package: pack.packageName, version: pack.version, reason: pack.reason })),
   };
+  const codingAgents = seenCodingAgents(home) ?? null;
+  const createdAt = Date.now();
   const scrub = scrubFor(knownValues);
-  return { bundle: scrubValue(bundle, scrub), ownRules: scrubValue(ownRules, scrub) };
+  const collected = (daemon: SupportBundle["daemon"]): CollectedBundle => {
+    const bundle: SupportBundle = {
+      format: SUPPORT_BUNDLE_FORMAT,
+      createdAt,
+      leftOut: LEFT_OUT,
+      rerail,
+      platform: { os: platform(), arch: arch(), release: release(), node: process.versions.node },
+      daemon,
+      codingAgents,
+      repository,
+      session,
+      daemonLog: lines,
+      daemonLogOmittedLines: omitted,
+      problems,
+    };
+    return { bundle: scrubValue(bundle, scrub), ownRules: scrubValue(ownRules, scrub) };
+  };
+  return collected(await patientDaemon(home, busyDaemonWaitMs, first => input.whileWaiting?.(collected(first)), problems));
 }
 
 /** Reads one section of the bundle; a section that throws gives `fallback` and says why in `problems`. */
@@ -791,6 +816,12 @@ function summaryText(summary: SupportBundleSummary): string {
   ].join("\n");
 }
 
+/** What the person or agent is told while the bundle waits for a busy daemon: the file is already there. */
+function waitingText(output: string): string {
+  return `● The Rerail daemon is alive but has not answered yet. ${output} already holds a bundle that says so; ` +
+    `waiting up to ${BUSY_DAEMON_WAIT_MS / 1000} s more for a busy daemon, then writing it again.\n`;
+}
+
 function writeBundle(output: string, bundle: SupportBundle): void {
   const staging = `${output}.${process.pid}.tmp`;
   mkdirSync(dirname(output), { recursive: true, mode: 0o700 });
@@ -818,6 +849,7 @@ export async function runSupportBundleCommand(args: readonly string[], usage: ()
     { flags: ["--json"], options: ["--repo", "--session", "--output"] },
     argument => `Unknown support-bundle option: ${argument}\n\n${usage()}`,
   );
+  const stderr = io.stderr ?? process.stderr;
   const output = resolve(options.get("--output") ?? join(homedir(), DEFAULT_OUTPUT_NAME));
   try {
     const { bundle, ownRules } = await collectSupportBundle({
@@ -827,6 +859,10 @@ export async function runSupportBundleCommand(args: readonly string[], usage: ()
       sessionId: options.get("--session"),
       packageVersion: io.packageVersion,
       packageRoot: io.packageRoot ?? PACKAGE_ROOT,
+      whileWaiting: draft => {
+        writeBundle(output, draft.bundle);
+        stderr.write(waitingText(output));
+      },
     });
     writeBundle(output, bundle);
     const summary = summaryOf(output, bundle, ownRules);
@@ -834,7 +870,7 @@ export async function runSupportBundleCommand(args: readonly string[], usage: ()
     return 0;
   } catch (error) {
     if (!(error instanceof SupportBundleError)) throw error;
-    (io.stderr ?? process.stderr).write(`● ${error.message}\n`);
+    stderr.write(`● ${error.message}\n`);
     return 1;
   }
 }

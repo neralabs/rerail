@@ -447,6 +447,30 @@ describe("rerail support-bundle", () => {
     expect(bundle.daemon.answeredInMs).toBeGreaterThanOrEqual(2_500);
   });
 
+  it("writes the bundle before it waits for a busy daemon, says where, and writes it again once the daemon answers", { timeout: 30_000 }, async () => {
+    const world = await fixture();
+    const daemon = await slowDaemon(world.home, 2_500);
+    daemons.push(daemon.close);
+    let stderr = "";
+    let written: SupportBundle["daemon"] | undefined;
+    const exit = await runSupportBundleCommand(["--repo", world.repo, "--output", world.output, "--json"], () => "usage", {
+      packageVersion: "9.9.9",
+      stdout: { write: () => true },
+      stderr: {
+        write: text => {
+          stderr += text;
+          // What a caller that gives up now finds.
+          written ??= (JSON.parse(readFileSync(world.output, "utf8")) as SupportBundle).daemon;
+          return true;
+        },
+      },
+    });
+    expect(exit).toBe(0);
+    expect(written).toEqual({ status: "unresponsive" });
+    expect(stderr).toContain(world.output);
+    expect((JSON.parse(readFileSync(world.output, "utf8")) as SupportBundle).daemon).toMatchObject({ status: "running", version: "9.9.9" });
+  });
+
   it("still calls a daemon that never answers unresponsive once the wait is over", { timeout: 30_000 }, async () => {
     const world = await fixture();
     const daemon = await slowDaemon(world.home, undefined);

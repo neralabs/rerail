@@ -550,7 +550,8 @@ read it first and replace anything you'd rather not post with `<redacted>`.
 - It covers the repository's latest session; `--session <id>` names another (the id is in its dashboard address).
 - It works where Rerail won't start or set-up never finished, and says which parts it could not read.
 - A daemon that misses the first 2-second health check gets 10 more seconds to answer before the bundle calls it
-  unresponsive; one that answers is recorded with how long it took.
+  unresponsive; one that answers is recorded with how long it took. The file is written before that wait, calling the
+  daemon unresponsive, and again after it, so a command stopped while it waits still leaves a bundle.
 
 | In the file | Left out |
 | --- | --- |
