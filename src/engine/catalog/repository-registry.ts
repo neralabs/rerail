@@ -329,12 +329,23 @@ function absorbAliasOwner(tx: Writer, key: RepositoryKey, alias: RepositoryKey):
   return [other.repositoryKey, ...other.aliases];
 }
 
+/**
+ * The order of a checkout's containing checkouts, nearest first: the longer path is nearer. Two paths of one length
+ * that both hold it are one folder recorded under two spellings (Windows ignores letter case); path order picks one,
+ * so no reader depends on which row was recorded first.
+ */
+function nearestFirst(left: Pick<CheckoutRecord, "checkoutPath">, right: Pick<CheckoutRecord, "checkoutPath">): number {
+  const nearer = right.checkoutPath.length - left.checkoutPath.length;
+  if (nearer !== 0) return nearer;
+  return left.checkoutPath < right.checkoutPath ? -1 : left.checkoutPath > right.checkoutPath ? 1 : 0;
+}
+
 /** The recorded checkouts of the same repository whose folder contains `checkout`, nearest first; never itself. */
 export function parentCheckouts(db: Reader, checkout: Pick<CheckoutContext, "checkoutPath" | "repositoryKey">): CheckoutRecord[] {
   return db.select().from(checkouts)
     .where(and(eq(checkouts.repositoryKey, checkout.repositoryKey), ne(checkouts.checkoutPath, checkout.checkoutPath))).all()
     .filter(row => withinCheckout(row.checkoutPath, checkout.checkoutPath))
-    .sort((left, right) => right.checkoutPath.length - left.checkoutPath.length);
+    .sort(nearestFirst);
 }
 
 /**
@@ -432,6 +443,8 @@ export function listedCheckoutStates(repository: RepositoryListing): (checkoutPa
         else parents.push(row);
       }
     }
+    // In parentCheckouts' order, so a folder recorded under two spellings gives both readers the same parent.
+    parents.sort(nearestFirst);
     return { status: statusOf(repository, own, parents), parentCheckoutPath: parents[0]?.checkoutPath ?? null };
   };
 }
