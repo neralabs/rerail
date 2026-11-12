@@ -205,6 +205,8 @@ interface EngineRoutingState {
   lastEventAt: Map<string, number>;
   lanes: SessionLanes;
   pending: Set<Promise<readonly AdapterDelivery[]>>;
+  /** Set once the service starts closing: an event still waiting in its session's lane is then not run. */
+  closing: boolean;
   /** The runtimes no session uses, each with the timer that closes it. */
   idle: Map<string, NodeJS.Timeout>;
   /** How long a runtime no session uses stays open: `idleRuntimeMs`, or `IDLE_RUNTIME_MS`. */
@@ -283,6 +285,7 @@ async function routeEngineEvent(
   clearTimeout(state.idle.get(runtimeKey));
   state.idle.delete(runtimeKey);
   const execution = state.lanes.run(lane, () => {
+    if (state.closing) throw new Error(`The Rerail engine service is closing, so event ${event.eventId} was not run`);
     let runtime = state.runtimes.get(runtimeKey);
     if (runtime === undefined) {
       if (runtimeOptions === undefined) throw new Error(`Kernel runtime is unavailable for session ${sessionId}`);
@@ -525,6 +528,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     pending: new Set(),
     idle: new Map(),
     idleRuntimeMs: options.idleRuntimeMs ?? IDLE_RUNTIME_MS,
+    closing: false,
   };
   const sweepIdleSessions = (): Promise<void> => closeIdleSessions(routing, options.idleSessionMs ?? IDLE_SESSION_MS, options.now ?? Date.now);
   const server = createServer(async (incoming, response) => {
@@ -570,8 +574,13 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     closeIdleSessions: sweepIdleSessions,
     async close() {
       clearInterval(idleSweep);
+      // A hook still waiting for its answer is cut off, and an event still waiting in its session's lane is not run:
+      // waiting for them, up to each request's 30 s timeout, would keep a busy daemon alive past the 10 s that
+      // `rerail daemon stop` gives it before a kill. An event already running finishes, so its writes complete.
+      routing.closing = true;
       const closed = Promise.withResolvers<void>();
       server.close((error) => (error ? closed.reject(error) : closed.resolve()));
+      server.closeAllConnections();
       await closed.promise;
       for (const timer of routing.idle.values()) clearTimeout(timer);
       routing.idle.clear();
