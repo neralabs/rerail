@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { REQUIRED_NODE_MAJOR } from "../../src/engine/index.js";
 import { scriptBundleOptions } from "../support/build/script-bundle.js";
-import { OLDER_NODE_VERSION, olderNodeArguments } from "../support/platform/older-node.js";
+import { linesRewrittenForOlderNode, OLDER_NODE_VERSION, olderNodeArguments } from "../support/platform/older-node.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 const manifestSchema = z.object({ scripts: z.record(z.string(), z.string()), bin: z.object({ rerail: z.string() }) });
@@ -45,7 +45,9 @@ describe("the rerail command's bundle", () => {
       await mkdir(binding, { recursive: true });
       await writeFile(join(binding, "package.json"), JSON.stringify({ name: "better-sqlite3", main: "index.js" }));
       await writeFile(join(binding, "index.js"), "module.exports = class Database {};\n");
-      await build({ ...await scriptBundleOptions("build:ts", "src/cli/cli.ts", root), logLevel: "silent" });
+      const options = await scriptBundleOptions("build:ts", "src/cli/cli.ts", root);
+      expect(await linesRewrittenForOlderNode(options)).toEqual([]);
+      await build({ ...options, logLevel: "silent" });
       const version = spawnSync(process.execPath, [...olderNodeArguments(), join(root, "dist", "cli", "cli.js"), "version"], { encoding: "utf8" });
       expect(version.stderr).toContain(`Rerail needs Node ${REQUIRED_NODE_MAJOR} or newer. You have Node ${OLDER_NODE_VERSION}.`);
       expect(version.status).toBe(1);
