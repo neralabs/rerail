@@ -19,7 +19,11 @@ use crate::launch;
 // and output pools, 32-64 MB), in place of a 2 GB guard (list step 13). A plan's buffers are
 // sized from it (counted, not worst-case: `label_passes`), and a batch that does not fit is
 // refused as `BackendCapacity` and split (`waves::matches::labelled_metal`). S7: peak 248 MB.
-pub const METAL_BUFFER_LIMIT: usize = 256 << 20;
+// The size is the process's Metal budget (`rerail_accel::budget::metal`, `--metal-mb`; 512 MB by default, decision
+// 0117), on top of the overall budget.
+pub fn metal_buffer_limit() -> usize {
+    rerail_accel::budget::metal()
+}
 #[cfg(not(any(test, feature = "test-hooks")))]
 static METAL_BUFFER_BYTES: AtomicUsize = AtomicUsize::new(0);
 /// The most `METAL_BUFFER_BYTES` has held.
@@ -51,27 +55,28 @@ use test_pool::{driver_bytes, pool, pool_peak};
 
 /// The Metal buffer budget, in bytes.
 pub fn buffer_limit() -> usize {
-    METAL_BUFFER_LIMIT
+    metal_buffer_limit()
 }
 
 /// The bytes of the Metal buffer budget not reserved now.
-/// The bytes the device's buffers hold now, of `METAL_BUFFER_LIMIT`: a user of them that can wait (the logic
+/// The bytes the device's buffers hold now, of `metal_buffer_limit()`: a user of them that can wait (the logic
 /// engine's device joins) keeps within what is left.
 pub fn reserved() -> usize {
     pool().load(Ordering::Acquire)
 }
 
-/// The bytes of `METAL_BUFFER_LIMIT` relational work (the logic engine's device joins) may still lease: past the
+/// The bytes of `metal_buffer_limit()` relational work (the logic engine's device joins) may still lease: past the
 /// buffer pool's reservations and what relational work holds itself, leased and kept idle in its pool. Its leases
 /// reserve nothing in the pool's ledger, so a check of `reserved` alone never saw them: a wave encoded strata until
 /// it held 400 MB.
 pub fn relational_bytes_left() -> usize {
+    rerail_accel::gpu::shared::set_other_reserved(reserved);
     let (live, idle) = rerail_accel::gpu::shared::held_bytes();
-    METAL_BUFFER_LIMIT.saturating_sub(pool().load(Ordering::Acquire) + live + idle)
+    metal_buffer_limit().saturating_sub(pool().load(Ordering::Acquire) + live + idle)
 }
 
 pub fn buffer_free() -> usize {
-    METAL_BUFFER_LIMIT.saturating_sub(pool().load(Ordering::Acquire))
+    metal_buffer_limit().saturating_sub(pool().load(Ordering::Acquire))
 }
 
 /// The bytes of Metal buffers alive now (their reservations), in MB.
@@ -96,7 +101,7 @@ const METAL_UPLOAD_CHUNK_BYTES: usize = 8 * 1024 * 1024;
 pub fn available_buffer_bytes(device: &Device) -> usize {
     let reserved = pool().load(Ordering::Acquire);
     let driver = usize::try_from(driver_bytes(device)).unwrap_or(usize::MAX);
-    METAL_BUFFER_LIMIT.saturating_sub(reserved.max(driver))
+    metal_buffer_limit().saturating_sub(reserved.max(driver))
 }
 
 pub fn buffer_usage() -> (usize, usize) {
@@ -244,7 +249,7 @@ impl MappedRegion {
             .map(|value| value / page * page)
             .ok_or(Error::BackendCapacity)?;
         let reservation =
-            BufferReservation::acquire(length, pool(), METAL_BUFFER_LIMIT)?;
+            BufferReservation::acquire(length, pool(), metal_buffer_limit())?;
         let raw = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
@@ -429,7 +434,7 @@ impl MappedBuffer {
         if mapping.length as u64 > device.max_buffer_length()
             || driver_bytes(device)
                 .saturating_add(mapping.length as u64)
-                > METAL_BUFFER_LIMIT as u64
+                > metal_buffer_limit() as u64
         {
             if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
                 eprintln!(
@@ -495,7 +500,7 @@ impl MappedBuffer {
         if length as u64 > device.max_buffer_length()
             || driver_bytes(device)
                 .saturating_add(length as u64)
-                > METAL_BUFFER_LIMIT as u64
+                > metal_buffer_limit() as u64
         {
             if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
                 eprintln!(
@@ -551,7 +556,7 @@ impl MappedBuffer {
             .map(|length| length / page * page)
             .ok_or(Error::BackendCapacity)?;
         let reservation = Arc::new(
-            BufferReservation::acquire(length, pool(), METAL_BUFFER_LIMIT)?.private(),
+            BufferReservation::acquire(length, pool(), metal_buffer_limit())?.private(),
         );
         let target = Self::owned_allocation(
             device,
@@ -604,7 +609,7 @@ impl MappedBuffer {
             .map(|length| length / page * page)
             .ok_or(Error::BackendCapacity)?;
         let reservation = Arc::new(
-            BufferReservation::acquire(length, pool(), METAL_BUFFER_LIMIT)?.private(),
+            BufferReservation::acquire(length, pool(), metal_buffer_limit())?.private(),
         );
         Self::owned_allocation(
             device,
@@ -635,7 +640,7 @@ impl MappedBuffer {
         let reservation = Arc::new(BufferReservation::acquire(
             length,
             pool(),
-            METAL_BUFFER_LIMIT,
+            metal_buffer_limit(),
         )?);
         Self::owned_allocation(device, length, reservation, MTLResourceOptions::StorageModeShared)
     }
@@ -658,7 +663,7 @@ impl MappedBuffer {
         let reservation = Arc::new(BufferReservation::acquire(
             length,
             pool(),
-            METAL_BUFFER_LIMIT,
+            metal_buffer_limit(),
         )?);
         let buffer = Self::owned_allocation(
             device,
@@ -907,7 +912,7 @@ mod memory_budget_tests {
     #[test]
     fn oversized_mapping_is_rejected_before_allocation() {
         assert!(matches!(
-            MappedRegion::zeroed(METAL_BUFFER_LIMIT + 1),
+            MappedRegion::zeroed(metal_buffer_limit() + 1),
             Err(Error::BackendCapacity)
         ));
         assert!(matches!(
@@ -916,7 +921,7 @@ mod memory_budget_tests {
         ));
         let device = Device::system_default().unwrap();
         assert!(matches!(
-            MappedBuffer::zeroed::<u8>(&device, METAL_BUFFER_LIMIT + 1),
+            MappedBuffer::zeroed::<u8>(&device, metal_buffer_limit() + 1),
             Err(Error::BackendCapacity)
         ));
         assert!(matches!(

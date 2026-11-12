@@ -29,13 +29,16 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-/// The most bytes queued and unwritten: within the 1 GB budget, a few chunks' memo entries.
-const CAP_BYTES_DEFAULT: usize = 192 << 20;
+/// The most bytes queued and unwritten: a few chunks' memo entries, 192 MB of the default 1 GB budget, scaled with the
+/// budget (`rerail_accel::budget::share`, decision 0117).
+fn cap_bytes_default() -> usize {
+    rerail_accel::budget::share(192 << 20)
+}
 
 /// The queue's cap: 192 MB, or `RERAIL_WRITE_QUEUE_MB` (a measurement aid: how far behind the writer may fall).
 fn cap_bytes() -> usize {
     static CAP: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *CAP.get_or_init(|| std::env::var("RERAIL_WRITE_QUEUE_MB").ok().and_then(|v| v.parse::<usize>().ok()).map_or(CAP_BYTES_DEFAULT, |mb| mb << 20))
+    *CAP.get_or_init(|| std::env::var("RERAIL_WRITE_QUEUE_MB").ok().and_then(|v| v.parse::<usize>().ok()).map_or(cap_bytes_default(), |mb| mb << 20))
 }
 
 /// The first wait before a busy job runs again: a writer that held the store is often done at once.
@@ -146,10 +149,14 @@ enum Run {
 const BATCH_IDLE: Duration = Duration::from_millis(500);
 
 /// The bytes a batch holds before it commits: half the queue's cap, so the back-pressure is never waiting on it.
-const BATCH_BYTES: usize = CAP_BYTES_DEFAULT / 2;
+fn batch_bytes() -> usize {
+    cap_bytes_default() / 2
+}
 
 /// The bytes under which a job is queued past the cap (back-pressure holds only a job of this size or more).
-const SMALL_JOB: usize = CAP_BYTES_DEFAULT / 64;
+fn small_job() -> usize {
+    cap_bytes_default() / 64
+}
 
 struct Lane {
     tx: mpsc::Sender<Queued>,
@@ -299,7 +306,7 @@ impl ContentStore {
             let mut s = w.shared.state.lock().expect("the writer's state");
             // Back-pressure: past the cap, wait for the writer (never for an empty queue). A small job never waits:
             // its wait frees next to nothing, and holds the wave behind a large job the writer is writing.
-            let full = |s: &State| bytes >= SMALL_JOB && s.jobs > 0 && s.bytes + bytes > cap_bytes();
+            let full = |s: &State| bytes >= small_job() && s.jobs > 0 && s.bytes + bytes > cap_bytes();
             // A cache's write gives way at half the cap: the other half is for the writes that may not go missing
             // (frames, memo entries), so they find room rather than wait behind tapes.
             if droppable && s.jobs > 0 && s.bytes + bytes > cap_bytes() / 2 {
@@ -375,7 +382,7 @@ impl ContentStore {
                         continue;
                     }
                     // One transaction while jobs keep coming: it commits once the queue is idle for `BATCH_IDLE`, holds
-                    // `BATCH_BYTES`, or a job comes that runs alone (a wait for the writer sends one: `written`).
+                    // `batch_bytes`, or a job comes that runs alone (a wait for the writer sends one: `written`).
                     let mut batch = vec![first];
                     let run = |batch: &mut Vec<Queued>, next: &mut Option<Queued>| -> Vec<StoreResult<()>> {
                         let mut outcomes = Vec::new();
@@ -392,7 +399,7 @@ impl ContentStore {
                                 );
                                 w.shared.state.lock().expect("the writer's state").by_what.entry(*what).or_default().2 += thread_cpu() - c0;
                             }
-                            if bytes >= BATCH_BYTES {
+                            if bytes >= batch_bytes() {
                                 return outcomes;
                             }
                             match rx.recv_timeout(BATCH_IDLE) {
@@ -650,7 +657,7 @@ mod tests {
         let ran = Arc::new(Mutex::new(0));
         let r = Arc::clone(&ran);
         let t = std::time::Instant::now();
-        let queued = store.write_back_unless_full("cache", SMALL_JOB, vec![], Box::new(move |_| {
+        let queued = store.write_back_unless_full("cache", small_job(), vec![], Box::new(move |_| {
             *r.lock().unwrap() += 1;
             Ok(())
         }));
@@ -658,9 +665,9 @@ mod tests {
         open.send(()).unwrap();
         store.written().unwrap();
         assert_eq!(*ran.lock().unwrap(), 0, "a dropped write never runs");
-        assert_eq!(store.dropped(), (1, SMALL_JOB));
+        assert_eq!(store.dropped(), (1, small_job()));
         let r = Arc::clone(&ran);
-        assert!(store.write_back_unless_full("cache", SMALL_JOB, vec![], Box::new(move |_| {
+        assert!(store.write_back_unless_full("cache", small_job(), vec![], Box::new(move |_| {
             *r.lock().unwrap() += 1;
             Ok(())
         })));

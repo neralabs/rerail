@@ -255,6 +255,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     // The report.
     let mut r = String::new();
     r.push_str(header);
+    let _ = writeln!(r, "Memory budgets (decision 0117): overall {} MB, Metal {} MB on top of it", rerail_accel::budget::memory() >> 20, rerail_accel::budget::metal() >> 20);
     cpu_by_thread(&mut r, &threads);
     let (analysis_text, analysis_json) = analysis_report::report(&state);
     std::fs::write(dir.join("analysis.txt"), &analysis_text)?;

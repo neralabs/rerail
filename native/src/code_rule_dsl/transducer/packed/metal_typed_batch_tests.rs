@@ -534,7 +534,7 @@ fn unrelated_program_operators_do_not_expand_a_producers_workspace_or_launch_flo
     );
 }
 
-#[ignore = "O83: G's grid-executor copy, written for the 2 GB device pool; its batch does not fit METAL_BUFFER_LIMIT (256 MiB since list step 13). The executor is superseded (decision 0028, O33) and stays until list step 31"]#[test]
+#[ignore = "O83: G's grid-executor copy, written for the 2 GB device pool; its batch does not fit metal_buffer_limit() (256 MiB since list step 13). The executor is superseded (decision 0028, O33) and stays until list step 31"]#[test]
 fn predicate_execution_retires_before_transform_workspace_allocation() {
     let roots = 16_384u32;
     let captures = 64u32;
@@ -831,7 +831,7 @@ fn typed_outputs_preserve_transform_order_and_complete_values_within_twenty_eigh
     }
 }
 
-#[ignore = "O83: G's grid-executor copy, written for the 2 GB device pool; its batch does not fit METAL_BUFFER_LIMIT (256 MiB since list step 13). The executor is superseded (decision 0028, O33) and stays until list step 31"]#[test]
+#[ignore = "O83: G's grid-executor copy, written for the 2 GB device pool; its batch does not fit metal_buffer_limit() (256 MiB since list step 13). The executor is superseded (decision 0028, O33) and stays until list step 31"]#[test]
 fn completed_typed_producers_seal_before_later_producers_need_output_storage() {
     let count = 65_536u32;
     let captures = 32u32;

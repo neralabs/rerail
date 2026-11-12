@@ -2142,9 +2142,15 @@ impl Batch {
 }
 
 impl Drop for Batch {
-    /// Work still in flight holds its buffers: wait for it before they return to the pool.
+    /// Work still in flight holds its buffers: wait for it before they return to the pool. Work encoded and never
+    /// committed is dropped uncommitted (nothing reads it, and nothing ran it): committing it here ran the launch
+    /// guard, whose thread-local a batch dropped in a thread's teardown (a wave left open) can no longer read.
     fn drop(&mut self) {
-        let _ = self.finish();
+        drop(self.pass.take());
+        drop(self.open.take());
+        for s in self.committed.drain(..) {
+            s.wait();
+        }
     }
 }
 

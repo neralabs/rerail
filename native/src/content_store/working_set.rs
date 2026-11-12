@@ -9,14 +9,16 @@
 //!   tape (`TapePrefilter::kinds`). Terms and uncovered nodes are not here: the store-wide residue
 //!   cap decides them in SQLite.
 //!
-//! Entries are evicted oldest first past `CAP_BYTES`, so the set stays a bounded part of the
+//! Entries are evicted oldest first past `cap_bytes`, so the set stays a bounded part of the
 //! process's budget.
 use std::any::Any;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
-/// The working set's bytes (estimated), within the 500 MB process budget.
-const CAP_BYTES: usize = 96 << 20;
+/// The working set's bytes (estimated): 96 MB of the default 1 GB budget, scaled with it (decision 0117).
+fn cap_bytes() -> usize {
+    rerail_accel::budget::share(96 << 20)
+}
 
 /// A tape's kind image: its language, node count and per kind atom its postings, by atom.
 #[derive(Debug)]
@@ -62,7 +64,7 @@ impl WorkingSet {
         inner.entries.insert(key, (entry, bytes));
         inner.order.push_back(key);
         inner.bytes += bytes;
-        while inner.bytes > CAP_BYTES {
+        while inner.bytes > cap_bytes() {
             let Some(oldest) = inner.order.pop_front() else { break };
             if let Some((_, bytes)) = inner.entries.remove(&oldest) {
                 inner.bytes -= bytes;
@@ -123,7 +125,7 @@ mod tests {
         let image = set.kinds(1).unwrap();
         assert_eq!((image.lang, image.nodes, image.postings(9)), (3, 10, Some(&[0_u8][..])));
         assert!(image.postings(6).is_none());
-        set.put_tape([7; 32], Arc::new(42_u32), CAP_BYTES);
+        set.put_tape([7; 32], Arc::new(42_u32), cap_bytes());
         assert!(set.kinds(1).is_none(), "the oldest entry goes past the cap");
         assert_eq!(*set.tape([7; 32]).unwrap().downcast::<u32>().unwrap(), 42);
         set.forget_kinds(1);

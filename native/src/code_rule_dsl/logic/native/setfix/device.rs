@@ -39,19 +39,20 @@ pub use crate::code_rule_dsl::logic::device::{Report};
 
 /// The most rows a table is given before its stage has run once (a guess; an overflow runs it again exactly).
 const GUESS_MAX: usize = 1 << 21;
-/// The device's buffers share one budget of 256 MB in the process (`metal_backend`'s ledger), with the buffer pool's
-/// 64 MB and the other lanes. The device joins keep within about half of it:
+/// The device's buffers share the Metal budget (`metal_buffer_limit`, 512 MB by default; decision 0117) with the
+/// buffer pool and the other lanes. The device joins keep within about a quarter of it at the default (their sizes
+/// below are those at 512 MB, scaled with the budget, `metal_share`):
 /// the most bytes one binding table may take: past it the rule is refused at run time and runs on the CPU, named;
-const TABLE_MAX: usize = 48 << 20;
+fn table_max() -> usize { rerail_accel::budget::metal_share(48 << 20) }
 /// the most bytes one submission's tables may take: past it the rules after go into the next submission;
-const BATCH_MAX: usize = 64 << 20;
+fn batch_max() -> usize { rerail_accel::budget::metal_share(64 << 20) }
 /// The largest text arena a batch runs again with; past it, the stratum's texts are made on the host.
-const ARENA_MAX: usize = 64 << 20;
+fn arena_max() -> usize { rerail_accel::budget::metal_share(64 << 20) }
 /// the most bytes the relations kept on the device may take on a thread;
-const RESIDENT_MAX: usize = 80 << 20;
+fn resident_max() -> usize { rerail_accel::budget::metal_share(80 << 20) }
 /// the budget a submission leaves for its stages run again after an overflow: with less left, the rules after go
 /// into the next submission.
-const HEADROOM: usize = 48 << 20;
+fn headroom() -> usize { rerail_accel::budget::metal_share(48 << 20) }
 
 /// How a stage reads.
 #[derive(Clone)]
@@ -1036,10 +1037,10 @@ impl Resident {
     fn trim(&mut self, room: usize) {
         self.entries.retain(|e| e.rel.strong_count() > 0);
         self.unions.retain(|(cols, _, _)| cols.iter().all(|(r, _)| r.strong_count() > 0));
-        if self.bytes() + room > RESIDENT_MAX {
+        if self.bytes() + room > resident_max() {
             self.unions.clear();
         }
-        while self.bytes() + room > RESIDENT_MAX && !self.entries.is_empty() {
+        while self.bytes() + room > resident_max() && !self.entries.is_empty() {
             let at = self.entries.iter().enumerate().min_by_key(|(_, e)| e.used).map(|(k, _)| k).expect("an entry");
             self.entries.swap_remove(at);
         }
@@ -1107,7 +1108,7 @@ fn resident(rel: &Arc<InRel>, cols: &[usize], batch: &mut mj::Batch, rep: &mut R
                 res.trim(8 * k * n);
                 // The process's device budget short (the syntax side's tapes hold most of it): every relation kept
                 // and the pool's free buffers give theirs back first.
-                if mj::device_bytes_left() < 8 * k * n + HEADROOM {
+                if mj::device_bytes_left() < 8 * k * n + headroom() {
                     res.entries.clear();
                     res.bytes = 0;
                     mj::give_back();
@@ -1447,7 +1448,7 @@ impl<'p> Run<'p> {
                         self.caps[o] = self.guess(k, cap_in, right.map_or(0, |r| r.0.rows));
                     }
                     let cap = self.caps[o];
-                    if 8 * self.plan.nslots.max(1) * cap > TABLE_MAX {
+                    if 8 * self.plan.nslots.max(1) * cap > table_max() {
                         return Err(format!("a binding table of {cap} rows past the device's budget"));
                     }
                     let out = mj::Table::new(self.plan.nslots, cap).map_err(|e| format!("{e:?}: a binding table of {cap} rows, {} slots", self.plan.nslots))?;
@@ -1508,7 +1509,7 @@ impl<'p> Run<'p> {
             return Some("lower of a name past ASCII (Unicode's mapping is the host's)".to_owned());
         }
         if self.arena_full() {
-            return Some(format!("its texts past the device's text arena of {ARENA_MAX} bytes"));
+            return Some(format!("its texts past the device's text arena of {} bytes", arena_max()));
         }
         None
     }
@@ -1534,7 +1535,7 @@ impl<'p> Run<'p> {
 
 /// Runs the seed joins `rules` (each: its plan, its rule, its head relation) on the device, their head rows into
 /// `fresh` as the CPU's run would add them. Returns each rule's head rows (before the store's set). The rules go in
-/// as few submissions as their tables' space allows (`BATCH_MAX`): one, for most strata.
+/// as few submissions as their tables' space allows (`batch_max`): one, for most strata.
 pub(in crate::code_rule_dsl) fn run(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
     on_lane("stratum joins", rules.len(), || run_here(rules, store, names, fresh))
 }
@@ -1606,7 +1607,7 @@ pub(in crate::code_rule_dsl) fn submit(rules: &[(&Plan, &JoinRule, usize)], name
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device joins (to the wave)".into());
     // A wave holds its strata's buffers to the level's end: with the budget's headroom gone (the wave's own leases
     // count, `device_bytes_left`), this stratum runs in a submission of its own, whose buffers go back when it ends.
-    if mj::device_bytes_left() < HEADROOM {
+    if mj::device_bytes_left() < headroom() {
         crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "strata run apart: the wave's budget was spent", 1);
         return Ok(None);
     }
@@ -1682,11 +1683,16 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, f
 
 /// The first rules of `rules` that fit one submission's space, each encoded into `batch`.
 fn encode_runs(rules: &[(&Plan, &JoinRule, usize)], batch: &mut mj::Batch, rep: &mut Report, names: &Interner) -> Result<Vec<Run<'static>>, String> {
+    // A lease past the Metal budget is refused here (decision 0117): the stratum then runs on the CPU, named.
+    rerail_accel::gpu::shared::within_budget(|| encode_runs_bounded(rules, batch, rep, names))
+}
+
+fn encode_runs_bounded(rules: &[(&Plan, &JoinRule, usize)], batch: &mut mj::Batch, rep: &mut Report, names: &Interner) -> Result<Vec<Run<'static>>, String> {
     let _h = crate::code_rule_dsl::logic::lanes::prof::host("device join (decision 0095)", "encode: uploads, sorts, stages");
     let mut runs: Vec<Run<'static>> = Vec::with_capacity(rules.len());
     let mut bytes = 0;
     for (plan, _, _) in rules {
-        if !runs.is_empty() && (bytes > BATCH_MAX || mj::device_bytes_left() < HEADROOM) {
+        if !runs.is_empty() && (bytes > batch_max() || mj::device_bytes_left() < headroom()) {
             break;
         }
         let mut r = match Run::new(plan) {
@@ -1734,7 +1740,7 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
             let r = &mut runs[k];
             let over = r.overflow();
             let wanted = r.arena.as_ref().map_or(0, |a| a.wanted());
-            let full = r.arena_full() && wanted <= ARENA_MAX;
+            let full = r.arena_full() && wanted <= arena_max();
             if over.is_none() && !full {
                 continue;
             }
