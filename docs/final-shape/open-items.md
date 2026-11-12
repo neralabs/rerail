@@ -3707,3 +3707,25 @@ Without `test-hooks` its own facade fails (`fixtures`, `p_table`, `drop_unread_c
 compiled only there.
 
 **Closure:** the target builds, and `base_tests` runs (O-p0-stats-flake's 20 runs).
+
+## O-phase0-store-state. Phase 0's include graph depends on what the store already holds
+
+Each test now starts from a copy of a store template that already holds the
+library's facts (decision 0118). In such a store, two runs of phase 0 on the
+same seed disagree:
+
+```text
+seed: the text of python/conditions.rr (its #include lines)
+first run   (graph):  python/env.rr includes core.rr at -1 (the implicit include)
+second run  (derive): python/env.rr has no includes; the absent candidates differ
+module digests: equal
+```
+
+On an empty store the two runs agree, so the derivation depends on the facts
+left in the store by earlier runs. That is maintenance of phase 0's own
+relations, not the observer: the module digests match.
+
+`bootstrap_resolves_as_the_builtin_reader_does` is ignored until this is fixed.
+It passes with `RERAIL_TAPE_CACHE` pointing at an empty store. Next step: find
+whether the first or the second run is wrong (compare both with a run on an
+empty store), then fix the rule or the maintenance that loses the edge.
