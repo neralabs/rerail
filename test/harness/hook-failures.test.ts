@@ -13,8 +13,9 @@ vi.mock("../../src/runtime/daemon-control.js", async () => {
 });
 
 import { HOOK_FAILURES_FILE, hookFailureLines, readHookFailures, recordHookFailure, type HookFailure } from "../../src/harness/hook-failures.js";
-import { DaemonUnreachableError, runHostHook } from "../../src/harness/hook-host.js";
+import { DaemonUnreachableError, runHostHook, type HookOptions, type HookPayload } from "../../src/harness/hook-host.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+import { startTestRepository } from "../support/started-repository.js";
 
 const homes: string[] = [];
 async function home(): Promise<string> {
@@ -28,6 +29,19 @@ afterEach(async () => {
   autostart.calls = 0;
   await Promise.all(homes.splice(0).map(path => removeFolder(path)));
 });
+
+/** Session `s`'s event `name` at `workspace`. */
+const payload = (workspace: string, name: string, startsSession = false): HookPayload => ({
+  workspace: () => workspace,
+  event: () => ({ sessionId: "s", name, startsSession }),
+});
+
+/** Options whose database has Rerail started at `rerailHome`, so the start check lets the event through. */
+function started(rerailHome: string, more: HookOptions = {}): HookOptions {
+  const databasePath = join(rerailHome, "rerail.sqlite");
+  startTestRepository(rerailHome, databasePath);
+  return { storageRoot: join(rerailHome, "sessions"), databasePath, ...more };
+}
 
 const failure = (at: number, event = "MessageDisplay"): HookFailure => ({
   at, host: "claude-code", event, agent: "claude-code_2-1-311_harness", rerail: "0.1.3", reason: "Claude hook omitted index",
@@ -78,7 +92,7 @@ describe("a hook that cannot record its event", () => {
     // A person's session, where hooks may start a daemon; the test run turns that off everywhere else.
     vi.stubEnv("RERAIL_AUTOSTART", "1");
     const handle = vi.fn(async () => ({}));
-    expect(await runHostHook("claude-code", rerailHome, "s", false, { storageRoot: join(rerailHome, "sessions") }, handle, "PostToolUse")).toEqual({});
+    expect(await runHostHook("claude-code", payload(rerailHome, "PostToolUse"), started(rerailHome), handle)).toEqual({});
     expect(handle).not.toHaveBeenCalled();
     expect(autostart.calls).toBe(1);
     expect(readHookFailures(rerailHome, 0)).toEqual([
@@ -112,8 +126,8 @@ describe("a hook that cannot record its event", () => {
       }));
       const handle = vi.fn(async () => ({}));
       // A deadline already reached: the hook gives up after the first probe's 2 s instead of waiting 10 s more.
-      const options = { storageRoot: join(rerailHome, "sessions"), daemonDeadline: Date.now() };
-      expect(await runHostHook("claude-code", rerailHome, "s", false, options, handle, "PreToolUse")).toEqual({});
+      const options = started(rerailHome, { daemonDeadline: Date.now() });
+      expect(await runHostHook("claude-code", payload(rerailHome, "PreToolUse"), options, handle)).toEqual({});
       expect(handle).not.toHaveBeenCalled();
       // A start finds the same daemon and refuses to replace it: the background start would cost a process and do nothing.
       expect(autostart.calls).toBe(0);
@@ -137,7 +151,7 @@ describe("a hook that cannot record its event", () => {
     vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
     vi.stubEnv("RERAIL_AUTOSTART", "0");
     const handle = vi.fn(async () => ({}));
-    const run = runHostHook("codex", rerailHome, "s", startsSession, { storageRoot: join(rerailHome, "sessions") }, handle, "SessionStart");
+    const run = runHostHook("codex", payload(rerailHome, "SessionStart", startsSession), started(rerailHome), handle);
     if (startsSession) await expect(run).rejects.toBeInstanceOf(DaemonUnreachableError);
     else expect(await run).toEqual({});
     expect(handle).not.toHaveBeenCalled();
@@ -148,8 +162,8 @@ describe("a hook that cannot record its event", () => {
   it("logs a failure inside the hook under the event's own name, then fails as before", async () => {
     const rerailHome = await home();
     vi.stubEnv("RERAIL_HOME", rerailHome);
-    const options = { storageRoot: join(rerailHome, "sessions"), databasePath: join(rerailHome, "rerail.sqlite"), embedder: { fingerprint: () => ({ modelId: "t", revision: "1", dimensions: 2, weightsSha256: "t", tokenizerSha256: "t", kernelFormatVersion: 1 }), embed: async (texts: readonly string[]) => texts.map(() => new Float32Array([1, 0])) } };
-    await expect(runHostHook("claude-code", rerailHome, "s", false, options, async () => { throw new Error("Claude hook omitted index"); }, "MessageDisplay"))
+    const options = started(rerailHome, { embedder: { fingerprint: () => ({ modelId: "t", revision: "1", dimensions: 2, weightsSha256: "t", tokenizerSha256: "t", kernelFormatVersion: 1 }), embed: async (texts: readonly string[]) => texts.map(() => new Float32Array([1, 0])) } });
+    await expect(runHostHook("claude-code", payload(rerailHome, "MessageDisplay"), options, async () => { throw new Error("Claude hook omitted index"); }))
       .rejects.toThrow("Claude hook omitted index");
     expect(readHookFailures(rerailHome, 0)).toEqual([expect.objectContaining({ event: "MessageDisplay", reason: "Claude hook omitted index" })]);
   });

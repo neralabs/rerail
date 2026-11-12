@@ -6,19 +6,28 @@ import {
   type CursorHookOutput,
 } from "./cursor-hook-adapter.js";
 import { serveHookEntry } from "../../harness/hook-adapter.js";
-import { hookRerailStarted, runHostHook, withDaemonDeadline, type HookOptions } from "../../harness/hook-host.js";
+import { runHostHook, type HookOptions, type HookPayload } from "../../harness/hook-host.js";
 
 export { CURSOR_FOLLOWUP_LOOP_LIMIT, cursorHookEvent, cursorHookOutput, handleCursorEvent } from "./cursor-hook-adapter.js";
+
+/** A Cursor hook's payload: its workspace, then its session and the event's name. */
+function cursorPayload(input: CursorHookInput): HookPayload {
+  return {
+    workspace: () => cursorWorkspace(input),
+    event: () => ({
+      sessionId: cursorSession(input).sessionId,
+      name: String(input.hook_event_name),
+      startsSession: input.hook_event_name === "sessionStart",
+    }),
+  };
+}
 
 export async function runCursorHook(
   input: CursorHookInput,
   options: HookOptions = {},
 ): Promise<CursorHookOutput> {
-  const waiting = withDaemonDeadline(options);
-  const workspace = cursorWorkspace(input);
-  if (!await hookRerailStarted("cursor", workspace, options.databasePath)) return {};
-  return runHostHook("cursor", workspace, cursorSession(input).sessionId, input.hook_event_name === "sessionStart", waiting, (runtime, storageRoot, lock) =>
-    handleCursorEvent(input, runtime, storageRoot, lock), String(input.hook_event_name));
+  return runHostHook("cursor", cursorPayload(input), options, (runtime, storageRoot, lock) =>
+    handleCursorEvent(input, runtime, storageRoot, lock));
 }
 
 // `serveHook` answers `{}` and exits 0 whatever fails, as Rerail does where it is not started, so Cursor carries on: a

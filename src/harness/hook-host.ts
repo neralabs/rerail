@@ -77,18 +77,41 @@ export interface HookOptions {
   /** Test seam: replaces the native model so hooks can run where the addon is absent. */
   embedder?: SemanticEmbedder;
   /**
-   * Epoch ms at which the hook stops waiting for a busy daemon (`withDaemonDeadline`); without one it waits the 2 s probe
-   * and 10 s more from the endpoint lookup on.
+   * Epoch ms at which the hook stops waiting for a busy daemon; `runHostHook` sets it `HOOK_DAEMON_WAIT_MS` after the
+   * event arrives unless the caller gives one.
    */
   daemonDeadline?: number;
 }
 
+/** One event as a coding agent's hook reads it from its payload. */
+export interface HookEvent {
+  /** The session, as the coding agent names it. */
+  sessionId: string;
+  /** The event, as the coding agent names it: what the hook failure log says of a failure. */
+  name: string;
+  /** Whether the event starts a session, the one event that waits for a daemon to start. */
+  startsSession: boolean;
+}
+
 /**
- * `options` with the daemon deadline `HOOK_DAEMON_WAIT_MS` from now. A host's hook takes it as the event arrives, so the
- * start check's read of the daemon (`hookRerailStarted`, up to 2 s) counts toward the one wait: a busy daemon held a
- * hook 2 s for the start check and then 12 s more for the endpoint lookup.
+ * How a coding agent's hook reads its payload, in two steps: the checkout first, which is all the start check needs,
+ * then the event, read only where Rerail is started. A payload where Rerail is not started is never read further, so
+ * what it lacks fails no hook there.
  */
-export function withDaemonDeadline(options: HookOptions): HookOptions {
+export interface HookPayload {
+  workspace(): string;
+  event(): HookEvent;
+}
+
+/** What a coding agent's hook does with its event once the daemon, or a local test runtime, takes it. */
+export type HookHandler = (runtime: RerailEventLoop, storageRoot: string, lock: SessionLock) => Promise<HookOutput>;
+
+/**
+ * `options` with the daemon deadline `HOOK_DAEMON_WAIT_MS` from now. It is taken as the event arrives, so the start
+ * check's read of the daemon (`hookRerailStarted`, up to 2 s) counts toward the one wait: a busy daemon held a hook 2 s
+ * for the start check and then 12 s more for the endpoint lookup.
+ */
+function withDaemonDeadline(options: HookOptions): HookOptions {
   return { daemonDeadline: Date.now() + HOOK_DAEMON_WAIT_MS, ...options };
 }
 
@@ -116,28 +139,26 @@ function autostartTurnedOff(error: unknown): boolean {
 }
 
 /**
- * Runs a normal package hook against the engine service, or an explicit local test runtime. Only the hook that starts
- * a session (`startsSession`) waits for a daemon to start; any other hook that finds none running answers `{}` at
- * once, so a daemon that is down never stalls a tool call or shows as a hook error (design N11), records the lost event
- * in the hook failure log and starts a daemon in the background. A daemon that cannot be reached throws
- * `DaemonUnreachableError`, so a coding agent without a footer can say so. Every failure, `event` named as the coding
- * agent names it, goes to the hook failure log (`hook-failures.ts`), which `rerail status` reads. Under
- * `RERAIL_AUTOSTART=0` a hook that finds no daemon logs nothing and starts none, since the person runs it themselves.
+ * Runs one event of a coding agent's hook against the engine service, or an explicit local test runtime: it takes the
+ * daemon deadline as the event arrives, reads the checkout from `payload`, answers `{}` where Rerail is not started,
+ * and only then reads the event. Only the hook that starts a session (`startsSession`) waits for a daemon to start;
+ * any other hook that finds none running answers `{}` at once, so a daemon that is down never stalls a tool call or
+ * shows as a hook error (design N11), records the lost event in the hook failure log and starts a daemon in the
+ * background. A daemon that cannot be reached throws `DaemonUnreachableError`, so a coding agent without a footer can
+ * say so. Every failure once the event is read, named as the coding agent names the event, goes to the hook failure
+ * log (`hook-failures.ts`), which `rerail status` reads. Under `RERAIL_AUTOSTART=0` a hook that finds no daemon logs
+ * nothing and starts none, since the person runs it themselves.
  */
-export async function runHostHook(
-  host: HookHost,
-  workspace: string,
-  sessionId: string,
-  startsSession: boolean,
-  options: HookOptions,
-  handle: (runtime: RerailEventLoop, storageRoot: string, lock: SessionLock) => Promise<HookOutput>,
-  event = "unknown",
-): Promise<HookOutput> {
+export async function runHostHook(host: HookHost, payload: HookPayload, options: HookOptions, handle: HookHandler): Promise<HookOutput> {
+  const waiting = withDaemonDeadline(options);
+  const workspace = payload.workspace();
+  if (!await hookRerailStarted(host, workspace, options.databasePath)) return {};
+  const event = payload.event();
   try {
-    return await runHostHookOnce(host, workspace, sessionId, startsSession, options, handle, event);
+    return await runHostHookOnce(host, workspace, event, waiting, handle);
   } catch (error) {
     // The coding agent keeps a hook's stderr out of the session; the failure log is where `rerail status` finds it.
-    if (!autostartTurnedOff(error)) recordHookFailure({ host, event, reason: error instanceof Error ? error.message : String(error) });
+    if (!autostartTurnedOff(error)) recordHookFailure({ host, event: event.name, reason: error instanceof Error ? error.message : String(error) });
     throw error;
   }
 }
@@ -145,11 +166,9 @@ export async function runHostHook(
 async function runHostHookOnce(
   host: HookHost,
   workspace: string,
-  sessionId: string,
-  startsSession: boolean,
+  { sessionId, name: event, startsSession }: HookEvent,
   options: HookOptions,
-  handle: (runtime: RerailEventLoop, storageRoot: string, lock: SessionLock) => Promise<HookOutput>,
-  event: string,
+  handle: HookHandler,
 ): Promise<HookOutput> {
   const { storageRoot, modelPath } = resolveSessionPaths(workspace, options);
   const databasePath = options.databasePath ?? defaultRerailDatabasePath();
