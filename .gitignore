@@ -51,3 +51,7 @@ packs/*/upstream/*/authored/
 
 # Written by prepack, removed by postpack (scripts/release/shrinkwrap-pack.mjs); a failed pack leaves it behind.
 /npm-shrinkwrap.json
+
+# The parser's code as Rust, written by `cargo run -p rerail-rr-aot-gen`.
+native/crates/rr_aot/src/tier1_aot.rs
+native/crates/rr_aot/src/tier2_aot.rs

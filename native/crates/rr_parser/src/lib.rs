@@ -254,17 +254,37 @@ pub mod tests {
         assert!(stream::validate(&bad).is_err(), "a switch's words out of order");
         let states = c.machine.lines().filter(|l| l.starts_with("state ")).count();
         let arms = c.machine.lines().filter(|l| l.starts_with("arm ")).count();
-        assert!(states <= 371 && arms <= 3068 && c.program.words.len() <= 8860, "{states} states, {arms} arms, {} words", c.program.words.len());
+        // A call of a nested choice with a field is a call where it can be (the field set where it
+        // returns): the choice's level switches on its first token itself, as the lean parser's
+        // function does, so more states and arms (371 and 3,068 before). Each rule keeps its own
+        // code, as the lean parser's methods do (4,841 words when rules shared alike code), and
+        // a term's rest (`more`) is a call: fewer states and arms. A callee that begins with a
+        // mark or a merge is called too, at its start (375 states, 3,064 arms, 5,385 words before).
+        assert!(states <= 380 && arms <= 3076 && c.program.words.len() <= 5271, "{states} states, {arms} arms, {} words", c.program.words.len());
         let native = native_ir::lower(&c.program, 0, 0).expect("lowers");
         let cut = native_cpu_clusters::by_rules(&native);
         assert_eq!((cut.count as usize, cut.calls), (rules.len(), true), "a function a rule");
         assert_eq!(c.parser.tier2.clusters, rules.len(), "as compiled");
-        // A jump from one rule into another, not a call's: refused.
-        let mut bad = c.program.clone();
-        let (from, into) = (usize::from(rules[1]), rules[2]);
-        let goto = (0..bad.words.len()).find(|&pc| pc >= from && rerail_compiler::program::split(bad.words[pc]).0 == rerail_compiler::program::GOTO && rerail_compiler::program::split(bad.words[pc - 1]).0 != rerail_compiler::program::PUSH).expect("a rule's own jump");
-        bad.words[goto] = rerail_compiler::program::word(rerail_compiler::program::GOTO, 0, into);
-        assert!(stream::validate_rules(&bad).is_err(), "a jump across rules");
+        // The calls open counted by the machine's stack, as the lean parser's: no `RETURN` runs
+        // with no call open, and no `ACCEPT` within one, so neither is checked.
+        assert!(rerail_compiler::native_cpu_stream::calls_on_stack(&native), "the calls open on the stack");
+        // A jump from one rule into another, not a call's: refused, into a later rule or an
+        // earlier one. A function is entered by calls alone, as the lean parser's methods are.
+        use rerail_compiler::program::{GOTO, PUSH, split, word};
+        let own_jump = |p: &rerail_compiler::program::Words, from: usize| (from..p.words.len()).find(|&pc| split(p.words[pc]).0 == GOTO && split(p.words[pc - 1]).0 != PUSH).expect("a rule's own jump");
+        // Every call enters its callee's function at its one entry, the rule's first place, as
+        // a lean parser's method is entered at its top: a flag the call runs with is its
+        // `PUSH`'s, a mark its caller's state keeps for it.
+        let firsts: std::collections::HashSet<u16> = rules.iter().copied().collect();
+        let w = &c.program.words;
+        let mid: Vec<usize> = (1..w.len()).filter(|&pc| split(w[pc - 1]).0 == PUSH && split(w[pc]).0 == GOTO && !firsts.contains(&split(w[pc]).2)).collect();
+        assert!(mid.is_empty(), "calls into the middle of a function: {mid:?}");
+        for (from, into) in [(rules[1], rules[2]), (rules[2], rules[1] + 2)] {
+            let mut bad = c.program.clone();
+            let goto = own_jump(&bad, usize::from(from));
+            bad.words[goto] = word(GOTO, 0, into);
+            assert!(stream::validate_rules(&bad).is_err(), "a jump across rules, into {into}");
+        }
         // The machine: no rules. Each shape writes the engine's tape on the samples.
         let m = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
         assert!(m.program.rules.is_empty());
@@ -358,6 +378,7 @@ pub mod tests {
             ("lib.rs", "fn metal_tapes("),
             ("../../compiler/src/native_cpu_block.rs", "pub fn new(program: &CompiledBlock, files"),
             ("../../compiler/src/native_cpu_block.rs", "pub fn call(&mut self, program: &CompiledBlock)"),
+            ("../../compiler/src/native_cpu_block.rs", "fn run(&mut self, entry: Entry)"),
         ];
         let walks = [".iter(", ".iter_mut(", ".into_iter(", ".chunks", ".windows(", ".flatten(", ".map(", ".fold(", ".for_each(", ".bytes()", ".chars()", ".collect", ".position(", ".find(", ".any(", ".all(", ".filter(", ".sum(", ".count()", "while ", "loop {", "nodes()"];
         let loops_allowed = ["for file in files", "for entry in &program.entries"];
@@ -948,6 +969,71 @@ pub mod tests {
     /// --ignored`). `RR_FORM`: `lean` (the lean parser whole, by default), `lexer` (its lexer),
     /// `tier1` or `tier2` (the compiled grammar's, on buffers made before). Build as
     /// `rr_against_rust` says.
+    /// Where tier 2's work goes, by opcode: each word's runs over the corpus (the interpreter's,
+    /// `run_seen`) times its machine code in its rule's function (`word_bytes`, every path of
+    /// it: an upper bound), and the runs alone. The functions the words call are not in it.
+    #[test]
+    #[ignore = "a measurement: run by hand"]
+    fn tier2_work_by_opcode() {
+        use rerail_compiler::program::split;
+        let c = crate::compiled().expect("compiles");
+        let program = &c.program;
+        let bytes = &c.parser.tier2.word_bytes;
+        let mut runs = vec![0u64; program.words.len()];
+        let mut tokens = 0u64;
+        for src in corpus() {
+            let run = program.block_programs[0].run(src.as_bytes());
+            tokens += run.codes.len() as u64;
+            let _ = rerail_compiler::stream::run_seen(program, src.as_bytes(), &run, &mut |pc| runs[pc] += 1);
+        }
+        let mut by: std::collections::BTreeMap<(u8, u8), (u64, u64)> = Default::default();
+        for (pc, &n) in runs.iter().enumerate() {
+            let (op, mode, _) = split(program.words[pc]);
+            let e = by.entry((op, if op == rerail_compiler::program::MARK { 0 } else { mode })).or_default();
+            e.0 += n;
+            e.1 += n * u64::from(bytes.get(pc).copied().unwrap_or(0) / 4);
+        }
+        // The switches run, by their ways: distinct targets but the refusal and the end.
+        let mut ways: std::collections::BTreeMap<usize, (u64, u64)> = Default::default();
+        for (pc, &n) in runs.iter().enumerate() {
+            let (op, _, t) = split(program.words[pc]);
+            if op != rerail_compiler::program::SWITCH {
+                continue;
+            }
+            let s = &program.switches[usize::from(t)];
+            let mut d: Vec<u16> = s.targets.iter().chain(s.words.iter().map(|w| &w.1)).copied().filter(|&x| x != rerail_compiler::stream_ir::REFUSE && x != s.end).collect();
+            d.sort_unstable();
+            d.dedup();
+            let e = ways.entry(d.len()).or_default();
+            e.0 += n;
+            e.1 += n * u64::from(bytes.get(pc).copied().unwrap_or(0) / 4);
+        }
+        // The switches run most: each kind's target (by the records' kinds), and the words'.
+        let kinds = &program.block_programs[0].records.as_ref().expect("records").kinds;
+        let mut top: Vec<(u64, usize)> = runs.iter().enumerate().filter(|&(pc, _)| split(program.words[pc]).0 == rerail_compiler::program::SWITCH).map(|(pc, &n)| (n, pc)).collect();
+        top.sort_unstable_by(|a, b| b.cmp(a));
+        for &(n, pc) in top.iter().take(6) {
+            let s = &program.switches[usize::from(split(program.words[pc]).2)];
+            let mut by_kind: std::collections::BTreeMap<u8, u16> = Default::default();
+            for (b, &t) in s.targets.iter().enumerate() {
+                by_kind.insert(kinds[b], t);
+            }
+            let show = |t: u16| if t == rerail_compiler::stream_ir::REFUSE { "R".to_string() } else if t == s.end { "E".to_string() } else { format!("@{t}") };
+            let line: Vec<String> = by_kind.iter().map(|(k, &t)| format!("{k}:{}", show(t))).collect();
+            let words: Vec<String> = s.words.iter().map(|&(w, t)| format!("s{w}:{}", show(t))).collect();
+            eprintln!("  switch @{pc} runs {:.2} a token, {} bytes: {} | words {}", n as f64 / tokens as f64, bytes[pc], line.join(" "), words.join(" "));
+        }
+        for (w, (n, ins)) in &ways {
+            eprintln!("  switches of {w} ways: runs {:.2} a token, at most {:.1} instructions a run", *n as f64 / tokens as f64, *ins as f64 / (*n).max(1) as f64);
+        }
+        let mut rows: Vec<_> = by.into_iter().collect();
+        rows.sort_by_key(|r| std::cmp::Reverse(r.1.1));
+        eprintln!("{tokens} tokens");
+        for ((op, mode), (n, ins)) in rows.iter().take(25) {
+            eprintln!("  op {op:#04x} m={mode:<3} runs {:>6.2} a token, instructions (at most) {:>6.1} a token", *n as f64 / tokens as f64, *ins as f64 / tokens as f64);
+        }
+    }
+
     #[test]
     #[ignore = "a profile's load: run by hand"]
     fn rr_profile_loop() {
@@ -966,6 +1052,10 @@ pub mod tests {
             // Each word's Cranelift instructions as lowered, a line a place.
             let insts: String = p.tier2.word_insts.iter().map(|n| format!("{n}\n")).collect();
             std::fs::write(format!("{dir}/tier2.insts"), insts).expect("writes");
+            let bytes: String = p.tier2.word_bytes.iter().map(|n| format!("{n}\n")).collect();
+            std::fs::write(format!("{dir}/tier2.bytes"), bytes).expect("writes");
+            let ranges: String = p.tier2.word_ranges.iter().map(|(pc, a, b)| format!("{pc} {a} {b}\n")).collect();
+            std::fs::write(format!("{dir}/tier2.ranges"), ranges).expect("writes");
             std::fs::write(format!("{dir}/tier2.machine"), &c.machine).expect("writes");
         }
         let mut batches: Vec<_> = ours.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()])).collect();

@@ -118,7 +118,7 @@ fn shared_arms_are_one_copy_and_refuse_at_their_own_word() {
         let compiled = bitlex_masks::compile(&stmts, &[FALLBACK], Some(&symbols)).expect("compiles");
         let words = rir_asm::assemble(&compiled.text()).expect("assembles");
         let structure = native_ir::lower(&words, 0, 0).expect("lowers");
-        let pushes: Vec<u16> = structure.structural.iter().filter_map(|w| if let native_ir::StructuralOperation::Push { target } = w.operation { Some(target) } else { None }).collect();
+        let pushes: Vec<u16> = structure.structural.iter().filter_map(|w| if let native_ir::StructuralOperation::Push { target, .. } = w.operation { Some(target) } else { None }).collect();
         let shared = crate::native_cpu_stream::shared_runs(&structure, &pushes);
         let ops = |a: usize, b: usize| structure.structural[a..b].iter().map(|w| w.operation).collect::<Vec<_>>();
         for (&s, &(b, ti)) in &shared.at {

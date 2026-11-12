@@ -548,7 +548,7 @@ pub fn check_shape(name: &str, c: &Compiled) {
         let out: Vec<&&str> = rest.iter().filter(|l| l.contains(" bl ") || l.contains(" br ") || l.trim_start().starts_with("br ")).take(4).collect();
         assert!(out.is_empty(), "{name}: {tier} jumps out: {out:?}");
         assert_eq!(tables_asm.len(), tables, "{name}: {tier} jumps other than by its own tables");
-        assert_eq!(asm.matches("blr").count(), own, "{name}: {tier} calls out");
+        assert_eq!(asm.matches("blr").count(), own, "{name}: {tier} calls out: {:?}", asm.lines().filter(|l| l.contains("blr")).collect::<Vec<_>>());
     }
 }
 
