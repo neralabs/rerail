@@ -1,5 +1,6 @@
 """Record complete admin metadata, registered extraction, projection and supplied facts."""
 from dataclasses import asdict,fields
+import contextlib
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -58,13 +59,17 @@ def cases(_module):
         dict(kind='report',id='report-missing-family',bundles=[dict(path='a.py',facts={})]),
         dict(kind='report',id='report-other-family',bundles=[dict(path='a.py',facts={'other':dict(violations=[hit])})]),
         dict(kind='report',id='report-unfiltered',allowed=[hit['file']],bundles=[dict(path='ignored.py',value=dict(violations=[hit,dict(hit,file='tools/tests/a.py')]))]),
+        dict(kind='report',id='report-lexical-line-order',bundles=[dict(path='ignored.py',value=dict(violations=[dict(hit,line=n) for n in [-10,-2,0,1,10,2,20,2**100,-2**100]]))]),
+        dict(kind='report',id='report-message-order',bundles=[dict(path='ignored.py',value=dict(violations=[dict(hit,text=t) for t in ['z','a','a','☃']]))]),
+        dict(kind='report',id='report-external-path-order',bundles=[dict(path='ignored.py',value=dict(violations=[dict(hit,file=p) for p in ['a/../b.py','/zzzz/external.py','//network/a.py','./a//b.py','']]))]),
+        dict(kind='report',id='report-cwd-relative-order',cwdRoot=True,bundles=[dict(path='ignored.py',value=dict(violations=[dict(hit,file=p) for p in ['a.py','/external.py','','a/../b.py']]))]),
     ]
     return rows
 
 
 def exercise(module,case,scratch):
     scratch=scratch.resolve();root=scratch/'repo';root.mkdir()
-    with patch.object(module,'ROOT',root),patch.object(module,'ALLOWLISTED_FILES',case.get('allowed',[])):
+    with patch.object(module,'ROOT',root),patch.object(module,'ALLOWLISTED_FILES',case.get('allowed',[])),contextlib.chdir(root if case.get('cwdRoot') else Path.cwd()):
         try:
             kind=case['kind']
             if kind=='metadata':
