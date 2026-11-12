@@ -86,12 +86,17 @@ function moveAside(path: string): void {
   const taken = `${path}.${process.pid}.${randomUUID()}.old`;
   try {
     renameWithRetrySync(path, taken);
+  } catch {
+    // Moved first by another hook, or held through the retries: this hook took nothing.
+    return;
+  }
+  try {
     if (sizeOf(taken) > MAX_FAILURE_BYTES) {
       renameWithRetrySync(taken, `${path}.1`);
       return;
     }
   } catch (error) {
-    // Moved first, or on, by another hook. Any other failure leaves `.1` held through the retries: the log goes back.
+    // Moved on by another hook. Any other failure leaves `.1` held through the retries: the log goes back.
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
   }
   try {
