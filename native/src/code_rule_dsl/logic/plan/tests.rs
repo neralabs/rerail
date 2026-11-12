@@ -25,6 +25,26 @@ fn native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters()
     assert_eq!(outputs[1]["result"],vec!["1\t99\t3\t17\t3\t7","2\t99\t1\t-2\t-2\t-2","4\t99\t3\t9223372036854775807\t-1\t9223372036854775807"]);
 }
 
+/// Two rules of one recursive stratum with one body and different heads (a magic relation and its reader's, as
+/// decision 0108's demand writes them) each run their whole plan in the first wave: the plans are kept apart by
+/// head, so neither head loses the rows the first wave derives.
+#[test]
+fn rules_of_one_body_and_two_heads_both_run_their_whole_plan() {
+    let p=parse(".decl seed(x:number)\nseed(1).\n.decl e(x:number,y:number)\ne(1,2).\ne(2,3).\ne(3,4).\n.decl a(x:number)\n.decl b(x:number)\na(x) :- seed(x).\na(y) :- a(x), e(x,y).\nb(y) :- a(x), e(x,y).\na(x) :- b(x).\n.output a,b\n").unwrap();
+    for modes in ["","program"] {
+        let path=crate::code_rule_dsl::fixtures::temp();
+        let store=ContentStore::open(&path).unwrap();
+        let python=crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let lowered=lower::lower(&p,python,&mut |s|store.intern_atoms(s).map_err(|e|Error::Plan(e.to_string()))).unwrap();
+        let db=Connection::open(&path).unwrap();
+        super::super::native::register(&db).unwrap();
+        super::super::native::register_symbols(&db).unwrap();
+        let got=run_atoms_native_over(&lowered,&db,"main",Stats::empty(&lowered.program),BTreeSet::new(),modes).unwrap();
+        assert_eq!(got.outputs["a"],vec!["1","2","3","4"],"modes {modes:?}");
+        assert_eq!(got.outputs["b"],vec!["2","3","4"],"modes {modes:?}");
+    }
+}
+
 /// Whether this process numbers nodes in preorder, as T's facts and outputs do (`RERAIL_NODE_IDS=preorder`). The
 /// tests that compare with T run only then: under ids per definition (the default, decision 0094 §2a) a program that
 /// orders nodes reads `node_order`, which T's facts do not have, and outputs show ids as `slot.index`.
