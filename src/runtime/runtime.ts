@@ -554,6 +554,9 @@ interface OwedState {
   recorded: number;
 }
 
+/** A tool call the ledger held open as the session opened: its call was recorded, its result not yet. */
+type RestoredCall = Extract<LedgerEntry, { type: "policy-call" }>;
+
 /** The checkout a session started in (physical root), the session folder relative to it, and that folder resolved once. */
 interface StartingCheckout {
   root: string;
@@ -636,6 +639,11 @@ interface RuntimeSessionState {
    * has gone quiet or its runtime closes. Its end drops what it owes, as it always has.
    */
   keepsOwed: boolean;
+  /**
+   * The calls the ledger held open as the session opened, by id. One whose result arrives while the evaluator opens is
+   * checked against what the call captured once the evaluator is open (`#checkWhenOpen`).
+   */
+  restoredCalls: Map<string, RestoredCall>;
   /**
    * The session's tool calls whose input names a secret-like path (`callNamesSecretPath`), until their result is stored.
    * The ledger records both ends (`secret-call`, `secret-result`), so a session reopened between them still knows.
@@ -1219,10 +1227,44 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     else if (event.kind === "turn-end") await state.codeRuleBridge?.unwatchedResult(TURN_WINDOW_ID);
   }
 
-  /** Finishes a tool call on the open evaluator; one answered while it opened only ends its window (`unwatchedResult`). */
+  /**
+   * Finishes a tool call on the open evaluator; one answered while it opened ends its window (`unwatchedResult`), and is
+   * checked once it is open when the ledger held it open (`#checkWhenOpen`).
+   */
   async #finishCall(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, toolCallId: string, failed: boolean): Promise<void> {
     if (bridge !== undefined) await bridge.finish(toolCallId, failed, { rewindable: true });
-    else await state.codeRuleBridge?.unwatchedResult(toolCallId);
+    else await this.#finishUnwatched(state, toolCallId, failed);
+  }
+
+  async #finishUnwatched(state: RuntimeSessionState, toolCallId: string, failed: boolean): Promise<void> {
+    await state.codeRuleBridge?.unwatchedResult(toolCallId);
+    const call = state.restoredCalls.get(toolCallId);
+    if (call !== undefined) this.#checkWhenOpen(state, call, failed);
+  }
+
+  /**
+   * Checks the edit of a call the ledger held open as the session opened, whose result came while the evaluator opened,
+   * against what the call captured before the session closed, once the evaluator is open: as `finishUnanswered` checks
+   * a call whose result will not come. The session reopened for that result (its agent was left at a permission prompt
+   * past the day the engine service holds such a session open, or the daemon restarted meanwhile), so the boundary
+   * itself went on without code rules, and the edit, made before the evaluator's first walk, would never be checked. Its
+   * steer goes out with a later answer, or with the digest, as a check that outlasted its boundary does.
+   */
+  #checkWhenOpen(state: RuntimeSessionState, call: RestoredCall, failed: boolean): void {
+    state.restoredCalls.delete(call.toolCallId);
+    void state.codeRuleWorkspace.then(async bridge => {
+      if (bridge !== undefined && !state.closed) await this.#checkRestoredCall(state, bridge, call, failed);
+    });
+  }
+
+  async #checkRestoredCall(state: RuntimeSessionState, bridge: CodeRuleBridge, call: RestoredCall, failed: boolean): Promise<void> {
+    try {
+      await bridge.begin(call.toolCallId, call.toolName, { paths: call.paths }, call.preimages ?? {});
+      await bridge.finish(call.toolCallId, failed);
+    } catch (error) {
+      // A session closed meanwhile closed its evaluator too.
+      if (!state.closed) process.stderr.write(`rerail: could not check tool call ${call.toolCallId}: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
   }
 
   /**
@@ -1844,6 +1886,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       missedFindings: [],
       owed: restoredOwed(ledger.entries),
       keepsOwed: false,
+      restoredCalls: new Map(unresolvedCodeRuleCalls(ledger.entries).map(call => [call.toolCallId, call])),
       secretCalls: secrets.calls,
       withheldResults: secrets.results,
       closed: false,
