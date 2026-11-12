@@ -6,6 +6,13 @@ import { setTimeout as sleep } from "node:timers/promises";
 const PROCESS_LIST: readonly [string, ...string[]] = ["ps", "-A", "-o", "pid=,ppid=,command="];
 
 /**
+ * The longest process list read. `ps` prints every process on the machine with its whole command line, which on a
+ * busy host runs past execFileSync's default of 1 MB; past its limit the call fails with ENOBUFS, and so does the test
+ * file whose tests passed.
+ */
+const PROCESS_LIST_BYTES = 256 * 1024 * 1024;
+
+/**
  * Daemons this test file spawned that are still running. A spawned daemon is detached but keeps this worker as its
  * parent until the worker exits, after which nothing would ever stop it. Windows launches through the native binding
  * and has no `ps`; it is not checked. `listProcesses` prints the list: `ps`, unless a test gives a list of its own.
@@ -14,7 +21,7 @@ export function strandedDaemons(listProcesses = PROCESS_LIST): Array<{ pid: numb
   if (process.platform === "win32") return [];
   const [program, ...args] = listProcesses;
   const stranded: Array<{ pid: number; home: string }> = [];
-  for (const line of execFileSync(program, args, { encoding: "utf8" }).split("\n")) {
+  for (const line of execFileSync(program, args, { encoding: "utf8", maxBuffer: PROCESS_LIST_BYTES }).split("\n")) {
     const match = /^\s*(\d+)\s+(\d+)\s+.*[\\/]dist[\\/]daemon\.js --state-file (.+?)(?: --|$)/u.exec(line);
     if (match !== null && Number(match[2]) === process.pid) stranded.push({ pid: Number(match[1]), home: dirname(match[3]!) });
   }
