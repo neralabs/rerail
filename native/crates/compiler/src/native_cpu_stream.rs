@@ -1730,7 +1730,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         f.ins().jump(fall, &[]);
                     }
                 }
-                Op::Mark { mask, order, end } => {
+                Op::Mark { mask, order, end, word: mark_word } => {
                     // The mark's bit at the token's start, if the mark is live: one load. At the
                     // stream's end, the mark is there when the end has it.
                     let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(mask)).copied()).ok_or(Error::UnsupportedBackend)?;
@@ -1751,6 +1751,15 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         f.ins().jump(skip, &[]);
                     }
                     f.switch_to_block(look);
+                    // A mark of one word: the record's word first, a compare on a register.
+                    if let Some(s) = mark_word {
+                        let code = mget(&mut f, Mem::Taken);
+                        let w = f.ins().ushr_imm(code, i64::from(crate::records::KIND_BITS));
+                        let same = f.ins().icmp_imm(IntCC::Equal, w, i64::from(s) + 1);
+                        let bits = f.create_block();
+                        f.ins().brif(same, bits, &[], skip, &[]);
+                        f.switch_to_block(bits);
+                    }
                     let start = mget(&mut f, Mem::Start);
                     let w = f.ins().ushr_imm(start, 6);
                     let off = f.ins().imul_imm(output_stride, output as i64);

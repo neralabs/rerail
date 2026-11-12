@@ -312,7 +312,7 @@ A call keeps the level's word and flags only where its callee's level may change
 The rules are 55 functions, the smallest 23 words: none is small enough to copy into callers.
 The lean parser has 45.
 
-## Open: keyword marks from the records
+## Built: keyword marks from the records
 
 A keyword mark is written in bytes:
 
@@ -323,28 +323,64 @@ mark fix_on = fix_w & next(id_ahead, 3)
 
 `fix_w` holds where an identifier token's text is `fix`.
 The record already says so: its word code, as the lean lexer's `word_of`.
-Tested in tier 2 (the lean parser's `is_id(W_FIX)`), the term leaves tier 1,
-and so do its letters' masks (about 180 of tier 1's 865 operations a block).
+Now tier 2 tests that code, as the lean parser's `is_id(W_FIX)` does,
+and the term leaves tier 1.
+The mark keeps only its other terms (here `next(id_ahead, 3)`).
 
-The rewrite must be proved, term by term:
+The compiler makes the rewrite only where it proves, term by term,
+that:
 
 - the term holds only at the grammar's token starts;
-- there, it holds exactly where a row that can begin with the word's first byte starts
-  and its token's text is the word (`Lowering::keyword` over the row's start and last).
+- it holds exactly where a row that can begin with the word's first byte starts
+  and its token's text is the word.
 
-The first proves. The second does not, for any of the `.rr` marks.
-`ident` is `fill(w & alpha, ~w)` and `w` is `code & word & ~hashword`:
-whether a letter continues the identifier depends on `code`, a toggle.
-The prover does not carry a toggle from one byte to the next,
-so it cannot show where the identifier's last byte is.
-A larger search budget does not help.
+### The prover
 
-Two ways on:
+The search prover cannot show the second.
+`ident` is `fill(w & alpha, ~w)`, and `w` reads `code`,
+which a fixed point computes (`rounds until settled`).
+Whether a letter continues an identifier depends on bytes far back.
 
-1. **The prover carries toggles across lags:** a toggle is unchanged across a byte
-   that none of its events can be. Then the rewrite is checked for any grammar.
-2. **A grammar primitive** for a token's word, which the mark names directly.
-   The byte-level reference evaluator then needs tokens.
+The new prover (`bitlex_prove::Induction`) writes the question as clauses
+for a small SAT solver of its own (`bitlex_sat`, conflict learning, no dependencies):
+
+- **A window of bytes.** Each operation at each lag it is read at.
+  Each byte is one of the groups of bytes its readers tell apart.
+- **The equations of carried values**, at every lag of the window:
+  `toggle`, `escaped`, `fill`, and a fixed point's carry, which equals its next.
+- **The stream's two ends.** It begins once and ends once.
+  Past the end the bytes are 0x00, as the executors pad them.
+  Without these, the solver found "ways" no stream has:
+  a byte past the end for one test and in the stream for the next.
+- **The window's edge.** Past it, carried values are free.
+  A run of bytes that changes nothing can carry a free value to the position,
+  however long the window.
+  So a way that reaches the edge is checked:
+  - First, a stream that begins inside the window.
+    A way there is a real stream, and the answer is "no" at once.
+  - Otherwise the edge's values become a lemma to prove: "these never hold together".
+    The lemma is proved by induction over the stream's positions.
+    At the first position where it holds, it held at none before,
+    so the proof assumes it fails at every earlier lag.
+    A proved lemma is made smaller, then holds at every lag of every later window.
+
+A claim the prover cannot settle within its budget counts as not proved.
+That is sound: the compiler then keeps the byte masks.
+
+The first bytes a term can start with come from the same solver.
+A real stream gives a byte, its group is set aside, and the solver goes again.
+When none is left, one proof shows no other byte can start the term.
+
+### What moved
+
+Five marks now test the record's word: `fix`, `suppress`, `options`, `over`, `policy`.
+Tier 1 went from 865 operations a block to 806.
+The rest of the 180 letter operations stay, for two reasons:
+
+- other masks read the same letters (`input_w`, `output_w`, the aggregates' words);
+- the other marks' terms hold away from token starts too.
+
+Each proof takes 10 to 100 ms in a debug build.
 
 ## The order
 
@@ -352,5 +388,6 @@ Two ways on:
    Built for keywords; rows stay `ROW` tests, which are cold.
 2. Marks in the record. Built as the marks live from one mask, at `TOKEN`.
 3. A cheaper `TOKEN`, and the hot state in registers.
-   Built within a function; across calls still to build.
-4. Tier 1's primitives: the picked hash, then nibble fingerprints.
+   Built: held within a function, and four fields passed in registers across calls.
+4. Keyword marks from the records. Built for the marks of one word.
+5. Tier 1's primitives: the picked hash, then nibble fingerprints.

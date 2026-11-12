@@ -13,6 +13,7 @@ extern crate cranelift_jit_wasm as cranelift_jit;
 
 pub mod bitlex_masks;
 pub mod bitlex_prove;
+pub mod bitlex_sat;
 pub mod bitlex_tier2;
 pub mod block;
 pub mod block_native;

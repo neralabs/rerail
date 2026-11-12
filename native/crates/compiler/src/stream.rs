@@ -357,7 +357,12 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             }
             MARK => {
                 let k = u32::from(mode % 32);
-                let here = if at_end { mode & 32 != 0 } else { mask_bit(operand, start) };
+                // A mark of one word (`Words::mark_words`): the token's record names it too.
+                let word_ok = || match program.mark_words.iter().find(|&&(x, _)| u32::from(x) == k) {
+                    Some(&(_, s)) => code >> crate::records::KIND_BITS == u32::from(s) + 1,
+                    None => true,
+                };
+                let here = if at_end { mode & 32 != 0 } else { mask_bit(operand, start) && word_ok() };
                 if live >> k & 1 == 1 && here {
                     // Taken: it and the marks before it are done at this token.
                     live &= !(u32::MAX >> (31 - k));
@@ -636,7 +641,23 @@ pub fn validate_tier2(program: &Words) -> Result<(), Error> {
         }
     }
     validate(program)?;
+    validate_mark_words(program)?;
     validate_rules(program)
+}
+
+/// The marks' words (`Words::mark_words`): rising by mark, each a mark a `MARK` tests and a
+/// string of the records' words.
+pub fn validate_mark_words(program: &Words) -> Result<(), Error> {
+    let records = program.block_programs.first().and_then(|b| b.records.as_ref());
+    let tested: Vec<u8> = program.words.iter().map(|&w| split(w)).filter(|w| w.0 == MARK).map(|w| w.1 % 32).collect();
+    for (i, &(k, s)) in program.mark_words.iter().enumerate() {
+        let rising = i == 0 || program.mark_words[i - 1].0 < k;
+        let ok = rising && k < 32 && tested.contains(&k) && usize::from(s) < program.strings.len() && records.is_some_and(|r| r.words == program.strings);
+        if !ok {
+            return Err(Error::InvalidOperand(i));
+        }
+    }
+    Ok(())
 }
 
 /// Tier 2's rules (`Words::rules`), when it has them: from place 0, rising, within the words;

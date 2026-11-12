@@ -2029,6 +2029,15 @@ impl Program {
                 }
             }
         }
+        // Tier 2's marks of one word (`Words::mark_words`), when it has them.
+        if !self.mark_words.is_empty() {
+            digest.update(b"mark words");
+            digest.update((self.mark_words.len() as u64).to_le_bytes());
+            for &(k, s) in &self.mark_words {
+                digest.update([k]);
+                digest.update(s.to_le_bytes());
+            }
+        }
         // Tier 2's rules, each a function (`Words::rules`), when it has them.
         if !self.rules.is_empty() {
             digest.update(b"rules");
