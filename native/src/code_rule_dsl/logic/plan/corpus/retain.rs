@@ -595,11 +595,19 @@ impl Retained {
         }
         let mut lines = Vec::new();
         let mut totals = [("supports", 0usize, 0usize, 0usize, 0usize), ("other", 0, 0, 0, 0)];
+        let mut dedup_only = (0usize, 0usize, 0usize, 0usize);
         let mut by_size: Vec<(&String, &Kept)> = self.rels.iter().collect();
         by_size.sort_by_key(|(_, k)| std::cmp::Reverse(k.rel.held_bytes().2));
         for (rel, kept) in by_size {
             let (k, set, chains, csr) = kept.rel.index_detail();
             let n = kept.rel.rows();
+            // Spike (index levers): relations whose only order is the full-row one, the dedup test (`id_hash`'s case).
+            dedup_only.0 += n;
+            if chains.len() == 1 && chains[0].0.len() == k {
+                dedup_only.1 += n;
+                dedup_only.2 += 1;
+                dedup_only.3 += chains[0].2;
+            }
             let now = set + chains.iter().map(|c| c.2).sum::<usize>() + csr.iter().map(|c| c.1).sum::<usize>();
             let probed = shapes.get(rel.as_str());
             let sets = probed.map_or(0, BTreeMap::len);
@@ -632,6 +640,7 @@ impl Retained {
                 format!("INDEX {kind}: {n} rows; sets and indexes now {:.1} MB ({:.1} B/row), proposed {:.1} MB ({:.1} B/row); {sets} probed key sets", *now as f64 / 1e6, *now as f64 / (*n).max(1) as f64, *proposed as f64 / 1e6, *proposed as f64 / (*n).max(1) as f64)
             })
             .collect();
+        out.push(format!("INDEX dedup-only: {} of {} kept rows in {} relations whose only order is the full row ({:.1} MB of orders)", dedup_only.1, dedup_only.0, dedup_only.2, dedup_only.3 as f64 / 1e6));
         out.extend(lines);
         // RERAIL_INDEX_SPIKE: every kept relation's orders built and measured; the 30 largest printed.
         if std::env::var_os("RERAIL_INDEX_SPIKE").is_some() {

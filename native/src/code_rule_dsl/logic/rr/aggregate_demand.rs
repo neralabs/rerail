@@ -276,10 +276,10 @@ pub fn optimize(program: &mut Program) {
 
 // cratify: `tests` is rerail-logic's (it mounts it)
 
-/// Whether `rel` is a helper the lowering makes (`rr_ctx…`, `rr_agg…`, and their demand `rr_demand_agg_…`), under
-/// any program's prefix.
+/// Whether `rel` is a helper the lowering makes (`rr_ctx…`, a context's `rr_cover…` groups, `rr_agg…`, and their
+/// demand `rr_demand_agg_…`), under any program's prefix.
 fn helper(rel: &str) -> bool {
-    rel.contains("rr_ctx") || rel.contains("rr_agg")
+    rel.contains("rr_ctx") || rel.contains("rr_cover") || rel.contains("rr_agg")
 }
 
 /// The helpers' columns typed again once the library's declarations are known (the combined program).
