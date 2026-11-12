@@ -224,6 +224,57 @@ pub enum Stmt {
     /// `flag F …` (in a tree): flags a level runs with (`with F A`, `unless F A`), clear in the
     /// root's.
     Flags(Vec<String>),
+    /// `implied RULE 'A' …` (in a tree): the tokens written `'A'` in rule `RULE`'s own body (not
+    /// in the rules it uses) make no leaf: the grammar implies them, so a named-only tape leaves
+    /// them out (`docs/parser-generators/32-named-only-rr-tapes.md`). The parser marks each one
+    /// `A as IMPLIED`; the statement stays, for the record.
+    Implied { rule: String, tokens: Vec<String> },
+}
+
+/// The kind `implied` gives a token (`A as IMPLIED`): it makes no leaf.
+pub const IMPLIED: &str = "\u{0}implied";
+/// The kind `drop` gives the node just made at this level (`relabel _ as GONE`): it goes.
+pub const GONE: &str = "\u{0}gone";
+
+/// Each `implied RULE 'A' …` of a tree's body, applied: its tokens in `RULE`'s own body marked
+/// `A as IMPLIED`. A token not written there is an error.
+fn apply_implied(body: &mut [Stmt]) -> Result<(), String> {
+    fn mark(g: &mut Gram, tokens: &[String], found: &mut Vec<bool>) {
+        match g {
+            Gram::Lit(t) => {
+                if let Some(i) = tokens.iter().position(|x| x == t) {
+                    found[i] = true;
+                    *g = Gram::As(IMPLIED.into(), Box::new(Gram::Lit(t.clone())));
+                }
+            }
+            // A token given a kind of its own, or merged, is a node's: not implied.
+            Gram::Sym(_) | Gram::As(..) | Gram::Merge(..) | Gram::Balanced { .. } | Gram::Any(_) => {}
+            Gram::Seq(gs) | Gram::Alt(gs) => gs.iter_mut().for_each(|g| mark(g, tokens, found)),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) => mark(a, tokens, found),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => mark(body, tokens, found),
+        }
+    }
+    let implied: Vec<(String, Vec<String>)> = body.iter().filter_map(|s| if let Stmt::Implied { rule, tokens } = s { Some((rule.clone(), tokens.clone())) } else { None }).collect();
+    for (rule, tokens) in implied {
+        let mut found = vec![false; tokens.len()];
+        let mut any = false;
+        for s in body.iter_mut() {
+            match s {
+                Stmt::Node { kind: name, body, .. } | Stmt::Choice { name, body, .. } if *name == rule => {
+                    any = true;
+                    mark(body, &tokens, &mut found);
+                }
+                _ => {}
+            }
+        }
+        if !any {
+            return Err(format!("implied {rule}: no such rule"));
+        }
+        if let Some(i) = found.iter().position(|f| !f) {
+            return Err(format!("implied {rule}: {:?} is not written in it", tokens[i]));
+        }
+    }
+    Ok(())
 }
 
 impl Stmt {
@@ -494,6 +545,14 @@ impl P {
                 let reading = self.ident()?;
                 let body = Box::new(self.gram_seq()?);
                 items.push(Gram::Reread { reading, body });
+                break;
+            }
+            // `drop`: the node just made at this level goes (a token the grammar implies, made
+            // before the token that says so); the rest of the sequence is its body.
+            if matches!(self.peek(), Some(Tok::Ident(w)) if w == "drop") {
+                self.i += 1;
+                let body = Box::new(self.gram_seq()?);
+                items.push(Gram::Relabel { field: None, moved: Some(GONE.into()), inner: None, body });
                 break;
             }
             // `fold K`: the rest of the sequence is its body.
@@ -900,7 +959,21 @@ impl P {
             }
             "tree" => {
                 let name = self.ident()?;
-                Stmt::Tree { name, body: self.block()? }
+                let mut body = self.block()?;
+                apply_implied(&mut body)?;
+                Stmt::Tree { name, body }
+            }
+            "implied" => {
+                let rule = self.ident()?;
+                let mut tokens = vec![];
+                while let Some(Tok::Str(s)) = self.peek() {
+                    tokens.push(String::from_utf8_lossy(s).into_owned());
+                    self.i += 1;
+                }
+                if tokens.is_empty() {
+                    return self.err("implied RULE 'A' …");
+                }
+                Stmt::Implied { rule, tokens }
             }
             "node" => {
                 let kind = self.kind()?;

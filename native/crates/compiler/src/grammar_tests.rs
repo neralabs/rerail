@@ -124,7 +124,7 @@ fn machine(src: &str) -> String {
     let tokens: Vec<String> = TOKENS.iter().map(|t| t.to_string()).collect();
     let is_token = |n: &str| TOKENS.contains(&n);
     let reading = |n: &str| Err(format!("no reading {n}"));
-    let g = grammar::Ids { kind: &id, field: &id, is_token: &is_token, tokens: &tokens, reading: &reading };
+    let g = grammar::Ids { kind: &id, field: &id, is_token: &is_token, tokens: &tokens, reading: &reading, marks: &[] };
     let (states, arms, _) = grammar::build(&tree(src), &g).expect("builds");
     grammar::text(&states, &arms)
 }

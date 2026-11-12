@@ -1989,6 +1989,15 @@ impl Program {
                 for t in s.targets.iter().chain([&s.end]) {
                     digest.update(t.to_le_bytes());
                 }
+                // A switch's words (`ByteSwitch::words`), when it names any.
+                if !s.words.is_empty() {
+                    digest.update(b"words");
+                    digest.update((s.words.len() as u64).to_le_bytes());
+                    for &(w, t) in &s.words {
+                        digest.update(w.to_le_bytes());
+                        digest.update(t.to_le_bytes());
+                    }
+                }
             }
         }
         if !self.readings.is_empty() {
@@ -2018,6 +2027,14 @@ impl Program {
                 for k in &self.readings.extras {
                     digest.update(k.to_le_bytes());
                 }
+            }
+        }
+        // Tier 2's rules, each a function (`Words::rules`), when it has them.
+        if !self.rules.is_empty() {
+            digest.update(b"rules");
+            digest.update((self.rules.len() as u64).to_le_bytes());
+            for r in &self.rules {
+                digest.update(r.to_le_bytes());
             }
         }
         crate::code_rule_dsl::prof::lower_hex(&digest.finalize())

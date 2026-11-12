@@ -25,20 +25,25 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
     // The totals are one flag (`BlockRun::totals`).
     let totals = block.map_or(0, |b| b.totals.len().min(1));
     let masks = block.map_or(0, |b| b.masks.len());
+    let records = block.and_then(|b| b.records.as_ref());
     let ok = match opcode {
-        TOKEN => mode == 0 && usize::from(operand) < extracts,
+        // A token is a record (`records`): its extract is the records' starts.
+        // `m=1+k`: mask `k` holds where any mark does (the marks are live only there).
+        TOKEN => (mode == 0 || usize::from(mode - 1) < masks) && usize::from(operand) < extracts && records.is_some_and(|r| r.starts == operand),
         ACCEPT => mode == 0 && operand == 0,
         EMPTY => mode == 0 && usize::from(operand) < totals,
         SWITCH => mode == 0 && usize::from(operand) < program.switches.len(),
         // `m=1`: a test, which skips the next word where the token is not the string.
         // A word of at most 64 bytes: the CPU compares 8 at a time, unrolled, within the 64 bytes
         // past the file.
-        WORD_IS => mode <= 1 && program.strings.get(usize::from(operand)).is_some_and(|s| !s.is_empty() && s.len() <= 64),
+        // The word is the record's (its code), so the program's strings are the records' words.
+        WORD_IS => mode <= 1 && program.strings.get(usize::from(operand)).is_some_and(|s| !s.is_empty() && s.len() <= 64) && records.is_some_and(|r| r.words == program.strings),
         // A level's word's kind (`REMEMBERED`) only as a moved or relabelled node's.
         OPEN | NODE_SUPER => mode == 0 && operand != REMEMBERED,
         // `m=1`: an extra's leaf, deferred; `m=2`: an extra's leaf placed now, never the node
         // made last at its level.
-        LEAF => mode <= 2 && operand != REMEMBERED,
+        // `m=3`: a token the grammar implies, no node.
+        LEAF => mode <= 3 && operand != REMEMBERED,
         // Mark `m % 32` (its order), its bit in mask `operand`; `m & 32`: the file's end has it.
         MARK => mode < 64 && usize::from(operand) < masks,
         ROW => mode == 0 && usize::from(operand) < masks,
@@ -55,7 +60,8 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         CLOSE => mode <= 1 && operand == 0,
         PUSH => mode == 0 && usize::from(operand) < words,
         RETURN => mode <= 1 && operand == 0,
-        SPAN => (mode == 0 && operand != 0) || (mode == 1 && usize::from(operand) < masks),
+        // `m=1`: the token's end is its record's (operand 0).
+        SPAN => (mode == 0 && operand != 0) || (mode == 1 && operand == 0),
         _ => return Err(Error::InvalidOpcode(pc)),
     };
     if ok { Ok(()) } else { Err(Error::InvalidOperand(pc)) }
@@ -73,8 +79,29 @@ pub fn validate(program: &Words) -> Result<(), Error> {
         }
     }
     let target = |t: u16| t == REFUSE || usize::from(t) < words.len();
-    if program.switches.iter().any(|s| s.targets.len() != 256 || !s.targets.iter().all(|&t| target(t)) || !target(s.end)) {
+    if program.switches.iter().any(|s| s.targets.len() != 256 || !s.all_targets().all(target)) {
         return Err(Error::InvalidTarget(0));
+    }
+    // A switch's words: on the first byte, with records whose words are the strings; each a
+    // string, in order.
+    let records = program.block_programs.first().and_then(|b| b.records.as_ref());
+    for s in program.switches.iter().filter(|s| !s.words.is_empty()) {
+        let in_order = s.words.windows(2).all(|w| w[0].0 < w[1].0);
+        let named = s.words.iter().all(|&(w, _)| usize::from(w) < program.strings.len());
+        if s.offset != 0 || !in_order || !named || !records.is_some_and(|r| r.words == program.strings) {
+            return Err(Error::InvalidTarget(0));
+        }
+    }
+    // A switch on the first byte is one on the record's kind (`records`): alike within a kind.
+    if let Some(r) = program.block_programs.first().and_then(|b| b.records.as_ref()) {
+        for s in program.switches.iter().filter(|s| s.offset == 0) {
+            let mut seen: HashMap<u8, u16> = HashMap::new();
+            for (b, &t) in s.targets.iter().enumerate() {
+                if *seen.entry(r.kinds[b]).or_insert(t) != t {
+                    return Err(Error::InvalidTarget(0));
+                }
+            }
+        }
     }
     let returns: Vec<usize> = words
         .iter()
@@ -102,18 +129,6 @@ pub fn validate(program: &Words) -> Result<(), Error> {
             return Err(Error::InvalidTarget(pc));
         }
     }
-    // One stream of starts and one of last bytes: every `TOKEN` names one extract, and every
-    // `SPAN m=1` one mask.
-    let named = |op: u8, m: u8| -> Vec<u16> {
-        let mut v: Vec<u16> = words.iter().map(|&w| split(w)).filter(|&(o, mm, _)| o == op && mm == m).map(|(_, _, x)| x).collect();
-        v.sort_unstable();
-        v.dedup();
-        v
-    };
-    let (starts, lasts) = (named(TOKEN, 0), named(SPAN, 1));
-    if starts.len() > 1 || lasts.len() > 1 {
-        return Err(Error::InvalidOperand(0));
-    }
     // Every cycle passes a `TOKEN` or a `RETURN`: with their edges cut, the graph is acyclic.
     // A `RETURN` pops a call, and from a `PUSH` no `RETURN` is reached before a `TOKEN` (below):
     // a cycle with no `TOKEN` pushes nothing, so it turns at most once per call made, and calls
@@ -126,7 +141,7 @@ pub fn validate(program: &Words) -> Result<(), Error> {
             GOTO => vec![usize::from(operand)],
             SWITCH => {
                 let s = &program.switches[usize::from(operand)];
-                let mut out: Vec<usize> = s.targets.iter().chain([&s.end]).filter(|&&t| t != REFUSE).map(|&t| usize::from(t)).collect();
+                let mut out: Vec<usize> = s.all_targets().filter(|&t| t != REFUSE).map(usize::from).collect();
                 out.sort_unstable();
                 out.dedup();
                 out
@@ -139,23 +154,32 @@ pub fn validate(program: &Words) -> Result<(), Error> {
         }
     };
     let successors = |pc: usize| step(pc, true);
-    // From a `PUSH`, no `RETURN` before a `TOKEN`.
+    // From a `PUSH`, no `RETURN` before a `TOKEN`; but a `RETURN m=0` after a `SPAN`: the call
+    // took the token, and its return lands on the caller's `TOKEN`, which takes the next. (A
+    // call that takes no token itself, a function a rule's, goes to its callee's start, whose arm
+    // takes it.) A `RETURN m=1` switches on the token again: a `TOKEN` must come first.
     for (pc, &w) in words.iter().enumerate() {
         if split(w).0 != PUSH {
             continue;
         }
-        let mut seen = vec![false; words.len()];
-        let mut todo = vec![pc];
-        while let Some(q) = todo.pop() {
+        // Each place, seen before or after a `SPAN`.
+        let mut seen = vec![[false; 2]; words.len()];
+        let mut todo = vec![(pc, false)];
+        while let Some((q, spanned)) = todo.pop() {
+            let spanned = spanned || split(words[q]).0 == SPAN;
             for n in step(q, false) {
                 if n >= words.len() {
                     return Err(Error::InvalidTarget(q));
                 }
-                if split(words[n]).0 == RETURN {
+                let (op, mode, _) = split(words[n]);
+                if op == RETURN {
+                    if spanned && mode == 0 {
+                        continue;
+                    }
                     return Err(Error::NonProgressingCycle(n));
                 }
-                if !std::mem::replace(&mut seen[n], true) {
-                    todo.push(n);
+                if !std::mem::replace(&mut seen[n][usize::from(spanned)], true) {
+                    todo.push((n, spanned));
                 }
             }
         }
@@ -208,22 +232,10 @@ pub struct Refused {
     pub why: &'static str,
 }
 
-/// The first set bit of `words` at `from` or after, a word at a time.
-fn next_bit(words: &[u64], from: usize) -> Option<u32> {
-    let (mut w, shift) = (from / 64, from % 64);
-    let mut bits = words.get(w)? & (u64::MAX << shift);
-    while bits == 0 {
-        w += 1;
-        bits = *words.get(w)?;
-    }
-    Some((64 * w) as u32 + bits.trailing_zeros())
-}
-
-/// The interpreter of a tier-2 program over tier 1's run of `bytes`: the extract `TOKEN` names
-/// holds every token's first byte, the mask `SPAN m=1` names the last byte of each token whose
-/// arm reads it (taken in order: the next set bit after the last one taken), and `EMPTY` reads
-/// the totals. It executes the words only; the tables it reads
-/// are the program's switches, strings and checks.
+/// The interpreter of a tier-2 program over tier 1's run of `bytes`: a token is tier 1's
+/// record (`records`), its first byte, its last byte and its code; `EMPTY` reads the totals.
+/// It executes the words only; the tables it reads are the program's switches, strings and
+/// checks.
 pub fn run(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun) -> Result<Vec<Node>, Refused> {
     run_seen(program, bytes, tier1, &mut |_| {})
 }
@@ -232,18 +244,17 @@ pub fn run(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun) -> Res
 /// states follow which, how often), for laying out the generated code.
 pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, seen: &mut dyn FnMut(usize)) -> Result<Vec<Node>, Refused> {
     let words = &program.words;
-    let stream = |op: u8, m: u8| words.iter().map(|&w| split(w)).find(|&(o, mm, _)| o == op && mm == m).map(|(_, _, x)| usize::from(x));
     let none: Vec<u32> = Vec::new();
     // A kind as a word names it: a level's word's (`REMEMBERED`), none where it has none.
     let kind_of = |k: u16, word: u16| if k != REMEMBERED { Some(k) } else if word != 0 { Some(word) } else { None };
-    let starts: &[u32] = stream(TOKEN, 0).map_or(&none, |e| &tier1.positions[e]);
-    let no_words: Vec<u64> = Vec::new();
-    let lasts: &[u64] = match (stream(SPAN, 1), program.block_programs.first()) {
-        (Some(m), Some(block)) => &tier1.outputs[block.mask_outputs()[m]],
-        _ => &no_words,
-    };
+    // The records' starts, as any `TOKEN` names them (its mode names the marks' mask).
+    let starts: &[u32] = words.iter().map(|&w| split(w)).find(|&(o, _, _)| o == TOKEN).map_or(&none, |(_, _, x)| &tier1.positions[usize::from(x)]);
+    let records = program.block_programs.first().and_then(|b| b.records.as_ref());
+    let lasts: &[u32] = records.map_or(&none, |r| &tier1.positions[usize::from(r.lasts)]);
     let mut pc = 0usize;
-    let (mut next, mut taken, mut start, mut end, mut limit, mut last_end, mut at_end) = (0usize, 0usize, 0u32, 0u32, 0u32, 0u32, false);
+    // The token's record: its start, its end (one past its last byte) and its code. `end` is
+    // `start` until its bytes are taken (`SPAN`).
+    let (mut next, mut start, mut end, mut rec_end, mut code, mut last_end, mut at_end) = (0usize, 0u32, 0u32, 0u32, 0u32, 0u32, false);
     // `need`: the token's bytes were taken (`SPAN`), so `TOKEN` takes the next; an arm of a mark
     // takes none, and the next state switches on the same token. `live`: the marks not yet
     // taken at this token (a level that ends at it leaves the rest to its caller, which tests
@@ -289,38 +300,27 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     return refuse(pc - 1, "a token past the stream's end");
                 }
                 need = false;
-                live = u32::MAX;
                 last_end = end;
-                if next == starts.len() {
+                // The record pass checked the records (the totals' flag, `EMPTY`): as many lasts
+                // as starts, each token after the one before.
+                if next == starts.len().min(lasts.len()) {
                     at_end = true;
                 } else {
-                    let s = starts[next];
-                    if s < end {
-                        return refuse(pc - 1, "a token inside the one before");
-                    }
-                    (start, end) = (s, s);
+                    (start, end) = (starts[next], starts[next]);
+                    rec_end = lasts[next] + 1;
+                    code = tier1.codes.get(next).copied().unwrap_or(0);
                     next += 1;
-                    limit = starts.get(next).map_or(bytes.len() as u32, |&n| n);
                 }
+                // The marks live: all, or (`m=1+k`) none where no mark holds and the stream
+                // goes on.
+                live = if mode == 0 || at_end || mask_bit(u16::from(mode - 1), start) { u32::MAX } else { 0 };
             }
             SPAN => {
-                // The token's end: a length (a one-byte token, a keyword), or its last byte, the
-                // next of the stream's last bytes; found once per token (a level that ends at it
-                // leaves it to its caller, which spans it again).
-                let e = if mode == 0 {
-                    start + u32::from(operand)
-                } else if end > start {
-                    end
-                } else {
-                    let Some(l) = next_bit(lasts, taken) else { return refuse(pc - 1, "a token with no last byte") };
-                    taken = l as usize + 1;
-                    if l < start {
-                        return refuse(pc - 1, "a last byte before its token");
-                    }
-                    l + 1
-                };
-                if e > limit {
-                    return refuse(pc - 1, "a token past the next one");
+                // The token's bytes taken: its record's end, or a length (a one-byte token),
+                // which must be its record's.
+                let e = if mode == 0 { start + u32::from(operand) } else { rec_end };
+                if e != rec_end {
+                    return refuse(pc - 1, "a token's length not its record's");
                 }
                 end = e;
                 need = true;
@@ -331,7 +331,14 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     s.end
                 } else {
                     let at = start as usize + usize::from(s.offset);
-                    if at >= limit as usize { REFUSE } else { s.targets[usize::from(bytes[at])] }
+                    // A word the switch names: its target. Else zeros past the file, as every
+                    // executor reads them.
+                    let word = (code >> crate::records::KIND_BITS).checked_sub(1).and_then(|w| s.word(w as u16));
+                    match word {
+                        Some(t) if s.offset == 0 => t,
+                        _ if at >= rec_end as usize => REFUSE,
+                        _ => s.targets[usize::from(bytes.get(at).copied().unwrap_or(0))],
+                    }
                 };
                 if t == REFUSE {
                     return refuse(pc - 1, "no state takes the token");
@@ -339,7 +346,8 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 pc = usize::from(t);
             }
             WORD_IS => {
-                let same = bytes[start as usize..end as usize] == program.strings[usize::from(operand)][..];
+                // The record's word: its code names the string.
+                let same = code >> crate::records::KIND_BITS == u32::from(operand) + 1;
                 match (mode, same) {
                     (_, true) => {}
                     // A test: the next word is the keyword's way; a token that is not the word skips it.
@@ -440,6 +448,14 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 if opcode == RETAG {
                     let Some(k) = kind_of(operand, word) else { return refuse(pc - 1, "a word's kind, and no word") };
                     nodes[r].kind = k;
+                    if k == DEAD {
+                        // `drop`: the node goes (a token the grammar implies), left out at
+                        // `ACCEPT`; none is made last at this level until the next.
+                        dead = true;
+                        if let Some(l) = lasts_made.last_mut() {
+                            *l = None;
+                        }
+                    }
                 } else {
                     nodes[r].field = operand;
                 }
@@ -507,6 +523,9 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 nodes[at].end = if mode == 1 { end } else if pending > 0 { keep } else { last_end };
                 nodes[at].size = (nodes.len() - pending - base) as u32;
             }
+            // A token the grammar implies (`implied`): no node; the extras pending stay where
+            // they are, as a leaf's would.
+            LEAF if mode == 3 => pending = 0,
             LEAF => {
                 if mode == 1 && pending == 0 {
                     keep = last_end;
@@ -538,7 +557,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 pc = usize::from(p) + usize::from(mode);
             }
             ACCEPT => {
-                if !at_end || open.len() != 1 || !returns.is_empty() || next_bit(lasts, taken).is_some() {
+                if !at_end || open.len() != 1 || !returns.is_empty() {
                     return refuse(pc - 1, "the file ends inside a node");
                 }
                 let at = open[0];
@@ -616,5 +635,52 @@ pub fn validate_tier2(program: &Words) -> Result<(), Error> {
             _ => validate_word(program, pc, opcode, mode, operand)?,
         }
     }
-    validate(program)
+    validate(program)?;
+    validate_rules(program)
+}
+
+/// Tier 2's rules (`Words::rules`), when it has them: from place 0, rising, within the words;
+/// every word goes on within its own rule (a `PUSH` to its return's places, and its next word,
+/// a `GOTO`), but for that `GOTO`: a call's, to its callee in any rule. So a rule is a
+/// function, and a rule's code reaches another's by its calls alone.
+pub fn validate_rules(program: &Words) -> Result<(), Error> {
+    let (rules, words) = (&program.rules, &program.words);
+    if rules.is_empty() {
+        return Ok(());
+    }
+    let n = words.len();
+    if rules[0] != 0 || rules.windows(2).any(|w| w[0] >= w[1]) || rules.last().is_some_and(|&r| usize::from(r) >= n) {
+        return Err(Error::InvalidTarget(0));
+    }
+    let rule_of = |pc: usize| rules.partition_point(|&s| usize::from(s) <= pc) - 1;
+    let target = |t: u16| usize::from(t);
+    for pc in 0..n {
+        let (op, mode, operand) = split(words[pc]);
+        let after_push = pc > 0 && split(words[pc - 1]).0 == PUSH;
+        let next: Vec<usize> = match op {
+            STOP | ACCEPT | RETURN => vec![],
+            // A call's `GOTO`: to its callee, in any rule.
+            GOTO if after_push => vec![],
+            GOTO => vec![target(operand)],
+            SWITCH => {
+                let s = &program.switches[usize::from(operand)];
+                s.all_targets().filter(|&t| t != REFUSE).map(target).collect()
+            }
+            PUSH => {
+                if split(*words.get(pc + 1).ok_or(Error::InvalidTarget(pc))?).0 != GOTO {
+                    return Err(Error::InvalidTarget(pc));
+                }
+                vec![target(operand), target(operand) + 1, pc + 1]
+            }
+            TOKEN => vec![pc + 1],
+            WORD_IS if mode != 0 => vec![pc + 1, pc + 2],
+            FLAG if mode == 2 => vec![pc + 1, pc + 2],
+            MARK | ROW => vec![pc + 1, pc + 2],
+            _ => vec![pc + 1],
+        };
+        if next.into_iter().any(|t| t < n && rule_of(t) != rule_of(pc)) {
+            return Err(Error::InvalidTarget(pc));
+        }
+    }
+    Ok(())
 }

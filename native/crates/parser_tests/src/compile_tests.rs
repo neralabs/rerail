@@ -377,35 +377,15 @@ const JSON_CASES: [&[u8]; 12] = [
 ];
 
 /// Tier 1's stream, on every executor, is the evaluator's tokens (decision 0087): the starts
-/// extract is every token's first byte; the lasts extract is the last byte of each token whose
-/// end tier 2 reads from it (a row whose tokens are not one byte and not all keywords).
+/// extract is every token's first byte; the lasts extract every token's last byte, zipped with
+/// it (`records`).
 #[test]
 fn json_stream_equals_the_evaluator_on_every_executor() {
-    use ::bitlex::syntax::Stmt;
     let (p, compiled) = json_compiled();
     let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
     let prepared = Executors::new(&p);
     let label = |name: &str| usize::from(compiled.labels.iter().find(|l| l.0 == name).unwrap_or_else(|| panic!("no {name}")).1);
     let (starts, lasts) = (label(bitlex_compile::STREAM_START), label(bitlex_compile::STREAM_LAST));
-    // The kinds whose tokens' last bytes are in the stream: rows with a last byte of their own,
-    // and their keywords. A row of keywords only is one too: its token runs to its own last byte,
-    // which tier 2 compares with the word (`truee` is not `true`).
-    let mut late: Vec<String> = Vec::new();
-    for s in &stmts {
-        if let Stmt::Token { kind, last, through, .. } = s
-            && (last.is_some() || through.is_some())
-        {
-            late.push(kind.clone());
-            if let Some(words) = stmts.iter().find_map(|k| match k {
-                Stmt::Keywords { kind: k, words, .. } if k == kind => Some(words),
-                _ => None,
-            }) {
-                late.extend(words.iter().map(|(w, alias)| alias.clone().unwrap_or_else(|| String::from_utf8_lossy(w).into_owned())));
-            }
-            late.dedup();
-        }
-    }
-    assert_eq!(late, ["string_content", "escape_sequence", "number", "true", "false", "null"]);
     let mut cases = inputs();
     cases.extend(JSON_CASES.iter().map(|c| c.to_vec()));
     let (mut compared, mut rejected, mut conservative) = (0, 0, 0);
@@ -420,9 +400,7 @@ fn json_stream_equals_the_evaluator_on_every_executor() {
         let mut want_lasts = vec![0u64; n.div_ceil(64)];
         for t in &out.tokens {
             want_starts[t.start / 64] |= 1 << (t.start % 64);
-            if late.contains(&t.kind) {
-                want_lasts[(t.end - 1) / 64] |= 1 << ((t.end - 1) % 64);
-            }
+            want_lasts[(t.end - 1) / 64] |= 1 << ((t.end - 1) % 64);
         }
         let (runs, over) = prepared.run(&bytes, true);
         assert!(over.is_empty(), "over the launch budget: {over:?}");
@@ -732,8 +710,10 @@ fn json_state_is_bits() {
 /// JSON's state budget (a ratchet): 104 bits in one tier; 4 in two (decision 0071); 5 since a
 /// keyword-only row's tokens end at their own last bytes (an escape's last byte, one byte after
 /// its backslash, is carried into the next block's last-bytes stream); 15 since the number check
-/// is tier 1's masks (doc 18 §4): a bit per state it looks back on and per run it fills.
-const JSON_STATE_BITS: usize = 15;
+/// is tier 1's masks (doc 18 §4): a bit per state it looks back on and per run it fills; 17
+/// since every token's last byte is an extract, zipped with the starts (the records, decision
+/// 0087's stream as a lexer's tokens): the one-byte tokens' too.
+const JSON_STATE_BITS: usize = 17;
 
 /// JSON's budgets (ratchets: lower them as the compiler improves). 37 operations rose to 40 when
 /// tier 1 began to hand tier 2 its stream (decision 0087): the starts' four ORs, as simdjson's
@@ -744,9 +724,11 @@ const JSON_STATE_BITS: usize = 15;
 /// length the compiler can prove would drop them. 85 and 15 when the number check moved from a
 /// program of its own, run per number in tier 2, into tier 1's masks (`JSON_NUMBER_CHECK_OPS`).
 /// 86 and 16 when the check's span fills from the starts it takes (`start & taken`), one `and`
-/// and its field: the exemption of other rows' starts went with it.
-const JSON_OPS: usize = 86;
-const JSON_CARRIED_WORDS: usize = 16;
+/// and its field: the exemption of other rows' starts went with it. 88 and 18 when every
+/// token's last byte joined the stream, an extract zipped with the starts (the records): one OR
+/// of the one-byte rows' last bytes, and the second extract's carries.
+const JSON_OPS: usize = 88;
+const JSON_CARRIED_WORDS: usize = 18;
 
 #[test]
 #[ignore = "a dump; run by name"]
@@ -784,8 +766,10 @@ fn json_loop_keeps_values_in_registers() {
 /// itself, the sinks after the ASCII branch's merge. Measured over the whole body (both
 /// bodies of the ASCII branch, the flattenings once), the code before the gated regions'
 /// calls has 564 instructions and 4 stack loads or stores; with the delayed outputs not held
-/// and the regions called where it is free, 566 and 4.
-const JSON_LOOP: usize = 566;
+/// and the regions called where it is free, 566 and 4. 690 with the records: every token's last
+/// byte an extract of its own, flattened as the starts are (simdjson writes one index; a record
+/// with no end for a one-byte token would save it).
+const JSON_LOOP: usize = 690;
 const JSON_LOOP_STACK: usize = 4;
 
 // --- Tier 1 is simdjson's stage 1 (decision 0071) ---------------------------------------------
@@ -882,59 +866,59 @@ state 14 level 17\n\
 state 15 level 17\n\
 state 16 level 17\n\
 state 17 level 17\n\
-arm 0 token 1 to 1 push 2 do open 15 open 17 s 16 leaf\n\
-arm 0 token 5 to 3 push 2 do open 15 open 19 s 16 leaf\n\
-arm 0 token 7 to 4 do open 15 open 20 s 16 leaf\n\
+arm 0 token 1 to 1 push 2 do open 15 open 17 s 16\n\
+arm 0 token 5 to 3 push 2 do open 15 open 19 s 16\n\
+arm 0 token 7 to 4 do open 15 open 20 s 16\n\
 arm 0 token 10 to 2 do open 15 leaf s 16\n\
 arm 0 token 11 to 2 do open 15 leaf s 16\n\
 arm 0 token 12 to 2 do open 15 leaf s 16\n\
 arm 0 token 13 to 2 do open 15 leaf s 16\n\
-arm 1 token 7 to 5 do open 18 open 20 f 1 leaf\n\
-arm 1 token 3 to 6 do leaf\n\
-arm 3 token 1 to 1 push 7 do open 17 s 16 leaf\n\
-arm 3 token 5 to 3 push 7 do open 19 s 16 leaf\n\
-arm 3 token 7 to 8 do open 20 s 16 leaf\n\
+arm 1 token 7 to 5 do open 18 open 20 f 1\n\
+arm 1 token 3 to 6 do\n\
+arm 3 token 1 to 1 push 7 do open 17 s 16\n\
+arm 3 token 5 to 3 push 7 do open 19 s 16\n\
+arm 3 token 7 to 8 do open 20 s 16\n\
 arm 3 token 10 to 7 do leaf s 16\n\
 arm 3 token 11 to 7 do leaf s 16\n\
 arm 3 token 12 to 7 do leaf s 16\n\
 arm 3 token 13 to 7 do leaf s 16\n\
-arm 3 token 6 to 6 do leaf\n\
+arm 3 token 6 to 6 do\n\
 arm 4 token 8 to 4 do leaf\n\
 arm 4 token 9 to 4 do leaf\n\
-arm 4 token 7 to 9 do leaf\n\
+arm 4 token 7 to 9 do\n\
 arm 5 token 8 to 5 do leaf\n\
 arm 5 token 9 to 5 do leaf\n\
-arm 5 token 7 to 10 do leaf\n\
-arm 7 token 2 to 11 do leaf\n\
-arm 7 token 6 to 6 do leaf\n\
+arm 5 token 7 to 10 do\n\
+arm 7 token 2 to 11 do\n\
+arm 7 token 6 to 6 do\n\
 arm 8 token 8 to 8 do leaf\n\
 arm 8 token 9 to 8 do leaf\n\
-arm 8 token 7 to 12 do leaf\n\
-arm 10 token 4 to 13 do close leaf\n\
-arm 11 token 1 to 1 push 7 do open 17 s 16 leaf\n\
-arm 11 token 5 to 3 push 7 do open 19 s 16 leaf\n\
-arm 11 token 7 to 8 do open 20 s 16 leaf\n\
+arm 8 token 7 to 12 do\n\
+arm 10 token 4 to 13 do close\n\
+arm 11 token 1 to 1 push 7 do open 17 s 16\n\
+arm 11 token 5 to 3 push 7 do open 19 s 16\n\
+arm 11 token 7 to 8 do open 20 s 16\n\
 arm 11 token 10 to 7 do leaf s 16\n\
 arm 11 token 11 to 7 do leaf s 16\n\
 arm 11 token 12 to 7 do leaf s 16\n\
 arm 11 token 13 to 7 do leaf s 16\n\
-arm 12 token 2 to 11 do close leaf\n\
-arm 12 token 6 to 6 do close leaf\n\
-arm 13 token 1 to 1 push 14 do open 17 f 2 s 16 leaf\n\
-arm 13 token 5 to 3 push 14 do open 19 f 2 s 16 leaf\n\
-arm 13 token 7 to 15 do open 20 f 2 s 16 leaf\n\
+arm 12 token 2 to 11 do close\n\
+arm 12 token 6 to 6 do close\n\
+arm 13 token 1 to 1 push 14 do open 17 f 2 s 16\n\
+arm 13 token 5 to 3 push 14 do open 19 f 2 s 16\n\
+arm 13 token 7 to 15 do open 20 f 2 s 16\n\
 arm 13 token 10 to 14 do leaf f 2 s 16\n\
 arm 13 token 11 to 14 do leaf f 2 s 16\n\
 arm 13 token 12 to 14 do leaf f 2 s 16\n\
 arm 13 token 13 to 14 do leaf f 2 s 16\n\
-arm 14 token 2 to 16 do close leaf\n\
-arm 14 token 3 to 6 do close leaf\n\
+arm 14 token 2 to 16 do close\n\
+arm 14 token 3 to 6 do close\n\
 arm 15 token 8 to 15 do leaf\n\
 arm 15 token 9 to 15 do leaf\n\
-arm 15 token 7 to 17 do leaf\n\
-arm 16 token 7 to 5 do open 18 open 20 f 1 leaf\n\
-arm 17 token 2 to 16 do close close leaf\n\
-arm 17 token 3 to 6 do close close leaf\n\
+arm 15 token 7 to 17 do\n\
+arm 16 token 7 to 5 do open 18 open 20 f 1\n\
+arm 17 token 2 to 16 do close close\n\
+arm 17 token 3 to 6 do close close\n\
 ";
 
 /// Tier 2's states and arms are the compiler's (doc 18, decisions 0085 and 0053): `grammar` makes
@@ -1151,9 +1135,11 @@ fn json_tier2_is_transducer_words() {
     let again = rir::assemble(&text).expect("reassembles");
     assert_eq!((&again.words, &again.block_programs, &again.strings), (&p.words, &p.block_programs, &p.strings), "the words round trip");
     let words: Vec<&str> = text.lines().filter(|l| l.trim_start().starts_with(|c: char| c.is_ascii_digit())).collect();
-    for want in ["TOKEN", "SWITCH", "OPEN", "LEAF", "CLOSE", "PUSH", "RETURN", "ACCEPT", "WORD"] {
+    for want in ["TOKEN", "SWITCH", "OPEN", "LEAF", "CLOSE", "PUSH", "RETURN", "ACCEPT"] {
         assert!(words.iter().any(|l| l.split_whitespace().nth(1) == Some(want)), "no {want}:\n{}", words.join("\n"));
     }
+    // The keywords (`true`, `false`, `null`) are a switch's targets, a row each.
+    assert!(text.lines().any(|l| l.trim_start().starts_with("switch ") && l.contains(" word s")), "no switch names a keyword");
     for banned in ["FORK", "CHILD", "NEXT", "DESCEND", "CAPTURE", "EMIT", "CHECK"] {
         assert!(!words.iter().any(|l| l.split_whitespace().nth(1) == Some(banned)), "{banned}:\n{}", words.join("\n"));
     }
@@ -1185,17 +1171,12 @@ fn json_compiled_path_equals_the_interpreters() {
     let tier1 = native_cpu_block::compile(&native.block_programs[0]).expect("tier 1 compiles");
     let tier2 = native_cpu_stream::compile(&native).expect("tier 2 compiles");
     // JSON has no wraps and no chained returns: it pays for neither (no wrap columns, no
-    // reorder). Its loop heads are the stream's and `ACCEPT`'s check of the mask (once a
-    // file). The table's final pass (parents and extras)
-    // is a function of its own, called once, and so is `SPAN m=1`'s search of the last-byte
-    // mask, called at each such span lowered (one copy of a shared arm's): their loops are not
-    // the token loop's.
+    // reorder). Its loop heads are the stream's. The table's final pass (parents and extras) is
+    // a function of its own, called once: its loop is not the token loop's. A token's end is its
+    // record's (`records`): no search.
     assert!(!tier2.wraps);
     assert!(tier2.heads.iter().all(|h| matches!(h.1, native_cpu_shape::Step::Token | native_cpu_shape::Step::Block)), "{:?}", tier2.heads);
-    let pushes: Vec<u16> = native.structural.iter().filter_map(|w| if let native_ir::StructuralOperation::Push { target } = w.operation { Some(target) } else { None }).collect();
-    let shared = native_cpu_stream::shared_runs(&native, &pushes);
-    let spans = native.structural.iter().enumerate().filter(|(pc, w)| !shared.skipped[*pc] && shared.at.get(pc).is_none_or(|&(b, _)| shared.bodies[b].start == *pc) && matches!(w.operation, native_ir::StructuralOperation::Span { last: true, .. })).count();
-    assert_eq!(tier2.own_calls, 1 + spans, "the final pass's call and the spans' searches alone");
+    assert_eq!(tier2.own_calls, 1, "the final pass's call alone");
     let files = json_tier2_files();
     for f in &files {
         let want1 = p.block_programs[0].run_files(&[f]).remove(0);
@@ -1204,6 +1185,51 @@ fn json_compiled_path_equals_the_interpreters() {
         let want = stream::run(&p, f, &want1).map_err(|r| r.pc);
         let got = tier2.run(f, &got1).map_err(|r| r.pc);
         assert_eq!(got, want, "tier 2: {}", String::from_utf8_lossy(f));
+    }
+}
+
+/// Tier 2 in clusters (`native_cpu_clusters`, `native_cpu_stream::compile_cut`): JSON cut by
+/// its traffic into small clusters, and with every word a cluster of its own. Each run equals
+/// the one function's, refusals at the same word.
+#[test]
+fn json_in_clusters_equals_one_function() {
+    let (p, _) = json_compiled();
+    let native = native_ir::lower(&p, 0, 0).expect("lowers");
+    assert_eq!(native.structural.len(), p.words.len(), "a word is lowered at its place");
+    let tier1 = native_cpu_block::compile(&native.block_programs[0]).expect("tier 1 compiles");
+    let one = native_cpu_stream::compile(&native).expect("one function");
+    assert_eq!((one.clusters, one.crossings), (1, 0));
+    let files = json_tier2_files();
+    let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
+    let traffic = native_cpu_clusters::traffic(&p, &refs);
+    let n = native.structural.len();
+    let cuts = [
+        ("by traffic, at most 40 words", native_cpu_clusters::by_traffic(&native, &traffic, 40)),
+        ("a function a rule, native calls", native_cpu_clusters::by_rules(&native)),
+        ("a function a rule, optimized", native_cpu_clusters::Cut { speed: true, ..native_cpu_clusters::by_rules(&native) }),
+        ("a word a cluster", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: rerail_compiler::native_cpu_clusters::Pick::Tree, pick_traffic: Default::default(), near: false, unsigned: false, calls: false }),
+        // The state in registers: every field, in clusters and in the one function.
+        ("by traffic, the state in registers", native_cpu_clusters::Cut { held: (0..23).collect(), ..native_cpu_clusters::by_traffic(&native, &traffic, 40) }),
+        ("a word a cluster, the state in registers", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32, held: (0..23).collect(), reload: true, inline_span: true, pass: Vec::new(), speed: false, pick: rerail_compiler::native_cpu_clusters::Pick::Tree, pick_traffic: Default::default(), near: false, unsigned: false, calls: false }),
+        ("one function, the state in registers", native_cpu_clusters::Cut { held: (0..23).collect(), ..native_cpu_clusters::Cut::one(n) }),
+        ("one function, ctx at each word", native_cpu_clusters::Cut { reload: true, ..native_cpu_clusters::Cut::one(n) }),
+        ("by traffic, ctx at each word", native_cpu_clusters::Cut { reload: true, ..native_cpu_clusters::by_traffic(&native, &traffic, 40) }),
+        ("by traffic, the span inline, the token's state held", native_cpu_clusters::Cut { inline_span: true, held: vec![10, 13, 14, 15, 16, 17, 21, 22], ..native_cpu_clusters::by_traffic(&native, &traffic, 40) }),
+        ("one function, arms weighted", native_cpu_clusters::Cut { pick: native_cpu_clusters::Pick::Weighted, pick_traffic: traffic.clone(), ..native_cpu_clusters::Cut::one(n) }),
+        ("one function, arms by a table", native_cpu_clusters::Cut { pick: native_cpu_clusters::Pick::Table, ..native_cpu_clusters::Cut::one(n) }),
+        ("one function, optimized", native_cpu_clusters::Cut { speed: true, ..native_cpu_clusters::Cut::one(n) }),
+        ("by traffic, optimized", native_cpu_clusters::Cut { speed: true, ..native_cpu_clusters::by_traffic(&native, &traffic, 40) }),
+        ("a state a function, direct and unsigned, entries by the profile", native_cpu_clusters::Cut { near: true, unsigned: true, pick_traffic: traffic.clone(), speed: true, ..native_cpu_clusters::by_states(&native) }),
+        ("a state a function, four fields passed", native_cpu_clusters::Cut { inline_span: true, reload: true, held: vec![10, 13, 14, 21, 22], pass: vec![10, 13, 14, 21], ..native_cpu_clusters::by_states(&native) }),
+    ];
+    for (name, cut) in cuts {
+        let tier2 = native_cpu_stream::compile_cut(&native, &cut).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        eprintln!("{name}: {} clusters, {} tail calls; {:.3} of the steps cross", tier2.clusters, tier2.crossings, native_cpu_clusters::crossings(&native, &cut, &traffic));
+        assert!(cut.count == 1 || (tier2.clusters > 1 && tier2.crossings > 0), "{name}: in clusters");
+        for f in &files {
+            let t1 = tier1.extract(f);
+            assert_eq!(tier2.run(f, &t1).map_err(|r| r.pc), one.run(f, &t1).map_err(|r| r.pc), "{name}: {}", String::from_utf8_lossy(f));
+        }
     }
 }
 

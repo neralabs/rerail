@@ -1300,7 +1300,96 @@ fn generate_serial(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (Str
         r = 2 * sw,
         tgs = PREFIX_THREADS / GROUP,
     ));
+    out.push_str(&records_source(programs));
     (out, sw, counted)
+}
+
+/// Threads a file of the record pass: each takes every `RECORD_LANES`th token.
+const RECORD_LANES: usize = 64;
+
+/// The record pass (`rerail_compiler::records`) in MSL: per program with records, its tables
+/// as constants and its function; the kernel `serial_records`, a file's tokens over
+/// `RECORD_LANES` threads. A token's work is straight-line word operations: its first byte's
+/// kind, its first eight bytes (two 16-byte loads, shifted), a slot, a compare, and for a word
+/// past eight bytes its other words. Each token checks it starts after the token before; a
+/// file whose streams disagree gets its totals' flag set.
+fn records_source(programs: &[&BlockNative]) -> String {
+    let list = |v: &mut dyn Iterator<Item = String>| v.collect::<Vec<_>>().join(", ");
+    let mut out = String::from(
+        "// Bytes `p..p + 8` of a file, zeros past its end.\n\
+         static inline ulong record_load8(device const uint4* bytes, FileRow f, uint p) {\n\
+         \x20 const uint4 a = load16(bytes, f, p / 16u), b = load16(bytes, f, p / 16u + 1u);\n\
+         \x20 const ulong w0 = ulong(a.x) | ulong(a.y) << 32, w1 = ulong(a.z) | ulong(a.w) << 32, w2 = ulong(b.x) | ulong(b.y) << 32;\n\
+         \x20 const uint o = p % 16u, r = (o % 8u) * 8u;\n\
+         \x20 const ulong lo = o < 8u ? w0 : w1, hi = o < 8u ? w1 : w2;\n\
+         \x20 return r == 0u ? lo : (lo >> r) | (hi << (64u - r));\n\
+         }\n\
+         static inline ulong record_cut(ulong w, uint n) { return n >= 8u ? w : w & ((1ul << (8u * n)) - 1ul); }\n",
+    );
+    let mut cases = String::new();
+    for (p, n) in programs.iter().enumerate() {
+        let Some(r) = &n.records else { continue };
+        let t = rerail_compiler::records::WordTable::new(&r.words).expect("verified: the words fit a table");
+        let tails: Vec<u64> = if t.tails.is_empty() { vec![0; 7] } else { t.tails.iter().flatten().copied().collect() };
+        let (se, le, e, x) = (r.starts, r.lasts, n.extracts.len(), n.extracts.len());
+        out.push_str(&format!(
+            "constant uchar record_kinds_{p}[256] = {{{kinds}}};\n\
+             constant ulong record_keys_{p}[{slots}] = {{{keys}}};\n\
+             constant uint record_meta_{p}[{slots}] = {{{meta}}};\n\
+             constant ulong record_tails_{p}[{nt}] = {{{tails}}};\n\
+             static inline void records_{p}(device const uint4* bytes, FileRow f, uint lane, device uint* positions, device const uint* tot, device atomic_uint* flag) {{\n\
+             \x20 const uint cap = max(f.len, 1u);\n\
+             \x20 device const uint* starts = positions + f.pos_base + {se}u * cap;\n\
+             \x20 device const uint* lasts = positions + f.pos_base + {le}u * cap;\n\
+             \x20 device uint* codes = positions + f.pos_base + {e}u * cap;\n\
+             \x20 const uint ns = tot[f.tot_base + {se}u], nl = tot[f.tot_base + {le}u], n = min(ns, nl);\n\
+             \x20 bool bad = lane == 0u && ns != nl;\n\
+             \x20 for (uint k = lane; k < n; k += {lanes}u) {{\n\
+             \x20   const uint s = starts[k], l = lasts[k], after = k > 0u ? lasts[k - 1u] + 1u : 0u;\n\
+             \x20   bad = bad || l < s || s < after;\n\
+             \x20   const uint len = l + 1u - s;\n\
+             \x20   const ulong raw = record_load8(bytes, f, s);\n\
+             \x20   const uint kind = record_kinds_{p}[uint(raw & 0xfful)];\n\
+             \x20   const ulong key = record_cut(raw, len);\n\
+             \x20   const uint slot = uint(((key ^ ulong(len)) * {mult}ul) >> {shift}u);\n\
+             \x20   const uint meta = record_meta_{p}[slot];\n\
+             \x20   uint word = (record_keys_{p}[slot] == key && (meta & 0xffu) == len) ? meta >> 8u : 0u;\n\
+             \x20   if (word != 0u && len > 8u) {{\n\
+             \x20     bool all = true;\n\
+             \x20     for (uint j = 1u; j < 8u; j++) all = all && (len <= 8u * j || record_cut(record_load8(bytes, f, s + 8u * j), len - 8u * j) == record_tails_{p}[(word - 1u) * 7u + j - 1u]);\n\
+             \x20     word = all ? word : 0u;\n\
+             \x20   }}\n\
+             \x20   codes[k] = kind | (word << {kb}u);\n\
+             \x20 }}\n\
+             \x20 if (bad) atomic_fetch_or_explicit(flag + f.tot_base + {x}u, 1u, memory_order_relaxed);\n\
+             }}\n",
+            kinds = list(&mut r.kinds.iter().map(|k| k.to_string())),
+            slots = t.keys.len(),
+            keys = list(&mut t.keys.iter().map(|k| format!("{k:#x}ul"))),
+            meta = list(&mut t.meta.iter().map(|m| format!("{m}u"))),
+            nt = tails.len(),
+            tails = list(&mut tails.iter().map(|k| format!("{k:#x}ul"))),
+            lanes = RECORD_LANES,
+            mult = t.mult,
+            shift = 64 - t.bits,
+            kb = rerail_compiler::records::KIND_BITS,
+        ));
+        cases.push_str(&format!("    case {p}u: records_{p}(bytes, f, lane, positions, tot, flag); break;\n"));
+    }
+    out.push_str(&format!(
+        "// The record pass: thread `t` is file `t / {lanes}`'s lane `t % {lanes}`.\n\
+         kernel void serial_records(device const uint4* s0 [[buffer(0)]], device const FileRow* files [[buffer(2)]], device uint* positions [[buffer(6)]],\n\
+         \x20   constant uint4& q [[buffer(7)]], device const uint* tot [[buffer(8)]], device atomic_uint* flag [[buffer(9)]],\n\
+         \x20   device const uint4* s1 [[buffer(16)]], device const uint4* s2 [[buffer(17)]], device const uint4* s3 [[buffer(18)]], uint t [[thread_position_in_grid]]) {{\n\
+         \x20 const uint fi = t / {lanes}u, lane = t % {lanes}u;\n\
+         \x20 if (fi >= q.x) return;\n\
+         \x20 const FileRow f = files[fi];\n\
+         \x20 SLAB;\n\
+         \x20 switch (f.program) {{\n{cases}    default: break;\n  }}\n\
+         }}\n",
+        lanes = RECORD_LANES,
+    ));
+    out
 }
 
 /// Whether the scans' carries are made exact first, level by level (`Levels`);
@@ -1335,7 +1424,11 @@ fn exact_unset() -> bool {
 
 /// After a first pass with wrong starts: each program's scans wrong in more than one segment in
 /// `PROMOTE` (their carry bit in the start differs from the end before) join its `LEARNED`.
-fn learn(forms: &[BlockNative], rows: &[FileRow], segs: &[[u32; 4]], records: &[u64], sw: usize) {
+///
+/// A source whose runs promoted nothing new is settled: its runs learn no more (what they would
+/// find is what it holds), and their records are not read back.
+fn learn(key: u64, forms: &[BlockNative], rows: &[FileRow], segs: &[[u32; 4]], records: &[u64], sw: usize) {
+    let mut grew = false;
     for (p, native) in forms.iter().enumerate() {
         let state = State::of(native);
         let mut wrong = vec![0usize; state.parts.len()];
@@ -1355,10 +1448,58 @@ fn learn(forms: &[BlockNative], rows: &[FileRow], segs: &[[u32; 4]], records: &[
         let promoted: Vec<usize> = state.parts.iter().zip(&wrong).filter(|&(_, &n)| n * PROMOTE > seen).map(|(&(at, ..), _)| at).collect();
         if !promoted.is_empty() {
             if let Ok(mut m) = LEARNED.lock() {
-                m.entry(fingerprint(native)).or_default().extend(promoted);
+                let known = m.entry(fingerprint(native)).or_default();
+                for at in promoted {
+                    if !known.contains(&at) {
+                        known.push(at);
+                        grew = true;
+                    }
+                }
             }
         }
     }
+    if !grew {
+        if let Ok(mut m) = SETTLED.lock() {
+            m.insert(key);
+        }
+    }
+}
+
+/// The sources (`serial_source`'s keys) whose runs learn nothing more (`learn`).
+static SETTLED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<u64>>> = std::sync::LazyLock::new(Default::default);
+
+fn settled(key: u64) -> bool {
+    SETTLED.lock().is_ok_and(|m| m.contains(&key))
+}
+
+/// What a run's buffers and launches take from its programs' levels, made once a source.
+struct Shape {
+    /// The most scans of a program (the tables' words a segment).
+    most: usize,
+    /// The deepest level (`cones_on`: else none).
+    depth: usize,
+    /// The fixed-point tables' words a segment (`group_stride`).
+    stride: usize,
+    /// The levels with a fixed point (`group_levels`).
+    with_groups: std::collections::BTreeSet<usize>,
+}
+
+fn shape_of(key: u64, programs: &[&BlockNative]) -> std::sync::Arc<Shape> {
+    static SHAPES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u64, std::sync::Arc<Shape>>>> = std::sync::LazyLock::new(Default::default);
+    if let Some(hit) = SHAPES.lock().ok().and_then(|m| m.get(&key).cloned()) {
+        return hit;
+    }
+    let levels: Vec<Levels> = programs.iter().map(|n| Levels::of(n)).collect();
+    let shape = std::sync::Arc::new(Shape {
+        most: levels.iter().map(|l| l.scans.len()).max().unwrap_or(0).max(1),
+        depth: if cones_on() { levels.iter().map(|l| l.depth).max().unwrap_or(0) } else { 0 },
+        stride: group_stride(programs),
+        with_groups: group_levels(programs),
+    });
+    if let Ok(mut m) = SHAPES.lock() {
+        m.insert(key, shape.clone());
+    }
+    shape
 }
 
 /// Whether the runs are in lanes form (`lanes_function`); `RERAIL_SERIAL_LANES=0` runs each
@@ -1563,7 +1704,7 @@ fn run_passes(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[std
         })
         .max()
         .unwrap_or(0);
-    let out = crate::pool::zeroed::<u64>((offset + widest * total_blocks).max(1))?;
+    let out = crate::pool::zeroed_on_device::<u64>((offset + widest * total_blocks).max(1))?;
     fit(offset + widest * total_blocks)?;
     // The segments, as `run_serial_io` cuts them: (file, first block, end, index in the file).
     let mut rows = Vec::with_capacity(files.len());
@@ -1723,7 +1864,8 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
             segs.push([fit(i)?, fit(s * segments.blocks)?, fit(((s + 1) * segments.blocks).min(blocks))?, fit(s)?]);
         }
         out_base += n.outputs.len() * blocks;
-        pos_base += n.extracts.len() * len.max(1);
+        // The extracts' positions, and with records a code a token after them.
+        pos_base += (n.extracts.len() + usize::from(n.records.is_some())) * len.max(1);
         tot_base += rerail_compiler::native_cpu_block::counted(n).len();
     }
     let total = segs.len();
@@ -1748,13 +1890,12 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     // last position.
     let tot = crate::pool::zeroed::<u32>(tot_base + 2)?;
     let positions = crate::pool::zeroed::<u32>(pos_base + 2)?;
-    let most = forms.iter().map(|n| Levels::of(n).scans.len()).max().unwrap_or(0).max(1);
-    let depth = if cones_on() { forms.iter().map(|n| Levels::of(n).depth).max().unwrap_or(0) } else { 0 };
+    let shape = shape_of(source_key, &refs);
+    let (most, depth, stride, with_groups) = (shape.most, shape.depth, shape.stride, &shape.with_groups);
     let tables = crate::pool::zeroed::<u32>(total * 2 * most)?;
     let cins = crate::pool::zeroed::<u64>(total)?;
     let cws = crate::pool::zeroed::<u64>(total)?;
-    let gtabs = crate::pool::zeroed::<u32>(total * group_stride(&refs))?;
-    let with_groups = group_levels(&refs);
+    let gtabs = crate::pool::zeroed::<u32>(total * stride)?;
     let marks = crate::pool::zeroed::<u32>(total)?;
     // Segments run again in all, and the most one thread ran.
     let hopped = crate::pool::zeroed::<u32>(2)?;
@@ -1775,6 +1916,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     let prefix = kernel(source_key, source, "serial_prefix")?;
     let write = kernel(source_key, source, "serial_write")?;
     let lanes_write = kernel(source_key, source, "lanes_write")?;
+    let records_pass = kernel(source_key, source, "serial_records")?;
     let mut common: Vec<(u64, &metal::BufferRef, u64)> = vec![(1, out.buffer(), 0), (2, table.buffer(), 0), (3, seg_table.buffer(), 0)];
     for (k, &at) in SLAB_BUFFERS.iter().enumerate() {
         common.push((at, &slabs.get(k).unwrap_or(&slabs[0]).buffer.buffer, 0));
@@ -1839,8 +1981,8 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
         unsafe { std::ptr::write_bytes(cws.host().cast::<u64>(), 0, total) };
     }
     let first_seconds = encode_passes(&first)?;
-    if listed.read::<u32>(1)[0] > 0 && exact_unset() {
-        learn(&forms, &rows, &segs, &records.read::<u64>(total * 2 * sw), sw);
+    if listed.read::<u32>(1)[0] > 0 && exact_unset() && !settled(source_key) {
+        learn(source_key, &forms, &rows, &segs, &records.read::<u64>(total * 2 * sw), sw);
     }
     if std::env::var("RERAIL_SERIAL_DEBUG").is_ok() {
         let lv = Levels::of(&forms[0]);
@@ -1935,6 +2077,9 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     } else {
         sinks.push(Pass { pipeline: &write, buffers: with(&[(5, "bases"), (6, "positions")]), args: args(fit(total)?, 0), groups: groups(total), threads: THREADS });
     }
+    if forms.iter().any(|n| n.records.is_some()) {
+        sinks.push(Pass { pipeline: &records_pass, buffers: with(&[(6, "positions"), (8, "tot"), (9, "tot")]), args: args(fit(files.len())?, 0), groups: groups(files.len() * RECORD_LANES), threads: THREADS });
+    }
     let sink_seconds = encode_passes(&sinks)?;
     launches += 1;
     let mut results = Vec::with_capacity(files.len());
@@ -1962,14 +2107,22 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
             .collect();
         let capacity = len.max(1);
         let count = |c: usize| tot[row.tot_base as usize + c];
-        let positions = (0..n.extracts.len())
+        let file_positions = (0..n.extracts.len())
             .map(|e| {
                 let from = row.pos_base as usize + e * capacity;
                 positions[from..from + (count(e) as usize).min(capacity)].to_vec()
             })
             .collect();
         let totals = if n.totals.is_empty() { Vec::new() } else { vec![u64::from(count(n.extracts.len()) != 0)] };
-        results.push(BlockRun { outputs, positions, totals });
+        let codes = match &n.records {
+            Some(r) => {
+                let from = row.pos_base as usize + n.extracts.len() * capacity;
+                let k = count(usize::from(r.starts)).min(count(usize::from(r.lasts))) as usize;
+                positions[from..from + k.min(capacity)].to_vec()
+            }
+            None => Vec::new(),
+        };
+        results.push(BlockRun { outputs, positions: file_positions, totals, codes });
     }
     Ok((serial(results), None))
 }

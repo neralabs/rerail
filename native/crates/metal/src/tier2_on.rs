@@ -1,6 +1,6 @@
 //! Tier 2 on tier 1's buffers as the Metal backend left them: the compiled words (the compiler
-//! crate's `native_cpu_stream`) read a file's bytes, positions, mask words and totals in the
-//! device's shared memory, where tier 1 wrote them.
+//! crate's `native_cpu_stream`) read a file's bytes, records (positions and codes), mask words
+//! and totals in the device's shared memory, where tier 1 wrote them.
 
 use crate::block_program::serial::Resident;
 use rerail_compiler::native_cpu_stream::{Columns, Parser, Tier1View};
@@ -22,15 +22,17 @@ pub fn columns_on(parser: &Parser, run: &Resident, i: usize) -> Result<Columns, 
         None => (pos, 0),
     };
     let outputs = out.wrapping_add(f.out_base);
-    let (lasts, nlasts) = match parser.tier2.lasts {
-        Some(m) => (outputs.wrapping_add(m * f.blocks), f.blocks),
-        None => (outputs, 0),
+    // The records' other columns: the last bytes, and the codes after the extracts'.
+    let lasts = match parser.tier2.lasts {
+        Some(e) => (pos.wrapping_add(f.pos_base + e * f.capacity), count(e)),
+        None => (pos, 0),
     };
+    let codes = pos.wrapping_add(f.pos_base + parser.tier1.extracts.len() * f.capacity);
     let view = Tier1View {
         starts: starts.0,
-        nstarts: starts.1,
-        lasts,
-        nlasts,
+        nstarts: starts.1.min(lasts.1),
+        lasts: lasts.0,
+        codes,
         lasts_stride: 8,
         outputs,
         output_stride: 8 * f.blocks,
