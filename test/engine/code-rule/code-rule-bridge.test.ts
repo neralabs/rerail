@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
+import { appendFile, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, utimes, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
@@ -418,6 +418,48 @@ describe("CodeRuleBridge", () => {
     await shell(bridge, () => writeFile(files[0]!, "x = 0\nmine\n"));
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
       [{ path: "deep/f0.py", language: "python", previousText: "x = 0\n", generatedText: "x = 0\nmine\n" }],
+    ]);
+  });
+
+  it("audits a shell command's writes that its own walk is the first to see, in a folder the baseline could not read", async () => {
+    const root = await realpath(await workspace());
+    await writeFile(join(root, "src", "kept.py"), "kept\n");
+    await mkdir(join(root, "deep"));
+    await writeFile(join(root, "deep", "old.py"), "old\n");
+    commitAll(root);
+    await awaitClockAfter(join(root, "deep", "old.py"));
+    // Every walk the session's opening makes fails to list the folder; the command's walk is the first to read it.
+    const failing = async () => { throw new Error("EMFILE: too many open files"); };
+    discovery.directories.set(join(root, "deep"), Array.from({ length: 20 }, () => failing));
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    discovery.directories.delete(join(root, "deep"));
+    await shell(bridge, async () => {
+      await writeFile(join(root, "deep", "old.py"), "old\nviolation\n");
+      await writeFile(join(root, "deep", "new.py"), "violation\n");
+    });
+    const uncaptured = "Source changed during initial discovery without a captured preimage";
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([[[
+      { path: "deep/new.py", language: "python", previousReadError: uncaptured, generatedText: "violation\n" },
+      { path: "deep/old.py", language: "python", previousReadError: uncaptured, generatedText: "old\nviolation\n" },
+    ], undefined]]);
+  });
+
+  it("measures a shell edit from the text of a file a command moved into the session folder, stamped before the session", async () => {
+    const root = await workspace();
+    await writeFile(join(root, "src", "a.py"), "a\n");
+    commitAll(root);
+    const outside = await workspace();
+    await mkdir(join(outside, "pkg"));
+    const moved = join(outside, "pkg", "m.py");
+    await writeFile(moved, "moved\n");
+    await awaitClockAfter(join(root, "src", "a.py"), moved);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    // A move keeps the stamps of the files in the folder, so the walk first sees m.py with a stamp from before the session.
+    await shell(bridge, () => rename(join(outside, "pkg"), join(root, "src", "pkg")));
+    await shell(bridge, () => writeFile(join(root, "src", "pkg", "m.py"), "moved\nmine\n"));
+    // Whether the move itself is audited depends on the stamps the platform gives a moved folder: only the edit is pinned.
+    expect(auditGeneratedEdits.mock.calls.at(-1)?.[1].edits).toEqual([
+      { path: "src/pkg/m.py", language: "python", previousText: "moved\n", generatedText: "moved\nmine\n" },
     ]);
   });
 
@@ -1214,6 +1256,72 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     ]);
     // The one file that changed is the one read made into text.
     expect(decodedReads.count).toBe(1);
+  });
+
+  it("makes no text of the files a later worktree walk first sees, as its baseline, in a folder the last one could not read", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    await mkdir(join(worktree, "deep"));
+    const files = Array.from({ length: 20 }, (_, index) => join(worktree, "deep", `f${index}.py`));
+    await Promise.all(files.map((file, index) => writeFile(file, `x = ${index}\n`)));
+    git(worktree, "add", ".");
+    git(worktree, "commit", "--quiet", "-m", "files");
+    await awaitClockAfter(...files);
+    discovery.directories.set(join(worktree, "deep"), [async () => { throw new Error("EMFILE: too many open files"); }]);
+    decodedReads.count = 0;
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    // The walk that reads the folder comes after the worktree's first: only that folder's failure makes these a baseline.
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    expect(decodedReads.count).toBe(0);
+    await shellInWorktree(bridge, () => writeFile(files[0]!, "x = 0\nmine\n"));
+    const path = relative(root, files[0]!).split(sep).join("/");
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
+      [[{ path, language: "python", previousText: "x = 0\n", generatedText: "x = 0\nmine\n" }], "log"],
+    ]);
+  });
+
+  it("records another writer's change in a worktree Git added during the session, made before that worktree's first walk", async () => {
+    const root = await twoBranches();
+    const roots: string[] = [];
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, {
+      ...auditor(auditGeneratedEdits),
+      sourceRoot: path => roots.find(known => resolve(root, path).startsWith(`${known}${sep}`)) ?? root,
+      worktreeRoots: () => roots,
+    }, { worktreeWalkGapMs: 0 });
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    const place = join(await workspace(), "w");
+    git(root, "worktree", "add", "--quiet", place, "other");
+    const worktree = await realpath(place);
+    await writeFile(join(worktree, "src", "a.py"), "old\nviolation\nmine\n");
+    roots.push(worktree);
+    await shellInWorktree(bridge, () => undefined);
+    const path = relative(root, join(worktree, "src", "a.py")).split(sep).join("/");
+    // Whether Git's own write of src/new.py is recorded too depends on how its checkout wrote line breaks.
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([[expect.arrayContaining([
+      { path, language: "python", previousReadError: "Source changed during initial discovery without a captured preimage", generatedText: "old\nviolation\nmine\n" },
+    ]), "log"]]);
+  });
+
+  it("records a file a shell command moved into another worktree, stamped before the session, and measures its next edit from that text", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const outside = await workspace();
+    await mkdir(join(outside, "pkg"));
+    const moved = join(outside, "pkg", "m.py");
+    await writeFile(moved, "moved\n");
+    await awaitClockAfter(moved);
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    await shellInWorktree(bridge, () => rename(join(outside, "pkg"), join(worktree, "src", "pkg")));
+    await shellInWorktree(bridge, () => writeFile(join(worktree, "src", "pkg", "m.py"), "moved\nmine\n"));
+    const path = relative(root, join(worktree, "src", "pkg", "m.py")).split(sep).join("/");
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
+      [[{ path, language: "python", generatedText: "moved\n" }], "log"],
+      [[{ path, language: "python", previousText: "moved\n", generatedText: "moved\nmine\n" }], "log"],
+    ]);
   });
 
   it("reports a worktree walk that never ran as pending when the session closes, and none with no worktree to walk", async () => {
