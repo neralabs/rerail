@@ -245,6 +245,8 @@ A worktree of a repository where Rerail runs is recorded the first time a sessio
 
 Shell writes are found by walking files, so each session also walks the repository's other worktrees that may run rules, behind its own folder's walk. A command doesn't wait for this. The walk can't tell who wrote a file, so what it finds is recorded under the repository, in Log, and steers no session: an agent is steered only on its own tool calls and on its own folder's shell writes. A shell write an agent makes in another worktree is therefore recorded but not steered. What Git wrote is left out, as in the session's own folder. In its own folder, a change made while none of the session's tool calls ran is another writer's and doesn't steer it ([the session's own write](reference.md#how-ai-output-scope-finds-changed-lines)).
 
+The walk asks each worktree which files its rules read and which Git ignores, with that worktree's configuration. Worktrees whose rules are the same share one copy of them for these answers, and a worktree's own copy, which checks files, is made only when a file there is checked. So a session's memory grows with the worktrees it checks files in, not with every worktree it walks.
+
 <details>
 <summary>Nested checkouts and symlinks</summary>
 

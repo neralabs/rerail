@@ -8,13 +8,19 @@
  * recorded checkout that may run rules. Any other nested repository, such as an untracked `git init` or a stray
  * `.git` entry, is judged with the checkout around it, so a `.git` never exempts files from that checkout's rules. A
  * declared submodule that is not set up runs nothing.
+ *
+ * A lane opens for the starting checkout and when an audit needs one. Which files a checkout reads or ignores is a
+ * question a walk asks of every worktree, so it opens no lane: a checkout with none answers from its catalog's code rule
+ * scopes (`CodeRuleScopes`) and its Git exclude stack, as its lane would.
  */
 import { existsSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { storedPath } from "../catalog/checkout-control.js";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
 import { worktreeRegistry } from "../catalog/repository-identity.js";
+import { loadNativeBinding, type NativeGitIgnoreMatcher } from "../native/native.js";
 import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
+import { CodeRuleScopes } from "./code-rule-scopes.js";
 import type {
   AuditorCloseOptions,
   CodeRuleEdit,
@@ -53,6 +59,12 @@ interface Lane {
   readonly opening: Promise<void>;
 }
 
+/** What a checkout with no lane answers from: its catalog's scopes, as read when `refreshCodeRules` had run `refreshed` times. */
+interface UnlanedCheckout {
+  readonly scopes: CodeRuleScopes;
+  readonly refreshed: number;
+}
+
 function merged(revision: number, responses: readonly CodeRuleResponse[]): CodeRuleResponse {
   return {
     revision,
@@ -72,6 +84,12 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   readonly #sessionRoot: string;
   readonly #lanes = new Map<string, Lane>();
   readonly #eligibility = new Map<string, CheckoutEligibility>();
+  /** The checkouts a path was asked of that have no lane, by root. */
+  readonly #unlaned = new Map<string, UnlanedCheckout>();
+  /** Git's exclude stack of each checkout with no lane that a path was asked of; null where it cannot be opened. */
+  readonly #gitIgnore = new Map<string, NativeGitIgnoreMatcher | null>();
+  /** How many times `refreshCodeRules` ran; a checkout with no lane reads its catalog again at its next question after one. */
+  #refreshes = 0;
   #settings: Required<AuditSettings>;
   #sessionId: string | undefined;
   #closing = false;
@@ -102,6 +120,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   refreshCodeRules(): void {
     if (this.#closing) return;
     for (const root of this.#eligibility.keys()) this.#eligibility.set(root, this.#options.catalogs.refresh(root));
+    this.#refreshes += 1;
     for (const lane of [...this.#lanes.values()]) {
       if (this.#mayRun(lane.root)) {
         lane.enforcer.refreshCodeRules();
@@ -118,22 +137,63 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     for (const lane of this.#lanes.values()) lane.enforcer.updateSettings(settings);
   }
 
-  /** Whether the lane that owns `path` reads it: a listed file in a code rule's scope, an unlisted one in a text-reading rule's (`acceptsPath` of the enforcer). */
+  /**
+   * Whether the checkout that owns `path` reads it: a listed file in a code rule's scope, an unlisted one in a
+   * text-reading rule's, never one Git ignores while the session follows `.gitignore` (`acceptsPath` of the enforcer).
+   * Its lane answers, or with no lane its catalog's scopes and Git's exclude stack; nothing is read where no lane may run.
+   */
   acceptsPath(path: string): boolean {
-    const routed = this.#route(path);
-    return routed !== undefined && routed.lane.enforcer.acceptsPath(routed.path);
+    const owner = this.#owner(resolve(this.#sessionRoot, path));
+    if (owner === undefined) return false;
+    const lane = this.#openLane(owner.checkoutRoot);
+    if (lane !== undefined) return lane.enforcer.acceptsPath(owner.path);
+    const scopes = this.#scopesOf(owner.checkoutRoot);
+    return scopes !== undefined && scopes.readsPath(owner.path) && !this.#gitIgnores(owner, false);
   }
 
-  /** Whether the checkout that owns `path` ignores it; a path no lane owns is never ignored here, only not accepted. */
+  /** Whether the checkout that owns `path` ignores it; a path of a checkout no lane may run in is never ignored here, only not accepted. */
   ignoresPath(path: string, directory: boolean): boolean {
-    const routed = this.#route(path);
-    return routed !== undefined && routed.lane.enforcer.ignoresPath(routed.path, directory);
+    const owner = this.#owner(resolve(this.#sessionRoot, path));
+    if (owner === undefined || !this.#mayAnswer(owner.checkoutRoot)) return false;
+    const lane = this.#openLane(owner.checkoutRoot);
+    return lane === undefined ? this.#gitIgnores(owner, directory) : lane.enforcer.ignoresPath(owner.path, directory);
   }
 
   /** Why the checkout that owns the file `path` leaves an edit of it unchecked for Git's rules (`ignoredEdit` of its enforcer). */
   ignoredEdit(path: string): IgnoredEditMatch | undefined {
-    const routed = this.#route(path);
-    return routed?.lane.enforcer.ignoredEdit(routed.path);
+    const owner = this.#owner(resolve(this.#sessionRoot, path));
+    if (owner === undefined) return undefined;
+    const lane = this.#openLane(owner.checkoutRoot);
+    if (lane !== undefined) return lane.enforcer.ignoredEdit(owner.path);
+    const scopes = this.#scopesOf(owner.checkoutRoot);
+    if (scopes === undefined || !scopes.readsPath(owner.path)) return undefined;
+    return this.#askGitIgnore(owner, matcher => matcher.ignoredBy(owner.path, false)) ?? undefined;
+  }
+
+  /** Whether Git ignores `owner`'s path in its checkout, while the session follows `.gitignore`. */
+  #gitIgnores(owner: CheckoutOwner, directory: boolean): boolean {
+    return this.#askGitIgnore(owner, matcher => matcher.ignored(owner.path, directory)) ?? false;
+  }
+
+  /**
+   * `ask` of Git's exclude stack of `owner`'s checkout while the session follows `.gitignore`, opened once; undefined
+   * otherwise, outside Git, and where the rules cannot be read. A lane's enforcer asks its own the same way.
+   */
+  #askGitIgnore<T>(owner: CheckoutOwner, ask: (matcher: NativeGitIgnoreMatcher) => T): T | undefined {
+    if (this.#options.followGitignore !== true) return undefined;
+    try {
+      let matcher = this.#gitIgnore.get(owner.checkoutRoot);
+      if (matcher === undefined) {
+        matcher = loadNativeBinding().openGitIgnoreMatcher(owner.checkoutRoot);
+        this.#gitIgnore.set(owner.checkoutRoot, matcher);
+      }
+      return matcher === null ? undefined : ask(matcher);
+    } catch (error) {
+      // As a lane does: rules that cannot be read leave the path in, so a broken `.gitignore` never hides sources.
+      this.#gitIgnore.set(owner.checkoutRoot, null);
+      process.stderr.write(`rerail: cannot read Git ignore rules for ${owner.path || "."}: ${error instanceof Error ? error.message : String(error)}\n`);
+      return undefined;
+    }
   }
 
   sourceRoot(path: string): string | undefined {
@@ -239,6 +299,9 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
 
   async close(options?: AuditorCloseOptions): Promise<void> {
     this.interrupt(options);
+    for (const scopes of new Set([...this.#unlaned.values()].map(unlaned => unlaned.scopes))) scopes.release(this);
+    this.#unlaned.clear();
+    this.#gitIgnore.clear();
     const lanes = [...this.#lanes.values()];
     this.#lanes.clear();
     await Promise.all(lanes.map(async lane => {
@@ -347,6 +410,8 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     if (sessionId === undefined || this.#closing || !this.#mayRun(root)) return undefined;
     let lane = this.#lanes.get(root);
     if (lane === undefined) {
+      // The lane answers for the checkout from now on, with its own exclude stack.
+      this.#forgetUnlaned(root);
       const enforcer = new NativeCodeRuleEnforcer(this.#options.catalogs.catalog(root), {
         workspaceRoot: root,
         steerDelivery: this.#options.steerDelivery,
@@ -363,6 +428,46 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
       this.#lanes.set(root, lane);
     }
     return lane;
+  }
+
+  /** The lane open for `root`, while it may run; a question asks it, and opens none. */
+  #openLane(root: string): Lane | undefined {
+    return this.#mayAnswer(root) ? this.#lanes.get(root) : undefined;
+  }
+
+  /** Whether `root`'s files get answers from rules: the session is open and its lane may run (`#lane`). */
+  #mayAnswer(root: string): boolean {
+    return this.#sessionId !== undefined && !this.#closing && this.#mayRun(root);
+  }
+
+  /**
+   * The scopes a checkout with no lane answers from, its catalog read at its first question and again at its first
+   * after each `refreshCodeRules`; undefined where no lane may run.
+   */
+  #scopesOf(root: string): CodeRuleScopes | undefined {
+    if (!this.#mayAnswer(root)) return undefined;
+    const known = this.#unlaned.get(root);
+    if (known?.refreshed === this.#refreshes) return known.scopes;
+    const catalog = this.#options.catalogs.catalog(root);
+    catalog.refresh();
+    const scopes = known?.scopes.version === catalog.status.version ? known.scopes : CodeRuleScopes.hold(catalog.snapshot(), this);
+    this.#unlaned.set(root, { scopes, refreshed: this.#refreshes });
+    if (known !== undefined && known.scopes !== scopes) this.#letGo(known.scopes);
+    return scopes;
+  }
+
+  /** Drops what `root` answered from while it had no lane. */
+  #forgetUnlaned(root: string): void {
+    const known = this.#unlaned.get(root);
+    this.#unlaned.delete(root);
+    this.#gitIgnore.delete(root);
+    if (known !== undefined) this.#letGo(known.scopes);
+  }
+
+  /** Releases `scopes` once no checkout with no lane answers from them. */
+  #letGo(scopes: CodeRuleScopes): void {
+    for (const unlaned of this.#unlaned.values()) if (unlaned.scopes === scopes) return;
+    scopes.release(this);
   }
 
   /** Whether `root` may run rules in this session: it is eligible, and the session's own checkout is not stopped. */

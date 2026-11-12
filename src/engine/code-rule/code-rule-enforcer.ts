@@ -438,6 +438,29 @@ function inAppFolder(path: string): boolean {
   return /(?:^|\/)app\//.test(path);
 }
 
+/** What `workspaceReadsPath` asks of a workspace: its code rules' scopes and what they read, never its files. */
+export type CodeRuleScopeView = Pick<
+  NativeCodeRuleDslWorkspace,
+  "acceptsPath" | "acceptsTextPath" | "readsPackageManifests" | "readsServerGraph"
+>;
+
+/**
+ * Whether the code rules `workspace` holds read `path` (relative to the checkout root), apart from Git's ignore rules
+ * (`NativeCodeRuleEnforcer.acceptsPath` says which files that is). With no workspace, as before a lane's workspace
+ * opens, a listed file is read and an unlisted one is not.
+ */
+export function workspaceReadsPath(workspace: CodeRuleScopeView | undefined, path: string): boolean {
+  const language = languageFor(path);
+  if (language === undefined) return (workspace?.acceptsTextPath(path) ?? false) && !sensitiveByName(path);
+  const graphInput = loadNativeBinding().readsPackageManifests(language) || inAppFolder(path);
+  return (
+    ((manifestDirectory(path) !== undefined || ignoreFileDirectory(path) !== undefined || isModuleConfig(path)) &&
+      (workspace?.readsPackageManifests() ?? true)) ||
+    (workspace?.readsServerGraph() === true && graphInput) ||
+    (workspace?.acceptsPath(path) ?? true)
+  );
+}
+
 function emptyEvaluation(): Evaluation {
   return {
     status: "completed",
@@ -698,18 +721,9 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return this.#readsPath(path) && !this.ignoresPath(path, false);
   }
 
-  /** `acceptsPath` apart from Git's ignore rules. */
+  /** `acceptsPath` apart from Git's ignore rules: what the newest catalog's workspace reads (`workspaceReadsPath`). */
   #readsPath(path: string): boolean {
-    const language = languageFor(path);
-    const workspace = (this.#replacement ?? this.#workspace)?.workspace;
-    if (language === undefined) return (workspace?.acceptsTextPath(path) ?? false) && !sensitiveByName(path);
-    const graphInput = loadNativeBinding().readsPackageManifests(language) || inAppFolder(path);
-    return (
-      ((manifestDirectory(path) !== undefined || ignoreFileDirectory(path) !== undefined || isModuleConfig(path)) &&
-        (workspace?.readsPackageManifests() ?? true)) ||
-      (workspace?.readsServerGraph() === true && graphInput) ||
-      (workspace?.acceptsPath(path) ?? true)
-    );
+    return workspaceReadsPath((this.#replacement ?? this.#workspace)?.workspace, path);
   }
 
   /**

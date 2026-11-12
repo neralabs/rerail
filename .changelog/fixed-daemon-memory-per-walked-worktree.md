@@ -1,0 +1,1 @@
+The daemon no longer builds a rule checker of its own, 6 MB with 325 rules, for every worktree a session walks to find shell writes, which came to gigabytes in a repository with many worktrees. A worktree gets one only once a file there is checked; which files a walk reads stays the same.

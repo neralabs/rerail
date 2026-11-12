@@ -2,9 +2,11 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { dirname, join, resolve } from "node:path";
+import { afterEach, describe, expect, it, vi, type TestContext } from "vitest";
 import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
+import * as native from "../../../src/engine/native/native.js";
+import type { NativeBinding } from "../../../src/engine/native/native.js";
 import { CheckoutCodeRuleRouter } from "../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { CheckoutCatalogs, startingCheckout } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
@@ -814,5 +816,151 @@ describe("CheckoutCodeRuleRouter lanes after review", () => {
 
     await auditor.openWorkspace("ignore-roots");
     expect(auditor.ignoreRuleRoots()).toEqual([session, service, inner]);
+  });
+});
+
+describe("CheckoutCodeRuleRouter questions about a checkout it has no lane in", () => {
+  /** A rule that forbids `NEEDLE` in the files `include` names, read as text where no code-rule language lists them. */
+  function scoped(id: string, code: string, include: string[]): CodeRule {
+    return codeRuleSchema.parse({
+      format: "rerail.policy/v1", id, revision: 1, mode: "block",
+      scope: { include, exclude: [] },
+      clauses: [{ id: "needle", violation: { code, anchor: "witness.span", message: `No ${code}` }, forbid: { regex: { pattern: "NEEDLE", source: "file.content" } } }],
+    });
+  }
+
+  /** Counts the native workspaces Rerail makes from now on, and the content stores it attaches to them (a lane's). */
+  function countNativeWorkspaces(): { made: number; attached: number } {
+    const binding = native.loadNativeBinding();
+    const counts = { made: 0, attached: 0 };
+    class Workspace {
+      constructor() {
+        counts.made += 1;
+        const inner = new binding.CodeRuleDslWorkspace();
+        return new Proxy(inner, {
+          get(target, key) {
+            const value: unknown = Reflect.get(target, key, target);
+            if (typeof value !== "function") return value;
+            if (key === "enableStorageAsync") counts.attached += 1;
+            return value.bind(target);
+          },
+        });
+      }
+    }
+    const spy = vi.spyOn(native, "loadNativeBinding")
+      .mockReturnValue(Object.assign(Object.create(binding) as NativeBinding, { CodeRuleDslWorkspace: Workspace }));
+    cleanups.push(async () => spy.mockRestore());
+    return counts;
+  }
+
+  async function writeFiles(root: string, files: Record<string, string>): Promise<void> {
+    for (const [path, text] of Object.entries(files)) {
+      await mkdir(dirname(join(root, path)), { recursive: true });
+      await writeFile(join(root, path), text);
+    }
+  }
+
+  /** Links `path` to `target` (a folder by junction on Windows); skips the test where Windows refuses a file link. */
+  async function link(context: TestContext, target: string, path: string, type: "file" | "junction" = "file"): Promise<void> {
+    try {
+      await symlink(target, path, type);
+    } catch (error) {
+      if (process.platform === "win32" && error instanceof Error && "code" in error && error.code === "EPERM")
+        context.skip("Windows makes symbolic links only in Developer Mode or for an elevated process");
+      throw error;
+    }
+  }
+
+  it("answers which files of each worktree a session reads and ignores with one shared scope and no lane there", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const session = await repository(join(root, "session"));
+    await writeFiles(session, { ".gitignore": "build/\n", "api/x.py": "x = 1\n" });
+    git(session, "add", ".");
+    git(session, "commit", "--quiet", "-m", "files");
+    setUpTestRepository(session, { library: [file(needle("test:session", "SESSION"))] }, databasePath);
+    const worktrees: string[] = [];
+    for (const name of ["a", "b", "c"]) {
+      git(session, "worktree", "add", "--quiet", "-b", name, join(root, "worktrees", name));
+      worktrees.push(await realpath(join(root, "worktrees", name)));
+    }
+    const auditor = router(session, databasePath, recordingAudits().recorder, undefined, true);
+    await auditor.openWorkspace("questions");
+    const counts = countNativeWorkspaces();
+
+    for (const worktree of worktrees) {
+      expect(auditor.acceptsPath(join(worktree, "api", "x.py"))).toBe(true);
+      expect(auditor.ignoresPath(join(worktree, "build"), true)).toBe(true);
+      expect(auditor.ignoredEdit(join(worktree, "build", "y.py"))).toBeDefined();
+    }
+
+    // A lane per worktree would make and attach three workspaces, each with its own copy of every rule.
+    expect(counts).toEqual({ made: 1, attached: 0 });
+  });
+
+  it("gives the answers the checkout's lane gives, for ignored, nested and linked paths", async context => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const session = await repository(join(root, "session"));
+    await writeFiles(session, {
+      ".gitignore": "build/\n", "api/.gitignore": "gen.py\n", "api/x.py": "x = 1\n", "off/y.py": "y = 1\n", "notes/a.txt": "notes\n",
+    });
+    git(session, "add", ".");
+    git(session, "commit", "--quiet", "-m", "files");
+    const repositoryKey = setUpTestRepository(session, {
+      library: [file(needle("test:python", "PYTHON")), file(scoped("test:notes", "NOTES", ["notes/**"]))],
+    }, databasePath);
+    const database = openRerailDatabase(databasePath);
+    try {
+      setRuleSetting(database, { owner: { kind: "repository", repositoryKey }, folder: "off", targetKind: "rule", targetId: "test:python", on: false, mode: null });
+    } finally {
+      database.$client.close();
+    }
+    git(session, "worktree", "add", "--quiet", "-b", "linked", join(root, "linked"));
+    const worktree = await realpath(join(root, "linked"));
+    await writeFiles(worktree, { "build/z.py": "z = 1\n", "api/gen.py": "g = 1\n", "notes/.env": "KEY=1\n" });
+    // A recorded repository nested in the worktree, judged by its own rules, and one nobody started, judged with it.
+    const lib = await repository(join(worktree, "vendor", "lib"));
+    await writeFiles(lib, { "src/c.py": "c = 1\n", "api/b.py": "b = 1\n" });
+    setUpTestRepository(lib, { library: [file(scoped("test:lib", "LIB", ["src/**/*.py"]))] }, databasePath);
+    await writeFiles(await repository(join(worktree, "scratch")), { "s.py": "s = 1\n" });
+    await link(context, join(worktree, "api", "x.py"), join(worktree, "api", "link.py"));
+    await link(context, join(lib, "src", "c.py"), join(worktree, "api", "into-lib.py"));
+    await link(context, join(session, "api", "x.py"), join(worktree, "api", "out.py"));
+    await link(context, join(worktree, "build"), join(worktree, "api", "built"), "junction");
+    const files = [
+      "api/x.py", "off/y.py", "build/z.py", "api/gen.py", "notes/a.txt", "notes/.env", "README.md", "vendor/lib/src/c.py",
+      "vendor/lib/api/b.py", "scratch/s.py", "api/link.py", "api/into-lib.py", "api/out.py",
+    ];
+    const folders = ["build", "api", "vendor", "vendor/lib", "vendor/lib/src", "scratch", "notes", "api/built"];
+
+    const unlaned = router(session, databasePath, recordingAudits().recorder, undefined, true);
+    const laned = router(session, databasePath, recordingAudits().recorder, undefined, true);
+    await unlaned.openWorkspace("unlaned");
+    await laned.openWorkspace("laned");
+    // An edit in the worktree and one in the nested repository open the second session's lanes there.
+    await edit(laned, "laned", 1, join(worktree, "api", "x.py"), join(lib, "src", "c.py"));
+    const counts = countNativeWorkspaces();
+    const answers = (auditor: CheckoutCodeRuleRouter) => ({
+      accepts: Object.fromEntries(files.map(path => [path, auditor.acceptsPath(join(worktree, path))])),
+      ignoredFiles: files.filter(path => auditor.ignoresPath(join(worktree, path), false)),
+      ignoredFolders: folders.filter(folder => auditor.ignoresPath(join(worktree, folder), true)),
+      ignoredEdits: Object.fromEntries(files.flatMap(path => {
+        const match = auditor.ignoredEdit(join(worktree, path));
+        return match === undefined ? [] : [[path, match.pattern]];
+      })),
+    });
+
+    const withoutLanes = answers(unlaned);
+    expect(withoutLanes).toEqual(answers(laned));
+    expect(withoutLanes.accepts).toEqual({
+      "api/x.py": true, "off/y.py": false, "build/z.py": false, "api/gen.py": false, "notes/a.txt": true, "notes/.env": false,
+      "README.md": false, "vendor/lib/src/c.py": true, "vendor/lib/api/b.py": false, "scratch/s.py": true, "api/link.py": true,
+      "api/into-lib.py": false, "api/out.py": false,
+    });
+    expect(withoutLanes.ignoredFolders).toEqual(["build", "api/built"]);
+    expect(Object.keys(withoutLanes.ignoredEdits)).toEqual(["build/z.py", "api/gen.py"]);
+    // The first session answered from the scopes of the worktree's catalog and the nested repository's, opening no lane.
+    expect(counts).toEqual({ made: 2, attached: 0 });
   });
 });
