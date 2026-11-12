@@ -3599,3 +3599,81 @@ neither the relation's columns nor a lazy entry. The run comes through `cone_rou
 connection address or by path (`""` for in-memory databases). Not yet traced.
 
 **Closure:** the shared state is found and keyed per run, and `base_tests` passes 20 of 20 in parallel.
+
+## Setup cost of a batch of policies (measured 2026-11-12)
+
+The items below come from one sampled run: the 43 strict data-layer policies of `run-policies` over a one-file
+corpus (`dl1`), CPU, after commit 04f66708c (246G instructions retired, of which the main thread is nearly all).
+Shares are of the main thread's samples. Rule evaluation itself is a small part of such a run; a batch is mostly
+setup that each policy repeats. Each item says what repeats, why it need not, and how to close it.
+
+## O-batch-typing-once. Each policy reruns the same typing program over the same files
+
+**Seen (2026-11-12).** About 15% of the batch: `bridge::facts` → `run_typed` (13.5%), and reading the typing
+program's source again for each policy (`bridge::source` → `tools::program_text` → phase 0, 2.2%). Every policy
+that includes `lib/python/calls.rr` or `lib/python/types.rr` reads `typing_calls__<output>` relations, so its run
+first runs `typing/programs/calls.rr` in full over the corpus: planning it (`keeps::choose` →
+`calibrated_rows` → `plan_rule_explained`, 4.9%), then executing it (3.3%). Policies differ only in which of the
+seven outputs they read (the `typing_bridge_at` rules added to the program's text), so the same rounds run once
+per policy. O91 is the same work across runs; this is the same work within one batch.
+
+**Closure:** a batch runs each typing program once, for the union of the outputs its policies read, as the typing
+phase (P2 in the phase layout of decision 0083) ahead of the policies, and hands each policy its rows. Measured as
+`run_typed` once per batch, not once per policy, with findings unchanged on dl1 and dl10 (CPU and device).
+
+## O-batch-phase-sources. Earlier phases' sources are made again for each policy
+
+**Seen (2026-11-12).** 5.5% of the batch: `phases::sources` → `run_with_options`, inside each policy's run. The
+phases a policy's program reads (decision 0083 §1) run in their own fact spaces for every policy, though the
+policies of a batch read the same phases over the same files.
+
+**Closure:** as O-batch-typing-once: each phase runs once per batch for every policy that reads it, and is measured
+so.
+
+## O-lower-aggregate-demand. Aggregate demand clones and rescans the whole program for each aggregate
+
+**Seen (2026-11-12).** 8.3% of the batch, the largest part of lowering (lowering, `rr::read_file`, is 22%).
+`rr::aggregate_demand::optimize` loops over the program's aggregates. For each one it calls
+`dependencies(program)`, a scan of every rule (1.1%), and tries its candidate on a full copy of the program
+(`let mut next = program.clone()`; the clone alone is about 1.8%). Each aggregate's cost grows with the whole
+program, not with the rules it touches.
+
+**Closure:** one dependency map, updated as each candidate is placed, and candidates tried in place on the rules
+they change, with an undo when refused. `aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps` and
+the `lowering_is_idempotent_*` shards pass, and `optimize` costs a small fraction of lowering.
+
+## O-combine-hiding-single. A single program pays guest hiding's analysis in `combine`
+
+**Seen (2026-11-12).** 7.5% of the batch: `combine_texts` → `hiding::hide` (`analyse`, `carry`), for runs that
+combine one program. `combine`'s documentation says one program is parsed as it is, yet each policy's single text
+is still analysed for hiding (decision 0058 §2). O99 is hiding's cost at scale. This is its fixed cost for each
+program.
+
+**Closure:** either hiding is shown to change nothing for one program and is skipped, or what it computes is kept
+by the text's digest (like the combined program, decision 0094 §6). Measured as `hiding::hide` below 1% of a
+batch.
+
+## O-vocabulary-dfa-reuse. The text vocabulary's DFAs are built again for each policy
+
+**Seen (2026-11-12).** 3.5% of the batch: `strings::Vocabulary::compile` → `text::vocabulary::Searchers::new` →
+dense DFA determinization (`dfa::dense::Builder::build_from_nfa`), once per policy. The data-layer policies share
+most of their library patterns, but each policy's vocabulary is compiled from scratch.
+
+**Closure:** compiled searchers kept by pattern set (or per pattern, then combined), so a pattern set already built
+in the process is not built again; or a lazily determinized DFA where the dense build costs more than the search
+saves. Measured as `Vocabulary::compile` below 1% of a batch, with match results unchanged.
+
+## O-texts-digest-twice. A run's texts were digested twice (closed)
+
+**Seen (2026-11-12).** About 6% of the batch (`texts_digest` → `rr::graph_digest`, twice per policy). `combine`
+digested its texts for its cache key, then the run took the same digest again, each time tokenizing every program
+text for its `#include`s. **Closed (2026-11-12, 04f66708c):** `combine_keyed` returns the digest it computed;
+`text_seed` is kept per text digest, and a text without `#include` (a printed program) is not tokenized. dl1
+278G → 246G instructions retired (with 5db161b00), dl10 418G → 374G.
+
+## O-lower-idempotent. Lowering a printed program gave another program (closed)
+
+**Seen (2026-11-12).** Reading back a printed program added a second copy of each regex-group binding and
+`rr_unit(0)` atoms, renamed natively made relations, and split set memberships into one rule per value.
+**Closed (2026-11-12, 5db161b00):** each of the 1,140 programs under `docs/rule-syntax` prints, lowers and prints as
+the same text (`lowering_is_idempotent_*`, 11 shards within the run cap).
