@@ -27,6 +27,9 @@ const NOT_ANSWERING: readonly string[] = [
   "  Ask again in a moment; if it keeps happening, run `rerail status` in a terminal.",
 ];
 
+/** What `/rerail` says where no daemon answered as Rerail: none runs (null), or the live one gave no answer in time. */
+const SILENT_HEADLINES: ReadonlyMap<SummaryState, readonly string[]> = new Map([[null, NOT_RUNNING], ["not-answering", NOT_ANSWERING]]);
+
 const notOnLines = ({ repositoryName, sigil }: RerailSummaryInput): string[] =>
   [`○ Rerail is not on in ${repositoryName}.`, `  Start it with ${sigil}rerail-start.`];
 
@@ -50,8 +53,8 @@ function awaitingLines(awaiting: number | null, rulesUrl: string | null): string
  */
 function repositoryHeadline(input: RerailSummaryInput): readonly string[] {
   const { repositoryState, ruleCount, rulesUrl } = input;
-  if (repositoryState === null) return NOT_RUNNING;
-  if (repositoryState === "not-answering") return NOT_ANSWERING;
+  const silent = SILENT_HEADLINES.get(repositoryState);
+  if (silent !== undefined) return silent;
   if (repositoryState === "not-set-up") return notSetUpLines(input);
   if (repositoryState === "stopped") return notOnLines(input);
   const lines = [onLine(input)];
