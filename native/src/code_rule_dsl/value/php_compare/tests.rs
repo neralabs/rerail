@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::code_rule_dsl::language::GrammarDialect;
-// cratify: a re-export of rerail-engine's, which its facades of this module make
+use crate::code_rule_dsl::fixtures::oracle;
 use crate::code_rule_dsl::scope::ScopeTable;
 use ast_grep_core::tree_sitter::LanguageExt;
 use serde_json::Value as Json;

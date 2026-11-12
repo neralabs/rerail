@@ -1,5 +1,5 @@
 use super::*;
-// cratify: a re-export of rerail-engine's, which its facades of this module make
+use crate::code_rule_dsl::fixtures::oracle;
 
 /// A node as `kind=value:"text"[children]`.
 fn describe(text: &str, node: &PNode) -> String {

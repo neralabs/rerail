@@ -1426,7 +1426,7 @@ fn oracle_fixtures(
     let root = std::env::var("SCOPE_ORACLE_ROOT")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| {
-            std::path::Path::new(crate::code_rule_dsl::fixtures_dir!())
+            std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!())
                 .join(pack)
                 .join("scope")
         })

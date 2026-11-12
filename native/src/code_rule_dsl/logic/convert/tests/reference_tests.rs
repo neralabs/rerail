@@ -250,7 +250,7 @@ def unused():
 /// corpus runner's rows are W's graph's, and between them every label but `late` and an open definition occur.
 #[test]
 fn reference_edge_is_ws_reference_graph_on_projects() {
-    let project = std::path::PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/calls/project");
+    let project = std::path::PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/calls/project");
     let mut oracle = Vec::new();
     let mut pending = vec![project.clone()];
     while let Some(dir) = pending.pop() {

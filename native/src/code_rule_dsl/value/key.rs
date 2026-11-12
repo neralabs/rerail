@@ -420,7 +420,7 @@ pub(crate) fn to_int32(value: f64) -> i32 {
 pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
-    use crate::code_rule_dsl::oracle;
+    use crate::code_rule_dsl::fixtures::oracle;
     use ast_grep_core::tree_sitter::LanguageExt;
     use serde_json::Value as Json;
     use std::collections::HashMap;

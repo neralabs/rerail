@@ -318,7 +318,7 @@ fn convert(root: tree_sitter::Node<'_>, clamp: &dyn Fn(Range<usize>) -> Range<us
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::code_rule_dsl::oracle;
+    use crate::code_rule_dsl::fixtures::oracle;
 
     fn kinds(text: &str, parenthesized: bool) -> Option<String> {
         fn describe(node: &PNode, text: &str) -> String {

@@ -3,8 +3,8 @@
 //! rules, against where Bandit 1.8.6 reports them on its own examples in `fixtures/python/value/bandit`
 //! (`fixtures/python/value/generate_bandit.py`).
 
-// cratify: a re-export of rerail-engine's, which its facades of this module make
-// cratify: a re-export of rerail-engine's, which its facades of this module make
+use crate::code_rule_dsl::fixtures::oracle;
+use crate::code_rule_dsl::test_support::*;
 use serde_json::{Value, json};
 
 const ORACLE: &str = oracle!("python/value/ruff.expected.json");

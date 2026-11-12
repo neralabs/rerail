@@ -12,7 +12,7 @@
     #[test]
     fn php_calls_bind_as_php_binds_them() {
         use super::{Arguments, Passed, SlotKind};
-        use crate::code_rule_dsl::oracle;
+        use crate::code_rule_dsl::fixtures::oracle;
         use crate::code_rule_dsl::value::{Context, php};
         use serde_json::Value as Json;
 
