@@ -60,9 +60,16 @@ export async function handleCodexEvent(
 ): Promise<HookOutput> {
   const hook = requiredText(input, "hook_event_name");
   const sessionId = requiredText(input, "session_id");
-  const deliveries: AdapterDelivery[] = [];
-  for (const event of codexHookEvents(input)) deliveries.push(...await eventLoop.ingest(event));
   const path = pendingPath(storageRoot, "codex", sessionId);
+  const deliveries: AdapterDelivery[] = [];
+  try {
+    for (const event of codexHookEvents(input)) deliveries.push(...await eventLoop.ingest(event));
+  } catch (error) {
+    // A Stop sends the assistant message, then the turn end: when the turn end's request fails, the steers the first
+    // answer carried are held as the Stop holds its own, or no later hook would carry them.
+    if (hook === "Stop") await holdStopSteers(path, deliveries);
+    throw error;
+  }
   if (hook === "Stop") {
     await holdStopSteers(path, deliveries);
     return {};

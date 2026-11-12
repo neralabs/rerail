@@ -190,6 +190,41 @@ describe("Codex one-shot hook", () => {
     expect(await serve({ ...common, hook_event_name: "Stop", turn_id: "t2", last_assistant_message: "Done." }, scriptedLoop({}))).toEqual({});
   });
 
+  it("holds the steer a Stop's first answer carried when its turn end's request fails, for the next context event, once", async () => {
+    const root = await temporaryDirectory();
+    const storageRoot = join(root, "sessions");
+    const common = { session_id: "codex-session", cwd: root };
+    const receipts: Array<readonly string[]> = [];
+    const serve = async (input: HookInput, loop: RerailEventLoop) => serveText(
+      parsed => handleCodexEvent(parsed, loop, storageRoot).then(output => bindSteerReceipt(output, (_receipt, ruleIds) => { receipts.push(ruleIds); })),
+      JSON.stringify(input),
+    );
+    // The assistant message's answer took the session's pending steer; the turn end's request then gave up, as a hook's
+    // request does at its deadline on a busy computer.
+    const timingOut: RerailEventLoop = {
+      ingest: async event => {
+        if (event.kind === "assistant-message") return [delivery("steer", editSteer("a", "Fix a."), ["a"])];
+        throw new Error("Kernel request timed out");
+      },
+    };
+
+    expect(await serve({ ...common, hook_event_name: "Stop", turn_id: "t1", last_assistant_message: "Done." }, timingOut))
+      .toEqual({ stdout: "{}\n", stderr: "rerail hook: Kernel request timed out\n" });
+    expect(receipts).toEqual([]);
+
+    const next = { ...common, hook_event_name: "PreToolUse", turn_id: "t2", tool_name: "Bash", tool_input: { command: "ls" } };
+    expect(JSON.parse((await serve({ ...next, tool_use_id: "call-2" }, scriptedLoop({}))).stdout)).toEqual({
+      systemMessage: "◆ Rerail · a  steered",
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        additionalContext: editSteer("a", "Fix a.").replace("Rerail found 1 problem in your last edit:", "Rerail finished checking your earlier edits after you moved on:"),
+      },
+    });
+    expect(receipts).toEqual([["a"]]);
+    expect(JSON.parse((await serve({ ...next, tool_use_id: "call-3" }, scriptedLoop({}))).stdout)).toEqual({});
+    expect(receipts).toEqual([["a"]]);
+  });
+
   it("delivers a tool's steering at its own PostToolUse, leaving nothing for the next tool call or Stop", async () => {
     const root = await temporaryDirectory();
     const storageRoot = join(root, "sessions");
