@@ -453,23 +453,6 @@ class Suite:
                                dict(apiInputDirs=['input']))
             rows.sort(key=lambda r: r['line'])
             return [(r['line'], r['parameters']['source']) for r in rows]
-        if check == 'admin_async_purity':
-            options = dict(allowlistedFiles=list(module.ALLOWLISTED_FILES))
-            if entry in {'_should_skip', '_is_allowlisted'}:
-                options['path'] = arguments.get('path', arguments.get('file'))
-                rows = self.native(check, entry, [], options)
-                code = 'ADMIN_SKIP' if entry == '_should_skip' else 'ADMIN_ALLOWLIST'
-                if len(rows) > 1 or any(r['code'] != code for r in rows):
-                    raise AssertionError('Invalid native admin helper Boolean')
-                return bool(rows)
-            root = Path(arguments.get('project_root', arguments.get('root')))
-            files = ([dict(path=path.relative_to(root).as_posix(), source=arguments['content'])]
-                     if entry == '_collect_violations_from_source' else self.admin_files(module, root))
-            rows = self.native(check, entry, files, options)
-            order = {f['path']: index for index, f in enumerate(files)}
-            rows.sort(key=lambda r: (order[r['path']], r['line'], r['parameters']['ordinal']))
-            return [module.Violation(file=r['path'], line=r['line'], pattern=r['parameters']['pattern'],
-                                     text=r['parameters']['text']) for r in rows]
         if check == 'no_blanket_grammar_bypass':
             from blanket_bypass_port import scan
             return scan(self,module,entry,arguments)

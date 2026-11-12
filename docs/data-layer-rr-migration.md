@@ -4203,6 +4203,25 @@ The admin rule remains a draft with explicit scanner progress in the manifest.
 All 125 original assertions still require full native acceptance. Production, CLI, earlier corpora, retained updates, and valid removal controls also remain open.
 The inventory remains twenty admissions, seventy-nine drafts, and one absent translation.
 
+### 2026-11-12 — Admin original suite and CLI pass through both APIs
+
+The lexical scanner now runs only in scanner, extractor, or production contexts.
+It no longer reports matches inside the rendering envelope.
+Both APIs pass all 31 complete CLI observations, including signed script bytes and service-call order.
+Both APIs pass all 125 unchanged original tests and all 51 complete recorded API observations.
+The source recording contains 26 finding-positive observations. No original assertion is skipped or excluded.
+No source semantic callback or host CLI exception is used.
+
+Some old observations lack a legacy normalized finding list.
+Their complete source DTO values are still compared exactly; the original assertions and their I/O behavior run unchanged.
+The frontend checkpoint is `rr-admin-frontends-finalfcce.json.gz`.
+All 666 Python tooling tests pass in 56.591 seconds.
+
+Twenty-two production cases record discovery, complete fact dictionaries, alias ownership, prefilters, invalid syntax, Unicode, and reporter order.
+The current native production query fails for missing contract metadata; its witness is `rr-admin-production-source-red-finalfcce.json.gz`.
+The earlier batch-two corpora also supply 59 historical inputs, all recorded again against the pinned source.
+Production, historical replay, retained edits, valid removal controls, and final coherent acceptance remain open. The rule remains a draft.
+
 ### 2026-11-12 — Admin CLI native control flow exposes a scan-context defect
 
 The CLI now uses native root selection, action selection, rendering, verification, signing, and exit decisions.

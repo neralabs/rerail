@@ -1568,7 +1568,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/admin-async-purity.rr",
-      "sha256": "aa443f774c2b695a8e2c372db120de7d9422efc25dee13d24d6bf0e3f27e24b5",
+      "sha256": "e89038d5ed4b8918cb39f998963b79b50fde9c676b9af97d33301a330c7574c2",
       "origin": "authored",
       "upstreamPath": "scripts/lint_admin_async_purity.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -4602,7 +4602,7 @@
       "legacySha256": "7c77aef231725a946398a941b9b1a9d2adac72f1506073b5881dd84796bfeb2a",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/admin-async-purity.rr",
-      "ruleSha256": "aa443f774c2b695a8e2c372db120de7d9422efc25dee13d24d6bf0e3f27e24b5",
+      "ruleSha256": "e89038d5ed4b8918cb39f998963b79b50fde9c676b9af97d33301a330c7574c2",
       "migrationProgress": {
         "status": "native-scanner-progress",
         "admitted": false,

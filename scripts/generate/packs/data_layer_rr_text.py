@@ -286,6 +286,7 @@ def admin_async_purity(source, target, header):
     _, space, _ = classes()
     quote = json.dumps
     text = header('admin_async_purity', target).replace('#include "python/ast.rr"\n', '')
+    text += '.decl admin_scanning()\nadmin_scanning() :- !option("entryPoint",_).\nadmin_scanning() :- option("entryPoint","_admin_extract").\nadmin_scanning() :- option("entryPoint","_admin_scan").\n'
     text += '.decl admin_owner(d: number, p: symbol)\n'
     text += 'admin_owner(d,p) :- doc(d,buffer,_), option_item("adminDocuments",i,buffer), option_item("adminPaths",i,p).\n'
     text += 'admin_owner(d,p) :- doc(d,p,_), !option_item("adminDocuments",_,_).\n'
@@ -300,7 +301,7 @@ def admin_async_purity(source, target, header):
     text += '.decl admin_allowlisted(p: symbol)\nadmin_allowlisted(p) :- option_item("allowlistedFiles", _, p).\n'
     text += '.decl admin_candidate(d: number, l: number, t: symbol, ordinal: number, label: symbol)\n'
     for index, (pattern, label) in enumerate(original.FORBIDDEN_PATTERNS):
-        text += f'admin_candidate(d, l, t, {index}, {quote(label)}) :- split_line(d, l, t), admin_owner(d, p), !admin_skip_path(p), !admin_allowlisted(p), !match({quote("(?s)" + space + "*#.*")}, t), match({quote(search(pattern))}, t).\n'
+        text += f'admin_candidate(d, l, t, {index}, {quote(label)}) :- admin_scanning(), split_line(d, l, t), admin_owner(d, p), !admin_skip_path(p), !admin_allowlisted(p), !match({quote("(?s)" + space + "*#.*")}, t), match({quote(search(pattern))}, t).\n'
         text += f'\n.violation AdminPattern{index}(at: span) code "ADMIN_PATTERN" "matched"\n'
         text += f'AdminPattern{index}(@place("input.py", 1)) :- option("entryPoint", "pattern_search"), option("patternOrdinal", "{index}"), option("patternText", t), match({quote(search(pattern))}, t).\n'
     triples = quote('"""|\x27\x27\x27')
