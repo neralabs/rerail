@@ -343,7 +343,7 @@ describe("a walk of the other worktrees with change notices", () => {
     expect(statsUnder(main, worktrees[1]!, worktrees[2]!)).toEqual([0, 0, 0]);
   });
 
-  it("records a shell write to a file Git ignored once the index tracks it, though nothing in the worktree changed", async () => {
+  it("records a file Git ignored, once the index tracks it, and a shell write to it, as walks of every worktree do", async () => {
     const { worktrees, checkouts } = await repository();
     const w3 = worktrees[2]!;
     const generated = join(w3, "src", "gen.py");
@@ -351,15 +351,20 @@ describe("a walk of the other worktrees with change notices", () => {
     await awaitClockAfter(generated);
     // As Git answers: a path the index tracks is never ignored.
     let tracked = false;
-    const watching = await session(worktrees[0]!, checkouts, new WorktreeWalks({ gapMs: 0 }), path => path.endsWith("gen.py") && !tracked);
-    await turn(watching);
-    await turn(watching);
+    const ignores = (path: string): boolean => path.endsWith("gen.py") && !tracked;
+    const noticed = await session(worktrees[0]!, checkouts, new WorktreeWalks({ gapMs: 0 }), ignores);
+    const everyWorktree = await session(worktrees[0]!, checkouts, new WorktreeWalks({ gapMs: 0, fullWalkMs: 0 }), ignores);
+    // The second walk reads again on Linux, where folders are watched once a read is over; the third reads none.
+    await turn(noticed, everyWorktree);
+    await turn(noticed, everyWorktree);
     git(w3, "add", "--force", "src/gen.py");
     tracked = true;
-    await turn(watching);
+    // Nothing in `w3` changed: only its index tells that the file counts now.
+    await turn(noticed, everyWorktree);
     await writeFile(generated, "x = 2\n");
-    await turn(watching);
-    expect(audited(watching)).toEqual([[["written ../w3/src/gen.py"], "log"]]);
+    await turn(noticed, everyWorktree);
+    expect(audited(noticed).at(-1)).toEqual([["written ../w3/src/gen.py"], "log"]);
+    expect(edits(noticed)).toEqual(edits(everyWorktree));
   });
 
   it("stats only the worktree a file changed in, and each session watching it records the change", async () => {
