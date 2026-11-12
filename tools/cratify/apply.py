@@ -221,6 +221,20 @@ def thread_local_cfg_edits(nodes, edits):
                 edits.add(n.file, a, a + 4, HOOKS, 'cfg test')
 
 
+def cfg_macro_edits(nodes, edits):
+    """`cfg!(test)` (a macro the cfgtest tool does not see) in a crate other than the engine: test-hooks, as every
+    `#[cfg(test)]` is, so the engine's tests see the same switch (costs.rs: tests write no statistics)."""
+    seen = set()
+    for p, n in nodes.items():
+        if n.inline or n.owner == ENGINE or n.file in seen:
+            continue
+        seen.add(n.file)
+        data = open(n.file, 'rb').read()
+        for m in re.finditer(rb'cfg!\(\s*test\s*\)', data):
+            a = m.start() + data[m.start():m.end()].index(b'test')
+            edits.add(n.file, a, a + 4, HOOKS, 'cfg test')
+
+
 def use_vis_edits(nodes, edits):
     """Every restricted re-export (`pub(crate) use`, `pub(in ...) use`) in a crate other than the engine: `pub`. Other
     crates path through them, and the index names the definition, not the re-export, so widen.py cannot see them."""
@@ -670,6 +684,7 @@ def main(tree_tsv, join_out, *flags):
     # (the engine's own files keep `cfg(test)`, as its declarations do)
     cfg_test_edits(nodes, [f for f in files if file_owner.get(f) != ENGINE], keep, edits)
     thread_local_cfg_edits(nodes, edits)
+    cfg_macro_edits(nodes, edits)
     manifest_dir_edits(nodes, edits)
     bad = edits.apply(write)
     print('edits:', dict(edits.why))

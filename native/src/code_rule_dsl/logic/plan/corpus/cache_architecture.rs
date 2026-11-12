@@ -146,7 +146,9 @@ fn a_cache_is_rules_only_with_no_store_hook_or_lookup_of_its_own() {
                 found.push(format!("{rel}: {name}"));
             }
         }
-        if knows.is_match(&text) && !KNOWS_CACHES.contains(&rel.as_str()) {
+        // A re-export (a crate's facade over another's module) names the module but knows nothing of caches.
+        let knowing = text.lines().any(|l| knows.is_match(l) && !l.trim_start().starts_with("pub use ") && !l.trim_start().starts_with("use "));
+        if knowing && !KNOWS_CACHES.contains(&rel.as_str()) {
             found.push(format!("{rel}: knows a relation is a cache"));
         }
     }
