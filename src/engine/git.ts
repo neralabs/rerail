@@ -365,6 +365,17 @@ function repositoryFormat(config: string): string {
   return lines.join("\n");
 }
 
+/**
+ * The `commondir` file of a linked worktree's Git folder, by which Git finds the common Git folder; `""` where the Git
+ * folder is the common one. Undefined where that file is gone or cannot be read: Git then takes the worktree's Git
+ * folder for a repository of its own, which has no `objects` or `refs`, and refuses it.
+ */
+function commonDirFile(layout: KeptLayout): string | undefined {
+  if (layout.gitDir === layout.commonDir) return "";
+  const text = fileText(join(layout.gitDir, "commondir"));
+  return text === undefined || text.startsWith("!") ? undefined : text;
+}
+
 async function present(path: string): Promise<boolean> {
   try {
     await stat(path);
@@ -418,11 +429,12 @@ async function headKey(layout: KeptLayout, settleMs: number): Promise<HeadKey | 
 
 /**
  * Reads `HEAD` ({@link gitHead}) for a caller that asks every pass, as the walk of a repository's worktrees does: it
- * starts a Git process only when a file Git reads `HEAD` from changed since the last read, and otherwise reads two or
- * three small files and stamps three or four (`config`, `objects`, `refs`, packed-refs). A read keeps Git's answer with
+ * starts a Git process only when a file Git reads `HEAD` from changed since the last read, and otherwise reads two to
+ * four small files and stamps three or four (`config`, `objects`, `refs`, packed-refs). A read keeps Git's answer with
  * what those files held before Git read them: the folder's `.git` entry, `HEAD`, and the branch's loose ref, else the
- * stamp of packed-refs; and what decides whether Git takes the common Git folder for a repository: its `objects` and
- * `refs` folders, and the format its `config` names ({@link repositoryFormat}). It keeps the answer only where those
+ * stamp of packed-refs; and what decides whether Git takes the Git folders for a repository: a linked worktree's
+ * `commondir` file ({@link commonDirFile}), and the common Git folder's `objects` and `refs` folders and the format its
+ * `config` names ({@link repositoryFormat}). It keeps the answer only where those
  * files name that commit, so an answer Git gave after one of them moved is not kept, and a write between the two reads
  * as a change next time. The first read of a folder with a `.git` entry, and the first after that entry changes, also
  * asks Git where the folder keeps `HEAD` (one more Git process). Where Git would read other files (a folder below the
@@ -466,13 +478,18 @@ export function gitHeadReader(options: { readonly settleMs?: number } = {}): (cw
     if (stamped.settled) formats.set(commonDir, { stamp: stamped.stamp, format });
     return format;
   };
-  /** {@link headKey}, with the common Git folder's format; undefined where Git would refuse that folder as a repository. */
+  /**
+   * {@link headKey}, with a linked worktree's {@link commonDirFile} and the common Git folder's format; undefined where
+   * Git would refuse the worktree's Git folder or the common one as a repository.
+   */
   const keyOf = async (layout: KeptLayout): Promise<HeadKey | undefined> => {
     const { commonDir } = layout;
+    const common = commonDirFile(layout);
+    if (common === undefined) return undefined;
     const [format, objects, refs, key] = await Promise.all([
       formatOf(commonDir), present(join(commonDir, "objects")), present(join(commonDir, "refs")), headKey(layout, settleMs),
     ]);
-    return format === undefined || !objects || !refs || key === undefined ? undefined : { ...key, key: `${format}\0${key.key}` };
+    return format === undefined || !objects || !refs || key === undefined ? undefined : { ...key, key: `${common}\0${format}\0${key.key}` };
   };
   return async cwd => {
     const layout = await layoutOf(cwd);

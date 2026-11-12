@@ -639,6 +639,24 @@ describe("gitHeadReader", () => {
     await processes(read, root);
   });
 
+  it("names no commit, as Git, once a linked worktree's Git folder has lost its commondir file", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    git(root, "branch", "first");
+    const worktree = `${root}-worktree`;
+    roots.push(worktree);
+    git(root, "worktree", "add", "--quiet", worktree, "first");
+    const gitDir = git(worktree, "rev-parse", "--absolute-git-dir").trim();
+    const read = gitHeadReader();
+    await processes(read, worktree);
+    expect(await processes(read, worktree)).toBe(0);
+    // Git removes a worktree's Git folder file by file. Without `commondir`, Git takes that folder for a repository of
+    // its own, which has no objects or refs.
+    await rm(join(gitDir, "commondir"));
+    expect(gitAnswer(worktree)).toBeUndefined();
+    await processes(read, worktree);
+    expect(await processes(read, worktree)).toBe(1);
+  });
+
   it("names no commit, as Git, once the repository's format names an extension this Git does not know", async () => {
     const root = await repository({ "a.py": "1\n" });
     const read = gitHeadReader();
