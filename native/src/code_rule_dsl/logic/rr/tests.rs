@@ -2914,6 +2914,10 @@ fn test_blocks_parse_only_whole() {
         assert!(error.contains(why), "{text:?}: {error}");
     }
     assert_eq!(super::testing::dedent("\n    a\n      b\n\n    c\n    "), "a\n  b\n\nc\n");
+    // The closing fence says the indent: lines deeper than it keep the rest.
+    assert_eq!(super::testing::dedent("\n      a\n        b\n    "), "  a\n    b\n");
+    // A closing fence after text: the indent the lines share.
+    assert_eq!(super::testing::dedent("\n    a\n      b"), "a\n  b\n");
 }
 
 /// A file of `text` in a directory of its own, its tests, and each one's outcome (or its error).
@@ -2998,7 +3002,8 @@ fn a_test_that_cannot_run_is_refused_with_its_line() {
 /// many backticks and blank lines they hold, and its expectations.
 #[test]
 fn a_printed_test_reads_back_as_written() {
-    let content = "x = ```a```\n\n  y = \"````\"\n";
+    // Every line indented: the closing fence keeps it.
+    let content = "  x = ```a```\n\n    y = \"````\"\n";
     let text = format!(
         ".decl r(x: symbol)\nr(\"a\").\n{}",
         super::testing::print_test("printed", false, &[("src/a.py".to_owned(), content.to_owned())], &["no _ at \"src/a.py\"".to_owned(), "r(\"a\")".to_owned()])

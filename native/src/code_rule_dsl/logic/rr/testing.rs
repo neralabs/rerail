@@ -161,8 +161,8 @@ pub fn tests(path: &Path) -> Result<Vec<Test>, String> {
 
 /// `.fixture "path" <fenced text>` or `.fixture "path" from "file"` (beside the `.rr` file).
 fn fixture(path: &Path, dir: &Path, line: usize, text: &str) -> Result<(String, Vec<u8>), String> {
-    let toks = syntax::tokens(text).map_err(|e| format!("{}:{line}: {e:?}", path.display()))?;
-    let toks: Vec<&Tok> = toks.iter().map(|(t, _, _)| t).collect();
+    let spanned = syntax::tokens(text).map_err(|e| format!("{}:{line}: {e:?}", path.display()))?;
+    let toks: Vec<&Tok> = spanned.iter().map(|(t, _, _)| t).collect();
     let name = match toks.as_slice() {
         [Tok::Str(name), ..] => name.clone(),
         _ => return bad(path, line, "`.fixture \"<path>\"` then its text"),
@@ -171,7 +171,14 @@ fn fixture(path: &Path, dir: &Path, line: usize, text: &str) -> Result<(String, 
         return bad(path, line, format!("a fixture's path is under the test's root: {name:?}"));
     }
     match toks.as_slice() {
-        [_, Tok::Tick(body)] => Ok((name, dedent(body).into_bytes())),
+        // The fence's body as written: the lexer drops a space inside a fence of two or more, which would take one
+        // from the closing fence's indent.
+        [_, Tok::Tick(_)] => {
+            let (_, start, end) = spanned[1];
+            let raw = &text[start..end];
+            let n = raw.bytes().take_while(|&b| b == b'`').count();
+            Ok((name, dedent(&raw[n..raw.len() - n]).into_bytes()))
+        }
         [_, Tok::Id(from), Tok::Str(file)] if from == "from" => {
             std::fs::read(dir.join(file)).map(|bytes| (name, bytes)).map_err(|e| format!("{}:{line}: {file}: {e}", path.display()))
         }
@@ -179,18 +186,25 @@ fn fixture(path: &Path, dir: &Path, line: usize, text: &str) -> Result<(String, 
     }
 }
 
-/// A fence's body as a file: its first newline gone, then the indent its lines share; a last line of only blanks (the
-/// closing fence's indent) gone; ending in a newline.
+/// A fence's body as a file, its first newline gone and ending in a newline. The closing fence, on a line of its own,
+/// says the indent: each line loses that much leading whitespace, so a file whose lines all share a deeper indent
+/// keeps it (as Java's text blocks and Swift's multi-line strings are read). A closing fence after text on its line
+/// says none, and the lines lose the indent they share.
 pub fn dedent(body: &str) -> String {
     let body = body.strip_prefix("\r\n").or_else(|| body.strip_prefix('\n')).unwrap_or(body);
     let mut lines: Vec<&str> = body.split('\n').collect();
-    if lines.last().is_some_and(|l| l.trim().is_empty()) {
-        lines.pop();
-    }
-    let indent = lines.iter().filter(|l| !l.trim().is_empty()).map(|l| l.len() - l.trim_start().len()).min().unwrap_or(0);
+    let indent = match lines.last() {
+        Some(last) if lines.len() > 1 && last.trim().is_empty() => {
+            let indent = last.len();
+            lines.pop();
+            indent
+        }
+        _ => lines.iter().filter(|l| !l.trim().is_empty()).map(|l| l.len() - l.trim_start().len()).min().unwrap_or(0),
+    };
     let mut out = String::new();
     for l in lines {
-        out.push_str(l.get(indent..).unwrap_or(l.trim_start()));
+        let blanks = l.len() - l.trim_start().len();
+        out.push_str(&l[blanks.min(indent)..]);
         out.push('\n');
     }
     out
