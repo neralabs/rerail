@@ -975,6 +975,67 @@ it picks where a call enters a function of 21 entries,
 since a rule shared from the middle of another is entered there.
 The lean parser's functions have one entry each.
 
+## Built: one entry a function, as the lean parser's
+
+Each of the lean parser's methods is entered at its top.
+Tier 2's functions were not:
+a function held code other rules went into,
+and a compare tree at its entry picked which of up to 21 places a call meant.
+The places came from three things, each now gone or made lean-like:
+
+- **A field on a nested choice, set before the call.**
+  A rule called a nested choice with a field (`right: product`)
+  by entering the choice's code at its first token, from the caller's own switch.
+  The lean parser calls the choice, then sets the field where it returns:
+  `self.product()?; self.field(Field::Right)`.
+  Now so does tier 2: the call's return state sets the field (`NODE_FIELD m=4`)
+  on the node the call made, if the node has none,
+  so a field the choice sets inside still wins.
+  The choice's own function switches on its first token.
+- **Short tails alike in two rules.**
+  The words were shared across rules where they behaved alike,
+  so a leaf and a return in one rule jumped into another rule's copy.
+  The lean parser writes each method's code in that method.
+  Now each rule keeps its own words. Words are still shared within a rule.
+  A keyword's `REMEMBER` takes its kind from the word, as its leaf does,
+  so arms that remembered different keywords are one.
+- **A term's rest, copied.**
+  The grammar's `more` (the rest of a term after its first operand)
+  was its own copy of product's and term's loops in each rule that used it,
+  and those copies were shared with product's code: jumps into its middle.
+  The lean parser calls `self.term()` there.
+  `more` is now `[more1]`, a call of a function that takes at least one operator:
+
+```
+# Before: the loops again, wherever `more` is used
+choice more  = (wrap binary_expression left operator: multiplicative right: primary)*
+               (wrap binary_expression left operator: additive right: product)*
+# After: a call when an operator follows, as the lean parser's self.term()
+choice more  = [more1]
+```
+
+The verifier now refuses any jump from one rule into another that is not a call,
+so a function is entered by calls alone.
+
+| | Before | Field set where it returns | Own tails | A term's rest a call | Lean parser |
+|---|---|---|---|---|---|
+| Functions | 56 | 56 | 54 | 55 | 45 |
+| Entries | 247 | 171 | 94 | 60 | 45 |
+| Machine instructions | 24,375 | 22,226 | 22,258 | 23,981 | 10,008 |
+| Compares | 3,004 | 2,759 | 2,737 | 2,808 | 1,198 |
+| Tier 2, instructions | 330.9M | 346.1M | | 315.7M | 356.6M |
+| Tier 2, cycles | | 67.4M (lean 69.6M) | | 70.7M (lean 75.1M) | |
+
+The code grew by 1,700 instructions in the last step:
+each rule's copy of what it once shared.
+But tier 2 runs 9% fewer instructions than before it, and 11% fewer than the lean parser,
+since no call picks its entry any more.
+(Cycles are taken on a shared machine: load 17, then 30.)
+
+Five functions still have a second entry.
+A caller enters them at their second word, or with a flag set first.
+Each is picked by one test.
+
 ## The order
 
 1. One symbol a token: rows and keywords in the record, one switch a state.
@@ -985,7 +1046,8 @@ The lean parser's functions have one entry each.
    the state as locals, a token taken for good, words as calls (and so the frame-free path),
    cheaper calls, callees shared across rules,
    `ctx` in a register of its own, code shared from the middle of rules,
-   a call's bookkeeping as the lean parser's, switches as rustc lowers a `match`.
-   Next: one entry a function, as the lean parser's.
+   a call's bookkeeping as the lean parser's, switches as rustc lowers a `match`,
+   one entry a function.
+   Next: the code each rule repeats (machine instructions 2.4 times the lean parser's).
 4. Keyword marks from the records. Built for the marks of one word.
 5. Tier 1's primitives: the picked hash, then nibble fingerprints.

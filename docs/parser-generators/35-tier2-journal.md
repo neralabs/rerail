@@ -28,24 +28,26 @@ How the numbers are taken:
 
 ## The best to date
 
-Tier 2 at `cebf1c631`: the best in shape and in the benchmark.
+Tier 2 at `f5357a7df`: the best in shape and in the benchmark.
+(`fa23bf4e5` has fewer machine instructions, 22,226,
+but functions entered at many places, as the lean parser's are not.)
 
 | | Tier 2 | Lean parser |
 |---|---|---|
-| Machine instructions | 24,375 | 10,008 |
-| Functions for rules | 56 | 45 |
-| Words | 6,441 | |
+| Machine instructions | 23,981 | 10,008 |
+| Functions for rules | 55 | 45 |
+| Entries | 60 | 45 |
+| Words | 5,385 | |
 | A rule call | `mov`, `bl`, `cbnz` | `mov`, `bl`, a load |
-| Stores | 713 | |
-| Stack reloads | 10 | 0 |
-| Compares | 3,004 | 1,198 |
-| Benchmark, instructions | 330.9M | 356.6M |
-| Benchmark, cycles | 64.0M (at `2b46b2e8b`) | 68.3M |
+| Stores | 744 | |
+| Compares | 2,808 | 1,198 |
+| Benchmark, instructions | 315.7M | 356.6M |
+| Benchmark, cycles | 70.7M (load 30) | 75.1M |
 
-The switches are 31% of the machine code, 21.5 instructions each;
-what is left there is mostly arms that call different rules.
-The next gap: functions with many entries (a rule shared from the middle of another),
-each picked by a compare tree where the lean parser's functions have one entry.
+The next gap: the code each rule repeats.
+Tier 2 has 2.4 times the lean parser's machine instructions,
+and most of it is each rule's own copy of words alike in many rules
+(a token taken, its marks, a leaf), where the lean parser calls one method.
 
 Its structure:
 
@@ -57,10 +59,14 @@ Its structure:
   Within a function, a pass forwards fields along straight-line code.
 - **Words as calls**: `TOKEN`, `LEAF` and the node words are functions
   every place calls, one body each. Only the main loop is inlined.
-- **Words that behave the same are one word**, across rules too.
-  A rule goes into an earlier rule's code by a call whose result it passes on,
-  as the lean parser's `return self.helper()`.
-  The verifier refuses a jump into a later rule.
+- **Words that behave the same are one word**, within a rule.
+  Each rule keeps its own code, as each of the lean parser's methods does,
+  so a function is entered by calls alone (its top, or for five, its second word).
+  The verifier refuses any jump across rules that is not a call.
+- **A field on a called choice is set where the call returns**,
+  as `self.product()?; self.field(Field::Right)`,
+  on the node the call made if it has none.
+- **A term's rest is a call** (`more` is `[more1]`), as the lean parser's `self.term()`.
 - **One exit a function**, one epilogue, as rustc's.
 - **A rule's result**: 0 for every return, the run's end with its top bit flipped:
   one `cbnz` a call.
@@ -81,7 +87,7 @@ Its structure:
   a test at each leaf, and bit tests for cases of up to three targets within 64 values.
 - **A keyword's leaf takes its kind from the token's word** (`WORD_KIND`),
   the keywords' strings numbered in kind order: one add, as `Kind::DotDecl + (d - W_DECL)`.
-  Keyword arms that differed only in the kind are one.
+  Keyword arms that differed only in the kind are one. A keyword's `REMEMBER` does the same.
 
 ## Tried and dropped
 
@@ -103,6 +109,8 @@ Each line gives what the machine code showed, and what could change the verdict.
 | A helper function for each set of rules sharing code | 84 functions, not 56, and 1,700 more instructions; three loop values spilled | Helpers are small and called from few places |
 | Tail calls into shared code, `ctx` pinned | An epilogue at each of 198 places: 785 restores, against 170 | Epilogues get cheaper |
 | The word → kind map over strings in first-use order | A 40-leaf compare tree in the leaf (kinds scattered over the strings) | Never: the strings are numbered in kind order now |
+| Words shared across rules: a rule jumps into an earlier rule's code, a call of its function | Functions of up to 21 entries, each call picking its entry by a compare tree; 346.1M instructions | Never as entries: a shared piece is a function of its own, if anything |
+| Shared across rules only where the shared code is large (over 8 words) | 94 entries: product's and term's loops, copied by the grammar's `more`, still shared | Superseded: `more` is a call now, and each rule keeps its own code |
 | One tail-call block a function gone to, the index its argument | The index constants folded into values live through the function, and spilled | Each place's own block is built; no reason to go back |
 
 ## The journal
@@ -131,3 +139,6 @@ Numbers are tier 2's for `.rr`. Each step's commit is listed.
 | Switches with a default target and known ranges | `73aed4adc` | 26,092 | |
 | A keyword's leaf kind from the token's word | `cebf1c631` | 24,828 | |
 | Switch cases as bit tests | `cebf1c631` | 24,375 | 330.9M (cycles not taken: load 58) |
+| A field on a called choice set where it returns: 171 entries | `fa23bf4e5` | 22,226 | 346.1M (67.4M) |
+| Short tails each rule's own; a keyword's `REMEMBER` by its word: 94 entries | `6be997744` | 22,258 | |
+| One entry a function: each rule's own code, a term's rest a call: 60 entries | `f5357a7df` | 23,981 | 315.7M (70.7M) |
