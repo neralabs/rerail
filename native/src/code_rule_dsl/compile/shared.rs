@@ -59,10 +59,11 @@ struct Language<'a> {
     origins: OnceCell<Option<Arc<[Option<UtilOrigin>]>>>,
 }
 
-/// A shared table and what compiling each utility in it added to the queries that reach it.
+/// A shared table and what compiling each utility in it added to the queries that reach it, by
+/// index: only the utilities compiled so far, as the table holds state for only those.
 struct Table {
     table: Arc<UtilTable>,
-    added: Vec<Option<Added>>,
+    added: HashMap<usize, Added>,
 }
 
 /// What compiling a utility adds to a query that reaches it: its first grammar gap and its
@@ -139,7 +140,7 @@ impl<'a> SharedTables<'a> {
         let missing = indices
             .iter()
             .copied()
-            .filter(|&index| table.added[index].is_none())
+            .filter(|index| !table.added.contains_key(index))
             .collect::<Vec<_>>();
         if !missing.is_empty() && table.compile(shared, &missing, dialect, context).is_none() {
             *slot = None;
@@ -148,8 +149,9 @@ impl<'a> SharedTables<'a> {
         let mut gap = None;
         let mut instances = BTreeSet::new();
         for &index in &indices {
-            let added = table.added[index]
-                .as_ref()
+            let added = table
+                .added
+                .get(&index)
                 .expect("a reached utility is compiled");
             gap = gap.or_else(|| added.gap.clone());
             instances.extend(added.instances.iter().cloned());
@@ -184,7 +186,7 @@ impl Language<'_> {
                 Arc::clone(&self.framed),
                 origins,
             )),
-            added: self.defs.iter().map(|_| None).collect(),
+            added: HashMap::new(),
         })
     }
 }
@@ -250,7 +252,7 @@ impl Table {
         }
         for (&index, (rule, added)) in missing.iter().zip(compiled) {
             self.table.fill(index, rule);
-            self.added[index] = Some(added);
+            self.added.insert(index, added);
         }
         Some(())
     }
