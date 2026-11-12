@@ -363,7 +363,7 @@ pub struct Rounds {
     /// The hop relations' rows stopped changing within `K` rounds: the result is the fixpoint.
     pub(crate) converged: bool,
     /// Each round's hop rows, summed over the hop relations.
-    pub(crate) rows: Vec<usize>,
+    pub rows: Vec<usize>,
     /// The rounds did not converge, and the pending round ran (`UNCONVERGED`).
     pub(crate) pending: bool,
 }

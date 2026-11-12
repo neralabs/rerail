@@ -28,7 +28,7 @@ use std::{
     time::Instant,
 };
 
-const POLICIES: [&str; 4] = [
+pub const POLICIES: [&str; 4] = [
     include_str!(
         "../../../../../packs/python/rules/ruff-async210-blocking-http-call-in-async-function.json"
     ),
@@ -42,7 +42,7 @@ const POLICIES: [&str; 4] = [
         "../../../../../packs/python/rules/ruff-async230-blocking-open-call-in-async-function.json"
     ),
 ];
-const SELECT_TARGETS: &str = r#"
+pub const SELECT_TARGETS: &str = r#"
 WITH sites AS MATERIALIZED (SELECT * FROM call_sites),
      refs AS MATERIALIZED (SELECT * FROM qualified),
      wanted AS MATERIALIZED (SELECT * FROM wanted_symbol),
@@ -54,7 +54,7 @@ UNION
 SELECT 3,s.doc,s.report,s.call,2
 FROM sites s JOIN x ON x.doc=s.doc AND x.callee=s.report
 "#;
-const COMPOSE: &str = r#"
+pub const COMPOSE: &str = r#"
 WITH c AS MATERIALIZED (SELECT * FROM candidates),
      q AS MATERIALIZED (SELECT * FROM qualified_values),
      o AS MATERIALIZED (SELECT * FROM value_origin),
@@ -123,7 +123,7 @@ struct Metrics {
     rows: BTreeMap<String, usize>,
     explain: Vec<String>,
 }
-struct Run {
+pub struct Run {
     findings: Findings,
     metrics: Metrics,
 }
@@ -382,14 +382,14 @@ fn origins<'t>(
     out
 }
 
-fn execute<'t>(
+pub fn execute<'t>(
     roots: &[(u32, Node<'t, TapeDoc>)],
     modules: &BTreeMap<u32, ModulePath>,
     copies: usize,
 ) -> Run {
     execute_sql(roots, modules, copies, &[SELECT_TARGETS, COMPOSE])
 }
-fn execute_sql<'t>(
+pub fn execute_sql<'t>(
     roots: &[(u32, Node<'t, TapeDoc>)],
     modules: &BTreeMap<u32, ModulePath>,
     copies: usize,
