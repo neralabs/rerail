@@ -742,6 +742,8 @@ struct Component { store: Arc<RwLock<Store>>, edges: Vec<EdgeRule>, probes: Vec<
                    /// A closure whose launches wait in this thread's device wave (`lanes::wave`), with their tickets.
                    waiting: Option<(closure::Closure, closure::Prepared, Vec<u64>)>,
                    device: Option<Vec<(usize, JoinPlan)>>,
+                   /// Device joins waiting in this thread's wave (`submit`): their ticket.
+                   device_wait: Option<u64>,
                    seed_specs: Vec<(usize, Arc<JoinSpec>)> }
 
 /// Decision 0090's levels for a recursive stratum: which of its kept rows are gone, decided in level order. Per
@@ -1178,7 +1180,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     let mut reg = COMPONENTS.lock().unwrap();
     let key = (conn.at(), name.clone());
     reg.retain(|(k, _)| *k != key);
-    let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, closure: None, waiting: None,
+    let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, closure: None, waiting: None, device_wait: None,
                                device: device_plans, seed_specs, levels };
     // A stratum placed on the device runs there whole: a recursive one as the device's rounds (`fixpoint`), not as
     // a closure (decision 0098 §1's form, for a stratum on the CPU).
@@ -1348,6 +1350,30 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             }
         }
     }
+    // Decision 0113 §3 for the device joins: when the caller can wait for its level's wave, a stratum placed on the
+    // device encodes its seed joins into the wave's one command buffer and returns `3`; the run after the wave
+    // finishes them (`SolverDevice::resume`). A level's small strata so share one commit and one wait. A recursive one
+    // runs its rounds here.
+    if !seeded && comp.device_wait.is_none() && crate::code_rule_dsl::logic::lanes::wave::can_wait()
+        && let Some(dev) = solver()
+        && let Some(plans) = comp.device.as_ref()
+        && !plans.iter().any(|(_, p)| dev.reads_own(p))
+        && std::env::var("RERAIL_DEVICE_WAVES").map_or(true, |v| v != "off")
+    {
+        let rules: Vec<(&JoinPlan, &JoinRule, usize)> = plans.iter().map(|(pi, plan)| match &comp.probes[*pi].body {
+            Body::Join(j) => (plan, j, comp.probes[*pi].head),
+            Body::Sql(_) => unreachable!("a device plan is a join's"),
+        }).collect();
+        let submitted = { let syms = symbols.read().unwrap(); dev.submit(&rules, &syms) };
+        if let Ok(Some(t)) = submitted {
+            comp.device_wait = Some(t);
+            let per: Vec<String> = per.iter().map(|(t, n, c)| format!("{:.1}:{n}:{:.3}", t * 1e3, c * 1e3)).collect();
+            let ms = t0.elapsed().as_secs_f64() * 1e3;
+            return Ok(format!("0 1 {visits} {runs} {skips} {ms:.1} {ms:.1} {} 3", per.join(",")));
+        }
+    }
+    // A stratum back from its wave: its device joins are finished below, in their place.
+    let mut device_ticket = comp.device_wait.take();
     while !done {
         let mut fresh: Vec<Fresh> = vec![Fresh::default(); nrels];
         // Probe rules: SQL over the vtabs, while no lock is held (the vtab cursors take read locks).
@@ -1411,6 +1437,8 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                     let (mut s, mut d) = (made[..seeds.len()].iter(), made[seeds.len()..].iter());
                     rules.iter().map(|r| *if dev.reads_own(r.0) { d.next() } else { s.next() }.expect("a count per rule")).collect::<Vec<u64>>()
                 })
+            } else if let Some(t) = device_ticket.take() {
+                dev.resume(t, &rules, store, &syms, &mut dev_fresh)
             } else {
                 dev.run_joins(&rules, store, &syms, &mut dev_fresh)
             };

@@ -53,6 +53,14 @@ impl SolverDevice for Metal {
         joins::run(&plans(rules)?, store, names, fresh)
     }
 
+    fn submit(&self, rules: &[(&JoinPlan, &JoinRule, usize)], names: &Interner) -> Result<Option<u64>, String> {
+        joins::submit(&plans(rules)?, names)
+    }
+
+    fn resume(&self, ticket: u64, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+        joins::resume(ticket, &plans(rules)?, store, names, fresh)
+    }
+
     fn reads_own(&self, plan: &JoinPlan) -> bool {
         plan.0.downcast_ref::<joins::Plan>().is_some_and(joins::reads_own)
     }
