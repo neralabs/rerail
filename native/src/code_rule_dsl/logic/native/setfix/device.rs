@@ -758,6 +758,8 @@ impl Resident {
 #[derive(Clone, Debug, Default)]
 pub(in crate::code_rule_dsl) struct Report {
     pub(in crate::code_rule_dsl) rules: u32,
+    /// Whether the stratum's joins went out in its level's wave (one commit and wait for the level's strata).
+    pub(in crate::code_rule_dsl) waved: u32,
     /// Texts made on the device (`cat` into a head) and stored as symbols.
     pub(in crate::code_rule_dsl) made: u64,
     pub(in crate::code_rule_dsl) stages: u32,
@@ -803,7 +805,9 @@ pub(super) fn refuse(why: String) {
 
 /// A rule's state in a batch: its tables by totals slot, their capacities, its words.
 struct Run<'p> {
-    plan: &'p Plan,
+    /// Its own copy: a run waiting for its wave outlives the borrow of the component's plans.
+    plan: Rc<Plan>,
+    _plan: std::marker::PhantomData<&'p Plan>,
     /// Each stage's input and output slots (a pass and a map keep their input's).
     io: Vec<(usize, usize)>,
     tables: Vec<Option<mj::Table>>,
@@ -976,7 +980,7 @@ fn texts(cols: &[(Arc<InRel>, usize)], consts: &[i64], rep: &mut Report, names: 
 }
 
 impl<'p> Run<'p> {
-    fn new(plan: &'p Plan) -> Result<Run<'p>, String> {
+    fn new(plan: &Plan) -> Result<Run<'p>, String> {
         let mut io = Vec::new();
         let mut slot = 0;
         let mut counter = Vec::new();
@@ -1016,7 +1020,7 @@ impl<'p> Run<'p> {
         if uniq_cols.len() > 16 {
             return Err("a head of more than 16 slots".into());
         }
-        Ok(Run { plan, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()], uniq: None, uniq_cols })
+        Ok(Run { plan: Rc::new(plan.clone()), _plan: std::marker::PhantomData, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()], uniq: None, uniq_cols })
     }
 
     /// The space for stage `k`'s rows out, from its input's space.
@@ -1174,32 +1178,127 @@ fn run_here(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner
     Ok(out)
 }
 
+thread_local! {
+    /// The level's open command buffer (decision 0113 §3's wave): the strata placed on the device encode their joins
+    /// into it and wait for the wave, so a level's small strata go out in one commit and one wait. Its number, and
+    /// whether it is open.
+    static WAVE: RefCell<Option<(u64, mj::Batch)>> = const { RefCell::new(None) };
+    static WAVES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// The waves flushed, by number: their completion (or why they failed), and the device's seconds not yet
+    /// counted by a stratum.
+    static FLUSHED: RefCell<HashMap<u64, Result<Option<mj::Done>, String>>> = RefCell::new(HashMap::new());
+    /// Strata waiting for their wave, by ticket: their encoded runs, their wave, their report so far.
+    static SUSPENDED: RefCell<HashMap<u64, (Vec<Run<'static>>, u64, Report)>> = RefCell::new(HashMap::new());
+    static TICKETS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// A stratum's joins encoded into the level's open command buffer, to wait for the wave (`lanes::wave::flush`
+/// commits it once, for every stratum in it): its ticket for `resume`. `None` when they do not all fit one
+/// submission's space (the stratum then runs on its own, `run`).
+pub(super) fn submit(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Option<u64>, String> {
+    let _span = crate::code_rule_dsl::logic::profile::span(|| "device joins (to the wave)".into());
+    let c0 = thread_cpu();
+    let mut rep = Report { rules: rules.len() as u32, stages: rules.iter().map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
+    let opened = WAVE.with_borrow(Option::is_none);
+    if opened {
+        let n = WAVES.get() + 1;
+        WAVES.set(n);
+        WAVE.with_borrow_mut(|w| -> Result<(), String> {
+            *w = Some((n, mj::Batch::new().map_err(|e| format!("{e:?}"))?));
+            Ok(())
+        })?;
+        crate::code_rule_dsl::logic::lanes::wave::defer(Box::new(move || {
+            let Some((n, mut batch)) = WAVE.with_borrow_mut(Option::take) else { return Ok(()) };
+            let done = on_lane("stratum joins (a wave)", 1, || batch.finish().map_err(|e| format!("{e:?}")));
+            // A failed wave fails its strata, which then run on the CPU: the flush itself goes on.
+            FLUSHED.with_borrow_mut(|f| f.insert(n, done.map(Some)));
+            Ok(())
+        }));
+    }
+    let encoded = WAVE.with_borrow_mut(|w| {
+        let (n, batch) = w.as_mut().expect("the open wave");
+        encode_runs(rules, batch, &mut rep, names).map(|runs| (*n, runs))
+    })?;
+    let (wave, runs) = encoded;
+    if runs.len() < rules.len() {
+        // Encoded work it will not wait for is harmless: the wave runs it and nothing reads it.
+        return Ok(None);
+    }
+    rep.encode_cpu = thread_cpu() - c0 - rep.upload_cpu;
+    let t = TICKETS.get() + 1;
+    TICKETS.set(t);
+    SUSPENDED.with_borrow_mut(|s| s.insert(t, (runs, wave, rep)));
+    Ok(Some(t))
+}
+
+/// A stratum that waited for its wave (`submit`'s `ticket`), finished: as `run`, from the flushed submission.
+pub(super) fn resume(ticket: u64, rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+    let _span = crate::code_rule_dsl::logic::profile::span(|| "device joins (after the wave)".into());
+    let Some((runs, wave, mut rep)) = SUSPENDED.with_borrow_mut(|s| s.remove(&ticket)) else { return Err("a stratum's device joins were not submitted".into()) };
+    let done = FLUSHED.with_borrow_mut(|f| match f.get_mut(&wave) {
+        None => Err("a stratum's wave was not flushed".to_owned()),
+        Some(Err(e)) => Err(e.clone()),
+        // The wave's device seconds, counted once (by its first stratum).
+        Some(Ok(d)) => Ok(d.take()),
+    })?;
+    if let Some(d) = done {
+        rep.submissions += d.submissions;
+        rep.dispatches += d.dispatches;
+        rep.gpu_seconds += d.gpu_seconds;
+    }
+    rep.waved = 1;
+    let c0 = thread_cpu();
+    let out = complete(runs, rules, store, names, fresh, &mut rep)?;
+    rep.encode_cpu += (thread_cpu() - c0 - rep.decode_cpu).max(0.0);
+    let rows: u64 = rep.rows;
+    crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "head rows read back", rows);
+    LAST.with_borrow_mut(|l| *l = Some(rep));
+    Ok(out)
+}
+
 /// The first rules of `rules` that fit one submission's space, run: their head rows as `run`'s.
 fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh], rep: &mut Report) -> Result<Vec<u64>, String> {
     let mut batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
-    let mut runs: Vec<Run<'_>> = Vec::with_capacity(rules.len());
-    {
-        let _h = crate::code_rule_dsl::logic::lanes::prof::host("device join (decision 0095)", "encode: uploads, sorts, stages");
-        let mut bytes = 0;
-        for (plan, _, _) in rules {
-            if !runs.is_empty() && (bytes > BATCH_MAX || mj::device_bytes_left() < HEADROOM) {
-                break;
-            }
-            let mut r = Run::new(plan)?;
-            r.encode(0, &mut batch, rep, &mut Own::default(), names)?;
-            bytes += r.bytes();
-            runs.push(r);
+    let runs = encode_runs(rules, &mut batch, rep, names)?;
+    finish_timed(&mut batch, rep)?;
+    complete(runs, &rules[..], store, names, fresh, rep)
+}
+
+/// The first rules of `rules` that fit one submission's space, each encoded into `batch`.
+fn encode_runs(rules: &[(&Plan, &JoinRule, usize)], batch: &mut mj::Batch, rep: &mut Report, names: &Interner) -> Result<Vec<Run<'static>>, String> {
+    let _h = crate::code_rule_dsl::logic::lanes::prof::host("device join (decision 0095)", "encode: uploads, sorts, stages");
+    let mut runs: Vec<Run<'static>> = Vec::with_capacity(rules.len());
+    let mut bytes = 0;
+    for (plan, _, _) in rules {
+        if !runs.is_empty() && (bytes > BATCH_MAX || mj::device_bytes_left() < HEADROOM) {
+            break;
         }
+        let mut r = Run::new(plan)?;
+        r.encode(0, batch, rep, &mut Own::default(), names)?;
+        bytes += r.bytes();
+        runs.push(r);
     }
+    Ok(runs)
+}
+
+/// Commits `batch` and waits for it, the wait and the device's seconds into `rep`.
+fn finish_timed(batch: &mut mj::Batch, rep: &mut Report) -> Result<(), String> {
+    let (t0, w0) = (Instant::now(), thread_cpu());
+    let done = batch.finish().map_err(|e| format!("{e:?}"))?;
+    rep.wait_wall += t0.elapsed().as_secs_f64();
+    rep.wait_cpu += thread_cpu() - w0;
+    rep.submissions += done.submissions;
+    rep.dispatches += done.dispatches;
+    rep.gpu_seconds += done.gpu_seconds;
+    Ok(())
+}
+
+/// Runs whose submission completed, finished: an overflowing stage run again from its exact count (in a batch of
+/// their own), then the rows into the store (`fresh`) and each step's counts. `rules` are the runs' rules, in order.
+fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh], rep: &mut Report) -> Result<Vec<u64>, String> {
     let mut pending: Vec<usize> = (0..runs.len()).collect();
+    let mut batch: Option<mj::Batch> = None;
     loop {
-        let (t0, w0) = (Instant::now(), thread_cpu());
-        let done = batch.finish().map_err(|e| format!("{e:?}"))?;
-        rep.wait_wall += t0.elapsed().as_secs_f64();
-        rep.wait_cpu += thread_cpu() - w0;
-        rep.submissions += done.submissions;
-        rep.dispatches += done.dispatches;
-        rep.gpu_seconds += done.gpu_seconds;
         let mut again = Vec::new();
         for &k in &pending {
             if let Some((s, n)) = runs[k].overflow() {
@@ -1223,9 +1322,14 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, f
         }
         rep.reruns += again.len() as u32;
         pending = again.iter().map(|&(k, _)| k).collect();
+        let b = match &mut batch {
+            Some(b) => b,
+            None => batch.insert(mj::Batch::new().map_err(|e| format!("{e:?}"))?),
+        };
         for (k, s) in again {
-            runs[k].encode(s, &mut batch, rep, &mut Own::default(), names)?;
+            runs[k].encode(s, b, rep, &mut Own::default(), names)?;
         }
+        finish_timed(b, rep)?;
     }
     // The rows into the store, and each step's counts.
     let d0 = thread_cpu();
@@ -1896,5 +2000,71 @@ mod tests {
         assert!(longest > 64, "a name past two chunks: {longest} bytes");
         assert_eq!(got[1].0, got[0].0, "the device's text tests are the CPU's");
         assert_eq!(got[1].1, got[0].1, "the device's counts per step are the CPU's");
+    }
+
+    /// Strata placed on the device, when their driver can wait, go out in one wave: each encodes its joins into the
+    /// level's one command buffer and returns `3`; one flush commits it; each then finishes, with the rows it makes
+    /// on its own.
+    #[test]
+    fn strata_on_the_device_wait_for_their_wave() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        use crate::code_rule_dsl::logic::lanes::wave;
+        let store = crate::code_rule_dsl::prefilter::tests::temp();
+        drop(crate::code_rule_dsl::prefilter::tests::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE n (c0, c1);").unwrap();
+        for k in 0..400 {
+            db.execute("INSERT INTO n VALUES (?1, ?2)", rusqlite::params![format!("s{}", k % 37), k]).unwrap();
+        }
+        let n = format!("t:x:{}:{}:si", hex("temp.n"), hex("c0, c1"));
+        let strata = [
+            ("wave_a", "h0", format!("pos {n} v0 v1\nlt v1 i:100\nhead v0 v1")),
+            ("wave_b", "h1", format!("pos {n} v0 v1\npos {n} v0 v2\nlt v1 v2\nlt v2 i:60\nhead v1 v2")),
+            ("wave_c", "h2", format!("pos {n} v0 v1\ncat v2 v0 x:{}\nhead v2 v1", hex("w"))),
+        ];
+        let mut got = Vec::new();
+        for waves in [false, true] {
+            for (name, h, rule) in &strata {
+                db.execute_batch(&format!("DROP TABLE IF EXISTS temp.{h}; CREATE TEMP TABLE {h} (c0, c1);")).unwrap();
+                super::super::open(&db, &format!("name {name}\ndevice\nrel {h} si empty\nseed 0 {}", hex(rule))).unwrap();
+            }
+            if waves {
+                let (w0, _) = wave::flushed();
+                {
+                    let _w = wave::suspendable();
+                    for (name, _, _) in &strata {
+                        let status = super::super::run(&db, name, 0).unwrap();
+                        assert!(status.ends_with(" 3"), "{name} waits for its wave: {status}");
+                    }
+                }
+                assert_eq!(wave::flush(strata.len()).unwrap(), 1, "one commit for the level's strata");
+                assert_eq!(wave::flushed().0, w0 + 1);
+                for (name, _, _) in &strata {
+                    let status = super::super::run(&db, name, 0).unwrap();
+                    assert!(!status.ends_with(" 3"), "{name} finished: {status}");
+                    let report = super::take_report().expect("a device report");
+                    assert!(report.refused.is_none() && report.waved == 1, "{report:?}");
+                }
+            } else {
+                for (name, _, _) in &strata {
+                    super::super::run(&db, name, 0).unwrap();
+                    assert!(super::take_report().is_some_and(|r| r.refused.is_none() && r.waved == 0));
+                }
+            }
+            let mut rows = Vec::new();
+            for (name, h, _) in &strata {
+                super::super::close(&db, name).unwrap();
+                let mut r: Vec<(i64, i64)> = db.prepare(&format!("SELECT c0, c1 FROM temp.{h}")).unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+                r.sort_unstable();
+                assert!(!r.is_empty(), "{name} made rows");
+                rows.push(r);
+            }
+            got.push(rows);
+        }
+        assert_eq!(got[1], got[0], "the strata's rows after the wave are their own runs'");
     }
 }

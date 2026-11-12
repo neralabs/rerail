@@ -199,6 +199,8 @@ struct GpuTotal {
     bindings: u64,
     /// Texts made on the device into heads, stored as symbols.
     made: u64,
+    /// Runs whose joins went out in their level's wave (one commit and wait for the level's strata).
+    waved: u64,
 }
 
 impl GpuTotal {
@@ -224,6 +226,7 @@ impl GpuTotal {
         self.distinct += o.distinct;
         self.bindings += o.bindings;
         self.made += o.made;
+        self.waved += o.waved;
     }
 
     /// The host's CPU on the device's work: encoding, uploads, waiting, reading back.
@@ -942,6 +945,7 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
                 distinct: d.distinct,
                 bindings: d.bindings,
                 made: d.made,
+                waved: u64::from(d.waved),
             });
             true
         }
@@ -997,8 +1001,8 @@ fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
     let ms = |s: f64| s * 1e3;
     let _ = writeln!(r, "Strata run on the GPU: {} strata, {} runs, {} rules in {} stages; their CPU {:.2} s (the whole stratum: planning its replans, the store, the device's host part)",
         ran.len(), sum.runs, sum.rules, sum.stages, cpu);
-    let _ = writeln!(r, "  GPU {:.1} ms (command buffers' timestamps) in {} submissions, {} dispatches ({} stages run again after an overflow)",
-        ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns);
+    let _ = writeln!(r, "  GPU {:.1} ms (command buffers' timestamps) in {} submissions, {} dispatches ({} stages run again after an overflow); {} runs sent in their level's wave",
+        ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns, sum.waved);
     let _ = writeln!(r, "  host CPU {:.1} ms: encode {:.1}, uploads {:.1}, wait {:.1} ({:.1} ms wall), rows back into the store {:.1}",
         ms(sum.host()), ms(sum.encode), ms(sum.upload), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
     let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), found resident {}; sorts made {}, found resident {}; bindings {}, head rows {} ({} distinct, made so on the device); texts made {}",

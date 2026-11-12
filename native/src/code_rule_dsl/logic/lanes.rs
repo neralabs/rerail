@@ -86,6 +86,15 @@ pub(in crate::code_rule_dsl) mod wave {
         static NEXT: Cell<u64> = const { Cell::new(0) };
         /// Waves flushed on this thread and the launches they held (for tests).
         static FLUSHED: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+        /// What else the wave runs when it is flushed, after its launches: a form's own submission (the device
+        /// joins' open command buffer, `setfix::device`), once.
+        static DEFERRED: RefCell<Vec<Box<dyn FnOnce() -> Result<(), String>>>> = RefCell::new(Vec::new());
+    }
+
+    /// Runs `f` when the wave is flushed (a form that encoded its work into a submission of its own, shared by the
+    /// level's strata, commits it there): once, after the wave's launches.
+    pub(in crate::code_rule_dsl) fn defer(f: Box<dyn FnOnce() -> Result<(), String>>) {
+        DEFERRED.with_borrow_mut(|d| d.push(f));
     }
 
     /// While held, a form's launches may wait for the wave.
@@ -131,8 +140,18 @@ pub(in crate::code_rule_dsl) mod wave {
     /// many launches it ran.
     pub(in crate::code_rule_dsl) fn flush(strata: usize) -> Result<usize, String> {
         let q = QUEUED.with_borrow_mut(std::mem::take);
+        let deferred = DEFERRED.with_borrow_mut(std::mem::take);
+        let ran = deferred.len();
         if q.is_empty() {
-            return Ok(0);
+            if ran > 0 {
+                let (w, l) = FLUSHED.get();
+                FLUSHED.set((w + 1, l));
+                super::prof::wave(ran, strata);
+            }
+            for f in deferred {
+                f()?;
+            }
+            return Ok(ran);
         }
         let n = q.len();
         let form = if q.iter().all(|l| l.0 == q[0].0) { q[0].0 } else { "device wave (forms mixed)" };
@@ -143,7 +162,10 @@ pub(in crate::code_rule_dsl) mod wave {
         DONE.with_borrow_mut(|d| d.extend(tickets.into_iter().zip(done.into_iter().map(|d| d.out))));
         let (w, l) = FLUSHED.get();
         FLUSHED.set((w + 1, l + n as u64));
-        Ok(n)
+        for f in deferred {
+            f()?;
+        }
+        Ok(n + ran)
     }
 
     /// The outputs of a flushed wave's launches, by their tickets.
