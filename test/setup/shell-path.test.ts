@@ -64,9 +64,16 @@ describe.skipIf(process.platform === "win32")("launcher on PATH", () => {
     expect(await addLauncherToPath({ ...other.options, env, loginShell: null })).toEqual({ status: "changed", locations: [join(other.home, ".profile")] });
   });
 
-  it("writes nothing when the running PATH has the directory, or RERAIL_MODIFY_PATH=0", async () => {
+  it("writes the block when the running PATH has the directory and no set-up recorded PATH, as in the shell an uninstall ran in", async () => {
     const { home, binDir, env, options } = await machine("/bin/zsh");
-    expect(await addLauncherToPath({ ...options, env: { ...env, PATH: `/usr/bin:${binDir}/` } })).toEqual({ status: "skipped" });
+    const zshrc = join(home, ".zshrc");
+    expect(await addLauncherToPath({ ...options, env: { ...env, PATH: `/usr/bin:${binDir}/` } })).toEqual({ status: "changed", locations: [zshrc] });
+    expect(await readFile(zshrc, "utf8")).toContain("# >>> rerail >>>");
+  });
+
+  it("writes nothing when a set-up recorded PATH and the running PATH has the directory, or RERAIL_MODIFY_PATH=0", async () => {
+    const { home, binDir, env, options } = await machine("/bin/zsh");
+    expect(await addLauncherToPath({ ...options, handledBefore: true, env: { ...env, PATH: `/usr/bin:${binDir}/` } })).toEqual({ status: "skipped" });
     expect(await addLauncherToPath({ ...options, env: { ...env, RERAIL_MODIFY_PATH: "0" } })).toEqual({ status: "skipped" });
     expect(existsSync(join(home, ".zshrc"))).toBe(false);
   });

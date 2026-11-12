@@ -5,11 +5,13 @@
  * when PATH lacks it, so a file sourced twice (`.bash_profile` sourcing `.bashrc`) adds it once. Windows: the user
  * `Path` in `HKCU\Environment`, keeping its registry value kind so `%VAR%` entries stay unexpanded.
  *
- * Nothing is written when the running PATH has the directory already: the person manages it. `RERAIL_MODIFY_PATH=0`
- * turns the whole step off (dotfile managers; the test suite).
- *
  * Set-up records in the Rerail home that it handled PATH (`launcherPathMarker`). `rerail update` adds the entry only
  * where no set-up ever did, so a block the person took out by hand stays out; `rerail setup` run again adds it back.
+ *
+ * Once that record exists, nothing is written when the running PATH has the directory already: the person manages it.
+ * Before it does, the running PATH says nothing about a new terminal: the shell an uninstall ran in keeps the
+ * directory after the block is gone. `RERAIL_MODIFY_PATH=0` turns the whole step off (dotfile managers; the test
+ * suite).
  */
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -60,10 +62,15 @@ export interface LauncherPathOptions {
   loginShell?: string | null;
   platform?: NodeJS.Platform;
   dryRun?: boolean;
+  /**
+   * A set-up recorded PATH as handled in this Rerail home (`launcherPathMarker`). Only then does a running PATH that
+   * has the directory mean the person manages it.
+   */
+  handledBefore?: boolean;
 }
 
 export type LauncherPathChange =
-  /** `RERAIL_MODIFY_PATH=0`, or the running PATH has the directory already. */
+  /** `RERAIL_MODIFY_PATH=0`, or PATH was handled before and the running PATH has the directory already. */
   | { status: "skipped" }
   /** Every startup file (or the Windows user Path) names the directory already. */
   | { status: "unchanged"; locations: string[] }
@@ -100,7 +107,7 @@ function onRunningPath(binDir: string, env: NodeJS.ProcessEnv, platform: NodeJS.
 export async function addLauncherToPath(options: LauncherPathOptions): Promise<LauncherPathChange> {
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
-  if (env.RERAIL_MODIFY_PATH === "0" || onRunningPath(options.binDir, env, platform)) return { status: "skipped" };
+  if (env.RERAIL_MODIFY_PATH === "0" || (options.handledBefore === true && onRunningPath(options.binDir, env, platform))) return { status: "skipped" };
   try {
     if (platform === "win32") return windowsUserPath(options.binDir, options.dryRun === true ? "check" : "add", env, options.home);
     const files = startupFiles(options.home, env, options.loginShell === undefined ? accountLoginShell() : options.loginShell);

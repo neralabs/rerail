@@ -49,7 +49,7 @@ import {
 import { checkNodeVersion } from "../setup/node-version.js";
 import { pinnedNodePath } from "../setup/node-path.js";
 import { setupPreflight, wslNote } from "../setup/preflight.js";
-import { addLauncherToPath, describeLauncherPath, LAUNCHER_PATH_FILE, launcherPathMarker, recordLauncherPath, removeLauncherFromPath } from "../setup/shell-path.js";
+import { addLauncherToPath, describeLauncherPath, LAUNCHER_PATH_FILE, launcherPathMarker, recordLauncherPath, removeLauncherFromPath, type LauncherPathChange } from "../setup/shell-path.js";
 import { TerminalInput } from "./setup-menu.js";
 import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, setupAgents, setupPacks, startRerailStep, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
 import { npmPackStore, type PackStore, type PackVersion } from "../setup/rule-pack-store.js";
@@ -108,15 +108,24 @@ function registrationRoot(context: SetupContext): string {
   return packageRegistrationRoot(context.home, context.packageRoot);
 }
 
-/** Put the launcher's directory on PATH (`shell-path.ts`); set-up's line for it, or undefined when nothing changed. */
-async function launcherOnPath(context: SetupContext, lane: SetupLane): Promise<string | undefined> {
-  const { launcherPath } = context.updater;
-  // A run that wrote no launcher (an install that failed) has nothing to put on PATH yet.
-  if (!existsSync(launcherPath)) return undefined;
-  const binDir = dirname(launcherPath);
+/**
+ * Put the launcher's directory on PATH and record the result (`shell-path.ts`). The running PATH counts only once a
+ * set-up recorded PATH in this home: the uninstall deletes that record with the block, so installing again from the
+ * shell that ran it, whose PATH still has the directory, writes the block.
+ */
+async function putLauncherOnPath(context: SetupContext, dryRun = false): Promise<{ binDir: string; home: string; change: LauncherPathChange }> {
+  const binDir = dirname(context.updater.launcherPath);
   const home = codingAgentHome();
-  const change = await addLauncherToPath({ binDir, home });
-  await recordLauncherPath(context.home, change);
+  const change = await addLauncherToPath({ binDir, home, dryRun, handledBefore: existsSync(launcherPathMarker(context.home)) });
+  await recordLauncherPath(context.home, change, dryRun);
+  return { binDir, home, change };
+}
+
+/** Set-up's line for the launcher on PATH (`putLauncherOnPath`), or undefined when nothing changed. */
+async function launcherOnPath(context: SetupContext, lane: SetupLane): Promise<string | undefined> {
+  // A run that wrote no launcher (an install that failed) has nothing to put on PATH yet.
+  if (!existsSync(context.updater.launcherPath)) return undefined;
+  const { binDir, home, change } = await putLauncherOnPath(context);
   if (change.status === "failed") return renderOnPath({ binDir, locations: [], failure: change.reason, home }, lane).replace(/\n$/u, "");
   if (change.status !== "changed") return undefined;
   return renderOnPath({ binDir, locations: change.locations, home }, lane).replace(/\n$/u, "");
@@ -563,9 +572,7 @@ async function runRefresh(context: SetupContext): Promise<number> {
 async function repairLauncherPath(context: SetupContext): Promise<string | undefined> {
   const { launcherPath } = context.updater;
   if (existsSync(launcherPathMarker(context.home)) || !existsSync(launcherPath)) return undefined;
-  const binDir = dirname(launcherPath);
-  const change = await addLauncherToPath({ binDir, home: codingAgentHome() });
-  await recordLauncherPath(context.home, change);
+  const { binDir, change } = await putLauncherOnPath(context);
   return describeLauncherPath(change, binDir, "add");
 }
 
@@ -632,9 +639,7 @@ async function finishUninstall({ parsed, deleteData }: InstallPlan, context: Set
 
 /** A checkout registered with `--root` gets the launcher on PATH too, and says what to do next. */
 async function finishExplicitRoot({ parsed }: InstallPlan, context: SetupContext): Promise<void> {
-  const binDir = dirname(context.updater.launcherPath);
-  const change = await addLauncherToPath({ binDir, home: codingAgentHome(), dryRun: parsed.dryRun });
-  await recordLauncherPath(context.home, change, parsed.dryRun);
+  const { binDir, change } = await putLauncherOnPath(context, parsed.dryRun);
   const pathLine = describeLauncherPath(change, binDir, "add", parsed.dryRun);
   process.stdout.write(["", ...(pathLine === undefined ? [] : [pathLine]), "Next:", "  restart Cursor, Claude Code, Codex, OMP, or Pi so they load the new hooks", ""].join("\n"));
 }
