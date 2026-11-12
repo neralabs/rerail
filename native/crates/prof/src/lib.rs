@@ -188,6 +188,173 @@ pub fn stages() -> std::sync::MutexGuard<'static, BTreeMap<String, (Duration, us
     STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// A sampling heap profiler (`RERAIL_HEAP_SAMPLE`): which spans allocated the heap that is live at the footprint's
+/// peak. The engine's allocator calls `alloc` and `free` around jemalloc's; a thread samples an allocation per
+/// `INTERVAL` bytes it allocates (every one of `BIG` bytes or more), keyed by its address with the thread's innermost
+/// span, and a free of a sampled address removes it. The profile's memory sampler takes `snapshot` at its peak: each
+/// live sample weighs the bytes it stands for. Nothing here allocates: the table is a static open-addressed array of
+/// atomics, the thread's state const cells. Off, an allocation pays one load.
+pub mod heap {
+    use std::cell::Cell;
+    use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering::Relaxed};
+
+    /// Bytes between samples, on average.
+    pub const INTERVAL: u64 = 256 << 10;
+    /// Allocations this large are all sampled, at their size.
+    const BIG: usize = 64 << 10;
+    const SLOTS: usize = 1 << 19;
+    const EMPTY: usize = 0;
+    const GONE: usize = 1;
+    const PROBES: usize = 64;
+
+    static STATE: AtomicU8 = AtomicU8::new(0);
+    static KEYS: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(EMPTY) }; SLOTS];
+    static SIZES: [AtomicU64; SLOTS] = [const { AtomicU64::new(0) }; SLOTS];
+    static SPANS: [AtomicU32; SLOTS] = [const { AtomicU32::new(0) }; SLOTS];
+    /// Samples the table had no place for (a probe past `PROBES`).
+    pub static DROPPED: AtomicU64 = AtomicU64::new(0);
+
+    thread_local! {
+        static SPAN: Cell<u32> = const { Cell::new(0) };
+        static LEFT: Cell<i64> = const { Cell::new(INTERVAL as i64) };
+    }
+
+    /// Whether heap sampling is on (`RERAIL_HEAP_SAMPLE` set): read once, without allocating.
+    #[inline]
+    pub fn on() -> bool {
+        match STATE.load(Relaxed) {
+            2 => true,
+            1 => false,
+            _ => {
+                #[cfg(unix)]
+                let set = !unsafe { libc::getenv(c"RERAIL_HEAP_SAMPLE".as_ptr()) }.is_null();
+                #[cfg(not(unix))]
+                let set = false;
+                STATE.store(if set { 2 } else { 1 }, Relaxed);
+                set
+            }
+        }
+    }
+
+    /// The span this thread's allocations are charged to (`intern`'s id; 0 none).
+    pub fn set_span(id: u32) {
+        let _ = SPAN.try_with(|s| s.set(id));
+    }
+
+    fn slot(ptr: usize) -> usize {
+        (ptr.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 13) & (SLOTS - 1)
+    }
+
+    /// The allocators a sample can name beside Rust's (`alloc_by`): a high bit of its span id.
+    pub const SQLITE: u32 = 1 << 31;
+    pub const TREE_SITTER: u32 = 1 << 30;
+
+    /// An allocation of `size` bytes at `ptr`: sampled when its thread's countdown runs out, or when big.
+    #[inline]
+    pub fn alloc(ptr: usize, size: usize) {
+        alloc_by(ptr, size, 0)
+    }
+
+    /// `alloc` by another allocator than Rust's (`SQLITE`, `TREE_SITTER`).
+    #[inline]
+    pub fn alloc_by(ptr: usize, size: usize, by: u32) {
+        if ptr == 0 {
+            return;
+        }
+        if size < BIG {
+            let Ok(sampled) = LEFT.try_with(|left| {
+                let l = left.get() - size as i64;
+                if l > 0 {
+                    left.set(l);
+                    return false;
+                }
+                // The next sample a varying distance on (a cheap hash of the address), so strided sizes do not alias.
+                left.set(l + INTERVAL as i64 / 2 + (slot(ptr) as i64 % INTERVAL as i64));
+                true
+            }) else { return };
+            if !sampled {
+                return;
+            }
+        }
+        let span = SPAN.try_with(Cell::get).unwrap_or(0) | by;
+        let mut at = slot(ptr);
+        for _ in 0..PROBES {
+            let k = KEYS[at].load(Relaxed);
+            if (k == EMPTY || k == GONE) && KEYS[at].compare_exchange(k, ptr, Relaxed, Relaxed).is_ok() {
+                SIZES[at].store(size as u64, Relaxed);
+                SPANS[at].store(span, Relaxed);
+                return;
+            }
+            at = (at + 1) & (SLOTS - 1);
+        }
+        DROPPED.fetch_add(1, Relaxed);
+    }
+
+    /// A free of `ptr`: its sample, if any, removed.
+    #[inline]
+    pub fn free(ptr: usize) {
+        let mut at = slot(ptr);
+        for _ in 0..PROBES {
+            let k = KEYS[at].load(Relaxed);
+            if k == EMPTY {
+                return;
+            }
+            if k == ptr {
+                KEYS[at].store(GONE, Relaxed);
+                return;
+            }
+            at = (at + 1) & (SLOTS - 1);
+        }
+    }
+
+    /// The live samples' bytes by span id: a sample of `size` stands for `size` bytes when big, else for
+    /// `size / (1 - e^(-size / INTERVAL))` (the expected bytes a sample of a byte-countdown stands for).
+    pub fn snapshot() -> Vec<(u32, u64)> {
+        let mut by = std::collections::HashMap::<u32, f64>::new();
+        for at in 0..SLOTS {
+            let k = KEYS[at].load(Relaxed);
+            if k == EMPTY || k == GONE {
+                continue;
+            }
+            let size = SIZES[at].load(Relaxed) as f64;
+            let weight = if size >= BIG as f64 { size } else { size / (1.0 - (-size / INTERVAL as f64).exp()).max(1e-9) };
+            *by.entry(SPANS[at].load(Relaxed)).or_default() += weight;
+        }
+        let mut v: Vec<(u32, u64)> = by.into_iter().map(|(k, w)| (k, w as u64)).collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1));
+        v
+    }
+
+    type Names = (std::collections::HashMap<String, u32>, Vec<String>);
+    static NAMES: std::sync::LazyLock<std::sync::Mutex<Names>> = std::sync::LazyLock::new(Default::default);
+
+    /// A span path's id (1 on), made once.
+    pub fn intern(path: &str) -> u32 {
+        let mut names = NAMES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(&id) = names.0.get(path) {
+            return id;
+        }
+        names.1.push(path.to_owned());
+        let id = names.1.len() as u32;
+        names.0.insert(path.to_owned(), id);
+        id
+    }
+
+    /// The path of span id `id` (0: none open).
+    pub fn name(id: u32) -> String {
+        if id & SQLITE != 0 {
+            return format!("SQLite's, in {}", name(id & !SQLITE));
+        }
+        if id & TREE_SITTER != 0 {
+            return format!("Tree-sitter's, in {}", name(id & !TREE_SITTER));
+        }
+        if id == 0 {
+            return "(no span open)".to_owned();
+        }
+        NAMES.lock().unwrap_or_else(std::sync::PoisonError::into_inner).1.get(id as usize - 1).cloned().unwrap_or_default()
+    }
+}
+
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
 extern crate self as rerail_prof;
 #[path = "../../../src/code_rule_dsl"]

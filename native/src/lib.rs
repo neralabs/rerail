@@ -45,7 +45,44 @@ use std::path::Path;
 // again as its own dev-dependency (`test-hooks`), whose copy declares the allocator.
 #[cfg(not(any(test, windows, target_family = "wasm", feature = "system-allocator")))]
 #[global_allocator]
-static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+static GLOBAL: Sampled = Sampled;
+
+/// jemalloc, with the heap sampler around it (`rerail_prof::heap`, `RERAIL_HEAP_SAMPLE`): off, one load more an
+/// allocation. Tree-sitter's allocations go to jemalloc directly and are not sampled.
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+struct Sampled;
+
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+unsafe impl std::alloc::GlobalAlloc for Sampled {
+    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+        let p = unsafe { tikv_jemallocator::Jemalloc.alloc(layout) };
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::alloc(p as usize, layout.size());
+        }
+        p
+    }
+    unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
+        let p = unsafe { tikv_jemallocator::Jemalloc.alloc_zeroed(layout) };
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::alloc(p as usize, layout.size());
+        }
+        p
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::free(ptr as usize);
+        }
+        unsafe { tikv_jemallocator::Jemalloc.dealloc(ptr, layout) }
+    }
+    unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
+        let q = unsafe { tikv_jemallocator::Jemalloc.realloc(ptr, layout, new_size) };
+        if rerail_prof::heap::on() && !q.is_null() {
+            rerail_prof::heap::free(ptr as usize);
+            rerail_prof::heap::alloc(q as usize, new_size);
+        }
+        q
+    }
+}
 
 #[cfg(not(any(windows, target_family = "wasm")))]
 union JemallocConf {
@@ -119,15 +156,25 @@ fn install_tree_sitter_allocator() {
     }
     unsafe extern "C" fn realloc(pointer: *mut c_void, size: usize) -> *mut c_void {
         // SAFETY: Tree-sitter passes null or a pointer these functions returned.
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::free(pointer as usize);
+        }
         allocated(unsafe { tikv_jemalloc_sys::realloc(pointer, size) }, size)
     }
     unsafe extern "C" fn free(pointer: *mut c_void) {
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::free(pointer as usize);
+        }
         // SAFETY: Tree-sitter passes null or a pointer these functions returned.
         unsafe { tikv_jemalloc_sys::free(pointer) }
     }
+    // The heap sampler sees Tree-sitter's allocations too (`rerail_prof::heap`).
     fn allocated(pointer: *mut c_void, size: usize) -> *mut c_void {
         if pointer.is_null() && size > 0 {
             std::process::abort();
+        }
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::alloc_by(pointer as usize, size, rerail_prof::heap::TREE_SITTER);
         }
         pointer
     }

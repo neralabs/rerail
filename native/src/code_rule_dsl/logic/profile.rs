@@ -398,6 +398,8 @@ pub struct Open {
     peak: u64,
     children_alloc: u64,
     children_rise: u64,
+    /// Its id in the heap sampler (`rerail_prof::heap::intern`; 0 off).
+    heap: u32,
 }
 
 /// A thread's open spans and the SQL statement it runs, where a dump on another thread can read them (`watch`).
@@ -680,7 +682,10 @@ fn open(path: String) -> Span {
                 *s.gaps.entry((after, path.clone())).or_default() += start - at;
             }
         }
-        s.opens.push(Open { path, start, children: 0.0, alloc, peak: memory::peak_sampled(), children_alloc: 0, children_rise: 0 });
+        // The heap sampler charges this thread's allocations to the span now (`rerail_prof::heap`).
+        let heap = if rerail_prof::heap::on() { rerail_prof::heap::intern(&path) } else { 0 };
+        rerail_prof::heap::set_span(heap);
+        s.opens.push(Open { path, start, children: 0.0, alloc, peak: memory::peak_sampled(), children_alloc: 0, children_rise: 0, heap });
     });
     Span(true)
 }
@@ -696,6 +701,7 @@ impl Drop for Span {
             let mut s = s.lock();
             let (allocated, freed) = s.counters.read();
             let Some(open) = s.opens.pop() else { return };
+            rerail_prof::heap::set_span(s.opens.last().map_or(0, |o| o.heap));
             let total = now - open.start;
             if s.opens.is_empty() {
                 s.covered += total;
