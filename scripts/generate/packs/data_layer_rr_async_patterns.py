@@ -89,7 +89,7 @@ ap_hidden(d) :- path_part(d, p), (p = ".git" ; p = ".venv" ; p = "venv" ; p = "_
 ap_source_triggered(d) :- source(d, sp), text(sp, text), ap_trigger(trigger), contains(trigger, text).
 .decl ap_path(d: number, owner: symbol, path: symbol)
 ap_path(d, owner, path) :- ap_document(d, owner), option("originalPath", path).
-ap_path(d, path, cat(root, "/", path)) :- ap_document(d, path), !option("originalPath", _), workspace_root(root).
+ap_path(d, path, cat(root, "/", path)) :- ap_document(d, path), !option("originalPath", _), !option("entryPoint","_ap_file_batch"), workspace_root(root).
 .decl ap_excluded_path(path: symbol)
 ap_excluded_path(path) :- ap_path(_, _, path), ap_exclude_pattern(pattern), contains(pattern, path).
 ap_excluded_path(path) :- option("originalPath", path), ap_exclude_pattern(pattern), contains(pattern, path).

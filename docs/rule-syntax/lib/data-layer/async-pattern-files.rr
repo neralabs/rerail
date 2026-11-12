@@ -1,0 +1,27 @@
+// Filesystem walks supply one ordered demand batch. Native predicates own selection.
+.decl apf_candidate(i:number,path:symbol)
+apf_candidate(i,p) :- option_item("apCandidatePaths",i,p),option_item("apCandidateIsFile",i,"1"),suffix(".py",p).
+.decl apf_directory_skip(i:number)
+apf_directory_skip(i) :- option_item("apCandidateRelative",i,p),(prefix("__pycache__/",p);contains("/__pycache__/",p)).
+.decl apf_bare_py(path:symbol)
+apf_bare_py(p) :- apf_candidate(_,p),(p=".py";suffix("/.py",p)).
+apf_bare_py(p) :- option_item("apBatchPaths",_,p),(p=".py";suffix("/.py",p)).
+.decl apf_duplicate(i:number)
+apf_duplicate(i) :- apf_candidate(i,p),apf_candidate(j,p),j<i.
+.violation AsyncPatternFile(at:span,ordinal:number,path:symbol) code "AP_FILE" "selected async-pattern file"
+AsyncPatternFile(@place("",0),i,p) :- option("entryPoint","_ap_file_select"),apf_candidate(i,p),!apf_duplicate(i),!apf_bare_py(p).
+AsyncPatternFile(@place("",0),i,p) :- option("entryPoint","_ap_directory_select"),apf_candidate(i,p),!apf_directory_skip(i).
+
+ap_document(d,p) :- option("entryPoint","_ap_file_batch"),pp_doc(d,p),!syntax_error(d,_,_),option_item("apBatchKeys",i,p),option_item("apBatchPaths",i,actual),!apf_bare_py(actual).
+ap_path(d,p,actual) :- option("entryPoint","_ap_file_batch"),ap_document(d,p),option_item("apBatchKeys",i,p),option_item("apBatchPaths",i,actual).
+ap_visible(c,p,code,message,fallback,rank) :- option("entryPoint","_ap_file_batch"),ap_issue(c,p,code,message,fallback,rank).
+.decl apf_positive(key:symbol)
+apf_positive(p) :- ap_issue(_,p,_,_,_,_).
+.violation AsyncPatternCounts(at:span,files_checked:number,files_with_violations:number) code "AP_COUNTS" "async-pattern file counts"
+AsyncPatternCounts(@place("",0),n,positive) :- option("entryPoint","_ap_file_batch"),n=count:{option_item("apBatchKeys",i,_)},positive=count:{apf_positive(p)}.
+
+.violation AsyncPatternReadWarning(at:span,ordinal:number,text:symbol) code "AP_WARNING" "async-pattern source warning"
+AsyncPatternReadWarning(@place("",0),i,cat("Warning: Could not parse ",p,": ",error,"\n")) :- option("entryPoint","_ap_read_warnings"),option_item("apErrorPaths",i,p),option_item("apErrors",i,error).
+.violation AsyncPatternApiStatus(at:span,error_type:symbol,detail:symbol,files_checked:number) code "AP_API_STATUS" "API abstraction scan"
+AsyncPatternApiStatus(@place("",0),"RuntimeError","This linter must run through the fact framework; standalone AST parsing is forbidden",1) :- option("entryPoint","_ap_api_transactions"),option_item("apApiPresent",_,"1").
+AsyncPatternApiStatus(@place("",0),"","",0) :- option("entryPoint","_ap_api_transactions"),!option_item("apApiPresent",_,"1").

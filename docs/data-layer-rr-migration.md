@@ -3841,3 +3841,38 @@ The next implementation must preserve that distinction and batch directory deman
 All 589 Python tooling tests pass after the detailed checkpoint.
 The native engine source and binary remain unchanged. Compilation time is zero.
 The manifest still records eighteen full admissions, eighty-one drafts, and one absent translation.
+
+### 2026-11-11 — Complete async-pattern filesystem and CLI parity
+
+Both native APIs pass all 28 filesystem-helper cases and forty CLI and ratchet cases.
+The frontend checkpoint retains 774 native executions, including explicit signing utility calls.
+The CLI combines directory walks into one native selection batch and one native scanner batch.
+Duplicate directory arguments retain their repeated counts and findings.
+Native relations compute counters, fallback filtering, grouping, formatting, and ratchet actions.
+The frontend transports files, arguments, passive DTOs, and native output only.
+
+A suffix case exposes another source distinction.
+The directory walker counts the bare `.py` filename as checked, but the explicit-file collector produces no findings for it.
+Production directory discovery retains that filename and can produce findings for it.
+The native file batch now preserves these different source behaviors.
+The failed complete values are retained in `rr-async-pattern-files-edge-red-finalfcce.json.gz`.
+
+CLI acceptance compares complete stdout, stderr, exit values, exceptions, and baseline bytes before and after each run.
+Cases include default and explicit roots, summary and verbose output, actionable filtering, duplicate directories, links, parser errors, regression checks, updates, and signing.
+No source CLI, ratchet, or discovery function supplies native decisions.
+Signing cases use a public synthetic fixture key. No ambient signing key enters the corpus.
+
+The shared native ratchet logic now lives in `data-layer/lint-ratchet.rr`.
+The direct-execution companion imports that library, and the async-pattern policy imports the same library.
+All thirty existing direct-execution ratchet cases pass through both APIs after this extraction.
+The shared receipt is `rr-shared-ratchet-extraction-finalfcce.json.gz`.
+Per-shard caches are removed after the completed verification runs.
+
+The frontend receipt is `rr-async-pattern-frontends-finalfcce.json.gz`.
+Eight checkpoint tests reject omitted cases, source fallback, changed output, removed native work, altered baseline writes, and mixed programs.
+All 597 Python tooling tests pass. Generator reproduction and the manifest inventory audit pass.
+The native engine and binary remain unchanged. Compilation time is zero.
+
+The rule remains a draft, with eighteen full admissions recorded overall.
+Final acceptance must replay all rule families on one final cohort, all 38 historical inputs, retained updates, and behavior-removal controls.
+The historical source recording and persistent-update harness are prepared for that next phase.

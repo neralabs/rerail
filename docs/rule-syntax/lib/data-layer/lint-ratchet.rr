@@ -1,0 +1,102 @@
+#include "data-layer/signing.rr"
+
+.decl ir_count(key: symbol, value: symbol)
+// All members are coerced for verification; only JSON numbers and booleans are ceilings.
+.decl ir_integer(ordinal: number, key: symbol, value: symbol, error_type: symbol, detail: symbol)
+.input ir_integer(IO=json, filename="baseline.json", path="/counts/*#", projection="python-int")
+.decl ir_count_type(key: symbol, kind: symbol)
+.input ir_count_type(IO=json, filename="baseline.json", path="/counts/*", projection="type")
+ir_count(k,v) :- ir_counts_object(), ir_integer(_,k,v,"",""), ir_count_type(k,"number").
+ir_count(k,v) :- ir_counts_object(), ir_integer(_,k,v,"",""), ir_count_type(k,"boolean").
+.decl ir_counts_type(value: symbol)
+.input ir_counts_type(IO=json, filename="baseline.json", path="/counts", projection="type")
+.decl ir_meta_type(value: symbol)
+.input ir_meta_type(IO=json, filename="baseline.json", path="/_metadata", projection="type")
+.decl ir_root_type(value: symbol)
+.input ir_root_type(IO=json, filename="baseline.json", projection="type")
+.decl ir_root_json(value: symbol)
+.input ir_root_json(IO=json, filename="baseline.json", projection="json")
+.decl ir_root_class(value: symbol)
+ir_root_class("list") :- ir_root_type("array").
+ir_root_class("str") :- ir_root_type("string").
+ir_root_class("NoneType") :- ir_root_type("null").
+ir_root_class("bool") :- ir_root_type("boolean").
+ir_root_class("int") :- ir_root_type("number"), ir_root_json(raw), @count_matches("[.eE]",raw) = 0.
+ir_root_class("float") :- ir_root_type("number"), ir_root_json(raw), @count_matches("[.eE]",raw) > 0.
+.decl ir_signature(value: symbol)
+.input ir_signature(IO=json, filename="baseline.json", path="/_metadata/signature", projection="python-str")
+.decl ir_current(key: symbol, value: number)
+ir_current(k,to_number(v)) :- option_item("currentKeys",i,k), option_item("currentValues",i,v).
+.decl ir_path(value: symbol)
+ir_path(p) :- option("ratchetPath",p).
+.decl ir_name(value: symbol)
+ir_name(n) :- option("ratchetName",n).
+.decl ir_meta_object()
+ir_meta_object() :- ir_meta_type("object").
+ir_meta_object() :- ir_root_type("object"), !ir_meta_type(_).
+.decl ir_counts_object()
+ir_counts_object() :- ir_counts_type("object").
+ir_counts_object() :- ir_root_type("object"), !ir_counts_type(_).
+.decl ir_sig(value: symbol)
+ir_sig(s) :- ir_signature(s).
+ir_sig("UNSIGNED") :- ir_meta_object(), !ir_signature(_).
+.decl ir_baseline_message(value: symbol)
+ir_baseline_message(cat("{\"counts\":{",body,"},\"linter\":",@json_str(n),"}")) :- ir_name(n), body = join q by k sep "," : { ir_integer(_,k,v,"",""), q = cat(@json_str(k),":",v) }.
+.decl ir_conversion_error(ordinal: number, error_type: symbol, detail: symbol)
+ir_conversion_error(i,t,e) :- ir_verify(), ir_integer(i,_,_,t,e), t != "".
+ir_conversion_error(i,t,e) :- ir_counts_object(), ir_integer(i,k,_,t,e), t != "", ir_count_type(k,"number").
+ir_conversion_error(i,t,e) :- ir_counts_object(), ir_integer(i,k,_,t,e), t != "", ir_count_type(k,"boolean").
+.decl ir_verify()
+ir_verify() :- ir_meta_object(), ir_counts_object().
+.decl ir_current_base(key: symbol, current: number, previous: symbol)
+ir_current_base(k,c,b) :- ir_current(k,c), ir_count(k,b).
+ir_current_base(k,c,"0") :- ir_current(k,c), !ir_count(k,_).
+.decl ir_load_error(value: symbol)
+ir_load_error(e) :- option("readError",e).
+.decl ir_problem(value: symbol)
+ir_problem(cat("ERROR: Failed to load baseline ",p,": ",e,"\n")) :- ir_path(p), ir_load_error(e).
+ir_problem(cat("FAIL: Baseline ",p," is unsigned and signature is required.\n")) :- ir_path(p), ir_verify(), !ir_conversion_error(_,_,_), ir_sig(s), unsigned_sig(s), option("requireSignature","1").
+ir_problem(cat("Signature verification failed: ",detail,"\nFAIL: Baseline signature verification failed for ",p,"\n")) :- ir_path(p), ir_verify(), !ir_conversion_error(_,_,_), ir_sig(s), !unsigned_sig(s), nera_key(key), ir_baseline_message(message), @ed25519_ok(key,message,s) = 0, detail = @ed25519_error(key,message,s).
+ir_problem(cat("ERROR: Failed to load baseline ",p,": ",detail,"\n")) :- ir_path(p), option("baselineText",raw), !ir_root_type(_), !ir_load_error(_), detail = @python_json_error(raw), detail != "".
+.decl ir_ready()
+ir_ready() :- option("missingBaseline","0"), ir_root_type("object"), !ir_problem(_), !ir_conversion_error(_,_,_), !input_error("baseline.json",_,_).
+.violation IrOutput(at: span, ordinal: number, stdout: symbol, stderr: symbol) code "IR_OUTPUT" "ratchet output"
+IrOutput(@place("",0),0,cat("No baseline found at ",p,". Run with --update-baseline to create one.\n"),"") :- option("missingBaseline","1"), ir_path(p).
+IrOutput(@place("",0),0,"",e) :- ir_problem(e).
+IrOutput(@place("",0),0,cat("  IMPROVED: ",k," decreased from ",b," to ",to_string(c),"\n"),"") :- ir_ready(), ir_current_base(k,c,b), @decimal_cmp(to_string(c),b) < 0.
+IrOutput(@place("",0),1,cat("  REGRESSION: ",k," increased from ",b," to ",to_string(c),"\n"),"") :- ir_ready(), ir_current_base(k,c,b), @decimal_cmp(to_string(c),b) > 0.
+IrOutput(@place("",0),2,cat("\nFAIL: ",to_string(n)," metric(s) regressed (+",total," total). Run with --update-baseline --sign to approve increases.\n"),"") :- ir_ready(), n = count : { ir_current_base(_,c,b), @decimal_cmp(to_string(c),b) > 0 }, n > 0, deltas = join delta by k sep "\n" : { ir_current_base(k,c,b), @decimal_cmp(to_string(c),b) > 0, delta = @decimal_sub(to_string(c),b) }, total = @decimal_sum(deltas).
+IrOutput(@place("",0),2,cat("  Ratchet OK: ",name," at ",to_string(c)," (baseline: ",b,")\n"),"") :- ir_ready(), ir_name(name), n = count : { ir_current_base(_,current,prior_value), @decimal_cmp(to_string(current),prior_value) > 0 }, n = 0, c = sum v : { ir_current(_,v) }, previous_values = join v by k sep "\n" : { ir_current_base(k,_,v) }, b = @decimal_sum(previous_values).
+.violation IrResult(at: span, value: number) code "IR_RESULT" "ratchet result"
+IrResult(@place("",0),1) :- option("missingBaseline","1"), option("requireBaseline","0").
+IrResult(@place("",0),0) :- option("missingBaseline","1"), option("requireBaseline","1").
+IrResult(@place("",0),0) :- ir_problem(_).
+IrResult(@place("",0),0) :- ir_ready(), ir_current_base(_,c,b), @decimal_cmp(to_string(c),b) > 0.
+IrResult(@place("",0),1) :- ir_ready(), n = count : { ir_current_base(_,c,b), @decimal_cmp(to_string(c),b) > 0 }, n = 0.
+.violation IrError(at: span, error_type: symbol, detail: symbol) code "IR_ERROR" "{detail}"
+IrError(@place("",0),"AttributeError",cat("'",t,"' object has no attribute 'get'")) :- ir_root_class(t).
+IrError(@place("",0),t,e) :- first = min i : { ir_conversion_error(i,_,_) }, ir_conversion_error(first,t,e).
+IrError(@place("",0),"NotImplementedError",cat("Native JSON diagnostic compatibility remains unimplemented: ",e)) :- option("missingBaseline","0"), input_error("baseline.json",k,e), k != "missing", !ir_load_error(_), !ir_problem(_), !ir_conversion_error(_,_,_).
+
+// Baseline writes are actions. Rules construct the exact bytes; the frontend performs the requested I/O.
+.decl ir_current_json(value: symbol)
+ir_current_json(cat("{",body,"}")) :- body = join q by k sep "," : { ir_current(k,v), q = cat(@json_str(k),":",to_string(v)) }.
+.decl ir_sign_message(value: symbol)
+ir_sign_message(cat("{\"counts\":",counts,",\"linter\":",@json_str(name),"}")) :- ir_current_json(counts), ir_name(name).
+.violation IrSignRequest(at: span, request_id: symbol, key_env: symbol, message: symbol) code "IR_SIGN_REQUEST" "baseline signing request"
+IrSignRequest(@place("",0),cat("ratchet:",name),"NERA_SIGNING_KEY",message) :- option("entryPoint","_ratchet_sign_request"), ir_name(name), ir_sign_message(message).
+.decl ir_pretty_counts(value: symbol)
+ir_pretty_counts("{}") :- !ir_current(_,_).
+ir_pretty_counts(cat("{\n",body,"\n  }")) :- ir_current(_,_), body = join q by k sep ",\n" : { ir_current(k,v), q = cat("    ",@json_str(k),": ",to_string(v)) }.
+.violation IrWrite(at: span, contents: symbol) code "IR_WRITE" "baseline bytes"
+IrWrite(@place("",0),cat("{\n  \"counts\": ",counts,",\n  \"_metadata\": {\n    \"linter\": ",@json_str(name),",\n    \"updated_at\": ",@json_str(now),",\n    \"signature\": ",@json_str(sig),",\n    \"approval_reason\": ",@json_str(reason),",\n    \"approved_by\": ",@json_str(approver),"\n  }\n}\n")) :- option("entryPoint","_ratchet_update"), ir_name(name), ir_pretty_counts(counts), option("updatedAt",now), option("newSignature",sig), option("reason",reason), option("approver",approver).
+IrOutput(@place("",0),0,cat("Baseline updated: ",p,"\n"),"") :- option("entryPoint","_ratchet_update"), ir_path(p).
+IrOutput(@place("",0),1,"  WARNING: Baseline is unsigned. Run with --sign to sign it.\n","") :- option("entryPoint","_ratchet_update"), option("newSignature","UNSIGNED").
+IrResult(@place("",0),1) :- option("entryPoint","_ratchet_update").
+IrOutput(@place("",0),0,"","ERROR: NERA_SIGNING_KEY environment variable not set.\nOnly the user may have access to NERA_SIGNING_KEY. Ask the user to run the documented uv signing command in an environment where the key is already present.\nAI agents must never have access to this proof-of-human key and must never try to obtain it.\nERROR: Failed to sign baseline.\n") :- option("entryPoint","_ratchet_sign_error"), option("signStatus","missing-key").
+IrOutput(@place("",0),0,"","ERROR: NERA_SIGNING_KEY must be 32 bytes\nERROR: Failed to sign baseline.\n") :- option("entryPoint","_ratchet_sign_error"), option("signStatus","key-length").
+IrOutput(@place("",0),0,"",cat("ERROR: Failed to decode NERA_SIGNING_KEY: ",detail,"\nERROR: Failed to sign baseline.\n")) :- option("entryPoint","_ratchet_sign_error"), option("signStatus","invalid-hex"), option("signDetail",detail).
+IrResult(@place("",0),0) :- option("entryPoint","_ratchet_sign_error").
+
+.violation IrRoot(at:span,path:symbol) code "IR_ROOT" "ratchet root"
+IrRoot(@place("",0),@dir(@dir(@dir(p)))) :- option("entryPoint","_ratchet_root"),option("ratchetDiscoverySource",p).

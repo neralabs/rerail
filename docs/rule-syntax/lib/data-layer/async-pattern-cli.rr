@@ -1,0 +1,63 @@
+#include "data-layer/python-discovery-roots.rr"
+sgd_enabled() :- env("async-pattern.paths","true").
+sgd_configured() :- env("async-pattern.paths","true").
+.violation AsyncPatternCliRoot(at:span,path:symbol) code "AP_CLI_ROOT" "async-pattern CLI root"
+AsyncPatternCliRoot(@place("",0),p) :- option("entryPoint","_ap_cli_root"),option("apExplicitRoot","1"),option("apRoot",p).
+AsyncPatternCliRoot(@place("",0),@dir(@dir(@dir(p)))) :- option("entryPoint","_ap_cli_root"),option("apExplicitRoot","0"),option("apDiscoverySource",p).
+.violation AsyncPatternCliArgument(at:span,ordinal:number,path:symbol) code "AP_CLI_ARG" "async-pattern CLI directory argument"
+AsyncPatternCliArgument(@place("",0),i,p) :- option("entryPoint","_ap_cli_root"),option("apHasDirs","1"),option_item("apDirs",i,p).
+AsyncPatternCliArgument(@place("",0),i,p) :- option("entryPoint","_ap_cli_root"),option("apHasDirs","0"),option_item("apDefaults",i,p).
+.violation AsyncPatternCliDirectory(at:span,argument:number,rank:number,path:symbol) code "AP_CLI_DIR" "async-pattern CLI directory"
+AsyncPatternCliDirectory(@place("",0),i,r,p) :- option("entryPoint","_ap_cli_dirs"),sgd_chosen(i,r,p).
+
+.decl apl_checked(g:number,n:number)
+.input apl_checked(IO=json,filename="async-pattern-cli.json",path="/groups/*/files_checked")
+.decl apl_positive(g:number,n:number)
+.input apl_positive(IO=json,filename="async-pattern-cli.json",path="/groups/*/files_with_violations")
+.decl apl_file(g:number,r:number,value:symbol)
+.input apl_file(IO=json,filename="async-pattern-cli.json",path="/groups/*/violations/*/file",projection="python-str")
+.decl apl_line(g:number,r:number,value:number)
+.input apl_line(IO=json,filename="async-pattern-cli.json",path="/groups/*/violations/*/line")
+.decl apl_code(g:number,r:number,value:symbol)
+.input apl_code(IO=json,filename="async-pattern-cli.json",path="/groups/*/violations/*/code",projection="python-str")
+.decl apl_message(g:number,r:number,value:symbol)
+.input apl_message(IO=json,filename="async-pattern-cli.json",path="/groups/*/violations/*/message",projection="python-str")
+.decl apl_context(g:number,r:number,value:symbol)
+.input apl_context(IO=json,filename="async-pattern-cli.json",path="/groups/*/violations/*/context",projection="python-str")
+.decl apl_flag(g:number,r:number,value:symbol)
+.input apl_flag(IO=json,filename="async-pattern-cli.json",path="/groups/*/violations/*/is_fallback",projection="python-str")
+.decl apl_fallback(g:number,r:number)
+apl_fallback(g,r) :- apl_flag(g,r,"True").
+.decl apl_visible(g:number,r:number)
+apl_visible(g,r) :- apl_file(g,r,_),!option("apActionable","1").
+apl_visible(g,r) :- apl_file(g,r,_),!apl_fallback(g,r),option("apActionable","1").
+.decl apl_totals(checked:number,positive:number,total:number,fallback:number,actionable:number)
+apl_totals(n,p,total,fb,total-fb) :- option("entryPoint","_ap_cli_report"),n=sum c:{apl_checked(g,c)},p=sum c:{apl_positive(g,c)},total=count:{apl_file(g,r,_)},fb=count:{apl_fallback(g,r)}.
+.decl apl_code_count(code:symbol,n:number,fallback:number)
+apl_code_count(code,n,fb) :- apl_visible(g,r),apl_code(g,r,code),n=count:{apl_visible(a,b),apl_code(a,b,code)},fb=count:{apl_visible(a,b),apl_code(a,b,code),apl_fallback(a,b)}.
+.decl apl_path(path:symbol,key:symbol,relative:symbol)
+apl_path(p,@replace_all(p,"/","\u0000"),@slice(p,strlen(root)+1,strlen(p))) :- apl_visible(g,r),apl_file(g,r,p),option("apCliRoot",root),root!="/",prefix(cat(root,"/"),p).
+apl_path(p,@replace_all(p,"/","\u0000"),@slice(p,1,strlen(p))) :- apl_visible(g,r),apl_file(g,r,p),option("apCliRoot","/"),prefix("/",p).
+.decl apl_marker(g:number,r:number,value:symbol)
+apl_marker(g,r," [FALLBACK]") :- apl_fallback(g,r).
+apl_marker(g,r,"") :- apl_file(g,r,_),!apl_fallback(g,r).
+.violation AsyncPatternCliOutput(at:span,phase:number,path_key:symbol,section:number,line:number,group:number,ordinal:number,sub:number,text:symbol) code "AP_CLI_OUTPUT" "async-pattern CLI output"
+AsyncPatternCliOutput(@place("",0),0,"",0,0,0,0,0,"Async Pattern Lint\n============================================================\n\n") :- option("entryPoint","_ap_cli_header").
+AsyncPatternCliOutput(@place("",0),0,"",0,0,0,0,0,cat("Summary\n----------------------------------------\nFiles checked: ",to_string(n),"\nFiles with violations: ",to_string(p),"\nTotal violations: ",to_string(total),"\n  - Fallback (intentional): ",to_string(fb),"\n  - Actionable: ",to_string(act),"\n\n")) :- apl_totals(n,p,total,fb,act),option("apSummary","1").
+AsyncPatternCliOutput(@place("",0),1,code,0,0,0,0,0,cat("  ",code,": ",to_string(n)," occurrences\n")) :- apl_totals(_,_,_,_,_),option("apSummary","1"),option("apActionable","1"),apl_code_count(code,n,_).
+AsyncPatternCliOutput(@place("",0),1,code,0,0,0,0,0,cat("  ",code,": ",to_string(n)," (",to_string(fb)," fallback, ",to_string(n-fb)," actionable)\n")) :- apl_totals(_,_,_,_,_),option("apSummary","1"),!option("apActionable","1"),apl_code_count(code,n,fb).
+AsyncPatternCliOutput(@place("",0),2,"",0,0,0,0,0,"\n") :- apl_totals(_,_,_,_,_),option("apSummary","1").
+AsyncPatternCliOutput(@place("",0),1,key,0,0,0,0,0,cat(rel,"\n")) :- apl_totals(_,_,_,_,_),!option("apSummary","1"),apl_path(_,key,rel).
+AsyncPatternCliOutput(@place("",0),1,key,1,l,g,r,0,cat("  ",to_string(l),": [",code,"] ",m,marker,"\n")) :- apl_totals(_,_,_,_,_),!option("apSummary","1"),apl_visible(g,r),apl_file(g,r,p),apl_path(p,key,_),apl_line(g,r,l),apl_code(g,r,code),apl_message(g,r,m),apl_marker(g,r,marker).
+AsyncPatternCliOutput(@place("",0),1,key,1,l,g,r,1,cat(ctx,"\n\n")) :- apl_totals(_,_,_,_,_),!option("apSummary","1"),option("apVerbose","1"),apl_visible(g,r),apl_file(g,r,p),apl_path(p,key,_),apl_line(g,r,l),apl_context(g,r,ctx),ctx!="".
+AsyncPatternCliOutput(@place("",0),1,key,2,0,0,0,0,"\n") :- apl_totals(_,_,_,_,_),!option("apSummary","1"),apl_path(_,key,_).
+AsyncPatternCliOutput(@place("",0),3,"",0,0,0,0,0,"------------------------------------------------------------\n") :- apl_totals(_,_,_,_,_).
+AsyncPatternCliOutput(@place("",0),3,"",1,0,0,0,0,cat("Actionable: ",to_string(act)," violations\n")) :- apl_totals(_,_,_,_,act),option("apActionable","1").
+AsyncPatternCliOutput(@place("",0),3,"",1,0,0,0,0,cat("Total: ",to_string(total)," violations in ",to_string(p)," files\n  - Fallback (intentional): ",to_string(fb),"\n  - Actionable: ",to_string(act),"\n")) :- apl_totals(_,p,total,fb,act),!option("apActionable","1").
+AsyncPatternCliOutput(@place("",0),3,"",2,0,0,0,0,cat("       (",to_string(n)," files checked)\n")) :- apl_totals(n,_,_,_,_).
+.decl apl_action(name:symbol)
+apl_action("update") :- option("apUpdate","1").
+apl_action("check") :- !option("apUpdate","1"),option("apCheck","1").
+apl_action("done") :- !option("apUpdate","1"),!option("apCheck","1").
+.violation AsyncPatternCliControl(at:span,action:symbol,count:number) code "AP_CLI_CONTROL" "async-pattern CLI action"
+AsyncPatternCliControl(@place("",0),action,act) :- apl_totals(_,_,_,_,act),apl_action(action).

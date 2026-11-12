@@ -96,6 +96,10 @@ def install(backend,module,detectors=False):
             return [module.StructuredViolation(CHECK,p['source_code'],Path(p['file']),json.loads(p['line_json']),p['source_message'],p['severity']) for p in ordered]
         return module.LinterPlugin(**config['plugin'],file_scope=module.FileScopeSpec(**scope),required_facts=(module.ASYNC_PATTERNS_EXTRACTOR,),reporter=report)
     backend.replace(module,'async_patterns_plugin',plugin)
+    from async_pattern_files_port import install as install_files
+    install_files(backend,module,config)
+    from async_pattern_cli_port import install as install_cli
+    install_cli(backend,module,config)
     if detectors:
         import inspect
         from async_patterns_port import scan
