@@ -1,12 +1,14 @@
 import { execFileSync } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
 import { createHash } from "node:crypto";
+import type * as SyncFileSystem from "node:fs";
 import { appendFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  CLOCK_PROBE_FILE,
   CodeRuleBridge,
   generatedEditPaths,
   isCommandTool,
@@ -17,17 +19,19 @@ import { MAX_FINISHED_CALLS, ToolCallWindows } from "../../../src/engine/code-ru
 import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../../../src/engine/code-rule/code-rule.js";
 import type { IgnoreRulesChange } from "../../../src/engine/code-rule/ignore-rule-files.js";
 import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
+import { defaultRerailHome } from "../../../src/engine/storage/rerail-home.js";
 
 const discovery = vi.hoisted(() => ({
   reads: new Map<string, Array<() => Promise<void>>>(),
   directories: new Map<string, Array<() => Promise<void>>>(),
+  opens: new Map<string, Array<() => Promise<void>>>(),
 }));
 /**
  * The arguments of every Git process Rerail started without blocking, for the tests that pin what a pass costs, and a
  * Git command (`failing`) that is made to fail, by an option Git does not know, while it is set.
  */
 const asyncGitCalls = vi.hoisted(() => ({ args: [] as string[][], failing: undefined as string | undefined }));
-/** Every folder made through `mkdtemp` or `mkdir`, by the prefix or path asked for, for the test that counts them. */
+/** Every folder made through `mkdtemp` or `mkdir`, or their synchronous forms, by the prefix or path asked for. */
 const madeFolders = vi.hoisted(() => [] as string[]);
 vi.mock("node:child_process", async importOriginal => {
   const actual = await importOriginal<typeof ChildProcess>();
@@ -58,6 +62,10 @@ vi.mock("node:fs/promises", async importOriginal => {
       await discovery.directories.get(String(args[0]))?.shift()?.();
       return await actual.opendir(...args);
     },
+    open: async (...args: Parameters<typeof actual.open>) => {
+      await discovery.opens.get(String(args[0]))?.shift()?.();
+      return await actual.open(...args);
+    },
     mkdtemp: async (...args: Parameters<typeof actual.mkdtemp>) => {
       madeFolders.push(String(args[0]));
       return await actual.mkdtemp(...args);
@@ -65,6 +73,20 @@ vi.mock("node:fs/promises", async importOriginal => {
     mkdir: async (...args: Parameters<typeof actual.mkdir>) => {
       madeFolders.push(String(args[0]));
       return await actual.mkdir(...args);
+    },
+  };
+});
+vi.mock("node:fs", async importOriginal => {
+  const actual = await importOriginal<typeof SyncFileSystem>();
+  return {
+    ...actual,
+    mkdtempSync: (...args: Parameters<typeof actual.mkdtempSync>) => {
+      madeFolders.push(String(args[0]));
+      return actual.mkdtempSync(...args);
+    },
+    mkdirSync: (...args: Parameters<typeof actual.mkdirSync>) => {
+      madeFolders.push(String(args[0]));
+      return actual.mkdirSync(...args);
     },
   };
 });
@@ -76,7 +98,7 @@ interface DiscoveryGate {
 }
 const bridges: CodeRuleBridge[] = [];
 const releases: Array<() => void> = [];
-function holdDiscovery(kind: "reads" | "directories", path: string): DiscoveryGate {
+function holdDiscovery(kind: "reads" | "directories" | "opens", path: string): DiscoveryGate {
   const entered = Promise.withResolvers<void>();
   const released = Promise.withResolvers<void>();
   const gate = { entered: entered.promise, release: released.resolve, started: false };
@@ -119,6 +141,7 @@ afterEach(async () => {
   releases.splice(0).forEach(release => release());
   discovery.reads.clear();
   discovery.directories.clear();
+  discovery.opens.clear();
   await Promise.all(passes.splice(0));
   await Promise.all(bridges.splice(0).map(bridge => bridge.close()));
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
@@ -1805,5 +1828,17 @@ describe("the file system's clock", () => {
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits.map(edit => edit.generatedText))).toEqual([
       ["old\nshell-1\n"], ["old\nshell-1\nshell-2\n"], ["old\nshell-1\nshell-2\nshell-3\n"],
     ]);
+  });
+
+  it("is sampled as a tool call starts, without waiting behind file work queued before it", async () => {
+    const bridge = createBridge(await workspace(), auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))));
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    // Holds the probe's open through `fs/promises` as a thread pool busy with a walk's reads holds it.
+    const held = holdDiscovery("opens", join(defaultRerailHome(), CLOCK_PROBE_FILE));
+
+    const begun = bridge.begin("shell-1", "Bash", { command: "./build.sh" });
+
+    expect(await Promise.race([begun.then(() => "answered"), held.entered.then(() => "waited for the open")])).toBe("answered");
   });
 });
