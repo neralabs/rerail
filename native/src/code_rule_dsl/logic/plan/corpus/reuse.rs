@@ -166,6 +166,13 @@ pub(super) fn reused(programs: &[&str], root: &Path, out: &Path, modes: &str, ty
     };
     // The library files first (a `stat` each), then the documents and the resolution rules' reads.
     let (rules, rest): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == "rule");
+    // What the record names, by its digest, first: an edit's document or rule file differs here, before the rule
+    // files are listed again (each phase program parsed) or the programs combined. Each is the observer's answer,
+    // which the journal trusts unread where nothing changed.
+    if let Some(c) = rules.iter().chain(rest.iter().filter(|c| c.0 == "doc" && !c.2.is_empty())).find(|c| super::world::bytes_digest(&root.join(&c.1)) != c.2) {
+        miss(&format!("{} {} changed", c.0, c.1));
+        return Ok(None);
+    }
     if rule_files(&texts, options)? != rules {
         miss("the rule files differ");
         return Ok(None);

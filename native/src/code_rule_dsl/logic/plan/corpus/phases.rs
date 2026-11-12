@@ -148,23 +148,34 @@ fn locate(name: &str, dir: Option<&Path>) -> Option<PathBuf> {
     dir.into_iter().chain([builtin.as_path()]).map(|d| d.join(format!("{name}.rr"))).find(|p| p.exists())
 }
 
-/// The files of every phase program `programs` read, and of the phases those read: each phase's `.rr` and its
-/// `#include`s. A run of a phased program is a function of them too, so the whole-run cutoff names them
+/// The files of every phase program `programs` may read, and of the phases those may read: each phase's `.rr` and
+/// its `#include`s. A run of a phased program is a function of them too, so the whole-run cutoff names them
 /// (O-cutoff-phases).
+///
+/// Read off the texts' declarations (`rr::declared_names`), nothing lowered: lowering the main program to find
+/// them was 2.7 s of a one-file edit. A relation declared `<phase>__<x>`, for a phase program, names that phase:
+/// a superset of what `wanted` finds (it also counts one a rule of the reader makes), so the record names as many
+/// files or more, and the record and its check list them the same way.
 pub(super) fn phase_files(programs: &[String], dir: Option<&Path>) -> Result<Vec<PathBuf>> {
     let (mut seen, mut out) = (BTreeSet::new(), Vec::new());
     let mut todo: Vec<String> = programs.to_vec();
     while let Some(text) = todo.pop() {
-        let prog = crate::code_rule_dsl::logic::rr::parse(&text)?;
-        for name in wanted(&prog, dir)?.into_keys() {
-            if !seen.insert(name.clone()) {
+        let (names, own) = crate::code_rule_dsl::logic::rr::declared_names(&text)?;
+        let phases: BTreeSet<&str> = names
+            .iter()
+            .filter_map(|rel| rel.split_once(SEP))
+            .filter(|(phase, export)| !phase.is_empty() && !export.is_empty() && own.as_deref() != Some(*phase) && !phase.starts_with("typing_") && !phase.starts_with("rr_"))
+            .map(|(phase, _)| phase)
+            .collect();
+        for name in phases {
+            let Some(path) = locate(name, dir) else { continue };
+            if !seen.insert(name.to_owned()) {
                 continue;
             }
-            let Some(path) = locate(&name, dir) else { continue };
             let raw = std::fs::read_to_string(&path).map_err(|e| Error::Plan(format!("{}: {e}", path.display())))?;
             out.extend(crate::code_rule_dsl::logic::rr::included_files(&raw)?);
             out.push(path);
-            if let Some(src) = source(&name, dir)? {
+            if let Some(src) = source(name, dir)? {
                 todo.push(src);
             }
         }
