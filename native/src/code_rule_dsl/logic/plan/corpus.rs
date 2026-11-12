@@ -1707,6 +1707,10 @@ pub fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, out: &P
 }
 
 #[allow(clippy::too_many_arguments)]
+/// The documents a run with no store reads from which its text tests' groups of automata are determinized: below,
+/// they run on the lazy DFA, whose states are built as its strings reach them.
+const DENSE_TEXT_DOCS: usize = 64;
+
 /// The first chunk's nodes, at most: what it adds per node sizes the rest.
 const PROBE_NODES: usize = 65_536;
 /// What a chunk's file-local run may add to the footprint (`RERAIL_CHUNK_MB`).
@@ -2521,14 +2525,17 @@ fn run_observed(
     }
     // The text tests' plans compiled once for the process (decision 0075), their groups of automata read from the store
     // when an earlier process determinized them.
+    // A group is determinized where that pays: kept in the store for later runs, or for a run over many documents.
+    // A small run with no store searches few strings, and runs a group on the lazy DFA (O-vocabulary-dfa-reuse).
     let compiling = crate::code_rule_dsl::logic::profile::span(|| "compile the text tests".into());
+    let dense = durable.is_some() || docs.len() >= DENSE_TEXT_DOCS;
     let compiled = match durable {
         Some(_) => {
             // The groups' sources reach the manifest with the other late ones: those it stores are the writer's.
             let groups = prepared::StoredDfas(store, Arc::clone(&late_sources));
-            vocabulary.compile(Some(&groups))
+            vocabulary.compile(Some(&groups), dense)
         }
-        None => vocabulary.compile(None),
+        None => vocabulary.compile(None, dense),
     };
     drop(compiling);
     if let Some(c) = compiled.filter(|c| c.read + c.built + c.lazy > 0) {

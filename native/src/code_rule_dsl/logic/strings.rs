@@ -275,7 +275,7 @@ impl Vocabulary {
         let mut learned: Vec<(u32, Box<[u64]>)> = Vec::new();
         if !fresh.is_empty() {
             tested += fresh.len();
-            let compiled = self.compiled.get_or_init(|| self.compile_with(None));
+            let compiled = self.compiled.get_or_init(|| self.compile_with(None, true));
             let terms: Vec<&[u8]> = fresh.iter().map(|(_, s)| s.as_bytes()).collect();
             let (hits, _undecided) = compiled.searchers.evaluate(&terms);
             let mut bits: Vec<Box<[u64]>> = vec![vec![0u64; words].into_boxed_slice(); fresh.len()];
@@ -372,18 +372,19 @@ impl Vocabulary {
         }
     }
 
-    fn compile_with(&self, cache: Option<&dyn crate::code_rule_dsl::text::vocabulary::DfaCache>) -> Compiled {
+    fn compile_with(&self, cache: Option<&dyn crate::code_rule_dsl::text::vocabulary::DfaCache>, dense: bool) -> Compiled {
         let (plans, owner): (Vec<&crate::code_rule_dsl::text::Plan>, Vec<usize>) =
             self.tests.iter().enumerate().flat_map(|(k, (_, m))| m.plans.iter().map(move |p| (&p.plan, k))).unzip();
-        Compiled { searchers: crate::code_rule_dsl::text::vocabulary::Searchers::new(&plans, cache), owner }
+        Compiled { searchers: crate::code_rule_dsl::text::vocabulary::Searchers::new(&plans, cache, dense), owner }
     }
 
     /// Compiles every test's plans now, its groups of automata read from `cache` or kept in it (decision 0075), and
-    /// says what it did; `None` when they were compiled before (in this process).
-    pub fn compile(&self, cache: Option<&dyn crate::code_rule_dsl::text::vocabulary::DfaCache>) -> Option<crate::code_rule_dsl::text::vocabulary::Compiling> {
+    /// says what it did; `None` when they were compiled before (in this process). `dense`: a group neither kept nor
+    /// cached is determinized; otherwise it runs on the lazy DFA (`Searchers::new`).
+    pub fn compile(&self, cache: Option<&dyn crate::code_rule_dsl::text::vocabulary::DfaCache>, dense: bool) -> Option<crate::code_rule_dsl::text::vocabulary::Compiling> {
         let mut made = None;
         self.compiled.get_or_init(|| {
-            let compiled = self.compile_with(cache);
+            let compiled = self.compile_with(cache, dense);
             made = Some(compiled.searchers.compiling);
             compiled
         });
