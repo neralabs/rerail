@@ -1184,6 +1184,39 @@ the five forward passes 58%, the four backward passes 24%, the record pass 18%.
 - **Tier 2**: its states test for comments and for the `no_value` mark in every state
   (above, "where tier 2's code goes").
 
+## Built: comments in the token step
+
+The lean parser skips a comment where it reads the next token,
+and records the comment then. Tier 2 used to test for a comment in every state:
+an arm on `/`, a `ROW` test to tell a comment from a `/` token, a leaf, a jump back.
+Now `TOKEN` does it once, for every state.
+
+- **Tier 1** marks a comment's start in the token's record code.
+  This is one more mark bit, beside the keyword marks (`Words::extras`, in `rir`
+  `tokenextra b11 #48` for `.rr`).
+- **`TOKEN`** with mode bit `TOKEN_EXTRAS`, after reading a record, tests that bit.
+  Where it is set, it takes the comment's bytes and makes a deferred leaf
+  (as `SPAN m=1; LEAF m=1` did), then reads the next record.
+  That loop steps one token each turn: a stated `Token` loop.
+- **The states** keep no comment arms; only state 0 does,
+  where a comment opens the root.
+
+Tapes are identical over the corpus (1,360 files).
+
+| | Before | After |
+|---|---|---|
+| Tier 2's words | 5,271 | 3,341 |
+| Comment tests (`ROW 12`) | 322 | 40 |
+| Comment leaves (`LEAF m=1`) | 140 | 0 |
+| Tier 2's machine instructions | 23,758 | 17,460 |
+| Tier 2, benchmark instructions (cycles) | 312.6M (61.8M) | 311.3M (60.7M) |
+
+The code is 27% smaller; the time is unchanged.
+The removed arms ran only at a `/`, so they cost little at run time.
+Each token now pays a shift, a mask and a branch for the comment bit.
+The gain in time has to come from the next steps: marks tested only where their token can be,
+and one compare on a held kind in place of a ladder.
+
 ## The order
 
 1. One symbol a token: rows and keywords in the record, one switch a state.
@@ -1196,7 +1229,8 @@ the five forward passes 58%, the four backward passes 24%, the record pass 18%.
    `ctx` in a register of its own, code shared from the middle of rules,
    a call's bookkeeping as the lean parser's, switches as rustc lowers a `match`,
    one entry a function (all 55).
-   Next: comments in the token step, and marks tested only where their token can be,
+   Built: comments in the token step.
+   Next: marks tested only where their token can be,
    as the lean parser does: 31% of tier 2's code.
 4. Keyword marks from the records. Built for the marks of one word.
 5. Tier 1's primitives: the picked hash, then nibble fingerprints.

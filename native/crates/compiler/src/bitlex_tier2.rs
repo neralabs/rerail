@@ -136,6 +136,10 @@ struct Emit<'a> {
     marks: &'a [Mark],
     /// The mask of any mark at a token (`TOKEN m=1+k`), when there are marks.
     any_mark: Option<u16>,
+    /// The extras taken in the token step (`TOKEN_EXTRAS`): every `TOKEN` but the root's first,
+    /// where an extra opens the root (`grammar::with_extras`).
+    token_extras: bool,
+    whole: bool,
     /// The rows each state can meet (`bitlex_compile::row_modes`).
     meets: &'a [Vec<bool>],
     /// A first lowering, to find the rows `ROW` tests: their masks are not given yet.
@@ -745,7 +749,8 @@ impl Emit<'_> {
         }
         // `m=1+k`: mask `k` holds where any mark does; `TOKEN` sets the marks live there (and
         // at the stream's end) and none elsewhere, so a state's mark tests fail on a register.
-        self.push("TOKEN", self.any_mark.map_or(0, |k| k as u8 + 1), Arg::Num(STARTS));
+        let extras = if self.token_extras && (s != 0 || self.whole) { crate::program::TOKEN_EXTRAS } else { 0 };
+        self.push("TOKEN", self.any_mark.map_or(0, |k| k as u8 + 1) | extras, Arg::Num(STARTS));
         // Past the `TOKEN`, where both returns land (`m=0` at it, `m=1` past it).
         self.returned_field(&st);
         // The marks, in order: each the state takes, a test and a jump to its arm; each not
@@ -884,8 +889,11 @@ fn tests_of(states: &[StateRow], arms: &[ArmRow], marks: &[Mark]) -> Vec<Vec<usi
         .collect()
 }
 
-pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark], any_mark: Option<u16>, meets: &[Vec<bool>], empties: u16, whole: bool, survey: bool, rules: bool) -> Result<Lowered, String> {
+#[allow(clippy::too_many_arguments)]
+pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark], any_mark: Option<u16>, meets: &[Vec<bool>], empties: u16, whole: bool, survey: bool, rules: bool, token_extras: bool) -> Result<Lowered, String> {
     let mut e = Emit {
+        token_extras,
+        whole,
         rule_of: Vec::new(),
         rule: 0,
         by_rules: rules,
@@ -951,7 +959,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         let Some(c) = st.end else { return Err(format!("state {p} takes no token and may not end")) };
         e.rule = st.rule;
         let at = e.pc();
-        let any = e.any_mark.map_or(0, |k| k as u8 + 1);
+        let any = e.any_mark.map_or(0, |k| k as u8 + 1) | if e.token_extras { crate::program::TOKEN_EXTRAS } else { 0 };
         e.push("TOKEN", any, Arg::Num(STARTS));
         e.returned_field(st);
         let t = e.switches.len();

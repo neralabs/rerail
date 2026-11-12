@@ -29,7 +29,11 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
     let ok = match opcode {
         // A token is a record (`records`): its extract is the records' starts.
         // `m=1+k`: mask `k` holds where any mark does (the marks are live only there).
-        TOKEN => (mode == 0 || usize::from(mode - 1) < masks) && usize::from(operand) < extracts && records.is_some_and(|r| r.starts == operand),
+        // `TOKEN_EXTRAS`: the extras taken too (`Words::extras`).
+        TOKEN => {
+            let m = mode & !TOKEN_EXTRAS;
+            (m == 0 || usize::from(m - 1) < masks) && (mode & TOKEN_EXTRAS == 0 || !program.extras.is_empty()) && usize::from(operand) < extracts && records.is_some_and(|r| r.starts == operand)
+        }
         ACCEPT => mode == 0 && operand == 0,
         EMPTY => mode == 0 && usize::from(operand) < totals,
         SWITCH => mode == 0 && usize::from(operand) < program.switches.len(),
@@ -374,20 +378,33 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     return refuse(pc - 1, "a token past the stream's end");
                 }
                 need = false;
-                last_end = end;
-                // The record pass checked the records (the totals' flag, `EMPTY`): as many lasts
-                // as starts, each token after the one before.
-                if next == starts.len().min(lasts.len()) {
-                    at_end = true;
-                } else {
+                loop {
+                    last_end = end;
+                    // The record pass checked the records (the totals' flag, `EMPTY`): as many
+                    // lasts as starts, each token after the one before.
+                    if next == starts.len().min(lasts.len()) {
+                        at_end = true;
+                        break;
+                    }
                     (start, end) = (starts[next], starts[next]);
                     rec_end = lasts[next] + 1;
                     code = tier1.codes.get(next).copied().unwrap_or(0);
                     next += 1;
+                    // An extra (`TOKEN_EXTRAS`): its bytes taken and its leaf deferred, as
+                    // `SPAN m=1; LEAF m=1 #K`; then the next token.
+                    let extra = if mode & TOKEN_EXTRAS == 0 { None } else { program.extras.iter().find(|&&(b, _)| code >> (crate::records::MARK_SHIFT + u32::from(b)) & 1 == 1) };
+                    let Some(&(_, kind)) = extra else { break };
+                    end = rec_end;
+                    if pending == 0 {
+                        keep = last_end;
+                    }
+                    pending += 1;
+                    nodes.push(Node { kind, field: 0, supers: vec![], start, end, size: 1 });
                 }
                 // The marks live: all, or (`m=1+k`) none where no mark holds and the stream
                 // goes on.
-                live = if mode == 0 || at_end || mask_bit(u16::from(mode - 1), start) { u32::MAX } else { 0 };
+                let m = mode & !TOKEN_EXTRAS;
+                live = if m == 0 || at_end || mask_bit(u16::from(m - 1), start) { u32::MAX } else { 0 };
             }
             SPAN => {
                 // The token's bytes taken: its record's end, or a length (a one-byte token),
@@ -759,7 +776,21 @@ pub fn validate_tier2(program: &Words) -> Result<(), Error> {
     validate(program)?;
     validate_mark_words(program)?;
     validate_word_kinds(program)?;
+    validate_extras(program)?;
     validate_rules(program)
+}
+
+/// The extras a `TOKEN` takes (`Words::extras`): rising by bit, each a mark the records' codes
+/// hold.
+pub fn validate_extras(program: &Words) -> Result<(), Error> {
+    let marks = program.block_programs.first().and_then(|b| b.records.as_ref()).map_or(0, |r| r.marks.len());
+    for (i, &(b, _)) in program.extras.iter().enumerate() {
+        let rising = i == 0 || program.extras[i - 1].0 < b;
+        if !rising || usize::from(b) >= marks {
+            return Err(Error::InvalidOperand(i));
+        }
+    }
+    Ok(())
 }
 
 /// The marks' words (`Words::mark_words`): rising by mark, each a mark a `MARK` tests and a

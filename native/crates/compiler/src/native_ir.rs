@@ -108,8 +108,9 @@ pub enum StructuralOperation {
     Emit { label: u16, output: FunctionRef },
     // Tier 2's words over the token stream (decision 0087, `stream`).
     /// The next start of tier 1's extract `extract`.
-    /// `any`: the mask of any mark (`TOKEN m=1+k`).
-    Token { extract: u16, any: Option<u8> },
+    /// `any`: the mask of any mark (`TOKEN m=1+k`). `extras`: the extras taken too
+    /// (`TOKEN_EXTRAS`, `Structure::extras`).
+    Token { extract: u16, any: Option<u8>, extras: bool },
     Switch { table: u16 },
     /// The token's end: `len` bytes, or (`last`) one past the next position of extract `len`.
     Span { last: bool, len: u16 },
@@ -205,7 +206,7 @@ impl StructuralOperation {
             Self::Fork { greedy, target } => (FORK, u8::from(greedy), target),
             Self::Goto { target } => (GOTO, 0, target),
             Self::Emit { label, .. } => (EMIT, 0, label),
-            Self::Token { extract, any } => (TOKEN, any.map_or(0, |k| k + 1), extract),
+            Self::Token { extract, any, extras } => (TOKEN, any.map_or(0, |k| k + 1) | if extras { crate::program::TOKEN_EXTRAS } else { 0 }, extract),
             Self::Empty { total } => (EMPTY, 0, total),
             Self::Switch { table } => (SWITCH, 0, table),
             Self::Span { last, len } => (SPAN, u8::from(last), len),
@@ -352,6 +353,8 @@ pub struct Structure {
     /// Tier 2's rules (`Words::rules`): each rule's first place.
     /// Each keyword's node kind, by string (`Words::word_kinds`).
     pub word_kinds: Vec<(u16, u16)>,
+    /// The extras a `TOKEN` takes (`Words::extras`): a code's mark bit and the leaf's kind.
+    pub extras: Vec<(u8, u16)>,
     pub rules: Vec<u16>,
     /// The block programs, lowered (`BlockNative`).
     pub block_programs: Vec<BlockNative>,
@@ -441,7 +444,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
                 label: operand,
                 output: FunctionRef::Output,
             },
-            TOKEN => StructuralOperation::Token { extract: operand, any: mode.checked_sub(1) },
+            TOKEN => StructuralOperation::Token { extract: operand, any: (mode & !crate::program::TOKEN_EXTRAS).checked_sub(1), extras: mode & crate::program::TOKEN_EXTRAS != 0 },
             EMPTY => StructuralOperation::Empty { total: operand },
             SWITCH => StructuralOperation::Switch { table: operand },
             SPAN => StructuralOperation::Span { last: mode != 0, len: operand },
@@ -514,6 +517,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
         readings: program.readings.clone(),
         rules: program.rules.clone(),
         word_kinds: program.word_kinds.clone(),
+        extras: program.extras.clone(),
         block_programs: program.block_programs.iter().map(BlockNative::lower).collect(),
         output: FunctionRef::Output,
         reduction: FunctionRef::Reduction,

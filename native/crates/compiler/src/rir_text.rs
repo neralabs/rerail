@@ -63,6 +63,13 @@ pub fn word_kind_rows(out: &mut String, word_kinds: &[(u16, u16)]) {
     }
 }
 
+pub fn extra_rows(out: &mut String, extras: &[(u8, u16)]) {
+    use std::fmt::Write as _;
+    for &(b, k) in extras {
+        let _ = writeln!(out, "  tokenextra b{b} #{k}");
+    }
+}
+
 pub fn rule_rows(out: &mut String, rules: &[u16]) {
     use std::fmt::Write as _;
     for (at, p) in rules.iter().enumerate() {

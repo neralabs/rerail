@@ -1703,13 +1703,15 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             }
         }
     }
-    // The extras' arms (grammar::with_extras), in every state: tier 2 tells an extra from a
-    // token beginning with the same byte by their rows' start masks (`ROW`), and a mark has
-    // no bytes at all.
+    // The extras (grammar::with_extras): taken in the token step (`TOKEN_EXTRAS`), as the lean
+    // parser places comments, where they are of one kind and the records' codes have a mark's
+    // bit for them (fewer marks than `records::MARKS`); else an arm in every state, which tells
+    // an extra from a token beginning with the same byte by their rows' start masks (`ROW`).
+    let token_extras = matches!(low.extra.as_slice(), [_]) && mark_kinds.len() < crate::records::MARKS;
     let (states, arms) = {
         let extras = low.extra.iter().map(|k| id(k)).collect::<Result<Vec<u16>, String>>()?;
         let apart = |_: u16, _: u16| true;
-        grammar::with_extras(states, arms, &extras, &apart, whole, &mark_kinds)?
+        grammar::with_extras(states, arms, &extras, &apart, whole, &mark_kinds, token_extras)?
     };
     // Each mark's bits at the grammar's token starts (not the extras'): a token that starts
     // with a bit since the start before it, `starts & (m | prev(fill(m & ~starts, starts)))`.
@@ -1821,13 +1823,13 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     let meets = row_modes(low, &token_rows, &rows, &states, &arms, &mark_kinds)?;
     // The totals are one flag (`BlockRun::totals`), tested once: `EMPTY 0`.
     let empties = 1;
-    let tested = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, whole, true, by_rules)?.tested;
+    let tested = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, whole, true, by_rules, token_extras)?.tested;
     for (j, &r) in tested.iter().enumerate() {
         rows[r].mask = Some(row_masks + j as u16);
         mark_masks.push(token_rows[r].1);
     }
     // The words, once the fallback's totals are known: each must be zero.
-    let mut lowered = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, whole, false, by_rules)?;
+    let mut lowered = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, whole, false, by_rules, token_extras)?;
     // The extras' kinds: the node table flags their nodes (comments).
     readings.extras = low.extra.iter().map(|k| id(k)).collect::<Result<_, _>>()?;
     crate::rir_text::reading_rows(&mut lowered.text, &readings);
@@ -1870,7 +1872,23 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     }
     // The marks in the code, by order (the first `MARKS`): each its mask (an index into the
     // program's masks here, its output once they are placed) and its word's code.
-    let in_code: Vec<(u16, u16)> = marks.iter().take(crate::records::MARKS).enumerate().map(|(k, m)| (m.mask, lowered.mark_words.iter().find(|&&(x, _)| usize::from(x) == k).map_or(0, |&(_, s)| s + 1))).collect();
+    let mut in_code: Vec<(u16, u16)> = marks.iter().take(crate::records::MARKS).enumerate().map(|(k, m)| (m.mask, lowered.mark_words.iter().find(|&&(x, _)| usize::from(x) == k).map_or(0, |&(_, s)| s + 1))).collect();
+    // The extra's bit, after the marks': its rows' starts (`TOKEN_EXTRAS`, `Words::extras`).
+    if token_extras {
+        let mut starts: Option<Val> = None;
+        let extra_starts: Vec<Val> = token_rows.iter().filter(|(k, _, _)| low.extra.contains(k)).map(|r| r.1).collect();
+        for start in &extra_starts {
+            starts = Some(match starts {
+                Some(s) => low.or(s, *start)?,
+                None => *start,
+            });
+        }
+        let starts = starts.ok_or("an extra with no rows")?;
+        mark_masks.push(starts);
+        in_code.push((mark_masks.len() as u16 - 1, 0));
+        let bit = (in_code.len() - 1) as u8;
+        crate::rir_text::extra_rows(&mut lowered.text, &[(bit, id(&low.extra[0])?)]);
+    }
     let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code };
     crate::records::WordTable::new(&records.words)?;
     Ok((grammar::text(&states, &arms), lowered.text, takes_last, mark_masks, records))

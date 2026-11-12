@@ -52,6 +52,10 @@ pub const EMPTY: u8 = 0x5d;
 pub const MARK: u8 = 0x5e;
 /// `MARK`'s mode bit: on the mark, its arm, the mark kept for the callee that arm calls.
 pub const MARK_KEEP: u8 = 64;
+/// `TOKEN`'s mode bit: the extras taken in the token step (`Words::extras`), as the lean parser
+/// places comments where it passes them: a token that is an extra is its leaf, deferred, and
+/// the next token is taken.
+pub const TOKEN_EXTRAS: u8 = 128;
 
 /// A `PUSH`'s mode: the flag its call runs with (`flag`, set or cleared), as a parameter: the
 /// caller's flags saved first and given back where the call returns. 0: none.
@@ -133,4 +137,8 @@ pub struct Words {
     /// Each keyword's node kind (`wordkind sW #K`): a token whose record names string `W` makes a
     /// leaf of kind `K` where a `LEAF` names `stream_ir::WORD_KIND`. Rising by string.
     pub word_kinds: Vec<(u16, u16)>,
+    /// The extras a `TOKEN` takes (`m` with `TOKEN_EXTRAS`; `tokenextra bB #K`): a token whose
+    /// record's code has mark bit `B` (`records::MARK_SHIFT + B`) is an extra of kind `K`. Rising
+    /// by bit.
+    pub extras: Vec<(u8, u16)>,
 }

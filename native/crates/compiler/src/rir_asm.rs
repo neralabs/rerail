@@ -434,6 +434,14 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             }
             parts.word_kinds.push((s, k));
         }
+        "tokenextra" => {
+            let b: u8 = line.number("b")?;
+            let k = line.kind()?;
+            if parts.extras.last().is_some_and(|&(x, _)| x >= b) {
+                return Err(format!("tokenextra b{b} out of order"));
+            }
+            parts.extras.push((b, k));
+        }
         "provisional" => {
             let f: u16 = line.number("#")?;
             parts.readings.provisional.push(f);
@@ -666,6 +674,7 @@ pub fn head_rows(out: &mut String, program: &Words) {
     reading_rows(out, &program.readings);
     crate::rir_text::mark_word_rows(out, &program.mark_words);
     crate::rir_text::word_kind_rows(out, &program.word_kinds);
+    crate::rir_text::extra_rows(out, &program.extras);
     crate::rir_text::rule_rows(out, &program.rules);
 }
 

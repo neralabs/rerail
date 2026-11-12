@@ -1404,6 +1404,12 @@ fn refusing(states: &[StateRow], arms: &[ArmRow]) -> Result<(), String> {
 ///
 /// In state 0 nothing is open: the extra arm opens the root first (so the root starts at the
 /// extra) and goes on in a copy of state 0 whose arms do not open it.
+///
+/// `in_token`: the extras are taken in the token step instead (`TOKEN_EXTRAS`), as the lean
+/// parser places a comment where it passes it: each a leaf deferred, which the closes before the
+/// next token leave out (the arms above, `Act::Extra`, in every state at once). Only state 0
+/// keeps its arms, where an extra opens the root.
+#[allow(clippy::too_many_arguments)]
 pub fn with_extras(
     mut states: Vec<StateRow>,
     mut arms: Vec<ArmRow>,
@@ -1411,6 +1417,7 @@ pub fn with_extras(
     apart: &dyn Fn(u16, u16) -> bool,
     whole: bool,
     marks: &[u16],
+    in_token: bool,
 ) -> Result<(Vec<StateRow>, Vec<ArmRow>), String> {
     if extras.is_empty() {
         // No extras, none pending: an implied token's settle has nothing to keep in place.
@@ -1448,6 +1455,11 @@ pub fn with_extras(
             new_arms.push(ArmRow { from: 0, token: k, acts: vec![open_root.clone(), Act::ExtraNow], to: opened, push: Vec::new(), call: false });
         }
     }
+    }
+    if in_token {
+        arms.extend(new_arms);
+        arms.sort_by_key(|a| a.from);
+        return Ok((states, arms));
     }
     // The states an arm of which merges into the leaf before, or calls one that does: the
     // extras before its token are that leaf's text, pending in the caller's state too.

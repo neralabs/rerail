@@ -959,7 +959,8 @@ enum WordFn {
     RememberWord,
     Merge { end: EndAt },
     /// `TOKEN`, taking a token: 0, or 1 past the stream's end, or `OVERFLOW` out of room.
-    Token { any_mark: Option<usize> },
+    /// `extras`: the extras taken too (`TOKEN_EXTRAS`).
+    Token { any_mark: Option<usize>, extras: bool },
 }
 
 /// What a word's body reads and writes, wherever it is made (`WordFn`): in its rule's function,
@@ -1362,17 +1363,26 @@ struct TokenShape {
     /// The calls open counted by the machine's stack (`calls_on_stack`): no argument for them,
     /// and no room for returns (none is written).
     on_stack: bool,
+    /// The extra this `TOKEN` takes (`TOKEN_EXTRAS`): its code's mark bit and its leaf's kind.
+    extra: Option<(u8, u16)>,
+    /// The program has wraps (`framed`): a leaf's frame slot too.
+    wrapping: bool,
 }
 
 /// `TOKEN`'s body (`WordFn::Token`), taking a token: params `ctx`, the calls open. The room for
 /// the path to the next token, then the next record, or the stream's end (its own kind's code). 0, or 1 where the stream had ended
 /// already, or `OVERFLOW` out of room.
-fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>, t: TokenShape) {
+fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>, t: TokenShape, heads: &mut Vec<(Block, Step)>) {
     let ctx = p[0];
     let flags = MemFlags::trusted();
     let load = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, flags, ctx, at);
     let pops = t.bound.pop_nodes > 0 || t.bound.pop_supers > 0;
     let open_calls = if !t.on_stack { p[1] } else if pops { calls_open_by_stack(f, ctx) } else { f.ins().iconst(types::I64, 0) };
+    // Each token from here: an extra taken (`TOKEN_EXTRAS`) comes back for the next.
+    let top = f.create_block();
+    f.ins().jump(top, &[]);
+    f.switch_to_block(top);
+    heads.push((top, Step::Token));
     let over = f.create_block();
     let mut counts = vec![field_get(f, ctx, Mem::Nodes), field_get(f, ctx, Mem::Supers)];
     let mut rooms = vec![load(f, ROOM_NODES), load(f, ROOM_SUPERS)];
@@ -1442,6 +1452,24 @@ fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>,
     field_set(f, ctx, Mem::Next, after);
     field_set(f, ctx, Mem::Limit, l1);
     field_set(f, ctx, Mem::Taken, c);
+    // An extra: its bytes taken and its leaf deferred (`SPAN m=1; LEAF m=1 #K`), then the next
+    // token, as the lean parser places a comment where it passes it.
+    if let Some((bit, kind)) = t.extra {
+        let b = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT) + i64::from(bit));
+        let b = f.ins().band_imm(b, 1);
+        let (extra, on) = (f.create_block(), f.create_block());
+        f.ins().brif(b, extra, &[], on, &[]);
+        f.switch_to_block(extra);
+        let get = |f: &mut FunctionBuilder<'_>, k: Mem| field_get(f, ctx, k);
+        let set = |f: &mut FunctionBuilder<'_>, k: Mem, x: Value| field_set(f, ctx, k, x);
+        let at = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, MemFlags::trusted(), ctx, at);
+        let guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a leaf does not refuse");
+        let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
+        let k = f.ins().iconst(types::I64, i64::from(kind));
+        leaf_word(f, &env, k, true, true, EndAt::Taken, t.wrapping);
+        f.ins().jump(top, &[]);
+        f.switch_to_block(on);
+    }
     let live = match any_mark {
         _ if t.in_code > 0 => {
             let marks = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT));
@@ -1466,10 +1494,10 @@ fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>,
 
 /// `TOKEN`'s function (`WordFn::Token`), made where first called.
 fn token_fn<'a>(module: &mut JITModule, fns: &'a mut std::collections::HashMap<WordFn, (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)>, any_mark: Option<usize>, shape: TokenShape, pinned: bool) -> Result<&'a (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function), Error> {
-    let key = WordFn::Token { any_mark };
+    let key = WordFn::Token { any_mark, extras: shape.extra.is_some() };
     if !fns.contains_key(&key) {
         let name = format!("tempo_word_{}", fns.len());
-        let made = outline(module, &name, if shape.on_stack { 1 } else { 2 }, 1, pinned, |g, q, _| take_token(g, q, any_mark, shape))?;
+        let made = outline(module, &name, if shape.on_stack { 1 } else { 2 }, 1, pinned, |g, q, heads| take_token(g, q, any_mark, shape, heads))?;
         fns.insert(key, made);
     }
     Ok(&fns[&key])
@@ -2036,10 +2064,10 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     // it and its caller peeks: where every call's place to return to is one `TOKEN`, alike
     // (the same mask, and taking a token there), a `RETURN m=0` takes it and returns as `m=1`
     // does, to the caller's switch. So every call returns one way and is tested once (`cbnz`).
-    let landing_token: Option<Option<u8>> = {
+    let landing_token: Option<(Option<u8>, bool)> = {
         let pushes = push_targets(native);
         let mut anys = pushes.iter().map(|&p| match words.get(usize::from(p)).map(|b| b.operation) {
-            Some(Op::Token { any, .. }) if phase_of[usize::from(p)] == crate::stream::TAKEN => Some(any),
+            Some(Op::Token { any, extras, .. }) if phase_of[usize::from(p)] == crate::stream::TAKEN => Some((any, extras)),
             _ => None,
         });
         let first = anys.next().flatten();
@@ -2629,7 +2657,13 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                 }
             };
             match w.operation {
-                Op::Token { any, .. } => {
+                Op::Token { any, extras, .. } => {
+                    // One kind of extra (`.rr`'s comments) for now.
+                    let extra: Option<(u8, u16)> = match (extras, native.extras.as_slice()) {
+                        (false, _) => None,
+                        (true, &[one]) => Some(one),
+                        (true, _) => return Err(Error::UnsupportedBackend),
+                    };
                     // Any mark's mask (`TOKEN m=1+k`): its output.
                     let any_mark: Option<usize> = match any {
                         Some(k) => Some(native.block_programs.first().and_then(|b| b.masks.get(usize::from(k)).copied()).ok_or(Error::UnsupportedBackend)?),
@@ -2642,7 +2676,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                             f.ins().jump(fall, &[]);
                             continue;
                         }
-                        let shape = TokenShape { bound, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from), on_stack };
+                        let shape = TokenShape { bound, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from), on_stack, extra, wrapping };
                         let (id, sig, _) = token_fn(&mut module, &mut word_fns, any_mark, shape, pinned_ctx)?;
                         let c = pinned(&mut f);
                         let open_calls: Vec<Value> = if on_stack { vec![] } else { vec![mget(&mut f, Mem::Ret)] };
@@ -2739,6 +2773,24 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     mset(&mut f, Mem::Next, after);
                     mset(&mut f, Mem::Limit, l1);
                     mset(&mut f, Mem::Taken, c);
+                    // An extra (`TOKEN_EXTRAS`): its bytes taken and its leaf deferred, then this
+                    // word again for the next token.
+                    if let Some((bit, kind)) = extra {
+                        let b = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT) + i64::from(bit));
+                        let b = f.ins().band_imm(b, 1);
+                        let (xb, on) = (f.create_block(), f.create_block());
+                        f.ins().brif(b, xb, &[], on, &[]);
+                        f.switch_to_block(xb);
+                        if flagged {
+                            mset(&mut f, Mem::End, l1);
+                            let one = f.ins().iconst(types::I64, 1);
+                            mset(&mut f, Mem::Need, one);
+                        }
+                        let k = f.ins().iconst(types::I64, i64::from(kind));
+                        let again = wb[pc].expect("its own place");
+                        word!(WordFn::Leaf { deferred: true, extra: true, end: EndAt::Taken, by_word: false }, &[k], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| leaf_word(g, e, q[0], true, true, EndAt::Taken, wrapping), again);
+                        f.switch_to_block(on);
+                    }
                     // The marks live at this token: every one; with any mark's mask
                     // (`TOKEN m=1+k`), none where no mark holds, so a state's marks fail at their
                     // first test, with no load.
@@ -3381,12 +3433,13 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         }
                     }
                     // The caller's token, taken here (`callee_takes`): a refusal is this word's.
-                    if let (Some(any), false) = (landing_token, again) {
+                    if let (Some((any, extras)), false) = (landing_token, again) {
+                        let extra: Option<(u8, u16)> = if extras { Some(*native.extras.first().ok_or(Error::UnsupportedBackend)?) } else { None };
                         let any_mark: Option<usize> = match any {
                             Some(k) => Some(native.block_programs.first().and_then(|b| b.masks.get(usize::from(k)).copied()).ok_or(Error::UnsupportedBackend)?),
                             None => None,
                         };
-                        let shape = TokenShape { bound, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from), on_stack };
+                        let shape = TokenShape { bound, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from), on_stack, extra, wrapping };
                         let (id, sig, _) = token_fn(&mut module, &mut word_fns, any_mark, shape, pinned_ctx)?;
                         let c = pinned(&mut f);
                         let r = call_word(&mut f, *id, sig, pinned_ctx, c, &[])[0];

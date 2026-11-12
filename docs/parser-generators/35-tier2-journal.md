@@ -148,3 +148,4 @@ Numbers are tier 2's for `.rr`. Each step's commit is listed.
 | Every call at its callee's start (merge, mark, flag on `PUSH`): 55 entries | `9a017c9b9` | 23,758 | 312.6M (61.8M) |
 | The same IR through LLVM, ahead of time (`clif_rust`; a measurement, not a step) | | 22,375 | 276.6M (55.3M) |
 | Tier 1 too through LLVM; the whole parse against the lean parser, by where it goes (page 34) | | | 276.6M (54.4M) |
+| Comments in the token step: 5,271 words to 3,341, 322 comment tests to 40 (page 34) | | 17,460 | 311.3M (60.7M) |
