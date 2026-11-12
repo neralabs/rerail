@@ -961,7 +961,8 @@ levels.
 
 A second cause, found while testing the first: a new process reads its kept relations from the store's frames,
 which held rows only. So every recursive stratum a new process maintained ran on delete-and-rederive. The frames
-now hold each relation's levels in a part of their own (`LEVELS_PART`), read where its digest and row count match.
+now hold each relation's levels in a part of their own (`LEVELS_PART`, `i64::MIN + 1`: not −1, which became the first
+delta frame's under 0117 step 4, and which a frame put whole removes), read where its digest and row count match.
 
 After both fixes, at step 07, all 18 recursive strata are maintained by levels. The step's work fell from 5.39 M
 to 4.05 M, and the component's from 3.30 M to 1.98 M (load 21–29). The test

@@ -122,7 +122,7 @@ fn recursive_cross_file_stratum() {
 #include "python/names.rr"
 .decl dep(a: number, b: number)
 dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
-.decl reach(a: number, b: number)
+.decl reach(a: number, b: number) no_reach
 reach(a, b) :- dep(a, b).
 reach(a, c) :- reach(a, b), dep(b, c).
 .violation CYC(at: node) code "CYC" "This import closes a cycle of imports."
@@ -303,7 +303,7 @@ fn a_session_inserts_only_rows_new_against_the_survivors() {
 #include "python/names.rr"
 .decl dep(a: number, b: number)
 dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
-.decl reach(a: number, b: number)
+.decl reach(a: number, b: number) no_reach
 reach(a, b) :- dep(a, b).
 reach(a, c) :- reach(a, b), dep(b, c).
 .violation CYC(at: node) code "CYC" "This import closes a cycle of imports."
@@ -482,7 +482,7 @@ fn wave0_a_negation_gain_inside_recursion() {
 fn wave0_a_row_derived_again_from_survivors() {
     wave0_case(
         "diamond",
-        ".decl reach(a: number, b: number)\nreach(a, b) :- dep(a, b).\nreach(a, c) :- reach(a, b), dep(b, c).\n.violation FAR(at: node) code \"FAR\" \"A module that reaches one it does not import.\"\nFAR(i) :- impmod(i, _), docof(i, a), reach(a, c), !dep(a, c).\n",
+        ".decl reach(a: number, b: number) no_reach\nreach(a, b) :- dep(a, b).\nreach(a, c) :- reach(a, b), dep(b, c).\n.violation FAR(at: node) code \"FAR\" \"A module that reaches one it does not import.\"\nFAR(i) :- impmod(i, _), docof(i, a), reach(a, c), !dep(a, c).\n",
         &[("a.py", "from b import x\nfrom c import y\n"), ("b.py", "from d import z\n"), ("c.py", "from d import z\n"), ("d.py", "from e import w\n"), ("e.py", "x = 1\n")],
         &[("a.py", "from c import y\n"), ("c.py", "x = 2\n"), ("c.py", "from d import z\n"), ("a.py", "from b import x\nfrom c import y\n")],
     );
@@ -496,7 +496,7 @@ fn wave0_a_compacted_start() {
     let files: Vec<(&str, &str)> = chain.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
     wave0_case(
         "compact",
-        ".decl reach(a: number, b: number)\nreach(a, b) :- dep(a, b).\nreach(a, c) :- reach(a, b), dep(b, c).\n.violation FAR(at: node) code \"FAR\" \"A module that reaches one it does not import.\"\nFAR(i) :- impmod(i, _), docof(i, a), reach(a, c), !dep(a, c).\n",
+        ".decl reach(a: number, b: number) no_reach\nreach(a, b) :- dep(a, b).\nreach(a, c) :- reach(a, b), dep(b, c).\n.violation FAR(at: node) code \"FAR\" \"A module that reaches one it does not import.\"\nFAR(i) :- impmod(i, _), docof(i, a), reach(a, c), !dep(a, c).\n",
         &files,
         &[("m2.py", "x = 2\n"), ("m2.py", "from m3 import x\n")],
     );

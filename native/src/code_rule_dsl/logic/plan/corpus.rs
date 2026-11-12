@@ -7441,7 +7441,6 @@ fn projection_of(prog: &front::Program, is_input: &dyn Fn(&str) -> bool, rel: &s
     }
     None
 }
-}
 
 fn constant_counts(tested: Option<&BTreeSet<(usize, i64)>>, source: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Vec<(String, i64, i64)> {
     let mut wanted: BTreeMap<(usize, i64), i64> = tested.into_iter().flatten().map(|k| (*k, 0)).collect();

@@ -559,6 +559,10 @@ impl Retained {
         if !super::kept_strata::admission_matches(&keys, &admitted, |(r, _)| frames.derived.get(&r.name)) {
             return Ok(false);
         }
+        // Their levels, where stored (decision 0090): a recursive stratum reached is maintained by levels only if its
+        // kept relations have them.
+        let level_keys: Vec<_> = wanted.iter().map(|r| (frames.names[*r].clone(), LEVELS_PART)).collect();
+        let levels = store.admit_frame_parts(&frames.space, &level_keys).map_err(|e| Error::Plan(e.to_string()))?;
         let mut late = self.late.borrow_mut();
         let (mut rows, mut n) = self.admitted.get();
         for (rel, key) in wanted.into_iter().zip(&keys) {
@@ -569,7 +573,8 @@ impl Retained {
             }
             rows += got.n;
             n += 1;
-            late.insert(rel.clone(), Kept { rel: InRel::from_flat(got.rows, got.n, got.types), width, output: None });
+            let Some(kept) = with_levels(frames, &levels, rel, key, got) else { return Ok(false) };
+            late.insert(rel.clone(), Kept { rel: kept, width, output: None });
         }
         self.admitted.set((rows, n));
         Ok(true)
@@ -1063,8 +1068,22 @@ const GRANULES: i64 = 64;
 const DOCS_PART: i64 = 0;
 /// The part of a derived relation's frames that holds its rows' levels (decision 0090), one row each in its rows'
 /// order, with their frame's digest: a new process maintains a recursive stratum by levels only if its kept
-/// relations have them. Read where its digest and count match the rows'; without it, the rows have no levels.
-const LEVELS_PART: i64 = -1;
+/// relations have them. Read where its digest and count match the rows'; without it, the rows have no levels. Not -1:
+/// parts -1 to -k are a relation's delta frames (decision 0117 step 4), and a frame put whole removes them.
+const LEVELS_PART: i64 = i64::MIN + 1;
+
+/// `rel`'s kept rows `got` (its frame's part `key`) as a relation, with the levels `levels` holds for it when their
+/// digest is its frame's and their count its rows'; else with none. `None`: the levels do not fit the rows.
+fn with_levels(frames: &InFrames, levels: &HashMap<(FrameRel, i64), Arc<crate::content_store::AdmittedFrame>>, rel: &str, key: &(FrameRel, i64), got: FrameRows) -> Option<Arc<InRel>> {
+    let level = levels.get(&(key.0.clone(), LEVELS_PART))
+        .filter(|l| frames.derived.get(rel).is_some_and(|s| s.digest == l.stored.digest))
+        .and_then(|l| l.rows().ok()).filter(|l| l.n == got.n && l.rows.len() == got.n)
+        .map(|l| l.rows.iter().map(|&v| v as u32).collect::<Vec<u32>>());
+    Some(match level {
+        Some(level) => InRel::from_flat_levels(got.rows, got.n, got.types, level)?,
+        None => InRel::from_flat(got.rows, got.n, got.types),
+    })
+}
 
 /// The deltas a relation's frame may have after it before it is written whole again (decision 0117 step 4;
 /// `RERAIL_FRAME_DELTAS` sets it, 0 writes every changed relation whole).
@@ -1447,14 +1466,7 @@ impl Retained {
                 let width = prog.decls.get(rel)?.len();
                 if got.types.len() != width { return None; }
                 rows += got.n;
-                let level = levels.get(&(key.0.clone(), LEVELS_PART))
-                    .filter(|l| frames.derived.get(rel).is_some_and(|s| s.digest == l.stored.digest))
-                    .and_then(|l| l.rows().ok()).filter(|l| l.n == got.n && l.rows.len() == got.n)
-                    .map(|l| l.rows.iter().map(|&v| v as u32).collect::<Vec<u32>>());
-                let rel_ = match level {
-                    Some(level) => InRel::from_flat_levels(got.rows, got.n, got.types, level)?,
-                    None => InRel::from_flat(got.rows, got.n, got.types),
-                };
+                let rel_ = with_levels(frames, &levels, rel, key, got)?;
                 rels.push((rel.clone(), Kept { rel: rel_, width, output: None }));
             }
             for (rel, keys) in &input_parts {
@@ -1750,10 +1762,13 @@ impl Retained {
                     continue;
                 }
                 // Changed by a delta (decision 0117 step 4): the delta is written after its frame, and its digest is
-                // patched by it, while its frame's deltas are few against its rows; else it is written whole.
+                // patched by it, while its frame's deltas are few against its rows; else it is written whole. A
+                // relation with levels (decision 0090) is written whole: its levels part is one row each in its rows'
+                // order under its rows' digest, which a delta moves, and without it the next process has no levels.
                 if let (Some((gone, added)), Some(stored), Some(rd)) = (deltas.get(rel), was.derived.get(rel), read_digests.as_ref())
                     && let Some(k) = self.rels.get(rel)
                     && k.width > 0
+                    && !k.rel.has_levels()
                 {
                     let (ng, na) = (gone.len() / k.width, added.len() / k.width);
                     let n_now = k.rel.rows();
