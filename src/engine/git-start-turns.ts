@@ -30,6 +30,15 @@ export function inGitBackground<T>(work: () => T): T {
   return background.run(true, work);
 }
 
+/**
+ * Runs `work` as work something waits for, even when background work asks for it: a step that holds what a hook's
+ * own work waits behind (a session's queue of operations) must not start its Git behind everyone else's, or the hook
+ * waits for it at background pace.
+ */
+export function inGitForeground<T>(work: () => T): T {
+  return background.exit(work);
+}
+
 /** Resolves in a turn of the event loop in which no other Git process has started; start the process then. */
 export async function gitStartTurn(): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>();

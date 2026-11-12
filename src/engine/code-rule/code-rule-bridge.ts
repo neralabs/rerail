@@ -19,7 +19,7 @@ import { fileStamp } from "../file-stamp.js";
 import {
   gitBranchTips, gitCommitsBetween, gitHead, gitModifiedOrUntrackedPaths, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs,
 } from "../git.js";
-import { inGitBackground } from "../git-start-turns.js";
+import { inGitBackground, inGitForeground } from "../git-start-turns.js";
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { sourceLanguageOfPath, UNLISTED_TEXT_LANGUAGE } from "./code-rule-languages.js";
@@ -2165,7 +2165,10 @@ export class CodeRuleBridge {
     return this.#sessionId;
   }
   async #enqueue<T>(operation: () => Promise<T>): Promise<T> {
-    const pending = this.#queue.then(operation, operation);
+    // A boundary waits behind whatever holds the queue, so an operation a background walk queues starts its Git as a
+    // boundary's own would (`inGitForeground`).
+    const run = async (): Promise<T> => await inGitForeground(operation);
+    const pending = this.#queue.then(run, run);
     this.#queue = pending.then(() => undefined, () => undefined);
     return await pending;
   }

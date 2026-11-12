@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { gitHead, readGitBlobIds, readGitBlobs } from "../../src/engine/git.js";
-import { BACKGROUND_SHARE, inGitBackground } from "../../src/engine/git-start-turns.js";
+import { BACKGROUND_SHARE, inGitBackground, inGitForeground } from "../../src/engine/git-start-turns.js";
 
 /**
  * The turn of the event loop each Git process started in, and how it started, in order: `gitHead` starts with
@@ -98,5 +98,16 @@ describe("Git process starts", () => {
     await Promise.all([...own, background]);
     expect(starts.kinds).toHaveLength(13);
     expect(starts.kinds.indexOf("spawn")).toBeLessThan(BACKGROUND_SHARE);
+  });
+
+  it("let a read background work runs in the foreground start before the background reads asked for earlier", async () => {
+    const root = await repository();
+    starts.kinds.length = 0;
+    const reads = inGitBackground(() => [
+      ...Array.from({ length: 6 }, async () => await gitHead(root)),
+      inGitForeground(async () => await readGitBlobIds(root, ["HEAD:./a.py"])),
+    ]);
+    await Promise.all(reads);
+    expect(starts.kinds.indexOf("spawn")).toBeLessThan(2);
   });
 });
