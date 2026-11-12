@@ -1487,7 +1487,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       this.#sessionStore.openSession(session, startedAt, this.#repositoryKey(checkout));
       this.#closedSessions.delete(session.sessionId);
       this.#sessionStore.startHudTracking(session, ledger.completeTracking);
-      opened.ownerClaim = this.#controls.registerOwner(session.sessionId, this.#deliverBackground === undefined ? "next-event" : "background");
+      opened.ownerClaim = this.#registerOwner(session.sessionId);
     } catch (error) {
       await this.#abandonSession(session.sessionId, opened, auditor);
       throw error;
@@ -1527,6 +1527,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const released = (): void => { this.#evaluatorOpens.delete(workspace); };
     void workspace.then(released, released);
     return { processedEventIds: [...opened.processed] };
+  }
+
+  /** Claims the session for this runtime, which delivers its steers in the background when it can, else at the next event. */
+  #registerOwner(sessionId: string): PolicyOwnerClaim {
+    return this.#controls.registerOwner(sessionId, this.#deliverBackground === undefined ? "next-event" : "background");
   }
 
   /** Makes the session's ledger folder, reads its ledger back and marks where history tracking began. */
