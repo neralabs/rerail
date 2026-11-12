@@ -264,8 +264,11 @@ export async function gitHead(cwd: string): Promise<string | undefined> {
   return await gitOutput(cwd, ["rev-parse", "--verify", "--quiet", "HEAD"]);
 }
 
-/** How long packed-refs must stand unchanged before {@link gitHeadReader} keeps an answer that its stamp vouches for. */
-const PACKED_REFS_SETTLE_MS = 2_000;
+/**
+ * How long a file {@link gitHeadReader} knows by its stamp (packed-refs, the common `config`) must stand unchanged before
+ * the stamp vouches for what the file holds.
+ */
+const SETTLE_MS = 2_000;
 
 /**
  * Where a checkout's top folder keeps `HEAD` and its branches, as Git named them (`kept`), or `asked` where every read
@@ -275,6 +278,7 @@ const PACKED_REFS_SETTLE_MS = 2_000;
 type HeadLayout =
   | { readonly kind: "kept"; readonly dotGit: string; readonly gitDir: string; readonly commonDir: string }
   | { readonly kind: "asked"; readonly dotGit: string };
+type KeptLayout = Extract<HeadLayout, { kind: "kept" }>;
 
 /**
  * What {@link gitHeadReader} compares between reads, and what a read checks before it keeps Git's answer with the key:
@@ -310,13 +314,13 @@ function fileText(path: string): string | undefined {
 }
 
 /**
- * The stamp of packed-refs, and whether it is old enough to vouch for the file; undefined when it could not be stamped
- * for a reason other than its absence. Git writes packed-refs as a new file each time, so a rewrite changes its inode;
- * but a new file can take an inode freed by an earlier rewrite, and within one tick of the file clock it then keeps
- * every part of the stamp. A stamp taken `settleMs` after the file's last change can only be repeated by a write that
- * carries a later time. `stat` opens and closes the file within one request, never across a turn.
+ * The stamp of a file Git writes whole as a new file (packed-refs, `config`), `!ENOENT` where there is none, and whether
+ * it is old enough to vouch for the file; undefined when it could not be stamped for another reason. A rewrite changes
+ * the file's inode, but a new file can take an inode freed by an earlier rewrite, and within one tick of the file clock
+ * it then keeps every part of the stamp. A stamp taken `settleMs` after the file's last change can only be repeated by a
+ * write that carries a later time. `stat` opens and closes the file within one request, never across a turn.
  */
-async function packedRefsStamp(path: string, settleMs: number): Promise<{ readonly stamp: string; readonly settled: boolean } | undefined> {
+async function settledStamp(path: string, settleMs: number): Promise<{ readonly stamp: string; readonly settled: boolean } | undefined> {
   try {
     const info = await stat(path);
     return { stamp: fileStamp(info), settled: Date.now() - info.ctimeMs >= settleMs };
@@ -339,6 +343,24 @@ function packedNames(path: string, stamp: string, branch: string, commit: string
     return false;
   }
   return text.split("\n").some(line => line.trimEnd() === `${commit} ${branch}`);
+}
+
+/**
+ * The lines of a repository's `config` that say which format it has: its `core` and `extensions` sections, which hold
+ * `core.repositoryformatversion` and the extensions a Git that does not know them refuses the repository for. A
+ * branch's upstream or a remote written to the file leaves them as they were. `!ENOENT` and `!EISDIR` stay as they are.
+ */
+function repositoryFormat(config: string): string {
+  if (config.startsWith("!")) return config;
+  let kept = false;
+  const lines: string[] = [];
+  for (const line of config.split("\n")) {
+    // A section header: `[core]`, `[extensions]`, `[branch "main"]`, or the older `[branch.main]`.
+    const section = /^\s*\[([^\s\]".]*)/u.exec(line)?.[1]?.toLowerCase();
+    if (section !== undefined) kept = section === "core" || section === "extensions";
+    if (kept && line.trim() !== "") lines.push(line.trim());
+  }
+  return lines.join("\n");
 }
 
 async function present(path: string): Promise<boolean> {
@@ -375,7 +397,7 @@ async function headLayout(cwd: string, dotGit: string): Promise<HeadLayout | und
  * than a branch (or the `refs/heads/.invalid` a reftable repository writes there), a branch naming another ref, or a
  * file that could not be read.
  */
-async function headKey(layout: Extract<HeadLayout, { kind: "kept" }>, settleMs: number): Promise<HeadKey | undefined> {
+async function headKey(layout: KeptLayout, settleMs: number): Promise<HeadKey | undefined> {
   const head = fileText(join(layout.gitDir, "HEAD"));
   if (head === undefined || head.startsWith("!")) return undefined;
   // Detached: `HEAD` holds the commit itself.
@@ -387,28 +409,34 @@ async function headKey(layout: Extract<HeadLayout, { kind: "kept" }>, settleMs: 
   if (!loose.startsWith("!")) return { key: `${head}\0${loose}`, settled: true, names: commit => commit === loose.trim() };
   // No loose ref, or a folder in its place: Git reads the branch from packed-refs.
   const path = join(layout.commonDir, "packed-refs");
-  const packed = await packedRefsStamp(path, settleMs);
+  const packed = await settledStamp(path, settleMs);
   if (packed === undefined) return undefined;
   return { key: `${head}\0${loose}\0${packed.stamp}`, settled: packed.settled, names: commit => packedNames(path, packed.stamp, branch, commit) };
 }
 
 /**
  * Reads `HEAD` ({@link gitHead}) for a caller that asks every pass, as the walk of a repository's worktrees does: it
- * starts a Git process only when a file Git reads `HEAD` from changed since the last read, and otherwise reads two to
- * four small files. A read keeps Git's answer with what those files held before Git read them: the folder's `.git`
- * entry, `HEAD`, and the branch's loose ref, else the stamp of packed-refs. It keeps the answer only where those files
- * name that commit, so an answer Git gave after one of them moved is not kept, and a write between the two reads as a
- * change next time. The first read of a folder with a `.git` entry, and the first after that entry changes, also asks Git where
- * the folder keeps `HEAD` (one more Git process). Where Git would read other files (a folder below the top of its
- * checkout, a branch naming another ref, a reftable repository), where packed-refs is newer than `settleMs`, and where
- * Git named no commit, every read asks Git: this can cost more, never answer differently from Git. Every file is read by
- * one call that closes it before returning ({@link fileText}) or stamped by one `stat`, so no file Git replaces stays
- * open across an await.
+ * starts a Git process only when a file Git reads `HEAD` from changed since the last read, and otherwise reads two or
+ * three small files and stamps three or four (`config`, `objects`, `refs`, packed-refs). A read keeps Git's answer with
+ * what those files held before Git read them: the folder's `.git` entry, `HEAD`, and the branch's loose ref, else the
+ * stamp of packed-refs; and what decides whether Git takes the common Git folder for a repository: its `objects` and
+ * `refs` folders, and the format its `config` names ({@link repositoryFormat}). It keeps the answer only where those
+ * files name that commit, so an answer Git gave after one of them moved is not kept, and a write between the two reads
+ * as a change next time. The first read of a folder with a `.git` entry, and the first after that entry changes, also
+ * asks Git where the folder keeps `HEAD` (one more Git process). Where Git would read other files (a folder below the
+ * top of its checkout, a branch naming another ref, a reftable repository), where packed-refs is newer than `settleMs`,
+ * and where Git named no commit, every read asks Git.
+ * Two changes make Git refuse the repository and are not seen here, so the held commit is still answered: a `config`
+ * line Git cannot parse outside the `core` and `extensions` sections, and a new owner of the folder (`safe.directory`).
+ * Every file is read by one call that closes it before returning ({@link fileText}) or stamped by one `stat`, so no file
+ * Git replaces stays open across an await.
  */
 export function gitHeadReader(options: { readonly settleMs?: number } = {}): (cwd: string) => Promise<string | undefined> {
-  const settleMs = options.settleMs ?? PACKED_REFS_SETTLE_MS;
+  const settleMs = options.settleMs ?? SETTLE_MS;
   const layouts = new Map<string, HeadLayout>();
   const held = new Map<string, { readonly key: string; readonly head: string }>();
+  /** The format of each common Git folder read, with the stamp of the `config` it was read from. */
+  const formats = new Map<string, { readonly stamp: string; readonly format: string }>();
   const layoutOf = async (cwd: string): Promise<HeadLayout | undefined> => {
     const dotGit = fileText(join(cwd, ".git"));
     const known = layouts.get(cwd);
@@ -419,9 +447,34 @@ export function gitHeadReader(options: { readonly settleMs?: number } = {}): (cw
     if (layout !== undefined) layouts.set(cwd, layout);
     return layout;
   };
+  /**
+   * {@link repositoryFormat} of the common Git folder `commonDir`, read again only once its `config` has another stamp,
+   * or while that stamp is too new to vouch for the file; undefined where `config` cannot be read.
+   */
+  const formatOf = async (commonDir: string): Promise<string | undefined> => {
+    const path = join(commonDir, "config");
+    const stamped = await settledStamp(path, settleMs);
+    if (stamped === undefined) return undefined;
+    const known = formats.get(commonDir);
+    if (stamped.settled && known?.stamp === stamped.stamp) return known.format;
+    formats.delete(commonDir);
+    const text = fileText(path);
+    if (text === undefined) return undefined;
+    const format = repositoryFormat(text);
+    if (stamped.settled) formats.set(commonDir, { stamp: stamped.stamp, format });
+    return format;
+  };
+  /** {@link headKey}, with the common Git folder's format; undefined where Git would refuse that folder as a repository. */
+  const keyOf = async (layout: KeptLayout): Promise<HeadKey | undefined> => {
+    const { commonDir } = layout;
+    const [format, objects, refs, key] = await Promise.all([
+      formatOf(commonDir), present(join(commonDir, "objects")), present(join(commonDir, "refs")), headKey(layout, settleMs),
+    ]);
+    return format === undefined || !objects || !refs || key === undefined ? undefined : { ...key, key: `${format}\0${key.key}` };
+  };
   return async cwd => {
     const layout = await layoutOf(cwd);
-    const key = layout?.kind === "kept" ? await headKey(layout, settleMs) : undefined;
+    const key = layout?.kind === "kept" ? await keyOf(layout) : undefined;
     const last = held.get(cwd);
     if (key !== undefined && last?.key === key.key) return last.head;
     held.delete(cwd);

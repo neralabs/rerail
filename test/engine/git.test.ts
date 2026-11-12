@@ -612,6 +612,35 @@ describe("gitHeadReader", () => {
     await processes(read, cwd);
   });
 
+  it.each(["objects", "refs"])("names no commit, as Git, once the Git folder's %s folder is gone", async folder => {
+    const root = await repository({ "a.py": "1\n" });
+    // Packed, so the branch's loose ref is not what goes with `refs`.
+    git(root, "pack-refs", "--all");
+    const read = gitHeadReader({ settleMs: 0 });
+    await processes(read, root);
+    expect(await processes(read, root)).toBe(0);
+    await rm(join(root, ".git", folder), { recursive: true, force: true });
+    await processes(read, root);
+  });
+
+  it("names no commit, as Git, once the repository's format names an extension this Git does not know", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    const read = gitHeadReader();
+    await processes(read, root);
+    expect(await processes(read, root)).toBe(0);
+    git(root, "config", "core.repositoryformatversion", "1");
+    git(root, "config", "extensions.rerailUnknownExtension", "true");
+    await processes(read, root);
+  });
+
+  it("starts no Git process after a write to config that leaves the repository's format as it was", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    const read = gitHeadReader();
+    await processes(read, root);
+    git(root, "config", "branch.topic.remote", "origin");
+    expect(await processes(read, root)).toBe(0);
+  });
+
   it("holds no file Git replaces open across a turn of the event loop", async () => {
     // Git replaces HEAD, a branch's ref and config by renaming its lock file over them, which Windows refuses while
     // another process has the file open: a read that held one across the turns of a busy event loop failed an agent's
