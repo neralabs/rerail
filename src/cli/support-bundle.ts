@@ -28,7 +28,6 @@ import {
 } from "../engine/catalog/repository-registry.js";
 import { activeCoreVersion, loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { listRepositoryRules } from "../engine/catalog/rule-configuration.js";
-import { contentStoreProblem } from "../engine/native/rerail-build.js";
 import { sensitiveByName } from "../engine/path-boundary.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { CURRENT_LINK, defaultRerailHome } from "../engine/storage/rerail-home.js";
@@ -487,19 +486,14 @@ interface CollectInput {
   databasePath: string;
   sessionId: string | undefined;
   packageVersion: string;
-  /** Why this Rerail has no content store, read in this process: it holds when the daemon does not answer too. */
-  storeProblem: () => string | undefined;
 }
 
 /**
  * Everything but the session is read section by section, and a section that fails says why in `problems`: the bundle
  * matters most when Rerail cannot start, its database is damaged or set-up never finished.
  */
-export async function collectSupportBundle({ repo, home, databasePath, sessionId, packageVersion, storeProblem }: CollectInput): Promise<{ bundle: SupportBundle; ownRules: string[] }> {
+export async function collectSupportBundle({ repo, home, databasePath, sessionId, packageVersion }: CollectInput): Promise<{ bundle: SupportBundle; ownRules: string[] }> {
   const problems: string[] = [];
-  // With no content store no code rule runs, and every audit fails with this reason.
-  const noStore = storeProblem();
-  if (noStore !== undefined) problems.push(`content store: ${noStore}`);
   const attempt = <T>(section: string, read: () => T, fallback: T): T => {
     try {
       return read();
@@ -670,8 +664,6 @@ export interface SupportBundleCommandIo {
   packageVersion: string;
   stdout?: Pick<NodeJS.WriteStream, "write">;
   stderr?: Pick<NodeJS.WriteStream, "write">;
-  /** Default: this process's `contentStoreProblem`. */
-  contentStoreProblem?: () => string | undefined;
 }
 
 /** `rerail support-bundle [--session <id>] [--repo <dir>] [--output <file>] [--json]`. */
@@ -690,7 +682,6 @@ export async function runSupportBundleCommand(args: readonly string[], usage: ()
       databasePath: defaultRerailDatabasePath(),
       sessionId: options.get("--session"),
       packageVersion: io.packageVersion,
-      storeProblem: io.contentStoreProblem ?? contentStoreProblem,
     });
     writeBundle(output, bundle);
     const summary = summaryOf(output, bundle, ownRules);

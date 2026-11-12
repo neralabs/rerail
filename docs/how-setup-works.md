@@ -485,7 +485,7 @@ store, except a file in `~/.cache/rerail/`: only the managed installation's daem
   changes the store the installed version reads.
 - **Neither** (say, an `npx` copy, or a package `npm install` put in a folder of its own): no store, so no code rule
   runs. The daemon reports its engine unavailable with the reason (`rerail status`, the session footer, the dashboard
-  header, `/healthz` and `daemon.log`), and the support bundle lists it under `problems`.
+  header, `/healthz`, `daemon.log` and the support bundle's engine health).
 
 The file name follows the store's compatibility floor (`v1` today) and changes when the floor rises.
 

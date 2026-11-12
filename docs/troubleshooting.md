@@ -560,8 +560,7 @@ read it first and replace anything you'd rather not post with `<redacted>`.
 
 - `--output <file>` writes elsewhere. The file is readable by your user only.
 - It covers the repository's latest session; `--session <id>` names another (the id is in its dashboard address).
-- It works where Rerail won't start or set-up never finished, and says which parts it could not read and whether this
-  Rerail has no content store.
+- It works where Rerail won't start or set-up never finished, and says which parts it could not read.
 
 | In the file | Left out |
 | --- | --- |
