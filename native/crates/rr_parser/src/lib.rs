@@ -259,7 +259,8 @@ pub mod tests {
         let cut = native_cpu_clusters::by_rules(&native);
         assert_eq!((cut.count as usize, cut.calls), (rules.len(), true), "a function a rule");
         assert_eq!(c.parser.tier2.clusters, rules.len(), "as compiled");
-        // A jump from one rule into another, not a call's: refused.
+        // A jump from one rule into a later one, not a call's: refused (into an earlier rule's
+        // code, which rules share, it is a call of that rule's function).
         let mut bad = c.program.clone();
         let (from, into) = (usize::from(rules[1]), rules[2]);
         let goto = (0..bad.words.len()).find(|&pc| pc >= from && rerail_compiler::program::split(bad.words[pc]).0 == rerail_compiler::program::GOTO && rerail_compiler::program::split(bad.words[pc - 1]).0 != rerail_compiler::program::PUSH).expect("a rule's own jump");

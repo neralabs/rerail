@@ -1716,11 +1716,12 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     signature.params.push(AbiParam::new(pointer));
     signature.returns.push(AbiParam::new(types::I64));
     let id = module.declare_function("tempo_stream", Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
-    // With a function a grammar rule, the calls open (`Mem::Ret`) are a function's last
-    // argument: one value for the whole of a call of it (a call adds one, its return takes it
-    // away), so in a register, as the lean parser's depth is its stack's. A call passes one
-    // more; no load or store.
-    let depth_arg = clustered && cut.calls && !native.rules.is_empty();
+    // The calls open (`Mem::Ret`) are a field of the state in `ctx`, read and written where a
+    // call is made and returns, and read by `TOKEN`'s room check, as the lean parser's
+    // `self` fields are: no value of them lives across a call. Passed as an argument, one value
+    // through a whole function, given to each call and to the code of other rules it goes
+    // into, was a value regalloc2 split twice at most and then cut into a piece a use, each
+    // reloaded from the stack (1,148 loads over `.rr`'s tier 2, against 17 so).
     // A cluster's function: (ctx, the entry's index), the `tail` convention.
     let csig = if clustered {
         let mut c = module.make_signature();
@@ -1733,10 +1734,6 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         // `Cut::pass`: those fields as arguments, in registers, and given back with the result,
         // as a call's arguments and results: a call stores none of them.
         c.params.extend(cut.pass.iter().map(|_| AbiParam::new(types::I64)));
-        // With a function a grammar rule, the calls open (`depth_arg`).
-        if depth_arg {
-            c.params.push(AbiParam::new(types::I64));
-        }
         c.returns.push(AbiParam::new(types::I64));
         c.returns.extend(cut.pass.iter().map(|_| AbiParam::new(types::I64)));
         c
@@ -1753,19 +1750,70 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     let mut reorder_fn = None;
     // The words made as functions of their own (`WordFn`), with a function a grammar rule.
     let outlined = !native.rules.is_empty() && cut.calls;
-    // With a function a grammar rule (only calls cross functions), each function's ways of
-    // returning (bit 0: `RETURN m=0`, bit 1: `m=1`). A function with one gives back 0 for it,
-    // and its callers test once, as a `Result`'s.
+    // With a function a grammar rule, or code rules share (`merge_words`' helpers), the ways a
+    // call of each function returns (bit 0: `RETURN m=0`, bit 1: `m=1`): its own `RETURN`s and
+    // those of the helpers it goes into (which it calls, passing their result on). A function
+    // with one way gives back 0 for it, and its callers test once, as a `Result`'s.
     let rule_of = |pc: usize| native.rules.partition_point(|&s| usize::from(s) <= pc).saturating_sub(1);
     let by_rule = outlined && (0..words.len()).all(|pc| cut.of[pc] as usize == rule_of(pc));
-    let mut return_ways = vec![0u8; cut.count as usize];
+    let functions = cut.count as usize;
+    let mut own_ways = vec![0u8; functions];
+    // `into[d]`: the functions `d` goes into (its jumps to other functions, not its calls).
+    let mut into: Vec<std::collections::BTreeSet<usize>> = vec![Default::default(); functions];
     for (pc, b) in words.iter().enumerate() {
         if let Op::Return { again } = b.operation {
-            return_ways[cut.of[pc] as usize] |= 1 << u8::from(again);
+            own_ways[cut.of[pc] as usize] |= 1 << u8::from(again);
+        }
+        let call = pc > 0 && matches!(words[pc - 1].operation, Op::Push { .. });
+        if cut.calls && !call {
+            for t in rule_successors(native, pc) {
+                if cut.of[t] != cut.of[pc] {
+                    into[cut.of[pc] as usize].insert(cut.of[t] as usize);
+                }
+            }
         }
     }
+    // `reached[d]`: `d` and every function it goes into, on and on (helpers go into helpers
+    // of more rules alone, so no cycle).
+    let reached: Vec<std::collections::BTreeSet<usize>> = (0..functions)
+        .map(|d| {
+            let (mut seen, mut todo) = (std::collections::BTreeSet::from([d]), vec![d]);
+            while let Some(x) = todo.pop() {
+                for &y in &into[x] {
+                    if seen.insert(y) {
+                        todo.push(y);
+                    }
+                }
+            }
+            seen
+        })
+        .collect();
+    let ways: Vec<u8> = reached.iter().map(|r| r.iter().fold(0, |w, &x| w | own_ways[x])).collect();
+    // One way each, where every `RETURN m=1` a call of it reaches can give back 0: one whose
+    // function is reached from a function with both ways gives back 1 (`RETURN`'s own), and so
+    // every function reaching it tests for 1. To a fixed point.
+    let mut one: Vec<Option<u16>> = ways.iter().map(|&w| if !by_rule { None } else { match w { 1 => Some(0), 2 => Some(1), _ => None } }).collect();
+    let users: Vec<Vec<usize>> = (0..functions).map(|x| (0..functions).filter(|&u| reached[u].contains(&x)).collect()).collect();
+    loop {
+        let mut changed = false;
+        for x in (0..functions).filter(|&x| own_ways[x] & 2 != 0) {
+            if users[x].iter().any(|&u| one[u].is_none()) {
+                for &u in &users[x] {
+                    if one[u] == Some(1) {
+                        one[u] = None;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    // A `RETURN m=1` of function `x` gives back 0 where every call reaching it reads 0 so.
+    let again_as_one: Vec<bool> = (0..functions).map(|x| users[x].iter().all(|&u| one[u] == Some(1))).collect();
     // The one way function `d` returns, where it has one.
-    let one_way = |d: usize| -> Option<u16> { if !by_rule { None } else { match return_ways[d] { 1 => Some(0), 2 => Some(1), _ => None } } };
+    let one_way = |d: usize| -> Option<u16> { one[d] };
     let mut word_fns: std::collections::HashMap<WordFn, (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)> = std::collections::HashMap::new();
     let mut table_fn: Option<(cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)> = None;
     let mut lowered: Vec<Lowered> = Vec::new();
@@ -1876,7 +1924,6 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         let mut f = FunctionBuilder::new(&mut func, &mut fctx);
         let entry = f.create_block();
         f.append_block_params_for_function_params(entry);
-        let depth = depth_arg.then(|| *f.block_params(entry).last().expect("the calls open"));
         let refuse = f.create_block();
         f.append_block_param(refuse, types::I64);
         let wb: Vec<Option<Block>> = named.iter().map(|&n| n.then(|| f.create_block())).collect();
@@ -1952,7 +1999,6 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         // function, loaded where it is entered and stored where it calls another cluster.
         let vars: Vec<Option<cranelift_frontend::Variable>> = (0..Mem::COUNT).map(|k| cut.held.contains(&k).then(|| f.declare_var(types::I64))).collect();
         let mget = |f: &mut FunctionBuilder<'_>, k: Mem| match (vars[k as usize], slot) {
-            _ if matches!(k, Mem::Ret) && depth.is_some() => depth.expect("the calls open"),
             (Some(v), _) => f.use_var(v),
             (None, Some(s)) => f.ins().stack_load(types::I64, s, 8 * k as i32),
             (None, None) => {
@@ -2883,11 +2929,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     let deep = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, ret, DEPTH);
                     guard(&mut f, deep, pc);
                     let ret = f.ins().iadd_imm(ret, 1);
-                    // The callee's calls open: its argument (`depth_arg`), else the state's.
-                    let deeper = depth.map(|_| ret);
-                    if depth.is_none() {
-                        mset(&mut f, Mem::Ret, ret);
-                    }
+                    mset(&mut f, Mem::Ret, ret);
                     let kept = (two_slots && changes_context[cut.of[callee(native, pc)] as usize]).then(|| (mget(&mut f, Mem::Word), mget(&mut f, Mem::Flags)));
                     for (k, v) in vars.iter().enumerate() {
                         if let Some(v) = v.filter(|_| !cut.pass.contains(&(k as u32))) {
@@ -2907,7 +2949,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     });
                     let iv = f.ins().iconst(types::I64, i as i64);
                     let passed: Vec<Value> = cut.pass.iter().map(|&k| f.use_var(vars[k as usize].expect("a passed field is held"))).collect();
-                    let args: Vec<Value> = (!pinned_ctx).then_some(ctx).into_iter().chain([iv]).chain(passed).chain(deeper).collect();
+                    let args: Vec<Value> = (!pinned_ctx).then_some(ctx).into_iter().chain([iv]).chain(passed).collect();
                     let call = f.ins().call(fref, &args);
                     let back = f.inst_results(call).to_vec();
                     let v = back[0];
@@ -2952,11 +2994,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     let ret = mget(&mut f, Mem::Ret);
                     let none = f.ins().icmp_imm(IntCC::Equal, ret, 0);
                     guard(&mut f, none, pc);
-                    // The caller's calls open are its own argument (`depth_arg`).
-                    if depth.is_none() {
-                        let ret = f.ins().iadd_imm(ret, -1);
-                        mset(&mut f, Mem::Ret, ret);
-                    }
+                    let ret = f.ins().iadd_imm(ret, -1);
+                    mset(&mut f, Mem::Ret, ret);
                     for (k, v) in vars.iter().enumerate() {
                         if let Some(v) = v.filter(|_| !cut.pass.contains(&(k as u32))) {
                             let x = f.use_var(v);
@@ -2965,7 +3004,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         }
                     }
                     // A function that returns one way gives back 0 for it (`one_way`).
-                    let way = if one_way(cut.of[pc] as usize).is_some() { 0 } else { i64::from(again) };
+                    let way = if again && by_rule && again_as_one[cut.of[pc] as usize] { 0 } else { i64::from(again) };
                     let v = f.ins().iconst(types::I64, RETURNED as i64 + way);
                     let r = results(&mut f, v, false);
                     leave(&mut f, &r);
@@ -3117,16 +3156,30 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         }
         if clustered {
             // Each place of another cluster a word here goes to: the held fields stored, then
-            // the tail call of its cluster with the place's index there.
+            // the tail call of its cluster with the place's index there. With a function a
+            // grammar rule (`pinned_ctx`), the code of an earlier rule a word goes into
+            // (`merge_words`): a call of that rule's function, whose result is this one's (the
+            // lean parser's `return self.helper()`), to its one exit. A rule goes into earlier
+            // rules alone, so these calls nest no deeper than the rules are many. One call for
+            // each place gone to, its index made there, however many words go there: an index
+            // passed in from many places would be one constant, folded, live through the whole
+            // function. A tail call each was an epilogue each (785 restores, against 170).
             use cranelift_codegen::ir::{ExtFuncData, ExternalName, UserExternalName};
             let refs = &mut call_refs;
             let named_foreign: Vec<usize> = foreign.borrow().iter().copied().collect();
+            let mut into: std::collections::BTreeMap<(usize, usize), Block> = std::collections::BTreeMap::new();
             for g in named_foreign {
                 let d = cluster_of(g);
                 // Named only by a word's fall it never takes (no word goes on to it).
                 let Some(&i) = index[d].get(&g) else { continue };
                 let b = if g < n_words { wb[g].expect("a place named") } else { entries[g - n_words] };
                 f.switch_to_block(b);
+                if pinned_ctx {
+                    let to = *into.entry((d, i)).or_insert_with(|| f.create_block());
+                    f.ins().jump(to, &[]);
+                    exits.insert(b, g);
+                    continue;
+                }
                 for (k, v) in vars.iter().enumerate() {
                     if let Some(v) = v.filter(|_| !cut.pass.contains(&(k as u32))) {
                         let x = f.use_var(v);
@@ -3141,10 +3194,32 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     f.import_function(ExtFuncData { name: ExternalName::user(name), signature, colocated: true })
                 });
                 let iv = f.ins().iconst(types::I64, i as i64);
-                let args: Vec<Value> = (!pinned_ctx).then_some(ctx).into_iter().chain([iv]).chain(passed).chain(depth).collect();
+                let args: Vec<Value> = (!pinned_ctx).then_some(ctx).into_iter().chain([iv]).chain(passed).collect();
                 f.ins().return_call(fref, &args);
                 exits.insert(b, g);
                 tails += 1;
+            }
+            for ((d, i), to) in into {
+                f.switch_to_block(to);
+                let iv = f.ins().iconst(types::I64, i as i64);
+                for (k, v) in vars.iter().enumerate() {
+                    if let Some(v) = v.filter(|_| !cut.pass.contains(&(k as u32))) {
+                        let x = f.use_var(v);
+                        let p = pinned(&mut f);
+                        f.ins().store(MemFlags::trusted(), x, p, STATE + 8 * k as i32);
+                    }
+                }
+                let passed: Vec<Value> = cut.pass.iter().map(|&k| f.use_var(vars[k as usize].expect("a passed field is held"))).collect();
+                let fref = *refs.entry(d).or_insert_with(|| {
+                    let name = f.func.declare_imported_user_function(UserExternalName::new(0, cids[d].as_u32()));
+                    let signature = f.import_signature(csig.clone());
+                    f.import_function(ExtFuncData { name: ExternalName::user(name), signature, colocated: true })
+                });
+                let args: Vec<Value> = std::iter::once(iv).chain(passed).collect();
+                let call = f.ins().call(fref, &args);
+                let v = f.inst_results(call)[0];
+                let r = results(&mut f, v, false);
+                leave(&mut f, &r);
             }
             // The entry's place, by its index among this cluster's entries.
             f.switch_to_block(pick);
@@ -3260,7 +3335,6 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
             let first = f.ins().iconst(types::I64, 0);
             // The passed fields' first values, as the state's in `ctx`.
             let passed: Vec<Value> = cut.pass.iter().map(|&k| if k == Mem::Need as u32 { one } else if k == Mem::Lw as u32 { before_first } else { zero }).collect();
-            let none_open = depth_arg.then_some(zero);
             // With `ctx` pinned: the host's x21 kept, `ctx` there for the run, the host's back
             // after (Cranelift saves no pinned register).
             let host = pinned_ctx.then(|| {
@@ -3268,7 +3342,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                 f.ins().set_pinned_reg(ctx);
                 host
             });
-            let args: Vec<Value> = (!pinned_ctx).then_some(ctx).into_iter().chain([first]).chain(passed).chain(none_open).collect();
+            let args: Vec<Value> = (!pinned_ctx).then_some(ctx).into_iter().chain([first]).chain(passed).collect();
             let r = call_own(&mut f, cids[cut.of[0] as usize], &csig, &args);
             if let Some(host) = host {
                 f.ins().set_pinned_reg(host);

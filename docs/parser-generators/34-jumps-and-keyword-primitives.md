@@ -688,6 +688,8 @@ so a word's cost is its own bytes, not its share of the IR.
   a call passes one more, a `RETURN` tests it against zero,
   and `TOKEN`'s function takes it for its room check.
   No load or store of the count is left around a call.
+  (Dropped since: with code shared from the middle of rules,
+  the count spilled; see below.)
 - **The stream's end is a token kind of its own.**
   At the end, `TOKEN` sets the token to a kind past the records' kinds,
   so a switch on kinds sends it to its end target in the same compare tree,
@@ -723,7 +725,7 @@ rustc compiles its `match`es as compare trees too, with no jump table.
 What differs is how many switches there are:
 the lean parser has 1,198 compares, tier 2 has 5,102.
 
-### Tried and dropped: code shared from the middle of rules
+### Tried first: code shared from the middle of rules
 
 Beyond whole callees, rules share tails:
 code from some state onwards that behaves the same in two rules.
@@ -748,6 +750,91 @@ What would make it pay is `ctx` outside the allocation,
 in a register of its own for the whole run (Cranelift's pinned register, x21).
 `tempo_stream` would save the host's x21 and restore it,
 and calls would no longer pass `ctx` at all.
+Both are built now: see the next section.
+
+## Built: `ctx` in a register, and code shared from the middle of rules
+
+The aim is the lean parser's code shape, not a faster benchmark.
+Each step below is judged by the machine code against rustc's:
+how many instructions and functions there are,
+what a call looks like, and how much goes through the stack.
+
+- **`ctx` in a register of its own.**
+  It sits in Cranelift's pinned register (x21) for the whole run.
+  Each function reads it once, into a value the allocator keeps
+  in one callee-saved register, as rustc keeps the lean parser's `self`.
+  No call passes it. `tempo_stream` saves the host's x21 and restores it.
+- **Rules share code from any place on.**
+  The word merge now treats words of two rules as alike when they behave the same.
+  A word goes to the first place of its kind, which is in the earliest rule that has it.
+  So a rule only goes into earlier rules' code,
+  and the verifier checks that: a jump that is not a call's
+  may go into an earlier rule, never into a later one.
+  Compiled, such a jump is a call of the earlier rule's function,
+  whose result is passed on, as the lean parser's `return self.helper()`.
+  These calls nest no deeper than there are rules.
+- **One call for each place gone to.**
+  However many words go to the same place in another rule,
+  they jump to one block that makes the call.
+- **A rule that returns one way gives back 0, across shared code.**
+  A rule's ways of returning now include those of the code it goes into.
+- **The calls-open count is back in `ctx`.**
+  It is read and written where a call is made and returns,
+  and read by `TOKEN`'s room check, as the lean parser's `self` fields are.
+
+Three ways to share code were tried and dropped, each because of what it did to the code:
+
+| Tried | What the machine code showed |
+|---|---|
+| The count as an argument, as before | One value through the whole function, given to every call: regalloc2 split it twice, then reloaded it from the stack at each use (1,148 loads) |
+| The count in the high bits of the entry index | The optimizer kept the incoming argument alive to rebuild it, and that spilled instead (1,674 loads) |
+| A helper function for each set of rules that share code | 84 functions instead of 56, and 1,700 more instructions |
+| A tail call into shared code | An epilogue at each of 198 places (785 register restores against 170) |
+
+| | Callees shared | `ctx` pinned | Now | Lean parser |
+|---|---|---|---|---|
+| Words | 8,144 | 8,144 | 6,441 | |
+| Functions | 56 | 56 | 56 | |
+| Machine instructions | 38,750 | 36,258 | 31,702 | 10,008 |
+| Code bytes | 155,000 | | 126,808 | |
+| Reloads from the stack | | 19 | 17 | 0 |
+| Compares | | 5,102 | 4,689 | 1,198 |
+| Tier 2, instructions | 335.1M | | 361.0M | 356.7M |
+| Tier 2, cycles | 63.9M | | 76.5M | 68.8M |
+
+The load average was about 34 for the last measurement.
+More instructions run now, since the code a rule goes into is a call away.
+The benchmark is reported, not used to judge the shape.
+
+What stands between a call here and a call in the lean parser:
+
+```
+// Tier 2: a rule calls another (14 instructions)
+ldr  x5, [x19, #400]    // the calls open
+cmp  x5, #1024          // too deep?
+b.ge refuse
+add  x7, x5, #1
+str  x7, [x19, #400]
+ldr  x23, [x19, #304]   // the level's word and flags, kept
+ldr  x24, [x19, #312]
+mov  x2, x25            // the callee's entry
+bl   rule
+str  x23, [x19, #304]   // given back
+str  x24, [x19, #312]
+cbz  x2, back           // the way it returned
+cmp  x2, #1
+b.ne end
+
+// The lean parser (3 instructions)
+mov  x0, x19            // self
+bl   comments_before
+ldr  x8, [x19, #0x58]
+```
+
+So the next levers are the call's bookkeeping (the depth check, the kept word and flags,
+the three-way result) and the number of compares.
+`PUSH` is now a fifth of the machine code (15 instructions each),
+and `SWITCH` still most of it (29%).
 
 ## The order
 
@@ -757,7 +844,8 @@ and calls would no longer pass `ctx` at all.
 3. A cheaper `TOKEN`, and the state as the lean parser's.
    Built: no select, nothing held across calls, the tape in rows, one exit a function,
    the state as locals, a token taken for good, words as calls (and so the frame-free path),
-   cheaper calls, callees shared across rules.
-   Next: `ctx` in a register of its own, then code shared from the middle of rules.
+   cheaper calls, callees shared across rules,
+   `ctx` in a register of its own, code shared from the middle of rules.
+   Next: a call's bookkeeping as the lean parser's, then fewer compares.
 4. Keyword marks from the records. Built for the marks of one word.
 5. Tier 1's primitives: the picked hash, then nibble fingerprints.

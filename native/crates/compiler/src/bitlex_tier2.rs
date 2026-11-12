@@ -955,8 +955,8 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
 ///
 /// - a place a jump reaches that only jumps on is passed: every target goes to where the jumps
 ///   end, within its rule;
-/// - a jump to a lone `STOP`, or within a rule to a `RETURN`, is that word (not after a `MARK`
-///   or `ROW`, whose way is a `GOTO` or `STOP`);
+/// - a jump to a lone `STOP` or a `RETURN` (in any rule: the same return) is that word (not
+///   after a `MARK` or `ROW`, whose way is a `GOTO` or `STOP`);
 /// - a run of words entered by one jump alone is placed after that jump, and a jump to the
 ///   next place goes.
 ///
@@ -1025,7 +1025,7 @@ fn lay_out(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], rules: &[
         let (op, mode, arg) = words[usize::from(t)];
         let copy = match op {
             "STOP" => true,
-            "RETURN" => rule(usize::from(t)) == rule(pc) && !after_mark,
+            "RETURN" => !after_mark,
             _ => false,
         };
         if copy {
@@ -1205,20 +1205,21 @@ fn ways(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], pc: usize) -
 /// becomes a `GOTO` to it, and words nothing reaches go. The places of a state a call returns to
 /// stay whole (`TOKEN`, its `MARK`s and their ways, `SWITCH`: `stream::validate`'s shape).
 ///
-/// `rules`: each word's rule (a function a rule): words of two rules are never alike, but a
-/// call goes to any rule's words alike with its callee's (the same partition with no rules):
-/// rules that are copies, whole or from the place a call enters, are one function, as the
-/// lean parser's rules call one helper. No word goes to another rule but by a call. The kept
-/// words' rules come back with them.
+/// `rules`: each word's rule (a function a rule). Words of two rules are alike as any are, and
+/// a word goes to the first place of its kind, in any rule: a call to its callee's, and a jump
+/// to code rules share (which compiled code calls, passing its result on: the lean parser's
+/// `return self.helper()`). A kind's first place is in the earliest rule that has it, so a
+/// rule goes into earlier rules' code alone. A call's landing stays its caller's (the call
+/// returns into its own function). The kept words' rules come back with them.
 fn merge_words(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], rules: Option<&[u16]>) -> (Vec<(&'static str, u8, Arg)>, Vec<ByteSwitch>, Vec<u16>) {
     let n = words.len();
     const NONE: u32 = u32::MAX;
     let class_of = |class: &[u32], t: u16| if t == REFUSE || usize::from(t) >= n { NONE } else { class[usize::from(t)] };
     // The first partition: operation, mode, operand (a switch's offset too), and the rule.
     let is_call = |pc: usize| pc > 0 && words[pc].0 == "GOTO" && words[pc - 1].0 == "PUSH";
-    let partition = |rules: Option<&[u16]>| -> (Vec<u32>, usize) {
+    let partition = || -> (Vec<u32>, usize) {
         let mut class: Vec<u32> = {
-            let mut ids: HashMap<(&str, u8, (u8, u16), u8, u16, Vec<u16>), u32> = HashMap::new();
+            let mut ids: HashMap<(&str, u8, (u8, u16), u8, Vec<u16>), u32> = HashMap::new();
             words
                 .iter()
                 .enumerate()
@@ -1226,10 +1227,9 @@ fn merge_words(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], rules
                     // A switch's offset and the words it names (their targets are its ways).
                     let (offset, named) = if let Arg::Table(t) = arg { (switches[usize::from(t)].offset, switches[usize::from(t)].words.iter().map(|&(w, _)| w).collect()) } else { (0, Vec::new()) };
                     let next = ids.len() as u32;
-                    let rule = rules.map_or(0, |r| r[pc]);
                     // A call's `GOTO` is never another `GOTO`'s kind: it goes to its callee.
                     let op = if is_call(pc) { "GOTO (a call's)" } else { op };
-                    *ids.entry((op, mode, operand_key(arg), offset, rule, named)).or_insert(next)
+                    *ids.entry((op, mode, operand_key(arg), offset, named)).or_insert(next)
                 })
                 .collect()
         };
@@ -1256,21 +1256,11 @@ fn merge_words(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], rules
         }
         (class, count)
     };
-    let (class, count) = partition(rules);
+    let (class, count) = partition();
     let mut rep = vec![usize::MAX; count];
     for pc in (0..n).rev() {
         rep[class[pc] as usize] = pc;
     }
-    // A call's callee: the first place alike with it in any rule (its own partition's first is
-    // that place, the first of its kind there too).
-    let callee_of: Vec<u16> = {
-        let (across, count) = if rules.is_some() { partition(None) } else { (class.clone(), count) };
-        let mut first = vec![usize::MAX; count];
-        for pc in (0..n).rev() {
-            first[across[pc] as usize] = pc;
-        }
-        (0..n).map(|t| first[across[t] as usize] as u16).collect()
-    };
     // What each place holds: nothing, its own word, or a `GOTO` to its kind's kept word.
     #[derive(Clone, Copy, PartialEq)]
     enum Hold {
@@ -1300,14 +1290,15 @@ fn merge_words(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], rules
         if op == "PUSH" {
             let Arg::Pc(p) = arg else { continue };
             let (p, r) = (usize::from(p), rep[class[usize::from(p)] as usize]);
-            let to = if r + 1 < n && p + 1 < n && class[r + 1] == class[p + 1] { r } else { p };
+            // In the caller's rule: the call returns into its own function.
+            let same_rule = rules.is_none_or(|q| q[r] == q[pc]);
+            let to = if same_rule && r + 1 < n && p + 1 < n && class[r + 1] == class[p + 1] { r } else { p };
             landing[pc] = to as u16;
             todo.push((to, true));
             todo.push((to + 1, false));
         } else {
             for t in targets {
                 if t != REFUSE && usize::from(t) < n {
-                    let t = if is_call(pc) { callee_of[usize::from(t)] } else { t };
                     todo.push((rep[class[usize::from(t)] as usize], true));
                 }
             }
@@ -1355,7 +1346,6 @@ fn merge_words(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], rules
                         });
                         Arg::Table(at)
                     }
-                    (_, Arg::Pc(t)) if is_call(pc) && usize::from(t) < n => Arg::Pc(to(callee_of[usize::from(t)])),
                     (_, Arg::Pc(t)) => Arg::Pc(to(t)),
                     (_, a) => a,
                 };

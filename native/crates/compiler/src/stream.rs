@@ -731,9 +731,12 @@ pub fn validate_mark_words(program: &Words) -> Result<(), Error> {
 }
 
 /// Tier 2's rules (`Words::rules`), when it has them: from place 0, rising, within the words;
-/// every word goes on within its own rule (a `PUSH` to its return's places, and its next word,
-/// a `GOTO`), but for that `GOTO`: a call's, to its callee in any rule. So a rule is a
-/// function, and a rule's code reaches another's by its calls alone.
+/// every word goes on by position within its own rule (its next word, a test's two ways), and
+/// a `PUSH` returns into it. A jump (a `GOTO`, a switch's targets) may go to another rule: a
+/// call's to its callee, any rule; another to an earlier rule's code, which rules share (the
+/// compiled code calls it, passing its result on). So a rule is a function, which reaches
+/// another's code by jumps alone, and those of jumps that are not calls nest no deeper than the
+/// rules are many: no cycle.
 pub fn validate_rules(program: &Words) -> Result<(), Error> {
     let (rules, words) = (&program.rules, &program.words);
     if rules.is_empty() {
@@ -748,15 +751,20 @@ pub fn validate_rules(program: &Words) -> Result<(), Error> {
     for pc in 0..n {
         let (op, mode, operand) = split(words[pc]);
         let after_push = pc > 0 && split(words[pc - 1]).0 == PUSH;
-        let next: Vec<usize> = match op {
-            STOP | ACCEPT | RETURN => vec![],
-            // A call's `GOTO`: to its callee, in any rule.
-            GOTO if after_push => vec![],
-            GOTO => vec![target(operand)],
+        // A jump that is not a call's: within its rule, or into an earlier one.
+        let jumps: Vec<usize> = match op {
+            GOTO if !after_push => vec![target(operand)],
             SWITCH => {
                 let s = &program.switches[usize::from(operand)];
                 s.all_targets().filter(|&t| t != REFUSE).map(target).collect()
             }
+            _ => vec![],
+        };
+        if jumps.iter().any(|&t| t < n && rule_of(t) > rule_of(pc)) {
+            return Err(Error::InvalidTarget(pc));
+        }
+        let next: Vec<usize> = match op {
+            STOP | ACCEPT | RETURN | GOTO | SWITCH => vec![],
             PUSH => {
                 if split(*words.get(pc + 1).ok_or(Error::InvalidTarget(pc))?).0 != GOTO {
                     return Err(Error::InvalidTarget(pc));
